@@ -1,0 +1,5 @@
+node_modules/
+.env
+audit-stdout.log
+audit-stderr.log
+*.log
