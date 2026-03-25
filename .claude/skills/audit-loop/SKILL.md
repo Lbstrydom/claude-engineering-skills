@@ -130,10 +130,82 @@ After parsing, show a clear summary — NOT raw JSON:
 
 **You are a peer, not a subordinate.** Review each finding using your codebase knowledge.
 
-### 3.1 Check Convergence First
+### 3.1 Check Convergence (Stability Algorithm)
 
-If already at 0 HIGH, ≤2 MEDIUM, 0 quick-fix → skip to Step 6.
-Maximum 4 rounds total.
+Convergence requires BOTH a quality threshold AND stability:
+
+**Quality threshold** (necessary):
+- `highCount === 0`
+- `mediumCount <= 2`
+- `quickFixCount === 0`
+
+**Stability check** (also necessary — fixes often introduce new issues):
+
+Track across rounds:
+- `previousFindingIds` — set of finding IDs from last round
+- `newFindingsThisRound` — findings whose category+detail don't match any from previous round
+- `consecutiveStableRounds` — counter, resets to 0 whenever new findings appear
+
+```
+Stability Rules:
+  1. After EVERY fix round, a mandatory verification audit runs (even if threshold is met)
+  2. If the verification audit finds NEW findings (not seen in prior rounds) → not stable, fix and re-audit
+  3. Stability = quality threshold met for 2 consecutive rounds with zero new findings
+  4. Maximum 6 rounds total (raised from 4 to allow stabilization)
+  5. If round 6 reached without stability: present remaining findings to user
+```
+
+**How to detect "new" findings:**
+Compare each finding's `category + section + detail` (normalized lowercase, trimmed) against all
+findings from the previous round. If >70% of words overlap, it's the same finding (possibly
+re-worded by GPT). If <70% overlap, it's genuinely new — likely caused by a fix.
+
+**Convergence state tracking** (maintain across rounds):
+
+```
+Round 1: 7H 5M 1L (13 total)           → fix →
+Round 2: 1H 3M 0L (4 total, 1 new)     → fix → [not stable: new finding]
+Round 3: 0H 2M 1L (3 total, 0 new)     → threshold met, stable round 1 of 2
+Round 4: 0H 1M 0L (1 total, 0 new)     → threshold met, stable round 2 of 2 → CONVERGED ✓
+```
+
+**Show stability in the round transition card:**
+
+```
+═══════════════════════════════════════════════════════════
+  ROUND 3 → ROUND 4
+═══════════════════════════════════════════════════════════
+  HIGH:    0 ✓  |  MEDIUM: 2 (≤2 ✓)  |  LOW: 1
+  Quick fixes: 0 ✓
+  New findings this round: 0 ✓
+
+  Stability: 1/2 consecutive clean rounds
+  Need 1 more clean round to confirm stability...
+═══════════════════════════════════════════════════════════
+```
+
+If max rounds reached without stability:
+
+```
+═══════════════════════════════════════════════════════════
+  ⚠️ MAX ROUNDS REACHED (6) — Not fully stable
+═══════════════════════════════════════════════════════════
+  Quality threshold: MET (0H, 2M, 0 quick-fix)
+  Stability: NOT MET (new findings still appearing)
+
+  This suggests fixes are creating oscillating issues.
+
+  Remaining findings (3):
+    [M2] Input validation too strict — added in R4, relaxed in R5, re-flagged in R6
+    [M5] Error message wording inconsistency
+    [L1] Unused import from Round 3 fix
+
+  Options:
+    A) Accept current state — these are minor and non-blocking
+    B) Run 1 more round with reasoning: low (faster stability check)
+    C) Fix remaining items manually
+═══════════════════════════════════════════════════════════
+```
 
 ### 3.2 Form Your Position on Each Finding
 
@@ -244,27 +316,61 @@ Wait for response. Apply choices. Then continue.
 
 ---
 
-## Step 5 — Re-Audit (Loop)
+## Step 5 — Mandatory Verification Audit + Loop
 
-### 5.1 Show Round Transition Card
+**CRITICAL**: After every fix round, ALWAYS re-audit — even if the threshold appears met.
+Fixes frequently introduce new issues. Skipping verification is the #1 cause of
+"it passed audit but broke in production."
+
+### 5.1 Re-run Audit (Verification)
+
+Go back to Step 2. Run the full audit again on the now-modified codebase.
+
+### 5.2 Detect New Findings (Fix Regression Check)
+
+After parsing the new round's results, compare against the previous round:
+
+For each finding in this round, check if it existed in the prior round:
+- **Same finding** = category + section overlap >70% of words (GPT may re-word slightly)
+- **New finding** = <70% overlap — this was likely CAUSED by a fix
+
+Track:
+- `newFindingCount` — findings that didn't exist last round
+- `resolvedFindingCount` — findings from last round that are now gone
+- `recurringFindingCount` — findings that persist across rounds
+
+### 5.3 Show Round Transition Card (with Stability)
 
 ```
 ═══════════════════════════════════════════════════════════
-  ROUND 1 → ROUND 2
+  ROUND 2 → ROUND 3 (Verification)
 ═══════════════════════════════════════════════════════════
-  HIGH:    6 → 0  ✓
-  MEDIUM: 10 → 3  (target: ≤2, need 1 more)
-  LOW:     5 → 2
+  HIGH:    1 → 0  ✓
+  MEDIUM:  3 → 2  ✓ (target: ≤2)
+  LOW:     2 → 1
   Quick fixes: 0  ✓
 
-  Files changed this round: 6
-  Re-auditing changed files... (~2 min)
+  Finding churn:
+    Resolved: 3 (fixed successfully)
+    Recurring: 2 (persisted, minor)
+    ⚠️ New: 1 (introduced by Round 2 fixes!)
+      → [M8] Missing null check in retry logic (added in R2 fix for M5)
+
+  Stability: 0/2 — new findings appeared, resetting counter
+  Files changed this round: 4
+  Fixing new finding, then re-auditing...
 ═══════════════════════════════════════════════════════════
 ```
 
-### 5.2 Re-run Audit
+### 5.4 Stability Decision
 
-Go back to Step 2. GPT-5.4 may find new issues in the fixes, or confirm they're clean.
+| Condition | Action |
+|-----------|--------|
+| Threshold NOT met | Fix findings → re-audit (back to Step 3) |
+| Threshold met BUT new findings appeared | Fix new findings → re-audit (stability counter resets to 0) |
+| Threshold met AND 0 new findings (stable round 1/2) | Re-audit one more time (mandatory second stable round) |
+| Threshold met AND 0 new findings for 2 consecutive rounds | **CONVERGED** → Step 6 |
+| Round 6 reached without stability | Present to user with options (Step 6 fallback) |
 
 ---
 
@@ -274,19 +380,27 @@ When converged (or max rounds reached):
 
 ```
 ═══════════════════════════════════════════════════════════
-  ✅ CONVERGED — Round 2
+  ✅ CONVERGED — Round 4 (stable for 2 consecutive rounds)
 ═══════════════════════════════════════════════════════════
   Final: 0 HIGH | 2 MEDIUM | 1 LOW
-  Rounds: 2 | Total time: 8m 42s | Cost: ~$0.85
+  Rounds: 4 (2 fix + 2 verification) | Total time: 14m 18s | Cost: ~$1.20
+
+  Stability journey:
+    R1: 13 findings → fixed 10 → R2: 4 findings (1 new from fixes!)
+    R2: fixed 2 → R3: 3 findings (0 new ✓, stable 1/2)
+    R3: no fixes needed → R4: 3 findings (0 new ✓, stable 2/2) → CONVERGED
 
   Deliberation stats:
     Challenged: 6 | Sustained: 2 | Overruled: 2 | Compromise: 2
     Claude win rate: 67% (4/6 challenges accepted or compromised)
 
+  Fix regressions caught: 1
+    → [M8] Missing null check in retry logic (caused by R1 fix for M5)
+
   Files changed:
     ✓ scripts/openai-audit.mjs (security fix, constant fix)
     ✓ src/routes/pairingLab.js (auth, validation)
-    ✓ src/services/pairing/pairingLab.js (retry, split)
+    ✓ src/services/pairing/pairingLab.js (retry, split, null check)
     ✓ src/schemas/pairingLab.js (new validation)
     ✓ public/js/pairingLab/results.js (loading state)
     ✓ tests/unit/services/pairing/pairingLab.test.js (new)
