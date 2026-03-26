@@ -253,6 +253,46 @@ node scripts/openai-audit.mjs rebuttal <plan-file> <rebuttal-file> --json
 
 ---
 
+## Parallel Execution (Speed Optimisation)
+
+**Do as much in parallel as possible without risking code quality.**
+
+### What CAN Run in Parallel (safe)
+
+| Action A | Action B | Why Safe |
+|----------|----------|----------|
+| Fix **accepted** findings | Wait for **rebuttal** response | Accepted findings won't change — GPT already ruled on them |
+| Fix **mechanical** issues (await, fetch, CSP) | Fix **recommendation** issues | Independent files, no interaction |
+| Read implementation files | Write rebuttal document | Read-only vs write to different file |
+| Run tests after fixes | Write audit summary notes | Tests are read-only validation |
+
+### What MUST Be Sequential (unsafe to parallelise)
+
+| Step | Depends On | Why |
+|------|-----------|-----|
+| Apply **sustained** fixes | Rebuttal response | Don't know which are sustained until GPT responds |
+| Apply **compromise** fixes | Rebuttal response | Compromise wording not known until GPT responds |
+| Verification audit | ALL fixes complete | Must audit the final state, not an intermediate one |
+| Opus deep review | Convergence confirmed | Only runs once stable |
+
+### Optimal Execution Pattern
+
+```
+1. GPT audit completes → parse findings
+2. IN PARALLEL:
+   a) Start fixing accepted/mechanical findings (known good)
+   b) Write rebuttal document for contested findings
+3. Send rebuttal to GPT → WHILE WAITING:
+   c) Continue fixing accepted findings
+   d) Run tests on mechanical fixes
+4. Rebuttal response arrives → apply sustained/compromise fixes
+5. SEQUENTIAL: Run verification audit on final state
+```
+
+This typically saves 60-90s per round by overlapping fix work with rebuttal wait time.
+
+---
+
 ## Step 4 — Fix All Surviving Findings
 
 **ALL HIGH findings MUST be fixed.** MEDIUM findings are fixed until ≤2 remain.
@@ -424,6 +464,157 @@ When converged (or max rounds reached):
 
 ---
 
+## Step 6.5 — Opus Deep Review (Final Quality Gate)
+
+After GPT-5.4 convergence confirms mechanical stability, run a **single high-effort holistic review**
+using Claude Opus (or the most capable model available). This catches architectural and design
+coherence issues that pass-based auditing misses.
+
+**Why a different model at the end?**
+- GPT-5.4 excels at structured, pass-based mechanical checking
+- Opus with extended thinking excels at holistic reasoning about design coherence, subtle coupling,
+  and cross-cutting concerns that span multiple files
+- Three-model system: Sonnet (work) + GPT-5.4 (iterate) + Opus (final gate)
+
+### 6.5.1 What Opus Reviews (NOT covered by GPT passes)
+
+Opus specifically looks for **cross-cutting concerns** that no single pass catches:
+
+- **Architectural coherence** — Do all the files work together as a unified design, or are there
+  seams where different fix rounds created inconsistent patterns?
+- **Abstraction integrity** — Are the boundaries between modules clean after all the fixes,
+  or did iterative patching create leaky abstractions?
+- **Naming consistency** — After 4 rounds of fixes, are naming conventions still consistent
+  across the full changeset?
+- **Over-engineering from audit pressure** — Did the loop add unnecessary complexity just to
+  satisfy GPT findings? (e.g., wrapping a simple function in a strategy pattern because GPT
+  flagged it, when the simple version was correct)
+- **Missing integration tests** — The loop checked unit-level quality, but did anyone verify
+  the components actually work together?
+- **User-facing impact** — Step back from code quality: does this feature actually work well
+  for the end user?
+
+### 6.5.2 Invoke Opus Review
+
+Use the highest-capability model available with extended thinking:
+
+```
+You are performing a FINAL HOLISTIC REVIEW of code that has already passed
+iterative GPT-5.4 auditing (N rounds, converged at 0 HIGH, ≤2 MEDIUM).
+
+The mechanical quality is confirmed. Your job is different:
+
+1. ARCHITECTURAL COHERENCE — Do these files form a unified design?
+   Look for seams where iterative fixing created inconsistencies.
+
+2. OVER-ENGINEERING — Did audit pressure add unnecessary complexity?
+   Flag any abstraction that exists only to satisfy an auditor, not a real need.
+
+3. CROSS-FILE PATTERNS — After N rounds of changes, are patterns
+   (naming, error handling, state management) still consistent?
+
+4. INTEGRATION GAPS — Unit-level quality is verified. What about the
+   interaction between components? Any untested integration paths?
+
+5. USER IMPACT — Does this feature actually work well for the end user?
+   Step back from code quality and think about the experience.
+
+Produce a SHORT assessment (max 10 items). Only flag issues the pass-based
+audit could NOT have caught. If everything is genuinely clean, say so.
+```
+
+Read all changed files and pass them with the plan to Opus (or the assistant's extended thinking mode).
+
+### 6.5.3 Show Deep Review Card
+
+```
+═══════════════════════════════════════════════════════════
+  🔬 OPUS DEEP REVIEW (holistic quality gate)
+═══════════════════════════════════════════════════════════
+  Architectural coherence: CLEAN
+  Over-engineering risk: 1 item flagged
+    → [DR1] Strategy pattern on retry logic is overkill — simple
+       3-line retry loop would be clearer and more maintainable
+
+  Cross-file consistency: CLEAN
+  Integration gaps: 1 item
+    → [DR2] No integration test for agent → pairingLab → feedback
+       pipeline. Unit tests cover each piece but not the chain.
+
+  User impact: GOOD
+    → Feature flow is intuitive, but consider adding a "last used"
+       indicator to Pairing Lab history for quick reference.
+
+  Verdict: APPROVED with 2 suggestions (non-blocking)
+═══════════════════════════════════════════════════════════
+```
+
+### 6.5.4 Sonnet Deliberation on Opus Findings
+
+Opus findings follow the same peer deliberation model as GPT findings.
+You (Sonnet/the working assistant) review each Opus finding:
+
+- **ACCEPT** — valid architectural concern, will fix
+- **PARTIAL ACCEPT** — real issue but the fix should differ (e.g., Opus says "add strategy pattern"
+  but the simpler approach is better)
+- **CHALLENGE** — Opus missed context (e.g., the "over-engineering" is actually a documented
+  project pattern, or the "integration gap" is covered by an existing test elsewhere)
+
+**Show deliberation card:**
+
+```
+═══════════════════════════════════════════════════════════
+  🤔 SONNET DELIBERATION on Opus Deep Review
+═══════════════════════════════════════════════════════════
+  ✅ Accepted:    3 (will fix)
+  🔄 Partial:     1 (agree but simpler fix)
+  ❌ Challenged:  1 (covered by existing test at tests/integration/...)
+═══════════════════════════════════════════════════════════
+```
+
+**No rebuttal API call needed** — Opus findings are deliberated locally (you have the context).
+If you challenge an Opus finding, document your reasoning in the audit summary. The user
+can review your reasoning and override if they disagree.
+
+### 6.5.5 Fix and Verify Opus Findings
+
+Fix accepted + partially accepted findings:
+
+```
+  🔧 Deep review fixes:
+    ✓ [DR1] Simplified retry to 3-line loop (removed strategy pattern)
+         → src/services/pairing/pairingLab.js lines 55-58
+    ✓ [DR2] Added integration test for agent→lab→feedback chain
+         → tests/integration/pairingLabFlow.test.js (new)
+    ✓ [DR3] Fixed naming inconsistency introduced in Round 2 fixes
+         → src/services/pairing/pairingLab.js (renamed 3 functions)
+```
+
+### 6.5.6 Opus Verification (Mandatory)
+
+After fixing Opus findings, run Opus review ONCE MORE to verify the fixes are clean.
+This is the same principle as the GPT stability loop — fixes can introduce issues.
+
+```
+═══════════════════════════════════════════════════════════
+  🔬 OPUS VERIFICATION
+═══════════════════════════════════════════════════════════
+  Previous findings: 5 | Fixed: 4 | Challenged: 1
+  New findings: 0 ✓
+  Verdict: APPROVED — all fixes are clean
+
+  Total deep review: 2 passes | ~2 min
+═══════════════════════════════════════════════════════════
+```
+
+**Opus convergence**: If the verification pass finds NEW issues:
+- Fix them → verify once more (max 3 Opus rounds total)
+- If Opus keeps finding new issues after 3 rounds, present to user
+
+**If verification is clean**: Proceed to final report (Step 6 convergence card).
+
+---
+
 ## Step 7 — Transition to Code Audit (FULL_CYCLE only)
 
 After plan audit converges:
@@ -459,19 +650,46 @@ Approximate costs (GPT-5.4, March 2026):
 
 ## Key Principles
 
-1. **Peer Relationship**: Claude and GPT-5.4 are equals. Neither blindly defers.
-2. **Fix Everything That Survived**: ALL HIGH must be fixed. MEDIUM until ≤2. LOW optional.
-3. **Show Your Work**: Every fix is visible. Every decision is transparent.
-4. **Respect the User's Time**: Batch decisions. Show progress. Give estimates.
-5. **No Quick Fixes**: Band-aids are rejected by both models.
-6. **Deliberation Is Final**: GPT's ruling on a challenge is accepted. No infinite debate.
-7. **Graceful Degradation**: Failed passes don't crash — offer recovery options.
+1. **Peer Relationship**: You and GPT-5.4 are equals. Neither blindly defers.
+2. **Three-Model System**: You (work) + GPT-5.4 (iterate) + Opus (final gate) = comprehensive quality.
+3. **Fix Everything That Survived**: ALL HIGH must be fixed. MEDIUM until ≤2. LOW optional.
+4. **Show Your Work**: Every fix is visible. Every decision is transparent.
+5. **Respect the User's Time**: Batch decisions. Show progress. Give estimates. Parallelise where safe.
+6. **No Quick Fixes**: Band-aids are rejected by all models.
+7. **Deliberation Is Final**: GPT's ruling on a challenge is accepted. No infinite debate.
+8. **Stability Over Speed**: 2 consecutive clean rounds required. Mandatory verification after every fix.
+9. **Graceful Degradation**: Failed passes don't crash — offer recovery options.
 
 ---
 
 ## Compatibility
 
-This skill works identically in:
-- **Claude Code CLI** (terminal)
-- **Claude Code in VS Code** (integrated terminal)
-- **Any Claude Code environment** that has access to `node` and `OPENAI_API_KEY`
+This skill works with any AI coding assistant that can run terminal commands:
+
+| Environment | Skill Location | Terminal Access |
+|-------------|---------------|----------------|
+| **Claude Code CLI** | `.claude/skills/audit-loop/` | Native bash |
+| **Claude Code in VS Code** | `.claude/skills/audit-loop/` | Integrated terminal |
+| **VS Code Copilot Chat** | `.github/skills/audit-loop/` | Terminal tool (auto-approve recommended) |
+| **Cursor / Windsurf** | `.github/skills/audit-loop/` | Terminal tool |
+| **Any AI + terminal** | N/A (use script directly) | `node scripts/openai-audit.mjs` |
+
+### VS Code Copilot Setup Notes
+
+1. The skill file at `.github/skills/audit-loop/SKILL.md` is auto-discovered by Copilot
+2. Invoke with `/audit-loop` in Copilot Chat
+3. Copilot uses its terminal tool to run `node scripts/openai-audit.mjs`
+4. For smooth operation, consider adding terminal auto-approve for `node scripts/` commands
+   in VS Code settings: `"chat.tools.autoApprove": true` or scope to specific commands
+5. The skill references `node` commands — ensure Node.js 18+ is in your terminal PATH
+6. If Copilot asks for permission to run commands, approve the `node scripts/openai-audit.mjs` pattern
+
+### Opus Deep Review Compatibility
+
+The Opus deep review (Step 6.5) uses the assistant's OWN extended thinking capability:
+- **Claude Code**: Uses Claude Opus naturally (switch to opus model or use extended thinking)
+- **VS Code Copilot**: Uses the highest available GPT model with `reasoning: high`, OR
+  the user can configure `OPUS_REVIEW_MODEL` env var to point to a specific model
+- **Other assistants**: Falls back to the assistant's best available reasoning mode
+
+The deep review prompt is model-agnostic — it works with any capable reasoning model.
