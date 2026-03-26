@@ -48,7 +48,7 @@ Determine the operating mode from `$ARGUMENTS`:
   AUDIT LOOP — Starting
   Plan: docs/plans/my-feature.md
   Mode: CODE AUDIT (multi-pass parallel)
-  Estimated time: ~3-5 min per round (max 4 rounds)
+  Estimated time: ~3-5 min per round (max 6 rounds)
 ═══════════════════════════════════════════════════════════
 ```
 
@@ -67,10 +67,12 @@ Generate the plan using `/plan-backend` or `/plan-frontend` patterns, save to `d
 Run the audit script and **show real-time pass progress** by reading stderr:
 
 ```bash
-node scripts/openai-audit.mjs code <plan-file> --json 2>audit-stderr.log 1>audit-stdout.log
+node scripts/openai-audit.mjs code <plan-file> --json 2>/tmp/audit-$$-stderr.log 1>/tmp/audit-$$-stdout.log
 ```
 
-While waiting (or after completion), read `audit-stderr.log` and display:
+(Use `$$` for PID-based unique filenames to avoid collisions with concurrent runs.)
+
+While waiting (or after completion), read the stderr log and display:
 
 ```
 ⏳ Running GPT-5.4 audit (Round 1)...

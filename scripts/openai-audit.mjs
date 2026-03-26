@@ -36,9 +36,11 @@ const MODEL = process.env.OPENAI_AUDIT_MODEL || 'gpt-5.4';
 const REASONING_EFFORT = process.env.OPENAI_AUDIT_REASONING || 'high';
 
 // Hard ceilings — adaptive sizing stays below these
-const MAX_OUTPUT_TOKENS_CAP = parseInt(process.env.OPENAI_AUDIT_MAX_TOKENS || '32000', 10);
-const TIMEOUT_MS_CAP = parseInt(process.env.OPENAI_AUDIT_TIMEOUT_MS || '300000', 10); // 5 min absolute max
-const BACKEND_SPLIT_THRESHOLD = parseInt(process.env.OPENAI_AUDIT_SPLIT_THRESHOLD || '12', 10);
+// Safe parseInt: NaN falls back to default
+function safeInt(val, fallback) { const n = parseInt(val, 10); return Number.isNaN(n) ? fallback : n; }
+const MAX_OUTPUT_TOKENS_CAP = safeInt(process.env.OPENAI_AUDIT_MAX_TOKENS, 32000);
+const TIMEOUT_MS_CAP = safeInt(process.env.OPENAI_AUDIT_TIMEOUT_MS, 300000); // 5 min absolute max
+const BACKEND_SPLIT_THRESHOLD = safeInt(process.env.OPENAI_AUDIT_SPLIT_THRESHOLD, 12);
 
 // ── Adaptive Sizing ────────────────────────────────────────────────────────────
 
@@ -64,22 +66,26 @@ function computePassLimits(contextChars, reasoning = 'high') {
   const reasoningMultiplier = reasoning === 'high' ? 0.4 : reasoning === 'medium' ? 0.25 : 0.1;
 
   // Output tokens: base for findings + proportional to input size for reasoning
-  // Minimum 4000 (enough for ~10 findings), scale up with input
-  const baseOutputTokens = 4000;
+  // High reasoning needs a higher base because ~60% of tokens go to internal thinking
+  // Minimum: low=4000, medium=6000, high=10000
+  const baseOutputTokens = reasoning === 'high' ? 10000 : reasoning === 'medium' ? 6000 : 4000;
   const reasoningOverhead = Math.ceil(estimatedInputTokens * reasoningMultiplier);
   const maxTokens = Math.min(
     MAX_OUTPUT_TOKENS_CAP,
     Math.max(baseOutputTokens, baseOutputTokens + reasoningOverhead)
   );
 
-  // Timeout: based on expected generation speed
-  // low reasoning: ~250 tok/s, medium: ~200 tok/s, high: ~150 tok/s
+  // Timeout: based on expected generation speed + reasoning overhead
+  // GPT-5.4 with reasoning: high spends 30-60s thinking BEFORE output starts
+  // low: ~250 tok/s, medium: ~200 tok/s, high: ~150 tok/s
   const tokensPerSec = reasoning === 'high' ? 150 : reasoning === 'medium' ? 200 : 250;
   const estimatedGenerationSec = maxTokens / tokensPerSec;
-  // Add 30s buffer for network + prompt processing, minimum 60s
+  // Reasoning think-time floor: high=90s, medium=45s, low=30s (before output starts)
+  const reasoningFloorSec = reasoning === 'high' ? 90 : reasoning === 'medium' ? 45 : 30;
+  const minTimeoutMs = (reasoningFloorSec + 30) * 1000; // floor + network buffer
   const timeoutMs = Math.min(
     TIMEOUT_MS_CAP,
-    Math.max(60000, Math.ceil((estimatedGenerationSec + 30) * 1000))
+    Math.max(minTimeoutMs, Math.ceil((estimatedGenerationSec + reasoningFloorSec) * 1000))
   );
 
   return { maxTokens, timeoutMs };
@@ -333,31 +339,53 @@ function extractPlanPaths(planContent) {
   const paths = new Set();
   let match;
 
-  // Paths with directory prefix
-  const pathRegex = /(?:^|\s|`|\/)((?:src|public|tests|config|schemas|db)\/[\w/.-]+\.(?:js|mjs|ts|sql|css|html))/gm;
-  while ((match = pathRegex.exec(planContent)) !== null) paths.add(match[1]);
+  // Code file extensions to match
+  const EXT = 'js|mjs|ts|tsx|jsx|sql|css|html|json|md|py|rs|go|java|rb|sh';
 
-  // Backtick-quoted paths
-  const btRegex = /`((?:src|public|tests|config|schemas|db)\/[\w/.-]+\.(?:js|mjs|ts|sql|css|html))`/gm;
-  while ((match = btRegex.exec(planContent)) !== null) paths.add(match[1]);
+  // 1. Any relative path with at least one directory separator and a code extension
+  //    Matches: src/foo.js, scripts/bar.mjs, .claude/skills/x/SKILL.md, lib/utils/helper.ts
+  const genericPathRegex = new RegExp(`(?:^|\\s|\\\`|\\()((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))`, 'gm');
+  while ((match = genericPathRegex.exec(planContent)) !== null) {
+    const p = match[1].replace(/^\.\//,''); // Normalize ./foo → foo
+    if (!p.startsWith('http') && !p.startsWith('node_modules')) paths.add(p);
+  }
 
-  // Filename-only headers (#### `foo.js`) — resolve to common dirs
-  const fnRegex = /####\s+`([^/`]+\.(?:js|mjs|ts))`/gm;
+  // 2. Backtick-quoted paths (highest confidence — explicitly referenced in plan)
+  const btRegex = new RegExp(`\\\`((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))\\\``, 'gm');
+  while ((match = btRegex.exec(planContent)) !== null) {
+    const p = match[1].replace(/^\.\//,'');
+    if (!p.startsWith('http') && !p.startsWith('node_modules')) paths.add(p);
+  }
+
+  // 3. Filename-only headers (#### `foo.js`) — try to resolve in common dirs
+  const fnRegex = /####\s+`([^/`]+\.(?:js|mjs|ts|md))`/gm;
   while ((match = fnRegex.exec(planContent)) !== null) {
     const filename = match[1];
-    if ([...paths].some(p => p.endsWith('/' + filename))) continue;
-    for (const dir of ['src/config', 'src/routes', 'src/services', 'src/schemas']) {
+    if ([...paths].some(p => p.endsWith('/' + filename) || p === filename)) continue;
+    // Search common project directories
+    const searchDirs = [
+      'src/config', 'src/routes', 'src/services', 'src/schemas',
+      'scripts', 'lib', 'utils', '.claude/skills', '.github/skills'
+    ];
+    for (const dir of searchDirs) {
       const candidate = `${dir}/${filename}`;
       if (fs.existsSync(path.resolve(candidate))) { paths.add(candidate); break; }
     }
   }
 
+  // 4. Deduplicate paths that resolve to the same file
+  const resolved = new Map();
+  for (const p of paths) {
+    const abs = path.resolve(p);
+    if (!resolved.has(abs)) resolved.set(abs, p);
+  }
+
   const found = [];
   const missing = [];
-  for (const p of [...paths].sort()) {
+  for (const p of [...resolved.values()].sort()) {
     (fs.existsSync(path.resolve(p)) ? found : missing).push(p);
   }
-  return { found, missing, allPaths: paths };
+  return { found, missing, allPaths: new Set(resolved.values()) };
 }
 
 /**
@@ -384,15 +412,18 @@ function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 120000 }
   let omitted = 0;
   let sensitive = 0;
 
+  const cwdBoundary = path.resolve('.'); // Defence-in-depth: don't read outside project
+
   for (const relPath of filePaths) {
     if (isSensitiveFile(relPath)) { sensitive++; continue; }
 
     const absPath = path.resolve(relPath);
+    if (!absPath.startsWith(cwdBoundary)) { omitted++; continue; } // Path traversal guard
     if (!fs.existsSync(absPath)) continue;
 
     const raw = fs.readFileSync(absPath, 'utf-8');
     const ext = relPath.split('.').pop();
-    const lang = ext === 'sql' ? 'sql' : ext === 'css' ? 'css' : ext === 'html' ? 'html' : 'js';
+    const lang = { sql: 'sql', css: 'css', html: 'html', md: 'markdown', json: 'json', py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby', sh: 'bash' }[ext] ?? 'js';
     const content = raw.length > maxPerFile
       ? raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`
       : raw;
@@ -417,13 +448,18 @@ function classifyFiles(filePaths) {
   const frontend = [];
   const shared = [];
 
+  // Frontend indicators
+  const fePatterns = [/^public\//, /\/css\//, /\/html\//, /\.css$/, /\.html$/, /\/components\//];
+  // Shared indicators (config, schemas, types used by both)
+  const sharedPatterns = [/\/config\//, /\/schemas\//, /\/types\//, /\/shared\//, /\.json$/];
+
   for (const p of filePaths) {
-    if (p.startsWith('public/') || p.startsWith('tests/unit/cellarAnalysis') || p.startsWith('tests/unit/restaurantPairing')) {
+    if (fePatterns.some(rx => rx.test(p))) {
       frontend.push(p);
-    } else if (p.startsWith('src/config/') || p.startsWith('src/schemas/')) {
-      shared.push(p); // Used by both, send to both passes
+    } else if (sharedPatterns.some(rx => rx.test(p))) {
+      shared.push(p);
     } else {
-      backend.push(p);
+      backend.push(p); // Default: routes, services, scripts, lib, etc.
     }
   }
 
