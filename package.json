@@ -1,8 +1,11 @@
 {
   "name": "claude-audit-loop",
   "version": "1.0.0",
-  "description": "Self-driving plan-audit-fix loop: Claude plans, GPT-5.4 audits, Claude deliberates and fixes. Repeat until quality converges.",
+  "description": "Self-driving plan-audit-fix loop with adaptive learning. 3 models: Claude + GPT-5.4 + Gemini 3.1 Pro.",
   "type": "module",
+  "bin": {
+    "claude-audit-loop": "install.mjs"
+  },
   "scripts": {
     "audit:plan": "node scripts/openai-audit.mjs plan",
     "audit:code": "node scripts/openai-audit.mjs code",

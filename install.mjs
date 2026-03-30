@@ -9,6 +9,7 @@
  */
 
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execSync } from 'child_process';
 import readline from 'readline';
@@ -51,7 +52,7 @@ ${B}═════════════════════════�
   console.log(`  Target: ${B}${target}${X}\n`);
 
   // 2. Clone to temp dir
-  const tmp = path.join(require('os').tmpdir(), `claude-audit-loop-${Date.now()}`);
+  const tmp = path.join(os.tmpdir(), `claude-audit-loop-${Date.now()}`);
   console.log(`${D}  Fetching latest from GitHub...${X}`);
   try {
     execSync(`git clone --depth 1 ${REPO} "${tmp}"`, { stdio: 'pipe' });
