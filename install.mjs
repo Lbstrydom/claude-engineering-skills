@@ -40,7 +40,13 @@ ${B}═════════════════════════�
 
   // 1. Get target directory
   let target = process.argv[2];
-  if (!target) {
+  if (target === '--help' || target === '-h') {
+    console.log('Usage: npx github:Lbstrydom/claude-audit-loop <project-directory>');
+    console.log('       node install.mjs <project-directory>');
+    rl.close();
+    return;
+  }
+  if (!target || target.startsWith('-')) {
     target = await ask(`  Project directory: `);
   }
   target = path.resolve(target);

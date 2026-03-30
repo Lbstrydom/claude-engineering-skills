@@ -1,0 +1,7 @@
+# Dev/local files — not needed for npx install
+.audit/
+.env
+.env.example
+supabase/
+docs/
+*.log
