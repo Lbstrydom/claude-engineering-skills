@@ -219,10 +219,22 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
 export async function getPassEffectiveness(repoId) {
   if (!_supabase) return [];
 
+  // Two-step query: get run IDs for repo, then get pass stats
+  const { data: runs, error: runErr } = await _supabase
+    .from('audit_runs')
+    .select('id')
+    .eq('repo_id', repoId);
+
+  if (runErr || !runs?.length) {
+    if (runErr) process.stderr.write(`  [learning] getPassEffectiveness runs query failed: ${runErr.message}\n`);
+    return [];
+  }
+
+  const runIds = runs.map(r => r.id);
   const { data, error } = await _supabase
     .from('audit_pass_stats')
     .select('pass_name, findings_raised, findings_accepted, findings_dismissed')
-    .eq('run_id', _supabase.from('audit_runs').select('id').eq('repo_id', repoId));
+    .in('run_id', runIds);
 
   if (error) {
     process.stderr.write(`  [learning] getPassEffectiveness failed: ${error.message}\n`);

@@ -130,11 +130,29 @@ export class PromptBandit {
   }
 
   _save() {
+    // Debounce: defer write by 100ms to coalesce rapid updates from parallel passes
+    if (this._saveTimer) clearTimeout(this._saveTimer);
+    this._saveTimer = setTimeout(() => {
+      try {
+        fs.mkdirSync(path.dirname(this.statePath), { recursive: true });
+        fs.writeFileSync(this.statePath, JSON.stringify(this.arms, null, 2), 'utf-8');
+      } catch (err) {
+        process.stderr.write(`  [bandit] Save failed: ${err.message}\n`);
+      }
+    }, 100);
+  }
+
+  /** Force immediate save (call at end of audit). */
+  flush() {
+    if (this._saveTimer) {
+      clearTimeout(this._saveTimer);
+      this._saveTimer = null;
+    }
     try {
       fs.mkdirSync(path.dirname(this.statePath), { recursive: true });
       fs.writeFileSync(this.statePath, JSON.stringify(this.arms, null, 2), 'utf-8');
     } catch (err) {
-      process.stderr.write(`  [bandit] Save failed: ${err.message}\n`);
+      process.stderr.write(`  [bandit] Flush failed: ${err.message}\n`);
     }
   }
 }
