@@ -96,7 +96,7 @@ node scripts/openai-audit.mjs code docs/plans/X.md \
   --round 2 --ledger ledger.json --diff changes.patch \
   --changed src/routes/wines.js --passes backend,sustainability
 
-# Gemini final review
+# Final review (Gemini first, Claude Opus fallback)
 node scripts/gemini-review.mjs review docs/plans/X.md transcript.json
 
 # Learning tools
@@ -144,7 +144,8 @@ claude-audit-loop/
 |----------|----------|---------|---------|
 | `OPENAI_API_KEY` | **Yes** | — | GPT-5.4 auditing |
 | `GEMINI_API_KEY` | No | — | Gemini final review + Flash context briefs |
-| `ANTHROPIC_API_KEY` | No | — | Haiku context briefs (best quality) |
+| `ANTHROPIC_API_KEY` | No | — | Claude Opus fallback for final review + Haiku context briefs |
+| `CLAUDE_FINAL_REVIEW_MODEL` | No | `claude-opus-4-1` | Override Claude Opus fallback model |
 | `SUPABASE_AUDIT_URL` | No | — | Cloud learning store URL |
 | `SUPABASE_AUDIT_ANON_KEY` | No | — | Cloud learning store key |
 | `SUPPRESS_SIMILARITY_THRESHOLD` | No | `0.35` | Jaccard threshold for R2+ suppression |

@@ -327,7 +327,9 @@ Save full report to `docs/plans/<name>-audit-summary.md`.
 
 After GPT-5.4 convergence, run Gemini 3.1 Pro as an independent third reviewer.
 
-**If `GEMINI_API_KEY` is not set**, skip with a warning.
+**If `GEMINI_API_KEY` is not set**, run Claude Opus fallback (`ANTHROPIC_API_KEY`).
+
+**Only skip Step 6.5** if neither key is available.
 
 ### Build Transcript
 
@@ -343,6 +345,10 @@ Assemble `/tmp/$SID-transcript.json` with the full audit trail:
 node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript.json \
   --out /tmp/$SID-gemini-result.json 2>/tmp/$SID-gemini-stderr.log
 ```
+
+The script auto-selects provider in this order:
+1. Gemini (when `GEMINI_API_KEY` is set)
+2. Claude Opus fallback (when `ANTHROPIC_API_KEY` is set)
 
 ### Process Verdict
 

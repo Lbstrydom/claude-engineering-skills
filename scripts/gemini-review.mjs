@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Gemini 3.1 Pro independent final reviewer for the audit loop.
+ * @fileoverview Independent final reviewer for the audit loop.
  *
  * This script provides an unbiased third-model perspective after Claude (author)
- * and GPT-5.4 (auditor) have converged. Gemini reviews the full deliberation
- * transcript and renders an independent verdict — detecting bias, false consensus,
- * and issues both models missed.
+ * and GPT-5.4 (auditor) have converged. It prefers Gemini 3.1 Pro and falls back
+ * to Claude Opus when Gemini credentials are unavailable.
  *
  * Usage:
  *   node scripts/gemini-review.mjs review <plan-file> <transcript-file>         # Full review
@@ -13,7 +12,7 @@
  *   node scripts/gemini-review.mjs review <plan-file> <transcript-file> --out <file>  # File output
  *   node scripts/gemini-review.mjs ping                                          # Verify API connectivity
  *
- * Requires: GEMINI_API_KEY in .env or environment
+ * Requires: GEMINI_API_KEY or ANTHROPIC_API_KEY in .env or environment
  *
  * @module scripts/gemini-review
  */
@@ -30,6 +29,7 @@ import {
 // ── Configuration ──────────────────────────────────────────────────────────────
 
 const MODEL = process.env.GEMINI_REVIEW_MODEL || 'gemini-3.1-pro-preview';
+const CLAUDE_OPUS_MODEL = process.env.CLAUDE_FINAL_REVIEW_MODEL || 'claude-opus-4-1';
 const TIMEOUT_MS = safeInt(process.env.GEMINI_REVIEW_TIMEOUT_MS, 120_000);
 const MAX_OUTPUT_TOKENS = safeInt(process.env.GEMINI_REVIEW_MAX_TOKENS, 16_000);
 
@@ -202,10 +202,10 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
     // Validate against Zod schema if provided
     if (zodSchema) {
       const validated = zodSchema.safeParse(result);
-      if (!validated.success) {
-        process.stderr.write(`  [${passName ?? 'gemini'}] Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
-      } else {
+      if (validated.success) {
         result = validated.data;
+      } else {
+        process.stderr.write(`  [${passName ?? 'gemini'}] Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
       }
     }
 
@@ -234,6 +234,77 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
   }
 }
 
+/**
+ * Make a single Claude Opus call with JSON output.
+ * Uses the same response contract as callGemini.
+ *
+ * @param {object} anthropic - Anthropic client instance
+ * @param {object} opts
+ * @param {string} opts.systemPrompt
+ * @param {string} opts.userPrompt
+ * @param {z.ZodType} opts.zodSchema
+ * @param {string} [opts.passName]
+ * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
+ */
+async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, passName }) {
+  const startMs = Date.now();
+
+  if (passName) {
+    process.stderr.write(`  [${passName}] Starting Claude ${CLAUDE_OPUS_MODEL} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
+  }
+
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
+  });
+
+  const requestPromise = anthropic.messages.create({
+    model: CLAUDE_OPUS_MODEL,
+    max_tokens: MAX_OUTPUT_TOKENS,
+    system: `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
+    messages: [{ role: 'user', content: userPrompt }]
+  });
+
+  try {
+    const response = await Promise.race([requestPromise, timeoutPromise]);
+    const latencyMs = Date.now() - startMs;
+    const text = response.content?.[0]?.text?.trim() || '{}';
+
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch (parseErr) {
+      throw new Error(`Failed to parse Claude JSON response: ${parseErr.message}\nRaw: ${text.slice(0, 500)}`);
+    }
+
+    if (zodSchema) {
+      const validated = zodSchema.safeParse(result);
+      if (validated.success) {
+        result = validated.data;
+      } else {
+        process.stderr.write(`  [${passName ?? 'claude-opus'}] Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
+      }
+    }
+
+    const usage = {
+      input_tokens: response.usage?.input_tokens ?? 0,
+      output_tokens: response.usage?.output_tokens ?? 0,
+      thinking_tokens: response.usage?.cache_creation_input_tokens ?? 0,
+      latency_ms: latencyMs
+    };
+
+    if (passName) {
+      process.stderr.write(`  [${passName}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out)\n`);
+    }
+
+    return { result, usage, latencyMs };
+  } catch (err) {
+    const latencyMs = Date.now() - startMs;
+    const msg = `[${passName ?? 'claude-opus'}] ${err.message} (${(latencyMs / 1000).toFixed(1)}s)`;
+    process.stderr.write(`  [${passName ?? 'claude-opus'}] FAILED: ${msg}\n`);
+    throw new Error(msg);
+  }
+}
+
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
 /**
@@ -244,7 +315,7 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
  * @param {string} projectContext
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function runFinalReview(ai, planContent, transcriptContent, projectContext) {
+async function runFinalReview(provider, client, planContent, transcriptContent, projectContext) {
   // Parse transcript to extract code file paths for direct code inclusion
   let transcript;
   try {
@@ -290,25 +361,40 @@ async function runFinalReview(ai, planContent, transcriptContent, projectContext
     codeContext || '(No code files found — review based on transcript only)',
   ].join('\n');
 
-  process.stderr.write(`\n── Gemini Final Review ──\n`);
-  process.stderr.write(`  Model: ${MODEL}\n`);
+  const selectedModel = provider === 'gemini' ? MODEL : CLAUDE_OPUS_MODEL;
+  const providerLabel = provider === 'gemini' ? 'Gemini' : 'Claude Opus';
+  process.stderr.write(`\n── ${providerLabel} Final Review ──\n`);
+  process.stderr.write(`  Model: ${selectedModel}\n`);
   process.stderr.write(`  Context: ~${(userPrompt.length / 4).toFixed(0)} tokens (estimated)\n`);
 
-  return callGemini(ai, {
+  if (provider === 'gemini') {
+    return callGemini(client, {
+      systemPrompt: REVIEW_SYSTEM,
+      userPrompt,
+      zodSchema: GeminiFinalReviewSchema,
+      jsonSchema: GeminiFinalReviewJsonSchema,
+      passName: 'gemini-review'
+    });
+  }
+
+  return callClaudeOpus(client, {
     systemPrompt: REVIEW_SYSTEM,
     userPrompt,
     zodSchema: GeminiFinalReviewSchema,
-    jsonSchema: GeminiFinalReviewJsonSchema,
-    passName: 'gemini-review'
+    passName: 'claude-opus-review'
   });
 }
 
 // ── Output Formatting ──────────────────────────────────────────────────────────
 
-function formatReviewResult(result, usage, latencyMs) {
+function formatReviewResult(result, usage, latencyMs, provider) {
   const lines = [];
-  lines.push('# Gemini 3.1 Pro — Independent Final Review');
-  lines.push(`- **Model**: ${MODEL} | **Latency**: ${(latencyMs / 1000).toFixed(1)}s`);
+  const selectedModel = provider === 'gemini' ? MODEL : CLAUDE_OPUS_MODEL;
+  const title = provider === 'gemini'
+    ? 'Gemini 3.1 Pro — Independent Final Review'
+    : 'Claude Opus — Independent Final Review';
+  lines.push(`# ${title}`);
+  lines.push(`- **Model**: ${selectedModel} | **Latency**: ${(latencyMs / 1000).toFixed(1)}s`);
   lines.push(`- **Tokens**: ${usage.input_tokens} in / ${usage.output_tokens} out (${usage.thinking_tokens} thinking)`);
   lines.push('');
 
@@ -373,22 +459,41 @@ async function main() {
 
   // Ping mode — quick connectivity test
   if (mode === 'ping') {
-    if (!process.env.GEMINI_API_KEY) {
-      console.error('Error: GEMINI_API_KEY environment variable required');
-      process.exit(1);
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const response = await ai.models.generateContent({
+          model: MODEL,
+          contents: 'Reply with exactly: Gemini ready'
+        });
+        console.log(`✓ ${MODEL}: ${response.text.trim()}`);
+        process.exit(0);
+      } catch (err) {
+        console.error(`✗ ${MODEL}: ${err.message}`);
+        process.exit(1);
+      }
     }
-    try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const response = await ai.models.generateContent({
-        model: MODEL,
-        contents: 'Reply with exactly: Gemini ready'
-      });
-      console.log(`✓ ${MODEL}: ${response.text.trim()}`);
-      process.exit(0);
-    } catch (err) {
-      console.error(`✗ ${MODEL}: ${err.message}`);
-      process.exit(1);
+
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        const { default: Anthropic } = await import('@anthropic-ai/sdk');
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+        const response = await anthropic.messages.create({
+          model: CLAUDE_OPUS_MODEL,
+          max_tokens: 32,
+          messages: [{ role: 'user', content: 'Reply with exactly: Claude ready' }]
+        });
+        const text = response.content?.[0]?.text?.trim() || '';
+        console.log(`✓ ${CLAUDE_OPUS_MODEL}: ${text}`);
+        process.exit(0);
+      } catch (err) {
+        console.error(`✗ ${CLAUDE_OPUS_MODEL}: ${err.message}`);
+        process.exit(1);
+      }
     }
+
+    console.error('Error: set GEMINI_API_KEY or ANTHROPIC_API_KEY');
+    process.exit(1);
   }
 
   // Review mode
@@ -404,9 +509,15 @@ async function main() {
     process.exit(1);
   }
 
-  if (!process.env.GEMINI_API_KEY) {
-    console.error('Error: GEMINI_API_KEY environment variable required');
-    console.error('Set it in .env or export GEMINI_API_KEY=AIza...');
+  let provider = null;
+  if (process.env.GEMINI_API_KEY) {
+    provider = 'gemini';
+  } else if (process.env.ANTHROPIC_API_KEY) {
+    provider = 'claude-opus';
+  }
+  if (!provider) {
+    console.error('Error: Final review requires GEMINI_API_KEY or ANTHROPIC_API_KEY');
+    console.error('Set GEMINI_API_KEY for Gemini, or ANTHROPIC_API_KEY for Claude Opus fallback.');
     process.exit(1);
   }
 
@@ -414,23 +525,31 @@ async function main() {
   const transcriptContent = readFileOrDie(transcriptFile);
   await initAuditBrief(); // Pre-generate context brief
   const projectContext = readProjectContext();
-  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  let client;
+  if (provider === 'gemini') {
+    client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  } else {
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    process.stderr.write(`  [final-review] GEMINI_API_KEY missing; using Claude Opus fallback (${CLAUDE_OPUS_MODEL}).\n`);
+  }
 
   try {
-    const { result, usage, latencyMs } = await runFinalReview(ai, planContent, transcriptContent, projectContext);
+    const { result, usage, latencyMs } = await runFinalReview(provider, client, planContent, transcriptContent, projectContext);
 
     // Add semantic hashes to new findings for cross-model tracking
     if (result.new_findings) {
       for (let i = 0; i < result.new_findings.length; i++) {
         const f = result.new_findings[i];
-        f.id = `G${i + 1}`;
+        f.id = `${provider === 'gemini' ? 'G' : 'C'}${i + 1}`;
         f._hash = semanticId(f);
-        f._source = 'gemini';
+        f._source = provider;
       }
     }
 
     if (jsonMode || outFile) {
-      const data = { ...result, _model: MODEL, _usage: usage };
+      const selectedModel = provider === 'gemini' ? MODEL : CLAUDE_OPUS_MODEL;
+      const data = { ...result, _model: selectedModel, _provider: provider, _usage: usage };
       if (outFile) {
         const newCount = result.new_findings?.length ?? 0;
         const dismissedCount = result.wrongly_dismissed?.length ?? 0;
@@ -440,7 +559,7 @@ async function main() {
         console.log(JSON.stringify(data, null, 2));
       }
     } else {
-      console.log(formatReviewResult(result, usage, latencyMs));
+      console.log(formatReviewResult(result, usage, latencyMs, provider));
     }
 
   } catch (err) {
