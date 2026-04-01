@@ -19,9 +19,25 @@
 
 ```
 scripts/
-├── shared.mjs          # Shared utilities (file reading, context extraction, finding dedup)
-├── openai-audit.mjs    # GPT-5.4 multi-pass auditor (plan, code, rebuttal modes)
-└── gemini-review.mjs   # Gemini 3.1 Pro independent final reviewer
+├── lib/                    # Focused modules (split from former shared.mjs monolith)
+│   ├── schemas.mjs         # Zod schemas + zodToGeminiSchema() — single source of truth
+│   ├── file-io.mjs         # File read/write, paths, plan path extraction (incl. fuzzy discovery)
+│   ├── ledger.mjs          # Adjudication ledger, R2+ suppression, finding metadata
+│   ├── code-analysis.mjs   # Chunking, dependency graphs, audit units, map-reduce
+│   ├── context.mjs         # Repo profiling, audit brief generation, CLAUDE.md parsing
+│   ├── findings.mjs        # Semantic IDs, FP tracker, outcome logging, formatting
+│   └── config.mjs          # Centralized validated config (all env var reads)
+├── shared.mjs              # Barrel re-export — backwards-compatible, imports from lib/
+├── openai-audit.mjs        # GPT-5.4 multi-pass auditor (plan, code, rebuttal modes)
+├── gemini-review.mjs       # Gemini 3.1 Pro independent final reviewer (Claude Opus fallback)
+├── bandit.mjs              # Thompson Sampling for prompt variant selection
+├── learning-store.mjs      # Supabase cloud persistence for audit outcomes + learning
+├── refine-prompts.mjs      # LLM-driven prompt refinement from outcome data
+└── phase7-check.mjs        # Pre-flight check for Step 7 readiness
+
+tests/                      # Node.js built-in test runner (node --test)
+├── shared.test.mjs         # 33 tests: schemas, atomic writes, ledger, FP tracker
+└── bandit.test.mjs         # 14 tests: Thompson Sampling, reward computation
 
 .claude/skills/audit-loop/SKILL.md   # Claude Code skill definition
 .github/skills/audit-loop/SKILL.md   # VS Code / Copilot skill definition (identical)
@@ -29,9 +45,10 @@ scripts/
 
 ### Script Responsibilities
 
-- **shared.mjs**: File I/O, CLAUDE.md context extraction, plan path discovery, sensitive file filtering, semantic finding IDs (content-hash), output formatting. Imported by both other scripts.
-- **openai-audit.mjs**: 5-pass parallel code audit (structure, wiring, backend, frontend, sustainability). Plan audit. Rebuttal deliberation. Uses GPT-5.4 with `responses.parse()` + Zod schemas.
-- **gemini-review.mjs**: Single-call final review after Claude-GPT convergence. Receives full audit transcript. Detects bias, false consensus, missed issues. Uses Gemini 3.1 Pro first, with Claude Opus fallback.
+- **lib/*.mjs**: Focused modules — import directly from `./lib/<module>.mjs` for explicit deps, or from `./shared.mjs` barrel for convenience. Schemas are the single source of truth (JSON Schemas derived via `zodToGeminiSchema()`).
+- **openai-audit.mjs**: 5-pass parallel code audit (structure, wiring, backend, frontend, sustainability). Plan audit. Rebuttal deliberation. Uses GPT-5.4 with `responses.parse()` + Zod schemas. Integrates bandit reward updates + Supabase cloud sync.
+- **gemini-review.mjs**: Independent final review (MANDATORY — not gated by convergence). Receives full audit transcript. Detects bias, false consensus, missed issues. Uses Gemini 3.1 Pro (16K thinking budget), with Claude Opus fallback. Claude deliberates on CONCERNS, then Gemini re-verifies.
+- **learning-store.mjs**: Cloud persistence via Supabase — repos, runs, findings, pass stats, bandit arms, FP patterns, adjudication events. Graceful fallback to local-only mode.
 
 ### Key Patterns
 
@@ -40,6 +57,16 @@ scripts/
 - **Semantic dedup**: Content-hash IDs (`semanticId()`) enable exact cross-round and cross-model finding matching
 - **Targeted context**: `readProjectContextForPass()` sends only relevant CLAUDE.md sections per pass (~1500 chars vs 8000)
 - **Sensitive file filtering**: `.env`, credentials, keys are never sent to external APIs
+- **Atomic persistence**: `atomicWriteFileSync()` — temp file + rename for crash-safe writes (ledger, bandit, FP tracker)
+- **Fuzzy file discovery**: When plan paths don't match exact filenames, Phase 2 extracts PascalCase/backtick identifiers and matches against repo files
+- **Schema validation at boundaries**: `callGemini()` throws on validation failure, `writeLedgerEntry()` validates entries before write
+- **Thompson Sampling**: `PromptBandit` — Beta posterior updates from deliberation outcomes, synced to Supabase
+- **Closed Gemini loop**: Step 7.1 — Claude deliberates on Gemini findings, fixes, then Gemini re-verifies (not GPT)
+
+### Testing
+
+Run: `npm test` (uses Node.js built-in test runner, 47 tests)
+Covers: atomic writes, schema derivation, ledger operations, finding identity, FP tracker, bandit posterior, reward computation.
 
 ## Environment Variables
 
@@ -56,6 +83,8 @@ scripts/
 | `BRIEF_MODEL_GEMINI` | No | `gemini-2.5-flash` | Override brief generation Gemini model |
 | `BRIEF_MODEL_CLAUDE` | No | `claude-haiku-4-5-20251001` | Override brief generation Claude model |
 | `SUPPRESS_SIMILARITY_THRESHOLD` | No | `0.35` | Jaccard threshold for R2+ suppression (0.0-1.0) |
+| `SUPABASE_AUDIT_URL` | No | — | Supabase project URL for cloud learning store |
+| `SUPABASE_AUDIT_ANON_KEY` | No | — | Supabase anon key (falls back to local-only mode) |
 
 ## R2+ Audit Mode (Phase 1)
 
