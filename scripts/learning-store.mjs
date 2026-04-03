@@ -221,14 +221,18 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
 export async function recordAdjudicationEvent(runId, findingFingerprint, event) {
   if (!_supabase || !runId) return;
 
-  // Look up the finding ID from the fingerprint
-  const { data: finding } = await _supabase
+  // Look up the finding ID using run_id + fingerprint + pass_name for unique resolution
+  let query = _supabase
     .from('audit_findings')
     .select('id')
     .eq('run_id', runId)
-    .eq('finding_fingerprint', findingFingerprint)
-    .limit(1)
-    .single();
+    .eq('finding_fingerprint', findingFingerprint);
+
+  // Include pass_name and round for unique identity when available
+  if (event.passName) query = query.eq('pass_name', event.passName);
+  if (event.round) query = query.eq('round_raised', event.round);
+
+  const { data: finding } = await query.limit(1).single();
 
   if (!finding?.id) return;
 
@@ -295,14 +299,15 @@ export async function loadBanditArms() {
 
   const arms = {};
   for (const row of data) {
-    const key = `${row.pass_name}:${row.variant_id}`;
+    const bucket = row.context_bucket || 'global';
+    const key = `${row.pass_name}:${row.variant_id}:${bucket}`;
     arms[key] = {
       passName: row.pass_name,
       variantId: row.variant_id,
       alpha: Number(row.alpha),
       beta: Number(row.beta),
       pulls: row.pulls,
-      contextBucket: row.context_bucket
+      contextBucket: bucket
     };
   }
   return arms;
@@ -362,6 +367,96 @@ export async function syncFalsePositivePatterns(repoId, patterns) {
 
   if (error) process.stderr.write(`  [learning] syncFalsePositivePatterns failed: ${error.message}\n`);
   else process.stderr.write(`  [learning] Synced ${rows.length} FP patterns to cloud\n`);
+}
+
+// ── Experiment Sync ──────────────────────────────────────────────────────────
+
+/**
+ * Sync experiment records using deterministic experimentId as upsert key.
+ * @param {object[]} experiments
+ */
+export async function syncExperiments(experiments) {
+  if (!_supabase) return;
+
+  const rows = experiments.map(e => ({
+    experiment_id: e.experimentId,
+    pass_name: e.pass,
+    revision_id: e.revisionId,
+    parent_revision_id: e.parentRevisionId,
+    parent_ewr: e.parentEWR,
+    parent_confidence: e.parentConfidence,
+    parent_effective_sample_size: e.parentEffectiveSampleSize,
+    rationale: e.rationale,
+    status: e.status,
+    final_ewr: e.finalEWR || null,
+    final_confidence: e.finalConfidence || null,
+    total_pulls: e.totalPulls || 0
+  }));
+
+  if (rows.length === 0) return;
+
+  const { error } = await _supabase
+    .from('prompt_experiments')
+    .upsert(rows, { onConflict: 'experiment_id' });
+
+  if (error) process.stderr.write(`  [learning] syncExperiments failed: ${error.message}\n`);
+  else process.stderr.write(`  [learning] Synced ${rows.length} experiments to cloud\n`);
+}
+
+// ── Prompt Revision Sync ────────────────────────────────────────────────────
+
+/**
+ * Sync a promoted prompt revision to cloud.
+ * @param {string} passName
+ * @param {string} revisionId
+ * @param {string} promptText
+ */
+export async function syncPromptRevision(passName, revisionId, promptText) {
+  if (!_supabase) return;
+
+  const { createHash } = await import('node:crypto');
+  const checksum = createHash('sha256').update(promptText).digest('hex');
+
+  const { error } = await _supabase
+    .from('prompt_revisions')
+    .upsert({
+      pass_name: passName,
+      revision_id: revisionId,
+      prompt_text: promptText,
+      checksum,
+      promoted_at: new Date().toISOString()
+    }, { onConflict: 'pass_name,revision_id' });
+
+  if (error) process.stderr.write(`  [learning] syncPromptRevision failed: ${error.message}\n`);
+}
+
+// ── Hierarchical FP Pattern Loading ─────────────────────────────────────────
+
+/**
+ * Load FP patterns from cloud with structured dimensions.
+ * @param {string} repoId
+ * @returns {{ repoPatterns: object[], globalPatterns: object[] }}
+ */
+export async function loadFalsePositivePatterns(repoId) {
+  if (!_supabase) return { repoPatterns: [], globalPatterns: [] };
+
+  const GLOBAL_REPO_ID = '00000000-0000-0000-0000-000000000000';
+  const columns = 'category, severity, principle, repo_id, file_extension, scope, dismissed, accepted, ema, auto_suppress';
+
+  const { data: repo } = await _supabase
+    .from('false_positive_patterns')
+    .select(columns)
+    .eq('repo_id', repoId).eq('auto_suppress', true);
+
+  const { data: global } = await _supabase
+    .from('false_positive_patterns')
+    .select(columns)
+    .eq('repo_id', GLOBAL_REPO_ID).eq('auto_suppress', true);
+
+  return {
+    repoPatterns: repo || [],
+    globalPatterns: global || []
+  };
 }
 
 // ── Querying (for Phase 4-6) ────────────────────────────────────────────────

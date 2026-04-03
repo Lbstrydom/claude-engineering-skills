@@ -64,8 +64,21 @@ export {
   appendOutcome,
   loadOutcomes,
   computePassEffectiveness,
+  computePassEWR,
+  applyLazyDecay,
+  effectiveSampleSize,
+  recordWithDecay,
+  extractDimensions,
+  buildPatternKey,
   FalsePositiveTracker,
-  setRepoProfileCache
+  setRepoProfileCache,
+  compactOutcomes,
+  createRemediationTask,
+  trackEdit,
+  verifyTask,
+  persistTask,
+  loadTasks,
+  updateTask
 } from './lib/findings.mjs';
 
 // ── Project Context & Repo Profiling ────────────────────────────────────────
@@ -77,3 +90,44 @@ export {
   extractPlanForPass,
   buildHistoryContext
 } from './lib/context.mjs';
+
+// ── File Store ──────────────────────────────────────────────────────────────
+export {
+  MutexFileStore,
+  AppendOnlyStore,
+  readJsonlFile
+} from './lib/file-store.mjs';
+
+// ── Config (Learning v2) ────────────────────────────────────────────────────
+export {
+  GLOBAL_CONTEXT_BUCKET,
+  GLOBAL_REPO_ID,
+  UNKNOWN_FILE_EXT,
+  PASS_NAMES,
+  normalizeLanguage
+} from './lib/config.mjs';
+
+// ── RNG ─────────────────────────────────────────────────────────────────────
+export { createRNG, reservoirSample } from './lib/rng.mjs';
+
+// ── Prompt Registry ─────────────────────────────────────────────────────────
+export {
+  revisionId,
+  saveRevision,
+  loadRevision,
+  getActiveRevisionId,
+  getActivePrompt,
+  promoteRevision,
+  abandonRevision,
+  bootstrapFromConstants
+} from './lib/prompt-registry.mjs';
+
+// ── Sanitizer ───────────────────────────────────────────────────────────────
+export { sanitizeOutcomes, sanitizePath, redactSecrets } from './lib/sanitizer.mjs';
+
+// ── Suppression Policy ──────────────────────────────────────────────────────
+export {
+  resolveSuppressionPolicy,
+  formatPolicyForPrompt,
+  shouldSuppressFinding
+} from './lib/suppression-policy.mjs';

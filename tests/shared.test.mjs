@@ -16,7 +16,28 @@ import {
   semanticId,
   jaccardSimilarity,
   normalizePath,
-  FalsePositiveTracker
+  FalsePositiveTracker,
+  computePassEWR,
+  applyLazyDecay,
+  effectiveSampleSize,
+  recordWithDecay,
+  extractDimensions,
+  buildPatternKey,
+  loadOutcomes,
+  compactOutcomes,
+  createRemediationTask,
+  trackEdit,
+  verifyTask,
+  normalizeLanguage,
+  createRNG,
+  reservoirSample,
+  revisionId,
+  saveRevision,
+  getActiveRevisionId,
+  getActivePrompt,
+  promoteRevision,
+  abandonRevision,
+  bootstrapFromConstants
 } from '../scripts/shared.mjs';
 import { z } from 'zod';
 
@@ -324,5 +345,278 @@ describe('FalsePositiveTracker', () => {
     // Load fresh from disk
     const t2 = new FalsePositiveTracker(fpPath);
     assert.equal(t2.getReport().length, 1);
+  });
+
+  it('records at multiple scopes with repo context', () => {
+    const tracker = new FalsePositiveTracker(path.join(tmpDir, 'fp-v2.json'));
+    const finding = { category: 'DRY Violation', severity: 'MEDIUM', principle: 'DRY' };
+    tracker.record(finding, false, 'repo-123', 'src/app.mjs');
+    const report = tracker.getReport();
+    // Should have 3 scope entries: repo+fileType, repo, global
+    assert.ok(report.length >= 3, `Expected >= 3 scopes, got ${report.length}`);
+  });
+});
+
+// ── Lazy-Decay Model ──────────────────────────────────────────────────────
+
+describe('applyLazyDecay', () => {
+  it('is a pure function (does not mutate input)', () => {
+    const pattern = {
+      decayedAccepted: 5, decayedDismissed: 3,
+      lastDecayTs: Date.now() - 10 * 24 * 60 * 60 * 1000 // 10 days ago
+    };
+    const original = { ...pattern };
+    applyLazyDecay(pattern);
+    assert.deepEqual(pattern, original);
+  });
+
+  it('applies exponential decay', () => {
+    const tenDaysAgo = Date.now() - 10 * 24 * 60 * 60 * 1000;
+    const pattern = {
+      decayedAccepted: 10, decayedDismissed: 5,
+      lastDecayTs: tenDaysAgo
+    };
+    const decayed = applyLazyDecay(pattern);
+    assert.ok(decayed.decayedAccepted < 10, 'Should decay accepted');
+    assert.ok(decayed.decayedDismissed < 5, 'Should decay dismissed');
+    assert.ok(decayed.lastDecayTs > tenDaysAgo, 'Should update timestamp');
+  });
+
+  it('derives EMA from decayed weights', () => {
+    const pattern = {
+      decayedAccepted: 8, decayedDismissed: 2,
+      lastDecayTs: Date.now()
+    };
+    const decayed = applyLazyDecay(pattern);
+    assert.ok(Math.abs(decayed.ema - 0.8) < 0.01, `EMA should be ~0.8, got ${decayed.ema}`);
+  });
+
+  it('defaults EMA to 0.5 when total is zero', () => {
+    const pattern = { decayedAccepted: 0, decayedDismissed: 0, lastDecayTs: Date.now() };
+    const decayed = applyLazyDecay(pattern);
+    assert.equal(decayed.ema, 0.5);
+  });
+});
+
+describe('recordWithDecay', () => {
+  it('adds observation and updates EMA', () => {
+    const pattern = {
+      decayedAccepted: 0, decayedDismissed: 0,
+      lastDecayTs: Date.now(), accepted: 0, dismissed: 0
+    };
+    recordWithDecay(pattern, true);
+    assert.equal(pattern.accepted, 1);
+    assert.ok(pattern.decayedAccepted > 0);
+    assert.equal(pattern.ema, 1.0); // Only one accepted observation
+  });
+});
+
+describe('effectiveSampleSize', () => {
+  it('sums decayed weights', () => {
+    assert.equal(effectiveSampleSize({ decayedAccepted: 3.5, decayedDismissed: 1.5 }), 5);
+  });
+});
+
+// ── EWR ─────────────────────────────────────────────────────────────────────
+
+describe('computePassEWR', () => {
+  it('returns zero for empty outcomes', () => {
+    const result = computePassEWR([], 'backend');
+    assert.equal(result.ewr, 0);
+    assert.equal(result.n, 0);
+  });
+
+  it('computes weighted reward', () => {
+    const now = Date.now();
+    const outcomes = [
+      { pass: 'backend', reward: 0.8, timestamp: now - 1000 },
+      { pass: 'backend', reward: 0.6, timestamp: now - 2000 },
+      { pass: 'frontend', reward: 0.9, timestamp: now }
+    ];
+    const result = computePassEWR(outcomes, 'backend');
+    assert.ok(result.ewr > 0.5);
+    assert.equal(result.n, 2);
+  });
+
+  it('ignores outcomes without reward', () => {
+    const outcomes = [
+      { pass: 'backend', timestamp: Date.now() },
+      { pass: 'backend', reward: 0.5, timestamp: Date.now() }
+    ];
+    const result = computePassEWR(outcomes, 'backend');
+    assert.equal(result.n, 1);
+  });
+});
+
+// ── loadOutcomes ────────────────────────────────────────────────────────────
+
+describe('loadOutcomes (v2)', () => {
+  it('assigns _importedAt in memory for legacy entries', () => {
+    const logPath = path.join(tmpDir, 'outcomes.jsonl');
+    fs.writeFileSync(logPath, '{"pass":"backend","accepted":true}\n');
+    const outcomes = loadOutcomes(logPath);
+    assert.equal(outcomes.length, 1);
+    assert.ok(outcomes[0]._importedAt, 'Should have _importedAt');
+  });
+
+  it('does not write to disk (pure read)', () => {
+    const logPath = path.join(tmpDir, 'outcomes.jsonl');
+    fs.writeFileSync(logPath, '{"pass":"backend","accepted":true}\n');
+    const mtimeBefore = fs.statSync(logPath).mtimeMs;
+    loadOutcomes(logPath);
+    const mtimeAfter = fs.statSync(logPath).mtimeMs;
+    assert.equal(mtimeBefore, mtimeAfter, 'File should not be modified by loadOutcomes');
+  });
+});
+
+// ── Remediation Tasks ───────────────────────────────────────────────────────
+
+describe('RemediationTask', () => {
+  it('creates task with deterministic ID', () => {
+    const task = createRemediationTask('run-1', 'backend', {
+      id: 'H1', severity: 'HIGH', semanticHash: 'abc12345',
+      category: 'test', section: 'file.js', detail: 'test'
+    });
+    assert.equal(task.taskId, 'run-1-backend-abc12345');
+    assert.equal(task.remediationState, 'pending');
+    assert.equal(task.edits.length, 0);
+  });
+
+  it('trackEdit updates state to fixed', () => {
+    const task = createRemediationTask('run-1', 'backend', {
+      id: 'H1', severity: 'HIGH', semanticHash: 'abc12345',
+      category: 'test', section: 'file.js', detail: 'test'
+    });
+    trackEdit(task, { file: 'src/app.js', type: 'edit' });
+    assert.equal(task.remediationState, 'fixed');
+    assert.equal(task.edits.length, 1);
+    assert.ok(task.edits[0].timestamp);
+  });
+
+  it('verifyTask sets verified or regressed', () => {
+    const task = createRemediationTask('run-1', 'backend', {
+      id: 'H1', severity: 'HIGH', semanticHash: 'abc12345',
+      category: 'test', section: 'file.js', detail: 'test'
+    });
+    verifyTask(task, 'gemini', true);
+    assert.equal(task.remediationState, 'verified');
+    assert.equal(task.verifiedBy, 'gemini');
+    assert.ok(task.verifiedAt);
+
+    verifyTask(task, 'gpt', false);
+    assert.equal(task.remediationState, 'regressed');
+  });
+});
+
+// ── Language Normalization ───────────────────────────────────────────────────
+
+describe('normalizeLanguage', () => {
+  it('normalizes common aliases', () => {
+    assert.equal(normalizeLanguage('javascript'), 'js');
+    assert.equal(normalizeLanguage('typescript'), 'ts');
+    assert.equal(normalizeLanguage('python'), 'py');
+    assert.equal(normalizeLanguage('golang'), 'go');
+  });
+
+  it('maps unknown languages to other', () => {
+    assert.equal(normalizeLanguage('fortran'), 'other');
+    assert.equal(normalizeLanguage(null), 'other');
+    assert.equal(normalizeLanguage(''), 'other');
+  });
+
+  it('is case-insensitive', () => {
+    assert.equal(normalizeLanguage('JavaScript'), 'js');
+    assert.equal(normalizeLanguage('PYTHON'), 'py');
+  });
+});
+
+// ── Seedable RNG ────────────────────────────────────────────────────────────
+
+describe('createRNG', () => {
+  it('produces deterministic output with seed', () => {
+    const rng1 = createRNG(42);
+    const rng2 = createRNG(42);
+    assert.equal(rng1.random(), rng2.random());
+    assert.equal(rng1.random(), rng2.random());
+  });
+
+  it('produces different output with different seeds', () => {
+    const rng1 = createRNG(42);
+    const rng2 = createRNG(99);
+    assert.notEqual(rng1.random(), rng2.random());
+  });
+
+  it('beta produces values in [0, 1]', () => {
+    const rng = createRNG(42);
+    for (let i = 0; i < 100; i++) {
+      const val = rng.beta(2, 3);
+      assert.ok(val >= 0 && val <= 1, `Beta sample out of range: ${val}`);
+    }
+  });
+});
+
+describe('reservoirSample', () => {
+  it('returns at most k items', () => {
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    const sampled = reservoirSample(items, 3, createRNG(42));
+    assert.equal(sampled.length, 3);
+  });
+
+  it('returns all items when k >= array length', () => {
+    const items = [1, 2, 3];
+    const sampled = reservoirSample(items, 5);
+    assert.equal(sampled.length, 3);
+  });
+
+  it('is deterministic with seeded RNG', () => {
+    const items = Array.from({ length: 100 }, (_, i) => i);
+    const s1 = reservoirSample(items, 5, createRNG(42));
+    const s2 = reservoirSample(items, 5, createRNG(42));
+    assert.deepEqual(s1, s2);
+  });
+});
+
+// ── Prompt Registry ─────────────────────────────────────────────────────────
+
+describe('Prompt Registry', () => {
+  it('revisionId produces stable content-hash', () => {
+    const id1 = revisionId('hello world');
+    const id2 = revisionId('hello world');
+    assert.equal(id1, id2);
+    assert.match(id1, /^rev-[a-f0-9]{12}$/);
+  });
+
+  it('different content produces different IDs', () => {
+    assert.notEqual(revisionId('prompt A'), revisionId('prompt B'));
+  });
+
+  it('bootstrap creates default revisions', () => {
+    const origDir = process.cwd();
+    process.chdir(tmpDir);
+    try {
+      bootstrapFromConstants({ test: 'This is a test prompt for bootstrapping' });
+      const activeId = getActiveRevisionId('test');
+      assert.ok(activeId, 'Should have active revision');
+      assert.match(activeId, /^rev-/);
+      const prompt = getActivePrompt('test');
+      assert.equal(prompt, 'This is a test prompt for bootstrapping');
+    } finally {
+      process.chdir(origDir);
+    }
+  });
+
+  it('bootstrap is idempotent', () => {
+    const origDir = process.cwd();
+    process.chdir(tmpDir);
+    try {
+      const prompts = { test: 'Same prompt content' };
+      bootstrapFromConstants(prompts);
+      const id1 = getActiveRevisionId('test');
+      bootstrapFromConstants(prompts);
+      const id2 = getActiveRevisionId('test');
+      assert.equal(id1, id2);
+    } finally {
+      process.chdir(origDir);
+    }
   });
 });

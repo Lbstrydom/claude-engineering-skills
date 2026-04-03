@@ -58,3 +58,47 @@ export const briefConfig = Object.freeze({
 export const suppressionConfig = Object.freeze({
   similarityThreshold: parseFloat(process.env.SUPPRESS_SIMILARITY_THRESHOLD || '0.35'),
 });
+
+// ── Learning System v2 Constants ────────────────────────────────────────────
+
+/** Sentinel constants — used instead of NULL for DB uniqueness constraints. */
+export const GLOBAL_CONTEXT_BUCKET = 'global';
+export const GLOBAL_REPO_ID = '00000000-0000-0000-0000-000000000000';
+export const UNKNOWN_FILE_EXT = 'unknown';
+
+/** Canonical list of audit pass names. */
+export const PASS_NAMES = Object.freeze(['structure', 'wiring', 'backend', 'frontend', 'sustainability']);
+
+/** Normalized language enum for bandit context bucketing. */
+export const LANGUAGES = Object.freeze(['js', 'ts', 'py', 'go', 'java', 'rust', 'mixed', 'other']);
+
+/**
+ * Normalize a language string to canonical enum value.
+ * Handles common aliases (javascript -> js, typescript -> ts, etc.).
+ */
+export function normalizeLanguage(lang) {
+  if (!lang) return 'other';
+  const lower = lang.toLowerCase().trim();
+  const aliases = {
+    javascript: 'js', jsx: 'js', mjs: 'js', cjs: 'js',
+    typescript: 'ts', tsx: 'ts',
+    python: 'py', python3: 'py',
+    golang: 'go',
+    'c#': 'other', csharp: 'other', cpp: 'other', c: 'other',
+    ruby: 'other', php: 'other', swift: 'other', kotlin: 'other'
+  };
+  const normalized = aliases[lower] || lower;
+  return LANGUAGES.includes(normalized) ? normalized : 'other';
+}
+
+// ── Learning System v2 Config ───────────────────────────────────────────────
+
+export const learningConfig = Object.freeze({
+  outcomeHalfLifeMs: safeInt(process.env.OUTCOME_HALF_LIFE_DAYS, 30) * 24 * 60 * 60 * 1000,
+  outcomeMaxAgeMs: safeInt(process.env.OUTCOME_MAX_AGE_DAYS, 180) * 24 * 60 * 60 * 1000,
+  outcomePruneEnabled: process.env.OUTCOME_PRUNE_ENABLED !== 'false',
+  ucbMinPulls: safeInt(process.env.UCB_MIN_PULLS, 3),
+  minBucketSamples: safeInt(process.env.MIN_BUCKET_SAMPLES, 5),
+  minFpSamples: safeInt(process.env.MIN_FP_SAMPLES, 5),
+  minExamplesThreshold: safeInt(process.env.MIN_EXAMPLES_THRESHOLD, 3),
+});

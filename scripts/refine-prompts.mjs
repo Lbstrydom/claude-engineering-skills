@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 /**
  * @fileoverview TextGrad-lite prompt refinement — analyzes audit outcomes
- * and suggests prompt improvements. Human approves before deployment.
+ * and suggests prompt improvements. v2: example-driven with sanitization
+ * and replay buffer sampling.
  * @module scripts/refine-prompts
  */
 
 import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
-import { loadOutcomes, computePassEffectiveness } from './lib/findings.mjs';
+import { loadOutcomes, computePassEffectiveness, computePassEWR } from './lib/findings.mjs';
+import { sanitizeOutcomes } from './lib/sanitizer.mjs';
+import { reservoirSample } from './lib/rng.mjs';
+import { PASS_NAMES, learningConfig } from './lib/config.mjs';
+
+const MIN_EXAMPLES_THRESHOLD = learningConfig.minExamplesThreshold;
 
 const REFINEMENT_SYSTEM = `You are a prompt engineer optimizing code audit prompts based on outcome data.
 
@@ -16,6 +22,7 @@ Given:
 1. The current audit system prompt for a specific pass
 2. Historical outcomes: which findings were accepted vs dismissed
 3. Pattern statistics: which categories have high false-positive rates
+4. Example findings (dismissed and accepted) with ruling rationale
 
 Your job:
 - Identify WHY certain finding types keep getting dismissed
@@ -39,11 +46,12 @@ async function analyzePass(passName, outcomesPath) {
   }
 
   const stats = computePassEffectiveness(passOutcomes);
+  const ewr = computePassEWR(outcomes, passName);
   console.log(`\n=== ${passName} ===`);
   console.log(`Total: ${stats.total} | Accepted: ${stats.accepted} | Dismissed: ${stats.dismissed}`);
   console.log(`Acceptance rate: ${(stats.acceptanceRate * 100).toFixed(1)}%`);
+  console.log(`EWR: ${ewr.ewr.toFixed(3)} | Confidence: ${ewr.confidence.toFixed(2)}`);
 
-  // Group dismissed findings by category
   const dismissedByCategory = {};
   for (const o of passOutcomes.filter(o => !o.accepted)) {
     const cat = o.category || 'unknown';
@@ -60,13 +68,28 @@ async function analyzePass(passName, outcomesPath) {
   console.log('\nTo generate prompt refinement suggestions, run with --suggest flag and provide ANTHROPIC_API_KEY or GEMINI_API_KEY');
 }
 
+/**
+ * Suggest refinements with example-driven approach.
+ * Uses sanitized outcomes and replay buffer sampling.
+ */
 async function suggestRefinements(passName, outcomesPath) {
   const outcomes = loadOutcomes(outcomesPath);
   const passOutcomes = outcomes.filter(o => o.pass === passName);
 
   if (passOutcomes.length < 10) {
     console.log(`Not enough data for ${passName} (${passOutcomes.length}/10 required)`);
-    return;
+    return { status: 'INSUFFICIENT_DATA', message: `Only ${passOutcomes.length} outcomes` };
+  }
+
+  // Sanitize before any external LLM call
+  const sanitized = sanitizeOutcomes(passOutcomes);
+
+  // Empty-state handling
+  if (sanitized.length < MIN_EXAMPLES_THRESHOLD) {
+    process.stderr.write(`[refine] Only ${sanitized.length} sanitized outcomes (need ${MIN_EXAMPLES_THRESHOLD}) — stats-only refinement\n`);
+    if (sanitized.length === 0) {
+      return { status: 'INSUFFICIENT_DATA', message: `Only ${sanitized.length} sanitized outcomes` };
+    }
   }
 
   // Compute stats
@@ -91,9 +114,36 @@ async function suggestRefinements(passName, outcomesPath) {
       .map(([cat, count]) => `  ${count}x ${cat}`)
   ].join('\n');
 
+  // Build example block from sanitized outcomes
+  let exampleBlock = '';
+  if (sanitized.length >= MIN_EXAMPLES_THRESHOLD) {
+    const sanDismissed = sanitized.filter(o => !o.accepted && o.detail);
+    const sanAccepted = sanitized.filter(o => o.accepted && o.detail);
+
+    // Mixed sampling: 3 recent + 2 random (replay buffer)
+    const dismissedExamples = [
+      ...sanDismissed.sort((a, b) => {
+        const order = { recent: 0, mid: 1, old: 2 };
+        return (order[a._recencyBucket] || 2) - (order[b._recencyBucket] || 2);
+      }).slice(0, 3),
+      ...reservoirSample(sanDismissed, 2)
+    ].map(o => `  - [${o.severity}] ${o.category} in ${o.primaryFile}: ${o.detail?.slice(0, 100)} (ruling: ${o.ruling}, rationale: ${o.rulingRationale?.slice(0, 80)})`);
+
+    const acceptedExamples = reservoirSample(sanAccepted, 3)
+      .map(o => `  - [${o.severity}] ${o.category} in ${o.primaryFile}: ${o.detail?.slice(0, 100)}`);
+
+    exampleBlock = [
+      '',
+      'DISMISSED FINDINGS (false positives — the prompt should avoid generating these):',
+      ...dismissedExamples,
+      '',
+      'ACCEPTED FINDINGS (true positives — the prompt should keep generating these):',
+      ...acceptedExamples
+    ].join('\n');
+  }
+
   console.log('Generating prompt refinement suggestions...\n');
 
-  // Try Claude Haiku first, then Gemini Flash
   let suggestion = null;
 
   if (process.env.ANTHROPIC_API_KEY) {
@@ -104,7 +154,7 @@ async function suggestRefinements(passName, outcomesPath) {
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 2000,
         system: REFINEMENT_SYSTEM,
-        messages: [{ role: 'user', content: `Outcome data:\n\n${statsBlock}\n\nSuggest prompt refinements to reduce false positives.` }]
+        messages: [{ role: 'user', content: `Outcome data:\n\n${statsBlock}${exampleBlock}\n\nSuggest prompt refinements to reduce false positives.` }]
       });
       suggestion = response.content?.[0]?.text;
     } catch (err) {
@@ -118,7 +168,7 @@ async function suggestRefinements(passName, outcomesPath) {
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `Outcome data:\n\n${statsBlock}\n\nSuggest prompt refinements to reduce false positives.`,
+        contents: `Outcome data:\n\n${statsBlock}${exampleBlock}\n\nSuggest prompt refinements to reduce false positives.`,
         config: { systemInstruction: REFINEMENT_SYSTEM, maxOutputTokens: 2000 }
       });
       suggestion = response.text;
@@ -133,8 +183,10 @@ async function suggestRefinements(passName, outcomesPath) {
     console.log('\nReview these suggestions and apply manually to the pass prompt.');
     console.log('After applying, register the new prompt as a bandit variant:');
     console.log(`  node scripts/bandit.mjs add ${passName} v2-refined`);
+    return { status: 'OK', suggestion };
   } else {
     console.log('No LLM available for suggestions. Set ANTHROPIC_API_KEY or GEMINI_API_KEY.');
+    return { status: 'NO_LLM' };
   }
 }
 
@@ -147,20 +199,21 @@ async function main() {
 
   if (!passName || passName === 'help') {
     console.log('Usage:');
-    console.log('  node scripts/refine-prompts.mjs <pass-name> [--outcomes <path>]');
+    console.log('  node scripts/refine-prompts.mjs <pass-name> [--outcomes <path>] [--suggest]');
     console.log('  node scripts/refine-prompts.mjs stats [--outcomes <path>]');
     console.log('');
-    console.log('Pass names: structure, wiring, backend, frontend, sustainability');
+    console.log(`Pass names: ${PASS_NAMES.join(', ')}`);
     process.exit(0);
   }
 
   if (passName === 'stats') {
     const outcomes = loadOutcomes(outcomesPath);
     console.log(`Total outcomes: ${outcomes.length}`);
-    for (const pass of ['structure', 'wiring', 'backend', 'frontend', 'sustainability']) {
+    for (const pass of PASS_NAMES) {
       const stats = computePassEffectiveness(outcomes, pass);
+      const ewr = computePassEWR(outcomes, pass);
       if (stats.total > 0) {
-        console.log(`  ${pass}: ${stats.total} findings, ${(stats.acceptanceRate*100).toFixed(0)}% accepted`);
+        console.log(`  ${pass.padEnd(15)} ${stats.total} findings, ${(stats.acceptanceRate*100).toFixed(0)}% accepted, EWR: ${ewr.ewr.toFixed(3)}`);
       }
     }
     return;
