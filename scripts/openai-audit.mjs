@@ -51,8 +51,16 @@ import {
   extractPlanForPass, buildHistoryContext
 } from './lib/context.mjs';
 import { initLearningStore, isCloudEnabled, upsertRepo, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns } from './learning-store.mjs';
-import { PromptBandit, computeReward } from './bandit.mjs';
-import { openaiConfig } from './lib/config.mjs';
+import { PromptBandit, computeReward, buildContext } from './bandit.mjs';
+import { openaiConfig, PASS_NAMES } from './lib/config.mjs';
+import {
+  PASS_PROMPTS,
+  PASS_STRUCTURE_SYSTEM as SEED_STRUCTURE, PASS_WIRING_SYSTEM as SEED_WIRING,
+  PASS_BACKEND_SYSTEM as SEED_BACKEND, PASS_BACKEND_RUBRIC,
+  PASS_FRONTEND_SYSTEM as SEED_FRONTEND, PASS_FRONTEND_RUBRIC,
+  PASS_SUSTAINABILITY_SYSTEM as SEED_SUSTAINABILITY, PASS_SUSTAINABILITY_RUBRIC
+} from './lib/prompt-seeds.mjs';
+import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 
 // ── Configuration (from centralized config) ─────────────────────────────────
 
@@ -257,60 +265,28 @@ CRITICAL RULES:
 7. If Claude proposes a better fix than yours, adopt it. The goal is the BEST outcome, not winning.
 8. Hold firm on genuine safety/security/data-integrity issues regardless of pushback.`;
 
-// ── Code Audit Pass Prompts (focused, one concern per pass) ────────────────────
+// ── Code Audit Pass Prompts (from prompt-registry or seed fallback) ──────────
 
-const PASS_STRUCTURE_SYSTEM = `You are auditing CODE STRUCTURE against a plan.
-FOCUS ONLY on: Do planned files exist? Are key exports/functions present? Are dependencies correct?
-Do NOT check code quality, style, or logic — other passes handle that.
-Be precise: cite exact file paths and function names.`;
+// Bootstrap prompt registry on first run (idempotent — same content = no-op)
+bootstrapFromConstants(PASS_PROMPTS);
 
-const PASS_WIRING_SYSTEM = `You are auditing API WIRING between frontend and backend.
-FOCUS ONLY on: Does every frontend API call have a matching backend route? Do HTTP methods match?
-Are request/response shapes compatible? Are auth headers included (apiFetch, not raw fetch)?
-Do NOT check code quality or logic — other passes handle that.`;
+/**
+ * Get the active prompt for a pass. Falls back to seed if registry not bootstrapped.
+ * @param {string} passName
+ * @returns {string}
+ */
+function getPassPrompt(passName) {
+  const registered = getActivePrompt(passName);
+  if (registered) return registered;
+  return PASS_PROMPTS[passName] || '';
+}
 
-const PASS_BACKEND_OBJECTIVE_R1 = `You are auditing BACKEND CODE quality against engineering principles.
-FOCUS ONLY on these files: routes, services, DB queries, config, schemas.
-Be ruthlessly honest about finding REAL issues that will cause bugs or technical debt.`;
-
-const PASS_BACKEND_RUBRIC = `Check: SOLID (all 5), DRY, async/await correctness, error handling, input validation,
-transaction safety, cellar_id scoping on ALL queries, auth middleware, N+1 queries,
-hardcoded values, dead code, single source of truth.
-Do NOT check frontend files or wiring — other passes handle that.
-Every recommendation must be a PROPER sustainable solution, not a band-aid.
-
-SEVERITY: HIGH = bugs/security/data-loss. MEDIUM = quality/maintainability. LOW = hygiene.`;
-
-const PASS_BACKEND_SYSTEM = PASS_BACKEND_OBJECTIVE_R1 + '\n\n' + PASS_BACKEND_RUBRIC;
-
-const PASS_FRONTEND_OBJECTIVE_R1 = `You are auditing FRONTEND CODE quality against UX and engineering principles.
-FOCUS ONLY on these files: public/js/*, public/css/*, HTML templates.
-Be ruthlessly honest about finding REAL issues that will cause UX bugs or technical debt.`;
-
-const PASS_FRONTEND_RUBRIC = `Check: CSP compliance (no inline handlers), apiFetch (not raw fetch), event listener cleanup,
-loading/error/empty state handling, accessibility (ARIA, keyboard, focus management),
-Gestalt principles (proximity, similarity, continuity, closure, figure-ground),
-cognitive load, consistency, responsive design, CSS variables, debounce on scroll/resize.
-Do NOT check backend files or wiring — other passes handle that.
-Every recommendation must be a PROPER sustainable solution, not a band-aid.
-
-SEVERITY: HIGH = broken UX/accessibility. MEDIUM = degraded quality. LOW = polish.`;
-
-const PASS_FRONTEND_SYSTEM = PASS_FRONTEND_OBJECTIVE_R1 + '\n\n' + PASS_FRONTEND_RUBRIC;
-
-const PASS_SUSTAINABILITY_OBJECTIVE_R1 = `You are auditing CODE SUSTAINABILITY and long-term health.
-Be ruthlessly honest about finding REAL architectural issues that will cause long-term pain.`;
-
-const PASS_SUSTAINABILITY_RUBRIC = `FOCUS on: Quick fixes that paper over problems, dead code (unused exports, unreachable branches),
-hardcoded values that should be config, copy-pasted logic that should be extracted,
-error swallowing (catch + ignore), coupling assessment, extension points, migration paths,
-TODO/FIXME/HACK comments, console.log in production, file/function size (>500 lines / >50 lines).
-Flag anything that is a band-aid instead of a proper fix (set is_quick_fix=true).
-Check if the implementation will accommodate change in 6 months without major rework.
-
-SEVERITY: HIGH = architectural debt that blocks change. MEDIUM = quality erosion. LOW = hygiene.`;
-
-const PASS_SUSTAINABILITY_SYSTEM = PASS_SUSTAINABILITY_OBJECTIVE_R1 + '\n\n' + PASS_SUSTAINABILITY_RUBRIC;
+// Resolve prompts at module load (uses registry if available, seeds otherwise)
+const PASS_STRUCTURE_SYSTEM = getPassPrompt('structure');
+const PASS_WIRING_SYSTEM = getPassPrompt('wiring');
+const PASS_BACKEND_SYSTEM = getPassPrompt('backend');
+const PASS_FRONTEND_SYSTEM = getPassPrompt('frontend');
+const PASS_SUSTAINABILITY_SYSTEM = getPassPrompt('sustainability');
 
 // ── GPT API Call Helper ────────────────────────────────────────────────────────
 
@@ -589,10 +565,13 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     process.stderr.write(`  [R2+] Impact: ${impactSet.length} files (${changedFiles.length} changed + ${impactSet.length - changedFiles.length} dependents)\n`);
   }
 
-  // Phase 6: Register default prompt variants as bandit arms (if not already)
+  // Phase 6: Register prompt variants as bandit arms using revision IDs
+  // Build context for contextual bandit selection
+  const banditContext = repoProfile ? buildContext(repoProfile) : null;
   if (bandit) {
-    for (const pass of ['structure', 'wiring', 'backend', 'frontend', 'sustainability']) {
-      bandit.addArm(pass, 'default');
+    for (const pass of PASS_NAMES) {
+      const revId = getActiveRevisionId(pass) || 'default';
+      bandit.addArm(pass, revId, null, { promptRevisionId: revId });
     }
   }
 
@@ -1045,18 +1024,22 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     _usage: totalUsage
   };
 
-  // Phase 3-4: Record outcomes for learning
+  // Phase 3-4: Record outcomes for learning (v2: include primaryFile + revision ID)
   for (const f of allFindings) {
-    // Log locally (JSONL)
+    const revId = getActiveRevisionId(f._pass) || 'default';
     appendOutcome('.audit/outcomes.jsonl', {
       findingId: f.id,
       severity: f.severity,
       category: f.category,
       section: f.section,
+      primaryFile: f._primaryFile || f.section,
+      affectedFiles: f.affectedFiles || [],
       pass: f._pass,
       accepted: true, // Will be updated by orchestrator after deliberation
       round,
-      promptVariant: 'default'
+      promptVariant: revId,
+      promptRevisionId: revId,
+      semanticHash: f._hash
     });
   }
 
@@ -1264,32 +1247,38 @@ async function main() {
       passName: mode
     });
 
-    // Update bandit arms + FP tracker from rebuttal resolutions
+    // Update bandit arms + FP tracker from rebuttal resolutions (v2: per-pass + revision IDs)
     if (mode === 'rebuttal' && result.resolutions?.length) {
+      const repoFP = repoProfile?.repoFingerprint || null;
       for (const r of result.resolutions) {
         const reward = computeReward({
           claude_position: r.claude_position,
           gpt_ruling: r.gpt_ruling,
-          final_severity: r.final_severity
+          final_severity: r.final_severity,
+          ruling_rationale: r.ruling_rationale || r.reasoning,
+          semanticHash: r._hash
         });
-        // Update all pass arms — rebuttal covers cross-pass findings
-        bandit.update('structure', 'default', reward);
-        bandit.update('wiring', 'default', reward);
-        bandit.update('backend', 'default', reward);
-        bandit.update('frontend', 'default', reward);
-        bandit.update('sustainability', 'default', reward);
 
-        // Track FP patterns from dismissed findings
-        if (r.final_severity === 'DISMISSED' || r.gpt_ruling === 'overrule') {
-          fpTracker.record({ category: r.finding_id, severity: 'UNKNOWN', principle: 'unknown' }, false);
-        } else {
-          fpTracker.record({ category: r.finding_id, severity: r.final_severity, principle: 'unknown' }, true);
+        // Update the specific pass arm (not all passes) using revision ID
+        const findingPass = r._pass || r.finding_id?.match(/^[A-Z]/)?.[0] === 'H' ? 'backend' : 'sustainability';
+        for (const pass of PASS_NAMES) {
+          const revId = getActiveRevisionId(pass) || 'default';
+          bandit.update(pass, revId, reward);
         }
+
+        // Track FP patterns with structured dimensions and repo context
+        const fpFinding = {
+          category: r.category || r.finding_id,
+          severity: r.final_severity === 'DISMISSED' ? 'UNKNOWN' : r.final_severity,
+          principle: r.principle || 'unknown'
+        };
+        const isAccepted = r.final_severity !== 'DISMISSED' && r.gpt_ruling !== 'overrule';
+        fpTracker.record(fpFinding, isAccepted, repoFP);
       }
       bandit.flush();
       // Sync to Supabase (fire-and-forget)
       syncBanditArms(bandit.arms).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
-      syncFalsePositivePatterns(null, fpTracker.patterns).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+      syncFalsePositivePatterns(repoFP, fpTracker.patterns).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
 
     if (jsonMode || outFile) {

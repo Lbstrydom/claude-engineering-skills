@@ -25,6 +25,10 @@ import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput } from
 import { semanticId, formatFindings } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief } from './lib/context.mjs';
 import { geminiConfig, claudeConfig } from './lib/config.mjs';
+// NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
+// This module keeps specialized callGemini/callClaudeOpus with thinkingConfig + abort controller
+// because the final review requires high-budget reasoning and precise timeout handling.
+// Future: extract shared patterns to llm-wrappers while keeping specialized configs here.
 
 // ── Configuration (from centralized config) ─────────────────────────────────
 
