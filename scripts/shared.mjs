@@ -10,6 +10,9 @@
 export {
   FindingSchema,
   FindingJsonSchema,
+  ClassificationSchema,
+  ProducerFindingSchema,
+  PersistedFindingSchema,
   WiringIssueSchema,
   LedgerEntrySchema,
   AdjudicationLedgerSchema,

@@ -254,7 +254,11 @@ Do NOT:
 - Change the substance of findings (only merge/elevate)
 - Lower severity unless merging duplicates
 
-Mark systemic findings with category prefix [SYSTEMIC].`;
+Mark systemic findings with category prefix [SYSTEMIC].
+
+PRESERVE the \`classification\` object on every finding (sonarType, effort, sourceKind, sourceName).
+When merging duplicates, keep the highest severity source's classification and set effort to the MAX
+of the merged findings (MAJOR > MEDIUM > EASY > TRIVIAL). Never drop or null the classification field.`;
 
 // ── Context Measurement ──────────────────────────────────────────────────────
 

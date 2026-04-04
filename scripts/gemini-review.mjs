@@ -20,7 +20,8 @@
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
-import { FindingSchema, zodToGeminiSchema } from './lib/schemas.mjs';
+import { ProducerFindingSchema, zodToGeminiSchema } from './lib/schemas.mjs';
+import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput } from './lib/file-io.mjs';
 import { semanticId, formatFindings } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief } from './lib/context.mjs';
@@ -57,7 +58,7 @@ const GeminiFinalReviewSchema = z.object({
     quality_summary: z.string().max(500).describe('Brief assessment of the deliberation process')
   }),
 
-  new_findings: z.array(FindingSchema).max(10).describe('Issues neither Claude nor GPT caught. Max 10, only genuinely new.'),
+  new_findings: z.array(ProducerFindingSchema).max(10).describe('Issues neither Claude nor GPT caught. Max 10, only genuinely new.'),
 
   wrongly_dismissed: z.array(WronglyDismissedSchema).max(10).describe('GPT findings Claude dismissed but were actually valid'),
 
@@ -336,9 +337,16 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
   process.stderr.write(`  Model: ${selectedModel}\n`);
   process.stderr.write(`  Context: ~${(userPrompt.length / 4).toFixed(0)} tokens (estimated)\n`);
 
+  // Append classification rubric so new_findings populate the required envelope.
+  const classificationBlock = buildClassificationRubric({
+    sourceKind: 'REVIEWER',
+    sourceName: selectedModel
+  });
+  const systemPrompt = REVIEW_SYSTEM + classificationBlock;
+
   if (provider === 'gemini') {
     return callGemini(client, {
-      systemPrompt: REVIEW_SYSTEM,
+      systemPrompt,
       userPrompt,
       zodSchema: GeminiFinalReviewSchema,
       jsonSchema: GeminiFinalReviewJsonSchema,
@@ -347,7 +355,7 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
   }
 
   return callClaudeOpus(client, {
-    systemPrompt: REVIEW_SYSTEM,
+    systemPrompt,
     userPrompt,
     zodSchema: GeminiFinalReviewSchema,
     passName: 'claude-opus-review'

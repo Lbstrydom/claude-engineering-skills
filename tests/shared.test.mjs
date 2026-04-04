@@ -130,8 +130,10 @@ describe('FindingJsonSchema (derived)', () => {
     assert.deepEqual(jsonKeys, zodKeys);
   });
 
-  it('has all fields as required', () => {
-    const zodKeys = Object.keys(FindingSchema.shape).sort();
+  it('has all non-optional fields as required', () => {
+    // Phase B: `classification` is optional on FindingSchema (alias for PersistedFindingSchema)
+    // — it's only required on ProducerFindingSchema.
+    const zodKeys = Object.keys(FindingSchema.shape).filter(k => k !== 'classification').sort();
     assert.deepEqual([...FindingJsonSchema.required].sort(), zodKeys);
   });
 
@@ -690,6 +692,32 @@ describe('batchWriteLedger', () => {
       { topicId: 'def', findingId: 'H2', severity: 'HIGH', adjudicationOutcome: 'pending', remediationState: 'pending', round: 1 }
     ]);
     assert.equal(inserted, 1);
+  });
+
+  it('Phase B: returns rejected[] for invalid entries with per-entry reason', () => {
+    const ledgerPath = path.join(tmpDir, 'ledger.json');
+    const result = batchWriteLedger(ledgerPath, [
+      { topicId: null, findingId: 'H1', severity: 'HIGH', adjudicationOutcome: 'pending' },
+      { topicId: 'abc', severity: null, adjudicationOutcome: 'pending' },
+      { topicId: 'good', findingId: 'H2', severity: 'HIGH', adjudicationOutcome: 'pending', remediationState: 'pending', round: 1 }
+    ]);
+    assert.equal(result.inserted, 1);
+    assert.ok(Array.isArray(result.rejected), 'rejected must be an array');
+    assert.equal(result.rejected.length, 2);
+    assert.match(result.rejected[0].reason, /topicId/);
+    assert.match(result.rejected[1].reason, /severity|adjudicationOutcome/);
+    // Rejected entries are returned for caller inspection, not silently dropped.
+    assert.ok(result.rejected[0].entry, 'entry preserved in rejected record');
+  });
+
+  it('Phase B: rejected[] is empty when all entries valid', () => {
+    const ledgerPath = path.join(tmpDir, 'ledger.json');
+    const result = batchWriteLedger(ledgerPath, [
+      { topicId: 'a', findingId: 'H1', severity: 'HIGH', adjudicationOutcome: 'pending', remediationState: 'pending', round: 1 },
+      { topicId: 'b', findingId: 'H2', severity: 'MEDIUM', adjudicationOutcome: 'pending', remediationState: 'pending', round: 1 }
+    ]);
+    assert.equal(result.inserted, 2);
+    assert.equal(result.rejected.length, 0);
   });
 
   it('throws on corrupted ledger (not ENOENT)', () => {

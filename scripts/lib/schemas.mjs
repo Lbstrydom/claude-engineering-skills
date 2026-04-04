@@ -7,9 +7,32 @@
 
 import { z } from 'zod';
 
+// ── Classification Schema (SonarQube-style, Phase B) ─────────────────────────
+
+/**
+ * Optional nested envelope — all fields within are required WHEN the envelope is present.
+ * This keeps schema evolution safe: absent = old format, present = new format fully specified.
+ */
+export const ClassificationSchema = z.object({
+  sonarType: z.enum(['BUG', 'VULNERABILITY', 'CODE_SMELL', 'SECURITY_HOTSPOT']).describe(
+    'SonarQube classification: BUG=broken behavior, VULNERABILITY=exploitable flaw, ' +
+    'CODE_SMELL=maintainability debt, SECURITY_HOTSPOT=needs manual security review'
+  ),
+  effort: z.enum(['TRIVIAL', 'EASY', 'MEDIUM', 'MAJOR', 'CRITICAL']).describe(
+    'Fix effort estimate: TRIVIAL=<5min, EASY=<30min, MEDIUM=<2h, MAJOR=<1day, CRITICAL=architectural rewrite'
+  ),
+  sourceKind: z.enum(['MODEL', 'REVIEWER', 'LINTER', 'TYPE_CHECKER']).describe(
+    'Stable source category. MODEL=primary auditor (GPT/Claude), REVIEWER=final-gate (Gemini/Opus), ' +
+    'LINTER/TYPE_CHECKER=tool output (Phase C).'
+  ),
+  sourceName: z.string().max(64).describe(
+    'Specific tool/model name: "gpt-5.4", "claude-opus-4-1", "gemini-3.1-pro-preview", "eslint", etc.'
+  ),
+});
+
 // ── Finding Schema ───────────────────────────────────────────────────────────
 
-export const FindingSchema = z.object({
+const FindingBase = {
   id: z.string().max(10).describe('Finding ID, e.g. H1, M3, L2, G1'),
   severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
   category: z.string().max(80).describe('Category: e.g. "DRY Violation", "Missing Error Handling"'),
@@ -20,7 +43,31 @@ export const FindingSchema = z.object({
   is_quick_fix: z.boolean().describe('TRUE if the recommendation is a band-aid rather than a proper fix.'),
   is_mechanical: z.boolean().describe('TRUE if fix is deterministic with exactly one correct answer.'),
   principle: z.string().max(80).describe('Which engineering/UX principle this violates')
+};
+
+/**
+ * ProducerFindingSchema — what LLMs emit. Classification is REQUIRED.
+ * Used as response schema for GPT / Gemini / Claude audit calls.
+ */
+export const ProducerFindingSchema = z.object({
+  ...FindingBase,
+  classification: ClassificationSchema,
 });
+
+/**
+ * PersistedFindingSchema — what we read from storage. Classification is OPTIONAL/nullable.
+ * Old findings written before Phase B have no classification; must still validate.
+ */
+export const PersistedFindingSchema = z.object({
+  ...FindingBase,
+  classification: ClassificationSchema.nullable().optional(),
+});
+
+/**
+ * Backward-compatible alias — existing imports of `FindingSchema` use the permissive
+ * persisted schema. Enforcement happens at producer boundaries via ProducerFindingSchema.
+ */
+export const FindingSchema = PersistedFindingSchema;
 
 // ── Zod-to-Gemini Schema Conversion ─────────────────────────────────────────
 

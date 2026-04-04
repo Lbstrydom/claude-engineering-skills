@@ -99,10 +99,14 @@ export function writeLedgerEntry(ledgerPath, entry) {
  * by topicId with idempotent merge, performs exactly one atomic write.
  * Only treats ENOENT as 'new file' — permission/corruption errors surface to caller.
  * Preserves both adjudication axes on upsert (adjudicationOutcome + remediationState).
+ *
+ * Invalid entries are returned in `rejected[]` with a per-entry reason — the caller
+ * decides whether to proceed or fail. Never silently drops data.
+ *
  * @param {string} ledgerPath - Path to ledger JSON file
  * @param {object[]} entries - Array of LedgerEntry-shaped objects
- * @returns {{ inserted: number, updated: number, total: number }}
- * @throws {Error} on permission errors, corruption, or validation failures
+ * @returns {{ inserted: number, updated: number, total: number, rejected: Array<{entry:object,reason:string}> }}
+ * @throws {Error} on permission errors or corrupt ledger
  */
 export function batchWriteLedger(ledgerPath, entries) {
   let ledger = { version: 1, entries: [] };
@@ -119,12 +123,16 @@ export function batchWriteLedger(ledgerPath, entries) {
   }
 
   const byTopic = new Map(ledger.entries.map(e => [e.topicId, e]));
+  const rejected = [];
   let inserted = 0, updated = 0;
 
   for (const entry of entries) {
-    if (!entry.topicId) continue;
+    if (!entry.topicId) {
+      rejected.push({ entry, reason: 'missing topicId' });
+      continue;
+    }
     if (!entry.severity || !entry.adjudicationOutcome) {
-      process.stderr.write(`  [ledger] Skipping invalid entry: ${entry.topicId}\n`);
+      rejected.push({ entry, reason: 'missing severity or adjudicationOutcome' });
       continue;
     }
 
@@ -158,7 +166,7 @@ export function batchWriteLedger(ledgerPath, entries) {
     throw new Error('Ledger integrity check failed: entry without topicId');
   }
   atomicWriteFileSync(path.resolve(ledgerPath), JSON.stringify(ledger, null, 2));
-  return { inserted, updated, total: ledger.entries.length };
+  return { inserted, updated, total: ledger.entries.length, rejected };
 }
 
 // ── Finding Metadata ────────────────────────────────────────────────────────

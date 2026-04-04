@@ -61,6 +61,39 @@ SEVERITY: HIGH = architectural debt that blocks change. MEDIUM = quality erosion
 export const PASS_SUSTAINABILITY_SYSTEM = PASS_SUSTAINABILITY_OBJECTIVE_R1 + '\n\n' + PASS_SUSTAINABILITY_RUBRIC;
 export { PASS_SUSTAINABILITY_RUBRIC };
 
+// ── Classification Rubric (Phase B) ─────────────────────────────────────────
+
+/**
+ * Build a classification rubric block for a pass prompt. Pulls sourceName from
+ * runtime config so model changes don't require prompt edits.
+ *
+ * @param {object} opts
+ * @param {string} opts.sourceKind - MODEL | REVIEWER | LINTER | TYPE_CHECKER
+ * @param {string} opts.sourceName - Tool/model identifier
+ * @returns {string} Block to append to a pass system prompt
+ */
+export function buildClassificationRubric({ sourceKind, sourceName }) {
+  return `
+
+## Classification (REQUIRED for every finding)
+Populate the \`classification\` field on each finding:
+
+- **sonarType**: Choose ONE of:
+  - BUG: Code that is demonstrably broken or will break at runtime
+  - VULNERABILITY: Exploitable security flaw (OWASP Top 10 pattern)
+  - CODE_SMELL: Works but harms maintainability/extensibility
+  - SECURITY_HOTSPOT: Needs manual security review (uncertain if flaw)
+- **effort**: Fix effort estimate:
+  - TRIVIAL: < 5 minutes, mechanical change
+  - EASY: < 30 minutes, single-file change
+  - MEDIUM: < 2 hours, touches 2-3 files
+  - MAJOR: < 1 day, multi-component change
+  - CRITICAL: architectural rewrite required
+- **sourceKind**: Always "${sourceKind}" for your findings
+- **sourceName**: Always "${sourceName}" for your findings
+`;
+}
+
 /**
  * All pass prompts as a map, for prompt-registry bootstrap.
  */

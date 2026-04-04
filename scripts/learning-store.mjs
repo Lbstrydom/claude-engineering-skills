@@ -9,6 +9,7 @@ import 'dotenv/config';
 
 let _supabase = null;
 let _userId = null;
+let _hasClassificationColumns = null;
 
 /**
  * Initialize the cloud learning store.
@@ -136,21 +137,57 @@ export async function recordRunComplete(runId, stats) {
 // ── Finding & Adjudication Recording ────────────────────────────────────────
 
 /**
+ * Detect whether the audit_findings table has Phase B classification columns.
+ * Cached after first probe — column shape doesn't change mid-run.
+ */
+async function detectClassificationColumns() {
+  if (_hasClassificationColumns !== null) return _hasClassificationColumns;
+  if (!_supabase) {
+    _hasClassificationColumns = false;
+    return false;
+  }
+  try {
+    const { error } = await _supabase.from('audit_findings').select('sonar_type').limit(0);
+    _hasClassificationColumns = !error;
+  } catch {
+    _hasClassificationColumns = false;
+  }
+  if (!_hasClassificationColumns) {
+    process.stderr.write('  [learning] classification columns not present — run migration to enable\n');
+  }
+  return _hasClassificationColumns;
+}
+
+/** Test-only reset for detection cache. */
+export function _resetClassificationColumnCache() { _hasClassificationColumns = null; }
+
+/**
  * Record a batch of findings from an audit pass.
  */
 export async function recordFindings(runId, findings, passName, round) {
   if (!_supabase || !runId) return;
 
-  const rows = findings.map(f => ({
-    run_id: runId,
-    finding_fingerprint: f._hash || 'unknown',
-    pass_name: passName,
-    severity: f.severity,
-    category: f.category,
-    primary_file: f._primaryFile || f.section,
-    detail_snapshot: f.detail?.slice(0, 600),
-    round_raised: round
-  }));
+  const hasClassification = await detectClassificationColumns();
+  const rows = findings.map(f => {
+    const base = {
+      run_id: runId,
+      finding_fingerprint: f._hash || 'unknown',
+      pass_name: passName,
+      severity: f.severity,
+      category: f.category,
+      primary_file: f._primaryFile || f.section,
+      detail_snapshot: f.detail?.slice(0, 600),
+      round_raised: round
+    };
+    if (!hasClassification) return base;
+    return {
+      ...base,
+      sonar_type: f.classification?.sonarType ?? null,
+      effort: f.classification?.effort ?? null,
+      source_kind: f.classification?.sourceKind ?? null,
+      source_name: f.classification?.sourceName ?? null,
+    };
+  });
 
   const { error } = await _supabase.from('audit_findings').insert(rows);
   if (error) process.stderr.write(`  [learning] recordFindings failed: ${error.message}\n`);

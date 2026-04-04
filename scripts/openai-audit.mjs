@@ -31,7 +31,7 @@ import path from 'node:path';
 import OpenAI from 'openai';
 import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
-import { FindingSchema, WiringIssueSchema, LedgerEntrySchema } from './lib/schemas.mjs';
+import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema } from './lib/schemas.mjs';
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
   writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles
@@ -64,7 +64,8 @@ import {
   PASS_STRUCTURE_SYSTEM as SEED_STRUCTURE, PASS_WIRING_SYSTEM as SEED_WIRING,
   PASS_BACKEND_SYSTEM as SEED_BACKEND, PASS_BACKEND_RUBRIC,
   PASS_FRONTEND_SYSTEM as SEED_FRONTEND, PASS_FRONTEND_RUBRIC,
-  PASS_SUSTAINABILITY_SYSTEM as SEED_SUSTAINABILITY, PASS_SUSTAINABILITY_RUBRIC
+  PASS_SUSTAINABILITY_SYSTEM as SEED_SUSTAINABILITY, PASS_SUSTAINABILITY_RUBRIC,
+  buildClassificationRubric
 } from './lib/prompt-seeds.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 
@@ -147,7 +148,7 @@ const PlanAuditResultSchema = z.object({
   principle_coverage_pct: z.number().min(0).max(100),
   specificity: z.enum(['High', 'Medium', 'Low']),
   sustainability: z.enum(['Strong', 'Adequate', 'Weak', 'Missing']),
-  findings: z.array(FindingSchema).max(25),
+  findings: z.array(ProducerFindingSchema).max(25),
   ambiguities: z.array(z.object({
     location: z.string().max(120),
     vague_language: z.string().max(200),
@@ -161,7 +162,7 @@ const PlanAuditResultSchema = z.object({
 
 const PassFindingsSchema = z.object({
   pass_name: z.string().max(30),
-  findings: z.array(FindingSchema).max(15).describe('Top 15 findings, sorted by severity (HIGH first). Prefer fewer deep findings over many shallow ones.'),
+  findings: z.array(ProducerFindingSchema).max(15).describe('Top 15 findings, sorted by severity (HIGH first). Prefer fewer deep findings over many shallow ones.'),
   quick_fix_warnings: z.array(z.string().max(300)).max(5),
   summary: z.string().max(500).describe('Brief summary of this pass')
 });
@@ -177,20 +178,20 @@ const StructurePassSchema = z.object({
     expected: z.string().max(200),
     actual: z.string().max(200)
   })).max(20),
-  findings: z.array(FindingSchema).max(15),
+  findings: z.array(ProducerFindingSchema).max(15),
   summary: z.string().max(500)
 });
 
 const WiringPassSchema = z.object({
   pass_name: z.literal('wiring'),
   wiring_issues: z.array(WiringIssueSchema).max(20),
-  findings: z.array(FindingSchema).max(10),
+  findings: z.array(ProducerFindingSchema).max(10),
   summary: z.string().max(500)
 });
 
 const SustainabilityPassSchema = z.object({
   pass_name: z.literal('sustainability'),
-  findings: z.array(FindingSchema).max(15),
+  findings: z.array(ProducerFindingSchema).max(15),
   dead_code: z.array(z.string().max(200)).max(20),
   quick_fix_warnings: z.array(z.string().max(300)).max(10),
   summary: z.string().max(500)
@@ -717,9 +718,14 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   };
 
   // Inject priority focus areas from repo profile into system prompts
-  const focusBlock = repoProfile?.focusAreas?.length > 0
+  const priorityBlock = repoProfile?.focusAreas?.length > 0
     ? `\n\nPRIORITY CHECKS for this codebase:\n${repoProfile.focusAreas.map(f => `- ${f}`).join('\n')}\n`
     : '';
+
+  // Phase B: classification rubric appended to every pass prompt.
+  // sourceName pulled from config so model changes don't require prompt edits.
+  const classificationBlock = buildClassificationRubric({ sourceKind: 'MODEL', sourceName: MODEL });
+  const focusBlock = priorityBlock + classificationBlock;
 
   // Read shared files ONCE — reuse across passes that need them
   const sharedContext = shared.length > 0 ? readFilesAsContext(shared, { maxPerFile: 6000, maxTotal: 20000 }) : '';
@@ -1102,8 +1108,15 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         round
       }));
 
-      const { inserted, updated, total } = batchWriteLedger(ledgerFile, ledgerEntries);
+      const { inserted, updated, total, rejected } = batchWriteLedger(ledgerFile, ledgerEntries);
       process.stderr.write(`  [ledger] Written to ${ledgerFile}: ${inserted} new, ${updated} updated, ${total} total\n`);
+      if (rejected?.length > 0) {
+        process.stderr.write(`  [ledger] ${rejected.length} entries REJECTED:\n`);
+        for (const { entry, reason } of rejected.slice(0, 5)) {
+          process.stderr.write(`    - ${entry.topicId || '(no topicId)'}: ${reason}\n`);
+        }
+        mergedResult._ledgerRejectedCount = rejected.length;
+      }
     } catch (err) {
       process.stderr.write(`  [ledger] WRITE FAILED: ${err.message}\n`);
       mergedResult._ledgerWriteError = err.message;
