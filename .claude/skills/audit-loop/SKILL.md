@@ -186,7 +186,29 @@ Stability uses `_hash` for exact cross-round matching:
 | Threshold met, 0 new, 2/2 stable | **CONVERGED** → Step 6, then REQUIRED Step 7 |
 | Round 6, not stable | Present to user, then REQUIRED Step 7 |
 
-Max 6 rounds.
+Max 6 rounds for CODE audits.
+
+### PLAN audits: Early-Stop on Rigor Pressure
+
+**Plan audits have infinite refinement surface.** Unlike code (which has objective correctness), a plan can always be made "more rigorous". GPT-5.4 is trained to keep finding issues — after round 2-3, findings shift from "real design bugs" to "push for more rigor" (parser-based analysis instead of regex, full v2 features now, cross-source dedup, etc.).
+
+**Max 3 rounds for plan audits** unless HIGH count is ACTIVELY DECREASING:
+
+| Condition | Action |
+|---|---|
+| R1 → R2 HIGH count drops significantly (>30%) | Continue to R3 |
+| R2 → R3 HIGH count drops significantly | Continue to R4 (rare) |
+| HIGH count plateaus or INCREASES across rounds | **STOP** — remaining findings are scope pressure, not correctness gaps |
+| R2+ findings push for v2 features, parser dependencies, framework expansion | **STOP** — challenge as out-of-scope, document as "known limitations" in plan |
+
+**When to stop, record remaining concerns as**:
+- `## N. Out of Scope (Future)` section in the plan
+- Explicit "known limitations" note
+- Then proceed to Step 7 final gate — acknowledge in transcript that deferrals are intentional
+
+**Why this matters**: Each audit round costs ~$0.15 and ~3 minutes. A 4-round plan audit that doesn't decrease HIGH count is $0.30 and 6 minutes wasted, plus it pressures Claude to accept scope creep during deliberation. Stop earlier, ship earlier, iterate in code.
+
+**Exception**: If you're genuinely uncertain whether a finding is a bug or scope creep, one more round is worth the cost. Use judgment.
 
 **CRITICAL**: Step 7 (Gemini/Claude Opus final review) is MANDATORY after the last audit round, regardless of convergence. Gemini provides an independent perspective that GPT-5.4 cannot. The only exception is when neither `GEMINI_API_KEY` nor `ANTHROPIC_API_KEY` is available.
 
