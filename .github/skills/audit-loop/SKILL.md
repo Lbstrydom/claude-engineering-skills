@@ -190,28 +190,43 @@ If `verdict` is `INCOMPLETE` (passes timed out), offer: re-run with higher timeo
 
 ---
 
-## Step 3 — Deliberation
+## Step 3 — Triage (validity × scope × action)
 
-**You are a peer, not a subordinate.** For each finding, decide:
-- **ACCEPT** — valid, will fix
-- **PARTIAL** — real but severity wrong or better fix exists
-- **CHALLENGE** — wrong (cite evidence: file paths, conventions)
+**You are a peer, not a subordinate.** For each finding, record three orthogonal judgments:
 
-### Finding Classification
+| Dimension | Values | Meaning |
+|---|---|---|
+| **validity** | `valid` \| `invalid` \| `uncertain` | Is the concern real? |
+| **scope** | `in-scope` \| `out-of-scope` | Does it cite code this audit targeted? |
+| **action** | `fix-now` \| `defer` \| `dismiss` \| `rebut` | What happens next? |
+
+### Triage Rules
+
+- `validity=invalid` → action MUST be `dismiss` or `rebut` (can't defer a wrong finding)
+- `validity=uncertain` → action MUST be `rebut` (send to GPT deliberation)
+- `validity=valid` + `scope=in-scope` + HIGH/MEDIUM → action MUST be `fix-now` (unless `accepted-permanent` debt with approver)
+- `validity=valid` + `scope=out-of-scope` → action = `defer` is eligible (pre-existing debt)
+- `validity=valid` + `scope=in-scope` + LOW → operator choice
+- Only `validity=valid` findings can be deferred to the debt ledger
+
+Scope hint: look at the finding's cited files vs `--changed`/`--scope diff`. A
+finding that points at code your PR didn't touch is `out-of-scope` by definition.
+
+### Finding Classification (existing)
 
 Each finding has `is_mechanical: true/false` set by GPT:
 - **Mechanical** (`is_mechanical: true`): deterministic fix. Fix immediately, no deliberation needed.
 - **Architectural** (`is_mechanical: false`): judgment call. Needs deliberation, resets stability if new.
 
-### Tiered Rebuttal
+### Tiered Rebuttal (when action=rebut)
 
 | Finding Severity | Deliberation |
 |-----------------|-------------|
-| **HIGH** challenged/partial | ALWAYS send to GPT deliberation |
-| **MEDIUM** challenged/partial | ALWAYS send to GPT deliberation |
-| **LOW** challenged | Claude decides locally |
+| **HIGH** rebut | ALWAYS send to GPT deliberation |
+| **MEDIUM** rebut | ALWAYS send to GPT deliberation |
+| **LOW** rebut | Claude decides locally |
 
-Only send rebuttal if there are challenged/partial HIGH or MEDIUM findings:
+Only send rebuttal if there are rebut HIGH or MEDIUM findings:
 ```bash
 node scripts/openai-audit.mjs rebuttal <plan-file> <rebuttal-file> \
   --out /tmp/$SID-resolution.json 2>/tmp/$SID-rebuttal-stderr.log
@@ -254,6 +269,8 @@ Max 6 rounds for CODE audits.
 - Then proceed to Step 7 final gate — acknowledge in transcript that deferrals are intentional
 
 **Why this matters**: Each audit round costs ~$0.15 and ~3 minutes. A 4-round plan audit that doesn't decrease HIGH count is $0.30 and 6 minutes wasted, plus it pressures Claude to accept scope creep during deliberation. Stop earlier, ship earlier, iterate in code.
+
+**Exception**: If you're genuinely uncertain whether a finding is a bug or scope creep, one more round is worth the cost. Use judgment.
 
 **CRITICAL**: Step 7 (Gemini/Claude Opus final review) is MANDATORY after the last audit round, regardless of convergence. Gemini provides an independent perspective that GPT-5.4 cannot. The only exception is when neither `GEMINI_API_KEY` nor `ANTHROPIC_API_KEY` is available.
 
@@ -301,16 +318,81 @@ writeLedgerEntry('/tmp/$SID-ledger.json', {
 
 ---
 
+## Step 3.6 — Debt Capture (Phase D)
+
+**Purpose**: Persist out-of-scope valid findings to `.audit/tech-debt.json` so
+future audits suppress them automatically. Without this step, the same
+pre-existing concerns get re-raised every audit, burning tokens and diluting
+signal.
+
+**Eligible candidates** (from Step 3 triage): findings with `action = defer`.
+That means `validity = valid` AND either `scope = out-of-scope` OR
+`validity = valid, scope = in-scope` with a non-`out-of-scope` reason.
+
+### Required fields per deferredReason
+
+| `deferredReason` | Valid scope | Additional required fields |
+|---|---|---|
+| `out-of-scope` | out-of-scope | (none beyond rationale) |
+| `blocked-by` | any | `blockedBy` (issue/PR/topicId ref) |
+| `deferred-followup` | any | `followupPr` (e.g. `owner/repo#123`) |
+| `accepted-permanent` | any | `approver` + `approvedAt` |
+| `policy-exception` | any | `policyRef` + `approver` |
+
+### Capture flow
+
+For each deferral candidate, write one entry to the debt ledger:
+
+```bash
+node -e "
+import { writeDebtEntries } from './scripts/lib/debt-ledger.mjs';
+import { buildDebtEntry } from './scripts/lib/debt-capture.mjs';
+
+const finding = { /* enriched finding with _hash, _primaryFile, _pass, affectedFiles, classification */ };
+const { entry, sensitivity, redactions } = buildDebtEntry(finding, {
+  deferredReason: 'out-of-scope',
+  deferredRationale: 'pre-existing god-module concern, not in this phase scope — tracked for refactor pass',
+  deferredRun: '$SID',
+});
+
+const result = await writeDebtEntries([entry]);
+console.log(JSON.stringify({ inserted: result.inserted, updated: result.updated, rejected: result.rejected.length, sensitive: sensitivity.sensitive, redactions: redactions.length }));
+" --input-type=module
+```
+
+**Automatic protections**:
+- `deferredRationale` must be >= 20 chars (schema-enforced — no rubber-stamp defers)
+- Sensitivity scan (path + content) runs at capture time — secrets in
+  `detail`/`category`/`section`/`rationale` are auto-redacted to
+  `[REDACTED:pattern-name]` and entry is marked `sensitive: true`
+- Per-reason required fields enforced by schema — missing field → rejected
+- Same topicId across runs → updates existing entry, NOT duplicate
+- Event written to `.audit/local/debt-events.jsonl` (or Supabase if cloud active)
+
+### Status card
+
+```
+═══════════════════════════════════════
+  DEBT CAPTURE — Round 1
+  Deferred: 7 entries (5 out-of-scope, 2 blocked-by)
+  Sensitive (redacted): 1
+  Total ledger: 23 entries
+═══════════════════════════════════════
+```
+
+---
+
 ## Execution Order
 
 **CRITICAL: Wait for rebuttal BEFORE fixing.**
 
-1. Send rebuttal (if challenged HIGH/MEDIUM findings)
+1. Send rebuttal (if rebut HIGH/MEDIUM findings from triage)
 2. Wait for rebuttal response
 3. **Write adjudication ledger** (Step 3.5)
-4. Fix ALL findings together (Step 4)
-5. Run tests
-6. Verification audit (Step 5)
+4. **Capture deferrable debt** (Step 3.6) — persist out-of-scope debt
+5. Fix ALL findings together (Step 4)
+6. Run tests
+7. Verification audit (Step 5) — debt suppression runs automatically
 
 ---
 
@@ -373,6 +455,43 @@ Review suppressed topics to validate no legitimate findings were over-suppressed
   Stable: 1/2
 ═══════════════════════════════════════
 ```
+
+### Step 5.1 — Debt Resolution Prompt (Phase D)
+
+After the verification audit runs, if the result's `_debtMemory.debtReopened > 0`
+AND those reopened debt topics have NO matching finding in the current round's
+output, those entries are candidates for resolution (the underlying issue
+appears fixed).
+
+**Resolution requires positive evidence** (fix R2-M3): the entry's files must
+be in `--changed` AND in the audit scope. Absence of a match from an
+out-of-scope audit is NOT proof of resolution.
+
+For each candidate, prompt the operator:
+
+```
+═══════════════════════════════════════
+  DEBT RESOLVED? — abc12345
+  Category: [SYSTEMIC] God Module / Excessive File Size
+  Files: scripts/openai-audit.mjs
+  Reopened this round but no matching finding raised.
+  Resolve? [y/N]
+═══════════════════════════════════════
+```
+
+If confirmed, run:
+
+```bash
+node scripts/debt-resolve.mjs abc12345 \
+  --rationale "fixed in commit <hash> — <brief description>" \
+  --run-id $SID
+```
+
+This removes the entry from `.audit/tech-debt.json` (and from cloud mirror when
+configured), and logs a `resolved` event to the event source. The audit trail
+stays in the event log.
+
+Exit codes: 0 = resolved, 1 = op error, 2 = entry not found / lock contention.
 
 ---
 

@@ -5,7 +5,9 @@
  * @module scripts/learning-store
  */
 
-import 'dotenv/config';
+// Quiet dotenv load — keeps CLI stdout clean for JSON output from debt-resolve, etc.
+import dotenv from 'dotenv';
+dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
 
 let _supabase = null;
 let _userId = null;

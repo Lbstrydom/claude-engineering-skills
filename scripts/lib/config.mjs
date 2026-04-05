@@ -56,7 +56,7 @@ function discoverDotenv() {
 // Run discovery then load .env (uses dotenv package directly, not 'dotenv/config')
 discoverDotenv();
 import dotenv from 'dotenv';
-dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env' });
+dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
 
 // ── Validation helpers ──────────────────────────────────────────────────────
 

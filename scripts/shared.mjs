@@ -143,6 +143,22 @@ export {
   reconcileLocalToCloud,
 } from './lib/debt-memory.mjs';
 
+// Phase D secret scanner — more surgical than sanitizer.mjs's redactSecrets
+// (which redacts any 20+ char token). Phase D version preserves context for
+// debt-capture readability while still redacting known secret shapes.
+export {
+  SECRET_PATTERNS,
+  scanForSecrets,
+  redactSecrets as redactKnownSecrets,
+  redactFields,
+} from './lib/secret-patterns.mjs';
+
+export {
+  computeSensitivity,
+  buildDebtEntry,
+  suggestDeferralCandidate,
+} from './lib/debt-capture.mjs';
+
 // ── File Store ──────────────────────────────────────────────────────────────
 export {
   MutexFileStore,
