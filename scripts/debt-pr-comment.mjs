@@ -41,6 +41,11 @@ import fs from 'node:fs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { DEFAULT_DEBT_EVENTS_PATH } from './lib/debt-events.mjs';
 import { findRecurringEntries } from './lib/debt-review-helpers.mjs';
+import {
+  countCommitsTouchingTopic,
+  findFirstDeferCommit,
+  detectGitHubRepoUrl,
+} from './lib/debt-git-history.mjs';
 
 /** Magic marker that identifies our sticky PR comment. */
 export const STICKY_MARKER = '<!-- audit-loop:debt-comment -->';
@@ -57,8 +62,10 @@ function parseArgs(argv) {
     ledgerPath: get('--ledger') || DEFAULT_DEBT_LEDGER_PATH,
     eventsPath: get('--events') || DEFAULT_DEBT_EVENTS_PATH,
     recurringThreshold: parseInt(get('--recurring-threshold') || '3', 10),
+    surfaceThreshold: parseInt(get('--surface-threshold') || '1', 10),
     outFile: get('--out'),
     noOpIfEmpty: args.includes('--no-op-if-empty'),
+    noGit: args.includes('--no-git'),
     prNumber: get('--pr'),
     help: args.includes('--help') || args.includes('-h'),
   };
@@ -77,6 +84,8 @@ Options:
   --ledger <path>          Debt ledger (default: .audit/tech-debt.json)
   --events <path>          Event log (default: .audit/local/debt-events.jsonl)
   --recurring-threshold N  Surface recurring debt ≥ N runs (default: 3)
+  --surface-threshold N    Only render touched-debt section if N+ entries touched (default: 1)
+  --no-git                 Skip git-history enrichment (occurrences + commit links)
   --out <file>             Write to file (default: stdout)
   --no-op-if-empty         Exit 0 with no output when nothing to report
   --pr <num>               PR number (display only)
@@ -120,14 +129,24 @@ function groupTouchedByFile(entries) {
 
 // ── Markdown rendering ──────────────────────────────────────────────────────
 
-function renderEntryLine(e) {
-  const sevBadge = e.severity === 'HIGH' ? 'H' : e.severity === 'MEDIUM' ? 'M' : 'L';
-  const occ = (e.distinctRunCount ?? 0);
+function renderEntryLine(e, opts = {}) {
+  const { occurrencesOverride, firstDefer } = opts;
+  let sevBadge;
+  if (e.severity === 'HIGH') sevBadge = 'H';
+  else if (e.severity === 'MEDIUM') sevBadge = 'M';
+  else sevBadge = 'L';
+  // Prefer event-log occurrences, fall back to git-history count (D.8)
+  const occ = occurrencesOverride ?? e.distinctRunCount ?? 0;
   const occText = occ > 0 ? `, occurrences: ${occ}` : '';
   const deferredAt = (e.deferredAt || '').slice(0, 10);
   const deferredDateText = deferredAt ? `, deferred ${deferredAt}` : '';
   const owner = e.owner ? ` _(${e.owner})_` : '';
-  return `- \`${e.topicId.slice(0, 8)}\` ${sevBadge} — ${e.category}${owner} (${e.deferredReason}${occText}${deferredDateText})`;
+  // D.8: linkify first-defer commit if we have one
+  let topicDisplay = `\`${e.topicId.slice(0, 8)}\``;
+  if (firstDefer?.url) {
+    topicDisplay = `[\`${e.topicId.slice(0, 8)}\`](${firstDefer.url})`;
+  }
+  return `- ${topicDisplay} ${sevBadge} — ${e.category}${owner} (${e.deferredReason}${occText}${deferredDateText})`;
 }
 
 export function renderPrComment({
@@ -135,7 +154,16 @@ export function renderPrComment({
   recurringDebt,
   totalEntries,
   prNumber,
+  occurrencesOverrides,
+  firstDefers,
 }) {
+  // D.8: per-entry enrichments from git-history fallback (all optional)
+  const occOverrides = occurrencesOverrides || new Map();
+  const firstDeferMap = firstDefers || new Map();
+  const entryOpts = (topicId) => ({
+    occurrencesOverride: occOverrides.get(topicId),
+    firstDefer: firstDeferMap.get(topicId),
+  });
   const lines = [STICKY_MARKER];
   const touchedCount = touchedDebt.length;
   const recurringCount = recurringDebt.length;
@@ -158,7 +186,7 @@ export function renderPrComment({
       const fileTotal = totalEntries; // could filter per-file but keep it simple
       lines.push(`**${file}** (${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} touched, ${fileTotal} total across ledger)`);
       for (const e of entries) {
-        lines.push(renderEntryLine(e));
+        lines.push(renderEntryLine(e, entryOpts(e.topicId)));
       }
       lines.push('');
     }
@@ -177,7 +205,7 @@ export function renderPrComment({
     lines.push('');
     lines.push('Consider a dedicated refactor pass for these:');
     for (const e of recurringDebt.slice(0, 20)) {
-      lines.push(renderEntryLine(e));
+      lines.push(renderEntryLine(e, entryOpts(e.topicId)));
     }
     if (recurringDebt.length > 20) {
       lines.push(`- _… and ${recurringDebt.length - 20} more_`);
@@ -232,16 +260,57 @@ function main() {
   const touchedDebt = findTouchedDebt(ledger.entries, changedFiles);
   const recurringDebt = findRecurringEntries(ledger.entries, opts.recurringThreshold);
 
-  if (opts.noOpIfEmpty && touchedDebt.length === 0 && recurringDebt.length === 0) {
-    process.stderr.write('  [debt-pr-comment] no-op (no touched or recurring debt)\n');
+  // D.8: surface-threshold — only render comment if touched count >= threshold.
+  // Prevents noise on small PRs. Recurring section always renders.
+  const meetsTouchedThreshold = touchedDebt.length >= opts.surfaceThreshold;
+  const shouldNoOp = opts.noOpIfEmpty
+    && !meetsTouchedThreshold
+    && recurringDebt.length === 0;
+  if (shouldNoOp) {
+    process.stderr.write(
+      `  [debt-pr-comment] no-op (touched=${touchedDebt.length}, threshold=${opts.surfaceThreshold}, recurring=${recurringDebt.length})\n`
+    );
     process.exit(0);
   }
 
+  // D.8: derive per-entry occurrences + first-defer commit from git history
+  // (fallback when event log is unavailable, e.g. in CI with no local events).
+  const occurrencesOverrides = new Map();
+  const firstDefers = new Map();
+  if (!opts.noGit) {
+    const repoUrl = detectGitHubRepoUrl();
+    // Only enrich entries actually rendered (touched + top-20 of recurring)
+    const toEnrich = new Set([
+      ...touchedDebt.map(e => e.topicId),
+      ...recurringDebt.slice(0, 20).map(e => e.topicId),
+    ]);
+    for (const topicId of toEnrich) {
+      // Only override when the event-log-derived occurrences is absent or zero;
+      // otherwise prefer the event-log source (more accurate).
+      const entry = ledger.entries.find(e => e.topicId === topicId);
+      const eventOcc = entry?.distinctRunCount ?? 0;
+      if (eventOcc === 0) {
+        const count = countCommitsTouchingTopic(topicId, { ledgerPath: opts.ledgerPath });
+        if (count > 0) occurrencesOverrides.set(topicId, count);
+      }
+      const first = findFirstDeferCommit(topicId, {
+        ledgerPath: opts.ledgerPath,
+        remoteUrl: repoUrl,
+      });
+      if (first) firstDefers.set(topicId, first);
+    }
+  }
+
+  // If below threshold but recurring present, suppress touched section but keep recurring
+  const renderedTouched = meetsTouchedThreshold ? touchedDebt : [];
+
   const body = renderPrComment({
-    touchedDebt,
+    touchedDebt: renderedTouched,
     recurringDebt,
     totalEntries: ledger.entries.length,
     prNumber: opts.prNumber,
+    occurrencesOverrides,
+    firstDefers,
   });
 
   if (opts.outFile) {

@@ -183,6 +183,15 @@ export {
   resolveOwners,
 } from './lib/owner-resolver.mjs';
 
+// ── Git-history debt derivation (Phase D.8) ─────────────────────────────────
+export {
+  countCommitsTouchingTopic,
+  findFirstDeferCommit,
+  detectGitHubRepoUrl,
+  buildCommitUrl,
+  deriveOccurrencesFromGit,
+} from './lib/debt-git-history.mjs';
+
 // ── File Store ──────────────────────────────────────────────────────────────
 export {
   MutexFileStore,

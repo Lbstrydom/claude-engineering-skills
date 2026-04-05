@@ -7,6 +7,18 @@ name: audit-debt-surface
 on:
   pull_request:
     branches: [main]
+  workflow_call:
+    inputs:
+      surface-threshold:
+        description: 'Only comment when at least N touched debt entries (default 1)'
+        required: false
+        type: number
+        default: 1
+      fail-on-budget-exceeded:
+        description: 'Fail the check when debt budgets exceeded (default false, warn only)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -55,17 +67,20 @@ jobs:
       - name: Generate PR comment body
         id: comment
         if: steps.ledger-check.outputs.entries != '0'
+        env:
+          SURFACE_THRESHOLD: ${{ inputs.surface-threshold || '1' }}
         run: |
           node scripts/debt-pr-comment.mjs \
             --changed-file /tmp/changed.txt \
             --pr "${{ github.event.pull_request.number }}" \
+            --surface-threshold "$SURFACE_THRESHOLD" \
             --out /tmp/comment.md \
             --no-op-if-empty || true
           if [ -f /tmp/comment.md ]; then
             echo "body-written=true" >> "$GITHUB_OUTPUT"
           else
             echo "body-written=false" >> "$GITHUB_OUTPUT"
-            echo "No debt touched — skipping comment"
+            echo "Below surface-threshold — skipping comment"
           fi
 
       - name: Post or update sticky PR comment
@@ -92,14 +107,31 @@ jobs:
       - name: Check budgets (optional gate)
         id: budgets
         if: steps.ledger-check.outputs.entries != '0'
-        continue-on-error: true
+        env:
+          FAIL_ON_EXCEEDED: ${{ inputs.fail-on-budget-exceeded || 'false' }}
+        continue-on-error: false
         run: |
-          node scripts/debt-budget-check.mjs --json > /tmp/budget-report.json || true
+          # debt-budget-check exits 2 on policy violation; we may choose to
+          # convert that to a warning (non-blocking) depending on input.
+          set +e
+          node scripts/debt-budget-check.mjs --json > /tmp/budget-report.json
+          EXIT=$?
+          set -e
           cat /tmp/budget-report.json
+
+          if [ "$EXIT" = "0" ]; then
+            echo "Budgets within limits"
+            exit 0
+          fi
+          # Violation: always emit a warning annotation. Fail the job only
+          # when fail-on-budget-exceeded: true.
           node -e "
             const r = require('/tmp/budget-report.json');
-            if (!r.ok) {
-              console.log('::warning::Debt budget violations: ' + r.violations.length);
-              process.exit(0);
-            }
+            const count = (r.violations || []).length;
+            console.log('::warning::Debt budget violations: ' + count);
           "
+          if [ "$FAIL_ON_EXCEEDED" = "true" ]; then
+            echo "::error::fail-on-budget-exceeded=true — failing workflow"
+            exit 1
+          fi
+          exit 0
