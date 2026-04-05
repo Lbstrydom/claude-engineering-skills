@@ -1,0 +1,105 @@
+name: audit-debt-surface
+
+# Phase D.6 — on every PR, compute the intersection of touched files + the
+# debt ledger from the base branch, then post (or update) a sticky comment
+# surfacing the matched debt. Optionally fails the check on budget violations.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write    # needed to post/edit PR comments
+
+jobs:
+  surface-debt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # need full history for diff vs base
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Compute changed files
+        id: diff
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > /tmp/changed.txt
+          echo "count=$(wc -l < /tmp/changed.txt)" >> "$GITHUB_OUTPUT"
+          echo "--- changed files ---"
+          cat /tmp/changed.txt
+
+      - name: Check for debt ledger on base branch
+        id: ledger-check
+        run: |
+          if [ -f .audit/tech-debt.json ]; then
+            ENTRIES=$(node -e "const l=require('./.audit/tech-debt.json');console.log(l.entries?.length||0)")
+            echo "entries=$ENTRIES" >> "$GITHUB_OUTPUT"
+            echo "Debt ledger has $ENTRIES entries"
+          else
+            echo "entries=0" >> "$GITHUB_OUTPUT"
+            echo "No debt ledger present — skipping"
+          fi
+
+      - name: Generate PR comment body
+        id: comment
+        if: steps.ledger-check.outputs.entries != '0'
+        run: |
+          node scripts/debt-pr-comment.mjs \
+            --changed-file /tmp/changed.txt \
+            --pr "${{ github.event.pull_request.number }}" \
+            --out /tmp/comment.md \
+            --no-op-if-empty || true
+          if [ -f /tmp/comment.md ]; then
+            echo "body-written=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "body-written=false" >> "$GITHUB_OUTPUT"
+            echo "No debt touched — skipping comment"
+          fi
+
+      - name: Post or update sticky PR comment
+        if: steps.comment.outputs.body-written == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          # Find existing comment by sticky marker
+          EXISTING_ID=$(gh api "repos/$REPO/issues/$PR_NUM/comments" \
+            --jq '.[] | select(.body | startswith("<!-- audit-loop:debt-comment -->")) | .id' \
+            | head -1)
+
+          if [ -n "$EXISTING_ID" ]; then
+            echo "Updating existing comment $EXISTING_ID"
+            gh api --method PATCH "repos/$REPO/issues/comments/$EXISTING_ID" \
+              --field body=@/tmp/comment.md
+          else
+            echo "Posting new comment"
+            gh pr comment "$PR_NUM" --body-file /tmp/comment.md
+          fi
+
+      - name: Check budgets (optional gate)
+        id: budgets
+        if: steps.ledger-check.outputs.entries != '0'
+        continue-on-error: true
+        run: |
+          node scripts/debt-budget-check.mjs --json > /tmp/budget-report.json || true
+          cat /tmp/budget-report.json
+          node -e "
+            const r = require('/tmp/budget-report.json');
+            if (!r.ok) {
+              console.log('::warning::Debt budget violations: ' + r.violations.length);
+              process.exit(0);
+            }
+          "

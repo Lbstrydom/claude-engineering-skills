@@ -49,8 +49,11 @@ describe('scanForSecrets', () => {
   });
 
   test('detects AWS access key IDs', () => {
-    assert.ok(scanForSecrets('AKIAIOSFODNN7EXAMPLE').patterns.includes('aws-access-key-id'));
-    assert.ok(scanForSecrets('ASIAIOSFODNN7EXAMPLE').patterns.includes('aws-access-key-id'));
+    // Synthetic fixtures that match AWS key regex (AKIA|ASIA + 16 uppercase alphanum)
+    // but are NOT AWS's published doc values (which trip GitHub secret-scanning
+    // even though they're intentional fixtures).
+    assert.ok(scanForSecrets('AKIAFAKEKEY1234567XY').patterns.includes('aws-access-key-id'));
+    assert.ok(scanForSecrets('ASIAFAKEKEY1234567XY').patterns.includes('aws-access-key-id'));
   });
 
   test('detects GitHub personal access tokens', () => {
@@ -113,12 +116,12 @@ describe('redactSecrets', () => {
   });
 
   test('handles multiple secrets in same string', () => {
-    const input = 'key1=sk-abc123def456ghi789jkl012mno345 AND key2=AKIAIOSFODNN7EXAMPLE';
+    const input = 'key1=sk-abc123def456ghi789jkl012mno345 AND key2=AKIAFAKEKEY1234567XY';
     const r = redactSecrets(input);
     assert.ok(r.redacted.includes('openai-key'));
     assert.ok(r.redacted.includes('aws-access-key-id'));
     assert.equal(r.text.includes('sk-abc'), false);
-    assert.equal(r.text.includes('AKIAIO'), false);
+    assert.equal(r.text.includes('AKIAFAKE'), false);
   });
 
   test('empty/non-string input returns safely', () => {

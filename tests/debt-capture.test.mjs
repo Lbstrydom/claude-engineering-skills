@@ -63,7 +63,7 @@ describe('computeSensitivity', () => {
   });
 
   test('secret in category flags sensitive', () => {
-    const f = { ...benignFinding, category: 'leaked AKIAIOSFODNN7EXAMPLE' };
+    const f = { ...benignFinding, category: 'leaked AKIAFAKEKEY1234567XY' };
     const r = computeSensitivity(f);
     assert.equal(r.sensitive, true);
   });
