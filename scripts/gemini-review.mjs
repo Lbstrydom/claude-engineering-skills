@@ -116,7 +116,10 @@ RULES:
 2. Only raise genuinely NEW findings — do not re-raise what GPT already found (even if phrased differently).
 3. Quality over quantity — 3 real findings beat 10 vague ones.
 4. Quick-fix detection still applies — flag band-aids.
-5. If the deliberation was fair and the code is good, say APPROVE. Don't manufacture issues.`;
+5. If the deliberation was fair and the code is good, say APPROVE. Don't manufacture issues.
+6. If the prompt includes a "Pre-filtered Debt" section, DO NOT re-raise any topic listed there.
+   Those concerns are pre-existing, operator-deferred, and tracked outside this audit's scope.
+   They were explicitly filtered from the transcript by the upstream pipeline.`;
 
 // ── Gemini API Helper ──────────────────────────────────────────────────────────
 
@@ -309,6 +312,30 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     }
   }
 
+  // Phase D.4: extract debt-suppression context from transcript envelope.
+  // When the upstream audit already filtered debt, tell the reviewer so they
+  // don't re-surface the same topics.
+  const suppressionContext = transcript._debtMemory?.suppressionContext
+    || transcript.debt_memory?.suppressionContext
+    || [];
+  let debtBlock = '';
+  if (Array.isArray(suppressionContext) && suppressionContext.length > 0) {
+    const lines = suppressionContext.slice(0, 50).map(s =>
+      `- [${s.topicId}] ${s.category} (${s.section}) — ${s.deferredReason}`
+    );
+    debtBlock = [
+      '## Pre-filtered Debt (already suppressed this round — DO NOT resurface)',
+      `The following ${suppressionContext.length} topics were matched against the repo's`,
+      'persistent debt ledger and filtered from the transcript above. They are',
+      'pre-existing concerns explicitly deferred by the operator. If you see new',
+      'findings in your review that match any of these topics, EXCLUDE them —',
+      'the pipeline already handled them.',
+      '',
+      ...lines,
+      '',
+    ].join('\n');
+  }
+
   const userPrompt = [
     '## Project Context',
     projectContext,
@@ -327,9 +354,12 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     '',
     '---',
     '',
+    debtBlock,
+    debtBlock ? '---' : '',
+    debtBlock ? '' : '',
     '## Code Files',
     codeContext || '(No code files found — review based on transcript only)',
-  ].join('\n');
+  ].filter(Boolean).join('\n');
 
   const selectedModel = provider === 'gemini' ? MODEL : CLAUDE_OPUS_MODEL;
   const providerLabel = provider === 'gemini' ? 'Gemini' : 'Claude Opus';
@@ -513,6 +543,50 @@ async function main() {
 
   try {
     const { result, usage, latencyMs } = await runFinalReview(provider, client, planContent, transcriptContent, projectContext);
+
+    // Phase D.4 defense-in-depth: re-suppress Gemini new_findings that match
+    // pre-filtered debt topics, even if the reviewer ignored our warning.
+    // Fuzzy match on category+section+detail against the transcript envelope.
+    try {
+      const transcriptObj = JSON.parse(transcriptContent);
+      const suppressionCtx = transcriptObj._debtMemory?.suppressionContext
+        || transcriptObj.debt_memory?.suppressionContext
+        || [];
+      if (Array.isArray(suppressionCtx) && suppressionCtx.length > 0 && Array.isArray(result.new_findings)) {
+        const { jaccardSimilarity } = await import('./lib/ledger.mjs');
+        // Threshold 0.30 (slightly lower than suppressReRaises' 0.35) because
+        // debt envelope signatures are short (category+section) while Gemini's
+        // new_findings include long detail text — asymmetric signature lengths
+        // dilute Jaccard. 0.30 captures real matches without over-suppressing.
+        const THRESHOLD = 0.30;
+        const before = result.new_findings.length;
+        const kept = [];
+        const debtSuppressed = [];
+        for (const f of result.new_findings) {
+          const fSig = `${f.category} ${f.section} ${f.detail}`;
+          let match = null;
+          let bestScore = 0;
+          for (const d of suppressionCtx) {
+            const dSig = `${d.category} ${d.section}`;
+            const score = jaccardSimilarity(fSig, dSig);
+            if (score > bestScore) { bestScore = score; match = d; }
+          }
+          if (match && bestScore > THRESHOLD) {
+            debtSuppressed.push({ finding: f, matchedTopic: match.topicId, score: bestScore });
+          } else {
+            kept.push(f);
+          }
+        }
+        if (debtSuppressed.length > 0) {
+          process.stderr.write(`  [final-review] Debt re-suppression: ${debtSuppressed.length}/${before} new_findings matched pre-filtered debt\n`);
+          for (const s of debtSuppressed.slice(0, 3)) {
+            process.stderr.write(`    [debt-suppressed] ${s.matchedTopic.slice(0, 8)} score=${s.score.toFixed(2)}\n`);
+          }
+          result.new_findings = kept;
+          result._debtSuppressedCount = debtSuppressed.length;
+        }
+      }
+    } catch { /* transcript not JSON or no _debtMemory — skip */ }
 
     // Add semantic hashes to new findings for cross-model tracking
     if (result.new_findings) {

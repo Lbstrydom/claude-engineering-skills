@@ -1260,12 +1260,30 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       process.stderr.write(`═══════════════════════════════════════\n\n`);
     }
 
+    // Build suppression context envelope for downstream Gemini review (Phase D.4)
+    // so the final-gate doesn't resurface what we already filtered.
+    const debtSuppressionContext = [];
+    for (const [topicId] of surfacedTopics) {
+      const entry = debtLedger.entries.find(e => e.topicId === topicId);
+      if (entry) {
+        debtSuppressionContext.push({
+          topicId,
+          category: entry.category,
+          section: entry.section,
+          affectedFiles: entry.affectedFiles,
+          deferredReason: entry.deferredReason,
+        });
+      }
+    }
+
     mergedResult._debtMemory = {
       eventSource: debtContext.source,
       debtSuppressed: surfacedTopics.size,
       debtReopened: reopenedDebtTopics.size,
       debtEntriesLoaded: debtLedger.entries.length,
       newlyEscalated: newlyEscalated.length,
+      // Phase D.4: transcript envelope for Gemini (capped to 50 topics to bound context)
+      suppressionContext: debtSuppressionContext.slice(0, 50),
     };
   }
 
