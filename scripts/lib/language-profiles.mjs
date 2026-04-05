@@ -5,7 +5,7 @@
  * lives in LanguageContext (built per-run, not baked into profiles).
  *
  * Phase A of the multi-language audit plan. See
- * docs/plans/phase-a-language-aware-analysis.md for design rationale.
+ * docs/complete/phase-a-language-aware-analysis.md for design rationale.
  * @module scripts/lib/language-profiles
  */
 

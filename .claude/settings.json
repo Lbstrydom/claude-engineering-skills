@@ -34,7 +34,8 @@
       "Bash(node -e \"const r=JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/User/AppData/Local/Temp/audit-phaseA-r4-result.json','utf8'\\)\\);r.findings.forEach\\(f=>console.log\\(f.id,f.severity,f.category.slice\\(0,55\\),'|',f.detail.slice\\(0,140\\)\\)\\)\")",
       "Bash(node -e \"const r=JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/User/AppData/Local/Temp/audit-phaseB-r1-result.json','utf8'\\)\\);r.findings.forEach\\(f=>console.log\\(f.id,f.severity,f.category.slice\\(0,50\\),'|',f.detail.slice\\(0,140\\)\\)\\)\")",
       "Bash(node -e \"const r=JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/User/AppData/Local/Temp/audit-phaseB-r2-result.json','utf8'\\)\\);r.findings.forEach\\(f=>console.log\\(f.id,f.severity,f.category.slice\\(0,50\\),'|',f.detail.slice\\(0,130\\)\\)\\)\")",
-      "Bash(node -e \"const r=JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/User/AppData/Local/Temp/audit-phaseC-r1-result.json','utf8'\\)\\);r.findings.forEach\\(f=>console.log\\(f.id,f.severity,f.category.slice\\(0,55\\),'|',f.detail.slice\\(0,140\\)\\)\\)\")"
+      "Bash(node -e \"const r=JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/User/AppData/Local/Temp/audit-phaseC-r1-result.json','utf8'\\)\\);r.findings.forEach\\(f=>console.log\\(f.id,f.severity,f.category.slice\\(0,55\\),'|',f.detail.slice\\(0,140\\)\\)\\)\")",
+      "Bash(node -e ':*)"
     ],
     "additionalDirectories": [
       "c:\\GIT\\claude-audit-loop\\.claude\\skills\\audit-loop",

@@ -13,7 +13,7 @@ import { populateFindingMetadata } from '../scripts/lib/ledger.mjs';
  * Verifies Phase A's dependency resolution works on a realistic Python
  * package structure (src-layout with absolute imports). This is the
  * fixture-based integration test called out in
- * docs/plans/phase-a-language-aware-analysis.md §2.8.
+ * docs/complete/phase-a-language-aware-analysis.md §2.8.
  */
 
 describe('Phase A integration — Python src/ layout', () => {
