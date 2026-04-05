@@ -175,6 +175,14 @@ export {
   countDebtByFile,
 } from './lib/debt-review-helpers.mjs';
 
+// ── Ownership (Phase D.5) ───────────────────────────────────────────────────
+export {
+  findCodeownersFile,
+  loadCodeownersEntries,
+  resolveOwner,
+  resolveOwners,
+} from './lib/owner-resolver.mjs';
+
 // ── File Store ──────────────────────────────────────────────────────────────
 export {
   MutexFileStore,

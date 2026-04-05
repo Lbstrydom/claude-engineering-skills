@@ -254,6 +254,65 @@ describe('findBudgetViolations', () => {
   });
 });
 
+describe('findBudgetViolations — glob support (D.5)', () => {
+  const entries = [
+    makeEntry({ topicId: 'a', affectedFiles: ['scripts/lib/x.mjs'] }),
+    makeEntry({ topicId: 'b', affectedFiles: ['scripts/lib/y.mjs'] }),
+    makeEntry({ topicId: 'c', affectedFiles: ['scripts/lib/sub/z.mjs'] }),
+    makeEntry({ topicId: 'd', affectedFiles: ['scripts/openai-audit.mjs'] }),
+    makeEntry({ topicId: 'e', affectedFiles: ['docs/plan.md'] }),
+  ];
+
+  test('glob pattern scripts/lib/** matches all 3 lib files', () => {
+    const v = findBudgetViolations(entries, { 'scripts/lib/**': 2 });
+    assert.equal(v.length, 1);
+    assert.equal(v[0].path, 'scripts/lib/**');
+    assert.equal(v[0].count, 3);
+    assert.equal(v[0].isGlob, true);
+  });
+
+  test('exact path still works alongside glob', () => {
+    const v = findBudgetViolations(entries, {
+      'scripts/lib/**': 10,                  // not violated (3 <= 10)
+      'scripts/openai-audit.mjs': 0,         // violated (1 > 0)
+    });
+    assert.equal(v.length, 1);
+    assert.equal(v[0].path, 'scripts/openai-audit.mjs');
+    assert.equal(v[0].isGlob, false);
+  });
+
+  test('glob within-budget not flagged', () => {
+    assert.deepEqual(findBudgetViolations(entries, { 'scripts/lib/**': 5 }), []);
+  });
+
+  test('multiple glob violations sort by how much over-budget', () => {
+    const v = findBudgetViolations(entries, {
+      'scripts/**': 1,       // 4 entries, over by 3
+      'docs/**': 0,          // 1 entry, over by 1
+    });
+    assert.equal(v.length, 2);
+    assert.equal(v[0].path, 'scripts/**');  // biggest over first
+    assert.equal(v[1].path, 'docs/**');
+  });
+
+  test('isGlob flag distinguishes pattern types', () => {
+    const v = findBudgetViolations(entries, {
+      'scripts/lib/**': 0,
+      'scripts/openai-audit.mjs': 0,
+    });
+    const byPath = Object.fromEntries(v.map(x => [x.path, x.isGlob]));
+    assert.equal(byPath['scripts/lib/**'], true);
+    assert.equal(byPath['scripts/openai-audit.mjs'], false);
+  });
+
+  test('accepts injected matcher for testability', () => {
+    let called = false;
+    const fakeMatcher = (files, pattern) => { called = true; return files; };
+    findBudgetViolations(entries, { '**/*.mjs': 0 }, { matcher: fakeMatcher });
+    assert.equal(called, true);
+  });
+});
+
 describe('countDebtByFile', () => {
   test('counts primary files', () => {
     const entries = [

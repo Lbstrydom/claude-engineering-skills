@@ -221,22 +221,60 @@ export function countDebtByFile(debtEntries) {
 }
 
 /**
- * Detect files exceeding their budget (exact-match only in D.3 — glob
- * support via micromatch lands in D.5).
+ * Detect files exceeding their budget. Supports both exact paths AND globs
+ * (via micromatch). Budget violations are reported per-BUDGET-KEY:
+ *   budget "scripts/lib/**": 10 exceeded → one violation record with
+ *   count = total entries across all files matching that glob.
+ *
+ * This matches operator intent: "I budget 10 debt items for the scripts/lib
+ * area" is one policy, not N file-level policies.
  *
  * @param {object[]} debtEntries
- * @param {Record<string, number>} budgets - path → max allowed count
- * @returns {{path: string, count: number, budget: number}[]}
+ * @param {Record<string, number>} budgets - path or glob → max allowed count
+ * @param {object} [opts]
+ * @param {Function} [opts.matcher] - override matcher for testing (fn(files, pattern) → files[])
+ * @returns {{path: string, count: number, budget: number, isGlob: boolean}[]}
  */
-export function findBudgetViolations(debtEntries, budgets = {}) {
+export function findBudgetViolations(debtEntries, budgets = {}, opts = {}) {
   if (!budgets || Object.keys(budgets).length === 0) return [];
+
+  const files = debtEntries
+    .map(e => (e.affectedFiles || [])[0])
+    .filter(Boolean);
   const counts = countDebtByFile(debtEntries);
+  const matcher = opts.matcher || getDefaultMatcher();
+
   const violations = [];
-  for (const [path, budget] of Object.entries(budgets)) {
-    const count = counts.get(path) || 0;
-    if (count > budget) {
-      violations.push({ path, count, budget });
+  for (const [pattern, budget] of Object.entries(budgets)) {
+    const isGlob = /[*?[\]{}]/.test(pattern);
+    if (!isGlob) {
+      const count = counts.get(pattern) || 0;
+      if (count > budget) {
+        violations.push({ path: pattern, count, budget, isGlob: false });
+      }
+    } else {
+      const matched = matcher(files, pattern);
+      if (matched.length > budget) {
+        violations.push({ path: pattern, count: matched.length, budget, isGlob: true });
+      }
     }
   }
+
   return violations.sort((a, b) => (b.count - b.budget) - (a.count - a.budget));
+}
+
+// Lazy micromatch loader — synchronous via createRequire (ESM→CJS interop)
+import { createRequire } from 'node:module';
+let _matcher = null;
+function getDefaultMatcher() {
+  if (_matcher) return _matcher;
+  try {
+    const mm = createRequire(import.meta.url)('micromatch');
+    _matcher = (files, pattern) => mm(files, pattern);
+    return _matcher;
+  } catch (err) {
+    process.stderr.write(`  [budgets] micromatch unavailable (${err.message}); falling back to exact-match\n`);
+    _matcher = (files, pattern) => files.filter(f => f === pattern);
+    return _matcher;
+  }
 }

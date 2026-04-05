@@ -19,6 +19,7 @@
 import path from 'node:path';
 import { isSensitiveFile } from './file-io.mjs';
 import { scanForSecrets, redactFields, redactSecrets } from './secret-patterns.mjs';
+import { resolveOwner } from './owner-resolver.mjs';
 
 /**
  * Check whether a finding should be marked sensitive.
@@ -142,7 +143,12 @@ export function buildDebtEntry(finding, captureArgs) {
   if (approver !== undefined) entry.approver = approver;
   if (approvedAt !== undefined) entry.approvedAt = approvedAt;
   if (policyRef !== undefined) entry.policyRef = policyRef;
-  if (owner !== undefined) entry.owner = owner;
+
+  // Owner resolution (D.5): explicit arg wins, else consult CODEOWNERS for
+  // the first affected file. If neither resolves → undefined (unassigned).
+  const primaryFile = entry.affectedFiles[0];
+  const resolvedOwner = resolveOwner(primaryFile, { explicitOwner: owner });
+  if (resolvedOwner) entry.owner = resolvedOwner;
 
   return {
     entry,
