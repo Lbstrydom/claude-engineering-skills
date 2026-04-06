@@ -3,7 +3,7 @@
  * pickAdapter() determines which adapter to use based on AUDIT_STORE env var.
  */
 
-const VALID_ADAPTERS = ['noop', 'supabase'];
+const VALID_ADAPTERS = ['noop', 'supabase', 'sqlite', 'postgres'];
 const _loggedOnce = new Set();
 
 function logOnce(key, msg) {
@@ -58,6 +58,14 @@ function validateExplicitAdapter(name) {
     }
   }
 
+  if (normalized === 'postgres') {
+    if (!process.env.AUDIT_POSTGRES_URL) {
+      throw new Error('AUDIT_STORE=postgres requires AUDIT_POSTGRES_URL. Set this env var or use AUDIT_STORE=noop');
+    }
+  }
+
+  // sqlite has no required env vars (defaults to ~/.audit-loop/shared.db)
+
   return normalized;
 }
 
@@ -81,6 +89,34 @@ export async function loadAdapterModule(name) {
           throw new Error(
             'AUDIT_STORE=supabase requires @supabase/supabase-js but it is not installed. ' +
             'Run: npm install @supabase/supabase-js (Or set AUDIT_STORE=noop)'
+          );
+        }
+        throw err;
+      }
+    }
+    case 'sqlite': {
+      try {
+        const mod = await import('./sqlite-store.mjs');
+        return mod.adapter;
+      } catch (err) {
+        if (err.code === 'ERR_MODULE_NOT_FOUND' || err.message?.includes('better-sqlite3')) {
+          throw new Error(
+            'AUDIT_STORE=sqlite requires better-sqlite3. ' +
+            'Run: npm install better-sqlite3 (Or set AUDIT_STORE=noop)'
+          );
+        }
+        throw err;
+      }
+    }
+    case 'postgres': {
+      try {
+        const mod = await import('./postgres-store.mjs');
+        return mod.adapter;
+      } catch (err) {
+        if (err.code === 'ERR_MODULE_NOT_FOUND' || err.message?.includes('pg')) {
+          throw new Error(
+            'AUDIT_STORE=postgres requires pg. ' +
+            'Run: npm install pg (Or set AUDIT_STORE=noop)'
           );
         }
         throw err;
