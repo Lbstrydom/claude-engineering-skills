@@ -61,7 +61,10 @@ export async function createGitHubAdapter(config = {}) {
   async function readJson(path) {
     const file = await gitApi.readFile(path);
     if (!file) return null;
-    try { return JSON.parse(file.content); } catch { return null; }
+    try { return JSON.parse(file.content); } catch (err) {
+      process.stderr.write(`  [github] JSON parse error for ${path}: ${err.message}\n`);
+      return null;
+    }
   }
 
   async function writeJson(path, data, message) {
@@ -90,8 +93,9 @@ export async function createGitHubAdapter(config = {}) {
           return false;
         }
         // Verify schema version
+        const REQUIRED_SCHEMA_VERSION = 1;
         const sv = await readJson('schema_version.json');
-        if (!sv || sv.v < 1) {
+        if (!sv || sv.v < REQUIRED_SCHEMA_VERSION) {
           process.stderr.write(`  [github] ERROR: invalid schema version. Run: node scripts/setup-github-store.mjs\n`);
           return false;
         }

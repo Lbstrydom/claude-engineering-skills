@@ -48,9 +48,19 @@ export function normalizeGitHubError(err, context) {
   }
 
   // Stale ref (conflict during push)
-  if (status === 409 || status === 422) {
+  if (status === 409) {
     return { reason: 'transient', retryable: true, bufferToOutbox: true,
-      operatorHint: 'Concurrent write conflict; retrying via merge', nativeCode: String(status) };
+      operatorHint: 'Concurrent write conflict; retrying via merge', nativeCode: '409' };
+  }
+
+  // 422 can be stale-ref OR validation error
+  if (status === 422) {
+    if (msg.includes('not a fast forward') || msg.includes('Update is not a fast forward') || msg.includes('sha')) {
+      return { reason: 'transient', retryable: true, bufferToOutbox: true,
+        operatorHint: 'Stale ref; retrying', nativeCode: '422-stale' };
+    }
+    return { reason: 'validation', retryable: false, bufferToOutbox: false,
+      operatorHint: `GitHub rejected payload: ${msg}`, nativeCode: '422-validation' };
   }
 
   // Server errors
