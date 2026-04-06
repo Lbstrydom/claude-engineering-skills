@@ -3,7 +3,7 @@
  * pickAdapter() determines which adapter to use based on AUDIT_STORE env var.
  */
 
-const VALID_ADAPTERS = ['noop', 'supabase', 'sqlite', 'postgres'];
+const VALID_ADAPTERS = ['noop', 'supabase', 'sqlite', 'postgres', 'github'];
 const _loggedOnce = new Set();
 
 function logOnce(key, msg) {
@@ -64,6 +64,16 @@ function validateExplicitAdapter(name) {
     }
   }
 
+  if (normalized === 'github') {
+    const missing = [];
+    if (!process.env.AUDIT_GITHUB_TOKEN) missing.push('AUDIT_GITHUB_TOKEN');
+    if (!process.env.AUDIT_GITHUB_OWNER) missing.push('AUDIT_GITHUB_OWNER');
+    if (!process.env.AUDIT_GITHUB_REPO) missing.push('AUDIT_GITHUB_REPO');
+    if (missing.length > 0) {
+      throw new Error(`AUDIT_STORE=github requires: ${missing.join(', ')}. Set these env vars or use AUDIT_STORE=noop`);
+    }
+  }
+
   // sqlite has no required env vars (defaults to ~/.audit-loop/shared.db)
 
   return normalized;
@@ -117,6 +127,20 @@ export async function loadAdapterModule(name) {
           throw new Error(
             'AUDIT_STORE=postgres requires pg. ' +
             'Run: npm install pg (Or set AUDIT_STORE=noop)'
+          );
+        }
+        throw err;
+      }
+    }
+    case 'github': {
+      try {
+        const mod = await import('./github-store.mjs');
+        return mod.adapter;
+      } catch (err) {
+        if (err.code === 'ERR_MODULE_NOT_FOUND' || err.message?.includes('octokit')) {
+          throw new Error(
+            'AUDIT_STORE=github requires @octokit/rest. ' +
+            'Run: npm install @octokit/rest @octokit/plugin-throttling @octokit/plugin-retry (Or set AUDIT_STORE=noop)'
           );
         }
         throw err;
