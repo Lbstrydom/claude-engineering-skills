@@ -118,15 +118,18 @@ export function findSimilarParagraphs(contentA, contentB, options = {}) {
   const parasA = extractParagraphs(contentA);
   const parasB = extractParagraphs(contentB);
 
+  // Pre-tokenize B to avoid repeated work in inner loop
+  const tokenizedB = parasB.map(b => ({ ...b, tokens: tokenize(b.text) }))
+    .filter(b => b.tokens.size >= minTokens);
+
   const matches = [];
 
   for (const a of parasA) {
     const tokensA = tokenize(a.text);
     if (tokensA.size < minTokens) continue;
 
-    for (const b of parasB) {
-      const tokensB = tokenize(b.text);
-      if (tokensB.size < minTokens) continue;
+    for (const b of tokenizedB) {
+      const tokensB = b.tokens;
 
       const score = jaccardSimilarity(tokensA, tokensB);
       if (score >= threshold) {

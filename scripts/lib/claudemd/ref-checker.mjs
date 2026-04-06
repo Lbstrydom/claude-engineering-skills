@@ -33,8 +33,13 @@ export function resolveReferencedPath(sourceFile, rawRef, repoRoot) {
   // Resolve relative to source file's directory
   const sourceDir = path.dirname(sourceFile);
   const resolved = path.posix.normalize(path.posix.join(sourceDir, cleaned));
-  const absPath = path.join(repoRoot, resolved);
 
+  // Repo boundary check — reject paths that escape the repo root
+  if (resolved.startsWith('..')) {
+    return { resolved, skip: true, reason: 'escapes-repo-root' };
+  }
+
+  const absPath = path.join(repoRoot, resolved);
   return { resolved, skip: false, exists: fs.existsSync(absPath) };
 }
 

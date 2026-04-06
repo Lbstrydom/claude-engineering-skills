@@ -42,7 +42,11 @@ export const DEFAULT_RULES = {
  * @returns {Array<{ ruleId: string, severity: string, file: string, line: number|null, message: string, semanticId: string, fixable: boolean }>}
  */
 export function runRules(files, repoRoot, config = {}) {
-  const rules = { ...DEFAULT_RULES, ...config };
+  // Deep merge: per-rule config overrides individual fields, not whole objects
+  const rules = {};
+  for (const [key, defaults] of Object.entries(DEFAULT_RULES)) {
+    rules[key] = { ...defaults, ...(config[key] || {}) };
+  }
   const findings = [];
 
   // Build indexes once for all reference checks

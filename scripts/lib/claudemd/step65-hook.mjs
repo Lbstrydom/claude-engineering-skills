@@ -3,7 +3,7 @@
  * Runs the claudemd-lint CLI, parses the report, returns structured findings
  * for the convergence card and Step 7 transcript.
  */
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -25,7 +25,7 @@ export function runHygieneCheck(sessionId, repoRoot = process.cwd()) {
 
   let exitCode;
   try {
-    execSync(`node "${scriptPath}" --format json --out "${outFile}"`, {
+    execFileSync(process.execPath, [scriptPath, '--format', 'json', '--out', outFile], {
       cwd: repoRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 30000,

@@ -4,7 +4,6 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { globSync } from 'node:fs';
 
 /** Globs that are always excluded (non-configurable). */
 const MANDATORY_EXCLUDES = [

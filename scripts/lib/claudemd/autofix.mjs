@@ -28,6 +28,8 @@ export function applyFixes(findings, repoRoot, options = {}) {
   }
 
   for (const [filePath, fileFindings] of byFile) {
+    // Sort by line descending — splice from bottom up to avoid stale indices
+    fileFindings.sort((a, b) => (b.line || 0) - (a.line || 0));
     const absPath = path.join(repoRoot, filePath);
     let content;
     try {
