@@ -1277,7 +1277,8 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       }
     }
 
-    mergedResult._debtMemory = {
+    // Stored in temp var because mergedResult is defined later (TDZ)
+    var _debtMemoryData = {
       eventSource: debtContext.source,
       debtSuppressed: surfacedTopics.size,
       debtReopened: reopenedDebtTopics.size,
@@ -1318,11 +1319,11 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         for (const { entry, reason } of rejected.slice(0, 5)) {
           process.stderr.write(`    - ${entry.topicId || '(no topicId)'}: ${reason}\n`);
         }
-        mergedResult._ledgerRejectedCount = rejected.length;
+        var _ledgerRejectedCount = rejected.length;
       }
     } catch (err) {
       process.stderr.write(`  [ledger] WRITE FAILED: ${err.message}\n`);
-      mergedResult._ledgerWriteError = err.message;
+      var _ledgerWriteError = err.message;
     }
   }
 
@@ -1394,9 +1395,18 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     _usage: totalUsage
   };
 
-  // Attach suppression data (accumulated before mergedResult was defined)
+  // Attach data accumulated before mergedResult was defined (var hoisting avoids TDZ)
   if (typeof _suppressionData !== 'undefined') {
     mergedResult._suppression = _suppressionData;
+  }
+  if (typeof _debtMemoryData !== 'undefined') {
+    mergedResult._debtMemory = _debtMemoryData;
+  }
+  if (typeof _ledgerRejectedCount !== 'undefined') {
+    mergedResult._ledgerRejectedCount = _ledgerRejectedCount;
+  }
+  if (typeof _ledgerWriteError !== 'undefined') {
+    mergedResult._ledgerWriteError = _ledgerWriteError;
   }
 
   // Phase 3-4: Record outcomes for learning (v2: include primaryFile + revision ID)
