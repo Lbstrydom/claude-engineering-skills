@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "bundleVersion": "534d30b9324b0296",
+  "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
+  "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
+  "updatedAt": "2026-04-06T14:25:54.630Z",
+  "skills": {
+    "audit": {
+      "path": "skills/audit/SKILL.md",
+      "sha": "bbedf404165d",
+      "size": 17446,
+      "summary": "Audit the implementation of a plan against its specification and engineering principles."
+    },
+    "audit-loop": {
+      "path": "skills/audit-loop/SKILL.md",
+      "sha": "5fcb1c925f62",
+      "size": 25724,
+      "summary": "Self-driving plan-audit-fix loop with adaptive learning."
+    },
+    "plan-backend": {
+      "path": "skills/plan-backend/SKILL.md",
+      "sha": "ec062a7f72d6",
+      "size": 11866,
+      "summary": "Backend architecture planning with engineering principles. Use when the user asks to plan,"
+    },
+    "plan-frontend": {
+      "path": "skills/plan-frontend/SKILL.md",
+      "sha": "1e6d40dc26bf",
+      "size": 15850,
+      "summary": "Frontend UX and implementation planning with design and engineering principles. Use when the"
+    },
+    "ship": {
+      "path": "skills/ship/SKILL.md",
+      "sha": "b1262dffaed8",
+      "size": 10357,
+      "summary": "Sync all project documentation, optionally update a plan, then commit and push to git."
+    }
+  }
+}

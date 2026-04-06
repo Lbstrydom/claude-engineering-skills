@@ -128,7 +128,7 @@ Phase G was originally one plan. R1 audit surfaced 7 HIGHs — classic "too many
 | Phase | Plan | Audit | Implement | Ship |
 |---|---|---|---|---|
 | E — Skill Consolidation + Python | done | done (3R, H:4→6→4) | done | pending audit-loop |
-| F — Install + Update Infra | done | done (3R, H:6→6→5) | — | — |
+| F — Install + Update Infra | done | done (3R, H:6→6→5) | done | pending audit-loop |
 | G.1 — Interface + Facade + noop/Supabase | done | done (3R, H:5→4→4) | — | — |
 | G.2 — SQLite + Postgres | done | done (2R, H:4→4) | — | — |
 | G.3 — GitHub Adapter | done | done (3R, H:6→5→5) | — | — |
