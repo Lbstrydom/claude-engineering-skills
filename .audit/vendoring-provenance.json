@@ -1,0 +1,27 @@
+{
+  "audit-loop": {
+    "sha": "5fcb1c925f62c2513f9a492318ec41ee53204664aea165f754aab37a62fd262d",
+    "vendoredAt": "2026-04-06T10:13:11.768Z",
+    "sourcePath": ".claude/skills/audit-loop/SKILL.md"
+  },
+  "plan-backend": {
+    "sha": "d98ecd3b024da511566e10ceabaffd3ceb72f3fdb1109574153d1cf13c1fe388",
+    "vendoredAt": "2026-04-06T10:13:11.769Z",
+    "sourcePath": "~/.claude/skills/plan-backend/SKILL.md"
+  },
+  "plan-frontend": {
+    "sha": "8f3febbc7a00389d6ac2e5b7a061fb46d2de477f014dac9b72c9ba402e5d6ff6",
+    "vendoredAt": "2026-04-06T10:13:11.769Z",
+    "sourcePath": "~/.claude/skills/plan-frontend/SKILL.md"
+  },
+  "ship": {
+    "sha": "910ea26f624224ba43cb488d76adfca01ab64a2ffa0b971eddaf2ed4bf7ec51e",
+    "vendoredAt": "2026-04-06T10:13:11.769Z",
+    "sourcePath": "~/.claude/skills/ship/SKILL.md"
+  },
+  "audit": {
+    "sha": "05f0b26643590bf8c4ac56bd472012400a0f5da1e7a38af1f1c05f2e7a943852",
+    "vendoredAt": "2026-04-06T10:13:11.769Z",
+    "sourcePath": "~/.claude/skills/audit/SKILL.md"
+  }
+}

@@ -1,10 +1,11 @@
-# CLAUDE.md - Audit Loop Project Guidelines
+# CLAUDE.md - Claude Engineering Skills
 
 ## Project Overview
 
-**Purpose**: Multi-model audit loop — Claude plans/codes, GPT-5.4 audits, Gemini 3.1 Pro does independent final review (Claude Opus fallback).
+**Purpose**: A bundle of 5 AI-pair-programming skills for planning, auditing, and shipping code. Includes a multi-model audit loop (Claude + GPT-5.4 + Gemini 3.1 Pro).
 **Runtime**: Node.js (ESM modules, `"type": "module"`)
-**Deployment**: CLI scripts, invoked by AI coding assistants via skills
+**Deployment**: CLI scripts + skill files, invoked by AI coding assistants (Claude Code, Copilot, Cursor, Windsurf)
+**Repo**: Renamed from `claude-audit-loop` to `claude-engineering-skills` (Phase E)
 
 ## Dependencies (CRITICAL — check versions before flagging issues)
 

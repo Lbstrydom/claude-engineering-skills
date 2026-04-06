@@ -1,10 +1,10 @@
 {
-  "name": "claude-audit-loop",
+  "name": "claude-engineering-skills",
   "version": "1.0.0",
   "description": "Self-driving plan-audit-fix loop with adaptive learning. 3 models: Claude + GPT-5.4 + Gemini 3.1 Pro.",
   "type": "module",
   "bin": {
-    "claude-audit-loop": "install.mjs"
+    "claude-engineering-skills": "install.mjs"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",

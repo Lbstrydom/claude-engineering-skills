@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * @fileoverview One-command installer for claude-audit-loop.
+ * @fileoverview One-command installer for claude-engineering-skills.
  *
  * Usage:
- *   npx github:Lbstrydom/claude-audit-loop
+ *   npx github:Lbstrydom/claude-engineering-skills
  *   node install.mjs
  *   node install.mjs /path/to/project
  */
@@ -19,7 +19,7 @@ const ask = (q) => new Promise(resolve => rl.question(q, resolve));
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', B = '\x1b[1m', D = '\x1b[2m', X = '\x1b[0m';
 
-const REPO = 'https://github.com/Lbstrydom/claude-audit-loop.git';
+const REPO = 'https://github.com/Lbstrydom/claude-engineering-skills.git';
 const SCRIPTS = ['openai-audit.mjs','shared.mjs','gemini-review.mjs','bandit.mjs','refine-prompts.mjs','learning-store.mjs','phase7-check.mjs'];
 const DEPS = ['openai','zod','dotenv','@google/genai','@anthropic-ai/sdk','@supabase/supabase-js'];
 const KEYS = [
@@ -33,7 +33,7 @@ const KEYS = [
 async function main() {
   console.log(`
 ${B}══════════════════════════════════════════════════
-  Claude Audit Loop — Install
+  Claude Engineering Skills — Install
   3 models · 7 phases · adaptive learning
 ══════════════════════════════════════════════════${X}
 `);
@@ -41,7 +41,7 @@ ${B}═════════════════════════�
   // 1. Get target directory
   let target = process.argv[2];
   if (target === '--help' || target === '-h') {
-    console.log('Usage: npx github:Lbstrydom/claude-audit-loop <project-directory>');
+    console.log('Usage: npx github:Lbstrydom/claude-engineering-skills <project-directory>');
     console.log('       node install.mjs <project-directory>');
     rl.close();
     return;
@@ -58,7 +58,7 @@ ${B}═════════════════════════�
   console.log(`  Target: ${B}${target}${X}\n`);
 
   // 2. Clone to temp dir
-  const tmp = path.join(os.tmpdir(), `claude-audit-loop-${Date.now()}`);
+  const tmp = path.join(os.tmpdir(), `claude-engineering-skills-${Date.now()}`);
   console.log(`${D}  Fetching latest from GitHub...${X}`);
   try {
     execSync(`git clone --depth 1 ${REPO} "${tmp}"`, { stdio: 'pipe' });

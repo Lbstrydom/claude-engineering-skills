@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Interactive setup script for claude-audit-loop.
+ * @fileoverview Interactive setup script for claude-engineering-skills.
  *
  * Installs the full adaptive audit intelligence system into any project.
  * Supports: Claude Code, VS Code Copilot, Cursor, Windsurf, JetBrains, and raw terminal.

@@ -21,10 +21,10 @@
       "Edit(.audit/**)",
       "Edit(docs/plans/**)",
       "Edit(/.claude/skills/audit-loop/**)",
-      "Bash(grep -n \"\\\\.js\\\\|\\\\.ts\\\\|\\\\.py\\\\|\\\\.go\\\\|\\\\.java\\\\|\\\\.rb\\\\|\\\\.rs\\\\|\\\\.sql\\\\|\\\\.css\\\\|\\\\.html\" c:/GIT/claude-audit-loop/scripts/lib/*.mjs)",
-      "Bash(sed -n '27,58p' c:/GIT/claude-audit-loop/scripts/lib/code-analysis.mjs)",
-      "Bash(sed -n '38,41p' c:/GIT/claude-audit-loop/scripts/lib/code-analysis.mjs)",
-      "Bash(sed -n '139,150p' c:/GIT/claude-audit-loop/scripts/lib/code-analysis.mjs)",
+      "Bash(grep -n \"\\\\.js\\\\|\\\\.ts\\\\|\\\\.py\\\\|\\\\.go\\\\|\\\\.java\\\\|\\\\.rb\\\\|\\\\.rs\\\\|\\\\.sql\\\\|\\\\.css\\\\|\\\\.html\" c:/GIT/claude-engineering-skills/scripts/lib/*.mjs)",
+      "Bash(sed -n '27,58p' c:/GIT/claude-engineering-skills/scripts/lib/code-analysis.mjs)",
+      "Bash(sed -n '38,41p' c:/GIT/claude-engineering-skills/scripts/lib/code-analysis.mjs)",
+      "Bash(sed -n '139,150p' c:/GIT/claude-engineering-skills/scripts/lib/code-analysis.mjs)",
       "Bash(node -e \"const r=JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/User/AppData/Local/Temp/audit-1775293200-r2-result.json','utf8'\\)\\);r.findings.forEach\\(f=>console.log\\(f.id,f.severity,f.category.slice\\(0,55\\),'|',f.detail.slice\\(0,120\\)\\)\\)\")",
       "Bash(node -e \"const r=JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/User/AppData/Local/Temp/audit-1775293200-r3-result.json','utf8'\\)\\);r.findings.forEach\\(f=>console.log\\(f.id,f.severity,f.category.slice\\(0,50\\),'|',f.detail.slice\\(0,130\\)\\)\\)\")",
       "Bash(node -e \"const r=JSON.parse\\(require\\('fs'\\).readFileSync\\('C:/Users/User/AppData/Local/Temp/audit-1775293200-r4-result.json','utf8'\\)\\);r.findings.forEach\\(f=>console.log\\(f.id,f.severity,f.category.slice\\(0,50\\),'|',f.detail.slice\\(0,140\\)\\)\\)\")",
@@ -39,7 +39,7 @@
       "Bash(wc -l docs/plans/*.md)"
     ],
     "additionalDirectories": [
-      "c:\\GIT\\claude-audit-loop\\.claude\\skills\\audit-loop",
+      "c:\\GIT\\claude-engineering-skills\\.claude\\skills\\audit-loop",
       "c:\\tmp",
       ".audit"
     ]
