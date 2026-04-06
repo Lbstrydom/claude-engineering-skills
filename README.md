@@ -78,16 +78,30 @@ Gemini 3.1 Pro (independent final review: bias, consensus, missed issues)
 | `SUPABASE_AUDIT_URL` | No | -- | Cloud learning store URL |
 | `SUPABASE_AUDIT_ANON_KEY` | No | -- | Cloud learning store key |
 
-## Roadmap
+## Security
 
-This repo follows a [multi-phase plan](docs/plans/skill-bundle-mega-plan.md):
+- Stable releases include Sigstore-signed checksums
+- Installer verifies checksums before writing files (`--channel stable`)
+- `.env` files are gitignored; API keys are never logged
+- Sensitive file patterns excluded from external API calls
+- All subprocess calls use `execFileSync` (no shell string interpolation)
 
-- **Phase E** -- Skill consolidation + Python profiles + rename (current)
-- **Phase F** -- Installer + update infrastructure
-- **Phase G** -- Pluggable storage adapters (SQLite, Postgres, GitHub)
-- **Phase H** -- Public distribution hardening (signing, releases)
-- **Phase I** -- CLAUDE.md hygiene + sprawl control
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and verification instructions.
+
+## Storage Adapters
+
+| Adapter | Config | Use case |
+|---------|--------|----------|
+| `noop` (default) | No config needed | Local files only, zero cloud |
+| `supabase` | `SUPABASE_AUDIT_URL` + key | Existing Supabase users |
+| `sqlite` | `AUDIT_STORE=sqlite` | Local cross-repo persistence |
+| `postgres` | `AUDIT_POSTGRES_URL` | Generic cloud Postgres |
+| `github` | `AUDIT_GITHUB_TOKEN` + owner/repo | GitHub-only infra |
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and PR guidelines.
 
 ## License
 
-MIT
+MIT -- see [LICENSE](LICENSE)

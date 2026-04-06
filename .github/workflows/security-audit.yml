@@ -1,0 +1,58 @@
+name: Security Audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: npm audit
+        run: npm audit --audit-level=high || true
+
+      - name: Check for shell string execution
+        run: |
+          echo "Checking for execSync with template literals (potential command injection)..."
+          if grep -rn "execSync\s*(" scripts/ --include="*.mjs" | grep -v "execFileSync" | grep -v "test" | grep '`'; then
+            echo "::error::Found execSync with template literals - use execFileSync instead"
+            exit 1
+          fi
+          echo "OK: No unsafe execSync patterns found"
+
+      - name: Check .env.example has no real values
+        run: |
+          echo "Checking .env.example for real-looking values..."
+          if [ -f .env.example ]; then
+            if grep -E '=sk-|=ghp_|=ghu_|=github_pat_|=eyJ' .env.example; then
+              echo "::error::.env.example contains what looks like real credentials"
+              exit 1
+            fi
+          fi
+          echo "OK: .env.example clean"
+
+      - name: Check SHA-pinned actions
+        run: |
+          echo "Checking GitHub Actions use SHA-pinned versions..."
+          UNPINNED=$(grep -rn "uses:" .github/workflows/ | grep -v "#" | grep -v "@[a-f0-9]\{40\}" | grep -v "^#" || true)
+          if [ -n "$UNPINNED" ]; then
+            echo "::warning::Some actions are not SHA-pinned (acceptable for non-release workflows):"
+            echo "$UNPINNED"
+          fi
+          echo "OK: Action pinning check complete"
+
+      - name: Run tests
+        run: npm test

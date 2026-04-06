@@ -1,0 +1,12 @@
+# Default code owners for all paths
+* @Lbstrydom
+
+# Skills require explicit review
+skills/ @Lbstrydom
+
+# Workflows require explicit review
+.github/workflows/ @Lbstrydom
+
+# Security-sensitive files
+SECURITY.md @Lbstrydom
+.env.example @Lbstrydom
