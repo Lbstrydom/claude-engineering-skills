@@ -23,19 +23,20 @@ describe('vendoring provenance', () => {
     }
   });
 
-  it('provenance SHAs match current skill file contents', () => {
+  it('provenance SHAs are valid hex and audit-loop SHA matches current file', () => {
     const provenance = JSON.parse(fs.readFileSync(PROVENANCE_PATH, 'utf-8'));
     for (const skill of ALL_SKILLS) {
-      const skillPath = path.join(SKILLS_DIR, skill, 'SKILL.md');
-      const content = fs.readFileSync(skillPath);
-      const actualSha = crypto.createHash('sha256').update(content).digest('hex');
-      // Note: provenance records the ORIGINAL vendored SHA before Python edits.
-      // After Python profile additions, SHAs will differ for edited skills.
-      // This test validates structural integrity, not byte-identity post-edit.
-      assert.ok(
-        provenance[skill].sha,
-        `${skill} provenance SHA must be non-empty`
-      );
+      const sha = provenance[skill].sha;
+      assert.match(sha, /^[0-9a-f]{64}$/, `${skill} SHA must be 64-char hex`);
+
+      // audit-loop was not edited post-vendoring, so its SHA must still match
+      if (skill === 'audit-loop') {
+        const content = fs.readFileSync(path.join(SKILLS_DIR, skill, 'SKILL.md'));
+        const actual = crypto.createHash('sha256').update(content).digest('hex');
+        assert.equal(actual, sha, 'audit-loop SHA must match (unedited since vendoring)');
+      }
+      // Other skills had Python profiles added — SHAs will differ from provenance.
+      // Provenance records the ORIGINAL vendored SHA before edits.
     }
   });
 });

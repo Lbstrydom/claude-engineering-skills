@@ -52,7 +52,7 @@ Detection ORDER: detect the environment manager FIRST, then probe commands throu
    - **Test runner**: probe for `pytest` through the env wrapper, else `python -m pytest`, else MISSING
    - **Linter**: `ruff check --version` if `[tool.ruff]` in pyproject or `ruff` in locked deps; else `flake8 --version`; else MISSING
    - **Type checker**: `mypy --version` if `[tool.mypy]` or `mypy.ini` present; else `pyright --version`; else MISSING
-   - **Format check**: `ruff format` if ruff detected; else `black --version` if `[tool.black]`; else MISSING
+   - **Format check**: `ruff format` if ruff detected; else `black --version` if `[tool.black]` or `black` in locked deps; else MISSING
 
 ### Python Pre-Push Contract
 

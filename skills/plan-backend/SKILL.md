@@ -58,7 +58,7 @@ Apply these principles when Python is detected. Each bullet carries an explicit 
 - `[generic]` Exception hierarchy (custom `AppException` base, no bare `except:`)
 - `[generic]` Pytest for testing, ruff for lint + format
 - `[generic]` Virtual environment discipline (venv/poetry/uv)
-- `[generic]` ORM N+1 prevention (`select_related` / `joinedload` / `prefetch_related`)
+- `[generic]` ORM N+1 prevention — Django: `select_related`/`prefetch_related`; SQLAlchemy: `joinedload`/`selectinload`
 - `[generic]` No mutable default arguments in function signatures
 - `[fastapi]` Async consistency -- whole request path async, no sync DB calls in async handlers
 - `[fastapi]` `Depends()` for dependency injection, not module-level singletons
@@ -66,7 +66,6 @@ Apply these principles when Python is detected. Each bullet carries an explicit 
 - `[fastapi,flask]` Pydantic validation at API boundaries, not dict-bashing
 - `[django]` Fat-view anti-pattern -- move business logic to services
 - `[django]` Django forms for validation before DB writes
-- `[django]` Use `select_related`/`prefetch_related` to prevent N+1 queries
 - `[django,flask]` HTMX progressive enhancement (Django/Flask templates)
 
 **Stack commands**: `pytest`, `ruff check`, `ruff format`, `mypy`/`pyright`, `uv sync`/`poetry install`
