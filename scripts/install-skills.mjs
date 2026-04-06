@@ -99,7 +99,8 @@ function main() {
 
     // Verify SHA matches manifest
     if (sha !== meta.sha) {
-      console.error(`${Y}Warning${X}: SHA mismatch for ${skillName} (manifest: ${meta.sha}, actual: ${sha})`);
+      console.error(`${R}Error${X}: SHA mismatch for ${skillName} (manifest: ${meta.sha}, actual: ${sha}). Run: node scripts/build-manifest.mjs`);
+      process.exit(1);
     }
 
     const targets = resolveSkillTargets(skillName, args.surface, repoRoot);

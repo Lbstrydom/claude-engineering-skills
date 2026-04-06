@@ -53,7 +53,9 @@ export function executeTransaction(writes) {
           fs.writeFileSync(tmpPath, snapshot);
           fs.renameSync(tmpPath, absPath);
         }
-      } catch { /* Best-effort rollback */ }
+      } catch (rollbackErr) {
+          process.stderr.write(`  [rollback] Failed to restore ${absPath}: ${rollbackErr.message}\n`);
+        }
     }
     return { success: false, written: 0, error: err.message };
   }

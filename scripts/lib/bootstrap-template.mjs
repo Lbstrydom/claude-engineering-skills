@@ -13,10 +13,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import https from 'node:https';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const RAW_BASE = 'https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main';
-const CACHE_DIR = path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), 'cache');
+const CACHE_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'cache');
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24hr
 
 const COMMANDS = {
@@ -100,10 +101,9 @@ Commands:
     }
   }
 
-  // Spawn with passthrough args
-  const args = ['--remote', ...rest].join(' ');
+  // Spawn with passthrough args (execFileSync prevents command injection)
   try {
-    execSync(`node "${scriptPath}" ${args}`, { stdio: 'inherit' });
+    execFileSync(process.execPath, [scriptPath, '--remote', ...rest], { stdio: 'inherit' });
   } catch (err) {
     process.exit(err.status || 1);
   }
