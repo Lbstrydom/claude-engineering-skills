@@ -24,6 +24,7 @@ export const RELEASE_ARTIFACTS = Object.freeze({
   // Metadata files
   metadata: Object.freeze([
     'skills.manifest.json',
+    'bundle-history.json',
   ]),
 
   // Release-only assets (not installed, just distributed)
