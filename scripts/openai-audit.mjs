@@ -73,7 +73,7 @@ import {
 } from './lib/prompt-seeds.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 import micromatch from 'micromatch';
-import { selectPipelineVariant, callAuditor, safeCallAuditor, createAuditorClient, hasProviderKey } from './lib/llm-auditor.mjs';
+import { incrementRunCounter } from './lib/llm-auditor.mjs';
 
 // ── Exclude patterns (.auditignore + --exclude-paths) ──────────────────────
 
@@ -442,20 +442,7 @@ async function _callGPTOnce(openai, { systemPrompt, userPrompt, schema, schemaNa
  * Call GPT with single retry on transient failures.
  * Accumulates usage across attempts for truthful accounting.
  */
-// ── Module-Level Pipeline State ────────────────────────────────────────────
-// Set by main() after pipeline variant selection. Used by callGPT/safeCallGPT
-// to dispatch to the appropriate provider when variant B (Gemini auditor) is active.
-let _auditorProvider = 'gpt';
-let _auditorClient = null;
-let _pipelineSelection = { variant: 'A', config: { auditor: 'gpt', reviewer: 'gemini' }, source: 'default' };
-
 async function callGPT(openai, opts) {
-  // If pipeline variant B is active and an auditor client is set, dispatch through
-  // the unified auditor abstraction instead of calling GPT directly.
-  if (_auditorProvider !== 'gpt' && _auditorClient) {
-    return callAuditor(_auditorProvider, _auditorClient, opts);
-  }
-
   let lastErr;
   const startMs = Date.now();
   const accumulatedUsage = { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0 };
@@ -1490,8 +1477,6 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       promptVariant: revId,
       promptRevisionId: revId,
       semanticHash: f._hash,
-      pipelineVariant: _pipelineSelection.variant,
-      auditorProvider: _auditorProvider,
     });
   }
 
@@ -1527,10 +1512,8 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     }
   }
 
-  // Attach cloud run ID and pipeline variant to result for orchestrator reference
+  // Attach cloud run ID to result for orchestrator reference
   if (cloudRunId) mergedResult._cloudRunId = cloudRunId;
-  mergedResult._pipelineVariant = _pipelineSelection.variant;
-  mergedResult._auditorProvider = _auditorProvider;
 
   // Phase C: surface tool-pre-pass capability state
   mergedResult._toolCapability = toolCapability;
@@ -1694,14 +1677,6 @@ async function main() {
     : (round >= 2 ? 5 : null);
 
   // A/B test: pipeline variant selection
-  // --pipeline A (GPT audits, Gemini reviews) or --pipeline B (Gemini audits, GPT reviews)
-  // Without flag: random 50/50 assignment (or AUDIT_PIPELINE_VARIANT env var)
-  const pipelineIdx = args.indexOf('--pipeline');
-  const pipelineArg = pipelineIdx !== -1 && args[pipelineIdx + 1] ? args[pipelineIdx + 1] : null;
-  const pipelineSelection = selectPipelineVariant(pipelineArg);
-  const auditorProvider = pipelineSelection.config.auditor;
-  const reviewerProvider = pipelineSelection.config.reviewer;
-
   if (!mode || !planFile || !['plan', 'code', 'rebuttal'].includes(mode)) {
     console.error('Usage: node scripts/openai-audit.mjs <plan|code> <plan-file> [--json] [--out <file>] [--history <file>] [--passes <list>] [--files <list>]');
     console.error('       node scripts/openai-audit.mjs code <plan-file> [--scope diff|plan|full] [--base <git-ref>]');
@@ -1718,21 +1693,11 @@ async function main() {
     process.exit(1);
   }
 
-  // Validate API key for selected auditor provider
-  if (!hasProviderKey(auditorProvider)) {
-    const keyName = auditorProvider === 'gpt' ? 'OPENAI_API_KEY' : 'GEMINI_API_KEY';
-    console.error(`Error: ${keyName} required for pipeline variant ${pipelineSelection.variant} (auditor: ${auditorProvider})`);
-    console.error(`Set it in .env, or use --pipeline ${auditorProvider === 'gpt' ? 'B' : 'A'} to use the other provider`);
-    process.exit(1);
-  }
-  // GPT key is always needed (for rebuttal mode, bandit, etc.)
   if (!process.env.OPENAI_API_KEY) {
     console.error('Error: OPENAI_API_KEY environment variable required');
     console.error('Set it in .env or export OPENAI_API_KEY=sk-...');
     process.exit(1);
   }
-
-  process.stderr.write(`  [pipeline] Variant ${pipelineSelection.variant}: ${pipelineSelection.config.label} (${pipelineSelection.source})\n`);
 
   const planContent = readFileOrDie(planFile);
   await initAuditBrief(); // Pre-generate context brief (Gemini Flash → Claude Haiku → regex)
@@ -1747,16 +1712,8 @@ async function main() {
 
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  // Create auditor client for the selected pipeline variant
-  // Variant A: openai client (same as above). Variant B: Gemini client.
-  let auditorClient = openai;
-  if (auditorProvider === 'gemini') {
-    auditorClient = await createAuditorClient('gemini');
-  }
-  // Set module-level state so callGPT() dispatches to the right provider
-  _auditorProvider = auditorProvider;
-  _auditorClient = auditorClient;
-  _pipelineSelection = pipelineSelection;
+  // Increment run counter for meta-assessment interval tracking
+  incrementRunCounter();
 
   // Resolve canonical ledger path
   const ledgerPath = resolveLedgerPath({ explicitLedger: ledgerFileArg, outFile, round, noLedger });

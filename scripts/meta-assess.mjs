@@ -116,7 +116,7 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
   const roundCounts = {};
   for (const o of windowed) {
     const day = o.timestamp ? new Date(o.timestamp).toISOString().slice(0, 10) : 'unknown';
-    const key = `${o.repoFingerprint || 'local'}:${o.pipelineVariant || ''}:${day}`;
+    const key = `${o.repoFingerprint || 'local'}:${day}`;
     roundCounts[key] = Math.max(roundCounts[key] || 0, o.round || 1);
   }
   const rounds = Object.values(roundCounts);
@@ -138,32 +138,6 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
     trend: convTrend,
   };
 
-  // ── Pipeline Comparison ──────────────────────────────────────────────────
-  const varA = windowed.filter(o => o.pipelineVariant === 'A');
-  const varB = windowed.filter(o => o.pipelineVariant === 'B');
-  const MIN_VARIANT_RUNS = 5;
-
-  const pipelineComparison = {
-    variantA: {
-      runs: varA.length,
-      fpRate: varA.length > 0 ? varA.filter(o => !o.accepted).length / varA.length : 0,
-      avgFindings: varA.length > 0 ? varA.length : 0,
-    },
-    variantB: {
-      runs: varB.length,
-      fpRate: varB.length > 0 ? varB.filter(o => !o.accepted).length / varB.length : 0,
-      avgFindings: varB.length > 0 ? varB.length : 0,
-    },
-    betterVariant: (varA.length < MIN_VARIANT_RUNS || varB.length < MIN_VARIANT_RUNS)
-      ? 'insufficient_data'
-      : (() => {
-          const aFP = varA.filter(o => !o.accepted).length / varA.length;
-          const bFP = varB.filter(o => !o.accepted).length / varB.length;
-          if (Math.abs(aFP - bFP) < 0.05) return 'no_difference';
-          return aFP < bFP ? 'A' : 'B';
-        })(),
-  };
-
   return {
     window,
     metrics: {
@@ -171,7 +145,6 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
       signalQuality,
       severityCalibration,
       convergenceSpeed,
-      pipelineComparison,
     },
   };
 }
@@ -184,11 +157,6 @@ function emptyMetrics() {
       signalQuality: { findingsLeadingToChanges: 0, totalFindings: 0, changeRate: 0 },
       severityCalibration: { highAcceptanceRate: 0, mediumAcceptanceRate: 0, lowAcceptanceRate: 0, miscalibrated: false },
       convergenceSpeed: { avgRoundsToConverge: 0, medianRoundsToConverge: 0, trend: 'stable' },
-      pipelineComparison: {
-        variantA: { runs: 0, fpRate: 0, avgFindings: 0 },
-        variantB: { runs: 0, fpRate: 0, avgFindings: 0 },
-        betterVariant: 'insufficient_data',
-      },
     },
   };
 }
@@ -401,9 +369,6 @@ export function formatAssessmentReport(result) {
     `| LOW acceptance | ${(m.severityCalibration.lowAcceptanceRate * 100).toFixed(1)}% |`,
     `| Severity miscalibrated | ${m.severityCalibration.miscalibrated ? 'YES' : 'no'} |`,
     `| Avg rounds to converge | ${m.convergenceSpeed.avgRoundsToConverge} (${m.convergenceSpeed.trend}) |`,
-    `| Pipeline A FP rate | ${(m.pipelineComparison.variantA.fpRate * 100).toFixed(1)}% (${m.pipelineComparison.variantA.runs} runs) |`,
-    `| Pipeline B FP rate | ${(m.pipelineComparison.variantB.fpRate * 100).toFixed(1)}% (${m.pipelineComparison.variantB.runs} runs) |`,
-    `| Better variant | ${m.pipelineComparison.betterVariant} |`,
     '',
     '### FP Rate by Pass',
     '',

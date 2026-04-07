@@ -282,76 +282,10 @@ async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, 
   }
 }
 
-/**
- * Make a single GPT call for final review using structured output.
- * Uses the same response contract as callGemini/callClaudeOpus.
- *
- * @param {object} openai - OpenAI client instance
- * @param {object} opts
- * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
- */
-async function callGPTReviewer(openai, { systemPrompt, userPrompt, zodSchema, schemaName, passName }) {
-  const { zodTextFormat: ztf } = await import('openai/helpers/zod');
-  const { openaiConfig: oaCfg } = await import('./lib/config.mjs');
-  const startMs = Date.now();
-  const timeout = TIMEOUT_MS;
-
-  if (passName) {
-    process.stderr.write(`  [${passName}] Starting GPT ${oaCfg.model} reviewer (timeout: ${(timeout / 1000).toFixed(0)}s)...\n`);
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-
-  try {
-    const requestParams = {
-      model: oaCfg.model,
-      input: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
-      text: { format: ztf(zodSchema, schemaName || 'final_review') },
-      max_output_tokens: MAX_OUTPUT_TOKENS,
-    };
-    if (oaCfg.model.startsWith('gpt-5')) {
-      requestParams.reasoning = { effort: 'high' };
-    }
-
-    const response = await openai.responses.parse(requestParams, { signal: controller.signal });
-    clearTimeout(timer);
-    const latencyMs = Date.now() - startMs;
-
-    const result = response.output_parsed;
-    if (!result) throw new Error('No parsed output from GPT reviewer');
-
-    const usage = {
-      input_tokens: response.usage?.input_tokens ?? 0,
-      output_tokens: response.usage?.output_tokens ?? 0,
-      thinking_tokens: response.usage?.output_tokens_details?.reasoning_tokens ?? 0,
-      latency_ms: latencyMs,
-    };
-
-    if (passName) {
-      process.stderr.write(`  [${passName}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out)\n`);
-    }
-
-    return { result, usage, latencyMs };
-  } catch (err) {
-    clearTimeout(timer);
-    const latencyMs = Date.now() - startMs;
-    const isAbort = err.name === 'AbortError' || err.message?.toLowerCase().includes('abort');
-    const msg = isAbort
-      ? `Timeout after ${(timeout / 1000).toFixed(0)}s`
-      : err.message;
-    process.stderr.write(`  [${passName ?? 'gpt-review'}] FAILED: ${msg} (${(latencyMs / 1000).toFixed(1)}s)\n`);
-    throw new Error(msg);
-  }
-}
-
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
 /**
- * Run the final review with any provider (Gemini, Claude Opus, or GPT).
+ * Run the final review with Gemini or Claude Opus.
  * @param {string} provider - 'gemini' | 'claude-opus' | 'gpt'
  * @param {object} client - Provider-specific client
  * @param {string} planContent
@@ -432,9 +366,8 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     codeContext || '(No code files found — review based on transcript only)',
   ].filter(Boolean).join('\n');
 
-  const { openaiConfig: oaCfg } = await import('./lib/config.mjs');
-  const modelMap = { gemini: MODEL, 'claude-opus': CLAUDE_OPUS_MODEL, gpt: oaCfg.model };
-  const labelMap = { gemini: 'Gemini', 'claude-opus': 'Claude Opus', gpt: 'GPT' };
+  const modelMap = { gemini: MODEL, 'claude-opus': CLAUDE_OPUS_MODEL };
+  const labelMap = { gemini: 'Gemini', 'claude-opus': 'Claude Opus' };
   const selectedModel = modelMap[provider] || provider;
   const providerLabel = labelMap[provider] || provider;
   process.stderr.write(`\n── ${providerLabel} Final Review ──\n`);
@@ -455,16 +388,6 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
       zodSchema: GeminiFinalReviewSchema,
       jsonSchema: GeminiFinalReviewJsonSchema,
       passName: 'gemini-review'
-    });
-  }
-
-  if (provider === 'gpt') {
-    return callGPTReviewer(client, {
-      systemPrompt,
-      userPrompt,
-      zodSchema: GeminiFinalReviewSchema,
-      schemaName: 'final_review',
-      passName: 'gpt-review'
     });
   }
 
@@ -597,7 +520,7 @@ async function main() {
   const providerOverride = providerIdx !== -1 && args[providerIdx + 1] ? args[providerIdx + 1] : null;
 
   if (mode !== 'review' || !planFile || !transcriptFile) {
-    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|anthropic|gpt]');
+    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|anthropic]');
     console.error('       node scripts/gemini-review.mjs ping');
     process.exit(1);
   }
@@ -616,14 +539,8 @@ async function main() {
       process.exit(1);
     }
     provider = 'gemini';
-  } else if (providerOverride === 'gpt') {
-    if (!process.env.OPENAI_API_KEY) {
-      console.error('Error: --provider gpt requires OPENAI_API_KEY');
-      process.exit(1);
-    }
-    provider = 'gpt';
   } else if (providerOverride) {
-    console.error(`Error: Unknown provider "${providerOverride}". Use "gemini", "anthropic", or "gpt".`);
+    console.error(`Error: Unknown provider "${providerOverride}". Use "gemini" or "anthropic".`);
     process.exit(1);
   } else {
     // Auto-detect from env vars (existing behavior)
@@ -647,10 +564,6 @@ async function main() {
   let client;
   if (provider === 'gemini') {
     client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  } else if (provider === 'gpt') {
-    const OpenAI = (await import('openai')).default;
-    client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-    process.stderr.write(`  [final-review] Using GPT as reviewer (pipeline variant B).\n`);
   } else {
     const { default: Anthropic } = await import('@anthropic-ai/sdk');
     client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

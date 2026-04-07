@@ -19,7 +19,6 @@ function makeOutcome(overrides = {}) {
     accepted: true,
     round: 1,
     timestamp: Date.now() - 3600000,
-    pipelineVariant: 'A',
     ...overrides,
   };
 }
@@ -92,25 +91,6 @@ describe('computeAssessmentMetrics', () => {
     const bandit = new PromptBandit(path.join(os.tmpdir(), `bandit-test-${Date.now()}.json`));
     const result = computeAssessmentMetrics(outcomes, fpTracker, bandit);
     assert.equal(result.metrics.severityCalibration.miscalibrated, false);
-  });
-
-  it('returns insufficient_data for pipeline comparison with small N', () => {
-    const outcomes = makeOutcomes(3, { pipelineVariant: 'A' });
-    const fpTracker = new FalsePositiveTracker(path.join(os.tmpdir(), `fp-test-${Date.now()}.json`));
-    const bandit = new PromptBandit(path.join(os.tmpdir(), `bandit-test-${Date.now()}.json`));
-    const result = computeAssessmentMetrics(outcomes, fpTracker, bandit);
-    assert.equal(result.metrics.pipelineComparison.betterVariant, 'insufficient_data');
-  });
-
-  it('compares pipeline variants when enough data', () => {
-    const outcomes = [
-      ...makeOutcomes(6, { pipelineVariant: 'A', accepted: true }),
-      ...makeOutcomes(6, { pipelineVariant: 'B', accepted: false }),
-    ];
-    const fpTracker = new FalsePositiveTracker(path.join(os.tmpdir(), `fp-test-${Date.now()}.json`));
-    const bandit = new PromptBandit(path.join(os.tmpdir(), `bandit-test-${Date.now()}.json`));
-    const result = computeAssessmentMetrics(outcomes, fpTracker, bandit);
-    assert.equal(result.metrics.pipelineComparison.betterVariant, 'A');
   });
 
   it('detects improving FP trend', () => {
@@ -198,11 +178,6 @@ describe('formatAssessmentReport', () => {
         signalQuality: { findingsLeadingToChanges: 16, totalFindings: 25, changeRate: 0.64 },
         severityCalibration: { highAcceptanceRate: 0.8, mediumAcceptanceRate: 0.6, lowAcceptanceRate: 0.3, miscalibrated: false },
         convergenceSpeed: { avgRoundsToConverge: 2.1, medianRoundsToConverge: 2, trend: 'stable' },
-        pipelineComparison: {
-          variantA: { runs: 12, fpRate: 0.3, avgFindings: 12 },
-          variantB: { runs: 13, fpRate: 0.4, avgFindings: 13 },
-          betterVariant: 'A',
-        },
       },
       overallHealth: 'healthy',
       diagnosis: 'System performing well.',

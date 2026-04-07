@@ -354,11 +354,6 @@ export const MetaAssessmentSchema = z.object({
       medianRoundsToConverge: z.number(),
       trend: z.enum(['faster', 'stable', 'slower']),
     }),
-    pipelineComparison: z.object({
-      variantA: z.object({ runs: z.number(), fpRate: z.number(), avgFindings: z.number() }),
-      variantB: z.object({ runs: z.number(), fpRate: z.number(), avgFindings: z.number() }),
-      betterVariant: z.enum(['A', 'B', 'insufficient_data', 'no_difference']),
-    }),
   }),
   diagnosis: z.string().max(2000),
   recommendations: z.array(z.object({
