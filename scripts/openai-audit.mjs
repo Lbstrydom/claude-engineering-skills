@@ -290,9 +290,17 @@ CRITICAL RULES:
 10. Anti-patterns to flag: God functions, shotgun surgery, feature envy, leaky abstractions.
 
 SEVERITY GUIDE:
-- HIGH: Implementation will fail, produce bugs, or require significant rework
-- MEDIUM: Implementation will work but quality/maintainability/UX will suffer
-- LOW: Plan is functional but could be clearer or more thorough
+- HIGH: Implementation will fail, produce bugs, or require significant rework.
+  A missing endpoint, broken data flow, or unspecified error handling is HIGH.
+  Do NOT use HIGH for "I would architect this differently" — that is MEDIUM.
+- MEDIUM: Implementation will work but quality/maintainability/UX will suffer.
+  Design trade-offs, alternative architectures, and "proportionality" concerns belong here.
+- LOW: Plan is functional but could be clearer or more thorough.
+
+INFRASTRUCTURE CONTEXT: Before claiming a library or tool doesn't exist in the project,
+check the Project Context and Dependencies sections. If a package is listed there,
+assume it is installed and available. Do NOT flag dependency availability as a finding
+if the dependency is already in the project's package.json.
 
 Be ruthlessly honest but constructive. Cite specific sections.`;
 
@@ -1813,10 +1821,39 @@ async function main() {
     schemaName = 'rebuttal_resolution';
     userPrompt = `## Project Context\n${projectContext}\n\n---\n\n## Original Plan/Code\n${planContent}\n\n---\n\n## Claude's Deliberation\n${rebuttalContent}`;
   } else {
-    systemPrompt = PLAN_AUDIT_SYSTEM;
+    // Plan audit: use the full brief (includes package.json deps) so GPT
+    // doesn't ask "does X exist?" when it's in the dependency list
+    await initAuditBrief().catch(() => {});
+    const planContext = readProjectContextForPass('plan') || projectContext;
+
+    // Inject package.json deps explicitly so infrastructure questions are answered
+    let depsBlock = '';
+    try {
+      const pkgPath = path.resolve('package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+        const depList = Object.entries(deps).slice(0, 30).map(([k, v]) => `  ${k}: ${v}`).join('\n');
+        if (depList) depsBlock = `\n\n## Installed Dependencies (package.json)\n${depList}\n`;
+      }
+    } catch { /* no package.json */ }
+
+    // R2+ rulings injection for plan mode
+    let rulingsBlock = '';
+    if (round >= 2 && ledgerPath) {
+      rulingsBlock = buildRulingsBlock(ledgerPath, 'plan');
+      if (rulingsBlock) {
+        rulingsBlock = `\n\n${rulingsBlock}`;
+        process.stderr.write(`  [plan-r2] Injected ${rulingsBlock.split('\n').length} rulings from ledger\n`);
+      }
+    }
+
+    const r2Modifier = round >= 2 ? `\n\n${R2_ROUND_MODIFIER}` : '';
+
+    systemPrompt = PLAN_AUDIT_SYSTEM + r2Modifier;
     schema = PlanAuditResultSchema;
     schemaName = 'plan_audit_result';
-    userPrompt = `## Project Context\n${projectContext}\n\n${historyContext ? `---\n\n${historyContext}\n` : ''}---\n\n## Plan to Audit\n${planContent}`;
+    userPrompt = `## Project Context\n${planContext}${depsBlock}${rulingsBlock}\n\n${historyContext ? `---\n\n${historyContext}\n` : ''}---\n\n## Plan to Audit\n${planContent}`;
   }
 
   try {
@@ -1824,6 +1861,55 @@ async function main() {
       systemPrompt, userPrompt, schema, schemaName,
       passName: mode
     });
+
+    // Plan mode R2+: post-output suppression (same as code mode Layer 3)
+    if (mode === 'plan' && round >= 2 && ledgerPath && Array.isArray(result.findings)) {
+      // Enrich findings with metadata for suppression matching
+      for (const f of result.findings) {
+        populateFindingMetadata(f, 'plan');
+      }
+
+      let ledger = { entries: [] };
+      try { ledger = JSON.parse(fs.readFileSync(path.resolve(ledgerPath), 'utf-8')); } catch { /* no ledger yet */ }
+
+      const { kept, suppressed, reopened } = suppressReRaises(result.findings, ledger, { changedFiles: [] });
+      result.findings = [...kept, ...reopened];
+      result._suppression = { kept: kept.length, suppressed: suppressed.length, reopened: reopened.length };
+
+      process.stderr.write(`  [plan-r2] Post-suppression: Kept ${kept.length} | Suppressed ${suppressed.length} | Reopened ${reopened.length}\n`);
+    }
+
+    // Plan mode: auto-write ledger entries (same as code mode)
+    if (mode === 'plan' && ledgerPath && !noLedger && Array.isArray(result.findings)) {
+      try {
+        const enriched = result.findings.map(f => {
+          const copy = { ...f };
+          populateFindingMetadata(copy, 'plan');
+          return copy;
+        });
+        const ledgerEntries = enriched.map(f => ({
+          topicId: generateTopicId(f),
+          findingId: f.id,
+          severity: f.severity,
+          category: f.category,
+          section: f.section,
+          detailSnapshot: f.detail?.slice(0, 300),
+          detail: f.detail?.slice(0, 300),
+          pass: 'plan',
+          _hash: f._hash,
+          semanticHash: f._hash,
+          affectedFiles: f.affectedFiles || [f._primaryFile || ''],
+          affectedPrinciples: f.principle ? [f.principle] : [],
+          adjudicationOutcome: 'pending',
+          remediationState: 'pending',
+          round
+        }));
+        const { inserted, updated, total } = batchWriteLedger(ledgerPath, ledgerEntries);
+        process.stderr.write(`  [plan-ledger] Written: ${inserted} new, ${updated} updated, ${total} total\n`);
+      } catch (err) {
+        process.stderr.write(`  [plan-ledger] Write failed: ${err.message}\n`);
+      }
+    }
 
     // Update bandit arms + FP tracker from rebuttal resolutions (v2: per-pass + revision IDs)
     if (mode === 'rebuttal' && result.resolutions?.length) {
