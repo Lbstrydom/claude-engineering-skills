@@ -68,18 +68,49 @@ Only switch to `--scope plan` or `--scope full` when the user EXPLICITLY asks fo
 
 **Why this matters**: Without scoping, auditing Phase A's ~150-line diff produces 28 findings about files Phase A barely touched. With `--scope diff`, you get findings about the actual changes. This is the #1 source of false-positive noise.
 
+### Excluding Files from Scope
+
+When `--scope diff` picks up vendored, upstream, or irrelevant files, use:
+
+**CLI flag**: `--exclude-paths 'scripts/**,vendor/**,.audit-loop/**'` (comma-separated globs)
+
+**`.auditignore` file** (in repo root): one glob pattern per line, `#` comments.
+```
+# Vendored audit-loop scripts — not our code
+scripts/openai-audit.mjs
+scripts/gemini-review.mjs
+scripts/lib/**
+
+# Build artifacts
+dist/**
+```
+
+Both mechanisms stack. `.auditignore` is read automatically; `--exclude-paths` is additive.
+
+### Single Entry Point (Full Loop)
+
+For end-to-end orchestration without AI skill orchestrators:
+```bash
+node scripts/audit-loop.mjs code <plan-file>                     # Full loop: audit → report
+node scripts/audit-loop.mjs code <plan-file> --max-rounds 3      # Limit rounds
+node scripts/audit-loop.mjs code <plan-file> --exclude-paths 'scripts/**'
+node scripts/audit-loop.mjs code <plan-file> --skip-gemini       # Skip Step 7
+```
+Artifacts land in `.audit/` (persistent across sessions).
+
 ### Round 1 — Audit (scope-aware)
 
 ```bash
 # Default: audit only recent changes (preferred)
 node scripts/openai-audit.mjs code <plan-file> \
-  --out /tmp/$SID-r1-result.json \
-  2>/tmp/$SID-r1-stderr.log
+  --out .audit/$SID-r1-result.json \
+  2>.audit/$SID-r1-stderr.log
 
 # Broader scope examples (only when user asks):
 # --scope plan    → all plan-referenced files
 # --scope full    → entire repo
 # --base main     → diff against main instead of HEAD~1
+# --exclude-paths 'scripts/**'  → exclude vendored files from scope
 ```
 
 ### Phase 0 — Tool Pre-Pass (Phase C)

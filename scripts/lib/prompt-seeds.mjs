@@ -56,7 +56,13 @@ TODO/FIXME/HACK comments, console.log in production, file/function size (>500 li
 Flag anything that is a band-aid instead of a proper fix (set is_quick_fix=true).
 Check if the implementation will accommodate change in 6 months without major rework.
 
-SEVERITY: HIGH = architectural debt that blocks change. MEDIUM = quality erosion. LOW = hygiene.`;
+SEVERITY:
+- HIGH = concrete bug risk, data loss, or security hole caused by structural issues.
+  Do NOT use HIGH for style/organisation opinions (file size, monolith, coupling)
+  unless you can show a specific failure scenario. "Hard to maintain" is not HIGH.
+- MEDIUM = quality erosion, architectural debt, coupling that slows change.
+  File-size, monolith, god-component, and coupling concerns belong here.
+- LOW = hygiene, style, naming, dead code.`;
 
 export const PASS_SUSTAINABILITY_SYSTEM = PASS_SUSTAINABILITY_OBJECTIVE_R1 + '\n\n' + PASS_SUSTAINABILITY_RUBRIC;
 export { PASS_SUSTAINABILITY_RUBRIC };

@@ -72,6 +72,44 @@ import {
   buildClassificationRubric
 } from './lib/prompt-seeds.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
+import micromatch from 'micromatch';
+
+// ── Exclude patterns (.auditignore + --exclude-paths) ──────────────────────
+
+/**
+ * Load exclusion patterns from --exclude-paths CLI arg and .auditignore file.
+ * @param {string[]} cliPatterns - Patterns from --exclude-paths flag
+ * @returns {string[]} Combined glob patterns
+ */
+function loadExcludePatterns(cliPatterns = []) {
+  const patterns = [...cliPatterns];
+  // Read .auditignore from CWD (repo root) — one pattern per line, # comments
+  try {
+    const raw = fs.readFileSync(path.resolve('.auditignore'), 'utf-8');
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith('#')) patterns.push(trimmed);
+    }
+  } catch { /* no .auditignore — that's fine */ }
+  return patterns;
+}
+
+/**
+ * Filter a file list, removing any paths that match exclusion patterns.
+ * @param {string[]} files - File paths to filter
+ * @param {string[]} patterns - Glob patterns to exclude
+ * @returns {string[]} Filtered file list
+ */
+function applyExclusions(files, patterns) {
+  if (!patterns || patterns.length === 0) return files;
+  const excluded = micromatch(files, patterns, { dot: true });
+  const excludedSet = new Set(excluded);
+  const kept = files.filter(f => !excludedSet.has(f));
+  if (excluded.length > 0) {
+    process.stderr.write(`  [scope] Excluded ${excluded.length} files via --exclude-paths/.auditignore\n`);
+  }
+  return kept;
+}
 
 // ── Configuration (from centralized config) ─────────────────────────────────
 
@@ -1597,6 +1635,13 @@ async function main() {
   const baseIdx = args.indexOf('--base');
   const diffBase = baseIdx !== -1 && args[baseIdx + 1] ? args[baseIdx + 1] : 'HEAD~1';
 
+  // --exclude-paths <list>: comma-separated glob patterns to exclude from scope
+  // e.g. --exclude-paths 'scripts/**,vendor/**,.audit-loop/**'
+  // Also reads .auditignore file from repo root (one pattern per line, # comments)
+  const excludeIdx = args.indexOf('--exclude-paths');
+  const excludeArg = excludeIdx !== -1 && args[excludeIdx + 1] ? args[excludeIdx + 1].split(',').map(s => s.trim()) : [];
+  const excludePatterns = loadExcludePatterns(excludeArg);
+
   // Phase C — tool pre-pass flags
   // --no-tools: skip static analysis tools entirely (opt-out for untrusted repos)
   // --strict-lint: count tool findings in verdict math (advisory by default)
@@ -1666,8 +1711,10 @@ async function main() {
   // Code mode → multi-pass parallel audit
   if (mode === 'code') {
     // Resolve scope: if --files not explicit AND --scope=diff (default), auto-detect from git
-    let effectiveFileFilter = fileFilter;
-    if (!fileFilter && scopeMode === 'diff') {
+    let effectiveFileFilter = fileFilter
+      ? (excludePatterns.length > 0 ? applyExclusions(fileFilter, excludePatterns) : fileFilter)
+      : null;
+    if (!effectiveFileFilter && scopeMode === 'diff') {
       try {
         const { execFileSync } = await import('node:child_process');
         const diffOutput = execFileSync('git', ['diff', '--name-only', `${diffBase}..HEAD`], {
@@ -1683,7 +1730,8 @@ async function main() {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
         }).trim();
         const untrackedFiles = untracked ? untracked.split('\n').filter(Boolean) : [];
-        const allChanged = [...new Set([...diffChanged, ...unstagedChanged, ...untrackedFiles])];
+        let allChanged = [...new Set([...diffChanged, ...unstagedChanged, ...untrackedFiles])];
+        if (excludePatterns.length > 0) allChanged = applyExclusions(allChanged, excludePatterns);
         if (allChanged.length > 0) {
           effectiveFileFilter = allChanged;
           // Also set changedFiles if caller didn't — enables R2+ impact scoping in R1

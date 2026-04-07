@@ -8,6 +8,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs tests/claudemd/*.test.mjs tests/install/*.test.mjs tests/stores/*.test.mjs",
+    "audit": "node scripts/audit-loop.mjs",
     "audit:plan": "node scripts/openai-audit.mjs plan",
     "audit:code": "node scripts/openai-audit.mjs code",
     "audit:rebuttal": "node scripts/openai-audit.mjs rebuttal",
@@ -15,7 +16,8 @@
     "audit:gemini-ping": "node scripts/gemini-review.mjs ping",
     "audit:refine": "node scripts/refine-prompts.mjs",
     "audit:bandit": "node scripts/bandit.mjs stats",
-    "audit:phase7": "node scripts/phase7-check.mjs"
+    "audit:phase7": "node scripts/phase7-check.mjs",
+    "audit:check-deps": "node scripts/check-deps.mjs"
   },
   "keywords": [
     "claude",

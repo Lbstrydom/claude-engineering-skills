@@ -197,8 +197,9 @@ describe('resolveLedgerPath', () => {
     assert.ok(result.endsWith('sid-r1-ledger.json'), `Expected ledger suffix, got: ${result}`);
   });
 
-  it('returns null when no --out and no --ledger on round 1', () => {
-    assert.equal(resolveLedgerPath({ explicitLedger: null, outFile: null, round: 1, noLedger: false }), null);
+  it('defaults to .audit/session-ledger.json when no --out and no --ledger on round 1', () => {
+    const result = resolveLedgerPath({ explicitLedger: null, outFile: null, round: 1, noLedger: false });
+    assert.ok(result.endsWith('session-ledger.json'), `Expected .audit/session-ledger.json, got: ${result}`);
   });
 
   it('returns null on round 2+ without explicit ledger (caller should fail-fast)', () => {

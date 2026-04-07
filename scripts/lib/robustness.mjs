@@ -125,10 +125,15 @@ export function resolveLedgerPath({ explicitLedger, outFile, round, noLedger }) 
   if (noLedger) return null;
   if (explicitLedger) return path.resolve(explicitLedger);
   if (round >= 2) return null;
-  if (!outFile) return null;
 
-  const parsed = path.parse(outFile);
-  const baseName = parsed.name.replace(/-result$/, '');
-  const ledgerName = `${baseName}-ledger${parsed.ext}`;
-  return path.resolve(parsed.dir, ledgerName);
+  // Derive from --out when available
+  if (outFile) {
+    const parsed = path.parse(outFile);
+    const baseName = parsed.name.replace(/-result$/, '');
+    const ledgerName = `${baseName}-ledger${parsed.ext}`;
+    return path.resolve(parsed.dir, ledgerName);
+  }
+
+  // Default to .audit/ in repo root for persistence across sessions
+  return path.resolve('.audit', 'session-ledger.json');
 }
