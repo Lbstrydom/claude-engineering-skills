@@ -51,13 +51,8 @@ function main() {
   let missingCount = 0;
 
   for (const f of receipt.managedFiles) {
-    // Determine absolute path
-    let absPath;
-    if (f.path.startsWith('.github/') || f.path.startsWith('.agents/') || f.path.startsWith('.audit-loop/')) {
-      absPath = path.join(repoRoot, f.path);
-    } else {
-      absPath = path.resolve(f.path); // Fallback
-    }
+    // All receipt paths are repo-relative — always resolve against repoRoot
+    const absPath = path.join(repoRoot, f.path);
 
     const actual = computeFileSha(absPath);
     const expected = f.sha || f.blockSha;
@@ -74,11 +69,17 @@ function main() {
     }
   }
 
-  // Check .gitignore coverage and auto-fix missing patterns
+  // Check .gitignore coverage (report-only — use --fix to mutate)
+  const fixGitignore = process.argv.includes('--fix');
   const giCheck = checkAuditGitignore(repoRoot);
-  if (giCheck.missing.length > 0) {
+  if (giCheck.missing.length > 0 && fixGitignore) {
     ensureAuditGitignore(repoRoot);
   }
+
+  // Recompute gitignore status after potential fix so output reflects actual state
+  const giFinal = fixGitignore && giCheck.missing.length > 0
+    ? checkAuditGitignore(repoRoot)
+    : giCheck;
 
   if (args.json) {
     console.log(JSON.stringify({
@@ -88,7 +89,7 @@ function main() {
       surface: receipt.surface,
       files: { total: driftResults.length, match: matchCount, drifted: driftCount, missing: missingCount },
       drift: driftResults.filter(r => r.status !== 'match'),
-      gitignore: { missing: giCheck.missing, ok: giCheck.missing.length === 0 },
+      gitignore: { missing: giFinal.missing, ok: giFinal.missing.length === 0, fixed: fixGitignore && giCheck.missing.length > 0 },
     }, null, 2));
   } else {
     console.log(`${D}Bundle version:${X} ${receipt.bundleVersion}`);
