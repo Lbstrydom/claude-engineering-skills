@@ -144,6 +144,17 @@ export function normalizeLanguage(lang) {
 
 // ── Learning System v2 Config ───────────────────────────────────────────────
 
+// ── Meta-Assessment Config ─────────────────────────────────────────────────
+
+export const assessmentConfig = Object.freeze({
+  interval: safeInt(process.env.META_ASSESS_INTERVAL, 4),
+  minOutcomes: safeInt(process.env.META_ASSESS_MIN_OUTCOMES, 20),
+  windowSize: safeInt(process.env.META_ASSESS_WINDOW, 50),
+  model: process.env.META_ASSESS_MODEL || 'gemini-2.5-flash',
+});
+
+// ── Learning System v2 Config ─────────────────────────────────────────────
+
 export const learningConfig = Object.freeze({
   outcomeHalfLifeMs: safeInt(process.env.OUTCOME_HALF_LIFE_DAYS, 30) * 24 * 60 * 60 * 1000,
   outcomeMaxAgeMs: safeInt(process.env.OUTCOME_MAX_AGE_DAYS, 180) * 24 * 60 * 60 * 1000,

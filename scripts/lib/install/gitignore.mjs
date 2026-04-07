@@ -26,6 +26,7 @@ const REQUIRED_PATTERNS = [
   '.audit/remediation-tasks.jsonl',
   '.audit/pipeline-state.json',
   '.audit/session-ledger.json',
+  '.audit/meta-assessments.jsonl',
 ];
 
 /**

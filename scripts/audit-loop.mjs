@@ -392,6 +392,28 @@ async function main() {
     }
   }
 
+  // Step 8.5 — Meta-assessment (every N runs)
+  try {
+    const { shouldRunAssessment } = await import('./scripts/meta-assess.mjs');
+    const { shouldRun, runsSinceLastAssessment } = shouldRunAssessment();
+    if (shouldRun) {
+      banner('META-ASSESSMENT — Loop Performance Review');
+      const assessOutFile = path.join(outDir, `${sid}-meta-assessment.md`);
+      try {
+        execFileSync('node', ['scripts/meta-assess.mjs', '--force', '--out', assessOutFile], {
+          stdio: 'inherit', timeout: 120000
+        });
+        console.log(`  Assessment: ${assessOutFile}`);
+      } catch (err) {
+        console.error(`  ${Y}Meta-assessment failed${X}: ${err.message?.slice(0, 100)}`);
+      }
+    } else {
+      process.stderr.write(`  [meta-assess] Not due (${runsSinceLastAssessment} runs since last)\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`  [meta-assess] ${err.message?.slice(0, 80)} — non-blocking\n`);
+  }
+
   // Summary
   banner('AUDIT LOOP COMPLETE');
   console.log(`  Rounds: ${roundResults.length}`);

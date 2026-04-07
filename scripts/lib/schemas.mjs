@@ -323,6 +323,56 @@ export const RefactorCandidateSchema = z.object({
  * and added to RefactorCandidates post-validation. budgetViolations are
  * also server-computed from the debt ledger + budgets map.
  */
+// ── Meta-Assessment Schema ──────────────────────────────────────────────────
+
+export const MetaAssessmentSchema = z.object({
+  window: z.object({
+    fromRun: z.number(),
+    toRun: z.number(),
+    outcomeCount: z.number(),
+    dateRange: z.string().max(100),
+  }),
+  metrics: z.object({
+    fpRate: z.object({
+      overall: z.number(),
+      byPass: z.record(z.number()),
+      trend: z.enum(['improving', 'stable', 'worsening']),
+    }),
+    signalQuality: z.object({
+      findingsLeadingToChanges: z.number(),
+      totalFindings: z.number(),
+      changeRate: z.number(),
+    }),
+    severityCalibration: z.object({
+      highAcceptanceRate: z.number(),
+      mediumAcceptanceRate: z.number(),
+      lowAcceptanceRate: z.number(),
+      miscalibrated: z.boolean(),
+    }),
+    convergenceSpeed: z.object({
+      avgRoundsToConverge: z.number(),
+      medianRoundsToConverge: z.number(),
+      trend: z.enum(['faster', 'stable', 'slower']),
+    }),
+    pipelineComparison: z.object({
+      variantA: z.object({ runs: z.number(), fpRate: z.number(), avgFindings: z.number() }),
+      variantB: z.object({ runs: z.number(), fpRate: z.number(), avgFindings: z.number() }),
+      betterVariant: z.enum(['A', 'B', 'insufficient_data', 'no_difference']),
+    }),
+  }),
+  diagnosis: z.string().max(2000),
+  recommendations: z.array(z.object({
+    type: z.enum(['prompt_change', 'threshold_adjustment', 'pass_config', 'pipeline_config']),
+    target: z.string().max(100),
+    action: z.string().max(500),
+    rationale: z.string().max(300),
+    priority: z.enum(['HIGH', 'MEDIUM', 'LOW']),
+  })).max(10),
+  overallHealth: z.enum(['healthy', 'needs_attention', 'degraded']),
+});
+
+// ── Debt Review Schema ──────────────────────────────────────────────────────
+
 export const DebtReviewResultSchema = z.object({
   summary: z.object({
     totalEntries: z.number().int().min(0),

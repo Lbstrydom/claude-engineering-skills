@@ -23,6 +23,7 @@ node_modules/
 .audit/remediation-tasks.jsonl
 .audit/pipeline-state.json
 .audit/session-ledger.json
+.audit/meta-assessments.jsonl
 
 # Per-run audit artifacts (results, transcripts, rebuttals)
 .audit/*-result.json
@@ -31,6 +32,7 @@ node_modules/
 .audit/*-rebuttal.md
 .audit/*-resolution.json
 .audit/*-debt-review.md
+.audit/*-meta-assessment.md
 .audit/*-ledger.json
 .audit/gemini-result.json
 

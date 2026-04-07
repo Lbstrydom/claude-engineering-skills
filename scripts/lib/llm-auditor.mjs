@@ -60,18 +60,35 @@ export function selectPipelineVariant(explicit = null) {
 
   const v = lastVariant === 'A' ? 'B' : 'A'; // First run defaults to A
 
-  // Persist for next run
+  // Persist for next run — read existing state to preserve runCount
   try {
     const dir = path.dirname(statePath);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    let existingState = {};
+    try { existingState = JSON.parse(fs.readFileSync(statePath, 'utf-8')); } catch { /* first run */ }
     fs.writeFileSync(statePath, JSON.stringify({
+      ...existingState,
       lastVariant: v,
       updatedAt: new Date().toISOString(),
-      runCount: (lastVariant ? 1 : 0) + 1, // Approximate — not critical
+      runCount: (existingState.runCount || 0) + 1,
     }, null, 2));
   } catch { /* non-fatal — next run will just pick A again */ }
 
   return { variant: v, config: PIPELINE_VARIANTS[v], source: 'alternation' };
+}
+
+/**
+ * Increment the run counter in pipeline state without changing variant.
+ * Called after each completed audit to track total runs for meta-assessment.
+ * @param {string} [statePath]
+ */
+export function incrementRunCounter(statePath = path.resolve(PIPELINE_STATE_FILE)) {
+  try {
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    state.runCount = (state.runCount || 0) + 1;
+    state.lastRunAt = new Date().toISOString();
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+  } catch { /* non-fatal */ }
 }
 
 // ── Unified Auditor Call ────────────────────────────────────────────────────
