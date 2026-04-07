@@ -111,10 +111,12 @@ export function computeAssessmentMetrics(outcomes, fpTracker, bandit, options = 
   };
 
   // ── Convergence Speed ────────────────────────────────────────────────────
-  // Group by round to estimate rounds-per-audit
+  // Group outcomes into audit sessions by (repoFingerprint + promptVariant + day)
+  // to determine max round per session. More robust than hour-boundary grouping.
   const roundCounts = {};
   for (const o of windowed) {
-    const key = `${o.repoFingerprint || 'local'}:${o.timestamp ? Math.floor(o.timestamp / 3600000) : 0}`;
+    const day = o.timestamp ? new Date(o.timestamp).toISOString().slice(0, 10) : 'unknown';
+    const key = `${o.repoFingerprint || 'local'}:${o.pipelineVariant || ''}:${day}`;
     roundCounts[key] = Math.max(roundCounts[key] || 0, o.round || 1);
   }
   const rounds = Object.values(roundCounts);
@@ -312,7 +314,14 @@ export async function runLLMAssessment(metrics, samples, fpPatterns) {
       },
     });
 
-    const result = JSON.parse(response.text);
+    let result = JSON.parse(response.text);
+    // Validate Gemini response against schema
+    const validated = MetaAssessmentSchema.safeParse(result);
+    if (validated.success) {
+      result = validated.data;
+    } else {
+      process.stderr.write(`  [meta-assess] Gemini Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
+    }
     // Overlay our deterministic metrics (LLM can't change the numbers)
     result.window = metrics.window;
     result.metrics = metrics.metrics;
@@ -337,6 +346,8 @@ export async function runLLMAssessment(metrics, samples, fpPatterns) {
     });
 
     const result = response.output_parsed;
+    if (!result) throw new Error('No parsed output from GPT assessment');
+    // Overlay our deterministic metrics (LLM can't change the numbers)
     result.window = metrics.window;
     result.metrics = metrics.metrics;
     process.stderr.write(`  [meta-assess] Done in ${((Date.now() - startMs) / 1000).toFixed(1)}s\n`);
