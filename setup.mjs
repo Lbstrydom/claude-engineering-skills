@@ -1,312 +1,265 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Interactive setup script for claude-engineering-skills.
+ * @fileoverview First-run setup wizard for claude-engineering-skills.
  *
- * Installs the full adaptive audit intelligence system into any project.
- * Supports: Claude Code, VS Code Copilot, Cursor, Windsurf, JetBrains, and raw terminal.
+ * Run once after cloning this repo. Configures:
+ *   1. API keys (.env in this repo)
+ *   2. Learning database (none / SQLite / Supabase / Postgres)
+ *   3. Global skill installation (~/.claude/skills/ — works in every repo)
+ *   4. Auto-update git hook (skills update when you git pull)
+ *   5. npm dependencies (in this repo)
  *
  * Usage:
- *   node setup.mjs                     # Install into current project
- *   node setup.mjs --target <dir>      # Install into specific project
- *   node setup.mjs --scripts-only      # Only copy scripts (skip skills, env)
+ *   node setup.mjs              # Interactive wizard
+ *   node setup.mjs --headless   # Non-interactive (use existing .env, defaults)
  */
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'node:child_process';
 import readline from 'readline';
 
+const SELF_DIR = path.dirname(fileURLToPath(import.meta.url));
 const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 const ask = (q) => new Promise(resolve => rl.question(q, resolve));
 
-const BOLD = '\x1b[1m';
-const GREEN = '\x1b[32m';
-const YELLOW = '\x1b[33m';
-const RED = '\x1b[31m';
-const DIM = '\x1b[2m';
-const RESET = '\x1b[0m';
+const B = '\x1b[1m', G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m';
+function ok(msg) { console.log(`  ${G}✓${X} ${msg}`); }
+function warn(msg) { console.log(`  ${Y}⚠${X} ${msg}`); }
+function fail(msg) { console.log(`  ${R}✗${X} ${msg}`); }
 
-function ok(msg) { console.log(`${GREEN}✓${RESET} ${msg}`); }
-function warn(msg) { console.log(`${YELLOW}⚠${RESET} ${msg}`); }
-function fail(msg) { console.log(`${RED}✗${RESET} ${msg}`); }
-function heading(msg) { console.log(`\n${BOLD}${msg}${RESET}\n`); }
+// ── Step 1: Prerequisites ───────────────────────────────────────────────────
 
-const SCRIPTS = [
-  'scripts/openai-audit.mjs',
-  'scripts/shared.mjs',
-  'scripts/gemini-review.mjs',
-  'scripts/bandit.mjs',
-  'scripts/refine-prompts.mjs',
-  'scripts/learning-store.mjs',
-  'scripts/phase7-check.mjs'
-];
+function checkPrereqs() {
+  const major = parseInt(process.version.slice(1));
+  if (major < 18) { fail(`Node.js ${process.version} — need v18+`); return false; }
+  ok(`Node.js ${process.version}`);
+  try {
+    const v = execSync('npm --version', { encoding: 'utf-8' }).trim();
+    ok(`npm ${v}`);
+  } catch { fail('npm not found'); return false; }
+  return true;
+}
 
-const DEPS = [
-  'openai',
-  'zod',
-  'dotenv',
-  '@google/genai',
-  '@anthropic-ai/sdk',
-  '@supabase/supabase-js'
-];
+// ── Step 2: API Keys ────────────────────────────────────────────────────────
 
 const API_KEYS = [
-  { name: 'OPENAI_API_KEY', prefix: 'sk-', required: true, desc: 'GPT-5.4 auditing (required)' },
-  { name: 'GEMINI_API_KEY', prefix: 'AIza', required: false, desc: 'Gemini 3.1 Pro final review (recommended)' },
-  { name: 'ANTHROPIC_API_KEY', prefix: 'sk-ant-', required: false, desc: 'Claude Haiku context briefs (recommended)' },
-  { name: 'SUPABASE_AUDIT_URL', prefix: 'https://', required: false, desc: 'Cloud learning store URL (optional)' },
-  { name: 'SUPABASE_AUDIT_ANON_KEY', prefix: '', required: false, desc: 'Cloud learning store anon key (optional)' }
+  { name: 'OPENAI_API_KEY', required: true, desc: 'GPT-5.4 auditing' },
+  { name: 'GEMINI_API_KEY', required: false, desc: 'Gemini final review + A/B pipeline' },
+  { name: 'ANTHROPIC_API_KEY', required: false, desc: 'Claude Opus fallback review' },
 ];
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function findProjectRoot(startDir) {
-  let dir = startDir;
-  while (dir !== path.dirname(dir)) {
-    if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
-    dir = path.dirname(dir);
-  }
-  return null;
-}
-
-function checkNode() {
-  const major = parseInt(process.version.slice(1));
-  if (major >= 18) { ok(`Node.js ${process.version}`); return true; }
-  fail(`Node.js ${process.version} — need v18+ for ES modules`);
-  return false;
-}
-
-function checkNpm() {
-  try {
-    ok(`npm ${execSync('npm --version', { encoding: 'utf-8' }).trim()}`);
-    return true;
-  } catch { fail('npm not found'); return false; }
-}
-
-// ── Install scripts ───────────────────────────────────────────────────────────
-
-function installScripts(targetDir, sourceDir) {
-  const scriptsDir = path.join(targetDir, 'scripts');
-  fs.mkdirSync(scriptsDir, { recursive: true });
-
-  let installed = 0, skipped = 0;
-  for (const script of SCRIPTS) {
-    const src = path.join(sourceDir, script);
-    const dest = path.join(targetDir, script);
-    if (!fs.existsSync(src)) { warn(`Source missing: ${script}`); continue; }
-
-    if (fs.existsSync(dest)) {
-      const existing = fs.readFileSync(dest, 'utf-8');
-      const incoming = fs.readFileSync(src, 'utf-8');
-      if (existing === incoming) { skipped++; continue; }
-    }
-    fs.copyFileSync(src, dest);
-    installed++;
-  }
-  ok(`${installed} script(s) installed, ${skipped} already up to date`);
-}
-
-// ── Install skills (all platforms) ────────────────────────────────────────────
-
-function installSkills(targetDir, sourceDir) {
-  const platforms = [
-    // Claude Code (CLI + VS Code extension + desktop app)
-    { dir: '.claude/skills/audit-loop', name: 'Claude Code' },
-    // VS Code Copilot / GitHub Copilot
-    { dir: '.github/skills/audit-loop', name: 'VS Code Copilot' },
-    // Cursor uses .cursor/rules or .cursorrules — skill goes in .github
-    // Windsurf uses .windsurfrules — skill goes in .github
-    // JetBrains uses .github/copilot-instructions.md — skill goes in .github
-  ];
-
-  const skillSrc = path.join(sourceDir, '.claude', 'skills', 'audit-loop', 'SKILL.md');
-  if (!fs.existsSync(skillSrc)) { warn('SKILL.md source not found'); return; }
-
-  for (const platform of platforms) {
-    const destDir = path.join(targetDir, platform.dir);
-    fs.mkdirSync(destDir, { recursive: true });
-    fs.copyFileSync(skillSrc, path.join(destDir, 'SKILL.md'));
-    ok(`${platform.name} skill → ${platform.dir}/SKILL.md`);
-  }
-
-  // Cursor: also create .cursor/rules reference if .cursor dir exists
-  const cursorDir = path.join(targetDir, '.cursor');
-  if (fs.existsSync(cursorDir)) {
-    const rulesDir = path.join(cursorDir, 'rules');
-    fs.mkdirSync(rulesDir, { recursive: true });
-    fs.copyFileSync(skillSrc, path.join(rulesDir, 'audit-loop.md'));
-    ok('Cursor skill → .cursor/rules/audit-loop.md');
-  }
-
-  // Windsurf: create .windsurfrules reference if it exists
-  const windsurfRules = path.join(targetDir, '.windsurfrules');
-  if (fs.existsSync(windsurfRules)) {
-    const content = fs.readFileSync(windsurfRules, 'utf-8');
-    if (!content.includes('audit-loop')) {
-      fs.appendFileSync(windsurfRules, '\n\n# Audit Loop skill — see .github/skills/audit-loop/SKILL.md\n');
-      ok('Windsurf .windsurfrules updated with audit-loop reference');
-    }
-  }
-}
-
-// ── Dependencies ──────────────────────────────────────────────────────────────
-
-function checkDependencies(targetDir) {
-  const pkgPath = path.join(targetDir, 'package.json');
-  if (!fs.existsSync(pkgPath)) {
-    warn('No package.json — creating one');
-    execSync('npm init -y', { cwd: targetDir, stdio: 'pipe' });
-  }
-
-  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-  const allDeps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
-  const needed = [];
-
-  for (const dep of DEPS) {
-    if (allDeps[dep]) {
-      ok(`${dep} ✓`);
-    } else {
-      needed.push(dep);
-    }
-  }
-
-  if (pkg.type !== 'module') {
-    warn('package.json missing "type": "module" — audit scripts use ES modules');
-  }
-
-  return needed;
-}
-
-// ── API Keys ──────────────────────────────────────────────────────────────────
-
-async function setupEnv(targetDir) {
-  const envPath = path.join(targetDir, '.env');
-  let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
+async function setupApiKeys(headless) {
+  const envPath = path.join(SELF_DIR, '.env');
+  let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
   let modified = false;
 
   for (const key of API_KEYS) {
-    if (envContent.includes(`${key.name}=`)) {
-      ok(`${key.name} already in .env`);
+    if (content.match(new RegExp(`^${key.name}=.+`, 'm'))) {
+      ok(`${key.name} already configured`);
       continue;
     }
-
-    const reqLabel = key.required ? `${RED}required${RESET}` : `${DIM}optional${RESET}`;
-    const value = await ask(`  ${key.name} (${key.desc}, ${reqLabel}): `);
-
-    if (value && value.trim()) {
-      envContent += `\n${key.name}=${value.trim()}`;
+    if (headless) {
+      if (key.required) warn(`${key.name} not set — you must add it to .env before running audits`);
+      continue;
+    }
+    const label = key.required ? `${R}required${X}` : `${D}optional${X}`;
+    const value = await ask(`  ${key.name} (${key.desc}, ${label}): `);
+    if (value?.trim()) {
+      content += `\n${key.name}=${value.trim()}`;
       modified = true;
-      ok(`${key.name} added`);
+      ok(`${key.name} saved`);
     } else if (key.required) {
-      warn(`${key.name} skipped — you MUST set this before running audits`);
-      envContent += `\n# ${key.name}=  # ${key.desc}`;
-      modified = true;
-    } else {
-      envContent += `\n# ${key.name}=  # ${key.desc}`;
+      warn(`${key.name} skipped — add it to .env before running audits`);
+      content += `\n# ${key.name}=  # ${key.desc}`;
       modified = true;
     }
   }
+  if (modified) fs.writeFileSync(envPath, content.trim() + '\n');
+}
 
-  if (modified) {
-    fs.writeFileSync(envPath, envContent.trim() + '\n', 'utf-8');
-    ok('.env updated');
+// ── Step 3: Database Selection ──────────────────────────────────────────────
+
+const DB_OPTIONS = [
+  { key: '1', name: 'None', desc: 'Local JSON files only (default, zero setup)', env: {} },
+  { key: '2', name: 'SQLite', desc: 'Local database at ~/.audit-loop/shared.db', env: { AUDIT_STORE: 'sqlite' } },
+  { key: '3', name: 'Supabase', desc: 'Cloud — free tier available at supabase.com', env: { AUDIT_STORE: 'supabase' }, extraKeys: ['SUPABASE_AUDIT_URL', 'SUPABASE_AUDIT_ANON_KEY'] },
+  { key: '4', name: 'Postgres', desc: 'Self-hosted PostgreSQL', env: { AUDIT_STORE: 'postgres' }, extraKeys: ['AUDIT_POSTGRES_URL'] },
+];
+
+async function setupDatabase(headless) {
+  if (headless) { ok('Database: using existing .env config'); return; }
+
+  console.log('');
+  console.log(`  Learning database stores audit outcomes, bandit arms, and FP patterns.`);
+  console.log(`  Data accumulates over time and makes future audits smarter.\n`);
+  for (const opt of DB_OPTIONS) {
+    console.log(`    ${B}${opt.key}${X}) ${opt.name} — ${opt.desc}`);
+  }
+  console.log('');
+
+  const choice = await ask(`  Choose (1-4, default 1): `);
+  const selected = DB_OPTIONS.find(o => o.key === choice?.trim()) || DB_OPTIONS[0];
+  ok(`Database: ${selected.name}`);
+
+  const envPath = path.join(SELF_DIR, '.env');
+  let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
+
+  // Set AUDIT_STORE
+  for (const [k, v] of Object.entries(selected.env)) {
+    if (!content.includes(`${k}=`)) {
+      content += `\n${k}=${v}`;
+    }
   }
 
-  // Ensure audit-loop artifacts are gitignored
-  const { ensureAuditGitignore } = await import('./scripts/lib/install/gitignore.mjs');
-  const giResult = ensureAuditGitignore(targetDir, { quiet: true });
-  if (giResult.added.length > 0) {
-    ok(`${giResult.created ? 'Created' : 'Updated'} .gitignore: +${giResult.added.length} patterns`);
+  // Prompt for extra keys (Supabase URL, Postgres URL, etc.)
+  if (selected.extraKeys) {
+    for (const key of selected.extraKeys) {
+      if (content.match(new RegExp(`^${key}=.+`, 'm'))) {
+        ok(`${key} already configured`);
+        continue;
+      }
+      const value = await ask(`  ${key}: `);
+      if (value?.trim()) {
+        content += `\n${key}=${value.trim()}`;
+        ok(`${key} saved`);
+      } else {
+        warn(`${key} skipped — add to .env before running audits`);
+        content += `\n# ${key}=`;
+      }
+    }
+  }
+
+  fs.writeFileSync(envPath, content.trim() + '\n');
+}
+
+// ── Step 4: Install Skills Globally ─────────────────────────────────────────
+
+function installSkills() {
+  try {
+    // Build manifest first
+    execFileSync('node', ['scripts/build-manifest.mjs'], { cwd: SELF_DIR, stdio: 'pipe' });
+
+    // Install to ~/.claude/skills/ (global — works in every repo)
+    execFileSync('node', ['scripts/install-skills.mjs', '--local', '--surface', 'claude', '--force'], {
+      cwd: SELF_DIR, stdio: 'pipe'
+    });
+    ok('Skills installed to ~/.claude/skills/ (available in every repo)');
+  } catch (err) {
+    warn(`Skill install failed: ${err.message?.slice(0, 100)}`);
+    console.log(`  Run manually: node scripts/install-skills.mjs --local --surface claude --force`);
   }
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Step 5: npm Dependencies ────────────────────────────────────────────────
+
+function installDeps() {
+  try {
+    execFileSync('npm', ['install'], { cwd: SELF_DIR, stdio: 'pipe', timeout: 120000 });
+    ok('npm dependencies installed');
+  } catch {
+    warn('npm install failed — run manually: npm install');
+  }
+}
+
+// ── Step 6: Git Hook for Auto-Update ────────────────────────────────────────
+
+function installGitHook() {
+  const hooksDir = path.join(SELF_DIR, '.git', 'hooks');
+  if (!fs.existsSync(hooksDir)) { warn('No .git/hooks — skip git hook'); return; }
+
+  const hookPath = path.join(hooksDir, 'post-merge');
+  const hookContent = `#!/bin/sh
+# Auto-update skills after git pull
+# Installed by setup.mjs — remove this file to disable
+
+echo "  [post-merge] Updating skills..."
+node scripts/build-manifest.mjs 2>/dev/null
+node scripts/install-skills.mjs --local --surface claude --force 2>/dev/null
+echo "  [post-merge] Skills updated."
+`;
+
+  if (fs.existsSync(hookPath)) {
+    const existing = fs.readFileSync(hookPath, 'utf-8');
+    if (existing.includes('install-skills.mjs')) {
+      ok('Post-merge hook already installed');
+      return;
+    }
+    // Append to existing hook
+    fs.appendFileSync(hookPath, '\n' + hookContent.split('\n').slice(1).join('\n'));
+    ok('Post-merge hook updated (appended skill update)');
+  } else {
+    fs.writeFileSync(hookPath, hookContent, { mode: 0o755 });
+    ok('Post-merge hook installed — skills auto-update on git pull');
+  }
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
+  const headless = process.argv.includes('--headless');
+
   console.log(`
-${BOLD}╔══════════════════════════════════════════════════════════╗
-║  Claude Audit Loop — Adaptive Audit Intelligence Setup  ║
-║  3 models: Claude + GPT-5.4 + Gemini 3.1 Pro           ║
-║  7 phases: R2+ efficiency → predictive strategy         ║
-╚══════════════════════════════════════════════════════════╝${RESET}
+${B}╔══════════════════════════════════════════════════════════╗
+║  Engineering Skills — First-Time Setup                   ║
+║  Multi-model audit: Claude + GPT-5.4 + Gemini 3.1 Pro   ║
+╚══════════════════════════════════════════════════════════╝${X}
 `);
 
-  const args = process.argv.slice(2);
-  const scriptsOnly = args.includes('--scripts-only');
-  const targetIdx = args.indexOf('--target');
-  const targetArg = targetIdx >= 0 ? args[targetIdx + 1] : null;
+  console.log(`${B}Step 1 — Prerequisites${X}`);
+  if (!checkPrereqs()) { process.exit(1); }
 
-  const sourceDir = path.dirname(fileURLToPath(import.meta.url));
-  let targetDir = targetArg ? path.resolve(targetArg) : findProjectRoot(process.cwd()) ?? process.cwd();
+  console.log(`\n${B}Step 2 — API Keys${X}`);
+  await setupApiKeys(headless);
 
-  // ── Prerequisites
-  heading('Step 1 — Prerequisites');
-  if (!checkNode() || !checkNpm()) { fail('Missing prerequisites.'); process.exit(1); }
+  console.log(`\n${B}Step 3 — Learning Database${X}`);
+  await setupDatabase(headless);
 
-  // ── Target
-  heading('Step 2 — Target project');
-  console.log(`  Installing into: ${BOLD}${targetDir}${RESET}`);
-  if (!fs.existsSync(targetDir)) { fail(`Directory not found: ${targetDir}`); process.exit(1); }
-  const confirm = await ask('  Correct? (Y/n) ');
-  if (confirm.toLowerCase() === 'n') {
-    targetDir = path.resolve(await ask('  Enter target directory: '));
-  }
+  console.log(`\n${B}Step 4 — Dependencies${X}`);
+  installDeps();
 
-  // ── Dependencies
-  heading('Step 3 — Dependencies');
-  const needed = checkDependencies(targetDir);
-  if (needed.length > 0) {
-    console.log(`\n  Installing: ${needed.join(', ')}`);
-    try {
-      execSync(`npm install ${needed.join(' ')}`, { cwd: targetDir, stdio: 'inherit' });
-      ok('Dependencies installed');
-    } catch { fail('npm install failed — run manually: npm install ' + needed.join(' ')); }
-  }
+  console.log(`\n${B}Step 5 — Install Skills${X}`);
+  installSkills();
 
-  // ── Scripts
-  heading('Step 4 — Audit scripts');
-  installScripts(targetDir, sourceDir);
+  console.log(`\n${B}Step 6 — Auto-Update Hook${X}`);
+  installGitHook();
 
-  // ── Skills (all platforms)
-  if (!scriptsOnly) {
-    heading('Step 5 — Platform skills');
-    installSkills(targetDir, sourceDir);
-  }
+  // Summary
+  console.log(`
+${B}╔══════════════════════════════════════════════════════════╗
+║  Setup Complete                                          ║
+╚══════════════════════════════════════════════════════════╝${X}
 
-  // ── API Keys
-  if (!scriptsOnly) {
-    heading('Step 6 — API keys');
-    await setupEnv(targetDir);
-  }
+  ${G}Skills are now available in every repo you open in VS Code.${X}
 
-  // ── Summary
-  heading('Setup complete!');
-  console.log('  Scripts:');
-  for (const s of SCRIPTS) {
-    const exists = fs.existsSync(path.join(targetDir, s));
-    console.log(`    ${exists ? GREEN + '✓' : RED + '✗'}${RESET} ${s}`);
-  }
+  ${B}How it works:${X}
+    - Skills live in ~/.claude/skills/ (global to your machine)
+    - Open any repo in VS Code → type /audit-loop → it works
+    - Run ${D}git pull${X} in this repo to get updates (auto-installs via hook)
 
-  console.log('\n  Platforms:');
-  console.log(`    ${GREEN}✓${RESET} Claude Code       (.claude/skills/audit-loop/)`);
-  console.log(`    ${GREEN}✓${RESET} VS Code Copilot   (.github/skills/audit-loop/)`);
-  console.log(`    ${GREEN}✓${RESET} Cursor            (.github/skills/ or .cursor/rules/)`);
-  console.log(`    ${GREEN}✓${RESET} Windsurf          (.github/skills/)`);
-  console.log(`    ${GREEN}✓${RESET} JetBrains         (.github/skills/)`);
-  console.log(`    ${GREEN}✓${RESET} Terminal           (node scripts/openai-audit.mjs)`);
+  ${B}Usage:${X}
+    ${D}In any repo:${X}
+      /audit-loop code docs/plans/my-feature.md
+      /audit-loop plan docs/plans/my-feature.md
+      /plan-backend <description>
+      /plan-frontend <description>
+      /audit <plan-file>
 
-  console.log('\n  Usage:');
-  console.log(`    ${DIM}Claude Code:${RESET}  /audit-loop plan docs/plans/my-feature.md`);
-  console.log(`    ${DIM}Claude Code:${RESET}  /audit-loop code docs/plans/my-feature.md`);
-  console.log(`    ${DIM}Copilot:${RESET}      /audit-loop (in Copilot Chat)`);
-  console.log(`    ${DIM}Terminal:${RESET}      node scripts/openai-audit.mjs code <plan>`);
-  console.log(`    ${DIM}Bandit:${RESET}        node scripts/bandit.mjs stats`);
-  console.log(`    ${DIM}Refine:${RESET}        node scripts/refine-prompts.mjs backend --suggest`);
-  console.log(`    ${DIM}Phase 7:${RESET}       node scripts/phase7-check.mjs`);
+    ${D}From this repo (CLI):${X}
+      node scripts/audit-loop.mjs code <plan-file>
+      node scripts/openai-audit.mjs code <plan-file>
+      node scripts/bandit.mjs stats
 
-  console.log('');
+  ${B}To update:${X}
+    cd ${SELF_DIR}
+    git pull   ${D}# hook auto-reinstalls skills${X}
+
+  ${B}To add skills to a specific repo${X} (Copilot/Cursor/Agents):
+    node scripts/install-skills.mjs --local --target /path/to/repo --force
+`);
+
   rl.close();
 }
 
-main().catch(err => { console.error('Setup failed:', err.message); process.exit(1); });
+main().catch(err => { console.error(`Setup failed: ${err.message}`); process.exit(1); });

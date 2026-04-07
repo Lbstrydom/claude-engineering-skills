@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "bundleVersion": "534d30b9324b0296",
+  "bundleVersion": "4854794ab42cb04b",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-04-06T14:25:54.630Z",
+  "updatedAt": "2026-04-07T11:35:20.646Z",
   "skills": {
     "audit": {
       "path": "skills/audit/SKILL.md",
