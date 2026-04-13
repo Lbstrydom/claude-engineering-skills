@@ -40,7 +40,7 @@
     "@google/genai": "^1.47.0",
     "@supabase/supabase-js": "^2.100.1",
     "codeowners-utils": "^1.0.2",
-    "dotenv": "17.0.0",
+    "dotenv": "17.4.2",
     "micromatch": "^4.0.8",
     "openai": "6.17.0",
     "proper-lockfile": "^4.1.2",
