@@ -26,8 +26,12 @@ const KEYS = [
   { name: 'OPENAI_API_KEY', req: true, hint: 'GPT-5.4 auditing (required)' },
   { name: 'GEMINI_API_KEY', req: false, hint: 'Gemini 3.1 Pro final review' },
   { name: 'ANTHROPIC_API_KEY', req: false, hint: 'Claude Haiku context briefs' },
-  { name: 'SUPABASE_AUDIT_URL', req: false, hint: 'Cloud learning store URL' },
-  { name: 'SUPABASE_AUDIT_ANON_KEY', req: false, hint: 'Cloud learning store key' }
+  { name: 'SUPABASE_AUDIT_URL', req: false, hint: 'audit-loop cloud learning store URL' },
+  { name: 'SUPABASE_AUDIT_ANON_KEY', req: false, hint: 'audit-loop cloud learning store key' },
+  { name: 'PERSONA_TEST_SUPABASE_URL', req: false, hint: 'persona-test session memory URL' },
+  { name: 'PERSONA_TEST_SUPABASE_ANON_KEY', req: false, hint: 'persona-test session memory key' },
+  { name: 'PERSONA_TEST_APP_URL', req: false, hint: 'default app URL for /persona-test list (e.g. https://myapp.railway.app)' },
+  { name: 'PERSONA_TEST_REPO_NAME', req: false, hint: 'repo name for cross-referencing audit findings (e.g. wine-cellar-app)' }
 ];
 
 async function main() {
@@ -82,29 +86,57 @@ ${B}═════════════════════════�
 
   // 4. Install skills (all platforms)
   console.log(`\n${B}Skills${X}`);
-  const skillSrc = path.join(tmp, '.claude', 'skills', 'audit-loop', 'SKILL.md');
-  if (fs.existsSync(skillSrc)) {
+  const skillNames = ['audit-loop', 'persona-test'];
+  for (const skillName of skillNames) {
+    const skillSrc = path.join(tmp, '.claude', 'skills', skillName, 'SKILL.md');
+    if (!fs.existsSync(skillSrc)) {
+      console.log(`  ${Y}⚠${X} ${skillName}/SKILL.md not found in bundle — skipping`);
+      continue;
+    }
     const skill = fs.readFileSync(skillSrc, 'utf-8');
 
     // Claude Code
-    const claudeDir = path.join(target, '.claude', 'skills', 'audit-loop');
+    const claudeDir = path.join(target, '.claude', 'skills', skillName);
     fs.mkdirSync(claudeDir, { recursive: true });
     fs.writeFileSync(path.join(claudeDir, 'SKILL.md'), skill);
-    console.log(`  ${G}✓${X} Claude Code`);
 
     // VS Code Copilot / Cursor / Windsurf / JetBrains
-    const ghDir = path.join(target, '.github', 'skills', 'audit-loop');
+    const ghDir = path.join(target, '.github', 'skills', skillName);
     fs.mkdirSync(ghDir, { recursive: true });
     fs.writeFileSync(path.join(ghDir, 'SKILL.md'), skill);
-    console.log(`  ${G}✓${X} VS Code Copilot / Cursor / Windsurf / JetBrains`);
 
     // Cursor .cursor/rules (if .cursor exists)
-    const cursorDir = path.join(target, '.cursor', 'rules');
     if (fs.existsSync(path.join(target, '.cursor'))) {
+      const cursorDir = path.join(target, '.cursor', 'rules');
       fs.mkdirSync(cursorDir, { recursive: true });
-      fs.writeFileSync(path.join(cursorDir, 'audit-loop.md'), skill);
-      console.log(`  ${G}✓${X} Cursor rules`);
+      fs.writeFileSync(path.join(cursorDir, `${skillName}.md`), skill);
     }
+    console.log(`  ${G}✓${X} ${skillName} → Claude Code + VS Code Copilot + Cursor + Windsurf`);
+  }
+
+  // 4b. Install pre-push hook for continuous skill sync
+  console.log(`\n${B}Git Hooks${X}`);
+  const hooksDir = path.join(target, '.git', 'hooks');
+  if (fs.existsSync(hooksDir)) {
+    const hookContent = `#!/bin/bash
+# Auto-sync skill files to consumer repos before every push.
+# Non-blocking — sync warnings never stop the push.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+SYNC_SCRIPT="$REPO_ROOT/scripts/sync-to-repos.mjs"
+if [ ! -f "$SYNC_SCRIPT" ]; then exit 0; fi
+echo "→ Syncing skills to consumer repos..."
+node "$SYNC_SCRIPT" 2>&1
+SYNC_EXIT=$?
+[ $SYNC_EXIT -ne 0 ] && echo "⚠  Sync completed with warnings — push continues"
+[ $SYNC_EXIT -eq 0 ] && echo "✓  Sync complete"
+exit 0
+`;
+    const hookPath = path.join(hooksDir, 'pre-push');
+    fs.writeFileSync(hookPath, hookContent);
+    fs.chmodSync(hookPath, 0o755);
+    console.log(`  ${G}✓${X} pre-push hook installed — skills auto-sync on every push`);
+  } else {
+    console.log(`  ${Y}⚠${X} No .git/hooks dir found — install in a git repo to enable auto-sync`);
   }
 
   // 5. Dependencies
@@ -173,9 +205,12 @@ ${B}═════════════════════════�
   ✓ Installed!
 ══════════════════════════════════════════════════${X}
 
-  ${D}Claude Code:${X}  /audit-loop plan docs/plans/X.md
-  ${D}Copilot:${X}      /audit-loop (in chat)
+  ${D}Audit:${X}         /audit-loop plan docs/plans/X.md
+  ${D}Persona test:${X}  /persona-test "first-time user" https://myapp.railway.app
+  ${D}List personas:${X} /persona-test list
+  ${D}Ship:${X}          /ship (includes UX P0 gate)
   ${D}Terminal:${X}      node scripts/openai-audit.mjs code docs/plans/X.md
+  ${D}Sync skills:${X}   node scripts/sync-to-repos.mjs (also runs on git push)
   ${D}Bandit:${X}        node scripts/bandit.mjs stats
   ${D}Phase 7:${X}       node scripts/phase7-check.mjs
 `);
