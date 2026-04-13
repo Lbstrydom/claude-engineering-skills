@@ -28,6 +28,12 @@
       "sha": "b1262dffaed8",
       "size": 10357,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git."
+    },
+    "persona-test": {
+      "path": "skills/persona-test/SKILL.md",
+      "sha": "auto",
+      "size": 28082,
+      "summary": "Persona-driven exploratory browser testing against a live URL. Plan→Act→Reflect loop, P0–P3 findings with confidence scoring, qualitative debrief, Supabase session memory, cross-references audit-loop findings. list/add sub-commands for per-app persona registry."
     }
   }
 }

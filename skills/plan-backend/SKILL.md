@@ -84,6 +84,29 @@ Apply these principles when Python is detected. Each bullet carries an explicit 
 **Explore the codebase FIRST.** The biggest planning failure is proposing solutions
 without understanding what already exists.
 
+### Phase 1 Pre-Step — Persona Test History (if available)
+
+Before reading the code, check if persona testing has already surfaced pain points in
+the area being planned. If `PERSONA_TEST_SUPABASE_URL` and `PERSONA_TEST_REPO_NAME` are set:
+
+```bash
+curl -s "$PERSONA_TEST_SUPABASE_URL/rest/v1/persona_test_sessions?repo_name=eq.$PERSONA_TEST_REPO_NAME&order=created_at.desc&limit=5&select=persona,focus,verdict,findings,p0_count,p1_count" \
+  -H "apikey: $PERSONA_TEST_SUPABASE_ANON_KEY" \
+  -H "Authorization: Bearer $PERSONA_TEST_SUPABASE_ANON_KEY"
+```
+
+Filter sessions whose `focus` overlaps with the feature being planned. If matches found,
+include in the **Context Summary** (Phase 4, Section 1) as **Known user-visible issues**:
+
+```
+Known user-visible issues (from persona testing):
+  • [P0] Form submit unresponsive — "Pieter" session, Apr 14 (focus: adding a bottle)
+  • [P1] No loading state on search — 3 sessions, recurring
+```
+
+This prevents the plan from ignoring already-discovered UX failures, and flags code paths
+that persona testing has confirmed are broken — treat these as HIGH priority in the design.
+
 1. **Map the landscape**: Read relevant existing files — routes, services, models, utilities
 2. **Identify existing patterns**: How does the codebase already solve similar problems?
 3. **Find reusable components**: What services, utilities, or abstractions already exist that could be leveraged?

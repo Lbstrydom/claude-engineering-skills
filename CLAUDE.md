@@ -2,10 +2,30 @@
 
 ## Project Overview
 
-**Purpose**: A bundle of 5 AI-pair-programming skills for planning, auditing, and shipping code. Includes a multi-model audit loop (Claude + GPT-5.4 + Gemini 3.1 Pro).
+**Purpose**: A bundle of 6 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
 **Runtime**: Node.js (ESM modules, `"type": "module"`)
 **Deployment**: CLI scripts + skill files, invoked by AI coding assistants (Claude Code, Copilot, Cursor, Windsurf)
 **Repo**: Renamed from `claude-audit-loop` to `claude-engineering-skills` (Phase E)
+
+## Skill Chain
+
+```
+/plan-backend + /plan-frontend   → architecture & UX planning
+        ↓
+/audit-loop                      → code quality gate (GPT-5.4 + Gemini arbiter)
+        ↓
+deploy to Railway / live URL
+        ↓
+/persona-test                    → live UX testing as a persona (browser + screenshots)
+        ↓
+/ship                            → commit + push (with UX P0 warning from persona-test)
+```
+
+Each skill is a sibling — they share env vars and Supabase stores but have distinct scopes:
+- **plan-***: code that doesn't exist yet
+- **audit-loop**: code that was just written (static analysis + LLM audit)
+- **persona-test**: deployed app (live browser, user flows, UX findings)
+- **ship**: packaging and delivery
 
 ## Dependencies (CRITICAL — check versions before flagging issues)
 
@@ -84,8 +104,12 @@ Covers: atomic writes, schema derivation, ledger operations, finding identity, F
 | `BRIEF_MODEL_GEMINI` | No | `gemini-2.5-flash` | Override brief generation Gemini model |
 | `BRIEF_MODEL_CLAUDE` | No | `claude-haiku-4-5-20251001` | Override brief generation Claude model |
 | `SUPPRESS_SIMILARITY_THRESHOLD` | No | `0.35` | Jaccard threshold for R2+ suppression (0.0-1.0) |
-| `SUPABASE_AUDIT_URL` | No | — | Supabase project URL for cloud learning store |
-| `SUPABASE_AUDIT_ANON_KEY` | No | — | Supabase anon key (falls back to local-only mode) |
+| `SUPABASE_AUDIT_URL` | No | — | Supabase project URL for audit-loop cloud learning store |
+| `SUPABASE_AUDIT_ANON_KEY` | No | — | Supabase anon key for audit-loop (falls back to local-only mode) |
+| `PERSONA_TEST_SUPABASE_URL` | No | — | Supabase project URL for persona-test session memory |
+| `PERSONA_TEST_SUPABASE_ANON_KEY` | No | — | Supabase anon key for persona-test |
+| `PERSONA_TEST_APP_URL` | No | — | Default app URL for persona-test list/add (per-project `.env`) |
+| `PERSONA_TEST_REPO_NAME` | No | — | Repo name for cross-referencing audit-loop findings (per-project `.env`) |
 
 ## R2+ Audit Mode (Phase 1)
 

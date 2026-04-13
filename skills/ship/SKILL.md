@@ -77,6 +77,33 @@ When generating/updating status.md for Python repos:
 
 ---
 
+## Step 0.5 — Persona-Test UX Gate (non-blocking)
+
+If `PERSONA_TEST_SUPABASE_URL` and `PERSONA_TEST_REPO_NAME` are set, check for recent
+unresolved P0s before shipping:
+
+```bash
+curl -s "$PERSONA_TEST_SUPABASE_URL/rest/v1/persona_test_sessions?repo_name=eq.$PERSONA_TEST_REPO_NAME&p0_count=gt.0&order=created_at.desc&limit=1&select=persona,focus,verdict,p0_count,p1_count,created_at,debrief_md" \
+  -H "apikey: $PERSONA_TEST_SUPABASE_ANON_KEY" \
+  -H "Authorization: Bearer $PERSONA_TEST_SUPABASE_ANON_KEY"
+```
+
+If a session with P0s exists within the last 14 days:
+
+```
+⚠ UX GATE (non-blocking)
+  Last persona test: "Pieter" — 3 days ago → Blocked (P0: 2, P1: 3)
+  Unresolved P0s detected. These are user-visible broken flows.
+  Shipping anyway — but consider fixing before next user-facing release.
+```
+
+This is **never blocking** — `/ship` is the user's approval and always proceeds.
+The warning is logged to `status.md` (see Step 2) so it appears in git history.
+
+If no persona test data or env vars not set, skip this step silently.
+
+---
+
 ## Step 1 — Assess What Changed
 
 Before updating any docs, understand the current state:
@@ -129,6 +156,20 @@ so the most recent session is always first.
 - Include decisions — these are valuable context for future sessions
 - Include blockers or open questions if any remain
 - Date format: YYYY-MM-DD
+
+**If Step 0.5 detected unresolved persona P0s**, append this section to the log entry:
+
+```markdown
+### UX Status
+⚠ Unresolved P0s from persona test (<N> days ago)
+- Persona: <persona> | Focus: <focus>
+- Verdict: <verdict> | P0: <n> | P1: <n>
+- Top finding: <first P0 description>
+Review `/persona-test list` before next user-facing release.
+```
+
+If the most recent session has a `debrief_md`, append the first 150 words as a
+"User Perspective" block — gives the commit history a qualitative layer.
 
 ---
 

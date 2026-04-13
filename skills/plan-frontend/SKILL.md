@@ -71,6 +71,22 @@ Focus on server-rendered frontends (Jinja, Django templates, HTMX) -- the domina
 
 ## Phase 1 — Explore the Existing UI
 
+### Phase 1 Pre-Step — Persona Test History (if available)
+
+Before auditing the UI, check what real users have already found. If `PERSONA_TEST_SUPABASE_URL`
+and `PERSONA_TEST_REPO_NAME` are set:
+
+```bash
+curl -s "$PERSONA_TEST_SUPABASE_URL/rest/v1/persona_test_sessions?repo_name=eq.$PERSONA_TEST_REPO_NAME&order=created_at.desc&limit=5&select=persona,focus,verdict,findings,debrief_md,p0_count,p1_count" \
+  -H "apikey: $PERSONA_TEST_SUPABASE_ANON_KEY" \
+  -H "Authorization: Bearer $PERSONA_TEST_SUPABASE_ANON_KEY"
+```
+
+If sessions overlap with the UI area being planned:
+- Include their P0/P1 findings in **Current UI Audit** as "Known user-visible issues"
+- Pull the first 200 words of the most relevant `debrief_md` as "User perspective" context
+- These are ground-truth UX signals — weight them as highly as code inspection findings
+
 **Understand what exists BEFORE designing anything new.** Study the current frontend
 to ensure consistency and reuse.
 

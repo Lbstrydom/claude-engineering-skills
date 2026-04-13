@@ -84,6 +84,7 @@ const LEARNING_SCRIPTS = [
  * Debt-tracking scripts (full suite only).
  */
 const DEBT_SCRIPTS = [
+  'scripts/debt-auto-capture.mjs',
   'scripts/debt-backfill.mjs',
   'scripts/debt-budget-check.mjs',
   'scripts/debt-pr-comment.mjs',
@@ -101,6 +102,8 @@ const DEBT_SCRIPTS = [
 const SKILL_FILES = [
   '.claude/skills/audit-loop/SKILL.md',
   '.github/skills/audit-loop/SKILL.md',
+  '.claude/skills/persona-test/SKILL.md',
+  '.github/skills/persona-test/SKILL.md',
 ];
 
 // ── Repo configuration ─────────────────────────────────────────────────────
