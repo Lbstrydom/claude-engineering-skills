@@ -36,7 +36,7 @@
   "author": "Louis Strydom",
   "license": "MIT",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.80.0",
+    "@anthropic-ai/sdk": "^0.88.0",
     "@google/genai": "^1.47.0",
     "@supabase/supabase-js": "^2.100.1",
     "codeowners-utils": "^1.0.2",
