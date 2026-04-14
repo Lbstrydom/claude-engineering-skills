@@ -157,6 +157,26 @@ function unifiedDiff(srcPath, dstPath, relFile) {
   }
 }
 
+// ── Helpers (continued) ───────────────────────────────────────────────────
+
+/**
+ * Deep merge two plain objects. Source keys overwrite target keys at every
+ * level. Arrays are replaced (not concatenated). Non-object values use source.
+ * Used to safely sync JSON config files without destroying local additions.
+ */
+function deepMerge(target, source) {
+  const result = { ...target };
+  for (const [key, val] of Object.entries(source)) {
+    if (val !== null && typeof val === 'object' && !Array.isArray(val)
+        && typeof target[key] === 'object' && target[key] !== null && !Array.isArray(target[key])) {
+      result[key] = deepMerge(target[key], val);
+    } else {
+      result[key] = val;
+    }
+  }
+  return result;
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 let totalNew = 0;
@@ -231,7 +251,16 @@ for (const repo of targetRepos) {
       try {
         // Ensure parent directory exists
         fs.mkdirSync(path.dirname(dstPath), { recursive: true });
-        fs.copyFileSync(srcPath, dstPath);
+        // JSON config files: merge instead of overwrite to preserve local customizations
+        if (relFile.endsWith('.json') && !isNew) {
+          const src = JSON.parse(fs.readFileSync(srcPath, 'utf-8'));
+          const dst = JSON.parse(fs.readFileSync(dstPath, 'utf-8'));
+          // Deep merge: source keys take precedence within shared objects (e.g. servers/mcpServers)
+          const merged = deepMerge(dst, src);
+          fs.writeFileSync(dstPath, JSON.stringify(merged, null, 2) + '\n');
+        } else {
+          fs.copyFileSync(srcPath, dstPath);
+        }
       } catch (err) {
         console.log(`  ${R}ERR${X}  ${relFile}: ${err.message}`);
         repoErrors++;
@@ -255,7 +284,7 @@ for (const repo of targetRepos) {
   if (!DRY_RUN) {
     try {
       execSync(
-        `node "${path.join(SOURCE_ROOT, 'scripts/check-setup.mjs')}" --repo-path "${repo.path}" --fix`,
+        `node "${path.join(SOURCE_ROOT, 'scripts/check-setup.mjs')}" --repo-path "${repo.path}"`,
         { stdio: 'inherit', timeout: 30000 }
       );
     } catch {
