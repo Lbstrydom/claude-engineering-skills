@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "playwright": {
+      "type": "stdio",
       "command": "npx",
-      "args": ["@playwright/mcp@latest", "--headless"]
+      "args": ["-y", "@playwright/mcp@latest", "--headless"],
+      "env": {}
     }
   }
 }
