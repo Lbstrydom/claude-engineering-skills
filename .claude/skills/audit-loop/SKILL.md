@@ -33,8 +33,11 @@ Orchestrate an automated plan-audit-fix quality loop with adaptive learning.
 | `full <description>` | FULL_CYCLE — plan → audit → implement → audit code |
 | `<description>` | PLAN_CYCLE — plan → audit → fix → repeat |
 
-Validate: plan file exists (if applicable), `OPENAI_API_KEY` is set.
-Optional: `GEMINI_API_KEY` for final review (Step 7). `SUPABASE_AUDIT_URL` for cloud learning.
+Validate: plan file exists (if applicable).
+**Do NOT pre-check API keys** — the scripts load `.env` automatically via `dotenv/config`.
+Checking `process.env.OPENAI_API_KEY` before running will always return empty because
+the key lives in the repo's `.env`, not the shell environment. Let the script fail with
+its own error if the key is truly missing.
 
 Initialize session ID: `SID=audit-$(date +%s)`
 
@@ -375,14 +378,42 @@ writeLedgerEntry('/tmp/$SID-ledger.json', {
 
 ## Step 3.6 — Debt Capture (Phase D)
 
-**Purpose**: Persist out-of-scope valid findings to `.audit/tech-debt.json` so
-future audits suppress them automatically. Without this step, the same
-pre-existing concerns get re-raised every audit, burning tokens and diluting
-signal.
+**BLOCKING GATE — do not proceed to Step 4 until this step is complete.**
+
+Count your `defer` triage decisions. If count > 0, you MUST run debt capture
+before fixing. Skipping this step means GPT will re-raise the same findings
+in every future round, wasting tokens and diluting signal.
 
 **Eligible candidates** (from Step 3 triage): findings with `action = defer`.
 That means `validity = valid` AND either `scope = out-of-scope` OR
 `validity = valid, scope = in-scope` with a non-`out-of-scope` reason.
+
+### Fast path — single command (preferred)
+
+After Step 3.5, run the auto-capture script. It reads every `ruling: defer`
+entry from the adjudication ledger and writes them all in one pass:
+
+```bash
+node scripts/debt-auto-capture.mjs --ledger /tmp/$SID-ledger.json
+```
+
+For non-default deferral reasons, add the appropriate flag:
+
+```bash
+# blocked by an upstream issue
+node scripts/debt-auto-capture.mjs --ledger /tmp/$SID-ledger.json \
+  --reason blocked-by --blocked-by "owner/repo#123"
+
+# planned for a follow-up PR
+node scripts/debt-auto-capture.mjs --ledger /tmp/$SID-ledger.json \
+  --reason deferred-followup --followup-pr "owner/repo#456"
+
+# see what would be captured without writing
+node scripts/debt-auto-capture.mjs --ledger /tmp/$SID-ledger.json --dry-run
+```
+
+The script uses `rulingRationale` from the adjudication ledger as the
+`deferredRationale` — no manual field construction needed.
 
 ### Required fields per deferredReason
 
@@ -394,9 +425,9 @@ That means `validity = valid` AND either `scope = out-of-scope` OR
 | `accepted-permanent` | any | `approver` + `approvedAt` |
 | `policy-exception` | any | `policyRef` + `approver` |
 
-### Capture flow
+### Manual capture (when per-entry control is needed)
 
-For each deferral candidate, write one entry to the debt ledger:
+For cases where entries need different reasons or metadata:
 
 ```bash
 node -e "
@@ -424,16 +455,20 @@ console.log(JSON.stringify({ inserted: result.inserted, updated: result.updated,
 - Same topicId across runs → updates existing entry, NOT duplicate
 - Event written to `.audit/local/debt-events.jsonl` (or Supabase if cloud active)
 
-### Status card
+### Status card (auto-capture output)
 
 ```
 ═══════════════════════════════════════
-  DEBT CAPTURE — Round 1
-  Deferred: 7 entries (5 out-of-scope, 2 blocked-by)
+  DEBT CAPTURE — Auto (Step 3.6)
+  Deferred: 7 entries (reason: out-of-scope)
+  Inserted: 5 | Updated: 2
   Sensitive (redacted): 1
   Total ledger: 23 entries
+  Cloud sync: ok
 ═══════════════════════════════════════
 ```
+
+**Pre-Step-4 assertion**: Confirm the status card shows at least `Inserted + Updated == defer count`. If the card shows rejections equal to defer count, stop and investigate before fixing.
 
 ---
 
@@ -444,7 +479,8 @@ console.log(JSON.stringify({ inserted: result.inserted, updated: result.updated,
 1. Send rebuttal (if rebut HIGH/MEDIUM findings from triage)
 2. Wait for rebuttal response
 3. **Write adjudication ledger** (Step 3.5)
-4. **Capture deferrable debt** (Step 3.6) — persist out-of-scope debt
+4. **Capture deferrable debt** (Step 3.6) — **BLOCKING**: count `defer` decisions,
+   run `debt-auto-capture.mjs`, confirm status card before proceeding
 5. Fix ALL findings together (Step 4)
 6. Run tests
 7. Verification audit (Step 5) — debt suppression runs automatically

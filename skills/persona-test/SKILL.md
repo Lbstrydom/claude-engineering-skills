@@ -154,11 +154,42 @@ Register a new one:
   /persona-test add "<name>" "<description>" <url>
 ```
 
+### Environment Pre-Flight Check
+
+After parsing arguments, silently check which optional capabilities are available.
+Set internal flags — do NOT ask the user to set anything:
+
+```
+memory_enabled   = PERSONA_TEST_SUPABASE_URL is set AND non-empty
+                   AND PERSONA_TEST_SUPABASE_ANON_KEY is set AND non-empty
+
+audit_link       = SUPABASE_AUDIT_URL is set AND non-empty
+                   AND SUPABASE_AUDIT_ANON_KEY is set AND non-empty
+```
+
+Output ONE status line showing what's active (not what's missing):
+
+```
+[PERSONA SESSION] Memory: ✓ enabled | Audit link: ✓ enabled
+   — or —
+[PERSONA SESSION] Memory: ✗ off (set PERSONA_TEST_SUPABASE_URL + PERSONA_TEST_SUPABASE_ANON_KEY to persist sessions)
+   — or —
+[PERSONA SESSION] Memory: ✓ enabled | Audit link: ✗ off
+```
+
+Behaviour when flags are off:
+- `memory_enabled = false` → skip Phase 0c persona lookup, skip Phase 6 session save, skip SESSION HISTORY section in report. Test runs and reports normally — results just aren't persisted.
+- `audit_link = false` → skip Phase 0d enrichment. Test runs without "Known Code Fragilities" context.
+
+Never block the test on missing optional env vars. Never prompt the user to set them mid-session.
+
 ---
 
 ## Phase 0c — Resolve Persona
 
-If `PERSONA_TEST_SUPABASE_URL` is set, check if `persona_input` matches a registered persona name for this URL:
+Skip this phase entirely if `memory_enabled = false`.
+
+If `memory_enabled = true`, check if `persona_input` matches a registered persona name for this URL:
 
 ```bash
 curl -s "$PERSONA_TEST_SUPABASE_URL/rest/v1/personas?name=ilike.<persona_input>&app_url=eq.<url>&select=id,name,description,notes,repo_name" \
@@ -177,7 +208,9 @@ in Phase 2 as additional backstory context.
 
 ## Phase 0d — Audit-Loop Pre-Test Enrichment (optional)
 
-If `SUPABASE_AUDIT_URL` and `repo_name` are both set, fetch recent unresolved HIGH findings
+Skip this phase entirely if `audit_link = false`.
+
+If `audit_link = true` and `repo_name` is set, fetch recent unresolved HIGH findings
 from the audit-loop database for this repo:
 
 ```bash
@@ -267,9 +300,48 @@ you are this specific person with these specific goals.
 
 ---
 
+## Phase 3 — Safety-First Policy (Read Before Acting)
+
+**Default mode: read-only exploration.** This skill operates on live production URLs.
+
+### Permitted without restriction
+- Navigating to URLs
+- Clicking navigation links, tabs, accordions, filters, sort controls, search inputs
+- Typing in search bars and demo/filter fields
+- Scrolling, hovering, observing
+
+### Safety Gate — language-neutral semantic intent check (G2)
+
+Do NOT rely on English keywords. Before acting, ask: "Would this action CREATE, UPDATE, DELETE, PURCHASE, SEND, or otherwise mutate data or trigger external systems — in any language?"
+
+Block any action whose **semantic purpose** is:
+- Destructive: delete, remove, archive, close account (in any language)
+- Transactional: purchase, subscribe, pay, checkout (in any language)
+- Confirmatory in a destructive context: OK/Confirm/Yes in a modal following a risky CTA
+- State-mutating submit: any non-search form submission
+
+If the action is ambiguous but context implies mutation → treat as blocked. Never bypass based on label alone.
+
+**When you encounter a denylist action:**
+1. Screenshot it (evidence for report)
+2. Log: `[SKIPPED — safe-mode] Action '<name>' not attempted — would mutate live data`
+3. Add to findings as: `P3 OBSERVATION — Mutation flow not tested (safe mode). Use --unsafe-mutations to enable.`
+4. Continue exploration — do not abort
+
+**Localhost/internal URL check (G1)**: Before selecting a provider, check the URL hostname. If it is `localhost`, `127.0.0.1`, `0.0.0.0`, or ends in `.local` or `.internal` — skip BrightData (cloud proxy cannot reach internal servers) and go directly to Playwright MCP. Log: `[LOCAL URL] Using Playwright — BrightData skipped for internal hostname`.
+
+**Origin boundary**: Stay within the starting URL's origin by default. If navigation leads to a third-party domain (external auth, payment, CDN), screenshot the boundary, log `[BOUNDARY] External domain — not testing third-party services`, navigate back to primary origin, and continue. Do not follow cross-origin redirects into external services.
+
+**Always close the browser at end of session** using the tool's close/disconnect operation, whether the session completes normally or fails mid-run.
+
+---
+
 ## Phase 3 — Exploration Loop (Plan → Act → Reflect)
 
-**Session length**: 8–12 steps. Aim for 10. Stop at 12.
+**Session length**: Aim for 10 steps. Cap at 12. Stop early only if:
+- URL returns HTTP error on step 1 (→ P0, stop)
+- Page blank/unresponsive after 2 retries (→ P0, stop)
+- Focus task completed successfully AND all key states observed
 
 Each step follows a strict **Plan → Act → Reflect** cycle:
 
@@ -293,7 +365,14 @@ Execute exactly one action using the browser tool. Then take a screenshot immedi
 | Screenshot | `mcp__brightdata__scraping_browser_screenshot` | `browser_screenshot` |
 | Click | `mcp__brightdata__scraping_browser_click` | `browser_click` |
 | Type | `mcp__brightdata__scraping_browser_type` | `browser_type` |
+| Scroll | `mcp__brightdata__scraping_browser_scroll` | `browser_scroll` |
 | Get DOM text | `mcp__brightdata__scraping_browser_get_text` | `browser_get_text` |
+
+**No sleep/wait tool exists** — to observe page settle, take a second screenshot immediately after the action. If still loading in screenshot 2, note "still loading" and proceed.
+
+**No goBack() tool** — to return from an external origin, use `navigate(previous_url)`. This does a fresh GET and loses form state; note this in narration.
+
+**Hover** — no cross-browser hover tool. Narrate what you would check on hover in the REFLECT step instead of attempting a hover call.
 
 When analysing the screenshot: treat numbered `[N]` references as interactive element
 indices. Reference elements by their index when describing findings (e.g. "element [3]
@@ -314,35 +393,58 @@ Step [N] — REFLECT
   Confidence:     [0.0–1.0 — how certain am I this is a real issue vs. me misreading the page]
 ```
 
-Only log a finding if **confidence ≥ 0.6**. Below 0.6: note the uncertainty but do not
-add to the findings log.
+**Severity-specific confidence thresholds** — only log if confidence meets the minimum:
+
+| Severity | Min confidence to log |
+|----------|-----------------------|
+| P0 BROKEN | ≥ 0.70 |
+| P1 DEGRADED | ≥ 0.65 |
+| P2 COSMETIC | ≥ 0.60 |
+| P3 OBSERVATION | ≥ 0.50 |
+
+Below minimum: note uncertainty in narration, do not add to findings log. If confidence is borderline, downgrade one severity level rather than excluding.
+
+**Per-step observation checklist** — for each meaningful interaction, check:
+- Loading state: did a spinner/skeleton appear within ~300ms? (No → P2 candidate)
+- Success signal: was success clearly communicated? (No → P1 candidate)
+- Error path: if an error occurred, was it explained with recovery guidance? (No → P1)
+- Empty state: if result is empty, is there a helpful message or CTA? (No → P2)
+- Recovery: can the user go back / undo? (No → P1 candidate)
 
 **Finding log** (maintained internally across all steps):
 ```
 findings = [
   {
-    code: "P0",
-    element: "<element [N] or area name>",
+    id: "F1",
+    semanticId: "<LLM-constructable slug — NOT a hash. Format: page-slug_element-slug_issue-slug, e.g. add-wine_submit-btn_no-response>",
+    severity: "P0",
+    confidence: 0.9,
+    title: "<short description, < 80 chars>",
+    page: "<url at time of observation>",
+    step: 4,
+    element: "<role + visible label, e.g. button 'Add Wine' or nav item 3>",
     observed: "<exactly what happened>",
     expected: "<what should have happened>",
-    fix: "<suggested direction>",
-    confidence: 0.9,
-    step: 4
+    userImpact: "<effect on persona's task>",
+    status: "open",  // or "skipped-safe-mode" | "uncertain"
   },
   ...
 ]
 ```
 
+**Before building the report**: group findings by `semanticId`. Merge duplicates (same issue seen multiple steps) into one finding with earliest `step` as `evidenceStep`.
+
 ---
 
 ## Phase 3 Exploration Strategy
 
-**If `focus` is provided**:
-- Steps 1–5: Free persona exploration — navigate as the persona naturally would.
+**If `focus` is provided** (10 steps total):
+- Steps 1–4: Free persona exploration — navigate as the persona naturally would.
   Do NOT jump directly to the focus area. Discovery friction is where real users fail.
-- Steps 6–12: Deliberately attempt the focus area and its sub-tasks.
+- Steps 5–10: Deliberately attempt the focus area and its sub-tasks.
+- If focus is completed early (step 8 or 9): use remaining steps on adjacent flows.
 
-**If no `focus`**:
+**If no `focus`** (10 steps total):
 - All steps: Persona-guided free exploration
 - Prioritise: first-run experience, primary feature, main navigation, a key form
 
@@ -365,10 +467,15 @@ findings = [
 | P2 | COSMETIC | ≥ 0.6 | Visual issue, minor confusion, inconsistency — does not block task |
 | P3 | OBSERVATION | ≥ 0.5 | Noted for awareness — not an issue, but tracked |
 
-**OVERALL verdict**:
-- `Ready for users` — zero P0s, one or fewer P1s
-- `Needs work` — one or more P0s, OR two or more P1s
-- `Blocked` — cannot complete primary task; multiple P0s or flow fully broken
+**OVERALL verdict** — determined by severity profile (not average confidence):
+
+| Verdict | Condition |
+|---------|-----------|
+| `Ready for users` | 0 P0s AND ≤ 1 P1 (P2s and P3s are acceptable) |
+| `Needs work` | 0 confirmed P0s AND 2+ P1s, OR 1 P0 skipped in safe mode |
+| `Blocked` | 1+ confirmed P0s that prevented task completion |
+
+Average confidence appears in the SUMMARY as a signal of report certainty — it does NOT determine the verdict. P3 observations are excluded from P0/P1/P2 issue counts.
 
 ---
 
@@ -488,10 +595,10 @@ not a generic user opinion. Every point should trace back to something observed 
 
 ## Phase 6 — Save Session to Memory (optional but recommended)
 
-After outputting the report, check if `PERSONA_TEST_SUPABASE_URL` and
-`PERSONA_TEST_SUPABASE_ANON_KEY` are set in the environment.
+Skip this phase entirely if `memory_enabled = false` (already determined in Phase 0b pre-flight).
+When skipped, output: `[Session not saved — memory disabled]` and stop.
 
-If both are set, POST the session to Supabase using a `curl` call:
+If `memory_enabled = true`, POST the session to Supabase using a `curl` call:
 
 ```bash
 curl -s -X POST "$PERSONA_TEST_SUPABASE_URL/rest/v1/persona_test_sessions" \
