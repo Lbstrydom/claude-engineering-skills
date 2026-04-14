@@ -46,6 +46,7 @@ const CORE_SCRIPTS = [
   'scripts/phase7-check.mjs',
   'scripts/shared.mjs',
   'scripts/check-sync.mjs',
+  'scripts/check-setup.mjs',
   // lib/ core modules
   'scripts/lib/schemas.mjs',
   'scripts/lib/file-io.mjs',
@@ -106,6 +107,11 @@ const SKILL_FILES = [
   '.github/skills/persona-test/SKILL.md',
 ];
 
+/** Editor config files — MCP server wiring for VSCode Copilot Chat */
+const EDITOR_FILES = [
+  '.vscode/mcp.json',
+];
+
 // ── Repo configuration ─────────────────────────────────────────────────────
 
 const REPOS = [
@@ -113,7 +119,7 @@ const REPOS = [
     name: 'wine-cellar-app',
     alias: 'wine',
     path: path.resolve(SOURCE_ROOT, '../wine-cellar-app'),
-    files: [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...DEBT_SCRIPTS, ...SKILL_FILES],
+    files: [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...DEBT_SCRIPTS, ...SKILL_FILES, ...EDITOR_FILES],
   },
   {
     name: 'ai-organiser',
@@ -121,7 +127,7 @@ const REPOS = [
     path: path.resolve(SOURCE_ROOT, '../ai-organiser'),
     // Full suite — ai-organiser was bootstrapped minimally (only openai-audit.mjs)
     // Sync full core + learning so audits actually work (lib/ deps were missing).
-    files: [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...SKILL_FILES],
+    files: [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...SKILL_FILES, ...EDITOR_FILES],
   },
 ];
 
@@ -244,6 +250,18 @@ for (const repo of targetRepos) {
   if (repoUnchanged > 0) parts.push(`${D}${repoUnchanged} unchanged${X}`);
   if (repoErrors > 0) parts.push(`${R}${repoErrors} errors${X}`);
   console.log(`  ${parts.join('  ')}`);
+
+  // Post-sync setup check — skip in dry-run (nothing was written)
+  if (!DRY_RUN) {
+    try {
+      execSync(
+        `node "${path.join(SOURCE_ROOT, 'scripts/check-setup.mjs')}" --repo-path "${repo.path}" --fix`,
+        { stdio: 'inherit', timeout: 30000 }
+      );
+    } catch {
+      // check-setup exits 1 on failures — already printed the report, just continue
+    }
+  }
   console.log('');
 }
 

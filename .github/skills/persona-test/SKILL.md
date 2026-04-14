@@ -262,8 +262,17 @@ Try tools in this order. Use the FIRST one that responds.
 ```
 [ERROR] No browser tool available.
 Install BrightData MCP or Playwright MCP to run persona tests.
-  BrightData: Configure in Claude Code settings (MCP servers)
-  Playwright:  npx @playwright/mcp@latest
+
+  Playwright MCP (free — works for own apps, no anti-bot):
+    Claude Code: add to ~/.claude/settings.json
+      "mcpServers": { "playwright": { "command": "npx", "args": ["@playwright/mcp@latest", "--headless"] } }
+    VSCode Copilot Chat: add to .vscode/mcp.json in your repo
+      { "servers": { "playwright": { "type": "stdio", "command": "npx", "args": ["@playwright/mcp@latest", "--headless"] } } }
+    Then restart your editor / reload the MCP server list.
+
+  BrightData MCP (handles anti-bot & CAPTCHA — for external sites):
+    Configure in Claude Code settings (MCP servers) per BrightData docs.
+
 Note: If running in a sub-agent context, MCP tools may not be exposed.
 Run /persona-test directly in your main Claude Code session.
 ```
