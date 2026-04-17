@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 
 // readFilesAsAnnotatedContext requires a CWD with files — import after setup
-import { readFilesAsAnnotatedContext } from '../scripts/lib/file-io.mjs';
+import { readFilesAsAnnotatedContext, isAuditInfraFile } from '../scripts/lib/file-io.mjs';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -198,5 +198,41 @@ describe('readFilesAsAnnotatedContext — budget limits', () => {
     // maxTotal just barely fits one file
     const result = readFilesAsAnnotatedContext(['a.js', 'b.js', 'c.js'], new Map(), { maxTotal: 1200 });
     assert.ok(result.includes('omitted'), 'omission notice present');
+  });
+});
+
+// ── isAuditInfraFile ──────────────────────────────────────────────────────
+
+describe('isAuditInfraFile', () => {
+  it('identifies top-level audit scripts', () => {
+    assert.ok(isAuditInfraFile('scripts/openai-audit.mjs'));
+    assert.ok(isAuditInfraFile('scripts/gemini-review.mjs'));
+    assert.ok(isAuditInfraFile('scripts/bandit.mjs'));
+    assert.ok(isAuditInfraFile('scripts/learning-store.mjs'));
+  });
+
+  it('identifies lib/ audit modules', () => {
+    assert.ok(isAuditInfraFile('scripts/lib/schemas.mjs'));
+    assert.ok(isAuditInfraFile('scripts/lib/ledger.mjs'));
+    assert.ok(isAuditInfraFile('scripts/lib/sanitizer.mjs'));
+    assert.ok(isAuditInfraFile('scripts/lib/config.mjs'));
+  });
+
+  it('handles backslash paths (Windows)', () => {
+    assert.ok(isAuditInfraFile(String.raw`scripts\lib\schemas.mjs`));
+    assert.ok(isAuditInfraFile(String.raw`scripts\gemini-review.mjs`));
+  });
+
+  it('rejects project files that are NOT audit infra', () => {
+    assert.ok(!isAuditInfraFile('scripts/migrate.mjs'));
+    assert.ok(!isAuditInfraFile('scripts/seed-db.mjs'));
+    assert.ok(!isAuditInfraFile('src/services/audit.mjs'));
+    assert.ok(!isAuditInfraFile('src/lib/config.mjs'));
+    assert.ok(!isAuditInfraFile('lib/schemas.mjs'));
+  });
+
+  it('requires scripts/ prefix — bare basenames do not match', () => {
+    assert.ok(!isAuditInfraFile('schemas.mjs'));
+    assert.ok(!isAuditInfraFile('ledger.mjs'));
   });
 });

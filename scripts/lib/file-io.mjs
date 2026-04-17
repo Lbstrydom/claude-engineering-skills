@@ -73,6 +73,45 @@ export function isSensitiveFile(relPath) {
   return SENSITIVE_PATTERNS.some(p => p.test(basename));
 }
 
+// ── Audit Infrastructure Exclusion ────────────────────────────────────────
+// These are the audit-loop's own scripts, synced to consumer repos via
+// sync-to-repos.mjs. They must NEVER appear in the audit scope — including
+// them causes Gemini/Claude Opus to flag issues in the tool itself rather
+// than in the project being audited.
+
+const AUDIT_INFRA_BASENAMES = new Set([
+  'openai-audit.mjs', 'gemini-review.mjs', 'bandit.mjs', 'learning-store.mjs',
+  'phase7-check.mjs', 'shared.mjs', 'check-sync.mjs', 'check-setup.mjs',
+  'refine-prompts.mjs', 'evolve-prompts.mjs', 'meta-assess.mjs',
+  'debt-auto-capture.mjs', 'debt-backfill.mjs', 'debt-budget-check.mjs',
+  'debt-pr-comment.mjs', 'debt-resolve.mjs', 'debt-review.mjs',
+  'write-plan-outcomes.mjs', 'write-ledger-r1.mjs', 'sync-to-repos.mjs',
+  // lib/ modules
+  'schemas.mjs', 'ledger.mjs', 'code-analysis.mjs', 'context.mjs',
+  'findings.mjs', 'config.mjs', 'llm-auditor.mjs', 'llm-wrappers.mjs',
+  'language-profiles.mjs', 'rng.mjs', 'robustness.mjs', 'sanitizer.mjs',
+  'secret-patterns.mjs', 'suppression-policy.mjs', 'backfill-parser.mjs',
+  'owner-resolver.mjs', 'rule-metadata.mjs', 'file-store.mjs',
+  'prompt-registry.mjs', 'prompt-seeds.mjs', 'linter.mjs',
+  'plan-fp-tracker.mjs', 'predictive-strategy.mjs',
+  'debt-capture.mjs', 'debt-events.mjs', 'debt-git-history.mjs',
+  'debt-ledger.mjs', 'debt-memory.mjs', 'debt-review-helpers.mjs',
+]);
+
+/**
+ * Returns true if the path points to an audit-loop infrastructure file.
+ * These files are synced to consumer repos but should never be in audit scope.
+ * @param {string} relPath - Relative file path
+ * @returns {boolean}
+ */
+export function isAuditInfraFile(relPath) {
+  const norm = relPath.replaceAll('\\', '/');
+  const basename = path.basename(norm);
+  // Must be under scripts/ (top-level or scripts/lib/) to match
+  if (!norm.startsWith('scripts/') && !norm.includes('/scripts/')) return false;
+  return AUDIT_INFRA_BASENAMES.has(basename);
+}
+
 // ── Diff Parsing ────────────────────────────────────────────────────────────
 
 /**
@@ -342,13 +381,13 @@ export function extractPlanPaths(planContent) {
   const genericPathRegex = new RegExp(`(?:^|\\s|\\\`|\\()((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))`, 'gm');
   while ((match = genericPathRegex.exec(planContent)) !== null) {
     const p = match[1].replace(/^\.\//, '');
-    if (!p.startsWith('http') && !p.startsWith('node_modules')) paths.add(p);
+    if (!p.startsWith('http') && !p.startsWith('node_modules') && !isAuditInfraFile(p)) paths.add(p);
   }
 
   const btRegex = new RegExp(`\\\`((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))\\\``, 'gm');
   while ((match = btRegex.exec(planContent)) !== null) {
     const p = match[1].replace(/^\.\//, '');
-    if (!p.startsWith('http') && !p.startsWith('node_modules')) paths.add(p);
+    if (!p.startsWith('http') && !p.startsWith('node_modules') && !isAuditInfraFile(p)) paths.add(p);
   }
 
   // Allow slash-containing paths AND bare filenames: #### `src/app/main.py` or #### `file.py`
@@ -359,7 +398,7 @@ export function extractPlanPaths(planContent) {
     // If captured path contains a slash, treat it as repo-relative and add directly
     if (captured.includes('/')) {
       const normalized = captured.replace(/^\.\//, '');
-      if (!normalized.startsWith('http') && !normalized.startsWith('node_modules')) paths.add(normalized);
+      if (!normalized.startsWith('http') && !normalized.startsWith('node_modules') && !isAuditInfraFile(normalized)) paths.add(normalized);
       continue;
     }
     // Bare filename — use search-dir fuzzy discovery (existing behavior)
@@ -371,7 +410,7 @@ export function extractPlanPaths(planContent) {
     ];
     for (const dir of searchDirs) {
       const candidate = `${dir}/${filename}`;
-      if (fs.existsSync(path.resolve(candidate))) { paths.add(candidate); break; }
+      if (fs.existsSync(path.resolve(candidate)) && !isAuditInfraFile(candidate)) { paths.add(candidate); break; }
     }
   }
 
@@ -495,7 +534,7 @@ function _scanRepoFiles() {
         const ext = path.extname(entry.name).toLowerCase();
         if (EXT_SET.has(ext) && !isSensitiveFile(entry.name)) {
           const rel = path.relative(process.cwd(), full).replace(/\\/g, '/');
-          results.push(rel);
+          if (!isAuditInfraFile(rel)) results.push(rel);
         }
       }
     }

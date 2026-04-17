@@ -34,7 +34,8 @@ import { zodTextFormat } from 'openai/helpers/zod';
 import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema } from './lib/schemas.mjs';
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
-  writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles
+  writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles,
+  isAuditInfraFile
 } from './lib/file-io.mjs';
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
@@ -1871,7 +1872,8 @@ async function main() {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
         }).trim();
         const untrackedFiles = untracked ? untracked.split('\n').filter(Boolean) : [];
-        let allChanged = [...new Set([...diffChanged, ...unstagedChanged, ...untrackedFiles])];
+        let allChanged = [...new Set([...diffChanged, ...unstagedChanged, ...untrackedFiles])]
+          .filter(f => !isAuditInfraFile(f));
         if (excludePatterns.length > 0) allChanged = applyExclusions(allChanged, excludePatterns);
         if (allChanged.length > 0) {
           effectiveFileFilter = allChanged;

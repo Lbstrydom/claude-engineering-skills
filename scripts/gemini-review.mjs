@@ -22,7 +22,7 @@ import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { ProducerFindingSchema, zodToGeminiSchema } from './lib/schemas.mjs';
 import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
-import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput } from './lib/file-io.mjs';
+import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
 import { geminiConfig, claudeConfig } from './lib/config.mjs';
@@ -459,10 +459,12 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
   let codeContext = '';
   if (transcript.code_files && Array.isArray(transcript.code_files)) {
     const { found } = extractPlanPaths(planContent);
-    const allFiles = [...new Set([...found, ...transcript.code_files])];
+    // Filter out audit-loop infrastructure files — they bleed into scope when
+    // consumer repos have synced copies of scripts/ and cause false findings.
+    const allFiles = [...new Set([...found, ...transcript.code_files])].filter(f => !isAuditInfraFile(f));
     codeContext = readFilesAsContext(allFiles, { maxPerFile: 8000, maxTotal: 100000 });
   } else {
-    // Fall back to extracting from plan
+    // Fall back to extracting from plan (already filtered by extractPlanPaths)
     const { found } = extractPlanPaths(planContent);
     if (found.length > 0) {
       codeContext = readFilesAsContext(found, { maxPerFile: 8000, maxTotal: 100000 });
