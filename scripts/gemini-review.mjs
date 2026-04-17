@@ -285,7 +285,9 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const response = await ai.models.generateContent({
+    // Use streaming to support maxOutputTokens > 21333 (SDK hard limit for
+    // non-streaming). Accumulate chunks then parse the final JSON.
+    const stream = await ai.models.generateContentStream({
       model: MODEL,
       contents: userPrompt,
       config: {
@@ -296,11 +298,18 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
         thinkingConfig: { thinkingBudget: 16384 }
       }
     }, { signal: controller.signal });
+
+    const textParts = [];
+    let usageMetadata = null;
+    for await (const chunk of stream) {
+      if (chunk.text) textParts.push(chunk.text);
+      if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
+    }
     clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
 
-    // Parse the JSON response
-    const text = response.text;
+    // Parse the accumulated JSON response
+    const text = textParts.join('');
     let result;
     try {
       result = JSON.parse(text);
@@ -330,9 +339,9 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
     }
 
     const usage = {
-      input_tokens: response.usageMetadata?.promptTokenCount ?? 0,
-      output_tokens: response.usageMetadata?.candidatesTokenCount ?? 0,
-      thinking_tokens: response.usageMetadata?.thoughtsTokenCount ?? 0,
+      input_tokens: usageMetadata?.promptTokenCount ?? 0,
+      output_tokens: usageMetadata?.candidatesTokenCount ?? 0,
+      thinking_tokens: usageMetadata?.thoughtsTokenCount ?? 0,
       latency_ms: latencyMs
     };
 
