@@ -86,8 +86,9 @@ const AUDIT_INFRA_BASENAMES = new Set([
   'debt-auto-capture.mjs', 'debt-backfill.mjs', 'debt-budget-check.mjs',
   'debt-pr-comment.mjs', 'debt-resolve.mjs', 'debt-review.mjs',
   'write-plan-outcomes.mjs', 'write-ledger-r1.mjs', 'sync-to-repos.mjs',
+  'audit-loop.mjs',
   // lib/ modules
-  'schemas.mjs', 'ledger.mjs', 'code-analysis.mjs', 'context.mjs',
+  'file-io.mjs', 'schemas.mjs', 'ledger.mjs', 'code-analysis.mjs', 'context.mjs',
   'findings.mjs', 'config.mjs', 'llm-auditor.mjs', 'llm-wrappers.mjs',
   'language-profiles.mjs', 'rng.mjs', 'robustness.mjs', 'sanitizer.mjs',
   'secret-patterns.mjs', 'suppression-policy.mjs', 'backfill-parser.mjs',
@@ -107,8 +108,9 @@ const AUDIT_INFRA_BASENAMES = new Set([
 export function isAuditInfraFile(relPath) {
   const norm = relPath.replaceAll('\\', '/');
   const basename = path.basename(norm);
-  // Must be under scripts/ (top-level or scripts/lib/) to match
-  if (!norm.startsWith('scripts/') && !norm.includes('/scripts/')) return false;
+  // Must be directly under top-level scripts/ or scripts/lib/ — NOT nested
+  // under other directories (e.g. src/scripts/ is a legitimate consumer path).
+  if (!norm.startsWith('scripts/')) return false;
   return AUDIT_INFRA_BASENAMES.has(basename);
 }
 

@@ -229,6 +229,9 @@ describe('isAuditInfraFile', () => {
     assert.ok(!isAuditInfraFile('src/services/audit.mjs'));
     assert.ok(!isAuditInfraFile('src/lib/config.mjs'));
     assert.ok(!isAuditInfraFile('lib/schemas.mjs'));
+    // Consumer paths under src/scripts/ must NOT be excluded (M4 fix)
+    assert.ok(!isAuditInfraFile('src/scripts/config.mjs'));
+    assert.ok(!isAuditInfraFile('app/scripts/lib/schemas.mjs'));
   });
 
   it('requires scripts/ prefix — bare basenames do not match', () => {

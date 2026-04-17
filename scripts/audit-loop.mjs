@@ -68,15 +68,17 @@ function parseResults(outFile) {
 }
 
 function countFindings(results) {
-  if (!results) return { high: 0, medium: 0, low: 0, total: 0 };
+  if (!results) return { high: 0, medium: 0, low: 0, total: 0, failed: true };
   const findings = results.findings || [];
   const high = findings.filter(f => f.severity === 'HIGH').length;
   const medium = findings.filter(f => f.severity === 'MEDIUM').length;
   const low = findings.filter(f => f.severity === 'LOW').length;
-  return { high, medium, low, total: findings.length };
+  return { high, medium, low, total: findings.length, failed: false };
 }
 
 function isConverged(counts) {
+  // A failed/crashed audit round must never look converged
+  if (counts.failed) return false;
   return counts.high === 0 && counts.medium <= 2;
 }
 
@@ -113,6 +115,7 @@ function parseArgs(argv) {
     strictLint: false,
     dryRun: false,
     debtReview: false,
+    predictiveSkip: false,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -128,6 +131,7 @@ function parseArgs(argv) {
       case '--strict-lint': args.strictLint = true; break;
       case '--dry-run': args.dryRun = true; break;
       case '--debt-review': args.debtReview = true; break;
+      case '--predictive-skip': args.predictiveSkip = true; break;
     }
   }
 
