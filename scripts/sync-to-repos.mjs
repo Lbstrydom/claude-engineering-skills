@@ -94,6 +94,7 @@ const LEARNING_SCRIPTS = [
  * Debt-tracking scripts (full suite only).
  */
 const DEBT_SCRIPTS = [
+  'scripts/setup-permissions.mjs',
   'scripts/write-plan-outcomes.mjs',
   'scripts/write-ledger-r1.mjs',
   'scripts/debt-auto-capture.mjs',

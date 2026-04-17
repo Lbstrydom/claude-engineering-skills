@@ -139,6 +139,25 @@ exit 0
     console.log(`  ${Y}⚠${X} No .git/hooks dir found — install in a git repo to enable auto-sync`);
   }
 
+  // 4c. Claude Code permissions (minimize approval prompts)
+  console.log(`\n${B}Claude Code Permissions${X}`);
+  const setupPerms = path.join(tmp, 'scripts', 'setup-permissions.mjs');
+  if (fs.existsSync(setupPerms)) {
+    const doPerms = await ask(`  Set up permission rules to minimize audit-loop prompts? [Y/n] `);
+    if (!doPerms || doPerms.toLowerCase().startsWith('y')) {
+      try {
+        // Copy the script to target first so it can find the project dir
+        const targetScript = path.join(scriptsDir, 'setup-permissions.mjs');
+        fs.copyFileSync(setupPerms, targetScript);
+        execSync(`node "${targetScript}" --yes`, { cwd: target, stdio: 'inherit' });
+      } catch {
+        console.log(`  ${Y}⚠${X} Permission setup had issues — run manually: node scripts/setup-permissions.mjs`);
+      }
+    } else {
+      console.log(`  ${D}Skipped — run later: node scripts/setup-permissions.mjs${X}`);
+    }
+  }
+
   // 5. Dependencies
   console.log(`\n${B}Dependencies${X}`);
   const pkgPath = path.join(target, 'package.json');
