@@ -102,26 +102,118 @@ Six data gaps prevent any prediction or optimization:
 5. `findingEditLinks` for bandit reward is never populated
 6. Gemini's new findings have no accuracy feedback loop
 
-### Fix: Wire Outcomes Back
+### Canonical Finding Identity (H1 fix)
 
-#### 4A. openai-audit.mjs — Set adjudicationOutcome on findings
+All cross-store correlation uses `semanticId` (8-char content hash from
+`findings.mjs`). This is THE canonical identity — not `_topicId`, not `findingId`,
+not `original_finding_id`. Every store write includes `finding_fingerprint = semanticId(f)`.
 
-After the orchestrator performs triage (Step 3), enrich each finding with the outcome
-before calling `recordRunComplete()`:
+The ledger uses `topicId` (12-char structural hash) for suppression — this is a
+SEPARATE concern from finding identity. `topicId` includes pass + file context;
+`semanticId` is content-only. Both are deterministic and stable.
+
+### Source of Truth Hierarchy (H3 fix)
+
+| Store | Role | Authoritative for |
+|---|---|---|
+| `finding_adjudication_events` | Write-ahead log | Adjudication decisions (who, when, why) |
+| `audit_findings` columns | Denormalized cache | Current state (accepted/dismissed) for fast queries |
+| `.audit/outcomes.jsonl` | Local fallback | Bandit reward signal when Supabase unavailable |
+| `audit_pass_stats` | Aggregate cache | Per-pass totals for dashboard/prediction |
+
+On conflict: `finding_adjudication_events` wins. The denormalized columns and
+outcomes.jsonl are updated from events, not the other way around.
+
+### Outcome Persistence — Single Transaction (H2 fix)
+
+All outcome writes go through ONE function: `recordTriageOutcomes(runId, findings, ledger)`.
+This function writes to all stores in a single call. If Supabase is unavailable,
+it falls back to local-only (outcomes.jsonl + ledger file). No partial writes.
 
 ```javascript
-// In the orchestrator, after triage:
-for (const finding of allFindings) {
-  const ledgerEntry = ledger.entries.find(e => e.topicId === finding._topicId);
-  if (ledgerEntry) {
-    finding.adjudicationOutcome = ledgerEntry.adjudicationOutcome;
-    finding.remediationState = ledgerEntry.remediationState;
+// scripts/lib/outcome-sync.mjs (NEW MODULE)
+export async function recordTriageOutcomes(store, runId, findings, ledger) {
+  // 1. Enrich findings with adjudication outcome from ledger
+  const enriched = findings.map(f => {
+    const entry = ledger.entries.find(e =>
+      e.topicId === generateTopicId(f) || e.latestFindingId === f.id
+    );
+    return {
+      ...f,
+      adjudicationOutcome: entry?.adjudicationOutcome ?? 'pending',
+      remediationState: entry?.remediationState ?? 'pending',
+    };
+  });
+
+  // 2. Compute per-pass aggregates
+  const passCounts = {};
+  for (const f of enriched) {
+    const pass = f._pass || 'unknown';
+    if (!passCounts[pass]) passCounts[pass] = { accepted: 0, dismissed: 0, compromised: 0 };
+    if (f.adjudicationOutcome === 'accepted') passCounts[pass].accepted++;
+    else if (f.adjudicationOutcome === 'dismissed') passCounts[pass].dismissed++;
+    else if (f.adjudicationOutcome === 'severity_adjusted') passCounts[pass].compromised++;
   }
+
+  // 3. Write all stores via Supabase RPC for atomicity (G1 fix)
+  // Server-side function wraps all writes in a single transaction.
+  // If RPC unavailable, fall back to sequential writes with best-effort rollback.
+  if (store) {
+    try {
+      await store.recordTriageTransaction(runId, enriched, passCounts);
+      // Single RPC call wraps: adjudication events + pass stats + run counts
+    } catch (err) {
+      process.stderr.write(`  [outcome-sync] Cloud write failed: ${err.message} — local only\n`);
+    }
+  }
+
+  // 4. Local outcomes — batch write for atomicity (G2 fix)
+  // Build all outcome records, then write once with atomicWriteFileSync
+  const outcomeRecords = enriched.map(f => ({
+    findingId: f.id,
+    semanticHash: semanticId(f),
+    pass: f._pass,
+    severity: f.severity,
+    accepted: f.adjudicationOutcome === 'accepted',
+    reward: computeOutcomeReward(f),
+    round: f._round || 1,
+    timestamp: Date.now(),
+  }));
+  batchAppendOutcomes('.audit/outcomes.jsonl', outcomeRecords);
+  // batchAppendOutcomes uses atomicWriteFileSync for crash-safe batch write
+
+  return { enriched, passCounts };
 }
 ```
 
-This makes the existing `recordRunComplete()` filter work — it already checks
-`f.adjudicationOutcome === 'accepted'` but the field was never set.
+### Historical Data Compatibility (H4 fix)
+
+The 100 existing runs have zero outcome labels. Strategy:
+
+1. **Mark as unlabeled**: Add `labeled: false` column to `audit_runs`. Existing rows default to `false`.
+2. **Exclude from precision metrics**: Phase 1 dashboard filters on `labeled = true`.
+   Display: "Precision: 72% (based on 23 labeled runs out of 123 total)"
+3. **No backfill**: Attempting to retroactively label outcomes would be inaccurate.
+   The system starts measuring from Phase 0 deployment forward.
+4. **Minimum threshold**: Phase 2/3 predictions require `≥20 labeled runs` per repo
+   before activating. Below this: "Insufficient data — using defaults."
+
+### Fix: Wire Outcomes Back
+
+#### 4A. openai-audit.mjs — Use recordTriageOutcomes
+
+After the orchestrator performs triage (Step 3), call the single outcome sync function:
+
+```javascript
+// In the orchestrator, after triage:
+const { enriched, passCounts } = await recordTriageOutcomes(
+  store, cloudRunId, allFindings, ledger
+);
+// enriched findings now have adjudicationOutcome set
+// passCounts used for convergence check
+```
+
+This replaces the broken pattern of setting fields ad-hoc across multiple modules.
 
 #### 4B. learning-store.mjs — Update pass stats after deliberation
 
@@ -169,20 +261,26 @@ appendOutcome(logPath, {
 });
 ```
 
-#### 4E. Track Gemini accuracy
+#### 4E. Track Gemini accuracy (M6 fix: separate ground truth)
 
-When Gemini raises new findings and Claude deliberates:
+Gemini is the independent arbiter — using Claude's `accepted` judgment as Gemini's
+ground truth creates circular bias. Instead, track Gemini accuracy separately:
 
 ```javascript
-// In gemini-review.mjs or the orchestrator:
+// In the orchestrator, after Gemini deliberation:
 for (const gf of geminiResult.new_findings) {
   appendOutcome(logPath, {
     findingId: gf.id,
+    semanticHash: semanticId(gf),
     pass: 'gemini-new',
     severity: gf.severity,
-    accepted: claudeAcceptedIt, // boolean from deliberation
     model: 'gemini',
     category: gf.category,
+    // TWO separate fields — not collapsed into one:
+    claude_accepted: claudeAcceptedIt,         // Claude's judgment (may be biased)
+    gemini_reconfirmed: geminiReconfirmedIt,   // Gemini's re-verify (independent)
+    // Ground truth for Gemini accuracy = gemini_reconfirmed on re-review
+    // Ground truth for Claude bias = claude_accepted vs gemini_reconfirmed disagreement
   });
 }
 
@@ -190,12 +288,18 @@ for (const wd of geminiResult.wrongly_dismissed) {
   appendOutcome(logPath, {
     findingId: wd.original_finding_id,
     pass: 'gemini-wrongly-dismissed',
-    accepted: claudeAcceptedIt,
     model: 'gemini',
     recommendedSeverity: wd.recommended_severity,
+    claude_accepted: claudeAcceptedIt,
+    gemini_reconfirmed: true, // Gemini raised it, so it considers it valid
   });
 }
 ```
+
+**Metrics derivable**:
+- Gemini precision = findings where `gemini_reconfirmed && claude_accepted` / total Gemini findings
+- Claude bias rate = findings where `gemini_reconfirmed && !claude_accepted` / total Gemini findings
+- Gemini noise rate = findings where `!gemini_reconfirmed` on re-review / total
 
 #### 4F. Additional telemetry to capture in-skill
 
@@ -219,24 +323,42 @@ The Phase C tool pre-pass runs linters before GPT. Track overlap:
 const linterFindings = results.findings.filter(f => f.classification?.sourceKind === 'LINTER');
 const gptFindings = results.findings.filter(f => !f.classification?.sourceKind);
 
-// For each linter finding, check if GPT raised a similar one:
-const overlap = linterFindings.filter(lf =>
-  gptFindings.some(gf => jaccardSimilarity(lf.detail, gf.detail) > 0.4)
-);
+// Match by FILE + LINE PROXIMITY (not free-text Jaccard — M1 fix):
+// Linter findings have exact file:line. GPT findings cite file in section field.
+// Match = same file AND line within ±5 lines of a linter finding.
+const overlap = linterFindings.filter(lf => {
+  const [lFile, lLine] = (lf.section || '').split(':');
+  const lLineNum = parseInt(lLine, 10);
+  return gptFindings.some(gf => {
+    const gFile = gf._primaryFile || gf.section?.split(':')[0];
+    if (normalizePath(lFile) !== normalizePath(gFile)) return false;
+    // G3 fix: only count overlap when BOTH have line numbers.
+    // File-level GPT findings (no line number) are NOT overlaps — they're architectural.
+    const gLine = parseInt((gf.section || '').split(':')[1], 10);
+    if (isNaN(gLine) || isNaN(lLineNum)) return false; // no line = no overlap
+    return Math.abs(gLine - lLineNum) <= 5;
+  });
+});
 
 // Record: { linterCount, gptCount, overlapCount, linterOnlyCount, gptOnlyCount }
-// → stored in audit_pass_stats or a new metrics table
 ```
 
 This answers: "Could linters replace GPT for the structure pass?" and
 "What unique value does GPT add beyond deterministic tools?"
 
-### Schema Changes
+### Schema Changes (M4 fix: constrained enums, not raw TEXT)
 
 ```sql
+-- Constrained enum types (M4 fix — not raw TEXT)
+CREATE TYPE adjudication_outcome_t AS ENUM ('accepted', 'dismissed', 'severity_adjusted', 'pending');
+CREATE TYPE remediation_state_t AS ENUM ('pending', 'planned', 'fixed', 'verified', 'regressed');
+
 -- Add adjudication columns to audit_findings
-ALTER TABLE audit_findings ADD COLUMN adjudication_outcome TEXT;
-ALTER TABLE audit_findings ADD COLUMN remediation_state TEXT;
+ALTER TABLE audit_findings ADD COLUMN adjudication_outcome adjudication_outcome_t;
+ALTER TABLE audit_findings ADD COLUMN remediation_state remediation_state_t;
+
+-- Add labeled flag for historical data compatibility (H4 fix)
+ALTER TABLE audit_runs ADD COLUMN labeled BOOLEAN DEFAULT false;
 
 -- Add suppression stats to audit_runs
 ALTER TABLE audit_runs ADD COLUMN suppression_stats JSONB;
@@ -245,6 +367,27 @@ ALTER TABLE audit_runs ADD COLUMN suppression_stats JSONB;
 ALTER TABLE audit_pass_stats ADD COLUMN linter_overlap_count INTEGER DEFAULT 0;
 ALTER TABLE audit_pass_stats ADD COLUMN linter_only_count INTEGER DEFAULT 0;
 ALTER TABLE audit_pass_stats ADD COLUMN gpt_only_count INTEGER DEFAULT 0;
+```
+
+These enum types mirror the existing Zod schemas (`LedgerEntrySchema` enums) —
+single source of truth in Zod, reflected in SQL. If Zod adds a new value,
+the migration script adds it to the SQL enum too.
+
+### Graceful Degradation (M5 fix)
+
+All outcome-dependent features degrade safely when data is unavailable:
+
+| Scenario | Behavior |
+|---|---|
+| Supabase unavailable | `recordTriageOutcomes` falls back to local outcomes.jsonl; logs warning |
+| `<20` labeled runs for a repo | Metrics show "Insufficient data"; predictions use global defaults |
+| Pass timing RPC returns empty | Cost prediction shows "Estimate unavailable" with fallback to hardcoded averages |
+| FP tracker empty for a repo | Pass selection returns all passes as active (no skipping) |
+| Gemini key missing | Gemini metrics show "N/A"; no Gemini accuracy tracking |
+
+The `audit-metrics.mjs` CLI always shows data availability:
+```
+  Data: 23/123 runs labeled (19%) | Predictions active: NO (need 20+)
 ```
 
 ### Tests
@@ -321,19 +464,41 @@ The `.audit/session-audit-*.json` files should include a structured metrics bloc
 Before running, predict cost and time from historical averages:
 
 ```javascript
-// predictive-strategy.mjs
+// predictive-strategy.mjs (M2 fix: per-model, per-pass pricing)
+// G4 fix: pricing loaded from config.mjs, not hardcoded inline
+// config.mjs exports: modelPricing = { 'gpt-5.4': { input: 2.50, output: 10.00 }, ... }
+import { modelPricing } from './config.mjs';
+
 predictCost(repoProfile, selectedPasses) {
-  let totalTokens = 0, maxLatency = 0;
-  for (const pass of selectedPasses) {
-    const stats = this._passTimings.get(pass);
-    if (!stats) continue;
-    totalTokens += stats.avgInputTokens + stats.avgOutputTokens;
-    maxLatency = Math.max(maxLatency, stats.avgLatencyMs);
+  // Group passes into waves (structure+wiring parallel, then quality parallel, then sustainability)
+  const waves = [
+    selectedPasses.filter(p => ['structure', 'wiring'].includes(p)),
+    selectedPasses.filter(p => ['backend', 'frontend', 'be-routes', 'be-services'].includes(p)),
+    selectedPasses.filter(p => p === 'sustainability'),
+  ].filter(w => w.length > 0);
+
+  let totalCost = 0, totalMinutes = 0;
+  for (const wave of waves) {
+    let waveMaxLatency = 0;
+    for (const pass of wave) {
+      const stats = this._passTimings.get(pass);
+      if (!stats) continue;
+      const pricing = modelPricing['gpt-5.4']; // all audit passes use GPT (G4 fix)
+      totalCost += (stats.avgInputTokens * pricing.input + stats.avgOutputTokens * pricing.output) / 1_000_000;
+      waveMaxLatency = Math.max(waveMaxLatency, stats.avgLatencyMs);
+    }
+    totalMinutes += waveMaxLatency / 60000;
   }
-  // Parallel passes: total time ≈ max(wave1) + max(wave2) + max(wave3)
-  const estimatedMinutes = maxLatency / 60000 * 1.2; // 20% buffer
-  const estimatedCost = totalTokens * 2.5 / 1_000_000; // approximate $/token
-  return { estimatedTokens: totalTokens, estimatedCostUsd: estimatedCost, estimatedMinutes };
+  // Add Gemini final review estimate
+  totalCost += (8000 * modelPricing['gemini-3.1'].input + 4000 * modelPricing['gemini-3.1'].output) / 1_000_000;
+  totalMinutes += 2; // ~2 min for Gemini
+
+  return {
+    estimatedTokens: Math.round(totalCost * 1_000_000 / 5), // approximate
+    estimatedCostUsd: Math.round(totalCost * 100) / 100,
+    estimatedMinutes: Math.round(totalMinutes * 10) / 10,
+    confidence: this._passTimings.size >= 3 ? 'high' : 'low',
+  };
 }
 ```
 
@@ -391,23 +556,47 @@ $$ LANGUAGE sql STABLE;
 
 ## 7. Phase 3 — Smart Pass Selection (P2, After Phase 0 data flows)
 
-### 7A. FP-driven pass deprioritization
+### 7A. FP-driven pass deprioritization (M3 fix: exploration + drift controls)
 
 Use the 9,190 existing FP patterns to identify passes that produce mostly noise
-for a given repo:
+for a given repo. **With mandatory exploration and freshness controls:**
 
 ```javascript
-// If >70% of a pass's findings for this repo fingerprint are FP-suppressed,
-// recommend skipping (with --predictive-skip flag)
+// predictive-strategy.mjs
 predictActivePasses(repoId, diffStats, allowSkip) {
+  const EXPLORATION_INTERVAL = 10; // run every 10th time regardless
+  const FRESHNESS_WINDOW_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
+
   for (const [passName, stats] of this._passStats) {
     const fpRate = this._fpTracker.getPassFpRate(passName, repoId);
     const confidence = stats.totalRuns >= 20 ? 1 - fpRate : 1;
-    const recommendSkip = allowSkip && fpRate > 0.7 && stats.totalRuns >= 20;
-    result.set(passName, { confidence, recommendSkip, fpRate });
+
+    // Exploration floor: never skip if run count is divisible by interval
+    const forceExplore = stats.totalRuns % EXPLORATION_INTERVAL === 0;
+
+    // Freshness: never skip if last run was >14 days ago
+    // G5 fix: parse ISO string from Supabase TIMESTAMPTZ column
+    const lastRunMs = stats.lastRunAt ? new Date(stats.lastRunAt).getTime() : 0;
+    const stale = lastRunMs > 0 && (Date.now() - lastRunMs > FRESHNESS_WINDOW_MS);
+
+    // Repo change trigger: never skip if repo profile changed since last skip
+    const repoChanged = diffStats.profileChanged === true;
+
+    const recommendSkip = allowSkip
+      && fpRate > 0.7
+      && stats.totalRuns >= 20
+      && !forceExplore
+      && !stale
+      && !repoChanged;
+
+    result.set(passName, { confidence, recommendSkip, fpRate, forceExplore, stale });
   }
 }
 ```
+
+**Exploration guarantee**: Even with `--predictive-skip`, every pass runs at least
+once per 10 audits. This catches drift — a pass that was 80% FP six months ago
+may now produce real findings due to codebase evolution.
 
 ### 7B. Repo-profile-aware pass filtering (enhance existing)
 
@@ -498,12 +687,13 @@ Output:
 
 | File | Change | Purpose |
 |---|---|---|
-| `scripts/openai-audit.mjs` | Modify | Set `adjudicationOutcome` on findings after triage; call `recordAdjudicationEvent()` |
-| `scripts/learning-store.mjs` | Modify | Add `updatePassStatsPostDeliberation()`, `getPassTimings()`, `recordGeminiOutcome()` |
-| `scripts/gemini-review.mjs` | Modify | Record Gemini finding outcomes with `model: 'gemini'` tag |
+| `scripts/lib/outcome-sync.mjs` | **New** | Single `recordTriageOutcomes()` function — atomic multi-store write (H2 fix) |
+| `scripts/openai-audit.mjs` | Modify | Call `recordTriageOutcomes()` after triage instead of ad-hoc field setting |
+| `scripts/learning-store.mjs` | Modify | Add `updatePassStatsPostDeliberation()`, `recordAdjudicationEvents()`, `getPassTimings()` |
+| `scripts/gemini-review.mjs` | Modify | Record Gemini outcomes with separate `claude_accepted` / `gemini_reconfirmed` fields (M6 fix) |
 | `scripts/lib/findings-outcomes.mjs` | Modify | Fix `appendOutcome()` to accept `accepted` parameter (not hardcode `true`) |
-| `supabase/migrations/NNN_outcome_columns.sql` | New | ALTER TABLE for adjudication columns + linter overlap |
-| `tests/outcome-sync.test.mjs` | New | Verify data loop closure |
+| `supabase/migrations/NNN_outcome_columns.sql` | New | Enum types + ALTER TABLE (M4 fix) |
+| `tests/outcome-sync.test.mjs` | New | Verify data loop closure, degradation, idempotency |
 
 ### Phase 1 Files
 
