@@ -425,8 +425,9 @@ async function callGPT(openai, opts) {
   let lastErr;
   const startMs = Date.now();
   const accumulatedUsage = { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0 };
+  const maxRetries = opts.maxRetries ?? RETRY_MAX_ATTEMPTS;
 
-  for (let attempt = 0; attempt <= RETRY_MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       const result = await _callGPTOnce(openai, opts);
       if (attempt > 0) {
@@ -446,7 +447,7 @@ async function callGPT(openai, opts) {
         accumulatedUsage.reasoning_tokens += err.llmUsage.reasoning_tokens ?? 0;
       }
       const { retryable, category } = classifyLlmError(err);
-      if (attempt < RETRY_MAX_ATTEMPTS && retryable) {
+      if (attempt < maxRetries && retryable) {
         const delayMs = category === 'http-429'
           ? Math.min(RETRY_429_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * (attempt + 1) + Math.random() * 1000)
           : RETRY_BASE_DELAY_MS * (attempt + 1);
@@ -571,7 +572,7 @@ function validateLedgerForR2(ledgerPath, round) {
  * @param {string} passName - Name of the pass (for logging)
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function runMapReducePass(openai, files, systemPrompt, projectBrief, planContent, passName, maxFilesPerUnit = Infinity) {
+async function runMapReducePass(openai, files, systemPrompt, projectBrief, planContent, passName, maxFilesPerUnit = Infinity, { changedFileSet = null } = {}) {
   const units = buildAuditUnits(files, 30000, maxFilesPerUnit);
 
   // MAP phase: parallel calls with concurrency limit
@@ -593,6 +594,12 @@ async function runMapReducePass(openai, files, systemPrompt, projectBrief, planC
           : readFilesAsContext(unit.files, { maxPerFile: 10000, maxTotal: 80000 });
 
         const limits = computePassLimits(context.length, 'high');
+        // Fix #3: Skip retry for map units with no changed files.
+        // Retrying unchanged-file units on R2+ is pure waste — they produce the
+        // same scope-pressure findings as the prior round.
+        const unitHasChangedFiles = !changedFileSet || unit.files.some(f => changedFileSet.has(normalizePath(f)));
+        const maxRetries = unitHasChangedFiles ? undefined : 0; // 0 = no retries
+
         return await callGPT(openai, {
           systemPrompt,
           userPrompt: `## Project Brief\n${projectBrief}\n\n## Audit Unit ${i + 1}/${units.length} (${unit.files.length} files)\n\n## Code\n${context}`,
@@ -600,7 +607,8 @@ async function runMapReducePass(openai, files, systemPrompt, projectBrief, planC
           schemaName: `map_${passName}_${i}`,
           reasoning: 'high',
           ...limits,
-          passName: `map-${passName}-${i}`
+          passName: `map-${passName}-${i}`,
+          maxRetries,
         });
       } finally {
         releaseSlot();
@@ -639,7 +647,8 @@ async function runMapReducePass(openai, files, systemPrompt, projectBrief, planC
     }
   }
 
-  process.stderr.write(`  [${passName}] MAP done: ${allFindings.length} findings from ${units.length - effectiveFailures}/${units.length} units (${((Date.now() - mapStart) / 1000).toFixed(1)}s)\n`);
+  const mapCompletionRate = units.length > 0 ? (units.length - effectiveFailures) / units.length : 1;
+  process.stderr.write(`  [${passName}] MAP done: ${allFindings.length} findings from ${units.length - effectiveFailures}/${units.length} units (${((Date.now() - mapStart) / 1000).toFixed(1)}s, completion: ${(mapCompletionRate * 100).toFixed(0)}%)\n`);
 
   if (allFindings.length === 0) {
     return {
@@ -718,7 +727,8 @@ async function runMapReducePass(openai, files, systemPrompt, projectBrief, planC
   return {
     result: reduceResult.result,
     usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: totalLatency },
-    latencyMs: totalLatency
+    latencyMs: totalLatency,
+    _mapCompletionRate: mapCompletionRate,
   };
 }
 
@@ -1168,7 +1178,9 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         : PASS_SUSTAINABILITY_SYSTEM) + focusBlock;
       const sustainCtx = readProjectContextForPass('sustainability');
       const sustainPlan = extractPlanForPass(planContent, 'sustainability');
-      sustainResult = await runMapReducePass(openai, sustainFiles, sustainSystemPrompt, sustainCtx, sustainPlan, 'sustainability');
+      // Fix #3: Pass changedFileSet so unchanged map units skip retries
+      const changedFileSet = changedFiles.length > 0 ? new Set(changedFiles.map(normalizePath)) : null;
+      sustainResult = await runMapReducePass(openai, sustainFiles, sustainSystemPrompt, sustainCtx, sustainPlan, 'sustainability', Infinity, { changedFileSet });
     } else {
       const sustainContextChars = baseContextChars + measureContextChars(sustainFiles, 4000);
       const sustainLimits = computePassLimits(sustainContextChars, 'medium');
@@ -1529,6 +1541,14 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   else if (medium > 2) verdict = 'NEEDS_FIXES';
   // Failed passes mean incomplete audit — don't report PASS with 0 findings if passes failed
   if (verdict === 'PASS' && failedPasses.length > 0) verdict = 'INCOMPLETE';
+
+  // Fix #2: Partial MAP verdict downgrade. When any pass completed <66% of MAP
+  // units, the verdict is unreliable — downgrade to INCOMPLETE regardless of findings.
+  const minMapCompletion = Math.min(...allResults.map(r => r._mapCompletionRate ?? 1));
+  if (minMapCompletion < 0.66 && verdict !== 'INCOMPLETE') {
+    process.stderr.write(`  [verdict] Downgrading to INCOMPLETE — MAP completion ${(minMapCompletion * 100).toFixed(0)}% (need ≥66%)\n`);
+    verdict = 'INCOMPLETE';
+  }
 
   const totalUsage = {
     input_tokens: allResults.reduce((s, r) => s + (r.usage?.input_tokens ?? 0), 0),

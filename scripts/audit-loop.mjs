@@ -82,6 +82,31 @@ function isConverged(counts) {
   return counts.high === 0 && counts.medium <= 2;
 }
 
+/**
+ * Detect HIGH count plateau across consecutive rounds.
+ * Returns true when two consecutive rounds show <30% HIGH decrease.
+ * Fix #1: Hard plateau threshold — stops ambiguity in the skill prose.
+ * @param {Array<{counts: object}>} roundResults
+ * @returns {{ plateau: boolean, consecutiveFlat: number }}
+ */
+function detectPlateau(roundResults) {
+  if (roundResults.length < 2) return { plateau: false, consecutiveFlat: 0 };
+
+  let consecutiveFlat = 0;
+  for (let i = 1; i < roundResults.length; i++) {
+    const prev = roundResults[i - 1].counts.high;
+    const curr = roundResults[i].counts.high;
+    // <30% decrease = plateau round
+    const decrease = prev > 0 ? (prev - curr) / prev : 0;
+    if (decrease < 0.3) {
+      consecutiveFlat++;
+    } else {
+      consecutiveFlat = 0;
+    }
+  }
+  return { plateau: consecutiveFlat >= 2, consecutiveFlat };
+}
+
 // ── Arg Parsing ──────────────────────────────────────────────────────────────
 
 /**
@@ -324,6 +349,17 @@ async function main() {
     if (round >= args.maxRounds) {
       console.log(`\n${Y}Max rounds (${args.maxRounds}) reached${X}`);
       break;
+    }
+
+    // Fix #1 + #5: Plateau detection — early stop when HIGH count stops decreasing.
+    // Applies to code audits too (not just plan audits). Soft cap at round 3+.
+    if (round >= 3) {
+      const { plateau, consecutiveFlat } = detectPlateau(roundResults);
+      if (plateau) {
+        console.log(`\n${Y}PLATEAU_STOP${X} — HIGH count flat for ${consecutiveFlat} consecutive rounds.`);
+        console.log(`${D}Override with --max-rounds ${round + 2} to continue.${X}`);
+        break;
+      }
     }
 
     round++;

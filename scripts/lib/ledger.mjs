@@ -282,7 +282,33 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
   const kept = [], suppressed = [], reopened = [];
   const changedSet = new Set(changedFiles.map(normalizePath));
 
+  // Fix #4: Build ruling count index. When a (category + primaryFile) pair has been
+  // ruled 'overrule' 3+ times across rounds, hard-suppress regardless of hash drift.
+  // The semantic hash drifts with GPT rewording, but the category+file is stable.
+  const HARD_SUPPRESS_THRESHOLD = 3;
+  const overruleCountIndex = new Map();
+  for (const e of resolved) {
+    if (e.ruling === 'overrule' || e.adjudicationOutcome === 'dismissed') {
+      const catFile = `${(e.category || '').toLowerCase().trim()}|${normalizePath(e.affectedFiles?.[0] || e.section || '')}`;
+      overruleCountIndex.set(catFile, (overruleCountIndex.get(catFile) || 0) + 1);
+    }
+  }
+
   for (const f of findings) {
+    // Fix #4: Hard suppress check — category+file ruled overrule 3+ times
+    const fCatFile = `${(f.category || '').toLowerCase().replace(/\[.*?\]\s*/g, '').trim()}|${normalizePath(f._primaryFile || f.section || '')}`;
+    const overruleCount = overruleCountIndex.get(fCatFile) || 0;
+    if (overruleCount >= HARD_SUPPRESS_THRESHOLD) {
+      suppressed.push({
+        finding: f,
+        matchedTopic: 'hard-suppress',
+        matchScore: 1.0,
+        matchedSource: 'ruling-count',
+        reason: `Category+file overruled ${overruleCount} times — hard-suppressed`,
+      });
+      continue;
+    }
+
     // Step 1: Narrow candidates by pass + file scope overlap
     const fFile = normalizePath(f._primaryFile || f.section || '');
     let candidates = resolved.filter(d =>
