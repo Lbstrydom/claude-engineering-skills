@@ -67,6 +67,13 @@ import {
   computeDriftScore,
   listSymbolsForSnapshot,
   listLayeringViolationsForSnapshot,
+  // Phase 1 — adaptive-learning-v1
+  insertLearningDecision,
+  backfillLearningOutcome,
+  readPendingTriageFindings,
+  readNoBrainerRecommendations,
+  readStaleClusters,
+  getRepoIdByName,
 } from './learning-store.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mjs';
 import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
@@ -826,6 +833,104 @@ async function cmdResolveRepoIdentity() {
   emit({ ok: true, ...id, persisted: persist });
 }
 
+// ── Phase 1 — adaptive-learning-v1 subcommands ─────────────────────────────
+
+/**
+ * Generic decision recorder.  Used by external skills/scripts that don't want
+ * to import scripts/lib/learning/decision-logger.mjs directly (e.g. shell
+ * pipelines).  Validates input shape, derives decision_key, inserts row.
+ */
+async function cmdLearningRecord() {
+  const p = parsePayload();
+  if (!p.decisionType) return emitError('BAD_INPUT', 'decisionType is required');
+  if (!p.context || !p.choice) return emitError('BAD_INPUT', 'context and choice are required');
+
+  const auditBound = p.auditRunId && Number.isInteger(p.round) && Number.isInteger(p.sequence);
+  if (!auditBound && !p.externalId) {
+    return emitError('BAD_INPUT', 'must provide either (auditRunId, round, sequence) OR externalId');
+  }
+
+  await initLearningStore();
+  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, decisionKey: null });
+
+  // Build decision_key the same way decision-logger does.
+  const decisionKey = auditBound
+    ? `${p.auditRunId}:${p.decisionType}:r${p.round}:s${p.sequence}`
+    : `${p.decisionType}:${p.externalId}`;
+
+  // Compute context_hash deterministically (same algorithm as decision-logger).
+  const crypto = await import('node:crypto');
+  const canonical = JSON.stringify(p.context, Object.keys(p.context).sort());
+  const contextHash = crypto.createHash('sha256').update(canonical).digest('hex');
+
+  const result = await insertLearningDecision({
+    decisionKey,
+    auditRunId:  p.auditRunId  ?? null,
+    decisionType: p.decisionType,
+    round:       p.round       ?? null,
+    sequence:    p.sequence    ?? null,
+    externalId:  p.externalId  ?? null,
+    repoId:      p.repoId      ?? null,
+    context:     p.context,
+    contextHash,
+    choice:      p.choice,
+    outcome:     p.outcome     ?? null,
+  });
+
+  if (!result.ok) return emitError('STORE_ERROR', result.error || 'insert failed', { decisionKey });
+  emit({ ok: true, cloud: true, decisionKey });
+}
+
+/**
+ * Stats snapshot for human inspection or weekly review.  Currently emits
+ * counts of pending_triage_findings + no_brainer_recommendations + stale
+ * clusters per repo.  Phase 2 extends with quickfix-pattern stats.
+ */
+async function cmdLearningStats() {
+  const p = parsePayload();
+  const repoName = p.repoName || process.env.LEARNING_REPO_NAME || null;
+  await initLearningStore();
+  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, stats: null });
+
+  let repoId = p.repoId || null;
+  if (!repoId && repoName) repoId = await getRepoIdByName(repoName);
+  if (!repoId) return emit({ ok: true, cloud: true, repoId: null, stats: { unknownRepo: true } });
+
+  const [triage, noBrainer, stale] = await Promise.all([
+    readPendingTriageFindings({ repoId, limit: 1000 }),
+    readNoBrainerRecommendations({ repoId, limit: 1000 }),
+    readStaleClusters({ repoId, limit: 1000 }),
+  ]);
+
+  emit({
+    ok: true,
+    cloud: true,
+    repoId,
+    repoName: repoName || null,
+    stats: {
+      pendingTriageCount: triage.length,
+      noBrainerCount: noBrainer.length,
+      staleClusterCount: stale.length,
+    },
+  });
+}
+
+/**
+ * Weekly review — delegates to scripts/learning/weekly-review.mjs.
+ * Provides a stable cross-skill subcommand surface so package.json and
+ * the GH workflow can invoke `cross-skill.mjs learning-weekly-review`
+ * uniformly.
+ */
+async function cmdLearningWeeklyReview() {
+  const { runWeeklyReview } = await import('./learning/weekly-review.mjs');
+  const result = await runWeeklyReview({
+    repoName: argOption('repo') || process.env.LEARNING_REPO_NAME || null,
+    dryRun: rest.includes('--dry-run'),
+    format: argOption('format') || 'json',
+  });
+  emit(result);
+}
+
 // ── Dispatcher ──────────────────────────────────────────────────────────────
 
 const commands = {
@@ -865,6 +970,10 @@ const commands = {
   'list-symbols-for-snapshot':        cmdListSymbolsForSnapshot,
   'list-layering-violations-for-snapshot': cmdListLayeringViolationsForSnapshot,
   'compute-drift-score':              cmdComputeDriftScore,
+  // Phase 1 — adaptive-learning-v1
+  'learning-record':                  cmdLearningRecord,
+  'learning-stats':                   cmdLearningStats,
+  'learning-weekly-review':           cmdLearningWeeklyReview,
 };
 
 async function main() {

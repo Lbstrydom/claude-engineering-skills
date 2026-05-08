@@ -239,6 +239,61 @@ return to green. Run locally: `npm run memory:health` or `npm run memory:health:
 for 2 consecutive weeks → prototype pgvector similarity. 2+ triggers → build
 the full clustering pipeline.
 
+## Learning System (Phase 1)
+
+The adaptive-learning system collects telemetry across audit decision points
+(pass selection, convergence prediction, arch-memory band, auto-deferral)
+into the `learning_decisions` Supabase table, plus a per-repo
+`recurring_finding_clusters` table for recurring-finding aggregation.
+Phase 1 ships the foundation; future phases promote individual decision
+points to live learners.
+
+**Plan**: `docs/plans/adaptive-learning-v1.md` (master), per-phase plans
+`docs/plans/adaptive-learning-phase-{1,2,3}-*.md`.
+
+### Auto-deferral classifier
+Scope-gated to `--scope diff` audits only. Two gates BOTH hold for an
+auto-defer to fire: (1) finding `category` in the AUTO_DEFERRABLE_CLASSES
+allowlist (`style`, `formatting`, `unused-import`, `dead-code-local`,
+`comment-quality`, `naming-local`, `magic-number-local`); (2) deterministic
+SCM evidence (file not in HEAD~1..HEAD diff, or matched by an explicit plan
+marker, or recurring across 2+ rounds). Findings failing either gate route
+to `audit_findings.user_action='needs_triage'` and surface in the weekly
+review's "Awaiting triage" section.
+
+**Plan-marker syntax** (operators inline these in plan markdown to accept
+known v1 limits):
+```
+<!-- audit:accept-v1: <file-glob> :: <reason> -->
+```
+
+### Weekly review
+Mondays 09:00 UTC, per consumer repo. Sticky GitHub issue with label
+`learning-weekly-review`. Hard cap of 7 items: 3 awaiting triage + 3
+no-brainer fix-now (recurring 3+ HIGH or 5+ MEDIUM) + 1 stale deferral
+(>30 days). Run locally with `npm run learning:weekly-review --repo <name>`.
+
+### Opt-outs
+- `LEARNING_DISABLE=1` — global kill switch; disables all live learning +
+  telemetry recording in one env var.
+- `LEARNING_QUEUE_CAP_PER_TYPE=64` — bounded sub-queue cap per
+  `decision_type`. Defaults to 64; high-frequency event types cannot evict
+  low-frequency ones.
+
+### CLI
+- `npm run learning:weekly-review` — generate digest, post sticky issue
+- `npm run learning:stats --repoName <name>` — counts of pending triage,
+  no-brainer recurring, stale deferrals
+- `npm run learning:record` — generic decision logger (mostly for tools)
+
+### Environment-aware outbox
+On flush failure, decisions spill to `.audit/learning-outbox/` (one JSON
+file per failed write, atomic via temp+rename) for replay on next audit
+start. In CI runtimes (`process.env.CI` or `GITHUB_ACTIONS` truthy), the
+disk outbox is disabled in favour of synchronous retry with exponential
+backoff (3 attempts: 200ms/600ms/1.8s); failures are counted as
+`lostInCI` and logged but never crash the run.
+
 ## Environment Variables
 
 | Variable | Required | Default | Purpose |
@@ -269,6 +324,10 @@ the full clustering pipeline.
 | `MEMORY_HEALTH_CLUSTER_MEDIAN` | No | `5` | Cluster density trigger threshold (median similar pairs/repo) |
 | `MEMORY_HEALTH_RECURRENCE_RATE` | No | `0.10` | Fixed-finding recurrence rate trigger threshold |
 | `MEMORY_HEALTH_MIN_FINDINGS` | No | `50` | Minimum findings in window to report a trigger (below → INSUFFICIENT_DATA) |
+| `SUPABASE_AUDIT_SERVICE_ROLE_KEY` | No (Phase 1) | — | Service-role key required for writes to RLS service-role-only tables (`learning_decisions`, `recurring_finding_clusters`). Missing → graceful degrade to local outbox. |
+| `LEARNING_DISABLE` | No | — | Set to `1` to disable all adaptive-learning live behaviour and telemetry recording (single env-var kill switch). |
+| `LEARNING_REPO_NAME` | Required for weekly-review | — | Per-repo gate for `weekly-review.mjs`. Aborts if missing — prevents cross-tenant data leakage in the digest issue body. |
+| `LEARNING_QUEUE_CAP_PER_TYPE` | No | `64` | Per-`decision_type` bounded sub-queue cap. Increase for high-throughput audits. |
 
 ## Cross-Skill Data Loop
 

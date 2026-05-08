@@ -1,0 +1,74 @@
+name: learning-weekly-review
+
+# Weekly review of the adaptive-learning system's pending-triage findings,
+# no-brainer recurring clusters, and stale deferrals. Posts a sticky GitHub
+# issue (label: learning-weekly-review) with the per-repo digest.
+#
+# Plan: docs/plans/adaptive-learning-phase-1-foundation.md
+
+on:
+  schedule:
+    # Mondays 09:00 UTC — same cadence as memory-health.yml
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+    inputs:
+      repo-name:
+        description: 'Repo name (defaults to github.event.repository.name)'
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: learning-weekly-review
+  cancel-in-progress: false
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Verify Supabase secrets present
+        id: secrets-check
+        env:
+          SUPABASE_AUDIT_URL: ${{ secrets.SUPABASE_AUDIT_URL }}
+          SUPABASE_AUDIT_ANON_KEY: ${{ secrets.SUPABASE_AUDIT_ANON_KEY }}
+          SUPABASE_AUDIT_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_AUDIT_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "$SUPABASE_AUDIT_URL" ] || [ -z "$SUPABASE_AUDIT_ANON_KEY" ]; then
+            echo "::warning::SUPABASE_AUDIT_URL / ANON_KEY not set — skipping review"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          elif [ -z "$SUPABASE_AUDIT_SERVICE_ROLE_KEY" ]; then
+            echo "::warning::SUPABASE_AUDIT_SERVICE_ROLE_KEY not set — service-role writes will fail; review may be incomplete"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run weekly review
+        if: steps.secrets-check.outputs.skip != 'true'
+        env:
+          SUPABASE_AUDIT_URL: ${{ secrets.SUPABASE_AUDIT_URL }}
+          SUPABASE_AUDIT_ANON_KEY: ${{ secrets.SUPABASE_AUDIT_ANON_KEY }}
+          SUPABASE_AUDIT_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_AUDIT_SERVICE_ROLE_KEY }}
+          # Per-repo scoping: weekly-review.mjs aborts if LEARNING_REPO_NAME
+          # is missing.  Defaults to the GH repo name; override via dispatch input.
+          LEARNING_REPO_NAME: ${{ inputs.repo-name || github.event.repository.name }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # Stdout is JSON (the digest envelope); stderr carries the markdown
+          # body (which weekly-review.mjs also posts to the sticky issue).
+          node scripts/cross-skill.mjs learning-weekly-review --repo "$LEARNING_REPO_NAME"

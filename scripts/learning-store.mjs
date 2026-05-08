@@ -2387,3 +2387,206 @@ export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefre
   return copied;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Phase 1 — adaptive-learning-v1 writes
+// Plan: docs/plans/adaptive-learning-phase-1-foundation.md
+// All methods use getWriteClient() (service-role).  They return
+// { ok, error? } — never throw — so decision-logger's outbox can catch
+// failures and spill to disk without a try/catch wrapper at every call site.
+// ════════════════════════════════════════════════════════════════════════════
+
+async function _safeWriteCall(fn) {
+  try {
+    const client = await getWriteClient();
+    return await fn(client);
+  } catch (err) {
+    // Includes SERVICE_ROLE_REQUIRED and any RLS rejection.
+    return { ok: false, error: err.message || String(err), code: err.code };
+  }
+}
+
+/**
+ * Insert one learning_decisions row.  Idempotent via decision_key UNIQUE
+ * (`ignoreDuplicates`).  Caller MUST have already derived decision_key via
+ * scripts/lib/learning/decision-logger.mjs::buildDecisionKey().
+ *
+ * @param {object} entry — from decision-logger queue
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export async function insertLearningDecision(entry) {
+  return _safeWriteCall(async (client) => {
+    const row = {
+      decision_key:  entry.decisionKey,
+      audit_run_id:  entry.auditRunId  ?? null,
+      decision_type: entry.decisionType,
+      round:         entry.round       ?? null,
+      sequence:      entry.sequence    ?? null,
+      external_id:   entry.externalId  ?? null,
+      repo_id:       entry.repoId      ?? null,
+      context:       entry.context,
+      context_hash:  entry.contextHash,
+      choice:        entry.choice,
+      outcome:       entry.outcome     ?? null,
+    };
+    const { error } = await client.from('learning_decisions')
+      .upsert(row, { onConflict: 'decision_key', ignoreDuplicates: true });
+    return { ok: !error, error: error?.message };
+  });
+}
+
+/**
+ * Update outcome on an existing learning_decisions row by decision_key.
+ * Idempotent — same outcome twice is a no-op.
+ *
+ * @param {{decisionKey: string, outcome: object}} input
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export async function backfillLearningOutcome({ decisionKey, outcome }) {
+  return _safeWriteCall(async (client) => {
+    const { error } = await client.from('learning_decisions')
+      .update({ outcome, outcome_at: new Date().toISOString() })
+      .eq('decision_key', decisionKey);
+    return { ok: !error, error: error?.message };
+  });
+}
+
+/**
+ * Update audit_runs.diff_complexity.  Best-effort.
+ * @param {string} runId
+ * @param {object} complexity — JSON-serialisable
+ */
+export async function recordDiffComplexity(runId, complexity) {
+  return _safeWriteCall(async (client) => {
+    const { error } = await client.from('audit_runs')
+      .update({ diff_complexity: complexity }).eq('id', runId);
+    return { ok: !error, error: error?.message };
+  });
+}
+
+/**
+ * Update audit_runs.round_converged_after + rigor_pressure_round.
+ * @param {string} runId
+ * @param {{round_converged_after?: number, rigor_pressure_round?: number}} state
+ */
+export async function recordConvergenceState(runId, state) {
+  return _safeWriteCall(async (client) => {
+    const patch = {};
+    if (state.round_converged_after !== undefined) patch.round_converged_after = state.round_converged_after;
+    if (state.rigor_pressure_round !== undefined)  patch.rigor_pressure_round  = state.rigor_pressure_round;
+    if (Object.keys(patch).length === 0) return { ok: true };
+    const { error } = await client.from('audit_runs').update(patch).eq('id', runId);
+    return { ok: !error, error: error?.message };
+  });
+}
+
+/**
+ * Update audit_findings resolution columns.
+ * @param {string} findingId
+ * @param {{user_action?: string, dismiss_reason?: string, fix_commit_sha?: string, time_to_resolution_ms?: number}} resolution
+ */
+export async function recordFindingResolution(findingId, resolution) {
+  return _safeWriteCall(async (client) => {
+    const patch = {};
+    if (resolution.user_action !== undefined)            patch.user_action = resolution.user_action;
+    if (resolution.dismiss_reason !== undefined)         patch.dismiss_reason = resolution.dismiss_reason;
+    if (resolution.fix_commit_sha !== undefined)         patch.fix_commit_sha = resolution.fix_commit_sha;
+    if (resolution.time_to_resolution_ms !== undefined)  patch.time_to_resolution_ms = resolution.time_to_resolution_ms;
+    if (Object.keys(patch).length === 0) return { ok: true };
+    const { error } = await client.from('audit_findings').update(patch).eq('id', findingId);
+    return { ok: !error, error: error?.message };
+  });
+}
+
+/**
+ * Invoke `defer_finding(...)` stored procedure.  Single transactional write
+ * boundary: updates audit_findings, upserts recurring_clusters, inserts
+ * learning_decisions.  Idempotent via decision_key.
+ */
+export async function callDeferFinding({
+  findingId, dismissReason, evidence, clusterHash, severity,
+  auditRunId, round, sequence,
+}) {
+  return _safeWriteCall(async (client) => {
+    const { error } = await client.rpc('defer_finding', {
+      p_finding_id:    findingId,
+      p_dismiss_reason: dismissReason,
+      p_evidence:      evidence,
+      p_cluster_hash:  clusterHash,
+      p_severity:      severity,
+      p_audit_run_id:  auditRunId,
+      p_round:         round,
+      p_sequence:      sequence,
+    });
+    return { ok: !error, error: error?.message };
+  });
+}
+
+/** Invoke `mark_finding_needs_triage(...)` stored procedure. */
+export async function callMarkFindingNeedsTriage({
+  findingId, reason, auditRunId, round, sequence, evidence,
+}) {
+  return _safeWriteCall(async (client) => {
+    const { error } = await client.rpc('mark_finding_needs_triage', {
+      p_finding_id:   findingId,
+      p_reason:       reason,
+      p_audit_run_id: auditRunId,
+      p_round:        round,
+      p_sequence:     sequence,
+      p_evidence:     evidence,
+    });
+    return { ok: !error, error: error?.message };
+  });
+}
+
+// ── Phase 1 reads (per-repo scoped — required by weekly-review) ────────────
+
+/**
+ * Read pending_triage_findings view, scoped to repo_id.  Required argument
+ * — caller MUST pass repoId; this method does NOT default to global queries.
+ */
+export async function readPendingTriageFindings({ repoId, limit = 100 }) {
+  if (!repoId) throw new Error('repoId is required');
+  if (!_supabase) return [];
+  try {
+    const { data, error } = await _supabase.from('pending_triage_findings')
+      .select('*').eq('repo_id', repoId).limit(limit);
+    return error ? [] : (data || []);
+  } catch { return []; }
+}
+
+export async function readNoBrainerRecommendations({ repoId, limit = 50 }) {
+  if (!repoId) throw new Error('repoId is required');
+  if (!_supabase) return [];
+  try {
+    const { data, error } = await _supabase.from('no_brainer_recommendations')
+      .select('*').eq('repo_id', repoId).limit(limit);
+    return error ? [] : (data || []);
+  } catch { return []; }
+}
+
+export async function readStaleClusters({ repoId, ageDays = 30, limit = 50 }) {
+  if (!repoId) throw new Error('repoId is required');
+  if (!_supabase) return [];
+  try {
+    const cutoff = new Date(Date.now() - ageDays * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await _supabase.from('recurring_finding_clusters')
+      .select('*').eq('repo_id', repoId).eq('status', 'open')
+      .lt('last_seen', cutoff).limit(limit);
+    return error ? [] : (data || []);
+  } catch { return []; }
+}
+
+/**
+ * Resolve repo_id by repo name (used by weekly-review with LEARNING_REPO_NAME).
+ * @param {string} repoName
+ * @returns {Promise<string|null>}
+ */
+export async function getRepoIdByName(repoName) {
+  if (!repoName || !_supabase) return null;
+  try {
+    const { data, error } = await _supabase.from('audit_repos')
+      .select('id').eq('name', repoName).single();
+    return error ? null : data?.id ?? null;
+  } catch { return null; }
+}
+

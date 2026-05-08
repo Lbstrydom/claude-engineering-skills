@@ -57,7 +57,8 @@ import { executeTools, normalizeToolResults, formatLintSummary } from './lib/lin
 import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from './lib/debt-memory.mjs';
-import { initLearningStore, isCloudEnabled, upsertRepo, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns } from './learning-store.mjs';
+import { initLearningStore, isCloudEnabled, upsertRepo, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
+import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey } from './lib/learning/decision-logger.mjs';
 import { PromptBandit, computeReward, buildContext } from './bandit.mjs';
 import { openaiConfig, PASS_NAMES, modelPricing } from './lib/config.mjs';
 import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey } from './lib/model-resolver.mjs';
@@ -848,6 +849,41 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {
         scopeMode, commitSha, branch, planId,
       }).catch(() => null);
+
+      // Phase 1 — adaptive-learning-v1 telemetry.  Compute diff_complexity
+      // (file count, LOC, scope mode) and record pass_selection decision
+      // pre-wave with outcome=null; the outcome is backfilled at audit-end.
+      // Plan: docs/plans/adaptive-learning-phase-1-foundation.md §2 data flow
+      if (cloudRunId) {
+        const diffComplexity = {
+          fileCount: Array.isArray(changedFiles) ? changedFiles.length : null,
+          diffLines: diffLinesChanged,
+          diffFiles: diffFilesChanged,
+          scopeMode: scopeMode || null,
+        };
+        // Best-effort.  These calls return { ok, error? } — never throw.
+        recordDiffComplexity(cloudRunId, diffComplexity).catch(() => {});
+
+        // Record pass_selection decision (telemetry-only in v1; choice always
+        // 'all' until Phase 3 promotes pass-selector to live).
+        try {
+          _learningRecordDecision({
+            decisionType: 'pass_selection',
+            repoId: cloudRepoId,
+            auditRunId: cloudRunId,
+            round: round || 1,
+            sequence: 0,
+            context: {
+              scopeMode: scopeMode || null,
+              fileCount: diffComplexity.fileCount,
+              diffLines: diffComplexity.diffLines,
+            },
+            choice: { chose: 'all' },
+            outcome: null,
+          });
+          _learningInstallHooks({ insertLearningDecision, backfillLearningOutcome, isCloudEnabled });
+        } catch { /* validation failure — best-effort telemetry */ }
+      }
     }
   }
 
@@ -1801,6 +1837,36 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       sessionCacheHit,
       mapReducePasses: mapReducePasses.length > 0 ? mapReducePasses : null,
     }).catch(e => process.stderr.write(`  [learning] recordRunComplete: ${e.message}\n`));
+
+    // Phase 1 — adaptive-learning-v1.  Backfill the pass_selection decision
+    // outcome with kept/dismissed counts and flush all queued telemetry to
+    // the cloud (or outbox on failure).  Best-effort.
+    try {
+      const decisionKey = _learningBuildKey({
+        decisionType: 'pass_selection',
+        auditRunId: cloudRunId,
+        round: round || 1,
+        sequence: 0,
+      });
+      await backfillLearningOutcome({
+        decisionKey,
+        outcome: {
+          totalFindings: allFindings.length,
+          highKept: allFindings.filter(f => f.severity === 'HIGH' && f.adjudicationOutcome !== 'dismissed').length,
+          mediumKept: allFindings.filter(f => f.severity === 'MEDIUM' && f.adjudicationOutcome !== 'dismissed').length,
+          dismissed: allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length,
+          durationMs: totalLatency,
+        },
+      }).catch(() => {});
+      const flushSummary = await _learningFlush({
+        store: { insertLearningDecision, backfillLearningOutcome, isCloudEnabled },
+      });
+      if (flushSummary && (flushSummary.dropped > 0 || flushSummary.outboxed > 0 || flushSummary.lostInCI > 0)) {
+        process.stderr.write(
+          `  [learning] flush: ${flushSummary.flushed} ok, ${flushSummary.outboxed} outbox, ${flushSummary.dropped} dropped, ${flushSummary.lostInCI} CI-lost\n`
+        );
+      }
+    } catch { /* best-effort telemetry */ }
   }
 
   // P0-B: Session manifest + meta (written by openai-audit.mjs, not audit-loop.mjs)

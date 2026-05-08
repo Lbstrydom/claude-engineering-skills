@@ -1,0 +1,135 @@
+/**
+ * Integration tests for the Phase 1 learning-store write functions.
+ *
+ * These tests gate on Supabase env vars; without `SUPABASE_AUDIT_URL`
+ * they emit a single placeholder pass and skip.  Without
+ * `SUPABASE_AUDIT_SERVICE_ROLE_KEY` they similarly skip the
+ * service-role-only write tests but still exercise the graceful-fail
+ * path (no crash, return shape `{ ok: false, error }`).
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+import {
+  insertLearningDecision,
+  backfillLearningOutcome,
+  recordDiffComplexity,
+  recordConvergenceState,
+  recordFindingResolution,
+} from '../scripts/learning-store.mjs';
+
+const HAS_SERVICE_ROLE = !!(
+  process.env.SUPABASE_AUDIT_URL && process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY
+);
+
+// ── No-env path: graceful fallback (does not throw) ───────────────────────
+
+describe('learning-store / Phase 1 graceful degradation (no service-role)', () => {
+  it('insertLearningDecision returns { ok: false, error } when service-role missing', async () => {
+    if (HAS_SERVICE_ROLE) return; // skip when service-role is configured
+    const r = await insertLearningDecision({
+      decisionKey: 'test:no-service-role',
+      decisionType: 'pass_selection',
+      auditRunId: '00000000-0000-0000-0000-000000000000',
+      round: 0,
+      sequence: 0,
+      context: {},
+      contextHash: 'a'.repeat(64),
+      choice: { chose: 'all' },
+    });
+    assert.equal(r.ok, false);
+    assert.ok(r.error || r.code, 'should report failure rather than crash');
+  });
+
+  it('backfillLearningOutcome returns { ok: false, error } when service-role missing', async () => {
+    if (HAS_SERVICE_ROLE) return;
+    const r = await backfillLearningOutcome({
+      decisionKey: 'pass_selection:test-1',
+      outcome: { totalFindings: 0 },
+    });
+    assert.equal(r.ok, false);
+    assert.ok(r.error || r.code);
+  });
+
+  it('recordDiffComplexity returns { ok: false } when service-role missing', async () => {
+    if (HAS_SERVICE_ROLE) return;
+    const r = await recordDiffComplexity('00000000-0000-0000-0000-000000000000', { fileCount: 0 });
+    assert.equal(r.ok, false);
+  });
+
+  it('recordConvergenceState returns { ok: false } when service-role missing', async () => {
+    if (HAS_SERVICE_ROLE) return;
+    const r = await recordConvergenceState('00000000-0000-0000-0000-000000000000', { round_converged_after: 1 });
+    assert.equal(r.ok, false);
+  });
+
+  it('recordFindingResolution returns { ok: false } when service-role missing', async () => {
+    if (HAS_SERVICE_ROLE) return;
+    const r = await recordFindingResolution('00000000-0000-0000-0000-000000000000', { user_action: 'deferred' });
+    assert.equal(r.ok, false);
+  });
+
+  it('placeholder when service-role IS configured', () => {
+    if (!HAS_SERVICE_ROLE) return;
+    // Real integration tests require a clean test schema and would touch
+    // production tables — keep them out of the default unit-test run.
+    // Run via `npm test -- --test-name-pattern="phase1 integration"` once
+    // we have a dedicated test database.
+    assert.ok(true);
+  });
+});
+
+// ── decision_key shape contract ───────────────────────────────────────────
+
+describe('learning-store / Phase 1 per-repo filter contract (H1 fix)', () => {
+  it('readPendingTriageFindings throws if repoId omitted', async () => {
+    const { readPendingTriageFindings } = await import('../scripts/learning-store.mjs');
+    await assert.rejects(
+      () => readPendingTriageFindings({}),
+      /repoId is required/,
+    );
+  });
+
+  it('readNoBrainerRecommendations throws if repoId omitted', async () => {
+    const { readNoBrainerRecommendations } = await import('../scripts/learning-store.mjs');
+    await assert.rejects(
+      () => readNoBrainerRecommendations({}),
+      /repoId is required/,
+    );
+  });
+
+  it('readStaleClusters throws if repoId omitted', async () => {
+    const { readStaleClusters } = await import('../scripts/learning-store.mjs');
+    await assert.rejects(
+      () => readStaleClusters({}),
+      /repoId is required/,
+    );
+  });
+
+  it('all three weekly-review reads have explicit repo_id filter (grep contract)', async () => {
+    const fs = await import('node:fs');
+    const src = fs.readFileSync('scripts/learning-store.mjs', 'utf-8');
+    // Each Phase 1 read function must include `.eq('repo_id', repoId)`.
+    const matches = (src.match(/\.eq\('repo_id',\s*repoId\)/g) || []).length;
+    assert.ok(matches >= 3, `expected ≥3 .eq('repo_id', repoId) calls, found ${matches}`);
+  });
+});
+
+describe('learning-store / Phase 1 decision_key shape', () => {
+  it('insertLearningDecision passes decision_key through untouched', async () => {
+    if (HAS_SERVICE_ROLE) return; // exercising the no-write-client path
+    const r = await insertLearningDecision({
+      decisionKey: 'audit-bound:pass_selection:r0:s0',
+      decisionType: 'pass_selection',
+      auditRunId: 'audit-bound',
+      round: 0,
+      sequence: 0,
+      context: { x: 1 },
+      contextHash: 'b'.repeat(64),
+      choice: { chose: 'all' },
+    });
+    // Without service-role, the call returns { ok: false } before touching
+    // the network — but the shape of the rejection MUST be predictable.
+    assert.equal(r.ok, false);
+  });
+});

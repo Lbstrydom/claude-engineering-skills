@@ -45,7 +45,10 @@
     "arch:duplicates": "node scripts/symbol-index/duplicates.mjs",
     "arch:prune": "node scripts/symbol-index/prune.mjs",
     "security:refresh": "node scripts/security-memory/refresh-incidents.mjs",
-    "arch:spike": "node scripts/symbol-index/spike-extract.mjs"
+    "arch:spike": "node scripts/symbol-index/spike-extract.mjs",
+    "learning:weekly-review": "node scripts/cross-skill.mjs learning-weekly-review",
+    "learning:stats": "node scripts/cross-skill.mjs learning-stats",
+    "learning:record": "node scripts/cross-skill.mjs learning-record"
   },
   "keywords": [
     "claude",
