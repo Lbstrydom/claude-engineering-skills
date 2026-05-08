@@ -248,8 +248,8 @@ into the `learning_decisions` Supabase table, plus a per-repo
 Phase 1 ships the foundation; future phases promote individual decision
 points to live learners.
 
-**Plan**: `docs/plans/adaptive-learning-v1.md` (master), per-phase plans
-`docs/plans/adaptive-learning-phase-{1,2,3}-*.md`.
+**Plan** (Complete v1): `docs/completed/adaptive-learning-v1.md` (master), per-phase plans
+`docs/completed/adaptive-learning-phase-{1,2,3}-*.md`.
 
 ### Auto-deferral classifier
 Scope-gated to `--scope diff` audits only. Two gates BOTH hold for an
@@ -481,7 +481,7 @@ Two-axis state model: `adjudicationOutcome` (dismissed/accepted/severity_adjuste
 
 ## Architectural Memory — Pre-fix Consultation (MANDATORY)
 
-The architectural-memory feature (`docs/plans/architectural-memory.md`)
+The architectural-memory feature (`docs/completed/architectural-memory.md`)
 indexes every symbol in this repo into Supabase, with embeddings, so we
 can find near-duplicates before writing new code. The `/plan-backend`
 and `/plan-frontend` skills consult it automatically. **But ad-hoc
@@ -577,7 +577,7 @@ the bottom of `tests/hook-arch-memory-check.test.mjs`):
 
 ## Quick-fix detection — two-layer architecture
 
-Plan: `docs/plans/brainstorm-quickfix-v1.md` Feature B.
+Plan: `docs/completed/brainstorm-quickfix-v1.md` Feature B.
 
 **Philosophy**: nudge, not gate. Root cause beats shortcut, but explicit
 acceptance beats silent shortcut. The system surfaces shortcuts so the
@@ -627,7 +627,7 @@ Why two layers: the hook catches mechanical patterns at edit time
 (immediate feedback, low cost). The audit pass catches semantic
 shortcuts during PR review (deeper analysis, higher cost). Neither
 covers the other's domain; together they cover both axes. See
-`docs/plans/brainstorm-quickfix-v1.md` §B for the full spec.
+`docs/completed/brainstorm-quickfix-v1.md` §B for the full spec.
 
 ## Personal config — keep it out of the public repo
 
