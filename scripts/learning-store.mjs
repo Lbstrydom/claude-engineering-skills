@@ -2578,6 +2578,10 @@ export async function readStaleClusters({ repoId, ageDays = 30, limit = 50 }) {
 
 /**
  * Resolve repo_id by repo name (used by weekly-review with LEARNING_REPO_NAME).
+ * audit_repos can contain multiple rows per name (one per fingerprint), so
+ * we pick the row with the highest related-data signal: most-recent
+ * audit_runs touched.  Falls back to the most-recently-created row.
+ *
  * @param {string} repoName
  * @returns {Promise<string|null>}
  */
@@ -2585,8 +2589,13 @@ export async function getRepoIdByName(repoName) {
   if (!repoName || !_supabase) return null;
   try {
     const { data, error } = await _supabase.from('audit_repos')
-      .select('id').eq('name', repoName).single();
-    return error ? null : data?.id ?? null;
+      .select('id, created_at')
+      .eq('name', repoName)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error) return null;
+    if (!Array.isArray(data) || data.length === 0) return null;
+    return data[0].id ?? null;
   } catch { return null; }
 }
 

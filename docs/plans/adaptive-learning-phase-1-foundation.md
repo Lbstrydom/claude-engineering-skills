@@ -1,7 +1,7 @@
 # Plan: Adaptive Learning — Phase 1 (Foundation + Auto-Deferral + Weekly Review)
 
 - **Date**: 2026-05-08
-- **Status**: Draft (sub-plan; refines [`adaptive-learning-v1.md`](./adaptive-learning-v1.md))
+- **Status**: **Complete** — shipped as commit `0bde3ab` on 2026-05-08; schema migration applied 2026-05-09
 - **Author**: Claude + Louis
 - **Scope**: backend (js-ts; consumes audit-orchestration + learning-store + supabase domains)
 - **Master plan**: [`docs/plans/adaptive-learning-v1.md`](./adaptive-learning-v1.md) — read for engineering principles (§4), sustainability (§5), and full risk register (§7). This phase plan covers only what THIS /cycle ships.

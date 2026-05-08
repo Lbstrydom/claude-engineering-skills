@@ -1,7 +1,14 @@
 # Plan: Adaptive Learning Expansion v1
 
 - **Date**: 2026-05-08
-- **Status**: Approved-with-known-debt (v2.4 — 4 Gemini deliberation rounds; loop stopped per /audit-plan SKILL guidance after persistent rigor-pressure)
+- **Status**: **Complete (v1)** — all 3 phases shipped (commits 0bde3ab, cf9a89b, e40a40e), schema migration applied to Supabase project `uahjjdelnnpfmaqjrwoz` on 2026-05-09, cloud-read smoke test passing. v2 graduations (per §5 promotion gates) are out of v1 scope.
+- **Completion summary** (2026-05-09):
+  - **Phase 1**: 19 files, 60 unit tests, audit R1+R2+R3 with H:12 → H:4 (rigor-pressure stop)
+  - **Phase 2**: 15 files, 77 unit tests, audit R1+R2+R3 with H:12 → H:3
+  - **Phase 3**: 11 files, 63 unit tests, audit R1+R2 with H:7 → H:0
+  - **Total**: 45 files (25 new), 200 new tests, 1811 total tests pass
+  - **Cloud**: schema migration `20260508120000_adaptive_learning_v1` applied, all 3 views + 2 stored procs + 2 tables + 7 columns verified
+  - **End-to-end**: `npm run learning:stats --json '{"repoName":"claude-audit-loop"}'` → `{ok:true, cloud:true, stats:{pendingTriageCount:0, noBrainerCount:0, staleClusterCount:0}}`
 - **Phasing**: This master plan is split into 3 sub-plans for staged delivery — see §0a below. Each sub-plan is a self-contained `/cycle` invocation; this master plan stays as the canonical reference for engineering principles, sustainability notes, risk register, and promotion gates.
 - **Author**: Claude + Louis
 - **Scope**: backend (js-ts; consumes audit-orchestration + learning-store + supabase domains)

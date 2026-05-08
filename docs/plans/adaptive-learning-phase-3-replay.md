@@ -1,7 +1,7 @@
 # Plan: Adaptive Learning — Phase 3 (Replay Framework + Remaining Telemetry)
 
 - **Date**: 2026-05-08
-- **Status**: Draft (sub-plan; refines [`adaptive-learning-v1.md`](./adaptive-learning-v1.md))
+- **Status**: **Complete** — shipped as commit `e40a40e` on 2026-05-08
 - **Author**: Claude + Louis
 - **Scope**: backend (js-ts; consumes audit-orchestration + learning-store + arch-memory domains)
 - **Master plan**: [`docs/plans/adaptive-learning-v1.md`](./adaptive-learning-v1.md) — read for engineering principles (§4), sustainability (§5), promotion gates (§5), risk register (§7).
