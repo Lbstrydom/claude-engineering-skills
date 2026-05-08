@@ -48,7 +48,11 @@
     "arch:spike": "node scripts/symbol-index/spike-extract.mjs",
     "learning:weekly-review": "node scripts/cross-skill.mjs learning-weekly-review",
     "learning:stats": "node scripts/cross-skill.mjs learning-stats",
-    "learning:record": "node scripts/cross-skill.mjs learning-record"
+    "learning:record": "node scripts/cross-skill.mjs learning-record",
+    "learning:quickfix-stats": "node scripts/cross-skill.mjs learning-quickfix-stats",
+    "learning:quickfix-rebuild": "node scripts/cross-skill.mjs learning-quickfix-stats --action rebuild",
+    "learning:quickfix-bootstrap": "node scripts/cross-skill.mjs learning-quickfix-stats --action rebuild --bootstrap",
+    "learning:backfill-outcomes": "node scripts/cross-skill.mjs learning-backfill-outcomes"
   },
   "keywords": [
     "claude",

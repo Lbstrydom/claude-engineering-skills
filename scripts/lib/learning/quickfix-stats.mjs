@@ -1,0 +1,376 @@
+#!/usr/bin/env node
+/**
+ * @fileoverview Live quickfix pattern-weight learner.  Reads the canonical
+ * `learning_decisions` cloud table for `decision_type='quickfix_hit'`
+ * outcomes, computes per-pattern Beta posteriors, and writes a derived
+ * `.audit/quickfix-pattern-stats.json` cache that `matchPatterns()` consults
+ * synchronously on the hot path.
+ *
+ * Two rebuild modes:
+ *   --rebuild              (default): cloud-canonical — reads learning_decisions
+ *   --rebuild --bootstrap : git-archeology — reads .audit/quickfix-hits.jsonl + git log
+ *                           for repos that adopted the hook before the cloud
+ *                           decision pattern shipped (Phase 2 only).
+ *
+ * Skip rule: a pattern is skipped when `acceptance_rate < SKIP_THRESHOLD
+ * AND total_hits >= MIN_HITS` — both gates required to avoid disabling on
+ * single-digit-sample noise.
+ *
+ * CLI output contract: stdout is JSON; stderr carries human-readable
+ * progress logs.  --format markdown produces a comparison table on stdout.
+ *
+ * Plan: docs/plans/adaptive-learning-phase-2-quickfix.md §2 (quickfix-stats)
+ *
+ * @module scripts/lib/learning/quickfix-stats
+ */
+import 'dotenv/config';
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+
+import { betaPosterior } from './beta-posterior.mjs';
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const CACHE_PATH        = '.audit/quickfix-pattern-stats.json';
+const HITS_JSONL_PATH   = '.audit/quickfix-hits.jsonl';
+const SKIP_THRESHOLD    = parseFloat(process.env.LEARNING_QUICKFIX_SKIP_THRESHOLD || '0.20');
+const MIN_HITS          = parseInt(process.env.LEARNING_QUICKFIX_MIN_HITS || '10', 10);
+const CACHE_VERSION     = 1;
+
+// ── Public API ─────────────────────────────────────────────────────────────
+
+/**
+ * Load the derived stats cache.  Returns an empty object when the cache
+ * file is absent OR malformed (graceful degradation — matchPatterns()
+ * falls through to default behaviour).
+ *
+ * @returns {{
+ *   _version: number,
+ *   _generatedAt: string,
+ *   _watermark: { maxOutcomeAt: string|null, totalRowCount: number },
+ *   patterns: Record<string, {alpha:number, beta:number, acceptanceRate:number, totalHits:number, ci_low:number}>,
+ * } | { patterns: {} }}
+ */
+export function loadStats(cachePath = CACHE_PATH) {
+  try {
+    if (!fs.existsSync(cachePath)) return { patterns: {} };
+    const raw = fs.readFileSync(cachePath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.patterns) return { patterns: {} };
+    return parsed;
+  } catch {
+    return { patterns: {} };
+  }
+}
+
+/**
+ * Decide whether a pattern should be skipped on the hot path.  Pure
+ * function — given a pattern name and the loaded stats, returns boolean.
+ *
+ * Skip rule: acceptance below threshold AND enough samples to trust the
+ * signal.  Single-digit hits never trigger a skip.
+ *
+ * @param {string} patternName
+ * @param {object} stats — return shape of loadStats()
+ * @returns {boolean}
+ */
+export function shouldSkipPattern(patternName, stats) {
+  if (!patternName || !stats || !stats.patterns) return false;
+  const p = stats.patterns[patternName];
+  if (!p) return false;
+  if (typeof p.acceptanceRate !== 'number' || typeof p.totalHits !== 'number') return false;
+  return p.acceptanceRate < SKIP_THRESHOLD && p.totalHits >= MIN_HITS;
+}
+
+/**
+ * Rebuild the stats cache from the cloud canonical source.  Reads
+ * `learning_decisions WHERE decision_type='quickfix_hit'`, groups by
+ * pattern name (stored in context.pattern), counts outcomes, computes
+ * Beta posteriors, writes the cache atomically (temp+rename).
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.repoId] — restrict to one repo; defaults to "all"
+ * @param {string} [opts.cachePath]
+ * @param {object} [opts.store] — injected for tests; defaults to learning-store.mjs
+ * @returns {Promise<{ok: boolean, totalDecisions: number, patternCount: number, written?: string, error?: string}>}
+ */
+export async function rebuildFromCloud({ repoId = null, cachePath = CACHE_PATH, store = null } = {}) {
+  const learningStore = store || await import('../../learning-store.mjs');
+  if (typeof learningStore.initLearningStore === 'function') {
+    await learningStore.initLearningStore();
+  }
+  const cloudEnabled = typeof learningStore.isCloudEnabled === 'function' && learningStore.isCloudEnabled();
+  if (!cloudEnabled) {
+    return { ok: false, totalDecisions: 0, patternCount: 0, error: 'cloud-disabled' };
+  }
+  const decisions = await readQuickfixDecisions(learningStore, { repoId });
+  const stats = aggregateDecisions(decisions);
+  const cacheBody = {
+    _version: CACHE_VERSION,
+    _generatedAt: new Date().toISOString(),
+    _watermark: computeWatermark(decisions),
+    _repoScope: repoId || 'all',
+    patterns: stats,
+  };
+  writeAtomic(cachePath, JSON.stringify(cacheBody, null, 2));
+  return {
+    ok: true,
+    totalDecisions: decisions.length,
+    patternCount: Object.keys(stats).length,
+    written: cachePath,
+  };
+}
+
+/**
+ * Bootstrap rebuild from local JSONL telemetry — for repos that adopted
+ * the quickfix hook BEFORE the cloud decision pattern shipped.
+ * Heuristic: file changed within 30 min of hit AND line removed/altered
+ * → accept; line gained `// quickfix-hook:ignore` → suppress; line still
+ * present after timeout → ignore.
+ *
+ * NOTE: this path uses ONLY local data (jsonl + git log), so it is safe
+ * to run without service-role.  The result is written to the same cache.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.jsonlPath]
+ * @param {string} [opts.cachePath]
+ * @returns {Promise<{ok: boolean, totalHits: number, patternCount: number, written?: string}>}
+ */
+export async function rebuildFromBootstrap({
+  jsonlPath = HITS_JSONL_PATH,
+  cachePath = CACHE_PATH,
+} = {}) {
+  if (!fs.existsSync(jsonlPath)) {
+    return { ok: false, totalHits: 0, patternCount: 0, error: 'jsonl-missing' };
+  }
+  const lines = fs.readFileSync(jsonlPath, 'utf-8').split(/\r?\n/).filter(Boolean);
+  const hits = [];
+  for (const line of lines) {
+    try {
+      const obj = JSON.parse(line);
+      if (!obj || !Array.isArray(obj.matches)) continue;
+      for (const m of obj.matches) {
+        hits.push({
+          ts: obj.ts,
+          file: obj.file,
+          pattern: m.name,
+          severity: m.severity,
+          snippet: m.snippet,
+          // Bootstrap path doesn't have outcome data — synthesise as
+          // 'no_action' (neutral).  That means bootstrap-only weights are
+          // permissive; once cloud rebuilds run, they overwrite this.
+          outcome: 'no_action',
+        });
+      }
+    } catch { /* skip malformed line */ }
+  }
+
+  const decisions = hits.map(h => ({
+    context: { pattern: h.pattern },
+    outcome: { action: h.outcome },
+  }));
+  const stats = aggregateDecisions(decisions);
+  const cacheBody = {
+    _version: CACHE_VERSION,
+    _generatedAt: new Date().toISOString(),
+    _watermark: { maxOutcomeAt: null, totalRowCount: hits.length },
+    _repoScope: 'bootstrap',
+    _bootstrap: true,
+    patterns: stats,
+  };
+  writeAtomic(cachePath, JSON.stringify(cacheBody, null, 2));
+  return { ok: true, totalHits: hits.length, patternCount: Object.keys(stats).length, written: cachePath };
+}
+
+// ── Internal helpers ───────────────────────────────────────────────────────
+
+/**
+ * Aggregate decisions into per-pattern Beta posteriors.
+ * Outcomes:
+ *   accept   → alpha += 1
+ *   suppress → beta  += 1
+ *   ignore   → beta  += 1
+ *   no_action → not counted (insufficient evidence yet)
+ *   <missing>→ not counted
+ *
+ * @param {Array<{context: {pattern: string}, outcome: {action: string}|null}>} decisions
+ * @returns {Record<string, {alpha:number, beta:number, acceptanceRate:number, totalHits:number, ci_low:number}>}
+ */
+export function aggregateDecisions(decisions) {
+  const counters = new Map(); // pattern → { alpha, beta, totalHits }
+  for (const d of decisions) {
+    const pattern = d?.context?.pattern;
+    if (!pattern) continue;
+    let c = counters.get(pattern);
+    if (!c) { c = { alpha: 0, beta: 0, totalHits: 0 }; counters.set(pattern, c); }
+    c.totalHits += 1;
+    const action = d?.outcome?.action;
+    if (action === 'accept')        c.alpha += 1;
+    else if (action === 'suppress' || action === 'ignore') c.beta += 1;
+    // 'no_action' or unknown → not counted in alpha/beta (totalHits still bumps)
+  }
+  const out = {};
+  for (const [pattern, c] of counters) {
+    const post = betaPosterior(c.alpha, c.beta);
+    out[pattern] = {
+      alpha: c.alpha,
+      beta: c.beta,
+      acceptanceRate: post.mean,
+      ci_low: post.ci_low,
+      totalHits: c.totalHits,
+    };
+  }
+  return out;
+}
+
+function computeWatermark(decisions) {
+  let maxOutcomeAt = null;
+  for (const d of decisions) {
+    const t = d?.outcome_at || d?.outcomeAt || null;
+    if (t && (maxOutcomeAt === null || t > maxOutcomeAt)) maxOutcomeAt = t;
+  }
+  return { maxOutcomeAt, totalRowCount: decisions.length };
+}
+
+/**
+ * Read all quickfix_hit decisions from cloud.  Pulls in pages of 1000
+ * to avoid Supabase row-limit truncation surprises.  Best-effort — empty
+ * array on failure.
+ */
+async function readQuickfixDecisions(learningStore, { repoId } = {}) {
+  // Use the read client; learning_decisions is service-role-only for write,
+  // but reads (for stats rebuild) use the anon client + RLS.  Phase 2 v1:
+  // we use the service-role write client for reads too, since the table is
+  // RLS-locked by default.  When a future iteration opens reads to anon,
+  // this can be relaxed.
+  let getClient;
+  try {
+    ({ getWriteClient: getClient } = await import('../stores/supabase-store.mjs'));
+  } catch {
+    return [];
+  }
+  const client = await getClient();
+  if (!client) return [];
+
+  const all = [];
+  const pageSize = 1000;
+  let offset = 0;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let q = client.from('learning_decisions')
+      .select('decision_key, context, outcome, outcome_at, repo_id')
+      .eq('decision_type', 'quickfix_hit')
+      .range(offset, offset + pageSize - 1);
+    if (repoId) q = q.eq('repo_id', repoId);
+    let rows = null;
+    try {
+      const { data, error } = await q;
+      if (error) {
+        process.stderr.write(`[quickfix-stats] read error: ${error.message}\n`);
+        break;
+      }
+      rows = data || [];
+    } catch (err) {
+      process.stderr.write(`[quickfix-stats] read exception: ${err.message}\n`);
+      break;
+    }
+    if (rows.length === 0) break;
+    for (const r of rows) all.push(r);
+    if (rows.length < pageSize) break;
+    offset += pageSize;
+  }
+  return all;
+}
+
+/**
+ * Atomic write: temp file + rename.  Crash-safe and avoids partial-read
+ * races for matchPatterns() consumers reading concurrently.
+ */
+function writeAtomic(targetPath, content) {
+  const dir = path.dirname(targetPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmpPath = `${targetPath}.tmp.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
+  fs.writeFileSync(tmpPath, content);
+  fs.renameSync(tmpPath, targetPath);
+}
+
+// ── CLI entrypoint ─────────────────────────────────────────────────────────
+
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+
+async function cliMain() {
+  const args = process.argv.slice(2);
+  const wantStats     = args.includes('--stats');
+  const wantRebuild   = args.includes('--rebuild');
+  const wantBootstrap = args.includes('--bootstrap');
+  const wantReset     = args.includes('--reset');
+  const repoIdx       = args.indexOf('--repo');
+  const repoId        = repoIdx >= 0 ? args[repoIdx + 1] : null;
+  const formatIdx     = args.indexOf('--format');
+  const format        = formatIdx >= 0 ? args[formatIdx + 1] : 'json';
+
+  if (wantReset) {
+    if (fs.existsSync(CACHE_PATH)) fs.unlinkSync(CACHE_PATH);
+    process.stdout.write(JSON.stringify({ ok: true, action: 'reset' }) + '\n');
+    return;
+  }
+
+  if (wantRebuild) {
+    const result = wantBootstrap
+      ? await rebuildFromBootstrap()
+      : await rebuildFromCloud({ repoId });
+    process.stdout.write(JSON.stringify({ ok: result.ok, action: 'rebuild', mode: wantBootstrap ? 'bootstrap' : 'cloud', ...result }) + '\n');
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
+  // Default: --stats (also implicit when no other action given)
+  const stats = loadStats();
+  if (format === 'markdown') {
+    const lines = ['| Pattern | α | β | Acceptance | Hits | Skip? |',
+                   '|---|---|---|---|---|---|'];
+    for (const [name, p] of Object.entries(stats.patterns || {})) {
+      const skip = shouldSkipPattern(name, stats) ? '✓' : '';
+      lines.push(`| \`${name}\` | ${p.alpha} | ${p.beta} | ${p.acceptanceRate.toFixed(3)} | ${p.totalHits} | ${skip} |`);
+    }
+    process.stdout.write(lines.join('\n') + '\n');
+    return;
+  }
+  // JSON output
+  const skipMap = {};
+  for (const name of Object.keys(stats.patterns || {})) skipMap[name] = shouldSkipPattern(name, stats);
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    action: 'stats',
+    cachePath: CACHE_PATH,
+    cacheExists: fs.existsSync(CACHE_PATH),
+    generatedAt: stats._generatedAt || null,
+    watermark: stats._watermark || null,
+    skipThreshold: SKIP_THRESHOLD,
+    minHits: MIN_HITS,
+    patterns: stats.patterns || {},
+    wouldSkip: skipMap,
+  }) + '\n');
+}
+
+if (isMain) {
+  await cliMain();
+}
+
+// ── Test-only export ─────────────────────────────────────────────────────
+
+export const _internals = Object.freeze({
+  CACHE_PATH,
+  HITS_JSONL_PATH,
+  SKIP_THRESHOLD,
+  MIN_HITS,
+  CACHE_VERSION,
+  computeWatermark,
+  writeAtomic,
+});

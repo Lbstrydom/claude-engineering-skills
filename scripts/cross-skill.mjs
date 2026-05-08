@@ -931,6 +931,57 @@ async function cmdLearningWeeklyReview() {
   emit(result);
 }
 
+/**
+ * Backfill quickfix outcomes — Phase 2.  Drains the local hits JSONL into
+ * `learning_decisions`, then resolves outcomes for unresolved hits older
+ * than 30 minutes by examining current file state.  Optionally rebuilds
+ * the `quickfix-pattern-stats.json` cache afterward (--rebuild-stats).
+ */
+async function cmdLearningBackfillOutcomes() {
+  const { runBackfill } = await import('./learning/backfill-outcomes.mjs');
+  const result = await runBackfill({
+    repoId:       argOption('repo-id') || null,
+    dryRun:       rest.includes('--dry-run'),
+    skipDrain:    rest.includes('--skip-drain'),
+    skipResolve:  rest.includes('--skip-resolve'),
+    rebuildStats: rest.includes('--rebuild-stats'),
+  });
+  emit(result);
+}
+
+/**
+ * Quickfix-stats CLI bridge — Phase 2.  Wraps
+ * `scripts/lib/learning/quickfix-stats.mjs` so package.json + workflow
+ * scripts route through cross-skill.mjs uniformly.
+ */
+async function cmdLearningQuickfixStats() {
+  const mod = await import('./lib/learning/quickfix-stats.mjs');
+  const action = argOption('action') || 'stats';
+  const repoId = argOption('repo-id') || null;
+  if (action === 'rebuild') {
+    const bootstrap = rest.includes('--bootstrap');
+    const result = bootstrap
+      ? await mod.rebuildFromBootstrap()
+      : await mod.rebuildFromCloud({ repoId });
+    emit({ ok: result.ok, action: 'rebuild', mode: bootstrap ? 'bootstrap' : 'cloud', ...result });
+    return;
+  }
+  // Default: read the cache and emit the stats summary.
+  const stats = mod.loadStats();
+  const skipMap = {};
+  for (const name of Object.keys(stats.patterns || {})) {
+    skipMap[name] = mod.shouldSkipPattern(name, stats);
+  }
+  emit({
+    ok: true,
+    action: 'stats',
+    cacheExists: !!stats._generatedAt,
+    generatedAt: stats._generatedAt || null,
+    patterns: stats.patterns || {},
+    wouldSkip: skipMap,
+  });
+}
+
 // ── Dispatcher ──────────────────────────────────────────────────────────────
 
 const commands = {
@@ -974,6 +1025,9 @@ const commands = {
   'learning-record':                  cmdLearningRecord,
   'learning-stats':                   cmdLearningStats,
   'learning-weekly-review':           cmdLearningWeeklyReview,
+  // Phase 2 — live quickfix learner
+  'learning-backfill-outcomes':       cmdLearningBackfillOutcomes,
+  'learning-quickfix-stats':          cmdLearningQuickfixStats,
 };
 
 async function main() {

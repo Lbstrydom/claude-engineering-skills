@@ -285,6 +285,41 @@ no-brainer fix-now (recurring 3+ HIGH or 5+ MEDIUM) + 1 stale deferral
 - `npm run learning:stats --repoName <name>` — counts of pending triage,
   no-brainer recurring, stale deferrals
 - `npm run learning:record` — generic decision logger (mostly for tools)
+- `npm run learning:quickfix-stats` — Phase 2; print Beta posteriors per pattern
+- `npm run learning:quickfix-rebuild` — Phase 2; rebuild stats cache from cloud
+- `npm run learning:quickfix-bootstrap` — Phase 2; rebuild from local
+  `.audit/quickfix-hits.jsonl` (for repos without cloud history yet)
+- `npm run learning:backfill-outcomes` — Phase 2; drain hits JSONL into
+  `learning_decisions`, then resolve unresolved outcomes from file state
+
+### Live quickfix learner (Phase 2)
+
+Per-repo Beta posteriors over each quickfix pattern's accept-vs-suppress
+outcomes.  The hot path stays synchronous: `matchPatterns()` reads the
+derived `.audit/quickfix-pattern-stats.json` cache (`fs.readFileSync`,
+no network) and skips patterns whose `acceptanceRate < 0.20 AND
+totalHits >= 10` per repo.  Cache freshness is enforced by an
+out-of-band reconciler (`backfill-outcomes.mjs`) which the weekly cron
+runs BEFORE the digest assembly.
+
+**Hit lifecycle**:
+1. `.claude/hooks/quickfix-scan.mjs` fires on Edit/Write — appends one
+   record per match to `.audit/quickfix-hits.jsonl` with a uuid `hit_id`.
+2. `learning:backfill-outcomes` drains new JSONL entries into
+   `learning_decisions` (decision_type=`quickfix_hit`, outcome=null).
+3. After 30 minutes, the same reconciler examines the file state at the
+   cited path: line removed/changed → `accept`; line gained `// quickfix-hook:ignore`
+   → `suppress`; line still present, no marker → `ignore`; file deleted
+   → `accept`.  Rows older than 30min that still can't be resolved stay
+   pending until the next cycle.
+4. On the next weekly cron, `learning:quickfix-rebuild` aggregates the
+   resolved outcomes into the cache file; the hot path picks them up.
+
+**Skip-rule env tuning**:
+- `LEARNING_QUICKFIX_SKIP_THRESHOLD` (default `0.20`) — minimum acceptance
+  rate below which a pattern is skipped.  Lower = more aggressive skip.
+- `LEARNING_QUICKFIX_MIN_HITS` (default `10`) — minimum hit count before
+  the skip rule applies.  Single-digit hits never trigger.
 
 ### Environment-aware outbox
 On flush failure, decisions spill to `.audit/learning-outbox/` (one JSON

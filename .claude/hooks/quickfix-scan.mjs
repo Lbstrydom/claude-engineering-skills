@@ -16,6 +16,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 // Resolve scripts/lib relative to this hook file (works regardless of cwd).
@@ -91,7 +92,7 @@ async function main() {
   const repoRelative = path.relative(REPO_ROOT, absoluteFilePath);
 
   // Lazy-load patterns module so the hook itself stays minimal
-  const { matchPatterns, isSensitivePath } = await import(PATTERNS_MOD_URL);
+  const { matchPatterns, isSensitivePath, loadSkippedPatternSet } = await import(PATTERNS_MOD_URL);
 
   // Sensitive-path short-circuit — never scan, never log.
   // Check BOTH the canonicalized absolute path AND the repo-relative
@@ -100,10 +101,15 @@ async function main() {
     process.exit(0);
   }
 
+  // Phase 2 — adaptive-learning skip set.  Loaded once per hook invocation
+  // (which IS once per Edit/Write — single fs.readFileSync, no network).
+  // Empty Set when LEARNING_DISABLE=1, LEARNING_QUICKFIX=off, or cache absent.
+  const skipPatterns = loadSkippedPatternSet({ cachePath: path.join(REPO_ROOT, '.audit', 'quickfix-pattern-stats.json') });
+
   // Pass canonicalized repo-relative path into matchPatterns too — the
   // langGuard checks file extensions which work with either form, but
   // using the canonical form keeps the contract clean.
-  const matches = matchPatterns(diffText, { filePath: repoRelative });
+  const matches = matchPatterns(diffText, { filePath: repoRelative, skipPatterns });
   if (matches.length === 0) {
     process.exit(0);
   }
@@ -120,15 +126,24 @@ async function main() {
   lines.push(`(Disable for this line: append // quickfix-hook:ignore | session: QUICKFIX_HOOK_DISABLE=1)`);
   const systemMessage = lines.join('\n');
 
-  // Telemetry — append redacted record to .audit/quickfix-hits.jsonl
+  // Telemetry — append redacted record to .audit/quickfix-hits.jsonl.
+  // Phase 2: each match gets a stable `hit_id` (uuid) so the out-of-band
+  // backfill-outcomes reconciler can dedupe + drain JSONL into the
+  // `learning_decisions` cloud table without losing identity.
   // (matches already redacted by matchPatterns per §15.A — defence in depth via JSON serialisation)
   try {
     ensureDir(path.dirname(TELEMETRY_PATH));
+    const ts = new Date().toISOString();
     const record = {
-      ts: new Date().toISOString(),
+      ts,
       tool: toolName,
       file: repoRelative,
-      matches: matches.map(m => ({ name: m.name, severity: m.severity, snippet: m.snippet })),
+      matches: matches.map(m => ({
+        name: m.name,
+        severity: m.severity,
+        snippet: m.snippet,
+        hit_id: crypto.randomUUID(),
+      })),
     };
     fs.appendFileSync(TELEMETRY_PATH, JSON.stringify(record) + '\n');
   } catch (err) {

@@ -57,6 +57,24 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Phase 2: backfill quickfix outcomes BEFORE the review reads stats.
+      # Drains hits.jsonl into learning_decisions, resolves >30min unresolved
+      # outcomes from current file state, then rebuilds the pattern-stats cache.
+      - name: Backfill quickfix outcomes
+        if: steps.secrets-check.outputs.skip != 'true'
+        env:
+          SUPABASE_AUDIT_URL: ${{ secrets.SUPABASE_AUDIT_URL }}
+          SUPABASE_AUDIT_ANON_KEY: ${{ secrets.SUPABASE_AUDIT_ANON_KEY }}
+          SUPABASE_AUDIT_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_AUDIT_SERVICE_ROLE_KEY }}
+        run: |
+          set +e
+          node scripts/cross-skill.mjs learning-backfill-outcomes --rebuild-stats
+          # Treat backfill failures as warnings — the review can still run
+          # against whatever data is already in learning_decisions.
+          if [ $? -ne 0 ]; then
+            echo "::warning::backfill-outcomes failed; weekly review will use prior cache state"
+          fi
+
       - name: Run weekly review
         if: steps.secrets-check.outputs.skip != 'true'
         env:

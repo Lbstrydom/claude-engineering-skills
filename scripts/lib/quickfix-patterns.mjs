@@ -2,15 +2,22 @@
  * @fileoverview Pattern matrix + matcher for the prospective quickfix hook.
  * Plan: docs/plans/brainstorm-quickfix-v1.md §B1, §11.D, §12.D, §12.F, §13.A, §15.A.
  *
- * Pure module — no I/O. The hook runner (.claude/hooks/quickfix-scan.mjs)
- * reads stdin, extracts diff text, calls matchPatterns(), composes the
- * system message, and writes telemetry. All redaction happens BEFORE
- * truncation (§15.A) so partial-secret characters cannot leak.
+ * Pure pattern matcher — `matchPatterns()` does no network I/O on the hot
+ * path.  Phase 2 added an opt-in synchronous file read (`loadSkippedPatternSet`)
+ * to consult the adaptive-learning cache (`.audit/quickfix-pattern-stats.json`)
+ * for low-acceptance patterns the user has effectively suppressed; the hook
+ * loads this once per session and passes the skip-set to matchPatterns.
+ *
+ * Plan (Phase 2): docs/plans/adaptive-learning-phase-2-quickfix.md §2 — hot-path
+ * stays synchronous; cache freshness enforced by the out-of-band reconciler.
  *
  * @module scripts/lib/quickfix-patterns
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from './secret-patterns.mjs';
+
+const STATS_CACHE_PATH = '.audit/quickfix-pattern-stats.json';
 
 const MAX_INPUT_CHARS = 80_000;            // §B1 — bail at >2000 lines
 const SNIPPET_MAX_CHARS = 80;              // §10.G — display cap
@@ -191,7 +198,10 @@ export function hasSuppression(line, filePath) {
  * secrets cannot leak into the output.
  *
  * @param {string} diffText - new lines from the edit (Edit.new_string or Write.content)
- * @param {{filePath?: string}} [opts]
+ * @param {{filePath?: string, skipPatterns?: Set<string>|null}} [opts]
+ *   skipPatterns: optional set of pattern names to skip (Phase 2 adaptive-learning).
+ *   Computed once per hook session via `loadSkippedPatternSet()` and passed in;
+ *   matchPatterns itself remains free of cache I/O on the hot path.
  * @returns {Array<{name: string, severity: string, snippet: string, suggestion: string}>}
  */
 export function matchPatterns(diffText, opts = {}) {
@@ -212,6 +222,7 @@ export function matchPatterns(diffText, opts = {}) {
   }
   const lines = diffText.split('\n');
   const matches = [];
+  const skipSet = (opts.skipPatterns instanceof Set) ? opts.skipPatterns : null;
 
   // Audit Gemini-G3-M1: multiline patterns evaluate against the WHOLE
   // diff so `catch (e) {\n  return null;\n}` style code (which spans
@@ -219,6 +230,7 @@ export function matchPatterns(diffText, opts = {}) {
   // for non-multiline patterns to keep snippets focused.
   for (const pattern of PATTERNS) {
     if (!pattern.multiline) continue;
+    if (skipSet && skipSet.has(pattern.name)) continue; // Phase 2 adaptive-learning skip
     if (pattern.langGuard && !pattern.langGuard.test(filePath)) continue;
     const m = pattern.regex.exec(diffText);
     if (!m) continue;
@@ -256,6 +268,7 @@ export function matchPatterns(diffText, opts = {}) {
     if (hasSuppression(line, filePath)) continue;
     for (const pattern of PATTERNS) {
       if (pattern.multiline) continue;  // already handled above
+      if (skipSet && skipSet.has(pattern.name)) continue; // Phase 2 adaptive-learning skip
       if (pattern.langGuard && !pattern.langGuard.test(filePath)) continue;
       if (!pattern.regex.test(line)) continue;
       // §15.A — redact full line FIRST, then truncate
@@ -272,4 +285,73 @@ export function matchPatterns(diffText, opts = {}) {
     }
   }
   return matches;
+}
+
+// ── Phase 2 — adaptive-learning hooks ──────────────────────────────────────
+//
+// `loadSkippedPatternSet()` is the ONLY I/O-bearing API in this module.
+// The hook calls it once per session and passes the resulting Set into
+// `matchPatterns()`.  matchPatterns itself stays purely synchronous +
+// in-memory on the hot path (no fs/network calls per Edit/Write).
+//
+// Cache freshness is enforced by the out-of-band reconciler (`backfill-
+// outcomes.mjs`) which periodically rebuilds the cache file.  A stale cache
+// here at worst causes one session of slightly-out-of-date pattern weights —
+// acceptable trade-off vs. blocking the editor hook on a Supabase round trip.
+//
+// Plan: docs/plans/adaptive-learning-phase-2-quickfix.md §2 (synchronous
+// hot-path contract).
+
+const _SKIP_THRESHOLD = parseFloat(process.env.LEARNING_QUICKFIX_SKIP_THRESHOLD || '0.20');
+const _MIN_HITS       = parseInt(process.env.LEARNING_QUICKFIX_MIN_HITS || '10', 10);
+
+/**
+ * Synchronously load the skip-set from the adaptive-learning cache.
+ * Returns an empty Set when:
+ *   - LEARNING_DISABLE=1 or LEARNING_QUICKFIX=off
+ *   - cache file missing or unreadable
+ *   - any individual pattern entry malformed
+ *
+ * Skip rule mirrors `quickfix-stats.shouldSkipPattern`: a pattern is
+ * skipped when `acceptanceRate < threshold AND totalHits >= minHits`.
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.cachePath] — defaults to `.audit/quickfix-pattern-stats.json`
+ * @param {object} [opts.env]       — defaults to process.env (test injection)
+ * @returns {Set<string>} — pattern names to skip on the hot path
+ */
+export function loadSkippedPatternSet({
+  cachePath = STATS_CACHE_PATH,
+  env = process.env,
+} = {}) {
+  if (env.LEARNING_DISABLE === '1' || env.LEARNING_QUICKFIX === 'off') return new Set();
+  let raw;
+  try {
+    if (!fs.existsSync(cachePath)) return new Set();
+    raw = fs.readFileSync(cachePath, 'utf-8');
+  } catch { return new Set(); }
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { return new Set(); }
+  if (!parsed || typeof parsed !== 'object' || !parsed.patterns) return new Set();
+  const skip = new Set();
+  for (const [name, entry] of Object.entries(parsed.patterns)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const rate = typeof entry.acceptanceRate === 'number' ? entry.acceptanceRate : null;
+    const hits = typeof entry.totalHits === 'number' ? entry.totalHits : 0;
+    if (rate === null) continue;
+    if (rate < _SKIP_THRESHOLD && hits >= _MIN_HITS) skip.add(name);
+  }
+  return skip;
+}
+
+/**
+ * @internal — exposed for tests + diagnostics; not part of the stable
+ * hook API.  Returns the loaded cache snapshot (or null) without
+ * applying the skip threshold.
+ */
+export function _loadStatsForTest(cachePath = STATS_CACHE_PATH) {
+  try {
+    if (!fs.existsSync(cachePath)) return null;
+    return JSON.parse(fs.readFileSync(cachePath, 'utf-8'));
+  } catch { return null; }
 }
