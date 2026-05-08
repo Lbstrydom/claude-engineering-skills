@@ -291,6 +291,10 @@ no-brainer fix-now (recurring 3+ HIGH or 5+ MEDIUM) + 1 stale deferral
   `.audit/quickfix-hits.jsonl` (for repos without cloud history yet)
 - `npm run learning:backfill-outcomes` — Phase 2; drain hits JSONL into
   `learning_decisions`, then resolve unresolved outcomes from file state
+- `npm run learning:replay <decision_type> [--policy <path>] [--since 30d] [--format markdown]`
+  — Phase 3; counterfactual evaluation of a candidate policy against
+  historical decisions.  Built-in reward fns: `pass_selection`,
+  `convergence_predict`, `arch_memory_band` (per master plan §5).
 
 ### Live quickfix learner (Phase 2)
 
@@ -320,6 +324,48 @@ runs BEFORE the digest assembly.
   rate below which a pattern is skipped.  Lower = more aggressive skip.
 - `LEARNING_QUICKFIX_MIN_HITS` (default `10`) — minimum hit count before
   the skip rule applies.  Single-digit hits never trigger.
+
+### Replay framework + remaining telemetry (Phase 3)
+
+Phase 3 ships the **graduation infrastructure** that lets future v2 candidates
+promote from telemetry-only to live without a 3-month wait:
+
+**Telemetry hooks**:
+- **`convergence_predict`** — `recordDecision` per round in `openai-audit.mjs`
+  capturing `{round, highCount, mediumCount, dismissed, totalFindings}`.
+  Outcome is resolved out-of-band by reading `audit_runs.round_converged_after`
+  + `rigor_pressure_round` once the run finishes (this round vs convergence
+  point → `converged-here` / `continued` / `wasted`).
+- **`arch_memory_band`** — `recordDecision` per neighbourhood-query record in
+  `scripts/lib/neighbourhood-query.mjs`.  Off-audit; `decision_key` format is
+  `arch_memory_band:<symbol_index_id>`.  Outcome resolved by scanning git
+  history within 30 min of the decision: `reuse-correct` (no edits in dir),
+  `wrong-fork` (edits despite reuse recommendation), `extend-correct` (edits
+  consistent with extend recommendation), or `uncertain`.
+
+**Replay engine** (`scripts/lib/learning/replay.mjs`): pure counterfactual
+evaluator.  Reads historical `learning_decisions`, runs both a baseline
+policy + a candidate policy on each row's recorded context, computes
+reward distributions + delta summary.  Built-in reward functions encode
+the master plan §5 promotion gates for all three decision types.
+
+**Replay CLI** (`scripts/learning/replay.mjs`):
+```
+npm run learning:replay <decision_type> \
+  [--policy <module-path>] \
+  [--baseline <module-path>] \
+  [--since 30d] \
+  [--repo-id <uuid>] \
+  [--format json|markdown]
+```
+Custom policy modules export either `default` or `policy` as a function
+mapping `(context) → choice`.  Stdout is JSON by default; markdown
+switch produces a comparison table.
+
+**Promotion recipe** (per master plan §5): collect ≥30 days of telemetry,
+write a candidate policy fn, run replay, validate metrics (e.g. `pass_selection`
+≤5% recall loss; `convergence_predict` ≤2% false-stop rate; `arch_memory_band`
+≥10% precision lift on reuse band), then flip a live env flag.
 
 ### Environment-aware outbox
 On flush failure, decisions spill to `.audit/learning-outbox/` (one JSON

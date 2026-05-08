@@ -950,6 +950,21 @@ async function cmdLearningBackfillOutcomes() {
 }
 
 /**
+ * Replay CLI bridge — Phase 3.  Wraps `scripts/learning/replay.mjs` so
+ * package.json + workflow scripts can route through cross-skill.mjs
+ * uniformly.  Forwards all positional + flag args to the CLI runner.
+ */
+async function cmdLearningReplay() {
+  const { runReplayCli } = await import('./learning/replay.mjs');
+  const result = await runReplayCli(rest);
+  // runReplayCli already wrote stdout; we just propagate the exit code via emit.
+  if (result && result.ok === false) {
+    emit({ ok: false, error: result.error || 'replay failed' });
+    process.exit(1);
+  }
+}
+
+/**
  * Quickfix-stats CLI bridge — Phase 2.  Wraps
  * `scripts/lib/learning/quickfix-stats.mjs` so package.json + workflow
  * scripts route through cross-skill.mjs uniformly.
@@ -1028,6 +1043,8 @@ const commands = {
   // Phase 2 — live quickfix learner
   'learning-backfill-outcomes':       cmdLearningBackfillOutcomes,
   'learning-quickfix-stats':          cmdLearningQuickfixStats,
+  // Phase 3 — replay framework + remaining telemetry
+  'learning-replay':                  cmdLearningReplay,
 };
 
 async function main() {

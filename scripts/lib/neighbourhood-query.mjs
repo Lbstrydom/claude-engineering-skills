@@ -230,6 +230,50 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     recommendation:  recommendationFromSimilarity(Number(r.similarity ?? 0)),
   }));
 
+  // Phase 3 — adaptive-learning arch_memory_band telemetry.  One decision
+  // per record so the reconciler can later resolve outcome (reuse-correct,
+  // wrong-fork, etc.) by inspecting subsequent commits.  Off-audit
+  // decisions: decision_key = `arch_memory_band:<symbol_index_id>`.
+  // Best-effort, fire-and-forget; never throws into the query path.
+  if (records.length > 0) {
+    try {
+      const [{ recordDecision }, { redactSecrets }] = await Promise.all([
+        import('./learning/decision-logger.mjs'),
+        import('./secret-patterns.mjs'),
+      ]);
+      // Audit-fix Phase 3 R2 M7: intent strings can carry secrets the
+      // user pasted (URLs with tokens, error logs, etc.).  Redact + cap
+      // before persisting to learning_decisions.
+      const rawIntent = v.intentDescription || null;
+      const intentSafe = rawIntent
+        ? redactSecrets(String(rawIntent)).text.slice(0, 240)
+        : null;
+      for (const rec of records) {
+        if (!rec.id) continue;
+        try {
+          recordDecision({
+            decisionType: 'arch_memory_band',
+            repoId: repoRow.id,
+            externalId: String(rec.id),
+            context: {
+              similarity: rec.similarityScore,
+              symbol:     rec.symbolName,
+              kind:       rec.kind,
+              filePath:   rec.filePath,
+              intent:     intentSafe,
+            },
+            choice: { band: rec.recommendation },
+            outcome: null,
+          });
+        } catch (err) {
+          process.stderr.write(`[learning:tel:arch_memory_band] record failure for ${rec.id}: ${err.message || ''}\n`);
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`[learning:tel:arch_memory_band] import failure: ${err.message || ''}\n`);
+    }
+  }
+
   return NeighbourhoodResultSchema.parse({
     cloud: true,
     refreshId: active.refreshId,

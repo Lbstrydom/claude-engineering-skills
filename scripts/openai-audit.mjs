@@ -1822,6 +1822,36 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     syncFalsePositivePatterns(null, fpTracker.patterns).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
   }
 
+  // Phase 3 — adaptive-learning convergence_predict telemetry.  Emit ONE
+  // decision per round capturing this round's findings + delta vs prior
+  // round.  outcome=null at emit time; backfilled at run-end below with
+  // {converged_at, hit_max, hit_rigor_pressure} once the next round (or
+  // stop signal) is known.  Best-effort; never throws into audit pipeline.
+  if (cloudRunId) {
+    try {
+      const highCount   = allFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount = allFindings.filter(f => f.severity === 'MEDIUM').length;
+      const dismissed   = allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length;
+      _learningRecordDecision({
+        decisionType: 'convergence_predict',
+        repoId: cloudRepoId,
+        auditRunId: cloudRunId,
+        round: round || 1,
+        sequence: 0,
+        context: {
+          round: round || 1,
+          highCount,
+          mediumCount,
+          dismissed,
+          totalFindings: allFindings.length,
+          // deltaPattern is filled by the reconciler comparing to prior rounds.
+        },
+        choice: { chose: 'continue' }, // telemetry-only in v1: never stop
+        outcome: null,
+      });
+    } catch { /* validation failure — best-effort telemetry */ }
+  }
+
   // Phase 5b: Finalise cloud run record with counts + run metadata
   if (cloudRunId) {
     recordRunComplete(cloudRunId, {

@@ -52,7 +52,8 @@
     "learning:quickfix-stats": "node scripts/cross-skill.mjs learning-quickfix-stats",
     "learning:quickfix-rebuild": "node scripts/cross-skill.mjs learning-quickfix-stats --action rebuild",
     "learning:quickfix-bootstrap": "node scripts/cross-skill.mjs learning-quickfix-stats --action rebuild --bootstrap",
-    "learning:backfill-outcomes": "node scripts/cross-skill.mjs learning-backfill-outcomes"
+    "learning:backfill-outcomes": "node scripts/cross-skill.mjs learning-backfill-outcomes",
+    "learning:replay": "node scripts/cross-skill.mjs learning-replay"
   },
   "keywords": [
     "claude",

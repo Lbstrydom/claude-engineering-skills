@@ -32,6 +32,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -163,69 +164,86 @@ async function drainJsonlToCloud({ learningStore, repoId, dryRun }) {
   const text = buf.toString('utf-8');
   // Audit-fix (Phase 2 R2 H4): if the file does not end with a newline,
   // the last "line" may be a partial record still being written by the
-  // hook.  Retain it (do NOT advance the cursor past it) so the next
-  // drain reads it whole.
-  const endsWithNewline = text.endsWith('\n') || text.endsWith('\r\n');
+  // hook.  Retain it so the next drain reads it whole.
+  // Audit-fix (Phase 3 R2 M3/M13): detect actual newline byte length —
+  // CRLF (Windows hook output) consumes 2 bytes per line separator, LF
+  // consumes 1.  We sniff the first separator and use it consistently.
+  const endsWithCRLF = text.endsWith('\r\n');
+  const endsWithNewline = endsWithCRLF || text.endsWith('\n');
+  const usesCRLF = /\r\n/.test(text);
+  const NEWLINE_BYTES = usesCRLF ? 2 : 1;
   const rawLines = text.split(/\r?\n/);
-  // .filter(Boolean) drops empty strings (incl. the trailing empty caused
-  // by a closing newline) but preserves whitespace-only lines, which we
-  // skip in the parse loop below.
   const lines = endsWithNewline
     ? rawLines.filter(Boolean)
-    : rawLines.slice(0, -1).filter(Boolean); // drop the partial tail
+    : rawLines.slice(0, -1).filter(Boolean); // drop partial tail
   const partialBytes = endsWithNewline
     ? 0
     : Buffer.byteLength(rawLines[rawLines.length - 1] || '', 'utf-8');
 
+  // Audit-fix Phase 3 R1 H6: track per-line byte offsets so we only
+  // advance the cursor past records that COMPLETELY succeeded.  If any
+  // insert in a record fails, the cursor stops at the start of that
+  // record; subsequent records still process (their inserts are
+  // idempotent via decision_key UNIQUE), but the cursor freezes at the
+  // first-failure boundary so the failed record is retried on next run.
+  let cumulativeBytes = 0;            // bytes BEFORE current line
+  let firstFailureOffset = null;      // null until something fails
   for (const line of lines) {
+    // Audit-fix Phase 3 R2 M3/M13: use detected NEWLINE_BYTES so CRLF
+    // files don't undercount and leak old records into the next drain.
+    const lineBytes = Buffer.byteLength(line, 'utf-8') + NEWLINE_BYTES;
     let record;
-    try { record = JSON.parse(line); } catch { out.errors += 1; continue; }
-    if (!record || !Array.isArray(record.matches)) continue;
-
-    for (const m of record.matches) {
-      out.processed += 1;
-      if (!m.hit_id) {
-        // Older JSONL records (pre-Phase 2) have no hit_id — skip gracefully.
-        // The bootstrap path handles them separately.
-        continue;
-      }
-      const entry = {
-        decisionKey: `quickfix_hit:${m.hit_id}`,
-        decisionType: 'quickfix_hit',
-        externalId: m.hit_id,
-        repoId: repoId || null,
-        context: {
-          pattern: m.name,
-          file: record.file,
-          severity: m.severity,
-          snippet: m.snippet,
-          ts: record.ts,
-        },
-        contextHash: '', // not used for quickfix_hit (decision_key is the dedup key)
-        choice: { action: 'flagged' },
-        outcome: null,
-      };
-      // Compute context_hash to satisfy the table NOT NULL contract.
-      const canonical = JSON.stringify(entry.context, Object.keys(entry.context).sort());
-      entry.contextHash = crypto.createHash('sha256').update(canonical).digest('hex');
-
-      if (dryRun) { out.inserted += 1; continue; }
-
-      const r = await learningStore.insertLearningDecision(entry);
-      if (r.ok) {
-        out.inserted += 1;
-      } else {
-        out.errors += 1;
-        process.stderr.write(`[backfill] insert failed for ${entry.decisionKey}: ${r.error || ''}\n`);
+    let recordOk = true;
+    try { record = JSON.parse(line); }
+    catch {
+      out.errors += 1;
+      recordOk = false;
+      record = null;
+    }
+    if (record && Array.isArray(record.matches)) {
+      for (const m of record.matches) {
+        out.processed += 1;
+        if (!m.hit_id) continue;
+        const entry = {
+          decisionKey: `quickfix_hit:${m.hit_id}`,
+          decisionType: 'quickfix_hit',
+          externalId: m.hit_id,
+          repoId: repoId || null,
+          context: {
+            pattern: m.name,
+            file: record.file,
+            severity: m.severity,
+            snippet: m.snippet,
+            ts: record.ts,
+          },
+          contextHash: '',
+          choice: { action: 'flagged' },
+          outcome: null,
+        };
+        const canonical = JSON.stringify(entry.context, Object.keys(entry.context).sort());
+        entry.contextHash = crypto.createHash('sha256').update(canonical).digest('hex');
+        if (dryRun) { out.inserted += 1; continue; }
+        const r = await learningStore.insertLearningDecision(entry);
+        if (r.ok) {
+          out.inserted += 1;
+        } else {
+          out.errors += 1;
+          recordOk = false;
+          process.stderr.write(`[backfill] insert failed for ${entry.decisionKey}: ${r.error || ''}\n`);
+        }
       }
     }
+    if (!recordOk && firstFailureOffset === null) {
+      firstFailureOffset = prevOffset + cumulativeBytes;
+    }
+    cumulativeBytes += lineBytes;
   }
 
-  // Persist the new offset + fingerprint so we don't reprocess.
-  // Audit-fix R2 H4: leave the trailing partial-record bytes UNREAD so
-  // the next drain picks them up whole.  newOffset = stat.size minus the
-  // size of the partial tail we deliberately skipped.
-  const newOffset = stat.size - partialBytes;
+  // Persist cursor.  Default: advance to (file size - partial tail).
+  // If a record failed, freeze cursor at the start of that record so it
+  // gets retried on the next drain.
+  const fullProcessedOffset = stat.size - partialBytes;
+  const newOffset = firstFailureOffset !== null ? firstFailureOffset : fullProcessedOffset;
   if (!dryRun) {
     try {
       writeDrainCursor({
@@ -237,6 +255,7 @@ async function drainJsonlToCloud({ learningStore, repoId, dryRun }) {
   }
   out.lastOffset = newOffset;
   out.partialBytesRetained = partialBytes;
+  out.frozenAtFailure = firstFailureOffset !== null;
   return out;
 }
 
@@ -302,7 +321,13 @@ function computeFileFingerprint(filePath) {
 // ── Resolve unresolved outcomes ──────────────────────────────────────────
 
 async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
-  const out = { examined: 0, resolved: 0, stillPending: 0, errors: 0 };
+  const out = {
+    examined: 0,
+    resolved: 0,
+    stillPending: 0,
+    errors: 0,
+    byType: { quickfix_hit: 0, arch_memory_band: 0, convergence_predict: 0 },
+  };
   let getClient;
   try {
     ({ getWriteClient: getClient } = await import('../lib/stores/supabase-store.mjs'));
@@ -314,9 +339,14 @@ async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
   if (!client) return out;
 
   const cutoff = new Date(Date.now() - STALENESS_MS).toISOString();
+  // Phase 3: resolve THREE decision types — quickfix_hit (Phase 2),
+  // arch_memory_band (this phase), and convergence_predict (this phase).
+  // Each has its own pure detector below; the resolver routes to the
+  // right one based on `decision_type`.
+  const RESOLVABLE_TYPES = ['quickfix_hit', 'arch_memory_band', 'convergence_predict'];
   let q = client.from('learning_decisions')
-    .select('decision_key, context, created_at')
-    .eq('decision_type', 'quickfix_hit')
+    .select('decision_key, decision_type, context, choice, created_at, audit_run_id, round, sequence')
+    .in('decision_type', RESOLVABLE_TYPES)
     .is('outcome', null)
     .lt('created_at', cutoff)
     .limit(500);
@@ -338,16 +368,173 @@ async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
 
   for (const row of rows) {
     out.examined += 1;
-    const outcome = computeOutcomeFromFileState(row);
+    let outcome = null;
+    if (row.decision_type === 'quickfix_hit') {
+      outcome = computeOutcomeFromFileState(row);
+    } else if (row.decision_type === 'arch_memory_band') {
+      outcome = await computeArchMemoryBandOutcome(row);
+    } else if (row.decision_type === 'convergence_predict') {
+      outcome = await computeConvergencePredictOutcome(row, { client });
+    }
     if (!outcome) { out.stillPending += 1; continue; }
-    if (dryRun) { out.resolved += 1; continue; }
+    if (dryRun) {
+      out.resolved += 1;
+      out.byType[row.decision_type] = (out.byType[row.decision_type] || 0) + 1;
+      continue;
+    }
     const r = await learningStore.backfillLearningOutcome({
       decisionKey: row.decision_key,
       outcome,
     });
-    if (r.ok) out.resolved += 1; else out.errors += 1;
+    if (r.ok) {
+      out.resolved += 1;
+      out.byType[row.decision_type] = (out.byType[row.decision_type] || 0) + 1;
+    } else {
+      out.errors += 1;
+    }
   }
   return out;
+}
+
+// ── arch_memory_band outcome detector ─────────────────────────────────────
+
+/**
+ * Resolve the outcome of an arch_memory_band decision by inspecting git
+ * history shortly after the decision.  v1 implementation is conservative:
+ * it returns 'reuse-correct' / 'extend-correct' / 'wrong-fork' / 'uncertain'
+ * based on whether the candidate symbol's source file gained new commits
+ * referencing the symbol within 30 minutes of the decision.
+ *
+ * Heuristic (v1):
+ *   - decision recommended `reuse` AND no new symbol added in the
+ *     candidate file's directory within 30 min → reuse-correct
+ *   - decision recommended `extend` AND the candidate file was modified
+ *     within 30 min → extend-correct
+ *   - decision recommended `reuse` AND a NEW symbol with a similar name
+ *     appeared in a sibling/different file within 30 min → wrong-fork
+ *   - otherwise → uncertain (still emit so the row stops being pending)
+ *
+ * Pure given inputs.  Exec'd for git only when fs paths exist.
+ *
+ * @param {{decision_key: string, context: object, choice: object, created_at: string}} row
+ * @param {object} [deps] — { execGit } injected for tests
+ * @returns {Promise<{action: string, evidence: string}|null>}
+ */
+export async function computeArchMemoryBandOutcome(row, deps = {}) {
+  const ctx = row?.context;
+  const ch  = row?.choice;
+  if (!ctx || !ch) return null;
+  const filePath = typeof ctx.filePath === 'string' ? ctx.filePath : null;
+  const symbol   = typeof ctx.symbol === 'string' ? ctx.symbol : null;
+  const band     = ch.band;
+  if (!band) return null;
+
+  // Bands the audit-loop didn't actively recommend: emit uncertain so the
+  // row stops being pending but doesn't bias the posterior.
+  if (band === 'review' || band === 'justify-divergence') {
+    return { action: 'uncertain', evidence: `band=${band}` };
+  }
+
+  // Without a file path we can't probe git — emit uncertain.
+  if (!filePath || !symbol) {
+    return { action: 'uncertain', evidence: 'missing-file-or-symbol' };
+  }
+
+  const execGit = deps.execGit || defaultExecGit;
+  const sinceWindow = '30.minutes.ago';
+  const decisionTs  = row.created_at;
+
+  // Look at commits in the cited file's directory within 30 min after the
+  // decision — proxies "did the user act on the recommendation?"
+  let commitsTouched = 0;
+  try {
+    const dir = path.posix.dirname(String(filePath).replace(/\\/g, '/'));
+    const argLog = ['log',
+      `--since=${sinceWindow}`,
+      `--until=${decisionTs}`,
+      '--pretty=format:%H',
+      '--', dir];
+    const out1 = execGit(argLog, { cwd: process.cwd() });
+    if (typeof out1 === 'string' && out1.trim().length > 0) {
+      commitsTouched = out1.trim().split('\n').filter(Boolean).length;
+    }
+  } catch { /* best effort */ }
+
+  if (band === 'reuse') {
+    return commitsTouched === 0
+      ? { action: 'reuse-correct', evidence: 'no-new-commits-in-dir' }
+      : { action: 'wrong-fork', evidence: `${commitsTouched}-commits-after-reuse` };
+  }
+  if (band === 'extend') {
+    return commitsTouched > 0
+      ? { action: 'extend-correct', evidence: `${commitsTouched}-commits-touched-dir` }
+      : { action: 'uncertain', evidence: 'no-followup-edits' };
+  }
+  return { action: 'uncertain', evidence: `band=${band}` };
+}
+
+function defaultExecGit(args, opts) {
+  return execFileSync('git', args, {
+    cwd: opts?.cwd || process.cwd(),
+    stdio: ['ignore', 'pipe', 'ignore'],
+    encoding: 'utf-8',
+    timeout: 5000,
+  });
+}
+
+// ── convergence_predict outcome detector ──────────────────────────────────
+
+/**
+ * Resolve the outcome of a convergence_predict decision by reading
+ * `audit_runs.round_converged_after` + `rigor_pressure_round` for the
+ * decision's run.  Once the run finishes, those columns tell us whether
+ * a "continue" choice would have been correct (run did go to next round)
+ * or wasted (this round was the convergence point).
+ *
+ * @param {object} row
+ * @param {object} deps — { client } the supabase client to read audit_runs
+ * @returns {Promise<{action: string, evidence: string, converged_at: number, round: number}|null>}
+ */
+export async function computeConvergencePredictOutcome(row, deps = {}) {
+  const client = deps.client;
+  if (!client || !row.audit_run_id || row.round == null) return null;
+  let runRow = null;
+  try {
+    const { data, error } = await client.from('audit_runs')
+      .select('round_converged_after, rigor_pressure_round, rounds')
+      .eq('id', row.audit_run_id).single();
+    if (error || !data) return null;
+    runRow = data;
+  } catch { return null; }
+
+  const convergedAt        = runRow.round_converged_after;
+  const rigorPressureRound = runRow.rigor_pressure_round;
+  const finalRound         = runRow.rounds;
+  // If the run is still in flight (no convergence + no rigor + no final round
+  // recorded), leave pending.
+  if (convergedAt == null && rigorPressureRound == null && finalRound == null) return null;
+
+  const decisionRound = Number(row.round);
+  // Synthesize a stable "stopAtRound" — whichever of the three signals is
+  // first.  Falls back to finalRound (== rounds) when neither convergence
+  // nor rigor-pressure was tagged.
+  const stopAt = [convergedAt, rigorPressureRound, finalRound]
+    .filter(x => Number.isFinite(x))
+    .reduce((a, b) => a < b ? a : b, Infinity);
+
+  if (!Number.isFinite(stopAt)) return null;
+
+  const hitMax = rigorPressureRound != null && rigorPressureRound === decisionRound;
+  const wasConvergence = convergedAt != null && convergedAt === decisionRound;
+
+  return {
+    action: wasConvergence ? 'converged-here' : (decisionRound < stopAt ? 'continued' : 'wasted'),
+    evidence: `stopAt=${stopAt} thisRound=${decisionRound}`,
+    converged_at: convergedAt ?? null,
+    rigor_pressure_round: rigorPressureRound ?? null,
+    hit_max: hitMax,
+    round: decisionRound,
+  };
 }
 
 /**
