@@ -20,6 +20,7 @@ import crypto from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
+import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
@@ -250,23 +251,21 @@ const COPILOT_PROMPT_FILES = buildCopilotPromptFiles();
 
 // ── Repo configuration ─────────────────────────────────────────────────────
 
-const REPOS = [
-  {
-    name: 'wine-cellar-app',
-    alias: 'wine',
-    path: path.resolve(SOURCE_ROOT, '../wine-cellar-app'),
-    files: [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...DEBT_SCRIPTS, ...ARCH_MEMORY_SCRIPTS, ...SKILL_FILES, ...COPILOT_PROMPT_FILES, ...EDITOR_FILES, ...CLAUDE_CODE_FILES],
-  },
-  {
-    name: 'ai-organiser',
-    alias: 'ai',
-    path: path.resolve(SOURCE_ROOT, '../ai-organiser'),
-    // Full suite — ai-organiser was bootstrapped minimally (only openai-audit.mjs)
-    // Sync full core + learning + architectural-memory so audits + plan
-    // skills work end-to-end (lib/ deps were missing in initial bootstrap).
-    files: [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...ARCH_MEMORY_SCRIPTS, ...SKILL_FILES, ...COPILOT_PROMPT_FILES, ...EDITOR_FILES, ...CLAUDE_CODE_FILES],
-  },
-];
+// Per-repo file sets — kept here because they're sync-specific (the file
+// lists differ per repo).  The repo identity (name/alias/path) lives in
+// scripts/lib/consumer-repos.mjs as the single source of truth.
+const REPO_FILE_SETS = {
+  'wine-cellar-app': [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...DEBT_SCRIPTS, ...ARCH_MEMORY_SCRIPTS, ...SKILL_FILES, ...COPILOT_PROMPT_FILES, ...EDITOR_FILES, ...CLAUDE_CODE_FILES],
+  // Full suite — ai-organiser was bootstrapped minimally (only openai-audit.mjs)
+  // Sync full core + learning + architectural-memory so audits + plan
+  // skills work end-to-end (lib/ deps were missing in initial bootstrap).
+  'ai-organiser':    [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...ARCH_MEMORY_SCRIPTS, ...SKILL_FILES, ...COPILOT_PROMPT_FILES, ...EDITOR_FILES, ...CLAUDE_CODE_FILES],
+};
+
+export const REPOS = CONSUMER_REPOS.map(r => ({
+  ...r,
+  files: REPO_FILE_SETS[r.name] || [],
+}));
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

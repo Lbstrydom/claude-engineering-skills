@@ -212,6 +212,28 @@ Only when `$ARGUMENTS` contains a plan file path:
 
 ---
 
+## Step 5.5 — Archive Completed Plans (always, unless `--no-archive`)
+
+After Step 5 may have flipped a plan's `Status` to `Complete`, sweep
+`docs/plans/` and move any completed plans (plus their sibling
+`*-audit-summary*.md` files left by `/audit-code` Step 6) into
+`docs/completed/`.  Run this BEFORE Step 6 commit so the move is part
+of the shipped commit — no dangling working-tree changes after `/ship`.
+
+```bash
+npm run plans:archive
+```
+
+Idempotent + silent when nothing matches.  Skip with `--no-archive`
+flag to keep a `Complete`-status plan in `docs/plans/` (rare — usually a
+v2 draft that shouldn't move yet).  Preview with
+`npm run plans:archive:dry`.
+
+If anything moves, include the renamed paths in the Step 6 stage list
+(git tracks them as renames automatically).
+
+---
+
 ## Step 6 — Stage, Commit, Push
 
 ### 6.1 Stage
@@ -317,6 +339,13 @@ Fire-and-forget — do not block on output. If cloud mode is off, CLI
 prints `{"ok":true,"cloud":false}` and returns 0.
 
 ---
+
+## Step 8 — Archive Completed Plans
+
+> **Note**: see Step 5.5 above — archive runs BEFORE commit so the
+> rename is part of the shipped commit.
+
+
 
 ## Quick Reference
 
