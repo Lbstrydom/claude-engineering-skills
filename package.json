@@ -58,7 +58,8 @@
     "plans:archive:dry": "node scripts/archive-completed-plans.mjs --dry-run --format human",
     "hooks:install": "node scripts/install-prepush-hook.mjs --format human",
     "hooks:install:dry": "node scripts/install-prepush-hook.mjs --dry-run --format human",
-    "hooks:uninstall": "node scripts/install-prepush-hook.mjs --uninstall --format human"
+    "hooks:uninstall": "node scripts/install-prepush-hook.mjs --uninstall --format human",
+    "audit:wtf": "node scripts/friction-log.mjs"
   },
   "keywords": [
     "claude",

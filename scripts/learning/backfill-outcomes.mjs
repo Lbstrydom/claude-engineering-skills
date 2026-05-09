@@ -38,6 +38,7 @@ import { execFileSync } from 'node:child_process';
 
 const HITS_JSONL_PATH    = '.audit/quickfix-hits.jsonl';
 const DRAIN_MARKER_PATH  = '.audit/quickfix-hits.drained-offset';
+const FRICTION_JSONL_PATH = '.audit/friction-log.jsonl';
 const STALENESS_MS       = 30 * 60 * 1000; // 30 minutes
 const HOOK_IGNORE_MARKER = 'quickfix-hook:ignore';
 
@@ -87,6 +88,16 @@ export async function runBackfill(opts = {}) {
     } catch (err) {
       summary.drain.errors += 1;
       process.stderr.write(`[backfill] drain failed: ${err.message}\n`);
+    }
+    // Audit-fix Phase-3-friction R1 H3: also drain the friction-log
+    // local fallback so notes captured while cloud was offline make it
+    // upstream and surface in the next weekly digest.
+    try {
+      const r = await drainFrictionFallback({ learningStore, dryRun });
+      summary.frictionDrain = r;
+    } catch (err) {
+      process.stderr.write(`[backfill] friction-drain failed: ${err.message}\n`);
+      summary.frictionDrain = { processed: 0, inserted: 0, errors: 1 };
     }
   }
 
@@ -258,6 +269,84 @@ async function drainJsonlToCloud({ learningStore, repoId, dryRun }) {
   out.frozenAtFailure = firstFailureOffset !== null;
   return out;
 }
+
+// ── Friction-log fallback drain (Audit-fix friction R1 H3) ──────────────
+//
+// Plain JSONL drain — every line is one friction note that was captured
+// when the cloud was offline.  We DELETE-then-recreate the file after a
+// successful drain; the cost of replaying a recently-failed line is
+// negligible (friction notes are tiny + not idempotency-critical).
+// Skip silently when the file is absent (the common case once cloud is
+// healthy and the operator hasn't been working offline).
+
+async function drainFrictionFallback({ learningStore, dryRun }) {
+  const out = { processed: 0, inserted: 0, errors: 0 };
+  if (!fs.existsSync(FRICTION_JSONL_PATH)) return out;
+
+  let raw;
+  try { raw = fs.readFileSync(FRICTION_JSONL_PATH, 'utf-8'); }
+  catch { out.errors += 1; return out; }
+  const lines = raw.split(/\r?\n/).filter(Boolean);
+  if (lines.length === 0) return out;
+
+  const remaining = []; // lines to retain after this drain (failed inserts)
+  for (const line of lines) {
+    out.processed += 1;
+    let record;
+    try { record = JSON.parse(line); }
+    catch { out.errors += 1; continue; }
+    if (!record || typeof record.message !== 'string') {
+      out.errors += 1;
+      continue;
+    }
+    // Resolve repo name → repo_id at drain time; it may have been
+    // unresolvable when the note was captured (e.g. fresh consumer repo).
+    let repoId = null;
+    if (record.repo && typeof learningStore.getRepoIdByName === 'function') {
+      repoId = await learningStore.getRepoIdByName(record.repo).catch(() => null);
+    }
+    if (dryRun) { out.inserted += 1; continue; }
+    let result;
+    try {
+      result = await learningStore.insertFrictionNote({
+        repoId,
+        message:  record.message,
+        cwd:      record.cwd ?? null,
+        severity: record.severity ?? 'note',
+      });
+    } catch (err) {
+      result = { ok: false, error: err.message };
+    }
+    if (result.ok) {
+      out.inserted += 1;
+    } else {
+      out.errors += 1;
+      remaining.push(line); // keep for the next drain attempt
+      process.stderr.write(`[friction-drain] insert failed (retained): ${result.error || ''}\n`);
+    }
+  }
+
+  // Rewrite the file with only the failed lines (or delete it entirely
+  // if everything drained).  Atomic via temp+rename.
+  if (!dryRun) {
+    try {
+      if (remaining.length === 0) {
+        fs.unlinkSync(FRICTION_JSONL_PATH);
+      } else {
+        const tmp = `${FRICTION_JSONL_PATH}.tmp.${process.pid}.${Date.now()}`;
+        fs.writeFileSync(tmp, remaining.join('\n') + '\n');
+        fs.renameSync(tmp, FRICTION_JSONL_PATH);
+      }
+    } catch (err) {
+      out.errors += 1;
+      process.stderr.write(`[friction-drain] rewrite failed: ${err.message}\n`);
+    }
+  }
+  return out;
+}
+
+// Exported for unit testing.
+export { drainFrictionFallback };
 
 // ── Drain-cursor helpers (Audit-fix R1 H11) ───────────────────────────────
 

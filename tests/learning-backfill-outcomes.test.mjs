@@ -6,6 +6,7 @@ import os from 'node:os';
 
 import {
   computeOutcomeFromFileState,
+  drainFrictionFallback,
   _internals,
 } from '../scripts/learning/backfill-outcomes.mjs';
 
@@ -159,5 +160,86 @@ describe('backfill-outcomes / constants', () => {
 
   it('hook-ignore marker matches the hook documentation', () => {
     assert.equal(_internals.HOOK_IGNORE_MARKER, 'quickfix-hook:ignore');
+  });
+});
+
+// ── Friction-fallback drain (Audit-fix friction R1 H3) ─────────────────
+
+describe('drainFrictionFallback', () => {
+  let tmpDir;
+  let prevCwd;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fric-drain-'));
+    prevCwd = process.cwd();
+    process.chdir(tmpDir);
+    fs.mkdirSync('.audit', { recursive: true });
+  });
+  afterEach(() => {
+    process.chdir(prevCwd);
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  });
+
+  it('no-op when fallback file absent', async () => {
+    const r = await drainFrictionFallback({ learningStore: {}, dryRun: false });
+    assert.deepEqual(r, { processed: 0, inserted: 0, errors: 0 });
+  });
+
+  it('drains all lines on success and deletes the file', async () => {
+    fs.writeFileSync('.audit/friction-log.jsonl',
+      JSON.stringify({ ts: 't', message: 'a', severity: 'note' }) + '\n' +
+      JSON.stringify({ ts: 't', message: 'b', severity: 'blocker' }) + '\n');
+    const inserted = [];
+    const fakeStore = {
+      getRepoIdByName: async () => null,
+      insertFrictionNote: async (e) => { inserted.push(e); return { ok: true, id: 'x' }; },
+    };
+    const r = await drainFrictionFallback({ learningStore: fakeStore, dryRun: false });
+    assert.equal(r.processed, 2);
+    assert.equal(r.inserted, 2);
+    assert.equal(inserted[0].message, 'a');
+    assert.equal(inserted[1].severity, 'blocker');
+    assert.equal(fs.existsSync('.audit/friction-log.jsonl'), false, 'file deleted after full drain');
+  });
+
+  it('retains failed lines for retry on next drain', async () => {
+    fs.writeFileSync('.audit/friction-log.jsonl',
+      JSON.stringify({ ts: 't', message: 'ok', severity: 'note' }) + '\n' +
+      JSON.stringify({ ts: 't', message: 'fail', severity: 'note' }) + '\n');
+    const fakeStore = {
+      getRepoIdByName: async () => null,
+      insertFrictionNote: async (e) => e.message === 'fail' ? { ok: false, error: 'sim' } : { ok: true },
+    };
+    const r = await drainFrictionFallback({ learningStore: fakeStore, dryRun: false });
+    assert.equal(r.inserted, 1);
+    assert.equal(r.errors, 1);
+    assert.equal(fs.existsSync('.audit/friction-log.jsonl'), true);
+    const remaining = fs.readFileSync('.audit/friction-log.jsonl', 'utf-8').trim();
+    assert.match(remaining, /"message":"fail"/);
+    assert.doesNotMatch(remaining, /"message":"ok"/);
+  });
+
+  it('skips malformed JSON lines and counts them as errors', async () => {
+    fs.writeFileSync('.audit/friction-log.jsonl',
+      'not-json\n' +
+      JSON.stringify({ ts: 't', message: 'good', severity: 'note' }) + '\n');
+    const fakeStore = {
+      getRepoIdByName: async () => null,
+      insertFrictionNote: async () => ({ ok: true, id: 'x' }),
+    };
+    const r = await drainFrictionFallback({ learningStore: fakeStore, dryRun: false });
+    assert.equal(r.errors, 1);
+    assert.equal(r.inserted, 1);
+  });
+
+  it('--dry-run does not delete or modify the file', async () => {
+    fs.writeFileSync('.audit/friction-log.jsonl',
+      JSON.stringify({ ts: 't', message: 'a', severity: 'note' }) + '\n');
+    const fakeStore = {
+      getRepoIdByName: async () => null,
+      insertFrictionNote: async () => ({ ok: true }),
+    };
+    const r = await drainFrictionFallback({ learningStore: fakeStore, dryRun: true });
+    assert.equal(r.inserted, 1);
+    assert.equal(fs.existsSync('.audit/friction-log.jsonl'), true, 'dry-run preserves file');
   });
 });

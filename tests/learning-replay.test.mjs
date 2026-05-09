@@ -60,24 +60,25 @@ describe('replay / distSummary', () => {
 // ── replay() with injected fixtures ──────────────────────────────────────
 
 describe('replay / engine (fixture-driven)', () => {
-  it('returns sample-size 0 + empty distributions when no rows', async () => {
+  it('returns sample-size 0 + empty distributions when cloud disabled', async () => {
+    // Short-circuit before any cloud read by stubbing isCloudEnabled:false.
+    // Prior version of this test relied on the real store returning [], which
+    // breaks once SUPABASE_AUDIT_SERVICE_ROLE_KEY is set in the test env
+    // (real reads return real rows).
     const store = {
-      isCloudEnabled: () => true,
-      initLearningStore: async () => true,
+      isCloudEnabled: () => false,
+      initLearningStore: async () => false,
     };
-    // Inject zero-row store via direct call (use an unrecognised type so
-    // readDecisionsForType returns []).
     const result = await replay({
       decisionType: 'pass_selection',
       candidatePolicy: () => ({ chose: 'all' }),
       rewardFn: () => 0,
       store,
     });
-    // Real behaviour: cloud is "enabled" but we have no fixture override
-    // so the real read returns [] (no SUPABASE env).  Either way, the
-    // sample size is 0 and the result is stable.
     assert.equal(result.ok, true);
     assert.equal(result.sampleSize, 0);
+    assert.deepEqual(result.baselineDist,  { mean: 0, p50: 0, p90: 0, total: 0 });
+    assert.deepEqual(result.candidateDist, { mean: 0, p50: 0, p90: 0, total: 0 });
   });
 
   it('rejects malformed input (validateInput)', async () => {

@@ -35,10 +35,15 @@ import {
   readPendingTriageFindings,
   readNoBrainerRecommendations,
   readStaleClusters,
+  readRecentFriction,
 } from '../learning-store.mjs';
 
 const TOTAL_CAP = 7;
-const SECTION_CAPS = { triage: 3, noBrainer: 3, stale: 1 };
+// Section caps — when friction notes exist, they're prioritised (3 friction
+// + 2 triage + 2 no-brainer + 0 stale = 7).  When no friction, fall back to
+// the original Phase 1 split (3+3+1).
+const SECTION_CAPS_DEFAULT  = { friction: 0, triage: 3, noBrainer: 3, stale: 1 };
+const SECTION_CAPS_FRICTION = { friction: 3, triage: 2, noBrainer: 2, stale: 0 };
 const STICKY_ISSUE_LABEL = 'learning-weekly-review';
 const STICKY_MARKER = '<!-- audit-loop:learning-weekly-review -->';
 
@@ -105,25 +110,44 @@ function buildStaleSection(rows, cap) {
 }
 
 /**
- * Greedy fill: try to give each section its full cap, but if the overall
- * total exceeds TOTAL_CAP, donate slots from low-priority sections to
- * high-priority ones.  Section priority: triage > noBrainer > stale.
+ * Friction notes — sorted by severity (blocker first), then created_at DESC.
+ * v1 plan: friction-log-and-digest-v1.md.
+ */
+function buildFrictionSection(rows, cap) {
+  const SEV_RANK = { blocker: 0, annoyance: 1, note: 2 };
+  const sorted = [...rows].sort((a, b) => {
+    const r = (SEV_RANK[a.severity] ?? 3) - (SEV_RANK[b.severity] ?? 3);
+    if (r !== 0) return r;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+  const shown = sorted.slice(0, cap);
+  const overflow = Math.max(0, sorted.length - cap);
+  return { items: shown, overflow, total: sorted.length };
+}
+
+/**
+ * Greedy fill: distribute the total cap across sections in priority
+ * order.  When friction notes exist, they take precedence (3+2+2+0);
+ * when absent, fall back to the original Phase 1 split (0+3+3+1).
  *
- * v1: keeps section caps fixed (3+3+1=7) which already matches TOTAL_CAP;
- * the donation logic kicks in only if SECTION_CAPS is changed later.
+ * Order: friction > triage > noBrainer > stale.
  */
 function applyTotalCap(sections) {
-  const order = ['triage', 'noBrainer', 'stale'];
+  const order = ['friction', 'triage', 'noBrainer', 'stale'];
+  // Pick caps based on whether friction notes exist.
+  const hasFriction = sections.friction && sections.friction.items.length > 0;
+  const caps = hasFriction ? SECTION_CAPS_FRICTION : SECTION_CAPS_DEFAULT;
   let used = 0;
   const out = {};
   for (const k of order) {
-    const cap = SECTION_CAPS[k];
+    const cap = caps[k];
     const remaining = TOTAL_CAP - used;
     const allowed = Math.max(0, Math.min(cap, remaining));
+    const src = sections[k] || { items: [], overflow: 0, total: 0 };
     out[k] = {
-      items: sections[k].items.slice(0, allowed),
-      overflow: sections[k].overflow + Math.max(0, sections[k].items.length - allowed),
-      total: sections[k].total,
+      items: src.items.slice(0, allowed),
+      overflow: src.overflow + Math.max(0, src.items.length - allowed),
+      total: src.total,
     };
     used += out[k].items.length;
   }
@@ -143,10 +167,32 @@ function fmtPath(p) {
   return (p || 'unknown').replace(/`/g, '\\`');
 }
 
+/**
+ * Compact "Xd ago", "Xh ago", "just now" style for friction-note timestamps.
+ * Pure given input; falls back to the raw ISO string on bad input.
+ */
+function humanizeAgo(iso, now = Date.now()) {
+  if (!iso) return 'unknown';
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return iso;
+  const diffMs = Math.max(0, now - t);
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1)   return 'just now';
+  if (min < 60)  return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24)   return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
+}
+
 function renderMarkdown({ repoName, sections, generatedAt }) {
-  const totalShown = sections.triage.items.length + sections.noBrainer.items.length + sections.stale.items.length;
+  const friction = sections.friction || { items: [], overflow: 0, total: 0 };
+  const totalShown = friction.items.length
+    + sections.triage.items.length
+    + sections.noBrainer.items.length
+    + sections.stale.items.length;
   if (totalShown === 0) {
-    return `${STICKY_MARKER}\n\n## ${repoName} — Adaptive Learning Weekly Review\n\nAll quiet this week. No findings awaiting triage, no recurring no-brainers, no stale deferrals.\n\n_Generated: ${generatedAt}_\n`;
+    return `${STICKY_MARKER}\n\n## ${repoName} — Adaptive Learning Weekly Review\n\nAll quiet this week. No friction notes, no findings awaiting triage, no recurring no-brainers, no stale deferrals.\n\n_Generated: ${generatedAt}_\n`;
   }
 
   const lines = [
@@ -158,8 +204,23 @@ function renderMarkdown({ repoName, sections, generatedAt }) {
     '',
   ];
 
+  // Section 0 — Friction notes (only when present; takes priority)
+  if (friction.items.length > 0) {
+    lines.push('### 1. Friction notes (last 7 days)');
+    lines.push('');
+    for (const note of friction.items) {
+      const ago = humanizeAgo(note.created_at);
+      const sev = mdEscape(note.severity || 'note');
+      lines.push(`- **[${sev}]** ${ago} — ${mdEscape((note.message || '').slice(0, 200))}`);
+    }
+    if (friction.overflow > 0) {
+      lines.push(`- _(...and ${friction.overflow} more — query \`friction_log\` directly via Supabase Studio for now)_`);
+    }
+    lines.push('');
+  }
+
   // Section 1 — Awaiting triage
-  lines.push('### 1. Awaiting triage');
+  lines.push(`### ${friction.items.length > 0 ? '2' : '1'}. Awaiting triage`);
   lines.push('');
   if (sections.triage.items.length === 0) {
     lines.push('_None._');
@@ -174,8 +235,8 @@ function renderMarkdown({ repoName, sections, generatedAt }) {
   }
   lines.push('');
 
-  // Section 2 — No-brainer fix-now
-  lines.push('### 2. No-brainer fix-now (recurring clusters)');
+  // No-brainer fix-now — number shifts based on friction presence.
+  lines.push(`### ${friction.items.length > 0 ? '3' : '2'}. No-brainer fix-now (recurring clusters)`);
   lines.push('');
   if (sections.noBrainer.items.length === 0) {
     lines.push('_None._');
@@ -195,8 +256,8 @@ function renderMarkdown({ repoName, sections, generatedAt }) {
   }
   lines.push('');
 
-  // Section 3 — Stale deferrals
-  lines.push('### 3. Stale deferrals (last_seen >30 days)');
+  // Stale deferrals — number shifts based on friction presence.
+  lines.push(`### ${friction.items.length > 0 ? '4' : '3'}. Stale deferrals (last_seen >30 days)`);
   lines.push('');
   if (sections.stale.items.length === 0) {
     lines.push('_None._');
@@ -306,19 +367,24 @@ export async function runWeeklyReview(opts = {}) {
     return { ok: true, cloud: true, repoName, posted: false, reason: 'unknown-repo' };
   }
 
-  const [triageRows, noBrainerRows, staleRows] = await Promise.all([
+  const [triageRows, noBrainerRows, staleRows, frictionRows] = await Promise.all([
     readPendingTriageFindings({ repoId, limit: 1000 }),
     readNoBrainerRecommendations({ repoId, limit: 1000 }),
     readStaleClusters({ repoId, ageDays: 30, limit: 1000 }),
+    readRecentFriction({ repoId, sinceMs: 7 * 24 * 60 * 60 * 1000, limit: 100 }),
   ]);
 
   const sections = applyTotalCap({
-    triage:    buildTriageSection(triageRows, SECTION_CAPS.triage),
-    noBrainer: buildNoBrainerSection(noBrainerRows, SECTION_CAPS.noBrainer),
-    stale:     buildStaleSection(staleRows, SECTION_CAPS.stale),
+    friction:  buildFrictionSection(frictionRows, SECTION_CAPS_FRICTION.friction),
+    triage:    buildTriageSection(triageRows, SECTION_CAPS_FRICTION.triage),
+    noBrainer: buildNoBrainerSection(noBrainerRows, SECTION_CAPS_FRICTION.noBrainer),
+    stale:     buildStaleSection(staleRows, SECTION_CAPS_DEFAULT.stale),
   });
 
-  const totalShown = sections.triage.items.length + sections.noBrainer.items.length + sections.stale.items.length;
+  const totalShown = (sections.friction?.items.length || 0)
+    + sections.triage.items.length
+    + sections.noBrainer.items.length
+    + sections.stale.items.length;
   const generatedAt = new Date().toISOString();
   const markdown = renderMarkdown({ repoName, sections, generatedAt });
 
@@ -336,6 +402,7 @@ export async function runWeeklyReview(opts = {}) {
     repoName,
     repoId,
     sections: {
+      friction:  { count: sections.friction?.items.length || 0, overflow: sections.friction?.overflow || 0, total: sections.friction?.total || 0 },
       triage:    { count: sections.triage.items.length,    overflow: sections.triage.overflow,    total: sections.triage.total },
       noBrainer: { count: sections.noBrainer.items.length, overflow: sections.noBrainer.overflow, total: sections.noBrainer.total },
       stale:     { count: sections.stale.items.length,     overflow: sections.stale.overflow,     total: sections.stale.total },
@@ -381,4 +448,13 @@ if (isMain) {
   process.exit(result.ok ? 0 : 1);
 }
 
-export { renderMarkdown, applyTotalCap, severityRank, buildTriageSection, buildNoBrainerSection, buildStaleSection };
+export {
+  renderMarkdown,
+  applyTotalCap,
+  severityRank,
+  buildTriageSection,
+  buildNoBrainerSection,
+  buildStaleSection,
+  buildFrictionSection,
+  humanizeAgo,
+};

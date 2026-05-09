@@ -950,6 +950,17 @@ async function cmdLearningBackfillOutcomes() {
 }
 
 /**
+ * Friction-log capture — `audit:wtf <message>`.  Quick-write CLI for
+ * real-time operator annoyance.  Plan: friction-log-and-digest-v1.md.
+ */
+async function cmdFrictionLog() {
+  const { runFrictionLog } = await import('./friction-log.mjs');
+  const result = await runFrictionLog(rest);
+  emit(result);
+  if (!result.ok) process.exit(1);
+}
+
+/**
  * Replay CLI bridge — Phase 3.  Wraps `scripts/learning/replay.mjs` so
  * package.json + workflow scripts can route through cross-skill.mjs
  * uniformly.  Forwards all positional + flag args to the CLI runner.
@@ -1045,6 +1056,8 @@ const commands = {
   'learning-quickfix-stats':          cmdLearningQuickfixStats,
   // Phase 3 — replay framework + remaining telemetry
   'learning-replay':                  cmdLearningReplay,
+  // Friction log (plan: friction-log-and-digest-v1.md)
+  'friction-log':                     cmdFrictionLog,
 };
 
 async function main() {

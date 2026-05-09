@@ -2576,6 +2576,75 @@ export async function readStaleClusters({ repoId, ageDays = 30, limit = 50 }) {
   } catch { return []; }
 }
 
+// ── Friction log (plan: docs/plans/friction-log-and-digest-v1.md) ────────
+
+/**
+ * Insert one friction-log row.  Service-role; never throws.
+ *
+ * @param {{repoId?: string|null, auditRunId?: string|null, message: string,
+ *          cwd?: string|null, severity?: 'note'|'annoyance'|'blocker'}} input
+ * @returns {Promise<{ok: boolean, id?: string, error?: string}>}
+ */
+export async function insertFrictionNote(input) {
+  return _safeWriteCall(async (client) => {
+    const row = {
+      repo_id:      input.repoId      ?? null,
+      audit_run_id: input.auditRunId  ?? null,
+      message:      input.message,
+      cwd:          input.cwd ?? null,
+      severity:     input.severity ?? 'note',
+    };
+    const { data, error } = await client.from('friction_log')
+      .insert(row).select('id').single();
+    return { ok: !error, error: error?.message, id: data?.id };
+  });
+}
+
+/**
+ * Read recent friction-log entries for one repo.  Ordered by severity
+ * (blocker first), then created_at DESC.  Anon-readable (no policy →
+ * we use the service-role write client for consistency with Phase 1
+ * patterns).
+ *
+ * @param {{repoId: string, sinceMs?: number, limit?: number}} input
+ * @returns {Promise<Array<object>>}
+ */
+export async function readRecentFriction({ repoId, sinceMs = 7 * 24 * 60 * 60 * 1000, limit = 100 }) {
+  if (!repoId) throw new Error('repoId is required');
+  if (!_supabase) return [];
+  try {
+    const cutoff = new Date(Date.now() - sinceMs).toISOString();
+    const { data, error } = await _supabase.from('friction_log')
+      .select('id, message, severity, created_at, cwd, audit_run_id')
+      .eq('repo_id', repoId)
+      .gte('created_at', cutoff)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    return error ? [] : (data || []);
+  } catch { return []; }
+}
+
+/**
+ * Look up the most recent audit_run_id for a repo (used by friction-log
+ * to associate a note with the most recent audit context).  Returns
+ * null when none found.
+ *
+ * @param {string} repoId
+ * @returns {Promise<string|null>}
+ */
+export async function getMostRecentAuditRunIdForRepo(repoId) {
+  if (!repoId || !_supabase) return null;
+  try {
+    const { data, error } = await _supabase.from('audit_runs')
+      .select('id')
+      .eq('repo_id', repoId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (error || !Array.isArray(data) || data.length === 0) return null;
+    return data[0].id ?? null;
+  } catch { return null; }
+}
+
 /**
  * Resolve repo_id by repo name (used by weekly-review with LEARNING_REPO_NAME).
  * audit_repos can contain multiple rows per name (one per fingerprint), so
