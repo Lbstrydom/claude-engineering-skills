@@ -2302,6 +2302,33 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     }
   }
 
+  // Persist cache metrics to a stable append-only log (.audit/cache-metrics.jsonl)
+  // so future analysis (`npm run cache:check`) can correlate hit rates over
+  // time without depending on Temp-dir result files (which Windows cleans).
+  // Every round emits one line — analysis filters by round >= 2 since cold-start
+  // R1 always reports 0%.
+  try {
+    const cacheMetrics = mergedResult._cacheMetrics;
+    if (cacheMetrics) {
+      const logPath = path.resolve(AUDIT_DIR, 'cache-metrics.jsonl');
+      const entry = {
+        sid,
+        round,
+        startedAt: new Date().toISOString(),
+        mode,
+        plan: planFile ? path.basename(planFile) : null,
+        totalInputTokens: cacheMetrics.totalInputTokens,
+        totalCachedTokens: cacheMetrics.totalCachedTokens,
+        hitRate: cacheMetrics.hitRate,
+        estimatedSavingsPct: cacheMetrics.estimatedSavingsPct,
+        perPassCount: Object.keys(cacheMetrics.perPass).length,
+      };
+      fs.appendFileSync(logPath, JSON.stringify(entry) + '\n', 'utf8');
+    }
+  } catch (err) {
+    process.stderr.write(`  [cache] log append failed (non-blocking): ${err.message}\n`);
+  }
+
   // 6. Output
   if (outFile) {
     const summaryLine = `Verdict: ${verdict} | H:${high} M:${medium} L:${low} | ${(totalLatency / 1000).toFixed(0)}s`;

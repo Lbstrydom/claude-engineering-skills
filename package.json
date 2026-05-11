@@ -18,6 +18,8 @@
     "audit:refine": "node scripts/refine-prompts.mjs",
     "audit:bandit": "node scripts/bandit.mjs stats",
     "audit:phase7": "node scripts/phase7-check.mjs",
+    "cache:check": "node scripts/cache-hitrate-check.mjs",
+    "cache:check:json": "node scripts/cache-hitrate-check.mjs --json",
     "audit:check-deps": "node scripts/check-deps.mjs",
     "memory:health": "node scripts/memory-health.mjs",
     "memory:health:json": "node scripts/memory-health.mjs --json",
