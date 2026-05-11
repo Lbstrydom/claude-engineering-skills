@@ -27,6 +27,13 @@ permissions:
 jobs:
   surface-debt:
     runs-on: ubuntu-latest
+    # Skip on Dependabot PRs — this workflow audits CODE debt against the
+    # debt ledger, not dependency debt.  Running on every npm/github-actions
+    # bump is pure noise: the diff touches package.json or .github/workflows
+    # only, which has no overlap with code-debt entries.  Saves ~15 runs/wk.
+    # If a Dependabot PR ever happens to touch a file in the debt ledger,
+    # the next push to main will surface it via the on-push paths.
+    if: github.actor != 'dependabot[bot]'
     steps:
       - name: Checkout PR
         uses: actions/checkout@v6

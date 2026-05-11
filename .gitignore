@@ -8,6 +8,7 @@ node_modules/
 # IDE settings (per-machine)
 .claude/settings.local.json
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 
 # Audit-loop operational state (local to each machine)
 .audit/local/
@@ -26,6 +27,12 @@ node_modules/
 .audit/meta-assessments.jsonl
 .audit/session-audit-*.json
 .audit/quickfix-hits.jsonl
+# Phase 1+2+3 + friction-log adaptive-learning local state
+.audit/learning-outbox/
+.audit/learning-failed-writes.jsonl
+.audit/friction-log.jsonl
+.audit/quickfix-pattern-stats.json
+.audit/quickfix-hits.drained-offset
 
 # Brainstorm session ledger + saved insights (per-machine state)
 .brainstorm/
@@ -42,8 +49,11 @@ node_modules/
 .audit/gemini-result.json
 
 # Install receipt + transaction journal (per-machine state)
+# .tmp.<pid>.<timestamp>.<rand> suffix is the in-flight write-then-rename
+# pattern; bare .json without .tmp. suffix is the final receipt.
 .audit-loop-install-receipt.json
 .audit-loop-install-txn.json
+.audit-loop-install-txn.json.tmp.*
 
 # Author-private self-audit artefacts (this repo auditing itself)
 .audit/tech-debt.json

@@ -37,7 +37,18 @@ jobs:
         run: |
           echo "Checking .env.example for real-looking values..."
           if [ -f .env.example ]; then
-            if grep -E '=sk-|=ghp_|=ghu_|=github_pat_|=eyJ' .env.example; then
+            # Tightened regex: only flag values that LOOK like real keys.
+            # Real keys have 20+ entropy chars after the prefix; placeholders
+            # use `...`, `<your-key>`, `xxx`, etc.  Previously matched the
+            # literal `sk-...` placeholder and false-positive-failed on every run.
+            #
+            # Patterns matched (real keys only):
+            #   sk-<20+ chars>            OpenAI / Anthropic
+            #   ghp_<20+ chars>           GitHub PAT classic
+            #   gh[uosr]_<20+ chars>      GitHub OAuth
+            #   github_pat_<20+ chars>    GitHub PAT modern
+            #   eyJ<20+ chars>            JWT body
+            if grep -E '=(sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_-]{20,}|github_pat_[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{20,})' .env.example; then
               echo "::error::.env.example contains what looks like real credentials"
               exit 1
             fi

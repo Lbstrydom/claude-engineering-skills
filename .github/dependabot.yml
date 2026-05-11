@@ -4,10 +4,57 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+    # Lowered from 10 → 5: with grouping below, ~2-3 PRs/week is the steady state.
+    open-pull-requests-limit: 5
+    groups:
+      # AI provider SDKs — bumped together in one PR per week (often on the
+      # same upstream cadence).  Replaces ~5 separate weekly PRs with 1.
+      ai-sdks:
+        patterns:
+          - "@anthropic-ai/*"
+          - "openai"
+          - "@google/*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Storage / infra SDKs — Supabase + DB drivers.
+      storage:
+        patterns:
+          - "@supabase/*"
+          - "pg"
+        update-types:
+          - "minor"
+          - "patch"
+      # Validation + general utilities — small, low-risk bumps.
+      utilities:
+        patterns:
+          - "zod"
+          - "dotenv"
+          - "yaml"
+          - "micromatch"
+          - "proper-lockfile"
+          - "codeowners-utils"
+        update-types:
+          - "minor"
+          - "patch"
+      # Dev-only deps (linters, type-checkers, AST tools) — never block prod.
+      dev-deps:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+    # Major-version bumps stay as their own per-package PRs (intentional —
+    # they need individual review attention) by NOT being in any group above.
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      gh-actions:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
