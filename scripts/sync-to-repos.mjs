@@ -154,6 +154,20 @@ const ARCH_MEMORY_SCRIPTS = [
   // Domain tagger — path-based mapping into .audit-loop/domain-map.json,
   // wired into refresh.mjs to populate domainTag instead of leaving null.
   'scripts/lib/symbol-index/domain-tagger.mjs',
+  // Audit prompt-builder — SSoT for the cache-stable 3-message structure
+  // used by all audit-pass calls in openai-audit.mjs.  Required by the
+  // call-site migration; without this file, audit calls throw on import.
+  'scripts/lib/audit/prompt-builder.mjs',
+  // Adaptive-learning runtime — required by openai-audit.mjs (decision-logger
+  // is a top-level import at line 63), cross-skill.mjs (lazy-loads
+  // quickfix-stats), and the audit pipeline's quickfix telemetry path.
+  // Missing these files caused ERR_MODULE_NOT_FOUND on consumer-repo audit
+  // runs after the prompt-cache deploy exposed the pre-existing sync gap.
+  'scripts/lib/learning/decision-logger.mjs',
+  'scripts/lib/learning/quickfix-stats.mjs',
+  'scripts/lib/learning/beta-posterior.mjs',
+  'scripts/lib/learning/cold-start.mjs',
+  'scripts/lib/learning/replay.mjs',
   // Security memory v1 — incident-log-driven proactive memory.
   // Markdown SoT in consumer's docs/security-strategy.md (consumer-owned,
   // committed by user). These scripts are the synced runtime.
