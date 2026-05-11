@@ -169,6 +169,12 @@ export async function recordRunComplete(runId, stats) {
   if (stats.sessionCacheHit != null) update.session_cache_hit = stats.sessionCacheHit;
   if (stats.mapReducePasses != null) update.map_reduce_passes = stats.mapReducePasses;
   if (stats.r2SkipReason != null) update.r2_skip_reason = stats.r2SkipReason;
+  // Prompt-prefix cache telemetry (migration 20260511120000). Drives the
+  // AUDIT_CACHE_SEED default-flip decision via cache-hitrate-check.mjs.
+  if (stats.cacheInputTokens != null) update.cache_input_tokens = stats.cacheInputTokens;
+  if (stats.cacheCachedTokens != null) update.cache_cached_tokens = stats.cacheCachedTokens;
+  if (stats.cacheHitRate != null) update.cache_hit_rate = stats.cacheHitRate;
+  if (stats.cacheEstimatedSavingsPct != null) update.cache_estimated_savings_pct = stats.cacheEstimatedSavingsPct;
 
   const { error } = await _supabase.from('audit_runs').update(update).eq('id', runId);
   if (error) process.stderr.write(`  [learning] recordRunComplete failed: ${error.message}\n`);

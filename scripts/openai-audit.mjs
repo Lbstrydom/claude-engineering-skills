@@ -2230,6 +2230,11 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       diffFilesChanged,
       sessionCacheHit,
       mapReducePasses: mapReducePasses.length > 0 ? mapReducePasses : null,
+      // Cache telemetry (migration 20260511120000_audit_runs_cache_metrics)
+      cacheInputTokens: cacheMetrics?.totalInputTokens ?? null,
+      cacheCachedTokens: cacheMetrics?.totalCachedTokens ?? null,
+      cacheHitRate: cacheMetrics?.hitRate ?? null,
+      cacheEstimatedSavingsPct: cacheMetrics?.estimatedSavingsPct ?? null,
     }).catch(e => process.stderr.write(`  [learning] recordRunComplete: ${e.message}\n`));
 
     // Phase 1 — adaptive-learning-v1.  Backfill the pass_selection decision

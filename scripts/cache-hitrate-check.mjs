@@ -25,6 +25,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import 'dotenv/config';
 
 const AUDIT_DIR = path.resolve(import.meta.dirname, '..', '.audit');
 const args = process.argv.slice(2);
@@ -35,6 +36,15 @@ const JSON_OUT = args.includes('--json');
 const sinceIdx = args.indexOf('--since');
 const SINCE = sinceIdx === -1 ? '2026-05-11' : args[sinceIdx + 1];
 const SINCE_MS = new Date(SINCE + 'T00:00:00Z').getTime();
+
+// Data source: 'local' (JSONL — this-machine only) or 'supabase'
+// (cross-machine via audit_runs table).  Default to supabase when
+// credentials are available; falls back to local otherwise.
+const sourceIdx = args.indexOf('--source');
+const SOURCE_OVERRIDE = sourceIdx === -1 ? null : args[sourceIdx + 1];
+const HAS_SUPABASE = process.env.SUPABASE_AUDIT_URL
+  && (process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY || process.env.SUPABASE_AUDIT_ANON_KEY);
+const SOURCE = SOURCE_OVERRIDE ?? (HAS_SUPABASE ? 'supabase' : 'local');
 
 const MIN_RUNS = 5;
 const FLIP_THRESHOLD = 0.3;
@@ -48,11 +58,34 @@ function median(nums) {
     : sorted[mid];
 }
 
-function analyse() {
+async function loadFromSupabase() {
+  const { createClient } = await import('@supabase/supabase-js');
+  const client = createClient(
+    process.env.SUPABASE_AUDIT_URL,
+    process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY || process.env.SUPABASE_AUDIT_ANON_KEY
+  );
+  const { data, error } = await client
+    .from('audit_runs')
+    .select('id, rounds, created_at, cache_input_tokens, cache_cached_tokens, cache_hit_rate, cache_estimated_savings_pct')
+    .gte('created_at', new Date(SINCE_MS).toISOString())
+    .gte('rounds', 2)
+    .not('cache_hit_rate', 'is', null)
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`Supabase query failed: ${error.message}`);
+  return (data || []).map(r => ({
+    sid: r.id,
+    startedAt: new Date(r.created_at).getTime(),
+    round: r.rounds,
+    totalInputTokens: r.cache_input_tokens ?? 0,
+    totalCachedTokens: r.cache_cached_tokens ?? 0,
+    hitRate: r.cache_hit_rate ?? 0,
+    estimatedSavingsPct: r.cache_estimated_savings_pct ?? 0,
+  }));
+}
+
+function loadFromLocal() {
   const logPath = path.join(AUDIT_DIR, 'cache-metrics.jsonl');
-  if (!fs.existsSync(logPath)) {
-    return { ok: true, recommendation: 'INSUFFICIENT_DATA', reason: `No cache-metrics log yet at ${logPath}. The log accumulates after each audit run starting from the 63912c0 bugfix commit (2026-05-11).`, runCount: 0, medianHitRate: 0, since: SINCE, runs: [] };
-  }
+  if (!fs.existsSync(logPath)) return null;
   const raw = fs.readFileSync(logPath, 'utf8');
   const lines = raw.split('\n').filter(l => l.trim().length > 0);
   const r2Plus = [];
@@ -61,11 +94,30 @@ function analyse() {
       const entry = JSON.parse(line);
       const startedAt = entry.startedAt ? new Date(entry.startedAt).getTime() : null;
       if (startedAt === null || startedAt < SINCE_MS) continue;
-      // Only R2+ runs are relevant — R1 cold-starts always report 0%
       if (entry.round && entry.round >= 2) {
         r2Plus.push({ ...entry, startedAt });
       }
     } catch { /* skip malformed line */ }
+  }
+  return r2Plus;
+}
+
+async function analyse() {
+  let r2Plus;
+  let sourceLabel;
+  if (SOURCE === 'supabase') {
+    try {
+      r2Plus = await loadFromSupabase();
+      sourceLabel = 'supabase audit_runs';
+    } catch (err) {
+      return { ok: false, error: `supabase load failed: ${err.message}. Try --source local.`, source: 'supabase' };
+    }
+  } else {
+    r2Plus = loadFromLocal();
+    sourceLabel = 'local .audit/cache-metrics.jsonl';
+    if (r2Plus === null) {
+      return { ok: true, recommendation: 'INSUFFICIENT_DATA', reason: `No cache-metrics log yet at ${path.join(AUDIT_DIR, 'cache-metrics.jsonl')}. The log accumulates after each audit run starting from the 63912c0 bugfix commit (2026-05-11).`, runCount: 0, medianHitRate: 0, since: SINCE, source: SOURCE, runs: [] };
+    }
   }
 
   const medianHitRate = median(r2Plus.map(r => r.hitRate));
@@ -83,7 +135,7 @@ function analyse() {
     reason = `Median R2+ hit-rate ${(medianHitRate * 100).toFixed(1)}% does not exceed ${(FLIP_THRESHOLD * 100).toFixed(0)}% across ${N} runs. Keep default OFF or investigate cache stability.`;
   }
 
-  return { ok: true, recommendation, reason, runCount: N, medianHitRate, since: SINCE, runs: r2Plus };
+  return { ok: true, recommendation, reason, runCount: N, medianHitRate, since: SINCE, source: sourceLabel, runs: r2Plus };
 }
 
 function renderHuman(result) {
@@ -95,6 +147,7 @@ function renderHuman(result) {
   console.log('  AUDIT_CACHE_SEED — empirical check');
   console.log('═══════════════════════════════════════');
   console.log(`  Recommendation: ${result.recommendation}`);
+  console.log(`  Source:         ${result.source ?? '(unknown)'}`);
   console.log(`  Since:          ${result.since}`);
   console.log(`  R2+ runs:       ${result.runCount}`);
   console.log(`  Median hitRate: ${(result.medianHitRate * 100).toFixed(1)}%`);
@@ -112,7 +165,7 @@ function renderHuman(result) {
   console.log('');
 }
 
-const result = analyse();
+const result = await analyse();
 if (JSON_OUT) {
   console.log(JSON.stringify(result, null, 2));
 } else {
