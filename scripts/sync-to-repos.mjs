@@ -52,6 +52,7 @@ const CORE_SCRIPTS = [
   'scripts/shared.mjs',
   'scripts/check-sync.mjs',
   'scripts/check-setup.mjs',
+  'scripts/cache-hitrate-check.mjs',
   // lib/ core modules
   'scripts/lib/schemas.mjs',
   'scripts/lib/file-io.mjs',
