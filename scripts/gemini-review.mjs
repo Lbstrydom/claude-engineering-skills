@@ -215,7 +215,21 @@ RULES:
    (b) Provide genuinely NEW counter-evidence in the evidence_basis field that was NOT addressed
        by Claude's challenge. Re-asserting the prior position without new evidence is not acceptable.
    Populate cited_lines with any specific line references you use, so hallucinated citations
-   can be detected. If you cite "line 132" of a file, it must actually contain relevant code.`;
+   can be detected. If you cite "line 132" of a file, it must actually contain relevant code.
+   PROVENANCE REQUIREMENT: every wrongly_dismissed entry must EITHER (i) cite a concrete
+   prior dismissed finding by its original_finding_id, OR (ii) name an explicit deliberation
+   error in the transcript. If the entry's evidence_basis cites code in a file NOT in
+   "Files In Scope (PR diff)", the evidence_basis MUST also state the linkage to a
+   changed file (e.g. "imported by <changed-file>", "consumed by <changed-file>'s call to X").
+   Entries that are neither traceable to a prior finding nor linked to in-scope code
+   should NOT be raised — they are scope-creep, not missed cross-cutting analysis.
+8. Scope discipline: when the prompt contains a "Files In Scope (PR diff)" section, every
+   new_findings entry MUST cite a file from that list. Files outside that list are inlined ONLY
+   for context (e.g. referenced by the plan or used as dependencies) — issues there are
+   pre-existing, NOT this PR's responsibility. Cross-cutting concerns that a PR change BREAKS
+   in an in-scope-adjacent file belong in the in-scope file's finding (cite both files in the
+   description), not as a standalone finding pointing at the unchanged file. Findings whose
+   primary file is out-of-scope will be filtered post-hoc and counted as scope errors.`;
 
 // Bootstrap prompt registry for Gemini review (enables variant selection + evolution)
 bootstrapFromConstants({ 'gemini-review': REVIEW_SYSTEM });
@@ -509,6 +523,23 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     ].join('\n');
   }
 
+  // Scope block: when the transcript declares changed_files, surface them
+  // explicitly so the reviewer knows which files are this PR's responsibility
+  // vs which are inlined for context.  Filtered post-hoc by applyScopeFilter().
+  const changedFiles = Array.isArray(transcript.changed_files) ? transcript.changed_files : [];
+  let scopeBlock = '';
+  if (changedFiles.length > 0) {
+    scopeBlock = [
+      '## Files In Scope (PR diff)',
+      'These are the files this PR modified.  new_findings[] entries MUST cite one of these.',
+      'Other files in "Code Files" below are inlined for context only — issues there are',
+      'pre-existing and out-of-scope for this audit.',
+      '',
+      ...changedFiles.map(f => `- ${f}`),
+      '',
+    ].join('\n');
+  }
+
   const userPrompt = [
     '## Project Context',
     projectContext,
@@ -520,6 +551,8 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     '',
     '---',
     '',
+    scopeBlock,
+    scopeBlock ? '---' : '',
     '## Audit Transcript (Claude-GPT Deliberation)',
     typeof transcript === 'object' && transcript.raw
       ? transcript.raw
@@ -802,6 +835,36 @@ async function applyDebtSuppression(result, transcriptContent) {
   } catch { /* transcript not JSON or no _debtMemory — skip */ }
 }
 
+async function applyScopeFilter(result, transcriptContent) {
+  try {
+    const transcriptObj = JSON.parse(transcriptContent);
+    const changedFiles = Array.isArray(transcriptObj.changed_files) ? transcriptObj.changed_files : [];
+    if (changedFiles.length === 0) return;
+    if (!Array.isArray(result.new_findings)) return;
+    // Normalise paths for comparison: trim whitespace, strip leading ./.
+    const inScope = new Set(changedFiles.map(f => f.trim().replace(/^\.\//, '')));
+    const before = result.new_findings.length;
+    const kept = [];
+    const scopeFiltered = [];
+    for (const f of result.new_findings) {
+      const file = (f.file || f.location || '').trim().replace(/^\.\//, '');
+      // Empty file → keep (deliberation-level finding, not file-specific).
+      if (!file) { kept.push(f); continue; }
+      const matched = inScope.has(file) || [...inScope].some(s => file === s || file.endsWith('/' + s) || s.endsWith('/' + file));
+      if (matched) kept.push(f);
+      else scopeFiltered.push({ finding: f, file });
+    }
+    if (scopeFiltered.length === 0) return;
+    process.stderr.write(`  [final-review] Scope filter: ${scopeFiltered.length}/${before} new_findings cited out-of-scope files (dropped)\n`);
+    for (const s of scopeFiltered.slice(0, 3)) {
+      process.stderr.write(`    [scope-dropped] ${s.finding.id || '?'} → ${s.file}\n`);
+    }
+    result.new_findings = kept;
+    result._scopeFilteredCount = scopeFiltered.length;
+    result._scopeFilteredFindings = scopeFiltered.map(s => ({ id: s.finding.id, file: s.file, hash: s.finding._hash }));
+  } catch { /* transcript not JSON or no changed_files — skip */ }
+}
+
 function addSemanticIds(result, provider) {
   if (!result.new_findings) return;
   for (let i = 0; i < result.new_findings.length; i++) {
@@ -927,6 +990,7 @@ async function main() {
     const r = await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode);
     const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
     await applyDebtSuppression(result, usedTranscript);
+    await applyScopeFilter(result, usedTranscript);
     addSemanticIds(result, provider);
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile);
     recordGeminiOutcomes(result);

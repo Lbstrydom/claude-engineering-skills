@@ -1,5 +1,48 @@
 # Project Status Log
 
+## 2026-05-11 (later) — Gemini-gate scope fix + OpenAI prompt prefix-cache restructure
+
+### Changes (bundled commit — two related fixes)
+
+**1. Gemini-gate scope fix** (`scripts/gemini-review.mjs` + shared docs)
+- Added `transcript.changed_files` field as Step 7 transcript requirement.
+- New rule 8 in REVIEW_SYSTEM: `new_findings[]` entries must cite a file from `Files In Scope (PR diff)` block.
+- Tightened rule 7: `wrongly_dismissed[]` entries must trace to a prior dismissed finding OR provide explicit linkage from unchanged-file evidence to in-scope changed file (provenance requirement).
+- New `applyScopeFilter()` post-output filter drops out-of-scope `new_findings`; logs `[scope-dropped]` to stderr + records `_scopeFilteredCount`/`_scopeFilteredFindings` on result envelope.
+- Updated canonical doc at `docs/audit/shared-references/gemini-gate.md` + auto-synced to 4 mirrors.
+- Audited in 3 GPT rounds + 2 Gemini rounds (REJECT final round was a Gemini hallucination — fabricated GPT quote contradicted by R1 stderr; documented).
+
+**2. OpenAI prompt prefix-cache restructure** (`scripts/openai-audit.mjs` + new `scripts/lib/audit/prompt-builder.mjs`)
+- New `buildAuditPassPrompt` pure function: 3-message structure (stable msg #1 = brief+plan+files; dynamic msg #2 = rulings; dynamic msg #3 = code) — preserves rulings-before-code instruction salience while keeping msg #1 byte-stable for OpenAI prefix caching.
+- Migrated all 14 audit call sites in `openai-audit.mjs` to use `buildCachePrompt` helper.
+- `_callGPTOnce` / `callGPT` / `safeCallGPT` now accept structured `{ system, messages }` OR legacy `{ systemPrompt, userPrompt }`; hybrid input rejected with `LlmError({category:'config'})` (fail-fast on programmer bugs); `safeCallGPT` re-throws config errors but stays graceful for LLM/runtime errors.
+- `cached_tokens` telemetry threaded through entire call chain; aggregated to `_cacheMetrics` on the merged result + session manifest; `[cache] input=… cached=… hitRate=…%` stderr line per audit run.
+- Opt-in cache-seed wrapper in `runMapReducePass` (`AUDIT_CACHE_SEED=1`) — sequential seed of smallest unit then parallel fanout; `shouldSeedCache()` policy checks `units.length > 1` + stable-prefix ≥ 1024 tokens; `throwIfConfigError` re-throws config-category rejections from Promise.allSettled (fail-fast preserved through fanout).
+- `runMapReducePass` signature changed: now takes `(openai, files, passName, buildPromptForUnit, ...)` — per-unit prompt is built by caller closure.
+- 40 new tests (22 prompt-builder + 18 wrapper-contract).
+- Audited 2 GPT rounds + 1 Gemini round → Gemini APPROVE.
+
+### Files Affected
+- `scripts/gemini-review.mjs` (+rule 8 + scope block + applyScopeFilter + rule 7 provenance)
+- `scripts/openai-audit.mjs` (~150 LOC change: prompt-builder integration, telemetry, cache-seed, test exports)
+- `scripts/lib/audit/prompt-builder.mjs` (NEW — ~150 LOC pure function + helpers)
+- `tests/prompt-builder.test.mjs` (NEW — 22 tests)
+- `tests/openai-wrapper-contract.test.mjs` (NEW — 18 tests)
+- `docs/audit/shared-references/gemini-gate.md` (+Flavour 2 section, +Step 7.1 refresh + Rule 7 cross-ref)
+- `docs/plans/openai-prefix-cache.md` (NEW — 600-line plan, audited 3+2 rounds)
+- `docs/plans/gemini-gate-scope-fix.md` + audit-summary (NEW)
+- Auto-synced mirrors at `skills/audit-{plan,code}/references/gemini-gate.md` + `.claude/skills/audit-{plan,code}/references/gemini-gate.md`
+
+### Audit Outcomes
+- Gemini-gate plan: GPT R1→R2 PASS, Gemini R1 CONCERNS→R2 APPROVE (with HIGH hallucination documented)
+- Prefix-cache plan: GPT R1 NEEDS_REVISION→R2 NEEDS_REVISION→R3 NEEDS_REVISION→Gemini R1 CONCERNS→R2 APPROVE; verification audit GPT R1 SIGNIFICANT_ISSUES (3 HIGHs — all rebutted/dismissed) → R2 NEEDS_FIXES (H:0 plateau, MEDIUMs are R1 re-raises) → Gemini APPROVE (1 LOW spread-order polish fixed)
+
+### Next Steps
+- Follow-up PR: deferred snapshot + integration + R2-churn-defense tests + their fixtures.
+- Empirical cache-hit-rate measurement across 5+ real audits; flip `AUDIT_CACHE_SEED` default to ON once median R2 hit-rate > 30%.
+
+---
+
 ## 2026-05-11 — Symbol-index bugs: arch:refresh --force + arch:duplicates thin-delegate
 
 ### Changes

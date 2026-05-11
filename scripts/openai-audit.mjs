@@ -39,7 +39,8 @@ import {
 } from './lib/file-io.mjs';
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
-  suppressReRaises, buildRulingsBlock, R2_ROUND_MODIFIER, buildR2SystemPrompt,
+  suppressReRaises, buildRulingsBlock, R2_ROUND_MODIFIER, buildR2SystemPrompt, // buildR2SystemPrompt retained for non-cache legacy callers only
+
   computeImpactSet, batchWriteLedger
 } from './lib/ledger.mjs';
 import {
@@ -47,6 +48,7 @@ import {
   buildDependencyGraph, REDUCE_SYSTEM_PROMPT, measureContextChars
 } from './lib/code-analysis.mjs';
 import { semanticId, formatFindings, appendOutcome, loadOutcomes, FalsePositiveTracker } from './lib/findings.mjs';
+import { buildAuditPassPrompt, estimateStablePrefixTokens } from './lib/audit/prompt-builder.mjs';
 import { PlanFpTracker } from './lib/plan-fp-tracker.mjs';
 import {
   generateRepoProfile, initAuditBrief, readProjectContext, readProjectContextForPass,
@@ -362,10 +364,105 @@ const PASS_SUSTAINABILITY_SYSTEM = getPassPrompt('sustainability');
  * Make a single GPT-5.4 call with structured output.
  * Detects incomplete/truncated responses and throws LlmError with usage attached.
  */
-async function _callGPTOnce(openai, { systemPrompt, userPrompt, schema, schemaName, reasoning, maxTokens, timeoutMs, passName }) {
+/**
+ * Build an audit-pass prompt opts object ready to pass to safeCallGPT in
+ * structured mode. Bundles the typical per-pass setup (brief lookup, plan
+ * slicing, optional rulings, R2_ROUND_MODIFIER) so call sites stay terse.
+ *
+ * Returns { system, messages } — pass directly to `safeCallGPT`/`callGPT`
+ * via spread: `safeCallGPT(openai, { ...buildCachePrompt({...}), schema, ... })`.
+ *
+ * @param {object} args
+ * @param {string} args.rubric            - pass-specific static system rubric (e.g. PASS_STRUCTURE_SYSTEM)
+ * @param {string} args.focusBlock        - repo-focus addition (appended to rubric)
+ * @param {string} args.passName          - pass identifier (used for brief/plan slicing)
+ * @param {string} args.planContent       - full plan markdown
+ * @param {string|null} args.ledgerFile   - ledger path (null on R1)
+ * @param {Set<string>|null} args.impactSet - impacted-file set for rulings filter
+ * @param {boolean} args.isR2Plus         - R2+ flag (controls rulings + roundModifier)
+ * @param {string} args.code              - file contents to audit
+ * @param {string} [args.fileListContext] - optional file-list summary block
+ * @returns {{ system: string, messages: Array<{role:'user',content:string}> }}
+ */
+function buildCachePrompt({ rubric, focusBlock, passName, planContent, ledgerFile, impactSet, isR2Plus, code, codeHeader = '## Code', fileListContext = '', historyBlock = '', unitLabel = '' }) {
+  // Combine pre-existing CLI --history block (rare) with R2+ ledger rulings.
+  // Both are round-varying; both belong in msg #2 for cache stability.
+  const rulings = (isR2Plus && ledgerFile) ? buildRulingsBlock(ledgerFile, passName, impactSet) : null;
+  const history = [historyBlock, rulings].filter(Boolean).join('\n\n') || null;
+  return buildAuditPassPrompt({
+    systemRubric: rubric + (focusBlock || ''),
+    brief: readProjectContextForPass(passName),
+    planSlice: extractPlanForPass(planContent, passName),
+    fileListContext,
+    code,
+    codeHeader,
+    history,
+    roundModifier: isR2Plus ? R2_ROUND_MODIFIER : null,
+    unitLabel,
+  });
+}
+
+/**
+ * Normalise prompt opts into a Responses-API `input` array.
+ * Accepts EITHER legacy `{ systemPrompt, userPrompt }` (strings) OR
+ * structured `{ system, messages }` (string + user-message array).
+ * Rejects hybrid combinations with LlmError({category:'config'}) — those
+ * are programmer bugs and must fail-fast per repo policy.
+ *
+ * SUNSET PLAN (legacy `systemPrompt`/`userPrompt` mode):
+ * The legacy mode is kept for non-audit callers (currently none in this
+ * repo's audit pipeline — all 14 audit call sites migrated to structured
+ * mode as of `feat(audit): prompt prefix-cache restructure`). It will be
+ * removed once we've gone 30 days without any internal caller using it.
+ * The wrapper-contract test asserts both modes work; remove the legacy
+ * branch + its test when the sunset fires.
+ *
+ * @returns {Array<{role:'system'|'user',content:string}>} input array
+ */
+function normalisePromptInput(opts) {
+  const hasLegacy = opts.systemPrompt !== undefined || opts.userPrompt !== undefined;
+  const hasStructured = opts.system !== undefined || opts.messages !== undefined;
+  if (hasLegacy && hasStructured) {
+    throw new LlmError(
+      'Hybrid prompt input: cannot pass both {systemPrompt|userPrompt} and {system|messages}. Pick one mode.',
+      { category: 'config', retryable: false }
+    );
+  }
+  if (hasStructured) {
+    if (typeof opts.system !== 'string') {
+      throw new LlmError('Structured mode requires opts.system: string', { category: 'config', retryable: false });
+    }
+    if (!Array.isArray(opts.messages) || opts.messages.length === 0) {
+      throw new LlmError('Structured mode requires opts.messages: non-empty array', { category: 'config', retryable: false });
+    }
+    for (const m of opts.messages) {
+      if (!m || m.role !== 'user' || typeof m.content !== 'string') {
+        throw new LlmError('Structured mode: each message must be { role: "user", content: string }', { category: 'config', retryable: false });
+      }
+    }
+    return [{ role: 'system', content: opts.system }, ...opts.messages];
+  }
+  // Legacy mode
+  if (typeof opts.systemPrompt !== 'string' || typeof opts.userPrompt !== 'string') {
+    throw new LlmError('Legacy mode requires systemPrompt + userPrompt as strings', { category: 'config', retryable: false });
+  }
+  return [
+    { role: 'system', content: opts.systemPrompt },
+    { role: 'user', content: opts.userPrompt }
+  ];
+}
+
+async function _callGPTOnce(openai, opts) {
+  const { schema, schemaName, reasoning, maxTokens, timeoutMs, passName } = opts;
   const effort = reasoning ?? REASONING_EFFORT;
   const tokens = maxTokens ?? MAX_OUTPUT_TOKENS_CAP;
   const timeout = timeoutMs ?? TIMEOUT_MS_CAP;
+
+  // Normalise prompt input ONCE — throws config-category LlmError on hybrid.
+  // This deliberately happens OUTSIDE the try/catch below so it propagates
+  // unwrapped (the try block re-throws structured LlmErrors anyway, but the
+  // config check here makes the failure unmissable for callers).
+  const input = normalisePromptInput(opts);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
@@ -378,10 +475,7 @@ async function _callGPTOnce(openai, { systemPrompt, userPrompt, schema, schemaNa
   try {
     const requestParams = {
       model: MODEL,
-      input: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ],
+      input,
       text: { format: zodTextFormat(schema, schemaName) },
       max_output_tokens: tokens
     };
@@ -394,9 +488,10 @@ async function _callGPTOnce(openai, { systemPrompt, userPrompt, schema, schemaNa
     clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
 
-    // Extract usage regardless of success/failure
+    // Extract usage regardless of success/failure (includes cached_tokens)
     const usage = {
       input_tokens: response.usage?.input_tokens ?? 0,
+      cached_tokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
       output_tokens: response.usage?.output_tokens ?? 0,
       reasoning_tokens: response.usage?.output_tokens_details?.reasoning_tokens ?? 0,
       latency_ms: latencyMs
@@ -462,7 +557,7 @@ async function _callGPTOnce(openai, { systemPrompt, userPrompt, schema, schemaNa
 async function callGPT(openai, opts) {
   let lastErr;
   const startMs = Date.now();
-  const accumulatedUsage = { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0 };
+  const accumulatedUsage = { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0 };
   const maxRetries = opts.maxRetries ?? RETRY_MAX_ATTEMPTS;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -470,6 +565,7 @@ async function callGPT(openai, opts) {
       const result = await _callGPTOnce(openai, opts);
       if (attempt > 0) {
         result.usage.input_tokens += accumulatedUsage.input_tokens;
+        result.usage.cached_tokens += accumulatedUsage.cached_tokens;
         result.usage.output_tokens += accumulatedUsage.output_tokens;
         result.usage.reasoning_tokens += accumulatedUsage.reasoning_tokens;
         result.latencyMs = Date.now() - startMs;
@@ -481,6 +577,7 @@ async function callGPT(openai, opts) {
       lastErr = err;
       if (err.llmUsage) {
         accumulatedUsage.input_tokens += err.llmUsage.input_tokens ?? 0;
+        accumulatedUsage.cached_tokens += err.llmUsage.cached_tokens ?? 0;
         accumulatedUsage.output_tokens += err.llmUsage.output_tokens ?? 0;
         accumulatedUsage.reasoning_tokens += err.llmUsage.reasoning_tokens ?? 0;
       }
@@ -501,17 +598,26 @@ async function callGPT(openai, opts) {
 }
 
 /**
- * Wrapper that catches pass failures and returns empty results instead of crashing.
- * Allows the audit to continue even if one pass fails.
+ * Wrapper that catches LLM/runtime pass failures and returns empty results
+ * instead of crashing. Allows the audit to continue even if one pass fails.
+ *
+ * Fail-fast for config errors (programmer bugs): if the underlying call throws
+ * LlmError({category:'config'}), it is RE-THROWN — those represent hybrid
+ * prompt inputs or schema mismatches that must surface immediately in tests
+ * rather than silently degrade in production audits.
  */
 async function safeCallGPT(openai, opts, emptyResult) {
   try {
     return await callGPT(openai, opts);
   } catch (err) {
+    // Fail-fast on programmer bugs (hybrid input, schema misconfig)
+    if (err instanceof LlmError && err.llmCategory === 'config') {
+      throw err;
+    }
     process.stderr.write(`  [${opts.passName}] Graceful degradation — using empty result\n`);
     return {
       result: emptyResult,
-      usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+      usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
       latencyMs: 0,
       failed: true,
       error: err.message
@@ -602,15 +708,116 @@ function validateLedgerForR2(ledgerPath, round) {
  * MAP: parallel GPT calls per audit unit (chunked file groups).
  * REDUCE: single synthesis call to deduplicate, elevate patterns, rank findings.
  *
+ * The prompt for each unit is built by the caller-provided `buildPromptForUnit`
+ * callback — this keeps the prompt-shape logic colocated with the per-pass
+ * config in the call sites, while runMapReducePass owns the parallelism /
+ * retry / aggregation logic.
+ *
  * @param {OpenAI} openai - OpenAI client
  * @param {string[]} files - Files to audit in this pass
- * @param {string} systemPrompt - System prompt for map units
- * @param {string} projectBrief - Project context brief
- * @param {string} planContent - Plan content for context
  * @param {string} passName - Name of the pass (for logging)
+ * @param {(unit, i, total) => { system, messages }} buildPromptForUnit -
+ *   Callback that returns structured prompt opts for a given unit.
+ *   Typically uses `buildCachePrompt({ ..., unitLabel: ..., code: ... })`.
+ * @param {number} [maxFilesPerUnit=Infinity]
+ * @param {object} [opts]
+ * @param {Set<string>|null} [opts.changedFileSet] - per-file changed set for retry-skip
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function runMapReducePass(openai, files, systemPrompt, projectBrief, planContent, passName, maxFilesPerUnit = Infinity, { changedFileSet = null } = {}) {
+// Re-throw config-category LlmErrors from a Promise.allSettled rejection
+// so programmer wiring bugs surface immediately rather than being swallowed
+// (Gemini-R1/MED fix to plan §6).
+function throwIfConfigError(settled) {
+  if (settled && settled.status === 'rejected'
+      && settled.reason instanceof LlmError
+      && settled.reason.llmCategory === 'config') {
+    throw settled.reason;
+  }
+}
+
+// Cache-seed eligibility policy (plan §7c). Returns the seed decision
+// envelope { seedEligible, seedUsed, seedSkipReason, seedUnitIdx, seedUnitTokens }
+// so the audit-pass telemetry can record which mode ran.
+function decideSeed(units, passName, buildPromptForUnit) {
+  const envFlag = process.env.AUDIT_CACHE_SEED === '1';
+  const minPrefix = safeInt(process.env.AUDIT_CACHE_STABLE_PREFIX_MIN, 1024);
+  const decision = { seedEligible: false, seedUsed: false, seedSkipReason: null, seedUnitIdx: null, seedUnitTokens: null };
+  if (!envFlag) {
+    decision.seedSkipReason = 'env-disabled';
+    return decision;
+  }
+  if (units.length <= 1) {
+    decision.seedSkipReason = 'units.length<=1';
+    return decision;
+  }
+  // Pick the smallest unit by code length (proxy for tokens) — its only job
+  // is to warm the cache; smaller seed = lower latency cost.
+  let seedIdx = 0;
+  let seedLen = Infinity;
+  for (let i = 0; i < units.length; i++) {
+    const u = units[i];
+    const len = u.chunk
+      ? (u.chunk.imports?.length ?? 0) + u.chunk.items.reduce((s, it) => s + (it.source?.length ?? 0), 0)
+      : u.files.reduce((s, f) => { try { return s + fs.statSync(f).size; } catch { return s; } }, 0);
+    if (len < seedLen) { seedLen = len; seedIdx = i; }
+  }
+  // Sanity-estimate the stable prefix by building one unit's prompt with the
+  // smallest payload — if msg #1 is below threshold, seeding is pointless.
+  try {
+    const probe = buildPromptForUnit({ ...units[seedIdx], _context: '' }, seedIdx, units.length, 'probe');
+    const prefixChars = (probe.system?.length ?? 0) + (probe.messages?.[0]?.content?.length ?? 0);
+    const prefixTokens = Math.ceil(prefixChars / 4);
+    if (prefixTokens < minPrefix) {
+      decision.seedSkipReason = 'prefix-too-small';
+      decision.seedEligible = false;
+      decision.seedUnitIdx = seedIdx;
+      decision.seedUnitTokens = prefixTokens;
+      return decision;
+    }
+    decision.seedEligible = true;
+    decision.seedUsed = true;
+    decision.seedUnitIdx = seedIdx;
+    decision.seedUnitTokens = prefixTokens;
+    return decision;
+  } catch (err) {
+    decision.seedSkipReason = `probe-failed:${err.message?.slice(0, 60)}`;
+    return decision;
+  }
+}
+
+// Run one map-reduce unit. Extracted from runMapReducePass body so the
+// cache-seed path (sequential seed → parallel fanout) can re-use the same
+// per-unit logic without duplicating retry/context wiring.
+async function runOneMapUnit(openai, unit, i, totalUnits, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot) {
+  if (acquireSlot) await acquireSlot();
+  try {
+    const context = unit.chunk
+      ? `// ${unit.files[0]} (chunk)\n${unit.chunk.imports}\n\n${unit.chunk.items.map(it => it.source).join('\n\n')}`
+      : readFilesAsContext(unit.files, { maxPerFile: 10000, maxTotal: 80000 });
+
+    const limits = computePassLimits(context.length, 'high');
+    const unitHasChangedFiles = !changedFileSet || unit.files.some(f => changedFileSet.has(normalizePath(f)));
+    const maxRetries = unitHasChangedFiles ? undefined : 0;
+
+    const unitLabel = `Audit Unit ${i + 1}/${totalUnits} (${unit.files.length} files)`;
+    const { system, messages } = buildPromptForUnit({ ...unit, _context: context }, i, totalUnits, unitLabel);
+
+    return await callGPT(openai, {
+      system,
+      messages,
+      schema: PassFindingsSchema,
+      schemaName: `map_${passName}_${i}`,
+      reasoning: 'high',
+      ...limits,
+      passName: `map-${passName}-${i}`,
+      maxRetries,
+    });
+  } finally {
+    if (releaseSlot) releaseSlot();
+  }
+}
+
+async function runMapReducePass(openai, files, passName, buildPromptForUnit, maxFilesPerUnit = Infinity, { changedFileSet = null } = {}) {
   const units = buildAuditUnits(files, 30000, maxFilesPerUnit);
 
   // MAP phase: parallel calls with concurrency limit
@@ -623,36 +830,35 @@ async function runMapReducePass(openai, files, systemPrompt, projectBrief, planC
   process.stderr.write(`  [${passName}] MAP: ${units.length} units, concurrency=${CONCURRENCY_LIMIT}\n`);
   const mapStart = Date.now();
 
-  const results = await Promise.allSettled(
-    units.map(async (unit, i) => {
-      await acquireSlot();
-      try {
-        const context = unit.chunk
-          ? `// ${unit.files[0]} (chunk)\n${unit.chunk.imports}\n\n${unit.chunk.items.map(it => it.source).join('\n\n')}`
-          : readFilesAsContext(unit.files, { maxPerFile: 10000, maxTotal: 80000 });
-
-        const limits = computePassLimits(context.length, 'high');
-        // Fix #3: Skip retry for map units with no changed files.
-        // Retrying unchanged-file units on R2+ is pure waste — they produce the
-        // same scope-pressure findings as the prior round.
-        const unitHasChangedFiles = !changedFileSet || unit.files.some(f => changedFileSet.has(normalizePath(f)));
-        const maxRetries = unitHasChangedFiles ? undefined : 0; // 0 = no retries
-
-        return await callGPT(openai, {
-          systemPrompt,
-          userPrompt: `## Project Brief\n${projectBrief}\n\n## Audit Unit ${i + 1}/${units.length} (${unit.files.length} files)\n\n## Code\n${context}`,
-          schema: PassFindingsSchema,
-          schemaName: `map_${passName}_${i}`,
-          reasoning: 'high',
-          ...limits,
-          passName: `map-${passName}-${i}`,
-          maxRetries,
-        });
-      } finally {
-        releaseSlot();
-      }
-    })
-  );
+  // Cache-seed (PR-5): opt-in via AUDIT_CACHE_SEED=1. When enabled AND
+  // units.length > 1 AND stable-prefix is large enough, run the smallest
+  // unit sequentially FIRST to warm OpenAI's prefix cache, then fan out
+  // the rest in parallel. Result ordering is reconstructed by original
+  // unit index — seed selection is purely a warm-up optimisation.
+  // Per Gemini-R1/MED: re-throw config errors from any settled result
+  // so programmer bugs surface immediately instead of being swallowed by
+  // Promise.allSettled.
+  const seedDecision = decideSeed(units, passName, buildPromptForUnit);
+  let results;
+  if (seedDecision.seedUsed) {
+    const seedIdx = seedDecision.seedUnitIdx;
+    process.stderr.write(`  [${passName}] cache-seed: warming with unit ${seedIdx} (~${seedDecision.seedUnitTokens} tok), then fanning out\n`);
+    const runOneAtIdx = (i) => runOneMapUnit(openai, units[i], i, units.length, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot);
+    const [seedSettled] = await Promise.allSettled([runOneAtIdx(seedIdx)]);
+    throwIfConfigError(seedSettled);
+    const fanoutIdxs = units.map((_, i) => i).filter(i => i !== seedIdx);
+    const fanoutSettled = await Promise.allSettled(fanoutIdxs.map(runOneAtIdx));
+    for (const s of fanoutSettled) throwIfConfigError(s);
+    results = new Array(units.length);
+    results[seedIdx] = seedSettled;
+    fanoutIdxs.forEach((origIdx, j) => { results[origIdx] = fanoutSettled[j]; });
+  } else {
+    results = await Promise.allSettled(
+      units.map((unit, i) => runOneMapUnit(openai, unit, i, units.length, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot))
+    );
+    // Fail-fast on config errors (Gemini-R1/MED)
+    for (const s of results) throwIfConfigError(s);
+  }
 
   // Collect findings + aggregate usage (including failed units)
   const allFindings = [];
@@ -1077,8 +1283,19 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     const structureFiles = readFilesAsContext(found, { maxPerFile: 2000, maxTotal: 30000 });
     wave1Promises.push(
       safeCallGPT(openai, {
-        systemPrompt: PASS_STRUCTURE_SYSTEM + focusBlock,
-        userPrompt: `## Project Context\n${readProjectContextForPass('structure')}\n${historyBlock}\n## Plan\n${extractPlanForPass(planContent, 'structure')}\n\n${fileListContext}\n\n## File Signatures\n${structureFiles}`,
+        ...buildCachePrompt({
+          rubric: PASS_STRUCTURE_SYSTEM,
+          focusBlock,
+          passName: 'structure',
+          planContent,
+          ledgerFile: isR2Plus ? ledgerFile : null,
+          impactSet,
+          isR2Plus,
+          historyBlock,
+          fileListContext,
+          codeHeader: '## File Signatures',
+          code: structureFiles,
+        }),
         schema: StructurePassSchema,
         schemaName: 'structure_pass',
         reasoning: 'low',
@@ -1095,10 +1312,22 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     const wiringFiles = found.filter(f => f.includes('/api/') || f.includes('/routes/'));
     const wiringContextChars = baseContextChars + measureContextChars(wiringFiles, 8000) + sharedContext.length;
     const wiringLimits = computePassLimits(wiringContextChars, 'low');
+    const wiringCode = `${readFilesAsContext(wiringFiles, { maxPerFile: 8000, maxTotal: 60000 })}\n\n## Shared Files\n${sharedContext}`;
     wave1Promises.push(
       safeCallGPT(openai, {
-        systemPrompt: PASS_WIRING_SYSTEM + focusBlock,
-        userPrompt: `## Project Context\n${readProjectContextForPass('wiring')}\n${historyBlock}\n## Plan\n${extractPlanForPass(planContent, 'wiring')}\n\n${fileListContext}\n\n## API & Route Files\n${readFilesAsContext(wiringFiles, { maxPerFile: 8000, maxTotal: 60000 })}\n\n## Shared Files\n${sharedContext}`,
+        ...buildCachePrompt({
+          rubric: PASS_WIRING_SYSTEM,
+          focusBlock,
+          passName: 'wiring',
+          planContent,
+          ledgerFile: isR2Plus ? ledgerFile : null,
+          impactSet,
+          isR2Plus,
+          historyBlock,
+          fileListContext,
+          codeHeader: '## API & Route Files',
+          code: wiringCode,
+        }),
         schema: WiringPassSchema,
         schemaName: 'wiring_pass',
         reasoning: 'low',
@@ -1135,21 +1364,39 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         if (shouldMapReduceHighReasoning(effectiveRoutes)) {
           mapReducePasses.push('be-routes');
           process.stderr.write(`  [be-routes] ${effectiveRoutes.length} files — using map-reduce\n`);
-          const beRoutesSystemPrompt = (isR2Plus
-            ? buildR2SystemPrompt(PASS_BACKEND_RUBRIC, buildRulingsBlock(ledgerFile, 'be-routes', impactSet))
-            : PASS_BACKEND_SYSTEM) + focusBlock;
           wave2Promises.push(
-            runMapReducePass(openai, effectiveRoutes, beRoutesSystemPrompt, beCtx, bePlan, 'be-routes', openaiConfig.backendMaxFilesPerUnit)
+            runMapReducePass(openai, effectiveRoutes, 'be-routes', (unit, i, total, unitLabel) => buildCachePrompt({
+              rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
+              focusBlock,
+              passName: 'be-routes',
+              planContent,
+              ledgerFile: isR2Plus ? ledgerFile : null,
+              impactSet,
+              isR2Plus,
+              historyBlock,
+              codeHeader: '## Code',
+              code: unit._context,
+              unitLabel,
+            }), openaiConfig.backendMaxFilesPerUnit)
           );
         } else {
           const limits = computePassLimits(baseContextChars + measureContextChars(effectiveRoutes, 8000) + sharedContext.length, 'high');
           process.stderr.write(`  be-routes: ${effectiveRoutes.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
+          const beRoutesCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveRoutes, diffMap, { maxPerFile: 8000, maxTotal: 60000 }) : readFilesAsContext(effectiveRoutes, { maxPerFile: 8000, maxTotal: 60000 })}\n\n## Shared Files\n${sharedContext}`;
           wave2Promises.push(
             safeCallGPT(openai, {
-              systemPrompt: (isR2Plus
-                ? buildR2SystemPrompt(PASS_BACKEND_RUBRIC, buildRulingsBlock(ledgerFile, 'be-routes', impactSet))
-                : PASS_BACKEND_SYSTEM) + focusBlock,
-              userPrompt: `## Project Context\n${beCtx}\n${historyBlock}\n## Plan\n${bePlan}\n\n## Backend ROUTES\n${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveRoutes, diffMap, { maxPerFile: 8000, maxTotal: 60000 }) : readFilesAsContext(effectiveRoutes, { maxPerFile: 8000, maxTotal: 60000 })}\n\n## Shared Files\n${sharedContext}`,
+              ...buildCachePrompt({
+                rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
+                focusBlock,
+                passName: 'be-routes',
+                planContent,
+                ledgerFile: isR2Plus ? ledgerFile : null,
+                impactSet,
+                isR2Plus,
+                historyBlock,
+                codeHeader: '## Backend ROUTES',
+                code: beRoutesCode,
+              }),
               schema: PassFindingsSchema,
               schemaName: 'backend_routes_pass',
               reasoning: 'high',
@@ -1164,21 +1411,39 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         if (shouldMapReduceHighReasoning(effectiveServices)) {
           mapReducePasses.push('be-services');
           process.stderr.write(`  [be-services] ${effectiveServices.length} files — using map-reduce\n`);
-          const beServicesSystemPrompt = (isR2Plus
-            ? buildR2SystemPrompt(PASS_BACKEND_RUBRIC, buildRulingsBlock(ledgerFile, 'be-services', impactSet))
-            : PASS_BACKEND_SYSTEM) + focusBlock;
           wave2Promises.push(
-            runMapReducePass(openai, effectiveServices, beServicesSystemPrompt, beCtx, bePlan, 'be-services', openaiConfig.backendMaxFilesPerUnit)
+            runMapReducePass(openai, effectiveServices, 'be-services', (unit, i, total, unitLabel) => buildCachePrompt({
+              rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
+              focusBlock,
+              passName: 'be-services',
+              planContent,
+              ledgerFile: isR2Plus ? ledgerFile : null,
+              impactSet,
+              isR2Plus,
+              historyBlock,
+              codeHeader: '## Code',
+              code: unit._context,
+              unitLabel,
+            }), openaiConfig.backendMaxFilesPerUnit)
           );
         } else {
           const limits = computePassLimits(baseContextChars + measureContextChars(effectiveServices, 8000), 'high');
           process.stderr.write(`  be-services: ${effectiveServices.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
+          const beServicesCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveServices, diffMap, { maxPerFile: 8000, maxTotal: 80000 }) : readFilesAsContext(effectiveServices, { maxPerFile: 8000, maxTotal: 80000 });
           wave2Promises.push(
             safeCallGPT(openai, {
-              systemPrompt: (isR2Plus
-                ? buildR2SystemPrompt(PASS_BACKEND_RUBRIC, buildRulingsBlock(ledgerFile, 'be-services', impactSet))
-                : PASS_BACKEND_SYSTEM) + focusBlock,
-              userPrompt: `## Project Context\n${beCtx}\n${historyBlock}\n## Plan\n${bePlan}\n\n## Backend SERVICES\n${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveServices, diffMap, { maxPerFile: 8000, maxTotal: 80000 }) : readFilesAsContext(effectiveServices, { maxPerFile: 8000, maxTotal: 80000 })}`,
+              ...buildCachePrompt({
+                rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
+                focusBlock,
+                passName: 'be-services',
+                planContent,
+                ledgerFile: isR2Plus ? ledgerFile : null,
+                impactSet,
+                isR2Plus,
+                historyBlock,
+                codeHeader: '## Backend SERVICES',
+                code: beServicesCode,
+              }),
               schema: PassFindingsSchema,
               schemaName: 'backend_services_pass',
               reasoning: 'high',
@@ -1193,21 +1458,39 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       if (shouldMapReduceHighReasoning(effectiveBackend)) {
         mapReducePasses.push('backend');
         process.stderr.write(`  [backend] ${effectiveBackend.length} files — using map-reduce\n`);
-        const beSystemPrompt = (isR2Plus
-          ? buildR2SystemPrompt(PASS_BACKEND_RUBRIC, buildRulingsBlock(ledgerFile, 'backend', impactSet))
-          : PASS_BACKEND_SYSTEM) + focusBlock;
         wave2Promises.push(
-          runMapReducePass(openai, effectiveBackend, beSystemPrompt, beCtx, bePlan, 'backend', openaiConfig.backendMaxFilesPerUnit)
+          runMapReducePass(openai, effectiveBackend, 'backend', (unit, i, total, unitLabel) => buildCachePrompt({
+            rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
+            focusBlock,
+            passName: 'backend',
+            planContent,
+            ledgerFile: isR2Plus ? ledgerFile : null,
+            impactSet,
+            isR2Plus,
+            historyBlock,
+            codeHeader: '## Code',
+            code: unit._context,
+            unitLabel,
+          }), openaiConfig.backendMaxFilesPerUnit)
         );
       } else {
         const limits = computePassLimits(baseContextChars + measureContextChars(effectiveBackend, 8000) + sharedContext.length, 'high');
         process.stderr.write(`  backend: ${effectiveBackend.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
+        const backendCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveBackend, diffMap, { maxPerFile: 8000, maxTotal: 80000 }) : readFilesAsContext(effectiveBackend, { maxPerFile: 8000, maxTotal: 80000 })}\n\n## Shared Files\n${sharedContext}`;
         wave2Promises.push(
           safeCallGPT(openai, {
-            systemPrompt: (isR2Plus
-              ? buildR2SystemPrompt(PASS_BACKEND_RUBRIC, buildRulingsBlock(ledgerFile, 'backend', impactSet))
-              : PASS_BACKEND_SYSTEM) + focusBlock,
-            userPrompt: `## Project Context\n${beCtx}\n${historyBlock}\n## Plan\n${bePlan}\n\n## Backend Implementation Files\n${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveBackend, diffMap, { maxPerFile: 8000, maxTotal: 80000 }) : readFilesAsContext(effectiveBackend, { maxPerFile: 8000, maxTotal: 80000 })}\n\n## Shared Files\n${sharedContext}`,
+            ...buildCachePrompt({
+              rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
+              focusBlock,
+              passName: 'backend',
+              planContent,
+              ledgerFile: isR2Plus ? ledgerFile : null,
+              impactSet,
+              isR2Plus,
+              historyBlock,
+              codeHeader: '## Backend Implementation Files',
+              code: backendCode,
+            }),
             schema: PassFindingsSchema,
             schemaName: 'backend_pass',
             reasoning: 'high',
@@ -1225,23 +1508,39 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     if (shouldMapReduceHighReasoning(effectiveFrontend)) {
       mapReducePasses.push('frontend');
       process.stderr.write(`  [frontend] ${effectiveFrontend.length} files — using map-reduce\n`);
-      const feSystemPrompt = (isR2Plus
-        ? buildR2SystemPrompt(PASS_FRONTEND_RUBRIC, buildRulingsBlock(ledgerFile, 'frontend', impactSet))
-        : PASS_FRONTEND_SYSTEM) + focusBlock;
-      const feCtx = readProjectContextForPass('frontend');
-      const fePlan = extractPlanForPass(planContent, 'frontend');
       wave2Promises.push(
-        runMapReducePass(openai, effectiveFrontend, feSystemPrompt, feCtx, fePlan, 'frontend', openaiConfig.frontendMaxFilesPerUnit)
+        runMapReducePass(openai, effectiveFrontend, 'frontend', (unit, i, total, unitLabel) => buildCachePrompt({
+          rubric: isR2Plus ? PASS_FRONTEND_RUBRIC : PASS_FRONTEND_SYSTEM,
+          focusBlock,
+          passName: 'frontend',
+          planContent,
+          ledgerFile: isR2Plus ? ledgerFile : null,
+          impactSet,
+          isR2Plus,
+          historyBlock,
+          codeHeader: '## Code',
+          code: unit._context,
+          unitLabel,
+        }), openaiConfig.frontendMaxFilesPerUnit)
       );
     } else {
       const limits = computePassLimits(baseContextChars + measureContextChars(effectiveFrontend, 10000) + sharedContext.length, 'high');
       process.stderr.write(`  frontend: ${effectiveFrontend.length} files → ${limits.maxTokens} tok / ${(limits.timeoutMs/1000).toFixed(0)}s\n`);
+      const frontendCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveFrontend, diffMap, { maxPerFile: 10000, maxTotal: 80000 }) : readFilesAsContext(effectiveFrontend, { maxPerFile: 10000, maxTotal: 80000 })}\n\n## Shared Files\n${sharedContext}`;
       wave2Promises.push(
         safeCallGPT(openai, {
-          systemPrompt: (isR2Plus
-            ? buildR2SystemPrompt(PASS_FRONTEND_RUBRIC, buildRulingsBlock(ledgerFile, 'frontend', impactSet))
-            : PASS_FRONTEND_SYSTEM) + focusBlock,
-          userPrompt: `## Project Context\n${readProjectContextForPass('frontend')}\n${historyBlock}\n## Plan\n${extractPlanForPass(planContent, 'frontend')}\n\n## Frontend Implementation Files\n${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveFrontend, diffMap, { maxPerFile: 10000, maxTotal: 80000 }) : readFilesAsContext(effectiveFrontend, { maxPerFile: 10000, maxTotal: 80000 })}\n\n## Shared Files\n${sharedContext}`,
+          ...buildCachePrompt({
+            rubric: isR2Plus ? PASS_FRONTEND_RUBRIC : PASS_FRONTEND_SYSTEM,
+            focusBlock,
+            passName: 'frontend',
+            planContent,
+            ledgerFile: isR2Plus ? ledgerFile : null,
+            impactSet,
+            isR2Plus,
+            historyBlock,
+            codeHeader: '## Frontend Implementation Files',
+            code: frontendCode,
+          }),
           schema: PassFindingsSchema,
           schemaName: 'frontend_pass',
           reasoning: 'high',
@@ -1273,24 +1572,40 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     if (shouldMapReduce(sustainFiles)) {
       mapReducePasses.push('sustainability');
       process.stderr.write(`  [sustainability] ${sustainFiles.length} files — using map-reduce\n`);
-      const sustainSystemPrompt = (isR2Plus
-        ? buildR2SystemPrompt(PASS_SUSTAINABILITY_RUBRIC, buildRulingsBlock(ledgerFile, 'sustainability', impactSet))
-        : PASS_SUSTAINABILITY_SYSTEM) + focusBlock;
-      const sustainCtx = readProjectContextForPass('sustainability');
-      const sustainPlan = extractPlanForPass(planContent, 'sustainability');
       // Fix #3: Pass changedFileSet so unchanged map units skip retries
       const changedFileSet = changedFiles.length > 0 ? new Set(changedFiles.map(normalizePath)) : null;
-      sustainResult = await runMapReducePass(openai, sustainFiles, sustainSystemPrompt, sustainCtx, sustainPlan, 'sustainability', Infinity, { changedFileSet });
+      sustainResult = await runMapReducePass(openai, sustainFiles, 'sustainability', (unit, i, total, unitLabel) => buildCachePrompt({
+        rubric: isR2Plus ? PASS_SUSTAINABILITY_RUBRIC : PASS_SUSTAINABILITY_SYSTEM,
+        focusBlock,
+        passName: 'sustainability',
+        planContent,
+        ledgerFile: isR2Plus ? ledgerFile : null,
+        impactSet,
+        isR2Plus,
+        historyBlock,
+        codeHeader: '## Code',
+        code: unit._context,
+        unitLabel,
+      }), Infinity, { changedFileSet });
     } else {
       const sustainContextChars = baseContextChars + measureContextChars(sustainFiles, 4000);
       const sustainLimits = computePassLimits(sustainContextChars, 'medium');
       process.stderr.write(`  ${sustainFiles.length} files → ${sustainLimits.maxTokens} tok / ${(sustainLimits.timeoutMs/1000).toFixed(0)}s\n`);
 
+      const sustainCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(sustainFiles, diffMap, { maxPerFile: 4000, maxTotal: 60000 }) : readFilesAsContext(sustainFiles, { maxPerFile: 4000, maxTotal: 60000 });
       sustainResult = await safeCallGPT(openai, {
-        systemPrompt: (isR2Plus
-          ? buildR2SystemPrompt(PASS_SUSTAINABILITY_RUBRIC, buildRulingsBlock(ledgerFile, 'sustainability', impactSet))
-          : PASS_SUSTAINABILITY_SYSTEM) + focusBlock,
-        userPrompt: `## Project Context\n${readProjectContextForPass('sustainability')}\n${historyBlock}\n## Plan\n${extractPlanForPass(planContent, 'sustainability')}\n\n## All Implementation Files\n${isR2Plus && diffMap ? readFilesAsAnnotatedContext(sustainFiles, diffMap, { maxPerFile: 4000, maxTotal: 60000 }) : readFilesAsContext(sustainFiles, { maxPerFile: 4000, maxTotal: 60000 })}`,
+        ...buildCachePrompt({
+          rubric: isR2Plus ? PASS_SUSTAINABILITY_RUBRIC : PASS_SUSTAINABILITY_SYSTEM,
+          focusBlock,
+          passName: 'sustainability',
+          planContent,
+          ledgerFile: isR2Plus ? ledgerFile : null,
+          impactSet,
+          isR2Plus,
+          historyBlock,
+          codeHeader: '## All Implementation Files',
+          code: sustainCode,
+        }),
         schema: SustainabilityPassSchema,
         schemaName: 'sustainability_pass',
         reasoning: 'medium',
@@ -1317,11 +1632,20 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     const qfContextChars = baseContextChars + measureContextChars(qfFiles, 4000);
     const qfLimits = computePassLimits(qfContextChars, 'low');
     process.stderr.write(`  ${qfFiles.length} files → ${qfLimits.maxTokens} tok / ${(qfLimits.timeoutMs/1000).toFixed(0)}s\n`);
+    const qfCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(qfFiles, diffMap, { maxPerFile: 4000, maxTotal: 60000 }) : readFilesAsContext(qfFiles, { maxPerFile: 4000, maxTotal: 60000 });
     quickfixResult = await safeCallGPT(openai, {
-      systemPrompt: (isR2Plus
-        ? buildR2SystemPrompt(qfRubric, buildRulingsBlock(ledgerFile, 'quickfix', impactSet))
-        : PASS_QUICKFIX_SYSTEM_LOCAL) + focusBlock,
-      userPrompt: `## Project Context\n${readProjectContextForPass('quickfix')}\n${historyBlock}\n## Plan\n${extractPlanForPass(planContent, 'quickfix')}\n\n## All Implementation Files\n${isR2Plus && diffMap ? readFilesAsAnnotatedContext(qfFiles, diffMap, { maxPerFile: 4000, maxTotal: 60000 }) : readFilesAsContext(qfFiles, { maxPerFile: 4000, maxTotal: 60000 })}`,
+      ...buildCachePrompt({
+        rubric: qfRubric,
+        focusBlock,
+        passName: 'quickfix',
+        planContent,
+        ledgerFile: isR2Plus ? ledgerFile : null,
+        impactSet,
+        isR2Plus,
+        historyBlock,
+        codeHeader: '## All Implementation Files',
+        code: qfCode,
+      }),
       schema: QuickfixPassSchema,
       schemaName: 'quickfix_pass',
       reasoning: 'low',
@@ -1685,10 +2009,43 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
 
   const totalUsage = {
     input_tokens: allResults.reduce((s, r) => s + (r.usage?.input_tokens ?? 0), 0),
+    cached_tokens: allResults.reduce((s, r) => s + (r.usage?.cached_tokens ?? 0), 0),
     output_tokens: allResults.reduce((s, r) => s + (r.usage?.output_tokens ?? 0), 0),
     reasoning_tokens: allResults.reduce((s, r) => s + (r.usage?.reasoning_tokens ?? 0), 0),
     latency_ms: totalLatency
   };
+
+  // ── Cache telemetry (PR-4) ───────────────────────────────────────────
+  // Aggregate prompt-prefix-cache hit metrics across all audit-pass calls.
+  // hitRate guard: 0/0 → 0 (per Gemini R2 review of plan).
+  // Per-pass entries keyed by passName; map-reduce sub-units use their
+  // map-<passName>-<i> keys (kept distinct for diagnostic per-unit visibility,
+  // per plan §2 telemetry contract).
+  const cacheMetrics = {
+    totalInputTokens: totalUsage.input_tokens,
+    totalCachedTokens: totalUsage.cached_tokens,
+    hitRate: totalUsage.input_tokens > 0
+      ? totalUsage.cached_tokens / totalUsage.input_tokens : 0,
+    estimatedSavingsPct: 0,
+    perPass: {},
+  };
+  cacheMetrics.estimatedSavingsPct = cacheMetrics.hitRate * 0.5; // OpenAI ~50% discount
+  // Build perPass entries via parallel arrays — passName isn't carried on the
+  // result objects, but the order in `allResults` matches a known sequence.
+  const passNameOrder = ['structure', 'wiring', ...backendPassNames, 'frontend', 'sustainability', 'quickfix'];
+  for (let i = 0; i < allResults.length && i < passNameOrder.length; i++) {
+    const pass = passNameOrder[i];
+    const r = allResults[i];
+    const entry = { totalInputTokens: 0, totalCachedTokens: 0, hitRate: 0, callCount: 0, retryCount: 0 };
+    entry.totalInputTokens = r.usage?.input_tokens ?? 0;
+    entry.totalCachedTokens = r.usage?.cached_tokens ?? 0;
+    entry.callCount = 1;
+    entry.retryCount = r._retried ? (r._attempts ?? 2) - 1 : 0;
+    entry.hitRate = entry.totalInputTokens > 0
+      ? entry.totalCachedTokens / entry.totalInputTokens : 0;
+    cacheMetrics.perPass[pass] = entry;
+  }
+  process.stderr.write(`  [cache] input=${cacheMetrics.totalInputTokens} cached=${cacheMetrics.totalCachedTokens} hitRate=${(cacheMetrics.hitRate * 100).toFixed(1)}% (~${(cacheMetrics.estimatedSavingsPct * 100).toFixed(1)}% savings)\n`);
 
   // Build per-pass timing map
   const passTimings = {};
@@ -1734,6 +2091,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     _pass_timings: passTimings,
     _failed_passes: failedPasses.length > 0 ? failedPasses : undefined,
     _usage: totalUsage,
+    _cacheMetrics: cacheMetrics,
     _executionMeta: suppressionUnavailable ? { suppressionUnavailable: true } : undefined,
   };
 
@@ -2448,4 +2806,18 @@ async function main() {
   }
 }
 
-main();
+// Test-export gate — when AUDIT_EXPORTS_FOR_TESTS=1 we expose the internal
+// LLM wrappers for unit tests. Production runs (the CLI invocation) do NOT
+// set the env var, so the export is undefined and the test scaffolding is
+// dead code at runtime cost.
+export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
+  ? { _callGPTOnce, callGPT, safeCallGPT, normalisePromptInput }
+  : undefined;
+
+// CLI entry — only fire main() when this module is executed directly,
+// not when imported (e.g. by tests). Uses node:url pathToFileURL for
+// cross-platform robustness.
+import { pathToFileURL } from 'node:url';
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
