@@ -56,12 +56,13 @@ import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules } from '../lib/symbol-index/domain-tagger.mjs';
 
 function parseArgs(argv) {
-  const args = { full: false, sinceCommit: null, force: false };
+  const args = { full: false, sinceCommit: null, force: false, includeDelegates: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--full') args.full = true;
     else if (a === '--since-commit') args.sinceCommit = argv[++i];
     else if (a === '--force') args.force = true;
+    else if (a === '--include-delegates') args.includeDelegates = true;
   }
   return args;
 }
@@ -241,7 +242,38 @@ async function main() {
       logErr(err.message);
       process.exit(2);
     }
-    throw err;
+    if (err.code === 'REFRESH_IN_FLIGHT' && args.force) {
+      // Abort the prior in-flight run, then retry openRefreshRun.
+      // Partial-unique index on (repo_id, status='running') guarantees at
+      // most one row to clear. The aborted worker's heartbeat loop exits
+      // cleanly when it observes status!='running'.
+      logOk(`--force: aborting prior in-flight refresh for repo ${repoId}`);
+      try {
+        const r = await getReadClient();
+        const { data: stale } = await r
+          .from('refresh_runs')
+          .select('id, last_heartbeat_at, started_at')
+          .eq('repo_id', repoId)
+          .eq('status', 'running')
+          .order('started_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (stale) {
+          await abortRefreshRun({ refreshId: stale.id, reason: 'aborted by --force' });
+          logOk(`--force: aborted refresh_run ${stale.id}`);
+        } else {
+          logOk(`--force: no in-flight row found, retrying openRefreshRun`);
+        }
+      } catch (abortErr) {
+        logErr(`--force: failed to abort prior run: ${abortErr.message}`);
+        process.exit(2);
+      }
+      const opened = await openRefreshRun({ repoId, mode, walkStartCommit });
+      refreshId = opened.refreshId;
+      cancellationToken = opened.cancellationToken;
+    } else {
+      throw err;
+    }
   }
   logOk(`opened refresh_run ${refreshId} (mode=${mode})`);
 
@@ -277,6 +309,10 @@ async function main() {
       const extractArgs = ['scripts/symbol-index/extract.mjs', '--root', repoRoot, '--mode', mode];
       if (restrictFiles && restrictFiles.length > 0) {
         extractArgs.push('--files', restrictFiles.join(','));
+      }
+      if (args.includeDelegates) {
+        extractArgs.push('--include-delegates');
+        logOk('WARNING: --include-delegates is a debug/visibility flag. Index will include thin-facade duplicates; do NOT publish this snapshot as a normal baseline. Re-run without the flag for standard operations.');
       }
       logOk(`extracting symbols...`);
       const extracted = runJsonLines('node', extractArgs);

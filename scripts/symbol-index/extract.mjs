@@ -31,15 +31,17 @@ import {
   redactSecrets,
   SECRET_REDACTED,
 } from '../lib/sensitive-egress-gate.mjs';
+import { isThinDelegate } from '../lib/symbol-index/thin-delegate.mjs';
 
 function parseArgs(argv) {
-  const args = { root: process.cwd(), files: null, mode: 'full', sinceCommit: null };
+  const args = { root: process.cwd(), files: null, mode: 'full', sinceCommit: null, includeDelegates: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--root') args.root = argv[++i];
     else if (a === '--files') args.files = argv[++i].split(',').filter(Boolean);
     else if (a === '--mode') args.mode = argv[++i];
     else if (a === '--since-commit') args.sinceCommit = argv[++i];
+    else if (a === '--include-delegates') args.includeDelegates = true;
   }
   return args;
 }
@@ -57,10 +59,11 @@ function emitProgress(msg) {
  *
  * @param {string[]} filePaths - absolute paths
  * @param {string} repoRoot - absolute path
- * @returns {{symbolCount: number, skippedPath: number, skippedExt: number, redacted: number}}
+ * @param {{includeDelegates?: boolean}} [opts] - opts.includeDelegates skips the thin-delegate filter (debug/visibility)
+ * @returns {{symbolCount: number, skippedPath: number, skippedExt: number, skippedSize: number, skippedDelegate: number, redacted: number}}
  */
-function extractSymbols(filePaths, repoRoot) {
-  const stats = { symbolCount: 0, skippedPath: 0, skippedExt: 0, skippedSize: 0, redacted: 0 };
+function extractSymbols(filePaths, repoRoot, opts = {}) {
+  const stats = { symbolCount: 0, skippedPath: 0, skippedExt: 0, skippedSize: 0, skippedDelegate: 0, redacted: 0 };
   // skipAddingFilesFromTsConfig + skipFileDependencyResolution prevent ts-morph
   // from auto-loading imported modules (vendored types, monorepo siblings, etc.)
   // which is what ballooned the wine-cellar refresh to 4.3GB heap.
@@ -148,6 +151,15 @@ function extractSymbols(filePaths, repoRoot) {
     }
 
     for (const c of candidates) {
+      // Thin-delegate filter: skip 1-line facades like
+      //   const addListener = (...args) => target.method(...args);
+      // before they enter the cluster index. See isThinDelegate().
+      // --include-delegates flag (opts.includeDelegates) disables the filter
+      // for operators who want the full per-module view in arch:render.
+      if (!opts.includeDelegates && isThinDelegate(c.bodyText)) {
+        stats.skippedDelegate++;
+        continue;
+      }
       const decision = gateSymbolForEgress({ filePath: rel, bodyText: c.bodyText });
       if (decision.action === 'skip-path' || decision.action === 'skip-extension') {
         // Already filtered above; defensive
@@ -352,11 +364,14 @@ async function main() {
   const args = parseArgs(process.argv);
   const repoRoot = path.resolve(args.root);
   const files = enumerateFiles(repoRoot, args.files);
+  if (args.includeDelegates) {
+    emitProgress('WARNING: --include-delegates is a debug/visibility flag. The resulting index includes thin-facade duplicates and should not be used as a baseline snapshot — re-run without the flag for normal operations.');
+  }
   emitProgress(`scanning ${files.length} files (mode=${args.mode})`);
-  const stats = extractSymbols(files, repoRoot);
+  const stats = extractSymbols(files, repoRoot, { includeDelegates: args.includeDelegates });
   const graphStats = await extractGraphAndViolations(repoRoot);
   emit({ type: 'summary', counts: { ...stats, ...graphStats } });
-  emitProgress(`done — symbols=${stats.symbolCount} violations=${graphStats.violationCount} skipped-path=${stats.skippedPath} skipped-ext=${stats.skippedExt} skipped-size=${stats.skippedSize} redacted=${stats.redacted}`);
+  emitProgress(`done — symbols=${stats.symbolCount} violations=${graphStats.violationCount} skipped-path=${stats.skippedPath} skipped-ext=${stats.skippedExt} skipped-size=${stats.skippedSize} skipped-delegate=${stats.skippedDelegate} redacted=${stats.redacted}`);
 }
 
 main().catch(err => {
