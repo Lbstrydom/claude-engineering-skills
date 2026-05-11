@@ -488,10 +488,16 @@ async function _callGPTOnce(openai, opts) {
     clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
 
-    // Extract usage regardless of success/failure (includes cached_tokens)
+    // Extract usage regardless of success/failure (includes cached_tokens).
+    // NOTE: Responses API returns cached_tokens under `input_tokens_details`
+    // (NOT `prompt_tokens_details` which is the Chat Completions API shape).
+    // The fallback to prompt_tokens_details is kept defensively for any
+    // future SDK shape changes — it costs nothing when not present.
     const usage = {
       input_tokens: response.usage?.input_tokens ?? 0,
-      cached_tokens: response.usage?.prompt_tokens_details?.cached_tokens ?? 0,
+      cached_tokens: response.usage?.input_tokens_details?.cached_tokens
+        ?? response.usage?.prompt_tokens_details?.cached_tokens
+        ?? 0,
       output_tokens: response.usage?.output_tokens ?? 0,
       reasoning_tokens: response.usage?.output_tokens_details?.reasoning_tokens ?? 0,
       latency_ms: latencyMs

@@ -1,0 +1,194 @@
+## Audit Brief — Synthetic Fixture for Prompt-Cache Integration Test
+
+### Section 1: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 2: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 3: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 4: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 5: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 6: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 7: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 8: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 9: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 10: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 11: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 12: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 13: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 14: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 15: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 16: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 17: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 18: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 19: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 20: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 21: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 22: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 23: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 24: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 25: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 26: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 27: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 28: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 29: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 30: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 31: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+
+### Section 32: Synthetic Pass Context
+
+The prompt-prefix-cache test fixture intentionally includes representative repo-context content to model the size of a real audit-brief preamble. Each section is approximately 250 chars, and we include 32 sections to comfortably exceed OpenAI's 1024-token (~4096 char) minimum threshold for prefix caching. This ensures the cache eligibility decision in shouldSeedCache() returns true.
+
+Key invariant under test: when two requests share the byte-identical prefix from message #0 (system) through message #1 (this brief + plan + file-list), OpenAI's auto-caching layer charges the cached_tokens-discounted rate on the shared portion of the second call. cached_tokens > 0 on call N+1 is the success signal.
+

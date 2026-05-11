@@ -1,0 +1,44 @@
+{
+  "findings": [
+    {
+      "_hash": "h-rerasise-style-paraphrased",
+      "id": "M1",
+      "severity": "MEDIUM",
+      "category": "[Sustainability] Style Inconsistency",
+      "section": "scripts/foo.mjs",
+      "detail": "The file mixes camelCase variable naming with snake_case in some places.",
+      "_pass": "sustainability",
+      "_primaryFile": "scripts/foo.mjs"
+    },
+    {
+      "_hash": "h-rerasise-auth-paraphrased",
+      "id": "H1",
+      "severity": "HIGH",
+      "category": "[Wiring] Missing Auth Middleware",
+      "section": "scripts/auth.mjs",
+      "detail": "/admin/* routes do not require authentication.",
+      "_pass": "wiring",
+      "_primaryFile": "scripts/auth.mjs"
+    },
+    {
+      "_hash": "h-rerasise-logging-paraphrased",
+      "id": "M2",
+      "severity": "MEDIUM",
+      "category": "[Structure] Verbose Logging",
+      "section": "scripts/logger.mjs",
+      "detail": "The logger writes too many lines per HTTP request — should be reduced.",
+      "_pass": "sustainability",
+      "_primaryFile": "scripts/logger.mjs"
+    },
+    {
+      "_hash": "h-genuinely-new-001",
+      "id": "M3",
+      "severity": "MEDIUM",
+      "category": "[Sustainability] Hardcoded Config Value",
+      "section": "scripts/foo.mjs",
+      "detail": "Timeout constant 30000 is hardcoded; should be config-driven.",
+      "_pass": "sustainability",
+      "_primaryFile": "scripts/foo.mjs"
+    }
+  ]
+}

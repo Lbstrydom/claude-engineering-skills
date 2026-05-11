@@ -1,0 +1,35 @@
+=== SYSTEM ===
+PASS_STRUCTURE_SYSTEM: Audit file-level structure against the plan.
+FOCUS: priority rules for backend stack.
+=== MSG_1 ===
+## Project Context
+Project: claude-engineering-skills. Stack: js-ts (Node ESM).
+
+### Pass-Specific Context (structure)
+Map planned files to actual files.  Flag missing/extra/misplaced.
+
+## Plan
+## File-Level Plan
+- scripts/foo.mjs — new module with bar() and baz()
+- tests/foo.test.mjs — unit tests for foo.mjs
+
+## Files
+- /scripts/foo.mjs
+- /tests/foo.test.mjs
+=== MSG_2 (R1) ===
+(absent)
+=== MSG_2 (R2 with rulings + roundModifier) ===
+ROUND 2+ MODE — verify fixes, do not re-raise dismissed findings.
+
+## Prior Rulings
+DISMISSED: [abc123] "Missing test file" — Resolved R1.  Reason: file exists at planned path.  Scope: tests/foo.test.mjs
+=== MSG_3 (R1) ===
+## File Signatures
+// scripts/foo.mjs
+export function bar() { return 1; }
+export function baz(x) { return x * 2; }
+=== MSG_3 (R2 with unitLabel) ===
+## File Signatures (Audit Unit 2/5 (3 files))
+// scripts/foo.mjs
+export function bar() { return 1; }
+export function baz(x) { return x * 2; }

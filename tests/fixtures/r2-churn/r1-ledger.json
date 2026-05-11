@@ -1,0 +1,58 @@
+{
+  "entries": [
+    {
+      "topicId": "abc123dismiss",
+      "semanticHash": "h-dismissed-001",
+      "severity": "MEDIUM",
+      "category": "[Sustainability] Style Inconsistency",
+      "section": "scripts/foo.mjs",
+      "detailSnapshot": "Variable names use camelCase here but snake_case elsewhere in the module.",
+      "affectedFiles": ["scripts/foo.mjs"],
+      "affectedPrinciples": [],
+      "pass": "sustainability",
+      "source": "session",
+      "adjudicationOutcome": "dismissed",
+      "remediationState": "pending",
+      "originalSeverity": "MEDIUM",
+      "ruling": "overrule",
+      "rulingRationale": "Pre-existing style — out of scope for this PR.",
+      "resolvedRound": 1
+    },
+    {
+      "topicId": "def456fixed",
+      "semanticHash": "h-fixed-001",
+      "severity": "HIGH",
+      "category": "[Wiring] Missing Auth Middleware",
+      "section": "scripts/auth.mjs",
+      "detailSnapshot": "Route /admin/* lacks authentication guard.",
+      "affectedFiles": ["scripts/auth.mjs"],
+      "affectedPrinciples": ["#11"],
+      "pass": "wiring",
+      "source": "session",
+      "adjudicationOutcome": "accepted",
+      "remediationState": "fixed",
+      "originalSeverity": "HIGH",
+      "ruling": "sustain",
+      "rulingRationale": "Valid — fixed by adding requireAuth middleware.",
+      "resolvedRound": 1
+    },
+    {
+      "topicId": "ghi789sevadj",
+      "semanticHash": "h-sevadj-001",
+      "severity": "LOW",
+      "category": "[Structure] Verbose Logging",
+      "section": "scripts/logger.mjs",
+      "detailSnapshot": "Logger emits 4 lines per request — too noisy.",
+      "affectedFiles": ["scripts/logger.mjs"],
+      "affectedPrinciples": [],
+      "pass": "sustainability",
+      "source": "session",
+      "adjudicationOutcome": "severity_adjusted",
+      "remediationState": "fixed",
+      "originalSeverity": "MEDIUM",
+      "ruling": "compromise",
+      "rulingRationale": "Operator preference — keep at LOW; fix applied.",
+      "resolvedRound": 1
+    }
+  ]
+}
