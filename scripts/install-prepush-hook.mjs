@@ -31,7 +31,17 @@ import path from 'node:path';
 // Adding a new consumer repo there auto-extends this script.
 import { CONSUMER_REPOS, resolveTargets } from './lib/consumer-repos.mjs';
 
-const HOOK_MARKER     = '# managed-by: claude-audit-loop install-prepush-hook.mjs';
+const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush-hook.mjs';
+// Accept the legacy marker too so existing installs (pre-rename) can be
+// upgraded in place by `npm run hooks:install` without manual cleanup.
+const LEGACY_MARKERS  = [
+  '# managed-by: claude-audit-loop install-prepush-hook.mjs',
+];
+function isManagedHook(content) {
+  if (!content) return false;
+  if (content.includes(HOOK_MARKER)) return true;
+  return LEGACY_MARKERS.some(m => content.includes(m));
+}
 const HOOK_BODY = `#!/bin/sh
 ${HOOK_MARKER}
 #
@@ -52,15 +62,31 @@ PLANS_DIR="docs/plans"
 PLAN_FILE=$(ls -t "$PLANS_DIR"/*.md 2>/dev/null | head -1)
 [ -z "$PLAN_FILE" ] && exit 0
 
-# Locate the audit-loop install (CLAUDE_AUDIT_LOOP env override, else default).
-AUDIT_LOOP_DIR="\${CLAUDE_AUDIT_LOOP_DIR:-../claude-audit-loop}"
+# Locate the audit-loop install — rename-resilient discovery.  Search order:
+#   1. \$CLAUDE_AUDIT_LOOP_DIR — explicit env override (manual escape hatch)
+#   2. Sibling-dir scan: any ../<dir>/ that contains BOTH
+#      scripts/openai-audit.mjs AND scripts/install-prepush-hook.mjs.
+#      (the install-prepush-hook.mjs presence is specific enough to avoid
+#       false positives on unrelated sibling repos that happen to vendor
+#       openai-audit.mjs)
+#   3. (No fallback) — print warning + skip.  Never aborts the push.
+AUDIT_LOOP_DIR="$CLAUDE_AUDIT_LOOP_DIR"
+if [ -z "$AUDIT_LOOP_DIR" ]; then
+  for sibling in ../*/; do
+    if [ -f "$sibling/scripts/openai-audit.mjs" ] && [ -f "$sibling/scripts/install-prepush-hook.mjs" ]; then
+      AUDIT_LOOP_DIR="\${sibling%/}"
+      break
+    fi
+  done
+fi
+
 AUDIT_SCRIPT="$AUDIT_LOOP_DIR/scripts/openai-audit.mjs"
-if [ ! -f "$AUDIT_SCRIPT" ]; then
-  echo "[prepush-hook] audit-loop not found at $AUDIT_SCRIPT — skipping audit" >&2
+if [ -z "$AUDIT_LOOP_DIR" ] || [ ! -f "$AUDIT_SCRIPT" ]; then
+  echo "[prepush-hook] audit-loop not found in any sibling dir (set CLAUDE_AUDIT_LOOP_DIR to override) — skipping audit" >&2
   exit 0
 fi
 
-echo "[prepush-hook] auditing $PLAN_FILE (--scope diff)..." >&2
+echo "[prepush-hook] auditing $PLAN_FILE via $AUDIT_LOOP_DIR (--scope diff)..." >&2
 node "$AUDIT_SCRIPT" code "$PLAN_FILE" --scope diff > /tmp/prepush-audit-$$.json 2>&1
 EXIT=$?
 
@@ -104,7 +130,7 @@ function installInRepo(repo) {
       return result;
     }
     const existing = fs.readFileSync(hookPath, 'utf-8');
-    if (!existing.includes(HOOK_MARKER)) {
+    if (!isManagedHook(existing)) {
       result.action = 'skip';
       result.error  = 'existing hook not managed by this installer';
       return result;
@@ -117,7 +143,7 @@ function installInRepo(repo) {
   // Install / refresh
   let existing = null;
   try { existing = fs.readFileSync(hookPath, 'utf-8'); } catch { /* absent */ }
-  if (existing && !existing.includes(HOOK_MARKER)) {
+  if (existing && !isManagedHook(existing)) {
     result.action = 'skip';
     result.error  = 'pre-push hook exists and is NOT managed by this installer (refusing to overwrite — review manually)';
     return result;
