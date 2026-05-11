@@ -75,7 +75,7 @@ jobs:
 
       - name: Upload report artefact
         if: steps.secrets-check.outputs.skip != 'true' && hashFiles('/tmp/memory-health.md') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: memory-health-report
           path: /tmp/memory-health.md
