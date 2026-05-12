@@ -170,6 +170,15 @@ const ARCH_MEMORY_SCRIPTS = [
   'scripts/lib/arch-intent/adapter-contract.mjs',
   'scripts/lib/arch-intent/adapters/js-ts.mjs',
   'scripts/arch-intent-bootstrap.mjs',
+  // Dead-code phase 1 (2026-05-12, commit 6c6be92) — orphan-introduced pass.
+  // openai-audit.mjs imports all 5 of these at module-init; if any is
+  // missing the consumer-side audit-loop crashes with ERR_MODULE_NOT_FOUND
+  // (hit wine-cellar-app PR 39 + 55 + 56 because sync allowlist forgot them).
+  'scripts/lib/audit/orphan-introduced.mjs',
+  'scripts/lib/audit/diff-scope-resolver.mjs',
+  'scripts/lib/audit/findings-pipeline.mjs',
+  'scripts/lib/audit/orphan-metrics.mjs',
+  'scripts/lib/audit/glob-match.mjs',
   // Adaptive-learning runtime — required by openai-audit.mjs (decision-logger
   // is a top-level import at line 63), cross-skill.mjs (lazy-loads
   // quickfix-stats), and the audit pipeline's quickfix telemetry path.
