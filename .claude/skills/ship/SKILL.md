@@ -342,8 +342,10 @@ prints `{"ok":true,"cloud":false}` and returns 0.
 
 ## Step 8 — Archive Completed Plans
 
-> **Note**: see Step 5.5 above — archive runs BEFORE commit so the
-> rename is part of the shipped commit.
+> **Note**: this step is documented for reference but is now run earlier
+> at **Step 5.5** (between plan-update and commit) so the archive moves
+> are part of the shipped commit rather than left uncommitted.  See
+> Step 5.5 above for the canonical flow.
 
 
 

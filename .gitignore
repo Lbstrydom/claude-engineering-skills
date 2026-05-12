@@ -70,3 +70,4 @@ node_modules/
 
 # Brainstorm temp files: topic stdin + malformed-payload debug JSONs (0o600).
 .claude/tmp/
+.audit/orphan-metrics.jsonl

@@ -53,7 +53,13 @@ export function detectRepoStack(cwd = process.cwd()) {
 
   const pythonFramework = hasPy ? detectPythonFramework(cwd) : null;
 
-  return { stack, pythonFramework, detectedFrom };
+  // Architecture-intent extension: list of stack kinds for per-stack
+  // adapter selection.  For non-mixed: singleton or empty.
+  const stackKinds = [];
+  if (hasJs) stackKinds.push('js-ts');
+  if (hasPy) stackKinds.push('python');
+
+  return { stack, pythonFramework, detectedFrom, stackKinds };
 }
 
 /**

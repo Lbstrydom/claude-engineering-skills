@@ -447,4 +447,147 @@ export const StackProfileSchema = z.object({
   pythonFramework: z.enum(['fastapi', 'django', 'flask', 'none']).nullable(),
   environmentManager: z.enum(['poetry', 'uv', 'pipenv', 'venv', 'none']).nullable(),
   detectedFrom: z.array(z.string()),
+  // Architecture-intent extension: list of stack kinds for per-stack adapter
+  // selection.  For non-mixed: singleton (or empty for 'unknown'). For mixed:
+  // multiple entries.  Adapter selection iterates this list.
+  stackKinds: z.array(z.enum(['js-ts', 'python', 'java', 'postgres'])).default([]),
+});
+
+// ── Architecture-Intent Framework (PR-A) ────────────────────────────────────
+
+/**
+ * Domain map config shape — extension of the existing rules-only format.
+ * Lives at `.audit-loop/domain-map.json`.
+ *
+ * `allowedDeps` lifecycle (decision 12):
+ *   - field absent OR null → SKIPPED_NO_BASELINE (loader returns null)
+ *   - {} (empty object)     → every cross-domain edge forbidden (operator's explicit choice)
+ *   - {keys: [values]}      → standard whitelist
+ */
+export const DomainMapSchema = z.object({
+  _comment: z.string().optional(),
+  rules: z.array(z.object({
+    pattern: z.string().min(1),
+    domain: z.string().regex(/^[a-z][a-z0-9_-]{0,49}$/),
+  })),
+  allowedDeps: z.record(z.string(), z.array(z.string())).nullable().optional(),
+  description: z.record(z.string(), z.string()).optional(),
+});
+
+/**
+ * One violation emitted by an adapter.
+ */
+export const ArchIntentViolationSchema = z.object({
+  fromFile: z.string(),
+  toFile: z.string(),
+  fromDomain: z.string(),
+  toDomain: z.string(),
+  ruleViolated: z.enum(['not-in-allowedDeps', 'cycle', 'unknown']).default('not-in-allowedDeps'),
+});
+
+/**
+ * Per-stack adapter result envelope (decision 13 — fault isolation).
+ */
+export const ArchIntentPerStackSchema = z.object({
+  stackKind: z.string(),
+  status: z.enum(['ok', 'error', 'unsupported']),
+  report: z.object({
+    violations: z.array(ArchIntentViolationSchema),
+    _meta: z.record(z.string(), z.unknown()).default({}),
+  }).optional(),
+  error: z.object({
+    message: z.string(),
+    kind: z.enum(['config', 'analyzer']),
+  }).optional(),
+});
+
+/**
+ * Top-level report returned by runArchIntentAnalysis. The merge of all
+ * successful perStackResults plus inventory-phase results.
+ */
+export const ArchIntentReportSchema = z.object({
+  violations: z.array(ArchIntentViolationSchema).default([]),
+  unmappedFiles: z.array(z.string()).default([]),
+  deadIntent: z.array(z.string()).default([]),
+  analyzerVersion: z.string().default('none'),
+  perStackResults: z.array(ArchIntentPerStackSchema).default([]),
+  _meta: z.record(z.string(), z.unknown()).default({}),
+});
+
+/**
+ * GPT response shape for the new architecture audit pass.
+ */
+export const ArchIntentPassSchema = z.object({
+  pass_name: z.literal('architecture').default('architecture'),
+  findings: z.array(FindingSchema).default([]),
+  summary: z.string().default(''),
+});
+
+// ── Orphan-Introduced Check (Dead-Code Phase 1) ─────────────────────────────
+
+/**
+ * Pass-state taxonomy for the orphan-introduced detector.
+ * Mirrors arch-intent's pass-state model; `ANALYZED_PARTIAL` inherited from
+ * upstream arch-intent partial-graph signal (Gemini-R2/M2 fix).
+ */
+export const OrphanPassStateSchema = z.enum([
+  'ANALYZED_CLEAN',
+  'ANALYZED_WITH_FINDINGS',
+  'ANALYZED_PARTIAL',
+  'SKIPPED_NO_BASELINE',
+  'SKIPPED_NO_GRAPH',
+  'SKIPPED_PATCH_ONLY_MODE',
+  'SKIPPED_UNSUPPORTED_STACK',
+  'ERROR',
+]);
+
+/**
+ * One row of `git diff --name-status` after orchestration parsing.
+ * R2/H1 fix — explicit base + head caller identities, distinct for renames.
+ * Gemini-R3/L1 — 'C' (copy) treated like 'A'.
+ */
+export const ChangedFileSchema = z.object({
+  status: z.enum(['A', 'C', 'M', 'D', 'R']),
+  baseCallerPath: z.string().nullable(),
+  headCallerPath: z.string().nullable(),
+});
+
+/**
+ * The fully-resolved diff scope passed into the pure detector.
+ * Sets serialised as sorted arrays for Zod-compatibility + JSON portability.
+ */
+export const DiffScopeSchema = z.object({
+  baseRef: z.string().nullable(),
+  headRef: z.string().nullable(),
+  changedFiles: z.array(ChangedFileSchema).default([]),
+  preEdgesByBaseCaller: z.record(z.string(), z.array(z.string())).default({}),
+  targetExistedAtBase: z.array(z.string()).default([]),
+  entryPoints: z.array(z.string()).default([]),
+  state: OrphanPassStateSchema.default('ANALYZED_CLEAN'),
+});
+
+/**
+ * HEAD graph projection exposed by the js-ts adapter for orphan analysis.
+ * R1/M1 fix — directionally explicit. Includes type-only edges per Gemini-R3/H1.
+ */
+export const HeadGraphMetaSchema = z.object({
+  callersByTarget: z.record(z.string(), z.array(z.string())).default({}),
+  targetsByCaller: z.record(z.string(), z.array(z.string())).default({}),
+  allFiles: z.array(z.string()).default([]),
+});
+
+/**
+ * Raw orphan finding emitted by the detector (pre-pipeline).
+ * `allRemovedCallers` is REQUIRED — used by the pipeline for stable
+ * fingerprinting (Gemini-G1 fix). Empty array for born-orphans.
+ */
+export const OrphanIntroducedFindingSchema = z.object({
+  severity: z.literal('MEDIUM'),
+  kind: z.literal('orphan-introduced'),
+  subKind: z.enum(['left-orphan', 'born-orphan']),
+  file: z.string(),
+  allRemovedCallers: z.array(z.string()).default([]),
+  priorCallers: z.array(z.string()).default([]),
+  testCallers: z.array(z.string()).default([]),
+  rationale: z.string(),
 });

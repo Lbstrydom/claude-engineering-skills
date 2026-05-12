@@ -159,6 +159,17 @@ const ARCH_MEMORY_SCRIPTS = [
   // used by all audit-pass calls in openai-audit.mjs.  Required by the
   // call-site migration; without this file, audit calls throw on import.
   'scripts/lib/audit/prompt-builder.mjs',
+  // Architecture-intent framework (PR-A 2026-05-11).  Whole subtree synced
+  // explicitly here; add new files under scripts/lib/arch-intent/ to this
+  // list as they're created.  See domain.architecture-intent in the plan.
+  'scripts/lib/arch-intent/errors.mjs',
+  'scripts/lib/arch-intent/domain-resolver.mjs',
+  'scripts/lib/arch-intent/semantic-validator.mjs',
+  'scripts/lib/arch-intent/load-config.mjs',
+  'scripts/lib/arch-intent/intent-doc-parser.mjs',
+  'scripts/lib/arch-intent/adapter-contract.mjs',
+  'scripts/lib/arch-intent/adapters/js-ts.mjs',
+  'scripts/arch-intent-bootstrap.mjs',
   // Adaptive-learning runtime — required by openai-audit.mjs (decision-logger
   // is a top-level import at line 63), cross-skill.mjs (lazy-loads
   // quickfix-stats), and the audit pipeline's quickfix telemetry path.

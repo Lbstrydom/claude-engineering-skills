@@ -49,6 +49,16 @@ import {
 } from './lib/code-analysis.mjs';
 import { semanticId, formatFindings, appendOutcome, loadOutcomes, FalsePositiveTracker } from './lib/findings.mjs';
 import { buildAuditPassPrompt, estimateStablePrefixTokens } from './lib/audit/prompt-builder.mjs';
+import { runArchIntentAnalysis, isArchIntentReportClean, deriveArchState } from './lib/arch-intent/adapter-contract.mjs';
+import { loadArchIntentConfig } from './lib/arch-intent/load-config.mjs';
+import { parseIntentDoc } from './lib/arch-intent/intent-doc-parser.mjs';
+import { ArchIntentConfigError } from './lib/arch-intent/errors.mjs';
+import { detectRepoStack } from './lib/repo-stack.mjs';
+import { ArchIntentPassSchema } from './lib/schemas.mjs';
+import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
+import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
+import { processFindings } from './lib/audit/findings-pipeline.mjs';
+import { emitOrphanRunMetrics } from './lib/audit/orphan-metrics.mjs';
 import { PlanFpTracker } from './lib/plan-fp-tracker.mjs';
 import {
   generateRepoProfile, initAuditBrief, readProjectContext, readProjectContextForPass,
@@ -355,6 +365,35 @@ const PASS_WIRING_SYSTEM = getPassPrompt('wiring');
 const PASS_BACKEND_SYSTEM = getPassPrompt('backend');
 const PASS_FRONTEND_SYSTEM = getPassPrompt('frontend');
 const PASS_SUSTAINABILITY_SYSTEM = getPassPrompt('sustainability');
+
+// Architecture-intent system prompt — the LLM-bouncer rubric.  See
+// docs/completed/architecture-intent-framework.md §9.  Static (never
+// varies across rounds) so safe to be in `system` prompt for cache-stability.
+const PASS_ARCH_INTENT_SYSTEM = `You are auditing PR diffs against the repo's declared architectural intent. The mechanical analyser has already flagged candidate violations — your job is to classify SEVERITY and filter false positives.
+
+You receive:
+1. The repo's architecture-intent.md (the hand-curated C4 + rationale).
+2. A list of mechanical violations: { fromFile, toFile, fromDomain, toDomain, ruleViolated }.
+3. Unmapped files (in repo, not in any domain rule).
+4. Dead intent (domains declared but with no files).
+
+Output: findings list. Use:
+- HIGH: cross-cutting violation, breaks a critical invariant (e.g., audit-orchestration → learning-store when not allowed creates a circular dep between core subsystems).
+- MEDIUM: boundary erosion in a non-critical edge, OR a recurring pattern that suggests the boundary is wrong (consider proposing an allowedDeps update INSTEAD of a fix).
+- LOW: isolated, easily-fixed cases (one file in the wrong domain; one stray import).
+
+When recommending a fix, prefer "move the file to the right domain" or "extract the cross-cutting concern into a shared module" over "add the dep to allowedDeps". Adding to allowedDeps is admitting the intent doc was wrong — sometimes that's right, but say so explicitly.
+
+DO NOT raise findings for:
+- Same-domain edges (always allowed by definition).
+- Edges to \`vendor\` (external deps — different policy layer).
+- Unmapped files in test/ or docs/ (heuristic — only flag src/ + scripts/).
+
+DO raise findings for:
+- deadIntent (domain declared but no files) — possible stale intent.
+- unmappedFiles in src/ or scripts/ — gap in domain-map.
+
+Severity floor: any mechanical violation defaults to MEDIUM unless you can justify HIGH or LOW with concrete reasoning.`;
 
 // LlmError and classifyLlmError imported from lib/robustness.mjs
 
@@ -989,6 +1028,395 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
  * Large backend file sets are split into route+service sub-passes.
  * Each pass uses safeCallGPT for graceful degradation on timeout/error.
  */
+/**
+ * Architecture-intent audit pass (Wave 1.5).
+ *
+ * Runs the two-phase analysis (inventory + per-stack edge analysis), then
+ * either short-circuits on clean OR sends violations to the LLM bouncer.
+ * Falls back to deterministic severity rubric if the LLM call fails.
+ *
+ * @returns {Promise<{ state: string, result: object }>}
+ */
+async function runArchitecturePass({ openai, repoRoot, focusBlock, planContent, historyBlock, ledgerFile, impactSet, isR2Plus }) {
+  const emptyResult = {
+    result: { pass_name: 'architecture', findings: [], summary: 'pass not run' },
+    usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+    latencyMs: 0,
+  };
+
+  const intentPath = path.join(repoRoot, 'docs/architecture-intent.md');
+  const domainMapPath = path.join(repoRoot, '.audit-loop/domain-map.json');
+
+  if (!fs.existsSync(intentPath)) {
+    return { state: 'SKIPPED_NO_INTENT', result: emptyResult, archReport: null };
+  }
+  if (!fs.existsSync(domainMapPath)) {
+    return { state: 'SKIPPED_MISSING_DOMAIN_MAP', result: emptyResult, archReport: null };
+  }
+
+  let domainMap;
+  try {
+    domainMap = loadArchIntentConfig(repoRoot);
+  } catch (err) {
+    if (err instanceof ArchIntentConfigError) {
+      return {
+        state: 'ERROR_INVALID_CONFIG',
+        result: {
+          result: {
+            pass_name: 'architecture',
+            findings: [{
+              severity: 'HIGH',
+              category: '[Architecture] Invalid domain-map.json',
+              detail: err.message,
+              recommendation: 'Fix the config file at .audit-loop/domain-map.json. See docs/completed/architecture-intent-framework.md §2 decision 5.',
+              section: '.audit-loop/domain-map.json',
+              affectedFiles: ['.audit-loop/domain-map.json'],
+              affectedPrinciples: ['#5 SSoT'],
+              is_quick_fix: false,
+              is_mechanical: false,
+              principle: '#5 SSoT',
+            }],
+            summary: 'Architecture pass aborted — config invalid',
+          },
+          usage: emptyResult.usage,
+          latencyMs: 0,
+        },
+        archReport: null,
+      };
+    }
+    throw err;
+  }
+
+  if (domainMap.allowedDeps === null) {
+    return { state: 'SKIPPED_NO_BASELINE', result: emptyResult, archReport: null };
+  }
+
+  const intent = parseIntentDoc(intentPath);
+  const { stackKinds } = detectRepoStack(repoRoot);
+
+  if (stackKinds.length === 0) {
+    return { state: 'SKIPPED_UNSUPPORTED_STACK', result: emptyResult, archReport: null };
+  }
+
+  const report = await runArchIntentAnalysis({ repoPath: repoRoot, stackKinds, domainMap });
+  const derivedState = deriveArchState(report);
+
+  // Stderr summary so operators see the mechanical findings even when LLM
+  // doesn't fire (clean) or fails (fallback).
+  process.stderr.write(`  [architecture] mechanical: ${report.violations.length} violations, ${report.unmappedFiles.length} unmapped, ${report.deadIntent.length} dead, ${report.perStackResults.length} stacks\n`);
+
+  if (isArchIntentReportClean(report)) {
+    return {
+      state: 'ANALYZED_CLEAN',
+      archReport: report,
+      result: {
+        result: { pass_name: 'architecture', findings: [], summary: 'Architecture intent clean' },
+        usage: emptyResult.usage,
+        latencyMs: 0,
+      },
+    };
+  }
+
+  // Build prompt + call LLM bouncer for severity classification
+  const violationsForPrompt = formatViolationsForPrompt(report, intent);
+  const archLimits = computePassLimits(violationsForPrompt.length + 4000, 'medium');
+  const llmCall = await safeCallGPT(openai, {
+    ...buildCachePrompt({
+      rubric: PASS_ARCH_INTENT_SYSTEM,
+      focusBlock,
+      passName: 'architecture',
+      planContent,
+      ledgerFile: isR2Plus ? ledgerFile : null,
+      impactSet,
+      isR2Plus,
+      historyBlock,
+      codeHeader: '## Intent + Mechanical Violations',
+      code: violationsForPrompt,
+    }),
+    schema: ArchIntentPassSchema,
+    schemaName: 'architecture_pass',
+    reasoning: 'medium',
+    ...archLimits,
+    passName: 'architecture',
+  }, { pass_name: 'architecture', findings: [], summary: 'LLM call failed; falling back to deterministic rubric' });
+
+  if (llmCall.failed) {
+    // Deterministic fallback (decision 11): emit findings from mechanical
+    // report using simplified rubric (no HIGH in fallback mode).
+    return {
+      state: derivedState === 'ANALYZED_PARTIAL' ? 'ANALYZED_PARTIAL' : 'ANALYZED_FALLBACK_DETERMINISTIC',
+      archReport: report,
+      result: {
+        ...llmCall,
+        result: {
+          pass_name: 'architecture',
+          findings: deriveFindingsFromReport(report),
+          summary: `LLM bouncer failed (${llmCall.error}); ${report.violations.length} mechanical findings emitted with simplified rubric`,
+        },
+      },
+    };
+  }
+
+  return {
+    state: derivedState,
+    archReport: report,
+    result: llmCall,
+  };
+}
+
+/**
+ * Convert a raw orphan-introduced finding to the standard FindingSchema shape
+ * so it merges into the normal findings stream consumed by the ledger / Gemini /
+ * cost reporting paths.
+ *
+ * @param {object} raw - finding from detectOrphansIntroduced (after processFindings)
+ * @returns {object} FindingSchema-shaped finding
+ */
+function orphanToStandardFinding(raw, idx) {
+  const idSuffix = raw._fingerprint ? raw._fingerprint.slice(0, 4) : String(idx).padStart(2, '0');
+  return {
+    id: `O${idSuffix}`,
+    severity: raw.severity, // 'MEDIUM'
+    category: `Orphan Introduced (${raw.subKind})`,
+    section: raw.file,
+    detail: raw.rationale,
+    risk: 'Dead code accumulation — file is no longer reachable from any non-test caller but remains in the repo',
+    recommendation: raw.subKind === 'born-orphan'
+      ? `Either wire ${raw.file} into the call graph or remove it before merge`
+      : `Remove ${raw.file} along with the diff that orphaned it, or accept via <!-- audit:accept-v1: ${raw.file} :: reason -->`,
+    is_quick_fix: false,
+    is_mechanical: true,
+    principle: 'Long-Term Sustainability (#20) — dead code is invisible debt',
+    classification: {
+      sonarType: 'CODE_SMELL',
+      effort: 'TRIVIAL',
+      sourceKind: 'LINTER',
+      sourceName: 'orphan-introduced',
+    },
+  };
+}
+
+/**
+ * Wave 1.5b — Orphan-Introduced check. Runs after the architecture pass; reuses
+ * the HEAD import graph from `archReport._meta['js-ts']`. Pure deterministic
+ * algorithm (no LLM call); emits MEDIUM findings for files orphaned by the diff.
+ *
+ * Plan: docs/plans/dead-code-phase-1-orphan-introduced.md
+ *
+ * @param {object} args
+ * @param {object|null} args.archReport - from runArchitecturePass; null → SKIPPED_NO_GRAPH
+ * @param {string} args.repoRoot
+ * @param {string|null} args.baseRef - explicit base sha/ref (e.g. from --base flag)
+ * @param {string|null} args.headRef
+ * @param {string} args.runId
+ * @param {string|null} args.planContent
+ * @param {object|null} args.ledger - parsed adjudication ledger (R2+ only)
+ * @returns {Promise<{state: string, result: object}>}
+ */
+async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef, runId, planContent, ledger }) {
+  const emptyResult = {
+    result: { pass_name: 'orphan-introduced', findings: [], summary: '' },
+    usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+    latencyMs: 0,
+  };
+
+  if (!archReport) {
+    // No graph available — arch pass skipped or errored before producing one.
+    return { state: 'SKIPPED_NO_GRAPH', result: { ...emptyResult, result: { ...emptyResult.result, summary: 'no arch graph' } } };
+  }
+
+  // Extract HEAD graph from arch report's js-ts adapter _meta.
+  const jsMeta = archReport._meta?.['js-ts'];
+  if (!jsMeta || !jsMeta.allFiles || jsMeta.allFiles.length === 0) {
+    return { state: 'SKIPPED_NO_GRAPH', result: { ...emptyResult, result: { ...emptyResult.result, summary: 'no js-ts graph' } } };
+  }
+  const head = {
+    callersByTarget: jsMeta.callersByTarget || {},
+    targetsByCaller: jsMeta.targetsByCaller || {},
+    allFiles: jsMeta.allFiles || [],
+  };
+
+  // Resolve diff scope (orchestration owns git I/O + AST pre-edges).
+  const startedAt = Date.now();
+  let scope;
+  try {
+    scope = await resolveDiffScope({ repoPath: repoRoot, baseRef, headRef });
+  } catch (err) {
+    process.stderr.write(`  [orphan-introduced] resolver error: ${err.message}\n`);
+    return { state: 'ERROR', result: { ...emptyResult, result: { ...emptyResult.result, summary: `resolver: ${err.message}` } } };
+  }
+
+  // Short-circuit states from the resolver.
+  if (scope.state === 'SKIPPED_NO_BASELINE' || scope.state === 'SKIPPED_PATCH_ONLY_MODE') {
+    await emitOrphanRunMetrics({
+      runId, passState: scope.state, rawFindings: [], survivors: [], suppressed: [], _meta: {}, repoPath: repoRoot,
+    });
+    return { state: scope.state, result: emptyResult };
+  }
+
+  // Inherit ANALYZED_PARTIAL from upstream arch state (Gemini-R2/M2 fix).
+  const archDerived = deriveArchState(archReport);
+  if (archDerived === 'ANALYZED_PARTIAL') scope.state = 'ANALYZED_PARTIAL';
+
+  // Run pure detector.
+  const detector = detectOrphansIntroduced({ scope, head });
+
+  // Post-processing pipeline (fingerprint + ledger-suppress + accept-v1).
+  const { survivors, suppressed } = processFindings(detector.rawFindings, {
+    ledger,
+    planContent,
+  });
+
+  // Emit telemetry (per-pass orchestration responsibility — Gemini-R4/H1).
+  await emitOrphanRunMetrics({
+    runId,
+    passState: detector.state,
+    rawFindings: detector.rawFindings,
+    survivors,
+    suppressed,
+    _meta: detector._meta,
+    repoPath: repoRoot,
+  });
+
+  const findings = survivors.map((f, i) => orphanToStandardFinding(f, i));
+  const summary = findings.length === 0
+    ? `No orphans introduced. Suspects: ${detector._meta.suspectsCount}, removed-edge targets: ${detector._meta.removedEdgeTargetCount}, total removed edges: ${detector._meta.totalRemovedEdges}, entry-points: ${detector._meta.entryPointsCount}.`
+    : `${findings.length} orphan-introduced finding(s) surfaced (${detector.rawFindings.length} raw, ${suppressed.length} suppressed).`;
+
+  const latencyMs = Date.now() - startedAt;
+  return {
+    state: detector.state,
+    result: {
+      result: { pass_name: 'orphan-introduced', findings, summary },
+      usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: latencyMs },
+      latencyMs,
+    },
+  };
+}
+
+/**
+ * Format a mechanical report into the prompt body for the LLM bouncer.
+ * Aggregates by (fromDomain, toDomain, ruleViolated) when >20 violations
+ * to stay within token budget (decision 16).
+ */
+function formatViolationsForPrompt(report, intent) {
+  const lines = [];
+  if (intent.mermaid) {
+    lines.push('## Intended boundaries (from architecture-intent.md)');
+    lines.push('```mermaid');
+    lines.push(intent.mermaid);
+    lines.push('```');
+    lines.push('');
+  }
+  lines.push(`## Mechanical Violations (${report.violations.length} total)`);
+  if (report.violations.length > 20) {
+    // Aggregate by (fromDomain, toDomain, ruleViolated)
+    const clusters = new Map();
+    for (const v of report.violations) {
+      const key = `${v.fromDomain} → ${v.toDomain} (${v.ruleViolated})`;
+      if (!clusters.has(key)) clusters.set(key, []);
+      clusters.get(key).push(v);
+    }
+    for (const [key, vs] of clusters) {
+      lines.push(`- **${key}**: ${vs.length} edges`);
+      for (const v of vs.slice(0, 3)) {
+        lines.push(`  - ${v.fromFile} → ${v.toFile}`);
+      }
+      if (vs.length > 3) lines.push(`  - ... and ${vs.length - 3} more`);
+    }
+  } else {
+    for (const v of report.violations) {
+      lines.push(`- ${v.fromDomain} → ${v.toDomain}: ${v.fromFile} → ${v.toFile}`);
+    }
+  }
+  if (report.unmappedFiles.length > 0) {
+    lines.push('');
+    lines.push(`## Unmapped Files (${report.unmappedFiles.length})`);
+    for (const f of report.unmappedFiles.slice(0, 30)) lines.push(`- ${f}`);
+    if (report.unmappedFiles.length > 30) lines.push(`- ... and ${report.unmappedFiles.length - 30} more`);
+  }
+  if (report.deadIntent.length > 0) {
+    lines.push('');
+    lines.push(`## Dead Intent (${report.deadIntent.length})`);
+    for (const d of report.deadIntent) lines.push(`- ${d}`);
+  }
+  if (report.perStackResults.some(r => r.status === 'error')) {
+    lines.push('');
+    lines.push('## Per-stack Analyzer Failures');
+    for (const r of report.perStackResults.filter(r => r.status === 'error')) {
+      lines.push(`- ${r.stackKind}: ${r.error?.message}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Deterministic fallback rubric (decision 11). Used when the LLM bouncer
+ * fails — emits findings from the mechanical report alone. No HIGH severity
+ * (cross-cutting detection requires LLM judgement).
+ */
+function deriveFindingsFromReport(report) {
+  const findings = [];
+  for (const v of report.violations) {
+    findings.push({
+      severity: 'MEDIUM',
+      category: '[Architecture] Forbidden cross-domain edge',
+      detail: `${v.fromFile} (${v.fromDomain}) imports ${v.toFile} (${v.toDomain}); not in allowedDeps[${v.fromDomain}].`,
+      recommendation: `Either move one of the files to align with allowed deps OR explicitly update allowedDeps in .audit-loop/domain-map.json with rationale in architecture-intent.md.`,
+      section: v.fromFile,
+      affectedFiles: [v.fromFile, v.toFile],
+      affectedPrinciples: ['#5 SSoT'],
+      is_quick_fix: false,
+      is_mechanical: true,
+      principle: '#5 SSoT',
+    });
+  }
+  for (const f of report.unmappedFiles) {
+    if (!f.startsWith('src/') && !f.startsWith('scripts/')) continue; // heuristic
+    findings.push({
+      severity: 'LOW',
+      category: '[Architecture] File missing domain rule',
+      detail: `${f} is not matched by any rule in .audit-loop/domain-map.json.`,
+      recommendation: 'Add a rule for this path so its dependencies can be evaluated.',
+      section: f,
+      affectedFiles: [f],
+      affectedPrinciples: ['#5 SSoT'],
+      is_quick_fix: true,
+      is_mechanical: true,
+      principle: '#5 SSoT',
+    });
+  }
+  for (const d of report.deadIntent) {
+    findings.push({
+      severity: 'LOW',
+      category: '[Architecture] Dead declared domain',
+      detail: `Domain "${d}" is declared in domain-map.json but no files match.`,
+      recommendation: 'Either remove the unused domain from the spec, or add files that will live in it.',
+      section: '.audit-loop/domain-map.json',
+      affectedFiles: ['.audit-loop/domain-map.json'],
+      affectedPrinciples: ['#5 SSoT'],
+      is_quick_fix: true,
+      is_mechanical: true,
+      principle: '#5 SSoT',
+    });
+  }
+  for (const r of report.perStackResults.filter(r => r.status === 'error')) {
+    findings.push({
+      severity: 'MEDIUM',
+      category: `[Architecture] Stack analyzer failure (${r.stackKind})`,
+      detail: r.error?.message ?? 'unknown error',
+      recommendation: `Check that the ${r.stackKind} adapter dependencies are installed and the repo is in a parsable state.`,
+      section: r.stackKind,
+      affectedFiles: [],
+      affectedPrinciples: ['#15 Error Handling'],
+      is_quick_fix: false,
+      is_mechanical: true,
+      principle: '#15 Error Handling',
+    });
+  }
+  return findings;
+}
+
 async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext = '', { passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null, changedFiles = [], repoProfile = null, bandit = null, fpTracker = null, noLedger = false, noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false, debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null, sessionCacheHit = null, scopeMode = null, planFile = null } = {}) {
   const totalStart = Date.now();
 
@@ -1349,6 +1777,66 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   const [structureResult, wiringResult] = await Promise.all(wave1Promises);
   cacheWaveResults(['structure', 'wiring'], [structureResult, wiringResult]);
 
+  // ── Wave 1.5: Architecture Intent (NEW, PR-A 2026-05-11) ─────────────────
+  // Opt-in: only runs when docs/architecture-intent.md AND
+  // .audit-loop/domain-map.json both exist.
+  let archResult = {
+    result: { pass_name: 'architecture', findings: [], summary: 'pass not run' },
+    usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+    latencyMs: 0,
+  };
+  let archState = 'SKIPPED_NO_INTENT';
+  let archReportForOrphan = null;
+  if (shouldRunPass('architecture')) {
+    const archOut = await runArchitecturePass({
+      openai, repoRoot: process.cwd(), focusBlock, planContent, historyBlock,
+      ledgerFile, impactSet, isR2Plus,
+    });
+    archState = archOut.state;
+    archResult = archOut.result;
+    archReportForOrphan = archOut.archReport;
+  } else {
+    archState = 'SKIPPED_PASS_FILTER';
+  }
+  process.stderr.write(`  [architecture] ${archState}\n`);
+  archResult._state = archState;
+  cachePassResult('architecture', archResult);
+
+  // ── Wave 1.5b: Orphan-Introduced check (dead-code phase 1, 2026-05-12) ────
+  // Deterministic mechanical pass — no LLM cost. Reuses the HEAD import graph
+  // from the architecture pass (shared dep-cruiser invocation).
+  // Plan: docs/plans/dead-code-phase-1-orphan-introduced.md
+  let orphanResult = {
+    result: { pass_name: 'orphan-introduced', findings: [], summary: 'pass not run' },
+    usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+    latencyMs: 0,
+  };
+  let orphanState = 'SKIPPED_NO_GRAPH';
+  if (shouldRunPass('orphan-introduced')) {
+    const ledgerForOrphan = isR2Plus && ledgerFile && fs.existsSync(ledgerFile)
+      ? (() => { try { return JSON.parse(fs.readFileSync(ledgerFile, 'utf-8')); } catch { return null; } })()
+      : null;
+    // Default: post-commit diff (HEAD~1 vs HEAD). This is the /cycle code workflow.
+    // For working-tree audits, headRef=null routes through the resolver's working-tree
+    // mode (Gemini-R3/H3 — tracked diff vs HEAD + untracked files).
+    const orphanOut = await runOrphanIntroducedPass({
+      archReport: archReportForOrphan,
+      repoRoot: process.cwd(),
+      baseRef: 'HEAD~1',
+      headRef: 'HEAD',
+      runId: debtRunId,
+      planContent,
+      ledger: ledgerForOrphan,
+    });
+    orphanState = orphanOut.state;
+    orphanResult = orphanOut.result;
+  } else {
+    orphanState = 'SKIPPED_PASS_FILTER';
+  }
+  process.stderr.write(`  [orphan-introduced] ${orphanState} — ${orphanResult.result.findings.length} findings\n`);
+  orphanResult._state = orphanState;
+  cachePassResult('orphan-introduced', orphanResult);
+
   // 3. Wave 2: Backend + Frontend quality (deep, reasoning: high)
   process.stderr.write('\n── Wave 2: Quality passes (parallel, reasoning: high) ──\n');
 
@@ -1670,7 +2158,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
 
   // 5. Merge all pass results with semantic dedup
   const totalLatency = Date.now() - totalStart;
-  const allResults = [structureResult, wiringResult, ...backendResults, frontendResult, sustainResult, quickfixResult];
+  const allResults = [structureResult, wiringResult, ...backendResults, frontendResult, sustainResult, quickfixResult, orphanResult];
   const failedPasses = allResults.filter(r => r.failed).map(r => r.error);
 
   process.stderr.write(`\n── Merge (${allResults.length} passes, ${failedPasses.length} failed) ──\n`);
@@ -1735,6 +2223,9 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   }
   addFindings(frontendResult?.result?.findings, 'Frontend');
   addFindings(sustainResult?.result?.findings, 'Sustainability');
+  // Orphan-introduced findings (dead-code phase 1) flow through the standard
+  // dedup + suppression path. Mechanical pass — no LLM cost.
+  addFindings(orphanResult?.result?.findings, 'Orphan');
 
   if (dedupCount > 0) {
     process.stderr.write(`  Deduped ${dedupCount} cross-pass duplicate(s)\n`);

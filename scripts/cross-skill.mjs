@@ -488,13 +488,14 @@ async function cmdGetPersonaSessionsByUrl() {
 async function cmdDetectStack() {
   const cwd = argOption('cwd') || process.cwd();
   const includeEnvManager = rest.includes('--include-env-manager');
-  const { stack, pythonFramework, detectedFrom } = detectRepoStack(cwd);
+  const { stack, pythonFramework, detectedFrom, stackKinds } = detectRepoStack(cwd);
   const profile = {
     ok: true,
     stack,
     pythonFramework,
     environmentManager: includeEnvManager ? detectPythonEnvironmentManager(cwd) : null,
     detectedFrom,
+    stackKinds: stackKinds ?? [],
   };
   const parsed = StackProfileSchema.safeParse(profile);
   if (!parsed.success) {

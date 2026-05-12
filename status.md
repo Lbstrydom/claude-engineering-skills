@@ -1,5 +1,63 @@
 # Project Status Log
 
+## 2026-05-12 — Architecture-Intent PR-A (framework + JS adapter) + Dead-Code Phase 1 (orphan-introduced check)
+
+### Bundled commit — two related bodies of work
+
+**1. Architecture-Intent Framework PR-A** (`scripts/lib/arch-intent/` + JS/TS adapter via dependency-cruiser)
+- C4-model-based per-repo architecture-intent framework with cross-language adapter contract (PR-A ships JS/TS; PR-B Python/Java; PR-C Postgres planned).
+- New artefacts: `docs/architecture-intent.md` (human narrative + Mermaid C4) + `.audit-loop/domain-map.json` (machine SoT with `allowedDeps` whitelist).
+- New CLI: `scripts/arch-intent-bootstrap.mjs` — seeds `allowedDeps` from current import graph (`--baseline-from-graph`); writes atomically; iterates all detected stacks.
+- New module: `scripts/lib/arch-intent/adapter-contract.mjs` — framework spine (inventoryFiles + per-stack fault isolation + deadIntent + pass-state taxonomy).
+- New adapter: `scripts/lib/arch-intent/adapters/js-ts.mjs` — dependency-cruiser-backed JS/TS import graph (canonical edge-kind taxonomy: local-file / vendor-npm / vendor-node-builtin / vendor-typescript-alias / unresolved / dynamic / type-only).
+- New Wave 1.5 architecture pass in `scripts/openai-audit.mjs` (LLM-bouncer pattern: mechanical violation detection + LLM severity classification + deterministic fallback rubric).
+- 4 new test files (~35 tests): contract, doc-parser, domain-resolver, load-config.
+
+**2. Dead-Code Phase 1 — orphan-introduced check** (`scripts/lib/audit/` new module set)
+- New pure detector `scripts/lib/audit/orphan-introduced.mjs` — diff-driven structural orphan detection (born-orphan and left-orphan subkinds with exact remover attribution).
+- New `scripts/lib/audit/diff-scope-resolver.mjs` — git I/O + AST pre-edge extraction via `git worktree` + dependency-cruiser; handles A/M/D/R/C statuses (variable-width records); `-z` null-byte parsing throughout; SOURCE_EXTENSIONS pre-filter; package.json + tsconfig reverse-resolution for entry-points; explicit partial-parse state propagation.
+- New `scripts/lib/audit/findings-pipeline.mjs` — unified post-processing (normalize → fingerprint → ledger-suppress → accept-v1-suppress). Returns `{survivors, suppressed}` for per-pass orchestration telemetry. `findingFingerprint` delegates non-orphan findings to `findings.mjs/semanticId()` for SoT identity. accept-v1 suppression is **kind-scoped to `orphan-introduced`** (Gemini-final-gate fix: prevents cross-pass leak).
+- New `scripts/lib/audit/orphan-metrics.mjs` — lock-safe single-batch JSONL writer; `wx`-flag file initialization (race-free); inside-try-block telemetry (no unhandled rejection).
+- New `scripts/lib/audit/glob-match.mjs` — shared glob utility (extracted from deferral-classifier duplication).
+- 5 new Zod schemas in `scripts/lib/schemas.mjs`: OrphanPassState, ChangedFile, DiffScope, HeadGraphMeta, OrphanIntroducedFinding.
+- `js-ts.mjs` adapter extended with two-track `_meta` (violation-track excludes type-only; orphan-track INCLUDES type-only edges — type imports keep files structurally alive).
+- Wave 1.5b orchestration wiring in `openai-audit.mjs`.
+- Audit cycle: 3 GPT rounds + 5 Gemini rounds during /audit-plan; 3 GPT rounds + 2 Gemini gates during /audit-code. ~30 findings addressed (mix of fix, dismiss, compromise via GPT deliberation). Gemini caught a cross-pass accept-v1 leak and a wrong-fingerprint-shape — both fixed.
+- 51 new tests; full suite **2041/2042** pass (1 pre-existing vendoring-SHA-drift failure unrelated to this work).
+
+### Files Affected (this commit)
+
+**Architecture-Intent PR-A**:
+- New: `docs/architecture-intent.md` + `docs/architecture-intent.template.md`
+- New: `scripts/arch-intent-bootstrap.mjs`
+- New: `scripts/lib/arch-intent/` (adapter-contract.mjs, adapters/js-ts.mjs, domain-resolver.mjs, errors.mjs, intent-doc-parser.mjs, load-config.mjs)
+- New: `tests/arch-intent-{contract,doc-parser,domain-resolver,load-config}.test.mjs`
+- New: `.audit-loop/domain-map.json` (extended with allowedDeps + descriptions)
+
+**Dead-Code Phase 1**:
+- New: `scripts/lib/audit/{orphan-introduced,diff-scope-resolver,findings-pipeline,orphan-metrics,glob-match}.mjs`
+- New: `tests/{orphan-introduced,diff-scope-resolver,findings-pipeline}.test.mjs`
+- New: `docs/plans/dead-code-phase-1-orphan-introduced.md` (full plan + implementation log)
+- New: `docs/plans/architecture-intent-framework.md`
+
+**Modified**:
+- `scripts/lib/schemas.mjs` — +8 Zod schemas
+- `scripts/lib/arch-intent/adapters/js-ts.mjs` — +15 LOC two-track meta
+- `scripts/openai-audit.mjs` — +493 LOC (arch-intent Wave 1.5 + orphan Wave 1.5b)
+- `scripts/lib/repo-stack.mjs` + `scripts/cross-skill.mjs` — `stackKinds[]` plumbing
+- `scripts/sync-to-repos.mjs` — added arch-intent + audit-lib files to CORE_SCRIPTS
+- `.gitignore` — added `.audit/orphan-metrics.jsonl`
+
+### Open deferrals (phase 2 of dead-code work)
+- R3/H2 preimage-resolution-parity test gate
+- Config-injection layer for entry-points + test-path patterns
+- `arch-intent`'s `git ls-files` lacks `-z` (Gemini-R2/G1; pre-existing arch-intent debt)
+- Cross-LLM verification for `/repo-scan` (separate phase 2 skill)
+- Knip / vulture / PurgeCSS wrap layer
+- Clustering pipeline for refactor blast-radius bounding
+
+---
+
 ## 2026-05-11 (later) — Gemini-gate scope fix + OpenAI prompt prefix-cache restructure
 
 ### Changes (bundled commit — two related fixes)

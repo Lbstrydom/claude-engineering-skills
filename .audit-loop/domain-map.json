@@ -1,48 +1,252 @@
 {
   "_comment": "Domain rules for the architectural-memory symbol index. First match wins. Most-specific patterns first; broad catch-alls last. Domains must match /^[a-z][a-z0-9_-]{0,49}$/.",
   "rules": [
-    { "pattern": ".claude/hooks/**", "domain": "claude-hooks" },
-    { "pattern": "scripts/lib/quickfix-patterns.mjs", "domain": "claude-hooks" },
-    { "pattern": "scripts/lib/brainstorm/**", "domain": "brainstorm" },
-    { "pattern": "scripts/lib/install/**", "domain": "install" },
-    { "pattern": "scripts/lib/stores/**", "domain": "stores" },
-    { "pattern": "scripts/lib/claudemd/**", "domain": "claudemd-management" },
-    { "pattern": "scripts/symbol-index/**", "domain": "arch-memory" },
-    { "pattern": "scripts/lib/symbol-index/**", "domain": "arch-memory" },
-    { "pattern": "scripts/lib/findings*.mjs", "domain": "findings" },
-    { "pattern": "scripts/lib/debt-*.mjs", "domain": "tech-debt" },
-    { "pattern": "scripts/lib/plan-*.mjs", "domain": "plan" },
-    { "pattern": "scripts/openai-audit.mjs", "domain": "audit-orchestration" },
-    { "pattern": "scripts/gemini-review.mjs", "domain": "audit-orchestration" },
-    { "pattern": "scripts/cycle.mjs", "domain": "audit-orchestration" },
-    { "pattern": "scripts/audit-*.mjs", "domain": "audit-orchestration" },
-    { "pattern": "scripts/debt-*.mjs", "domain": "tech-debt" },
-    { "pattern": "scripts/cross-skill.mjs", "domain": "cross-skill-bridge" },
-    { "pattern": "scripts/learning-store.mjs", "domain": "learning-store" },
-    { "pattern": "scripts/bandit.mjs", "domain": "learning-store" },
-    { "pattern": "scripts/refine-prompts.mjs", "domain": "learning-store" },
-    { "pattern": "scripts/evolve-prompts.mjs", "domain": "learning-store" },
-    { "pattern": "scripts/meta-assess.mjs", "domain": "learning-store" },
-    { "pattern": "scripts/install-skills.mjs", "domain": "install" },
-    { "pattern": "scripts/setup-permissions.mjs", "domain": "install" },
-    { "pattern": "scripts/sync-to-repos.mjs", "domain": "install" },
-    { "pattern": "scripts/regenerate-skill-copies.mjs", "domain": "install" },
-    { "pattern": "scripts/build-manifest.mjs", "domain": "install" },
-    { "pattern": "scripts/check-*.mjs", "domain": "install" },
-    { "pattern": "scripts/memory-health.mjs", "domain": "memory-health" },
-    { "pattern": "scripts/persona-test.mjs", "domain": "persona-test" },
-    { "pattern": "scripts/ux-lock.mjs", "domain": "ux-lock" },
-    { "pattern": "scripts/ship.mjs", "domain": "ship" },
-    { "pattern": "scripts/explain.mjs", "domain": "explain" },
-    { "pattern": "scripts/plan*.mjs", "domain": "plan" },
-    { "pattern": "scripts/brainstorm-round.mjs", "domain": "brainstorm" },
-    { "pattern": "scripts/lib/**", "domain": "shared-lib" },
-    { "pattern": "scripts/**", "domain": "scripts" },
-    { "pattern": "tests/**", "domain": "tests" },
-    { "pattern": "skills/**", "domain": "skills-content" },
-    { "pattern": "supabase/**", "domain": "supabase" },
-    { "pattern": "docs/**", "domain": "docs" },
-    { "pattern": "*.mjs", "domain": "root-scripts" },
-    { "pattern": "*.js", "domain": "root-scripts" }
-  ]
+    {
+      "pattern": ".claude/hooks/**",
+      "domain": "claude-hooks"
+    },
+    {
+      "pattern": "scripts/lib/quickfix-patterns.mjs",
+      "domain": "claude-hooks"
+    },
+    {
+      "pattern": "scripts/lib/brainstorm/**",
+      "domain": "brainstorm"
+    },
+    {
+      "pattern": "scripts/lib/install/**",
+      "domain": "install"
+    },
+    {
+      "pattern": "scripts/lib/stores/**",
+      "domain": "stores"
+    },
+    {
+      "pattern": "scripts/lib/claudemd/**",
+      "domain": "claudemd-management"
+    },
+    {
+      "pattern": "scripts/symbol-index/**",
+      "domain": "arch-memory"
+    },
+    {
+      "pattern": "scripts/lib/symbol-index/**",
+      "domain": "arch-memory"
+    },
+    {
+      "pattern": "scripts/lib/findings*.mjs",
+      "domain": "findings"
+    },
+    {
+      "pattern": "scripts/lib/audit/**",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/lib/debt-*.mjs",
+      "domain": "tech-debt"
+    },
+    {
+      "pattern": "scripts/lib/plan-*.mjs",
+      "domain": "plan"
+    },
+    {
+      "pattern": "scripts/openai-audit.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/gemini-review.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/cycle.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/audit-*.mjs",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/debt-*.mjs",
+      "domain": "tech-debt"
+    },
+    {
+      "pattern": "scripts/cross-skill.mjs",
+      "domain": "cross-skill-bridge"
+    },
+    {
+      "pattern": "scripts/learning-store.mjs",
+      "domain": "learning-store"
+    },
+    {
+      "pattern": "scripts/bandit.mjs",
+      "domain": "learning-store"
+    },
+    {
+      "pattern": "scripts/refine-prompts.mjs",
+      "domain": "learning-store"
+    },
+    {
+      "pattern": "scripts/evolve-prompts.mjs",
+      "domain": "learning-store"
+    },
+    {
+      "pattern": "scripts/meta-assess.mjs",
+      "domain": "learning-store"
+    },
+    {
+      "pattern": "scripts/install-skills.mjs",
+      "domain": "install"
+    },
+    {
+      "pattern": "scripts/setup-permissions.mjs",
+      "domain": "install"
+    },
+    {
+      "pattern": "scripts/sync-to-repos.mjs",
+      "domain": "install"
+    },
+    {
+      "pattern": "scripts/regenerate-skill-copies.mjs",
+      "domain": "install"
+    },
+    {
+      "pattern": "scripts/build-manifest.mjs",
+      "domain": "install"
+    },
+    {
+      "pattern": "scripts/check-*.mjs",
+      "domain": "install"
+    },
+    {
+      "pattern": "scripts/memory-health.mjs",
+      "domain": "memory-health"
+    },
+    {
+      "pattern": "scripts/persona-test.mjs",
+      "domain": "persona-test"
+    },
+    {
+      "pattern": "scripts/ux-lock.mjs",
+      "domain": "ux-lock"
+    },
+    {
+      "pattern": "scripts/ship.mjs",
+      "domain": "ship"
+    },
+    {
+      "pattern": "scripts/explain.mjs",
+      "domain": "explain"
+    },
+    {
+      "pattern": "scripts/plan*.mjs",
+      "domain": "plan"
+    },
+    {
+      "pattern": "scripts/brainstorm-round.mjs",
+      "domain": "brainstorm"
+    },
+    {
+      "pattern": "scripts/lib/**",
+      "domain": "shared-lib"
+    },
+    {
+      "pattern": "scripts/**",
+      "domain": "scripts"
+    },
+    {
+      "pattern": "tests/**",
+      "domain": "tests"
+    },
+    {
+      "pattern": "skills/**",
+      "domain": "skills-content"
+    },
+    {
+      "pattern": "supabase/**",
+      "domain": "supabase"
+    },
+    {
+      "pattern": "docs/**",
+      "domain": "docs"
+    },
+    {
+      "pattern": "*.mjs",
+      "domain": "root-scripts"
+    },
+    {
+      "pattern": "*.js",
+      "domain": "root-scripts"
+    }
+  ],
+  "allowedDeps": {
+    "audit-orchestration": [
+      "findings",
+      "learning-store",
+      "plan",
+      "shared-lib",
+      "tech-debt"
+    ],
+    "findings": [
+      "shared-lib"
+    ],
+    "shared-lib": [
+      "findings",
+      "plan"
+    ],
+    "plan": [
+      "shared-lib"
+    ],
+    "learning-store": [
+      "findings",
+      "shared-lib"
+    ],
+    "brainstorm": [
+      "shared-lib"
+    ],
+    "install": [
+      "claudemd-management",
+      "shared-lib"
+    ],
+    "scripts": [
+      "claudemd-management",
+      "findings",
+      "learning-store",
+      "plan",
+      "shared-lib",
+      "stores",
+      "tech-debt"
+    ],
+    "cross-skill-bridge": [
+      "learning-store",
+      "shared-lib"
+    ],
+    "tech-debt": [
+      "learning-store",
+      "shared-lib"
+    ],
+    "claude-hooks": [
+      "shared-lib"
+    ],
+    "stores": [
+      "shared-lib"
+    ],
+    "arch-memory": [
+      "learning-store",
+      "shared-lib"
+    ],
+    "tests": [
+      "arch-memory",
+      "brainstorm",
+      "claude-hooks",
+      "claudemd-management",
+      "findings",
+      "install",
+      "learning-store",
+      "plan",
+      "scripts",
+      "shared-lib",
+      "stores",
+      "tech-debt"
+    ]
+  }
 }
