@@ -179,6 +179,10 @@ const ARCH_MEMORY_SCRIPTS = [
   'scripts/lib/audit/findings-pipeline.mjs',
   'scripts/lib/audit/orphan-metrics.mjs',
   'scripts/lib/audit/glob-match.mjs',
+  // findings-pipeline.mjs imports parseAcceptV1Markers from this file.
+  // Pre-existing in claude-engineering-skills (learning system phase 1) but
+  // never added to the sync allowlist — exposed by phase-1 dead-code import.
+  'scripts/lib/audit/deferral-classifier.mjs',
   // Adaptive-learning runtime — required by openai-audit.mjs (decision-logger
   // is a top-level import at line 63), cross-skill.mjs (lazy-loads
   // quickfix-stats), and the audit pipeline's quickfix telemetry path.
