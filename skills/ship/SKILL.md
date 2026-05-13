@@ -236,6 +236,29 @@ If anything moves, include the renamed paths in the Step 6 stage list
 
 ## Step 6 — Stage, Commit, Push
 
+### 6.0 Regenerate sync manifest (claude-engineering-skills only)
+
+If this is the source repo (`package.json.name === "claude-engineering-skills"`)
+AND any file under `scripts/`, `scripts/lib/`, or other CORE_SCRIPTS-tracked
+paths has changed, regenerate the sync manifest before staging:
+
+```bash
+node scripts/sync-to-repos.mjs --target wine    # any --target works; manifest writes first
+```
+
+The first line of sync output will read `manifest  scripts/.sync-manifest.json @ <sha>`.
+The manifest captures SHA-256 hashes of every CORE_SCRIPTS file at the
+current commit. Consumer repos fetch it on `/audit-code` startup to detect
+staleness vs upstream.
+
+Then stage it alongside your other changes (Step 6.1):
+
+```bash
+git add scripts/.sync-manifest.json
+```
+
+Skip this step in consumer repos — the manifest is read-only there.
+
 ### 6.1 Stage
 
 Stage relevant files by name (be specific):
@@ -245,6 +268,7 @@ git add <list of changed source files>
 git add status.md
 git add CLAUDE.md AGENTS.md    # only if modified
 git add docs/plans/<plan>.md   # only if plan was updated
+git add scripts/.sync-manifest.json   # source repo only, after Step 6.0
 ```
 
 **Do NOT stage**: `.env`, credentials, `node_modules/`, temp/generated files.

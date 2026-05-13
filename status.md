@@ -1,5 +1,55 @@
 # Project Status Log
 
+## 2026-05-13 — Audit-tool staleness check (Option A)
+
+Closes the recurring "I didn't know engineering-skills shipped new audit-tool
+files" problem.  Three sync-related blockers in PR 39 / 55 / 56 in
+wine-cellar-app over 24h all traced to consumer repos running stale upstream
+files without any in-band signal.
+
+**Mechanism**: `npm run sync` regenerates `scripts/.sync-manifest.json`
+(SHA-256 of every CORE_SCRIPTS file at the current commit) before copying
+to consumers.  Consumer-side `openai-audit.mjs` fetches the manifest from
+`raw.githubusercontent.com` on every audit startup, compares hashes, prints
+a non-blocking warning when files diverge.  Network failure swallowed
+silently (never blocks audit).
+
+**Files Affected**:
+- `scripts/lib/sync-manifest.mjs` (new) — pure logic: hash, fetch, compare, validate
+- `scripts/check-audit-tool-version.mjs` (new) — standalone CLI for explicit checks (`npm run sync:version-check`)
+- `scripts/.sync-manifest.json` (new, generated) — committed artefact, 101 files at current commit
+- `scripts/sync-to-repos.mjs` — regenerates manifest at start of every sync; adds 3 files to CORE_SCRIPTS
+- `scripts/openai-audit.mjs` — 2.5s non-blocking version check in main()
+- `skills/ship/SKILL.md` — new Step 6.0 documents manifest regeneration before staging
+- `package.json` — `sync:version-check` script
+- `docs/plans/audit-tool-staleness-check.md` (new) — plan + acceptance criteria
+
+**Audit cycle**: 4 GPT rounds + 2 Gemini gates against the plan.  R1 HIGHs
+(3) → R2 HIGHs (2, new aspects) → R3 HIGHs (2, new aspects) → R4 HIGHs (0).
+Gemini round 1 = CONCERNS_REMAINING (2 new findings: silent partial
+manifest + keep-alive socket hang).  Both fixed (`generateManifest` now
+throws in strict mode; `https.get` passes `agent: false`).  Gemini round 2 =
+APPROVE with 1 LOW (manifest self-exclusion check pre-normalisation — fixed).
+
+**Key fixes shipped (defence in depth)**:
+- Zod boundary validation on upstream manifest (`SyncManifestSchema`)
+- `RelPathSchema` rejects absolute paths, traversals, drive letters — symmetric on producer + consumer
+- `path.resolve` containment guard in `compareToUpstream`
+- 2 MiB response size cap before `JSON.parse` (memory-exhaustion defence)
+- Promise.race end-to-end deadline that calls `req.destroy()` on timeout (was leaking sockets)
+- `agent: false` on `https.get` so CLI exits cleanly (no 5s keep-alive hang)
+- `atomicWriteFileSync` for the manifest itself
+- `process.exitCode` + return (not `process.exit()`) so stdout/stderr flush under pipe
+- Cross-OS path normalisation (Windows `\` → POSIX `/`)
+- Strict manifest generation refuses to ship a partial manifest
+- Differentiated CLI verdicts: `NETWORK_ERROR` vs `INVALID_MANIFEST`
+- `findRepoRoot()` via `git rev-parse --show-toplevel` (cwd-independent)
+- Non-Error throwable coercion at the failure-handling boundary
+
+**Test status**: 2041 pass, 1 pre-existing vendoring-provenance fail
+(unrelated — local provenance file is gitignored and older than current
+audit-loop SKILL.md).
+
 ## 2026-05-12 — Architecture-Intent PR-A (framework + JS adapter) + Dead-Code Phase 1 (orphan-introduced check)
 
 ### Bundled commit — two related bodies of work

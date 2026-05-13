@@ -2910,6 +2910,33 @@ async function main() {
     } catch { /* ignore — never block audit on resolver introspection */ }
   }
 
+  // Audit-tool version-staleness check (consumer-side).  Fetches the upstream
+  // sync manifest, compares hashes, warns when the consumer is running stale
+  // audit-tool files.  Non-blocking: a network failure or stale state never
+  // aborts the audit — just surfaces a warning so the operator knows to sync.
+  // Skipped in source repo (self-check is meaningless), in CI, and when the
+  // env var AUDIT_TOOL_VERSION_CHECK=skip is set.
+  if (process.env.AUDIT_TOOL_VERSION_CHECK !== 'skip' && !process.env.CI) {
+    try {
+      const { fetchUpstreamManifest, compareToUpstream, isSourceRepo, findRepoRoot } =
+        await import('./lib/sync-manifest.mjs');
+      const root = findRepoRoot();
+      if (!isSourceRepo(root)) {
+        const upstream = await fetchUpstreamManifest(undefined, { timeoutMs: 2500 });
+        const diff = compareToUpstream(root, upstream);
+        if (!diff.current) {
+          const total = diff.stale.length + diff.missing.length;
+          const upstreamRef = upstream.commitSha ? upstream.commitSha.slice(0, 7) : '?';
+          process.stderr.write(
+            `\n  [sync-check] WARNING: ${total} audit-tool file(s) differ from claude-engineering-skills @ ${upstreamRef}\n` +
+            '              Run `npm run sync` in claude-engineering-skills to refresh.\n' +
+            '              Set AUDIT_TOOL_VERSION_CHECK=skip to suppress. Continuing.\n\n'
+          );
+        }
+      }
+    } catch { /* silent — never block audit on network or missing manifest */ }
+  }
+
   const args = process.argv.slice(2);
   const mode = args[0];
   const planFile = args[1];

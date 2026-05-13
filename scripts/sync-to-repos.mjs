@@ -21,6 +21,7 @@ import { execSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
+import { writeManifest } from './lib/sync-manifest.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
@@ -52,7 +53,12 @@ const CORE_SCRIPTS = [
   'scripts/shared.mjs',
   'scripts/check-sync.mjs',
   'scripts/check-setup.mjs',
+  'scripts/check-audit-tool-version.mjs',
   'scripts/cache-hitrate-check.mjs',
+  // Sync manifest — generated at the start of every `npm run sync`.
+  // Consumer repos read it to detect when audit-tool files are stale
+  // vs upstream. See scripts/lib/sync-manifest.mjs.
+  'scripts/.sync-manifest.json',
   // lib/ core modules
   'scripts/lib/schemas.mjs',
   'scripts/lib/file-io.mjs',
@@ -85,6 +91,9 @@ const CORE_SCRIPTS = [
   'scripts/lib/owner-resolver.mjs',
   'scripts/lib/rule-metadata.mjs',
   'scripts/lib/file-store.mjs',
+  // Sync-manifest helper — pure logic for staleness check (used by both
+  // sync-to-repos.mjs generator and consumer-side openai-audit.mjs check).
+  'scripts/lib/sync-manifest.mjs',
   // Brainstorm helper (concept-level multi-LLM rounds — see /brainstorm)
   'scripts/brainstorm-round.mjs',
   'scripts/lib/brainstorm/prompt.mjs',
@@ -374,6 +383,21 @@ const dryRunSuffix = DRY_RUN ? ' ' + Y + '[DRY RUN]' + X : '';
 console.log(B + 'Audit-Loop Sync' + X + dryRunSuffix);
 console.log(`  Source: ${SOURCE_ROOT}`);
 console.log('');
+
+// Regenerate the sync manifest BEFORE copying — its hash content needs to
+// reflect what we're about to ship to consumers.  The manifest is itself
+// in CORE_SCRIPTS so it gets included in the file copy below.
+if (!DRY_RUN) {
+  // Hash the canonical CORE_SCRIPTS set — these are the files consumers
+  // need to keep in lockstep.  Other file sets (LEARNING/DEBT/etc.) are
+  // optional per-repo additions and not part of the version contract.
+  const manifestFiles = [...CORE_SCRIPTS, ...ARCH_MEMORY_SCRIPTS];
+  const { manifest } = writeManifest(SOURCE_ROOT, manifestFiles, {
+    repo: 'Lbstrydom/claude-engineering-skills',
+  });
+  console.log(`  ${G}manifest${X}  scripts/.sync-manifest.json @ ${manifest.commitSha?.slice(0, 7) || '?'} (${Object.keys(manifest.files).length} files)`);
+  console.log('');
+}
 
 for (const repo of targetRepos) {
   if (!fs.existsSync(repo.path)) {

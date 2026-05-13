@@ -33,6 +33,7 @@
     "sync": "node scripts/sync-to-repos.mjs",
     "sync:dry": "node scripts/sync-to-repos.mjs --dry-run",
     "sync:check": "node scripts/check-sync.mjs",
+    "sync:version-check": "node scripts/check-audit-tool-version.mjs",
     "skills:regenerate": "node scripts/sync-shared-audit-refs.mjs && node scripts/regenerate-skill-copies.mjs",
     "skills:check": "node scripts/check-skill-refs.mjs && node scripts/sync-shared-audit-refs.mjs --check && node scripts/regenerate-skill-copies.mjs --check",
     "audit:sync-shared-refs": "node scripts/sync-shared-audit-refs.mjs",
