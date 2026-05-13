@@ -1,6 +1,6 @@
 # Plan — Consumer-side audit-tool staleness check (Option A)
 
-**Status**: implemented 2026-05-13.
+**Status**: Complete — shipped 2026-05-13 as commit bc537f0.
 **Owner**: Louis.
 **Origin**: 24-hour stretch where three sync-related blockers (PR 39, 55, 56 in
 wine-cellar-app) traced to consumer repos running stale `claude-engineering-skills`
