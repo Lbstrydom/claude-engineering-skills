@@ -9,7 +9,6 @@ description: |
   Triggers on: "ship it", "commit and push", "push my changes", "ready to ship".
   IMPORTANT: This command runs autonomously — no confirmation prompts. The user invoking
   /ship is their approval to update docs, commit, and push in one uninterrupted flow.
-disable-model-invocation: true
 ---
 
 # Ship: Sync Docs → Commit → Push

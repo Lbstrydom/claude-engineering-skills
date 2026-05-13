@@ -17,7 +17,6 @@ description: |
     /ux-lock abc1234
     /ux-lock "role=list on wine grid" --url https://myapp.railway.app
     /ux-lock verify docs/plans/cellar-grid-redesign.md --url https://myapp.railway.app
-disable-model-invocation: true
 ---
 
 # UX Lock — Playwright Spec Generator & Plan Verifier

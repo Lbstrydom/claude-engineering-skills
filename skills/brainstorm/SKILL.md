@@ -11,7 +11,6 @@ description: |
     /brainstorm <topic>                          # OpenAI only (default)
     /brainstorm --with-gemini <topic>            # both
     /brainstorm --models openai,gemini <topic>   # explicit
-disable-model-invocation: true
 ---
 
 # /brainstorm — Multi-LLM Brainstorming

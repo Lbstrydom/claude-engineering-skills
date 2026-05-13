@@ -20,7 +20,6 @@ description: |
     /persona-test add "Pieter" "wine enthusiast, 40s, drinks daily, mobile-first" https://myapp.railway.app "Wine Cellar App"
     /persona-test "Pieter" https://myapp.railway.app "adding a bottle"
     /persona-test "first-time user on mobile" https://myapp.railway.app
-  disable-model-invocation: true
 ---
 
 # Persona-Driven Browser Testing
