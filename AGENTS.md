@@ -653,6 +653,36 @@ Claude Code merges `settings.json` (project) with `settings.local.json`
 (local) automatically — your local entries layer on top of the committed
 defaults without polluting the public repo.
 
+## Scope discipline — pre-existing uncommitted changes
+
+When you find uncommitted, unstaged, untracked, or unpushed changes in
+the repo that are **unrelated to the current task**: leave them alone.
+They are the user's working set, not yours to tidy.
+
+**Rules:**
+
+- **Stage by name only** — never `git add -A`, `git add .`, or `git
+  add -u`. Stage exactly the files you modified for the current task.
+- **Never auto-commit** pre-existing state to "clean up" — that
+  bundles unrelated work into your commit and corrupts blame/history.
+- **Never auto-stash** unrelated work — stash conflicts on pop bite
+  worse than the original mess.
+- **Never `git rm --cached`** legacy tracked-but-gitignored files
+  without an explicit user instruction; that change ships to every
+  collaborator and isn't reversible by `git pull`.
+- **Mention what you saw, once**, in a one-line note: *"Heads-up:
+  there are 3 unrelated unstaged files (foo.ts, bar.mjs, baz.json) I
+  left untouched."* Then move on — don't relitigate them.
+- If the unrelated state genuinely blocks the task (e.g., a half-edited
+  file you need to also edit), stop and ask the user how to proceed
+  before touching it.
+
+**Why:** Scope expansion is the failure mode this rule prevents.  Without
+it, sessions drift from the requested task into repo-hygiene meta-work
+the user didn't authorise, and the final commit bundles unrelated work
+that's hard to revert cleanly.  Repo hygiene is a separate, dedicated
+task — request it explicitly when you want it done.
+
 ## Code Style
 
 - ESM modules (`import`/`export`, not `require`)
