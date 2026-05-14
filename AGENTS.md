@@ -385,7 +385,9 @@ backoff (3 attempts: 200ms/600ms/1.8s); failures are counted as
 | `OPENAI_AUDIT_REASONING` | No | `high` | Reasoning effort |
 | `GEMINI_REVIEW_MODEL` | No | `latest-pro` | Gemini model sentinel or concrete ID |
 | `GEMINI_REVIEW_TIMEOUT_MS` | No | `120000` | Gemini timeout |
-| `ANTHROPIC_API_KEY` | No | — | Claude Haiku fallback for brief generation |
+| `ANTHROPIC_API_KEY` | No | — | Claude Haiku fallback for brief generation (sdk backend only) |
+| `CLAUDE_BACKEND` | No | `sdk` | Routing for Claude calls: `sdk` (raw API) or `cli` (`claude -p` headless — draws from Max 20x Agent SDK $200/mo credit from 2026-06-15). See "Anthropic Backend Routing" below. |
+| `CLAUDE_BIN` | No | `claude` | Path/name of the `claude` CLI (cli backend only) |
 | `CLAUDE_FINAL_REVIEW_MODEL` | No | `latest-opus` | Claude Opus override (Step 7 fallback) |
 | `BRIEF_MODEL_GEMINI` | No | `latest-flash` | Brief-generation Gemini model |
 | `BRIEF_MODEL_CLAUDE` | No | `latest-haiku` | Brief-generation Claude model |
@@ -409,6 +411,59 @@ backoff (3 attempts: 200ms/600ms/1.8s); failures are counted as
 | `LEARNING_DISABLE` | No | — | Set to `1` to disable all adaptive-learning live behaviour and telemetry recording (single env-var kill switch). |
 | `LEARNING_REPO_NAME` | Required for weekly-review | — | Per-repo gate for `weekly-review.mjs`. Aborts if missing — prevents cross-tenant data leakage in the digest issue body. |
 | `LEARNING_QUEUE_CAP_PER_TYPE` | No | `64` | Per-`decision_type` bounded sub-queue cap. Increase for high-throughput audits. |
+
+## Anthropic Backend Routing
+
+All Claude API calls go through [`scripts/lib/anthropic-client.mjs`](scripts/lib/anthropic-client.mjs).
+The `CLAUDE_BACKEND` env switches the underlying transport without touching
+call sites:
+
+| Backend | Transport | Bills against | Use when |
+|---|---|---|---|
+| `sdk` (default) | `@anthropic-ai/sdk` direct API | `ANTHROPIC_API_KEY` token meter | Today; CI without `claude` CLI installed |
+| `cli` | `claude -p --output-format json` subprocess | **Before 2026-06-15**: your interactive Max 20x subscription (same pool as IDE sessions). **From 2026-06-15**: dedicated Max 20x Agent SDK $200/mo credit. | After credit redemption opens; reduces API spend on high-volume scripts |
+
+> ⚠️ **DO NOT flip `CLAUDE_BACKEND=cli` before 2026-06-15.** Until that date,
+> every `claude -p` invocation eats from the same subscription pool as your
+> interactive Claude Code sessions, so automated scripts would cannibalise
+> the IDE budget. From June 15 the pools split and the cli backend draws
+> from the dedicated credit. Default stays `sdk` for safety.
+>
+> **Operational prerequisite — install [`claude-trace`](https://github.com/badlogic/claude-trace) BEFORE flipping the flag.**
+> The $200 credit is non-rolling and overage requires manually-enabled
+> billing. Without per-call token + cost telemetry you can rack up
+> overage charges from things like `npm run arch:refresh` (hundreds of
+> Haiku calls) without realising. claude-trace is free, runs locally,
+> and gives you the baseline to know whether the credit is generous or
+> tight for your usage pattern.
+
+**Migration**: call sites use the factory instead of `new Anthropic({apiKey})`:
+
+```js
+const { createAnthropicClient } = await import('./anthropic-client.mjs');
+const client = await createAnthropicClient();
+const resp = await client.messages.create({ model, max_tokens, system, messages });
+```
+
+The adapter exposes the same `.messages.create()` shape as the raw SDK, so
+the body of every call site stays identical. The factory caches a single
+client per `(backend, apiKey, claudeBin)` key for the process lifetime —
+matches the "reuse client created in main()" rule below.
+
+**Already migrated**: [scripts/lib/context.mjs](scripts/lib/context.mjs)
+(brief generation), [scripts/lib/neighbourhood-query.mjs](scripts/lib/neighbourhood-query.mjs)
+(security-memory consultation), [scripts/lib/llm-wrappers.mjs](scripts/lib/llm-wrappers.mjs)
+(shared `callClaude`).
+
+**Pending migration** (still call `new Anthropic()` directly — drop-in swap
+when revisited): [scripts/symbol-index/summarise.mjs](scripts/symbol-index/summarise.mjs),
+[scripts/symbol-index/summarise-domains.mjs](scripts/symbol-index/summarise-domains.mjs),
+[scripts/refine-prompts.mjs](scripts/refine-prompts.mjs),
+[scripts/evolve-prompts.mjs](scripts/evolve-prompts.mjs),
+[scripts/gemini-review.mjs](scripts/gemini-review.mjs) (Opus fallback paths).
+
+**Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through
+whichever backend the env resolves to.
 
 ## Cross-Skill Data Loop
 
@@ -708,4 +763,5 @@ These items were evaluated and deliberately accepted:
 | `atomicWriteFileSync` temp naming (PID+timestamp) | Collision requires same PID + same millisecond + same directory. Probability negligible. | Never |
 | `readFileOrDie` process.exit(1) | Name is self-documenting. Only called from CLI entry points. | If ever called from a library context |
 | `normalizePath()` lowercasing | Correct for Windows (case-insensitive FS). On case-sensitive Linux, distinct files could collide — acceptable for local-repo auditing. | If deployed as a CI service on Linux |
-| Module-global caches (`_repoProfileCache`, `_taskStore`) | Safe in CLI-per-invocation model. Each process starts fresh. | If extracting as a library or running as a long-lived server |
+| Module-global caches (`_repoProfileCache`, `_taskStore`, `_clientCache`) | Safe in CLI-per-invocation model. Each process starts fresh. Anthropic client cache uses effective-resolved env values so two unparameterised calls hit the same entry. `_resetClientCache()` available for tests. | If extracting as a library or running as a long-lived server |
+| `anthropic-client.mjs` `_internals` test exports | Mirrors `file-io.mjs`, `shared.mjs` project pattern. Internal helpers (`buildPromptFromMessages`, `normaliseCliOutput`, `quoteWinArg`) need direct test coverage; underscore-prefix signals private. | If we adopt stricter export hygiene project-wide |

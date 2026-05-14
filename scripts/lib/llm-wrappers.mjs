@@ -86,7 +86,13 @@ export async function callGemini(ai, systemPrompt, userPrompt, jsonSchema, optio
 
 /**
  * Call Claude with structured output.
- * @param {import('@anthropic-ai/sdk').default} anthropic - Pre-configured Anthropic client
+ *
+ * Accepts either a raw `@anthropic-ai/sdk` instance or an adapter from
+ * `createAnthropicClient()` — both expose the same `.messages.create()` shape.
+ * Use the factory for new code so `CLAUDE_BACKEND=cli` can flip the whole
+ * codebase onto the Max 20x Agent SDK credit pool from 2026-06-15.
+ *
+ * @param {{messages: {create: Function}}} anthropic - Pre-configured client or factory adapter
  * @param {string} systemPrompt
  * @param {string} userPrompt
  * @param {import('zod').ZodSchema} schema - Used for post-parse validation

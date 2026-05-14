@@ -1,5 +1,62 @@
 # Project Status Log
 
+## 2026-05-14 — Anthropic backend routing (Agent SDK credit prep)
+
+Pluggable Anthropic client factory landed in preparation for the Max 20x Agent SDK
+$200/mo credit (effective 2026-06-15). One env flag (`CLAUDE_BACKEND=cli`) routes
+Claude calls through `claude -p` instead of the raw `@anthropic-ai/sdk`, shifting
+billing to the credit pool. Default stays `sdk` so the merge is dormant until
+the credit redemption opens; before that date, flipping `cli` would cannibalise
+the interactive Max budget (documented as a ⚠️ block in AGENTS.md and `.env.example`).
+
+**Mechanism**: `scripts/lib/anthropic-client.mjs` exports
+`createAnthropicClient()` returning a `.messages.create()` shape compatible
+with the raw SDK. Two backends behind a single env-resolved factory.
+Module-global cache keyed on effective resolved env values + redactor
+identity, with cache bypass for custom redactors to prevent collisions.
+
+**Files Affected**:
+- `scripts/lib/anthropic-client.mjs` (new) — factory + cli adapter, Zod-validated CLI envelope, Windows process-tree-kill, command-injection-safe arg quoting
+- `scripts/anthropic-ping.mjs` (new) — `npm run anthropic:ping` smoke test for either backend
+- `tests/anthropic-client.test.mjs` (new) — 41 tests including explicit cmd.exe command-injection regression
+- `scripts/lib/context.mjs` — `_llmCondense` brief generator migrated to factory
+- `scripts/lib/neighbourhood-query.mjs` — Haiku rephrase migrated to factory (side-effect: env-gate now correctly ordered)
+- `scripts/lib/llm-wrappers.mjs` — `callClaude` JSDoc notes factory compatibility
+- `docs/plans/anthropic-backend-routing.md` (new) — plan + acceptance criteria + R1→R3+Gemini audit trail
+- `AGENTS.md` — new "Anthropic Backend Routing" section with pre-Jun-15 warning + claude-trace prerequisite + Pending-migration list (5 remaining direct-SDK sites)
+- `.env.example` — `CLAUDE_BACKEND`, `CLAUDE_BIN`, `CLAUDE_CLI_TIMEOUT_MS` with rollout warnings
+- `package.json` — `anthropic:ping` script
+
+**Real bugs caught + fixed during /audit-code (3 GPT rounds + 2 Gemini rounds)**:
+- Windows process-tree leak: `proc.kill()` on `shell:true`-spawned `.cmd` only killed the cmd shell; orphan `claude.exe` survived timeout/abort. Fix: `taskkill /T /F /PID <pid>` on Windows.
+- Redactor cache-key collision: two distinct custom redactor functions collapsed to one cache entry. Fix: cache only for default redactor or `null`; custom functions bypass cache.
+- Structured `system: [{type:'text',...}]` not redacted: `applyRedactor` only traversed string form. Fix: handle array form.
+- cmd.exe command injection in `quoteWinArg`: used `\"` for embedded quotes, but cmd.exe does NOT honour `\"` as an escape — a payload like `foo " & whoami &` would close the quoted span and shell-evaluate the metacharacters. Fix: use `""` (doubled-quote) which is valid for both cmd.exe and CommandLineToArgvW. Caught by Gemini Step 7.
+
+**Decisions Made**:
+- Default `redactor` is `redactSecrets` from `lib/sanitizer.mjs` (deny-by-default egress). Opt-out via `redactor: null`.
+- `resolveBackend()` throws on invalid `CLAUDE_BACKEND` instead of silent fallback — backend choice affects billing, fail loudly at config load.
+- `claude -p` has no `--max-tokens` flag; passing `max_tokens` to cli backend emits one-time stderr warning rather than throwing (throwing would break existing callers that pass it benignly).
+- cli adapter throws via `assertOneShotTextMessages` on multi-turn or non-text content rather than silently flattening. Documented limitation, by-design.
+- Migrated only 2 of 7 direct-Anthropic call sites this session; the other 5 (`evolve-prompts`, `gemini-review`, `refine-prompts`, `summarise`, `summarise-domains`) listed under AGENTS.md "Pending migration" as mechanical drop-ins.
+- Pre-existing `scripts/.sync-manifest.json` modification left unstaged per scope-discipline rule (unrelated to this work).
+
+**Audit summary**: 3 GPT rounds (R1 14 → R2 15 → R3 14 findings); R3 mechanical
+fixes applied (JSDoc consistency, timeout bounds-check, ping error logging,
+deny-by-default comment). Gemini Step 7 CONCERNS → fixed cmd.exe injection →
+Gemini Step 7.1 **APPROVE**. 41/41 tests passing. End-to-end ping smoke test:
+"pong" in 639ms via sdk backend.
+
+**Next Steps**:
+- After 2026-06-15: install `claude-trace`, baseline token spend, flip
+  `CLAUDE_BACKEND=cli` in `.env`, re-verify via `npm run anthropic:ping`.
+- Follow-up PR: migrate remaining 5 direct-SDK call sites listed in AGENTS.md
+  "Pending migration".
+- Follow-up: `putCached()` in [neighbourhood-query.mjs](scripts/lib/neighbourhood-query.mjs)
+  grows unbounded (flagged by Gemini G2 as out-of-scope for this PR).
+
+---
+
 ## 2026-05-13 — Audit-tool staleness check (Option A)
 
 Closes the recurring "I didn't know engineering-skills shipped new audit-tool

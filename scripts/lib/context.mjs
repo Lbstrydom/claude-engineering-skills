@@ -177,10 +177,12 @@ async function _llmCondense(content) {
   const userContent = `Extract an audit brief from this developer guidelines document:\n\n${truncated}`;
 
   // Try Claude Haiku first (better quality — captures all constraints)
-  if (process.env.ANTHROPIC_API_KEY) {
+  // `cli` backend (CLAUDE_BACKEND=cli) routes via `claude -p` so this draws
+  // from the Max 20x Agent SDK credit instead of the raw-API meter.
+  if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_BACKEND === 'cli') {
     try {
-      const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const { createAnthropicClient } = await import('./anthropic-client.mjs');
+      const anthropic = await createAnthropicClient();
       const model = briefConfig.claudeModel;
       process.stderr.write(`  [brief] Generating via ${model}...\n`);
       const startMs = Date.now();

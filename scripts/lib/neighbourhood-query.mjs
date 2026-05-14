@@ -392,14 +392,15 @@ export async function getIncidentNeighbourhoodForIntent(adapters, args, repoRoot
   if (candidates.length > 0 && noOverlap && allLowCosine) {
     // Single Haiku rephrase attempt (R3-M3 spec — Zod schema)
     // Best-effort: wrapped in try so a failure here doesn't kill /plan.
+    // `cli` backend (CLAUDE_BACKEND=cli) draws from the Max 20x Agent SDK credit.
     try {
-      const { default: Anthropic } = await import('@anthropic-ai/sdk');
       const { z } = await import('zod');
       const FailureModesSchema = z.object({
         failureModes: z.array(z.string().min(20).max(200)).min(1).max(3),
       });
-      const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-      if (process.env.ANTHROPIC_API_KEY) {
+      if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_BACKEND === 'cli') {
+        const { createAnthropicClient } = await import('./anthropic-client.mjs');
+        const client = await createAnthropicClient();
         const { resolveModel } = await import('./model-resolver.mjs');
         const haikuModel = resolveModel('latest-haiku');
         const prompt = redactSecrets(
