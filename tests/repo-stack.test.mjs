@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execSync } from 'node:child_process';
 import {
   detectRepoStack, detectPythonFramework, detectPythonEnvironmentManager,
+  hasJavaSources,
 } from '../scripts/lib/repo-stack.mjs';
 
 let tmp;
@@ -66,6 +68,51 @@ describe('detectRepoStack', () => {
     write('pyproject.toml', '');
     const r = detectRepoStack(tmp);
     assert.equal(r.stack, 'python');
+  });
+});
+
+describe('detectRepoStack — Java detection (PR-B)', () => {
+  it('stackKinds includes java when pom.xml present (fast path)', () => {
+    write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
+    write('pom.xml', '<project/>');
+    const r = detectRepoStack(tmp);
+    assert.ok(r.stackKinds.includes('java'), `stackKinds=${JSON.stringify(r.stackKinds)}`);
+  });
+
+  it('stackKinds includes java when build.gradle present', () => {
+    write('build.gradle', 'plugins {}');
+    const r = detectRepoStack(tmp);
+    assert.ok(r.stackKinds.includes('java'));
+  });
+
+  it('stackKinds includes java for a Gradle Kotlin-DSL repo (settings.gradle.kts) (M4)', () => {
+    write('settings.gradle.kts', 'rootProject.name = "x"');
+    const r = detectRepoStack(tmp);
+    assert.ok(r.stackKinds.includes('java'), `stackKinds=${JSON.stringify(r.stackKinds)}`);
+  });
+
+  it('stackKinds includes java for a monorepo with .java files but no root marker', () => {
+    // No root pom.xml/build.gradle — only nested .java. Needs a git repo
+    // so the `git ls-files` enumeration path fires.
+    write('apps/svc/src/com/example/App.java', 'package com.example;\nclass App {}');
+    write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
+    execSync('git init -q', { cwd: tmp });
+    // Stage by name — never `git add -A` (AGENTS.md scope-discipline rule).
+    execSync('git add apps package.json', { cwd: tmp });
+    const r = detectRepoStack(tmp);
+    assert.ok(r.stackKinds.includes('java'),
+      `monorepo .java should be detected, stackKinds=${JSON.stringify(r.stackKinds)}`);
+  });
+
+  it('stackKinds excludes java for a pure JS repo', () => {
+    write('package.json', JSON.stringify({ dependencies: { express: '^4' } }));
+    const r = detectRepoStack(tmp);
+    assert.ok(!r.stackKinds.includes('java'));
+  });
+
+  it('hasJavaSources returns false in a non-git dir with no markers', () => {
+    write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
+    assert.equal(hasJavaSources(tmp), false);
   });
 });
 

@@ -1,5 +1,59 @@
 # Project Status Log
 
+## 2026-05-15 — Architecture-Intent PR-B: Python & Java adapters
+
+PR-B of the 3-PR architecture-intent series. Adds two new pure-JS import
+adapters so the architecture pass works on Python and Java repos, not just
+JS/TS. Shipped via the full `/cycle` (plan → audit-plan → implement →
+audit-code → ship).
+
+**What shipped**:
+- `scripts/lib/arch-intent/adapters/python.mjs` (new) — pure-JS Python
+  import analyser. Char-level comment/string stripper (PEP 701 f-string
+  brace tracking), packaging-aware source-root discovery (pyproject.toml /
+  `src/` / `__init__.py` walk, monorepo-aware), most-specific-root module
+  index, three-state resolution (resolved-local / proven-external /
+  unresolved). No Python runtime required.
+- `scripts/lib/arch-intent/adapters/java.mjs` (new) — pure-JS Java import
+  analyser. Strips `//`, `/* */`, strings, text blocks. Resolution index
+  from parsed `package` declarations + source-set derivation. Progressive
+  FQN resolution (nested types, static imports), wildcard handling
+  (package + JLS 7.5.2 type-import-on-demand), same-package cross-domain
+  blind-spot surfaced via `_meta.packagesSpanningDomains`. No JVM required.
+- `scripts/lib/repo-stack.mjs` — `hasJavaSources()` + `java` pushed to
+  `stackKinds`; data-driven (root markers OR `git ls-files`).
+- `scripts/sync-to-repos.mjs` — both adapters added to `CORE_SCRIPTS`.
+- `tests/arch-intent-adapter-python.test.mjs`,
+  `tests/arch-intent-adapter-java.test.mjs` (new),
+  `tests/repo-stack.test.mjs` (+Java cases) — 90 adapter/stack tests.
+- `docs/plans/arch-intent-pr-b-python-java-adapters.md` (new),
+  `docs/completed/arch-intent-pr-b-audit-summary.md` (new).
+
+**Decisions Made**:
+- *Python: pure-JS parser, not `import-linter`* — `import-linter` needs a
+  Python runtime everywhere `/audit-code` runs + its own `.importlinter`
+  config (a second source of truth, conflicts with `domain-map.json`).
+- *Java: pure-JS parser, not ArchUnit codegen* — ArchUnit test-file
+  generation is async/out-of-band and cannot return violations to the
+  synchronous adapter contract. Java parses imports + returns violations
+  like every other adapter.
+- *Three-state resolution* — `unresolved` imports stay visible in `_meta`,
+  never silently absorbed as `vendor`; keeps resolver gaps observable.
+- *Adapter contract frozen* — PR-B conforms to PR-A's
+  `adapter-contract.mjs`; did not modify it.
+- Pre-existing `scripts/.sync-manifest.json` change left unstaged
+  (unrelated to PR-B, scope-discipline).
+
+**Audit**: `/cycle` ran 3 GPT + 2 Gemini rounds at the plan stage and
+3 GPT + 2 Gemini rounds at the code stage. Final Gemini verdict
+**APPROVE** (coherence "Strong"). Full suite 2023 pass / 0 fail.
+
+**Next Steps**:
+- PR-C — Postgres adapter (separate plan, separate `/cycle`; the
+  schema/RLS/function model differs from imports, per parent plan §11).
+
+---
+
 ## 2026-05-14 — Anthropic backend routing (Agent SDK credit prep)
 
 Pluggable Anthropic client factory landed in preparation for the Max 20x Agent SDK
