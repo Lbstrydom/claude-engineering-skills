@@ -5,7 +5,7 @@
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib` (the `arch-intent/` module tree), `audit-orchestration` (stack detection)
-- **Parent plan**: [architecture-intent-framework.md](architecture-intent-framework.md) — this is PR-B of the 3-PR series (§10, §11).
+- **Parent plan**: [architecture-intent-framework.md](../completed/architecture-intent-framework.md) — this is PR-B of the 3-PR series (§10, §11).
 
 > **Neighbourhood considered** — explored directly (deeper than embedding
 > search). [scripts/lib/arch-intent/adapters/js-ts.mjs](../../scripts/lib/arch-intent/adapters/js-ts.mjs)
