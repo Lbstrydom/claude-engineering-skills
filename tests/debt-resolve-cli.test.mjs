@@ -5,12 +5,12 @@
 
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
 import { writeDebtEntries } from '../scripts/lib/debt-ledger.mjs';
+import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
 let ledgerPath;
@@ -28,12 +28,7 @@ function makeEntry(topicId) {
   };
 }
 
-function runCli(args) {
-  return spawnSync('node', [scriptPath, ...args], {
-    encoding: 'utf-8',
-    cwd: path.resolve('.'),
-  });
-}
+const runCli = makeRunCli(scriptPath);
 
 beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'debt-resolve-cli-'));

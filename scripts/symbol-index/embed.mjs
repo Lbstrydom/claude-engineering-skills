@@ -13,19 +13,10 @@
 import readline from 'node:readline';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { chunkBatches } from '../lib/symbol-index.mjs';
+import { emit } from '../lib/cli-io.mjs';
+import { getGeminiClient } from '../lib/llm-wrappers.mjs';
 
-function emit(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
 function logProgress(s) { process.stderr.write(`  [embed] ${s}\n`); }
-
-// R1 audit M3/M5: singleton client — never construct GoogleGenAI per batch.
-let _geminiClient = null;
-async function getGeminiClient() {
-  if (_geminiClient) return _geminiClient;
-  if (!process.env.GEMINI_API_KEY) return null;
-  const { GoogleGenAI } = await import('@google/genai');
-  _geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  return _geminiClient;
-}
 
 /**
  * @param {string[]} texts

@@ -10,6 +10,21 @@ import { zodTextFormat } from 'openai/helpers/zod';
 import { openaiConfig, briefConfig } from './config.mjs';
 
 /**
+ * Lazily construct + cache a single Gemini (`GoogleGenAI`) client for the
+ * process. Returns `null` when `GEMINI_API_KEY` is unset (callers degrade
+ * gracefully). One client per process — never construct per call/batch.
+ * @returns {Promise<import('@google/genai').GoogleGenAI|null>}
+ */
+let _geminiClient = null;
+export async function getGeminiClient() {
+  if (_geminiClient) return _geminiClient;
+  if (!process.env.GEMINI_API_KEY) return null;
+  const { GoogleGenAI } = await import('@google/genai');
+  _geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  return _geminiClient;
+}
+
+/**
  * Make a safe GPT call with structured output. Extracted from openai-audit.mjs.
  * Returns standard envelope or null on failure.
  * @param {import('openai').default} openai - Pre-configured OpenAI client

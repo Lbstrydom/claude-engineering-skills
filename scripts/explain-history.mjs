@@ -23,6 +23,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { ArgvError } from './lib/cli-io.mjs';
 
 const HELP_TEXT = `explain-history — "did we already solve this?" cross-source search
 
@@ -46,7 +47,6 @@ OUTPUT
   Exit 1 = argv error or fatal.
 `;
 
-class ArgvError extends Error { constructor(m) { super(m); this.code = 'ARGV_ERROR'; } }
 
 function parseArgs(argv) {
   const args = { topic: null, since: null, paths: null, limit: 10, out: null, skipArch: false, help: false };

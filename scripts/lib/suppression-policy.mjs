@@ -6,18 +6,13 @@
  */
 
 import { learningConfig, GLOBAL_REPO_ID, UNKNOWN_FILE_EXT } from './config.mjs';
+// Effective sample size (sum of decayed weights). Single source of truth is
+// findings-tracker.mjs; imported for local use + re-exported so existing
+// callers that import it from this module keep working.
+import { effectiveSampleSize } from './findings-tracker.mjs';
+export { effectiveSampleSize };
 
 const MIN_FP_SAMPLES = learningConfig.minFpSamples;
-
-// ── Lazy Decay Helpers ──────────────────────────────────────────────────────
-
-/**
- * Effective sample size: sum of decayed weights.
- * Used for confidence-aware scope resolution.
- */
-export function effectiveSampleSize(pattern) {
-  return (pattern.decayedAccepted || 0) + (pattern.decayedDismissed || 0);
-}
 
 // ── Policy Resolution ───────────────────────────────────────────────────────
 

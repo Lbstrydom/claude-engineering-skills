@@ -28,7 +28,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
+import { sha } from './lib/cli-io.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CANONICAL_DIR = path.join(ROOT, 'docs', 'audit', 'shared-references');
@@ -36,9 +36,6 @@ const SKILLS_DIR = path.join(ROOT, 'skills');
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', X = '\x1b[0m', B = '\x1b[1m', D = '\x1b[2m';
 
-function sha(buf) {
-  return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12);
-}
 
 /**
  * Expected consumers per canonical file. Skills listed here MUST have the

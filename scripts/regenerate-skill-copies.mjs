@@ -29,9 +29,9 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { generateAllPromptFiles } from './lib/install/copilot-prompts.mjs';
+import { sha } from './lib/cli-io.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC_ROOT = path.join(ROOT, 'skills');
@@ -45,9 +45,6 @@ const DEST_ROOTS = [
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', X = '\x1b[0m', D = '\x1b[2m', B = '\x1b[1m';
 
-function sha(buf) {
-  return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12);
-}
 
 // ── main() helpers — keep main() under cognitive-complexity 15 ────────────
 

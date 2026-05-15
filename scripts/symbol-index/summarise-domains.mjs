@@ -39,20 +39,21 @@ const PROMPT_TEMPLATE = (domain, symbols) =>
   symbols.slice(0, 10).map(s => `- ${s.symbolName}: ${s.purposeSummary || '(no purpose summary)'} (${s.filePath})`).join('\n') +
   `\n\nDescription:`;
 
-function computeCompositionHash(symbols) {
+// Exported for direct unit testing — tests/domain-summaries.test.mjs.
+export function computeCompositionHash(symbols) {
   const rows = symbols
     .map(s => `${s.definitionId || s.id || ''}|${s.signatureHash || ''}`)
     .sort();
   return crypto.createHash('sha256').update(rows.join('\n')).digest('hex').slice(0, 16);
 }
 
-function symbolCountDeltaOk(prior, current) {
+export function symbolCountDeltaOk(prior, current) {
   if (prior <= 0) return false;
   const pct = Math.abs(current - prior) / prior;
   return pct <= 0.20;
 }
 
-function cacheHit(prior, { compositionHash, symbolCount, promptTemplateVersion, generatedModel }) {
+export function cacheHit(prior, { compositionHash, symbolCount, promptTemplateVersion, generatedModel }) {
   if (!prior) return false;
   if (prior.compositionHash !== compositionHash) return false;
   if (prior.promptTemplateVersion !== promptTemplateVersion) return false;

@@ -23,6 +23,7 @@ import {
 import { recommendationFromSimilarity } from './symbol-index.mjs';
 import { symbolIndexConfig } from './config.mjs';
 import { redactSecrets } from './secret-patterns.mjs';
+import { getGeminiClient } from './llm-wrappers.mjs';
 
 const CACHE_REL = '.audit-loop/cache/intent-embeddings.json';
 const CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
@@ -64,16 +65,6 @@ function putCached(repoRoot, key, embedding) {
   const cache = loadCache(repoRoot);
   cache.entries[key] = { embedding, savedAt: Date.now() };
   saveCache(repoRoot, cache);
-}
-
-// R1 audit M3/M5: singleton client (one per process, not per call).
-let _geminiClient = null;
-async function getGeminiClient() {
-  if (_geminiClient) return _geminiClient;
-  if (!process.env.GEMINI_API_KEY) return null;
-  const { GoogleGenAI } = await import('@google/genai');
-  _geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  return _geminiClient;
 }
 
 /**

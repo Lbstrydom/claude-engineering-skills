@@ -9,33 +9,11 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
-import { PROMPT_TEMPLATE_VERSION } from '../scripts/symbol-index/summarise-domains.mjs';
-
-// Re-implement the cache-hit predicate locally so the test exercises the
-// invariant rules without coupling to Supabase. This mirrors the logic
-// in summarise-domains.mjs::cacheHit verbatim.
-function symbolCountDeltaOk(prior, current) {
-  if (prior <= 0) return false;
-  const pct = Math.abs(current - prior) / prior;
-  return pct <= 0.20;
-}
-
-function cacheHit(prior, { compositionHash, symbolCount, promptTemplateVersion, generatedModel }) {
-  if (!prior) return false;
-  if (prior.compositionHash !== compositionHash) return false;
-  if (prior.promptTemplateVersion !== promptTemplateVersion) return false;
-  if (prior.generatedModel !== generatedModel) return false;
-  if (!symbolCountDeltaOk(prior.symbolCount, symbolCount)) return false;
-  return true;
-}
-
-function computeCompositionHash(symbols) {
-  const rows = symbols
-    .map(s => `${s.definitionId || s.id || ''}|${s.signatureHash || ''}`)
-    .sort();
-  return crypto.createHash('sha256').update(rows.join('\n')).digest('hex').slice(0, 16);
-}
+// Import the cache-hit predicate + helpers directly from source (single
+// source of truth — no Supabase coupling; these are pure functions).
+import {
+  PROMPT_TEMPLATE_VERSION, computeCompositionHash, symbolCountDeltaOk, cacheHit,
+} from '../scripts/symbol-index/summarise-domains.mjs';
 
 describe('PROMPT_TEMPLATE_VERSION', () => {
   it('is a positive integer', () => {

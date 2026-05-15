@@ -32,6 +32,7 @@ import {
   SECRET_REDACTED,
 } from '../lib/sensitive-egress-gate.mjs';
 import { isThinDelegate } from '../lib/symbol-index/thin-delegate.mjs';
+import { emit } from '../lib/cli-io.mjs';
 
 function parseArgs(argv) {
   const args = { root: process.cwd(), files: null, mode: 'full', sinceCommit: null, includeDelegates: false };
@@ -46,9 +47,6 @@ function parseArgs(argv) {
   return args;
 }
 
-function emit(obj) {
-  process.stdout.write(JSON.stringify(obj) + '\n');
-}
 
 function emitProgress(msg) {
   process.stderr.write(`  [extract] ${msg}\n`);

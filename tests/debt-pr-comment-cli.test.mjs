@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { makeRunCli } from './helpers/run-cli.mjs';
 
 let tmpDir;
 let ledgerPath;
@@ -31,12 +32,7 @@ function seedLedger(entries) {
   fs.writeFileSync(ledgerPath, JSON.stringify({ version: 1, entries }, null, 2));
 }
 
-function runCli(args) {
-  return spawnSync('node', [scriptPath, ...args], {
-    encoding: 'utf-8',
-    cwd: path.resolve('.'),
-  });
-}
+const runCli = makeRunCli(scriptPath);
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-comment-cli-'));

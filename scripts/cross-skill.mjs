@@ -75,6 +75,7 @@ import {
   readStaleClusters,
   getRepoIdByName,
 } from './learning-store.mjs';
+import { emit } from './lib/cli-io.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mjs';
 import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
 import { detectRepoStack, detectPythonEnvironmentManager } from './lib/repo-stack.mjs';
@@ -106,10 +107,6 @@ function argOption(name) {
   const idx = rest.indexOf(`--${name}`);
   if (idx < 0) return null;
   return rest[idx + 1] || null;
-}
-
-function emit(obj) {
-  process.stdout.write(JSON.stringify(obj) + '\n');
 }
 
 /**

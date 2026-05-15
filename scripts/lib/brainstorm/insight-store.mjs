@@ -23,6 +23,7 @@ import { atomicWriteFileSync } from '../file-io.mjs';
 import { InsightFrontmatterSchema } from './schemas.mjs';
 import { withFileLock } from './file-lock.mjs';
 import { validateSid } from './id-validator.mjs';
+import { ensureDir } from '../cli-io.mjs';
 
 const INSIGHTS_DIR_DEFAULT = '.brainstorm/insights';
 const MAX_INSIGHT_CHARS = 2000;
@@ -34,10 +35,6 @@ function rootDir(rootOverride = null) {
   return rootOverride ?? INSIGHTS_DIR_DEFAULT;
 }
 
-function ensureDir(dir) {
-  try { fs.mkdirSync(dir, { recursive: true }); }
-  catch (err) { if (err.code !== 'EEXIST') throw err; }
-}
 
 function shortHash(...parts) {
   return crypto.createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 16);

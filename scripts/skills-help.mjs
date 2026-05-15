@@ -22,6 +22,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import yaml from 'yaml';
+import { ArgvError } from './lib/cli-io.mjs';
 
 const HELP_TEXT = `skills-help — quick reference for all available skills
 
@@ -43,7 +44,6 @@ DISCOVERY
   to .claude/skills/ are ignored — that's the generated copy.
 `;
 
-class ArgvError extends Error { constructor(m) { super(m); this.code = 'ARGV_ERROR'; } }
 
 function parseArgs(argv) {
   const args = { skill: null, search: null, format: 'md', out: null, help: false };

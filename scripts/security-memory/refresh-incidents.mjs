@@ -37,10 +37,10 @@ import { redactSecrets } from '../lib/secret-patterns.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { parseSecurityStrategy } from './parse-strategy.mjs';
 import { classifyMitigation, runSemgrepIfNeeded } from './incident-status.mjs';
+import { emit } from '../lib/cli-io.mjs';
 
 const STRATEGY_PATH = 'docs/security-strategy.md';
 
-function emit(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
 function logInfo(msg) { process.stderr.write(`  [security-refresh] ${msg}\n`); }
 function logWarn(msg) { process.stderr.write(`  [security-refresh] WARN ${msg}\n`); }
 

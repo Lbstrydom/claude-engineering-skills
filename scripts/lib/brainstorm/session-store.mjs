@@ -16,6 +16,7 @@ import path from 'node:path';
 import { withFileLock } from './file-lock.mjs';
 import { BrainstormEnvelopeV2Schema, BrainstormEnvelopeWriteSchema } from './schemas.mjs';
 import { validateSid } from './id-validator.mjs';
+import { ensureDir } from '../cli-io.mjs';
 
 const SESSION_DIR_DEFAULT = '.brainstorm/sessions';
 const PRUNE_SENTINEL = '.last-prune';
@@ -39,12 +40,6 @@ function quarantinePath(sid, rootOverride = null) {
   return path.join(sessionDir(rootOverride), `${sid}.quarantine.jsonl`);
 }
 
-function ensureDir(dir) {
-  try { fs.mkdirSync(dir, { recursive: true }); }
-  catch (err) {
-    if (err.code !== 'EEXIST') throw err;
-  }
-}
 
 /**
  * Read raw lines for round-number computation under the lock. Applies

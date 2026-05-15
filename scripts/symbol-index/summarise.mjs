@@ -20,10 +20,10 @@ import { briefConfig } from '../lib/config.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { chunkBatches } from '../lib/symbol-index.mjs';
 import { redactSecrets } from '../lib/sensitive-egress-gate.mjs';
+import { emit } from '../lib/cli-io.mjs';
 
 const MODEL = symbolIndexConfig.summariseModel || briefConfig.claudeModel;
 
-function emit(obj) { process.stdout.write(JSON.stringify(obj) + '\n'); }
 function logProgress(s) { process.stderr.write(`  [summarise] ${s}\n`); }
 
 /**
