@@ -180,6 +180,7 @@ const ARCH_MEMORY_SCRIPTS = [
   'scripts/lib/arch-intent/adapters/js-ts.mjs',
   'scripts/lib/arch-intent/adapters/python.mjs',
   'scripts/lib/arch-intent/adapters/java.mjs',
+  'scripts/lib/arch-intent/adapters/postgres.mjs',
   'scripts/arch-intent-bootstrap.mjs',
   // Dead-code phase 1 (2026-05-12, commit 6c6be92) — orphan-introduced pass.
   // openai-audit.mjs imports all 5 of these at module-init; if any is

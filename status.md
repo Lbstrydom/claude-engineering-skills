@@ -1,5 +1,60 @@
 # Project Status Log
 
+## 2026-05-15 — Architecture-Intent PR-C: Postgres adapter (series complete)
+
+PR-C, the final adapter of the 3-PR architecture-intent series. Adds a
+pure-JS Postgres `.sql` adapter so the architecture pass works on database
+schema migrations. Shipped via the full `/cycle`.
+
+**What shipped**:
+- `scripts/lib/arch-intent/adapters/postgres.mjs` (new, ~430 LOC) —
+  pure-JS Postgres DDL analyser, NO database/credentials, CI-safe.
+  3-stage pipeline: `parseFile` (length-preserving lexical strip
+  handling `--` comments, NESTED `/* */`, `'…'`/`E'…'` strings,
+  `$tag$…$tag$` dollar-quotes, preserved quoted identifiers) →
+  `buildSqlCatalog` (natural-sorted, epoch-tracked ordered replay —
+  CREATE/REPLACE last-wins, DROP removes, named constraint/trigger/
+  policy drop-matching; kind-separated relation/function/type maps) →
+  `resolveEdges` (kind-aware three-state resolution). Seven edge kinds:
+  foreign-key, view-select, function-call, trigger-binding,
+  policy-reference, partition-of, column-type.
+- `scripts/lib/repo-stack.mjs` — `hasPostgresSources()` (tiered
+  detection: `supabase/migrations/` strong signal, else `.sql` +
+  Postgres-distinctive content marker) + `postgres` in `stackKinds`.
+- `scripts/sync-to-repos.mjs` — `postgres.mjs` added to `CORE_SCRIPTS`.
+- `tests/arch-intent-adapter-postgres.test.mjs` (new, 44 tests),
+  `tests/repo-stack.test.mjs` (+4 Postgres cases).
+- `docs/plans/arch-intent-pr-c-postgres-adapter.md` (new),
+  `docs/completed/arch-intent-pr-c-audit-summary.md` (new).
+
+**Decisions Made**:
+- *Pure-JS `.sql` parsing, not live `pg_catalog` introspection* — the
+  parent plan sketched `pg_catalog`, but that needs a running DB +
+  credentials and cannot run in CI. Overridden, same as PR-B overrode
+  import-linter / ArchUnit codegen.
+- *File-granularity domains* — objects inherit their defining `.sql`
+  file's domain via the existing `mapped` contract input; NO
+  `DomainMapSchema` change. Object-granularity (name-pattern → domain)
+  explicitly deferred to a future PR.
+- *Epoch-tracked ordered catalog* — migrations evolve schema; the
+  current state (last `CREATE OR REPLACE`, post-`DROP`) is what's
+  analysed, with per-object epochs so drop-then-recreate discards
+  stale edges.
+- Adapter contract frozen — PR-C conforms; did not modify it.
+- Pre-existing `scripts/.sync-manifest.json` left unstaged (scope-discipline).
+
+**Audit**: `/cycle` ran 3 GPT + 2 Gemini rounds at the plan stage and
+2 GPT + 2 Gemini rounds at the code stage. Gemini coherence "Strong"
+every round, 0 wrongly-dismissed every round; the final residual finding
+(at the Gemini round-2 cap) was concrete and fixed. Full suite 2065 pass
+/ 0 fail.
+
+**The architecture-intent series is now complete** — JS/TS (PR-A),
+Python + Java (PR-B, commit 18ecc5e), Postgres (PR-C). Four adapters,
+one frozen contract.
+
+---
+
 ## 2026-05-15 — Architecture-Intent PR-B: Python & Java adapters
 
 PR-B of the 3-PR architecture-intent series. Adds two new pure-JS import

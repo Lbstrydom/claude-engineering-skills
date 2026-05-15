@@ -6,7 +6,7 @@ import os from 'node:os';
 import { execSync } from 'node:child_process';
 import {
   detectRepoStack, detectPythonFramework, detectPythonEnvironmentManager,
-  hasJavaSources,
+  hasJavaSources, hasPostgresSources,
 } from '../scripts/lib/repo-stack.mjs';
 
 let tmp;
@@ -113,6 +113,38 @@ describe('detectRepoStack — Java detection (PR-B)', () => {
   it('hasJavaSources returns false in a non-git dir with no markers', () => {
     write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
     assert.equal(hasJavaSources(tmp), false);
+  });
+});
+
+describe('detectRepoStack — Postgres detection (PR-C)', () => {
+  it('stackKinds includes postgres for a supabase/migrations dir (strong signal)', () => {
+    write('supabase/migrations/0001_init.sql', 'create table t (id int);');
+    const r = detectRepoStack(tmp);
+    assert.ok(r.stackKinds.includes('postgres'), `stackKinds=${JSON.stringify(r.stackKinds)}`);
+  });
+
+  it('stackKinds includes postgres for .sql with a Postgres-distinctive marker', () => {
+    write('db/0001.sql', 'create policy p on t using (true);');
+    write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
+    execSync('git init -q', { cwd: tmp });
+    execSync('git add db package.json', { cwd: tmp });
+    const r = detectRepoStack(tmp);
+    assert.ok(r.stackKinds.includes('postgres'), `stackKinds=${JSON.stringify(r.stackKinds)}`);
+  });
+
+  it('stackKinds EXCLUDES postgres for generic ANSI .sql with no distinctive marker', () => {
+    write('seed.sql', 'INSERT INTO t (id) VALUES (1), (2), (3);');
+    write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
+    execSync('git init -q', { cwd: tmp });
+    execSync('git add seed.sql package.json', { cwd: tmp });
+    const r = detectRepoStack(tmp);
+    assert.ok(!r.stackKinds.includes('postgres'),
+      `generic seed SQL must not trigger postgres, stackKinds=${JSON.stringify(r.stackKinds)}`);
+  });
+
+  it('hasPostgresSources returns false in a non-git dir with no migrations dir', () => {
+    write('package.json', JSON.stringify({ dependencies: { x: '1' } }));
+    assert.equal(hasPostgresSources(tmp), false);
   });
 });
 

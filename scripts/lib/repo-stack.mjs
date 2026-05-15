@@ -80,8 +80,63 @@ export function detectRepoStack(cwd = process.cwd()) {
     // root markers present are appended unconditionally.
     detectedFrom.push(...JAVA_ROOT_MARKERS.filter(m => fs.existsSync(path.join(cwd, m))));
   }
+  if (hasPostgresSources(cwd)) stackKinds.push('postgres');
 
   return { stack, pythonFramework, detectedFrom, stackKinds };
+}
+
+// Conventional migration directories. Only `supabase/migrations` is a
+// content-check-free strong signal (Supabase is Postgres-exclusive); the
+// rest are dialect-agnostic and fall through to the content check.
+const PG_STRONG_DIR = 'supabase/migrations';
+// Postgres-DISTINCTIVE content markers. Excluded as NOT Postgres-exclusive:
+// `create table` (generic), `returning`/`on conflict` (SQLite/MariaDB also),
+// and `$$` — MySQL/MariaDB schema dumps use `DELIMITER $$` for stored
+// procedures, so a dollar sequence is not Postgres-distinctive. The three
+// retained markers are genuinely Postgres-only: row-level-security policies,
+// the PL/pgSQL language, and the `jsonb` type. Lowercased before test.
+const PG_CONTENT_MARKERS = ['create policy', 'language plpgsql', 'jsonb'];
+
+/**
+ * Data-driven Postgres detection (architecture-intent PR-C). True when
+ * EITHER a `supabase/migrations` directory exists (Supabase is
+ * Postgres-exclusive — an unambiguous signal) OR `git ls-files` reports
+ * `.sql` files AND a bounded content sample contains a Postgres-distinctive
+ * DDL marker. Generic ANSI SQL and other dialects do not trigger detection.
+ *
+ * @param {string} cwd
+ * @returns {boolean}
+ */
+export function hasPostgresSources(cwd = process.cwd()) {
+  if (fs.existsSync(path.join(cwd, PG_STRONG_DIR))) return true;
+  let sqlFiles = [];
+  try {
+    const out = execSync('git ls-files --cached --others --exclude-standard -- "*.sql"', {
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    sqlFiles = out.split('\n').map(l => l.trim()).filter(Boolean);
+  } catch {
+    return false; // not a git repo — strong-dir fast path already returned false
+  }
+  // Bounded content sample — widened to first ≤20 files, first 16 KiB each
+  // (H4: the prior 5×4 KiB window could miss a Postgres repo whose
+  // distinctive syntax appears later). Still bounded — detection never
+  // scans the whole file set.
+  const SAMPLE_BYTES = 16 * 1024;
+  for (const rel of sqlFiles.slice(0, 20)) {
+    let head = '';
+    let fd;
+    try {
+      fd = fs.openSync(path.join(cwd, rel), 'r');
+      const buf = Buffer.alloc(SAMPLE_BYTES);
+      const n = fs.readSync(fd, buf, 0, SAMPLE_BYTES, 0);
+      head = buf.toString('utf-8', 0, n).toLowerCase();
+    } catch { continue; }
+    finally { if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* already closed */ } } }
+    if (PG_CONTENT_MARKERS.some(mk => head.includes(mk))) return true;
+  }
+  return false;
 }
 
 /**
