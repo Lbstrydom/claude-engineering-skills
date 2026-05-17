@@ -139,13 +139,10 @@ function mk(verification, reason, entity, finding, verdictSeverity) {
  * @param {Set<string>|string[]} ctx.repoFiles - the canonical, sensitive-
  *   filtered inventory (`listRepoFiles().files`). The SOLE source of file
  *   existence — no `fs` fallback (audit H3).
- * @param {(name:string)=>boolean} [ctx.symbolLookup] - optional exact
- *   symbol-presence check (AST index). Absent → symbol claims become
- *   `requires_verification` (never `confirmed` — audit G1).
  * @returns {object[]} same findings; existence-claim ones gain `.verification`
  */
 export function verifyExistenceFindings(findings, ctx = {}) {
-  const { repoFiles = [], symbolLookup = null } = ctx;
+  const { repoFiles = [] } = ctx;
   const fileSet = repoFiles instanceof Set ? repoFiles : new Set(repoFiles);
 
   return (findings || []).map((finding) => {
@@ -161,12 +158,16 @@ export function verifyExistenceFindings(findings, ctx = {}) {
       return { ...finding, verification: mk('requires_verification', `"${entity.name}" looks like an external dependency, not a repo file — not adjudicated by the repo inventory`, entity, finding) };
     }
 
-    // ── Symbol claims — presence-only; absence is unprovable (G1) ──
+    // ── Symbol claims — the gate does not adjudicate these ──
+    // A name-only "symbol X exists" check is not sound proof for an
+    // import/export claim: a same-named symbol elsewhere does not show the
+    // cited import/export is correct (audit H2), and absence is unprovable
+    // from the incomplete AST index (audit G1). Per-module export
+    // verification is a future enhancement; until then a symbol claim is
+    // never `refuted` or `confirmed` — it always `requires_verification`,
+    // preserving the model's original severity.
     if (entity.kind === 'symbol') {
-      if (typeof symbolLookup === 'function' && symbolLookup(entity.name) === true) {
-        return { ...finding, verification: mk('refuted', `symbol "${entity.name}" exists in the AST symbol index`, entity, finding, 'LOW') };
-      }
-      return { ...finding, verification: mk('requires_verification', `symbol "${entity.name}" not found in the AST index — absence is not provable from an incomplete index`, entity, finding) };
+      return { ...finding, verification: mk('requires_verification', `symbol "${entity.name}" — symbol/export existence is not deterministically adjudicated by this gate`, entity, finding) };
     }
 
     // ── File / module claims ──

@@ -573,3 +573,27 @@ Backend scope — behavioural pass/fail contracts:
   alongside its sole consumer rather than built speculatively now.
 - **Remaining**: Phase 2 (`repo-context.mjs` tiers) and Phase 3 (consumer
   rewiring) — separate cycles per the plan's dependency chain.
+
+### 2026-05-17 — Phase 2 complete
+
+- **Shipped**: `scripts/lib/repo-context.mjs` (new — `getRepoContext` with
+  the four blast-radius tiers, fallback state machine, `INTENT_SECTION_MAP`);
+  `module-graph.mjs` gains `parseImports`/`publicExports`;
+  `arch-context.mjs` generalised `loadArchSection` → `loadSection({heading})`
+  + back-compat wrapper. 26 new/extended tests; full suite green (2284).
+- **Audit**: Phase 2 R1 code-audit surfaced 21 findings — ~11 genuine
+  fixes applied (repo-root resolution; symbol claims never refuted;
+  `targetPaths` inventory-validated; `execSync` maxBuffer; fs-walk dot-dir
+  inclusion; `complete` flag; line-boundary truncation; honest T3 label;
+  unknown-intent surfaced; static gate imports). M15 (move `loadSection`
+  to a neutral module — benign coupling, `arch-context.mjs` is
+  dependency-light) and M11 (have the audit producer emit a structured
+  `citedEntity` so the gate consumes a contract instead of parsing prose —
+  a larger producer-schema change) deferred with rationale. Plan-prose
+  path nits, the prior-adjudicated `@import` non-resolution, and
+  context-provider≠audit-run dismissed.
+- **Deviation**: `publicExports`/`parseImports` are comment-stripped ESM
+  regex (not a full AST parser) — a deliberate best-effort choice for the
+  *advisory* T1 block; the deterministic gate's resolution is pure path
+  math, where M1's AST concern actually applied.
+- **Remaining**: Phase 3 — rewire the consumers onto `getRepoContext`.

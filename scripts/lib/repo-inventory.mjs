@@ -17,42 +17,62 @@ import { execSync } from 'node:child_process';
 import { isSensitivePath } from './quickfix-patterns.mjs';
 
 // Directories never worth inventorying — skipped by the fs-walk fallback.
-// (The git path already excludes these via .gitignore.)
+// (The git path already excludes these via .gitignore.) Dot-directories
+// are NOT blanket-skipped — `.github/` etc. are legitimate tracked content
+// (audit M6/M16); `.git` itself is listed explicitly.
 const WALK_SKIP_DIRS = new Set([
   'node_modules', '.git', '.audit', '.audit-loop', 'coverage',
   'dist', 'build', '.claude', 'tmp',
 ]);
 
-function runGit(cmd, baseDir) {
-  return execSync(cmd, { cwd: baseDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+// git ls-files output on a large repo can exceed execSync's 1 MB default
+// maxBuffer; raising it prevents a silent (mis-classified) fallback to
+// fs-walk (audit M5).
+const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
+function runGit(cmd, cwd) {
+  return execSync(cmd, {
+    cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: GIT_MAX_BUFFER,
+  })
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean);
 }
 
+/** Resolve the git work-tree root, or null when not in a git checkout. */
+function gitRoot(baseDir) {
+  try {
+    return execSync('git rev-parse --show-toplevel', {
+      cwd: baseDir, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Git inventory: union of tracked + untracked-but-unignored files, MINUS
- * uncommitted deletions. Plain `git ls-files` omits newly-created files
- * (the exact false-positive the gate exists to prevent) and includes
- * index entries already deleted from the work tree (ghost files) — both
- * are corrected here. Plan audit G3 + Gemini-R2-G2.
+ * uncommitted deletions. Run from the repo ROOT so paths are repo-root-
+ * relative even when the caller's `baseDir` is a subdirectory (audit H1).
+ * Plain `git ls-files` omits newly-created files (the exact false-positive
+ * the gate exists to prevent) and includes index entries already deleted
+ * from the work tree (ghost files) — both corrected here (audit G3 +
+ * Gemini-R2-G2).
  */
-function gitInventory(baseDir) {
-  const tracked = runGit('git ls-files', baseDir);
-  const untracked = runGit('git ls-files --others --exclude-standard', baseDir);
-  const deleted = new Set(runGit('git ls-files --deleted', baseDir));
+function gitInventory(root) {
+  const tracked = runGit('git ls-files', root);
+  const untracked = runGit('git ls-files --others --exclude-standard', root);
+  const deleted = new Set(runGit('git ls-files --deleted', root));
   return [...new Set([...tracked, ...untracked])].filter((f) => !deleted.has(f));
 }
 
 /**
  * Filesystem-walk fallback for non-git checkouts / shallow clones /
  * tarball installs. Best-effort: not a full `.gitignore` parser, but it
- * skips the heavy generated dirs AND every dot-directory (`.git`, `.ssh`,
- * `.aws`, …), and sensitive paths are excluded DURING traversal — a
- * sensitive directory is never descended into or enumerated (audit M8).
- * The non-git inventory may still diverge from a git checkout for
- * vendored/cached content; this is the documented fallback contract
- * (audit M9/M12 — accepted: a non-git environment is rare for this tool).
+ * skips the heavy generated dirs, and sensitive paths are excluded DURING
+ * traversal — a sensitive directory is never descended into or enumerated
+ * (audit M8). Legitimate dot-directories (`.github/`, …) ARE included so
+ * the fallback does not silently diverge from a git checkout (audit M6).
  */
 function fsWalkInventory(baseDir, warnings) {
   const out = [];
@@ -67,10 +87,8 @@ function fsWalkInventory(baseDir, warnings) {
     for (const e of entries) {
       const rel = relDir ? `${relDir}/${e.name}` : e.name;
       if (e.isDirectory()) {
-        // Skip heavy/generated dirs, all dot-dirs, and any sensitive dir
-        // BEFORE descending — sensitive paths are never enumerated.
-        if (WALK_SKIP_DIRS.has(e.name) || e.name.startsWith('.')) continue;
-        if (isSensitivePath(`${rel}/`)) continue;
+        if (WALK_SKIP_DIRS.has(e.name)) continue;
+        if (isSensitivePath(`${rel}/`)) continue; // never descend into a sensitive dir
         walk(path.join(absDir, e.name), rel);
       } else if (e.isFile()) {
         if (!isSensitivePath(rel)) out.push(rel);
@@ -86,26 +104,37 @@ function fsWalkInventory(baseDir, warnings) {
  *
  * @param {{baseDir?: string}} [opts]
  * @returns {{files: string[], inventorySource: 'git'|'fs-walk',
- *   gitAvailable: boolean, excludedSensitive: number, warnings: string[]}}
- *   `files` are repo-root-relative, forward-slashed, sorted, and contain
- *   NO sensitive path. `warnings` carries inventory-completeness context
- *   (git failure reason, unreadable subtrees) instead of silently
- *   swallowing it (audit L3).
+ *   gitAvailable: boolean, complete: boolean, excludedSensitive: number,
+ *   warnings: string[]}}
+ *   `files` are repo-root-relative, forward-slashed, sorted, with NO
+ *   sensitive path. `complete` is the machine-readable completeness flag
+ *   (audit M7): false when a subtree was unreadable. `warnings` carries
+ *   inventory-completeness context instead of silently swallowing it.
  */
 export function listRepoFiles({ baseDir = process.cwd() } = {}) {
   const warnings = [];
   let raw;
   let inventorySource;
   let gitAvailable = true;
-  try {
-    raw = gitInventory(baseDir);
-    inventorySource = 'git';
-  } catch (err) {
+
+  const root = gitRoot(baseDir);
+  if (root) {
+    try {
+      raw = gitInventory(root); // repo-root-relative by construction
+      inventorySource = 'git';
+    } catch (err) {
+      gitAvailable = false;
+      warnings.push(`git inventory failed (${err.code || err.message || 'ERR'}) — using fs-walk fallback`);
+    }
+  } else {
     gitAvailable = false;
-    warnings.push(`git inventory unavailable (${err.code || err.message || 'ERR'}) — using fs-walk fallback`);
+    warnings.push('not a git work-tree — using fs-walk fallback');
+  }
+  if (raw === undefined) {
     raw = fsWalkInventory(baseDir, warnings);
     inventorySource = 'fs-walk';
   }
+
   const normalised = raw.map((f) => f.replace(/\\/g, '/'));
   // Defence-in-depth: the git path filters here; the fs-walk path already
   // filtered during traversal, so this is idempotent for it.
@@ -114,6 +143,9 @@ export function listRepoFiles({ baseDir = process.cwd() } = {}) {
     files,
     inventorySource,
     gitAvailable,
+    // `complete` is false ONLY when a subtree was genuinely unreadable —
+    // merely using the fs-walk fallback is not an incompleteness (M7).
+    complete: !warnings.some((w) => w.includes('could not read')),
     excludedSensitive: normalised.length - files.length,
     warnings,
   };

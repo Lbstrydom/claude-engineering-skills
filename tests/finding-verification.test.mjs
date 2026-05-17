@@ -89,12 +89,14 @@ describe('verifyExistenceFindings — the H1/H2/M2 regression', () => {
     assert.equal(v.countsTowardVerdict, true);
   });
 
-  it('a symbol found via symbolLookup is refuted', () => {
+  it('symbol claims are NEVER refuted — the gate does not adjudicate symbols (audit H2)', () => {
+    // A name-only "symbol exists" check is not sound proof for an
+    // import/export claim, so symbol claims always requires_verification.
     const out = verifyExistenceFindings(
       [finding({ category: 'Missing Symbol', detail: 'The export `KnownSym` is missing.' })],
-      { repoFiles: REPO, symbolLookup: (n) => n === 'KnownSym' },
+      { repoFiles: REPO },
     );
-    assert.equal(out[0].verification.verification, 'refuted');
+    assert.equal(out[0].verification.verification, 'requires_verification');
   });
 
   it('an external-dependency claim is requires_verification (not confirmed missing — audit M7)', () => {

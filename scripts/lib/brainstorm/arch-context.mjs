@@ -76,16 +76,20 @@ export function shouldAttachArch({ withArch = false, noArch = false, topic = '' 
 }
 
 /**
- * Extract the `## Architecture` H2 section with a heading-aware line
- * parser. Not a regex: `\Z` is not a JS anchor, and a single
- * `[\s\S]*?` regex mishandles CRLF, EOF-without-newline, and `## `
- * lines inside fenced code blocks.
+ * Extract a named H2 section with a heading-aware line parser. Not a
+ * regex: `\Z` is not a JS anchor, and a single `[\s\S]*?` regex mishandles
+ * CRLF, EOF-without-newline, and `## ` lines inside fenced code blocks.
+ * Heading match is exact string comparison (whitespace-tolerant) — no
+ * regex, so a heading containing regex metacharacters (`## R2+ Audit
+ * Mode`) is matched literally.
  *
  * @param {string} content - raw file content
+ * @param {string} heading - the full H2 heading line, e.g. `## Architecture`
  * @returns {string|null} the section (heading line through the line
  *   before the next H1/H2), or null if no such heading exists
  */
-function extractArchSection(content) {
+export function extractSection(content, heading) {
+  const want = String(heading).trim();
   const lines = String(content).split(/\r\n|\r|\n/);
   let inFence = false;
   let start = -1;
@@ -98,7 +102,7 @@ function extractArchSection(content) {
       continue;
     }
     if (inFence) continue;
-    if (/^## Architecture\s*$/.test(line)) {
+    if (trimmed === want) {
       start = i;
       break;
     }
@@ -123,24 +127,23 @@ function extractArchSection(content) {
 }
 
 /**
- * Load the architecture section from the repo's instruction file.
+ * Load a named H2 section from the repo's instruction file.
  *
  * Walks `[AGENTS.md, CLAUDE.md]` (resolved against `baseDir`) and returns
- * the FIRST candidate that yields an extractable `## Architecture`
- * section. Reads literal file content — does NOT resolve `@./AGENTS.md`
- * import indirection (an importer-stub CLAUDE.md simply parses to
- * `no-section`).
+ * the FIRST candidate that yields the requested section. Reads literal
+ * file content — does NOT resolve `@./AGENTS.md` import indirection (an
+ * importer-stub CLAUDE.md simply parses to `no-section`).
  *
  * Never throws: all `fs` exceptions are caught at the boundary and
  * collapse to `state:'unreadable'`. Terminal-state precedence when no
- * candidate yields a section: `no-section` (a readable file lacked the
+ * candidate yields the section: `no-section` (a readable file lacked the
  * heading) beats `unreadable` (I/O error) beats `no-file` (nothing
  * existed) — a definite "not here" outranks an I/O error.
  *
- * @param {{baseDir?: string}} [opts]
- * @returns {{state: 'ok'|'no-file'|'no-section'|'unreadable', text: string, sourceFile: string|null, error?: string}}
+ * @param {{heading?: string, baseDir?: string}} [opts]
+ * @returns {{state: 'ok'|'no-file'|'no-section'|'unreadable', text: string, sourceFile: string|null, heading: string, error?: string}}
  */
-export function loadArchSection({ baseDir = process.cwd() } = {}) {
+export function loadSection({ heading = ARCH_SECTION_HEADING, baseDir = process.cwd() } = {}) {
   let sawReadableNoSection = false;
   let firstError = null;
   let unreadableFile = null;
@@ -158,18 +161,29 @@ export function loadArchSection({ baseDir = process.cwd() } = {}) {
       }
       continue;
     }
-    const section = extractArchSection(content);
+    const section = extractSection(content, heading);
     if (section && section.length > 0) {
-      return { state: 'ok', text: section, sourceFile: name };
+      return { state: 'ok', text: section, sourceFile: name, heading };
     }
     sawReadableNoSection = true;
   }
 
   if (sawReadableNoSection) {
-    return { state: 'no-section', text: '', sourceFile: null };
+    return { state: 'no-section', text: '', sourceFile: null, heading };
   }
   if (firstError !== null) {
-    return { state: 'unreadable', text: '', sourceFile: unreadableFile, error: firstError };
+    return { state: 'unreadable', text: '', sourceFile: unreadableFile, heading, error: firstError };
   }
-  return { state: 'no-file', text: '', sourceFile: null };
+  return { state: 'no-file', text: '', sourceFile: null, heading };
+}
+
+/**
+ * Back-compat wrapper — the original `/brainstorm --with-arch` entry point.
+ * Equivalent to `loadSection({ heading: ARCH_SECTION_HEADING })`.
+ *
+ * @param {{baseDir?: string}} [opts]
+ * @returns {{state: 'ok'|'no-file'|'no-section'|'unreadable', text: string, sourceFile: string|null, error?: string}}
+ */
+export function loadArchSection({ baseDir = process.cwd() } = {}) {
+  return loadSection({ heading: ARCH_SECTION_HEADING, baseDir });
 }

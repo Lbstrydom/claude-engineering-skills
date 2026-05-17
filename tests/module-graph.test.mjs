@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveSpecifier } from '../scripts/lib/module-graph.mjs';
+import { resolveSpecifier, parseImports, publicExports } from '../scripts/lib/module-graph.mjs';
 
 const REPO = new Set([
   'scripts/foo.mjs',
@@ -68,5 +68,50 @@ describe('resolveSpecifier', () => {
     assert.equal(probed.kind, 'repo', 'default mode probes');
     const exact = resolveSpecifier({ fromFile: 'scripts/foo.mjs', specifier: './lib/schemas', repoFiles: REPO, exact: true });
     assert.equal(exact.kind, 'unresolvable', 'exact mode requires the extension');
+  });
+});
+
+describe('parseImports', () => {
+  const SRC = [
+    "import a from './a.mjs';",
+    "import {\n  b,\n  c,\n} from './b.mjs';",
+    "export { d } from './c.mjs';",
+    "import './side-effect.mjs';",
+    "export * from './star.mjs';",
+    "const x = await import('./dynamic.mjs');", // dynamic — intentionally skipped
+  ].join('\n');
+
+  it('extracts from-imports, side-effect imports and re-exports', () => {
+    const specs = parseImports(SRC);
+    assert.ok(specs.includes('./a.mjs'));
+    assert.ok(specs.includes('./b.mjs'), 'multiline import');
+    assert.ok(specs.includes('./c.mjs'), 'export … from');
+    assert.ok(specs.includes('./side-effect.mjs'), 'side-effect import');
+    assert.ok(specs.includes('./star.mjs'), 'export * from');
+  });
+  it('deduplicates and returns first-seen order', () => {
+    assert.deepEqual(parseImports("import a from 'x';\nimport b from 'x';"), ['x']);
+  });
+});
+
+describe('publicExports', () => {
+  const SRC = [
+    'export const A = 1;',
+    'export function B() {}',
+    'export async function asyncFn() {}',
+    'export class C {}',
+    'const d = 1, e = 2;',
+    'export { d, e as F };',
+    'export default function () {}',
+  ].join('\n');
+
+  it('extracts named declarations, export-lists (with `as`), and default', () => {
+    const ex = publicExports(SRC);
+    assert.ok(ex.includes('A') && ex.includes('B') && ex.includes('C'));
+    assert.ok(ex.includes('asyncFn'), 'export async function');
+    assert.ok(ex.includes('d'), 'export { d }');
+    assert.ok(ex.includes('F'), 'export { e as F } → F');
+    assert.ok(!ex.includes('e'), 'the local name is not the export name');
+    assert.ok(ex.includes('default'));
   });
 });

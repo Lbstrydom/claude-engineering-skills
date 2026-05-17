@@ -54,6 +54,8 @@ import { loadArchIntentConfig } from './lib/arch-intent/load-config.mjs';
 import { parseIntentDoc } from './lib/arch-intent/intent-doc-parser.mjs';
 import { ArchIntentConfigError } from './lib/arch-intent/errors.mjs';
 import { detectRepoStack } from './lib/repo-stack.mjs';
+import { listRepoFiles } from './lib/repo-inventory.mjs';
+import { verifyExistenceFindings } from './lib/audit/finding-verification.mjs';
 import { ArchIntentPassSchema } from './lib/schemas.mjs';
 import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
@@ -2485,10 +2487,8 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   // longer counts toward the verdict; everything else keeps its severity.
   // Plan: docs/plans/adaptive-context-blast-radius.md — Phase 1.
   try {
-    const { listRepoFiles } = await import('./lib/repo-inventory.mjs');
-    const { verifyExistenceFindings } = await import('./lib/audit/finding-verification.mjs');
     const inv = listRepoFiles({ baseDir: process.cwd() });
-    const verified = verifyExistenceFindings(allFindings, { baseDir: process.cwd(), repoFiles: inv.files });
+    const verified = verifyExistenceFindings(allFindings, { repoFiles: inv.files });
     allFindings.length = 0;
     allFindings.push(...verified);
     const refutedN = verified.filter(f => f.verification?.verification === 'refuted').length;

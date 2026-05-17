@@ -1,5 +1,52 @@
 # Project Status Log
 
+## 2026-05-17 — Adaptive context blast-radius — Phase 2: the blast-radius context layer
+
+Phase 2 of `docs/plans/adaptive-context-blast-radius.md` — the
+context-provisioning layer with four blast-radius tiers. No consumer
+wiring yet (that is Phase 3); the layer is self-contained and tested
+directly.
+
+### Changes
+- `scripts/lib/repo-context.mjs` (new) — `getRepoContext({tier,scope,
+  targetPaths,intent,baseDir})`: T0 inventory · T1 adjacency (imported-
+  unchanged modules' public exports) · T2 intent-selected AGENTS.md
+  section · T3 symbol map. Full fallback state machine
+  (`resolvedTier`/`fallbackReason`), commit-SHA stamped, token-budgeted.
+  `INTENT_SECTION_MAP` is the data-driven T2 selector.
+- `scripts/lib/module-graph.mjs` — added `parseImports()` + `publicExports()`
+  (comment-stripped ESM regex; advisory, for T1).
+- `scripts/lib/brainstorm/arch-context.mjs` — generalised `loadArchSection`
+  → `loadSection({heading})` + exported `extractSection`; `loadArchSection`
+  kept as a back-compat wrapper.
+- 26 new/extended tests; full suite green (2284, 0 fail).
+
+### Decisions Made
+- Phase 2 R1 code-audit (21 findings): ~11 genuine fixes applied — repo-root
+  resolution in the inventory (`git rev-parse --show-toplevel` so subdir
+  invocation still yields root-relative paths); symbol claims never refuted
+  (a name-only lookup is not sound proof — gate adjudicates files only);
+  `targetPaths` validated against the inventory before any read;
+  `execSync` maxBuffer raised; fs-walk no longer blanket-skips dot-dirs;
+  `complete` completeness flag; line-boundary truncation; honest T3
+  artefact labelling; unknown-intent surfaced not silently defaulted;
+  gate imports made static. Deferred with rationale: M15 (move `loadSection`
+  to a neutral module — benign coupling), M11 (structured-citation
+  contract — larger change). Dismissed: plan-prose path nits, the
+  prior-adjudicated `@import` decision, context-provider≠audit-run.
+
+### Files Affected
+- `scripts/lib/repo-context.mjs` (new)
+- `scripts/lib/repo-inventory.mjs`, `scripts/lib/module-graph.mjs`,
+  `scripts/lib/brainstorm/arch-context.mjs`, `scripts/openai-audit.mjs`
+- `tests/repo-context.test.mjs` (new), `tests/{module-graph,finding-verification}.test.mjs`
+
+### Next Steps
+- Phase 3: rewire `/audit-code`, `/audit-plan`, `gemini-review`,
+  `/brainstorm` onto `getRepoContext`.
+
+---
+
 ## 2026-05-17 — Adaptive context blast-radius — Phase 1: deterministic finding-verification gate
 
 First phase of `docs/plans/adaptive-context-blast-radius.md` (the plan

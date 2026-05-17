@@ -90,3 +90,70 @@ export function resolveSpecifier({ fromFile, specifier, repoFiles, exact = false
   }
   return { resolved: null, kind: 'unresolvable' };
 }
+
+/**
+ * Strip `/* *\/` block comments and `//` line comments so the import /
+ * export regexes below don't match commented-out code (audit M9). The
+ * line-comment pass guards `://` (URLs) and quote-prefixed `//` to avoid
+ * eating string content — crude but safe for the advisory use here.
+ */
+function stripComments(src) {
+  return String(src || '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:'"`\\])\/\/[^\n]*/g, '$1');
+}
+
+/**
+ * Extract every import/re-export specifier from ESM source. Catches
+ * `import … from 'x'`, side-effect `import 'x'`, and `export … from 'x'`
+ * — multiline-tolerant (it anchors on the `from 'x'` clause, so the
+ * binding list between `import` and `from` may span lines).
+ *
+ * Best-effort by design — this feeds the *advisory* T1 adjacency context
+ * block, not a deterministic gate. Dynamic `import()` is intentionally
+ * skipped (the specifier may be computed).
+ *
+ * @param {string} content - ESM source
+ * @returns {string[]} unique specifiers, in first-seen order
+ */
+export function parseImports(content) {
+  const src = stripComments(content);
+  const found = [];
+  const add = (s) => { if (s && !found.includes(s)) found.push(s); };
+  // `import … from 'x'` and `export … from 'x'`
+  for (const m of src.matchAll(/\bfrom\s*['"]([^'"\n]+)['"]/g)) add(m[1]);
+  // side-effect `import 'x'`
+  for (const m of src.matchAll(/(?:^|[;\n])\s*import\s+['"]([^'"\n]+)['"]/g)) add(m[1]);
+  return found;
+}
+
+/**
+ * Extract the public export names from ESM source. Covers
+ * `export const/let/var/function/class NAME`, `export { a, b as c }`,
+ * `export { x } from '…'`, and `export default`. `export * from '…'`
+ * cannot be named — reported as the literal `'*'`.
+ *
+ * Best-effort by design — feeds the advisory T1 context block.
+ *
+ * @param {string} content - ESM source
+ * @returns {string[]} unique export names, in first-seen order
+ */
+export function publicExports(content) {
+  const src = stripComments(content);
+  const found = [];
+  const add = (s) => { if (s && !found.includes(s)) found.push(s); };
+  for (const m of src.matchAll(/\bexport\s+(?:async\s+)?(?:function|class|const|let|var)\s+([A-Za-z_$][\w$]*)/g)) {
+    add(m[1]);
+  }
+  for (const m of src.matchAll(/\bexport\s*\{([^}]*)\}/g)) {
+    for (const part of m[1].split(',')) {
+      const seg = part.trim();
+      if (!seg) continue;
+      const asMatch = seg.match(/\bas\s+([A-Za-z_$][\w$]*)\s*$/);
+      add(asMatch ? asMatch[1] : seg.split(/\s+/)[0]);
+    }
+  }
+  if (/\bexport\s+default\b/.test(src)) add('default');
+  if (/\bexport\s*\*\s*from\b/.test(src)) add('*');
+  return found;
+}
