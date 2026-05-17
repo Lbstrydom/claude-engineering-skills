@@ -2479,16 +2479,42 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     }
   }
 
+  // ── Deterministic finding-verification gate (code mode only) ──────────
+  // Resolves "missing file/module/symbol" findings against the real repo.
+  // A finding the gate PROVES false (entity exists) is `refuted` and no
+  // longer counts toward the verdict; everything else keeps its severity.
+  // Plan: docs/plans/adaptive-context-blast-radius.md — Phase 1.
+  try {
+    const { listRepoFiles } = await import('./lib/repo-inventory.mjs');
+    const { verifyExistenceFindings } = await import('./lib/audit/finding-verification.mjs');
+    const inv = listRepoFiles({ baseDir: process.cwd() });
+    const verified = verifyExistenceFindings(allFindings, { baseDir: process.cwd(), repoFiles: inv.files });
+    allFindings.length = 0;
+    allFindings.push(...verified);
+    const refutedN = verified.filter(f => f.verification?.verification === 'refuted').length;
+    if (refutedN > 0) {
+      process.stderr.write(`  [verify-gate] ${refutedN} existence finding(s) refuted (entity exists in repo) — excluded from verdict\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`  [verify-gate] skipped (non-blocking) — ${err.message}\n`);
+  }
+
   // Phase C: verdict counts exclude tool findings by default (advisory mode).
   // With --strict-lint, tool findings count in the verdict.
   const isToolFinding = (f) => {
     const k = f.classification?.sourceKind;
     return k === 'LINTER' || k === 'TYPE_CHECKER';
   };
-  const countFor = strictLint ? allFindings : allFindings.filter(f => !isToolFinding(f));
-  const high = countFor.filter(f => f.severity === 'HIGH').length;
-  const medium = countFor.filter(f => f.severity === 'MEDIUM').length;
-  const low = countFor.filter(f => f.severity === 'LOW').length;
+  // Effective severity respects the verification gate: a refuted finding
+  // has countsTowardVerdict=false; confirmed / requires_verification keep
+  // the model's original severity (audit G2).
+  const effSeverity = (f) => f.verification ? f.verification.verdictSeverity : f.severity;
+  const countsTowardVerdict = (f) => (f.verification ? f.verification.countsTowardVerdict : true);
+  const countFor = (strictLint ? allFindings : allFindings.filter(f => !isToolFinding(f)))
+    .filter(countsTowardVerdict);
+  const high = countFor.filter(f => effSeverity(f) === 'HIGH').length;
+  const medium = countFor.filter(f => effSeverity(f) === 'MEDIUM').length;
+  const low = countFor.filter(f => effSeverity(f) === 'LOW').length;
 
   let verdict = 'PASS';
   if (high > 0) verdict = 'SIGNIFICANT_ISSUES';

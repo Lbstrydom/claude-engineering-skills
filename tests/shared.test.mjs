@@ -135,7 +135,10 @@ describe('FindingJsonSchema (derived)', () => {
   it('has all non-optional fields as required', () => {
     // Phase B: `classification` is optional on FindingSchema (alias for PersistedFindingSchema)
     // — it's only required on ProducerFindingSchema.
-    const zodKeys = Object.keys(FindingSchema.shape).filter(k => k !== 'classification').sort();
+    // `verification` is optional too — the finding-verification gate attaches
+    // it post-hoc (docs/plans/adaptive-context-blast-radius.md, Phase 1).
+    const optional = new Set(['classification', 'verification']);
+    const zodKeys = Object.keys(FindingSchema.shape).filter(k => !optional.has(k)).sort();
     assert.deepEqual([...FindingJsonSchema.required].sort(), zodKeys);
   });
 

@@ -1,5 +1,60 @@
 # Project Status Log
 
+## 2026-05-17 — Adaptive context blast-radius — Phase 1: deterministic finding-verification gate
+
+First phase of `docs/plans/adaptive-context-blast-radius.md` (the plan
+synthesised from a multi-LLM brainstorm + audited GPT 2r / Gemini 2r, 15
+findings). Phase 1 is the self-contained, highest-leverage unit — a
+deterministic gate that stops the audit pipeline from emitting "missing
+file/module" false positives (3 of 4 HIGH findings on the previous PR
+were exactly that).
+
+### Changes
+- `scripts/lib/repo-inventory.mjs` (new) — `listRepoFiles()`: the canonical
+  sensitive-path-filtered repo file list. Git inventory unions
+  `ls-files` + `ls-files --others --exclude-standard` minus
+  `ls-files --deleted` (tracked + new − ghost files); `.gitignore`-ish
+  fs-walk fallback off-git. Sensitive paths filtered DURING traversal.
+- `scripts/lib/module-graph.mjs` (new) — `resolveSpecifier()`: ESM-only
+  deterministic specifier resolution; `exact` mode (no extensionless
+  probing) for the gate; scoped packages / leading-slash → external /
+  unresolvable, never guessed.
+- `scripts/lib/audit/finding-verification.mjs` (new) — `verifyExistenceFindings()`:
+  classifies "missing X" findings, extracts the cited entity anchored on
+  the claim phrase (not first-quoted-token), resolves it against the repo,
+  and downgrades ONLY provably-false ones (`refuted`). `confirmed` /
+  `requires_verification` preserve the model's severity; missing-symbol
+  claims are never `confirmed` (the AST index is incomplete).
+- `scripts/lib/schemas.mjs` — `FindingVerificationSchema`; optional
+  `verification` sibling on `PersistedFindingSchema` (immutable original).
+- `scripts/openai-audit.mjs` — gate wired into `runMultiPassCodeAudit`
+  (code mode only), post-normalize / pre-verdict; verdict counts
+  `verdictSeverity`/`countsTowardVerdict`.
+- 29 new tests across 3 suites; full suite green (2270, 0 fail).
+
+### Decisions Made
+- Phase 1 R1 code-audit (20 findings): ~11 genuine gate-correctness bugs
+  fixed (anchored extraction, ESM-exact resolution, no `fs` fallback,
+  scoped-package handling, sensitive-path filtering during walk); the rest
+  were diff-scope artefacts (Phase 2 not built yet) or plan-prose path
+  shorthand.
+- Phases 2 (context tiers) + 3 (consumer rewiring) remain — separate
+  cycles, as the plan sequences them.
+
+### Files Affected
+- `scripts/lib/repo-inventory.mjs`, `scripts/lib/module-graph.mjs`,
+  `scripts/lib/audit/finding-verification.mjs` (new)
+- `scripts/lib/schemas.mjs`, `scripts/openai-audit.mjs`
+- `tests/{repo-inventory,module-graph,finding-verification}.test.mjs` (new),
+  `tests/shared.test.mjs`
+
+### Next Steps
+- Phase 2: `scripts/lib/repo-context.mjs` blast-radius tiers (T0–T3).
+- Phase 3: rewire `/audit-code`, `/audit-plan`, `gemini-review`,
+  `/brainstorm` onto the context layer.
+
+---
+
 ## 2026-05-17 — /brainstorm `--with-arch`: codebase context for external LLMs
 
 Closes the asymmetry where Claude's `/brainstorm` take was codebase-grounded

@@ -55,12 +55,46 @@ export const ProducerFindingSchema = z.object({
 });
 
 /**
+ * FindingVerificationSchema — metadata the deterministic finding-verification
+ * gate (scripts/lib/audit/finding-verification.mjs) attaches to a finding
+ * AFTER the LLM produced it. The model's own fields stay immutable; the
+ * verdict reads `verdictSeverity` / `countsTowardVerdict`, not `severity`.
+ * Plan: docs/plans/adaptive-context-blast-radius.md (audit H1, M2, G1, G2).
+ *
+ * - `refuted`               — entity provably exists; the "missing" claim
+ *                             is a context-window artifact. ONLY this
+ *                             outcome downgrades (verdictSeverity LOW,
+ *                             countsTowardVerdict false).
+ * - `confirmed`             — a FILE is provably absent (fs is complete).
+ * - `requires_verification` — could not deterministically prove falsity
+ *                             (missing-symbol claim — the AST index is
+ *                             incomplete; or unresolvable / sensitive /
+ *                             out-of-scope). Original severity preserved.
+ */
+export const FindingVerificationSchema = z.object({
+  verification: z.enum(['refuted', 'confirmed', 'requires_verification']),
+  verificationReason: z.string().max(300),
+  citedEntity: z.object({
+    kind: z.enum(['file', 'symbol']),
+    name: z.string().max(300),
+    fromFile: z.string().max(300).nullable(),
+    exportName: z.string().max(200).nullable(),
+  }).nullable(),
+  verdictSeverity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
+  countsTowardVerdict: z.boolean(),
+});
+
+/**
  * PersistedFindingSchema — what we read from storage. Classification is OPTIONAL/nullable.
  * Old findings written before Phase B have no classification; must still validate.
+ * `verification` is attached only to findings the gate classified as
+ * existence-claims; absent on all others (they count toward the verdict
+ * normally).
  */
 export const PersistedFindingSchema = z.object({
   ...FindingBase,
   classification: ClassificationSchema.nullable().optional(),
+  verification: FindingVerificationSchema.optional(),
 });
 
 /**
