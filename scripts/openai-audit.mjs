@@ -56,6 +56,7 @@ import { ArchIntentConfigError } from './lib/arch-intent/errors.mjs';
 import { detectRepoStack } from './lib/repo-stack.mjs';
 import { listRepoFiles } from './lib/repo-inventory.mjs';
 import { verifyExistenceFindings } from './lib/audit/finding-verification.mjs';
+import { getRepoContext } from './lib/repo-context.mjs';
 import { ArchIntentPassSchema } from './lib/schemas.mjs';
 import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
@@ -1639,9 +1640,27 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   // History context for round 2+ (prevents re-raising resolved findings)
   const historyBlock = historyContext ? `\n${historyContext}\n` : '';
 
-  const fileListContext = `## Files Referenced in Plan (${found.length} found, ${missing.length} missing)\n\n`
+  let fileListContext = `## Files Referenced in Plan (${found.length} found, ${missing.length} missing)\n\n`
     + (missing.length ? `**Missing:** ${missing.join(', ')}\n\n` : '')
     + `**Found:** ${found.join(', ')}\n`;
+
+  // Adaptive repo-context block (Phase 3 — adaptive-context-blast-radius):
+  // give the auditor the file inventory + import adjacency so it cannot
+  // hallucinate "missing module" for unchanged-but-imported files. Lives
+  // in the cacheable stable prefix. T1 for diff scope, T3 for full.
+  try {
+    const tier = scopeMode === 'full' ? 'T3' : 'T1';
+    const rc = getRepoContext({
+      tier, scope: scopeMode || 'diff',
+      targetPaths: changedFiles || [], baseDir: process.cwd(),
+    });
+    if (rc.block) {
+      fileListContext += `\n\n## Repository Context (tier ${rc.resolvedTier})\n${rc.block}\n`;
+      process.stderr.write(`  [repo-context] tier ${rc.requestedTier}→${rc.resolvedTier} (~${rc.tokensEst} tok)${rc.degraded ? ` [degraded: ${rc.fallbackReason}]` : ''}\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`  [repo-context] skipped (non-blocking) — ${err.message}\n`);
+  }
 
   // When --files is specified, scope quality passes to those files + their shared deps
   // This enables delta-only auditing on Round 2+
@@ -2488,7 +2507,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   // Plan: docs/plans/adaptive-context-blast-radius.md — Phase 1.
   try {
     const inv = listRepoFiles({ baseDir: process.cwd() });
-    const verified = verifyExistenceFindings(allFindings, { repoFiles: inv.files });
+    const verified = verifyExistenceFindings(allFindings, { repoFiles: inv.files, inventoryComplete: inv.complete });
     allFindings.length = 0;
     allFindings.push(...verified);
     const refutedN = verified.filter(f => f.verification?.verification === 'refuted').length;
@@ -3205,10 +3224,22 @@ async function main() {
 
     const r2Modifier = round >= 2 ? `\n\n${R2_ROUND_MODIFIER}` : '';
 
+    // Adaptive repo-context — T0 inventory (Phase 3): a plan audit has no
+    // diff, so the auditor gets the file inventory only. This lets it tell
+    // "the plan references a nonexistent module" from "the plan duplicates
+    // an existing one" without hallucinating either way.
+    let invBlock = '';
+    try {
+      const rc = getRepoContext({ tier: 'T0', scope: 'plan', baseDir: process.cwd() });
+      if (rc.block) invBlock = `\n\n## Repository Context (tier ${rc.resolvedTier})\n${rc.block}\n`;
+    } catch (err) {
+      process.stderr.write(`  [repo-context] skipped (non-blocking) — ${err.message}\n`);
+    }
+
     systemPrompt = PLAN_AUDIT_SYSTEM + r2Modifier;
     schema = PlanAuditResultSchema;
     schemaName = 'plan_audit_result';
-    userPrompt = `## Project Context\n${planContext}${depsBlock}${rulingsBlock}\n\n${historyContext ? `---\n\n${historyContext}\n` : ''}---\n\n## Plan to Audit\n${planContent}`;
+    userPrompt = `## Project Context\n${planContext}${depsBlock}${invBlock}${rulingsBlock}\n\n${historyContext ? `---\n\n${historyContext}\n` : ''}---\n\n## Plan to Audit\n${planContent}`;
   }
 
   // Cost preflight (single-call modes: plan, rebuttal)

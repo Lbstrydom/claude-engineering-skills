@@ -139,10 +139,15 @@ function mk(verification, reason, entity, finding, verdictSeverity) {
  * @param {Set<string>|string[]} ctx.repoFiles - the canonical, sensitive-
  *   filtered inventory (`listRepoFiles().files`). The SOLE source of file
  *   existence — no `fs` fallback (audit H3).
+ * @param {boolean} [ctx.inventoryComplete=true] - `listRepoFiles().complete`.
+ *   When false (a subtree was unreadable), file *absence* is not provable —
+ *   a "missing file" claim degrades to `requires_verification` instead of
+ *   `confirmed` (audit P3-M2 — `confirmed` is a soundness claim that only
+ *   holds against a complete inventory).
  * @returns {object[]} same findings; existence-claim ones gain `.verification`
  */
 export function verifyExistenceFindings(findings, ctx = {}) {
-  const { repoFiles = [] } = ctx;
+  const { repoFiles = [], inventoryComplete = true } = ctx;
   const fileSet = repoFiles instanceof Set ? repoFiles : new Set(repoFiles);
 
   return (findings || []).map((finding) => {
@@ -198,6 +203,12 @@ export function verifyExistenceFindings(findings, ctx = {}) {
     // inventory is the SOLE source of truth, no `fs` fallback).
     if (fileSet.has(norm)) {
       return { ...finding, verification: mk('refuted', `file "${norm}" exists in the repository inventory — "missing" claim is a context-window artefact`, entity, finding, 'LOW') };
+    }
+    // `confirmed` asserts provable absence — sound only against a COMPLETE
+    // inventory. If a subtree was unreadable, downgrade to
+    // requires_verification (audit P3-M2).
+    if (!inventoryComplete) {
+      return { ...finding, verification: mk('requires_verification', `file "${norm}" not in the inventory, but the inventory is incomplete (a subtree was unreadable) — absence is not provable`, entity, finding) };
     }
     return { ...finding, verification: mk('confirmed', `file "${norm}" is not present in the repository inventory`, entity, finding) };
   });

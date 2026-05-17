@@ -1,7 +1,7 @@
 # Plan: Adaptive context "blast radius" + deterministic finding-verification gate
 
 - **Date**: 2026-05-17
-- **Status**: In Progress
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend
 
@@ -597,3 +597,30 @@ Backend scope — behavioural pass/fail contracts:
   *advisory* T1 block; the deterministic gate's resolution is pure path
   math, where M1's AST concern actually applied.
 - **Remaining**: Phase 3 — rewire the consumers onto `getRepoContext`.
+
+### 2026-05-17 — Phase 3 complete (series complete)
+
+- **Shipped**: `/audit-code` injects `getRepoContext` T1 (diff) / T3 (full)
+  into the cacheable prompt prefix; `/audit-plan` injects T0; `gemini-review`
+  gains a T0/T1 block so the final reviewer can falsify factual repo
+  claims. `scripts/lib/doc-sections.mjs` (new) — section extraction moved
+  out of the `brainstorm/` namespace into shared `lib/`. The gate now
+  degrades `confirmed`→`requires_verification` on an incomplete inventory.
+  13 new tests; suite green (bar one pre-existing flaky timing test in
+  `hook-arch-memory-check`, unrelated — touches no hooks).
+- **Audit**: Phase 3 R1 surfaced 7 findings — M2 (incomplete-inventory
+  soundness) and M4 (cross-domain coupling — flagged in P2 and P3, fixed
+  by the `doc-sections.mjs` move) fixed; M1 (regex prose-parsing — same as
+  the deferred P2-M11 structured-citation-contract idea) and M3 (advisory
+  T1 read-swallow — benign, advisory context) deferred with rationale;
+  plan-prose path nits + the `quickfix-patterns.mjs` location LOW dismissed.
+- **Deferred from Phase 3** (out of scope — documented follow-ups, not
+  regressions): (1) the `/brainstorm` → `getRepoContext` T2 rewiring — the
+  shipped `--with-arch` feature already supplies equivalent context, so
+  this is cosmetic consolidation with regression risk; (2) the
+  `/audit-plan` neighbourhood-duplication LLM pre-pass — a distinct
+  sub-feature; the T0 inventory injection already addresses the core "does
+  this plan reference / duplicate existing code" gap.
+- **Series complete**: Phases 1–3 shipped (`b14a3e6`, `52b21b9`, this).
+  The deterministic gate + the four-tier blast-radius context layer are
+  live across `/audit-code`, `/audit-plan`, and `gemini-review`.

@@ -1,5 +1,57 @@
 # Project Status Log
 
+## 2026-05-17 — Adaptive context blast-radius — Phase 3: consumer rewiring (series complete)
+
+Phase 3 of `docs/plans/adaptive-context-blast-radius.md` — wires the
+Phase 2 context layer into the external-LLM audit path. Completes the
+series (plan audited GPT 2r + Gemini 2r; Phases 1–3 each implemented +
+R1-audited + shipped).
+
+### Changes
+- `scripts/openai-audit.mjs` — `/audit-code` injects a `getRepoContext`
+  block into the cacheable prompt prefix (`fileListContext`): **T1** for
+  `--scope diff` (inventory + import adjacency), **T3** for `--scope full`
+  (symbol map). `/audit-plan` injects **T0** (inventory) into the
+  plan-mode prompt so the auditor can tell "references a nonexistent
+  module" from "duplicates an existing one". The gate now receives
+  `inventoryComplete`.
+- `scripts/gemini-review.mjs` — the final reviewer's prompt gains a
+  `getRepoContext` block (T1 code / T0 plan) so it can *falsify* factual
+  "missing module" claims in the transcript, not just judge deliberation.
+- `scripts/lib/doc-sections.mjs` (new) — heading-aware section extraction
+  (`extractSection`, `loadSection`) moved out of the `brainstorm/` feature
+  namespace into shared `lib/` (audit P2-M15 / P3-M4); `arch-context.mjs`
+  re-exports for back-compat.
+- `scripts/lib/audit/finding-verification.mjs` — the gate degrades
+  `confirmed` → `requires_verification` when the inventory is incomplete
+  (audit P3-M2: provable absence needs a complete inventory).
+- 13 new tests; suite green bar one pre-existing flaky timing test.
+
+### Decisions Made
+- Phase 3 R1 code-audit (7 findings): M2 (incomplete-inventory soundness)
+  and M4 (section loader → neutral module) fixed; M1/M3 (regex-prose
+  parsing, advisory T1 read-swallow) deferred with rationale; plan-prose
+  path nits + the misplaced-security-policy LOW dismissed.
+- **Deferred from Phase 3 scope** (documented in the plan): the
+  `/brainstorm` rewiring onto `getRepoContext` (the `--with-arch` feature
+  already supplies equivalent context; converting it is cosmetic
+  consolidation with regression risk on a shipped feature) and the
+  `/audit-plan` neighbourhood-duplication LLM pre-pass (a distinct
+  sub-feature — T0 inventory injection already addresses the core gap).
+
+### Files Affected
+- `scripts/openai-audit.mjs`, `scripts/gemini-review.mjs`
+- `scripts/lib/doc-sections.mjs` (new), `scripts/lib/brainstorm/arch-context.mjs`
+- `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-context.mjs`
+- `tests/doc-sections.test.mjs` (new), `tests/finding-verification.test.mjs`
+
+### Next Steps
+- Optional follow-ups: `/brainstorm` → `getRepoContext` T2 consolidation;
+  `/audit-plan` neighbourhood-duplication pre-pass; the `/assess`
+  standalone codebase-health skill (separate plan, depends on this layer).
+
+---
+
 ## 2026-05-17 — Adaptive context blast-radius — Phase 2: the blast-radius context layer
 
 Phase 2 of `docs/plans/adaptive-context-blast-radius.md` — the

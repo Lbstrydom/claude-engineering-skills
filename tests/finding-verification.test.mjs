@@ -126,6 +126,19 @@ describe('verifyExistenceFindings — the H1/H2/M2 regression', () => {
     assert.equal(out[0].verification.verification, 'requires_verification');
   });
 
+  it('does NOT confirm absence when the inventory is incomplete (audit P3-M2)', () => {
+    // `confirmed` is a soundness claim — only valid against a complete
+    // inventory. A subtree was unreadable → degrade to requires_verification.
+    const out = verifyExistenceFindings(
+      [finding({ detail: 'The module `scripts/lib/ghost-module.mjs` does not exist.' })],
+      { repoFiles: REPO, inventoryComplete: false },
+    );
+    const v = out[0].verification;
+    assert.equal(v.verification, 'requires_verification');
+    assert.match(v.verificationReason, /incomplete/i);
+    assert.equal(v.verdictSeverity, 'HIGH', 'severity preserved');
+  });
+
   it('leaves a non-existence finding untouched (no verification field)', () => {
     const out = verifyExistenceFindings(
       [finding({ category: 'DRY Violation', detail: 'helper duplicated across two files', section: 'scripts/a.mjs' })],

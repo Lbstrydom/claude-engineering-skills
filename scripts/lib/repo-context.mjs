@@ -20,7 +20,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { listRepoFiles } from './repo-inventory.mjs';
 import { parseImports, publicExports, resolveSpecifier } from './module-graph.mjs';
-import { loadSection } from './brainstorm/arch-context.mjs';
+import { loadSection } from './doc-sections.mjs';
 
 /**
  * Intent → AGENTS.md H2 heading. The T2 selector — data-driven single

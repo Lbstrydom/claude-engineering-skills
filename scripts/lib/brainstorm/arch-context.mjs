@@ -16,12 +16,14 @@
  *
  * @module scripts/lib/brainstorm/arch-context
  */
-import fs from 'node:fs';
-import path from 'node:path';
 import { ARCH_INTENT_RE } from './depth-config.mjs';
+import { loadSection, extractSection, ARCH_SECTION_HEADING } from '../doc-sections.mjs';
 
-/** The H2 heading whose section is extracted. Single source of truth. */
-export const ARCH_SECTION_HEADING = '## Architecture';
+// Heading-aware section extraction now lives in the shared, neutral
+// `lib/doc-sections.mjs` (audit P3-M4 — a shared concern should not be
+// owned by the brainstorm feature namespace). Re-exported here so existing
+// importers of these names from `arch-context.mjs` keep working.
+export { loadSection, extractSection, ARCH_SECTION_HEADING };
 
 /**
  * XML wrapper tags for the arch block. XML — not Markdown ``` fences —
@@ -51,9 +53,6 @@ export const ARCH_BLOCK_PREAMBLE =
  */
 export const ARCH_INTENT_SCAN_LIMIT = 600;
 
-/** Instruction-file candidates, in resolution order. */
-const CANDIDATE_FILES = ['AGENTS.md', 'CLAUDE.md'];
-
 /**
  * Decide whether to attach the architecture context.
  *
@@ -73,108 +72,6 @@ export function shouldAttachArch({ withArch = false, noArch = false, topic = '' 
   if (withArch) return true;
   const scanSurface = String(topic || '').slice(0, ARCH_INTENT_SCAN_LIMIT);
   return ARCH_INTENT_RE.test(scanSurface);
-}
-
-/**
- * Extract a named H2 section with a heading-aware line parser. Not a
- * regex: `\Z` is not a JS anchor, and a single `[\s\S]*?` regex mishandles
- * CRLF, EOF-without-newline, and `## ` lines inside fenced code blocks.
- * Heading match is exact string comparison (whitespace-tolerant) — no
- * regex, so a heading containing regex metacharacters (`## R2+ Audit
- * Mode`) is matched literally.
- *
- * @param {string} content - raw file content
- * @param {string} heading - the full H2 heading line, e.g. `## Architecture`
- * @returns {string|null} the section (heading line through the line
- *   before the next H1/H2), or null if no such heading exists
- */
-export function extractSection(content, heading) {
-  const want = String(heading).trim();
-  const lines = String(content).split(/\r\n|\r|\n/);
-  let inFence = false;
-  let start = -1;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-      inFence = !inFence;
-      continue;
-    }
-    if (inFence) continue;
-    if (trimmed === want) {
-      start = i;
-      break;
-    }
-  }
-  if (start === -1) return null;
-
-  const collected = [lines[start]];
-  inFence = false;
-  for (let i = start + 1; i < lines.length; i++) {
-    const line = lines[i];
-    const trimmed = line.trim();
-    if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-      inFence = !inFence;
-      collected.push(line);
-      continue;
-    }
-    // A non-fenced H1 or H2 ends the section. `### …` subsections stay.
-    if (!inFence && (/^## /.test(line) || /^# /.test(line))) break;
-    collected.push(line);
-  }
-  return collected.join('\n').trimEnd();
-}
-
-/**
- * Load a named H2 section from the repo's instruction file.
- *
- * Walks `[AGENTS.md, CLAUDE.md]` (resolved against `baseDir`) and returns
- * the FIRST candidate that yields the requested section. Reads literal
- * file content — does NOT resolve `@./AGENTS.md` import indirection (an
- * importer-stub CLAUDE.md simply parses to `no-section`).
- *
- * Never throws: all `fs` exceptions are caught at the boundary and
- * collapse to `state:'unreadable'`. Terminal-state precedence when no
- * candidate yields the section: `no-section` (a readable file lacked the
- * heading) beats `unreadable` (I/O error) beats `no-file` (nothing
- * existed) — a definite "not here" outranks an I/O error.
- *
- * @param {{heading?: string, baseDir?: string}} [opts]
- * @returns {{state: 'ok'|'no-file'|'no-section'|'unreadable', text: string, sourceFile: string|null, heading: string, error?: string}}
- */
-export function loadSection({ heading = ARCH_SECTION_HEADING, baseDir = process.cwd() } = {}) {
-  let sawReadableNoSection = false;
-  let firstError = null;
-  let unreadableFile = null;
-
-  for (const name of CANDIDATE_FILES) {
-    const filePath = path.resolve(baseDir, name);
-    if (!fs.existsSync(filePath)) continue;
-    let content;
-    try {
-      content = fs.readFileSync(filePath, 'utf-8');
-    } catch (err) {
-      if (firstError === null) {
-        firstError = err.message || String(err);
-        unreadableFile = name;
-      }
-      continue;
-    }
-    const section = extractSection(content, heading);
-    if (section && section.length > 0) {
-      return { state: 'ok', text: section, sourceFile: name, heading };
-    }
-    sawReadableNoSection = true;
-  }
-
-  if (sawReadableNoSection) {
-    return { state: 'no-section', text: '', sourceFile: null, heading };
-  }
-  if (firstError !== null) {
-    return { state: 'unreadable', text: '', sourceFile: unreadableFile, heading, error: firstError };
-  }
-  return { state: 'no-file', text: '', sourceFile: null, heading };
 }
 
 /**

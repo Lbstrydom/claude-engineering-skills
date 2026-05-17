@@ -29,6 +29,7 @@ import { geminiConfig, claudeConfig } from './lib/config.mjs';
 import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
 import { PromptBandit } from './bandit.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
+import { getRepoContext } from './lib/repo-context.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
 // This module keeps specialized callGemini/callClaudeOpus with thinkingConfig + abort controller
 // because the final review requires high-budget reasoning and precise timeout handling.
@@ -540,6 +541,23 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     ].join('\n');
   }
 
+  // Adaptive repo-context (Phase 3 — adaptive-context-blast-radius): give
+  // the final reviewer the repo file inventory so it can FALSIFY factual
+  // "missing module" claims in the transcript instead of only judging the
+  // deliberation. T1 (with the changed files) for a code review; T0 for a
+  // plan review. Non-blocking — a failure just omits the block.
+  let repoContextBlock = '';
+  try {
+    const rc = getRepoContext({
+      tier: auditMode === 'plan' ? 'T0' : 'T1',
+      scope: auditMode === 'plan' ? 'plan' : 'diff',
+      targetPaths: changedFiles, baseDir: process.cwd(),
+    });
+    if (rc.block) {
+      repoContextBlock = `## Repository Context (tier ${rc.resolvedTier})\n${rc.block}`;
+    }
+  } catch { /* non-blocking */ }
+
   const userPrompt = [
     '## Project Context',
     projectContext,
@@ -551,6 +569,8 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     '',
     '---',
     '',
+    repoContextBlock,
+    repoContextBlock ? '---' : '',
     scopeBlock,
     scopeBlock ? '---' : '',
     '## Audit Transcript (Claude-GPT Deliberation)',
