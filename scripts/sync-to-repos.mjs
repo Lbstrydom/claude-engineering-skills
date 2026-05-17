@@ -117,6 +117,17 @@ const CORE_SCRIPTS = [
   'scripts/explain-history.mjs',
   // /skills quick-reference helper (reads SKILL.md frontmatter)
   'scripts/skills-help.mjs',
+  // Adaptive context blast-radius (docs/plans/adaptive-context-blast-radius.md):
+  // the deterministic finding-verification gate + the tiered context layer.
+  // openai-audit.mjs / gemini-review.mjs statically import these — they MUST
+  // ship alongside, or the consumer-repo audit tooling fails to load.
+  'scripts/lib/repo-inventory.mjs',
+  'scripts/lib/module-graph.mjs',
+  'scripts/lib/repo-context.mjs',
+  'scripts/lib/doc-sections.mjs',
+  'scripts/lib/audit/finding-verification.mjs',
+  // brainstorm /--with-arch context loader — brainstorm-round.mjs depends on it.
+  'scripts/lib/brainstorm/arch-context.mjs',
 ];
 
 /**
