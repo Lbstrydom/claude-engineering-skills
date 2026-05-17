@@ -33,6 +33,16 @@ Three-model audit loop (Claude plans/codes, GPT-5.4 audits, Gemini 3.1 Pro revie
 | `npm run arch:duplicates` | List top cross-file duplicate clusters (refactor targets) |
 | `npm run security:refresh` | Re-parse `docs/security-strategy.md` and refresh the security_incidents Supabase index (auto-runs post-push from `/ship`) |
 
+**Requirements layer** (terminal) — a materialized view of the codebase's de-facto invariants, surfaced to `/audit-code` as a rubric:
+
+| Command | What it does |
+|---|---|
+| `node scripts/requirements.mjs extract --files <a,b,…> [--runs N]` | Extract de-facto requirements from the given files (LLM ×N, merged) → `.requirements/candidates.json` + `gaps.json` |
+| `node scripts/requirements.mjs reconcile` | Fold candidates + gap assessments + hand-curated `.requirements/overrides.json` into `.requirements/ledger.json` |
+| `node scripts/requirements.mjs index` | Print the active requirements index |
+
+Once `.requirements/ledger.json` exists, `/audit-code` automatically injects in-scope invariants as a rubric. See [`.requirements/README.md`](.requirements/README.md).
+
 **Workflow**:
 
 ```
