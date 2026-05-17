@@ -14,6 +14,12 @@ import { resolveModel, refreshModelCatalog } from '../model-resolver.mjs';
 import { GAP_CLASSES, GapAssessmentSchema } from './schema.mjs';
 import { parseLlmJson } from './llm-json.mjs';
 
+// One assessment is ~50-70 output tokens; 16k comfortably covers a few
+// hundred candidates. Beyond that the prompt needs true batching — a
+// documented Phase-2 item (plan §8). Until then an over-large candidate
+// set degrades loudly to all-`none` rather than silently truncating.
+const GAP_MAX_OUTPUT_TOKENS = 16_000;
+
 export const GAP_PROMPT = `You are gap-analysing extracted DE-FACTO requirements. For EACH requirement
 below, assign exactly one gap class:
 - "none"                    — a sound, intended-looking invariant.
@@ -54,7 +60,7 @@ export async function classifyGaps(candidates, { timeoutMs = 120_000 } = {}) {
     const model = resolveModel('latest-gpt');
     const r = await callOpenAI({
       topic: `${GAP_PROMPT}\n\nREQUIREMENTS:\n${JSON.stringify(list, null, 1)}`,
-      model, maxTokens: 3000, timeoutMs,
+      model, maxTokens: GAP_MAX_OUTPUT_TOKENS, timeoutMs,
     });
     if (r.state !== 'success') {
       // Advisory pass — degrade rather than block (#16) — but LOUDLY: a
