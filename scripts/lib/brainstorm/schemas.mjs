@@ -93,12 +93,28 @@ export const BrainstormEnvelopeV2Schema = BrainstormEnvelopeV1Schema.extend({
   schemaVersion: z.literal(2),
   debate: z.array(DebateRoundSchema).optional(),
   _synthesised: z.object({ fields: z.array(z.string()) }).optional(),
+  // Arch-context fields (docs/plans/brainstorm-arch-context.md). `.optional()`
+  // on V2 is the READ-side back-compat allowance — legacy V2 session rows
+  // written before this feature still parse. `loadSession()` normalises
+  // missing values to false/0/null. The WriteSchema below promotes them to
+  // required so a write-side regression that omits one fails at the boundary.
+  archContextAttached: z.boolean().optional(),
+  archContextChars: z.number().int().nonnegative().optional(),
+  archContextWarning: z.string().nullable().optional(),
 });
 
 /**
- * Writers MUST emit V2 strict. Non-V2 writes are bugs.
+ * Writers MUST emit V2 strict. Non-V2 writes are bugs. Stricter than V2
+ * on reads: the three arch-context fields are promoted to required (key
+ * must be present; `archContextWarning` value may still be null), so a
+ * write that forgets one fails validation instead of being silently
+ * masked by the read-side normalizer.
  */
-export const BrainstormEnvelopeWriteSchema = BrainstormEnvelopeV2Schema;
+export const BrainstormEnvelopeWriteSchema = BrainstormEnvelopeV2Schema.required({
+  archContextAttached: true,
+  archContextChars: true,
+  archContextWarning: true,
+});
 
 /**
  * Public-facing parse target — union with V2 first so V2 records normalise

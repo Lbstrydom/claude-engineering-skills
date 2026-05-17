@@ -20,11 +20,19 @@ export const DEPTH_TOKENS = Object.freeze({
 });
 
 /**
- * Topics matching this regex auto-promote to `deep`. The trigger words
- * cover architecture / schema / migration / refactor / design questions
- * where 1500 tokens is too cramped.
+ * Architecture-intent keyword regex. The trigger words cover
+ * architecture / schema / migration / refactor / design questions.
+ *
+ * Single source of truth, two consumers:
+ *   - `autoPromoteDepth()` below — promotes such topics to `deep`.
+ *   - `shouldAttachArch()` in `arch-context.mjs` — decides whether to
+ *     auto-attach the repo's architecture section to the prompt.
+ *
+ * The two consumers share this *constant* but each runs its own test —
+ * neither calls the other — so depth and arch-attach policies stay
+ * behaviourally independent (plan §2, audit M1 / R3-M2).
  */
-const AUTO_PROMOTE_RE = /(architect|schema|migration|refactor|design|how\s+should\s+we\s+structure|what['']?s\s+the\s+best\s+approach)/i;
+export const ARCH_INTENT_RE = /(architect|schema|migration|refactor|design|how\s+should\s+we\s+structure|what['']?s\s+the\s+best\s+approach)/i;
 
 /**
  * Returns 'deep' if the topic matches the auto-promote heuristic, else null.
@@ -35,7 +43,7 @@ const AUTO_PROMOTE_RE = /(architect|schema|migration|refactor|design|how\s+shoul
  */
 export function autoPromoteDepth(topic) {
   if (typeof topic !== 'string' || topic.length === 0) return null;
-  return AUTO_PROMOTE_RE.test(topic) ? 'deep' : null;
+  return ARCH_INTENT_RE.test(topic) ? 'deep' : null;
 }
 
 /**

@@ -1,5 +1,57 @@
 # Project Status Log
 
+## 2026-05-17 — /brainstorm `--with-arch`: codebase context for external LLMs
+
+Closes the asymmetry where Claude's `/brainstorm` take was codebase-grounded
+but the external LLMs (OpenAI/Gemini) received only the topic string —
+`/brainstorm` had no context-assembly step at all, unlike `/audit-code`.
+Shipped via the full `/cycle` (plan → 3-round GPT + 3-round Gemini plan
+audit → implement → code audit → ship).
+
+### Changes
+- `scripts/lib/brainstorm/arch-context.mjs` (new) — `loadArchSection()`
+  extracts the `## Architecture` H2 from `AGENTS.md`→`CLAUDE.md` with a
+  heading-aware, fence-tracking line parser (no regex — the section starts
+  with a ``` directory-tree fence); `shouldAttachArch()` is a pure attach
+  predicate. Candidate-walk file resolution; never throws (`fs` errors →
+  `unreadable` state).
+- `--with-arch` / `--no-arch` flags on `scripts/brainstorm-round.mjs`.
+  Default: auto-attach when the topic shows architecture intent (shared
+  `ARCH_INTENT_RE` keyword trigger). Mutually exclusive.
+- `resume-context.mjs` — arch block redacted, wrapped in
+  `<architecture_context>` XML tags (collision-proof vs the section's own
+  ``` fences), wrapper-aware-truncated to a new `ARCH_CONTEXT_FRACTION`
+  (0.1) budget slice, prepended to `systemPreface` (so the debate round
+  inherits it for free).
+- `schemas.mjs` — 3 envelope fields (`archContextAttached`,
+  `archContextChars`, `archContextWarning`); `BrainstormEnvelopeWriteSchema`
+  now genuinely strict (required arch fields) while V2 reads stay lenient.
+- `session-store.mjs` — `loadSession()` normalizes legacy rows.
+- 24 new tests (`tests/brainstorm-arch-context.test.mjs`); full suite green
+  (2241 tests, 0 fail).
+
+### Files Affected
+- `scripts/lib/brainstorm/arch-context.mjs` — new loader + attach predicate
+- `scripts/brainstorm-round.mjs` — flags, decision, envelope fields
+- `scripts/lib/brainstorm/{depth-config,provider-limits,resume-context,schemas,session-store}.mjs`
+- `skills/brainstorm/SKILL.md` (+ regenerated `.claude/` copy)
+- `docs/plans/brainstorm-arch-context.md` + `-audit-summary.md`
+
+### Decisions Made
+- Auto-attach intent scan is bounded to the first 600 chars of `topic`
+  only (not `--with-context`) — Gemini caught that scanning a piped file
+  or large pasted context would false-positive on generic keywords.
+- New module rather than reusing audit-domain `context.mjs` — keeps the
+  `brainstorm` domain off the Anthropic-client dependency graph.
+- 8 pre-existing session-store/provider-limits debt items surfaced by the
+  diff-scope code audit were deferred (see audit summary), not fixed —
+  scope discipline.
+
+### Next Steps
+- None for this feature. Deferred pre-existing debt tracked in the audit summary.
+
+---
+
 ## 2026-05-15 — Architecture-Intent PR-C: Postgres adapter (series complete)
 
 PR-C, the final adapter of the 3-PR architecture-intent series. Adds a

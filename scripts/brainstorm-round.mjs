@@ -21,6 +21,7 @@ import { callGemini } from './lib/brainstorm/gemini-adapter.mjs';
 import { preflightEstimateUsd } from './lib/brainstorm/pricing.mjs';
 import { resolveDepth, DEPTH_TOKENS } from './lib/brainstorm/depth-config.mjs';
 import { assembleResumeContext } from './lib/brainstorm/resume-context.mjs';
+import { loadArchSection, shouldAttachArch } from './lib/brainstorm/arch-context.mjs';
 import { buildDebatePrompt } from './lib/brainstorm/debate-prompt.mjs';
 import { appendSession, pruneOldSessions, loadSession } from './lib/brainstorm/session-store.mjs';
 import { saveInsight } from './lib/brainstorm/insight-store.mjs';
@@ -54,6 +55,9 @@ FLAGS — brainstorm-round mode
   --debate               Run a second round where each model reacts to the other's response
   --continue-from <sid>  Resume from prior session id (loads prior rounds as context)
   --with-context "<txt>" Additional context (repeatable, max 8000 chars per flag, 24000 total)
+  --with-arch            Force-attach the repo's AGENTS.md '## Architecture' section as context
+  --no-arch              Force-skip architecture context (unanchored ideation)
+                         Default: auto-attach when the topic shows architecture intent
   --out <path>           Write JSON output to file (default: stdout)
   --timeout-ms <n>       Per-provider timeout (default: 60000)
   --sid <sid>            Override session id (default: auto-generated)
@@ -106,6 +110,8 @@ function parseBrainstormArgs(argv) {
     debate: false,
     continueFrom: null,
     withContext: [],         // collected per-flag, validated below
+    withArch: false,         // --with-arch — force-attach architecture context
+    noArch: false,           // --no-arch — force-skip architecture context
     sid: null,               // explicit override (else auto-generated)
     out: null,
     timeoutMs: 60000,
@@ -134,6 +140,8 @@ function parseBrainstormArgs(argv) {
       case '--debate': args.debate = true; break;
       case '--continue-from': args.continueFrom = requireValue(); break;
       case '--with-context': args.withContext.push(requireValue()); break;
+      case '--with-arch': args.withArch = true; break;
+      case '--no-arch': args.noArch = true; break;
       case '--sid': args.sid = requireValue(); break;
       case '--out': args.out = requireValue(); break;
       case '--timeout-ms': args.timeoutMs = Number(requireValue()); break;
@@ -181,6 +189,10 @@ function parseBrainstormArgs(argv) {
   }
   if (totalWithContext > WITH_CONTEXT_TOTAL_MAX) {
     throw new ArgvError(`--with-context combined (${totalWithContext} chars) exceeds total max ${WITH_CONTEXT_TOTAL_MAX}`);
+  }
+  // --with-arch and --no-arch are contradictory — fail fast.
+  if (args.withArch && args.noArch) {
+    throw new ArgvError('Provide either --with-arch OR --no-arch, not both');
   }
   return args;
 }
@@ -313,6 +325,33 @@ async function runBrainstormMode(args) {
     }
   }
 
+  // Decide + load architecture context (docs/plans/brainstorm-arch-context.md).
+  // shouldAttachArch is pure; the file read happens only when it returns true.
+  const attachArch = shouldAttachArch({ withArch: args.withArch, noArch: args.noArch, topic });
+  let archContextText = '';
+  let archContextWarning = null;
+  if (attachArch) {
+    const arch = loadArchSection();
+    if (arch.state === 'ok') {
+      archContextText = arch.text;
+      process.stderr.write(`  [brainstorm] attached architecture context (${arch.text.length} chars from ${arch.sourceFile})\n`);
+    } else {
+      const reason = arch.state === 'no-file'
+        ? 'no AGENTS.md/CLAUDE.md found'
+        : arch.state === 'no-section'
+          ? "no '## Architecture' section found in AGENTS.md/CLAUDE.md"
+          : `instruction file unreadable (${arch.error})`;
+      if (args.withArch) {
+        // Explicit intent — surface to the user via the envelope (Step 3).
+        archContextWarning = `--with-arch was requested but architecture context could not be attached: ${reason}.`;
+        process.stderr.write(`  [brainstorm] WARN: ${archContextWarning}\n`);
+      } else {
+        // Auto-mode — quiet stderr only; the user didn't ask.
+        process.stderr.write(`  [brainstorm] architecture context not attached (${reason}); proceeding\n`);
+      }
+    }
+  }
+
   // Assemble resume context + --with-context (BEFORE preflight per §13.C)
   const providersForBudget = args.models.map(p => ({
     provider: p,
@@ -321,11 +360,12 @@ async function runBrainstormMode(args) {
   const wcCombined = args.withContext.length > 0
     ? args.withContext.join('\n\n---\n\n')
     : '';
-  let assembledContext = { systemPreface: '', userPrefix: '', withContextEffective: '', includedRounds: [], droppedRounds: [], estimatedTokens: 0 };
+  let assembledContext = { systemPreface: '', userPrefix: '', withContextEffective: '', archContextEffective: '', archContextTokens: 0, includedRounds: [], droppedRounds: [], estimatedTokens: 0 };
   try {
     assembledContext = assembleResumeContext({
       sid: args.continueFrom,
       withContextText: wcCombined,
+      archContextText,
       providers: providersForBudget,
     });
   } catch (err) {
@@ -406,6 +446,12 @@ async function runBrainstormMode(args) {
     capturedAt: new Date().toISOString(),
     schemaVersion: 2,
     ...(debateResults.length > 0 ? { debate: debateResults } : { debate: [] }),
+    // Arch-context fields — always emitted (WriteSchema requires them).
+    // archContextChars is the post-redaction, post-truncation length of
+    // the wrapped block actually sent (docs/plans/brainstorm-arch-context.md).
+    archContextAttached: (assembledContext.archContextEffective || '').length > 0,
+    archContextChars: (assembledContext.archContextEffective || '').length,
+    archContextWarning,
   };
 
   // Both providers failed — DO NOT append to session ledger (§10.F)

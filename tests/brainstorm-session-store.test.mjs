@@ -21,6 +21,8 @@ function mkV2Envelope({ topic = 't', sid = 'sid-x' } = {}) {
     sid,
     capturedAt: new Date().toISOString(),
     schemaVersion: 2,
+    // Arch-context fields — WriteSchema (validated by appendSession) requires them.
+    archContextAttached: false, archContextChars: 0, archContextWarning: null,
   };
 }
 

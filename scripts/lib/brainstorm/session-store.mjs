@@ -125,6 +125,27 @@ export async function appendSession({ sid, envelope, root = null }) {
  * @param {{root?: string}} [opts]
  * @returns {{sid: string, rounds: Array<object>, synthesisedCount: number, invalidCount: number}|null}
  */
+/**
+ * Read-side canonicalisation for arch-context fields — the SINGLE owner
+ * of legacy-row normalization (plan: docs/plans/brainstorm-arch-context.md).
+ * Legacy V2 rows written before the arch-context feature lack these
+ * fields; `BrainstormEnvelopeV2Schema` permits that via `.optional()`,
+ * and this coerces missing values to their zero form so downstream
+ * consumers never branch on `undefined`. No Zod `.default()` is used —
+ * this function is the one place legacy rows are canonicalised.
+ *
+ * @param {object} envelope - a schema-valid round envelope
+ * @returns {object} same envelope with arch fields guaranteed present
+ */
+function normalizeArchFields(envelope) {
+  return {
+    ...envelope,
+    archContextAttached: envelope.archContextAttached ?? false,
+    archContextChars: envelope.archContextChars ?? 0,
+    archContextWarning: envelope.archContextWarning ?? null,
+  };
+}
+
 export function loadSession(sid, { root = null } = {}) {
   validateSid(sid, 'loadSession.sid');
   const file = sessionPath(sid, root);
@@ -162,7 +183,7 @@ export function loadSession(sid, { root = null } = {}) {
         invalidLines.push({ lineIdx: idx, raw: line, reason: 'v2-schema-invalid', issues: v.error.issues.slice(0, 3) });
         continue;
       }
-      rounds.push(v.data);
+      rounds.push(normalizeArchFields(v.data));
     } else if (typeof parsed.schemaVersion === 'number' && parsed.schemaVersion > 2) {
       // Audit R2-M8: future-version records should NOT be silently
       // downcast through the V1 synthesis path. Quarantine and warn so
@@ -188,7 +209,7 @@ export function loadSession(sid, { root = null } = {}) {
         invalidLines.push({ lineIdx: idx, raw: line, reason: 'v1-promotion-invalid', issues: vsynth.error.issues.slice(0, 3) });
         continue;
       }
-      rounds.push(vsynth.data);
+      rounds.push(normalizeArchFields(vsynth.data));
       synthesisedCount++;
     }
   }

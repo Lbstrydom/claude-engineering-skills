@@ -52,6 +52,15 @@ export const RESUME_BUDGET_FRACTION = 0.4;
 export const WITH_CONTEXT_FRACTION = 0.1;
 
 /**
+ * Fraction of the provider ceiling reserved for the auto/`--with-arch`
+ * architecture-context block. Counted SEPARATELY from resume and
+ * with-context. Resume + with-context + arch sum to 0.6 < 1.0, so the
+ * combined-ceiling guard in `assembleResumeContext` is purely defensive
+ * (plan §2 Context allocator).
+ */
+export const ARCH_CONTEXT_FRACTION = 0.1;
+
+/**
  * Returns the input-token ceiling for a (provider, sentinel) pair.
  * Falls back to the provider's `default` when the specific sentinel
  * isn't in the table.

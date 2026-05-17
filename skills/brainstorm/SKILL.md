@@ -42,6 +42,17 @@ SAVE MODE (jump to §Step 5 below). Otherwise BRAINSTORM-ROUND mode.
 | `--depth <tier>` | auto | `shallow` (~500 tok) / `standard` (~1500) / `deep` (~4000). Auto-promote to `deep` when topic mentions architecture/schema/migration/refactor/design/"how should we structure"/"what's the best approach". |
 | `--continue-from <sid>` | — | Resume from prior session id (assembles prior rounds as context per token budget). |
 | `--with-context "<text>"` | — | Additional context (repeatable; max 8000 chars per flag, 24000 total). |
+| `--with-arch` | auto | Force-attach the repo's `AGENTS.md` `## Architecture` section so the external LLMs share Claude's codebase grounding. |
+| `--no-arch` | auto | Force-skip architecture context — unanchored greenfield ideation. |
+
+**Architecture context (`--with-arch` / `--no-arch`)**: by default the
+helper **auto-attaches** the repo's `## Architecture` section whenever the
+topic shows architecture intent (same keyword trigger as `--depth` deep:
+architecture / schema / migration / refactor / design). This fixes the
+asymmetry where Claude's take is codebase-grounded but the external models
+saw only the topic. `--with-arch` forces it on for any topic; `--no-arch`
+forces it off when you want an unanchored outside view. The flags are
+mutually exclusive (helper errors if both are passed).
 
 ### Save mode (§Step 5)
 
@@ -107,11 +118,15 @@ risks (Plan v6 §2.1, Gemini-G1 v1+v2).
      [--debate] \
      [--continue-from <prev-sid>] \
      [--with-context "<text>"]   # repeatable \
+     [--with-arch | --no-arch] \
      --out .claude/tmp/brainstorm-<SID>.json \
      < .claude/tmp/brainstorm-<SID>.txt
    ```
    Pass through user-supplied `--debate` / `--depth` / `--continue-from` /
-   `--with-context` flags; the helper validates them. Always pass `--sid <SID>`
+   `--with-context` / `--with-arch` / `--no-arch` flags; the helper
+   validates them. The helper auto-attaches architecture context on
+   architecture-intent topics without any flag — only forward `--with-arch`
+   / `--no-arch` when the user explicitly asked. Always pass `--sid <SID>`
    so the helper writes to a session ledger you can resume from.
 4. Always clean up after rendering (Step 3) finishes — both files:
    ```bash
@@ -146,6 +161,16 @@ provider):
 
 If the JSON's `redactionCount > 0`, prepend a single line above the blocks:
 > ⚠ Redacted N secret pattern(s) from your topic before sending.
+
+**Architecture-context lines** (driven purely by envelope fields — never
+inspect argv):
+- If `archContextAttached` is `true`, prepend an info line above the blocks:
+  > ℹ Sent the repo's architecture summary (`archContextChars` chars) to the
+  > external models — pass `--no-arch` for an unanchored view.
+- If `archContextWarning` is non-null, prepend it as a prominent warning
+  line (this fires only when the user explicitly passed `--with-arch` but
+  the section was unavailable):
+  > ⚠ `<archContextWarning>`
 
 **Error UX rule (§A8)**: when one provider fails (`misconfigured` /
 `timeout` / `http_error` / `empty` / `malformed` / `blocked`), surface the
