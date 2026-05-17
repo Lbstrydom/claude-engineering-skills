@@ -124,9 +124,23 @@ Required: `persona_input` + `url`. If either is missing, output usage and STOP.
 | `PERSONA_TEST_REPO_NAME` | Enables audit-loop cross-reference (`audit_link = true`) |
 | `SUPABASE_AUDIT_URL` + `SUPABASE_AUDIT_ANON_KEY` | Audit-loop DB — used by Phase 0d pre-test enrichment |
 
-Set boolean flags `memory_enabled`, `audit_link` based on what's present.
-When both are off, the skill runs in "stateless" mode — tests complete
-but nothing is saved or cross-referenced.
+**Do NOT read these from the Claude Code session's `process.env`.** The
+consumer repo's `.env` is not loaded into the session, so a bare env check
+reports false negatives — the vars look unset even when they exist, and the
+session silently runs stateless. `cross-skill.mjs` loads `.env` itself via
+`dotenv/config`; the pre-flight probe must do the same.
+
+Run this probe from the consumer-repo root (the same cwd used for every
+`node scripts/cross-skill.mjs` call):
+
+```bash
+node -e "import('dotenv/config').then(()=>console.log(JSON.stringify({memory_enabled:!!(process.env.PERSONA_TEST_SUPABASE_URL&&process.env.PERSONA_TEST_SUPABASE_ANON_KEY),audit_link:!!(process.env.SUPABASE_AUDIT_URL&&process.env.SUPABASE_AUDIT_ANON_KEY),repo_name:process.env.PERSONA_TEST_REPO_NAME||null})))"
+```
+
+Set `memory_enabled` and `audit_link` from the probe's JSON output. `audit_link`
+additionally requires a resolved `repo_name` (probe value, or git remote — see
+Phase 0c). When both flags are off, the skill runs in "stateless" mode — tests
+complete but nothing is saved or cross-referenced.
 
 ---
 
