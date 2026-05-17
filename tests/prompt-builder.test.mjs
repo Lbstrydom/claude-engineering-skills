@@ -106,6 +106,39 @@ describe('buildAuditPassPrompt — fileListContext', () => {
   });
 });
 
+describe('buildAuditPassPrompt — requirementsRubric', () => {
+  const RUBRIC = '<requirements_rubric>\nVerify the diff violates NONE of these.\n</requirements_rubric>';
+
+  it('appears in msg #1 when present', () => {
+    const { messages } = buildAuditPassPrompt({ ...MINIMAL, requirementsRubric: RUBRIC });
+    assert.equal(messages[0].content.includes(RUBRIC), true);
+  });
+
+  it('omitted when empty string', () => {
+    const { messages } = buildAuditPassPrompt({ ...MINIMAL, requirementsRubric: '' });
+    assert.equal(messages[0].content.includes('requirements_rubric'), false);
+  });
+
+  it('follows fileListContext in msg #1 order', () => {
+    const fileListContext = '## Files\n- a.js';
+    const { messages } = buildAuditPassPrompt({ ...MINIMAL, fileListContext, requirementsRubric: RUBRIC });
+    assert.ok(messages[0].content.indexOf(fileListContext) < messages[0].content.indexOf(RUBRIC));
+  });
+
+  it('counts toward the stable prefix (cacheable, round-invariant)', () => {
+    const withRubric = estimateStablePrefixTokens({ ...MINIMAL, requirementsRubric: RUBRIC });
+    const without = estimateStablePrefixTokens(MINIMAL);
+    assert.ok(withRubric > without, 'rubric enlarges the stable prefix');
+    const r1 = buildAuditPassPrompt({ ...MINIMAL, requirementsRubric: RUBRIC, history: null });
+    const r2 = buildAuditPassPrompt({ ...MINIMAL, requirementsRubric: RUBRIC, history: 'rulings' });
+    assert.equal(r1.messages[0].content, r2.messages[0].content, 'rubric stays byte-stable across rounds');
+  });
+
+  it('throws TypeError on non-string requirementsRubric', () => {
+    assert.throws(() => buildAuditPassPrompt({ ...MINIMAL, requirementsRubric: ['x'] }), TypeError);
+  });
+});
+
 describe('buildAuditPassPrompt — edge cases', () => {
   it('empty code → msg has "## Code\\n" prefix preserved', () => {
     const { messages } = buildAuditPassPrompt({ ...MINIMAL, code: '' });

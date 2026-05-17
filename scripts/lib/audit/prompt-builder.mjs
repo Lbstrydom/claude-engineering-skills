@@ -39,6 +39,9 @@
  * @param {string} opts.brief           - audit brief (output of readProjectContextForPass)
  * @param {string} opts.planSlice       - pass-sliced plan content (output of extractPlanForPass)
  * @param {string} [opts.fileListContext=''] - optional file-list summary block
+ * @param {string} [opts.requirementsRubric=''] - optional requirements-rubric
+ *   block (output of `getRequirementsContext`). Static across rounds —
+ *   lives in the cacheable msg #1. Empty string → no rubric injected.
  * @param {string} opts.code            - code to audit (file content or unit chunk)
  * @param {string} [opts.codeHeader='## Code'] - section header for the code message (per-pass varies, e.g. '## File Signatures')
  * @param {string|null} [opts.history=null]  - R2+ rulings block (null/empty on R1 → no msg #2)
@@ -54,8 +57,8 @@
  *   - `system` is byte-identical across calls with the same `systemRubric`,
  *     regardless of round, unitLabel, history, or code values.
  *   - `messages[0].content` (msg #1) is byte-identical across calls with the
- *     same `{ brief, planSlice, fileListContext }` regardless of round or
- *     unit context.
+ *     same `{ brief, planSlice, fileListContext, requirementsRubric }`
+ *     regardless of round or unit context.
  */
 export function buildAuditPassPrompt(opts) {
   validateOpts(opts);
@@ -64,6 +67,7 @@ export function buildAuditPassPrompt(opts) {
     brief,
     planSlice,
     fileListContext = '',
+    requirementsRubric = '',
     code,
     codeHeader = '## Code',
     history = null,
@@ -81,6 +85,9 @@ export function buildAuditPassPrompt(opts) {
     `## Plan\n${planSlice}`,
   ];
   if (fileListContext) msg1Parts.push(fileListContext);
+  // Requirements rubric — static across rounds, so it stays in the cacheable
+  // msg #1 (self-delimiting `<requirements_rubric>` block, no extra header).
+  if (requirementsRubric) msg1Parts.push(requirementsRubric);
   const msg1 = msg1Parts.join('\n\n');
 
   // msg #2: dynamic — round-specific content. Omitted entirely on R1.
@@ -112,7 +119,7 @@ function validateOpts(opts) {
   // Optional fields that affect prompt shape — validate types when present
   // so a bad caller (e.g. passing an array) doesn't silently produce
   // `[object Array]` substrings in the prompt.
-  for (const k of ['fileListContext', 'codeHeader', 'unitLabel']) {
+  for (const k of ['fileListContext', 'requirementsRubric', 'codeHeader', 'unitLabel']) {
     if (opts[k] !== undefined && typeof opts[k] !== 'string') {
       throw new TypeError(`buildAuditPassPrompt: opts.${k} must be a string when set (got ${typeof opts[k]})`);
     }
@@ -149,9 +156,10 @@ export function estimateTokens(text) {
  * cache-seed eligibility. The stable prefix is what OpenAI prefix-caches;
  * if it's below ~1024 tokens, caching is ineligible and seeding is pointless.
  *
- * Only `systemRubric`, `brief`, `planSlice`, and `fileListContext` affect
- * the stable prefix. `code` is part of msg #3 (dynamic) — pass any string
- * or rely on the empty-string default; this function ignores it.
+ * Only `systemRubric`, `brief`, `planSlice`, `fileListContext`, and
+ * `requirementsRubric` affect the stable prefix. `code` is part of msg #3
+ * (dynamic) — pass any string or rely on the empty-string default; this
+ * function ignores it.
  *
  * @param {object} opts - subset of buildAuditPassPrompt opts (code optional)
  * @returns {number} estimated stable-prefix token count

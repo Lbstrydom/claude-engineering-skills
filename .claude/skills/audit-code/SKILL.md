@@ -110,6 +110,19 @@ node scripts/openai-audit.mjs code <plan-file> \
   2>/tmp/$SID-r2-stderr.log
 ```
 
+### Requirements rubric (automatic)
+
+When `.requirements/ledger.json` exists, every code-audit pass is given a
+`<requirements_rubric>` block — the repo's de-facto invariants (security /
+safety / correctness / behavioural / persistence) the diff must not
+violate. It is assembled by `getRequirementsContext` and injected through
+the shared prompt builder; in-scope active requirements appear in full,
+the rest as an index. No flag needed — ledger absent → audit is
+unaffected. A stale ledger (in-scope files changed since extraction) or
+uncovered target files surface as a `[requirements]` stderr line; if you
+see `[stale]`, run `node scripts/requirements.mjs extract --files <…>`
+then `reconcile` to refresh it. See `docs/plans/requirements-layer.md`.
+
 ### Handle results
 
 If `verdict` is `INCOMPLETE` (passes timed out), offer: re-run with higher

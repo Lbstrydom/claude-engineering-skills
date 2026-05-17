@@ -1,5 +1,50 @@
 # Project Status Log
 
+## 2026-05-17 — Requirements layer — a materialized view of de-facto requirements
+
+Implemented `docs/plans/requirements-layer.md` (Plan-Phase A + B) — a new
+subsystem that extracts the codebase's de-facto invariants
+(security / safety / correctness / behavioural / persistence), reconciles
+them into an ID'd ledger, and surfaces in-scope ones to `/audit-code` as
+an invariant rubric. Plan audited (GPT 2r + Gemini 2r, 21 findings);
+code audited (GPT 4r + Gemini 2r).
+
+### Changes
+- **NEW `scripts/lib/requirements/`** — `schema.mjs` (Zod contracts +
+  shared `RequirementIdSchema`), `extract.mjs` (2×-run LLM extraction +
+  merge, repo-root + symlink egress guards), `gap-challenge.mjs` (advisory
+  gap classifier), `ledger.mjs` (pure `reconcile` + atomic load/write),
+  `context.mjs` (`getRequirementsContext` — the audit rubric), `llm-json.mjs`
+  (shared fenced-JSON parser).
+- **NEW `scripts/requirements.mjs`** — CLI: `extract` / `reconcile` / `index`,
+  repo-scoped `withFileLock`.
+- **MOD `scripts/lib/audit/prompt-builder.mjs`** — `buildAuditPassPrompt`
+  accepts a `requirementsRubric` slot (cacheable msg #1).
+- **MOD `scripts/openai-audit.mjs`** — `runMultiPassCodeAudit` assembles the
+  rubric via `getRequirementsContext` and threads it into every pass;
+  non-blocking (ledger absent → audit unaffected).
+- **MOD `scripts/sync-to-repos.mjs`** — 6 `requirements/` modules +
+  `requirements.mjs` added to `CORE_SCRIPTS`.
+- **NEW** `.requirements/README.md`; `tests/requirements-*.test.mjs`
+  (5 suites, 54 tests) + `tests/prompt-builder.test.mjs` extension.
+
+### Decisions Made
+- `.requirements/` holds only `README.md` at rest — `candidates.json` /
+  `gaps.json` / `ledger.json` are runtime-generated; `overrides.json` is
+  user-curated. Override parse-failure fails **closed** (operator intent is
+  never silently dropped); gap-challenge failure degrades **loudly**.
+- Audit caught + fixed a real symlink-egress hole, a self-introduced
+  advisory-pass-can-crash-`extract` regression, and a silent ledger
+  data-loss path (`coveredFiles` now unions succeeded-batch files only).
+  See `docs/plans/requirements-layer-audit-summary.md`.
+
+### Next Steps
+- Phase 2 (deferred): the requirement↔code/test drift-check, a `/ship`
+  ledger-mutation-proposal flow, an `/audit-plan` consumer, and a
+  precomputed reverse-dependency graph.
+
+---
+
 ## 2026-05-17 — Adaptive context blast-radius — Phase 3: consumer rewiring (series complete)
 
 Phase 3 of `docs/plans/adaptive-context-blast-radius.md` — wires the

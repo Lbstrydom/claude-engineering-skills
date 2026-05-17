@@ -684,6 +684,32 @@ shortcuts during PR review (deeper analysis, higher cost). Neither
 covers the other's domain; together they cover both axes. See
 `docs/completed/brainstorm-quickfix-v1.md` §B for the full spec.
 
+## Requirements Layer — de-facto invariant ledger
+
+Plan: `docs/plans/requirements-layer.md`. A materialized view of the
+codebase's de-facto requirements — the behavioural / safety / security /
+correctness / persistence invariants the code already enforces.
+
+- **`scripts/requirements.mjs`** — CLI: `extract --files <a,b,…> [--runs N]`
+  → `reconcile` → `index`. `extract` runs the LLM extractor 2× and merges;
+  `reconcile` folds candidates + gap assessments + hand-curated
+  `overrides.json` into the ledger; both hold a repo-scoped `withFileLock`.
+- **`scripts/lib/requirements/`** — `schema.mjs` (Zod contracts, shared
+  `RequirementIdSchema`), `extract.mjs`, `gap-challenge.mjs` (advisory),
+  `ledger.mjs` (pure `reconcile`), `context.mjs` (`getRequirementsContext`),
+  `llm-json.mjs`.
+- **`.requirements/`** — holds only `README.md` at rest. `candidates.json`,
+  `gaps.json`, `ledger.json` are runtime-generated and intentionally absent
+  from a fresh checkout; `overrides.json` is user-curated. `ledger.json` is
+  the single persisted artefact — the index is derived in-memory.
+- **`/audit-code` consumption** — when `.requirements/ledger.json` exists,
+  `runMultiPassCodeAudit` injects a `<requirements_rubric>` block (in-scope
+  `active` invariants enforced, the rest indexed) through the shared
+  `buildAuditPassPrompt`. Non-blocking: ledger absent → audit unaffected.
+- **Egress safety** — `extract --files` is user-supplied: every path is
+  repo-root-contained AND symlink-resolved before read; sensitive paths
+  (and sensitive symlink targets) are refused; bodies are secret-redacted.
+
 ## Personal config — keep it out of the public repo
 
 This repo is **public on GitHub**. The committed `.claude/settings.json`

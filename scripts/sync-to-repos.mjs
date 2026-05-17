@@ -128,6 +128,19 @@ const CORE_SCRIPTS = [
   'scripts/lib/audit/finding-verification.mjs',
   // brainstorm /--with-arch context loader — brainstorm-round.mjs depends on it.
   'scripts/lib/brainstorm/arch-context.mjs',
+  // Requirements layer (docs/plans/requirements-layer.md): the de-facto-
+  // requirements ledger + its audit rubric. openai-audit.mjs statically
+  // imports context.mjs → it (and its transitive deps schema.mjs +
+  // ledger.mjs) MUST ship or the consumer audit fails to load. extract.mjs
+  // / gap-challenge.mjs are CLI-only deps of scripts/requirements.mjs but
+  // ship together so `requirements.mjs extract` works in consumer repos.
+  'scripts/lib/requirements/schema.mjs',
+  'scripts/lib/requirements/llm-json.mjs',
+  'scripts/lib/requirements/extract.mjs',
+  'scripts/lib/requirements/gap-challenge.mjs',
+  'scripts/lib/requirements/ledger.mjs',
+  'scripts/lib/requirements/context.mjs',
+  'scripts/requirements.mjs',
 ];
 
 /**

@@ -57,6 +57,7 @@ import { detectRepoStack } from './lib/repo-stack.mjs';
 import { listRepoFiles } from './lib/repo-inventory.mjs';
 import { verifyExistenceFindings } from './lib/audit/finding-verification.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
+import { getRequirementsContext } from './lib/requirements/context.mjs';
 import { ArchIntentPassSchema } from './lib/schemas.mjs';
 import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
@@ -424,9 +425,10 @@ Severity floor: any mechanical violation defaults to MEDIUM unless you can justi
  * @param {boolean} args.isR2Plus         - R2+ flag (controls rulings + roundModifier)
  * @param {string} args.code              - file contents to audit
  * @param {string} [args.fileListContext] - optional file-list summary block
+ * @param {string} [args.requirementsRubric] - optional requirements-rubric block
  * @returns {{ system: string, messages: Array<{role:'user',content:string}> }}
  */
-function buildCachePrompt({ rubric, focusBlock, passName, planContent, ledgerFile, impactSet, isR2Plus, code, codeHeader = '## Code', fileListContext = '', historyBlock = '', unitLabel = '' }) {
+function buildCachePrompt({ rubric, focusBlock, passName, planContent, ledgerFile, impactSet, isR2Plus, code, codeHeader = '## Code', fileListContext = '', requirementsRubric = '', historyBlock = '', unitLabel = '' }) {
   // Combine pre-existing CLI --history block (rare) with R2+ ledger rulings.
   // Both are round-varying; both belong in msg #2 for cache stability.
   const rulings = (isR2Plus && ledgerFile) ? buildRulingsBlock(ledgerFile, passName, impactSet) : null;
@@ -436,6 +438,7 @@ function buildCachePrompt({ rubric, focusBlock, passName, planContent, ledgerFil
     brief: readProjectContextForPass(passName),
     planSlice: extractPlanForPass(planContent, passName),
     fileListContext,
+    requirementsRubric,
     code,
     codeHeader,
     history,
@@ -1662,6 +1665,25 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     process.stderr.write(`  [repo-context] skipped (non-blocking) — ${err.message}\n`);
   }
 
+  // Requirements rubric (Plan-Phase B — requirements-layer): surface the
+  // de-facto-requirements ledger as an audit rubric so a pass can flag a
+  // diff that violates a repo invariant. Static across rounds → lives in
+  // the cacheable msg #1. Non-blocking: ledger absent / unreadable → ''.
+  let requirementsRubric = '';
+  try {
+    const reqTargets = (changedFiles && changedFiles.length) ? changedFiles : found;
+    const rq = getRequirementsContext({ targetPaths: reqTargets, baseDir: process.cwd() });
+    if (rq.block) {
+      requirementsRubric = rq.block;
+      process.stderr.write(`  [requirements] rubric: ${rq.inScopeCount} in-scope / ${rq.indexCount} indexed (~${rq.tokensEst} tok)${rq.stale ? ' [stale]' : ''}${rq.uncoveredTargets.length ? ` [${rq.uncoveredTargets.length} uncovered]` : ''}\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`  [requirements] skipped (non-blocking) — ${err.message}\n`);
+  }
+  // Wrapper: thread the run-static requirements rubric into every pass
+  // prompt without repeating it at each call site.
+  const passPrompt = (opts) => buildCachePrompt({ ...opts, requirementsRubric });
+
   // When --files is specified, scope quality passes to those files + their shared deps
   // This enables delta-only auditing on Round 2+
   const scopedBackend = fileFilter ? backend.filter(f => fileFilter.some(ff => f.includes(ff) || ff.includes(f))) : backend;
@@ -1738,7 +1760,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     const structureFiles = readFilesAsContext(found, { maxPerFile: 2000, maxTotal: 30000 });
     wave1Promises.push(
       safeCallGPT(openai, {
-        ...buildCachePrompt({
+        ...passPrompt({
           rubric: PASS_STRUCTURE_SYSTEM,
           focusBlock,
           passName: 'structure',
@@ -1770,7 +1792,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     const wiringCode = `${readFilesAsContext(wiringFiles, { maxPerFile: 8000, maxTotal: 60000 })}\n\n## Shared Files\n${sharedContext}`;
     wave1Promises.push(
       safeCallGPT(openai, {
-        ...buildCachePrompt({
+        ...passPrompt({
           rubric: PASS_WIRING_SYSTEM,
           focusBlock,
           passName: 'wiring',
@@ -1880,7 +1902,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
           mapReducePasses.push('be-routes');
           process.stderr.write(`  [be-routes] ${effectiveRoutes.length} files — using map-reduce\n`);
           wave2Promises.push(
-            runMapReducePass(openai, effectiveRoutes, 'be-routes', (unit, i, total, unitLabel) => buildCachePrompt({
+            runMapReducePass(openai, effectiveRoutes, 'be-routes', (unit, i, total, unitLabel) => passPrompt({
               rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
               focusBlock,
               passName: 'be-routes',
@@ -1900,7 +1922,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
           const beRoutesCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveRoutes, diffMap, { maxPerFile: 8000, maxTotal: 60000 }) : readFilesAsContext(effectiveRoutes, { maxPerFile: 8000, maxTotal: 60000 })}\n\n## Shared Files\n${sharedContext}`;
           wave2Promises.push(
             safeCallGPT(openai, {
-              ...buildCachePrompt({
+              ...passPrompt({
                 rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
                 focusBlock,
                 passName: 'be-routes',
@@ -1927,7 +1949,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
           mapReducePasses.push('be-services');
           process.stderr.write(`  [be-services] ${effectiveServices.length} files — using map-reduce\n`);
           wave2Promises.push(
-            runMapReducePass(openai, effectiveServices, 'be-services', (unit, i, total, unitLabel) => buildCachePrompt({
+            runMapReducePass(openai, effectiveServices, 'be-services', (unit, i, total, unitLabel) => passPrompt({
               rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
               focusBlock,
               passName: 'be-services',
@@ -1947,7 +1969,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
           const beServicesCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveServices, diffMap, { maxPerFile: 8000, maxTotal: 80000 }) : readFilesAsContext(effectiveServices, { maxPerFile: 8000, maxTotal: 80000 });
           wave2Promises.push(
             safeCallGPT(openai, {
-              ...buildCachePrompt({
+              ...passPrompt({
                 rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
                 focusBlock,
                 passName: 'be-services',
@@ -1974,7 +1996,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         mapReducePasses.push('backend');
         process.stderr.write(`  [backend] ${effectiveBackend.length} files — using map-reduce\n`);
         wave2Promises.push(
-          runMapReducePass(openai, effectiveBackend, 'backend', (unit, i, total, unitLabel) => buildCachePrompt({
+          runMapReducePass(openai, effectiveBackend, 'backend', (unit, i, total, unitLabel) => passPrompt({
             rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
             focusBlock,
             passName: 'backend',
@@ -1994,7 +2016,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         const backendCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveBackend, diffMap, { maxPerFile: 8000, maxTotal: 80000 }) : readFilesAsContext(effectiveBackend, { maxPerFile: 8000, maxTotal: 80000 })}\n\n## Shared Files\n${sharedContext}`;
         wave2Promises.push(
           safeCallGPT(openai, {
-            ...buildCachePrompt({
+            ...passPrompt({
               rubric: isR2Plus ? PASS_BACKEND_RUBRIC : PASS_BACKEND_SYSTEM,
               focusBlock,
               passName: 'backend',
@@ -2024,7 +2046,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       mapReducePasses.push('frontend');
       process.stderr.write(`  [frontend] ${effectiveFrontend.length} files — using map-reduce\n`);
       wave2Promises.push(
-        runMapReducePass(openai, effectiveFrontend, 'frontend', (unit, i, total, unitLabel) => buildCachePrompt({
+        runMapReducePass(openai, effectiveFrontend, 'frontend', (unit, i, total, unitLabel) => passPrompt({
           rubric: isR2Plus ? PASS_FRONTEND_RUBRIC : PASS_FRONTEND_SYSTEM,
           focusBlock,
           passName: 'frontend',
@@ -2044,7 +2066,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       const frontendCode = `${isR2Plus && diffMap ? readFilesAsAnnotatedContext(effectiveFrontend, diffMap, { maxPerFile: 10000, maxTotal: 80000 }) : readFilesAsContext(effectiveFrontend, { maxPerFile: 10000, maxTotal: 80000 })}\n\n## Shared Files\n${sharedContext}`;
       wave2Promises.push(
         safeCallGPT(openai, {
-          ...buildCachePrompt({
+          ...passPrompt({
             rubric: isR2Plus ? PASS_FRONTEND_RUBRIC : PASS_FRONTEND_SYSTEM,
             focusBlock,
             passName: 'frontend',
@@ -2089,7 +2111,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       process.stderr.write(`  [sustainability] ${sustainFiles.length} files — using map-reduce\n`);
       // Fix #3: Pass changedFileSet so unchanged map units skip retries
       const changedFileSet = changedFiles.length > 0 ? new Set(changedFiles.map(normalizePath)) : null;
-      sustainResult = await runMapReducePass(openai, sustainFiles, 'sustainability', (unit, i, total, unitLabel) => buildCachePrompt({
+      sustainResult = await runMapReducePass(openai, sustainFiles, 'sustainability', (unit, i, total, unitLabel) => passPrompt({
         rubric: isR2Plus ? PASS_SUSTAINABILITY_RUBRIC : PASS_SUSTAINABILITY_SYSTEM,
         focusBlock,
         passName: 'sustainability',
@@ -2109,7 +2131,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
 
       const sustainCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(sustainFiles, diffMap, { maxPerFile: 4000, maxTotal: 60000 }) : readFilesAsContext(sustainFiles, { maxPerFile: 4000, maxTotal: 60000 });
       sustainResult = await safeCallGPT(openai, {
-        ...buildCachePrompt({
+        ...passPrompt({
           rubric: isR2Plus ? PASS_SUSTAINABILITY_RUBRIC : PASS_SUSTAINABILITY_SYSTEM,
           focusBlock,
           passName: 'sustainability',
@@ -2149,7 +2171,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     process.stderr.write(`  ${qfFiles.length} files → ${qfLimits.maxTokens} tok / ${(qfLimits.timeoutMs/1000).toFixed(0)}s\n`);
     const qfCode = isR2Plus && diffMap ? readFilesAsAnnotatedContext(qfFiles, diffMap, { maxPerFile: 4000, maxTotal: 60000 }) : readFilesAsContext(qfFiles, { maxPerFile: 4000, maxTotal: 60000 });
     quickfixResult = await safeCallGPT(openai, {
-      ...buildCachePrompt({
+      ...passPrompt({
         rubric: qfRubric,
         focusBlock,
         passName: 'quickfix',
