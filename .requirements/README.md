@@ -5,17 +5,19 @@ A **materialized view** of the codebase's de-facto requirements
 Generated + reconciled by `scripts/requirements.mjs`; do not hand-edit the
 generated files. Plan: [`docs/plans/requirements-layer.md`](../docs/plans/requirements-layer.md).
 
-| File | Origin | Purpose |
-|---|---|---|
-| `candidates.json` | generated (`requirements extract`) | raw 2×-merged extraction output |
-| `gaps.json` | generated (`requirements extract`) | gap-challenge assessments |
-| `ledger.json` | generated (`requirements reconcile`) | the reconciled requirements at every status (`active`, `needs-review`, `inferred-only`, `superseded`) — the single source of truth; the index is derived from it in-memory. Only `active` requirements enter the enforced `/audit-code` rubric |
-| `overrides.json` | **hand-curated** | per-id `accept` / `reject` / edited `assertion` — the human's deltas-only refine surface |
+| File | Origin | Committed? | Purpose |
+|---|---|---|---|
+| `candidates.json` | generated (`requirements extract`) | no — gitignored | raw 2×-merged extraction output; a transient input to `reconcile` |
+| `gaps.json` | generated (`requirements extract`) | no — gitignored | gap-challenge assessments; a transient input to `reconcile` |
+| `ledger.json` | generated (`requirements reconcile`) | **yes** | the reconciled requirements at every status (`active`, `needs-review`, `inferred-only`, `superseded`) — the single source of truth; the index is derived from it in-memory. Only `active` requirements enter the enforced `/audit-code` rubric. **Committed** so the rubric travels with the repo |
+| `overrides.json` | **hand-curated** | **yes** (when present) | per-id `accept` / `reject` / edited `assertion` — the human's deltas-only refine surface |
 
-> The three generated files are **runtime-produced and intentionally absent
-> from a fresh checkout** — they appear on the first `extract` / `reconcile`.
-> A repo with no `ledger.json` is the expected initial state; `/audit-code`
-> simply runs without a requirements rubric until one is generated.
+> `candidates.json` + `gaps.json` are **gitignored extraction intermediates**
+> — regenerable, noisy, absent from a fresh checkout; they exist only between
+> `extract` and `reconcile`. `ledger.json` (and `overrides.json` when present)
+> **are committed** — the ledger is the shared, diffable materialized view.
+> A repo with no `ledger.json` yet simply has `/audit-code` run without a
+> requirements rubric until the first `extract` → `reconcile`.
 
 Workflow:
 

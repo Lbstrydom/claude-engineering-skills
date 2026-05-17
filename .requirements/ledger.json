@@ -1,0 +1,3720 @@
+{
+  "generatedAt": "2026-05-17T20:27:08.594Z",
+  "commitSha": "d6e246fe28e14dbf1cb95d55cb21f07536a1db0d",
+  "extractionSourceSha": "d6e246fe28e14dbf1cb95d55cb21f07536a1db0d",
+  "coveredFiles": [
+    "scripts/lib/audit/finding-verification.mjs",
+    "scripts/lib/audit/prompt-builder.mjs",
+    "scripts/lib/brainstorm/file-lock.mjs",
+    "scripts/lib/file-io.mjs",
+    "scripts/lib/ledger.mjs",
+    "scripts/lib/requirements/context.mjs",
+    "scripts/lib/requirements/extract.mjs",
+    "scripts/lib/requirements/gap-challenge.mjs",
+    "scripts/lib/requirements/ledger.mjs",
+    "scripts/lib/requirements/llm-json.mjs",
+    "scripts/lib/requirements/schema.mjs",
+    "scripts/lib/sensitive-egress-gate.mjs"
+  ],
+  "requirements": [
+    {
+      "id": "REQ-behavioural-0638687e",
+      "assertion": "A matched re-raised finding whose best similarity score exceeds the configured suppression threshold is reopened rather than suppressed when any matched affected file is directly changed.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "suppressReRaises Step 3"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:suppressReRaises"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-0638687e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended reopened-finding invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-0815bda8",
+      "assertion": "A requirement with a `contradictory` or `observed-but-unintended` gap must receive `needs-review` status unless explicitly accepted by override.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "statusFor"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:statusFor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-0815bda8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended review status invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-1a7bc239",
+      "assertion": "A finding is hard-suppressed without similarity scoring when its normalized category plus primary file has been overruled or dismissed at least three times in resolved ledger entries.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "suppressReRaises hard suppress"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:suppressReRaises"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-1a7bc239",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended hard-suppression invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-207a1587",
+      "assertion": "The Round 2 system prompt is always composed from the fixed Round 2 verification modifier, the supplied rulings block, and the supplied pass rubric in that order.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "buildR2SystemPrompt"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:R2_ROUND_MODIFIER",
+          "scripts/lib/ledger.mjs:buildR2SystemPrompt"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-behavioural-207a1587",
+        "gap": "contradictory",
+        "conflictsWith": [
+          "REQ-behavioural-310e33fc"
+        ],
+        "rationale": "It requires a Round 2-specific system prompt while another requirement requires the system prompt to remain byte-stable."
+      }
+    },
+    {
+      "id": "REQ-behavioural-27a17fcf",
+      "assertion": "LLM JSON parsing must prefer the first fenced JSON block found anywhere in the response and otherwise parse the trimmed raw response.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/llm-json.mjs",
+          "anchor": "parseLlmJson"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs",
+        "scripts/lib/requirements/gap-challenge.mjs",
+        "scripts/lib/requirements/llm-json.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/llm-json.mjs:parseLlmJson",
+          "scripts/lib/requirements/extract.mjs:extractOneRun",
+          "scripts/lib/requirements/gap-challenge.mjs:classifyGaps"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-behavioural-27a17fcf",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended JSON parsing behaviour but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-310e33fc",
+      "assertion": "Audit prompt construction must keep the system prompt and first user message byte-stable across rounds by placing round modifiers and prior rulings only in a later dynamic message.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/prompt-builder.mjs",
+          "anchor": "buildAuditPassPrompt"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/prompt-builder.mjs",
+        "scripts/lib/audit/**/*.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/prompt-builder.mjs:buildAuditPassPrompt",
+          "scripts/lib/audit/prompt-builder.mjs:estimateStablePrefixTokens"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-behavioural-310e33fc",
+        "gap": "contradictory",
+        "conflictsWith": [
+          "REQ-behavioural-207a1587",
+          "REQ-behavioural-de6191ea"
+        ],
+        "rationale": "It requires byte-stable system prompts across rounds while the conflicting requirements require Round 2 system prompt mutation."
+      }
+    },
+    {
+      "id": "REQ-behavioural-33e61587",
+      "assertion": "Requirements context must enforce only active requirements that directly govern target files or govern files imported by target files.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "inScopeActive"
+        },
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "direct OR forward-transitive"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs",
+        "scripts/lib/audit/**/*.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs:getRequirementsContext"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-33e61587",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended context scoping invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-4c08004f",
+      "assertion": "Requirements context must include only `active` in-scope requirements in the enforced rubric while listing non-enforced active or known requirements only in the index section.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "inScopeActive and indexLines"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs:getRequirementsContext"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-4c08004f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended enforced-context filtering invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-4fa50243",
+      "assertion": "Rulings blocks must return an empty string for missing or unparsable ledgers, include only entries for the requested pass, group dismissed, severity-adjusted, and fixed-or-verified entries, and cap th",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "buildRulingsBlock"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:buildRulingsBlock"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-behavioural-4fa50243",
+        "gap": "observed-but-unintended",
+        "conflictsWith": [],
+        "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-behavioural-7e8ee53b",
+      "assertion": "Refuted existence claims must have verdictSeverity LOW and countsTowardVerdict false, while confirmed and requires_verification claims must preserve the finding severity and count toward the verdict.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "mk"
+        },
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:mk",
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-7e8ee53b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended verdict adjustment invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-881aab25",
+      "assertion": "Suppression considers session ledger entries only when adjudicationOutcome is dismissed or remediationState is fixed or verified, and considers debt entries only when they are not escalated.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "suppressReRaises source-aware filter"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:suppressReRaises"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-behavioural-881aab25",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended suppression eligibility invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-9861a034",
+      "assertion": "A finding must be hard-suppressed when its normalized category and primary file match at least three resolved ledger entries ruled overrule or dismissed.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "suppressReRaises hard suppress check"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:suppressReRaises"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-9861a034",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended hard-suppression invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-9980acdb",
+      "assertion": "A requirement observed in fewer than two runs must receive `inferred-only` status unless an earlier status rule or accept override applies.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "statusFor"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:statusFor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-9980acdb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended inferred-only status invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-99b31589",
+      "assertion": "Re-raised finding suppression first matches same-pass candidates by overlapping affected file scope, and only falls back to cross-pass candidates when their Jaccard similarity exceeds 0.8.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "suppressReRaises Step 1b"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:suppressReRaises",
+          "scripts/lib/ledger.mjs:jaccardSimilarity"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-99b31589",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended re-raised suppression matching invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-9fd21fb3",
+      "assertion": "A rejected override must remove the matching candidate from the reconciled ledger, while an accepted override must force its status to active.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "override decision handling"
+        },
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "OverrideEntrySchema"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs",
+        ".requirements/overrides.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:reconcile",
+          "scripts/lib/requirements/ledger.mjs:statusFor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-9fd21fb3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended override status behaviour but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-a3bb869a",
+      "assertion": "Verification results are added as sibling verification objects on copied findings, and refuted findings receive verdictSeverity LOW and countsTowardVerdict false while non-refuted findings preserve or",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "mk"
+        },
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:mk",
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-behavioural-a3bb869a",
+        "gap": "observed-but-unintended",
+        "conflictsWith": [],
+        "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-behavioural-de6191ea",
+      "assertion": "Round 2+ system prompts must prepend the fixed R2_ROUND_MODIFIER, include the supplied rulings block, and append the pass rubric under a PASS RUBRIC heading.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "buildR2SystemPrompt"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:R2_ROUND_MODIFIER",
+          "scripts/lib/ledger.mjs:buildR2SystemPrompt"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-behavioural-de6191ea",
+        "gap": "contradictory",
+        "conflictsWith": [
+          "REQ-behavioural-310e33fc"
+        ],
+        "rationale": "It requires Round 2+ system prompt mutation while another requirement requires the system prompt to remain byte-stable."
+      }
+    },
+    {
+      "id": "REQ-behavioural-e3212853",
+      "assertion": "A matched re-raised finding above the suppression threshold must be marked reopened instead of suppressed when any matched affected file is directly present in changedFiles after normalization.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "suppressReRaises reopen check"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:suppressReRaises"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-e3212853",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended reopened-finding invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-e4c3e616",
+      "assertion": "Cross-pass suppression candidates may be considered only when no same-pass scoped candidates exist and only if their Jaccard similarity exceeds 0.8.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "suppressReRaises cross-pass fallback"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:suppressReRaises"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-e4c3e616",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended cross-pass suppression invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-e9b9e905",
+      "assertion": "Existence-claim verification only modifies findings whose category, section, or detail matches one of the configured existence-claim signal regexes.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "EXISTENCE_CLAIM_SIGNAL"
+        },
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "classifyFinding"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:EXISTENCE_CLAIM_SIGNAL",
+          "scripts/lib/audit/finding-verification.mjs:classifyFinding",
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-e9b9e905",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended existence-claim gating invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-eb5cc3f4",
+      "assertion": "Requirements context must report any target path absent from ledger `coveredFiles` as an uncovered target.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "Coverage"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs:getRequirementsContext"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-eb5cc3f4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended uncovered-target reporting invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-ebfb7527",
+      "assertion": "The rulings block includes only ledger entries for the requested pass and truncates the rendered prompt block to approximately 1500 characters with an explicit truncation notice.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "buildRulingsBlock"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:buildRulingsBlock"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-ebfb7527",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended rulings-block filtering invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-014a061e",
+      "assertion": "Cited-entity extraction must select only a token adjacent to a missing-claim phrase in detail or section and must return null when no single such token is found.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "extractCitedEntity"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:CLAIM_BEFORE",
+          "scripts/lib/audit/finding-verification.mjs:CLAIM_AFTER",
+          "scripts/lib/audit/finding-verification.mjs:extractCitedEntity"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-014a061e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended cited-token extraction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-0847f3f1",
+      "assertion": "The impact set consists of normalized changed files plus normalized scanned files whose contents import a changed file via a matching './basename' or './normalizedPath' substring, returned sorted.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "computeImpactSet"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:computeImpactSet"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-0847f3f1",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended impact-set computation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-10e7435e",
+      "assertion": "Audit prompt construction must reject non-string required prompt fields and non-string optional prompt fields that affect prompt shape.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/prompt-builder.mjs",
+          "anchor": "validateOpts"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/prompt-builder.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/prompt-builder.mjs:validateOpts"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-10e7435e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended prompt-field validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-168cda5d",
+      "assertion": "Existence-claim verification treats scoped packages and bare module specifiers without symbol context as external dependencies and always returns requires_verification for them.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "tokenKind"
+        },
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings external dependency claim"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:tokenKind",
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-168cda5d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended external-dependency handling invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-16bede7d",
+      "assertion": "A requirement seen in fewer than two runs must be assigned status `inferred-only` unless an accept override, ambiguity, or review-worthy gap takes precedence.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "statusFor seenInRuns"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs",
+        ".requirements/ledger.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:statusFor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-16bede7d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended inferred-only status invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-1ef0e7cd",
+      "assertion": "Jaccard similarity must tokenize lowercased alphanumeric words, ignore punctuation, return 0 for two empty token sets, and otherwise return intersection size divided by union size.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "jaccardSimilarity"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:jaccardSimilarity"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1ef0e7cd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended Jaccard calculation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-22065e5c",
+      "assertion": "A requirement is in scope for audit context when a target file directly matches its `appliesTo` or provenance file, or when the target imports that governed file through a resolved repo import.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "In-scope direct OR forward-transitive"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs:getRequirementsContext",
+          "scripts/lib/requirements/context.mjs:globMatch"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-22065e5c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended audit-context scoping invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-2cb3a9fe",
+      "assertion": "Finding verification must classify existence claims by testing category, section, and detail against the centralized EXISTENCE_CLAIM_SIGNAL regex list.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "classifyFinding"
+        },
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "EXISTENCE_CLAIM_SIGNAL"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:EXISTENCE_CLAIM_SIGNAL",
+          "scripts/lib/audit/finding-verification.mjs:classifyFinding"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-2cb3a9fe",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended existence-claim classification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-3312abd0",
+      "assertion": "Finding metadata population must extract normalized file references from section text, set _primaryFile to the first extracted file or normalized section prefix, set affectedFiles to all extracted fil",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "populateFindingMetadata"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs",
+        "scripts/lib/language-profiles.mjs",
+        "scripts/lib/findings.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:populateFindingMetadata"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-correctness-3312abd0",
+        "gap": "observed-but-unintended",
+        "conflictsWith": [],
+        "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-38f18287",
+      "assertion": "Impact-set computation must include all normalized changed files and any scanned existing file whose contents import a changed file by './basename' or './normalizedChangedPath', returning the result s",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "computeImpactSet"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:computeImpactSet"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-38f18287",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended impact-set invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-3be71f43",
+      "assertion": "Requirement identifiers must match `REQ-<kind>-<hash8>` where `<kind>` is one of security, safety, correctness, behavioural, or persistence and `<hash8>` is lowercase hex.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "RequirementIdSchema"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/**/*.mjs",
+        ".requirements/*.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/schema.mjs:RequirementIdSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-3be71f43",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended-looking schema invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-4d6f6b65",
+      "assertion": "A `contradictory` gap assessment must name at least one non-self candidate id in `conflictsWith`, otherwise it must be coerced to `none`.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "GapAssessmentSchema refine"
+        },
+        {
+          "file": "scripts/lib/requirements/gap-challenge.mjs",
+          "anchor": "conflictsWith sanitisation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/gap-challenge.mjs",
+        "scripts/lib/requirements/schema.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/schema.mjs:GapAssessmentSchema",
+          "scripts/lib/requirements/gap-challenge.mjs:classifyGaps"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4d6f6b65",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended non-self conflict invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-5ec9f123",
+      "assertion": "Merged candidates must count `seenInRuns` by distinct successful runs and assign high confidence only when seen in every successful run.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "mergeRequirements confidence"
+        },
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "degraded extraction confidence downgrade"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:mergeRequirements",
+          "scripts/lib/requirements/extract.mjs:extractRequirements"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-5ec9f123",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended confidence-counting invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-5f40c9ab",
+      "assertion": "An LLM extraction response without a top-level `requirements` array must be treated as a failed batch rather than as an empty successful result.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "top-level shape guard"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractOneRun"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-5f40c9ab",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended malformed-response handling invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-626b7c40",
+      "assertion": "A contradictory gap verdict with no remaining valid conflicts must be coerced to gap `none`.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/gap-challenge.mjs",
+          "anchor": "contradictory empty coercion"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/gap-challenge.mjs",
+        "scripts/lib/requirements/schema.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/gap-challenge.mjs:classifyGaps",
+          "scripts/lib/requirements/schema.mjs:GapAssessmentSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-626b7c40",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended invalid-contradiction coercion invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-69a52f11",
+      "assertion": "A `contradictory` gap assessment must include at least one valid requirement id in `conflictsWith`.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "GapAssessmentSchema.refine"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/**/*.mjs",
+        ".requirements/gaps.json",
+        ".requirements/ledger.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/schema.mjs:GapAssessmentSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-69a52f11",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Valid contradiction-shape invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-6eebc05f",
+      "assertion": "A missing-file claim may be refuted only when the cited repo-root-relative path exactly exists in repoFiles or an exact relative specifier resolves to a repo file via resolveSpecifier.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings file/module claims"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs",
+        "scripts/lib/module-graph.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings",
+          "scripts/lib/module-graph.mjs:resolveSpecifier"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-6eebc05f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended missing-file refutation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-76f349a6",
+      "assertion": "Finding metadata population extracts affected files from the section text using a fresh file-reference regex per call and normalizes all extracted paths.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "getFileRegex"
+        },
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "populateFindingMetadata"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:getFileRegex",
+          "scripts/lib/ledger.mjs:populateFindingMetadata"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-76f349a6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended metadata extraction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-86969162",
+      "assertion": "Existence-claim verification extracts the cited entity only from tokens adjacent to missing-claim phrases and returns requires_verification when no single cited entity can be unambiguously extracted.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "extractCitedEntity"
+        },
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:CLAIM_BEFORE",
+          "scripts/lib/audit/finding-verification.mjs:CLAIM_AFTER",
+          "scripts/lib/audit/finding-verification.mjs:extractCitedEntity",
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-86969162",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended cited-entity extraction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-9d0be1e6",
+      "assertion": "A repo-root-relative missing-file claim may be confirmed only when the normalized path is absent from repoFiles and inventoryComplete is true.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings inventoryComplete"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-9d0be1e6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended confirmed-absence invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-9d920329",
+      "assertion": "Requirements context must report targets absent from `ledger.coveredFiles` as uncovered and mark the ledger stale when any covered file changed since `extractionSourceSha`.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "Coverage and Freshness"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs:getRequirementsContext",
+          "scripts/lib/requirements/context.mjs:changedSince"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-9d920329",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended uncovered-and-stale reporting invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-a1c37dfa",
+      "assertion": "Override entries must set either `decision` or `assertion`, and note-only override entries are invalid.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "OverrideEntrySchema.refine"
+        }
+      ],
+      "appliesTo": [
+        ".requirements/overrides.json",
+        "scripts/lib/requirements/**/*.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/schema.mjs:OverrideEntrySchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-a1c37dfa",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended override validation rule but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-a61d4079",
+      "assertion": "Extraction must assign requirement ids locally from kind, normalized assertion text, and sorted provenance files rather than accepting ids from the LLM.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "assignId"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs",
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:assignId",
+          "scripts/lib/requirements/extract.mjs:mergeRequirements"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-a61d4079",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended deterministic id-generation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-a764ece4",
+      "assertion": "Override entries must contain either a decision or an assertion edit, and note-only override entries must be schema-invalid.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "OverrideEntrySchema refine"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/schema.mjs",
+        ".requirements/overrides.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/schema.mjs:OverrideEntrySchema",
+          "scripts/lib/requirements/schema.mjs:OverridesSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-a764ece4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended override schema invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-a8781f0f",
+      "assertion": "Batch ledger writes validate every input entry with BatchLedgerEntrySchema and return invalid entries in rejected with a reason instead of silently dropping them.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "upsertEntry"
+        },
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "batchWriteLedger"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs",
+        "scripts/lib/schemas.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:upsertEntry",
+          "scripts/lib/ledger.mjs:batchWriteLedger"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-a8781f0f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended batch-entry validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-ac6b768e",
+      "assertion": "Persisted candidates, gap assessments, and ledger requirements must reject duplicate requirement identifiers within their respective collections.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "uniqueIds refinements"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/schema.mjs",
+        ".requirements/*.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/schema.mjs:CandidatesFileSchema",
+          "scripts/lib/requirements/schema.mjs:GapsFileSchema",
+          "scripts/lib/requirements/schema.mjs:RequirementsLedgerSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-ac6b768e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended duplicate identifier rejection invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-adad7dce",
+      "assertion": "Single-entry ledger writes refuse to write entries that fail LedgerEntrySchema validation and emit a stderr validation message instead of mutating the ledger.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "writeLedgerEntry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:writeLedgerEntry"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-adad7dce",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended single-entry validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-b751155f",
+      "assertion": "Requirement merge clustering must only merge items of the same kind whose normalized assertions have Jaccard similarity of at least 0.6.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "MERGE_THRESHOLD"
+        },
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "mergeRequirements"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:mergeRequirements",
+          "scripts/lib/requirements/extract.mjs:MERGE_THRESHOLD"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-b751155f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended merge-clustering invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-b7b0ad8e",
+      "assertion": "All requirement-id-bearing fields must match the canonical shape `REQ-<security|safety|correctness|behavioural|persistence>-<8 lowercase hex chars>`.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "RequirementIdSchema"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/**/*.mjs",
+        ".requirements/*.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/schema.mjs:RequirementIdSchema",
+          "scripts/lib/requirements/schema.mjs:GapAssessmentSchema",
+          "scripts/lib/requirements/schema.mjs:RequirementsLedgerSchema",
+          "scripts/lib/requirements/schema.mjs:OverridesSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-b7b0ad8e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended canonical id-shape invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-c405ab74",
+      "assertion": "Requirements context must mark the ledger stale when any covered file changed between `extractionSourceSha` and HEAD.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "Freshness"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs:changedSince",
+          "scripts/lib/requirements/context.mjs:getRequirementsContext"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-c405ab74",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended stale-ledger detection invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-c5303755",
+      "assertion": "Gap classification must discard hallucinated conflict ids and self-conflicts, keeping only ids belonging to peer candidates.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/gap-challenge.mjs",
+          "anchor": "conflictsWith filter"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/gap-challenge.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/gap-challenge.mjs:classifyGaps"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-c5303755",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended conflict-id sanitization invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-c7d79515",
+      "assertion": "Bare cited tokens must be treated as symbols only when they are identifier-shaped and the finding context mentions symbol, export, function, class, const, variable, method, interface, or type; otherwi",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "tokenKind"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:tokenKind",
+          "scripts/lib/audit/finding-verification.mjs:SYMBOL_CONTEXT_RE"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-correctness-c7d79515",
+        "gap": "observed-but-unintended",
+        "conflictsWith": [],
+        "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-d152bee6",
+      "assertion": "Repo-root-relative file claims are refuted only by exact membership in the provided repoFiles inventory and are confirmed absent only when inventoryComplete is true.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings repo-root-relative path"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d152bee6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended repo-root claim verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-d4a0578a",
+      "assertion": "Finding metadata population always sets _primaryFile, affectedFiles, _pass, principle, and _hash on the finding before returning it.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "populateFindingMetadata"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:populateFindingMetadata"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d4a0578a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended metadata population invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-e861919f",
+      "assertion": "Audit prompt construction must validate required prompt inputs as strings and reject optional prompt-shaping fields that are not strings or null where allowed.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/prompt-builder.mjs",
+          "anchor": "validateOpts"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/prompt-builder.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/prompt-builder.mjs:validateOpts"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-e861919f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended prompt-input validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-eb7faf9e",
+      "assertion": "Relative file specifiers are refuted only when exact resolveSpecifier resolution against the cited importer and repo inventory resolves to a repo file; otherwise they require verification.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings Relative specifier"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs",
+        "scripts/lib/module-graph.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings",
+          "scripts/lib/module-graph.mjs:resolveSpecifier"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-eb7faf9e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended relative-specifier verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-f0e614a8",
+      "assertion": "Topic IDs must be deterministic 12-character lowercase SHA-256 hex prefixes derived from normalized file, normalized principle prefix, normalized category with bracket tags removed, pass name, and the",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "generateTopicId"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs",
+        "scripts/lib/findings.mjs",
+        "scripts/lib/file-io.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:generateTopicId"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-correctness-f0e614a8",
+        "gap": "observed-but-unintended",
+        "conflictsWith": [],
+        "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-correctness-fb29e05a",
+      "assertion": "If fewer extraction runs succeed than were requested, any candidate confidence of high must be demoted to medium.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "degraded extraction confidence demotion"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractRequirements"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-fb29e05a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended confidence-demotion invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-02ffaec7",
+      "assertion": "Batch upserts of an existing topicId must preserve the existing adjudicationOutcome, remediationState, ruling, rulingRationale, and firstSeenRound while updating latest finding detail, severity, lates",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "upsertEntry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:upsertEntry"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-persistence-02ffaec7",
+        "gap": "observed-but-unintended",
+        "conflictsWith": [],
+        "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-persistence-07f992ed",
+      "assertion": "Topic IDs are generated as 12-character SHA-256 hex prefixes from normalized primary file, normalized principle prefix, normalized category with bracket tags removed, pass name, and semantic content h",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "generateTopicId"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs",
+        "scripts/lib/**/*.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:generateTopicId"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-persistence-07f992ed",
+        "gap": "observed-but-unintended",
+        "conflictsWith": [],
+        "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-persistence-080402f8",
+      "assertion": "Single-entry ledger writes upsert by topicId rather than appending duplicate topicId entries.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "writeLedgerEntry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:writeLedgerEntry"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-080402f8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended topicId upsert invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-11353870",
+      "assertion": "Reconciliation must retain prior requirements whose provenance files are outside the new `coveredFiles` scope unchanged.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "retained outside scope"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:reconcile"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-11353870",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended reconciliation retention invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-115d4207",
+      "assertion": "The reconciled ledger's `coveredFiles` must be the sorted union of prior covered files and the current extraction's covered files.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "coveredFiles union"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs",
+        ".requirements/ledger.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:reconcile"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-115d4207",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended coveredFiles union invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-15121828",
+      "assertion": "Session ledger meta updates acquire a proper-lockfile lock, merge new meta fields into the existing meta object, and write atomically before releasing the lock.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "mergeMetaLocked"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:mergeMetaLocked",
+          "scripts/lib/ledger.mjs:batchWriteLedger"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-15121828",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended locked meta-update invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-1c9bc191",
+      "assertion": "Candidate IDs must be content-seeded from kind, normalized assertion text, and sorted provenance files rather than from LLM output or list position.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "assignId"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs",
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:assignId",
+          "scripts/lib/requirements/extract.mjs:mergeRequirements"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-1c9bc191",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended content-seeded candidate-id invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-35f58f95",
+      "assertion": "When batch-updating an existing topicId, the ledger preserves existing adjudicationOutcome, remediationState, ruling, and rulingRationale while refreshing latest finding fields and lastSeenRound.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "upsertEntry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:upsertEntry"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-35f58f95",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended adjudication-field preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-43456336",
+      "assertion": "Writing the requirements ledger must validate it against `RequirementsLedgerSchema` before performing an atomic write.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "writeLedger"
+        },
+        {
+          "file": "scripts/lib/file-io.mjs",
+          "anchor": "atomicWriteFileSync"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs",
+        "scripts/lib/file-io.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:writeLedger",
+          "scripts/lib/file-io.mjs:atomicWriteFileSync"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-43456336",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended pre-write ledger validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-5a9f2781",
+      "assertion": "Reconciliation must retain prior requirements outside the newly covered file scope unchanged and replace only requirements whose provenance file is in `coveredFiles`.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "reconcile scoped partial merge"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:reconcile"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-5a9f2781",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended scoped reconciliation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-6623d196",
+      "assertion": "A file may be reported in extraction `coveredFiles` only if at least one LLM batch containing that file succeeded.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractOneRun covered"
+        },
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "coveredFiles union"
+        },
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractOneRun covered set"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs",
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractOneRun",
+          "scripts/lib/requirements/extract.mjs:extractRequirements"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-persistence-6623d196",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended coveredFiles persistence invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-7c7ec522",
+      "assertion": "Candidates, gap assessments, and ledger requirements must reject duplicate requirement ids within the same persisted collection.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "uniqueIds refinements"
+        }
+      ],
+      "appliesTo": [
+        ".requirements/*.json",
+        "scripts/lib/requirements/**/*.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/schema.mjs:CandidatesFileSchema",
+          "scripts/lib/requirements/schema.mjs:GapsFileSchema",
+          "scripts/lib/requirements/schema.mjs:RequirementsLedgerSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-7c7ec522",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended duplicate-rejection invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-8f26669f",
+      "assertion": "Reconciliation must merge `seenInRuns` and `confidence` using high-water marks rather than allowing a fresh extraction to lower prior evidence strength.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "High-water-mark merge"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:reconcile",
+          "scripts/lib/requirements/ledger.mjs:CONFIDENCE_RANK"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-8f26669f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended high-water evidence invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-9381b46a",
+      "assertion": "Single-entry ledger writes must upsert by topicId so that an existing entry with the same topicId is replaced rather than duplicated.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "writeLedgerEntry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:writeLedgerEntry"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-9381b46a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended topicId replacement invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-af19c4fa",
+      "assertion": "Reconciliation must preserve a prior requirement's frozen id when a new candidate matches by exact id, identity alias, or unambiguous mutual-best rewording.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "Match each candidate"
+        },
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "unambiguous 1:1 reword aliasing"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs",
+        ".requirements/ledger.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:reconcile"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-af19c4fa",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended frozen-id preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-d347f5bc",
+      "assertion": "When targetMetaPath and meta are provided, meta updates must acquire a proper-lockfile lock, merge new meta fields into the existing meta object, preserve the existing entries array, and write atomica",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "mergeMetaLocked"
+        },
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "batchWriteLedger"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:mergeMetaLocked",
+          "scripts/lib/ledger.mjs:batchWriteLedger"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-d347f5bc",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended locked meta merge invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-d8f9613d",
+      "assertion": "Atomic writes must write to a same-directory temporary file and then rename it into place, deleting the temporary file on write or rename failure when possible.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/file-io.mjs",
+          "anchor": "atomicWriteFileSync"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/file-io.mjs",
+        "scripts/lib/**/*.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/file-io.mjs:atomicWriteFileSync"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-persistence-d8f9613d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended atomic-write invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-dfa4776c",
+      "assertion": "Ledger writes must schema-validate the full ledger before atomically writing `.requirements/ledger.json`.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "writeLedger"
+        },
+        {
+          "file": "scripts/lib/file-io.mjs",
+          "anchor": "atomicWriteFileSync"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs",
+        "scripts/lib/file-io.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:writeLedger",
+          "scripts/lib/file-io.mjs:atomicWriteFileSync"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-dfa4776c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended schema-before-write invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-f2245f56",
+      "assertion": "Reconciliation must preserve a prior requirement's frozen id for exact matches, alias matches, and unambiguous mutual-best same-kind reword matches.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "reconcile identity matching"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:reconcile"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-f2245f56",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended id preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-faced6f4",
+      "assertion": "Reconciliation must merge `seenInRuns` and `confidence` using high-water marks when a candidate matches a prior requirement.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "High-water-mark merge"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs",
+        ".requirements/ledger.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:reconcile"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-faced6f4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended high-water merge invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-01bc2ea3",
+      "assertion": "Malformed individual LLM extraction items must be dropped with a warning instead of poisoning the entire extraction batch.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "RawExtractionItemSchema.safeParse loop"
+        },
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "RawExtractionItemSchema"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs",
+        "scripts/lib/requirements/schema.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractOneRun",
+          "scripts/lib/requirements/schema.mjs:RawExtractionItemSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-01bc2ea3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended malformed-item isolation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-065953bd",
+      "assertion": "Single-entry ledger writes must validate the entry with LedgerEntrySchema before mutating disk and must refuse to write invalid entries.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "writeLedgerEntry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs",
+        "scripts/lib/schemas.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:writeLedgerEntry"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-065953bd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended pre-mutation validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-20a957d4",
+      "assertion": "A relative file specifier that cannot be resolved exactly to a repo file must yield requires_verification rather than confirmed absence.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings relative specifier"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs",
+        "scripts/lib/module-graph.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-20a957d4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended unresolved-relative-specifier invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-3c5a0fde",
+      "assertion": "Verification must not mutate the original finding fields and must attach verification data as a sibling verification object only for findings classified as existence claims.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings"
+        },
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "mk"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings",
+          "scripts/lib/audit/finding-verification.mjs:mk"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-3c5a0fde",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended non-mutating verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-562164e7",
+      "assertion": "If inventoryComplete is false, absence of a cited repo-root-relative file from repoFiles must yield requires_verification rather than confirmed.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings inventoryComplete"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-562164e7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended incomplete-inventory safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-582db962",
+      "assertion": "Loading the requirements ledger must never throw and must return an empty ledger when the persisted file is absent, unreadable, invalid JSON, or schema-invalid.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "loadLedger"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:loadLedger"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-582db962",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended ledger-load fallback invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-5a11baa5",
+      "assertion": "Single-entry ledger writes back up an existing malformed or unparsable ledger to a .bak file before starting from a fresh ledger shape.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "writeLedgerEntry"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:writeLedgerEntry"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-5a11baa5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended malformed-ledger backup invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-5aeafdc3",
+      "assertion": "Batch ledger writes perform exactly one atomic write of the merged ledger after all valid entries have been upserted and after asserting every stored entry has a topicId.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "batchWriteLedger"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:batchWriteLedger"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-5aeafdc3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended single atomic batch-write invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-5fdd7c5c",
+      "assertion": "Gap classification failures, malformed top-level responses, or non-successful LLM calls must degrade loudly to all-`none` assessments rather than throwing.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/gap-challenge.mjs",
+          "anchor": "benign fallback"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/gap-challenge.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/gap-challenge.mjs:classifyGaps"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-5fdd7c5c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended loud degradation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-6e1dc8ea",
+      "assertion": "Extraction must fail outright when all batches in a run fail or when all requested runs fail, rather than producing an empty successful candidate set.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractOneRun all batches failed"
+        },
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractRequirements all runs failed"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractOneRun",
+          "scripts/lib/requirements/extract.mjs:extractRequirements"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-6e1dc8ea",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended all-failed extraction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-7bda16b5",
+      "assertion": "Stale lock recovery must only force-release an owned lock when its mtime is older than the stale threshold and its owning PID is dead, or a corrupted lock when it is older than the stale threshold.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "anchor": "stale detection in withFileLock"
+        },
+        {
+          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "anchor": "forceRelease"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/file-lock.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/file-lock.mjs:withFileLock",
+          "scripts/lib/brainstorm/file-lock.mjs:forceRelease"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-7bda16b5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended stale-lock recovery invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-843d772a",
+      "assertion": "Extraction must fail fast when any single input file exceeds the configured extraction token budget instead of attempting to batch it.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "overBudget check"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:CHUNK_TOKEN_BUDGET",
+          "scripts/lib/requirements/extract.mjs:extractRequirements"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-843d772a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended token-budget fail-fast invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-8abce6cb",
+      "assertion": "File locks must be acquired by an atomic exclusive create containing pid, token, and acquisition timestamp in a single write operation.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "anchor": "tryAcquireLock"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/file-lock.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/file-lock.mjs:tryAcquireLock",
+          "scripts/lib/brainstorm/file-lock.mjs:withFileLock"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-8abce6cb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended atomic lock acquisition invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-93e2cfbd",
+      "assertion": "Batch ledger reads must treat ENOENT as an empty version-1 ledger but must throw on unreadable, invalid JSON, or structurally corrupt ledgers lacking an entries array.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "readLedgerJson"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:readLedgerJson"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-93e2cfbd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended batch ledger read invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-95597025",
+      "assertion": "Raw LLM extraction items must be validated individually at the extraction boundary so malformed items are dropped without aborting an otherwise valid batch.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractOneRun per-item validation"
+        },
+        {
+          "file": "scripts/lib/requirements/schema.mjs",
+          "anchor": "RawExtractionItemSchema"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs",
+        "scripts/lib/requirements/schema.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractOneRun",
+          "scripts/lib/requirements/schema.mjs:RawExtractionItemSchema"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-95597025",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended boundary-validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-96a01c7f",
+      "assertion": "Ledger file writes performed by writeLedgerEntry and batchWriteLedger must use atomicWriteFileSync rather than direct fs.writeFileSync writes.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "writeLedgerEntry"
+        },
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "batchWriteLedger"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:writeLedgerEntry",
+          "scripts/lib/ledger.mjs:batchWriteLedger",
+          "scripts/lib/ledger.mjs:mergeMetaLocked"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-96a01c7f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended atomic-write usage invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-9b38c1dd",
+      "assertion": "Batch ledger writes treat only ENOENT as a new empty ledger and throw on malformed JSON, permission errors, or ledgers missing an entries array.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "readLedgerJson"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:readLedgerJson",
+          "scripts/lib/ledger.mjs:batchWriteLedger"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-9b38c1dd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended batch-read failure invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-a883915d",
+      "assertion": "Batch ledger writes must fail before writing if any resulting ledger entry lacks a topicId.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "batchWriteLedger"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:batchWriteLedger"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-a883915d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended topicId assertion invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-a9dc1f0a",
+      "assertion": "File-reference regexes used during finding metadata population must be freshly constructed per call to avoid shared global RegExp lastIndex state.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/ledger.mjs",
+          "anchor": "getFileRegex"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/ledger.mjs",
+        "scripts/lib/language-profiles.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/ledger.mjs:getFileRegex",
+          "scripts/lib/ledger.mjs:populateFindingMetadata"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-a9dc1f0a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended fresh-regex invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-b915bbd6",
+      "assertion": "An extraction run must fail outright when every batch in that run fails, but must preserve items from successful batches when only some batches fail.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractOneRun batch failure handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractOneRun"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-b915bbd6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended partial-failure handling invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-bc19509b",
+      "assertion": "Gap classification must return exactly one schema-valid assessment per candidate, defaulting missing or failed assessments to gap `none`.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/gap-challenge.mjs",
+          "anchor": "classifyGaps return mapping"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/gap-challenge.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/gap-challenge.mjs:classifyGaps"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-bc19509b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended gap-assessment fallback invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-bf1fd735",
+      "assertion": "A requirement with a contradictory or observed-but-unintended gap must be assigned status `needs-review` unless an accept override applies.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/ledger.mjs",
+          "anchor": "statusFor gap handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/ledger.mjs",
+        ".requirements/ledger.json"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/ledger.mjs:statusFor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-bf1fd735",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended review-status precedence invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-ca1e0c13",
+      "assertion": "Gap challenge must return exactly one schema-valid assessment per candidate and degrade to `gap:\"none\"` for every candidate on LLM failure, malformed top-level response, or missing individual assessme",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/gap-challenge.mjs",
+          "anchor": "classifyGaps benign fallback"
+        },
+        {
+          "file": "scripts/lib/requirements/gap-challenge.mjs",
+          "anchor": "return candidates.map"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/gap-challenge.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/gap-challenge.mjs:classifyGaps"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-ca1e0c13",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended gap-challenge fallback invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-cea053c9",
+      "assertion": "Existence-claim verification never confirms or refutes symbol or export claims and always marks them requires_verification while preserving the original severity.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings Symbol claims"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings",
+          "scripts/lib/audit/finding-verification.mjs:mk"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-cea053c9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended symbol-claim safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-d9053cf6",
+      "assertion": "File locks must be acquired with exclusive create semantics and released only when the on-disk token still matches the token acquired by the current process.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "anchor": "tryAcquireLock"
+        },
+        {
+          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "anchor": "safeRelease"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/file-lock.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/file-lock.mjs:tryAcquireLock",
+          "scripts/lib/brainstorm/file-lock.mjs:safeRelease",
+          "scripts/lib/brainstorm/file-lock.mjs:withFileLock"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-d9053cf6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended lock acquire-release invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-ee64dc2a",
+      "assertion": "File lock release must unlink the lock file only when the on-disk token still matches the token acquired by the releasing process.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "anchor": "safeRelease"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/file-lock.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/file-lock.mjs:safeRelease",
+          "scripts/lib/brainstorm/file-lock.mjs:withFileLock"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-ee64dc2a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended token-checked lock release invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-f39699b0",
+      "assertion": "Stale lock recovery must force-release at most once and only for locks older than the stale threshold whose owner PID is dead or whose contents remain corrupted after re-inspection.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "anchor": "withFileLock stale detection"
+        },
+        {
+          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "anchor": "forceRelease"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/file-lock.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/file-lock.mjs:withFileLock",
+          "scripts/lib/brainstorm/file-lock.mjs:forceRelease"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-f39699b0",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended stale-lock force-release invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-f901aa95",
+      "assertion": "When the requirements context exceeds the token budget, it must preserve the in-scope invariant section before summarising or truncating the remaining index.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "Assemble, respecting the budget"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs:getRequirementsContext"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-f901aa95",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended token-budget preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-1f6a91e0",
+      "assertion": "Existence-claim verification returns requires_verification for sensitive paths before any existence resolution so the verifier does not confirm secret file presence or absence.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings Sensitive-path check BEFORE anything else"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs",
+        "scripts/lib/quickfix-patterns.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings",
+          "scripts/lib/quickfix-patterns.mjs:isSensitivePath"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-1f6a91e0",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended sensitive-path non-disclosure invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-5c746aa9",
+      "assertion": "External dependency claims, symbol/export claims, sensitive-path claims, and absolute-path claims must always receive requires_verification rather than refuted or confirmed.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs",
+        "scripts/lib/quickfix-patterns.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings",
+          "scripts/lib/quickfix-patterns.mjs:isSensitivePath"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-5c746aa9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended conservative verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-b0b533cc",
+      "assertion": "Extraction must redact secret-shaped content from every file body before including it in an LLM request.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "redactSecrets(fs.readFileSync(...))"
+        },
+        {
+          "file": "scripts/lib/sensitive-egress-gate.mjs",
+          "anchor": "redactSecrets"
+        },
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractRequirements redactSecrets"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs",
+        "scripts/lib/sensitive-egress-gate.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractRequirements",
+          "scripts/lib/sensitive-egress-gate.mjs:redactSecrets"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-security-b0b533cc",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended secret-redaction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-b6cfe447",
+      "assertion": "Extraction must reject both lexically sensitive paths and symlink targets that resolve to sensitive paths before sending content to the LLM.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "Sensitive-egress guard"
+        },
+        {
+          "file": "scripts/lib/sensitive-egress-gate.mjs",
+          "anchor": "DEFAULT_PATH_DENYLIST"
+        },
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractRequirements sensitive path checks"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs",
+        "scripts/lib/sensitive-egress-gate.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractRequirements",
+          "scripts/lib/sensitive-egress-gate.mjs:isPathSensitive"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-security-b6cfe447",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended sensitive-path and symlink-safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-d55680e9",
+      "assertion": "Extraction must reject any requested file path that escapes the repo root before reading or sending file content.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractRequirements repo-root containment"
+        },
+        {
+          "file": "scripts/lib/requirements/extract.mjs",
+          "anchor": "extractRequirements sensitive-egress guard"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/extract.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/extract.mjs:extractRequirements"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-security-d55680e9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended repo-root path-safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-e5c9dd5e",
+      "assertion": "File existence verification must use the supplied repoFiles inventory as the sole source of truth and must not fall back to filesystem existence checks.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings repoFiles"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-e5c9dd5e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended inventory-only verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-faab5ce8",
+      "assertion": "Existence-claim verification returns requires_verification for absolute or drive-letter paths because they are outside the repo-relative inventory.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/audit/finding-verification.mjs",
+          "anchor": "verifyExistenceFindings Windows-absolute / drive-letter"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/audit/finding-verification.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/audit/finding-verification.mjs:verifyExistenceFindings"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-faab5ce8",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "Intended absolute-path safety invariant but no linked test is present."
+      }
+    }
+  ],
+  "identityAliases": {}
+}

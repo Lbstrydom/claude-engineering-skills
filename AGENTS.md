@@ -698,10 +698,11 @@ correctness / persistence invariants the code already enforces.
   `RequirementIdSchema`), `extract.mjs`, `gap-challenge.mjs` (advisory),
   `ledger.mjs` (pure `reconcile`), `context.mjs` (`getRequirementsContext`),
   `llm-json.mjs`.
-- **`.requirements/`** — holds only `README.md` at rest. `candidates.json`,
-  `gaps.json`, `ledger.json` are runtime-generated and intentionally absent
-  from a fresh checkout; `overrides.json` is user-curated. `ledger.json` is
-  the single persisted artefact — the index is derived in-memory.
+- **`.requirements/`** — `README.md` + the **committed** `ledger.json` (the
+  shared, diffable rubric) are tracked; `candidates.json` / `gaps.json` are
+  gitignored extraction intermediates; `overrides.json` is user-curated
+  (committed when present). `ledger.json` is the single persisted artefact —
+  the index is derived in-memory.
 - **`/audit-code` consumption** — when `.requirements/ledger.json` exists,
   `runMultiPassCodeAudit` injects a `<requirements_rubric>` block (in-scope
   `active` invariants enforced, the rest indexed) through the shared
