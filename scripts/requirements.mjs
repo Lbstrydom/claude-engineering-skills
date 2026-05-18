@@ -22,6 +22,7 @@ import { withFileLock } from './lib/brainstorm/file-lock.mjs';
 import { extractRequirements } from './lib/requirements/extract.mjs';
 import { classifyGaps } from './lib/requirements/gap-challenge.mjs';
 import { loadLedger, writeLedger, reconcile, deriveIndex } from './lib/requirements/ledger.mjs';
+import { renderRequirementsMap } from './lib/requirements/render.mjs';
 import { CandidatesFileSchema, GapsFileSchema, OverridesSchema } from './lib/requirements/schema.mjs';
 
 const REQ_DIR = '.requirements';
@@ -31,11 +32,12 @@ const GAPS = `${REQ_DIR}/gaps.json`;
 const OVERRIDES = `${REQ_DIR}/overrides.json`;
 const LOCK = `${REQ_DIR}/.lock`;
 
-const HELP = `requirements — extract / reconcile / index the de-facto requirements ledger
+const HELP = `requirements — extract / reconcile / index / render the de-facto requirements ledger
 
   node scripts/requirements.mjs extract --files <a,b,...> [--runs 2]
   node scripts/requirements.mjs reconcile
   node scripts/requirements.mjs index [--json]
+  node scripts/requirements.mjs render [--out docs/requirements-map.md]
 `;
 
 function gitSha() {
@@ -162,6 +164,19 @@ function cmdIndex(argv, baseDir) {
   }
 }
 
+/** Render the ledger as a human-readable map (Mermaid pie + grouped tables). */
+function cmdRender(argv, baseDir) {
+  const ledger = loadLedger({ baseDir });
+  const repoName = path.basename(path.resolve(baseDir));
+  const md = renderRequirementsMap(ledger, { repoName });
+  const outRel = flag(argv, '--out') || 'docs/requirements-map.md';
+  const outAbs = path.join(baseDir, outRel);
+  fs.mkdirSync(path.dirname(outAbs), { recursive: true });
+  atomicWriteFileSync(outAbs, md.endsWith('\n') ? md : md + '\n');
+  process.stderr.write(`  [requirements] render: ${ledger.requirements.length} requirement(s) → ${outRel}\n`);
+  process.stdout.write(`requirements map → ${outRel}\n`);
+}
+
 async function main() {
   const argv = process.argv.slice(2);
   const mode = argv[0];
@@ -175,6 +190,7 @@ async function main() {
   if (mode === 'extract') return cmdExtract(argv.slice(1), baseDir);
   if (mode === 'reconcile') return cmdReconcile(argv.slice(1), baseDir);
   if (mode === 'index') return cmdIndex(argv.slice(1), baseDir);
+  if (mode === 'render') return cmdRender(argv.slice(1), baseDir);
   process.stderr.write(`Error: unknown command '${mode}'\n\n${HELP}`);
   process.exit(1);
 }

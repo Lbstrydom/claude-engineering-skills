@@ -40,6 +40,7 @@ Three-model audit loop (Claude plans/codes, GPT-5.4 audits, Gemini 3.1 Pro revie
 | `node scripts/requirements.mjs extract --files <a,b,…> [--runs N]` | Extract de-facto requirements from the given files (LLM ×N, merged) → `.requirements/candidates.json` + `gaps.json` |
 | `node scripts/requirements.mjs reconcile` | Fold candidates + gap assessments + hand-curated `.requirements/overrides.json` into `.requirements/ledger.json` |
 | `node scripts/requirements.mjs index` | Print the active requirements index |
+| `node scripts/requirements.mjs render` | Render the ledger as a human-readable map → `docs/requirements-map.md` (Mermaid pie + grouped tables) |
 
 Once `.requirements/ledger.json` exists, `/audit-code` automatically injects in-scope invariants as a rubric. See [`.requirements/README.md`](.requirements/README.md).
 

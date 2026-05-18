@@ -140,6 +140,7 @@ const CORE_SCRIPTS = [
   'scripts/lib/requirements/gap-challenge.mjs',
   'scripts/lib/requirements/ledger.mjs',
   'scripts/lib/requirements/context.mjs',
+  'scripts/lib/requirements/render.mjs',
   'scripts/requirements.mjs',
 ];
 
