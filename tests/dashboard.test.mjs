@@ -14,7 +14,7 @@ import http from 'node:http';
 
 import { renderDocument, escapeHtml, jsonScriptSafe, __test__ as renderTest } from '../scripts/lib/dashboard/render.mjs';
 import { validateDashboardData } from '../scripts/lib/dashboard/schema.mjs';
-import { discoverPlans } from '../scripts/lib/dashboard/collect-reference.mjs';
+import { discoverPlans, collectArchitecture } from '../scripts/lib/dashboard/collect-reference.mjs';
 import { __test__ as telemetryTest } from '../scripts/lib/dashboard/collect-telemetry.mjs';
 import { serve } from '../scripts/lib/dashboard/serve.mjs';
 import { parseArgs } from '../scripts/build-dashboard.mjs';
@@ -214,6 +214,35 @@ test('sectionAuditRuns keeps local fallback data visible on a cloud error', () =
   const html = renderDocument(data, 'telemetry', ASSETS);
   assert.ok(html.includes('warn-panel'), 'cloud error shown as a warning');
   assert.ok(html.includes('local-only'), 'local fallback data still rendered, not discarded');
+});
+
+// ── Architecture map ────────────────────────────────────────────────────
+
+test('collectArchitecture parses every domain in the ## Contents block', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-arch-'));
+  fs.mkdirSync(path.join(root, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'docs/architecture-map.md'), [
+    '# Architecture Map', '',
+    '## Contents',
+    '- [alpha](#alpha) — 12 symbols',
+    '- [beta](#beta) — 7 symbols',
+    '- [gamma](#gamma) — 30 symbols',
+    '', '---', '',
+    '## alpha', '', '> The alpha domain does alpha things.', '',
+    '## beta', '', '> The beta domain does beta things.', '',
+    '## gamma', '', '> The gamma domain does gamma things.', '',
+  ].join('\n'));
+  const res = collectArchitecture(root);
+  assert.equal(res.status.status, 'ok');
+  assert.deepEqual(res.domains.map((d) => d.name), ['alpha', 'beta', 'gamma'],
+    'all three domains parsed — not just the first');
+  assert.equal(res.domains[0].symbolCount, 12);
+  assert.match(res.domains[2].summary, /gamma domain/);
+});
+
+test('collectArchitecture: absent map → missing-optional (never invalid)', () => {
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-arch-empty-'));
+  assert.equal(collectArchitecture(empty).status.status, 'missing-optional');
 });
 
 // ── Requirements collection + redaction ─────────────────────────────────

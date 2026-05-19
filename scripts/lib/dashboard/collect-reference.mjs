@@ -100,7 +100,7 @@ export function discoverPlans(root = process.cwd()) {
  * @param {string} root
  * @returns {{domains: object[], mapPath: string|null, status: object}}
  */
-function collectArchitecture(root) {
+export function collectArchitecture(root) {
   const rel = 'docs/architecture-map.md';
   const file = path.join(root, rel);
   let raw;
@@ -114,7 +114,11 @@ function collectArchitecture(root) {
     return { domains: [], mapPath: rel, status: { status: 'unexpected-error', detail: `${rel} unreadable: ${err.message}` } };
   }
   try {
-    const contents = raw.match(/^## Contents\n([\s\S]*?)(?:\n## |\n---|\n*$)/m);
+    // The Contents block runs from the `## Contents` heading to the next
+    // `## ` heading, a `---` rule, or end-of-string. NO `/m` flag — under
+    // `/m` the `$` alternative matches every line-end and the non-greedy
+    // capture would stop after the first list line (only 1 domain).
+    const contents = raw.match(/\n## Contents\n([\s\S]*?)(?:\n## |\n---|$)/);
     if (!contents) {
       return { domains: [], mapPath: rel, status: { status: 'missing-optional', detail: 'no ## Contents block — see the raw map' } };
     }
