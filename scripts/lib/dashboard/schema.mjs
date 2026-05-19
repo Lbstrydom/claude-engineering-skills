@@ -94,6 +94,9 @@ export const ReferenceDataSchema = z.object({
   }),
   architecture: z.object({
     domains: z.array(DomainSchema),
+    // domain → allowed-dependency domains (from .audit-loop/domain-map.json),
+    // used to lay the architecture tab out in dependency layers.
+    deps: z.record(z.string(), z.array(z.string())),
     mapPath: z.string().nullable(),
   }),
   flows: FlowManifestSchema.nullable(),

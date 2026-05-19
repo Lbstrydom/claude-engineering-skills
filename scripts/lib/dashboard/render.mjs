@@ -138,19 +138,77 @@ function sectionFlows(data) {
     <h3>Transitions</h3>${edges}`;
 }
 
+const ARCH_TIER_LABELS = ['foundation', 'core', 'top-level'];
+
+/**
+ * Classify each domain into one of three dependency tiers. A coarse 3-way
+ * bucket rather than a strict topological sort — `allowedDeps` is NOT a DAG
+ * (e.g. findings ↔ shared-lib), so depth-based layering degenerates.
+ *   0 foundation — depends on no other domain
+ *   1 core       — has deps, AND is itself depended upon by others
+ *   2 top-level  — has deps, and nothing depends on it (a consumer)
+ * @returns {Map<string, number>}
+ */
+function archTiers(domains, deps) {
+  const names = new Set(domains.map((d) => d.name));
+  const ownDeps = (n) => (deps[n] || []).filter((d) => names.has(d) && d !== n);
+  const dependedUpon = new Set();
+  for (const [from, list] of Object.entries(deps)) {
+    if (!names.has(from)) continue;
+    for (const to of list || []) {
+      if (names.has(to) && to !== from) dependedUpon.add(to);
+    }
+  }
+  const tier = new Map();
+  for (const d of domains) {
+    if (ownDeps(d.name).length === 0) tier.set(d.name, 0);
+    else if (dependedUpon.has(d.name)) tier.set(d.name, 1);
+    else tier.set(d.name, 2);
+  }
+  return tier;
+}
+
 function sectionArchitecture(data) {
   const src = data.sources.architecture || { status: 'ok', detail: '' };
   if (NON_OK.has(src.status)) return warningPanel('architecture', src);
-  if (!data.architecture.domains.length) {
+  const { domains, deps = {}, mapPath } = data.architecture;
+  if (!domains.length) {
     return emptyPanel('arch-empty',
       'No architecture-map.md — run `npm run arch:render` to generate it.');
   }
-  const rows = data.architecture.domains.map((d) => `<details class="row">
-    <summary><strong>${escapeHtml(d.name)}</strong> &mdash; ${d.symbolCount == null ? '?' : escapeHtml(d.symbolCount)} symbols</summary>
-    <div>${escapeHtml(d.summary || 'No summary.')}</div>
-  </details>`).join('');
-  const path = data.architecture.mapPath ? escapeHtml(data.architecture.mapPath) : 'docs/architecture-map.md';
-  return `<p class="section-note">${data.architecture.domains.length} domains · full map: <code>${path}</code></p>${rows}`;
+  const names = new Set(domains.map((d) => d.name));
+  const tiers = archTiers(domains, deps);
+  // Render top-level tier first — consumers on top, foundations at the
+  // bottom. Box width within a tier is proportional to symbol count.
+  let bands = '';
+  let tierCount = 0;
+  for (let t = 2; t >= 0; t -= 1) {
+    const inTier = domains
+      .filter((d) => tiers.get(d.name) === t)
+      .sort((a, b) => (b.symbolCount || 0) - (a.symbolCount || 0));
+    if (!inTier.length) continue;
+    tierCount += 1;
+    const boxes = inTier.map((d) => {
+      const sym = d.symbolCount || 0;
+      const ds = (deps[d.name] || []).filter((x) => names.has(x) && x !== d.name);
+      const depLine = ds.length
+        ? `<div class="arch-deps">&#8627; depends on: ${ds.map((x) => escapeHtml(x)).join(', ')}</div>`
+        : '<div class="arch-deps arch-deps-none">foundation — no domain deps</div>';
+      return `<details class="arch-domain" style="flex-grow:${Math.max(1, sym)}">
+        <summary><span class="arch-name">${escapeHtml(d.name)}</span><span class="arch-sym">${escapeHtml(sym)}</span></summary>
+        <div class="arch-body"><p>${escapeHtml(d.summary || 'No summary.')}</p>${depLine}</div>
+      </details>`;
+    }).join('');
+    bands += `<div class="arch-layer">
+      <span class="arch-layer-label">${escapeHtml(ARCH_TIER_LABELS[t])}</span>
+      <div class="arch-row">${boxes}</div>
+    </div>`;
+  }
+  const mp = mapPath ? escapeHtml(mapPath) : 'docs/architecture-map.md';
+  return `<p class="section-note">${escapeHtml(domains.length)} domains · `
+    + `${escapeHtml(tierCount)} dependency tiers (top-level → foundation) · `
+    + `box width &prop; symbol count · full map: <code>${mp}</code></p>
+    <div class="arch-graph">${bands}</div>`;
 }
 
 function planList(plans) {

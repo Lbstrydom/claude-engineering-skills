@@ -92,6 +92,23 @@ export function discoverPlans(root = process.cwd()) {
 }
 
 /**
+ * Read the domain → allowed-dependency map from `.audit-loop/domain-map.json`.
+ * Best-effort — absent file or missing key → `{}` (the architecture tab then
+ * lays domains out flat instead of in dependency layers).
+ * @param {string} root
+ * @returns {Object<string, string[]>}
+ */
+function readDomainDeps(root) {
+  try {
+    const raw = fs.readFileSync(path.join(root, '.audit-loop', 'domain-map.json'), 'utf-8');
+    const deps = JSON.parse(raw).allowedDeps;
+    return (deps && typeof deps === 'object' && !Array.isArray(deps)) ? deps : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Parse ONLY the stable `## Contents` block of `docs/architecture-map.md`
  * — domain name + symbol count + the per-domain `>` summary blurb. Mermaid
  * blocks and symbol tables are deliberately NOT scraped (Gemini-G2): a
@@ -239,7 +256,7 @@ export function collectReference(opts = {}) {
     sources,
     skills,
     plans,
-    architecture: { domains: arch.domains, mapPath: arch.mapPath },
+    architecture: { domains: arch.domains, deps: readDomainDeps(root), mapPath: arch.mapPath },
     flows: flowRes.flows,
   };
   // sourceHash over content (everything but provenance) — committed-page

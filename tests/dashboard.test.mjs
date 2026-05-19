@@ -36,7 +36,7 @@ function refData(overrides = {}) {
       usage: ['/plan x'], disableModelInvocation: false, path: 'skills/plan/SKILL.md',
     }],
     plans: { active: [], completed: [] },
-    architecture: { domains: [], mapPath: null },
+    architecture: { domains: [], deps: {}, mapPath: null },
     flows: { nodes: [{ id: 'plan', skill: 'plan', label: 'Plan' }], edges: [] },
     ...overrides,
   };
@@ -243,6 +243,26 @@ test('collectArchitecture parses every domain in the ## Contents block', () => {
 test('collectArchitecture: absent map → missing-optional (never invalid)', () => {
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-arch-empty-'));
   assert.equal(collectArchitecture(empty).status.status, 'missing-optional');
+});
+
+test('architecture renders domains in dependency layers', () => {
+  const data = refData({
+    architecture: {
+      mapPath: 'docs/architecture-map.md',
+      domains: [
+        { name: 'base', anchor: 'base', symbolCount: 10, summary: 'foundation.' },
+        { name: 'mid', anchor: 'mid', symbolCount: 20, summary: 'middle.' },
+        { name: 'top', anchor: 'top', symbolCount: 5, summary: 'orchestrator.' },
+      ],
+      deps: { mid: ['base'], top: ['mid'] },
+    },
+  });
+  const html = renderDocument(data, 'reference', ASSETS);
+  // 3 domains → 3 layers; box width proportional to symbol count.
+  assert.equal((html.match(/class="arch-layer"/g) || []).length, 3, 'one band per layer');
+  assert.ok(html.includes('depends on: base'), 'dependency line rendered');
+  assert.ok(html.includes('foundation — no domain deps'), 'foundation marked');
+  assert.ok(/flex-grow:20/.test(html), 'box width carries the symbol count');
 });
 
 // ── Requirements collection + redaction ─────────────────────────────────
