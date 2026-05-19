@@ -1,5 +1,37 @@
 # Project Status Log
 
+## 2026-05-19 — /plan emits Mermaid architecture diagrams
+
+Added optional Mermaid diagram generation to the `/plan` skill. Phase 6 §2
+"Proposed Architecture" now instructs the planner to emit a fenced
+` ```mermaid ` block, with a scope→diagram-type table. New Phase 6.5
+validates blocks via the Mermaid Chart MCP when available and degrades
+silently when not — the MCP is validation-only, never an install
+dependency.
+
+### Changes
+- `/plan` SKILL.md: §2 diagram-type table + mermaid-block instruction;
+  §5 optional `stateDiagram-v2`; new Phase 6.5 (graceful validation);
+  reference-table row for the new examples file
+- New `skills/plan/examples/mermaid-blocks.md` — 5 copy-paste templates
+  (sequenceDiagram, graph LR, graph TD + subgraph, erDiagram, stateDiagram-v2)
+- Regenerated `.claude/skills/plan/` copies
+
+### Decisions Made
+- The Mermaid block is the *proposed* view, an artifact of the plan — not
+  a maintained file. Existing structure still defers to the generated
+  `docs/architecture-map.md`. Keeps the "generated, not maintained"
+  philosophy and avoids reintroducing stale hand-drawn UML.
+- Mermaid MCP validation is optional and graceful — Mermaid renders
+  natively in GitHub/VS Code, and the MCP is a Claude.ai account-level
+  connector the repo installer cannot manage. No install check added.
+
+> Also shipped this push: a sync dependency-walker (`collectImportClosure`
+> in `module-graph.mjs` + `sync-to-repos.mjs` refactor + tests) — committed
+> separately; pre-existing working-set change not authored this session.
+
+---
+
 ## 2026-05-17 — Requirements layer — a materialized view of de-facto requirements
 
 Implemented `docs/plans/requirements-layer.md` (Plan-Phase A + B) — a new

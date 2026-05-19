@@ -373,10 +373,29 @@ Structure ONE consolidated output document. Section presence depends on scope:
 - Neighbourhood considered (if Phase 0.5 fired with results)
 
 #### 2. Proposed Architecture
+- **Architecture diagram** — a fenced ` ```mermaid ` block (type from the
+  table below). Default-on; skip with `--no-diagram`, or force a type with
+  `--diagram=sequence|graph|er|state`.
 - Component diagram (which files/modules, how they interact)
 - Data flow (request → response path) — backend/full-stack
 - User flow + ASCII wireframe — frontend/full-stack
 - Key design decisions and **which principles drove them** (cite #N)
+
+The Mermaid block is the **proposed** view — an artifact of this plan, not
+a maintained file. It dies with the plan; nothing claims it stays current.
+For *existing* structure defer to `docs/architecture-map.md` (the
+generated, always-current index). Pick the type from the Phase 0 scope:
+
+| Scope / signal | Mermaid diagram |
+|---|---|
+| `backend` — request lifecycle | `sequenceDiagram` (route → service → DB → back) |
+| `backend` — module structure | `graph LR` component boxes |
+| `frontend` | `graph TD` component tree |
+| `full-stack` | `graph TD` with one `subgraph` per tier (Client / API / Data) |
+| DB schema work | `erDiagram` |
+
+Mermaid renders natively in GitHub and VS Code preview — no tooling needed
+for the reader. Copy the exact fence syntax from `examples/mermaid-blocks.md`.
 
 ### If scope ⊇ frontend
 
@@ -394,6 +413,9 @@ Structure ONE consolidated output document. Section presence depends on scope:
 
 #### 5. State Map (frontend)
 For every component, document: Empty / Loading / Error / Success / Edge cases.
+For components with a non-trivial state machine, optionally render the
+transitions as a `stateDiagram-v2` block — template in
+`examples/mermaid-blocks.md`.
 
 ### Always
 
@@ -451,6 +473,22 @@ be under-specified — revisit Phase 1 and §5 (State Map).
 
 ---
 
+## Phase 6.5 — Validate diagrams (optional, graceful)
+
+If the plan contains a ` ```mermaid ` block AND the Mermaid Chart MCP is
+available this session (`mcp__claude_ai_Mermaid_Chart__validate_and_render_mermaid_diagram`),
+validate each block before persisting — a syntax error otherwise renders
+as a red error box in GitHub.
+
+- **MCP available** → validate each block; fix any reported syntax error
+  in place before Phase 7.
+- **MCP not available** → **skip silently and proceed.** The Mermaid MCP
+  is an optional convenience, never an install dependency — Mermaid
+  renders natively in GitHub and VS Code preview, so an unvalidated block
+  still works for the reader. Do not warn the user about the missing MCP.
+
+---
+
 ## Phase 7 — Persist the Plan
 
 Save to `docs/plans/<descriptive-name>.md`. Create `docs/plans/` if
@@ -504,3 +542,4 @@ in Phase 0 tells you which ones).
 | `references/technical-principles.md` | 17 technical implementation principles — component architecture, state, events, CSS/styling. | Phase 4 — scope ⊇ frontend AND writing Technical Architecture. |
 | `references/python-backend-profile.md` | Python backend profile — framework-tagged principle checks + stack commands + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python backend files) AND scope ⊇ backend. |
 | `references/python-frontend-profile.md` | Python frontend profile — Jinja/Django/Flask template patterns + HTMX + anti-patterns. | Phase 0 detect-stack returned `python` (or mixed with Python frontend files) AND scope ⊇ frontend. |
+| `examples/mermaid-blocks.md` | Mermaid diagram templates — sequenceDiagram, graph, erDiagram, stateDiagram-v2 — one per scope. | Phase 6 §2/§5 — emitting an architecture or state diagram; need the exact fence syntax. |
