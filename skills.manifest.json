@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "90276d629daa796c",
+  "bundleVersion": "5f9403063759261f",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-05-19T09:45:32.832Z",
+  "updatedAt": "2026-05-19T18:36:41.987Z",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
@@ -55,14 +55,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "bbe3acdbb386",
-      "size": 14457,
+      "sha": "26c3e345166d",
+      "size": 15411,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "bbe3acdbb386",
-          "size": 14457
+          "sha": "26c3e345166d",
+          "size": 15411
         },
         {
           "relPath": "references/debt-capture.md",
@@ -193,14 +193,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "66e18eb97a91",
-      "size": 20684,
+      "sha": "c06fcce8537e",
+      "size": 21001,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "66e18eb97a91",
-          "size": 20684
+          "sha": "c06fcce8537e",
+          "size": 21001
         },
         {
           "relPath": "references/engineering-principles.md",

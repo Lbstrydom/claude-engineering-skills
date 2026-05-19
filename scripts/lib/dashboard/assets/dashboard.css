@@ -77,12 +77,14 @@ code, .mono { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font
   display: block; font-size: 10px; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--muted); margin-bottom: 3px;
 }
-.card pre.usage {
-  margin: 0; padding: 8px 10px; background: var(--panel-2);
-  border: 1px solid var(--border); border-radius: 6px;
-  font-size: 11.5px; line-height: 1.5; color: var(--text);
-  overflow-x: auto; white-space: pre;
+.usage-list { margin: 0; padding: 0; list-style: none; }
+.usage-list li {
+  background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 9px; margin-bottom: 4px;
 }
+.usage-list li:last-child { margin-bottom: 0; }
+.usage-list code { color: var(--accent); font-size: 11.5px; overflow-wrap: anywhere; }
+.usage-desc { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
 .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
 .chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 100px; padding: 2px 9px; font-size: 11px; color: var(--muted); }
 .lock { color: var(--warn); }
@@ -125,10 +127,13 @@ details.row > div { padding-top: 8px; color: var(--muted); }
 .section-note { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
 
 /* ── Flow diagram ─────────────────────────────────────────────── */
-.flow { display: flex; flex-direction: column; gap: 6px; }
+.flow { display: flex; flex-direction: column; gap: 4px; }
+.flow-step { display: flex; flex-direction: column; gap: 4px; }
 .flow-node { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 10px 14px; }
 .flow-node .flow-skill { color: var(--accent); font-weight: 600; }
-.flow-edge { color: var(--muted); font-size: 12px; padding-left: 14px; }
+.flow-arrow { color: var(--muted); font-size: 12.5px; padding-left: 18px; }
+.flow-arrow code { color: var(--accent); }
+.flow-edge-label { color: var(--muted); font-size: 11px; }
 
 /* ── Architecture domain graph ────────────────────────────────── */
 .arch-graph { display: flex; flex-direction: column; gap: 10px; }
@@ -141,21 +146,29 @@ details.row > div { padding-top: 8px; color: var(--muted); }
   letter-spacing: 0.07em; color: var(--muted); margin-bottom: 6px;
 }
 .arch-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+/* Uniform-width boxes — the symbol-count signal is the bar, not the box
+   width (box width must not mislead). An open box spans the full row. */
 .arch-domain {
-  flex-basis: 150px; min-width: 140px;
+  flex: 1 1 175px;
   background: var(--panel-2); border: 1px solid var(--border);
   border-left: 3px solid var(--accent); border-radius: 6px;
 }
+.arch-domain[open] { flex-basis: 100%; }
 .arch-domain > summary {
   cursor: pointer; padding: 9px 11px; display: flex;
-  align-items: baseline; justify-content: space-between; gap: 8px;
+  align-items: baseline; gap: 8px; flex-wrap: wrap;
 }
-.arch-name { font-weight: 600; }
+.arch-name { font-weight: 600; flex: 1; }
 .arch-sym {
   font-size: 11px; color: var(--muted); background: var(--bg);
   border: 1px solid var(--border); border-radius: 100px; padding: 1px 8px;
 }
-.arch-body { padding: 0 11px 10px; }
+.arch-bar {
+  flex-basis: 100%; height: 4px; margin-top: 6px;
+  background: var(--bg); border-radius: 2px; overflow: hidden;
+}
+.arch-bar > span { display: block; height: 100%; background: var(--accent); }
+.arch-body { padding: 4px 11px 10px; }
 .arch-body p { margin: 0 0 6px; color: var(--muted); font-size: 13px; }
 .arch-deps { font-size: 11.5px; color: var(--accent); }
 .arch-deps-none { color: var(--muted); font-style: italic; }

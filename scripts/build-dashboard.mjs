@@ -18,7 +18,6 @@
  * @module scripts/build-dashboard
  */
 import path from 'node:path';
-import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { ArgvError, emit, ensureDir } from './lib/cli-io.mjs';
@@ -151,16 +150,14 @@ async function main() {
     const ref = await buildReference(git, assets);
     results.push(ref);
     commanded = [ref];
-    // Guarantee telemetry.html exists so the nav link always resolves (§3).
-    // This is a best-effort SIDE build — a thrown failure here must not
-    // fail the commanded `reference` target (it is isolated, not awaited
-    // into the command's success path).
-    if (!fs.existsSync(TEL_OUT)) {
-      try {
-        results.push(await buildTelemetry(git, assets));
-      } catch (err) {
-        process.stderr.write(`  [dashboard] side telemetry build failed (reference unaffected): ${err.message}\n`);
-      }
+    // Also rebuild telemetry.html so BOTH pages stay on the same commit —
+    // otherwise the committed index.html and the gitignored telemetry.html
+    // drift apart and show mismatched provenance. Best-effort SIDE build: a
+    // thrown failure here must not fail the commanded `reference` target.
+    try {
+      results.push(await buildTelemetry(git, assets));
+    } catch (err) {
+      process.stderr.write(`  [dashboard] side telemetry build failed (reference unaffected): ${err.message}\n`);
     }
   } else if (args.cmd === 'telemetry') {
     results.push(await buildTelemetry(git, assets));

@@ -16,6 +16,11 @@ description: |
   Optional explicit scope hint via `--scope=backend|frontend|full-stack` for
   cases where auto-detection is wrong; otherwise scope is inferred from the
   task description and the files mentioned.
+
+  Usage: /plan <task description>                          — auto-detected scope
+  Usage: /plan <task> --scope=backend|frontend|full-stack  — explicit scope hint
+  Triggers on: "plan", "design this", "architect this", "I want to add",
+  "let's design", "plan the implementation", "how should we structure this".
 ---
 
 # Unified Architecture + UX Planner

@@ -92,7 +92,11 @@ function collectRequirements(root) {
     const items = reqs.slice(0, MAX_REQ_ITEMS).map((r) => ({
       id: String(r.id || ''),
       kind: String(r.kind || 'unknown'),
-      statement: redactSecrets(String(r.assertion || r.statement || '')).slice(0, 280),
+      // Requirement statements are descriptive prose from the committed
+      // .requirements/ledger.json — not a secret-bearing surface. They are
+      // NOT secret-redacted: redactSecrets false-positives on ordinary words
+      // (e.g. it mangled "[REDACTED_TOKEN]" into a real requirement).
+      statement: String(r.assertion || r.statement || '').slice(0, 280),
       status: String(r.status || 'unknown'),
     }));
     return {

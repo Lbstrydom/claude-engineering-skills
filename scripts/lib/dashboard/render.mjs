@@ -80,6 +80,18 @@ function panel(id, selected, inner) {
 
 // ── Reference sections ───────────────────────────────────────────────────
 
+/**
+ * Split a usage line — `<command>  — <description>` (or `… # comment`) — into
+ * its two parts, so the card can render the command + description as a
+ * wrapping list instead of a single clipped line.
+ */
+function splitUsage(line) {
+  const m = String(line).match(/^(.*?)\s+(?:[—–]|#)\s+(.+)$/);
+  return m
+    ? { cmd: m[1].trim(), desc: m[2].trim() }
+    : { cmd: String(line).trim(), desc: '' };
+}
+
 function sectionSkills(data) {
   const src = data.sources.skills || { status: 'ok', detail: '' };
   if (NON_OK.has(src.status)) return warningPanel('skills', src);
@@ -94,10 +106,16 @@ function sectionSkills(data) {
       .map((t) => `<span class="chip">${escapeHtml(t)}</span>`).join('');
     const lock = s.disableModelInvocation ? ' <span class="lock" title="manual invocation only">&#128274;</span>' : '';
     const hid = `skill-h-${escapeHtml(s.name)}`;
-    // Usage / flag shortlist — the invocation forms + flags for the skill.
+    // Usage / flag shortlist — command + description as a wrapping list, so
+    // nothing is clipped at the card edge.
     const usage = s.usage.length
-      ? `<div class="usage-block"><span class="usage-label">Usage</span>`
-        + `<pre class="usage">${s.usage.map((u) => escapeHtml(u)).join('\n')}</pre></div>`
+      ? `<div class="usage-block"><span class="usage-label">Usage</span><ul class="usage-list">`
+        + s.usage.map((u) => {
+          const { cmd, desc } = splitUsage(u);
+          return `<li><code>${escapeHtml(cmd)}</code>`
+            + `${desc ? `<span class="usage-desc">${escapeHtml(desc)}</span>` : ''}</li>`;
+        }).join('')
+        + '</ul></div>'
       : '';
     return `<article class="card" data-search="${haystack}" aria-labelledby="${hid}">
       <h3 id="${hid}"><code>/${escapeHtml(s.name)}</code>${lock}</h3>
@@ -126,16 +144,24 @@ function sectionFlows(data) {
   const caveat = src.status === 'missing-optional' && src.detail
     ? `<p class="section-note"><span class="status-dot status-warn"></span>${escapeHtml(src.detail)}</p>`
     : '';
-  const nodes = data.flows.nodes.map((n) =>
-    `<div class="flow-node"><span class="flow-skill">/${escapeHtml(n.skill)}</span> &mdash; ${escapeHtml(n.label)}</div>`,
-  ).join('');
-  const edges = data.flows.edges.map((e) => {
-    const lbl = e.label ? ` (${escapeHtml(e.label)})` : '';
-    return `<div class="flow-edge">${escapeHtml(e.from)} &rarr; ${escapeHtml(e.to)}${lbl}</div>`;
+  // Connected flow: each node box, then a down-arrow to every node it hands
+  // off to (so branches and the cycle orchestrator are visible inline) —
+  // not a separate node-list + edge-list.
+  const byId = new Map(data.flows.nodes.map((n) => [n.id, n]));
+  const steps = data.flows.nodes.map((n) => {
+    const outs = data.flows.edges.filter((e) => e.from === n.id);
+    const arrows = outs.map((e) => {
+      const tgt = byId.get(e.to);
+      const lbl = e.label ? ` <span class="flow-edge-label">${escapeHtml(e.label)}</span>` : '';
+      return `<div class="flow-arrow">&darr;&ensp;<code>/${escapeHtml(tgt ? tgt.skill : e.to)}</code>${lbl}</div>`;
+    }).join('');
+    return `<div class="flow-step">
+      <div class="flow-node"><span class="flow-skill">/${escapeHtml(n.skill)}</span> &mdash; ${escapeHtml(n.label)}</div>
+      ${arrows}
+    </div>`;
   }).join('');
-  return `${caveat}<p class="section-note">Skill-chain process flow.</p>
-    <div class="flow">${nodes}</div>
-    <h3>Transitions</h3>${edges}`;
+  return `${caveat}<p class="section-note">Skill-chain process flow — each step shows what it hands off to.</p>
+    <div class="flow">${steps}</div>`;
 }
 
 const ARCH_TIER_LABELS = ['foundation', 'core', 'top-level'];
@@ -178,8 +204,11 @@ function sectionArchitecture(data) {
   }
   const names = new Set(domains.map((d) => d.name));
   const tiers = archTiers(domains, deps);
-  // Render top-level tier first — consumers on top, foundations at the
-  // bottom. Box width within a tier is proportional to symbol count.
+  // Symbol count drives a per-box BAR, scaled against the global max — so
+  // the size signal is honest everywhere (boxes are uniform width; an
+  // earlier flex-grow scheme normalised per-row and misled across rows).
+  const maxSym = Math.max(1, ...domains.map((d) => d.symbolCount || 0));
+  // Render top-level tier first — consumers on top, foundations at the bottom.
   let bands = '';
   let tierCount = 0;
   for (let t = 2; t >= 0; t -= 1) {
@@ -190,12 +219,17 @@ function sectionArchitecture(data) {
     tierCount += 1;
     const boxes = inTier.map((d) => {
       const sym = d.symbolCount || 0;
+      const barPct = Math.max(2, Math.round((sym / maxSym) * 100));
       const ds = (deps[d.name] || []).filter((x) => names.has(x) && x !== d.name);
       const depLine = ds.length
         ? `<div class="arch-deps">&#8627; depends on: ${ds.map((x) => escapeHtml(x)).join(', ')}</div>`
         : '<div class="arch-deps arch-deps-none">foundation — no domain deps</div>';
-      return `<details class="arch-domain" style="flex-grow:${Math.max(1, sym)}">
-        <summary><span class="arch-name">${escapeHtml(d.name)}</span><span class="arch-sym">${escapeHtml(sym)}</span></summary>
+      return `<details class="arch-domain">
+        <summary>
+          <span class="arch-name">${escapeHtml(d.name)}</span>
+          <span class="arch-sym">${escapeHtml(sym)}</span>
+          <span class="arch-bar" title="${escapeHtml(sym)} symbols"><span style="width:${barPct}%"></span></span>
+        </summary>
         <div class="arch-body"><p>${escapeHtml(d.summary || 'No summary.')}</p>${depLine}</div>
       </details>`;
     }).join('');
@@ -207,16 +241,23 @@ function sectionArchitecture(data) {
   const mp = mapPath ? escapeHtml(mapPath) : 'docs/architecture-map.md';
   return `<p class="section-note">${escapeHtml(domains.length)} domains · `
     + `${escapeHtml(tierCount)} dependency tiers (top-level → foundation) · `
-    + `box width &prop; symbol count · full map: <code>${mp}</code></p>
+    + `bar width &prop; symbol count · full map: <code>${mp}</code></p>
     <div class="arch-graph">${bands}</div>`;
 }
 
 function planList(plans) {
   if (!plans.length) return '<p class="empty">None.</p>';
-  return plans.map((p) => `<details class="row">
-    <summary><strong>${escapeHtml(p.title)}</strong>${p.status ? ` &mdash; ${escapeHtml(p.status)}` : ''}</summary>
-    <div>${p.date ? `Date: ${escapeHtml(p.date)}<br>` : ''}<code>${escapeHtml(p.path)}</code>${p.malformed ? ' <span class="lock">(metadata unparsed)</span>' : ''}</div>
-  </details>`).join('');
+  return plans.map((p) => {
+    // The collapsed summary shows only the status's first clause — some
+    // plan files carry a whole paragraph in their `Status:` line; the full
+    // text stays available in the expanded body.
+    const shortStatus = p.status ? p.status.split(/\s+[—–-]\s+|\s*\(/)[0].trim() : '';
+    const statusBled = p.status && shortStatus !== p.status.trim();
+    return `<details class="row">
+    <summary><strong>${escapeHtml(p.title)}</strong>${shortStatus ? ` &mdash; ${escapeHtml(shortStatus)}` : ''}</summary>
+    <div>${p.date ? `Date: ${escapeHtml(p.date)}<br>` : ''}${statusBled ? `Status: ${escapeHtml(p.status)}<br>` : ''}<code>${escapeHtml(p.path)}</code>${p.malformed ? ' <span class="lock">(metadata unparsed)</span>' : ''}</div>
+  </details>`;
+  }).join('');
 }
 
 function sectionPlans(data) {
@@ -426,6 +467,7 @@ export function renderDocument(data, kind, assets) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
 <title>${escapeHtml(title)}</title>
 <style>${assets.css}</style>
 </head>

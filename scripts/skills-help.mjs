@@ -121,6 +121,10 @@ export function parseSkill(skillFile) {
     if (inTriggers) {
       if (/^usage:/i.test(line)) { inTriggers = false; continue; }
       if (line.length === 0) { inTriggers = false; continue; }
+      // A trigger continuation line is a quoted-comma list. A line with no
+      // quote (e.g. "IMPORTANT: …" boilerplate) is NOT a trigger — stop
+      // capture so it doesn't become a giant malformed trigger chip.
+      if (!line.includes('"')) { inTriggers = false; continue; }
       triggers.push(line);
     }
   }
@@ -144,8 +148,10 @@ export function parseSkill(skillFile) {
     }
     if (inUsage) {
       if (line.length === 0) { inUsage = false; continue; }
-      // Stop on a new top-level field cue like "Examples:" (some skills use it)
+      // Stop on a new top-level field cue — "Examples:" or "Triggers on:"
+      // (a Usage block before the triggers must not swallow them).
       if (/^examples?:/i.test(line)) { inUsage = false; continue; }
+      if (/^triggers? on:/i.test(line)) { inUsage = false; continue; }
       usage.push(line);
     }
   }

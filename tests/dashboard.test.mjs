@@ -258,30 +258,37 @@ test('architecture renders domains in dependency layers', () => {
     },
   });
   const html = renderDocument(data, 'reference', ASSETS);
-  // 3 domains → 3 layers; box width proportional to symbol count.
+  // 3 domains → 3 layers; a proportional bar (not box width) carries the
+  // symbol count — boxes are uniform width so the box itself never misleads.
   assert.equal((html.match(/class="arch-layer"/g) || []).length, 3, 'one band per layer');
   assert.ok(html.includes('depends on: base'), 'dependency line rendered');
   assert.ok(html.includes('foundation — no domain deps'), 'foundation marked');
-  assert.ok(/flex-grow:20/.test(html), 'box width carries the symbol count');
+  assert.ok(html.includes('class="arch-bar"'), 'proportional symbol-count bar rendered');
+  // mid has the most symbols (20) → its bar fills 100%.
+  assert.ok(/<span style="width:100%"/.test(html), 'bar width carries the symbol count');
 });
 
-// ── Requirements collection + redaction ─────────────────────────────────
+// ── Requirements collection ─────────────────────────────────────────────
 
-test('collectRequirements parses the ledger and redacts secrets', () => {
+test('collectRequirements parses the ledger and shows statements verbatim', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-req-'));
   fs.mkdirSync(path.join(root, '.requirements'), { recursive: true });
   fs.writeFileSync(path.join(root, '.requirements/ledger.json'), JSON.stringify({
     requirements: [{
       id: 'REQ-1', kind: 'security', status: 'active',
-      assertion: 'Key sk-abcdefghijklmnopqrstuvwxyz0123456789 must not leak.',
+      assertion: 'Credentials must never be logged in plaintext.',
     }],
   }));
   const res = telemetryTest.collectRequirements(root);
   assert.equal(res.status.status, 'ok');
   assert.equal(res.data.total, 1);
   assert.equal(res.data.active, 1);
-  assert.ok(!res.data.items[0].statement.includes('sk-abcdefghijklmnopqrstuvwxyz'),
-    'secret redacted from requirement statement');
+  // Requirement prose comes from the committed ledger — it is descriptive
+  // text, not a secret-bearing surface, so it is shown verbatim (redaction
+  // false-positived on ordinary words like "[REDACTED_TOKEN]").
+  assert.equal(res.data.items[0].statement,
+    'Credentials must never be logged in plaintext.',
+    'statement rendered verbatim, not mangled by redaction');
 });
 
 test('collectRequirements: absent ledger → missing-optional, malformed → invalid', () => {
