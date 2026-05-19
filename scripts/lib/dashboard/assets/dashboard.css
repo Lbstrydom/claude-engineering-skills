@@ -72,7 +72,18 @@ code, .mono { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font
 }
 .card h3 { margin: 0 0 6px; font-size: 15px; }
 .card .oneliner { color: var(--muted); margin: 0 0 10px; }
-.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.usage-block { margin-top: 10px; }
+.usage-label {
+  display: block; font-size: 10px; text-transform: uppercase;
+  letter-spacing: 0.06em; color: var(--muted); margin-bottom: 3px;
+}
+.card pre.usage {
+  margin: 0; padding: 8px 10px; background: var(--panel-2);
+  border: 1px solid var(--border); border-radius: 6px;
+  font-size: 11.5px; line-height: 1.5; color: var(--text);
+  overflow-x: auto; white-space: pre;
+}
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
 .chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 100px; padding: 2px 9px; font-size: 11px; color: var(--muted); }
 .lock { color: var(--warn); }
 

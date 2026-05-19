@@ -5,15 +5,14 @@ import path from 'node:path';
 
 const SKILLS_DIR = path.resolve('skills');
 // plan-backend + plan-frontend were merged into the unified `plan` skill on
-// 2026-05-02 (one consolidated plan output for cross-stack work). Both
-// originals remain as thin alias shims for muscle memory but no longer
-// hold the planning content — that's all in `skills/plan/`.
-const ALL_SKILLS = ['audit-loop', 'plan', 'plan-backend', 'plan-frontend', 'ship'];
-// Skills that must hold the full Phase 0 stack-detection + Python profile
-// content. Shims (plan-backend, plan-frontend, audit-loop) deliberately don't anymore.
+// 2026-05-02; audit-loop folded into `/cycle`. The deprecated alias shims
+// were removed on 2026-05-19 — planning content lives in `skills/plan/`,
+// the orchestrator flow in `skills/cycle/`.
+const ALL_SKILLS = ['plan', 'ship'];
+// Skills that must hold the full Phase 0 stack-detection + Python profile content.
 const PYTHON_SKILLS = ['plan', 'ship'];
-// Shims allow no-`##`-heading content (just deprecation notice + delegate).
-const HEADING_EXEMPT_SKILLS = new Set(['plan-backend', 'plan-frontend', 'audit-loop']);
+// No deprecation shims remain — every skill carries real `##`-heading content.
+const HEADING_EXEMPT_SKILLS = new Set();
 
 describe('skills content', () => {
   for (const skill of ALL_SKILLS) {

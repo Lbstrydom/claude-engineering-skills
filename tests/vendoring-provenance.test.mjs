@@ -2,11 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 
 const PROVENANCE_PATH = path.resolve('.audit', 'vendoring-provenance.json');
-const SKILLS_DIR = path.resolve('skills');
-const ALL_SKILLS = ['audit-loop', 'plan-backend', 'plan-frontend', 'ship'];
+// audit-loop / plan-backend / plan-frontend deprecation shims were removed
+// on 2026-05-19; `ship` is the remaining vendored skill with provenance.
+const ALL_SKILLS = ['ship'];
 
 // Provenance is a local, author-private artefact — gitignored since
 // 2026-04-19. Skip the whole suite when the file is absent (fresh clone or
@@ -19,7 +19,7 @@ describe('vendoring provenance', { skip: !PROVENANCE_AVAILABLE }, () => {
     assert.ok(fs.existsSync(PROVENANCE_PATH), `${PROVENANCE_PATH} must exist`);
   });
 
-  it('provenance has entries for all 5 skills', () => {
+  it('provenance has an entry for each vendored skill', () => {
     const provenance = JSON.parse(fs.readFileSync(PROVENANCE_PATH, 'utf-8'));
     for (const skill of ALL_SKILLS) {
       assert.ok(provenance[skill], `provenance must have entry for ${skill}`);
@@ -29,20 +29,12 @@ describe('vendoring provenance', { skip: !PROVENANCE_AVAILABLE }, () => {
     }
   });
 
-  it('provenance SHAs are valid hex and audit-loop SHA matches current file', () => {
+  it('provenance SHAs are valid 64-char hex', () => {
     const provenance = JSON.parse(fs.readFileSync(PROVENANCE_PATH, 'utf-8'));
     for (const skill of ALL_SKILLS) {
-      const sha = provenance[skill].sha;
-      assert.match(sha, /^[0-9a-f]{64}$/, `${skill} SHA must be 64-char hex`);
-
-      // audit-loop was not edited post-vendoring, so its SHA must still match
-      if (skill === 'audit-loop') {
-        const content = fs.readFileSync(path.join(SKILLS_DIR, skill, 'SKILL.md'));
-        const actual = crypto.createHash('sha256').update(content).digest('hex');
-        assert.equal(actual, sha, 'audit-loop SHA must match (unedited since vendoring)');
-      }
-      // Other skills had Python profiles added — SHAs will differ from provenance.
-      // Provenance records the ORIGINAL vendored SHA before edits.
+      assert.match(provenance[skill].sha, /^[0-9a-f]{64}$/, `${skill} SHA must be 64-char hex`);
+      // Skills had Python profiles added post-vendoring — current SHAs differ
+      // from provenance, which records the ORIGINAL vendored SHA.
     }
   });
 });

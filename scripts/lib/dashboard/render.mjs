@@ -85,16 +85,24 @@ function sectionSkills(data) {
   if (NON_OK.has(src.status)) return warningPanel('skills', src);
   if (!data.skills.length) return emptyPanel(null, 'No skills found in skills/.');
   const cards = data.skills.map((s) => {
+    // Usage lines are part of the search haystack too — so a query like
+    // "--with-gemini" finds /brainstorm.
     const haystack = escapeHtml(
-      [s.name, s.oneLiner, s.triggers.join(' ')].join(' ').toLowerCase(),
+      [s.name, s.oneLiner, s.triggers.join(' '), s.usage.join(' ')].join(' ').toLowerCase(),
     );
     const chips = s.triggers.slice(0, 6)
       .map((t) => `<span class="chip">${escapeHtml(t)}</span>`).join('');
     const lock = s.disableModelInvocation ? ' <span class="lock" title="manual invocation only">&#128274;</span>' : '';
     const hid = `skill-h-${escapeHtml(s.name)}`;
+    // Usage / flag shortlist — the invocation forms + flags for the skill.
+    const usage = s.usage.length
+      ? `<div class="usage-block"><span class="usage-label">Usage</span>`
+        + `<pre class="usage">${s.usage.map((u) => escapeHtml(u)).join('\n')}</pre></div>`
+      : '';
     return `<article class="card" data-search="${haystack}" aria-labelledby="${hid}">
       <h3 id="${hid}"><code>/${escapeHtml(s.name)}</code>${lock}</h3>
       <p class="oneliner">${escapeHtml(s.oneLiner)}</p>
+      ${usage}
       ${chips ? `<div class="chips">${chips}</div>` : ''}
     </article>`;
   }).join('');

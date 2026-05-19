@@ -1,185 +1,308 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "842dd42e7470bf66",
+  "bundleVersion": "90276d629daa796c",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-04-19T15:45:14.913Z",
+  "updatedAt": "2026-05-19T09:45:32.832Z",
   "skills": {
-    "audit-loop": {
-      "path": "skills/audit-loop/SKILL.md",
-      "sha": "bbbf91bd49f1",
-      "size": 13860,
-      "summary": "Self-driving plan-audit-fix loop with adaptive learning.",
+    "ai-context-management": {
+      "path": "skills/ai-context-management/SKILL.md",
+      "sha": "f99609f8e6c6",
+      "size": 7686,
+      "summary": "Manage AGENTS.md and CLAUDE.md alignment across a repo so Claude, Copilot,",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "bbbf91bd49f1",
-          "size": 13860
+          "sha": "f99609f8e6c6",
+          "size": 7686
+        },
+        {
+          "relPath": "examples/monorepo-layout.md",
+          "sha": "de753c5579df",
+          "size": 3238
+        },
+        {
+          "relPath": "examples/slim-claude-md.md",
+          "sha": "6bded773843e",
+          "size": 1498
+        },
+        {
+          "relPath": "examples/well-formed-agents-md.md",
+          "sha": "7982a0d13b9f",
+          "size": 2357
+        },
+        {
+          "relPath": "references/canonical-flip.md",
+          "sha": "3c4c66a5d67f",
+          "size": 4805
+        },
+        {
+          "relPath": "references/drift-rules.md",
+          "sha": "6fb875475a32",
+          "size": 3614
+        },
+        {
+          "relPath": "references/prompt-file-format.md",
+          "sha": "b0bf5e609a50",
+          "size": 3785
+        },
+        {
+          "relPath": "references/reconcile-playbook.md",
+          "sha": "5b1d0542a828",
+          "size": 3154
+        }
+      ]
+    },
+    "audit-code": {
+      "path": "skills/audit-code/SKILL.md",
+      "sha": "bbe3acdbb386",
+      "size": 14457,
+      "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "bbe3acdbb386",
+          "size": 14457
         },
         {
           "relPath": "references/debt-capture.md",
-          "sha": "6c2e17c33bc2",
-          "size": 4123
+          "sha": "40fd06ac9bd6",
+          "size": 4233
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "c6150b5a3102",
-          "size": 2992
+          "sha": "d791f74d9633",
+          "size": 5393
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "55acf54877e8",
-          "size": 3003
+          "sha": "0cb6a7815e70",
+          "size": 3094
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "127a6f9b120d",
-          "size": 4520
+          "sha": "20d541bae5bd",
+          "size": 4630
+        }
+      ]
+    },
+    "audit-plan": {
+      "path": "skills/audit-plan/SKILL.md",
+      "sha": "46369e03ded2",
+      "size": 8874,
+      "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "46369e03ded2",
+          "size": 8874
+        },
+        {
+          "relPath": "references/gemini-gate.md",
+          "sha": "d791f74d9633",
+          "size": 5393
+        },
+        {
+          "relPath": "references/ledger-format.md",
+          "sha": "0cb6a7815e70",
+          "size": 3094
+        }
+      ]
+    },
+    "brainstorm": {
+      "path": "skills/brainstorm/SKILL.md",
+      "sha": "f1430f55d38f",
+      "size": 13058,
+      "summary": "Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "f1430f55d38f",
+          "size": 13058
+        }
+      ]
+    },
+    "cycle": {
+      "path": "skills/cycle/SKILL.md",
+      "sha": "098cbfcebb85",
+      "size": 7522,
+      "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "098cbfcebb85",
+          "size": 7522
+        }
+      ]
+    },
+    "explain": {
+      "path": "skills/explain/SKILL.md",
+      "sha": "aa6c476599e1",
+      "size": 12870,
+      "summary": "Explain WHY a piece of code is structured the way it is. Synthesises",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "aa6c476599e1",
+          "size": 12870
         }
       ]
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "85d9fae05442",
-      "size": 14461,
+      "sha": "f45876fae77d",
+      "size": 15701,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "85d9fae05442",
-          "size": 14461
+          "sha": "f45876fae77d",
+          "size": 15701
         },
         {
           "relPath": "examples/report-and-debrief.md",
-          "sha": "d0ce9fdffb6c",
-          "size": 6661
+          "sha": "ee7510886849",
+          "size": 6797
         },
         {
           "relPath": "references/audit-correlation.md",
-          "sha": "56dd488ff6b2",
-          "size": 4851
+          "sha": "25ff1571561a",
+          "size": 4971
         },
         {
           "relPath": "references/browser-tool-detection.md",
-          "sha": "3bfd5de2c7d4",
-          "size": 3377
+          "sha": "33700fa2d34b",
+          "size": 3460
         },
         {
           "relPath": "references/interop.md",
-          "sha": "7ea1d8014dcc",
-          "size": 3652
+          "sha": "7b33ad7b034c",
+          "size": 3629
         },
         {
           "relPath": "references/persona-debrief-format.md",
-          "sha": "2437807d742d",
-          "size": 3258
+          "sha": "921b8b405660",
+          "size": 3341
         },
         {
           "relPath": "references/session-history.md",
-          "sha": "18280295c17d",
-          "size": 2468
+          "sha": "04f6b5a2c8a6",
+          "size": 2407
         }
       ]
     },
-    "plan-backend": {
-      "path": "skills/plan-backend/SKILL.md",
-      "sha": "0d7d652256fe",
-      "size": 8891,
-      "summary": "Backend architecture planning with engineering principles. Use when the user asks to plan,",
+    "plan": {
+      "path": "skills/plan/SKILL.md",
+      "sha": "66e18eb97a91",
+      "size": 20684,
+      "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "0d7d652256fe",
-          "size": 8891
+          "sha": "66e18eb97a91",
+          "size": 20684
         },
         {
           "relPath": "references/engineering-principles.md",
-          "sha": "671d91216cf6",
-          "size": 3161
+          "sha": "473889f0879b",
+          "size": 3215
         },
         {
           "relPath": "references/python-backend-profile.md",
-          "sha": "800c414577d2",
-          "size": 2159
-        }
-      ]
-    },
-    "plan-frontend": {
-      "path": "skills/plan-frontend/SKILL.md",
-      "sha": "c388aa1cad32",
-      "size": 10156,
-      "summary": "Frontend UX and implementation planning with design and engineering principles. Use when the",
-      "files": [
-        {
-          "relPath": "SKILL.md",
-          "sha": "c388aa1cad32",
-          "size": 10156
+          "sha": "8d1f9c9f7325",
+          "size": 2210
         },
         {
           "relPath": "references/python-frontend-profile.md",
-          "sha": "33d7d66170a5",
-          "size": 2196
+          "sha": "e1c3c084bdc5",
+          "size": 2240
         },
         {
           "relPath": "references/technical-principles.md",
-          "sha": "7b9da0f3f43d",
-          "size": 3423
+          "sha": "f485662340bc",
+          "size": 3484
         },
         {
           "relPath": "references/ux-principles.md",
-          "sha": "320ff5c98417",
-          "size": 4275
+          "sha": "7b2daef4bd6b",
+          "size": 4350
+        }
+      ]
+    },
+    "security-strategy": {
+      "path": "skills/security-strategy/SKILL.md",
+      "sha": "419948ccf473",
+      "size": 6294,
+      "summary": "On-demand maintenance of the per-repo security memory: bootstrap an",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "419948ccf473",
+          "size": 6294
         }
       ]
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "cb8910e49ba0",
-      "size": 9489,
+      "sha": "7dc57972abb0",
+      "size": 15844,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "cb8910e49ba0",
-          "size": 9489
+          "sha": "7dc57972abb0",
+          "size": 15844
         },
         {
           "relPath": "references/python-environment-discovery.md",
-          "sha": "3b3016df54a0",
-          "size": 2662
+          "sha": "ddf0c4303aab",
+          "size": 2737
         },
         {
           "relPath": "references/status-md-format.md",
-          "sha": "823b3e52c5c3",
-          "size": 2588
+          "sha": "8a1051d33067",
+          "size": 2681
+        }
+      ]
+    },
+    "skills": {
+      "path": "skills/skills/SKILL.md",
+      "sha": "2ec37e85c598",
+      "size": 3949,
+      "summary": "Quick reference for every available skill in this repo — name, one-line",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "2ec37e85c598",
+          "size": 3949
         }
       ]
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "a436ee5ed2f0",
-      "size": 7969,
+      "sha": "3a0b86ad3da2",
+      "size": 8145,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "a436ee5ed2f0",
-          "size": 7969
+          "sha": "3a0b86ad3da2",
+          "size": 8145
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",
-          "sha": "817fb2b4cfc5",
-          "size": 3839
+          "sha": "5ad63df2ec64",
+          "size": 3957
         },
         {
           "relPath": "references/scope-and-limitations.md",
-          "sha": "7711dc5f41cc",
-          "size": 3267
+          "sha": "6b8a853d9635",
+          "size": 3359
         },
         {
           "relPath": "references/verify-mode-generation.md",
-          "sha": "c5cd92c4b45e",
-          "size": 6758
+          "sha": "fe9404068bdd",
+          "size": 6976
         }
       ]
     }
