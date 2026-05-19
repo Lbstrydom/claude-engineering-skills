@@ -3,7 +3,7 @@
  * Covers: output encoding (the security boundary), render purity +
  * determinism, schema validation, plan discovery, requirements collection
  * + redaction, the static server (path containment / Host allowlist /
- * no-store), CLI arg validation, and CORE_SCRIPTS sync completeness.
+ * no-store), CLI arg validation, and sync-closure completeness.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,6 +11,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+
+import { collectImportClosure } from '../scripts/lib/module-graph.mjs';
 
 import { renderDocument, escapeHtml, jsonScriptSafe, __test__ as renderTest } from '../scripts/lib/dashboard/render.mjs';
 import { validateDashboardData } from '../scripts/lib/dashboard/schema.mjs';
@@ -357,41 +359,53 @@ test('parseArgs accepts valid input', () => {
   assert.equal(s.explicitPort, true);
 });
 
-// ── CORE_SCRIPTS sync completeness (guards plan H6) ─────────────────────
+// ── Sync-closure completeness (guards plan H6) ──────────────────────────
 
-test('every dashboard module is registered in CORE_SCRIPTS', () => {
+test('every dashboard module is reached by the sync import closure', () => {
   const repoRoot = path.resolve(import.meta.dirname, '..');
-  const syncSrc = fs.readFileSync(path.join(repoRoot, 'scripts/sync-to-repos.mjs'), 'utf-8');
 
-  // Walk the static .mjs import graph from build-dashboard.mjs (scripts/-local).
-  const seen = new Set();
-  const walk = (relPath) => {
-    if (seen.has(relPath)) return;
-    seen.add(relPath);
-    const abs = path.join(repoRoot, relPath);
-    let src;
-    try { src = fs.readFileSync(abs, 'utf-8'); } catch { return; }
-    const importRe = /from\s+['"](\.[^'"]+)['"]/g;
-    let m;
-    while ((m = importRe.exec(src)) !== null) {
-      const dep = path.normalize(path.join(path.dirname(relPath), m[1])).replace(/\\/g, '/');
-      if (dep.startsWith('scripts/')) walk(dep);
+  // build-dashboard.mjs is a CORE entry point; the sync resolver walks its
+  // transitive import graph. This test exercises that same resolver — so a
+  // new dashboard module is covered the moment something imports it, with
+  // no hand-maintained allowlist to keep in step.
+  const universe = new Set();
+  const walkDir = (dir, base) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === 'node_modules') continue;
+      const rel = base ? `${base}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walkDir(path.join(dir, entry.name), rel);
+      else universe.add(rel);
     }
   };
-  walk('scripts/build-dashboard.mjs');
+  walkDir(path.join(repoRoot, 'scripts'), 'scripts');
 
-  // Non-import deps read via fs at runtime must also ship.
-  const fsDeps = [
+  const readFile = (rel) => {
+    try { return fs.readFileSync(path.join(repoRoot, rel), 'utf-8'); }
+    catch { return null; }
+  };
+  const { files } = collectImportClosure({
+    entryPoints: ['scripts/build-dashboard.mjs'], repoFiles: universe, readFile,
+  });
+  const closure = new Set(files);
+
+  // The closure must reach every dashboard module — both static-import and
+  // string-literal dynamic-import deps (the walker follows both).
+  for (const rel of universe) {
+    if (!rel.startsWith('scripts/lib/dashboard/') || !rel.endsWith('.mjs')) continue;
+    assert.ok(
+      closure.has(rel),
+      `${rel} must be reachable from build-dashboard.mjs (else it won't sync)`,
+    );
+  }
+
+  // Non-importable assets carry no import edges — the walker cannot see
+  // them, so they must be declared in CORE_ASSETS in sync-to-repos.mjs.
+  const syncSrc = fs.readFileSync(path.join(repoRoot, 'scripts/sync-to-repos.mjs'), 'utf-8');
+  for (const asset of [
     'scripts/lib/dashboard/flows.json',
     'scripts/lib/dashboard/assets/dashboard.css',
     'scripts/lib/dashboard/assets/dashboard.js',
-  ];
-
-  for (const dep of [...seen, ...fsDeps]) {
-    if (dep === 'scripts/build-dashboard.mjs') {
-      assert.ok(syncSrc.includes("'scripts/build-dashboard.mjs'"), 'entry in CORE_SCRIPTS');
-      continue;
-    }
-    assert.ok(syncSrc.includes(`'${dep}'`), `${dep} must be in CORE_SCRIPTS`);
+  ]) {
+    assert.ok(syncSrc.includes(`'${asset}'`), `${asset} must be listed in CORE_ASSETS`);
   }
 });

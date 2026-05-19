@@ -22,6 +22,7 @@ import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import { writeManifest } from './lib/sync-manifest.mjs';
+import { collectImportClosure } from './lib/module-graph.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
@@ -36,14 +37,28 @@ const SOURCE_ROOT = path.resolve(import.meta.dirname, '..');
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
 
 // ── Canonical file sets ────────────────────────────────────────────────────
+//
+// The audit-loop deployment is NOT a hand-maintained file list. Each bundle
+// declares only its ENTRY POINTS — scripts invoked directly (CLIs, hooks)
+// plus the few modules reached solely via a *computed* dynamic import, which
+// static analysis cannot follow. Every lib/* dependency is auto-resolved by
+// walking the ESM import graph (see resolveBundle / collectImportClosure).
+//
+// Why: a new lib module imported by a synced script used to need a manual
+// CORE_SCRIPTS entry, or the consumer repo broke at runtime with
+// ERR_MODULE_NOT_FOUND. The walker eliminates that drift — the first static
+// or string-literal `import` of a module pulls it into every bundle that
+// reaches it, with no edit here.
+//
+// ASSETS are non-importable leaves (read via fs, or generated): they carry
+// no import edges, so the walker cannot discover them — listed explicitly.
 
 /**
- * Core audit runtime scripts shared across all consumer repos.
- * These are the files that must stay in sync — audits won't work correctly
- * without them. Ordered: top-level scripts first, then lib/.
+ * Core audit-runtime entry points — directly-invoked scripts + the quickfix
+ * hook. Their transitive import closure is the shared core every consumer
+ * repo needs.
  */
-const CORE_SCRIPTS = [
-  // Top-level audit scripts
+const CORE_ENTRY = [
   'scripts/openai-audit.mjs',
   'scripts/gemini-review.mjs',
   'scripts/bandit.mjs',
@@ -55,150 +70,50 @@ const CORE_SCRIPTS = [
   'scripts/check-setup.mjs',
   'scripts/check-audit-tool-version.mjs',
   'scripts/cache-hitrate-check.mjs',
-  // Sync manifest — generated at the start of every `npm run sync`.
-  // Consumer repos read it to detect when audit-tool files are stale
-  // vs upstream. See scripts/lib/sync-manifest.mjs.
-  'scripts/.sync-manifest.json',
-  // lib/ core modules
-  'scripts/lib/schemas.mjs',
-  'scripts/lib/file-io.mjs',
-  'scripts/lib/ledger.mjs',
-  'scripts/lib/code-analysis.mjs',
-  'scripts/lib/context.mjs',
-  'scripts/lib/findings.mjs',
-  'scripts/lib/findings-format.mjs',
-  'scripts/lib/findings-tracker.mjs',
-  'scripts/lib/findings-outcomes.mjs',
-  'scripts/lib/findings-tasks.mjs',
-  'scripts/lib/outcome-sync.mjs',
-  'scripts/lib/config.mjs',
-  'scripts/lib/model-resolver.mjs',
-  'scripts/lib/llm-auditor.mjs',
-  'scripts/lib/llm-wrappers.mjs',
-  'scripts/lib/language-profiles.mjs',
-  'scripts/lib/rng.mjs',
-  'scripts/lib/audit-scope.mjs',
-  'scripts/lib/diff-annotation.mjs',
-  'scripts/lib/plan-paths.mjs',
-  'scripts/lib/plan-fp-tracker.mjs',
-  'scripts/lib/predictive-strategy.mjs',
-  'scripts/lib/robustness.mjs',
-  'scripts/lib/sanitizer.mjs',
-  'scripts/lib/repo-stack.mjs',
-  'scripts/lib/secret-patterns.mjs',
-  'scripts/lib/suppression-policy.mjs',
-  'scripts/lib/backfill-parser.mjs',
-  'scripts/lib/owner-resolver.mjs',
-  'scripts/lib/rule-metadata.mjs',
-  'scripts/lib/file-store.mjs',
-  // Sync-manifest helper — pure logic for staleness check (used by both
-  // sync-to-repos.mjs generator and consumer-side openai-audit.mjs check).
-  'scripts/lib/sync-manifest.mjs',
-  // Brainstorm helper (concept-level multi-LLM rounds — see /brainstorm)
   'scripts/brainstorm-round.mjs',
-  'scripts/lib/brainstorm/prompt.mjs',
-  'scripts/lib/brainstorm/schemas.mjs',
-  'scripts/lib/brainstorm/pricing.mjs',
-  'scripts/lib/brainstorm/openai-adapter.mjs',
-  'scripts/lib/brainstorm/gemini-adapter.mjs',
-  // Brainstorm v1.x extensions (debate / depth / continue-from / save / session-store)
-  'scripts/lib/brainstorm/depth-config.mjs',
-  'scripts/lib/brainstorm/provider-limits.mjs',
-  'scripts/lib/brainstorm/file-lock.mjs',
-  'scripts/lib/brainstorm/session-store.mjs',
-  'scripts/lib/brainstorm/insight-store.mjs',
-  'scripts/lib/brainstorm/resume-context.mjs',
-  'scripts/lib/brainstorm/debate-prompt.mjs',
-  'scripts/lib/brainstorm/id-validator.mjs',
-  // Quickfix detection — prospective hook + retrospective audit pass
-  'scripts/lib/quickfix-patterns.mjs',
-  '.claude/hooks/quickfix-scan.mjs',
-  // /explain --history aggregator (cross-source "did we already solve this?")
   'scripts/explain-history.mjs',
-  // /skills quick-reference helper (reads SKILL.md frontmatter)
   'scripts/skills-help.mjs',
-  // Adaptive context blast-radius (docs/plans/adaptive-context-blast-radius.md):
-  // the deterministic finding-verification gate + the tiered context layer.
-  // openai-audit.mjs / gemini-review.mjs statically import these — they MUST
-  // ship alongside, or the consumer-repo audit tooling fails to load.
-  'scripts/lib/repo-inventory.mjs',
-  'scripts/lib/module-graph.mjs',
-  'scripts/lib/repo-context.mjs',
-  'scripts/lib/doc-sections.mjs',
-  'scripts/lib/audit/finding-verification.mjs',
-  // brainstorm /--with-arch context loader — brainstorm-round.mjs depends on it.
-  'scripts/lib/brainstorm/arch-context.mjs',
-  // Requirements layer (docs/plans/requirements-layer.md): the de-facto-
-  // requirements ledger + its audit rubric. openai-audit.mjs statically
-  // imports context.mjs → it (and its transitive deps schema.mjs +
-  // ledger.mjs) MUST ship or the consumer audit fails to load. extract.mjs
-  // / gap-challenge.mjs are CLI-only deps of scripts/requirements.mjs but
-  // ship together so `requirements.mjs extract` works in consumer repos.
-  'scripts/lib/requirements/schema.mjs',
-  'scripts/lib/requirements/llm-json.mjs',
-  'scripts/lib/requirements/extract.mjs',
-  'scripts/lib/requirements/gap-challenge.mjs',
-  'scripts/lib/requirements/ledger.mjs',
-  'scripts/lib/requirements/context.mjs',
-  'scripts/lib/requirements/render.mjs',
   'scripts/requirements.mjs',
-  // Local dashboard (docs/plans/local-dashboard.md): the generator + its
-  // entire lib subtree. build-dashboard.mjs statically imports every
-  // lib/dashboard/* module — they MUST ship together or the consumer-repo
-  // `npm run dashboard` fails to load. lib/learning/stats.mjs is imported
-  // by collect-telemetry.mjs (and now by cross-skill.mjs's cmdLearningStats).
-  // cli-io.mjs + audit-metrics.mjs are transitive deps of the generator.
-  // dashboard/index.html itself is NOT synced — it is a per-repo artefact.
-  'scripts/lib/cli-io.mjs',
   'scripts/audit-metrics.mjs',
-  // Closes the adaptive-learning data loop — /audit-code Step 3.5b runs this
-  // to bridge the adjudication ledger → outcome-sync → cloud + local stores.
   'scripts/write-code-outcomes.mjs',
   'scripts/build-dashboard.mjs',
-  'scripts/lib/dashboard/schema.mjs',
-  'scripts/lib/dashboard/flows.json',
-  'scripts/lib/dashboard/load-assets.mjs',
-  'scripts/lib/dashboard/render.mjs',
-  'scripts/lib/dashboard/collect-reference.mjs',
-  'scripts/lib/dashboard/collect-telemetry.mjs',
-  'scripts/lib/dashboard/serve.mjs',
-  'scripts/lib/dashboard/assets/dashboard.css',
-  'scripts/lib/dashboard/assets/dashboard.js',
-  'scripts/lib/learning/stats.mjs',
+  '.claude/hooks/quickfix-scan.mjs',
 ];
 
 /**
- * Learning + prompt-refinement scripts (full suite only).
+ * Non-importable core assets — read via fs or generated, never `import`ed,
+ * so the import-graph walker cannot reach them.
  */
-const LEARNING_SCRIPTS = [
+const CORE_ASSETS = [
+  // Regenerated at the start of every `npm run sync` (see writeManifest);
+  // consumer repos read it to detect stale audit-tool files vs upstream.
+  'scripts/.sync-manifest.json',
+  // fs-read by lib/dashboard/collect-reference.mjs (flows.json) and
+  // lib/dashboard/load-assets.mjs (css/js) — never imported.
+  'scripts/lib/dashboard/flows.json',
+  'scripts/lib/dashboard/assets/dashboard.css',
+  'scripts/lib/dashboard/assets/dashboard.js',
+];
+
+/**
+ * Learning + prompt-refinement entry points (full suite only).
+ */
+const LEARNING_ENTRY = [
   'scripts/refine-prompts.mjs',
   'scripts/evolve-prompts.mjs',
   'scripts/meta-assess.mjs',
-  'scripts/lib/prompt-registry.mjs',
-  'scripts/lib/prompt-seeds.mjs',
-  'scripts/lib/linter.mjs',
 ];
 
 /**
- * Architectural-memory scripts (per docs/plans/architectural-memory.md).
- * Adds: ts-morph symbol extraction, dep-cruiser layering graph, Haiku
- * purpose summaries, Gemini embeddings, snapshot-isolated refresh,
- * weekly drift sweep + retention prune. Required for /plan-* skills'
- * "Neighbourhood considered" callout and /audit-code --scope=full
- * symbol catalogue. Cloud-off path is graceful (skills emit a hint
- * without failing).
+ * Architectural-memory entry points (per docs/completed/architectural-memory.md):
+ * ts-morph symbol extraction, dep-cruiser layering, Haiku summaries, Gemini
+ * embeddings, drift sweep, retention prune, plus security-incident memory.
  *
  * Consumer needs: `dependency-cruiser` + `ts-morph` devDependencies,
  * SUPABASE_AUDIT_SERVICE_ROLE_KEY in .env, and one `npm run arch:refresh:full`
- * to populate. See architectural-memory plan §8 Adoption.
+ * to populate. See the architectural-memory plan §8 Adoption.
  */
-const ARCH_MEMORY_SCRIPTS = [
-  'scripts/lib/symbol-index.mjs',
-  'scripts/lib/symbol-index-contracts.mjs',
-  'scripts/lib/repo-identity.mjs',
-  'scripts/lib/sensitive-egress-gate.mjs',
-  'scripts/lib/neighbourhood-query.mjs',
-  'scripts/lib/arch-render.mjs',
+const ARCH_ENTRY = [
   'scripts/symbol-index/extract.mjs',
   'scripts/symbol-index/summarise.mjs',
   'scripts/symbol-index/embed.mjs',
@@ -209,62 +124,24 @@ const ARCH_MEMORY_SCRIPTS = [
   'scripts/symbol-index/prune.mjs',
   'scripts/symbol-index/spike-extract.mjs',
   'scripts/symbol-index/summarise-domains.mjs',
-  // Domain tagger — path-based mapping into .audit-loop/domain-map.json,
-  // wired into refresh.mjs to populate domainTag instead of leaving null.
-  'scripts/lib/symbol-index/domain-tagger.mjs',
-  // Audit prompt-builder — SSoT for the cache-stable 3-message structure
-  // used by all audit-pass calls in openai-audit.mjs.  Required by the
-  // call-site migration; without this file, audit calls throw on import.
-  'scripts/lib/audit/prompt-builder.mjs',
-  // Architecture-intent framework (PR-A 2026-05-11).  Whole subtree synced
-  // explicitly here; add new files under scripts/lib/arch-intent/ to this
-  // list as they're created.  See domain.architecture-intent in the plan.
-  'scripts/lib/arch-intent/errors.mjs',
-  'scripts/lib/arch-intent/domain-resolver.mjs',
-  'scripts/lib/arch-intent/semantic-validator.mjs',
-  'scripts/lib/arch-intent/load-config.mjs',
-  'scripts/lib/arch-intent/intent-doc-parser.mjs',
-  'scripts/lib/arch-intent/adapter-contract.mjs',
-  'scripts/lib/arch-intent/adapters/js-ts.mjs',
-  'scripts/lib/arch-intent/adapters/python.mjs',
-  'scripts/lib/arch-intent/adapters/java.mjs',
-  'scripts/lib/arch-intent/adapters/postgres.mjs',
   'scripts/arch-intent-bootstrap.mjs',
-  // Dead-code phase 1 (2026-05-12, commit 6c6be92) — orphan-introduced pass.
-  // openai-audit.mjs imports all 5 of these at module-init; if any is
-  // missing the consumer-side audit-loop crashes with ERR_MODULE_NOT_FOUND
-  // (hit wine-cellar-app PR 39 + 55 + 56 because sync allowlist forgot them).
-  'scripts/lib/audit/orphan-introduced.mjs',
-  'scripts/lib/audit/diff-scope-resolver.mjs',
-  'scripts/lib/audit/findings-pipeline.mjs',
-  'scripts/lib/audit/orphan-metrics.mjs',
-  'scripts/lib/audit/glob-match.mjs',
-  // findings-pipeline.mjs imports parseAcceptV1Markers from this file.
-  // Pre-existing in claude-engineering-skills (learning system phase 1) but
-  // never added to the sync allowlist — exposed by phase-1 dead-code import.
-  'scripts/lib/audit/deferral-classifier.mjs',
-  // Adaptive-learning runtime — required by openai-audit.mjs (decision-logger
-  // is a top-level import at line 63), cross-skill.mjs (lazy-loads
-  // quickfix-stats), and the audit pipeline's quickfix telemetry path.
-  // Missing these files caused ERR_MODULE_NOT_FOUND on consumer-repo audit
-  // runs after the prompt-cache deploy exposed the pre-existing sync gap.
-  'scripts/lib/learning/decision-logger.mjs',
-  'scripts/lib/learning/quickfix-stats.mjs',
-  'scripts/lib/learning/beta-posterior.mjs',
-  'scripts/lib/learning/cold-start.mjs',
-  'scripts/lib/learning/replay.mjs',
-  // Security memory v1 — incident-log-driven proactive memory.
-  // Markdown SoT in consumer's docs/security-strategy.md (consumer-owned,
-  // committed by user). These scripts are the synced runtime.
   'scripts/security-memory/parse-strategy.mjs',
   'scripts/security-memory/incident-status.mjs',
   'scripts/security-memory/refresh-incidents.mjs',
+  // arch-intent language adapters are loaded via `import(`./adapters/${k}.mjs`)`
+  // in adapter-contract.mjs — a computed specifier the import-graph walker
+  // cannot follow, so each adapter seeds the closure as its own entry point
+  // (its transitive deps are then walked normally).
+  'scripts/lib/arch-intent/adapters/js-ts.mjs',
+  'scripts/lib/arch-intent/adapters/java.mjs',
+  'scripts/lib/arch-intent/adapters/python.mjs',
+  'scripts/lib/arch-intent/adapters/postgres.mjs',
 ];
 
 /**
- * Debt-tracking scripts (full suite only).
+ * Debt-tracking entry points (full suite only).
  */
-const DEBT_SCRIPTS = [
+const DEBT_ENTRY = [
   'scripts/setup-permissions.mjs',
   'scripts/write-plan-outcomes.mjs',
   'scripts/write-ledger-r1.mjs',
@@ -274,13 +151,69 @@ const DEBT_SCRIPTS = [
   'scripts/debt-pr-comment.mjs',
   'scripts/debt-resolve.mjs',
   'scripts/debt-review.mjs',
-  'scripts/lib/debt-capture.mjs',
-  'scripts/lib/debt-events.mjs',
-  'scripts/lib/debt-git-history.mjs',
-  'scripts/lib/debt-ledger.mjs',
-  'scripts/lib/debt-memory.mjs',
-  'scripts/lib/debt-review-helpers.mjs',
 ];
+
+// ── Import-graph resolution ────────────────────────────────────────────────
+
+/**
+ * Build the repo-relative path universe under scripts/ and .claude/ — the
+ * file set `resolveSpecifier` probes for extension/index resolution.
+ * @param {string} root
+ * @returns {Set<string>}
+ */
+function buildFileUniverse(root) {
+  const out = new Set();
+  const SKIP = new Set(['node_modules', '.git', '.audit', '.audit-loop']);
+  const walk = (dir, base) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP.has(entry.name)) continue;
+      const abs = path.join(dir, entry.name);
+      const rel = base ? `${base}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(abs, rel);
+      else out.add(rel);
+    }
+  };
+  for (const top of ['scripts', '.claude']) {
+    const dir = path.join(root, top);
+    if (fs.existsSync(dir)) walk(dir, top);
+  }
+  return out;
+}
+
+const FILE_UNIVERSE = buildFileUniverse(SOURCE_ROOT);
+const readSource = (rel) => {
+  try { return fs.readFileSync(path.join(SOURCE_ROOT, rel), 'utf-8'); }
+  catch { return null; }
+};
+
+/**
+ * Resolve a bundle to its full file list: the transitive import closure of
+ * its entry points, plus its non-importable assets.
+ * @param {string[]} entryPoints
+ * @param {string[]} [assets]
+ * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>}}
+ */
+function resolveBundle(entryPoints, assets = []) {
+  const { files, unresolved } = collectImportClosure({
+    entryPoints, repoFiles: FILE_UNIVERSE, readFile: readSource,
+  });
+  return { files: [...new Set([...files, ...assets])], unresolved };
+}
+
+/**
+ * `unresolved` entries worth surfacing — a path-like specifier that didn't
+ * resolve to a repo file is a genuinely missing dependency. Specifiers
+ * carrying `${`, backticks or whitespace are template-literal parser noise
+ * (a regex catching a string fragment of source) and are filtered out.
+ * @param {Array<{from:string,specifier:string}>} unresolved
+ * @returns {Array<{from:string,specifier:string}>}
+ */
+function realMissingDeps(unresolved) {
+  return (unresolved || []).filter(u =>
+    !/[\s`${}]/.test(u.specifier)
+    && (u.specifier.startsWith('./') || u.specifier.startsWith('../'))
+  );
+}
 
 /**
  * Skill files synced to Claude Code (.claude/skills/). Phase B.2: replaced
@@ -350,21 +283,36 @@ const COPILOT_PROMPT_FILES = buildCopilotPromptFiles();
 
 // ── Repo configuration ─────────────────────────────────────────────────────
 
-// Per-repo file sets — kept here because they're sync-specific (the file
-// lists differ per repo).  The repo identity (name/alias/path) lives in
-// scripts/lib/consumer-repos.mjs as the single source of truth.
-const REPO_FILE_SETS = {
-  'wine-cellar-app': [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...DEBT_SCRIPTS, ...ARCH_MEMORY_SCRIPTS, ...SKILL_FILES, ...COPILOT_PROMPT_FILES, ...EDITOR_FILES, ...CLAUDE_CODE_FILES],
-  // Full suite — ai-organiser was bootstrapped minimally (only openai-audit.mjs)
-  // Sync full core + learning + architectural-memory so audits + plan
-  // skills work end-to-end (lib/ deps were missing in initial bootstrap).
-  'ai-organiser':    [...CORE_SCRIPTS, ...LEARNING_SCRIPTS, ...ARCH_MEMORY_SCRIPTS, ...SKILL_FILES, ...COPILOT_PROMPT_FILES, ...EDITOR_FILES, ...CLAUDE_CODE_FILES],
-};
+// Non-code surfaces — skills, Copilot prompt shims, editor + Claude Code
+// config. Not importable, so appended after the import-graph closure.
+const NON_CODE_FILES = [
+  ...SKILL_FILES, ...COPILOT_PROMPT_FILES, ...EDITOR_FILES, ...CLAUDE_CODE_FILES,
+];
 
-export const REPOS = CONSUMER_REPOS.map(r => ({
-  ...r,
-  files: REPO_FILE_SETS[r.name] || [],
-}));
+/**
+ * Compute the synced file list for one consumer repo: the import-graph
+ * closure of its entry-point bundles + core assets + non-code surfaces.
+ * wine-cellar-app gets the debt suite; ai-organiser does not.
+ *
+ * Repo identity (name/alias/path) lives in lib/consumer-repos.mjs as the
+ * single source of truth — only the file-set composition is sync-specific.
+ *
+ * @param {string} repoName
+ * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>}}
+ */
+function bundleForRepo(repoName) {
+  const entries = [
+    ...CORE_ENTRY, ...LEARNING_ENTRY, ...ARCH_ENTRY,
+    ...(repoName === 'wine-cellar-app' ? DEBT_ENTRY : []),
+  ];
+  const { files, unresolved } = resolveBundle(entries, CORE_ASSETS);
+  return { files: [...files, ...NON_CODE_FILES], unresolved };
+}
+
+export const REPOS = CONSUMER_REPOS.map(r => {
+  const { files, unresolved } = bundleForRepo(r.name);
+  return { ...r, files, unresolved };
+});
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -437,12 +385,14 @@ console.log('');
 
 // Regenerate the sync manifest BEFORE copying — its hash content needs to
 // reflect what we're about to ship to consumers.  The manifest is itself
-// in CORE_SCRIPTS so it gets included in the file copy below.
+// in CORE_ASSETS so it gets included in the file copy below.
 if (!DRY_RUN) {
-  // Hash the canonical CORE_SCRIPTS set — these are the files consumers
-  // need to keep in lockstep.  Other file sets (LEARNING/DEBT/etc.) are
-  // optional per-repo additions and not part of the version contract.
-  const manifestFiles = [...CORE_SCRIPTS, ...ARCH_MEMORY_SCRIPTS];
+  // Version-contract files = the core + arch import closure. These are the
+  // files consumers must keep in lockstep. Other bundles (learning/debt)
+  // are optional per-repo additions and not part of the version contract.
+  const { files: manifestFiles } = resolveBundle(
+    [...CORE_ENTRY, ...ARCH_ENTRY], CORE_ASSETS,
+  );
   const { manifest } = writeManifest(SOURCE_ROOT, manifestFiles, {
     repo: 'Lbstrydom/claude-engineering-skills',
   });
@@ -529,6 +479,18 @@ for (const repo of targetRepos) {
   if (repoUnchanged > 0) parts.push(`${D}${repoUnchanged} unchanged${X}`);
   if (repoErrors > 0) parts.push(`${R}${repoErrors} errors${X}`);
   console.log(`  ${parts.join('  ')}`);
+
+  // Surface genuinely-unresolved imports — a path-like specifier the graph
+  // walker could not resolve is a real missing dependency that would crash
+  // the consumer repo at runtime. Non-fatal (it may be a deliberate
+  // optional-dep guard), but loud so it doesn't go unnoticed.
+  const missing = realMissingDeps(repo.unresolved);
+  if (missing.length) {
+    console.log(`  ${Y}⚠ ${missing.length} unresolved import(s)${X} ${D}— possible missing dependency:${X}`);
+    for (const m of missing.slice(0, 8)) {
+      console.log(`    ${D}${m.from} → ${m.specifier}${X}`);
+    }
+  }
 
   // Post-sync: ensure audit-loop npm deps are installed. Idempotent — no-op
   // when the target already has everything. Without this step, sync can keep

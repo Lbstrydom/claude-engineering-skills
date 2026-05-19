@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveSpecifier, parseImports, publicExports } from '../scripts/lib/module-graph.mjs';
+import { resolveSpecifier, parseImports, publicExports, collectImportClosure } from '../scripts/lib/module-graph.mjs';
 
 const REPO = new Set([
   'scripts/foo.mjs',
@@ -113,5 +113,88 @@ describe('publicExports', () => {
     assert.ok(ex.includes('F'), 'export { e as F } → F');
     assert.ok(!ex.includes('e'), 'the local name is not the export name');
     assert.ok(ex.includes('default'));
+  });
+});
+
+describe('parseImports — dynamic opt-in', () => {
+  const SRC = [
+    "import a from './a.mjs';",
+    "const m = await import('./dyn.mjs');",
+    "const n = import(\"./dyn2.mjs\");",
+    "const c = await import(`./computed-${k}.mjs`);", // computed — never captured
+  ].join('\n');
+
+  it('skips dynamic import() by default', () => {
+    const specs = parseImports(SRC);
+    assert.ok(specs.includes('./a.mjs'));
+    assert.ok(!specs.includes('./dyn.mjs'), 'dynamic skipped without opt-in');
+  });
+  it('captures string-literal dynamic imports with { dynamic: true }', () => {
+    const specs = parseImports(SRC, { dynamic: true });
+    assert.ok(specs.includes('./a.mjs'));
+    assert.ok(specs.includes('./dyn.mjs'), 'await import(\'x\')');
+    assert.ok(specs.includes('./dyn2.mjs'), 'import("x")');
+  });
+  it('never captures computed dynamic specifiers', () => {
+    const specs = parseImports(SRC, { dynamic: true });
+    assert.ok(!specs.some(s => s.includes('computed')), 'template-literal specifier skipped');
+  });
+});
+
+describe('collectImportClosure', () => {
+  // Virtual repo: entry → static dep → string-literal dynamic dep;
+  // a computed import and a bare dep that must NOT be followed; a cycle.
+  const FILES = {
+    'scripts/entry.mjs': [
+      "import { x } from './lib/a.mjs';",
+      "import 'node:fs';",                       // bare → external, ignored
+      "const lazy = await import('./lib/b.mjs');", // string-literal dynamic → followed
+      "const c = await import(`./lib/${n}.mjs`);", // computed → NOT followed
+    ].join('\n'),
+    'scripts/lib/a.mjs': "import './c.mjs';\nimport { z } from './missing.mjs';",
+    'scripts/lib/b.mjs': "import '../entry.mjs';", // cycle back to entry
+    'scripts/lib/c.mjs': "export const c = 1;",
+  };
+  const repoFiles = new Set(Object.keys(FILES));
+  const readFile = (rel) => (rel in FILES ? FILES[rel] : null);
+
+  it('returns the transitive closure including entry points', () => {
+    const { files } = collectImportClosure({
+      entryPoints: ['scripts/entry.mjs'], repoFiles, readFile,
+    });
+    assert.deepEqual(files, [
+      'scripts/entry.mjs',
+      'scripts/lib/a.mjs',
+      'scripts/lib/b.mjs',
+      'scripts/lib/c.mjs',
+    ]);
+  });
+  it('follows string-literal dynamic imports but not computed ones', () => {
+    const { files } = collectImportClosure({
+      entryPoints: ['scripts/entry.mjs'], repoFiles, readFile,
+    });
+    assert.ok(files.includes('scripts/lib/b.mjs'), 'string-literal dynamic followed');
+  });
+  it('records path-like specifiers that do not resolve', () => {
+    const { unresolved } = collectImportClosure({
+      entryPoints: ['scripts/entry.mjs'], repoFiles, readFile,
+    });
+    assert.ok(
+      unresolved.some(u => u.from === 'scripts/lib/a.mjs' && u.specifier === './missing.mjs'),
+      'unresolved missing dep surfaced',
+    );
+  });
+  it('is cycle-safe and terminates', () => {
+    const { files } = collectImportClosure({
+      entryPoints: ['scripts/entry.mjs'], repoFiles, readFile,
+    });
+    assert.equal(files.length, 4, 'entry↔b cycle visited once');
+  });
+  it('tolerates unreadable entry points', () => {
+    const { files } = collectImportClosure({
+      entryPoints: ['scripts/entry.mjs', 'scripts/gone.mjs'], repoFiles, readFile,
+    });
+    assert.ok(files.includes('scripts/gone.mjs'), 'missing entry still listed');
+    assert.ok(files.includes('scripts/lib/c.mjs'), 'reachable deps still walked');
   });
 });

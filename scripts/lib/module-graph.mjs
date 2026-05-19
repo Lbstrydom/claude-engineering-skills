@@ -110,13 +110,20 @@ function stripComments(src) {
  * binding list between `import` and `from` may span lines).
  *
  * Best-effort by design — this feeds the *advisory* T1 adjacency context
- * block, not a deterministic gate. Dynamic `import()` is intentionally
- * skipped (the specifier may be computed).
+ * block, not a deterministic gate. Dynamic `import()` is skipped by
+ * default (the specifier may be computed); pass `{ dynamic: true }` to
+ * also capture string-literal dynamic imports (`import('./x.mjs')`) —
+ * the sync dependency walker needs these because the project lazy-loads
+ * many modules. Computed dynamic specifiers (template literals,
+ * identifiers) are never captured — they cannot be resolved statically.
  *
  * @param {string} content - ESM source
+ * @param {object} [opts]
+ * @param {boolean} [opts.dynamic=false] - also capture string-literal
+ *   `import('x')` specifiers
  * @returns {string[]} unique specifiers, in first-seen order
  */
-export function parseImports(content) {
+export function parseImports(content, { dynamic = false } = {}) {
   const src = stripComments(content);
   const found = [];
   const add = (s) => { if (s && !found.includes(s)) found.push(s); };
@@ -124,7 +131,64 @@ export function parseImports(content) {
   for (const m of src.matchAll(/\bfrom\s*['"]([^'"\n]+)['"]/g)) add(m[1]);
   // side-effect `import 'x'`
   for (const m of src.matchAll(/(?:^|[;\n])\s*import\s+['"]([^'"\n]+)['"]/g)) add(m[1]);
+  // string-literal dynamic import — `import('x')` / `await import("x")`.
+  if (dynamic) {
+    for (const m of src.matchAll(/\bimport\s*\(\s*['"]([^'"\n]+)['"]\s*\)/g)) add(m[1]);
+  }
   return found;
+}
+
+/**
+ * Walk the ESM import graph from a set of entry points and return the
+ * transitive closure of repo files reachable from them.
+ *
+ * Both static imports and string-literal dynamic imports are followed —
+ * the latter because the project lazy-loads modules via
+ * `await import('./x.mjs')`. Computed dynamic specifiers
+ * (`import(`./adapters/${k}.mjs`)`) cannot be resolved statically and are
+ * NOT followed; targets reachable only that way must be supplied to the
+ * caller's allowlist explicitly.
+ *
+ * Pure — no filesystem access. The caller injects `readFile` (keeps this
+ * unit-testable) and `repoFiles` (the resolvable file universe, used by
+ * `resolveSpecifier` for extension/index probing).
+ *
+ * @param {object} args
+ * @param {string[]} args.entryPoints - repo-relative paths to start from
+ * @param {Set<string>|string[]} args.repoFiles - repo-relative file universe
+ * @param {(relPath: string) => string|null} args.readFile - file contents,
+ *   or null when unreadable/absent
+ * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>}}
+ *   `files` = sorted closure (entry points + every reachable repo file);
+ *   `unresolved` = path-like specifiers that did not resolve to a repo file
+ *   (a genuinely missing dependency, or a typo — surfaced for diagnostics).
+ */
+export function collectImportClosure({ entryPoints, repoFiles, readFile }) {
+  const fileSet = repoFiles instanceof Set ? repoFiles : new Set(repoFiles || []);
+  const norm = (p) => path.posix.normalize(String(p || '').replace(/\\/g, '/'));
+  const visited = new Set();
+  const unresolved = [];
+  const queue = (entryPoints || []).map(norm);
+
+  while (queue.length) {
+    const file = queue.shift();
+    if (visited.has(file)) continue;
+    visited.add(file);
+
+    const content = readFile(file);
+    if (content == null) continue; // unreadable — caller's sync loop reports the miss
+
+    for (const spec of parseImports(content, { dynamic: true })) {
+      const { resolved, kind } = resolveSpecifier({ fromFile: file, specifier: spec, repoFiles: fileSet });
+      if (kind === 'external') continue;
+      if (kind === 'repo' && resolved) {
+        if (!visited.has(resolved)) queue.push(resolved);
+      } else {
+        unresolved.push({ from: file, specifier: spec });
+      }
+    }
+  }
+  return { files: [...visited].sort(), unresolved };
 }
 
 /**
