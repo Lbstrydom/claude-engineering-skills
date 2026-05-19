@@ -205,8 +205,19 @@ function sectionAuditRuns(data) {
   if (a.local.total) {
     out += `<p class="section-note">Local outcomes: ${escapeHtml(a.local.total)} total, ${escapeHtml(a.local.labeled)} labeled.</p>`;
   }
+  // Accepted/Dismissed come from triage labelling. When nothing is labelled
+  // those columns are legitimately all-zero — say so rather than letting
+  // bare zeros read as a bug.
+  if (a.cloud && a.labeledCount === 0) {
+    out += `<p class="section-note"><span class="status-dot status-warn"></span>`
+      + `Accepted / Dismissed are 0 because no run has been triage-labelled — `
+      + `the audit pipeline records findings raised, not their adjudication outcome.</p>`;
+  }
   return out;
 }
+
+// Most-actionable status first, within each requirement kind.
+const REQ_STATUS_ORDER = { active: 0, 'needs-review': 1, 'inferred-only': 2 };
 
 function sectionRequirements(data) {
   const src = data.sources.requirements || { status: 'ok', detail: '' };
@@ -214,15 +225,31 @@ function sectionRequirements(data) {
   const r = data.requirements;
   if (!r.present) return emptyPanel(null, 'No requirements ledger — run `node scripts/requirements.mjs`.');
   if (r.total === 0) return emptyPanel(null, 'Requirements ledger is empty.');
-  const rows = r.items.map((i) => `<tr>
-    <td><code>${escapeHtml(i.id)}</code></td><td>${escapeHtml(i.kind)}</td>
-    <td>${escapeHtml(i.statement)}</td><td>${escapeHtml(i.status)}</td></tr>`).join('');
+
+  // Group invariants by `kind` (behavioural / security / safety / …); within
+  // a kind, sort most-actionable status first.
+  const byKind = new Map();
+  for (const i of r.items) {
+    if (!byKind.has(i.kind)) byKind.set(i.kind, []);
+    byKind.get(i.kind).push(i);
+  }
+  const rank = (s) => (s in REQ_STATUS_ORDER ? REQ_STATUS_ORDER[s] : 3);
   const note = r.truncated
-    ? `${escapeHtml(r.active)} active of ${escapeHtml(r.total)} invariants — showing the first ${escapeHtml(r.items.length)}.`
-    : `${escapeHtml(r.active)} active of ${escapeHtml(r.total)} invariants.`;
-  return `<p class="section-note">${note}</p>
-    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Kind</th><th>Statement</th><th>Status</th></tr></thead>
-    <tbody>${rows}</tbody></table></div>`;
+    ? `${escapeHtml(r.active)} active of ${escapeHtml(r.total)} invariants — first ${escapeHtml(r.items.length)} shown, grouped by kind.`
+    : `${escapeHtml(r.active)} active of ${escapeHtml(r.total)} invariants, grouped by kind.`;
+  let out = `<p class="section-note">${note}</p>`;
+  for (const kind of [...byKind.keys()].sort()) {
+    const items = byKind.get(kind)
+      .sort((a, b) => rank(a.status) - rank(b.status) || a.id.localeCompare(b.id));
+    const rows = items.map((i) => `<tr>
+      <td><code>${escapeHtml(i.id)}</code></td>
+      <td>${escapeHtml(i.statement)}</td>
+      <td>${escapeHtml(i.status)}</td></tr>`).join('');
+    out += `<h3>${escapeHtml(kind)} <span class="kind-count">(${items.length})</span></h3>
+      <div class="table-wrap"><table><thead><tr><th>ID</th><th>Statement</th><th>Status</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }
+  return out;
 }
 
 function sectionLearning(data) {

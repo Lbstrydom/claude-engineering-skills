@@ -113,11 +113,23 @@ function collectRequirements(root) {
   }
 }
 
-/** Collect the learning section via the shared accessor. */
-async function collectLearning() {
+/** This repo's name — the learning store keys repos by it. */
+function repoName(root) {
+  if (process.env.LEARNING_REPO_NAME) return process.env.LEARNING_REPO_NAME;
   try {
-    // getLearningStats is pure — the caller owns the env fallback.
-    const r = await getLearningStats({ repoName: process.env.LEARNING_REPO_NAME || null });
+    return JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf-8')).name || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Collect the learning section via the shared accessor. */
+async function collectLearning(root) {
+  try {
+    // getLearningStats is pure — the caller owns identity resolution.
+    // Falls back from LEARNING_REPO_NAME to the package.json name (the key
+    // the learning store actually uses) so the tab works with zero config.
+    const r = await getLearningStats({ repoName: repoName(root) });
     const s = r.stats || { pendingTriageCount: 0, noBrainerCount: 0, staleClusterCount: 0 };
     return {
       data: { cloud: r.cloud, ...s },
@@ -141,7 +153,7 @@ export async function collectTelemetry(opts = {}) {
   const git = opts.git || { baseSha: 'unknown' };
   const sb = makeClient();
 
-  const [auditRuns, learning] = await Promise.all([collectAuditRuns(sb), collectLearning()]);
+  const [auditRuns, learning] = await Promise.all([collectAuditRuns(sb), collectLearning(root)]);
   const requirements = collectRequirements(root);
 
   return {
