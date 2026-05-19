@@ -78,6 +78,10 @@ node_modules/
 .requirements/gaps.json
 .requirements/.lock
 
+# Playwright MCP session artifacts — screenshots / DOM snapshots / console
+# logs written by /persona-test runs. Transient, per-machine, never committed.
+.playwright-mcp/
+
 # Local dashboard — the telemetry page is per-user / per-machine (audit
 # findings, learning counts) and must never be committed. The reference
 # page (dashboard/index.html) IS committed — asymmetric commit policy,
