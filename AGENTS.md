@@ -686,7 +686,7 @@ covers the other's domain; together they cover both axes. See
 
 ## Requirements Layer — de-facto invariant ledger
 
-Plan: `docs/plans/requirements-layer.md`. A materialized view of the
+Plan: `docs/completed/requirements-layer.md`. A materialized view of the
 codebase's de-facto requirements — the behavioural / safety / security /
 correctness / persistence invariants the code already enforces.
 

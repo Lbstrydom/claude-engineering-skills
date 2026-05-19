@@ -1,6 +1,6 @@
 # Audit Summary — Requirements Layer
 
-- **Plan**: [`docs/plans/requirements-layer.md`](requirements-layer.md)
+- **Plan**: [`docs/completed/requirements-layer.md`](requirements-layer.md)
 - **Date**: 2026-05-17
 - **Audit**: `/audit-code` — GPT-5.x ×4 rounds + Gemini 3.1 Pro ×2 final-review rounds
 

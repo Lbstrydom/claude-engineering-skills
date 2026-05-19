@@ -1,7 +1,7 @@
 # Plan: Architecture-Intent Framework + JS Adapter (PR-A of 3)
 
 - **Date**: 2026-05-11
-- **Status**: Complete — all 3 PRs shipped (PR-A framework + JS/TS adapter, commit `6c6be92`; PR-B Python + Java adapters, commit `18ecc5e`; PR-C Postgres adapter, commit `5f7c30d`). PR-B and PR-C each ran their own `/plan` + `/audit-plan` + `/audit-code` cycle — see `docs/plans/arch-intent-pr-{b,c}-*.md` and the audit summaries in `docs/completed/`.
+- **Status**: Complete — all 3 PRs shipped (PR-A framework + JS/TS adapter, commit `6c6be92`; PR-B Python + Java adapters, commit `18ecc5e`; PR-C Postgres adapter, commit `5f7c30d`). PR-B and PR-C each ran their own `/plan` + `/audit-plan` + `/audit-code` cycle — see `docs/completed/arch-intent-pr-{b,c}-*.md` and the audit summaries in `docs/completed/`.
 - **Author**: Claude + Louis (origin: /brainstorm on 2026-05-11 — both GPT and Gemini converged on C4 + intent-doc + LLM-bouncer)
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`, `install`, `docs`

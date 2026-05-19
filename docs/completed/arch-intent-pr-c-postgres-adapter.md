@@ -5,7 +5,7 @@
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib` (the `arch-intent/` module tree), `audit-orchestration` (stack detection)
-- **Parent plan**: [architecture-intent-framework.md](../completed/architecture-intent-framework.md) — PR-C of the 3-PR series (§10, §11). Follows PR-A (framework + JS/TS) and PR-B (Python + Java, shipped commit `18ecc5e`).
+- **Parent plan**: [architecture-intent-framework.md](architecture-intent-framework.md) — PR-C of the 3-PR series (§10, §11). Follows PR-A (framework + JS/TS) and PR-B (Python + Java, shipped commit `18ecc5e`).
 
 > **Neighbourhood considered** — explored directly. The PR-B adapters
 > [adapters/python.mjs](../../scripts/lib/arch-intent/adapters/python.mjs)

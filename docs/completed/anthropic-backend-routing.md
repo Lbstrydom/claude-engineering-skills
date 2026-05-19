@@ -1,7 +1,7 @@
 # Plan: Anthropic Backend Routing (Agent SDK credit prep)
 
 - **Date**: 2026-05-14
-- **Status**: Implemented — submitted for /audit-code
+- **Status**: Complete — implemented + audited (R1→R3 + Gemini)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib`, `docs`
