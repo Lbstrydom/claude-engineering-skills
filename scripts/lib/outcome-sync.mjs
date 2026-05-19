@@ -50,13 +50,33 @@ function enrichFindings(findings, ledger) {
 function computePassCounts(enriched) {
   const passCounts = {};
   for (const f of enriched) {
-    const pass = f._pass || 'unknown';
+    // Normalise case — `audit_pass_stats.pass_name` is lowercase, but a
+    // finding's `_pass` can be capitalised (e.g. "Sustainability").
+    const pass = (f._pass || 'unknown').toLowerCase();
     if (!passCounts[pass]) passCounts[pass] = { accepted: 0, dismissed: 0, compromised: 0 };
     if (f.adjudicationOutcome === 'accepted') passCounts[pass].accepted++;
     else if (f.adjudicationOutcome === 'dismissed') passCounts[pass].dismissed++;
     else if (f.adjudicationOutcome === 'severity_adjusted') passCounts[pass].compromised++;
   }
   return passCounts;
+}
+
+/** Rulings the `finding_adjudication_events.ruling` CHECK constraint allows. */
+const VALID_RULINGS = new Set(['sustain', 'overrule', 'compromise']);
+
+/**
+ * A DB-CHECK-valid `ruling` for a finding. Uses the ledger's ruling when it
+ * is one of the three allowed values; otherwise derives it from the
+ * adjudication outcome (the ledger schema also permits `defer`, and entries
+ * may carry no ruling at all — both must NOT reach the DB verbatim).
+ * @param {object} f — enriched finding
+ * @returns {'sustain'|'overrule'|'compromise'}
+ */
+function dbRuling(f) {
+  if (VALID_RULINGS.has(f._ruling)) return f._ruling;
+  if (f.adjudicationOutcome === 'accepted') return 'sustain';
+  if (f.adjudicationOutcome === 'severity_adjusted') return 'compromise';
+  return 'overrule'; // dismissed / anything else
 }
 
 /**
@@ -72,10 +92,13 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
   if (typeof store.recordAdjudicationEvent === 'function') {
     for (const f of enriched) {
       if (f.adjudicationOutcome === 'pending') continue;
-      await store.recordAdjudicationEvent(runId, f.id || semanticId(f), {
+      // 2nd arg MUST be the finding fingerprint (`_hash`) — that is what
+      // recordFindings stores in `audit_findings.finding_fingerprint`.
+      // `f.id` is a per-run short id ("H1") and never resolves.
+      await store.recordAdjudicationEvent(runId, f._hash || semanticId(f), {
         adjudicationOutcome: f.adjudicationOutcome,
         remediationState: f.remediationState,
-        ruling: f._ruling || 'unknown',
+        ruling: dbRuling(f),
         round,
       });
     }
@@ -85,13 +108,15 @@ async function writeCloudOutcomes(store, runId, enriched, passCounts, round) {
     await store.updatePassStatsPostDeliberation(runId, passCounts);
   }
 
-  if (typeof store.recordRunComplete === 'function') {
+  // Stamp the run via a NON-destructive partial update — recordRunComplete
+  // rewrites the whole row and would null rounds/total_findings/cost.
+  if (typeof store.updateRunMeta === 'function') {
     const accepted = enriched.filter(f => f.adjudicationOutcome === 'accepted').length;
     const dismissed = enriched.filter(f => f.adjudicationOutcome === 'dismissed').length;
-    await store.recordRunComplete(runId, {
-      accepted_count: accepted,
-      dismissed_count: dismissed,
+    await store.updateRunMeta(runId, {
       labeled: true,
+      acceptedCount: accepted,
+      dismissedCount: dismissed,
     });
   }
 

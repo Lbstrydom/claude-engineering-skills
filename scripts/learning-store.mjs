@@ -181,18 +181,28 @@ export async function recordRunComplete(runId, stats) {
 }
 
 /**
- * Update a subset of run metadata — used by the orchestrator after R2 decisions.
+ * Update a subset of run metadata — a NON-destructive partial update (only
+ * the fields supplied are written). Used after R2 decisions and, post-
+ * deliberation, to stamp `labeled` + accept/dismiss counts (outcome-sync).
+ * Uses the service-role write client so it survives RLS on `audit_runs`.
  * @param {string} runId
- * @param {object} meta — any subset of audit_runs columns
+ * @param {object} meta — any subset of: r2SkipReason, geminiVerdict,
+ *   labeled, acceptedCount, dismissedCount
  */
 export async function updateRunMeta(runId, meta) {
-  if (!_supabase || !runId) return;
+  if (!runId) return;
   const update = {};
   if (meta.r2SkipReason != null) update.r2_skip_reason = meta.r2SkipReason;
   if (meta.geminiVerdict != null) update.gemini_verdict = meta.geminiVerdict;
+  if (meta.labeled != null) update.labeled = meta.labeled;
+  if (meta.acceptedCount != null) update.accepted_count = meta.acceptedCount;
+  if (meta.dismissedCount != null) update.dismissed_count = meta.dismissedCount;
   if (Object.keys(update).length === 0) return;
-  const { error } = await _supabase.from('audit_runs').update(update).eq('id', runId);
-  if (error) process.stderr.write(`  [learning] updateRunMeta failed: ${error.message}\n`);
+  const res = await _safeWriteCall(async (client) => {
+    const { error } = await client.from('audit_runs').update(update).eq('id', runId);
+    return { ok: !error, error: error?.message };
+  });
+  if (!res.ok) process.stderr.write(`  [learning] updateRunMeta failed: ${res.error}\n`);
 }
 
 // ── Finding & Adjudication Recording ────────────────────────────────────────
@@ -566,7 +576,9 @@ export async function readDebtEventsCloud(repoId) {
 export async function recordAdjudicationEvent(runId, findingFingerprint, event) {
   if (!_supabase || !runId) return;
 
-  // Look up the finding ID using run_id + fingerprint + pass_name for unique resolution
+  // Resolve the audit_findings row. `findingFingerprint` MUST be the
+  // finding's `_hash` — that is the value recordFindings() stores in
+  // `finding_fingerprint` (NOT the per-run short id like "H1").
   let query = _supabase
     .from('audit_findings')
     .select('id')
@@ -577,22 +589,33 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
   if (event.passName) query = query.eq('pass_name', event.passName);
   if (event.round) query = query.eq('round_raised', event.round);
 
-  const { data: finding } = await query.limit(1).single();
+  const { data: finding } = await query.limit(1).maybeSingle();
 
   if (!finding?.id) return;
 
-  const { error } = await _supabase
-    .from('finding_adjudication_events')
-    .insert({
-      finding_id: finding.id,
-      adjudication_outcome: event.adjudicationOutcome,
-      remediation_state: event.remediationState,
-      ruling: event.ruling,
-      ruling_rationale: event.rulingRationale,
-      round: event.round
-    });
+  // Writes go through the service-role client — `finding_adjudication_events`
+  // is the adjudication source of truth and may be RLS service-role-only.
+  const res = await _safeWriteCall(async (client) => {
+    const { error: insErr } = await client
+      .from('finding_adjudication_events')
+      .insert({
+        finding_id: finding.id,
+        adjudication_outcome: event.adjudicationOutcome,
+        remediation_state: event.remediationState,
+        ruling: event.ruling,
+        ruling_rationale: event.rulingRationale,
+        round: event.round,
+      });
+    // Denormalised per-finding outcome on audit_findings (so a single-table
+    // read can see the verdict without joining the events table).
+    const { error: updErr } = await client
+      .from('audit_findings')
+      .update({ adjudication_outcome: event.adjudicationOutcome })
+      .eq('id', finding.id);
+    return { ok: !insErr && !updErr, error: insErr?.message || updErr?.message };
+  });
 
-  if (error) process.stderr.write(`  [learning] recordAdjudicationEvent failed: ${error.message}\n`);
+  if (!res.ok) process.stderr.write(`  [learning] recordAdjudicationEvent failed: ${res.error}\n`);
 }
 
 // ── Bandit Arms Sync ───────────────────────────────────────────────────────

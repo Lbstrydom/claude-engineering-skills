@@ -219,6 +219,29 @@ Full writer invocation example + status field semantics: `references/ledger-form
 
 ---
 
+## Step 3.5b — Record Triage Outcomes (closes the adaptive-learning loop)
+
+**MANDATORY after the ledger is written each round.** Persist the round's
+accepted/dismissed outcomes so the adaptive-learning loop has ground truth:
+
+```bash
+node scripts/write-code-outcomes.mjs \
+  --result /tmp/$SID-r<N>-result.json \
+  --ledger /tmp/$SID-ledger.json \
+  --round <N>
+```
+
+This bridges the adjudication ledger → `outcome-sync` → `finding_adjudication_events`
++ `audit_pass_stats` (accepted/dismissed) + `audit_findings` + `audit_runs.labeled`
+(cloud) and `.audit/outcomes.jsonl` (local bandit reward). Without it those
+columns stay 0 and the bandit / FP-learning / prompt evolution get **no
+training signal** — the audit works but never improves.
+
+Best-effort: a cloud failure logs and falls back to local-only; it never
+blocks the audit. Run it once per round, after Step 3.5.
+
+---
+
 ## Step 3.6 — Debt Capture
 
 Persist out-of-scope valid findings to `.audit/tech-debt.json` so future
@@ -237,10 +260,11 @@ and status card format: `references/debt-capture.md`.
 1. Send rebuttal (if rebut HIGH/MEDIUM findings from triage)
 2. Wait for rebuttal response
 3. Write adjudication ledger (Step 3.5)
-4. Capture deferrable debt (Step 3.6)
-5. Fix ALL findings together (Step 4)
-6. Run tests
-7. Verification audit (Step 5) — debt suppression runs automatically
+4. Record triage outcomes — `write-code-outcomes.mjs` (Step 3.5b)
+5. Capture deferrable debt (Step 3.6)
+6. Fix ALL findings together (Step 4)
+7. Run tests
+8. Verification audit (Step 5) — debt suppression runs automatically
 
 ---
 

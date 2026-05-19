@@ -74,7 +74,7 @@ import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from './lib/debt-memory.mjs';
 import { initLearningStore, isCloudEnabled, upsertRepo, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
-import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey } from './lib/learning/decision-logger.mjs';
+import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from './lib/learning/decision-logger.mjs';
 import { PromptBandit, computeReward, buildContext } from './bandit.mjs';
 import { openaiConfig, PASS_NAMES, modelPricing } from './lib/config.mjs';
 import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey } from './lib/model-resolver.mjs';
@@ -3135,6 +3135,14 @@ async function main() {
   // Initialize learning systems (graceful — never blocks audit)
   const startMs = Date.now();
   await initLearningStore().catch(e => process.stderr.write(`  [learning] ${e.message}\n`)); // Cloud store (optional)
+  // Replay any learning decisions that spilled to the local outbox on a
+  // prior run's cloud-write failure (e.g. service-role key briefly unset).
+  // Idempotent via decision_key UNIQUE — makes the loop self-healing.
+  await _learningReconcileOutbox({
+    store: { insertLearningDecision, backfillLearningOutcome, isCloudEnabled },
+  }).then((r) => {
+    if (r && r.succeeded > 0) process.stderr.write(`  [learning] outbox replayed: ${r.succeeded}/${r.processed}\n`);
+  }).catch(() => { /* best-effort */ });
   const bandit = new PromptBandit();
   const fpTracker = new FalsePositiveTracker();
 

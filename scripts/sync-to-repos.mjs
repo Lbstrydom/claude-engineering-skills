@@ -151,6 +151,9 @@ const CORE_SCRIPTS = [
   // dashboard/index.html itself is NOT synced — it is a per-repo artefact.
   'scripts/lib/cli-io.mjs',
   'scripts/audit-metrics.mjs',
+  // Closes the adaptive-learning data loop — /audit-code Step 3.5b runs this
+  // to bridge the adjudication ledger → outcome-sync → cloud + local stores.
+  'scripts/write-code-outcomes.mjs',
   'scripts/build-dashboard.mjs',
   'scripts/lib/dashboard/schema.mjs',
   'scripts/lib/dashboard/flows.json',
