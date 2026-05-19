@@ -596,6 +596,12 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
   // Writes go through the service-role client — `finding_adjudication_events`
   // is the adjudication source of truth and may be RLS service-role-only.
   const res = await _safeWriteCall(async (client) => {
+    // Idempotent re-record: a finding row (audit_findings) is unique per
+    // run+round, so it carries at most one adjudication verdict. Clear any
+    // prior event(s) before inserting so re-running outcome recording
+    // replaces rather than duplicates (duplicate events would double-count
+    // in the bandit reward).
+    await client.from('finding_adjudication_events').delete().eq('finding_id', finding.id);
     const { error: insErr } = await client
       .from('finding_adjudication_events')
       .insert({
