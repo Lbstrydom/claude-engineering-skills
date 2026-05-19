@@ -70,11 +70,8 @@ import {
   // Phase 1 — adaptive-learning-v1
   insertLearningDecision,
   backfillLearningOutcome,
-  readPendingTriageFindings,
-  readNoBrainerRecommendations,
-  readStaleClusters,
-  getRepoIdByName,
 } from './learning-store.mjs';
+import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit } from './lib/cli-io.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mjs';
 import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
@@ -886,31 +883,15 @@ async function cmdLearningRecord() {
  */
 async function cmdLearningStats() {
   const p = parsePayload();
-  const repoName = p.repoName || process.env.LEARNING_REPO_NAME || null;
-  await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, stats: null });
-
-  let repoId = p.repoId || null;
-  if (!repoId && repoName) repoId = await getRepoIdByName(repoName);
-  if (!repoId) return emit({ ok: true, cloud: true, repoId: null, stats: { unknownRepo: true } });
-
-  const [triage, noBrainer, stale] = await Promise.all([
-    readPendingTriageFindings({ repoId, limit: 1000 }),
-    readNoBrainerRecommendations({ repoId, limit: 1000 }),
-    readStaleClusters({ repoId, limit: 1000 }),
-  ]);
-
-  emit({
-    ok: true,
-    cloud: true,
-    repoId,
-    repoName: repoName || null,
-    stats: {
-      pendingTriageCount: triage.length,
-      noBrainerCount: noBrainer.length,
-      staleClusterCount: stale.length,
-    },
+  // Thin wrapper over the shared accessor — argv/env/stdout concerns only.
+  // The CLI (not the pure lib) owns the LEARNING_REPO_NAME env fallback.
+  const r = await getLearningStats({
+    repoId: p.repoId || null,
+    repoName: p.repoName || process.env.LEARNING_REPO_NAME || null,
   });
+  if (!r.cloud) return emit({ ok: true, cloud: false, stats: null });
+  if (!r.stats) return emit({ ok: true, cloud: true, repoId: null, stats: { unknownRepo: true } });
+  emit({ ok: true, cloud: true, repoId: r.repoId, repoName: r.repoName, stats: r.stats });
 }
 
 /**

@@ -121,7 +121,7 @@ the rest as an index. No flag needed — ledger absent → audit is
 unaffected. A stale ledger (in-scope files changed since extraction) or
 uncovered target files surface as a `[requirements]` stderr line; if you
 see `[stale]`, run `node scripts/requirements.mjs extract --files <…>`
-then `reconcile` to refresh it. See `docs/plans/requirements-layer.md`.
+then `reconcile` to refresh it. See `docs/completed/requirements-layer.md`.
 
 ### Handle results
 
@@ -311,6 +311,26 @@ are candidates for resolution. Full prompt + resolver invocation:
 Save convergence snapshot to `docs/plans/<name>-audit-summary.md`.
 
 Do not close the loop in Step 6 — completion requires Step 7.
+
+### Step 6.5 — Regenerate Telemetry Dashboard (advisory, source-repo only)
+
+**Source-repo-gated** — run ONLY when
+`package.json.name === "claude-engineering-skills"`. Skip silently in
+consumer repos (the dashboard is opt-in there — `docs/plans/local-dashboard.md`
+§7.3). Never blocks the audit.
+
+```bash
+node scripts/build-dashboard.mjs telemetry 2>&1 || true
+```
+
+This refreshes the gitignored `dashboard/telemetry.html` so the just-run
+audit's findings are visible in the local dashboard. Print the link:
+
+```
+Telemetry dashboard: file://<abs-path>/dashboard/telemetry.html
+```
+
+`telemetry.html` is gitignored — never staged, never committed.
 
 ---
 

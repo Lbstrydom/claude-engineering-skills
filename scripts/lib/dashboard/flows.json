@@ -1,0 +1,21 @@
+{
+  "_comment": "Committed flow manifest for the dashboard Process Flows tab. The skill-chain process-flow graph. Every node.skill MUST resolve against a real skills/*/SKILL.md name (collect-reference.mjs cross-validates). See docs/plans/local-dashboard.md §7.",
+  "nodes": [
+    { "id": "plan", "skill": "plan", "label": "Plan — architecture & UX" },
+    { "id": "audit-plan", "skill": "audit-plan", "label": "Audit Plan — iterative refinement" },
+    { "id": "audit-code", "skill": "audit-code", "label": "Audit Code — multi-pass review" },
+    { "id": "ux-lock", "skill": "ux-lock", "label": "UX Lock — Playwright regression spec" },
+    { "id": "persona-test", "skill": "persona-test", "label": "Persona Test — live UX testing" },
+    { "id": "ship", "skill": "ship", "label": "Ship — sync docs, commit, push" },
+    { "id": "cycle", "skill": "cycle", "label": "Cycle — orchestrates the whole chain" }
+  ],
+  "edges": [
+    { "from": "plan", "to": "audit-plan", "label": "plan written" },
+    { "from": "audit-plan", "to": "audit-code", "label": "human implements" },
+    { "from": "audit-code", "to": "ux-lock", "label": "fixes shipped" },
+    { "from": "audit-code", "to": "persona-test", "label": "frontend scope" },
+    { "from": "ux-lock", "to": "ship" },
+    { "from": "persona-test", "to": "ship" },
+    { "from": "cycle", "to": "plan", "label": "drives" }
+  ]
+}

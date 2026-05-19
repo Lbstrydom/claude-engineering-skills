@@ -77,3 +77,9 @@ node_modules/
 .requirements/candidates.json
 .requirements/gaps.json
 .requirements/.lock
+
+# Local dashboard — the telemetry page is per-user / per-machine (audit
+# findings, learning counts) and must never be committed. The reference
+# page (dashboard/index.html) IS committed — asymmetric commit policy,
+# see docs/plans/local-dashboard.md §2.1.
+dashboard/telemetry.html

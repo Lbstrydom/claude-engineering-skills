@@ -1,0 +1,126 @@
+/*
+ * Dashboard styles — design tokens + layout for both pages.
+ * Inlined into every generated page by render.mjs (via load-assets.mjs).
+ * No external fonts, no network. See docs/plans/local-dashboard.md §4.
+ */
+:root {
+  --bg: #0f1115;
+  --panel: #181b22;
+  --panel-2: #1f232c;
+  --border: #2c313c;
+  --text: #e6e8ec;
+  --muted: #9aa3b2;
+  --accent: #6ea8fe;
+  --ok: #5fd08a;
+  --warn: #e3b341;
+  --err: #f0796b;
+  --radius: 8px;
+  --gap: 16px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+a { color: var(--accent); }
+code, .mono { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 0.92em; }
+
+/* ── Header / nav ─────────────────────────────────────────────── */
+.dash-header {
+  padding: 18px 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dash-titlerow { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.dash-header h1 { margin: 0; font-size: 21px; }
+.dash-nav { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* Skip link — visually hidden until keyboard focus. */
+.skip-link {
+  position: absolute; left: 8px; top: -48px; z-index: 10;
+  background: var(--accent); color: #0b0d12; padding: 8px 14px;
+  border-radius: var(--radius); text-decoration: none; font-weight: 600;
+  transition: top 0.12s ease;
+}
+.skip-link:focus-visible { top: 8px; outline: 2px solid var(--text); }
+.dash-nav a {
+  padding: 6px 12px; border-radius: var(--radius); text-decoration: none;
+  border: 1px solid var(--border); color: var(--muted);
+}
+.dash-nav a.current { color: var(--text); background: var(--panel-2); border-color: var(--accent); }
+.dash-nav .nav-hint { color: var(--muted); font-size: 12px; padding: 6px 4px; }
+.freshness { color: var(--muted); font-size: 12px; margin: 6px 0 14px; }
+
+/* ── Tabs ─────────────────────────────────────────────────────── */
+.tabstrip { display: flex; gap: 2px; padding: 0 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.tabstrip [role="tab"] {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 10px 14px; cursor: pointer; font-size: 14px;
+}
+.tabstrip [role="tab"]:hover { color: var(--text); }
+.tabstrip [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tabstrip [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+[role="tabpanel"] { padding: 20px 24px 48px; }
+[role="tabpanel"][hidden] { display: none; }
+
+/* ── Cards / grid ─────────────────────────────────────────────── */
+.grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.card h3 { margin: 0 0 6px; font-size: 15px; }
+.card .oneliner { color: var(--muted); margin: 0 0 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 100px; padding: 2px 9px; font-size: 11px; color: var(--muted); }
+.lock { color: var(--warn); }
+
+/* ── Tables / lists ───────────────────────────────────────────── */
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+details.row { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; padding: 8px 12px; }
+details.row summary { cursor: pointer; }
+details.row > div { padding-top: 8px; color: var(--muted); }
+
+/* ── Search ───────────────────────────────────────────────────── */
+.searchbar { margin-bottom: 16px; }
+.searchbar label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+.searchbar input {
+  width: 100%; max-width: 320px; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); font-size: 14px;
+}
+.searchbar input:focus-visible { outline: 2px solid var(--accent); }
+.search-count { color: var(--muted); font-size: 12px; margin: 6px 0 0; min-height: 1em; }
+
+/* Horizontal-scroll container so wide telemetry tables never overflow
+   the viewport on narrow screens. */
+.table-wrap { overflow-x: auto; }
+.table-wrap table { min-width: 420px; }
+
+/* ── Status panels ────────────────────────────────────────────── */
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+.empty { color: var(--muted); }
+.warn-panel { border-color: var(--warn); }
+.warn-panel .warn-title { color: var(--warn); font-weight: 600; margin: 0 0 6px; }
+.warn-panel pre { background: var(--panel-2); padding: 8px 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0 0; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.status-ok { background: var(--ok); }
+.status-warn { background: var(--warn); }
+.status-err { background: var(--err); }
+.section-note { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+
+/* ── Flow diagram ─────────────────────────────────────────────── */
+.flow { display: flex; flex-direction: column; gap: 6px; }
+.flow-node { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 10px 14px; }
+.flow-node .flow-skill { color: var(--accent); font-weight: 600; }
+.flow-edge { color: var(--muted); font-size: 12px; padding-left: 14px; }
+
+/* ── Responsive ───────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .dash-titlerow { flex-direction: column; align-items: flex-start; }
+  .grid { grid-template-columns: 1fr; }
+  [role="tabpanel"], .tabstrip, .dash-header { padding-left: 14px; padding-right: 14px; }
+}

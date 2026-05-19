@@ -14,6 +14,7 @@
  */
 
 import 'dotenv/config';
+import { pathToFileURL } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 import { loadOutcomes } from './lib/findings-outcomes.mjs';
 
@@ -34,16 +35,42 @@ if (process.env.SUPABASE_AUDIT_URL && process.env.SUPABASE_AUDIT_ANON_KEY) {
 
 // ── Data Fetching ───────────────────────────────────────────────────────────
 
-async function fetchCloudMetrics() {
+/**
+ * Fetch audit metrics from Supabase. Exported so other tooling (the
+ * dashboard telemetry collector) can reuse it.
+ *
+ * Supabase's `.select()` returns `{data, error}` and does NOT throw on
+ * network/credential failure — so we MUST inspect `.error` explicitly and
+ * throw, otherwise a transport error silently degrades to an empty result
+ * (a false-empty `ok`). See docs/plans/local-dashboard.md (Gemini-G1).
+ *
+ * @param {import('@supabase/supabase-js').SupabaseClient|null} sb
+ * @param {number} days lookback window
+ * @returns {Promise<{runs,passStats,findings,labeled}|null>} null when no client
+ */
+export async function fetchCloudMetrics(sb, days) {
   if (!sb) return null;
 
-  const since = new Date(Date.now() - DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
   const [runsRes, passRes, findingsRes] = await Promise.all([
     sb.from('audit_runs').select('*').gte('created_at', since),
     sb.from('audit_pass_stats').select('*').gte('created_at', since),
     sb.from('audit_findings').select('severity, adjudication_outcome, pass_name').gte('created_at', since),
   ]);
+
+  for (const [label, res] of [['audit_runs', runsRes], ['audit_pass_stats', passRes], ['audit_findings', findingsRes]]) {
+    if (res && res.error) {
+      const e = res.error;
+      // Preserve the provider's diagnostics — code + details + hint — not
+      // just the message, so callers can act on the real failure.
+      const parts = [e.message || String(e)];
+      if (e.code) parts.push(`code=${e.code}`);
+      if (e.details) parts.push(`details=${e.details}`);
+      if (e.hint) parts.push(`hint=${e.hint}`);
+      throw new Error(`Supabase ${label} query failed: ${parts.join(' | ')}`);
+    }
+  }
 
   const runs = runsRes.data || [];
   const passStats = passRes.data || [];
@@ -53,9 +80,14 @@ async function fetchCloudMetrics() {
   return { runs, passStats, findings, labeled };
 }
 
-function computeLocalMetrics() {
+/**
+ * Compute audit metrics from the local `.audit/outcomes.jsonl`. Exported
+ * for reuse by the dashboard telemetry collector.
+ * @param {number} days lookback window
+ */
+export function computeLocalMetrics(days) {
   const outcomes = loadOutcomes('.audit/outcomes.jsonl');
-  const cutoff = Date.now() - DAYS * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   const recent = outcomes.filter(o => (o.timestamp || 0) > cutoff);
   const withOutcome = recent.filter(o => o.accepted !== null && o.accepted !== undefined);
 
@@ -147,8 +179,16 @@ function displayMetrics(cloud, local) {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const cloud = await fetchCloudMetrics();
-  const local = computeLocalMetrics();
+  // `fetchCloudMetrics` now THROWS on a Supabase error (so the dashboard
+  // collector can classify it) — but this CLI must still degrade
+  // gracefully to local-only output rather than crash.
+  let cloud = null;
+  try {
+    cloud = await fetchCloudMetrics(sb, DAYS);
+  } catch (err) {
+    process.stderr.write(`  ${Y}cloud metrics unavailable — showing local only: ${err.message}${X}\n`);
+  }
+  const local = computeLocalMetrics(DAYS);
 
   if (JSON_MODE) {
     console.log(JSON.stringify({ cloud, local, days: DAYS }, null, 2));
@@ -157,4 +197,9 @@ async function main() {
   }
 }
 
-main().catch(err => { console.error(err.message); process.exit(1); });
+// Only run the CLI when invoked directly — `fetchCloudMetrics` /
+// `computeLocalMetrics` are also imported by the dashboard telemetry
+// collector, and importing must not trigger the CLI.
+if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
+  main().catch(err => { console.error(err.message); process.exit(1); });
+}

@@ -42,6 +42,8 @@
     "skills:manifest:check": "node scripts/build-manifest.mjs --check",
     "skills:index": "node scripts/skills-help.mjs --out docs/SKILLS-INDEX.md",
     "skills:help": "node scripts/skills-help.mjs",
+    "dashboard": "node scripts/build-dashboard.mjs serve",
+    "dashboard:build": "node scripts/build-dashboard.mjs all",
     "arch:refresh": "node scripts/symbol-index/refresh.mjs",
     "arch:refresh:full": "node scripts/symbol-index/refresh.mjs --full",
     "arch:render": "node scripts/symbol-index/render-mermaid.mjs",

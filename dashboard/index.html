@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Engineering Skills — Reference</title>
+<style>/*
+ * Dashboard styles — design tokens + layout for both pages.
+ * Inlined into every generated page by render.mjs (via load-assets.mjs).
+ * No external fonts, no network. See docs/plans/local-dashboard.md §4.
+ */
+:root {
+  --bg: #0f1115;
+  --panel: #181b22;
+  --panel-2: #1f232c;
+  --border: #2c313c;
+  --text: #e6e8ec;
+  --muted: #9aa3b2;
+  --accent: #6ea8fe;
+  --ok: #5fd08a;
+  --warn: #e3b341;
+  --err: #f0796b;
+  --radius: 8px;
+  --gap: 16px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+a { color: var(--accent); }
+code, .mono { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 0.92em; }
+
+/* ── Header / nav ─────────────────────────────────────────────── */
+.dash-header {
+  padding: 18px 24px 0;
+  border-bottom: 1px solid var(--border);
+}
+.dash-titlerow { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.dash-header h1 { margin: 0; font-size: 21px; }
+.dash-nav { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+/* Skip link — visually hidden until keyboard focus. */
+.skip-link {
+  position: absolute; left: 8px; top: -48px; z-index: 10;
+  background: var(--accent); color: #0b0d12; padding: 8px 14px;
+  border-radius: var(--radius); text-decoration: none; font-weight: 600;
+  transition: top 0.12s ease;
+}
+.skip-link:focus-visible { top: 8px; outline: 2px solid var(--text); }
+.dash-nav a {
+  padding: 6px 12px; border-radius: var(--radius); text-decoration: none;
+  border: 1px solid var(--border); color: var(--muted);
+}
+.dash-nav a.current { color: var(--text); background: var(--panel-2); border-color: var(--accent); }
+.dash-nav .nav-hint { color: var(--muted); font-size: 12px; padding: 6px 4px; }
+.freshness { color: var(--muted); font-size: 12px; margin: 6px 0 14px; }
+
+/* ── Tabs ─────────────────────────────────────────────────────── */
+.tabstrip { display: flex; gap: 2px; padding: 0 24px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.tabstrip [role="tab"] {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 10px 14px; cursor: pointer; font-size: 14px;
+}
+.tabstrip [role="tab"]:hover { color: var(--text); }
+.tabstrip [role="tab"][aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tabstrip [role="tab"]:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+[role="tabpanel"] { padding: 20px 24px 48px; }
+[role="tabpanel"][hidden] { display: none; }
+
+/* ── Cards / grid ─────────────────────────────────────────────── */
+.grid { display: grid; gap: var(--gap); grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.card {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 14px 16px;
+}
+.card h3 { margin: 0 0 6px; font-size: 15px; }
+.card .oneliner { color: var(--muted); margin: 0 0 10px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 100px; padding: 2px 9px; font-size: 11px; color: var(--muted); }
+.lock { color: var(--warn); }
+
+/* ── Tables / lists ───────────────────────────────────────────── */
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+details.row { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 8px; padding: 8px 12px; }
+details.row summary { cursor: pointer; }
+details.row > div { padding-top: 8px; color: var(--muted); }
+
+/* ── Search ───────────────────────────────────────────────────── */
+.searchbar { margin-bottom: 16px; }
+.searchbar label { display: block; color: var(--muted); font-size: 13px; margin-bottom: 4px; }
+.searchbar input {
+  width: 100%; max-width: 320px; padding: 8px 12px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); font-size: 14px;
+}
+.searchbar input:focus-visible { outline: 2px solid var(--accent); }
+.search-count { color: var(--muted); font-size: 12px; margin: 6px 0 0; min-height: 1em; }
+
+/* Horizontal-scroll container so wide telemetry tables never overflow
+   the viewport on narrow screens. */
+.table-wrap { overflow-x: auto; }
+.table-wrap table { min-width: 420px; }
+
+/* ── Status panels ────────────────────────────────────────────── */
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+.empty { color: var(--muted); }
+.warn-panel { border-color: var(--warn); }
+.warn-panel .warn-title { color: var(--warn); font-weight: 600; margin: 0 0 6px; }
+.warn-panel pre { background: var(--panel-2); padding: 8px 10px; border-radius: 6px; overflow-x: auto; margin: 8px 0 0; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.status-ok { background: var(--ok); }
+.status-warn { background: var(--warn); }
+.status-err { background: var(--err); }
+.section-note { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+
+/* ── Flow diagram ─────────────────────────────────────────────── */
+.flow { display: flex; flex-direction: column; gap: 6px; }
+.flow-node { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 10px 14px; }
+.flow-node .flow-skill { color: var(--accent); font-weight: 600; }
+.flow-edge { color: var(--muted); font-size: 12px; padding-left: 14px; }
+
+/* ── Responsive ───────────────────────────────────────────────── */
+@media (max-width: 720px) {
+  .dash-titlerow { flex-direction: column; align-items: flex-start; }
+  .grid { grid-template-columns: 1fr; }
+  [role="tabpanel"], .tabstrip, .dash-header { padding-left: 14px; padding-right: 14px; }
+}
+</style>
+</head>
+<body>
+<a href="#main" class="skip-link">Skip to content</a>
+<header class="dash-header">
+  <div class="dash-titlerow">
+    <h1>Claude Engineering Skills — Reference</h1>
+    <nav class="dash-nav" aria-label="Dashboard pages">
+    <a href="./index.html" class="current" aria-current="page">Reference</a>
+    <a href="./telemetry.html">Telemetry</a>
+    <span class="nav-hint">local pages: <code>npm run dashboard:build</code></span>
+  </nav>
+  </div>
+  <p class="freshness" data-testid="freshness-banner">built from <code>972cf9a</code>+local · source <code>44eac697</code></p>
+</header>
+<main id="main"><div class="tabstrip" role="tablist" aria-label="Claude Engineering Skills — Reference"><button role="tab" id="tab-skills" aria-controls="panel-skills" aria-selected="true" tabindex="0">Skills</button><button role="tab" id="tab-flows" aria-controls="panel-flows" aria-selected="false" tabindex="-1">Process Flows</button><button role="tab" id="tab-architecture" aria-controls="panel-architecture" aria-selected="false" tabindex="-1">Architecture</button><button role="tab" id="tab-plans" aria-controls="panel-plans" aria-selected="false" tabindex="-1">Plans</button></div><div role="tabpanel" id="panel-skills" aria-labelledby="tab-skills"><div class="searchbar">
+      <label for="skill-search">Filter skills</label>
+      <input type="search" role="searchbox" id="skill-search"
+        data-role="skill-search" placeholder="name, trigger, summary…">
+      <p role="status" class="search-count" data-role="skill-count"></p>
+    </div>
+    <div class="grid"><article class="card" data-search="ai-context-management manage agents.md and claude.md alignment across a repo so claude, copilot, cursor, windsurf, and other ai agents share the same project context. audit agents.md check context drift agents.md vs claude.md fix context drift regenerate copilot prompts migrate to agents.md context sync what tools read which file ai-context-management" aria-labelledby="skill-h-ai-context-management">
+      <h3 id="skill-h-ai-context-management"><code>/ai-context-management</code></h3>
+      <p class="oneliner">Manage AGENTS.md and CLAUDE.md alignment across a repo so Claude, Copilot, Cursor, Windsurf, and other AI agents share the same project context.</p>
+      <div class="chips"><span class="chip">audit AGENTS.md</span><span class="chip">check context drift</span><span class="chip">AGENTS.md vs CLAUDE.md</span><span class="chip">fix context drift</span><span class="chip">regenerate copilot prompts</span><span class="chip">migrate to AGENTS.md</span></div>
+    </article><article class="card" data-search="audit-code iteratively audit code against a plan with gpt + gemini final gate. audit my code audit my changes audit my pr check the implementation review my code audit code /audit-code audit this verify the implementation" aria-labelledby="skill-h-audit-code">
+      <h3 id="skill-h-audit-code"><code>/audit-code</code></h3>
+      <p class="oneliner">Iteratively audit code against a plan with GPT + Gemini final gate.</p>
+      <div class="chips"><span class="chip">audit my code</span><span class="chip">audit my changes</span><span class="chip">audit my PR</span><span class="chip">check the implementation</span><span class="chip">review my code</span><span class="chip">audit code</span></div>
+    </article><article class="card" data-search="audit-loop deprecated — use `/cycle` for the full chained workflow, or `/audit-plan` / `/audit-code` for atomic invocations. audit loop plan and audit run the audit loop" aria-labelledby="skill-h-audit-loop">
+      <h3 id="skill-h-audit-loop"><code>/audit-loop</code></h3>
+      <p class="oneliner">DEPRECATED — use `/cycle` for the full chained workflow, OR `/audit-plan` / `/audit-code` for atomic invocations.</p>
+      <div class="chips"><span class="chip">audit loop</span><span class="chip">plan and audit</span><span class="chip">run the audit loop</span></div>
+    </article><article class="card" data-search="audit-plan iteratively audit a plan file (docs/plans/*.md) with gpt + gemini final gate. audit the plan iterate on the plan plan-audit audit docs/plans/ verify the plan review the plan is this plan good check the plan /audit-plan" aria-labelledby="skill-h-audit-plan">
+      <h3 id="skill-h-audit-plan"><code>/audit-plan</code></h3>
+      <p class="oneliner">Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.</p>
+      <div class="chips"><span class="chip">audit the plan</span><span class="chip">iterate on the plan</span><span class="chip">plan-audit</span><span class="chip">audit docs/plans/</span><span class="chip">verify the plan</span><span class="chip">review the plan</span></div>
+    </article><article class="card" data-search="brainstorm multi-llm concept-level brainstorming. brainstorm let&#39;s think about get other llms on this what would gemini/gpt say /brainstorm" aria-labelledby="skill-h-brainstorm">
+      <h3 id="skill-h-brainstorm"><code>/brainstorm</code></h3>
+      <p class="oneliner">Multi-LLM concept-level brainstorming.</p>
+      <div class="chips"><span class="chip">brainstorm</span><span class="chip">let&#39;s think about</span><span class="chip">get other LLMs on this</span><span class="chip">what would Gemini/GPT say</span><span class="chip">/brainstorm</span></div>
+    </article><article class="card" data-search="cycle end-to-end feature cycle orchestrator. run the full cycle do the whole flow plan + audit + ship feature cycle /cycle" aria-labelledby="skill-h-cycle">
+      <h3 id="skill-h-cycle"><code>/cycle</code></h3>
+      <p class="oneliner">End-to-end feature cycle orchestrator.</p>
+      <div class="chips"><span class="chip">run the full cycle</span><span class="chip">do the whole flow</span><span class="chip">plan + audit + ship</span><span class="chip">feature cycle</span><span class="chip">/cycle</span></div>
+    </article><article class="card" data-search="explain explain why a piece of code is structured the way it is. why is this explain this code why does this exist what is this for /explain give me context on" aria-labelledby="skill-h-explain">
+      <h3 id="skill-h-explain"><code>/explain</code></h3>
+      <p class="oneliner">Explain WHY a piece of code is structured the way it is.</p>
+      <div class="chips"><span class="chip">why is this</span><span class="chip">explain this code</span><span class="chip">why does this exist</span><span class="chip">what is this for</span><span class="chip">/explain</span><span class="chip">give me context on</span></div>
+    </article><article class="card" data-search="persona-test persona-driven exploratory browser testing against a live url. persona test test as explore the app as run persona test test the site as browse the app as qa as list personas add persona who are my personas which persona should test" aria-labelledby="skill-h-persona-test">
+      <h3 id="skill-h-persona-test"><code>/persona-test</code></h3>
+      <p class="oneliner">Persona-driven exploratory browser testing against a live URL.</p>
+      <div class="chips"><span class="chip">persona test</span><span class="chip">test as</span><span class="chip">explore the app as</span><span class="chip">run persona test</span><span class="chip">test the site as</span><span class="chip">browse the app as</span></div>
+    </article><article class="card" data-search="plan unified architecture + ux planner with engineering principles. " aria-labelledby="skill-h-plan">
+      <h3 id="skill-h-plan"><code>/plan</code></h3>
+      <p class="oneliner">Unified architecture + UX planner with engineering principles.</p>
+      
+    </article><article class="card" data-search="plan-backend deprecated — thin alias for `/plan --scope=backend`. " aria-labelledby="skill-h-plan-backend">
+      <h3 id="skill-h-plan-backend"><code>/plan-backend</code></h3>
+      <p class="oneliner">DEPRECATED — thin alias for `/plan --scope=backend`.</p>
+      
+    </article><article class="card" data-search="plan-frontend deprecated — thin alias for `/plan --scope=frontend`. " aria-labelledby="skill-h-plan-frontend">
+      <h3 id="skill-h-plan-frontend"><code>/plan-frontend</code></h3>
+      <p class="oneliner">DEPRECATED — thin alias for `/plan --scope=frontend`.</p>
+      
+    </article><article class="card" data-search="security-strategy on-demand maintenance of the per-repo security memory: bootstrap an initial threat model + add/append incidents to docs/security-strategy.md with proper marker comments, then refresh the supabase index. security strategy add security incident draft incident /security-strategy bootstrap security memory" aria-labelledby="skill-h-security-strategy">
+      <h3 id="skill-h-security-strategy"><code>/security-strategy</code> <span class="lock" title="manual invocation only">&#128274;</span></h3>
+      <p class="oneliner">On-demand maintenance of the per-repo security memory: bootstrap an initial threat model + add/append incidents to docs/security-strategy.md with proper marker comments, then refresh the Supabase index.</p>
+      <div class="chips"><span class="chip">security strategy</span><span class="chip">add security incident</span><span class="chip">draft incident</span><span class="chip">/security-strategy</span><span class="chip">bootstrap security memory</span></div>
+    </article><article class="card" data-search="ship sync all project documentation, optionally update a plan, then commit and push to git. ship it commit and push push my changes ready to ship&quot;. important: this command runs autonomously — no confirmation prompts. the user invoking /ship is their approval to update docs, commit, and push in one uninterrupted flow" aria-labelledby="skill-h-ship">
+      <h3 id="skill-h-ship"><code>/ship</code></h3>
+      <p class="oneliner">Sync all project documentation, optionally update a plan, then commit and push to git.</p>
+      <div class="chips"><span class="chip">ship it</span><span class="chip">commit and push</span><span class="chip">push my changes</span><span class="chip">ready to ship&quot;. IMPORTANT: This command runs autonomously — no confirmation prompts. The user invoking /ship is their approval to update docs, commit, and push in one uninterrupted flow</span></div>
+    </article><article class="card" data-search="skills quick reference for every available skill in this repo — name, one-line purpose, triggers, usage examples — without having to open each individual skill.md document. /skills list skills what skills do you have show all skills skill cheatsheet skills help show me the skills what can you do" aria-labelledby="skill-h-skills">
+      <h3 id="skill-h-skills"><code>/skills</code> <span class="lock" title="manual invocation only">&#128274;</span></h3>
+      <p class="oneliner">Quick reference for every available skill in this repo — name, one-line purpose, triggers, usage examples — without having to open each individual SKILL.md document.</p>
+      <div class="chips"><span class="chip">/skills</span><span class="chip">list skills</span><span class="chip">what skills do you have</span><span class="chip">show all skills</span><span class="chip">skill cheatsheet</span><span class="chip">skills help</span></div>
+    </article><article class="card" data-search="ux-lock generate playwright e2e specs. ux lock lock ux lock in the fix write regression spec generate e2e test for regression test for commit lock this fix verify the plan verify plan implementation check the plan was built audit frontend implementation did we ship the plan" aria-labelledby="skill-h-ux-lock">
+      <h3 id="skill-h-ux-lock"><code>/ux-lock</code></h3>
+      <p class="oneliner">Generate Playwright e2e specs.</p>
+      <div class="chips"><span class="chip">ux lock</span><span class="chip">lock ux</span><span class="chip">lock in the fix</span><span class="chip">write regression spec</span><span class="chip">generate e2e test for</span><span class="chip">regression test for commit</span></div>
+    </article></div></div><div role="tabpanel" id="panel-flows" aria-labelledby="tab-flows" hidden><p class="section-note">Skill-chain process flow.</p>
+    <div class="flow"><div class="flow-node"><span class="flow-skill">/plan</span> &mdash; Plan — architecture &amp; UX</div><div class="flow-node"><span class="flow-skill">/audit-plan</span> &mdash; Audit Plan — iterative refinement</div><div class="flow-node"><span class="flow-skill">/audit-code</span> &mdash; Audit Code — multi-pass review</div><div class="flow-node"><span class="flow-skill">/ux-lock</span> &mdash; UX Lock — Playwright regression spec</div><div class="flow-node"><span class="flow-skill">/persona-test</span> &mdash; Persona Test — live UX testing</div><div class="flow-node"><span class="flow-skill">/ship</span> &mdash; Ship — sync docs, commit, push</div><div class="flow-node"><span class="flow-skill">/cycle</span> &mdash; Cycle — orchestrates the whole chain</div></div>
+    <h3>Transitions</h3><div class="flow-edge">plan &rarr; audit-plan (plan written)</div><div class="flow-edge">audit-plan &rarr; audit-code (human implements)</div><div class="flow-edge">audit-code &rarr; ux-lock (fixes shipped)</div><div class="flow-edge">audit-code &rarr; persona-test (frontend scope)</div><div class="flow-edge">ux-lock &rarr; ship</div><div class="flow-edge">persona-test &rarr; ship</div><div class="flow-edge">cycle &rarr; plan (drives)</div></div><div role="tabpanel" id="panel-architecture" aria-labelledby="tab-architecture" hidden><p class="section-note">1 domains · full map: <code>docs/architecture-map.md</code></p><details class="row">
+    <summary><strong>arch-memory</strong> &mdash; 54 symbols</summary>
+    <div>The `arch-memory` domain manages glob-based file path classification and drift analysis for tracking architectural changes—it converts glob patterns to regex rules, tags files by domain, and computes repository-wide drift scores indicating how much code deviates from documented architecture.</div>
+  </details></div><div role="tabpanel" id="panel-plans" aria-labelledby="tab-plans" hidden><h3>Active (1)</h3><details class="row">
+    <summary><strong>Local Navigable Dashboard Subsystem</strong> &mdash; Approved</summary>
+    <div>Date: 2026-05-19<br><code>docs/plans/local-dashboard.md</code></div>
+  </details>
+    <h3>Completed (50)</h3><details class="row">
+    <summary><strong>Adaptive context &quot;blast radius&quot; + deterministic finding-verification gate</strong> &mdash; Complete</summary>
+    <div>Date: 2026-05-17<br><code>docs/completed/adaptive-context-blast-radius.md</code></div>
+  </details><details class="row">
+    <summary><strong>`/brainstorm --with-arch` — codebase architecture context for external LLMs</strong> &mdash; Complete</summary>
+    <div>Date: 2026-05-17<br><code>docs/completed/brainstorm-arch-context.md</code></div>
+  </details><details class="row">
+    <summary><strong>Requirements Layer — a materialized view of the codebase&#39;s de-facto requirements</strong> &mdash; Complete</summary>
+    <div>Date: 2026-05-17<br><code>docs/completed/requirements-layer.md</code></div>
+  </details><details class="row">
+    <summary><strong>Architecture-Intent PR-B — Python &amp; Java Adapters</strong> &mdash; Complete (implemented + audited via /cycle; /audit-code → Gemini APPROVE 2026-05-15; see audit summary at docs/completed/arch-intent-pr-b-audit-summary.md)</summary>
+    <div>Date: 2026-05-15<br><code>docs/completed/arch-intent-pr-b-python-java-adapters.md</code></div>
+  </details><details class="row">
+    <summary><strong>Architecture-Intent PR-C — Postgres Adapter</strong> &mdash; Complete (implemented + audited via /cycle; /audit-code 2 GPT + 2 Gemini rounds 2026-05-15, all findings fixed, Gemini coherence &quot;Strong&quot;; see audit summary at docs/completed/arch-intent-pr-c-audit-summary.md)</summary>
+    <div>Date: 2026-05-15<br><code>docs/completed/arch-intent-pr-c-postgres-adapter.md</code></div>
+  </details><details class="row">
+    <summary><strong>Anthropic Backend Routing (Agent SDK credit prep)</strong> &mdash; Complete — implemented + audited (R1→R3 + Gemini)</summary>
+    <div>Date: 2026-05-14<br><code>docs/completed/anthropic-backend-routing.md</code></div>
+  </details><details class="row">
+    <summary><strong>Dead-Code Detection — Phase 1 (Orphan-Introduced Check)</strong> &mdash; Complete</summary>
+    <div>Date: 2026-05-12<br><code>docs/completed/dead-code-phase-1-orphan-introduced.md</code></div>
+  </details><details class="row">
+    <summary><strong>Architecture-Intent Framework + JS Adapter (PR-A of 3)</strong> &mdash; Complete — all 3 PRs shipped (PR-A framework + JS/TS adapter, commit `6c6be92`; PR-B Python + Java adapters, commit `18ecc5e`; PR-C Postgres adapter, commit `5f7c30d`). PR-B and PR-C each ran their own `/plan` + `/audit-plan` + `/audit-code` cycle — see `docs/completed/arch-intent-pr-{b,c}-*.md` and the audit summaries in `docs/completed/`.</summary>
+    <div>Date: 2026-05-11<br><code>docs/completed/architecture-intent-framework.md</code></div>
+  </details><details class="row">
+    <summary><strong>OpenAI prompt prefix-caching for the audit pipeline</strong> &mdash; Complete — implemented + verified 2026-05-11 (PR-1..5 shipped; Gemini final review APPROVE)</summary>
+    <div>Date: 2026-05-11<br><code>docs/completed/openai-prefix-cache.md</code></div>
+  </details><details class="row">
+    <summary><strong>Dogfooding Ergonomics v1</strong> &mdash; Complete — shipped 2026-05-09; archive auto-moves this file via `/ship` Step 5.5</summary>
+    <div>Date: 2026-05-09<br><code>docs/completed/dogfooding-ergonomics-v1.md</code></div>
+  </details><details class="row">
+    <summary><strong>Friction Log + Weekly Digest Surface (v1)</strong> &mdash; Complete — shipped 2026-05-09; schema applied to live Supabase; auto-archived via `/ship` Step 5.5</summary>
+    <div>Date: 2026-05-09<br><code>docs/completed/friction-log-and-digest-v1.md</code></div>
+  </details><details class="row">
+    <summary><strong>Adaptive Learning — Phase 1 (Foundation + Auto-Deferral + Weekly Review)</strong> &mdash; **Complete** — shipped as commit `0bde3ab` on 2026-05-08; schema migration applied 2026-05-09</summary>
+    <div>Date: 2026-05-08<br><code>docs/completed/adaptive-learning-phase-1-foundation.md</code></div>
+  </details><details class="row">
+    <summary><strong>Adaptive Learning — Phase 2 (Live Quickfix Learner)</strong> &mdash; **Complete** — shipped as commit `cf9a89b` on 2026-05-08</summary>
+    <div>Date: 2026-05-08<br><code>docs/completed/adaptive-learning-phase-2-quickfix.md</code></div>
+  </details><details class="row">
+    <summary><strong>Adaptive Learning — Phase 3 (Replay Framework + Remaining Telemetry)</strong> &mdash; **Complete** — shipped as commit `e40a40e` on 2026-05-08</summary>
+    <div>Date: 2026-05-08<br><code>docs/completed/adaptive-learning-phase-3-replay.md</code></div>
+  </details><details class="row">
+    <summary><strong>Adaptive Learning Expansion v1</strong> &mdash; **Complete (v1)** — all 3 phases shipped (commits 0bde3ab, cf9a89b, e40a40e), schema migration applied to Supabase project `uahjjdelnnpfmaqjrwoz` on 2026-05-09, cloud-read smoke test passing. v2 graduations (per §5 promotion gates) are out of v1 scope.</summary>
+    <div>Date: 2026-05-08<br><code>docs/completed/adaptive-learning-v1.md</code></div>
+  </details><details class="row">
+    <summary><strong>Brainstorm-skill upgrades + Quick-fix detection (v1)</strong> &mdash; Draft (audit-plan R1 fixes applied — see §10 R1 Revisions)</summary>
+    <div>Date: 2026-05-05 (R2 — audit-plan revisions integrated)<br><code>docs/completed/brainstorm-quickfix-v1.md</code></div>
+  </details><details class="row">
+    <summary><strong>Proactive Security Memory v1</strong> &mdash; Draft v6 (post R1+R2+R3 GPT + Gemini ×2 — 14H/18M/2L addressed; 1 medium deferred to v1.1 with rationale)</summary>
+    <div>Date: 2026-05-04<br><code>docs/completed/security-memory-v1.md</code></div>
+  </details><details class="row">
+    <summary><strong>Arch-Memory Planning Anchor</strong> &mdash; Draft v6 (post R1+R2+R3 GPT + Gemini ×2 — 9H/14M/2L addressed; 2 Gemini-R1 HIGHs challenged as invalid claims about pre-existing code; all Gemini-R2 MEDIUMs accepted)</summary>
+    <div>Date: 2026-05-03<br><code>docs/completed/arch-memory-planning-anchor.md</code></div>
+  </details><details class="row">
+    <summary><strong>/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid</strong> &mdash; Draft v6 (post R1+R2+R3 GPT + Gemini ×2 — 14H/11M addressed; 1H+1M deferred to v2)</summary>
+    <div>Date: 2026-05-03<br><code>docs/completed/brainstorm-and-arch-discoverability.md</code></div>
+  </details><details class="row">
+    <summary><strong>Architectural Memory</strong> &mdash; Draft — full audit cycle complete; ready for human review before implementation</summary>
+    <div>Date: 2026-05-01 (revised post-R1 + R2 + R3 + Gemini ×2 audit cycle)<br><code>docs/completed/architectural-memory.md</code></div>
+  </details><details class="row">
+    <summary><strong>Architectural Memory — Backend</strong> &mdash; Draft</summary>
+    <div>Date: 2026-05-01<br><code>docs/completed/architectural-memory-backend.md</code></div>
+  </details><details class="row">
+    <summary><strong>Architectural Memory — Human-Facing Surfaces</strong> &mdash; Draft</summary>
+    <div>Date: 2026-05-01<br><code>docs/completed/architectural-memory-frontend.md</code></div>
+  </details><details class="row">
+    <summary><strong>Tech Debt Wave 3 — Lint Modernization + Cognitive-Complexity Sweep</strong> &mdash; **Complete** (all 5 PRs shipped 2026-04-27)</summary>
+    <div>Date: 2026-04-27<br><code>docs/completed/tech-debt-wave-3.md</code></div>
+  </details><details class="row">
+    <summary><strong>AI Context Sync — Reconcile Drift, Detect Drift, Copilot Slash-Command Parity</strong> &mdash; **Complete** (all 6 phases shipped 2026-04-26 / 2026-04-27)</summary>
+    <div>Date: 2026-04-26<br><code>docs/completed/ai-context-sync.md</code></div>
+  </details><details class="row">
+    <summary><strong>Split `/audit-loop` into `/audit-plan` + `/audit-code`</strong> &mdash; **Complete** (all 6 phases shipped 2026-04-27)</summary>
+    <div>Date: 2026-04-26<br><code>docs/completed/audit-loop-skill-split.md</code></div>
+  </details><details class="row">
+    <summary><strong>Skill Progressive Disclosure Refactor</strong> &mdash; **Complete** (all phases A, B.1, B.2, C1–C6, D, E shipped and tested)</summary>
+    <div>Date: 2026-04-19<br><code>docs/completed/skill-progressive-disclosure-refactor.md</code></div>
+  </details><details class="row">
+    <summary><strong>Predictive Audit Strategy — Data Loop Completion &amp; Intelligence</strong> &mdash; Draft</summary>
+    <div>Date: 2026-04-17<br><code>docs/completed/predictive-audit-strategy.md</code></div>
+  </details><details class="row">
+    <summary><strong>Tech Debt Wave 2 — Responsibility Splits &amp; Safety Fixes</strong> &mdash; Draft</summary>
+    <div>Date: 2026-04-17<br><code>docs/completed/tech-debt-wave-2.md</code></div>
+  </details><details class="row">
+    <summary><strong>Audit-Loop Reliability &amp; Intelligence Improvements</strong> &mdash; Approved (R1 + Gemini G1-G4 + G2-extended fixes applied)</summary>
+    <div>Date: 2026-04-15<br><code>docs/completed/audit-loop-improvements.md</code></div>
+  </details><details class="row">
+    <summary><strong>Audit-Loop Meta-Assessment System</strong> &mdash; Complete</summary>
+    <div>Date: 2026-04-06<br><code>docs/completed/meta-assessment-system.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase G.3 — GitHub Adapter (Branch + Issues)</strong> &mdash; Draft (follows Phase G.2)</summary>
+    <div>Date: 2026-04-06<br><code>docs/completed/phase-g3-github-adapter.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control</strong> &mdash; Draft</summary>
+    <div>Date: 2026-04-06<br><code>docs/completed/phase-i-claudemd-hygiene.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase D — Persistent Tech-Debt Memory</strong> &mdash; Draft, pending audit-loop review</summary>
+    <div>Date: 2026-04-05<br><code>docs/completed/phase-d-tech-debt-memory.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase E — Skill Consolidation + Python Profiles + Rename</strong> &mdash; Draft, pending audit-loop review</summary>
+    <div>Date: 2026-04-05<br><code>docs/completed/phase-e-skill-consolidation-python.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase F — Install + Update Infrastructure</strong> &mdash; Draft (follows Phase E)</summary>
+    <div>Date: 2026-04-05<br><code>docs/completed/phase-f-install-update-infra.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase G.1 — Storage Interface + Facade + noop + Supabase refactor</strong> &mdash; Draft (follows Phase F)</summary>
+    <div>Date: 2026-04-05<br><code>docs/completed/phase-g1-storage-interface-noop-supabase.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase G.2 — SQLite + Postgres Adapters + Shared Conformance</strong> &mdash; Draft (follows Phase G.1)</summary>
+    <div>Date: 2026-04-05<br><code>docs/completed/phase-g2-sqlite-postgres-adapters.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase H — Public-Distribution Hardening</strong> &mdash; Draft (follows Phase G)</summary>
+    <div>Date: 2026-04-05<br><code>docs/completed/phase-h-public-distribution.md</code></div>
+  </details><details class="row">
+    <summary><strong>Multi-Language Audit Support + Linter Pre-Pass + SonarQube Taxonomy</strong> &mdash; In Progress (revised after Round 3 audit — converging)</summary>
+    <div>Date: 2026-04-04<br><code>docs/completed/multi-language-and-linter-integration.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase A — Language-Aware Code Analysis</strong> &mdash; Audit-complete, ready to implement</summary>
+    <div>Date: 2026-04-04<br><code>docs/completed/phase-a-language-aware-analysis.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase B — SonarQube Classification for Findings</strong> &mdash; Audit-complete, ready to implement</summary>
+    <div>Date: 2026-04-04<br><code>docs/completed/phase-b-sonarqube-classification.md</code></div>
+  </details><details class="row">
+    <summary><strong>Phase C — Linter Pre-Pass Integration</strong> &mdash; Audit-complete, ready to implement</summary>
+    <div>Date: 2026-04-04<br><code>docs/completed/phase-c-linter-pre-pass.md</code></div>
+  </details><details class="row">
+    <summary><strong>Robustness Hardening &amp; R2+ Ledger Auto-Write</strong> &mdash; In Progress (revised after Round 3 audit — converging)</summary>
+    <div>Date: 2026-04-04<br><code>docs/completed/robustness-and-ledger-wiring.md</code></div>
+  </details><details class="row">
+    <summary><strong>Learning System v2 — Adaptive Prompt Evolution &amp; Contextual Bandits</strong> &mdash; In Progress (consolidated rewrite after 3 audit rounds)</summary>
+    <div>Date: 2026-04-02<br><code>docs/completed/learning-system-v2.md</code></div>
+  </details><details class="row">
+    <summary><strong>Audit Context Brief Generator</strong> &mdash; Draft</summary>
+    <div>Date: 2026-03-29<br><code>docs/completed/context-brief.md</code></div>
+  </details><details class="row">
+    <summary><strong>Gemini 3.1 Pro Final Reviewer</strong> &mdash; Complete</summary>
+    <div>Date: 2026-03-29<br><code>docs/completed/gemini-final-reviewer.md</code></div>
+  </details><details class="row">
+    <summary><strong>Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement</strong> &mdash; Draft</summary>
+    <div>Date: 2026-03-29<br><code>docs/completed/r2-efficiency.md</code></div>
+  </details><details class="row">
+    <summary><strong>Claude Audit Loop v1.0</strong> &mdash; Complete</summary>
+    <div>Date: 2026-03-25<br><code>docs/completed/audit-loop-v1.md</code></div>
+  </details><details class="row">
+    <summary><strong>Browser MCP Tooling + Skill Sync Improvements</strong></summary>
+    <div><code>docs/completed/browser-mcp-and-tooling.md</code> <span class="lock">(metadata unparsed)</span></div>
+  </details><details class="row">
+    <summary><strong>Gemini-gate scope-error fix</strong> &mdash; Complete — applied 2026-05-11</summary>
+    <div><code>docs/completed/gemini-gate-scope-fix.md</code> <span class="lock">(metadata unparsed)</span></div>
+  </details></div></main>
+<script type="application/json" id="dashboard-data">{"kind":"reference","provenance":{"baseSha":"972cf9a","dirty":true,"sourceHash":"44eac697"},"sources":{"skills":{"status":"ok","detail":""},"plans":{"status":"ok","detail":"some plans have a loose metadata header (shown as minimal rows)"},"architecture":{"status":"ok","detail":""},"flows":{"status":"ok","detail":""}},"skills":[{"name":"ai-context-management","oneLiner":"Manage AGENTS.md and CLAUDE.md alignment across a repo so Claude, Copilot, Cursor, Windsurf, and other AI agents share the same project context.","triggers":["audit AGENTS.md","check context drift","AGENTS.md vs CLAUDE.md","fix context drift","regenerate copilot prompts","migrate to AGENTS.md","context sync","what tools read which file","ai-context-management"],"usage":["/ai-context-management audit          — Score drift + report findings","/ai-context-management reconcile      — Apply patches to fix drift","/ai-context-management generate-prompts — Refresh .github/prompts/*","/ai-context-management migrate        — Flip legacy repo to AGENTS.md canonical"],"disableModelInvocation":false,"path":"skills/ai-context-management/SKILL.md"},{"name":"audit-code","oneLiner":"Iteratively audit code against a plan with GPT + Gemini final gate.","triggers":["audit my code","audit my changes","audit my PR","check the implementation","review my code","audit code","/audit-code","audit this","verify the implementation"],"usage":["/audit-code \u003cplan-file\u003e             — Audit code against plan (--scope diff default)","/audit-code \u003cplan-file\u003e --scope full — Full repo audit"],"disableModelInvocation":false,"path":"skills/audit-code/SKILL.md"},{"name":"audit-loop","oneLiner":"DEPRECATED — use `/cycle` for the full chained workflow, OR `/audit-plan` / `/audit-code` for atomic invocations.","triggers":["audit loop","plan and audit","run the audit loop"],"usage":["/audit-loop full \u003ctask\u003e     — DEPRECATED → use /cycle \u003ctask\u003e","/audit-loop plan \u003cfile\u003e     — DEPRECATED → use /audit-plan \u003cfile\u003e","/audit-loop code \u003cfile\u003e     — DEPRECATED → use /audit-code \u003cfile\u003e"],"disableModelInvocation":false,"path":"skills/audit-loop/SKILL.md"},{"name":"audit-plan","oneLiner":"Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.","triggers":["audit the plan","iterate on the plan","plan-audit","audit docs/plans/","verify the plan","review the plan","is this plan good","check the plan","/audit-plan"],"usage":["/audit-plan \u003cplan-file\u003e             — Audit existing plan iteratively","/audit-plan \u003ctask-description\u003e      — Generate plan with /plan-*, then audit"],"disableModelInvocation":false,"path":"skills/audit-plan/SKILL.md"},{"name":"brainstorm","oneLiner":"Multi-LLM concept-level brainstorming.","triggers":["brainstorm","let's think about","get other LLMs on this","what would Gemini/GPT say","/brainstorm"],"usage":["/brainstorm \u003ctopic\u003e                          # OpenAI only (default)","/brainstorm --with-gemini \u003ctopic\u003e            # both","/brainstorm --models openai,gemini \u003ctopic\u003e   # explicit"],"disableModelInvocation":false,"path":"skills/brainstorm/SKILL.md"},{"name":"cycle","oneLiner":"End-to-end feature cycle orchestrator.","triggers":["run the full cycle","do the whole flow","plan + audit + ship","feature cycle","/cycle"],"usage":["/cycle \u003ctask-description\u003e          — Full chain from scratch","/cycle plan \u003cplan-file\u003e            — Skip planning; use existing plan","/cycle code \u003cplan-file\u003e            — Skip to code-audit-then-ship","/cycle \u003cplan-file\u003e --no-persona    — Skip persona-test step"],"disableModelInvocation":false,"path":"skills/cycle/SKILL.md"},{"name":"explain","oneLiner":"Explain WHY a piece of code is structured the way it is.","triggers":["why is this","explain this code","why does this exist","what is this for","/explain","give me context on"],"usage":["/explain \u003cfile\u003e                       — Explain the file's purpose + history","/explain \u003cfile\u003e:\u003cline\u003e                — Explain a specific line/section","/explain \u003csymbol-name\u003e                — Find + explain a function/class by name","/explain \u003cfile\u003e:\u003cline\u003e --depth=full   — Include full neighbourhood + all blame","/explain --history \"\u003ctopic\u003e\"          — \"Did we already solve this?\" — cross-source search"],"disableModelInvocation":false,"path":"skills/explain/SKILL.md"},{"name":"persona-test","oneLiner":"Persona-driven exploratory browser testing against a live URL.","triggers":["persona test","test as","explore the app as","run persona test","test the site as","browse the app as","QA as","list personas","add persona","who are my personas","which persona should test"],"usage":["/persona-test list [url]                                        — show all personas for an app","/persona-test add \"\u003cname\u003e\" \"\u003cdescription\u003e\" \u003curl\u003e [app name]     — register a new persona","/persona-test \"\u003cpersona or name\u003e\" \u003curl\u003e [focus area]            — run a test session"],"disableModelInvocation":false,"path":"skills/persona-test/SKILL.md"},{"name":"plan","oneLiner":"Unified architecture + UX planner with engineering principles.","triggers":[],"usage":[],"disableModelInvocation":false,"path":"skills/plan/SKILL.md"},{"name":"plan-backend","oneLiner":"DEPRECATED — thin alias for `/plan --scope=backend`.","triggers":[],"usage":[],"disableModelInvocation":false,"path":"skills/plan-backend/SKILL.md"},{"name":"plan-frontend","oneLiner":"DEPRECATED — thin alias for `/plan --scope=frontend`.","triggers":[],"usage":[],"disableModelInvocation":false,"path":"skills/plan-frontend/SKILL.md"},{"name":"security-strategy","oneLiner":"On-demand maintenance of the per-repo security memory: bootstrap an initial threat model + add/append incidents to docs/security-strategy.md with proper marker comments, then refresh the Supabase index.","triggers":["security strategy","add security incident","draft incident","/security-strategy","bootstrap security memory"],"usage":["/security-strategy bootstrap         — interview to seed initial threat model + first incident","/security-strategy add-incident      — interactive draft of one new incident entry","/security-strategy add-incident from-commit \u003csha\u003e  — pre-fill from commit subject + changed files"],"disableModelInvocation":true,"path":"skills/security-strategy/SKILL.md"},{"name":"ship","oneLiner":"Sync all project documentation, optionally update a plan, then commit and push to git.","triggers":["ship it","commit and push","push my changes","ready to ship\". IMPORTANT: This command runs autonomously — no confirmation prompts. The user invoking /ship is their approval to update docs, commit, and push in one uninterrupted flow"],"usage":["/ship — sync docs + commit + push","/ship docs/plans/feature.md — also update the plan before committing","Triggers on: \"ship it\", \"commit and push\", \"push my changes\", \"ready to ship\".","IMPORTANT: This command runs autonomously — no confirmation prompts. The user invoking","/ship is their approval to update docs, commit, and push in one uninterrupted flow."],"disableModelInvocation":false,"path":"skills/ship/SKILL.md"},{"name":"skills","oneLiner":"Quick reference for every available skill in this repo — name, one-line purpose, triggers, usage examples — without having to open each individual SKILL.md document.","triggers":["/skills","list skills","what skills do you have","show all skills","skill cheatsheet","skills help","show me the skills","what can you do"],"usage":["/skills                           — Compact reference table for all skills","/skills \u003cname\u003e                    — Full detail for one skill (e.g. /skills explain)","/skills --search \"\u003cterm\u003e\"         — Filter by name/description match"],"disableModelInvocation":true,"path":"skills/skills/SKILL.md"},{"name":"ux-lock","oneLiner":"Generate Playwright e2e specs.","triggers":["ux lock","lock ux","lock in the fix","write regression spec","generate e2e test for","regression test for commit","lock this fix","verify the plan","verify plan implementation","check the plan was built","audit frontend implementation","did we ship the plan"],"usage":["/ux-lock \u003ccommit-or-description\u003e [--url \u003cbase-url\u003e]                     — lock mode","/ux-lock verify \u003cplan.md\u003e [--url \u003cbase-url\u003e]                            — verify mode"],"disableModelInvocation":false,"path":"skills/ux-lock/SKILL.md"}],"plans":{"active":[{"title":"Local Navigable Dashboard Subsystem","path":"docs/plans/local-dashboard.md","status":"Approved","date":"2026-05-19","malformed":false}],"completed":[{"title":"Adaptive context \"blast radius\" + deterministic finding-verification gate","path":"docs/completed/adaptive-context-blast-radius.md","status":"Complete","date":"2026-05-17","malformed":false},{"title":"`/brainstorm --with-arch` — codebase architecture context for external LLMs","path":"docs/completed/brainstorm-arch-context.md","status":"Complete","date":"2026-05-17","malformed":false},{"title":"Requirements Layer — a materialized view of the codebase's de-facto requirements","path":"docs/completed/requirements-layer.md","status":"Complete","date":"2026-05-17","malformed":false},{"title":"Architecture-Intent PR-B — Python \u0026 Java Adapters","path":"docs/completed/arch-intent-pr-b-python-java-adapters.md","status":"Complete (implemented + audited via /cycle; /audit-code → Gemini APPROVE 2026-05-15; see audit summary at docs/completed/arch-intent-pr-b-audit-summary.md)","date":"2026-05-15","malformed":false},{"title":"Architecture-Intent PR-C — Postgres Adapter","path":"docs/completed/arch-intent-pr-c-postgres-adapter.md","status":"Complete (implemented + audited via /cycle; /audit-code 2 GPT + 2 Gemini rounds 2026-05-15, all findings fixed, Gemini coherence \"Strong\"; see audit summary at docs/completed/arch-intent-pr-c-audit-summary.md)","date":"2026-05-15","malformed":false},{"title":"Anthropic Backend Routing (Agent SDK credit prep)","path":"docs/completed/anthropic-backend-routing.md","status":"Complete — implemented + audited (R1→R3 + Gemini)","date":"2026-05-14","malformed":false},{"title":"Dead-Code Detection — Phase 1 (Orphan-Introduced Check)","path":"docs/completed/dead-code-phase-1-orphan-introduced.md","status":"Complete","date":"2026-05-12","malformed":false},{"title":"Architecture-Intent Framework + JS Adapter (PR-A of 3)","path":"docs/completed/architecture-intent-framework.md","status":"Complete — all 3 PRs shipped (PR-A framework + JS/TS adapter, commit `6c6be92`; PR-B Python + Java adapters, commit `18ecc5e`; PR-C Postgres adapter, commit `5f7c30d`). PR-B and PR-C each ran their own `/plan` + `/audit-plan` + `/audit-code` cycle — see `docs/completed/arch-intent-pr-{b,c}-*.md` and the audit summaries in `docs/completed/`.","date":"2026-05-11","malformed":false},{"title":"OpenAI prompt prefix-caching for the audit pipeline","path":"docs/completed/openai-prefix-cache.md","status":"Complete — implemented + verified 2026-05-11 (PR-1..5 shipped; Gemini final review APPROVE)","date":"2026-05-11","malformed":false},{"title":"Dogfooding Ergonomics v1","path":"docs/completed/dogfooding-ergonomics-v1.md","status":"Complete — shipped 2026-05-09; archive auto-moves this file via `/ship` Step 5.5","date":"2026-05-09","malformed":false},{"title":"Friction Log + Weekly Digest Surface (v1)","path":"docs/completed/friction-log-and-digest-v1.md","status":"Complete — shipped 2026-05-09; schema applied to live Supabase; auto-archived via `/ship` Step 5.5","date":"2026-05-09","malformed":false},{"title":"Adaptive Learning — Phase 1 (Foundation + Auto-Deferral + Weekly Review)","path":"docs/completed/adaptive-learning-phase-1-foundation.md","status":"**Complete** — shipped as commit `0bde3ab` on 2026-05-08; schema migration applied 2026-05-09","date":"2026-05-08","malformed":false},{"title":"Adaptive Learning — Phase 2 (Live Quickfix Learner)","path":"docs/completed/adaptive-learning-phase-2-quickfix.md","status":"**Complete** — shipped as commit `cf9a89b` on 2026-05-08","date":"2026-05-08","malformed":false},{"title":"Adaptive Learning — Phase 3 (Replay Framework + Remaining Telemetry)","path":"docs/completed/adaptive-learning-phase-3-replay.md","status":"**Complete** — shipped as commit `e40a40e` on 2026-05-08","date":"2026-05-08","malformed":false},{"title":"Adaptive Learning Expansion v1","path":"docs/completed/adaptive-learning-v1.md","status":"**Complete (v1)** — all 3 phases shipped (commits 0bde3ab, cf9a89b, e40a40e), schema migration applied to Supabase project `uahjjdelnnpfmaqjrwoz` on 2026-05-09, cloud-read smoke test passing. v2 graduations (per §5 promotion gates) are out of v1 scope.","date":"2026-05-08","malformed":false},{"title":"Brainstorm-skill upgrades + Quick-fix detection (v1)","path":"docs/completed/brainstorm-quickfix-v1.md","status":"Draft (audit-plan R1 fixes applied — see §10 R1 Revisions)","date":"2026-05-05 (R2 — audit-plan revisions integrated)","malformed":false},{"title":"Proactive Security Memory v1","path":"docs/completed/security-memory-v1.md","status":"Draft v6 (post R1+R2+R3 GPT + Gemini ×2 — 14H/18M/2L addressed; 1 medium deferred to v1.1 with rationale)","date":"2026-05-04","malformed":false},{"title":"Arch-Memory Planning Anchor","path":"docs/completed/arch-memory-planning-anchor.md","status":"Draft v6 (post R1+R2+R3 GPT + Gemini ×2 — 9H/14M/2L addressed; 2 Gemini-R1 HIGHs challenged as invalid claims about pre-existing code; all Gemini-R2 MEDIUMs accepted)","date":"2026-05-03","malformed":false},{"title":"/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid","path":"docs/completed/brainstorm-and-arch-discoverability.md","status":"Draft v6 (post R1+R2+R3 GPT + Gemini ×2 — 14H/11M addressed; 1H+1M deferred to v2)","date":"2026-05-03","malformed":false},{"title":"Architectural Memory","path":"docs/completed/architectural-memory.md","status":"Draft — full audit cycle complete; ready for human review before implementation","date":"2026-05-01 (revised post-R1 + R2 + R3 + Gemini ×2 audit cycle)","malformed":false},{"title":"Architectural Memory — Backend","path":"docs/completed/architectural-memory-backend.md","status":"Draft","date":"2026-05-01","malformed":false},{"title":"Architectural Memory — Human-Facing Surfaces","path":"docs/completed/architectural-memory-frontend.md","status":"Draft","date":"2026-05-01","malformed":false},{"title":"Tech Debt Wave 3 — Lint Modernization + Cognitive-Complexity Sweep","path":"docs/completed/tech-debt-wave-3.md","status":"**Complete** (all 5 PRs shipped 2026-04-27)","date":"2026-04-27","malformed":false},{"title":"AI Context Sync — Reconcile Drift, Detect Drift, Copilot Slash-Command Parity","path":"docs/completed/ai-context-sync.md","status":"**Complete** (all 6 phases shipped 2026-04-26 / 2026-04-27)","date":"2026-04-26","malformed":false},{"title":"Split `/audit-loop` into `/audit-plan` + `/audit-code`","path":"docs/completed/audit-loop-skill-split.md","status":"**Complete** (all 6 phases shipped 2026-04-27)","date":"2026-04-26","malformed":false},{"title":"Skill Progressive Disclosure Refactor","path":"docs/completed/skill-progressive-disclosure-refactor.md","status":"**Complete** (all phases A, B.1, B.2, C1–C6, D, E shipped and tested)","date":"2026-04-19","malformed":false},{"title":"Predictive Audit Strategy — Data Loop Completion \u0026 Intelligence","path":"docs/completed/predictive-audit-strategy.md","status":"Draft","date":"2026-04-17","malformed":false},{"title":"Tech Debt Wave 2 — Responsibility Splits \u0026 Safety Fixes","path":"docs/completed/tech-debt-wave-2.md","status":"Draft","date":"2026-04-17","malformed":false},{"title":"Audit-Loop Reliability \u0026 Intelligence Improvements","path":"docs/completed/audit-loop-improvements.md","status":"Approved (R1 + Gemini G1-G4 + G2-extended fixes applied)","date":"2026-04-15","malformed":false},{"title":"Audit-Loop Meta-Assessment System","path":"docs/completed/meta-assessment-system.md","status":"Complete","date":"2026-04-06","malformed":false},{"title":"Phase G.3 — GitHub Adapter (Branch + Issues)","path":"docs/completed/phase-g3-github-adapter.md","status":"Draft (follows Phase G.2)","date":"2026-04-06","malformed":false},{"title":"Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control","path":"docs/completed/phase-i-claudemd-hygiene.md","status":"Draft","date":"2026-04-06","malformed":false},{"title":"Phase D — Persistent Tech-Debt Memory","path":"docs/completed/phase-d-tech-debt-memory.md","status":"Draft, pending audit-loop review","date":"2026-04-05","malformed":false},{"title":"Phase E — Skill Consolidation + Python Profiles + Rename","path":"docs/completed/phase-e-skill-consolidation-python.md","status":"Draft, pending audit-loop review","date":"2026-04-05","malformed":false},{"title":"Phase F — Install + Update Infrastructure","path":"docs/completed/phase-f-install-update-infra.md","status":"Draft (follows Phase E)","date":"2026-04-05","malformed":false},{"title":"Phase G.1 — Storage Interface + Facade + noop + Supabase refactor","path":"docs/completed/phase-g1-storage-interface-noop-supabase.md","status":"Draft (follows Phase F)","date":"2026-04-05","malformed":false},{"title":"Phase G.2 — SQLite + Postgres Adapters + Shared Conformance","path":"docs/completed/phase-g2-sqlite-postgres-adapters.md","status":"Draft (follows Phase G.1)","date":"2026-04-05","malformed":false},{"title":"Phase H — Public-Distribution Hardening","path":"docs/completed/phase-h-public-distribution.md","status":"Draft (follows Phase G)","date":"2026-04-05","malformed":false},{"title":"Multi-Language Audit Support + Linter Pre-Pass + SonarQube Taxonomy","path":"docs/completed/multi-language-and-linter-integration.md","status":"In Progress (revised after Round 3 audit — converging)","date":"2026-04-04","malformed":false},{"title":"Phase A — Language-Aware Code Analysis","path":"docs/completed/phase-a-language-aware-analysis.md","status":"Audit-complete, ready to implement","date":"2026-04-04","malformed":false},{"title":"Phase B — SonarQube Classification for Findings","path":"docs/completed/phase-b-sonarqube-classification.md","status":"Audit-complete, ready to implement","date":"2026-04-04","malformed":false},{"title":"Phase C — Linter Pre-Pass Integration","path":"docs/completed/phase-c-linter-pre-pass.md","status":"Audit-complete, ready to implement","date":"2026-04-04","malformed":false},{"title":"Robustness Hardening \u0026 R2+ Ledger Auto-Write","path":"docs/completed/robustness-and-ledger-wiring.md","status":"In Progress (revised after Round 3 audit — converging)","date":"2026-04-04","malformed":false},{"title":"Learning System v2 — Adaptive Prompt Evolution \u0026 Contextual Bandits","path":"docs/completed/learning-system-v2.md","status":"In Progress (consolidated rewrite after 3 audit rounds)","date":"2026-04-02","malformed":false},{"title":"Audit Context Brief Generator","path":"docs/completed/context-brief.md","status":"Draft","date":"2026-03-29","malformed":false},{"title":"Gemini 3.1 Pro Final Reviewer","path":"docs/completed/gemini-final-reviewer.md","status":"Complete","date":"2026-03-29","malformed":false},{"title":"Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement","path":"docs/completed/r2-efficiency.md","status":"Draft","date":"2026-03-29","malformed":false},{"title":"Claude Audit Loop v1.0","path":"docs/completed/audit-loop-v1.md","status":"Complete","date":"2026-03-25","malformed":false},{"title":"Browser MCP Tooling + Skill Sync Improvements","path":"docs/completed/browser-mcp-and-tooling.md","status":null,"date":null,"malformed":true},{"title":"Gemini-gate scope-error fix","path":"docs/completed/gemini-gate-scope-fix.md","status":"Complete — applied 2026-05-11","date":null,"malformed":true}]},"architecture":{"domains":[{"name":"arch-memory","anchor":"arch-memory","symbolCount":54,"summary":"The `arch-memory` domain manages glob-based file path classification and drift analysis for tracking architectural changes—it converts glob patterns to regex rules, tags files by domain, and computes repository-wide drift scores indicating how much code deviates from documented architecture."}],"mapPath":"docs/architecture-map.md"},"flows":{"nodes":[{"id":"plan","skill":"plan","label":"Plan — architecture \u0026 UX"},{"id":"audit-plan","skill":"audit-plan","label":"Audit Plan — iterative refinement"},{"id":"audit-code","skill":"audit-code","label":"Audit Code — multi-pass review"},{"id":"ux-lock","skill":"ux-lock","label":"UX Lock — Playwright regression spec"},{"id":"persona-test","skill":"persona-test","label":"Persona Test — live UX testing"},{"id":"ship","skill":"ship","label":"Ship — sync docs, commit, push"},{"id":"cycle","skill":"cycle","label":"Cycle — orchestrates the whole chain"}],"edges":[{"from":"plan","to":"audit-plan","label":"plan written"},{"from":"audit-plan","to":"audit-code","label":"human implements"},{"from":"audit-code","to":"ux-lock","label":"fixes shipped"},{"from":"audit-code","to":"persona-test","label":"frontend scope"},{"from":"ux-lock","to":"ship"},{"from":"persona-test","to":"ship"},{"from":"cycle","to":"plan","label":"drives"}]}}</script>
+<script>/*
+ * Dashboard browser controller — tab switching, skill search, collapse.
+ * Inlined into every generated page by render.mjs. NO network calls of
+ * any kind (no fetch, no HEAD probe). See docs/plans/local-dashboard.md §4.
+ */
+(function () {
+  'use strict';
+
+  // ── Tabs ───────────────────────────────────────────────────────
+  // Delegated click on the tab strip; arrow-key navigation per WAI-ARIA.
+  var strip = document.querySelector('.tabstrip');
+  if (strip) {
+    var tabs = Array.prototype.slice.call(strip.querySelectorAll('[role="tab"]'));
+
+    function select(tab) {
+      tabs.forEach(function (t) {
+        var sel = t === tab;
+        t.setAttribute('aria-selected', sel ? 'true' : 'false');
+        t.tabIndex = sel ? 0 : -1;
+        var panel = document.getElementById(t.getAttribute('aria-controls'));
+        if (panel) panel.hidden = !sel;
+      });
+    }
+
+    strip.addEventListener('click', function (e) {
+      var tab = e.target.closest('[role="tab"]');
+      if (tab) select(tab);
+    });
+
+    strip.addEventListener('keydown', function (e) {
+      var i = tabs.indexOf(document.activeElement);
+      if (i === -1) return;
+      var next = -1;
+      if (e.key === 'ArrowRight') next = (i + 1) % tabs.length;
+      else if (e.key === 'ArrowLeft') next = (i - 1 + tabs.length) % tabs.length;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = tabs.length - 1;
+      if (next >= 0) {
+        e.preventDefault();
+        tabs[next].focus();
+        select(tabs[next]);
+      }
+    });
+  }
+
+  // ── Skill search ───────────────────────────────────────────────
+  var box = document.querySelector('[data-role="skill-search"]');
+  var count = document.querySelector('[data-role="skill-count"]');
+  if (box) {
+    var cards = Array.prototype.slice.call(document.querySelectorAll('[data-search]'));
+    var apply = function () {
+      var q = box.value.trim().toLowerCase();
+      var shown = 0;
+      cards.forEach(function (c) {
+        var hit = !q || c.getAttribute('data-search').indexOf(q) !== -1;
+        c.hidden = !hit;
+        if (hit) shown++;
+      });
+      if (count) {
+        count.textContent = q
+          ? shown + ' of ' + cards.length + ' skills match "' + q + '"'
+          : cards.length + ' skills';
+      }
+    };
+    box.addEventListener('input', apply);
+    apply();
+  }
+})();
+</script>
+</body>
+</html>

@@ -129,6 +129,37 @@ GH workflow, never by /ship directly.
 
 ---
 
+## Step 0.5d — Regenerate the Local Dashboard (advisory, source-repo only)
+
+**Source-repo-gated** — run this ONLY when
+`package.json.name === "claude-engineering-skills"` (same gate as Step 6.0).
+Skip silently in consumer repos: there the dashboard is opt-in via
+`node scripts/build-dashboard.mjs all` (see `docs/plans/local-dashboard.md`
+§7.3). Never blocks the ship.
+
+```bash
+node scripts/build-dashboard.mjs reference 2>&1
+```
+
+Run it WITHOUT `|| true` — the **exit code is the signal** and must be
+read, not masked. A non-zero exit must not abort the ship (this step is
+advisory): treat a failure as "skip staging, print a heads-up, continue".
+
+`reference` mode regenerates the committed `dashboard/index.html` (and a
+placeholder `dashboard/telemetry.html` if none exists — gitignored). The
+CLI exits non-zero on a **degraded** build (a source was invalid/errored):
+
+- Exit 0 → stage the regenerated page in the Step 6.1 list:
+  `git add dashboard/index.html`.
+- Exit non-zero → do **NOT** stage `dashboard/index.html` (a degraded page
+  must not reach a commit — §7.1 write/stage matrix). Print a one-line
+  heads-up; ship continues.
+
+This keeps the committed reference dashboard current with the skills/plans
+being shipped. `dashboard/telemetry.html` is never staged (gitignored).
+
+---
+
 ## Step 1 — Assess What Changed
 
 Before updating docs, understand the current state:
@@ -268,6 +299,7 @@ git add status.md
 git add CLAUDE.md AGENTS.md    # only if modified
 git add docs/plans/<plan>.md   # only if plan was updated
 git add scripts/.sync-manifest.json   # source repo only, after Step 6.0
+git add dashboard/index.html   # source repo only, after Step 0.5d, ONLY if that build exited 0
 ```
 
 **Do NOT stage**: `.env`, credentials, `node_modules/`, temp/generated files.

@@ -142,6 +142,26 @@ const CORE_SCRIPTS = [
   'scripts/lib/requirements/context.mjs',
   'scripts/lib/requirements/render.mjs',
   'scripts/requirements.mjs',
+  // Local dashboard (docs/plans/local-dashboard.md): the generator + its
+  // entire lib subtree. build-dashboard.mjs statically imports every
+  // lib/dashboard/* module — they MUST ship together or the consumer-repo
+  // `npm run dashboard` fails to load. lib/learning/stats.mjs is imported
+  // by collect-telemetry.mjs (and now by cross-skill.mjs's cmdLearningStats).
+  // cli-io.mjs + audit-metrics.mjs are transitive deps of the generator.
+  // dashboard/index.html itself is NOT synced — it is a per-repo artefact.
+  'scripts/lib/cli-io.mjs',
+  'scripts/audit-metrics.mjs',
+  'scripts/build-dashboard.mjs',
+  'scripts/lib/dashboard/schema.mjs',
+  'scripts/lib/dashboard/flows.json',
+  'scripts/lib/dashboard/load-assets.mjs',
+  'scripts/lib/dashboard/render.mjs',
+  'scripts/lib/dashboard/collect-reference.mjs',
+  'scripts/lib/dashboard/collect-telemetry.mjs',
+  'scripts/lib/dashboard/serve.mjs',
+  'scripts/lib/dashboard/assets/dashboard.css',
+  'scripts/lib/dashboard/assets/dashboard.js',
+  'scripts/lib/learning/stats.mjs',
 ];
 
 /**
