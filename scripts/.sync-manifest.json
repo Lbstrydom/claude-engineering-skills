@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-05-19T19:10:39.664Z",
+  "generatedAt": "2026-05-20T06:09:07.092Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "2bc23033aa965fe2e3da3d96c8337e4ca93a2ed9",
+  "commitSha": "e6e731a7c9f419ecb17e9f155ba6612462de3654",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -59,7 +59,7 @@
     "scripts/lib/brainstorm/session-store.mjs": "sha256:f6e75645003bdd076ba23a9964fa370cda6ba3714c1c8f43e04712fe7c87c9ae",
     "scripts/lib/cli-io.mjs": "sha256:ac6fa4d75a48d8b201d5099f8c94ec4cc45fd21f99dd7f480fcaf0830317dcf9",
     "scripts/lib/code-analysis.mjs": "sha256:b5620d8d15d8d9a77ae8ab0385ebaf185ad84dc1e587cf835031c8a092e1bfa7",
-    "scripts/lib/config.mjs": "sha256:46815293cc9708145d2ab37ff6e373623518d9491dd94ba36706de5c75e49de8",
+    "scripts/lib/config.mjs": "sha256:71ead34ab93dd75766a45652ebc650fa96e6310b289202bef3cca007cb9abbe8",
     "scripts/lib/context.mjs": "sha256:5cb4039cd51a3025c95f978beb1e0c95a8736ce5746070d9ec73f19b11f07a1c",
     "scripts/lib/dashboard/collect-reference.mjs": "sha256:1e777e795c5b32b0df65651dd943d80a52b04156ac7173a952c3280eae4ff037",
     "scripts/lib/dashboard/collect-telemetry.mjs": "sha256:a4e707598a021281b8b30ac01fa1f5f64129b6b258024723b45e97cf057c7282",

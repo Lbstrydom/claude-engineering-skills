@@ -14,12 +14,14 @@ description: |
   Usage:
     /persona-test list [url]                                        — show all personas for an app
     /persona-test add "<name>" "<description>" <url> [app name]     — register a new persona
-    /persona-test "<persona or name>" <url> [focus area]            — run a test session
+    /persona-test "<persona or name>" <url> [focus area]            — run an exploratory test session (MCP-driven)
+    /persona-test --mode consistency --canary <name> <url>          — run a deterministic consistency-mode canary (code-driven Playwright)
   Examples:
     /persona-test list https://myapp.railway.app
     /persona-test add "Pieter" "wine enthusiast, 40s, drinks daily, mobile-first" https://myapp.railway.app "Wine Cellar App"
     /persona-test "Pieter" https://myapp.railway.app "adding a bottle"
     /persona-test "first-time user on mobile" https://myapp.railway.app
+    /persona-test --mode consistency --canary oliver-infeasible-reorg http://localhost:3000
 ---
 
 # Persona-Driven Browser Testing
@@ -232,6 +234,97 @@ Record a finding only when confidence ≥0.6. Below that, note it as
 
 ---
 
+## Phase 3b — Consistency Mode (deterministic, code-driven)
+
+> Triggered by `--mode consistency`. **This is a completely different
+> execution model from the exploratory loop above.** When `--mode consistency`
+> is set, the LLM does NOT drive the browser — you delegate to the
+> deterministic runner which owns Playwright directly. Skip Phases 1-3 and
+> Phases 4-6 above; consistency mode has its own flow below.
+
+Use this mode to detect cross-step UI/state contradictions (the engine says
+"infeasible" but a CTA says "Reorganise") against a registered canary journey.
+Authoritative spec: [docs/consistency-contract.md](../../docs/consistency-contract.md).
+
+### Step C1 — Validate inputs
+
+Required: `--mode consistency` + `--canary <name>` + URL. If any missing,
+print usage and STOP.
+
+### Step C2 — Delegate to the runner
+
+```bash
+node scripts/persona-consistency-run.mjs \
+  --canary <name> \
+  --url <url> \
+  [--out .persona-test/sessions/<SID>.json]
+```
+
+The runner:
+1. Resolves `surfaces.json` from `.persona-test/` → `<repo-root>/` → `src/` (first match wins).
+2. Loads `.persona-test/canaries/<name>.json` and validates against `CanaryDefinitionSchema`.
+3. Drives Playwright through `canary.journeySteps[]` deterministically (no LLM in the loop).
+4. Captures `{surfaceClaims, networkClaims}` synchronously per step via `scripts/lib/ux-lock/capture.mjs`.
+5. Diffs DOM vs network ground truth via `scripts/lib/persona-test/consistency.mjs`.
+6. Emits candidate `regression_specs` rows for P1+ contradictions (fingerprint-upserted).
+7. Verifies the canary's `expectedContradictions` and decides the exit code.
+
+### Step C3 — Read the verdict from the exit code (do NOT parse stdout)
+
+| Exit | Verdict | Action |
+|---|---|---|
+| `0` | healthy — canary expectations met | Report success; surface contradictions count + any pending candidates |
+| `2` | rig-broken — canary expected ≥N contradictions, got fewer | **Stop the pipeline.** Surface the failureReason from the ledger; investigate manifest drift or attribute regression before running again |
+| `3` | fatal-rig — manifest missing / canary schema invalid / Playwright disconnected | Surface failureReason; the rig itself needs fixing |
+| `4` | ledger-persist-failed — couldn't write session JSON | Surface stderr; disk full / permission issue, distinct from rig findings |
+| `5` | playwright-missing | Suggest `npx playwright install chromium`; the runner emits this hint to stderr too |
+| `6` | app-error — a journey action threw (e.g. TimeoutError on click) | This is an APP regression, NOT a rig issue. Surface the failing step + selector from the ledger |
+
+### Step C4 — Report
+
+Render this fence to stdout:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CONSISTENCY MODE REPORT
+  Canary: <name>
+  URL: <url>
+  Verdict: <healthy | broken | partial | fatal | app-error>
+  Exit: <code>
+  Contradictions: <n>   Candidates emitted: <n>   Warnings: <n>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FINDINGS
+────────────────────────────────────────────────────
+  [<severity>] <kind> at <surfaceId>.<engineField>
+     DOM:      <value>   (data-freshness="<freshness>")
+     Engine:   <value>
+     Selector: <selector>
+     Detail:   <one-line>
+  ...
+
+OVERALL: <one-line verdict>
+```
+
+Sort findings by severity (P0 first), tie-break by surfaceId. If the canary
+verdict is `broken`, lead with a one-line callout above the report:
+
+```
+⚠ RIG BROKEN — canary expected min:N contradictions, found M.
+  Manifest drift or attribute regression suspected — fix before next run.
+```
+
+### Step C5 — Skip the persona debrief
+
+Consistency mode does NOT produce a Phase 5b debrief. The exit code + the
+findings fence is the entire report. Don't generate first-person narrative
+— consistency mode is rig output, not persona perception.
+
+Full grammar + manifest schema + canary schema + flow details:
+[references/consistency-mode.md](references/consistency-mode.md).
+
+---
+
 ## Phase 4 — Severity Model
 
 | Code | Label | Rule |
@@ -371,6 +464,7 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/audit-correlation.md` | Pre-test audit enrichment + post-test persona↔audit correlation emission — full rules. | `audit_link = true` AND (Phase 0d fetches audit candidates OR Phase 6b emits correlations). |
 | `references/browser-tool-detection.md` | Full browser-tool detection algorithm with tier priority, fallback rules, and Windows caveats. | Phase 1 tool selection fails on first try, OR the user is on Windows and Playwright MCP tools aren't appearing. |
+| `references/consistency-mode.md` | Full consistency-mode grammar, manifest schema, canary schema, runner exit codes, contradiction kinds. | Phase 3b runs (i.e., `--mode consistency` was passed) and you need the full grammar reference; OR the user asks how the rig decides severity / coercion / negative-space. |
 | `references/persona-debrief-format.md` | Full persona debrief generation rules, tone guide, and output wrapper. | About to write the Phase 5b debrief. |
 | `references/session-history.md` | Post-session history readback — recurring-issue surface + cross-session pattern detection. | Phase 6c runs AND Supabase is configured. |
 | `references/interop.md` | How persona-test interacts with /ship, /plan-*, and /audit-loop — integration contracts. | User asks about cross-skill effects, OR a sibling skill needs to reference persona-test data. |
