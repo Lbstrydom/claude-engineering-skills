@@ -65,7 +65,12 @@
     "hooks:install": "node scripts/install-prepush-hook.mjs --format human",
     "hooks:install:dry": "node scripts/install-prepush-hook.mjs --dry-run --format human",
     "hooks:uninstall": "node scripts/install-prepush-hook.mjs --uninstall --format human",
-    "audit:wtf": "node scripts/friction-log.mjs"
+    "audit:wtf": "node scripts/friction-log.mjs",
+    "parity:check-refs": "node scripts/postgres-parity/check-non-core-references.mjs",
+    "parity:check-refs:strict": "node scripts/postgres-parity/check-non-core-references.mjs --strict",
+    "parity:check-coupling": "node scripts/postgres-parity/check-non-core-references.mjs --schema-coupling --strict",
+    "parity:expected-schema": "node scripts/postgres-parity/generate-expected-schema.mjs",
+    "parity:record-fixtures": "node scripts/postgres-parity/record-golden-fixtures.mjs"
   },
   "keywords": [
     "claude",
