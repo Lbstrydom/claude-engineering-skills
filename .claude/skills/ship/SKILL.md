@@ -10,6 +10,7 @@ description: |
   Usage: /ship --ignore-p0            — push despite an unresolved persona-test P0 finding
   Usage: /ship --skip-ux-lock         — push despite an unlocked recent UI fix
   Usage: /ship --no-archive           — keep Complete-status plans in docs/plans/ (rare)
+  Usage: /ship --no-promote           — keep consistency candidates pending; don't materialise locks this ship
   Triggers on: "ship it", "commit and push", "push my changes", "ready to ship".
   IMPORTANT: This command runs autonomously — no confirmation prompts. The user invoking
   /ship is their approval to update docs, commit, and push in one uninterrupted flow.
@@ -265,6 +266,44 @@ v2 draft that shouldn't move yet).  Preview with
 
 If anything moves, include the renamed paths in the Step 6 stage list
 (git tracks them as renames automatically).
+
+---
+
+## Step 5.6 — Promote Consistency Candidates (when present)
+
+If `.persona-test/canaries/` exists in this repo (consistency mode is
+adopted), check for pending `regression_specs` rows in the
+`persona-consistency-candidate` source_kind. These are evidence
+snapshots that `/persona-test --mode consistency` captured during prior
+runs; `/ship` is the boundary where the user decides whether to
+materialise them as enforceable Playwright specs.
+
+```bash
+# Reconcile any incomplete promotions left by a prior crash; this is
+# safe to run unconditionally (no-op when the journal is empty).
+node scripts/persona-consistency-promote.mjs --auto=false
+```
+
+Skip silently if:
+- `.persona-test/canaries/` does NOT exist (consistency mode is opt-in)
+- the audit-store is offline (no candidates to promote)
+- the resolved repoId is null (run `cross-skill.mjs resolve-repo-identity --persist` first)
+
+When candidates ARE pending, the script prints them and prompts y/N per
+row. Approve → it renders the deterministic Playwright spec via
+`renderCandidateSpec`, atomic-writes to `tests/e2e/<filename>.spec.js`,
+flips the DB row to `persona-consistency-locked`, and records one
+`ship_event` per promotion. The two-phase journal at
+`.persona-test/promotion-journal/<specId>.json` lets a crash mid-flight
+be reconciled on next invocation — never a stranded file or DB row.
+
+Output appears inline in `/ship`'s stdout. Failures do NOT block the
+ship (a candidate that fails to materialise stays as a candidate; the
+operator can retry later). Promoted spec files become part of the same
+commit Step 6 builds.
+
+**Skip with `--no-promote`** (rare — when you want to defer promotion
+until a follow-up PR; the candidates remain in the queue).
 
 ---
 

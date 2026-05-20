@@ -40,6 +40,10 @@ export const OPTIONAL_DEPS = [
   '@supabase/supabase-js', // cloud learning store + persona-test + cross-skill
   'codeowners-utils',       // owner resolution in debt ledger
   'proper-lockfile',        // advisory locking for bandit-state writes
+  'playwright',             // consistency-mode runner — only used when the consumer
+                            //   has adopted consistency mode (canaries/ + surfaces.json).
+                            //   Browser binaries are a separate step:
+                            //   `npx playwright install chromium`.
 ];
 
 const G = '\x1b[32m', Y = '\x1b[33m', X = '\x1b[0m', D = '\x1b[2m';
