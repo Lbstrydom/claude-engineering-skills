@@ -87,3 +87,14 @@ node_modules/
 # page (dashboard/index.html) IS committed — asymmetric commit policy,
 # see docs/plans/local-dashboard.md §2.1.
 dashboard/telemetry.html
+
+# Persona-test consistency mode — session ledgers + LLM-egress derived
+# state. Per-machine artifacts; surfaces.json + canaries/*.json ARE
+# committed (the manifest + reference journeys are shared rubric).
+# See docs/plans/persona-test-consistency-mode.md.
+.persona-test/sessions/
+.persona-test/semantic-cache.json
+.persona-test/semantic-cache.json.lock
+.persona-test/semantic-egress.log
+.persona-test/semantic-egress.log.*
+.persona-test/promotion-journal/
