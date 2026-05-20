@@ -1,5 +1,101 @@
 # Project Status Log
 
+## 2026-05-20 — Persona-test consistency mode (Phases 0-6.5 + 7-round audit)
+
+End-to-end ship of `/persona-test --mode consistency` — a deterministic,
+code-driven Playwright runner that detects cross-step UI/state
+contradictions against an HTML-attribute contract. Plan was audited
+through 10 rounds before implementation (51 findings addressed) and the
+implementation was audited through 7 more rounds (34 findings addressed)
+before this ship.
+
+### Changes (commits e6e731a → 0af636c, 8 commits over the cycle)
+
+- **Phase 0 — contract layer** (e6e731a): Zod schemas
+  (`scripts/lib/persona-test/schemas.mjs`), redaction adapter
+  (`scripts/lib/redact.mjs`), additive Supabase migration
+  (`supabase/migrations/20260520120000_consistency_source_kinds.sql`),
+  authoritative HTML attribute contract doc
+  (`docs/consistency-contract.md`), 62 tests
+- **Phase 1 — diff + LLM boundary** (8d64312):
+  `manifest-resolver.mjs` (priority-ordered, frozen DEFAULT_RESOLVERS),
+  `consistency.mjs` (pure diffClaims with type coercion + stale-projection
+  + null-grounded + negative-space + per-kind dispatch),
+  `semantic-compare.mjs` (CROSS_STREAM_VIOLATION enforcement, redact-first
+  egress, model-allowlist), `context.mjs`. Plus SKILL.md Phase 3b.
+- **Phase 2 + 3 — capture + ledger** (9a5a6d8):
+  `scripts/lib/ux-lock/capture.mjs` with `attachNetworkListener` (passive
+  `page.on('response')`, cumulative LRU NetworkGroundTruth store),
+  `stabiliseDom` content-hash poll loop, `extractDomClaims`,
+  `captureWitness`; `scripts/lib/ux-lock/candidate-spec.mjs` (deterministic
+  Playwright spec renderer with per-contradiction-kind assertion templates);
+  `scripts/lib/persona-test/ledger.mjs` (atomic per-step writes,
+  mandatory persistence on every terminal state, `normaliseForReplay` for
+  idempotency).
+- **Phase 4 — runner + canary + 6.5 bootstrap** (777e1b1):
+  `scripts/lib/persona-test/canary.mjs` (loadCanary path-traversal safe,
+  verifyExpectations min/max/shapes/kind), `scripts/persona-consistency-run.mjs`
+  (the deterministic CLI with all 6 exit codes 0/2/3/4/5/6), playwright
+  npm dep added, `checkPlaywrightAvailable()` in `scripts/check-setup.mjs`.
+  cross-skill writers extended: `cmdListConsistencyCandidates`,
+  `cmdPromoteRegressionSpec`.
+- **Phase 6 — /ship promote + sync-to-repos** (2d65dfb):
+  `scripts/persona-consistency-promote.mjs` (crash-tolerant two-phase
+  journal: pending → DB commit → db-committed → rename → finalised, with
+  reconcile recovery on every restart), `skills/ship/SKILL.md` Step 5.6,
+  `playwright` added to consumer `OPTIONAL_DEPS`.
+- **Audit-cycle fixes** (0af636c): 34 fixes across 4 /audit-code rounds +
+  3 Gemini final reviews. Key landings: cycle detection via ancestor stack,
+  redact-before-truncate, try/catch around LLM callbacks, fingerprint
+  identity using scope+key (not selector), per-contradiction-kind
+  assertions, refuse-promotion on `evaluate` steps, `unresolved-ground-truth`
+  finding for unmatched DOM, `coerceDomKey` wired into diffClaims, model
+  allowlist enforcement, promote+ship through cross-skill CLI per plan
+  Phase 6 facade mandate. See
+  `docs/plans/persona-test-consistency-mode-audit-summary.md` for the
+  full round-by-round breakdown.
+
+### Decisions made
+
+- **Code-owned Playwright for consistency mode, NOT MCP** (locked in §2.0
+  of the plan): the LLM authors canary JSON ahead of time; the runner
+  executes deterministically. Trades the exploratory MCP loop for
+  byte-identical replay. Exploratory persona-test mode unchanged.
+- **No 2PC across Supabase + filesystem** (plan §11b): the promote uses
+  a journal-based two-phase commit with reconciliation on next run.
+  `reconcilePromotionJournal` DB-disambiguates pending entries; leaves
+  them untouched when DB unreachable.
+- **`evaluate` journey steps REFUSE promotion** (R2-H3/H10): a TODO
+  comment isn't a regression lock. Candidate stays pending; operator
+  rewrites the journey without evaluate to enable promotion.
+- **Audit cycle stopped at round 7**: coherence reached "Strong" by
+  Gemini-R2; further iteration would be rigor-pressure. 1 of 4 R3
+  findings (G2 `keyNative === null` typo) was a Gemini hallucination of
+  code that doesn't exist — verified by direct grep before dismissal.
+
+### Tests
+
+`npm test`: **2644 pass, 17 skip, 0 fail**. New test files this cycle:
+`consistency-schemas`, `redact`, `persona-test-manifest-resolver`,
+`persona-test-consistency`, `persona-test-semantic-compare`,
+`ux-lock-capture`, `ux-lock-candidate-spec`, `persona-test-ledger`,
+`persona-test-canary`, `persona-consistency-run-args`,
+`persona-consistency-promote` (~160 test cases).
+
+### Next steps
+
+- Consumer-repo adoption: annotate `data-engine-claim`/`-value`/`-freshness`
+  on first surface in wine-cellar-app (status chip + capacity feasibility
+  is the canonical first target); author
+  `.persona-test/canaries/oliver-infeasible-reorg.json` with
+  `expectedContradictions: { min: 1 }`; run end-to-end against staging.
+- Optional v2: contradiction-trends cross-skill table (plan §11b deferred
+  until 2-3 real consumer adoptions produce session data to shape schema).
+- Optional v2: auto-generate `surfaces.json` from `data-engine-claim`
+  scans (plan §11b deferred — severity rubric still needs human input).
+
+---
+
 ## 2026-05-19 — /plan emits Mermaid architecture diagrams
 
 Added optional Mermaid diagram generation to the `/plan` skill. Phase 6 §2

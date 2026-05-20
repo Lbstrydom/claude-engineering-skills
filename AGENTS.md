@@ -67,8 +67,10 @@ Each skill is a sibling — they share env vars and Supabase stores but have dis
 - **audit-code**: code that was just written (5-pass parallel static analysis + LLM audit + R2+ suppression).
 - **audit-loop**: thin orchestrator dispatching to /audit-plan or /audit-code by input shape.
 - **ux-lock**: code that was just fixed (Playwright e2e regression lock). **Verify mode** (`/ux-lock verify <plan.md>`) grades a plan-frontend plan against its live implementation — each criterion becomes a Playwright test case; results populate `plan_verification_runs` + `plan_verification_items`.
-- **persona-test**: deployed app (live browser, user flows, UX findings)
-- **ship**: packaging and delivery
+- **persona-test**: deployed app. Two execution modes:
+  - **Exploratory** (default, MCP-driven): persona walks the app via Playwright MCP, finds UX issues, writes a P0-P3 report + debrief.
+  - **Consistency mode** (`--mode consistency --canary <name>`, code-driven Playwright): deterministic runner against a canary journey + a `surfaces.json` manifest declaring `data-engine-claim` HTML attributes. Detects cross-step UI/state contradictions (DOM-vs-network-truth, stale-projection, undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright specs. See `docs/consistency-contract.md` for the HTML attribute contract.
+- **ship**: packaging and delivery (now includes Step 5.6 candidate promotion when consistency mode is adopted)
 
 ## Browser Tool Setup (persona-test)
 
