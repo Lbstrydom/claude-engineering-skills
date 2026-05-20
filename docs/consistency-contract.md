@@ -186,10 +186,28 @@ Pick one. The schema is enforced via Zod
 
 Each surface declares a `severityFloor` (`P0`/`P1`/`P2`/`P3`). Contradictions
 on that surface CANNOT be raised below this floor — keeps the skill generic
-and lets consumer apps tune signal-to-noise per surface:
+and lets consumer apps tune signal-to-noise per surface.
 
-- Status chip whose currency is contract-critical → `P0`
-- Recommendation advisor where copy redundancy is acceptable noise → `P2`
+**Three-tier guidance for status surfaces** (the most common consistency-mode
+target — and the one where severity choice gets adopters burned first):
+
+| Surface type | severityFloor | Why |
+|---|---|---|
+| Contract-critical currency (account balance, payment status, anything where stale is wrong by definition) | `P0` | Every stale-projection event IS a bug. Fail CI on it. |
+| Documented stale-tolerant UX (SWR with visible "…updating" copy, optimistic-update patterns, background-sync indicators) | `P1` | The stale-projection still gets recorded in the ledger for trend analysis, but won't fail CI on intentional grace. The chip is doing its job. |
+| Recommendation / advisory copy (Restock suggestions, "you might like…", anything where stale is acceptable noise) | `P2` | Surfaced for visibility, never blocks. |
+| Pure observability metadata (footer timestamps, debug overlays) | `P3` | Logged for completeness; almost never reviewed. |
+
+**Common adopter trap**: setting a stale-tolerant SWR chip to `P0` because
+"it's the main status indicator". Every page-load where the engine is
+mid-recompute fires P0 — that's noise, not signal, and adopters either
+(a) lower the floor for the wrong reasons or (b) learn to ignore P0s
+(corrupting their CI gate). If your chip has documented stale-tolerant
+UX, **start at P1**.
+
+The stale-projection contradiction kind ALWAYS fires when
+`data-freshness="stale"` is visible — severity choice controls whether
+that fires loud or quiet, not whether it fires at all.
 
 ### Locators
 
@@ -228,7 +246,7 @@ that lets the consistency rig self-test against a known reference journey.
   "name": "oliver-infeasible-reorg",
   "personaId": "pieter-wine-enthusiast",
   "fixtureSeed": "wine-cellar-infeasible-2026-05",
-  "authBootstrap": { "kind": "none" },
+  "authBootstrap": { "kind": "storageState", "storageStatePath": ".persona-test/storage-states/authed.json" },
   "routes": { "cellar": "/cellar", "organise": "/cellar/organise" },
   "scripts": {},
   "journeySteps": [
@@ -237,7 +255,16 @@ that lets the consistency rig self-test against a known reference journey.
     { "action": "click", "label": "Start reorganise",
       "locator": { "kind": "role", "role": "button", "name": "Reorganise" } }
   ],
-  "expectedContradictions": { "min": 1 }
+  "expectedContradictions": {
+    "min": 1,
+    "shapes": [
+      {
+        "surfaceId": "reorganise-cta",
+        "engineField": "capacityRemedy.feasibility",
+        "kind": "value-mismatch"
+      }
+    ]
+  }
 }
 ```
 
@@ -245,7 +272,17 @@ that lets the consistency rig self-test against a known reference journey.
 
 - `min: 1` ⇒ **broken-canary canary** — rig MUST find ≥1 contradiction. Zero findings = rig is broken (e.g. attribute drift, manifest mismatch). The runner exits 2 (`rig-broken`).
 - `max: 0` ⇒ **clean reference canary** — rig must find zero contradictions. Any finding = consumer regression.
-- `shapes` ⇒ optional precision — assert specific `(engineField, surfaceId)` pairs are among the contradictions.
+- `shapes` ⇒ **strongly recommended** — assert specific `(engineField, surfaceId, kind)` triples are among the contradictions. Without `shapes`, the `min: 1` gate is satisfied by ANY P1+ state-contradiction on the page — which means an unrelated stale-projection on a different surface counts as "the canary passed" even though it has nothing to do with the journey's premise.
+
+**The `shapes` filter is the difference between**:
+
+- "Rig caught ANYTHING this run" (a `min: 1` canary without shapes — trivial bar)
+- "Rig caught the INTENDED bug" (a `min: 1` + shapes canary — proves the rig works for THIS journey's purpose)
+
+Write the shape for what the journey is supposed to expose. If the journey
+exercises "infeasible-reorg shows Reorganise CTA anyway", the shape is the
+contradiction kind, surface, and field that proves it. Without that, a stale
+status chip three surfaces away masquerades as a passing canary.
 
 Run with: `/persona-test --mode consistency --canary oliver-infeasible-reorg <url>`.
 
@@ -327,6 +364,21 @@ The rig emits `unannotated-surface` (P2) when the locator matches an
 element but `data-engine-claim` is absent — that's the diagnostic for
 "branch annotated, deployed build hasn't caught up". Distinct from
 `missing-surface` (locator matched nothing — wrong route or auth state).
+
+**Deploy cadence note**: typical Railway/Vercel/Netlify deploy from
+`git push` to "new bundle served" is 3-10 minutes (Docker build +
+provider pickup + cache warm-up). CI that runs the canary on the same
+workflow as the push trigger will canary the OLD bundle. Two options:
+
+- **PR-preview**: wait for the preview URL to be available (most
+  providers post a deployment-ready webhook or status check). Run the
+  canary on that URL, not the main staging URL.
+- **Two-job pipeline**: job 1 pushes and waits for deploy; job 2 (gated
+  on job 1's success) runs the canary against the now-fresh URL.
+
+Without one of these, your CI will report `unannotated-surface` for
+every recently-pushed annotation and adopters will think the rig is
+broken when it's actually just ahead of the deploy.
 
 ### SPA storage-key gotchas (programmatic auth-state seeders)
 

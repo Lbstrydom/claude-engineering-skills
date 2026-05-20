@@ -390,6 +390,13 @@ export async function runConsistency(args, deps = {}) {
       // nudges) so the operator sees them once. Later steps only carry
       // their own capture/diff warnings.
       const stepWarnings = i === 0 ? [...startupWarnings, ...warnings] : warnings;
+      // step.freshness[] used to mirror contradictions filtered by
+      // freshness kinds (wine-cellar round-4 #3 — duplication). Same
+      // rows appeared in both arrays, doubling triage cost. As of
+      // round-4, freshness[] is left empty: stale-projection +
+      // absent-not-rendered findings live in contradictions[] under
+      // their kind, and the schema field is retained only for
+      // backwards-compat with previously-written ledgers.
       ledger.appendStep({
         stepIndex: i,
         plan: step.label || `step ${i}`,
@@ -398,15 +405,7 @@ export async function runConsistency(args, deps = {}) {
         navResponseStatus: stepMeta?.navResponseStatus ?? null,
         witness,
         contradictions,
-        freshness: contradictions
-          .filter((c) => c.kind === 'stale-projection' || c.kind === 'absent-not-rendered')
-          .map((c) => ({
-            surfaceId: c.surfaceId || '',
-            engineField: c.engineField || '',
-            freshness: c.freshness === 'current' ? 'absent' : (c.freshness || 'absent'),
-            severity: c.severity,
-            detail: c.detail,
-          })),
+        freshness: [],
         warnings: stepWarnings,
         durationMs: Date.now() - stepStart,
       });

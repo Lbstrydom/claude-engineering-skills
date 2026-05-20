@@ -213,6 +213,60 @@ describe('diffClaims — stale-projection respects severityFloor', () => {
     assert.ok(stale);
     assert.equal(stale.severity, 'P2');
   });
+
+  // Wine-cellar round-4 #2 — detail enrichment with three branches.
+  it('detail includes engine "(match)" framing when stale value still agrees with engine', async () => {
+    const witness = emptyWitness({
+      domClaims:     [makeDomClaim({ domValueRaw: 'true', freshness: 'stale' })],
+      networkClaims: [makeNetClaim({ value: true })],   // agrees
+    });
+    const f = await diffClaims(witness, makeManifest());
+    const stale = f.find((x) => x.kind === 'stale-projection');
+    assert.ok(stale);
+    assert.match(stale.detail, /engine ground-truth: true \(match\)/i);
+    assert.equal(stale.engineValue, true,
+      'engineValue must be populated when ground-truth was captured');
+  });
+
+  it('detail includes "(DIVERGES)" framing when stale value disagrees with engine', async () => {
+    const witness = emptyWitness({
+      domClaims:     [makeDomClaim({ domValueRaw: 'true', freshness: 'stale' })],
+      networkClaims: [makeNetClaim({ value: false })],   // diverges
+    });
+    const f = await diffClaims(witness, makeManifest());
+    const stale = f.find((x) => x.kind === 'stale-projection');
+    assert.ok(stale);
+    assert.match(stale.detail, /\(DIVERGES\)/);
+    assert.match(stale.detail, /Both stale AND value-mismatch/i);
+    assert.equal(stale.engineValue, false);
+  });
+
+  it('detail flags "ground-truth NOT captured" when no matching network claim exists', async () => {
+    const witness = emptyWitness({
+      domClaims:     [makeDomClaim({ domValueRaw: 'true', freshness: 'stale' })],
+      networkClaims: [],   // no ground truth
+    });
+    const f = await diffClaims(witness, makeManifest());
+    const stale = f.find((x) => x.kind === 'stale-projection');
+    assert.ok(stale);
+    assert.match(stale.detail, /ground-truth NOT captured/i);
+    assert.equal(stale.engineValue, null,
+      'engineValue must be null when no ground-truth was captured');
+  });
+
+  it('detail always includes the stringified DOM value so ledger readers see both sides', async () => {
+    const witness = emptyWitness({
+      domClaims:     [makeDomClaim({ domValueRaw: 'feasible', freshness: 'stale' })],
+      networkClaims: [makeNetClaim({ value: 'feasible' })],
+    });
+    const m = makeManifest();
+    m.surfaces[0].engineFields[0] = { field: 'cellarOrganised', type: 'enum',
+      semanticValues: ['feasible', 'infeasible'], llmSafe: false, llmMaxChars: 2000 };
+    const f = await diffClaims(witness, m);
+    const stale = f.find((x) => x.kind === 'stale-projection');
+    assert.ok(stale);
+    assert.match(stale.detail, /"feasible"/, 'DOM value must appear quoted in the detail');
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────

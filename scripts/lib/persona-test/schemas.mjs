@@ -419,6 +419,12 @@ const StepRecordSchema = z.object({
   navResponseStatus: z.number().int().nullable().default(null),  // 200/404/500 for navigate steps; null otherwise
   witness: WitnessRecordSchema,
   contradictions: z.array(ContradictionSchema),
+  // DEPRECATED in wine-cellar round-4 #3 — left in the schema for
+  // backwards-compat with ledgers written before the runner stopped
+  // populating it. Stale-projection + absent-not-rendered findings now
+  // live in `contradictions[]` under their `kind` field; readers
+  // should filter contradictions[] by kind, NOT inspect freshness[].
+  // New ledgers from the round-4 runner onwards write this as `[]`.
   freshness: z.array(FreshnessFindingSchema),
   warnings: z.array(RigWarningSchema),
   durationMs: z.number().int().min(0),

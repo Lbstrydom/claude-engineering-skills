@@ -179,23 +179,16 @@ export async function diffClaims(witness, manifest, opts = {}) {
       continue;
     }
 
-    // Stale-projection — severity from manifest floor (Gemini-R2-G4).
-    // Fire regardless of value match (the point is to surface the projection bug class).
-    if (dom.freshness === 'stale' && dom.visible) {
-      findings.push(make(
-        'stale-projection', floor, dom, dom.domValueRaw, null,
-        `Surface renders stale value while visible (data-freshness="stale")`,
-      ));
-      // Continue to value compare — stale is its own finding, but a stale value
-      // that ALSO doesn't match should not be silently absorbed.
-    }
-
-    // Find the matching network claim (same surface + field + scope + key).
-    // Resolves Gemini-final-G2: when the DOM has a `data-engine-key`,
-    // coerce it to the type recorded with the network claim's `keyType`
-    // BEFORE comparing — otherwise DOM-string "42" never matches JSON
-    // number 42. The keyType is set by matchResponseAgainstManifest when
-    // the response row's keyField is non-string.
+    // Find the matching network claim FIRST so stale-projection can
+    // build a rich detail (wine-cellar round-4 #2). Previously the
+    // stale-projection emit fired before correlation and had only
+    // domValue; ledger readers had to open the witness to learn
+    // whether the stale value still agreed with the engine.
+    //
+    // Key-correlation (Gemini-final-G2): when the DOM has a
+    // `data-engine-key`, coerce it to the network claim's `keyType`
+    // before comparing — otherwise DOM-string "42" never matches
+    // JSON number 42.
     const net = witness.networkClaims.find((n) => {
       if (n.surfaceId !== dom.surfaceId) return false;
       if (n.engineField !== dom.engineField) return false;
@@ -213,6 +206,38 @@ export async function diffClaims(witness, manifest, opts = {}) {
       if (!coerced.ok) return false;   // coercion failure surfaces below
       return coerced.value === nKeyNative;
     });
+
+    // Stale-projection — severity from manifest floor (Gemini-R2-G4).
+    // Fire regardless of value match (the point is to surface the
+    // projection bug class). Detail enriched with domValue +
+    // engineValue + match/diverges framing (wine-cellar round-4 #2)
+    // so triage doesn't require opening the witness.
+    if (dom.freshness === 'stale' && dom.visible) {
+      let detail;
+      const domV = JSON.stringify(dom.domValueRaw);
+      if (!net) {
+        detail =
+          `Surface renders stale ${domV} while visible (data-freshness="stale"); ` +
+          'engine ground-truth NOT captured this step — cannot determine if value still agrees. ' +
+          'Stale-projection itself is the finding regardless; investigate the surface\'s freshness handling, not just the value';
+      } else if (deepEqual(coerceDomValue(dom.domValueRaw, engineFieldDecl.type, engineFieldDecl.semanticValues).value, net.value)) {
+        detail =
+          `Surface renders stale ${domV} while visible; engine ground-truth: ${JSON.stringify(net.value)} (match). ` +
+          'Stale-projection condition is independent of value drift — the surface\'s freshness is the bug class, not the value';
+      } else {
+        detail =
+          `Surface renders stale ${domV} while visible; engine ground-truth: ${JSON.stringify(net.value)} (DIVERGES). ` +
+          'Both stale AND value-mismatch — this is a real consistency bug, not just SWR grace';
+      }
+      findings.push(make(
+        'stale-projection', floor, dom, dom.domValueRaw, net ? net.value : null,
+        detail,
+      ));
+      // Continue to value compare below — stale is its own finding,
+      // but a stale value that ALSO doesn't match should not be silently
+      // absorbed (the divergent-stale case above sets the detail; the
+      // value-mismatch emit below also fires for the same pair).
+    }
 
     // Null ground-truth handling (Gemini-R4-G3).
     if (net && net.value === null) {
