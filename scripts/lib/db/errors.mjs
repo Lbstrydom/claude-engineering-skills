@@ -1,0 +1,202 @@
+/**
+ * @fileoverview Canonical error normalization for the `pg`-backed audit-loop store.
+ *
+ * Originally salvaged from `scripts/lib/stores/sql/sql-errors.mjs` (deleted in
+ * M4 — postgres-parity plan §7 Phase 4). Hardened in M1 audit R1 (H5 / M12)
+ * to prefer first-class structured fields (`err.code` syscall names + the
+ * Postgres SQLSTATE class-08 family) over brittle message-substring matching.
+ * Message matching is retained only as a last-resort fallback for legacy
+ * pg builds that wrap socket errors without preserving `err.code`.
+ *
+ * @module scripts/lib/db/errors
+ */
+
+// Node syscall codes that `pg` propagates on `err.code` when the underlying
+// socket / DNS lookup fails. All are retryable from this layer's perspective
+// — they describe transient connectivity, not a doomed misconfiguration.
+const RETRYABLE_NETWORK_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+]);
+
+// SQLSTATE class 08 — Connection Exception. Treat the whole class as
+// retryable: every member is "the connection died, retrying may succeed".
+// Postgres docs: https://www.postgresql.org/docs/current/errcodes-appendix.html
+function isConnectionExceptionSqlstate(code) {
+  return typeof code === 'string' && code.length === 5 && code.startsWith('08');
+}
+
+// Additional retryable SQLSTATEs outside class 08.
+const RETRYABLE_SQLSTATES = new Set([
+  '40001', // serialization_failure
+  '40P01', // deadlock_detected
+  '57014', // query_canceled (statement_timeout)
+  '57P01', // admin_shutdown
+  '57P02', // crash_shutdown
+  '57P03', // cannot_connect_now (server in restart / startup)
+  '53300', // too_many_connections
+  '53400', // configuration_limit_exceeded
+]);
+
+// Message-substring fallback. Only consulted when `err.code` is missing —
+// some pg builds wrap the syscall error and lose `code` on the rewrap.
+const TRANSIENT_MESSAGE_SUBSTRINGS = [
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'connection terminated',
+  'Connection terminated',
+  'Client has encountered a connection error',
+];
+
+/**
+ * @typedef {Object} NormalizedStoreError
+ * @property {'transient'|'misconfiguration'|'validation'|'integrity'|'capability'|'unknown'} reason
+ * @property {boolean} retryable
+ * @property {boolean} bufferToOutbox
+ * @property {string} operatorHint
+ * @property {string} [nativeCode]
+ */
+
+/**
+ * Normalize a native Postgres error into a canonical error shape.
+ *
+ * Classification priority (high → low):
+ *  1. `err.code` matches a known syscall name → transient/network.
+ *  2. `err.code` matches SQLSTATE 08* → transient/connection.
+ *  3. `err.code` matches an explicit SQLSTATE allowlist → transient/misc.
+ *  4. `err.code` is a known fixed-meaning SQLSTATE → misconfig / integrity.
+ *  5. Message-substring fallback for legacy wrappers without `err.code`.
+ *  6. `unknown` (not retryable).
+ *
+ * @param {Error & {code?: string}} err
+ * @param {string} [_context]
+ * @returns {NormalizedStoreError}
+ */
+export function normalizePostgresError(err, _context) {
+  const code = err?.code || '';
+  const msg = err?.message || '';
+
+  // (1) Node syscall codes
+  if (RETRYABLE_NETWORK_CODES.has(code)) {
+    return {
+      reason: 'transient',
+      retryable: true,
+      bufferToOutbox: true,
+      operatorHint: `Postgres connection failed (${code}); buffering writes`,
+      nativeCode: code,
+    };
+  }
+
+  // (2) SQLSTATE class 08 — Connection Exception
+  if (isConnectionExceptionSqlstate(code)) {
+    return {
+      reason: 'transient',
+      retryable: true,
+      bufferToOutbox: true,
+      operatorHint: `Postgres connection exception (SQLSTATE ${code}); retrying`,
+      nativeCode: code,
+    };
+  }
+
+  // (3) Allowlisted retryable SQLSTATEs
+  if (RETRYABLE_SQLSTATES.has(code)) {
+    const hint = ({
+      '40001': 'Serialization conflict; retrying',
+      '40P01': 'Deadlock detected; retrying',
+      '57014': 'Query exceeded statement_timeout',
+      '57P01': 'Postgres admin shutdown; retrying after restart',
+      '57P02': 'Postgres crash shutdown; retrying after restart',
+      '57P03': 'Postgres cannot connect (starting up?); retrying',
+      '53300': 'Too many connections; reduce AUDIT_DB_POOL_MAX or retry',
+      '53400': 'Configuration limit exceeded; retrying',
+    })[code];
+    return {
+      reason: 'transient',
+      retryable: true,
+      bufferToOutbox: true,
+      operatorHint: hint,
+      nativeCode: code,
+    };
+  }
+
+  // (4) Fixed-meaning SQLSTATEs
+  if (code === '28P01' || code === '28000') {
+    return {
+      reason: 'misconfiguration',
+      retryable: false,
+      bufferToOutbox: false,
+      operatorHint: 'Postgres auth failed; check AUDIT_DB_URL credentials',
+      nativeCode: code,
+    };
+  }
+  if (code === '3D000') {
+    return {
+      reason: 'misconfiguration',
+      retryable: false,
+      bufferToOutbox: false,
+      operatorHint: 'Postgres DB does not exist; create it',
+      nativeCode: code,
+    };
+  }
+  if (code === '42P01') {
+    return {
+      reason: 'misconfiguration',
+      retryable: false,
+      bufferToOutbox: false,
+      operatorHint: 'Run: node scripts/setup-postgres.mjs --migrate',
+      nativeCode: code,
+    };
+  }
+  if (code === '23505') {
+    return {
+      reason: 'integrity',
+      retryable: false,
+      bufferToOutbox: false,
+      // Be precise: this is *a* unique-violation, not necessarily an idempotency
+      // collision. Audit M4 flagged the broad "safe to ignore" wording — the
+      // caller has to decide whether their write was idempotent. We just say
+      // what happened and let context drive the response.
+      operatorHint: 'Unique constraint violation (SQLSTATE 23505) — caller-specific: safe if the write was idempotent, otherwise a real conflict',
+      nativeCode: code,
+    };
+  }
+
+  // (5) Message-substring fallback (only when no err.code)
+  if (!code) {
+    for (const needle of TRANSIENT_MESSAGE_SUBSTRINGS) {
+      if (msg.includes(needle)) {
+        return {
+          reason: 'transient',
+          retryable: true,
+          bufferToOutbox: true,
+          operatorHint: 'Postgres unreachable (legacy wrapper, no err.code); buffering writes',
+          nativeCode: code,
+        };
+      }
+    }
+  }
+
+  // (6) Unknown
+  return {
+    reason: 'unknown',
+    retryable: false,
+    bufferToOutbox: false,
+    operatorHint: code ? `Postgres error (SQLSTATE ${code}): ${msg}` : `Postgres error: ${msg}`,
+    nativeCode: code,
+  };
+}
+
+// ── Test seam ──────────────────────────────────────────────────────────────
+
+export const _internals = Object.freeze({
+  RETRYABLE_NETWORK_CODES,
+  RETRYABLE_SQLSTATES,
+  isConnectionExceptionSqlstate,
+});

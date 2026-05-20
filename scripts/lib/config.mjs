@@ -256,3 +256,20 @@ export const predictiveConfig = Object.freeze({
   minLabeledRuns: safeInt(process.env.PREDICTIVE_MIN_LABELED_RUNS, 20),
   skipFpThreshold: Number.parseFloat(process.env.PREDICTIVE_SKIP_FP_THRESHOLD || '0.7'),
 });
+
+// ── Postgres / `db/` layer Config ──────────────────────────────────────────
+// postgres-parity plan §7 Phase 1. v1 supports the `public` schema only;
+// arbitrary schema is §10 Out of Scope — no AUDIT_DB_SCHEMA env exposed
+// here.
+//
+// `url` is read eagerly (so test code that overrides process.env before
+// `import` works), but `scripts/lib/db/client.mjs` re-reads `process.env`
+// at pool-init time — that's the resolver of record (it also enforces the
+// legacy-only fail-fast). Treat the values here as documentation +
+// convenience for callers that just want to ask "is cloud configured?".
+
+export const dbConfig = Object.freeze({
+  url: process.env.AUDIT_DB_URL || null,
+  sslMode: (process.env.AUDIT_DB_SSL_MODE || 'require').trim(),
+  poolMax: safeInt(process.env.AUDIT_DB_POOL_MAX, 4),
+});
