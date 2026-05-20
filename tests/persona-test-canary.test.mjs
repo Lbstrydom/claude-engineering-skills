@@ -178,6 +178,13 @@ describe('verifyExpectations', () => {
     assert.equal(r.passed, false);
   });
 
+  it('excludes unannotated-surface from the min count (wine-cellar round-2 #3)', () => {
+    const r = verifyExpectations(canary({ min: 1 }), [
+      c({ kind: 'unannotated-surface', surfaceId: 'cellar-chip' }),
+    ]);
+    assert.equal(r.passed, false);
+  });
+
   it('value-mismatch DOES satisfy min (state contradiction)', () => {
     const r = verifyExpectations(canary({ min: 1 }), [
       c({ kind: 'value-mismatch' }),

@@ -465,6 +465,8 @@ describe('ContradictionSchema', () => {
       'value-mismatch', 'stale-projection', 'undeclared-engine-claim',
       'missing-surface', 'value-coercion-error', 'absent-not-rendered',
       'key-coercion-error',
+      'unresolved-ground-truth',
+      'unannotated-surface',   // round-2 #3 — locator-matched-but-unannotated
     ];
     for (const k of kinds) {
       const r = ContradictionSchema.safeParse({ ...base, kind: k });

@@ -59,6 +59,13 @@ export const ContradictionKindSchema = z.enum([
   // first-class outcome, not a silent skip. Severity clamped to
   // surface.severityFloor at most; default rank P2 when no floor.
   'unresolved-ground-truth',
+  // Wine-cellar adoption round-2 #3 — locator matched an element in the
+  // current DOM, but the element has no data-engine-claim attribute.
+  // Different actionable signal from `missing-surface` (locator didn't
+  // match anything) — this one means "you declared the surface in
+  // manifest but haven't annotated the element yet". Common during
+  // staged rollout (annotation in branch, canary against deployed URL).
+  'unannotated-surface',
 ]);
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -368,6 +375,17 @@ export const RigWarningKindSchema = z.enum([
   'dom-stabilisation-cap-reached',
   'css-locator-prefer-semantic',
   'cache-only-network-claim',
+  // Wine-cellar adoption round-2 #1 — navigation step's response was a
+  // non-2xx (typically 404 or 5xx). Playwright's waitUntil:'load' still
+  // resolves on the error body, so the rig had no idea the route was
+  // wrong. Surfacing this loudly turns "is the surface broken?" into
+  // "is the URL right?" — a 30-second diagnosis instead of an hour.
+  'navigated-to-non-2xx',
+  // Wine-cellar adoption round-2 #2 — runner waited for a manifest-
+  // declared networkSource.urlPattern but the response never arrived
+  // within the timeout. Capture proceeds anyway; downstream
+  // unresolved-ground-truth fires for the affected surfaces.
+  'manifest-network-await-timeout',
 ]);
 
 export const RigWarningSchema = z.object({
@@ -385,6 +403,13 @@ const StepRecordSchema = z.object({
   stepIndex: z.number().int().min(0),
   plan: z.string(),
   actionLabel: z.string(),
+  // Wine-cellar adoption round-2 #7 — the resolved URL the step actually
+  // navigated to. `actionLabel` carries intent (`navigate (routeKey=cellar)`)
+  // but a ledger reader debugging "did the nav land where I expected"
+  // shouldn't have to cross-reference canary.routes. For non-navigate
+  // steps this is the page.url() at step start.
+  resolvedTarget: z.string().nullable().default(null),
+  navResponseStatus: z.number().int().nullable().default(null),  // 200/404/500 for navigate steps; null otherwise
   witness: WitnessRecordSchema,
   contradictions: z.array(ContradictionSchema),
   freshness: z.array(FreshnessFindingSchema),
@@ -401,6 +426,10 @@ export const SessionLedgerSchema = z.object({
   canaryName: z.string().nullable(),
   journeyKey: z.string().min(1),
   fixtureSeed: z.string().nullable(),
+  // Wine-cellar adoption round-2 #1b — canary auth bootstrap kind
+  // exposed at the ledger boundary so summary-line scrapers + the
+  // dashboard can flag `none` against state surfaces.
+  authKind: z.enum(['none', 'token', 'storageState']).default('none'),
   startedAt: z.string(),
   steps: z.array(StepRecordSchema),
   candidateSpecIds: z.array(z.string()),

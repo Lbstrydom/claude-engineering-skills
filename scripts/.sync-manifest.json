@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-05-20T08:54:01.000Z",
+  "generatedAt": "2026-05-20T09:32:42.623Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "0af636cf41dac45c10986f9d0d37cef97783bf96",
+  "commitSha": "d898aa31da0401565c254609945d0256bf708cea",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -97,6 +97,12 @@
     "scripts/lib/neighbourhood-query.mjs": "sha256:d01ff5b1120fa8195021c9a67c0c5bf74035bed1797f322628a1b1d50f7b7d7b",
     "scripts/lib/outcome-sync.mjs": "sha256:db0f7e5b7439802ce194df669e340fa4cf7e43cf2b577ab4bf5c420fda68ca46",
     "scripts/lib/owner-resolver.mjs": "sha256:182eebe8bddfa50f04e3ba4080c70f919221ce1e00e39c5cf1eefdd856342e30",
+    "scripts/lib/persona-test/canary.mjs": "sha256:2d1a017feed0a87208371d42adc28cb59eca6e1df3afb92faa30c4640755afe4",
+    "scripts/lib/persona-test/consistency.mjs": "sha256:712dbf156e5f9586c1a5816501d5d3ffdc5f1e9bb5066a01dfcc7e7bee258595",
+    "scripts/lib/persona-test/ledger.mjs": "sha256:5dbfc6d446c1dd203f4f258ac4c19b659c13b1edf75ea6a7b0aa1244cff1ff67",
+    "scripts/lib/persona-test/manifest-resolver.mjs": "sha256:fb50a80cfd0469b358d598778dd76a9f1b7a53596ca0cb738f800c4a3465417d",
+    "scripts/lib/persona-test/schemas.mjs": "sha256:f294a3f2c1bc27260400d788d88fe24deca02e5e4d1339447c30e2d814a4cb72",
+    "scripts/lib/persona-test/semantic-compare.mjs": "sha256:c058d22f3f51b5f86298e6e64dd803656157be79600242afc1c7d8ceb969e64e",
     "scripts/lib/plan-fp-tracker.mjs": "sha256:434a5da84a2fd879197343aebc75991626a579dc13eaa9d170f963b325cd98e4",
     "scripts/lib/plan-paths.mjs": "sha256:cf7c0dc6f4b9bde71124e0359ac38c657059d1303c6d47b18540e30da84fa05a",
     "scripts/lib/prompt-registry.mjs": "sha256:b5101f39415672aad66728b8a743dfb06dabf4f90d27b1d1e18b101bc74013d1",
@@ -129,7 +135,11 @@
     "scripts/lib/symbol-index/domain-tagger.mjs": "sha256:bf9917a97464a8758ad04258478628ee1125aaf938234c5017059a1de16821ee",
     "scripts/lib/symbol-index/thin-delegate.mjs": "sha256:90e99096d58b58436fa448f3aa7c2b90e02490e655b380f789cc0fed0007ec89",
     "scripts/lib/sync-manifest.mjs": "sha256:4aeb7ecc25f49a30891a805900932b60d4763b524b7f3e5f0e7094f4778bf084",
+    "scripts/lib/ux-lock/candidate-spec.mjs": "sha256:8ef0190dd1447e79d551dfe64f1831fd762fc8437c1bda45cb6e759df51727aa",
+    "scripts/lib/ux-lock/capture.mjs": "sha256:105099424acd8de4af7ddeed47fccebb4291f978957659e15a6383b1c9c92442",
     "scripts/openai-audit.mjs": "sha256:4ffd10dc028f04ce726287c6f21fcbab57d6c8a472e87cebcd76dc04f5af8d27",
+    "scripts/persona-consistency-promote.mjs": "sha256:ee96113f7b474a35845024d1482b6d6750a582e3a6f04234cdc2203054e23c8b",
+    "scripts/persona-consistency-run.mjs": "sha256:f6ff3f17204ff34e8d609543097a8f4b12b7bc582323e9aa220a007b0a7faef4",
     "scripts/phase7-check.mjs": "sha256:3a79699afd6a418e8f67d494a294a7c60d1b927e155238daa9371b2c20e29107",
     "scripts/requirements.mjs": "sha256:cbcd8d5a9bdf47c6c1bce7470ecaa4e07000840fe4115a095229a2c0ae403994",
     "scripts/security-memory/incident-status.mjs": "sha256:3f6bcb37931859307726e55b42e5cb6c47a2a6cbef7c9e5d88d33e0398f1d02c",
@@ -150,6 +160,7 @@
     "scripts/write-code-outcomes.mjs": "sha256:a0a08ba195e3f9212f948dfcdebbbaea1f906e9d7ca793fa5dd56c8f46228610",
     "scripts/lib/dashboard/flows.json": "sha256:3bc0807a1bcf65c7afbe9c933c61622b9c7abc3727d2d738f41429e06dbc3ddf",
     "scripts/lib/dashboard/assets/dashboard.css": "sha256:1a6321f3d576c7338d51deab41f35502f2a2017c20225e3c49dbf8a593abe8a6",
-    "scripts/lib/dashboard/assets/dashboard.js": "sha256:eb0acf10b1f638005066bd000527331cbaa09898237505d27936951be3e38c93"
+    "scripts/lib/dashboard/assets/dashboard.js": "sha256:eb0acf10b1f638005066bd000527331cbaa09898237505d27936951be3e38c93",
+    "docs/consistency-contract.md": "sha256:19d44a003756196f6d4cf1f4bf185b92f6c6465c98ade3adcbb6440d68b83d4e"
   }
 }

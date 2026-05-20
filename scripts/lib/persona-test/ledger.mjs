@@ -77,6 +77,7 @@ export function openLedger(repoRoot, sessionId, opts) {
     canaryName: opts.canaryName ?? null,
     journeyKey: opts.journeyKey,
     fixtureSeed: opts.fixtureSeed ?? null,
+    authKind: opts.authKind ?? 'none',
     startedAt,
     steps: [],
     candidateSpecIds: [],

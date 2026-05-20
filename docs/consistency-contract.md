@@ -272,6 +272,81 @@ node scripts/persona-consistency-run.mjs \
   --url http://localhost:3000
 ```
 
+### Async-data surfaces (loading states)
+
+The null-grounded rule (above) applies to your **loading shell** too,
+not just the post-fetch render. If your chip mounts as a loading
+placeholder before the API response arrives, that initial shell still
+needs the three attributes:
+
+```html
+<!-- Loading shell — fetch hasn't completed yet -->
+<span id="status-chip"
+      data-engine-claim="capacityRemedy.feasibility"
+      data-engine-value=""
+      data-freshness="absent">
+  Loading…
+</span>
+```
+
+When the data arrives, your render path swaps `data-freshness` to
+`current` and populates `data-engine-value`. The rig auto-awaits manifest
+network sources before capturing (up to ~1.5s), so most async surfaces
+will be captured in their populated state. But for slow APIs OR for
+captures that legitimately happen mid-fetch (e.g. polling), the
+loading-state attribute set lets the rig record the truth: "engine
+hasn't returned a value yet; DOM correctly knows it doesn't have one."
+
+Without loading-state attributes, the rig sees `unannotated-surface`
+during the loading window and `value-mismatch` after the render — both
+spurious. With them, it sees `absent → current` transition, which is
+exactly what the contract expects.
+
+### Running against local vs deployed builds
+
+A common first-adoption hazard: you annotate in a branch, then run the
+canary against your deployed staging URL. The deployed build doesn't
+have your annotations yet → guaranteed `unannotated-surface` findings.
+
+Three recommended cadences:
+
+1. **Local-first** (fastest iteration): `--url http://localhost:3000`
+   after `npm start` or `npm run dev`. Tightest feedback loop;
+   annotations land instantly.
+
+2. **PR-preview** (CI-integrated): your CI builds a preview deployment
+   per PR; the canary runs against that preview URL as part of the
+   PR check. Annotations and canary live in the same branch, deploy
+   together, get tested together.
+
+3. **Staging-after-merge** (slowest, baseline): annotations merge to
+   main, deploy to staging, canary runs against staging. Loses the
+   per-PR signal but cheap to wire up if no preview infra exists.
+
+The rig emits `unannotated-surface` (P2) when the locator matches an
+element but `data-engine-claim` is absent — that's the diagnostic for
+"branch annotated, deployed build hasn't caught up". Distinct from
+`missing-surface` (locator matched nothing — wrong route or auth state).
+
+### SPA storage-key gotchas (programmatic auth-state seeders)
+
+If your app overrides Supabase's default storage key, programmatic
+storage-state seeders that write to `sb-<ref>-auth-token` (the default)
+will silently fail — the session looks valid on disk but the app
+ignores it. Inspect your `createClient` call:
+
+```ts
+// If you see this in your app:
+const supabase = createClient(url, key, {
+  auth: { storageKey: 'my-app-auth' }   // ← non-default
+});
+```
+
+…then your seeder must write to `my-app-auth`, not the default key.
+For `npx playwright codegen` users this isn't a problem (codegen
+captures whatever the app actually writes). For CI jobs that can't
+drive a headed browser, audit the storage key before seeding.
+
 ### Authoring caveat
 
 **`networkSource.urlPattern` and `jsonPath` values shown in any prompt or

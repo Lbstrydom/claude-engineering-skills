@@ -184,6 +184,10 @@ const SELF_TEST_CONTRADICTION_KINDS = new Set([
   'value-coercion-error',
   'absent-not-rendered',
   'key-coercion-error',
+  // Rig-observability kinds that do NOT count toward `min` (wine-cellar
+  // adoption #1 + round-2 #3): missing-surface, unresolved-ground-truth,
+  // unannotated-surface. All three signal "rig couldn't get the state
+  // contract from the page", not "engine says X, DOM says Y".
 ]);
 
 export function verifyExpectations(canary, contradictions) {

@@ -186,6 +186,7 @@ export async function runConsistency(args, deps = {}) {
       return { exitCode: EXIT.FATAL_RIG, ledgerPath: ledger.ledgerPath, ledger: ledger.state };
     }
     ledger.state.fixtureSeed = canary.fixtureSeed || null;
+    ledger.state.authKind = canary.authBootstrap?.kind || 'none';
 
     // ── 5. Resolve repo identity for candidate emission (soft) ────────────
     await initLearningStore();
@@ -246,14 +247,17 @@ export async function runConsistency(args, deps = {}) {
       const stepStart = Date.now();
       const warnings = [];
 
+      let stepMeta;
       try {
-        await executeStep(page, step, canary.routes, args.url);
+        stepMeta = await executeStep(page, step, canary.routes, args.url);
       } catch (err) {
         // Act-step error → exit 6 (APP regression, NOT rig issue).
         ledger.appendStep({
           stepIndex: i,
           plan: step.label || `step ${i}`,
           actionLabel: describeAction(step),
+          resolvedTarget: stepMeta?.resolvedTarget ?? null,
+          navResponseStatus: stepMeta?.navResponseStatus ?? null,
           witness: emptyWitness(i),
           contradictions: [],
           freshness: [],
@@ -274,20 +278,65 @@ export async function runConsistency(args, deps = {}) {
         return { exitCode: EXIT.APP_ERROR, ledgerPath: ledger.ledgerPath, ledger: ledger.state };
       }
 
+      // Resolves wine-cellar round-2 #1: surface non-2xx navigation as a
+      // warning. Playwright's waitUntil resolves on error bodies, so the
+      // rig has no other way to flag "URL is wrong".
+      if (stepMeta?.navResponseStatus != null
+          && (stepMeta.navResponseStatus < 200 || stepMeta.navResponseStatus >= 300)) {
+        warnings.push({
+          kind: 'navigated-to-non-2xx',
+          surfaceId: null,
+          detail: `Step ${i} navigated to ${stepMeta.resolvedTarget} but got HTTP ${stepMeta.navResponseStatus}; subsequent surface findings are likely caused by being on the wrong page`,
+        });
+      }
+
+      // Resolves wine-cellar round-2 #2: auto-await manifest-declared
+      // networkSource URL patterns before capture. Async-rendered surfaces
+      // populate their data-engine-* attributes only after the relevant
+      // API response lands; capturing before that just emits
+      // unresolved-ground-truth for every async surface. We briefly wait
+      // for each unique urlPattern not yet seen in the store this step.
+      await awaitManifestNetworkSources(page, manifestResult.manifest, listener, {
+        timeoutMs: 1500,
+        warn: (w) => warnings.push(w),
+      });
+
       // Capture witness (sync wrt page).
       const witness = await captureWitness(page, manifestResult.manifest, listener, {
         stepIndex: i,
         warn: (w) => warnings.push(w),
       });
 
+      // Resolves wine-cellar round-2 #3: distinguish "locator matched
+      // but element has no data-engine-claim" from "locator matched
+      // nothing at all". Both previously rolled into missing-surface;
+      // the former is "you haven't annotated yet" (common during staged
+      // rollout) and the latter is "the route/state is wrong".
+      const unannotatedFindings = await detectUnannotatedSurfaces(
+        page,
+        manifestResult.manifest,
+        witness,
+        { currentRoute: safeCurrentRoute(page), currentStepLabel: step.label },
+      );
+
       // Diff. Semantic compare is off by default in the runner — wire when
       // Phase 4.1 (canary --enable-semantic) lands.
-      const contradictions = await diffClaims(witness, manifestResult.manifest, {
+      const rawContradictions = await diffClaims(witness, manifestResult.manifest, {
         context: {
           currentRoute: safeCurrentRoute(page),
           currentStepLabel: step.label,
         },
       });
+      // Strip missing-surface findings for surfaces that detectUnannotatedSurfaces
+      // already classified as `unannotated-surface` — same root surface,
+      // more actionable kind wins.
+      const unannotatedSurfaceIds = new Set(unannotatedFindings.map((f) => f.surfaceId));
+      const contradictions = [
+        ...rawContradictions.filter(
+          (c) => !(c.kind === 'missing-surface' && unannotatedSurfaceIds.has(c.surfaceId)),
+        ),
+        ...unannotatedFindings,
+      ];
 
       // Candidate emission — for unexpected P0/P1 contradictions with a
       // resolved surfaceId. Suppress canary-expected shapes (Gemini-R3-G1).
@@ -330,6 +379,8 @@ export async function runConsistency(args, deps = {}) {
         stepIndex: i,
         plan: step.label || `step ${i}`,
         actionLabel: describeAction(step),
+        resolvedTarget: stepMeta?.resolvedTarget ?? null,
+        navResponseStatus: stepMeta?.navResponseStatus ?? null,
         witness,
         contradictions,
         freshness: contradictions
@@ -381,18 +432,28 @@ export async function runConsistency(args, deps = {}) {
 
 // ── Step execution ────────────────────────────────────────────────────────
 
+/**
+ * @returns {Promise<{ resolvedTarget: string|null, navResponseStatus: number|null }>}
+ */
 async function executeStep(page, step, routes, baseUrl) {
   switch (step.action) {
     case 'navigate': {
       const target = step.url || joinUrl(baseUrl, routes?.[step.routeKey] || '');
-      await page.goto(target, { waitUntil: step.waitUntil || 'load' });
-      return;
+      // Resolves wine-cellar adoption round-2 #1 + #7: capture the navigation
+      // response so we can surface non-2xx outcomes (Playwright's waitUntil
+      // resolves on the error body, hiding 404s/5xx) and so the ledger
+      // records the resolved URL (not just the routeKey intent).
+      const response = await page.goto(target, { waitUntil: step.waitUntil || 'load' });
+      return {
+        resolvedTarget: target,
+        navResponseStatus: response ? response.status() : null,
+      };
     }
     case 'click': {
       await locatorOf(page, step.locator).click();
       if (step.postWait) await applyWait(page, step.postWait);
       else await page.waitForTimeout(250);   // default 250ms tick (NOT networkidle, per Gemini-R3-G2)
-      return;
+      return { resolvedTarget: safeCurrentRoute(page), navResponseStatus: null };
     }
     case 'fill': {
       const loc = locatorOf(page, step.locator);
@@ -400,16 +461,155 @@ async function executeStep(page, step, routes, baseUrl) {
       if (step.blurAfter !== false) {
         try { await loc.blur(); } catch { /* not all locators support .blur() */ }
       }
-      return;
+      return { resolvedTarget: safeCurrentRoute(page), navResponseStatus: null };
     }
-    case 'wait':     return applyWait(page, step.condition);
+    case 'wait':
+      await applyWait(page, step.condition);
+      return { resolvedTarget: safeCurrentRoute(page), navResponseStatus: null };
     case 'evaluate':
       // v1 §11b — `evaluate` is a known limitation; emit a no-op so the
       // runner doesn't crash, the runner will continue and the step's
       // declared scriptId will appear in the ledger for traceability.
-      return;
+      return { resolvedTarget: safeCurrentRoute(page), navResponseStatus: null };
     default:
       throw new Error(`unknown journey action "${step.action}"`);
+  }
+}
+
+// ── Auto-wait for manifest-declared network sources (round-2 #2) ───────────
+
+/**
+ * Briefly await any manifest networkSource.urlPattern that the cumulative
+ * store hasn't yet seen in this run. Async-rendered surfaces populate
+ * their attributes only after the API response lands; without this wait
+ * the rig captures during the loading shell and emits
+ * unresolved-ground-truth for every async surface (the wine-cellar round
+ * 2 finding).
+ *
+ * Total wait capped at opts.timeoutMs across all patterns (parallel via
+ * Promise.race against a single timeout). Misses emit
+ * `manifest-network-await-timeout` so the operator knows which pattern
+ * wasn't satisfied.
+ *
+ * @param {object} page
+ * @param {import('./lib/persona-test/schemas.mjs').SurfaceManifest} manifest
+ * @param {{ store: object }} listener
+ * @param {{ timeoutMs?: number, warn?: (w: object) => void }} opts
+ */
+async function awaitManifestNetworkSources(page, manifest, listener, opts = {}) {
+  const timeoutMs = Number.isInteger(opts.timeoutMs) && opts.timeoutMs > 0 ? opts.timeoutMs : 1500;
+  const patterns = new Set();
+  for (const surface of (manifest?.surfaces || [])) {
+    for (const f of (surface.engineFields || [])) {
+      if (f?.networkSource?.urlPattern) patterns.add(f.networkSource.urlPattern);
+    }
+  }
+  if (patterns.size === 0) return;
+
+  // Check what we've already seen this run via the store keys.
+  const seenKeys = listener.store.keys();
+  const seenUrls = new Set(seenKeys.map((k) => k));   // tuple keys; loose match below
+  const unseen = [...patterns].filter((urlPat) => {
+    // The store stores by tuple `surfaceId::engineField::scope::key`, not
+    // by URL. We can't easily probe "did any response of pattern X arrive"
+    // from the store alone — so the simpler check is: are there ANY entries
+    // for surfaces using this pattern? If not, we haven't seen the response.
+    const patternStr = String(urlPat);
+    return !seenKeys.some((k) => {
+      const surfaceId = k.split('::')[0];
+      const surface = manifest.surfaces.find((s) => s.id === surfaceId);
+      if (!surface) return false;
+      return surface.engineFields.some((f) => f.networkSource?.urlPattern === patternStr);
+    });
+  });
+  if (unseen.length === 0) return;
+
+  // Wait in parallel up to the total cap.
+  const waiters = unseen.map((urlPat) => {
+    try {
+      const re = new RegExp(urlPat);
+      return page.waitForResponse((r) => re.test(r.url()) && r.status() >= 200 && r.status() < 300, { timeout: timeoutMs })
+        .then(() => ({ ok: true, pattern: urlPat }))
+        .catch(() => ({ ok: false, pattern: urlPat }));
+    } catch {
+      return Promise.resolve({ ok: false, pattern: urlPat });
+    }
+  });
+  const results = await Promise.all(waiters);
+  for (const r of results) {
+    if (!r.ok && typeof opts.warn === 'function') {
+      opts.warn({
+        kind: 'manifest-network-await-timeout',
+        surfaceId: null,
+        detail: `Waited ${timeoutMs}ms for response matching ${r.pattern} but none arrived; capture proceeds — downstream unresolved-ground-truth findings expected for surfaces using this pattern`,
+      });
+    }
+  }
+}
+
+// ── Unannotated-surface detection (round-2 #3) ────────────────────────────
+
+/**
+ * For each manifest surface NOT represented in witness.domClaims (i.e. no
+ * annotated element was captured for it), probe the live DOM via the
+ * surface's declared locator. If the locator matches an element, the
+ * surface IS present but unannotated — emit `unannotated-surface`. If
+ * the locator matches nothing, leave the diff engine's `missing-surface`
+ * to fire normally.
+ *
+ * Resolves wine-cellar round-2 #3 — semantic distinction between "didn't
+ * annotate yet" (common during staged rollout) and "surface really
+ * absent from DOM in this context".
+ *
+ * @param {object} page
+ * @param {import('./lib/persona-test/schemas.mjs').SurfaceManifest} manifest
+ * @param {import('./lib/persona-test/schemas.mjs').WitnessRecord} witness
+ * @param {{ currentRoute?: string }} ctx
+ * @returns {Promise<import('./lib/persona-test/schemas.mjs').Contradiction[]>}
+ */
+async function detectUnannotatedSurfaces(page, manifest, witness, ctx = {}) {
+  const out = [];
+  const seenSurfaceIds = new Set((witness?.domClaims || []).map((c) => c.surfaceId));
+  for (const surface of (manifest?.surfaces || [])) {
+    if (seenSurfaceIds.has(surface.id)) continue;   // annotated — diff handled it
+    // Quick locator probe — uses Playwright's locator API in the runner
+    // (not the browser context) so we get the same kind-resolution rules
+    // as the runner's executeStep.
+    let count = 0;
+    try {
+      count = await locatorOf(page, surface.locator).count();
+    } catch { count = 0; }
+    if (count > 0) {
+      out.push({
+        kind: 'unannotated-surface',
+        severity: 'P2',
+        surfaceId: surface.id,
+        engineField: null,
+        scope: null,
+        key: null,
+        domValue: null,
+        engineValue: null,
+        freshness: null,
+        selector: locatorToStringLite(surface.locator),
+        detail: `Surface "${surface.id}" — locator matched ${count} element(s) in the live DOM but no data-engine-claim attribute. Annotate the element with data-engine-claim/-value/-freshness, OR re-deploy if the annotation lives in a branch not yet shipped`,
+        suppressedByLockedSpec: null,
+      });
+    }
+    // If count === 0, leave to diffClaims' missing-surface scan (it
+    // already gates by appliesTo so we don't duplicate that logic).
+  }
+  return out;
+}
+
+function locatorToStringLite(locator) {
+  if (!locator) return null;
+  switch (locator.kind) {
+    case 'role':   return `role=${locator.role}${locator.name ? `[name="${locator.name}"]` : ''}`;
+    case 'label':  return `label="${locator.text}"`;
+    case 'testid': return `[data-testid="${locator.id}"]`;
+    case 'id':     return `#${locator.id}`;
+    case 'css':    return locator.selector;
+    default:       return JSON.stringify(locator);
   }
 }
 
@@ -582,11 +782,17 @@ const isMain = (() => {
 })();
 
 if (isMain) {
+  const startedAt = Date.now();
   const result = await runConsistency(parseArgs(process.argv.slice(2)));
-  // Resolves wine-cellar adoption #6: CI-scannable trailing summary line.
-  // Stdout (not stderr) so log scrapers can grep for `consistency:` on
-  // its own line. Compact + machine-parseable: counts per severity +
-  // ledger path + exit code.
+  const durationMs = Date.now() - startedAt;
+  // Resolves wine-cellar adoption #6 + round-2 ask: CI-scannable trailing
+  // summary line. Stdout (not stderr) so log scrapers can grep
+  // `consistency:` on its own line. Compact + machine-parseable:
+  //   - canary= so multi-canary jobs can grep
+  //   - counts per severity (omits 0s)
+  //   - duration so flakes show
+  //   - auth= so adopters notice `none` when it shouldn't be
+  //   - ledger path + exit code
   if (result.ledger) {
     const allContradictions = (result.ledger.steps || [])
       .flatMap((s) => s.contradictions || []);
@@ -599,12 +805,14 @@ if (isMain) {
       .filter((k) => counts[k] > 0)
       .map((k) => `${k}:${counts[k]}`)
       .join(' ') || '—';
+    const canaryName = result.ledger.canaryName || '(none)';
+    const authKind = result.ledger.authKind || 'none';
     process.stdout.write(
-      `consistency: ${total} contradiction(s) [${sevSummary}], ledger=${result.ledgerPath}, exit=${result.exitCode}\n`,
+      `consistency: canary=${canaryName} auth=${authKind} ${total} contradiction(s) [${sevSummary}] duration=${durationMs}ms ledger=${result.ledgerPath} exit=${result.exitCode}\n`,
     );
   } else {
     process.stdout.write(
-      `consistency: no ledger written, exit=${result.exitCode}\n`,
+      `consistency: no ledger written duration=${durationMs}ms exit=${result.exitCode}\n`,
     );
   }
   process.exit(result.exitCode);
