@@ -78,6 +78,20 @@ const CORE_ENTRY = [
   'scripts/write-code-outcomes.mjs',
   'scripts/build-dashboard.mjs',
   '.claude/hooks/quickfix-scan.mjs',
+  // Persona-test consistency mode CLIs (docs/plans/persona-test-consistency-mode.md).
+  // Both are user-invoked CLIs; the import-graph walker pulls in their
+  // transitive lib closure (scripts/lib/persona-test/* + scripts/lib/ux-lock/*)
+  // automatically.
+  'scripts/persona-consistency-run.mjs',
+  'scripts/persona-consistency-promote.mjs',
+  // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
+  // + learning-store.mjs (dynamic specifier — walker cannot follow).
+  // Required at runtime for candidate-write redaction.
+  'scripts/lib/redact.mjs',
+  // Documented injection point — consumers wire their preferred provider
+  // adapter at runtime; no static caller in this repo so the walker
+  // doesn't pull it in. Ship explicitly.
+  'scripts/lib/persona-test/semantic-compare.mjs',
 ];
 
 /**
@@ -93,6 +107,10 @@ const CORE_ASSETS = [
   'scripts/lib/dashboard/flows.json',
   'scripts/lib/dashboard/assets/dashboard.css',
   'scripts/lib/dashboard/assets/dashboard.js',
+  // Authoritative HTML-attribute contract for persona-test consistency mode.
+  // Referenced by skills/persona-test/SKILL.md Phase 3b + references/consistency-mode.md;
+  // consumer-app frontend devs read it to author their data-engine-* annotations.
+  'docs/consistency-contract.md',
 ];
 
 /**
