@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-05-20T18:48:44.938Z",
+  "generatedAt": "2026-05-20T19:09:49.491Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "655e4113781ad4afeb93981d8afd5f6b20af6d97",
+  "commitSha": "f2a747796f9390713e8fe4a2541a16df29a26ec3",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -61,11 +61,12 @@
     "scripts/lib/code-analysis.mjs": "sha256:b5620d8d15d8d9a77ae8ab0385ebaf185ad84dc1e587cf835031c8a092e1bfa7",
     "scripts/lib/config.mjs": "sha256:71ead34ab93dd75766a45652ebc650fa96e6310b289202bef3cca007cb9abbe8",
     "scripts/lib/context.mjs": "sha256:5cb4039cd51a3025c95f978beb1e0c95a8736ce5746070d9ec73f19b11f07a1c",
-    "scripts/lib/dashboard/collect-reference.mjs": "sha256:1e777e795c5b32b0df65651dd943d80a52b04156ac7173a952c3280eae4ff037",
+    "scripts/lib/dashboard/collect-cli.mjs": "sha256:b302238dfa47227b599422923749542645766ce00fc1dd3970b6692fe090b7b3",
+    "scripts/lib/dashboard/collect-reference.mjs": "sha256:7051671f74981d8bccc927aa3b3f7d23fbefa5a11a6e1485be4c1d55100c15fa",
     "scripts/lib/dashboard/collect-telemetry.mjs": "sha256:a4e707598a021281b8b30ac01fa1f5f64129b6b258024723b45e97cf057c7282",
     "scripts/lib/dashboard/load-assets.mjs": "sha256:09c28d0757dd8c8392ff07d8b8748c37abfa6491412b79df7e4f0e38e56a1795",
-    "scripts/lib/dashboard/render.mjs": "sha256:c151fce9756dd4f898ebfda699a8c071a73c2d26f0b1e03bf0aee8226982272b",
-    "scripts/lib/dashboard/schema.mjs": "sha256:11b5bc2e32dab5d503cb0c9b2442349a287dcb9eda40ec31ff79ebc97f9ecbc6",
+    "scripts/lib/dashboard/render.mjs": "sha256:cd4432fd3b61802fa230ccab41cd9991fb21fb3a42af6a46a8e1e003da00ed38",
+    "scripts/lib/dashboard/schema.mjs": "sha256:fcf2c1eb8232393a1569bb3119727cadd48fcd039bf75e7cd8d5839827c95a52",
     "scripts/lib/dashboard/serve.mjs": "sha256:c62fef2fcb9b7624362552d5388a3959034034b805485178b3433efedff15835",
     "scripts/lib/debt-capture.mjs": "sha256:314cb4908b84b349fa12102551f7c88c61f0db66db96608aef2ea3e13af5e70e",
     "scripts/lib/debt-events.mjs": "sha256:8b1d3f26f282f0269f481608474c30dbfc5ae3c76ab25343032c8cf9a9d16a64",
@@ -162,8 +163,8 @@
     "scripts/symbol-index/summarise.mjs": "sha256:4e22ca4af483e51955d5811acb96cab6e3945ef36a6bf458ec9ec55b3057f0be",
     "scripts/write-code-outcomes.mjs": "sha256:a0a08ba195e3f9212f948dfcdebbbaea1f906e9d7ca793fa5dd56c8f46228610",
     "scripts/lib/dashboard/flows.json": "sha256:3bc0807a1bcf65c7afbe9c933c61622b9c7abc3727d2d738f41429e06dbc3ddf",
-    "scripts/lib/dashboard/assets/dashboard.css": "sha256:1a6321f3d576c7338d51deab41f35502f2a2017c20225e3c49dbf8a593abe8a6",
-    "scripts/lib/dashboard/assets/dashboard.js": "sha256:eb0acf10b1f638005066bd000527331cbaa09898237505d27936951be3e38c93",
+    "scripts/lib/dashboard/assets/dashboard.css": "sha256:4021f3cb1b34ff6b01e44fcfd05d543a8e4c833b3f8b92563a4bc52d1b3d4360",
+    "scripts/lib/dashboard/assets/dashboard.js": "sha256:507dd61b1fcf2bf9e1426c57221ba9a5bdfc60abe2db12f169b0cc549c30fa9b",
     "docs/consistency-contract.md": "sha256:7b372ff152d30c689487dd7ece6a7beed4171abc6ff587bd215c724948b5252a"
   }
 }

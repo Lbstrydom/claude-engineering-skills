@@ -96,8 +96,12 @@ plan *consolidates* all four into one `pg.Pool` — replacement, not a new sibli
    `docs/plans/postgres-parity-contract-matrix.md`: one row per the 94 functions —
    input fixture, expected DB mutations, expected return shape, **and ordering
    semantics** (R3/M1). Recorded once by running the frozen legacy (`supabase-js`)
-   path against a **local `supabase start` stack** (never the production project).
-   Committed; the §9 contract suite diffs against them.
+   path against a **dedicated Supabase target** (one of: a fresh sandbox project
+   created via `supabase projects create`, or a `supabase start` Docker stack —
+   the recipe is dual-path so a maintainer with Supabase credentials can sidestep
+   Docker; downstream users without Supabase credentials fall back to local
+   Docker). **Never the maintainer's live audit-loop project** — fixture
+   recording writes test rows. Committed; the §9 contract suite diffs against them.
 
 ---
 
@@ -375,11 +379,25 @@ return shapes (#18) are *genuinely* preserved:
 ### Golden-fixture contract model (R2/H1)
 
 The legacy path is `@supabase/supabase-js` (PostgREST) and **cannot talk to a plain
-Postgres container**. So: fixtures are **generated once, off-CI** — the frozen
-`learning-store.legacy.mjs` is run against a local `supabase start` stack (full
-Supabase in Docker; never production), recording per-function return value + table
-mutations into `tests/fixtures/contract/`. CI runs the **new path only** against
-postgres+pgvector and diffs vs the committed fixtures.
+Postgres container** — it needs a full Supabase stack (PostgREST + the project's
+REST endpoint). So: fixtures are **generated once, off-CI**. Two equivalent paths:
+
+- **Maintainer path** (preferred when Supabase credentials are available): a
+  fresh sandbox Supabase project, provisioned via `supabase projects create`,
+  linked, migrated, then recorded against. Faster than spinning up Docker; no
+  local container engine required.
+- **Public-fork path** (downstream users without Supabase credentials): a local
+  `supabase start` Docker stack (full Supabase running in Docker). The
+  `record-golden-fixtures.mjs` runner is identical — only the connection target
+  changes.
+
+**Never the maintainer's live audit-loop project** — the recorder writes test
+rows and would pollute real persistence data. `record-golden-fixtures.mjs`
+enforces this with `assertLocalOnly()` + an `AUDIT_DB_URL`-equality check that
+refuses production targets.
+
+CI runs the **new path only** against postgres+pgvector and diffs vs the
+committed fixtures.
 
 ### Ordering semantics (R3/M1)
 

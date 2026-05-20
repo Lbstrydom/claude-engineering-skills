@@ -19,8 +19,48 @@ live-path rewrite gates on the contract suite being green.
 
 ## How to (re)record
 
+Two equivalent paths — pick the one that matches your access:
+
+### Path A — Maintainer with Supabase credentials (no Docker needed)
+
 ```bash
-# 1. Bring up the local Supabase stack.
+# 1. Create a dedicated fixture sandbox project (free tier is fine).
+supabase projects create postgres-parity-fixtures --org-id <your-org>
+
+# 2. Link + apply the audit-loop migrations to the sandbox.
+supabase link --project-ref <ref-from-step-1>
+supabase db push   # applies supabase/migrations/*.sql
+
+# 3. Read the anon + service-role keys from the dashboard
+#    (Project Settings → API). Export as env vars:
+export SUPABASE_LOCAL_URL=https://<ref>.supabase.co
+export SUPABASE_LOCAL_ANON_KEY=...
+export SUPABASE_LOCAL_SERVICE_ROLE_KEY=...
+
+# 4. Record.
+node scripts/postgres-parity/record-golden-fixtures.mjs \
+  --legacy tests/fixtures/learning-store.legacy.mjs \
+  --supabase-url "$SUPABASE_LOCAL_URL" \
+  --anon-key "$SUPABASE_LOCAL_ANON_KEY" \
+  --service-role-key "$SUPABASE_LOCAL_SERVICE_ROLE_KEY" \
+  --out tests/fixtures/contract/
+
+# 5. Commit + (optional) tear the sandbox project down.
+git add tests/fixtures/contract/*.json
+supabase projects delete <ref>   # cleanup; keep it long-term if you re-record often
+```
+
+> **The recorder's `assertLocalOnly()` will refuse a `*.supabase.co` URL**
+> for safety. To target a sandbox Supabase project, either temporarily relax
+> that guard with a `--allow-remote <project-ref>` flag we add when this
+> path is first exercised, or run the recorder behind a forwarding proxy at
+> `127.0.0.1:<port>`. Today the recorder is wired only for path B; path A
+> needs the small `--allow-remote` extension before it's actually usable.
+
+### Path B — No Supabase credentials → local Docker stack
+
+```bash
+# 1. Bring up the local Supabase stack (Docker required).
 supabase start
 
 # 2. Pull the anon + service-role keys.
