@@ -180,6 +180,15 @@ export async function matchResponseAgainstManifest(response, manifest) {
           const rowKey = row?.[binding.keyField];
           if (rowKey == null) continue;
           const value = resolveJsonPath(row, entryFieldPath);
+          // Resolves Gemini-final-G2 part 1: preserve undefined → no upsert.
+          // The plan §8 requires schema-drift to surface as a P1; by
+          // NOT upserting when path resolves to undefined, the downstream
+          // `unresolved-ground-truth` finding in diffClaims fires naturally.
+          if (value === undefined) continue;
+          // Resolves Gemini-final-G2 part 2: record the JSON keyField's
+          // native type so diffClaims can coerce dom.key to the same type
+          // before correlation (plan §6 key-coercion contract).
+          const keyTypeName = typeof rowKey;
           const tuple = `${surface.id}::${field.field}::${surface.scope}::${String(rowKey)}`;
           out.push({
             key: tuple,
@@ -187,8 +196,15 @@ export async function matchResponseAgainstManifest(response, manifest) {
               surfaceId: surface.id,
               engineField: field.field,
               scope: surface.scope,
+              // Persist BOTH the string form (for tuple matching) and the
+              // native form (for coercion verification). diffClaims uses
+              // coerceDomKey + this type to bridge DOM-string vs JSON-native.
               key: String(rowKey),
-              value: value === undefined ? null : value,
+              keyNative: rowKey,
+              keyType: keyTypeName === 'number' || keyTypeName === 'boolean' || keyTypeName === 'string'
+                ? keyTypeName
+                : 'string',
+              value,
               sourceUrl: url,
               receivedAt: new Date().toISOString(),
             },
@@ -197,6 +213,8 @@ export async function matchResponseAgainstManifest(response, manifest) {
       } else {
         // Singleton surface — read the jsonPath directly.
         const value = resolveJsonPath(body, ns.jsonPath);
+        // Resolves Gemini-final-G2: skip upsert on undefined (schema drift).
+        if (value === undefined) continue;
         const tuple = `${surface.id}::${field.field}::::`;
         out.push({
           key: tuple,
@@ -205,7 +223,7 @@ export async function matchResponseAgainstManifest(response, manifest) {
             engineField: field.field,
             scope: null,
             key: null,
-            value: value === undefined ? null : value,
+            value,
             sourceUrl: url,
             receivedAt: new Date().toISOString(),
           },

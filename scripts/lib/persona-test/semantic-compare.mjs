@@ -28,6 +28,29 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { SemanticVerdictSchema } from './schemas.mjs';
 import { redact } from '../redact.mjs';
+import { resolveModel, parseClaudeModel, parseGeminiModel } from '../model-resolver.mjs';
+
+// Resolves Gemini-final-G4: plan §11 Boundary 1 step 3 mandates an
+// explicit allowlist of permitted egress destinations. The semantic
+// comparator refuses to invoke unknown providers — only Claude/Anthropic
+// or Google/Gemini are sanctioned. OpenAI/other providers throw at the
+// boundary so a misconfigured `PERSONA_CONSISTENCY_SEMANTIC_MODEL` cannot
+// quietly send prose to a provider the security review didn't sign off on.
+function assertEgressApproved(modelId) {
+  if (typeof modelId !== 'string' || modelId.length === 0) return;   // wrapper default
+  let resolved;
+  try { resolved = resolveModel(modelId, { silent: true }); }
+  catch { resolved = modelId; }
+  const isClaude  = !!parseClaudeModel(resolved)  || /^(claude-|anthropic\/)/i.test(resolved) || /^latest-(opus|sonnet|haiku)$/.test(resolved);
+  const isGemini  = !!parseGeminiModel(resolved)  || /^gemini-/i.test(resolved) || /^latest-(pro|flash|flash-lite)$/.test(resolved);
+  if (!isClaude && !isGemini) {
+    throw new Error(
+      `semantic-compare egress refused: model "${modelId}" (resolved="${resolved}") is not in the approved provider allowlist ` +
+      '(Anthropic Claude or Google Gemini only — see plan §11 Boundary 1). ' +
+      'Set PERSONA_CONSISTENCY_SEMANTIC_MODEL to a `claude-*` or `gemini-*` id (or a `latest-*` sentinel that resolves to one).',
+    );
+  }
+}
 
 /**
  * The provider returns a JSON object matching `SemanticVerdictSchema`.
@@ -70,13 +93,21 @@ export async function compare(textA, textB, fieldType, opts = {}) {
   }
 
   const maxChars = Number.isInteger(opts.maxChars) && opts.maxChars > 0 ? opts.maxChars : 2000;
-  const aRaw = textA.length > maxChars ? textA.slice(0, maxChars) : textA;
-  const bRaw = textB.length > maxChars ? textB.slice(0, maxChars) : textB;
-  const truncated = textA.length > maxChars || textB.length > maxChars;
+  // Resolves R2-H6: redact FIRST, truncate AFTER. The previous order let
+  // a secret straddling the maxChars boundary be cut in half — half of
+  // an OpenAI key (e.g. `sk-AAAAAAAAAAAAAAAA...`) doesn't match the
+  // pattern and would pass through to the provider. Redacting on the
+  // full input then truncating the already-safe text preserves the
+  // egress guarantee at any cap.
+  const aFull = redact(textA);
+  const bFull = redact(textB);
+  const aRaw = aFull.redacted.length > maxChars ? aFull.redacted.slice(0, maxChars) : aFull.redacted;
+  const bRaw = bFull.redacted.length > maxChars ? bFull.redacted.slice(0, maxChars) : bFull.redacted;
+  const truncated = aFull.redacted.length > maxChars || bFull.redacted.length > maxChars;
 
-  // Pre-egress redaction (every call, not just llmSafe — defence in depth).
-  const a = redact(aRaw);
-  const b = redact(bRaw);
+  // The "a"/"b" handles below are kept for the cacheKey + log-emit lines.
+  const a = { redacted: aRaw, count: aFull.count, patternsHit: aFull.patternsHit };
+  const b = { redacted: bRaw, count: bFull.count, patternsHit: bFull.patternsHit };
   const redactionCount = a.count + b.count;
 
   // Cache lookup — key is content-hash of redacted text + model (if provided).
@@ -101,14 +132,39 @@ export async function compare(textA, textB, fieldType, opts = {}) {
     };
   }
 
+  // Resolves Gemini-final-G4: enforce model-allowlist before any egress.
+  // Thrown errors propagate to the caller — refusing to call rather than
+  // silently downgrading prevents an unsigned-off model from receiving
+  // user data even when callLLM is hooked up.
+  if (opts.model) assertEgressApproved(opts.model);
+
   const userPrompt = renderUserPrompt(a.redacted, b.redacted, truncated);
-  const envelope = await opts.callLLM(
-    opts.provider,
-    SYSTEM_PROMPT,
-    userPrompt,
-    SemanticVerdictSchema,
-    opts.model ? { model: opts.model } : {},
-  );
+  // Resolves R2-H8: wrap the wrapper. Provider timeouts, auth failures,
+  // SDK exceptions, transient HTTP errors must NOT abort the entire
+  // consistency run — semantic compare is best-effort and degrades to
+  // 'uncertain' on any error.
+  let envelope;
+  try {
+    envelope = await opts.callLLM(
+      opts.provider,
+      SYSTEM_PROMPT,
+      userPrompt,
+      SemanticVerdictSchema,
+      opts.model ? { model: opts.model } : {},
+    );
+  } catch (err) {
+    // Resolves R4-H3: SDK exceptions commonly include endpoint URLs, model
+    // identifiers, filesystem paths, sometimes auth metadata. Run the raw
+    // error message through redact() so any matched secret patterns get
+    // replaced before we surface them in the (cached, logged) verdict.
+    const rawMsg = err?.message || String(err);
+    const safeMsg = redact(rawMsg).redacted.slice(0, 200);
+    return {
+      result: { matched: 'uncertain', reason: `provider-error: ${safeMsg}` },
+      usage: {},
+      latencyMs: 0,
+    };
+  }
 
   let verdict;
   if (!envelope || !envelope.result) {

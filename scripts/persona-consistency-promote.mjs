@@ -37,13 +37,84 @@ import 'dotenv/config';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { renderCandidateSpec } from './lib/ux-lock/candidate-spec.mjs';
 import {
+  WitnessRecordSchema,
+  ContradictionSchema,
+} from './lib/persona-test/schemas.mjs';
+import {
   initLearningStore,
   isCloudEnabled,
-  listConsistencyCandidates,
-  promoteRegressionSpec,
   getRepoIdByUuid,
-  recordShipEvent,
 } from './learning-store.mjs';
+// Resolves Gemini-final-G3: `promoteRegressionSpec` and `recordShipEvent`
+// were direct learning-store imports; the plan's Phase 6 explicitly routes
+// them through the cross-skill CLI facade (the same way it does for
+// list-consistency-candidates). The helpers below replace the direct
+// calls with subprocess invocations. getRepoIdByUuid stays direct — it's
+// a read-only identity-resolution helper used by reconcile-time DB
+// disambiguation, not a persistence write.
+
+// Resolves Gemini-final-wronglyDismissed-R4-M4: the audited plan dictates
+// that `persona-consistency-promote.mjs` MUST invoke the cross-skill CLI
+// for `list-consistency-candidates` (NOT a direct DB call). We honour the
+// plan's explicit architectural mandate by spawning the CLI as a subprocess
+// — the cross-skill facade is the canonical persistence boundary for this
+// read path. promoteRegressionSpec, getRepoIdByUuid, recordShipEvent
+// remain direct imports because the plan didn't explicitly route them
+// through the facade.
+function callCrossSkill(repoRoot, command, payload) {
+  try {
+    const out = execFileSync(
+      'node',
+      ['scripts/cross-skill.mjs', command, '--json', JSON.stringify(payload)],
+      { cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    return JSON.parse(out.trim());
+  } catch (err) {
+    // Resolves Gemini-final-G3: when the cross-skill CLI exits non-zero,
+    // execFileSync throws an Error with `.stdout` containing the structured
+    // JSON error response (per scripts/cross-skill.mjs `emitError` shape:
+    // `{ok:false, code:'...', message:'...'}`). The previous catch
+    // collapsed every failure to `{ok:false, error:'Command failed...'}`
+    // — callers couldn't distinguish BAD_INPUT from "node not found" or
+    // an empty-result success-with-cloud-off. Parse stdout when present.
+    const stdout = (err.stdout || '').toString().trim();
+    if (stdout) {
+      try {
+        const parsed = JSON.parse(stdout);
+        return { ok: false, error: parsed.message || parsed.code || 'cross-skill returned error', code: parsed.code };
+      } catch { /* fall through to generic error */ }
+    }
+    return { ok: false, error: err.message };
+  }
+}
+
+function listConsistencyCandidatesViaCli(repoRoot, repoId, sinceTs) {
+  const parsed = callCrossSkill(repoRoot, 'list-consistency-candidates', {
+    repoId, sinceTs, limit: 100,
+  });
+  if (!parsed.ok) {
+    process.stderr.write(`  [promote] list-consistency-candidates failed: ${parsed.code || parsed.error || 'unknown'}\n`);
+    return [];
+  }
+  return parsed.candidates || [];
+}
+
+async function promoteRegressionSpecViaCli(repoRoot, args) {
+  const parsed = callCrossSkill(repoRoot, 'promote-regression-spec', args);
+  if (!parsed.ok) {
+    return { ok: false, rowsAffected: 0, error: parsed.code || parsed.error || 'unknown' };
+  }
+  return { ok: true, rowsAffected: parsed.rowsAffected || 0 };
+}
+
+async function recordShipEventViaCli(repoRoot, args) {
+  const parsed = callCrossSkill(repoRoot, 'record-ship-event', args);
+  if (!parsed.ok && !parsed.cloud) {
+    // Cloud off — silently OK
+    return { ok: true };
+  }
+  return { ok: !!parsed.ok };
+}
 
 const JOURNAL_DIR = path.join('.persona-test', 'promotion-journal');
 const E2E_DIR     = path.join('tests', 'e2e');
@@ -145,7 +216,7 @@ export async function promoteCandidates(args, deps = {}) {
     return result;
   }
 
-  const candidates = await listConsistencyCandidates(repoId, { sinceTs: args.since });
+  const candidates = listConsistencyCandidatesViaCli(args.repoRoot, repoId, args.since || null);
   if (!candidates || candidates.length === 0) {
     process.stdout.write('No pending consistency candidates.\n');
     return result;
@@ -202,15 +273,38 @@ export async function promoteCandidates(args, deps = {}) {
 // ────────────────────────────────────────────────────────────────────────────
 
 async function promoteOne(repoRoot, repoId, cand, promotedBy) {
+  // Resolves R1-H4 — re-validate JSONB columns on the read boundary. The
+  // candidate row was written by a prior runner; row-shape CHECK enforces
+  // structure but not full schema. Parse before rendering so a corrupt or
+  // shape-drifted record fails LOUDLY here (not via cryptic stack from
+  // deep inside renderCandidateSpec).
+  const witnessParsed = WitnessRecordSchema.safeParse(cand.witness_snapshot);
+  if (!witnessParsed.success) {
+    throw new Error(`witness_snapshot fails schema: ${witnessParsed.error.message}`);
+  }
+  const contradictionParsed = ContradictionSchema.safeParse(cand.contradiction_payload);
+  if (!contradictionParsed.success) {
+    throw new Error(`contradiction_payload fails schema: ${contradictionParsed.error.message}`);
+  }
+  const jc = cand.journey_context;
+  if (!jc || !Array.isArray(jc.journeySteps) || jc.journeySteps.length === 0) {
+    throw new Error('journey_context.journeySteps[] is empty or malformed');
+  }
+
   // 1. Render the spec body (deterministic — same candidate → same body).
+  // Resolves R4-H8: thread `contradictionStepIndex` through so the
+  // renderer can validate the replay-boundary contract (R3-H4 fix). The
+  // field is optional in journeyContext for backward compat with pre-R3
+  // candidate rows that don't carry it; current runner always sets it.
   const { filename, body } = renderCandidateSpec(
-    cand.witness_snapshot,
-    cand.contradiction_payload,
+    witnessParsed.data,
+    contradictionParsed.data,
     {
-      journeySteps:           cand.journey_context?.journeySteps || [],
-      routes:                 cand.journey_context?.routes,
-      authBootstrap:          cand.journey_context?.authBootstrap,
-      candidateFingerprint:   cand.candidate_fingerprint,
+      journeySteps:             jc.journeySteps,
+      contradictionStepIndex:   jc.contradictionStepIndex,
+      routes:                   jc.routes,
+      authBootstrap:            jc.authBootstrap,
+      candidateFingerprint:     cand.candidate_fingerprint,
     },
   );
 
@@ -235,8 +329,11 @@ async function promoteOne(repoRoot, repoId, cand, promotedBy) {
     // 3. Write spec to .tmp (atomic temp+rename pattern via file-io).
     atomicWriteFileSync(tmpPath, body);
 
-    // 4. DB UPDATE candidate → locked.
-    const updateResult = await promoteRegressionSpec(cand.id, {
+    // 4. DB UPDATE candidate → locked. Routed through cross-skill CLI
+    // (Gemini-final-G3: the plan's Phase 6 explicitly mandates the facade
+    // here, NOT a direct learning-store call).
+    const updateResult = await promoteRegressionSpecViaCli(repoRoot, {
+      specId: cand.id,
       specPath: path.relative(repoRoot, finalPath).replace(/\\/g, '/'),
       promotedBy,
       candidateFingerprint: cand.candidate_fingerprint,
@@ -261,7 +358,34 @@ async function promoteOne(repoRoot, repoId, cand, promotedBy) {
     });
 
     // 6. Atomic rename — moves the file out of .tmp suffix into place.
-    fs.renameSync(tmpPath, finalPath);
+    // Resolves R3-H6: refuse to overwrite an existing finalPath. A
+    // collision here means either (a) a previous promotion attempt left
+    // the file in place (reconcilePromotionJournal should have cleared
+    // it; if not, we're racing with a concurrent run) or (b) a fingerprint
+    // short-hash collision (R2-H7 bumped slice to 16 chars but defence in
+    // depth). Refuse rather than silently overwrite — the candidate row
+    // remains locked in DB; next reconcile run will catch the disagreement.
+    if (fs.existsSync(finalPath)) {
+      // Read both files; if they're byte-identical, the rename is idempotent
+      // (re-running the same promotion is safe). Otherwise refuse loudly.
+      let existing, incoming;
+      try {
+        existing = fs.readFileSync(finalPath, 'utf-8');
+        incoming = fs.readFileSync(tmpPath,   'utf-8');
+      } catch (err) {
+        throw new Error(`promote rename refused — could not compare existing and incoming spec: ${err.message}`);
+      }
+      if (existing === incoming) {
+        // Idempotent re-run — discard the .tmp; the locked file already matches.
+        try { fs.unlinkSync(tmpPath); } catch { /* swallow */ }
+      } else {
+        throw new Error(
+          `promote rename refused — ${finalPath} already exists with different content (possible concurrent promotion or fingerprint collision)`,
+        );
+      }
+    } else {
+      fs.renameSync(tmpPath, finalPath);
+    }
 
     // 7. Journal finalised; record ship_event; delete journal.
     writeJournal(repoRoot, cand.id, {
@@ -273,7 +397,9 @@ async function promoteOne(repoRoot, repoId, cand, promotedBy) {
       timestamp: new Date().toISOString(),
     });
     try {
-      await recordShipEvent(repoId, {
+      // Routed through cross-skill CLI (Gemini-final-G3).
+      await recordShipEventViaCli(repoRoot, {
+        repoId,
         commitSha: safeGitSha(repoRoot),
         branch: safeGitBranch(repoRoot),
         outcome: 'shipped',
@@ -303,6 +429,34 @@ export async function reconcilePromotionJournal(repoRoot) {
   let recovered = 0;
   let rolledBack = 0;
 
+  // Resolves Gemini-final-G1: a `pending` entry can mean (a) DB never
+  // committed (the journal is honest) OR (b) we crashed between
+  // promoteRegressionSpec returning success and writing the
+  // 'db-committed' journal update. Cases (a) and (b) need opposite
+  // recovery actions, so we MUST query the DB on pending entries to
+  // disambiguate. `finalised` and `db-committed` are safe to act on
+  // without DB; only `pending` disambiguation needs the live candidate
+  // set.
+  await initLearningStore();
+  let repoId = null;
+  if (isCloudEnabled()) {
+    try {
+      const uuid = readLocalRepoUuid(repoRoot);
+      if (uuid) repoId = await getRepoIdByUuid(uuid);
+    } catch { /* fall through */ }
+  }
+  const canQueryDb = !!repoId;
+  const candidateByFingerprint = new Map();
+  if (canQueryDb) {
+    // Pre-fetch the current candidate set so we can probe individual
+    // fingerprints below. (Listing via the CLI honours the cross-skill
+    // facade per the plan.)
+    const liveCandidates = listConsistencyCandidatesViaCli(repoRoot, repoId, null);
+    for (const c of liveCandidates) {
+      if (c.candidate_fingerprint) candidateByFingerprint.set(c.candidate_fingerprint, c);
+    }
+  }
+
   for (const f of files) {
     const journalPath = path.join(dir, f);
     let entry;
@@ -330,14 +484,49 @@ export async function reconcilePromotionJournal(repoRoot) {
     }
 
     if (entry.stage === 'pending') {
-      // DB never committed. Roll back the .tmp file; leave the candidate row.
-      try {
-        if (entry.tmpPath && fs.existsSync(entry.tmpPath)) fs.unlinkSync(entry.tmpPath);
-        fs.unlinkSync(journalPath);
-        rolledBack += 1;
-        process.stderr.write(`[reconcile] Rolled back incomplete promotion for ${entry.specId}\n`);
-      } catch (err) {
-        process.stderr.write(`[reconcile] Failed rollback ${entry.specId}: ${err.message}\n`);
+      // Without DB access, we cannot safely disambiguate "DB never
+      // committed" from "DB committed but journal not yet updated".
+      // Per Gemini-final-G1, the wrong action either corrupts state
+      // (delete a committed file) or leaves a stranded row. Leave the
+      // journal entry alone and let a future reconcile with DB access
+      // resolve it.
+      if (!canQueryDb) {
+        process.stderr.write(
+          `[reconcile] cannot disambiguate pending entry ${entry.specId} — no DB access; leaving untouched\n`,
+        );
+        continue;
+      }
+      // Disambiguate via DB query. If the candidate row STILL exists as
+      // a candidate, the DB UPDATE didn't land — safe to roll back the
+      // .tmp. If the row is missing from the candidate list, the UPDATE
+      // landed (it's now locked) — we crashed before writing the
+      // 'db-committed' journal entry. Treat as db-committed and complete
+      // the rename.
+      const stillCandidate = entry.candidateFingerprint
+        && candidateByFingerprint.has(entry.candidateFingerprint);
+
+      if (stillCandidate) {
+        try {
+          if (entry.tmpPath && fs.existsSync(entry.tmpPath)) fs.unlinkSync(entry.tmpPath);
+          fs.unlinkSync(journalPath);
+          rolledBack += 1;
+          process.stderr.write(`[reconcile] Rolled back incomplete promotion for ${entry.specId} (DB confirmed never committed)\n`);
+        } catch (err) {
+          process.stderr.write(`[reconcile] Failed rollback ${entry.specId}: ${err.message}\n`);
+        }
+      } else {
+        // DB committed silently between our journal write and crash.
+        // Complete the rename.
+        try {
+          if (fs.existsSync(entry.tmpPath) && !fs.existsSync(entry.intendedPath)) {
+            fs.renameSync(entry.tmpPath, entry.intendedPath);
+          }
+          fs.unlinkSync(journalPath);
+          recovered += 1;
+          process.stderr.write(`[reconcile] DB query reveals ${entry.specId} was committed despite stale journal; completed rename\n`);
+        } catch (err) {
+          process.stderr.write(`[reconcile] Failed to complete ${entry.specId}: ${err.message}\n`);
+        }
       }
       continue;
     }

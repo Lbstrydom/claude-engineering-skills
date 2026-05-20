@@ -184,6 +184,28 @@ async function cmdRecordRegressionSpec() {
   if (!p.sourceKind || !p.description) {
     return emitError('BAD_INPUT', 'sourceKind and description are required');
   }
+  // Resolves Gemini-final-G1: defense-in-depth pre-egress redaction at the
+  // cross-skill CLI boundary. learning-store.recordRegressionSpec ALSO
+  // redacts (R1 fix), but redacting at the boundary too means future
+  // callers / future learning-store refactors can't bypass it. Idempotent
+  // — applying redact twice is harmless (patterns already replaced won't
+  // match again).
+  if (p.sourceKind === 'persona-consistency-candidate' || p.sourceKind === 'persona-consistency-locked') {
+    try {
+      const { redactObject } = await import('./lib/redact.mjs');
+      if (p.witnessSnapshot !== undefined && p.witnessSnapshot !== null) {
+        p.witnessSnapshot = redactObject(p.witnessSnapshot).redacted;
+      }
+      if (p.contradictionPayload !== undefined && p.contradictionPayload !== null) {
+        p.contradictionPayload = redactObject(p.contradictionPayload).redacted;
+      }
+      if (p.journeyContext !== undefined && p.journeyContext !== null) {
+        p.journeyContext = redactObject(p.journeyContext).redacted;
+      }
+    } catch (err) {
+      return emitError('REDACT_FAILED', `pre-egress redact threw: ${err.message}`);
+    }
+  }
   // Conditional specPath requirement by sourceKind (Gemini-R6-G2 fix).
   const isCandidate = p.sourceKind === 'persona-consistency-candidate';
   const isLocked    = p.sourceKind === 'persona-consistency-locked';
@@ -202,9 +224,13 @@ async function cmdRecordRegressionSpec() {
   await initLearningStore();
   if (!isCloudEnabled()) return emit({ ok: true, cloud: false, specId: null });
   const repoId = await resolveRepoId(p);
-  if (isCandidate && !repoId) {
+  // Resolves R1-H3 — repo scoping enforced at the CLI boundary. Both
+  // candidate AND locked rows require a resolved repoId; without it the
+  // partial unique index has no anchor and concurrent runs can silently
+  // produce duplicate-fingerprint rows (Postgres NULL-distinct trap).
+  if ((isCandidate || isLocked) && !repoId) {
     return emitError('BAD_INPUT',
-      'consistency candidates require a resolved repoId — run resolve-repo-identity first');
+      'consistency rows (candidate or locked) require a resolved repoId — run resolve-repo-identity --persist first');
   }
   const specId = await recordRegressionSpec(repoId, {
     specPath: p.specPath ?? null,

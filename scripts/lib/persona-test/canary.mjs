@@ -53,6 +53,38 @@ export function loadCanary(name, repoRoot) {
   const canaryDirAbs = path.join(repoRoot, CANARY_DIR);
   const filePath     = path.join(canaryDirAbs, `${name}.json`);
 
+  // Resolves R2-H1: the canaries/ DIRECTORY itself must be inside repoRoot
+  // (real-path resolved). The old code only validated the file's real
+  // path against the canaries/ dir's real path — a symlinked canaries/
+  // dir pointing outside the repo would still pass that check.
+  let canaryDirReal;
+  try {
+    canaryDirReal = fs.realpathSync(canaryDirAbs);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      const e = new Error(`loadCanary: ${CANARY_DIR}/ does not exist in ${repoRoot}`);
+      e.failureReason = 'canary-dir-missing';
+      throw e;
+    }
+    throw err;
+  }
+  let repoReal;
+  try {
+    repoReal = fs.realpathSync(repoRoot);
+  } catch (err) {
+    const e = new Error(`loadCanary: repoRoot does not exist: ${repoRoot}`);
+    e.failureReason = 'canary-repo-missing';
+    throw e;
+  }
+  {
+    const relDir = path.relative(repoReal, canaryDirReal);
+    if (relDir.startsWith('..') || path.isAbsolute(relDir)) {
+      const e = new Error(`loadCanary: refusing symlink escape — canaries/ dir resolves outside repoRoot`);
+      e.failureReason = 'canary-path-traversal';
+      throw e;
+    }
+  }
+
   let realPath;
   try {
     realPath = fs.realpathSync(filePath);
@@ -66,17 +98,6 @@ export function loadCanary(name, repoRoot) {
   }
 
   // Refuse if the realpath escapes the canary directory.
-  let canaryDirReal;
-  try {
-    canaryDirReal = fs.realpathSync(canaryDirAbs);
-  } catch (err) {
-    if (err.code === 'ENOENT') {
-      const e = new Error(`loadCanary: ${CANARY_DIR}/ does not exist in ${repoRoot}`);
-      e.failureReason = 'canary-dir-missing';
-      throw e;
-    }
-    throw err;
-  }
   const rel = path.relative(canaryDirReal, realPath);
   if (rel.startsWith('..') || path.isAbsolute(rel)) {
     const e = new Error(`loadCanary: refusing symlink escape — ${realPath} is outside ${canaryDirReal}`);
@@ -148,8 +169,19 @@ export function loadCanary(name, repoRoot) {
  * @returns {VerifyResult}
  */
 export function verifyExpectations(canary, contradictions) {
+  // Resolves R3-H1: strict-guard non-array input. The old code coerced
+  // `.length` defensively to 0 but then called `.find()` later, which
+  // would throw on a non-array. Either both branches handle non-array
+  // gracefully OR neither does — refusing at the boundary is the cleaner
+  // contract.
+  if (!Array.isArray(contradictions)) {
+    throw new Error('verifyExpectations: contradictions must be an array');
+  }
+  if (!canary || typeof canary !== 'object') {
+    throw new Error('verifyExpectations: canary must be an object');
+  }
   const expected = canary.expectedContradictions || { min: 0, max: null };
-  const observed = Array.isArray(contradictions) ? contradictions.length : 0;
+  const observed = contradictions.length;
   const min = Number.isInteger(expected.min) ? expected.min : 0;
   const max = expected.max === null || expected.max === undefined
     ? null
@@ -174,15 +206,20 @@ export function verifyExpectations(canary, contradictions) {
 
   if (Array.isArray(expected.shapes) && expected.shapes.length > 0) {
     for (const shape of expected.shapes) {
-      const match = contradictions.find(
-        (c) => c.engineField === shape.engineField && c.surfaceId === shape.surfaceId,
+      const match = contradictions.find((c) =>
+        c.engineField === shape.engineField &&
+        c.surfaceId === shape.surfaceId &&
+        // Resolves R1-H10: kind discriminator. Optional in the spec —
+        // when shape.kind is undefined, any contradiction kind satisfies it.
+        (shape.kind === undefined || c.kind === shape.kind)
       );
       if (!match) {
+        const kindLabel = shape.kind ? `:${shape.kind}` : '';
         return {
           passed: false,
           verdict: 'broken',
           observed,
-          reason: `expected shape (${shape.surfaceId}.${shape.engineField}) not found in contradictions — rig may be matching the wrong surface`,
+          reason: `expected shape (${shape.surfaceId}.${shape.engineField}${kindLabel}) not found in contradictions — rig may be matching the wrong surface`,
         };
       }
     }
@@ -220,8 +257,14 @@ export function verifyExpectations(canary, contradictions) {
 export function canaryExpectsShape(canary, contradiction) {
   const shapes = canary?.expectedContradictions?.shapes;
   if (!Array.isArray(shapes) || shapes.length === 0) return false;
-  return shapes.some(
-    (s) => s.engineField === contradiction.engineField && s.surfaceId === contradiction.surfaceId,
+  return shapes.some((s) =>
+    s.engineField === contradiction.engineField &&
+    s.surfaceId === contradiction.surfaceId &&
+    // Resolves R1-H15: suppression keyed on full identity including kind.
+    // Optional in the shape spec — when shape.kind is undefined, suppression
+    // applies to any kind on this (surface, field) pair (backwards-compat for
+    // canaries that haven't migrated to kind-discriminated shapes yet).
+    (s.kind === undefined || s.kind === contradiction.kind)
   );
 }
 
@@ -244,13 +287,19 @@ export function candidateFingerprint({ repoId, journeyKey, contradiction }) {
   if (!repoId || !journeyKey || !contradiction) {
     throw new Error('candidateFingerprint: repoId, journeyKey, contradiction required');
   }
-  const locatorNorm = String(contradiction.selector || '').trim();
+  // Resolves R1-M21: fingerprint identity uses semantic discriminators
+  // (surface + field + scope + key + kind), NOT DOM `selector`. Selector
+  // is implementation detail that can drift across CSS refactors without
+  // changing the underlying contract; keying on it would make every UI
+  // refactor look like a new candidate. scope+key is the entity-level
+  // stable identifier for collection rows.
   const h = createHash('sha256');
-  h.update(String(repoId));        h.update('\x00');
-  h.update(String(journeyKey));    h.update('\x00');
-  h.update(String(contradiction.surfaceId   ?? ''));  h.update('\x00');
-  h.update(String(contradiction.engineField ?? ''));  h.update('\x00');
-  h.update(String(contradiction.kind        ?? ''));  h.update('\x00');
-  h.update(locatorNorm);
+  h.update(String(repoId));                                h.update('\x00');
+  h.update(String(journeyKey));                            h.update('\x00');
+  h.update(String(contradiction.surfaceId   ?? ''));       h.update('\x00');
+  h.update(String(contradiction.engineField ?? ''));       h.update('\x00');
+  h.update(String(contradiction.scope       ?? ''));       h.update('\x00');
+  h.update(String(contradiction.key         ?? ''));       h.update('\x00');
+  h.update(String(contradiction.kind        ?? ''));
   return h.digest('hex');
 }

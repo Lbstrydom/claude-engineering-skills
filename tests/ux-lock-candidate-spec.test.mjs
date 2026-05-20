@@ -52,15 +52,27 @@ function baseJourney(over = {}) {
     ],
     routes: { cellar: '/cellar' },
     authBootstrap: { kind: 'none' },
-    candidateFingerprint: 'abc123def456789',
+    candidateFingerprint: 'abc123def4567890ab',
     ...over,
   };
 }
 
 describe('renderCandidateSpec — output shape', () => {
-  it('filename is derived from surfaceId + short fingerprint', () => {
+  it('filename is derived from surfaceId + 16-char fingerprint slice (R2-H7/H12)', () => {
     const { filename } = renderCandidateSpec(baseWitness(), baseContradiction(), baseJourney());
-    assert.match(filename, /^consistency-status-chip-abc123def4\.spec\.js$/);
+    // baseJourney fingerprint is 18 chars; renderer slices to 16.
+    assert.match(filename, /^consistency-status-chip-abc123def4567890\.spec\.js$/);
+  });
+
+  it('refuses when fingerprint is missing or too short (R2-H7/H12 collision guard)', () => {
+    assert.throws(
+      () => renderCandidateSpec(baseWitness(), baseContradiction(), baseJourney({ candidateFingerprint: '' })),
+      /candidateFingerprint is required/,
+    );
+    assert.throws(
+      () => renderCandidateSpec(baseWitness(), baseContradiction(), baseJourney({ candidateFingerprint: 'abc' })),
+      /too short/,
+    );
   });
 
   it('body contains import, ROUTES, and the test block', () => {
@@ -80,11 +92,22 @@ describe('renderCandidateSpec — output shape', () => {
     assert.match(body, /await page\.getByRole\("button", \{ name: "Reorganise" \}\)\.click\(\);/);
   });
 
-  it('asserts on the contradicted selector + expected engine value + freshness', () => {
+  it('asserts on the contradicted selector + expected engine value (value-mismatch kind)', () => {
+    // R1-H7 fix: assertion dispatched by contradiction.kind. value-mismatch
+    // emits the value-equality assertion. The freshness check is now part
+    // of the stale-projection kind's template only — covered by a separate
+    // test below.
     const { body } = renderCandidateSpec(baseWitness(), baseContradiction(), baseJourney());
     assert.match(body, /const el = page\.locator\("\[role=\\"status\\"\]"\);/);
     assert.match(body, /expect\(observed\)\.toBe\(String\(false\)\);/);
-    assert.match(body, /expect\(freshness\)\.not\.toBe\('stale'\);/);
+  });
+
+  it('stale-projection contradictions emit a freshness assertion (R1-H7)', () => {
+    const c = baseContradiction({ kind: 'stale-projection', engineValue: 'feasible' });
+    const { body } = renderCandidateSpec(baseWitness(), c, baseJourney());
+    assert.match(body, /expect\(freshness\)\.toBe\('current'\);/);
+    // Value-equality template is NOT emitted for stale-projection kind.
+    assert.equal(/expect\(observed\)\.toBe\(/.test(body), false);
   });
 });
 
@@ -144,12 +167,14 @@ describe('renderCandidateSpec — every journey action', () => {
     assert.match(body, /page\.waitForTimeout\(250\)/);
   });
 
-  it('evaluate emits a TODO comment (v1 scope per §11b)', () => {
+  it('evaluate steps REFUSE promotion (R2-H3/H10 — TODO comment is not a lock)', () => {
     const j = baseJourney({ journeySteps: [
       { action: 'evaluate', label: 'seed', scriptId: 'reset-fixture' },
     ]});
-    const { body } = renderCandidateSpec(baseWitness(), baseContradiction(), j);
-    assert.match(body, /TODO: replay evaluate step "reset-fixture"/);
+    assert.throws(
+      () => renderCandidateSpec(baseWitness(), baseContradiction(), j),
+      /journey contains evaluate step/,
+    );
   });
 });
 

@@ -123,9 +123,11 @@ describe('runConsistency — early exits (no Playwright session needed)', () => 
     assert.equal(ledger.failureReason, 'manifest-missing');
   });
 
-  it('returns FATAL_RIG when canary is missing', async () => {
+  it('returns FATAL_RIG when canary is missing (file not in canaries/)', async () => {
     writeManifest(tmpDir, MIN_MANIFEST);
-    // No canary file written.
+    // Create canaries/ dir but no canary file — R2-H1 fix added an explicit
+    // canaries/ dir check that fires first when the dir is also absent.
+    fs.mkdirSync(path.join(tmpDir, '.persona-test', 'canaries'), { recursive: true });
     const r = await runConsistency(
       { canary: 'demo', url: 'http://x', repoRoot: tmpDir },
       { playwrightFactory: async () => ({ chromium: { launch: async () => ({ close: async () => {} }) } }) },
@@ -134,6 +136,18 @@ describe('runConsistency — early exits (no Playwright session needed)', () => 
     const ledger = JSON.parse(fs.readFileSync(r.ledgerPath, 'utf-8'));
     assert.equal(ledger.rigVerdict, 'fatal');
     assert.equal(ledger.failureReason, 'canary-not-found');
+  });
+
+  it('returns FATAL_RIG with canary-dir-missing when canaries/ dir is absent (R2-H1)', async () => {
+    writeManifest(tmpDir, MIN_MANIFEST);
+    // Don't create canaries/ dir.
+    const r = await runConsistency(
+      { canary: 'demo', url: 'http://x', repoRoot: tmpDir },
+      { playwrightFactory: async () => ({ chromium: { launch: async () => ({ close: async () => {} }) } }) },
+    );
+    assert.equal(r.exitCode, EXIT.FATAL_RIG);
+    const ledger = JSON.parse(fs.readFileSync(r.ledgerPath, 'utf-8'));
+    assert.equal(ledger.failureReason, 'canary-dir-missing');
   });
 
   it('returns FATAL_RIG when canary schema is invalid', async () => {

@@ -61,10 +61,26 @@ export function redactObject(value, opts = {}) {
   let count = 0;
   let nodesVisited = 0;
 
+  // Resolves R1-H5 + R2-H4: fail closed on cycles AND depth/node cap, but
+  // distinguish "cycle" from "shared reference in an acyclic DAG". The R1
+  // fix used a process-wide WeakSet which mis-classified diamond-shaped
+  // references (the same object reached via two paths from root) as a
+  // cycle, silently dropping legitimate substructure. We now track an
+  // ANCESTOR STACK — only objects on the current path-from-root are
+  // candidates for cycle detection. Shared refs in a DAG walk fully.
+  const ancestors = new Set();
+  const CAPPED_PLACEHOLDER = '[REDACTED:cap-reached]';
+  const CYCLE_PLACEHOLDER  = '[REDACTED:cycle-detected]';
+
   function walk(node, currentDepth) {
     nodesVisited += 1;
-    if (nodesVisited > MAX_OBJECT_NODES) return node;
-    if (currentDepth > maxDepth) return node;
+    if (nodesVisited > MAX_OBJECT_NODES) {
+      // Fail closed — return a safe placeholder, not the original.
+      return CAPPED_PLACEHOLDER;
+    }
+    if (currentDepth > maxDepth) {
+      return CAPPED_PLACEHOLDER;
+    }
 
     if (typeof node === 'string') {
       const r = redact(node);
@@ -76,14 +92,26 @@ export function redactObject(value, opts = {}) {
       return node;
     }
     if (Array.isArray(node)) {
-      return node.map((n) => walk(n, currentDepth + 1));
+      if (ancestors.has(node)) return CYCLE_PLACEHOLDER;
+      ancestors.add(node);
+      try {
+        return node.map((n) => walk(n, currentDepth + 1));
+      } finally {
+        ancestors.delete(node);
+      }
     }
     if (node !== null && typeof node === 'object') {
-      const out = {};
-      for (const key of Object.keys(node)) {
-        out[key] = walk(node[key], currentDepth + 1);
+      if (ancestors.has(node)) return CYCLE_PLACEHOLDER;
+      ancestors.add(node);
+      try {
+        const out = {};
+        for (const key of Object.keys(node)) {
+          out[key] = walk(node[key], currentDepth + 1);
+        }
+        return out;
+      } finally {
+        ancestors.delete(node);
       }
-      return out;
     }
     return node;
   }

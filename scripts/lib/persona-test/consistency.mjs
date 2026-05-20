@@ -191,12 +191,28 @@ export async function diffClaims(witness, manifest, opts = {}) {
     }
 
     // Find the matching network claim (same surface + field + scope + key).
-    const net = witness.networkClaims.find((n) =>
-      n.surfaceId === dom.surfaceId &&
-      n.engineField === dom.engineField &&
-      (n.scope ?? null) === (dom.scope ?? null) &&
-      (n.key   ?? null) === (dom.key   ?? null),
-    );
+    // Resolves Gemini-final-G2: when the DOM has a `data-engine-key`,
+    // coerce it to the type recorded with the network claim's `keyType`
+    // BEFORE comparing — otherwise DOM-string "42" never matches JSON
+    // number 42. The keyType is set by matchResponseAgainstManifest when
+    // the response row's keyField is non-string.
+    const net = witness.networkClaims.find((n) => {
+      if (n.surfaceId !== dom.surfaceId) return false;
+      if (n.engineField !== dom.engineField) return false;
+      if ((n.scope ?? null) !== (dom.scope ?? null)) return false;
+      // Key correlation: coerce dom.key (always string from data-engine-key)
+      // to network entry's recorded keyType; compare against keyNative.
+      const dKey = dom.key ?? null;
+      const nKey = n.key   ?? null;
+      const nKeyNative = ('keyNative' in n) ? n.keyNative : nKey;
+      const inferredType = n.keyType || 'string';
+      if (dKey === null && nKey === null) return true;
+      if (dKey === null || nKey === null) return false;
+      // Both present — coerce dom string to inferred type, compare to native.
+      const coerced = coerceDomKey(String(dKey), inferredType);
+      if (!coerced.ok) return false;   // coercion failure surfaces below
+      return coerced.value === nKeyNative;
+    });
 
     // Null ground-truth handling (Gemini-R4-G3).
     if (net && net.value === null) {
@@ -215,15 +231,33 @@ export async function diffClaims(witness, manifest, opts = {}) {
           'absent-not-rendered', clampToFloor('P1', floor), dom, dom.domValueRaw, net.value,
           `DOM renders data-freshness="absent" but engine has value ${JSON.stringify(net.value)}`,
         ));
+      } else {
+        // Resolves R2-H5: DOM says absent AND we captured NO ground truth.
+        // The engine MIGHT genuinely have nothing OR the rig might have
+        // missed the response — surface it explicitly so we don't silently
+        // count it as "absent agreement". Severity capped at surface floor;
+        // default P2 — operators tune for their surface.
+        findings.push(make(
+          'unresolved-ground-truth', clampToFloor('P2', floor), dom, dom.domValueRaw, null,
+          `DOM renders data-freshness="absent" but rig captured no network ground-truth — cannot distinguish "engine has no value" from "rig missed the response"`,
+        ));
       }
       continue;
     }
 
     if (!net) {
-      // No matching network response was captured for this DOM claim.
-      // The capture library should have marked partialCapture=true; this is
-      // observability, not a contradiction. Skip silently — the surface is
-      // simply uncorrelated for this step.
+      // Resolves R1-H13: unmatched DOM claims are a FIRST-CLASS outcome,
+      // not a silent skip. Manifest mistakes, capture timing gaps, and
+      // SPA cache patterns all surface here — making them invisible turns
+      // "rig couldn't see the truth" into "no contradiction" which is
+      // exactly the silent-rig-failure mode the canary self-test is meant
+      // to catch. Severity is clamped to the surface's floor (default P2
+      // proposed) so consumer apps tune signal/noise per surface; the
+      // contradiction kind makes the situation observable in the ledger.
+      findings.push(make(
+        'unresolved-ground-truth', clampToFloor('P2', floor), dom, dom.domValueRaw, null,
+        `No network ground-truth captured for ${dom.surfaceId}.${dom.engineField}${dom.scope ? `[${dom.scope}/${dom.key}]` : ''} — manifest networkSource may be misconfigured, the surface is cache-only this step, or the capture timing window missed the response`,
+      ));
       continue;
     }
 

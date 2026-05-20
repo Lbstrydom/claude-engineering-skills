@@ -88,20 +88,37 @@ describe('redactObject', () => {
     assert.deepEqual(orig, snapshot, 'input must not be mutated');
   });
 
-  it('respects depth cap', () => {
-    // Build a tower deeper than the depth cap; the deepest secret should NOT be redacted.
+  it('fails closed at depth cap — substitutes a placeholder, NOT the original (R1-H5)', () => {
+    // The previous version of redactObject returned the original subtree
+    // when the depth cap fired, which meant a still-sensitive object could
+    // leak past the boundary by reference. Post-R1 fix, the redactor
+    // substitutes a `[REDACTED:cap-reached]` placeholder instead.
     let inner = { token: 'sk-' + 'A'.repeat(25) };
     for (let i = 0; i < 20; i++) inner = { nested: inner };
     const r = redactObject(inner, { depth: 3 });
-    // The redactor returned the original deep subtree past depth 3 untouched.
-    // Walking 3 levels in: inner.nested.nested.nested is the cutoff.
-    let node = r.redacted;
-    for (let i = 0; i < 5; i++) node = node.nested;
-    // At this point we're past the depth cap; verify the token remains un-redacted
-    // somewhere deeper.
+    // Walk past the cap — anything deeper is a placeholder string, not an object.
     let cursor = r.redacted;
-    while (cursor && cursor.nested) cursor = cursor.nested;
-    assert.match(cursor.token, /sk-A{25}/, 'past depth cap, content should be untouched');
+    let depth = 0;
+    while (cursor && typeof cursor === 'object' && cursor.nested) {
+      cursor = cursor.nested;
+      depth += 1;
+    }
+    // The traversal terminates at a string placeholder, NOT the original token.
+    assert.equal(typeof cursor, 'string', 'cap-reached returns a string placeholder, not the original object');
+    assert.match(cursor, /\[REDACTED:cap-reached\]/);
+    assert.ok(depth >= 3, `traversed at least the cap depth (got ${depth})`);
+  });
+
+  it('detects cycles and substitutes a placeholder (R1-H5)', () => {
+    const a = { name: 'a' };
+    const b = { name: 'b', back: a };
+    a.next = b;   // a → b → a (cycle)
+    const r = redactObject(a);
+    // The result is a finite, walkable tree — no infinite recursion. The
+    // cycle is broken by a placeholder.
+    assert.equal(r.redacted.name, 'a');
+    assert.equal(r.redacted.next.name, 'b');
+    assert.match(r.redacted.next.back, /\[REDACTED:cycle-detected\]/);
   });
 
   it('handles primitives at the root', () => {

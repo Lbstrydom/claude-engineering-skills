@@ -127,35 +127,44 @@ describe('reconcilePromotionJournal', () => {
       'final file should not be overwritten on reconcile');
   });
 
-  it('"pending" → rolls back the .tmp and clears the journal (DB never committed)', async () => {
+  it('"pending" without DB access → LEAVES the entry untouched (Gemini-final-G1)', async () => {
+    // Cloud disabled in test env → reconcile can't disambiguate
+    // "DB never committed" from "DB committed but journal not updated".
+    // Per G1 fix, the safe action is to leave the journal alone and let
+    // a future reconcile with DB access decide. The .tmp file also
+    // stays — destroying it without DB confirmation could corrupt a
+    // committed promotion.
     const e2eDir = path.join(tmpDir, _internals.E2E_DIR);
     fs.mkdirSync(e2eDir, { recursive: true });
     const tmpPath   = path.join(e2eDir, 'spec-3.spec.js.tmp');
     const finalPath = path.join(e2eDir, 'spec-3.spec.js');
-    fs.writeFileSync(tmpPath, '// abandoned');
+    fs.writeFileSync(tmpPath, '// uncertain');
     writeJournalEntry('spec-3', {
       stage: 'pending',
       specId: 'spec-3',
       tmpPath, intendedPath: finalPath,
+      candidateFingerprint: 'fp-deadbeef',
     });
 
     const r = await reconcilePromotionJournal(tmpDir);
-    assert.equal(r.rolledBack, 1);
-    assert.equal(journalExists('spec-3'), false);
-    assert.equal(fs.existsSync(tmpPath), false);
+    assert.equal(r.rolledBack, 0, 'cannot roll back without DB confirmation');
+    assert.equal(r.recovered, 0);
+    assert.equal(journalExists('spec-3'), true,  'entry must remain for future reconcile');
+    assert.equal(fs.existsSync(tmpPath), true,   '.tmp must remain — could be a committed-but-unrenamed spec');
     assert.equal(fs.existsSync(finalPath), false);
   });
 
-  it('"pending" with no .tmp file just clears the journal (idempotent)', async () => {
+  it('"pending" with no .tmp file: same — leave for future reconcile (no DB)', async () => {
     writeJournalEntry('spec-4', {
       stage: 'pending',
       specId: 'spec-4',
       tmpPath: path.join(tmpDir, _internals.E2E_DIR, 'never-created.tmp'),
       intendedPath: path.join(tmpDir, _internals.E2E_DIR, 'never-created.spec.js'),
+      candidateFingerprint: 'fp-cafebabe',
     });
     const r = await reconcilePromotionJournal(tmpDir);
-    assert.equal(r.rolledBack, 1);
-    assert.equal(journalExists('spec-4'), false);
+    assert.equal(r.rolledBack, 0);
+    assert.equal(journalExists('spec-4'), true);
   });
 
   it('malformed journal entries are deleted (don\'t block subsequent reconciles)', async () => {

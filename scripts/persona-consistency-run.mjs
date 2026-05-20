@@ -191,13 +191,31 @@ export async function runConsistency(args, deps = {}) {
     await initLearningStore();
     const cloudOn = isCloudEnabled();
     let repoId = null;
+    let resolveErr = null;
     if (cloudOn) {
       try {
         const uuid = readLocalRepoUuid(repoRoot);
         if (uuid) repoId = await getRepoIdByUuid(uuid);
-      } catch { /* candidate emission becomes a no-op */ }
+        else resolveErr = 'no .audit-loop/repo-identity.json present';
+      } catch (err) {
+        resolveErr = err.message || String(err);
+      }
+    } else {
+      resolveErr = 'cloud store disabled (SUPABASE_AUDIT_* env vars unset)';
     }
     const candidateEnabled = cloudOn && !!repoId;
+    // Resolves R1-M10 — make silent disablement audible. Without this the
+    // runner appears to work fine but never emits candidates, which
+    // misleads operators into thinking the rig is healthy when it's
+    // running with degraded observability.
+    if (!candidateEnabled) {
+      process.stderr.write(
+        `⚠ candidate emission DISABLED: ${resolveErr || 'unknown reason'}\n` +
+        '  Contradictions will surface in the session ledger but no regression_specs candidates will be written.\n' +
+        '  Fix: ensure SUPABASE_AUDIT_URL+ANON_KEY are set, then run\n' +
+        '  `node scripts/cross-skill.mjs resolve-repo-identity --persist`\n',
+      );
+    }
 
     // ── 6. Launch browser + apply auth bootstrap ──────────────────────────
     const browser = await playwright.chromium.launch();
@@ -275,6 +293,12 @@ export async function runConsistency(args, deps = {}) {
             contradictionPayload: c,
             journeyContext: {
               journeySteps: canary.journeySteps.slice(0, i + 1),
+              // Resolves R3-H4: explicit replay boundary in the payload
+              // contract. Consumers (renderCandidateSpec) validate that
+              // journeySteps.length === contradictionStepIndex + 1 so the
+              // producer/consumer agreement is enforced at promotion time,
+              // not implicit in the slice call here.
+              contradictionStepIndex: i,
               routes: canary.routes,
               authBootstrap: canary.authBootstrap,
               candidateFingerprint: fingerprint,

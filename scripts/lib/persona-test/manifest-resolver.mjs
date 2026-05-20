@@ -51,6 +51,13 @@ export function resolveManifest(repoRoot, resolvers = DEFAULT_RESOLVERS) {
   if (typeof repoRoot !== 'string' || repoRoot.length === 0) {
     throw new Error('resolveManifest: repoRoot must be a non-empty string');
   }
+  // Resolves R1-M8: enforce documented absolute-path contract. Relative
+  // paths would mean candidate resolution depends on cwd at call time,
+  // which is exactly the surprise the resolver-list design is meant to
+  // prevent.
+  if (!path.isAbsolute(repoRoot)) {
+    throw new Error(`resolveManifest: repoRoot must be absolute (got "${repoRoot}")`);
+  }
   if (!Array.isArray(resolvers) || resolvers.length === 0) {
     throw new Error('resolveManifest: resolvers must be a non-empty array');
   }
@@ -81,6 +88,14 @@ export function resolveManifest(repoRoot, resolvers = DEFAULT_RESOLVERS) {
     if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
       continue;
     }
+
+    // Resolves R1-M8: ensure the resolved target is a regular file — refuse
+    // directories, pipes, sockets, character/block devices, etc. A symlink
+    // pointing at /dev/zero or a fifo would have passed the traversal guard
+    // above but would hang or misbehave on read.
+    let stat;
+    try { stat = fs.statSync(realPath); } catch { continue; }
+    if (!stat.isFile()) continue;
 
     let raw;
     try {

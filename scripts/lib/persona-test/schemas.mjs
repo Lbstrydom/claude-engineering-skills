@@ -34,6 +34,33 @@ const EngineClaimFieldTypeSchema = z.enum(ENGINE_CLAIM_FIELD_TYPES);
 const SeveritySchema = z.enum(['P0', 'P1', 'P2', 'P3']);
 const HttpMethodSchema = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
 
+// Resolves R2-H11: regex patterns in the manifest are validated at load
+// time, not silently no-matched at runtime. A bad pattern fails the
+// manifest parse — operators see the error at the boundary instead of
+// debugging "the rig doesn't see my surface" days later.
+const RegexPatternSchema = z.string().min(1).refine(
+  (s) => { try { new RegExp(s); return true; } catch { return false; } },
+  { message: 'invalid regex pattern' },
+);
+
+// Declared up here (not next to ContradictionSchema below) because
+// ExpectedContradictionShapeSchema in the canary schema references it,
+// and the canary schema sits earlier in the file than the contradiction
+// schemas. Move with care — the kinds list IS the contradiction grammar.
+export const ContradictionKindSchema = z.enum([
+  'value-mismatch',
+  'stale-projection',
+  'undeclared-engine-claim',
+  'missing-surface',
+  'value-coercion-error',
+  'absent-not-rendered',
+  'key-coercion-error',
+  // R1-H13 — DOM claim with no matching network ground-truth is a
+  // first-class outcome, not a silent skip. Severity clamped to
+  // surface.severityFloor at most; default rank P2 when no floor.
+  'unresolved-ground-truth',
+]);
+
 // ────────────────────────────────────────────────────────────────────────────
 // Locator — structured, not stringly-typed (resolves R1-M3).
 // `kind` is the discriminator. `css` carries `warn:true` so the diff engine
@@ -69,7 +96,7 @@ export const LocatorSchema = z.discriminatedUnion('kind', [
 
 export const CollectionBindingSchema = z.object({
   id: z.string().min(1),
-  urlPattern: z.string().min(1),
+  urlPattern: RegexPatternSchema,
   jsonPath: z.string().min(1),
   keyField: z.string().min(1),
 });
@@ -81,7 +108,7 @@ export const CollectionBindingSchema = z.object({
 // ────────────────────────────────────────────────────────────────────────────
 
 export const SurfaceApplicabilitySchema = z.object({
-  routePattern: z.string().optional(),
+  routePattern: RegexPatternSchema.optional(),
   journeyStepLabels: z.array(z.string()).optional(),
   requiresState: z.array(z.string()).optional(),
 });
@@ -93,7 +120,7 @@ export const SurfaceApplicabilitySchema = z.object({
 // ────────────────────────────────────────────────────────────────────────────
 
 const NetworkSourceSchema = z.object({
-  urlPattern: z.string().min(1),
+  urlPattern: RegexPatternSchema,
   method: HttpMethodSchema.optional(),
   operationName: z.string().optional(),
   requestMatchers: z.array(z.object({
@@ -104,7 +131,7 @@ const NetworkSourceSchema = z.object({
   jsonPath: z.string().min(1),
   captureWindow: z.enum(['step', 'step-end']).default('step-end'),
   winnerRule: z.enum(['latest', 'first']).default('latest'),
-  excludeUrlPattern: z.string().optional(),
+  excludeUrlPattern: RegexPatternSchema.optional(),
 });
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -160,12 +187,12 @@ export const WaitConditionSchema = z.discriminatedUnion('kind', [
   }),
   z.object({
     kind: z.literal('url'),
-    urlPattern: z.string().min(1),
+    urlPattern: RegexPatternSchema,
     timeoutMs: z.number().int().positive().default(10000),
   }),
   z.object({
     kind: z.literal('network'),
-    urlPattern: z.string().min(1),
+    urlPattern: RegexPatternSchema,
     method: HttpMethodSchema.optional(),
     timeoutMs: z.number().int().positive().default(10000),
   }),
@@ -223,6 +250,10 @@ const AuthBootstrapSchema = z.discriminatedUnion('kind', [
 const ExpectedContradictionShapeSchema = z.object({
   engineField: z.string().min(1),
   surfaceId: z.string().min(1),
+  // resolves R1-H10 + R1-H15 — kind discriminator so distinct contradiction
+  // types on the same (surfaceId, engineField) don't suppress each other.
+  // Optional for backwards-compat — when omitted, suppress matches any kind.
+  kind: ContradictionKindSchema.optional(),
 });
 
 const ExpectedContradictionsSchema = z.object({
@@ -262,7 +293,9 @@ const NetworkClaimSchema = z.object({
   surfaceId: z.string().min(1),
   engineField: z.string().min(1),
   scope: z.string().nullable(),
-  key: z.string().nullable(),
+  key: z.string().nullable(),                   // stringified for cross-row matching
+  keyNative: z.unknown().optional(),            // resolves Gemini-final-G2 — native JSON type (string|number|boolean)
+  keyType: z.enum(['string','number','boolean']).optional(),
   value: z.unknown(),       // native JSON type — coercion happens in diffClaims
   sourceUrl: z.string(),
   receivedAt: z.string(),   // ISO
@@ -287,15 +320,9 @@ export const WitnessRecordSchema = z.object({
 // missing-surface, value-coercion-error, absent-not-rendered, key-coercion-error).
 // ────────────────────────────────────────────────────────────────────────────
 
-export const ContradictionKindSchema = z.enum([
-  'value-mismatch',
-  'stale-projection',
-  'undeclared-engine-claim',
-  'missing-surface',
-  'value-coercion-error',
-  'absent-not-rendered',
-  'key-coercion-error',
-]);
+// ContradictionKindSchema is declared near the top of the file (before
+// ExpectedContradictionShapeSchema needs it). This block keeps the
+// section header for readers who navigate by §.
 
 export const ContradictionSchema = z.object({
   kind: ContradictionKindSchema,
