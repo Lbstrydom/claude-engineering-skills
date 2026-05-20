@@ -79,6 +79,25 @@ const DomainSchema = z.object({
   summary: z.string(),
 });
 
+/**
+ * CLI catalog entry — one row per package.json script, joined against
+ * scripts/.cli-catalog.json by collect-cli. `uncatalogued: true` when the
+ * script exists in package.json but has no sidecar entry — surfaced in the
+ * UI as a friction nudge to backfill metadata.
+ */
+const CliEntrySchema = z.object({
+  name: z.string().min(1),
+  command: z.string(),
+  description: z.string(),
+  category: z.enum([
+    'audit', 'diagnostic', 'sync', 'skills', 'arch', 'security',
+    'learning', 'plans', 'dashboard', 'hooks', 'parity', 'test', 'other',
+  ]),
+  relatedSkill: z.string().nullable(),
+  outputs: z.string().nullable(),
+  uncatalogued: z.boolean(),
+});
+
 export const ReferenceDataSchema = z.object({
   kind: z.literal('reference'),
   provenance: z.object({
@@ -100,6 +119,7 @@ export const ReferenceDataSchema = z.object({
     mapPath: z.string().nullable(),
   }),
   flows: FlowManifestSchema.nullable(),
+  cli: z.array(CliEntrySchema),
 });
 
 // ── Telemetry data ───────────────────────────────────────────────────────

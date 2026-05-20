@@ -1,0 +1,282 @@
+{
+  "$schema": "./.cli-catalog.schema.json",
+  "_description": "Metadata sidecar for the dashboard's CLI section. Joined against package.json scripts by scripts/lib/dashboard/collect-cli.mjs. Missing entries surface as 'uncatalogued' — that's intentional friction so new scripts get a description added here. Categories: audit, diagnostic, sync, skills, arch, security, learning, plans, dashboard, hooks, parity, test, other.",
+  "entries": {
+    "test": {
+      "description": "Run the full Node built-in test suite (everything under tests/).",
+      "category": "test"
+    },
+
+    "audit": {
+      "description": "Run /audit-loop — dispatches to /audit-plan or /audit-code by input shape.",
+      "category": "audit",
+      "relatedSkill": "audit-code"
+    },
+    "audit:full": {
+      "description": "Full multi-round audit with deliberation + Gemini final review.",
+      "category": "audit"
+    },
+    "audit:plan": {
+      "description": "GPT-5.4 plan audit pass (use --mode plan; max 3 rounds).",
+      "category": "audit",
+      "relatedSkill": "audit-plan"
+    },
+    "audit:code": {
+      "description": "Multi-pass code audit (structure / wiring / backend / frontend / sustainability).",
+      "category": "audit",
+      "relatedSkill": "audit-code"
+    },
+    "audit:rebuttal": {
+      "description": "GPT deliberation pass on Claude's rebuttal of findings.",
+      "category": "audit"
+    },
+    "audit:gemini-review": {
+      "description": "Gemini 3.1 Pro final review of the Claude+GPT audit transcript.",
+      "category": "audit"
+    },
+    "audit:gemini-ping": {
+      "description": "One-shot Gemini API ping (verifies GEMINI_API_KEY + model resolution).",
+      "category": "diagnostic"
+    },
+    "anthropic:ping": {
+      "description": "One-shot Anthropic API ping (verifies the configured backend — sdk or cli).",
+      "category": "diagnostic"
+    },
+    "audit:refine": {
+      "description": "LLM-driven prompt refinement from outcome data.",
+      "category": "audit"
+    },
+    "audit:bandit": {
+      "description": "Print Thompson Sampling Beta posteriors per audit prompt variant.",
+      "category": "audit"
+    },
+    "audit:phase7": {
+      "description": "Pre-flight check that Step 7 (Gemini final review) prerequisites are met.",
+      "category": "diagnostic"
+    },
+
+    "cache:check": {
+      "description": "Audit-loop cache hit-rate diagnostic.",
+      "category": "diagnostic"
+    },
+    "cache:check:json": {
+      "description": "Cache hit-rate diagnostic, JSON output (for CI).",
+      "category": "diagnostic"
+    },
+    "audit:check-deps": {
+      "description": "Verify audit-loop runtime deps are installed.",
+      "category": "diagnostic"
+    },
+    "memory:health": {
+      "description": "Memory-health gate — fuzzy re-raise rate, cluster density, recurrence (human report).",
+      "category": "diagnostic"
+    },
+    "memory:health:json": {
+      "description": "Memory-health gate, JSON output.",
+      "category": "diagnostic"
+    },
+    "context:check": {
+      "description": "Detect drift between CLAUDE.md / AGENTS.md and the live codebase.",
+      "category": "diagnostic"
+    },
+    "context:check:json": {
+      "description": "Context-drift check, JSON output.",
+      "category": "diagnostic"
+    },
+    "context:check:sarif": {
+      "description": "Context-drift check, SARIF output (for GitHub code-scanning).",
+      "category": "diagnostic"
+    },
+    "models:freshness": {
+      "description": "Check whether configured model IDs are still current with provider catalogs.",
+      "category": "diagnostic"
+    },
+    "models:freshness:json": {
+      "description": "Model-freshness check, JSON output.",
+      "category": "diagnostic"
+    },
+    "models:check": {
+      "description": "Strict model-freshness gate (exits non-zero on stale IDs).",
+      "category": "diagnostic"
+    },
+    "check": {
+      "description": "Combined gate: context drift + skills cross-check + full test suite.",
+      "category": "diagnostic"
+    },
+
+    "sync": {
+      "description": "Sync this bundle into all registered consumer repos (auto-fires fit-check on first sync).",
+      "category": "sync"
+    },
+    "sync:dry": {
+      "description": "Dry-run sync — preview what would be created/updated, no writes.",
+      "category": "sync"
+    },
+    "sync:check": {
+      "description": "Verify consumer repos are in lockstep with the source bundle.",
+      "category": "sync"
+    },
+    "sync:version-check": {
+      "description": "Compare consumer-repo audit-tool versions against the source manifest.",
+      "category": "sync"
+    },
+
+    "skills:regenerate": {
+      "description": "Regenerate .claude/skills/* mirrors from skills/* authoritative sources.",
+      "category": "skills"
+    },
+    "skills:check": {
+      "description": "Verify skill references are valid + mirrors are in sync.",
+      "category": "skills"
+    },
+    "audit:sync-shared-refs": {
+      "description": "Sync shared references (audit-loop docs) into skill files.",
+      "category": "skills"
+    },
+    "skills:manifest": {
+      "description": "Build the skills manifest JSON.",
+      "category": "skills"
+    },
+    "skills:manifest:check": {
+      "description": "Verify skills manifest is current.",
+      "category": "skills"
+    },
+    "skills:index": {
+      "description": "Generate docs/SKILLS-INDEX.md (skill catalog).",
+      "category": "skills"
+    },
+    "skills:help": {
+      "description": "Print all available skills + usage to stdout.",
+      "category": "skills"
+    },
+    "skills:fit-check": {
+      "description": "One-shot diagnostic: label each skill FITS / PARTIAL / MISMATCH for this repo's shape.",
+      "category": "skills",
+      "outputs": ".skills-fit-check.json"
+    },
+
+    "dashboard": {
+      "description": "Build the dashboard, then serve it on a localhost port (default 4173).",
+      "category": "dashboard"
+    },
+    "dashboard:build": {
+      "description": "Build both dashboard pages (reference + telemetry) to dashboard/.",
+      "category": "dashboard"
+    },
+
+    "arch:refresh": {
+      "description": "Refresh architectural-memory: extract symbols, embed, index in Supabase (changed files only).",
+      "category": "arch"
+    },
+    "arch:refresh:full": {
+      "description": "Full architectural-memory refresh — re-index every symbol (expensive).",
+      "category": "arch"
+    },
+    "arch:render": {
+      "description": "Render docs/architecture-map.md from the symbol index.",
+      "category": "arch"
+    },
+    "arch:drift": {
+      "description": "Detect drift between code and the architectural memory snapshot.",
+      "category": "arch"
+    },
+    "arch:duplicates": {
+      "description": "Find near-duplicate symbols across the repo (cosine similarity).",
+      "category": "arch"
+    },
+    "arch:prune": {
+      "description": "Prune stale entries from the architectural memory snapshot.",
+      "category": "arch"
+    },
+    "arch:spike": {
+      "description": "One-off spike-extract: experimental symbol extraction without indexing.",
+      "category": "arch"
+    },
+
+    "security:refresh": {
+      "description": "Refresh the security-incident memory from docs/security-strategy.md.",
+      "category": "security"
+    },
+
+    "learning:weekly-review": {
+      "description": "Generate the weekly learning digest + post the sticky GitHub issue.",
+      "category": "learning"
+    },
+    "learning:stats": {
+      "description": "Print learning-system counts (pending triage, no-brainers, stale deferrals).",
+      "category": "learning"
+    },
+    "learning:record": {
+      "description": "Generic decision logger (mostly for tools).",
+      "category": "learning"
+    },
+    "learning:quickfix-stats": {
+      "description": "Print Beta posteriors per quickfix pattern (per repo).",
+      "category": "learning"
+    },
+    "learning:quickfix-rebuild": {
+      "description": "Rebuild the quickfix-pattern stats cache from cloud history.",
+      "category": "learning"
+    },
+    "learning:quickfix-bootstrap": {
+      "description": "Rebuild quickfix stats from .audit/quickfix-hits.jsonl (for repos without cloud history).",
+      "category": "learning"
+    },
+    "learning:backfill-outcomes": {
+      "description": "Drain .audit/quickfix-hits.jsonl into learning_decisions + resolve outcomes from file state.",
+      "category": "learning"
+    },
+    "learning:replay": {
+      "description": "Replay-evaluate a candidate policy against historical decisions (counterfactual).",
+      "category": "learning"
+    },
+
+    "plans:archive": {
+      "description": "Move completed plans into docs/completed/ (with deferred items preserved).",
+      "category": "plans"
+    },
+    "plans:archive:dry": {
+      "description": "Preview which plans would be archived (no file moves).",
+      "category": "plans"
+    },
+
+    "hooks:install": {
+      "description": "Install local pre-push hooks (skill-driven checks before push).",
+      "category": "hooks"
+    },
+    "hooks:install:dry": {
+      "description": "Preview which hooks would be installed.",
+      "category": "hooks"
+    },
+    "hooks:uninstall": {
+      "description": "Remove locally-installed pre-push hooks.",
+      "category": "hooks"
+    },
+
+    "audit:wtf": {
+      "description": "Friction log — capture a 'what happened, what hurt' note for later review.",
+      "category": "diagnostic"
+    },
+
+    "parity:check-refs": {
+      "description": "Postgres-parity: verify non-core code respects the schema boundary.",
+      "category": "parity"
+    },
+    "parity:check-refs:strict": {
+      "description": "Postgres-parity reference check, strict mode (CI gate).",
+      "category": "parity"
+    },
+    "parity:check-coupling": {
+      "description": "Postgres-parity: check for schema coupling between non-core layers.",
+      "category": "parity"
+    },
+    "parity:expected-schema": {
+      "description": "Postgres-parity: print the expected schema (drift baseline).",
+      "category": "parity"
+    },
+    "parity:record-fixtures": {
+      "description": "Postgres-parity: record golden fixtures (run once after schema changes).",
+      "category": "parity"
+    }
+  }
+}

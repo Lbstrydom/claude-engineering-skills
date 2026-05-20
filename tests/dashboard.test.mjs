@@ -32,6 +32,7 @@ function refData(overrides = {}) {
       plans: { status: 'ok', detail: '' },
       architecture: { status: 'ok', detail: '' },
       flows: { status: 'ok', detail: '' },
+      cli: { status: 'ok', detail: '' },
     },
     skills: [{
       name: 'plan', oneLiner: 'Plan things.', triggers: ['plan it'],
@@ -40,6 +41,7 @@ function refData(overrides = {}) {
     plans: { active: [], completed: [] },
     architecture: { domains: [], deps: {}, mapPath: null },
     flows: { nodes: [{ id: 'plan', skill: 'plan', label: 'Plan' }], edges: [] },
+    cli: [],
     ...overrides,
   };
 }

@@ -13,6 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { sha } from '../cli-io.mjs';
 import { loadAllSkills } from '../../skills-help.mjs';
+import { collectCli } from './collect-cli.mjs';
 import { FlowManifestSchema } from './schema.mjs';
 
 const FLOWS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'flows.json');
@@ -250,6 +251,16 @@ export function collectReference(opts = {}) {
   const flowRes = collectFlows(new Set(skills.map((s) => s.name)), sources.skills.status === 'ok');
   sources.flows = flowRes.status;
 
+  // CLI catalog — never fatal; cli source-status carries uncatalogued count.
+  let cli = [];
+  try {
+    const cliRes = collectCli(root);
+    cli = cliRes.entries;
+    sources.cli = cliRes.status;
+  } catch (err) {
+    sources.cli = { status: 'unexpected-error', detail: `collectCli failed: ${err.message}` };
+  }
+
   const data = {
     kind: 'reference',
     provenance: { baseSha: git.baseSha, dirty: git.dirty, sourceHash: '' },
@@ -258,11 +269,12 @@ export function collectReference(opts = {}) {
     plans,
     architecture: { domains: arch.domains, deps: readDomainDeps(root), mapPath: arch.mapPath },
     flows: flowRes.flows,
+    cli,
   };
   // sourceHash over content (everything but provenance) — committed-page
   // determinism (no timestamp; plan §8 / M3).
   data.provenance.sourceHash = sha(JSON.stringify({
-    skills, plans, architecture: data.architecture, flows: data.flows, sources,
+    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources,
   }), 8);
   return data;
 }

@@ -173,6 +173,35 @@ details.row > div { padding-top: 8px; color: var(--muted); }
 .arch-deps { font-size: 11.5px; color: var(--accent); }
 .arch-deps-none { color: var(--muted); font-style: italic; }
 
+/* ── CLI section ──────────────────────────────────────────────── */
+.cli-group { margin-top: 22px; }
+.cli-group:first-of-type { margin-top: 6px; }
+.cli-group-title {
+  font-size: 14px; color: var(--accent); font-weight: 600;
+  margin: 0 0 8px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: baseline; gap: 8px;
+}
+.cli-group-count {
+  font-size: 11px; color: var(--muted); font-weight: 400;
+  background: var(--panel-2); padding: 1px 7px; border-radius: 100px;
+}
+.cli-card .cli-name { font-size: 13px; margin: 0 0 6px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.cli-card .cli-name code { color: var(--accent); font-size: 12.5px; }
+.cli-desc { margin: 0 0 8px; color: var(--text); font-size: 12.5px; line-height: 1.45; }
+.cli-desc-muted { color: var(--muted); font-style: italic; }
+.cli-cmd {
+  margin: 0; padding: 6px 9px; background: var(--bg);
+  border: 1px solid var(--border); border-radius: 4px;
+  font-size: 11px; color: var(--muted); overflow-x: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
+.chip.warn {
+  background: rgba(255, 180, 60, 0.12);
+  color: #d4a040;
+  border-color: rgba(255, 180, 60, 0.35);
+}
+
 /* ── Responsive ───────────────────────────────────────────────── */
 @media (max-width: 720px) {
   .dash-titlerow { flex-direction: column; align-items: flex-start; }

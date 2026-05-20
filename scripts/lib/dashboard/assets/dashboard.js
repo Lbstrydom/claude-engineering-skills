@@ -43,11 +43,16 @@
     });
   }
 
-  // ── Skill search ───────────────────────────────────────────────
-  var box = document.querySelector('[data-role="skill-search"]');
-  var count = document.querySelector('[data-role="skill-count"]');
-  if (box) {
-    var cards = Array.prototype.slice.call(document.querySelectorAll('[data-search]'));
+  // ── Panel-scoped search (skills + CLI) ─────────────────────────
+  // Each search input lives inside a tab-panel; the cards it filters are
+  // its sibling `[data-search]` elements within the SAME panel. This keeps
+  // the skill search from also hiding CLI cards (and vice versa).
+  function wireSearch(boxSelector, countSelector, noun) {
+    var box = document.querySelector(boxSelector);
+    if (!box) return;
+    var panel = box.closest('[role="tabpanel"]') || document;
+    var count = panel.querySelector(countSelector);
+    var cards = Array.prototype.slice.call(panel.querySelectorAll('[data-search]'));
     var apply = function () {
       var q = box.value.trim().toLowerCase();
       var shown = 0;
@@ -58,11 +63,13 @@
       });
       if (count) {
         count.textContent = q
-          ? shown + ' of ' + cards.length + ' skills match "' + q + '"'
-          : cards.length + ' skills';
+          ? shown + ' of ' + cards.length + ' ' + noun + ' match "' + q + '"'
+          : cards.length + ' ' + noun;
       }
     };
     box.addEventListener('input', apply);
     apply();
   }
+  wireSearch('[data-role="skill-search"]', '[data-role="skill-count"]', 'skills');
+  wireSearch('[data-role="cli-search"]',   '[data-role="cli-count"]',   'commands');
 })();
