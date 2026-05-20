@@ -36,6 +36,17 @@ describe('parseArgs', () => {
   it('overrides repoRoot via --repo-root', () => {
     assert.equal(parseArgs(['--repo-root', '/tmp/x']).repoRoot, '/tmp/x');
   });
+
+  it('parses --await-ms (wine-cellar round-3 #1 + #5)', () => {
+    assert.equal(parseArgs(['--await-ms', '5000']).awaitMs, 5000);
+    assert.equal(parseArgs([]).awaitMs, null);
+  });
+
+  it('--await-ms ignores non-positive / non-numeric values', () => {
+    assert.equal(parseArgs(['--await-ms', '0']).awaitMs, null);
+    assert.equal(parseArgs(['--await-ms', '-5']).awaitMs, null);
+    assert.equal(parseArgs(['--await-ms', 'abc']).awaitMs, null);
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────

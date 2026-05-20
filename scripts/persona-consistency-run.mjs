@@ -54,13 +54,23 @@ export const EXIT = Object.freeze({
 // ────────────────────────────────────────────────────────────────────────────
 
 export function parseArgs(argv) {
-  const args = { canary: null, url: null, out: null, repoRoot: process.cwd() };
+  const args = {
+    canary: null, url: null, out: null, repoRoot: process.cwd(),
+    awaitMs: null,   // wine-cellar round-3 #1 — CLI override for the
+                     // auto-await-before-capture window. Applies to ALL
+                     // network sources this run. Takes precedence over
+                     // per-source `awaitTimeoutMs` in the manifest.
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--canary')   args.canary = argv[++i];
     else if (a === '--url') args.url    = argv[++i];
     else if (a === '--out') args.out    = argv[++i];
     else if (a === '--repo-root') args.repoRoot = argv[++i];
+    else if (a === '--await-ms') {
+      const n = parseInt(argv[++i], 10);
+      if (Number.isFinite(n) && n > 0) args.awaitMs = n;
+    }
     else if (a === '--help' || a === '-h') args.help = true;
   }
   return args;
@@ -71,13 +81,17 @@ function usage() {
     'persona-consistency-run — deterministic consistency-mode runner',
     '',
     'Usage:',
-    '  node scripts/persona-consistency-run.mjs --canary <name> --url <url> [--out <path>]',
+    '  node scripts/persona-consistency-run.mjs --canary <name> --url <url> [--out <path>] [--await-ms <N>]',
     '',
     'Flags:',
     '  --canary <name>   Canary file (looked up at .persona-test/canaries/<name>.json)',
     '  --url <url>       Base URL to drive against',
     '  --out <path>      Override the session ledger path (default .persona-test/sessions/<SID>.json)',
     '  --repo-root <dir> Override repoRoot (defaults to process.cwd())',
+    '  --await-ms <N>    Override the auto-await-before-capture window in ms (default 3000;',
+    '                    per-source `awaitTimeoutMs` in surfaces.json also overrides it).',
+    '                    Use when SPA boot chains exceed the default — e.g. auth+context+fetch',
+    '                    chains where /api/whatever doesn\'t fire until 2-4s after navigation.',
   ].join('\n');
 }
 
@@ -290,14 +304,15 @@ export async function runConsistency(args, deps = {}) {
         });
       }
 
-      // Resolves wine-cellar round-2 #2: auto-await manifest-declared
-      // networkSource URL patterns before capture. Async-rendered surfaces
-      // populate their data-engine-* attributes only after the relevant
-      // API response lands; capturing before that just emits
-      // unresolved-ground-truth for every async surface. We briefly wait
-      // for each unique urlPattern not yet seen in the store this step.
+      // Resolves wine-cellar round-2 #2 + round-3 #1: auto-await
+      // manifest-declared networkSource URL patterns before capture.
+      // Async-rendered surfaces populate their data-engine-* attributes
+      // only after the relevant API response lands; capturing before that
+      // just emits unresolved-ground-truth for every async surface.
+      // Per-pattern timeout resolution: --await-ms CLI > surfaces.json
+      // per-source awaitTimeoutMs > DEFAULT_AWAIT_MS (3000ms).
       await awaitManifestNetworkSources(page, manifestResult.manifest, listener, {
-        timeoutMs: 1500,
+        cliOverrideMs: args.awaitMs,
         warn: (w) => warnings.push(w),
       });
 
@@ -496,24 +511,42 @@ async function executeStep(page, step, routes, baseUrl) {
  * @param {{ store: object }} listener
  * @param {{ timeoutMs?: number, warn?: (w: object) => void }} opts
  */
+// Resolves wine-cellar round-3 #1 — default bumped from 1500ms to 3000ms
+// based on real-world SPA boot chains. Auth → context → mount → fetch
+// chains routinely take 1.5-2.5s on prod; the old default consistently
+// fired manifest-network-await-timeout for any auth-gated surface.
+// 3000ms covers the 95th percentile; adopters with slower chains
+// declare `awaitTimeoutMs` per source in surfaces.json (caps at 30s).
+const DEFAULT_AWAIT_MS = 3000;
+
 async function awaitManifestNetworkSources(page, manifest, listener, opts = {}) {
-  const timeoutMs = Number.isInteger(opts.timeoutMs) && opts.timeoutMs > 0 ? opts.timeoutMs : 1500;
-  const patterns = new Set();
+  const cliOverride = Number.isInteger(opts.cliOverrideMs) && opts.cliOverrideMs > 0
+    ? opts.cliOverrideMs : null;
+
+  // Build pattern → resolved-timeout map. Precedence (highest wins):
+  // 1. --await-ms CLI flag (applies to ALL patterns this run)
+  // 2. surfaces.json engineFields[*].networkSource.awaitTimeoutMs (per-source)
+  // 3. DEFAULT_AWAIT_MS
+  const patternTimeouts = new Map();
   for (const surface of (manifest?.surfaces || [])) {
     for (const f of (surface.engineFields || [])) {
-      if (f?.networkSource?.urlPattern) patterns.add(f.networkSource.urlPattern);
+      const urlPat = f?.networkSource?.urlPattern;
+      if (!urlPat) continue;
+      const sourceOverride = f.networkSource.awaitTimeoutMs;
+      const resolved = cliOverride
+        || (Number.isInteger(sourceOverride) && sourceOverride > 0 ? sourceOverride : null)
+        || DEFAULT_AWAIT_MS;
+      // If the same pattern appears on multiple surfaces with different
+      // overrides, the more generous wins (we'd rather over-wait than miss).
+      const existing = patternTimeouts.get(urlPat);
+      if (!existing || resolved > existing) patternTimeouts.set(urlPat, resolved);
     }
   }
-  if (patterns.size === 0) return;
+  if (patternTimeouts.size === 0) return;
 
-  // Check what we've already seen this run via the store keys.
+  // Filter to patterns NOT yet seen via the listener's store this run.
   const seenKeys = listener.store.keys();
-  const seenUrls = new Set(seenKeys.map((k) => k));   // tuple keys; loose match below
-  const unseen = [...patterns].filter((urlPat) => {
-    // The store stores by tuple `surfaceId::engineField::scope::key`, not
-    // by URL. We can't easily probe "did any response of pattern X arrive"
-    // from the store alone — so the simpler check is: are there ANY entries
-    // for surfaces using this pattern? If not, we haven't seen the response.
+  const unseen = [...patternTimeouts.entries()].filter(([urlPat]) => {
     const patternStr = String(urlPat);
     return !seenKeys.some((k) => {
       const surfaceId = k.split('::')[0];
@@ -524,24 +557,38 @@ async function awaitManifestNetworkSources(page, manifest, listener, opts = {}) 
   });
   if (unseen.length === 0) return;
 
-  // Wait in parallel up to the total cap.
-  const waiters = unseen.map((urlPat) => {
+  // Wait in parallel — each pattern uses its own resolved timeout.
+  const waiters = unseen.map(([urlPat, timeoutMs]) => {
     try {
       const re = new RegExp(urlPat);
-      return page.waitForResponse((r) => re.test(r.url()) && r.status() >= 200 && r.status() < 300, { timeout: timeoutMs })
-        .then(() => ({ ok: true, pattern: urlPat }))
-        .catch(() => ({ ok: false, pattern: urlPat }));
+      return page.waitForResponse(
+        (r) => re.test(r.url()) && r.status() >= 200 && r.status() < 300,
+        { timeout: timeoutMs },
+      )
+        .then(() => ({ ok: true, pattern: urlPat, timeoutMs }))
+        .catch(() => ({ ok: false, pattern: urlPat, timeoutMs }));
     } catch {
-      return Promise.resolve({ ok: false, pattern: urlPat });
+      return Promise.resolve({ ok: false, pattern: urlPat, timeoutMs });
     }
   });
   const results = await Promise.all(waiters);
   for (const r of results) {
     if (!r.ok && typeof opts.warn === 'function') {
+      // Resolves wine-cellar round-3 #2 — the warning previously claimed
+      // "downstream unresolved-ground-truth expected" unconditionally,
+      // but unannotated surfaces short-circuit to `unannotated-surface`
+      // before the ground-truth diff. Reworded to be accurate.
       opts.warn({
         kind: 'manifest-network-await-timeout',
         surfaceId: null,
-        detail: `Waited ${timeoutMs}ms for response matching ${r.pattern} but none arrived; capture proceeds — downstream unresolved-ground-truth findings expected for surfaces using this pattern`,
+        detail:
+          `Waited ${r.timeoutMs}ms for response matching ${r.pattern} but none arrived. ` +
+          'Capture proceeds. For surfaces that ARE annotated, expect ' +
+          '`unresolved-ground-truth` findings next. For UNannotated surfaces, expect ' +
+          '`unannotated-surface` instead (the unannotated check short-circuits ' +
+          'before the ground-truth diff runs). ' +
+          'Bump per-source via `awaitTimeoutMs` in surfaces.json, ' +
+          'or globally via `--await-ms <N>`',
       });
     }
   }
@@ -591,7 +638,7 @@ async function detectUnannotatedSurfaces(page, manifest, witness, ctx = {}) {
         engineValue: null,
         freshness: null,
         selector: locatorToStringLite(surface.locator),
-        detail: `Surface "${surface.id}" — locator matched ${count} element(s) in the live DOM but no data-engine-claim attribute. Annotate the element with data-engine-claim/-value/-freshness, OR re-deploy if the annotation lives in a branch not yet shipped`,
+        detail: `Surface "${surface.id}" — locator matched ${count} element(s) in the live DOM but no data-engine-claim attribute. Three root causes (in likelihood order): (a) annotation not added yet — write data-engine-claim/-value/-freshness on the element; (b) annotation added in a branch not yet deployed to the URL the canary points at; (c) typo in the attribute name (must be exactly "data-engine-claim", not "data-engine-clams" / "data-claim-engine" / etc — case-sensitive, hyphenated)`,
         suppressedByLockedSpec: null,
       });
     }
@@ -785,34 +832,50 @@ if (isMain) {
   const startedAt = Date.now();
   const result = await runConsistency(parseArgs(process.argv.slice(2)));
   const durationMs = Date.now() - startedAt;
-  // Resolves wine-cellar adoption #6 + round-2 ask: CI-scannable trailing
-  // summary line. Stdout (not stderr) so log scrapers can grep
-  // `consistency:` on its own line. Compact + machine-parseable:
-  //   - canary= so multi-canary jobs can grep
-  //   - counts per severity (omits 0s)
-  //   - duration so flakes show
-  //   - auth= so adopters notice `none` when it shouldn't be
-  //   - ledger path + exit code
+  // CI-scannable trailing summary line. Stdout (not stderr) so log
+  // scrapers can grep `consistency:` on its own line.
+  //
+  // Format evolution:
+  //   round-1: simple count + ledger path
+  //   round-2: + canary + auth + duration
+  //   round-3 (this): + kinds per severity (actionable axis), `BROKEN`
+  //                   lead-in on non-zero exit (CI greppable), `(slow)`
+  //                   marker for unusually-long runs
   if (result.ledger) {
     const allContradictions = (result.ledger.steps || [])
       .flatMap((s) => s.contradictions || []);
-    const counts = { P0: 0, P1: 0, P2: 0, P3: 0 };
+    // Group: severity → { kind → count }
+    const groups = { P0: {}, P1: {}, P2: {}, P3: {} };
     for (const c of allContradictions) {
-      if (counts[c.severity] !== undefined) counts[c.severity] += 1;
+      if (groups[c.severity] === undefined) continue;
+      groups[c.severity][c.kind] = (groups[c.severity][c.kind] || 0) + 1;
     }
     const total = allContradictions.length;
+    // Render as: [P2:1 unannotated-surface] for one-kind,
+    //            [P0:2 value-mismatch,absent-not-rendered P3:1 missing-surface] for many
     const sevSummary = ['P0','P1','P2','P3']
-      .filter((k) => counts[k] > 0)
-      .map((k) => `${k}:${counts[k]}`)
-      .join(' ') || '—';
+      .filter((sev) => Object.keys(groups[sev]).length > 0)
+      .map((sev) => {
+        const kindSummary = Object.entries(groups[sev])
+          .map(([k, n]) => n > 1 ? `${k}×${n}` : k)
+          .join(',');
+        const total = Object.values(groups[sev]).reduce((a, b) => a + b, 0);
+        return `${sev}:${total} ${kindSummary}`;
+      })
+      .join(' ') || '';
     const canaryName = result.ledger.canaryName || '(none)';
     const authKind = result.ledger.authKind || 'none';
+    const SLOW_THRESHOLD_MS = 10_000;
+    const slowMarker = durationMs > SLOW_THRESHOLD_MS ? ' (slow)' : '';
+    const exitMarker = result.exitCode !== 0 ? 'BROKEN ' : '';
+    const sevPart = sevSummary ? ` [${sevSummary}]` : '';
     process.stdout.write(
-      `consistency: canary=${canaryName} auth=${authKind} ${total} contradiction(s) [${sevSummary}] duration=${durationMs}ms ledger=${result.ledgerPath} exit=${result.exitCode}\n`,
+      `consistency: ${exitMarker}canary=${canaryName} auth=${authKind} ${total} contradiction(s)${sevPart} duration=${durationMs}ms${slowMarker} ledger=${result.ledgerPath} exit=${result.exitCode}\n`,
     );
   } else {
+    const exitMarker = result.exitCode !== 0 ? 'BROKEN ' : '';
     process.stdout.write(
-      `consistency: no ledger written duration=${durationMs}ms exit=${result.exitCode}\n`,
+      `consistency: ${exitMarker}no ledger written duration=${durationMs}ms exit=${result.exitCode}\n`,
     );
   }
   process.exit(result.exitCode);

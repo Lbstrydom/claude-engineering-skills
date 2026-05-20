@@ -148,6 +148,13 @@ const NetworkSourceSchema = z.object({
   captureWindow: z.enum(['step', 'step-end']).default('step-end'),
   winnerRule: z.enum(['latest', 'first']).default('latest'),
   excludeUrlPattern: RegexPatternSchema.optional(),
+  // Wine-cellar round-3 #1 — per-source override for the runner's
+  // auto-await-before-capture window. Default is the runner's
+  // DEFAULT_AWAIT_MS (3000ms). Use for SPAs whose API call lives
+  // behind a long auth/context boot chain. Capped at 30s — if you
+  // need longer, your canary should declare an explicit wait step
+  // instead of relying on the auto-await backstop.
+  awaitTimeoutMs: z.number().int().positive().max(30000).optional(),
 });
 
 // ────────────────────────────────────────────────────────────────────────────
