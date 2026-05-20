@@ -8,7 +8,8 @@ description: |
   Triggers on: "audit my code", "audit my changes", "audit my PR",
   "check the implementation", "review my code", "audit code", "/audit-code",
   "audit this", "verify the implementation".
-  Usage: /audit-code <plan-file>             — Audit code against plan (--scope diff default)
+  Usage: /audit-code <plan-file>              — Audit code against plan (--scope diff default)
+  Usage: /audit-code <plan-file> --scope plan — Audit only files mentioned in the plan
   Usage: /audit-code <plan-file> --scope full — Full repo audit
 ---
 

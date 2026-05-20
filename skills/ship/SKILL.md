@@ -6,6 +6,10 @@ description: |
   Use when the user is ready to commit and push their work.
   Usage: /ship — sync docs + commit + push
   Usage: /ship docs/plans/feature.md — also update the plan before committing
+  Usage: /ship --no-tests             — skip pre-push tests (override; logged in ship_event)
+  Usage: /ship --ignore-p0            — push despite an unresolved persona-test P0 finding
+  Usage: /ship --skip-ux-lock         — push despite an unlocked recent UI fix
+  Usage: /ship --no-archive           — keep Complete-status plans in docs/plans/ (rare)
   Triggers on: "ship it", "commit and push", "push my changes", "ready to ship".
   IMPORTANT: This command runs autonomously — no confirmation prompts. The user invoking
   /ship is their approval to update docs, commit, and push in one uninterrupted flow.

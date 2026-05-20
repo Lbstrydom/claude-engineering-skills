@@ -12,6 +12,9 @@ description: |
   Usage: /cycle plan <plan-file>            — Skip planning; use existing plan
   Usage: /cycle code <plan-file>            — Skip to code-audit-then-ship
   Usage: /cycle <plan-file> --no-persona    — Skip persona-test step
+  Usage: /cycle <plan-file> --no-uxlock     — Skip ux-lock step (no UI changes)
+  Usage: /cycle <plan-file> --no-ship       — Stop after audit; don't commit or push
+  Usage: /cycle <plan-file> --max-rounds N  — Pass through to /audit-plan and /audit-code
 ---
 
 # Feature Cycle Orchestrator

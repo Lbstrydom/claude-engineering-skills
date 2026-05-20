@@ -11,6 +11,13 @@ description: |
     /brainstorm <topic>                          # OpenAI only (default)
     /brainstorm --with-gemini <topic>            # both
     /brainstorm --models openai,gemini <topic>   # explicit
+    /brainstorm --with-arch <topic>              # force-attach repo architecture context
+    /brainstorm --no-arch <topic>                # force-skip architecture context (default: auto-attach on arch topics)
+    /brainstorm --debate <topic>                 # second round where models react to each other
+    /brainstorm --depth shallow|standard|deep <topic>  # token budget per response
+    /brainstorm --continue-from <sid> <topic>    # resume a prior session
+    /brainstorm --with-context "<text>" <topic>  # attach extra context (repeatable)
+    /brainstorm save <sid> <round> "<insight>"   # record a keeper insight from a prior round
 ---
 
 # /brainstorm — Multi-LLM Brainstorming

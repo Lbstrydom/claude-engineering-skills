@@ -17,8 +17,10 @@ description: |
   cases where auto-detection is wrong; otherwise scope is inferred from the
   task description and the files mentioned.
 
-  Usage: /plan <task description>                          — auto-detected scope
-  Usage: /plan <task> --scope=backend|frontend|full-stack  — explicit scope hint
+  Usage: /plan <task description>                                  — auto-detected scope
+  Usage: /plan <task> --scope=backend|frontend|full-stack          — explicit scope hint
+  Usage: /plan <task> --no-diagram                                 — skip the architecture mermaid block
+  Usage: /plan <task> --diagram=sequence|graph|er|state            — force a specific mermaid diagram type
   Triggers on: "plan", "design this", "architect this", "I want to add",
   "let's design", "plan the implementation", "how should we structure this".
 ---
