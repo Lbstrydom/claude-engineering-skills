@@ -1,7 +1,7 @@
 # Plan: Local Navigable Dashboard Subsystem
 
 - **Date**: 2026-05-19
-- **Status**: Approved
+- **Status**: Complete — shipped as 8f98d46 (initial), follow-ups 53d1413, 94a1668, 63f5e70, 371142d, 0da1881
 - **Author**: Claude + Louis
 - **Scope**: full-stack
 
