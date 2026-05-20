@@ -73,6 +73,11 @@ const CORE_ENTRY = [
   'scripts/brainstorm-round.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',
+  // One-shot fit-check diagnostic — labels each skill FITS/PARTIAL/MISMATCH
+  // for the consumer's repo shape. Auto-fires once after first sync (see
+  // post-sync hook); re-runnable any time as `npm run skills:fit-check`.
+  // Walker pulls in the lib/fit-check/ closure automatically.
+  'scripts/skills-fit-check.mjs',
   'scripts/requirements.mjs',
   'scripts/audit-metrics.mjs',
   'scripts/write-code-outcomes.mjs',
@@ -531,6 +536,26 @@ for (const repo of targetRepos) {
       );
     } catch {
       // check-setup exits 1 on failures — already printed the report, just continue
+    }
+  }
+
+  // First-sync skills fit-check — fires once per consumer when the
+  // sentinel report (`.skills-fit-check.json` in the consumer root) is
+  // absent. Subsequent syncs skip it silently; adopters re-run any time
+  // with `npm run skills:fit-check`. Best-effort, never blocks sync.
+  if (!DRY_RUN) {
+    const fitCheckSentinel = path.join(repo.path, '.skills-fit-check.json');
+    if (!fs.existsSync(fitCheckSentinel)) {
+      console.log('');
+      console.log(`  ${B}First sync — running skills fit-check${X}`);
+      try {
+        execSync(
+          `node "${path.join(SOURCE_ROOT, 'scripts/skills-fit-check.mjs')}" --repo-root "${repo.path}"`,
+          { stdio: 'inherit', timeout: 15000 }
+        );
+      } catch {
+        // Advisory diagnostic — never block the sync flow.
+      }
     }
   }
   console.log('');

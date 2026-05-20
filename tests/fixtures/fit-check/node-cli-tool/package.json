@@ -1,0 +1,7 @@
+{
+  "name": "cli-fixture",
+  "version": "0.0.1",
+  "bin": { "cli-fixture": "./bin/cli.mjs" },
+  "scripts": { "test": "node --test" },
+  "dependencies": { "yargs": "^17.7.0" }
+}

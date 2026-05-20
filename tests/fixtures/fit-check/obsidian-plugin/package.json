@@ -1,0 +1,11 @@
+{
+  "name": "obsidian-plugin-fixture",
+  "version": "0.0.1",
+  "main": "main.js",
+  "scripts": { "dev": "node esbuild.config.mjs", "test": "vitest" },
+  "devDependencies": {
+    "obsidian": "^1.4.0",
+    "esbuild": "^0.21.0",
+    "vitest": "^1.6.0"
+  }
+}

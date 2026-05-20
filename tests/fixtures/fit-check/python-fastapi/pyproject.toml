@@ -1,0 +1,13 @@
+[project]
+name = "fastapi-fixture"
+version = "0.0.1"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.30",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[tool.ruff]
+line-length = 100

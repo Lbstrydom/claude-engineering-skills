@@ -1,0 +1,9 @@
+{
+  "id": "fixture-plugin",
+  "name": "Fixture Plugin",
+  "version": "0.0.1",
+  "minAppVersion": "1.4.0",
+  "description": "Test fixture for fit-check",
+  "author": "fixture",
+  "isDesktopOnly": false
+}
