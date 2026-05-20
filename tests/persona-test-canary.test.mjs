@@ -157,6 +157,35 @@ describe('verifyExpectations', () => {
     assert.match(r.reason, /expected min:1.*found 0/i);
   });
 
+  it('excludes missing-surface from the min count (wine-cellar adoption #1)', () => {
+    // Canary expects ≥1 state-contradiction. The rig finds ZERO real
+    // state contradictions but TWO missing-surface findings (rig
+    // artefacts). Previously the canary passed on those alone — a
+    // false-positive "rig works". Now: broken.
+    const r = verifyExpectations(canary({ min: 1 }), [
+      c({ kind: 'missing-surface', surfaceId: 'cellar-chip' }),
+      c({ kind: 'missing-surface', surfaceId: 'advisor-panel' }),
+    ]);
+    assert.equal(r.passed, false);
+    assert.equal(r.verdict, 'broken');
+    assert.match(r.reason, /state-contradictions, found 0/);
+  });
+
+  it('excludes unresolved-ground-truth from the min count', () => {
+    const r = verifyExpectations(canary({ min: 1 }), [
+      c({ kind: 'unresolved-ground-truth', surfaceId: 'cellar-chip' }),
+    ]);
+    assert.equal(r.passed, false);
+  });
+
+  it('value-mismatch DOES satisfy min (state contradiction)', () => {
+    const r = verifyExpectations(canary({ min: 1 }), [
+      c({ kind: 'value-mismatch' }),
+    ]);
+    assert.equal(r.passed, true);
+    assert.equal(r.observed, 1);
+  });
+
   it('fails as broken when observed > max (consumer regression canary)', () => {
     const r = verifyExpectations(canary({ min: 0, max: 0 }), [c()]);
     assert.equal(r.passed, false);

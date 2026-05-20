@@ -64,6 +64,28 @@ type of the first matching response (cached for the session).
 
 ---
 
+## Severity floor — which kinds bypass it (resolves wine-cellar adoption #7)
+
+`severityFloor` applies to **state-contradiction kinds** (`value-mismatch`,
+`stale-projection`, `absent-not-rendered`, `undeclared-engine-claim`,
+`value-coercion-error`, `key-coercion-error`). For these the floor
+clamps the proposed severity UP — a P0-floor surface emitting a P2
+proposed value-mismatch ends up P0.
+
+`severityFloor` does NOT apply to **rig observability kinds**:
+
+- `missing-surface` — fixed at P3 (declared surface absent from current
+  context; appliesTo-gated)
+- `unresolved-ground-truth` — fixed at P2 (rig couldn't see engine
+  truth; manifest may be misconfigured)
+
+The rationale: these aren't state mismatches, they're notes about what
+the rig DID see vs what it COULD see. The floor is for contracts;
+observability findings live in a fixed severity tier so operators see
+them consistently. They DO appear in the contradiction list, but they
+don't count toward `expectedContradictions.min` — that gate is
+state-mismatch-only.
+
 ## Stale-projection rule (Gemini-R2-G4 resolution)
 
 `data-freshness="stale"` + element visible → emit `stale-projection`

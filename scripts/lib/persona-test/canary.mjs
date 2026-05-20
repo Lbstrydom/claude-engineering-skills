@@ -168,6 +168,24 @@ export function loadCanary(name, repoRoot) {
  * @param {import('./schemas.mjs').Contradiction[]} contradictions
  * @returns {VerifyResult}
  */
+// Contradiction kinds that count toward `expectedContradictions.min` —
+// i.e. cross-step state-mismatch findings the canary self-test cares
+// about. Resolves wine-cellar adoption #1: the old code counted ALL
+// findings including `missing-surface` (a rig observability finding)
+// which let the canary "pass" on rig artefacts alone, masking the fact
+// that no real cross-state contradictions were detected. The auditable
+// state-contradiction kinds are listed explicitly; rig observations
+// (missing-surface, unresolved-ground-truth) surface in the ledger but
+// don't satisfy `min`.
+const SELF_TEST_CONTRADICTION_KINDS = new Set([
+  'value-mismatch',
+  'stale-projection',
+  'undeclared-engine-claim',
+  'value-coercion-error',
+  'absent-not-rendered',
+  'key-coercion-error',
+]);
+
 export function verifyExpectations(canary, contradictions) {
   // Resolves R3-H1: strict-guard non-array input. The old code coerced
   // `.length` defensively to 0 but then called `.find()` later, which
@@ -181,7 +199,13 @@ export function verifyExpectations(canary, contradictions) {
     throw new Error('verifyExpectations: canary must be an object');
   }
   const expected = canary.expectedContradictions || { min: 0, max: null };
-  const observed = contradictions.length;
+  // Count only state-contradiction kinds toward the self-test gate.
+  // Rig artefacts (missing-surface, unresolved-ground-truth) flow through
+  // the ledger but don't satisfy `min`.
+  const stateContradictions = contradictions.filter(
+    (c) => SELF_TEST_CONTRADICTION_KINDS.has(c.kind),
+  );
+  const observed = stateContradictions.length;
   const min = Number.isInteger(expected.min) ? expected.min : 0;
   const max = expected.max === null || expected.max === undefined
     ? null
@@ -192,7 +216,7 @@ export function verifyExpectations(canary, contradictions) {
       passed: false,
       verdict: 'broken',
       observed,
-      reason: `expected min:${min} contradictions, found ${observed} — rig may be broken (manifest drift, attribute regression, or canary expectations stale)`,
+      reason: `expected min:${min} state-contradictions, found ${observed} — rig may be broken (manifest drift, attribute regression, canary expectations stale, or the contradicted surface never rendered)`,
     };
   }
   if (max !== null && observed > max) {
@@ -200,11 +224,15 @@ export function verifyExpectations(canary, contradictions) {
       passed: false,
       verdict: 'broken',
       observed,
-      reason: `expected max:${max} contradictions, found ${observed} — consumer regression introduced new contradictions`,
+      reason: `expected max:${max} state-contradictions, found ${observed} — consumer regression introduced new contradictions`,
     };
   }
 
   if (Array.isArray(expected.shapes) && expected.shapes.length > 0) {
+    // Shape match scans the FULL contradiction list (including rig
+    // artefacts) so canary authors can assert specific missing-surface
+    // or unresolved-ground-truth shapes if they want — the count gate
+    // above is the only place rig artefacts are excluded.
     for (const shape of expected.shapes) {
       const match = contradictions.find((c) =>
         c.engineField === shape.engineField &&
@@ -230,8 +258,8 @@ export function verifyExpectations(canary, contradictions) {
     verdict: 'passed',
     observed,
     reason: max === null
-      ? `observed ${observed} contradictions (min:${min}, no max)`
-      : `observed ${observed} contradictions (min:${min}, max:${max})`,
+      ? `observed ${observed} state-contradictions (min:${min}, no max); rig artefacts excluded from this count`
+      : `observed ${observed} state-contradictions (min:${min}, max:${max}); rig artefacts excluded from this count`,
   };
 }
 

@@ -15,7 +15,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { diffClaims, coerceDomValue, coerceDomKey, _internals }
+import { diffClaims, coerceDomValue, coerceDomKey, manifestQualityWarnings, _internals }
   from '../scripts/lib/persona-test/consistency.mjs';
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -406,6 +406,51 @@ describe('diffClaims — prose routing', () => {
 // _internals: severity clamp + locator stringification
 // ────────────────────────────────────────────────────────────────────────────
 
+// ────────────────────────────────────────────────────────────────────────────
+// manifestQualityWarnings (resolves wine-cellar adoption #2 + #3)
+// ────────────────────────────────────────────────────────────────────────────
+
+describe('manifestQualityWarnings', () => {
+  it('emits a css-locator-prefer-semantic warning for css/warn:true surfaces', () => {
+    const m = makeManifest();
+    m.surfaces[0].locator = { kind: 'css', selector: '#cellar-status-badge', warn: true };
+    const w = manifestQualityWarnings(m);
+    assert.equal(w.length, 1);
+    assert.equal(w[0].kind, 'css-locator-prefer-semantic');
+    assert.equal(w[0].surfaceId, 'status-chip');
+    // Critical: no `.` prefix mangling — selector flows through verbatim.
+    assert.match(w[0].detail, /#cellar-status-badge/);
+    assert.equal(/\.\s*#cellar-status-badge/.test(w[0].detail), false,
+      'selector must NOT be prefixed with "." (wine-cellar adoption #2)');
+  });
+  it('does NOT emit for css/warn:false', () => {
+    const m = makeManifest();
+    m.surfaces[0].locator = { kind: 'css', selector: '.silenced', warn: false };
+    assert.deepEqual(manifestQualityWarnings(m), []);
+  });
+  it('does NOT emit for semantic locators (role/label/testid/id)', () => {
+    for (const locator of [
+      { kind: 'role', role: 'status' },
+      { kind: 'label', text: 'Cellar status' },
+      { kind: 'testid', id: 'cellar' },
+      { kind: 'id', id: 'cellar-badge' },
+    ]) {
+      const m = makeManifest();
+      m.surfaces[0].locator = locator;
+      assert.deepEqual(manifestQualityWarnings(m), [], `expected no warnings for ${locator.kind}`);
+    }
+  });
+  it('does NOT emit as a contradiction (wine-cellar adoption #3 — warnings go in step.warnings[])', async () => {
+    const m = makeManifest();
+    m.surfaces[0].locator = { kind: 'css', selector: '#cellar-status-badge', warn: true };
+    // Witness has zero claims so the diff path can't add a contradiction
+    // for any other reason — anything that comes back is the false-emit.
+    const f = await diffClaims(emptyWitness(), m);
+    assert.equal(f.find((x) => x.kind === 'value-mismatch' && x.surfaceId === 'status-chip'), undefined,
+      'CSS-locator nudge must NOT be emitted as a value-mismatch contradiction');
+  });
+});
+
 describe('_internals', () => {
   it('clampToFloor raises proposed severity TOWARD floor only', () => {
     const { clampToFloor } = _internals;
@@ -419,6 +464,7 @@ describe('_internals', () => {
     assert.match(locatorToString({ kind: 'role', role: 'button', name: 'X' }), /role=button.*name="X"/);
     assert.match(locatorToString({ kind: 'label', text: 'Foo' }),           /label="Foo"/);
     assert.match(locatorToString({ kind: 'testid', id: 'bar' }),            /data-testid="bar"/);
+    assert.equal(locatorToString({ kind: 'id', id: 'cellar-badge' }),       '#cellar-badge');
     assert.equal(locatorToString({ kind: 'css', selector: '.chip' }),       '.chip');
   });
 });

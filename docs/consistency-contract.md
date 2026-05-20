@@ -272,6 +272,53 @@ node scripts/persona-consistency-run.mjs \
   --url http://localhost:3000
 ```
 
+### Authoring caveat
+
+**`networkSource.urlPattern` and `jsonPath` values shown in any prompt or
+plan are illustrative.** Real-world adoption needs you to open your
+app's devtools network tab, navigate to the state you want to test,
+find the actual response carrying the field, and write the manifest
+against THAT URL and JSON path. A first-time adopter who copy-pastes
+`/api/cellar` + `capacityRemedy.feasibility` from example prose against
+a real app whose endpoint is `/api/cellar/status` + `stateV2` will get
+zero network matches and the rig will silently emit
+`unresolved-ground-truth` (or, on this v1, `missing-surface` if the
+auth-walled surface never rendered).
+
+### Auth-walled surfaces — the first-run footgun
+
+**Most real SPAs auth-wall their state surfaces.** The
+`authBootstrap: { kind: 'none' }` default in the canary template will
+land you on the public landing page, the chip will never mount, and
+the rig will report zero contradictions (or only rig artefacts) — a
+false-positive "rig works". Pick ONE of these BEFORE your first canary
+run:
+
+- **`kind: 'storageState'`** — record a Playwright storage state once
+  (`npx playwright codegen` and stop after login; save with `Save as`).
+  Then reference the file in the canary:
+  ```json
+  "authBootstrap": {
+    "kind": "storageState",
+    "storageStatePath": ".persona-test/storage-states/authed.json"
+  }
+  ```
+- **`kind: 'token'`** — if your app accepts bearer tokens for the API
+  the chip reads:
+  ```json
+  "authBootstrap": {
+    "kind": "token",
+    "tokenEnv": "CELLAR_BEARER_TOKEN"
+  }
+  ```
+  The runner reads `process.env.CELLAR_BEARER_TOKEN` and attaches it
+  via `Authorization: Bearer <token>` on every request.
+
+Use `kind: 'none'` only for public surfaces (marketing pages, public
+search). For state surfaces inside auth, always specify the auth
+mechanism — the rig won't warn you if your "infeasible" canary lands
+on the login page instead.
+
 ### CI
 
 Add to your existing test workflow:

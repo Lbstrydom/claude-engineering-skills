@@ -370,31 +370,41 @@ export async function diffClaims(witness, manifest, opts = {}) {
     }
   }
 
-  // ── 5. CSS-locator nudge — emit P2 per surface using a `css` locator
-  //      with `warn:true`. Once-per-surface across the diff (not once per
-  //      DOM claim, which would be noisy).
-  const cssWarned = new Set();
+  // CSS-locator nudge — now a RigWarning, not a contradiction (resolves
+  // wine-cellar adoption signal #2 + #3). The previous code emitted this
+  // as a `value-mismatch` contradiction at P2 clamped to floor (so a P0
+  // surface got a P0 finding for a locator quality issue) with a
+  // hard-coded `.` prefix that mangled `#id` selectors into `.#id`. Now
+  // emitted as `step.warnings[]` so it doesn't count against
+  // expectedContradictions and doesn't pollute the contradiction stream.
+  return findings;
+}
+
+/**
+ * Walk the manifest for `css` locators with `warn:true` and produce
+ * RigWarning records (NOT contradictions). The runner appends these to
+ * `step.warnings[]`. One warning per surface, regardless of how many
+ * times the surface fires this step.
+ *
+ * Resolves the wine-cellar adoption #2 (mangled selector) + #3 (wrong
+ * kind/severity) by routing through the dedicated warning channel.
+ *
+ * @param {import('./schemas.mjs').SurfaceManifest} manifest
+ * @returns {import('./schemas.mjs').RigWarning[]}
+ */
+export function manifestQualityWarnings(manifest) {
+  const out = [];
+  if (!manifest || !Array.isArray(manifest.surfaces)) return out;
   for (const surface of manifest.surfaces) {
-    if (surface.locator.kind === 'css' && surface.locator.warn && !cssWarned.has(surface.id)) {
-      cssWarned.add(surface.id);
-      findings.push({
-        kind: 'value-mismatch',  // borrowed kind; in v1 we don't have a `locator-nudge` kind
-        severity: clampToFloor('P2', surface.severityFloor),
+    if (surface.locator?.kind === 'css' && surface.locator?.warn) {
+      out.push({
+        kind: 'css-locator-prefer-semantic',
         surfaceId: surface.id,
-        engineField: null,
-        scope: null,
-        key: null,
-        domValue: null,
-        engineValue: null,
-        freshness: null,
-        selector: surface.locator.selector,
-        detail: `Surface "${surface.id}" uses CSS-class locator (".${surface.locator.selector}"); prefer role/label/testid`,
-        suppressedByLockedSpec: null,
+        detail: `Surface "${surface.id}" uses CSS selector "${surface.locator.selector}"; prefer role / label / testid / id for stability`,
       });
     }
   }
-
-  return findings;
+  return out;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -422,6 +432,7 @@ function locatorToString(locator) {
     case 'role':   return `role=${locator.role}${locator.name ? `[name="${locator.name}"]` : ''}`;
     case 'label':  return `label="${locator.text}"`;
     case 'testid': return `[data-testid="${locator.id}"]`;
+    case 'id':     return `#${locator.id}`;
     case 'css':    return locator.selector;
     default:       return JSON.stringify(locator);
   }

@@ -81,6 +81,15 @@ export const LocatorSchema = z.discriminatedUnion('kind', [
     kind: z.literal('testid'),
     id: z.string().min(1),
   }),
+  // Resolves wine-cellar adoption #4 — `kind:'id'` for codebases without
+  // data-testid attributes everywhere. HTML id is a stable semantic
+  // selector (uniqueness is enforced by the HTML spec), so it doesn't
+  // carry the css-kind `warn` flag; the rig considers id selectors
+  // first-class alongside role/label/testid.
+  z.object({
+    kind: z.literal('id'),
+    id: z.string().min(1).regex(/^[A-Za-z][\w-]*$/, 'HTML id must start with a letter and contain only word chars or hyphens'),
+  }),
   z.object({
     kind: z.literal('css'),
     selector: z.string().min(1),

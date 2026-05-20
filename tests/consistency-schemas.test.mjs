@@ -63,6 +63,19 @@ describe('LocatorSchema', () => {
     assert.equal(r.success, true);
     assert.equal(r.data.warn, true);
   });
+  it('accepts an id locator (wine-cellar adoption #4)', () => {
+    const r = LocatorSchema.safeParse({ kind: 'id', id: 'cellar-status-badge' });
+    assert.equal(r.success, true);
+    assert.equal(r.data.id, 'cellar-status-badge');
+  });
+  it('id locator rejects ids starting with a digit', () => {
+    const r = LocatorSchema.safeParse({ kind: 'id', id: '1badge' });
+    assert.equal(r.success, false);
+  });
+  it('id locator rejects ids with disallowed characters', () => {
+    const r = LocatorSchema.safeParse({ kind: 'id', id: 'badge.with.dots' });
+    assert.equal(r.success, false);
+  });
   it('rejects an unknown kind', () => {
     const r = LocatorSchema.safeParse({ kind: 'xpath', expr: '//div' });
     assert.equal(r.success, false);

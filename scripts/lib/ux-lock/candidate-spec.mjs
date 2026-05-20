@@ -402,6 +402,7 @@ function locatorCall(locator) {
       : `page.getByRole(${js(locator.role)})`;
     case 'label':  return `page.getByLabel(${js(locator.text)})`;
     case 'testid': return `page.getByTestId(${js(locator.id)})`;
+    case 'id':     return `page.locator(${js('#' + locator.id)})`;
     case 'css':    return `page.locator(${js(locator.selector)})`;
     default:       throw new Error(`renderCandidateSpec: unknown locator kind "${locator.kind}"`);
   }

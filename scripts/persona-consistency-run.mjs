@@ -29,7 +29,7 @@ import { resolveManifest }       from './lib/persona-test/manifest-resolver.mjs'
 import { loadCanary, verifyExpectations, canaryExpectsShape, candidateFingerprint }
   from './lib/persona-test/canary.mjs';
 import { openLedger }            from './lib/persona-test/ledger.mjs';
-import { diffClaims }            from './lib/persona-test/consistency.mjs';
+import { diffClaims, manifestQualityWarnings } from './lib/persona-test/consistency.mjs';
 import { attachNetworkListener, captureWitness }
   from './lib/ux-lock/capture.mjs';
 import {
@@ -200,20 +200,28 @@ export async function runConsistency(args, deps = {}) {
       } catch (err) {
         resolveErr = err.message || String(err);
       }
-    } else {
-      resolveErr = 'cloud store disabled (SUPABASE_AUDIT_* env vars unset)';
     }
     const candidateEnabled = cloudOn && !!repoId;
-    // Resolves R1-M10 — make silent disablement audible. Without this the
-    // runner appears to work fine but never emits candidates, which
-    // misleads operators into thinking the rig is healthy when it's
-    // running with degraded observability.
-    if (!candidateEnabled) {
+    // Resolves R1-M10 + wine-cellar adoption #8: surface disablement
+    // audibly, but with different messages depending on what's missing.
+    // Cloud-off is "linkage off" (informational); cloud-on-but-no-repo-id
+    // is "DISABLED" (actionable). Don't conflate the two — operators
+    // who haven't configured Supabase shouldn't see a "fix this" warning;
+    // operators who configured Supabase but didn't run identity-resolve
+    // should.
+    if (!cloudOn) {
+      process.stderr.write(
+        'ℹ audit-loop linkage off (no SUPABASE_AUDIT_URL) — contradictions ' +
+        'will be logged to the session ledger only; no regression_specs ' +
+        'candidates written. This is fine for first-run adoption.\n',
+      );
+    } else if (!candidateEnabled) {
       process.stderr.write(
         `⚠ candidate emission DISABLED: ${resolveErr || 'unknown reason'}\n` +
-        '  Contradictions will surface in the session ledger but no regression_specs candidates will be written.\n' +
-        '  Fix: ensure SUPABASE_AUDIT_URL+ANON_KEY are set, then run\n' +
-        '  `node scripts/cross-skill.mjs resolve-repo-identity --persist`\n',
+        '  Cloud is configured but no repo identity is registered. To enable\n' +
+        '  candidate persistence, run from this repo root:\n' +
+        '    node scripts/cross-skill.mjs resolve-repo-identity --persist\n' +
+        '  Contradictions will still appear in the session ledger.\n',
       );
     }
 
@@ -227,6 +235,11 @@ export async function runConsistency(args, deps = {}) {
     const allContradictions = [];
     const commitSha = safeGitSha(repoRoot);
     const ctx = { repoId, journeyKey: canary.name, commitSha };
+
+    // Manifest-quality warnings (CSS-locator nudges, etc.) — surface ONCE
+    // at the start of the run so they appear in the first step's warnings
+    // and aren't repeated per-step. Resolves wine-cellar adoption #2/#3.
+    const startupWarnings = manifestQualityWarnings(manifestResult.manifest);
 
     for (let i = 0; i < canary.journeySteps.length; i++) {
       const step = canary.journeySteps[i];
@@ -309,6 +322,10 @@ export async function runConsistency(args, deps = {}) {
       }
 
       allContradictions.push(...contradictions);
+      // First step also carries the startup warnings (manifest-quality
+      // nudges) so the operator sees them once. Later steps only carry
+      // their own capture/diff warnings.
+      const stepWarnings = i === 0 ? [...startupWarnings, ...warnings] : warnings;
       ledger.appendStep({
         stepIndex: i,
         plan: step.label || `step ${i}`,
@@ -324,7 +341,7 @@ export async function runConsistency(args, deps = {}) {
             severity: c.severity,
             detail: c.detail,
           })),
-        warnings,
+        warnings: stepWarnings,
         durationMs: Date.now() - stepStart,
       });
     }
@@ -403,9 +420,18 @@ function locatorOf(page, locator) {
       : page.getByRole(locator.role);
     case 'label':  return page.getByLabel(locator.text);
     case 'testid': return page.getByTestId(locator.id);
+    case 'id':     return page.locator(`#${cssEscape(locator.id)}`);
     case 'css':    return page.locator(locator.selector);
     default:       throw new Error(`unknown locator kind "${locator.kind}"`);
   }
+}
+
+// Minimal CSS-escape for the `id` locator path — handles digit-leading +
+// special-char ids without pulling in a dep. The schema regex already
+// rejects most pathological ids; this is belt-and-braces for the rare
+// hyphenated/numeric-prefix case.
+function cssEscape(s) {
+  return String(s).replace(/(^\d)|([^\w-])/g, '\\$1$2');
 }
 
 async function applyWait(page, cond) {
@@ -440,6 +466,7 @@ function locatorString(locator) {
     case 'role':   return `role=${locator.role}${locator.name ? `[name="${locator.name}"]` : ''}`;
     case 'label':  return `label="${locator.text}"`;
     case 'testid': return `data-testid="${locator.id}"`;
+    case 'id':     return `#${locator.id}`;
     case 'css':    return locator.selector;
     default:       return '?';
   }
@@ -556,5 +583,29 @@ const isMain = (() => {
 
 if (isMain) {
   const result = await runConsistency(parseArgs(process.argv.slice(2)));
+  // Resolves wine-cellar adoption #6: CI-scannable trailing summary line.
+  // Stdout (not stderr) so log scrapers can grep for `consistency:` on
+  // its own line. Compact + machine-parseable: counts per severity +
+  // ledger path + exit code.
+  if (result.ledger) {
+    const allContradictions = (result.ledger.steps || [])
+      .flatMap((s) => s.contradictions || []);
+    const counts = { P0: 0, P1: 0, P2: 0, P3: 0 };
+    for (const c of allContradictions) {
+      if (counts[c.severity] !== undefined) counts[c.severity] += 1;
+    }
+    const total = allContradictions.length;
+    const sevSummary = ['P0','P1','P2','P3']
+      .filter((k) => counts[k] > 0)
+      .map((k) => `${k}:${counts[k]}`)
+      .join(' ') || '—';
+    process.stdout.write(
+      `consistency: ${total} contradiction(s) [${sevSummary}], ledger=${result.ledgerPath}, exit=${result.exitCode}\n`,
+    );
+  } else {
+    process.stdout.write(
+      `consistency: no ledger written, exit=${result.exitCode}\n`,
+    );
+  }
   process.exit(result.exitCode);
 }
