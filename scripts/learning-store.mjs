@@ -965,22 +965,78 @@ export async function updatePlanStatus(planId, status) {
  */
 export async function recordRegressionSpec(repoId, spec) {
   if (!_supabase) return null;
-  if (!spec?.specPath || !spec?.description || !spec?.sourceKind) return null;
+  if (!spec?.sourceKind) return null;
+
+  // Phase 0 (consistency-mode) — candidate rows are upserted by
+  // (repo_id, candidate_fingerprint) with spec_path NULL. Locked + legacy
+  // rows continue to upsert by (repo_id, spec_path).
+  const isCandidate = spec.sourceKind === 'persona-consistency-candidate';
+  const isLocked    = spec.sourceKind === 'persona-consistency-locked';
+
+  if (isCandidate) {
+    if (!spec.candidateFingerprint || !spec.witnessSnapshot || !spec.contradictionPayload || !spec.journeyContext) {
+      process.stderr.write('  [learning] recordRegressionSpec: candidate rows require candidateFingerprint, witnessSnapshot, contradictionPayload, journeyContext\n');
+      return null;
+    }
+    if (!repoId) {
+      process.stderr.write('  [learning] recordRegressionSpec: candidate rows require resolved repoId (NULL would silently allow duplicates through the partial unique index)\n');
+      return null;
+    }
+  } else if (!spec.specPath) {
+    process.stderr.write('  [learning] recordRegressionSpec: spec_path is required for non-candidate source_kind\n');
+    return null;
+  }
+  if (!spec.description) return null;
+
+  // Apply pre-egress redaction to all JSONB columns populated by consistency
+  // mode (Gemini-R6-G3). For legacy source kinds these fields are NULL — the
+  // redactObject call is a no-op on null.
+  let redactionCount = 0;
+  let witnessSnapshot      = null;
+  let contradictionPayload = null;
+  let journeyContext       = null;
+  if (isCandidate || isLocked) {
+    try {
+      const { redactObject } = await import('./lib/redact.mjs');
+      const w = redactObject(spec.witnessSnapshot ?? null);
+      const c = redactObject(spec.contradictionPayload ?? null);
+      const j = redactObject(spec.journeyContext ?? null);
+      witnessSnapshot      = w.redacted;
+      contradictionPayload = c.redacted;
+      journeyContext       = j.redacted;
+      redactionCount = w.count + c.count + j.count;
+    } catch (err) {
+      process.stderr.write(`  [learning] recordRegressionSpec: redact failed (${err.message})\n`);
+      return null;
+    }
+  }
+
+  const row = {
+    repo_id: repoId || null,
+    spec_path: spec.specPath ?? null,
+    description: spec.description,
+    commit_sha: spec.commitSha || null,
+    assertion_count: spec.assertionCount || 0,
+    dom_contract_types: spec.domContractTypes || [],
+    source_kind: spec.sourceKind,
+    source_finding_id: spec.sourceFindingId || null,
+    source_finding_type: spec.sourceFindingType || null,
+    candidate_fingerprint: spec.candidateFingerprint || null,
+    witness_snapshot: witnessSnapshot,
+    contradiction_payload: contradictionPayload,
+    journey_context: journeyContext,
+    redaction_count: redactionCount,
+    updated_at: new Date().toISOString(),
+  };
+
+  // Choose the upsert key:
+  //   - candidate rows → (repo_id, candidate_fingerprint) — partial unique index
+  //   - everything else → (repo_id, spec_path) — pre-existing unique constraint
+  const onConflict = isCandidate ? 'repo_id,candidate_fingerprint' : 'repo_id,spec_path';
 
   const { data, error } = await _supabase
     .from('regression_specs')
-    .upsert({
-      repo_id: repoId || null,
-      spec_path: spec.specPath,
-      description: spec.description,
-      commit_sha: spec.commitSha || null,
-      assertion_count: spec.assertionCount || 0,
-      dom_contract_types: spec.domContractTypes || [],
-      source_kind: spec.sourceKind,
-      source_finding_id: spec.sourceFindingId || null,
-      source_finding_type: spec.sourceFindingType || null,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'repo_id,spec_path' })
+    .upsert(row, { onConflict })
     .select('id')
     .single();
 
@@ -989,6 +1045,77 @@ export async function recordRegressionSpec(repoId, spec) {
     return null;
   }
   return data?.id;
+}
+
+/**
+ * List pending consistency candidates for a repo. Used by /ship at promotion time.
+ *
+ * @param {string} repoId
+ * @param {object} [opts]
+ * @param {string} [opts.sinceTs] - ISO timestamp; only candidates created after this point
+ * @param {number} [opts.limit]   - default 100
+ * @returns {Promise<Array<object>>}
+ */
+export async function listConsistencyCandidates(repoId, opts = {}) {
+  if (!_supabase) return [];
+  if (!repoId) return [];
+  const limit = Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : 100;
+
+  let query = _supabase
+    .from('regression_specs')
+    .select('id, candidate_fingerprint, witness_snapshot, contradiction_payload, journey_context, redaction_count, description, commit_sha, created_at')
+    .eq('repo_id', repoId)
+    .eq('source_kind', 'persona-consistency-candidate')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (opts.sinceTs) query = query.gte('created_at', opts.sinceTs);
+
+  const { data, error } = await query;
+  if (error) {
+    process.stderr.write(`  [learning] listConsistencyCandidates failed: ${error.message}\n`);
+    return [];
+  }
+  return data || [];
+}
+
+/**
+ * Promote a candidate row to locked. Atomic UPDATE; records the file path
+ * where the materialised spec lives + the git user who approved.
+ *
+ * @param {string} specId
+ * @param {object} args
+ * @param {string} args.specPath          - tests/e2e/<filename>.spec.js
+ * @param {string} args.promotedBy        - git user.email
+ * @param {string} [args.candidateFingerprint] - belt-and-braces re-check
+ * @returns {Promise<{ ok: boolean, rowsAffected: number }>}
+ */
+export async function promoteRegressionSpec(specId, args) {
+  if (!_supabase) return { ok: false, rowsAffected: 0 };
+  if (!specId || !args?.specPath || !args?.promotedBy) {
+    return { ok: false, rowsAffected: 0 };
+  }
+  const update = {
+    source_kind: 'persona-consistency-locked',
+    spec_path: args.specPath,
+    promoted_at: new Date().toISOString(),
+    promoted_by: args.promotedBy,
+    updated_at: new Date().toISOString(),
+  };
+  let query = _supabase
+    .from('regression_specs')
+    .update(update)
+    .eq('id', specId)
+    .eq('source_kind', 'persona-consistency-candidate');
+  if (args.candidateFingerprint) {
+    query = query.eq('candidate_fingerprint', args.candidateFingerprint);
+  }
+  const { error, count } = await query.select('id', { count: 'exact' });
+  if (error) {
+    process.stderr.write(`  [learning] promoteRegressionSpec failed: ${error.message}\n`);
+    return { ok: false, rowsAffected: 0 };
+  }
+  return { ok: (count || 0) > 0, rowsAffected: count || 0 };
 }
 
 /**

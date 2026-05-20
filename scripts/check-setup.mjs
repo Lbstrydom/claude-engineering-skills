@@ -369,6 +369,87 @@ function printJsonReport(report) {
   process.stdout.write(JSON.stringify(out, null, 2) + '\n');
 }
 
+// ── Consistency-mode (Phase 6.5 — Playwright bootstrap probe) ────────────────
+
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFileAsync = promisify(execFile);
+
+/**
+ * ESM dynamic-import probe — repo is ESM-only, NO require() (resolves R4-M4).
+ * Returns `{ available: boolean, version: string|null, browserBinary: boolean, reason?: string }`.
+ *
+ * Same helper is used by persona-consistency-run.mjs at startup so all three
+ * code paths (setup-check, runner, sync-to-repos) share one resolution.
+ */
+export async function checkPlaywrightAvailable() {
+  try {
+    await import('playwright');
+  } catch (err) {
+    return { available: false, version: null, browserBinary: false, reason: `node_modules: ${err.message}` };
+  }
+  let version = null;
+  try {
+    const { stdout } = await execFileAsync('npx', ['playwright', '--version'], { timeout: 10_000, shell: process.platform === 'win32' });
+    version = stdout.trim();
+  } catch (err) {
+    return { available: true, version: null, browserBinary: false, reason: `npx playwright --version failed: ${err.message}` };
+  }
+  // Probe for chromium binary — `npx playwright install --dry-run chromium`
+  // exits 0 if chromium is present (or just lists what would install). v1 uses
+  // a softer probe: assume binary present if `playwright --version` worked,
+  // and let the runner emit exit 5 with a more precise message at first run.
+  return { available: true, version, browserBinary: true };
+}
+
+async function checkConsistencyMode(env, report) {
+  report.section('Consistency-Mode (Phase 6.5)');
+
+  // Manifest is optional — only report if the repo has adopted consistency mode.
+  const manifestPaths = [
+    path.join(REPO_PATH, '.persona-test', 'surfaces.json'),
+    path.join(REPO_PATH, 'persona-test-manifest.json'),
+    path.join(REPO_PATH, 'src', 'persona-test-surfaces.json'),
+  ];
+  const manifest = manifestPaths.find((p) => fs.existsSync(p));
+
+  if (!manifest) {
+    report.warn(
+      'No surfaces.json detected',
+      'consistency mode is opt-in; this repo has not adopted it',
+      'See docs/consistency-contract.md to bootstrap',
+    );
+    return;
+  }
+  report.pass('surfaces.json', path.relative(REPO_PATH, manifest));
+
+  // Canaries directory — if present, count them.
+  const canariesDir = path.join(REPO_PATH, '.persona-test', 'canaries');
+  if (fs.existsSync(canariesDir)) {
+    const canaries = fs.readdirSync(canariesDir).filter((f) => f.endsWith('.json'));
+    report.pass(`Canaries (${canaries.length})`, canaries.join(', ') || '(none)');
+  } else {
+    report.warn('No .persona-test/canaries/ directory',
+      'consistency mode needs at least one canary',
+      'mkdir -p .persona-test/canaries && add <canary>.json — see docs/consistency-contract.md');
+  }
+
+  // Playwright probe.
+  const pw = await checkPlaywrightAvailable();
+  if (!pw.available) {
+    report.fail(
+      'Playwright unavailable',
+      pw.reason,
+      'npm install playwright && npx playwright install chromium',
+    );
+    return;
+  }
+  report.pass('Playwright', pw.version || '(version unknown — first install)');
+  if (!pw.browserBinary) {
+    report.warn('Chromium binary not detected', pw.reason, 'npx playwright install chromium');
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -377,6 +458,7 @@ async function main() {
 
   await checkAuditLoop(env, report);
   await checkPersonaTest(env, report);
+  await checkConsistencyMode(env, report);
 
   if (JSON_MODE) printJsonReport(report);
   else printReport(report);

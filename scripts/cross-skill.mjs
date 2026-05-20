@@ -37,6 +37,8 @@ import {
   updatePlanStatus,
   recordRegressionSpec,
   recordRegressionSpecRun,
+  listConsistencyCandidates,
+  promoteRegressionSpec,
   recordPersonaAuditCorrelation,
   recordShipEvent,
   recordPlanVerificationRun,
@@ -179,14 +181,33 @@ async function cmdUpdatePlanStatus() {
 
 async function cmdRecordRegressionSpec() {
   const p = parsePayload();
-  if (!p.specPath || !p.description || !p.sourceKind) {
-    return emitError('BAD_INPUT', 'specPath, description, sourceKind are required');
+  if (!p.sourceKind || !p.description) {
+    return emitError('BAD_INPUT', 'sourceKind and description are required');
+  }
+  // Conditional specPath requirement by sourceKind (Gemini-R6-G2 fix).
+  const isCandidate = p.sourceKind === 'persona-consistency-candidate';
+  const isLocked    = p.sourceKind === 'persona-consistency-locked';
+  if (!isCandidate && !p.specPath) {
+    return emitError('BAD_INPUT', 'specPath is required for non-candidate source_kind');
+  }
+  if (isCandidate) {
+    if (!p.candidateFingerprint) {
+      return emitError('BAD_INPUT', 'candidate rows require candidateFingerprint');
+    }
+    if (!p.witnessSnapshot || !p.contradictionPayload || !p.journeyContext) {
+      return emitError('BAD_INPUT',
+        'candidate rows require witnessSnapshot, contradictionPayload, journeyContext');
+    }
   }
   await initLearningStore();
   if (!isCloudEnabled()) return emit({ ok: true, cloud: false, specId: null });
   const repoId = await resolveRepoId(p);
+  if (isCandidate && !repoId) {
+    return emitError('BAD_INPUT',
+      'consistency candidates require a resolved repoId — run resolve-repo-identity first');
+  }
   const specId = await recordRegressionSpec(repoId, {
-    specPath: p.specPath,
+    specPath: p.specPath ?? null,
     description: p.description,
     commitSha: p.commitSha || currentCommitSha(),
     assertionCount: p.assertionCount,
@@ -194,8 +215,42 @@ async function cmdRecordRegressionSpec() {
     sourceKind: p.sourceKind,
     sourceFindingId: p.sourceFindingId,
     sourceFindingType: p.sourceFindingType,
+    candidateFingerprint: p.candidateFingerprint,
+    witnessSnapshot: p.witnessSnapshot,
+    contradictionPayload: p.contradictionPayload,
+    journeyContext: p.journeyContext,
   });
   emit({ ok: !!specId, cloud: true, specId });
+}
+
+async function cmdListConsistencyCandidates() {
+  const p = parsePayload();
+  await initLearningStore();
+  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, candidates: [] });
+  const repoId = await resolveRepoId(p);
+  if (!repoId) {
+    return emitError('BAD_INPUT', 'repoId could not be resolved; pass repoId or repoUuid');
+  }
+  const rows = await listConsistencyCandidates(repoId, {
+    sinceTs: p.sinceTs,
+    limit: p.limit,
+  });
+  emit({ ok: true, cloud: true, candidates: rows });
+}
+
+async function cmdPromoteRegressionSpec() {
+  const p = parsePayload();
+  if (!p.specId || !p.specPath || !p.promotedBy) {
+    return emitError('BAD_INPUT', 'specId, specPath, promotedBy are required');
+  }
+  await initLearningStore();
+  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, rowsAffected: 0 });
+  const r = await promoteRegressionSpec(p.specId, {
+    specPath: p.specPath,
+    promotedBy: p.promotedBy,
+    candidateFingerprint: p.candidateFingerprint,
+  });
+  emit({ ok: r.ok, cloud: true, rowsAffected: r.rowsAffected });
 }
 
 async function cmdRecordRegressionSpecRun() {
@@ -994,6 +1049,8 @@ const commands = {
   'update-plan-status': cmdUpdatePlanStatus,
   'record-regression-spec': cmdRecordRegressionSpec,
   'record-regression-spec-run': cmdRecordRegressionSpecRun,
+  'list-consistency-candidates': cmdListConsistencyCandidates,
+  'promote-regression-spec':     cmdPromoteRegressionSpec,
   'record-correlation': cmdRecordCorrelation,
   'record-ship-event': cmdRecordShipEvent,
   'record-plan-verify-run': cmdRecordPlanVerifyRun,
