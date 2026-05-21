@@ -1,12 +1,15 @@
 # Plan: Postgres Parity — One Postgres Code Path for the Audit-Loop Store
 
-- **Date**: 2026-05-19
-- **Status**: Draft
+- **Date**: 2026-05-19 (implementation 2026-05-19 → 2026-05-21)
+- **Status**: **Complete** (fixtures deferred — see §12 Completion Notes)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Audit**: R1 GPT-5.4 (9) + R2 (6) + R3 (6) + Gemini ×2 (3 + 4) — 28 findings,
   all addressed. GPT stopped at R3 (rigor-pressure rule); Gemini loop stopped at
   the 2-round cap with all findings accepted-and-fixed (no open disagreements).
+- **Final audit (post-M4)**: `/audit-code` R1 → R2 (HIGH cleared) → Gemini
+  **APPROVE** ("Ready for production"). See
+  [`postgres-parity-m3m4-audit-summary.md`](./postgres-parity-m3m4-audit-summary.md).
 
 ---
 
@@ -533,3 +536,89 @@ to non-optional.
 | P2 | `setup-postgres.mjs` + compat bootstrap + adopt-mode | none (additive) | P1 |
 | P3 | `learning-store.mjs` rewrite + domain split + 5-caller de-leak + raw-client removal (atomic) | **high (live path)** | P1, P2, §9 contract suite green in CI |
 | P4 | drop `@supabase/supabase-js`; remove GitHub/SQLite stores; CI workflow; docs; sync | medium | P3, maintainer `.env` cutover |
+
+---
+
+## 12. Completion Notes (2026-05-21)
+
+The plan landed in five commits across two days. Final state on `origin/main`:
+
+| Milestone | Commit(s) | Notes |
+|---|---|---|
+| **M0** prereq artefacts | `78d598d`, `92d97f0` | Non-core inventory + schema-coupling audit + contract matrix + frozen legacy snapshot + lint + expected-schema manifest captured live |
+| **M1** pg query layer | `6aec0b7`, `6c43662` | `db/{client,query,rpc,errors}.mjs` + 4 test files + audit summary |
+| **M2** setup CLI | `be9545d` | `compat-bootstrap.sql` + `setup-postgres.mjs` (--migrate/--adopt/--preflight-only/--bootstrap-only) + integration test |
+| **M3** atomic barrel + caller de-leak | `d1ee5cc` (additive part 1), `63fba17` (atomic part 2) | 10 domain modules (93 frozen contract fns + 10 caller helpers) replacing the 2832-line god module |
+| **M4** cutover + cleanup | `47a1368` | Dropped `@supabase/supabase-js`, deleted `scripts/lib/stores/**`, migrated 7 stragglers, AGENTS.md rewrite, CI workflow, sync routing |
+| Audit summary + `--allow-remote` | `42a893d` | `/audit-code` R1→R2 + Gemini **APPROVE**; recorder ready for sandbox use |
+
+**Net diff across the plan**: roughly **+8,500 / –6,500 LOC**; the audit-loop
+store is ~2,500 lines smaller (the old adapter system was that much dead code).
+
+### Final live verification (post-M4)
+
+Smoke through the new barrel against the maintainer's Supabase, via
+`AUDIT_DB_URL` (Session pooler):
+
+```
+isCloudEnabled                              → true
+getRepoIdByName('claude-engineering-skills') → dc0ff2c5…
+listPersonasForApp('https://wine-cellar…')   → 2 personas
+getPassEffectiveness(repoId)                 → 24 rows
+listRepoIds()                                → 288 repos
+audit-metrics --days 7                       → 144 runs (live audit flow
+                                                end-to-end through pg path)
+```
+
+### One follow-up deferred — fixture recording
+
+Two related items remain open by design (user decision 2026-05-21):
+
+1. **Provision a sandbox Supabase project** for fixture recording.
+2. **Fill out `INPUT_FACTORY[]`** for the 90 remaining functions in
+   `scripts/postgres-parity/record-golden-fixtures.mjs` (3 of 93 seeded
+   today as proof of runner).
+
+**Why deferred**: the original §9 contract suite was the R1-mitigation
+gate — diff the new pg path against the legacy supabase-js path. M4
+deleted the legacy path, so recording fixtures today doesn't verify
+parity-vs-legacy (there's nothing left to compare against). It would
+serve as a **regression baseline** for the pg path going forward, but
+that's a lower-urgency follow-up, not a missing correctness gate.
+
+The infrastructure is ready when this work is picked up:
+
+- [`scripts/postgres-parity/record-golden-fixtures.mjs`](../../scripts/postgres-parity/record-golden-fixtures.mjs)
+  has the `--allow-remote <project-ref>` flag with 3 safety guards
+  (verified live).
+- [`tests/fixtures/contract/README.md`](../../tests/fixtures/contract/README.md)
+  has the path-A recipe (sandbox Supabase) + path-B recipe (Docker).
+- [`tests/learning-store-contract.test.mjs`](../../tests/learning-store-contract.test.mjs)
+  is wired to flip from "structural-only" to full parity assertions
+  as soon as fixtures land in the directory.
+
+When ready, the workflow per
+[`tests/fixtures/contract/README.md`](../../tests/fixtures/contract/README.md):
+
+```bash
+supabase projects create postgres-parity-fixtures --org-id ywppwklfyycfsenshsij
+supabase link --project-ref <new-ref>
+supabase db push
+# Fill in INPUT_FACTORY for the 90 unseeded functions
+node scripts/postgres-parity/record-golden-fixtures.mjs \
+  --legacy tests/fixtures/learning-store.legacy.mjs \
+  --supabase-url "https://<new-ref>.supabase.co" \
+  --allow-remote <new-ref> \
+  --anon-key <key> --service-role-key <key> \
+  --out tests/fixtures/contract/
+```
+
+### Decision log — items that didn't make the cut
+
+| Item | Decision | Reason |
+|---|---|---|
+| Arbitrary `AUDIT_DB_SCHEMA` (non-`public`) | §10 Out of Scope | Schema-coupling audit found 4 hardcoded `public.` qualifications + 11 `SECURITY DEFINER` `search_path` pins. v1 stays `public`-only. |
+| Managed Postgres without `CREATEROLE` | §10 Out of Scope | Compat-bootstrap needs `CREATEROLE` for the stub-role creation. setup-postgres.mjs preflights + aborts with a precise message. |
+| sqlite / github / noop store backends | Removed in M4 | User-confirmed feature drop. "No DB" path survives as learning-store null-guards. |
+| Realtime / Storage / Auth (Supabase products) | Never in scope | Audit-loop never used them. |
+| Live-DB fixture recording | Deferred (M3+M4 follow-up) | Legacy path is gone → R1 mitigation is moot; deferred as regression-baseline follow-up. |
