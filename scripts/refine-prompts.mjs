@@ -12,6 +12,7 @@ import { sanitizeOutcomes } from './lib/sanitizer.mjs';
 import { reservoirSample } from './lib/rng.mjs';
 import { PASS_NAMES, learningConfig, briefConfig } from './lib/config.mjs';
 import { refreshModelCatalog } from './lib/model-resolver.mjs';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const MIN_EXAMPLES_THRESHOLD = learningConfig.minExamplesThreshold;
 
@@ -190,6 +191,7 @@ async function suggestRefinements(passName, outcomesPath) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   // Live-catalog refresh (see openai-audit.mjs for rationale).
   if (process.env.MODEL_CATALOG_REFRESH !== 'skip') {
     try { await refreshModelCatalog(); } catch { /* silent */ }

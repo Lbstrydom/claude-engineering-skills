@@ -30,6 +30,7 @@ import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
 import { PromptBandit } from './bandit.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
 // This module keeps specialized callGemini/callClaudeOpus with thinkingConfig + abort controller
 // because the final review requires high-budget reasoning and precise timeout handling.
@@ -982,6 +983,7 @@ function recordGeminiOutcomes(result) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   await refreshCatalogAndWarn();
 
   const args = process.argv.slice(2);

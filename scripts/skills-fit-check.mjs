@@ -133,8 +133,7 @@ export function renderCard(report) {
 function yn(b) { return b ? 'yes' : 'no'; }
 
 // ─── CLI entry ─────────────────────────────────────────────────────────────
-const isMain = import.meta.url.endsWith(process.argv[1]?.replace(/\\/g, '/').split('/').pop() || '');
-if (isMain) {
+function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     process.stdout.write(HELP);
@@ -151,4 +150,9 @@ if (isMain) {
     process.stdout.write(renderCard(report) + '\n');
   }
   process.exit(exitCode);
+}
+
+const isMain = import.meta.url.endsWith(process.argv[1]?.replace(/\\/g, '/').split('/').pop() || '');
+if (isMain) {
+  main();
 }

@@ -55,6 +55,7 @@ import { resolveModel } from '../lib/model-resolver.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules } from '../lib/symbol-index/domain-tagger.mjs';
+import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 
 function parseArgs(argv) {
   const args = { full: false, sinceCommit: null, force: false, includeDelegates: false };
@@ -161,6 +162,7 @@ async function runWithHeartbeat(refreshId, intervalMs, fn) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
   const repoRoot = path.resolve(process.cwd());
   const domainRules = loadDomainRules(repoRoot);

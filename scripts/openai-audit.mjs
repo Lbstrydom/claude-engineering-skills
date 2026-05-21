@@ -682,6 +682,7 @@ async function safeCallGPT(openai, opts, emptyResult) {
 // The cache dir is derived from the --out path or uses os.tmpdir().
 
 import os from 'node:os';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 let _cacheDir = null;
 
@@ -2959,6 +2960,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   // Live-catalog refresh: populate session cache so providers' newest models
   // are visible to resolveModel(). Module-load resolution (config.mjs) used
   // STATIC_POOL only — the warning below surfaces drift so operators can

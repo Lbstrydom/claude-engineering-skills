@@ -28,6 +28,7 @@ import {
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { renderDriftIssue } from '../lib/arch-render.mjs';
+import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 
 function parseArgs(argv) {
   const args = { out: null, json: false };
@@ -72,6 +73,7 @@ function renderMarkdownViaShared(drift, threshold, status, identity, clusters) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
   await initLearningStore();
   if (!isCloudEnabled()) {

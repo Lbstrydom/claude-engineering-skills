@@ -38,6 +38,7 @@ import { symbolIndexConfig } from '../lib/config.mjs';
 import { parseSecurityStrategy } from './parse-strategy.mjs';
 import { classifyMitigation, runSemgrepIfNeeded } from './incident-status.mjs';
 import { emit } from '../lib/cli-io.mjs';
+import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 
 const STRATEGY_PATH = 'docs/security-strategy.md';
 
@@ -123,6 +124,7 @@ async function generateEmbedding(ai, text, modelId, dim) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   const repoRoot = path.resolve(process.cwd());
   const strategyAbs = path.join(repoRoot, STRATEGY_PATH);
 

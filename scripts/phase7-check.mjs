@@ -6,6 +6,7 @@
 
 import 'dotenv/config';
 import { loadOutcomes } from './lib/findings.mjs';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const PHASE7_THRESHOLD = 50; // audit runs needed
 
@@ -61,4 +62,9 @@ async function checkReadiness() {
   return { runCount, threshold: PHASE7_THRESHOLD, ready: runCount >= PHASE7_THRESHOLD };
 }
 
-checkReadiness();
+async function main() {
+  assertRepoRoot(import.meta.url);
+  return checkReadiness();
+}
+
+main();

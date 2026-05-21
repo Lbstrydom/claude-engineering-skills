@@ -163,7 +163,7 @@ export async function collectTelemetry(opts = {}) {
     provenance: {
       generatedAt: new Date().toISOString(),
       baseSha: git.baseSha,
-      mode: auditRuns.data.cloud ? 'supabase' : 'local-only',
+      mode: auditRuns.data.cloud ? 'cloud' : 'local-only',
     },
     sources: {
       auditRuns: auditRuns.status,

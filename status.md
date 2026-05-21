@@ -1,5 +1,78 @@
 # Project Status Log
 
+## 2026-05-21 — Pre-public-release polish: dashboard mode label + repo-root cwd guard
+
+Two ergonomic fixes ahead of opening the repo publicly:
+
+### 1. Dashboard mode label — cloud, not supabase
+
+The telemetry dashboard's freshness banner was hard-coding `'supabase'`
+in the Zod enum + collector, so users on RDS / Neon / Railway / self-hosted
+Postgres saw a misleading label. Since the M4 postgres-parity migration
+unified everything onto `AUDIT_DB_URL` (no JS-level distinction between
+"Supabase" and "Postgres"), the label is now `'cloud'`.
+
+- [scripts/lib/dashboard/schema.mjs:140](scripts/lib/dashboard/schema.mjs#L140) — `z.enum(['supabase', 'local-only'])` → `z.enum(['cloud', 'local-only'])`
+- [scripts/lib/dashboard/collect-telemetry.mjs:166](scripts/lib/dashboard/collect-telemetry.mjs#L166) — emits `'cloud'` when `auditRuns.data.cloud === true`
+
+### 2. Repo-root cwd guard for CLI entry points
+
+New helper [scripts/lib/assert-repo-root.mjs](scripts/lib/assert-repo-root.mjs)
+walks up from the calling script's path to find its `scripts/` parent
+directory, then asserts `process.cwd()` matches. On mismatch it writes
+an actionable "cd to <path> && re-run" message and exits(1). Catches
+the common mistake of cd'ing into `scripts/` or invoking a script with
+a path prefix from the wrong directory — relative paths like
+`.requirements/` and `.audit/` would otherwise resolve to surprising
+locations.
+
+Wired into 17 entry points using the uniform pattern
+`async function main() { assertRepoRoot(import.meta.url); ... }`. The
+6 oddballs that previously had bare top-level imperative code or
+in-script `isMain` gates were refactored to the same `main()` shape
+for uniformity — `sync-to-repos.mjs` was the biggest (188-line main
+loop re-indented + wrapped, deprecation warning moved inside main()).
+
+### Deliberately not guarded
+
+[scripts/cross-skill.mjs](scripts/cross-skill.mjs) and
+[scripts/skills-fit-check.mjs](scripts/skills-fit-check.mjs) are
+designed to be invoked from arbitrary cwd (cross-skill is called by
+tests with a temp dir as cwd; skills-fit-check accepts
+`--repo-root <path>`). Both still got the uniform `main()` wrapping
+for structural consistency, but no guard call.
+
+### Honest limitation
+
+The original user error that surfaced this (`node scripts/requirements.mjs`
+from the repo's parent directory, no path prefix) fails at Node's module
+loader BEFORE the script can run — no in-script guard can intercept it.
+The guard catches the adjacent cases:
+- `cd scripts && node requirements.mjs ...`
+- `node claude-engineering-skills/scripts/requirements.mjs ...` from `C:\GIT/`
+
+### Files Affected
+
+- New: [scripts/lib/assert-repo-root.mjs](scripts/lib/assert-repo-root.mjs) — the helper
+- New: [tests/assert-repo-root.test.mjs](tests/assert-repo-root.test.mjs) — 6 tests covering happy path, failure path, no-scripts-ancestor opt-out
+- 17 entry points wired: `requirements.mjs`, `build-dashboard.mjs`, `gemini-review.mjs`, `openai-audit.mjs`, `refine-prompts.mjs`, `skills-help.mjs`, `bandit.mjs`, `friction-log.mjs`, `phase7-check.mjs`, `install-prepush-hook.mjs`, `sync-to-repos.mjs`, plus `postgres-parity/generate-expected-schema.mjs`, `security-memory/refresh-incidents.mjs`, and `symbol-index/{drift,duplicates,prune,refresh,render-mermaid}.mjs`
+- 2 main()-wrapped but unguarded: `cross-skill.mjs`, `skills-fit-check.mjs`
+- Dashboard label: `scripts/lib/dashboard/{schema,collect-telemetry}.mjs`
+
+### Test cycle
+
+One revert during the sweep — initially guarded `cross-skill.mjs` and
+`skills-fit-check.mjs`, then the test suite caught it (`cross-skill
+compute-target-domains` + 4 related failures, all because tests spawn
+those scripts from temp dirs). Reverted the guard call from those two,
+kept the `main()` wrapping. Final: 2729 tests, 0 failures.
+
+### Next Steps
+
+- None blocking. Repo ready for public release.
+
+---
+
 ## 2026-05-21 — Setup-wizard rework: collapse pre-M4 adapter facade
 
 Cleanup pass on the user-facing setup surfaces left stale by the M4

@@ -35,6 +35,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -180,6 +181,7 @@ const QUERIES = {
 // ── Runner ─────────────────────────────────────────────────────────────────
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   const args = process.argv.slice(2);
   const outIdx = args.indexOf('--out');
   const outPath = outIdx >= 0 ? args[outIdx + 1] : DEFAULT_OUT;

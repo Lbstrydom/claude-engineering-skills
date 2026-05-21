@@ -30,6 +30,7 @@ import path from 'node:path';
 // Single source of truth for consumer repos — see scripts/lib/consumer-repos.mjs.
 // Adding a new consumer repo there auto-extends this script.
 import { CONSUMER_REPOS, resolveTargets } from './lib/consumer-repos.mjs';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush-hook.mjs';
 // Accept the legacy marker too so existing installs (pre-rename) can be
@@ -163,25 +164,30 @@ function installInRepo(repo) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
-const targetRepos = resolveTargets(targetName);
+function main() {
+  assertRepoRoot(import.meta.url);
+  const targetRepos = resolveTargets(targetName);
 
-if (targetRepos.length === 0) {
-  process.stdout.write(JSON.stringify({
-    ok: false,
-    error: `No matching repos for --target ${targetName} (available: ${CONSUMER_REPOS.map(r => r.alias).join(', ')})`,
-  }) + '\n');
-  process.exit(1);
-}
-
-const results = targetRepos.map(installInRepo);
-const ok = results.every(r => r.error === null || r.action === 'skip');
-
-if (format === 'human') {
-  for (const r of results) {
-    const icon = r.error ? '⚠' : (r.action === 'noop' ? '·' : '✓');
-    process.stdout.write(`${icon} ${r.repo.padEnd(20)} ${r.action}${r.error ? ` (${r.error})` : ''}\n`);
+  if (targetRepos.length === 0) {
+    process.stdout.write(JSON.stringify({
+      ok: false,
+      error: `No matching repos for --target ${targetName} (available: ${CONSUMER_REPOS.map(r => r.alias).join(', ')})`,
+    }) + '\n');
+    process.exit(1);
   }
-} else {
-  process.stdout.write(JSON.stringify({ ok, results }) + '\n');
+
+  const results = targetRepos.map(installInRepo);
+  const ok = results.every(r => r.error === null || r.action === 'skip');
+
+  if (format === 'human') {
+    for (const r of results) {
+      const icon = r.error ? '⚠' : (r.action === 'noop' ? '·' : '✓');
+      process.stdout.write(`${icon} ${r.repo.padEnd(20)} ${r.action}${r.error ? ` (${r.error})` : ''}\n`);
+    }
+  } else {
+    process.stdout.write(JSON.stringify({ ok, results }) + '\n');
+  }
+  process.exit(ok ? 0 : 1);
 }
-process.exit(ok ? 0 : 1);
+
+main();

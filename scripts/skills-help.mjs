@@ -23,6 +23,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import yaml from 'yaml';
 import { ArgvError } from './lib/cli-io.mjs';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const HELP_TEXT = `skills-help — quick reference for all available skills
 
@@ -267,6 +268,7 @@ function renderJson(skillsOrSkill) {
 // ── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   let args;
   try { args = parseArgs(process.argv.slice(2)); }
   catch (err) {

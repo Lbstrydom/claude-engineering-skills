@@ -23,6 +23,7 @@ import { ensureAuditDeps } from './lib/install/deps.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import { writeManifest } from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
@@ -291,13 +292,6 @@ function buildSkillFiles() {
 }
 const SKILL_FILES = buildSkillFiles();
 
-if (!KEEP_GITHUB_SKILLS) {
-  process.stderr.write(
-    '[sync] DEPRECATION: .github/skills/ surface is no longer mirrored to consumer repos.\n' +
-    '  Pass --keep-github-skills to preserve mirroring during the deprecation window.\n' +
-    '  Existing .github/skills/ directories in consumer repos are NOT deleted by this sync.\n'
-  );
-}
 
 /** Editor config files — MCP server wiring for VSCode Copilot Chat */
 const EDITOR_FILES = [
@@ -414,197 +408,211 @@ function deepMerge(target, source) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
-let totalNew = 0;
-let totalUpdated = 0;
-let totalUnchanged = 0;
-let totalErrors = 0;
+function main() {
+  assertRepoRoot(import.meta.url);
 
-const targetRepos = targetFilter
-  ? REPOS.filter(r => r.name === targetFilter || r.alias === targetFilter)
-  : REPOS;
-
-if (targetFilter && targetRepos.length === 0) {
-  console.error(`${R}Unknown target: "${targetFilter}"${X}`);
-  const knownTargets = REPOS.map(r => r.name + ' (' + r.alias + ')').join(', ');
-  console.error(`  Known: ${knownTargets}`);
-  process.exit(1);
-}
-
-const dryRunSuffix = DRY_RUN ? ' ' + Y + '[DRY RUN]' + X : '';
-console.log(B + 'Audit-Loop Sync' + X + dryRunSuffix);
-console.log(`  Source: ${SOURCE_ROOT}`);
-console.log('');
-
-// Regenerate the sync manifest BEFORE copying — its hash content needs to
-// reflect what we're about to ship to consumers.  The manifest is itself
-// in CORE_ASSETS so it gets included in the file copy below.
-if (!DRY_RUN) {
-  // Version-contract files = the core + arch import closure. These are the
-  // files consumers must keep in lockstep. Other bundles (learning/debt)
-  // are optional per-repo additions and not part of the version contract.
-  const { files: manifestFiles } = resolveBundle(
-    [...CORE_ENTRY, ...ARCH_ENTRY], CORE_ASSETS,
-  );
-  const { manifest } = writeManifest(SOURCE_ROOT, manifestFiles, {
-    repo: 'Lbstrydom/claude-engineering-skills',
-  });
-  console.log(`  ${G}manifest${X}  scripts/.sync-manifest.json @ ${manifest.commitSha?.slice(0, 7) || '?'} (${Object.keys(manifest.files).length} files)`);
-  console.log('');
-}
-
-for (const repo of targetRepos) {
-  if (!fs.existsSync(repo.path)) {
-    console.log(`${Y}Skipping ${repo.name}${X}: directory not found at ${repo.path}`);
-    console.log('');
-    continue;
+  if (!KEEP_GITHUB_SKILLS) {
+    process.stderr.write(
+      '[sync] DEPRECATION: .github/skills/ surface is no longer mirrored to consumer repos.\n' +
+      '  Pass --keep-github-skills to preserve mirroring during the deprecation window.\n' +
+      '  Existing .github/skills/ directories in consumer repos are NOT deleted by this sync.\n'
+    );
   }
 
-  let repoNew = 0, repoUpdated = 0, repoUnchanged = 0, repoErrors = 0;
+  let totalNew = 0;
+  let totalUpdated = 0;
+  let totalUnchanged = 0;
+  let totalErrors = 0;
 
-  console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
+  const targetRepos = targetFilter
+    ? REPOS.filter(r => r.name === targetFilter || r.alias === targetFilter)
+    : REPOS;
 
-  for (const relFile of repo.files) {
-    const srcPath = path.join(SOURCE_ROOT, relFile);
-    const dstPath = path.join(repo.path, relFile);
+  if (targetFilter && targetRepos.length === 0) {
+    console.error(`${R}Unknown target: "${targetFilter}"${X}`);
+    const knownTargets = REPOS.map(r => r.name + ' (' + r.alias + ')').join(', ');
+    console.error(`  Known: ${knownTargets}`);
+    process.exit(1);
+  }
 
-    // Source must exist
-    if (!fs.existsSync(srcPath)) {
-      console.log(`  ${Y}skip${X}  ${relFile} ${D}(not in source)${X}`);
+  const dryRunSuffix = DRY_RUN ? ' ' + Y + '[DRY RUN]' + X : '';
+  console.log(B + 'Audit-Loop Sync' + X + dryRunSuffix);
+  console.log(`  Source: ${SOURCE_ROOT}`);
+  console.log('');
+
+  // Regenerate the sync manifest BEFORE copying — its hash content needs to
+  // reflect what we're about to ship to consumers.  The manifest is itself
+  // in CORE_ASSETS so it gets included in the file copy below.
+  if (!DRY_RUN) {
+    // Version-contract files = the core + arch import closure. These are the
+    // files consumers must keep in lockstep. Other bundles (learning/debt)
+    // are optional per-repo additions and not part of the version contract.
+    const { files: manifestFiles } = resolveBundle(
+      [...CORE_ENTRY, ...ARCH_ENTRY], CORE_ASSETS,
+    );
+    const { manifest } = writeManifest(SOURCE_ROOT, manifestFiles, {
+      repo: 'Lbstrydom/claude-engineering-skills',
+    });
+    console.log(`  ${G}manifest${X}  scripts/.sync-manifest.json @ ${manifest.commitSha?.slice(0, 7) || '?'} (${Object.keys(manifest.files).length} files)`);
+    console.log('');
+  }
+
+  for (const repo of targetRepos) {
+    if (!fs.existsSync(repo.path)) {
+      console.log(`${Y}Skipping ${repo.name}${X}: directory not found at ${repo.path}`);
+      console.log('');
       continue;
     }
 
-    const srcSha = sha256(srcPath);
-    const dstSha = sha256(dstPath);
+    let repoNew = 0, repoUpdated = 0, repoUnchanged = 0, repoErrors = 0;
 
-    if (srcSha === dstSha) {
-      repoUnchanged++;
-      totalUnchanged++;
-      // Quiet for unchanged — only show in verbose mode
-      continue;
-    }
+    console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
 
-    const isNew = dstSha === null;
-    const label = isNew ? `${G}new${X}  ` : `${Y}upd${X}  `;
+    for (const relFile of repo.files) {
+      const srcPath = path.join(SOURCE_ROOT, relFile);
+      const dstPath = path.join(repo.path, relFile);
 
-    console.log(`  ${label} ${relFile}`);
-
-    if (DRY_RUN && !isNew) {
-      const diff = unifiedDiff(srcPath, dstPath, relFile);
-      // Show at most 40 lines of diff to keep output manageable
-      const lines = diff.split('\n');
-      const preview = lines.slice(0, 40).join('\n');
-      const truncated = lines.length > 40;
-      // Indent each diff line
-      console.log(preview.split('\n').map(l => '    ' + l).join('\n'));
-      if (truncated) console.log(`    ${D}... ${lines.length - 40} more lines${X}`);
-    }
-
-    if (!DRY_RUN) {
-      try {
-        // Ensure parent directory exists
-        fs.mkdirSync(path.dirname(dstPath), { recursive: true });
-        // JSON config files: merge instead of overwrite to preserve local customizations
-        if (relFile.endsWith('.json') && !isNew) {
-          const src = JSON.parse(fs.readFileSync(srcPath, 'utf-8'));
-          const dst = JSON.parse(fs.readFileSync(dstPath, 'utf-8'));
-          // Deep merge: source keys take precedence within shared objects (e.g. servers/mcpServers)
-          const merged = deepMerge(dst, src);
-          fs.writeFileSync(dstPath, JSON.stringify(merged, null, 2) + '\n');
-        } else {
-          fs.copyFileSync(srcPath, dstPath);
-        }
-      } catch (err) {
-        console.log(`  ${R}ERR${X}  ${relFile}: ${err.message}`);
-        repoErrors++;
-        totalErrors++;
+      // Source must exist
+      if (!fs.existsSync(srcPath)) {
+        console.log(`  ${Y}skip${X}  ${relFile} ${D}(not in source)${X}`);
         continue;
       }
+
+      const srcSha = sha256(srcPath);
+      const dstSha = sha256(dstPath);
+
+      if (srcSha === dstSha) {
+        repoUnchanged++;
+        totalUnchanged++;
+        // Quiet for unchanged — only show in verbose mode
+        continue;
+      }
+
+      const isNew = dstSha === null;
+      const label = isNew ? `${G}new${X}  ` : `${Y}upd${X}  `;
+
+      console.log(`  ${label} ${relFile}`);
+
+      if (DRY_RUN && !isNew) {
+        const diff = unifiedDiff(srcPath, dstPath, relFile);
+        // Show at most 40 lines of diff to keep output manageable
+        const lines = diff.split('\n');
+        const preview = lines.slice(0, 40).join('\n');
+        const truncated = lines.length > 40;
+        // Indent each diff line
+        console.log(preview.split('\n').map(l => '    ' + l).join('\n'));
+        if (truncated) console.log(`    ${D}... ${lines.length - 40} more lines${X}`);
+      }
+
+      if (!DRY_RUN) {
+        try {
+          // Ensure parent directory exists
+          fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+          // JSON config files: merge instead of overwrite to preserve local customizations
+          if (relFile.endsWith('.json') && !isNew) {
+            const src = JSON.parse(fs.readFileSync(srcPath, 'utf-8'));
+            const dst = JSON.parse(fs.readFileSync(dstPath, 'utf-8'));
+            // Deep merge: source keys take precedence within shared objects (e.g. servers/mcpServers)
+            const merged = deepMerge(dst, src);
+            fs.writeFileSync(dstPath, JSON.stringify(merged, null, 2) + '\n');
+          } else {
+            fs.copyFileSync(srcPath, dstPath);
+          }
+        } catch (err) {
+          console.log(`  ${R}ERR${X}  ${relFile}: ${err.message}`);
+          repoErrors++;
+          totalErrors++;
+          continue;
+        }
+      }
+
+      if (isNew) { repoNew++; totalNew++; }
+      else { repoUpdated++; totalUpdated++; }
     }
 
-    if (isNew) { repoNew++; totalNew++; }
-    else { repoUpdated++; totalUpdated++; }
-  }
+    const parts = [];
+    if (repoNew > 0) parts.push(`${G}+${repoNew} new${X}`);
+    if (repoUpdated > 0) parts.push(`${Y}~${repoUpdated} updated${X}`);
+    if (repoUnchanged > 0) parts.push(`${D}${repoUnchanged} unchanged${X}`);
+    if (repoErrors > 0) parts.push(`${R}${repoErrors} errors${X}`);
+    console.log(`  ${parts.join('  ')}`);
 
-  const parts = [];
-  if (repoNew > 0) parts.push(`${G}+${repoNew} new${X}`);
-  if (repoUpdated > 0) parts.push(`${Y}~${repoUpdated} updated${X}`);
-  if (repoUnchanged > 0) parts.push(`${D}${repoUnchanged} unchanged${X}`);
-  if (repoErrors > 0) parts.push(`${R}${repoErrors} errors${X}`);
-  console.log(`  ${parts.join('  ')}`);
-
-  // Surface genuinely-unresolved imports — a path-like specifier the graph
-  // walker could not resolve is a real missing dependency that would crash
-  // the consumer repo at runtime. Non-fatal (it may be a deliberate
-  // optional-dep guard), but loud so it doesn't go unnoticed.
-  const missing = realMissingDeps(repo.unresolved);
-  if (missing.length) {
-    console.log(`  ${Y}⚠ ${missing.length} unresolved import(s)${X} ${D}— possible missing dependency:${X}`);
-    for (const m of missing.slice(0, 8)) {
-      console.log(`    ${D}${m.from} → ${m.specifier}${X}`);
-    }
-  }
-
-  // Post-sync: ensure audit-loop npm deps are installed. Idempotent — no-op
-  // when the target already has everything. Without this step, sync can keep
-  // skill + script files current forever while the scripts silently fail to
-  // import at runtime because devDeps were never installed.
-  if (!DRY_RUN) {
-    try {
-      ensureAuditDeps(repo.path, { dryRun: false, quiet: false });
-    } catch (err) {
-      console.log(`  ${R}deps check failed${X}: ${err.message?.slice(0, 120)}`);
-    }
-  }
-
-  // Post-sync setup check — skip in dry-run (nothing was written)
-  if (!DRY_RUN) {
-    try {
-      execSync(
-        `node "${path.join(SOURCE_ROOT, 'scripts/check-setup.mjs')}" --repo-path "${repo.path}"`,
-        { stdio: 'inherit', timeout: 30000 }
-      );
-    } catch {
-      // check-setup exits 1 on failures — already printed the report, just continue
-    }
-  }
-
-  // First-sync skills fit-check — fires once per consumer when the
-  // sentinel report (`.skills-fit-check.json` in the consumer root) is
-  // absent. Subsequent syncs skip it silently; adopters re-run any time
-  // with `npm run skills:fit-check`. Best-effort, never blocks sync.
-  if (!DRY_RUN) {
-    const fitCheckSentinel = path.join(repo.path, '.skills-fit-check.json');
-    if (!fs.existsSync(fitCheckSentinel)) {
-      console.log('');
-      console.log(`  ${B}First sync — running skills fit-check${X}`);
-      try {
-        execSync(
-          `node "${path.join(SOURCE_ROOT, 'scripts/skills-fit-check.mjs')}" --repo-root "${repo.path}"`,
-          { stdio: 'inherit', timeout: 15000 }
-        );
-      } catch {
-        // Advisory diagnostic — never block the sync flow.
+    // Surface genuinely-unresolved imports — a path-like specifier the graph
+    // walker could not resolve is a real missing dependency that would crash
+    // the consumer repo at runtime. Non-fatal (it may be a deliberate
+    // optional-dep guard), but loud so it doesn't go unnoticed.
+    const missing = realMissingDeps(repo.unresolved);
+    if (missing.length) {
+      console.log(`  ${Y}⚠ ${missing.length} unresolved import(s)${X} ${D}— possible missing dependency:${X}`);
+      for (const m of missing.slice(0, 8)) {
+        console.log(`    ${D}${m.from} → ${m.specifier}${X}`);
       }
     }
-  }
-  console.log('');
-}
 
-// Summary
-console.log('─'.repeat(40));
-if (DRY_RUN) {
-  console.log(`${Y}DRY RUN complete${X} — no files written`);
-  console.log(`  Would create: ${totalNew}  update: ${totalUpdated}  unchanged: ${totalUnchanged}`);
-  if (totalNew + totalUpdated > 0) {
-    console.log(`\nRun without --dry-run to apply.`);
+    // Post-sync: ensure audit-loop npm deps are installed. Idempotent — no-op
+    // when the target already has everything. Without this step, sync can keep
+    // skill + script files current forever while the scripts silently fail to
+    // import at runtime because devDeps were never installed.
+    if (!DRY_RUN) {
+      try {
+        ensureAuditDeps(repo.path, { dryRun: false, quiet: false });
+      } catch (err) {
+        console.log(`  ${R}deps check failed${X}: ${err.message?.slice(0, 120)}`);
+      }
+    }
+
+    // Post-sync setup check — skip in dry-run (nothing was written)
+    if (!DRY_RUN) {
+      try {
+        execSync(
+          `node "${path.join(SOURCE_ROOT, 'scripts/check-setup.mjs')}" --repo-path "${repo.path}"`,
+          { stdio: 'inherit', timeout: 30000 }
+        );
+      } catch {
+        // check-setup exits 1 on failures — already printed the report, just continue
+      }
+    }
+
+    // First-sync skills fit-check — fires once per consumer when the
+    // sentinel report (`.skills-fit-check.json` in the consumer root) is
+    // absent. Subsequent syncs skip it silently; adopters re-run any time
+    // with `npm run skills:fit-check`. Best-effort, never blocks sync.
+    if (!DRY_RUN) {
+      const fitCheckSentinel = path.join(repo.path, '.skills-fit-check.json');
+      if (!fs.existsSync(fitCheckSentinel)) {
+        console.log('');
+        console.log(`  ${B}First sync — running skills fit-check${X}`);
+        try {
+          execSync(
+            `node "${path.join(SOURCE_ROOT, 'scripts/skills-fit-check.mjs')}" --repo-root "${repo.path}"`,
+            { stdio: 'inherit', timeout: 15000 }
+          );
+        } catch {
+          // Advisory diagnostic — never block the sync flow.
+        }
+      }
+    }
+    console.log('');
   }
-} else {
-  if (totalErrors > 0) {
-    console.log(`${R}Sync completed with errors${X}`);
+
+  // Summary
+  console.log('─'.repeat(40));
+  if (DRY_RUN) {
+    console.log(`${Y}DRY RUN complete${X} — no files written`);
+    console.log(`  Would create: ${totalNew}  update: ${totalUpdated}  unchanged: ${totalUnchanged}`);
+    if (totalNew + totalUpdated > 0) {
+      console.log(`\nRun without --dry-run to apply.`);
+    }
   } else {
-    console.log(`${G}Sync complete${X}`);
+    if (totalErrors > 0) {
+      console.log(`${R}Sync completed with errors${X}`);
+    } else {
+      console.log(`${G}Sync complete${X}`);
+    }
+    console.log(`  Created: ${totalNew}  Updated: ${totalUpdated}  Unchanged: ${totalUnchanged}  Errors: ${totalErrors}`);
   }
-  console.log(`  Created: ${totalNew}  Updated: ${totalUpdated}  Unchanged: ${totalUnchanged}  Errors: ${totalErrors}`);
+
+  process.exit(totalErrors > 0 ? 1 : 0);
 }
 
-process.exit(totalErrors > 0 ? 1 : 0);
+main();

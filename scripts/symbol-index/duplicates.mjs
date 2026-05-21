@@ -26,6 +26,7 @@ import {
   getTopDuplicateClusters,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
+import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 
 function parseArgs(argv) {
   const args = { limit: 20, json: false };
@@ -62,6 +63,7 @@ function renderText(clusters, repoName) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
   await initLearningStore();
   if (!isCloudEnabled()) {

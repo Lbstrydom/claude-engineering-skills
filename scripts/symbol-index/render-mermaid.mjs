@@ -30,6 +30,7 @@ import {
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { renderArchitectureMap } from '../lib/arch-render.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
+import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 
 function parseArgs(argv) {
   const args = { out: 'docs/architecture-map.md' };
@@ -51,6 +52,7 @@ function classify(score, threshold) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
   const outPath = path.resolve(args.out);
   const repoRoot = process.cwd();

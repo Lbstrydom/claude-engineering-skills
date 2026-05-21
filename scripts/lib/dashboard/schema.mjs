@@ -137,7 +137,7 @@ export const TelemetryDataSchema = z.object({
   provenance: z.object({
     generatedAt: z.string(),
     baseSha: z.string(),
-    mode: z.enum(['supabase', 'local-only']),
+    mode: z.enum(['cloud', 'local-only']),
   }),
   sources: SourcesMapSchema,
   auditRuns: z.object({

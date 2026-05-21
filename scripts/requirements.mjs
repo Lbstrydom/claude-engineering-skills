@@ -17,6 +17,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock } from './lib/brainstorm/file-lock.mjs';
 import { extractRequirements } from './lib/requirements/extract.mjs';
@@ -178,6 +179,7 @@ function cmdRender(argv, baseDir) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   const argv = process.argv.slice(2);
   const mode = argv[0];
   const baseDir = process.cwd();

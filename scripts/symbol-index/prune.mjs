@@ -26,6 +26,7 @@ import {
   listRollbacksForRepo,
   demoteRefreshRuns,
 } from '../learning-store.mjs';
+import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 
 function parseArgs(argv) {
   const args = { dryRun: false };
@@ -41,6 +42,7 @@ const TRANSIENT_RETAIN_DAYS = 30;
 const ABORTED_RETAIN_DAYS = 7;
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
   await initLearningStore();
   if (!await isCloudEnabled()) {

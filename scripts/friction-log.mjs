@@ -21,6 +21,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const VALID_SEVERITIES = ['note', 'annoyance', 'blocker'];
 const FALLBACK_PATH    = '.audit/friction-log.jsonl';
@@ -181,7 +182,8 @@ const isMain = (() => {
   } catch { return false; }
 })();
 
-if (isMain) {
+async function main() {
+  assertRepoRoot(import.meta.url);
   const result = await runFrictionLog(process.argv.slice(2));
   if (result.help) {
     process.stdout.write(result.help);
@@ -202,4 +204,8 @@ if (isMain) {
   } else {
     process.stderr.write(`✓ logged [${result.severity}] to local fallback (${result.fallback}) — will replay on next cloud sync\n`);
   }
+}
+
+if (isMain) {
+  await main();
 }

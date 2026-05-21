@@ -27,6 +27,7 @@ import { collectTelemetry } from './lib/dashboard/collect-telemetry.mjs';
 import { renderDocument } from './lib/dashboard/render.mjs';
 import { loadAssets } from './lib/dashboard/load-assets.mjs';
 import { serve } from './lib/dashboard/serve.mjs';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const HELP = `build-dashboard — generate the local navigable dashboard
 
@@ -126,6 +127,7 @@ function reportDegraded(results) {
 }
 
 async function main() {
+  assertRepoRoot(import.meta.url);
   let args;
   try { args = parseArgs(process.argv.slice(2)); }
   catch (err) {

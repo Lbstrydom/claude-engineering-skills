@@ -14,6 +14,7 @@ import { createRNG } from './lib/rng.mjs';
 import {
   GLOBAL_CONTEXT_BUCKET, normalizeLanguage, learningConfig
 } from './lib/config.mjs';
+import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const MIN_BUCKET_SAMPLES = learningConfig.minBucketSamples;
 const UCB_MIN_PULLS = learningConfig.ucbMinPulls;
@@ -416,7 +417,8 @@ export function computePassReward(evaluationRecord) {
 
 // ── CLI interface ───────────────────────────────────────────────────────────
 
-if (process.argv[1]?.endsWith('bandit.mjs')) {
+function main() {
+  assertRepoRoot(import.meta.url);
   const cmd = process.argv[2];
   const bandit = new PromptBandit();
 
@@ -449,4 +451,8 @@ if (process.argv[1]?.endsWith('bandit.mjs')) {
     console.log('Usage: node scripts/bandit.mjs stats');
     console.log('       node scripts/bandit.mjs add <pass-name> <variant-id>');
   }
+}
+
+if (process.argv[1]?.endsWith('bandit.mjs')) {
+  main();
 }
