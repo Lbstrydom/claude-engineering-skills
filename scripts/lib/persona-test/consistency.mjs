@@ -463,7 +463,29 @@ function locatorToString(locator) {
   }
 }
 
-function appliesToCurrent(appliesTo, context) {
+/**
+ * Gate a surface's applicability for the current capture context.
+ *
+ * The three sub-rules:
+ *  - `routePattern` — regex against `context.currentRoute` (typically
+ *    `page.url()` minus protocol/host).
+ *  - `journeyStepLabels` — `context.currentStepLabel` must be in the list.
+ *  - `requiresState` — `context.activeStateTags` must include EVERY tag
+ *    in the list. State tags are typically derived by the runner from
+ *    chip-style projections in `witness.domClaims` (e.g. a domClaim with
+ *    `engineField === 'stateV2'` contributes its `domValueRaw` as a tag).
+ *
+ * Exported so the runner's `detectUnannotatedSurfaces` (and any future
+ * pre-diff gates) can share the same applicability logic the
+ * `missing-surface` path uses. Closes wine-cellar issue #40 partial
+ * gating — previously this was reachable only via `_internals`, so the
+ * unannotated-surface path silently bypassed it.
+ *
+ * @param {import('./schemas.mjs').SurfaceApplicability|undefined|null} appliesTo
+ * @param {{ currentRoute?: string, currentStepLabel?: string, activeStateTags?: string[] }} context
+ * @returns {boolean}
+ */
+export function appliesToCurrent(appliesTo, context) {
   if (!appliesTo) return true;   // unrestricted surfaces always apply
   if (appliesTo.routePattern && context.currentRoute) {
     let re;

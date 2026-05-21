@@ -29,7 +29,7 @@ import { resolveManifest }       from './lib/persona-test/manifest-resolver.mjs'
 import { loadCanary, verifyExpectations, canaryExpectsShape, candidateFingerprint }
   from './lib/persona-test/canary.mjs';
 import { openLedger }            from './lib/persona-test/ledger.mjs';
-import { diffClaims, manifestQualityWarnings } from './lib/persona-test/consistency.mjs';
+import { diffClaims, manifestQualityWarnings, appliesToCurrent } from './lib/persona-test/consistency.mjs';
 import { attachNetworkListener, captureWitness }
   from './lib/ux-lock/capture.mjs';
 import {
@@ -327,20 +327,33 @@ export async function runConsistency(args, deps = {}) {
       // nothing at all". Both previously rolled into missing-surface;
       // the former is "you haven't annotated yet" (common during staged
       // rollout) and the latter is "the route/state is wrong".
+      // Derive activeStateTags from any chip-style domClaim that projects
+      // a state-shaped enum field (closes wine-cellar issue #40 partial
+      // gating — without this, `appliesTo.requiresState` is dead code).
+      // The chip + any explicit state-projecting surface (e.g. stateV2,
+      // mode, status fields) contributes its captured value as a tag.
+      const STATE_FIELDS = new Set(['stateV2', 'state', 'mode', 'status']);
+      const activeStateTags = (witness?.domClaims || [])
+        .filter((c) => STATE_FIELDS.has(c.engineField) && c.visible && c.domValueRaw)
+        .map((c) => c.domValueRaw);
+
+      const stepContext = {
+        currentRoute: safeCurrentRoute(page),
+        currentStepLabel: step.label,
+        activeStateTags,
+      };
+
       const unannotatedFindings = await detectUnannotatedSurfaces(
         page,
         manifestResult.manifest,
         witness,
-        { currentRoute: safeCurrentRoute(page), currentStepLabel: step.label },
+        stepContext,
       );
 
       // Diff. Semantic compare is off by default in the runner — wire when
       // Phase 4.1 (canary --enable-semantic) lands.
       const rawContradictions = await diffClaims(witness, manifestResult.manifest, {
-        context: {
-          currentRoute: safeCurrentRoute(page),
-          currentStepLabel: step.label,
-        },
+        context: stepContext,
       });
       // Strip missing-surface findings for surfaces that detectUnannotatedSurfaces
       // already classified as `unannotated-surface` — same root surface,
@@ -610,7 +623,7 @@ async function awaitManifestNetworkSources(page, manifest, listener, opts = {}) 
  * @param {object} page
  * @param {import('./lib/persona-test/schemas.mjs').SurfaceManifest} manifest
  * @param {import('./lib/persona-test/schemas.mjs').WitnessRecord} witness
- * @param {{ currentRoute?: string }} ctx
+ * @param {{ currentRoute?: string, currentStepLabel?: string, activeStateTags?: string[] }} ctx
  * @returns {Promise<import('./lib/persona-test/schemas.mjs').Contradiction[]>}
  */
 async function detectUnannotatedSurfaces(page, manifest, witness, ctx = {}) {
@@ -618,6 +631,12 @@ async function detectUnannotatedSurfaces(page, manifest, witness, ctx = {}) {
   const seenSurfaceIds = new Set((witness?.domClaims || []).map((c) => c.surfaceId));
   for (const surface of (manifest?.surfaces || [])) {
     if (seenSurfaceIds.has(surface.id)) continue;   // annotated — diff handled it
+    // Gate by appliesTo — mirror the missing-surface path (line ~378 of
+    // consistency.mjs). Closes the partial-gating gap from wine-cellar
+    // issue #40: previously this scan iterated ALL surfaces, so an
+    // analysis-view surface declaring `routePattern: 'view=analysis'`
+    // would still false-positive `unannotated-surface` on the grid view.
+    if (!appliesToCurrent(surface.appliesTo, ctx)) continue;
     // Quick locator probe — uses Playwright's locator API in the runner
     // (not the browser context) so we get the same kind-resolution rules
     // as the runner's executeStep.

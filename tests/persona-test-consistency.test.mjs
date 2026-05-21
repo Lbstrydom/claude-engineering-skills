@@ -375,6 +375,41 @@ describe('diffClaims — missing-surface respects appliesTo', () => {
     const missing = f.find((x) => x.kind === 'missing-surface');
     assert.ok(missing);
   });
+
+  // Closes wine-cellar adoption issue #40 partial-gating: requiresState
+  // was schema-accepted but the gate fired only when `activeStateTags`
+  // was supplied by the caller. The runner now derives those tags from
+  // state-projecting domClaims (stateV2 / state / mode / status); these
+  // tests pin the contract that the gate honours them.
+  it('requiresState present + matching activeStateTags → surface applies', async () => {
+    const m = makeManifest();
+    m.surfaces[0].appliesTo = { requiresState: ['blocked'] };
+    const f = await diffClaims(emptyWitness(), m, {
+      context: { activeStateTags: ['blocked'] },
+    });
+    const missing = f.find((x) => x.kind === 'missing-surface');
+    assert.ok(missing, 'requiresState matches → missing-surface still fires');
+  });
+
+  it('requiresState present + non-matching activeStateTags → surface skipped', async () => {
+    const m = makeManifest();
+    m.surfaces[0].appliesTo = { requiresState: ['blocked'] };
+    const f = await diffClaims(emptyWitness(), m, {
+      context: { activeStateTags: ['major'] },
+    });
+    const missing = f.find((x) => x.kind === 'missing-surface');
+    assert.equal(missing, undefined, 'requiresState mismatches → no false-positive');
+  });
+
+  it('requiresState present + activeStateTags omitted by caller → surface skipped (legacy callers)', async () => {
+    const m = makeManifest();
+    m.surfaces[0].appliesTo = { requiresState: ['blocked'] };
+    const f = await diffClaims(emptyWitness(), m, { context: {} });
+    const missing = f.find((x) => x.kind === 'missing-surface');
+    // No activeStateTags ⇒ requiresState clause cannot evaluate ⇒ default
+    // is "applies" (the existing behavior — backwards-compat).
+    assert.ok(missing, 'no activeStateTags → assume applies (legacy callers preserved)');
+  });
 });
 
 // ────────────────────────────────────────────────────────────────────────────
