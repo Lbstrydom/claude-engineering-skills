@@ -1,0 +1,167 @@
+/**
+ * @fileoverview Security-incidents domain (plan: docs/plans/security-memory-v1.md).
+ *
+ * Part of the postgres-parity M3 split. Translates 5 security_incidents
+ * functions. The composite incident_neighbourhood RPC is bridged through
+ * the M1 wrapper.
+ *
+ * @module scripts/lib/store/security
+ */
+
+import { many, one, updateWhere, upsert } from '../db/query.mjs';
+import { incidentNeighbourhood as rpcIncidentNeighbourhood } from '../db/rpc.mjs';
+import { isCloudEnabled } from './repo.mjs';
+
+// Same chunk size the legacy path uses for chunked upserts (the Supabase
+// REST body cap is gone now, but keeping the chunk size preserves the
+// same network shape + makes incremental progress visible in logs).
+const UPSERT_CHUNK_SIZE = 500;
+
+function chunk(arr, n) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+}
+
+/**
+ * UPSERT a batch of parsed incidents from docs/security-strategy.md.
+ * Chunked at 500 rows per request — matches the legacy chunking.
+ *
+ * Note: `embedding` is a JS number[] (the legacy supabase-js path serialised
+ * it as a Postgres array literal). For pgvector columns, the column type is
+ * VECTOR(N); the `pg` driver's array codec produces `{1,2,3}` which pgvector
+ * accepts via implicit cast. If pgvector rejects this, the upsert will
+ * surface a 22P02 with the column name and we'll need to format the literal
+ * as `[1,2,3]::vector` explicitly (mirrors rpc.mjs::vectorLiteral).
+ *
+ * @param {string} repoId
+ * @param {Array<object>} incidents
+ * @returns {Promise<{upserted: number}>}
+ */
+export async function recordSecurityIncidents(repoId, incidents) {
+  if (!Array.isArray(incidents) || incidents.length === 0) return { upserted: 0 };
+  if (!await isCloudEnabled()) return { upserted: 0 };
+  let upserted = 0;
+  for (const batch of chunk(incidents, UPSERT_CHUNK_SIZE)) {
+    const payload = batch.map((i) => ({
+      repo_id: repoId,
+      incident_id: i.incident_id,
+      description: i.description,
+      affected_paths: i.affected_paths,
+      mitigation_ref: i.mitigation_ref,
+      mitigation_kind: i.mitigation_kind,
+      lessons_learned: i.lessons_learned,
+      embedding: formatVectorOrNull(i.embedding),
+      embedding_model: i.embedding_model,
+      embedding_dim: i.embedding_dim,
+      source_fingerprint: i.source_fingerprint,
+      status: i.status,
+      status_check_at: i.status_check_at,
+    }));
+    await upsert('security_incidents', payload, {
+      onConflict: ['repo_id', 'incident_id'],
+      update: 'all',
+    });
+    upserted += payload.length;
+  }
+  return { upserted };
+}
+
+/**
+ * Cache-hit comparison reader during refresh. Returns the rows in their
+ * compact shape used by the refresh loop.
+ */
+export async function getSecurityIncidentsByRepo(repoId) {
+  if (!repoId || !await isCloudEnabled()) return [];
+  return many(
+    `SELECT id, incident_id, source_fingerprint, embedding_model, embedding_dim,
+            status, mitigation_ref, mitigation_kind
+       FROM security_incidents
+      WHERE repo_id = $1`,
+    [repoId]
+  );
+}
+
+/**
+ * Mark a set of incidents as historical (sweep — R-Gemini-r2-G2).
+ * `IN` clause translation: we expand to a `= ANY($2)` so the JS array
+ * binds natively as a `text[]`.
+ */
+export async function markIncidentsHistorical(repoId, incidentIds) {
+  if (!Array.isArray(incidentIds) || incidentIds.length === 0) return { marked: 0 };
+  if (!await isCloudEnabled()) return { marked: 0 };
+  await many(
+    `UPDATE security_incidents
+        SET status = 'historical', status_check_at = $2
+      WHERE repo_id = $1 AND incident_id = ANY($3)`,
+    [repoId, new Date().toISOString(), incidentIds]
+  );
+  return { marked: incidentIds.length };
+}
+
+/**
+ * Freshness check — most recent updated_at on this repo's incidents.
+ * R2-H2.
+ *
+ * @returns {Promise<string|null>}
+ */
+export async function getMaxIncidentRefreshAt(repoId) {
+  if (!repoId || !await isCloudEnabled()) return null;
+  try {
+    const row = await one(
+      `SELECT updated_at
+         FROM security_incidents
+        WHERE repo_id = $1
+        ORDER BY updated_at DESC
+        LIMIT 1`,
+      [repoId]
+    );
+    return row?.updated_at ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Composite incident-neighbourhood RPC. Bridges through the M1 wrapper
+ * and re-shapes the rows (camelCase + Number-cast) to match the legacy
+ * return contract.
+ */
+export async function callIncidentNeighbourhoodRpc({ repoId, targetPaths, intentEmbedding, k }) {
+  if (!await isCloudEnabled()) return [];
+  let rows;
+  try {
+    rows = await rpcIncidentNeighbourhood({ repoId, targetPaths, intentEmbedding, k });
+  } catch (err) {
+    const e = new Error(`incident_neighbourhood RPC failed: ${err.message}`);
+    e.code = 'RPC_ERROR';
+    throw e;
+  }
+  return rows.map((r) => ({
+    incidentId: r.incident_id,
+    description: r.description,
+    affectedPaths: r.affected_paths,
+    mitigationRef: r.mitigation_ref,
+    status: r.status,
+    lessonsLearned: r.lessons_learned,
+    cosineScore: Number(r.cosine_score),
+    pathOverlap: r.path_overlap === true,
+    mitigationBonus: Number(r.mitigation_bonus),
+    recencyDecay: Number(r.recency_decay),
+  }));
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
+
+/**
+ * Format a JS number[] embedding as a pgvector literal string the same
+ * way rpc.mjs::vectorLiteral does, so the upsert can write directly into
+ * a VECTOR(N) column. Returns null for null/undefined embeddings.
+ */
+function formatVectorOrNull(embedding) {
+  if (embedding == null) return null;
+  if (!Array.isArray(embedding)) {
+    throw new TypeError(`security_incidents: embedding must be number[] or null`);
+  }
+  return `[${embedding.join(',')}]`;
+}
