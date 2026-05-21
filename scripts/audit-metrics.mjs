@@ -15,8 +15,9 @@
 
 import 'dotenv/config';
 import { pathToFileURL } from 'node:url';
-import { createClient } from '@supabase/supabase-js';
 import { loadOutcomes } from './lib/findings-outcomes.mjs';
+import { many } from './lib/db/query.mjs';
+import { getPool } from './lib/db/client.mjs';
 
 const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', B = '\x1b[1m', X = '\x1b[0m';
 
@@ -26,56 +27,40 @@ const args = process.argv.slice(2);
 const JSON_MODE = args.includes('--json');
 const DAYS = Number.parseInt(args[args.indexOf('--days') + 1] || '30', 10) || 30;
 
-// ── Supabase ────────────────────────────────────────────────────────────────
-
-let sb = null;
-if (process.env.SUPABASE_AUDIT_URL && process.env.SUPABASE_AUDIT_ANON_KEY) {
-  sb = createClient(process.env.SUPABASE_AUDIT_URL, process.env.SUPABASE_AUDIT_ANON_KEY);
-}
-
 // ── Data Fetching ───────────────────────────────────────────────────────────
 
 /**
- * Fetch audit metrics from Supabase. Exported so other tooling (the
- * dashboard telemetry collector) can reuse it.
+ * Fetch audit metrics from the cloud store. Exported so the dashboard
+ * telemetry collector can reuse it.
  *
- * Supabase's `.select()` returns `{data, error}` and does NOT throw on
- * network/credential failure — so we MUST inspect `.error` explicitly and
- * throw, otherwise a transport error silently degrades to an empty result
- * (a false-empty `ok`). See docs/plans/local-dashboard.md (Gemini-G1).
+ * M4 — migrated off `@supabase/supabase-js` to the new pg seam. The
+ * legacy `sb` parameter is kept for backwards compat with importing
+ * callers but is now ignored — connectivity is gated on `AUDIT_DB_URL`
+ * via `getPool()` returning non-null. Errors propagate as exceptions
+ * (matching the post-Gemini-G1 contract: no silent empty-result on
+ * transport failure).
  *
- * @param {import('@supabase/supabase-js').SupabaseClient|null} sb
+ * @param {*} _sb - legacy positional arg, ignored under the pg path
  * @param {number} days lookback window
- * @returns {Promise<{runs,passStats,findings,labeled}|null>} null when no client
+ * @returns {Promise<{runs,passStats,findings,labeled}|null>} null when no DB pool
  */
-export async function fetchCloudMetrics(sb, days) {
-  if (!sb) return null;
+export async function fetchCloudMetrics(_sb, days) {
+  const pool = await getPool();
+  if (!pool) return null;
 
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
-  const [runsRes, passRes, findingsRes] = await Promise.all([
-    sb.from('audit_runs').select('*').gte('created_at', since),
-    sb.from('audit_pass_stats').select('*').gte('created_at', since),
-    sb.from('audit_findings').select('severity, adjudication_outcome, pass_name').gte('created_at', since),
+  const [runs, passStats, findings] = await Promise.all([
+    many(`SELECT * FROM audit_runs WHERE created_at >= $1`, [since]),
+    many(`SELECT * FROM audit_pass_stats WHERE created_at >= $1`, [since]),
+    many(
+      `SELECT severity, adjudication_outcome, pass_name
+         FROM audit_findings WHERE created_at >= $1`,
+      [since]
+    ),
   ]);
 
-  for (const [label, res] of [['audit_runs', runsRes], ['audit_pass_stats', passRes], ['audit_findings', findingsRes]]) {
-    if (res && res.error) {
-      const e = res.error;
-      // Preserve the provider's diagnostics — code + details + hint — not
-      // just the message, so callers can act on the real failure.
-      const parts = [e.message || String(e)];
-      if (e.code) parts.push(`code=${e.code}`);
-      if (e.details) parts.push(`details=${e.details}`);
-      if (e.hint) parts.push(`hint=${e.hint}`);
-      throw new Error(`Supabase ${label} query failed: ${parts.join(' | ')}`);
-    }
-  }
-
-  const runs = runsRes.data || [];
-  const passStats = passRes.data || [];
-  const findings = findingsRes.data || [];
-  const labeled = runs.filter(r => r.labeled);
+  const labeled = runs.filter((r) => r.labeled);
 
   return { runs, passStats, findings, labeled };
 }
@@ -179,12 +164,12 @@ function displayMetrics(cloud, local) {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  // `fetchCloudMetrics` now THROWS on a Supabase error (so the dashboard
+  // `fetchCloudMetrics` now THROWS on a DB error (so the dashboard
   // collector can classify it) — but this CLI must still degrade
   // gracefully to local-only output rather than crash.
   let cloud = null;
   try {
-    cloud = await fetchCloudMetrics(sb, DAYS);
+    cloud = await fetchCloudMetrics(null, DAYS);
   } catch (err) {
     process.stderr.write(`  ${Y}cloud metrics unavailable — showing local only: ${err.message}${X}\n`);
   }

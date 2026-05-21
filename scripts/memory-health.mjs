@@ -55,18 +55,15 @@ function parseArgs(argv) {
 }
 
 async function callRpc() {
-  if (!process.env.SUPABASE_AUDIT_URL || !process.env.SUPABASE_AUDIT_ANON_KEY) {
-    throw new Error('SUPABASE_AUDIT_URL / SUPABASE_AUDIT_ANON_KEY not set — cannot run health check');
+  // M4 — migrated off direct supabase-js + raw RPC to the typed M1 wrapper.
+  // Requires AUDIT_DB_URL (Postgres DSN); the legacy SUPABASE_AUDIT_URL +
+  // ANON_KEY pair only sufficed because supabase-js wraps PostgREST.
+  if (!process.env.AUDIT_DB_URL) {
+    throw new Error('AUDIT_DB_URL not set — cannot run health check (legacy SUPABASE_AUDIT_* keys were sunset in postgres-parity M4)');
   }
-  const { createClient } = await import('@supabase/supabase-js');
-  const supabase = createClient(
-    process.env.SUPABASE_AUDIT_URL,
-    process.env.SUPABASE_AUDIT_ANON_KEY
-  );
-  const { data, error } = await supabase.rpc('memory_health_metrics', {
-    window_days: WINDOW_DAYS
-  });
-  if (error) throw new Error(`RPC failed: ${error.message}`);
+  const { memoryHealthMetrics } = await import('./lib/db/rpc.mjs');
+  const data = await memoryHealthMetrics({ windowDays: WINDOW_DAYS });
+  if (!data) throw new Error('memory_health_metrics returned null');
   return data;
 }
 

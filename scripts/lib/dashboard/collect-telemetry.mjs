@@ -9,7 +9,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import 'dotenv/config';
-import { createClient } from '@supabase/supabase-js';
 import { fetchCloudMetrics, computeLocalMetrics } from '../../audit-metrics.mjs';
 import { getLearningStats } from '../learning/stats.mjs';
 import { redactSecrets } from '../sanitizer.mjs';
@@ -17,12 +16,10 @@ import { redactSecrets } from '../sanitizer.mjs';
 const DAYS = 30;
 const MAX_REQ_ITEMS = 200;
 
-/** Build a Supabase client from env, or null when unconfigured. */
-function makeClient() {
-  const url = process.env.SUPABASE_AUDIT_URL;
-  const key = process.env.SUPABASE_AUDIT_ANON_KEY;
-  return url && key ? createClient(url, key) : null;
-}
+// M4 — Supabase client is gone. fetchCloudMetrics now ignores its first
+// positional arg and reaches into the shared pg pool via lib/db/client.mjs.
+// We keep the call shape so the rest of this collector + audit-metrics
+// stays unchanged; the legacy `sb` is just passed as null.
 
 /** Aggregate raw `audit_pass_stats` rows into per-pass totals. */
 function aggregatePasses(passStats) {
@@ -155,9 +152,10 @@ async function collectLearning(root) {
 export async function collectTelemetry(opts = {}) {
   const root = process.cwd();
   const git = opts.git || { baseSha: 'unknown' };
-  const sb = makeClient();
 
-  const [auditRuns, learning] = await Promise.all([collectAuditRuns(sb), collectLearning(root)]);
+  // M4 — collectAuditRuns no longer needs a client param; it pulls from the
+  // shared pg pool via lib/db/client.mjs. Pass null for the legacy positional.
+  const [auditRuns, learning] = await Promise.all([collectAuditRuns(null), collectLearning(root)]);
   const requirements = collectRequirements(root);
 
   return {

@@ -21,15 +21,15 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', B = '\x1b[1m', D = '\x1b[2
 
 const REPO = 'https://github.com/Lbstrydom/claude-engineering-skills.git';
 const SCRIPTS = ['openai-audit.mjs','shared.mjs','gemini-review.mjs','bandit.mjs','refine-prompts.mjs','learning-store.mjs','phase7-check.mjs'];
-const DEPS = ['openai','zod','dotenv','@google/genai','@anthropic-ai/sdk','@supabase/supabase-js'];
+// M4 — `@supabase/supabase-js` removed; `pg` (the Postgres driver) is the
+// new cloud-store dependency. Anyone running the audit-loop now needs `pg`,
+// not supabase-js.
+const DEPS = ['openai','zod','dotenv','@google/genai','@anthropic-ai/sdk','pg'];
 const KEYS = [
   { name: 'OPENAI_API_KEY', req: true, hint: 'GPT-5.4 auditing (required)' },
   { name: 'GEMINI_API_KEY', req: false, hint: 'Gemini 3.1 Pro final review' },
   { name: 'ANTHROPIC_API_KEY', req: false, hint: 'Claude Haiku context briefs' },
-  { name: 'SUPABASE_AUDIT_URL', req: false, hint: 'audit-loop cloud learning store URL' },
-  { name: 'SUPABASE_AUDIT_ANON_KEY', req: false, hint: 'audit-loop cloud learning store key' },
-  { name: 'PERSONA_TEST_SUPABASE_URL', req: false, hint: 'persona-test session memory URL' },
-  { name: 'PERSONA_TEST_SUPABASE_ANON_KEY', req: false, hint: 'persona-test session memory key' },
+  { name: 'AUDIT_DB_URL', req: false, hint: 'audit-loop cloud store Postgres DSN (Supabase Connect → Session pooler)' },
   { name: 'PERSONA_TEST_APP_URL', req: false, hint: 'default app URL for /persona-test list (e.g. https://myapp.railway.app)' },
   { name: 'PERSONA_TEST_REPO_NAME', req: false, hint: 'repo name for cross-referencing audit findings (e.g. wine-cellar-app)' }
 ];

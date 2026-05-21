@@ -56,25 +56,22 @@ function loadEnv(repoPath) {
   return env;
 }
 
-// ── Supabase helpers ──────────────────────────────────────────────────────────
-
-async function getSupabaseClient(url, key) {
-  const { createClient } = await import('@supabase/supabase-js');
-  return createClient(url, key);
-}
+// ── Postgres helpers (M4 — migrated off supabase-js) ──────────────────────────
 
 /**
- * Probe each table by attempting a zero-row select.
- * PostgREST doesn't expose information_schema, so we probe directly.
- * Error code 42P01 = relation does not exist.
+ * Probe each table+view via information_schema. Returns
+ * `{name, exists}[]`.  Pure Postgres reads through the new pg seam.
  */
-async function checkTables(sb, tableNames) {
-  const results = await Promise.all(tableNames.map(async (name) => {
-    const { error } = await sb.from(name).select('*').limit(0);
-    const missing = error && (error.code === '42P01' || error.message?.includes('does not exist'));
-    return { name, exists: !missing };
-  }));
-  return results;
+async function checkTables(_unused, tableNames) {
+  const { many } = await import('./lib/db/query.mjs');
+  const present = await many(
+    `SELECT table_name AS name
+       FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = ANY($1)`,
+    [tableNames]
+  );
+  const presentSet = new Set(present.map((r) => r.name));
+  return tableNames.map((name) => ({ name, exists: presentSet.has(name) }));
 }
 
 // ── SQL fix templates ─────────────────────────────────────────────────────────
@@ -178,35 +175,25 @@ function shortUrl(url) {
 }
 
 async function checkAuditSupabase(env, report) {
-  if (!env.SUPABASE_AUDIT_URL) {
-    report.warn('SUPABASE_AUDIT_URL not set', 'audit runs will be local-only (no cloud learning)');
+  // M4 — AUDIT_DB_URL is the new runtime persistence env. The legacy
+  // SUPABASE_AUDIT_URL + ANON_KEY pair is sunset for runtime; we still
+  // surface them as informational (other tooling may read them during
+  // the transition).
+  if (!env.AUDIT_DB_URL) {
+    report.warn('AUDIT_DB_URL not set', 'audit runs will be local-only (no cloud learning)');
     return;
   }
-  report.pass('SUPABASE_AUDIT_URL', shortUrl(env.SUPABASE_AUDIT_URL));
-
-  if (!env.SUPABASE_AUDIT_ANON_KEY) {
-    report.fail('SUPABASE_AUDIT_ANON_KEY missing', '', 'Add SUPABASE_AUDIT_ANON_KEY=... to .env');
-    return;
-  }
-  report.pass('SUPABASE_AUDIT_ANON_KEY');
+  report.pass('AUDIT_DB_URL');
 
   const REQUIRED = ['audit_repos', 'audit_runs', 'audit_findings', 'audit_pass_stats',
     'bandit_arms', 'false_positive_patterns', 'debt_entries'];
   const VIEWS = ['debt_summary'];
 
-  let sb;
-  try {
-    sb = await getSupabaseClient(env.SUPABASE_AUDIT_URL, env.SUPABASE_AUDIT_ANON_KEY);
-  } catch {
-    report.fail('Supabase connection failed', 'check URL and anon key');
-    return;
-  }
-
   let tableResults;
   try {
-    tableResults = await checkTables(sb, [...REQUIRED, ...VIEWS]);
+    tableResults = await checkTables(null, [...REQUIRED, ...VIEWS]);
   } catch (err) {
-    report.fail('Table query failed', err.message.slice(0, 80));
+    report.fail('Postgres connection / table query failed', err.message.slice(0, 80));
     return;
   }
 
@@ -217,8 +204,8 @@ async function checkAuditSupabase(env, report) {
       report.pass(label);
     } else if (VIEWS.includes(name)) {
       report.fail(`${label} missing`, '',
-        `Save to /tmp/debt-summary.sql and run: npx supabase db query --linked -f /tmp/debt-summary.sql`);
-      report.info('SQL:', DEBT_SUMMARY_SQL);
+        `Apply the migrations via: AUDIT_DB_URL=… node scripts/setup-postgres.mjs --migrate`);
+      report.info('SQL (if you need to add this view by hand):', DEBT_SUMMARY_SQL);
     } else {
       report.fail(`${label} missing`);
       missingTables.push(name);
@@ -226,7 +213,7 @@ async function checkAuditSupabase(env, report) {
   }
 
   if (missingTables.length > 0) {
-    report.info(`${missingTables.length} missing table(s) — run an audit to auto-create via learning-store.mjs`);
+    report.info(`${missingTables.length} missing table(s) — run \`node scripts/setup-postgres.mjs --migrate\` to apply the migrations`);
   }
 }
 

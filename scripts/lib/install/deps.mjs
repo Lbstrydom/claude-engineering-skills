@@ -27,6 +27,8 @@ export const REQUIRED_DEPS = [
   'dotenv',
   'micromatch',
   'openai',
+  'pg',                     // M4 — cloud learning store now Postgres-only;
+                            //   `pg` replaces `@supabase/supabase-js`.
   'zod',
 ];
 
@@ -37,7 +39,6 @@ export const REQUIRED_DEPS = [
  * block the rest.
  */
 export const OPTIONAL_DEPS = [
-  '@supabase/supabase-js', // cloud learning store + persona-test + cross-skill
   'codeowners-utils',       // owner resolution in debt ledger
   'proper-lockfile',        // advisory locking for bandit-state writes
   'playwright',             // consistency-mode runner — only used when the consumer

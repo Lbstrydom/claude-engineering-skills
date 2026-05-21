@@ -396,12 +396,11 @@ backoff (3 attempts: 200ms/600ms/1.8s); failures are counted as
 | `META_ASSESS_MODEL` | No | `latest-flash` | Meta-assessment Gemini model |
 | `META_ASSESS_GPT_FALLBACK` | No | `latest-gpt-mini` | Meta-assessment GPT fallback when GEMINI_API_KEY is absent |
 | `SUPPRESS_SIMILARITY_THRESHOLD` | No | `0.35` | Jaccard threshold for R2+ suppression (0.0-1.0) |
-| `SUPABASE_AUDIT_URL` | No | — | Supabase project URL for audit-loop cloud learning store |
-| `SUPABASE_AUDIT_ANON_KEY` | No | — | Supabase anon key for audit-loop (falls back to local-only mode) |
-| `AUDIT_STORE` | No | auto | Storage backend: `supabase` (REST), `postgres` (direct — use with dedicated pooler on Pro), `sqlite`, `github`, `noop` |
-| `AUDIT_STORE_POSTGRES_URL` | No | — | Direct Postgres URL — use dedicated pooler string from Supabase dashboard → Connect (port 6543, transaction mode) for Pro plan |
-| `PERSONA_TEST_SUPABASE_URL` | No | — | Supabase project URL for persona-test session memory |
-| `PERSONA_TEST_SUPABASE_ANON_KEY` | No | — | Supabase anon key for persona-test |
+| `AUDIT_DB_URL` | No | — | **Postgres DSN** for the audit-loop store. Supabase users: dashboard → Connect → **Session pooler** (URI, port 5432). Unset → local-only mode (#16 graceful degradation). Replaces the legacy `SUPABASE_AUDIT_*` triplet (postgres-parity M4). |
+| `AUDIT_DB_SSL_MODE` | No | `require` | TLS mode: `require` (default; strict verify), `no-verify` (accept self-signed — needed for Supabase poolers), `disable`. |
+| `AUDIT_DB_POOL_MAX` | No | `4` | Maximum simultaneous pg connections. Increase only when the audit-loop's chunked upserts demand it. |
+| `PERSONA_TEST_APP_URL` | No | — | Default app URL for persona-test list/add (per-project `.env`) |
+| `PERSONA_TEST_REPO_NAME` | No | — | Repo name for cross-referencing audit-loop findings (per-project `.env`) |
 | `PERSONA_TEST_APP_URL` | No | — | Default app URL for persona-test list/add (per-project `.env`) |
 | `PERSONA_TEST_REPO_NAME` | No | — | Repo name for cross-referencing audit-loop findings (per-project `.env`) |
 | `MEMORY_HEALTH_WINDOW_DAYS` | No | `30` | Memory-health lookback window |
@@ -409,10 +408,81 @@ backoff (3 attempts: 200ms/600ms/1.8s); failures are counted as
 | `MEMORY_HEALTH_CLUSTER_MEDIAN` | No | `5` | Cluster density trigger threshold (median similar pairs/repo) |
 | `MEMORY_HEALTH_RECURRENCE_RATE` | No | `0.10` | Fixed-finding recurrence rate trigger threshold |
 | `MEMORY_HEALTH_MIN_FINDINGS` | No | `50` | Minimum findings in window to report a trigger (below → INSUFFICIENT_DATA) |
-| `SUPABASE_AUDIT_SERVICE_ROLE_KEY` | No (Phase 1) | — | Service-role key required for writes to RLS service-role-only tables (`learning_decisions`, `recurring_finding_clusters`). Missing → graceful degrade to local outbox. |
+| ~~`SUPABASE_AUDIT_*`~~ | — | — | **Sunset in M4** (postgres-parity). The audit-loop now uses `AUDIT_DB_URL` exclusively; the legacy URL + anon-key + service-role-key triplet was tied to the old `@supabase/supabase-js` PostgREST path which has been removed. The runtime DSN's password IS the secret — no separate write-role key. |
 | `LEARNING_DISABLE` | No | — | Set to `1` to disable all adaptive-learning live behaviour and telemetry recording (single env-var kill switch). |
 | `LEARNING_REPO_NAME` | Required for weekly-review | — | Per-repo gate for `weekly-review.mjs`. Aborts if missing — prevents cross-tenant data leakage in the digest issue body. |
 | `LEARNING_QUEUE_CAP_PER_TYPE` | No | `64` | Per-`decision_type` bounded sub-queue cap. Increase for high-throughput audits. |
+
+## Postgres-Parity Store (M1–M4)
+
+The cloud learning store talks to **Postgres directly via the `pg` driver**
+— no `@supabase/supabase-js` / PostgREST layer. "Supabase-hosted vs
+self-hosted" is just a connection string. Architecture: plan
+[`docs/plans/postgres-parity.md`](docs/plans/postgres-parity.md) (status:
+complete).
+
+### Connecting
+
+```
+AUDIT_DB_URL=postgresql://postgres.<ref>:<password>@aws-1-<region>.pooler.supabase.com:5432/postgres
+AUDIT_DB_SSL_MODE=no-verify       # Supabase poolers use an internal CA
+```
+
+- **Supabase Connect → Session pooler** (port 5432). Use Direct only if
+  your network is IPv6-capable; the shared Session pooler is IPv4-friendly.
+- Plan §2 R9 / §8 R9: do NOT use the Transaction pooler (port 6543) for
+  this — it doesn't preserve server-side prepared statements and the
+  `options=-c search_path=public` startup pin the `db/` seam relies on.
+
+### Privilege model (plan §2 / R2 H4 + R3 H3)
+
+Two distinct roles, both single-tenant by design (the DSN's password IS
+the secret — no separate read/write keys):
+
+- **Setup role** (`scripts/setup-postgres.mjs`, one-time per fresh
+  self-hosted DB) — needs `CREATEROLE` (to create the
+  `anon`/`authenticated`/`service_role` stub roles) + `CREATE EXTENSION`
+  on `pgcrypto`, `pg_trgm`, `vector`. The setup CLI preflights both and
+  aborts with a precise message when absent. Managed-Postgres-without-
+  `CREATEROLE` is an explicit v1-unsupported case (plan §10).
+- **Runtime role** (the `pg.Pool` in
+  [`scripts/lib/db/client.mjs`](scripts/lib/db/client.mjs)) — owns the
+  audit-loop objects, OR holds full DML + `EXECUTE` on the 9 RPCs +
+  schema/sequence `USAGE`. Ownership **bypasses RLS** — correct for the
+  single-tenant store. On a Supabase project, `AUDIT_DB_URL` is the
+  `postgres`-role string and naturally owns `public`.
+
+### Setup recipe
+
+| What | Command |
+|---|---|
+| Fresh self-hosted Postgres → ready for the audit-loop | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --migrate` |
+| Pre-provisioned Supabase project → seed the migration ledger without replay | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --adopt` |
+| Privilege preflight only (no DDL) | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --preflight-only` |
+| Compat-bootstrap only (no migrations) | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --bootstrap-only` |
+
+`--adopt` mode diffs the live schema against
+[`tests/fixtures/expected-schema.json`](tests/fixtures/expected-schema.json)
+across 10 catalog categories (tables / functions / views / policies /
+constraints / indexes / triggers / sequences / extensions / grants).
+Any drift aborts with a per-category diff so the operator decides.
+
+### Prerequisites
+
+- Postgres 13+ (uses `gen_random_uuid()` built-in; `pgcrypto` is the
+  fallback for older versions, installed by the compat-bootstrap).
+- Extensions installed at the OS level: `vector` (pgvector), `pg_trgm`,
+  `pgcrypto`. The setup-CLI preflight reports missing packages with an
+  install hint (`apt-get install postgresql-<ver>-pgvector` etc.).
+
+### Why the schema is `public`-only
+
+v1 hard-wires `public`. Plan §2 "Schema scope" + the audit at
+[`docs/plans/postgres-parity-schema-coupling.md`](docs/plans/postgres-parity-schema-coupling.md):
+4 migrations qualify `public.<table>` inside `publish_refresh_run` and
+11 `SECURITY DEFINER` functions pin `search_path = pg_catalog, public`.
+Arbitrary-schema support is §10 Out of Scope until that audit pass is
+re-run.
 
 ## Anthropic Backend Routing
 

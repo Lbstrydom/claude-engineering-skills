@@ -82,6 +82,11 @@ const CORE_ENTRY = [
   'scripts/audit-metrics.mjs',
   'scripts/write-code-outcomes.mjs',
   'scripts/build-dashboard.mjs',
+  // postgres-parity M4 — setup CLI ships to consumer repos so downstream
+  // users can apply the schema to their own DB without cloning this repo.
+  // Walker pulls in the lib/db/ closure (client.mjs / query.mjs / rpc.mjs /
+  // errors.mjs) automatically.
+  'scripts/setup-postgres.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   // Persona-test consistency mode CLIs (docs/plans/persona-test-consistency-mode.md).
   // Both are user-invoked CLIs; the import-graph walker pulls in their
@@ -116,7 +121,31 @@ const CORE_ASSETS = [
   // Referenced by skills/persona-test/SKILL.md Phase 3b + references/consistency-mode.md;
   // consumer-app frontend devs read it to author their data-engine-* annotations.
   'docs/consistency-contract.md',
+  // postgres-parity M4 — setup-postgres.mjs reads compat-bootstrap.sql via
+  // fs (the import-graph walker can't follow fs reads). Migrations are
+  // similarly fs-read; ship the whole directory so `--migrate` works on
+  // consumer repos without them needing this repo cloned.
+  'scripts/lib/db/compat-bootstrap.sql',
+  ...syncMigrations(),
 ];
+
+/**
+ * Enumerate `supabase/migrations/*.sql` at sync time so newly-added
+ * migrations ship to consumer repos automatically. Returns an empty
+ * array if the directory doesn't exist (graceful — running in a
+ * non-canonical repo).
+ */
+function syncMigrations() {
+  const dir = path.join(SOURCE_ROOT, 'supabase', 'migrations');
+  try {
+    return fs.readdirSync(dir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort()
+      .map((f) => `supabase/migrations/${f}`);
+  } catch {
+    return [];
+  }
+}
 
 /**
  * Learning + prompt-refinement entry points (full suite only).

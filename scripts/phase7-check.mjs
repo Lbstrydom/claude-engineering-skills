@@ -42,18 +42,16 @@ async function checkReadiness() {
   }
   console.log(`═══════════════════════════════════════\n`);
 
-  // Also check cloud store if available
-  if (process.env.SUPABASE_AUDIT_URL && process.env.SUPABASE_AUDIT_ANON_KEY) {
+  // Also check cloud store if available — M4: AUDIT_DB_URL via pg seam.
+  if (process.env.AUDIT_DB_URL) {
     try {
-      const { createClient } = await import('@supabase/supabase-js');
-      const sb = createClient(process.env.SUPABASE_AUDIT_URL, process.env.SUPABASE_AUDIT_ANON_KEY);
-      const { count } = await sb.from('audit_runs').select('*', { count: 'exact', head: true });
-      console.log(`  Cloud store: ${count ?? 0} runs recorded in Supabase`);
+      const { many, one } = await import('./lib/db/query.mjs');
+      const c = await one(`SELECT COUNT(*)::int AS c FROM audit_runs`);
+      console.log(`  Cloud store: ${c?.c ?? 0} runs recorded in Postgres`);
 
-      // Per-repo breakdown
-      const { data: repos } = await sb.from('audit_repos').select('name, last_audited_at');
-      if (repos?.length) {
-        console.log(`  Repos: ${repos.map(r => r.name).join(', ')}`);
+      const repos = await many(`SELECT name, last_audited_at FROM audit_repos`);
+      if (repos.length) {
+        console.log(`  Repos: ${repos.map((r) => r.name).join(', ')}`);
       }
     } catch (err) {
       console.log(`  Cloud store: unavailable (${err.message})`);

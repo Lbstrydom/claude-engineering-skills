@@ -35,7 +35,7 @@ const REQUIRED_PACKAGES = [
 const OPTIONAL_PACKAGES = [
   ['@google/genai', 'Gemini final review + brief generation', 'GEMINI_API_KEY'],
   ['@anthropic-ai/sdk', 'Claude Opus fallback for Gemini', 'ANTHROPIC_API_KEY'],
-  ['@supabase/supabase-js', 'Cloud learning store', 'SUPABASE_AUDIT_URL'],
+  ['pg', 'Cloud learning store (Postgres driver)', 'AUDIT_DB_URL'],
   ['proper-lockfile', 'Atomic writes for debt ledger', null],
 ];
 
@@ -46,8 +46,7 @@ const ENV_VARS = [
   ['OPENAI_API_KEY', 'GPT-5.4 auditor', true],
   ['GEMINI_API_KEY', 'Gemini final review (Step 7)', false],
   ['ANTHROPIC_API_KEY', 'Claude Opus fallback', false],
-  ['SUPABASE_AUDIT_URL', 'Cloud learning store', false],
-  ['SUPABASE_AUDIT_ANON_KEY', 'Cloud learning store', false],
+  ['AUDIT_DB_URL', 'Cloud learning store (Postgres DSN)', false],
 ];
 
 function canResolve(pkg) {

@@ -40,36 +40,31 @@ async function checkSync() {
   log('═══════════════════════════════════════');
   log('');
 
-  // 1. Check env vars
+  // 1. Check env vars — M4: AUDIT_DB_URL replaces the legacy SUPABASE_AUDIT_*
+  // triplet for runtime persistence; the URL + anon key remain for any
+  // remaining PostgREST callers (none after M4).
   log('  1. Environment Variables');
-  report.env.url = !!process.env.SUPABASE_AUDIT_URL;
-  report.env.key = !!process.env.SUPABASE_AUDIT_ANON_KEY;
+  report.env.url = !!process.env.AUDIT_DB_URL;
 
-  if (report.env.url) pass('SUPABASE_AUDIT_URL is set');
-  else fail('SUPABASE_AUDIT_URL is not set');
+  if (report.env.url) pass('AUDIT_DB_URL is set');
+  else fail('AUDIT_DB_URL is not set');
 
-  if (report.env.key) pass('SUPABASE_AUDIT_ANON_KEY is set');
-  else fail('SUPABASE_AUDIT_ANON_KEY is not set');
-
-  if (!report.env.url || !report.env.key) {
+  if (!report.env.url) {
     log('');
-    fail('Missing env vars — add both to your .env file');
+    fail('Missing AUDIT_DB_URL — add it to your .env file (Supabase Dashboard → Connect → Session pooler)');
     log('');
     report.verdict = 'NOT_CONFIGURED';
     return finish(report);
   }
 
-  // 2. Connection
+  // 2. Connection (M4 — pg seam, not supabase-js)
   log('');
-  log('  2. Supabase Connection');
-  let sb;
+  log('  2. Postgres Connection');
+  const { many, one } = await import('./lib/db/query.mjs');
   try {
-    const { createClient } = await import('@supabase/supabase-js');
-    sb = createClient(process.env.SUPABASE_AUDIT_URL, process.env.SUPABASE_AUDIT_ANON_KEY);
-    const { error } = await sb.from('audit_repos').select('id').limit(1);
-    if (error) throw new Error(error.message);
+    await one(`SELECT 1 FROM audit_repos LIMIT 1`);
     report.connection = true;
-    pass('Connected to Supabase');
+    pass('Connected to Postgres');
   } catch (err) {
     fail(`Connection failed: ${err.message}`);
     report.verdict = 'CONNECTION_FAILED';
@@ -83,11 +78,11 @@ async function checkSync() {
   const fingerprint = profile.repoFingerprint;
   info(`Fingerprint: ${fingerprint}`);
 
-  const { data: repoRow } = await sb
-    .from('audit_repos')
-    .select('id, name, fingerprint, last_audited_at, stack')
-    .eq('fingerprint', fingerprint)
-    .maybeSingle();
+  const repoRow = await one(
+    `SELECT id, name, fingerprint, last_audited_at, stack
+       FROM audit_repos WHERE fingerprint = $1 LIMIT 1`,
+    [fingerprint]
+  );
 
   if (repoRow) {
     report.repo = repoRow;
@@ -95,7 +90,7 @@ async function checkSync() {
     info(`Last audited: ${repoRow.last_audited_at || 'never'}`);
     info(`Stack: ${JSON.stringify(repoRow.stack)}`);
   } else {
-    fail('Repo not found in Supabase — run an audit to register it');
+    fail('Repo not found in Postgres — run an audit to register it');
     report.verdict = 'NOT_REGISTERED';
     return finish(report);
   }
@@ -103,22 +98,23 @@ async function checkSync() {
   // 4. Audit runs
   log('');
   log('  4. Audit Runs');
-  const { count: runCount } = await sb
-    .from('audit_runs')
-    .select('*', { count: 'exact', head: true })
-    .eq('repo_id', repoRow.id);
-
-  report.runs.total = runCount ?? 0;
+  const runCountRow = await one(
+    `SELECT COUNT(*)::int AS c FROM audit_runs WHERE repo_id = $1`,
+    [repoRow.id]
+  );
+  report.runs.total = runCountRow?.c ?? 0;
   info(`Total runs: ${report.runs.total}`);
 
-  const { data: recentRuns } = await sb
-    .from('audit_runs')
-    .select('id, plan_file, mode, created_at, gemini_verdict, rounds, total_findings')
-    .eq('repo_id', repoRow.id)
-    .order('created_at', { ascending: false })
-    .limit(5);
+  const recentRuns = await many(
+    `SELECT id, plan_file, mode, created_at, gemini_verdict, rounds, total_findings
+       FROM audit_runs
+      WHERE repo_id = $1
+      ORDER BY created_at DESC
+      LIMIT 5`,
+    [repoRow.id]
+  );
 
-  if (recentRuns?.length) {
+  if (recentRuns.length) {
     report.runs.recent = recentRuns;
     log('');
     log('  Recent runs:');
@@ -135,17 +131,17 @@ async function checkSync() {
   log('');
   log('  5. Learning State');
 
-  const { count: armCount } = await sb
-    .from('bandit_arms')
-    .select('*', { count: 'exact', head: true })
-    .eq('repo_id', repoRow.id);
-  report.learning.banditArms = armCount ?? 0;
+  const armCountRow = await one(
+    `SELECT COUNT(*)::int AS c FROM bandit_arms WHERE repo_id = $1`,
+    [repoRow.id]
+  );
+  report.learning.banditArms = armCountRow?.c ?? 0;
 
-  const { count: fpCount } = await sb
-    .from('false_positive_patterns')
-    .select('*', { count: 'exact', head: true })
-    .eq('repo_id', repoRow.id);
-  report.learning.fpPatterns = fpCount ?? 0;
+  const fpCountRow = await one(
+    `SELECT COUNT(*)::int AS c FROM false_positive_patterns WHERE repo_id = $1`,
+    [repoRow.id]
+  );
+  report.learning.fpPatterns = fpCountRow?.c ?? 0;
 
   info(`Bandit arms: ${report.learning.banditArms}`);
   info(`FP patterns: ${report.learning.fpPatterns}`);
@@ -163,7 +159,7 @@ function finish(report) {
     const icon = report.verdict === 'SYNCING' ? 'SYNCING' : report.verdict;
     log(`  Verdict: ${icon}`);
     if (report.verdict === 'NOT_CONFIGURED') {
-      log('  Fix: Add SUPABASE_AUDIT_URL and SUPABASE_AUDIT_ANON_KEY to .env');
+      log('  Fix: Add AUDIT_DB_URL to .env (Supabase Dashboard → Connect → Session pooler)');
     } else if (report.verdict === 'CONNECTION_FAILED') {
       log('  Fix: Check your Supabase URL and anon key');
     } else if (report.verdict === 'NOT_REGISTERED') {

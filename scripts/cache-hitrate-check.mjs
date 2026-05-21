@@ -40,10 +40,11 @@ const SINCE_MS = new Date(SINCE + 'T00:00:00Z').getTime();
 // Data source: 'local' (JSONL — this-machine only) or 'supabase'
 // (cross-machine via audit_runs table).  Default to supabase when
 // credentials are available; falls back to local otherwise.
+// M4 — `supabase` source now means the pg seam (AUDIT_DB_URL); the
+// legacy SUPABASE_AUDIT_* env triplet is sunset.
 const sourceIdx = args.indexOf('--source');
 const SOURCE_OVERRIDE = sourceIdx === -1 ? null : args[sourceIdx + 1];
-const HAS_SUPABASE = process.env.SUPABASE_AUDIT_URL
-  && (process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY || process.env.SUPABASE_AUDIT_ANON_KEY);
+const HAS_SUPABASE = !!process.env.AUDIT_DB_URL;
 const SOURCE = SOURCE_OVERRIDE ?? (HAS_SUPABASE ? 'supabase' : 'local');
 
 const MIN_RUNS = 5;
@@ -59,20 +60,22 @@ function median(nums) {
 }
 
 async function loadFromSupabase() {
-  const { createClient } = await import('@supabase/supabase-js');
-  const client = createClient(
-    process.env.SUPABASE_AUDIT_URL,
-    process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY || process.env.SUPABASE_AUDIT_ANON_KEY
+  // M4 — migrated off @supabase/supabase-js to the pg seam. Same query
+  // shape; the SOURCE label stays 'supabase' since the live target is
+  // still the Supabase-hosted Postgres.
+  const { many } = await import('./lib/db/query.mjs');
+  const rows = await many(
+    `SELECT id, rounds, created_at,
+            cache_input_tokens, cache_cached_tokens,
+            cache_hit_rate, cache_estimated_savings_pct
+       FROM audit_runs
+      WHERE created_at >= $1
+        AND rounds >= 2
+        AND cache_hit_rate IS NOT NULL
+      ORDER BY created_at DESC`,
+    [new Date(SINCE_MS).toISOString()]
   );
-  const { data, error } = await client
-    .from('audit_runs')
-    .select('id, rounds, created_at, cache_input_tokens, cache_cached_tokens, cache_hit_rate, cache_estimated_savings_pct')
-    .gte('created_at', new Date(SINCE_MS).toISOString())
-    .gte('rounds', 2)
-    .not('cache_hit_rate', 'is', null)
-    .order('created_at', { ascending: false });
-  if (error) throw new Error(`Supabase query failed: ${error.message}`);
-  return (data || []).map(r => ({
+  return rows.map((r) => ({
     sid: r.id,
     startedAt: new Date(r.created_at).getTime(),
     round: r.rounds,

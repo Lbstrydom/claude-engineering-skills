@@ -1,0 +1,135 @@
+name: postgres-parity
+
+# Plan §9 CI topology + §7 P4 row ".github/workflows/postgres-parity.yml".
+#
+# The DB-backed parity suite is the sole correctness gate for the new
+# pg-driver code path — the maintainer never runs it locally, so the
+# gate cannot depend on a local environment. Deliberate exception to
+# the repo's "local-first CI" preference (see CLAUDE.md memory
+# feedback_local_first_ci).
+#
+# Two jobs:
+#   unit     — pure tests (no DB). Runs on every PR.
+#   db-suite — postgres+pgvector service container; sets AUDIT_DB_URL;
+#              runs the env-gated DB tests (db-date-parser, db-withtx,
+#              db-setup, learning-store-contract scaffold).
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/lib/db/**'
+      - 'scripts/lib/store/**'
+      - 'scripts/setup-postgres.mjs'
+      - 'scripts/learning-store.mjs'
+      - 'supabase/migrations/**'
+      - 'tests/db-*.test.mjs'
+      - 'tests/learning-store-*.test.mjs'
+      - 'tests/sync-packaging.test.mjs'
+      - 'tests/fixtures/expected-schema.json'
+      - 'tests/fixtures/contract/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/postgres-parity.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postgres-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
+      # Run only the postgres-parity-touching tests so this job stays fast.
+      # The full suite runs separately via the repo's existing `npm test`.
+      - name: Unit tests (no DB)
+        run: |
+          node --test \
+            tests/db-query.test.mjs \
+            tests/db-config-resolver.test.mjs \
+            tests/db-setup.test.mjs \
+            tests/learning-store-exports.test.mjs \
+            tests/learning-store-contract.test.mjs \
+            tests/sync-packaging.test.mjs
+
+  db-suite:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # pgvector base image — Postgres 16 with the `vector` extension
+        # pre-installed. `pg_trgm` ships with stock Postgres; `pgcrypto`
+        # is added by the compat-bootstrap.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      AUDIT_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      AUDIT_DB_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      AUDIT_DB_SSL_MODE: disable  # in-container, no TLS needed
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci --ignore-scripts
+
+      - name: Apply migrations + compat-bootstrap (setup-postgres --migrate)
+        run: node scripts/setup-postgres.mjs --migrate
+
+      - name: Verify schema matches the committed manifest
+        run: |
+          # Generate a live manifest from the freshly-migrated DB, then diff
+          # it against the committed tests/fixtures/expected-schema.json.
+          # Any drift = the committed manifest is stale or the migrations
+          # changed shape without re-recording.
+          node scripts/postgres-parity/generate-expected-schema.mjs --out /tmp/live-schema.json
+          # Use the script's own diff helper via node — keeps the comparator
+          # logic in one place (scripts/setup-postgres.mjs _internals.diffSchemas).
+          node -e "
+            const fs = require('fs');
+            const { _internals } = await import('./scripts/setup-postgres.mjs');
+            const expected = JSON.parse(fs.readFileSync('tests/fixtures/expected-schema.json', 'utf-8'));
+            const live = JSON.parse(fs.readFileSync('/tmp/live-schema.json', 'utf-8'));
+            const diff = _internals.diffSchemas(expected, live);
+            if (diff.length > 0) {
+              console.error('SCHEMA DRIFT:', JSON.stringify(diff, null, 2));
+              process.exit(1);
+            }
+            console.log('manifest matches live schema');
+          " --input-type=module || exit 1
+
+      - name: Env-gated DB tests (G1 date parser + G3 withTx + setup integration)
+        run: |
+          node --test \
+            tests/db-date-parser.test.mjs \
+            tests/db-withtx.test.mjs \
+            tests/db-setup.test.mjs
+
+      - name: Contract suite — structural assertions
+        # Per-function parity checks are gated on the fixture directory
+        # having content; structural checks always run.
+        run: node --test tests/learning-store-contract.test.mjs
