@@ -339,6 +339,51 @@ during the loading window and `value-mismatch` after the render — both
 spurious. With them, it sees `absent → current` transition, which is
 exactly what the contract expects.
 
+#### Cross-surface loading derivation (the chip → CTA pattern)
+
+A common case: a slow endpoint backs a secondary surface (e.g. an
+Analysis-view CTA card derived from `/api/cellar/analyse`), while a
+faster cached endpoint backs a primary surface (e.g. a header chip
+from `/api/cellar/status`). A naive implementation hides the secondary
+surface until the slow endpoint returns — which strands the user
+between "primary says action needed" and "secondary has nothing to
+click yet".
+
+The contract-conformant pattern: derive the secondary surface's
+*loading shell visibility* from the primary surface's already-rendered
+state, NOT from the slow endpoint's response. The chip renders fast,
+sets its `data-engine-value` to the actionable state, and (via either
+a `CustomEvent` it dispatches OR a `window.__cellarStatus` snapshot it
+writes) signals the secondary surface to render its skeleton + disabled
+affordance immediately.
+
+This keeps both surfaces in lockstep from first paint:
+
+```html
+<!-- T+50ms (chip fetch returned) -->
+<button id="status-chip"
+        data-engine-claim="stateV2"
+        data-engine-value="major"
+        data-freshness="current">
+  🟠 158 bottles in the wrong section
+</button>
+
+<!-- T+50ms (analysis fetch still in flight) — derives from chip -->
+<div id="organize-cta" data-variant="loading"
+     data-engine-claim="organiseProjection.moveCount"
+     data-engine-value=""
+     data-freshness="absent">
+  <span role="status" aria-live="polite">Computing your plan…</span>
+  <button disabled>Organize Now</button>
+</div>
+```
+
+Adopters MUST NOT use this pattern to invent state the engine hasn't
+returned. The secondary surface's `data-engine-value` STAYS `""` /
+`data-freshness="absent"` until ITS engine source actually responds.
+Cross-surface derivation only controls **visibility of the loading
+shell**, never the claimed value.
+
 ### Running against local vs deployed builds
 
 A common first-adoption hazard: you annotate in a branch, then run the
