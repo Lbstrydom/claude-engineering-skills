@@ -97,7 +97,7 @@
     "playwright": "^1.60.0",
     "proper-lockfile": "^4.1.2",
     "yaml": "^2.8.4",
-    "zod": "4.3.6"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "dependency-cruiser": "^17.3.10",
