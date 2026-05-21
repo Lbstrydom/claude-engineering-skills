@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-05-21T06:24:25.632Z",
+  "generatedAt": "2026-05-21T06:40:45.195Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "2235bea23af40da9ebf28ad4c408995df186cfa5",
+  "commitSha": "b10c5db00aff489db82d002ba6e4aa0d621dfb4d",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -177,7 +177,7 @@
     "scripts/lib/dashboard/flows.json": "sha256:3bc0807a1bcf65c7afbe9c933c61622b9c7abc3727d2d738f41429e06dbc3ddf",
     "scripts/lib/dashboard/assets/dashboard.css": "sha256:4021f3cb1b34ff6b01e44fcfd05d543a8e4c833b3f8b92563a4bc52d1b3d4360",
     "scripts/lib/dashboard/assets/dashboard.js": "sha256:507dd61b1fcf2bf9e1426c57221ba9a5bdfc60abe2db12f169b0cc549c30fa9b",
-    "docs/consistency-contract.md": "sha256:7b372ff152d30c689487dd7ece6a7beed4171abc6ff587bd215c724948b5252a",
+    "docs/consistency-contract.md": "sha256:edd27629813db4f918594150c4a70357fcba17135f3d828592221c3d966782fa",
     "scripts/lib/db/compat-bootstrap.sql": "sha256:93d295a156e42dad0bd384ce0a249c86b3c350321e3095121f3f20b43da2f6b2",
     "supabase/migrations/20260330063355_learning_store.sql": "sha256:126dfb40684b3561655755f25b81929765f30315de12cb92c624af27e85505e6",
     "supabase/migrations/20260330065641_fix_rls_for_cli.sql": "sha256:369fd841aeee48ce2d4a344bb1c81bc5749f162d4f70f2a35125d3242fe92299",

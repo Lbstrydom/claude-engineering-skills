@@ -1,7 +1,7 @@
 # Plan: Persona-Test Consistency Mode + UX-Lock Capture Library
 
 - **Date**: 2026-05-20
-- **Status**: Audited (4 GPT rounds + 6 Gemini rounds; 51 findings total — all addressed inline; coherence rated "Strong" from Gemini round 3 onwards; iteration stopped at diminishing-returns asymptote; residual debt captured in §11b)
+- **Status**: Complete (shipped 2026-05-20; status line was stale at "Audited" from the pre-implementation phase. Plan ran 7 phases + 7-round audit-fix cycle + 4 rounds of wine-cellar adoption fixes; §11b residual debt accepted at v1.)
 - **Author**: Claude + Louis
 - **Scope**: full-stack
 - **Target domain(s)**: `scripts`, `shared-lib`, `skills-content`
