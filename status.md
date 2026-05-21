@@ -1,5 +1,114 @@
 # Project Status Log
 
+## 2026-05-21 — Postgres-Parity COMPLETE (M0→M4) + plan archived
+
+End-to-end ship of the postgres-parity plan — the audit-loop store now
+talks to Postgres directly via the `pg` driver. `@supabase/supabase-js`
+removed; the legacy adapter system (`scripts/lib/stores/**`) deleted;
+the 2832-line `learning-store.mjs` god module rewritten as a 52-line
+barrel over 10 focused domain modules. Plan landed across 8 commits in
+3 days (2026-05-19 → 2026-05-21); Gemini final-review APPROVE.
+
+### Changes (commits 6aec0b7 → 2235bea, 8 commits)
+
+- **M0 prerequisites** (`78d598d`, `92d97f0`) — non-core dependency
+  inventory, schema-coupling audit, contract matrix (93 functions),
+  frozen `learning-store.legacy.mjs` snapshot, CI lint
+  (`check-non-core-references.mjs`), live expected-schema manifest
+  captured from the audit-loop Supabase (44 tables / 11 views / 27
+  policies / 158 functions / 7 extensions).
+- **M1 pg query layer** (`6aec0b7`, `6c43662`) —
+  `scripts/lib/db/{client,query,rpc,errors}.mjs`. Single `pg.Pool`
+  singleton with `AUDIT_DB_URL` resolver + legacy fail-fast,
+  pool-scoped type parsers (timestamp/date/timestamptz OIDs → string,
+  NOT global pg.types), AsyncLocalStorage transaction context with
+  re-entrant `withTx` (SAVEPOINT for nested, never a second pool
+  checkout), 8 explicit per-RPC wrappers. Plus 4 test files + M1 audit
+  summary (R1→R3 + Gemini ×2, 7 fixes landed).
+- **M2 setup CLI** (`be9545d`) — `scripts/lib/db/compat-bootstrap.sql`
+  (auth schema + auth.users + auth.uid()-returning-NULL stubs, 3
+  anon/authenticated/service_role roles via DO/EXCEPTION, 3 extensions);
+  `scripts/setup-postgres.mjs` rewrite with `--migrate`/`--adopt`/
+  `--preflight-only`/`--bootstrap-only`/`--dry-run` modes, privilege
+  preflight (CREATEROLE + extensions), Supabase-managed-`auth` detection,
+  idempotent migration ledger, 10-category schema-drift diff for
+  adopt-mode. 14-test integration block (env-gated on AUDIT_DB_TEST_URL).
+- **M3 atomic barrel + caller de-leak** (`d1ee5cc` additive +
+  `63fba17` atomic) — 10 domain modules under `scripts/lib/store/`
+  (repo, debt, bandit-fp, runs-findings, plans-ship, persona, security,
+  learning-decisions, arch-memory) totalling 93 frozen-contract
+  functions + 10 caller-helper exports. `learning-store.mjs` rewritten
+  as a thin re-export barrel. 5 raw-client callers
+  (`symbol-index/{prune,refresh}`, `learning/{quickfix-stats,replay,backfill-outcomes}`)
+  migrated off `getReadClient`/`getWriteClient` to the new named
+  exports. Plus exports-pinning test + contract-suite scaffold.
+- **M4 cutover + cleanup** (`47a1368`) — dropped
+  `@supabase/supabase-js`; promoted `pg` to runtime dependency; deleted
+  `scripts/lib/stores/**`, `scripts/setup-{github,sqlite}-store.mjs`,
+  `tests/stores/*` (8 test files); migrated 7 remaining supabase-js
+  callers (`memory-health`, `audit-metrics`, `phase7-check`,
+  `cache-hitrate-check`, `check-setup`, `check-sync`, `collect-telemetry`)
+  through the pg seam; AGENTS.md env-table + privilege-model rewrite;
+  `scripts/sync-to-repos.mjs` routing for `setup-postgres.mjs` +
+  `compat-bootstrap.sql` + dynamic-enumerated migrations;
+  `tests/sync-packaging.test.mjs` (8 structural assertions);
+  `.github/workflows/postgres-parity.yml` (DB-backed parity suite,
+  pgvector service container).
+- **M3+M4 audit + recorder polish** (`42a893d`) — `/audit-code`
+  R1 (H:1 M:11) → R2 (H:0 M:5) → Gemini **APPROVE** ("Ready for
+  production"); fixes in `tests/sync-packaging.test.mjs` (tautological
+  migration-order assertion, hardcoded counts, loose regexes) + the
+  Gemini-G1 LOW in `tests/db-setup.test.mjs`;
+  `record-golden-fixtures.mjs` gained `--allow-remote <project-ref>`
+  with 3 safety guards (verified live: refused production ref +
+  refused ref/URL mismatch + refused default policy).
+- **Persona-test consolidation** (`9e43d9e`) — migrated 14 personas +
+  46 test sessions from the legacy "Persona Test" Supabase project
+  (`cnvxixhaubfuijldxyli`, since deleted) into the audit-loop project.
+  `Audit-loop wins` collision policy (ON CONFLICT DO NOTHING); jsonb
+  columns explicitly stringified; refuses any source ≠ Persona-Test
+  project AND any target ≠ Audit-loop project (anti-direction-swap).
+- **Plan completion + archive** (`2235bea` + this commit) — plan
+  Status flipped Draft → Complete; §12 Completion Notes added (final
+  commit map, net diff, live verification, deferred-follow-up
+  rationale); all 6 postgres-parity docs moved to `docs/completed/`.
+
+### Files Affected (this session — M3+M4 audit + plan archive)
+
+- `tests/sync-packaging.test.mjs` — hardened per R1 audit (contractual
+  naming check; `REQUIRED_MIGRATIONS` allowlist; array-anchored regexes;
+  broadened scan)
+- `tests/db-setup.test.mjs` — dropped hardcoded `>= 30` migration count
+  per Gemini-G1
+- `scripts/postgres-parity/record-golden-fixtures.mjs` —
+  `--allow-remote <ref>` flag + 3 safety guards
+- `tests/fixtures/contract/README.md` — path-A recipe updated with
+  `--allow-remote` instructions
+- `docs/plans/postgres-parity*.md` (6 files) → `docs/completed/`
+- `docs/plans/postgres-parity.md` §12 Completion Notes section added
+
+### Decisions Made
+
+- **Live-DB fixture recording deferred** — the original §9 contract
+  suite was the R1-mitigation gate (diff new pg path vs legacy
+  supabase-js path). M4 deleted the legacy path, so fixtures today
+  would only be a regression baseline, not a parity gate. Recipe +
+  `--allow-remote` flag ready when this gets picked up.
+- **Plan status uses plain "Complete"** (not bold markdown) so
+  `scripts/archive-completed-plans.mjs` can auto-archive future plans
+  without operator intervention.
+
+### Next Steps
+
+- Optional follow-up: provision a sandbox Supabase project, flesh out
+  90 unseeded `INPUT_FACTORY[]` entries, record fixtures. Recipe in
+  `docs/completed/postgres-parity.md` §12.
+- AGENTS.md env-table cleanup follow-up: rename `PERSONA_TEST_SUPABASE_*`
+  to reflect the consolidated reality (those env keys point at the
+  Audit-loop project, not a separate Persona-Test project — confusing).
+
+---
+
 ## 2026-05-20 — Persona-test consistency mode (Phases 0-6.5 + 7-round audit)
 
 End-to-end ship of `/persona-test --mode consistency` — a deterministic,

@@ -1,7 +1,7 @@
 # Plan: Postgres Parity — One Postgres Code Path for the Audit-Loop Store
 
 - **Date**: 2026-05-19 (implementation 2026-05-19 → 2026-05-21)
-- **Status**: **Complete** (fixtures deferred — see §12 Completion Notes)
+- **Status**: Complete (fixtures deferred — see §12 Completion Notes)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Audit**: R1 GPT-5.4 (9) + R2 (6) + R3 (6) + Gemini ×2 (3 + 4) — 28 findings,
