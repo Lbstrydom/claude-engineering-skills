@@ -215,10 +215,9 @@ Windows users — see [CLAUDE.md](CLAUDE.md#claude-code-only-notes) for the `npx
 | `OPENAI_API_KEY` | **Yes** | GPT-5.4 auditing |
 | `GEMINI_API_KEY` | No | Gemini final review + Flash context briefs |
 | `ANTHROPIC_API_KEY` | No | Claude Opus fallback + Haiku purpose summaries |
-| `AUDIT_STORE` | No | `noop` (default) / `sqlite` / `supabase` / `postgres` |
-| `SUPABASE_AUDIT_URL` + `SUPABASE_AUDIT_ANON_KEY` | No | Cloud learning store (when `AUDIT_STORE=supabase`) |
+| `AUDIT_DB_URL` | No | Postgres DSN for the cloud learning store (Supabase pooler or self-hosted). Unset → local-only mode |
+| `AUDIT_DB_SSL_MODE` | No | `require` (default) / `no-verify` (Supabase poolers) / `disable` |
 | `SUPABASE_AUDIT_SERVICE_ROLE_KEY` | For arch-memory | Required for `npm run arch:refresh*` (writes to symbol-index tables) |
-| `AUDIT_POSTGRES_URL` | No | Direct Postgres (when `AUDIT_STORE=postgres`) |
 | `META_ASSESS_INTERVAL` | No | Run meta-assessment every N audits (default 4) |
 | `ARCH_RENDER_MAX_SYMBOLS` | No | Cap on symbols pulled into the rendered map (default 50000) |
 | `ARCH_DRIFT_SCORE_THRESHOLD` | No | Drift score above this is RED (default 20) |
@@ -226,15 +225,16 @@ Windows users — see [CLAUDE.md](CLAUDE.md#claude-code-only-notes) for the `npx
 | `PERSONA_TEST_APP_URL` | No | Default app URL for `/persona-test list` |
 | `PERSONA_TEST_REPO_NAME` | No | Repo name for cross-referencing audit findings |
 
-## Storage Adapters
+## Learning Store
 
-| Adapter | Config | Use case |
-|---------|--------|----------|
-| `noop` (default) | None | Local JSON files only, zero cloud |
-| `sqlite` | `AUDIT_STORE=sqlite` | Local cross-repo persistence |
-| `supabase` | `SUPABASE_AUDIT_URL` + key | Existing Supabase users |
-| `postgres` | `AUDIT_POSTGRES_URL` | Generic cloud Postgres |
-| `github` | `AUDIT_GITHUB_TOKEN` + owner/repo | GitHub-only infra |
+Set `AUDIT_DB_URL` to a Postgres 13+ DSN to enable cloud / cross-repo
+persistence (debt ledger, audit history, bandit arms, FP patterns). Works
+against Supabase (Session pooler, port 5432), self-hosted Postgres, RDS,
+Neon, Railway, etc. Requires the `pgvector` and `pg_trgm` extensions.
+
+Unset → local JSON files only, single audit session, zero cloud. See
+[AGENTS.md → Postgres-Parity Store](AGENTS.md#postgres-parity-store-m1m4)
+for the connection model + setup recipe.
 
 ## Security
 

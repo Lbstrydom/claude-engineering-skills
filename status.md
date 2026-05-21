@@ -1,5 +1,67 @@
 # Project Status Log
 
+## 2026-05-21 — Setup-wizard rework: collapse pre-M4 adapter facade
+
+Cleanup pass on the user-facing setup surfaces left stale by the M4
+postgres-parity migration. The runtime already honoured `AUDIT_DB_URL`
+only (legacy `SUPABASE_AUDIT_*` triplet fail-fasts at
+[scripts/lib/db/client.mjs:79-91](scripts/lib/db/client.mjs#L79-L91)),
+but the setup wizard, .env.example, and README still advertised the
+old `AUDIT_STORE` adapter facade (noop / sqlite / supabase / postgres /
+github) with `SUPABASE_AUDIT_URL` + `AUDIT_POSTGRES_URL` examples.
+None of those env vars are read by the runtime anymore.
+
+### Changes
+
+- **[setup.mjs](setup.mjs)** — `DB_OPTIONS` collapsed from 4 entries
+  (None / SQLite / Supabase / Postgres) to 2 (None / Postgres). The
+  surviving Postgres option prompts for `AUDIT_DB_URL` and covers both
+  managed (Supabase pooler) and self-hosted DSNs. Removed the dead
+  `env: { AUDIT_STORE: '…' }` writes — no reader exists post-M4 —
+  and the `Object.entries(selected.env)` loop that consumed them.
+  Choice prompt updated `1-4` → `1-2`.
+- **[.env.example](.env.example)** — Replaced the 5-backend adapter
+  block (35 lines) with a focused `AUDIT_DB_URL` block (15 lines)
+  matching AGENTS.md's connection model + `AUDIT_DB_SSL_MODE=no-verify`
+  hint for Supabase poolers. Net −20 lines.
+- **[README.md](README.md)** — Env-var table now shows `AUDIT_DB_URL`
+  + `AUDIT_DB_SSL_MODE` instead of `AUDIT_STORE` /
+  `SUPABASE_AUDIT_URL`+`ANON_KEY` / `AUDIT_POSTGRES_URL`. "Storage
+  Adapters" 5-row table replaced with a brief "Learning Store"
+  paragraph that links to AGENTS.md for the full setup recipe.
+
+### Decisions
+
+- **`SUPABASE_AUDIT_SERVICE_ROLE_KEY` preserved** — still actively
+  read by `scripts/lib/config.mjs:240` for `npm run arch:refresh`
+  (architectural-memory writes). Separate concern from the audit-loop
+  cloud store; the variable's name is misleading post-M4 but renaming
+  it would ripple through too many call sites for a doc-cleanup pass.
+- **Legacy-detection error kept** — [scripts/lib/db/client.mjs:79-91](scripts/lib/db/client.mjs#L79-L91)
+  still fires an actionable migration message when only the old
+  `SUPABASE_AUDIT_*` vars are set. Intentional aid for users
+  migrating from pre-M4 .env files.
+- **Test fixtures kept** — `tests/fixtures/learning-store.legacy.mjs`
+  and `tests/db-config-resolver.test.mjs` exercise the legacy-error
+  path on purpose; the `.legacy.mjs` naming is the signal.
+
+### Files Affected
+
+- [setup.mjs](setup.mjs) — wizard DB_OPTIONS rework
+- [.env.example](.env.example) — adapter docs → AUDIT_DB_URL block
+- [README.md](README.md) — env-var table + Storage Adapters section
+- [scripts/.sync-manifest.json](scripts/.sync-manifest.json) — regenerated bookkeeping from prior ship (timestamp + HEAD SHA refresh, no file-list change)
+
+### Next Steps
+
+- None blocking. If a future pass renames `SUPABASE_AUDIT_SERVICE_ROLE_KEY`
+  to something matching the post-M4 model, the arch-memory call sites
+  in [scripts/lib/config.mjs](scripts/lib/config.mjs) and
+  [scripts/symbol-index/render-mermaid.mjs](scripts/symbol-index/render-mermaid.mjs)
+  are the touch points.
+
+---
+
 ## 2026-05-21 — Postgres-Parity COMPLETE (M0→M4) + plan archived
 
 End-to-end ship of the postgres-parity plan — the audit-loop store now

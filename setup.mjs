@@ -82,10 +82,8 @@ async function setupApiKeys(headless) {
 // ── Step 3: Database Selection ──────────────────────────────────────────────
 
 const DB_OPTIONS = [
-  { key: '1', name: 'None', desc: 'Local JSON files only (default, zero setup)', env: {} },
-  { key: '2', name: 'SQLite', desc: 'Local database at ~/.audit-loop/shared.db', env: { AUDIT_STORE: 'sqlite' } },
-  { key: '3', name: 'Supabase', desc: 'Cloud — free tier available at supabase.com', env: { AUDIT_STORE: 'supabase' }, extraKeys: ['SUPABASE_AUDIT_URL', 'SUPABASE_AUDIT_ANON_KEY'] },
-  { key: '4', name: 'Postgres', desc: 'Self-hosted PostgreSQL', env: { AUDIT_STORE: 'postgres' }, extraKeys: ['AUDIT_POSTGRES_URL'] },
+  { key: '1', name: 'None', desc: 'Local JSON files only (default, zero setup)' },
+  { key: '2', name: 'Postgres', desc: 'Cloud (Supabase pooler) or self-hosted — single DSN via AUDIT_DB_URL', extraKeys: ['AUDIT_DB_URL'] },
 ];
 
 async function setupDatabase(headless) {
@@ -99,21 +97,13 @@ async function setupDatabase(headless) {
   }
   console.log('');
 
-  const choice = await ask(`  Choose (1-4, default 1): `);
+  const choice = await ask(`  Choose (1-2, default 1): `);
   const selected = DB_OPTIONS.find(o => o.key === choice?.trim()) || DB_OPTIONS[0];
   ok(`Database: ${selected.name}`);
 
   const envPath = path.join(SELF_DIR, '.env');
   let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
 
-  // Set AUDIT_STORE
-  for (const [k, v] of Object.entries(selected.env)) {
-    if (!content.includes(`${k}=`)) {
-      content += `\n${k}=${v}`;
-    }
-  }
-
-  // Prompt for extra keys (Supabase URL, Postgres URL, etc.)
   if (selected.extraKeys) {
     for (const key of selected.extraKeys) {
       if (content.match(new RegExp(`^${key}=.+`, 'm'))) {
