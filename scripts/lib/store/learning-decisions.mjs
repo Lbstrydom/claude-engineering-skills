@@ -245,3 +245,106 @@ export async function readRecentFriction({ repoId, sinceMs = 7 * 24 * 60 * 60 * 
     return [];
   }
 }
+
+// ── learning_decisions reads (replaces the raw-client callers M3 removes) ──
+
+/**
+ * Paginated read of learning_decisions filtered by decision_type, time
+ * range, and (optional) repo. Returns up to `hardCap` rows total — replaces
+ * the raw-client pagination loop in scripts/lib/learning/replay.mjs and
+ * scripts/lib/learning/quickfix-stats.mjs.
+ *
+ * Plan §7 P3 — one of the 6 named exports the caller migrations consume.
+ *
+ * @param {object} input
+ * @param {string}      input.decisionType
+ * @param {number}      [input.sinceMs]   — only rows with created_at >= now - sinceMs
+ * @param {string|null} [input.repoId]
+ * @param {number}      [input.pageSize=1000]
+ * @param {number}      [input.hardCap=5000] — safety cap to bound memory
+ * @returns {Promise<Array<object>>}
+ */
+export async function readDecisionsPaginated({
+  decisionType, sinceMs, repoId = null, pageSize = 1000, hardCap = 5000,
+}) {
+  if (!decisionType) throw new Error('decisionType is required');
+  if (!await isCloudEnabled()) return [];
+  const cols = 'decision_key, decision_type, context, choice, outcome, outcome_at, created_at, repo_id';
+  const rows = [];
+  let offset = 0;
+  while (rows.length < hardCap) {
+    const params = [decisionType];
+    let where = `decision_type = $1`;
+    if (sinceMs != null) {
+      const cutoff = new Date(Date.now() - sinceMs).toISOString();
+      params.push(cutoff);
+      where += ` AND created_at >= $${params.length}`;
+    }
+    if (repoId) {
+      params.push(repoId);
+      where += ` AND repo_id = $${params.length}`;
+    }
+    params.push(pageSize);
+    params.push(offset);
+    let page;
+    try {
+      page = await many(
+        `SELECT ${cols} FROM learning_decisions
+          WHERE ${where}
+          ORDER BY created_at ASC
+          LIMIT $${params.length - 1} OFFSET $${params.length}`,
+        params
+      );
+    } catch (err) {
+      process.stderr.write(`  [learning] readDecisionsPaginated error: ${err.message}\n`);
+      break;
+    }
+    if (page.length === 0) break;
+    for (const r of page) rows.push(r);
+    if (page.length < pageSize) break;
+    offset += pageSize;
+  }
+  return rows;
+}
+
+/**
+ * Read learning_decisions where `outcome IS NULL` and `created_at < cutoff`,
+ * filtered by allowed decision_types. Powers the out-of-band outcome-
+ * resolution loop in scripts/learning/backfill-outcomes.mjs.
+ *
+ * Plan §7 P3 — one of the 6 named exports.
+ *
+ * @param {object} input
+ * @param {string[]}    input.types  — allowlist of decision_types to consider
+ * @param {string|Date} input.cutoff — created_at < cutoff
+ * @param {string|null} [input.repoId]
+ * @param {number}      [input.limit=500]
+ * @returns {Promise<Array<object>>}
+ */
+export async function readUnresolvedDecisions({ types, cutoff, repoId = null, limit = 500 }) {
+  if (!Array.isArray(types) || types.length === 0) {
+    throw new Error('readUnresolvedDecisions: types array is required');
+  }
+  if (!await isCloudEnabled()) return [];
+  const cutoffIso = cutoff instanceof Date ? cutoff.toISOString() : String(cutoff);
+  const params = [types, cutoffIso];
+  let where = `decision_type = ANY($1) AND outcome IS NULL AND created_at < $2`;
+  if (repoId) {
+    params.push(repoId);
+    where += ` AND repo_id = $${params.length}`;
+  }
+  params.push(limit);
+  try {
+    return await many(
+      `SELECT decision_key, decision_type, context, choice, created_at,
+              audit_run_id, round, sequence
+         FROM learning_decisions
+        WHERE ${where}
+        LIMIT $${params.length}`,
+      params
+    );
+  } catch (err) {
+    process.stderr.write(`  [learning] readUnresolvedDecisions error: ${err.message}\n`);
+    return [];
+  }
+}

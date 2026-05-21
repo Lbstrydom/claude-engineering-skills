@@ -214,3 +214,22 @@ export async function getRepoIdByName(repoName) {
     return null;
   }
 }
+
+/**
+ * List every audit_repos id — used by scripts/symbol-index/prune.mjs to
+ * iterate per-repo for rollback-retention demotion.
+ *
+ * Plan §7 P3 — companion to the 6 raw-client-replacement exports.
+ *
+ * @returns {Promise<string[]>}
+ */
+export async function listRepoIds() {
+  if (!await isCloudEnabled()) return [];
+  try {
+    const rows = await many(`SELECT id FROM audit_repos ORDER BY id`);
+    return rows.map((r) => r.id);
+  } catch (err) {
+    process.stderr.write(`  [learning] listRepoIds failed: ${err.message}\n`);
+    return [];
+  }
+}

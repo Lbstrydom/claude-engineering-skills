@@ -30,29 +30,33 @@ describe('convergence_predict / decision_key shape', () => {
 // ── computeConvergencePredictOutcome ────────────────────────────────────
 
 describe('convergence_predict / outcome detector', () => {
-  it('returns null when client missing', async () => {
+  // M3 P3 — the function now uses `deps.getRunConvergence` (or
+  // `deps.learningStore.getAuditRunConvergence`) instead of a raw
+  // supabase client. Test injects the typed helper directly.
+
+  it('returns null when no run-convergence helper is provided', async () => {
     assert.equal(await computeConvergencePredictOutcome({ audit_run_id: 'r', round: 1 }, {}), null);
   });
 
   it('returns null when audit_run_id missing', async () => {
-    const client = { from: () => ({ select: () => ({ eq: () => ({ single: async () => ({ data: null }) }) }) }) };
-    assert.equal(await computeConvergencePredictOutcome({ round: 1 }, { client }), null);
+    const getRunConvergence = async () => null;
+    assert.equal(await computeConvergencePredictOutcome({ round: 1 }, { getRunConvergence }), null);
   });
 
   it('returns null when run still in flight (no convergence/rigor/final)', async () => {
-    const client = mockClient({ round_converged_after: null, rigor_pressure_round: null, rounds: null });
+    const getRunConvergence = mockRunConvergence({ roundConvergedAfter: null, rigorPressureRound: null, rounds: null });
     const r = await computeConvergencePredictOutcome(
       { audit_run_id: 'r1', round: 1 },
-      { client }
+      { getRunConvergence }
     );
     assert.equal(r, null);
   });
 
   it('marks the convergence round as `converged-here`', async () => {
-    const client = mockClient({ round_converged_after: 3, rigor_pressure_round: null, rounds: 3 });
+    const getRunConvergence = mockRunConvergence({ roundConvergedAfter: 3, rigorPressureRound: null, rounds: 3 });
     const r = await computeConvergencePredictOutcome(
       { audit_run_id: 'r1', round: 3 },
-      { client }
+      { getRunConvergence }
     );
     assert.equal(r.action, 'converged-here');
     assert.equal(r.converged_at, 3);
@@ -60,59 +64,44 @@ describe('convergence_predict / outcome detector', () => {
   });
 
   it('marks earlier rounds as `continued`', async () => {
-    const client = mockClient({ round_converged_after: 4, rigor_pressure_round: null, rounds: 4 });
+    const getRunConvergence = mockRunConvergence({ roundConvergedAfter: 4, rigorPressureRound: null, rounds: 4 });
     const r = await computeConvergencePredictOutcome(
       { audit_run_id: 'r1', round: 2 },
-      { client }
+      { getRunConvergence }
     );
     assert.equal(r.action, 'continued');
   });
 
   it('marks rounds at/past stopAt as `wasted`', async () => {
-    // If stopAt = 3 and decisionRound = 4, the row's decision shouldn't
-    // exist (we wouldn't have run round 4) — but if it does, classify as wasted.
-    const client = mockClient({ round_converged_after: 3, rigor_pressure_round: null, rounds: 4 });
+    const getRunConvergence = mockRunConvergence({ roundConvergedAfter: 3, rigorPressureRound: null, rounds: 4 });
     const r = await computeConvergencePredictOutcome(
       { audit_run_id: 'r1', round: 4 },
-      { client }
+      { getRunConvergence }
     );
     assert.equal(r.action, 'wasted');
   });
 
   it('hit_max=true when rigor_pressure_round equals decision round', async () => {
-    const client = mockClient({ round_converged_after: null, rigor_pressure_round: 3, rounds: 3 });
+    const getRunConvergence = mockRunConvergence({ roundConvergedAfter: null, rigorPressureRound: 3, rounds: 3 });
     const r = await computeConvergencePredictOutcome(
       { audit_run_id: 'r1', round: 3 },
-      { client }
+      { getRunConvergence }
     );
     assert.ok(r);
     assert.equal(r.hit_max, true);
   });
 
-  it('returns null on Supabase error', async () => {
-    const client = {
-      from: () => ({
-        select: () => ({
-          eq: () => ({
-            single: async () => ({ data: null, error: { message: 'oops' } }),
-          }),
-        }),
-      }),
-    };
-    assert.equal(await computeConvergencePredictOutcome({ audit_run_id: 'r1', round: 1 }, { client }), null);
+  it('returns null when the helper throws (Supabase-error analog)', async () => {
+    const getRunConvergence = async () => { throw new Error('oops'); };
+    assert.equal(
+      await computeConvergencePredictOutcome({ audit_run_id: 'r1', round: 1 }, { getRunConvergence }),
+      null
+    );
   });
 });
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-function mockClient(runRow) {
-  return {
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          single: async () => ({ data: runRow, error: null }),
-        }),
-      }),
-    }),
-  };
+function mockRunConvergence(runRow) {
+  return async () => runRow;
 }

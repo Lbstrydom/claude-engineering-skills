@@ -230,6 +230,34 @@ export async function updatePassStatsPostDeliberation(runId, passCounts) {
 }
 
 /**
+ * Read convergence/stop-round signals for one audit_runs row. Powers the
+ * convergence_predict outcome detector in
+ * scripts/learning/backfill-outcomes.mjs, which previously reached for a
+ * raw supabase client (M3 P3 raw-client removal).
+ *
+ * @param {string} runId
+ * @returns {Promise<{roundConvergedAfter: number|null, rigorPressureRound: number|null, rounds: number|null}|null>}
+ */
+export async function getAuditRunConvergence(runId) {
+  if (!runId || !await isCloudEnabled()) return null;
+  try {
+    const row = await one(
+      `SELECT round_converged_after, rigor_pressure_round, rounds
+         FROM audit_runs WHERE id = $1 LIMIT 1`,
+      [runId]
+    );
+    if (!row) return null;
+    return {
+      roundConvergedAfter: row.round_converged_after,
+      rigorPressureRound:  row.rigor_pressure_round,
+      rounds:              row.rounds,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Aggregate average pass timing/token data across all rows where
  * input_tokens > 0. In-memory aggregation matches the legacy approach.
  */

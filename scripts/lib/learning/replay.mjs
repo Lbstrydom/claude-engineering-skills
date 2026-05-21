@@ -198,64 +198,25 @@ export async function readDecisionsForType({ store = null, decisionType, sinceMs
   const cloud = typeof ls.isCloudEnabled === 'function' && ls.isCloudEnabled();
   if (!cloud) return [];
 
-  // Audit-fix Phase 3 R2 M5/M12: honor the injected store contract.  When
-  // a custom store provides `readDecisions` (or returns a fixture client
-  // via `getWriteClient`), prefer it over the default Supabase import.
-  // This makes `replay()` truly testable without env vars or RLS bypass.
-  let client = null;
+  // M3 P3 — replaced the raw `getWriteClient()` + hand-rolled pagination
+  // with the typed `readDecisionsPaginated` export. The `readDecisions`
+  // fixture-injection contract (R2 M5/M12) is preserved.
   if (typeof ls.readDecisions === 'function') {
-    // Inject-style: caller controls the cloud read entirely.
     return ls.readDecisions({ decisionType, sinceMs, repoId });
   }
-  if (typeof ls.getWriteClient === 'function') {
-    client = await ls.getWriteClient();
+  if (typeof ls.readDecisionsPaginated !== 'function') return [];
+  try {
+    return await ls.readDecisionsPaginated({
+      decisionType,
+      sinceMs,
+      repoId: repoId || null,
+      pageSize: 1000,
+      hardCap: 5000,
+    });
+  } catch (err) {
+    process.stderr.write(`[replay] read exception: ${err.message}\n`);
+    return [];
   }
-  if (!client) {
-    // Fallback: default Supabase client.  learning_decisions is RLS-locked
-    // for write; we use the service-role write client for reads too since
-    // the table is closed by default.
-    let getClient;
-    try {
-      ({ getWriteClient: getClient } = await import('../stores/supabase-store.mjs'));
-    } catch {
-      return [];
-    }
-    client = await getClient();
-  }
-  if (!client) return [];
-
-  const cutoff = new Date(Date.now() - sinceMs).toISOString();
-  const rows = [];
-  const pageSize = 1000;
-  let offset = 0;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    let q = client.from('learning_decisions')
-      .select('decision_key, decision_type, context, choice, outcome, outcome_at, created_at, repo_id')
-      .eq('decision_type', decisionType)
-      .gte('created_at', cutoff)
-      .order('created_at', { ascending: true })
-      .range(offset, offset + pageSize - 1);
-    if (repoId) q = q.eq('repo_id', repoId);
-    let data;
-    try {
-      const res = await q;
-      if (res.error) {
-        process.stderr.write(`[replay] read error: ${res.error.message}\n`);
-        break;
-      }
-      data = res.data || [];
-    } catch (err) {
-      process.stderr.write(`[replay] read exception: ${err.message}\n`);
-      break;
-    }
-    if (data.length === 0) break;
-    for (const r of data) rows.push(r);
-    if (data.length < pageSize) break;
-    if (rows.length >= 5000) break; // safety cap
-    offset += pageSize;
-  }
-  return rows;
 }
 
 // ── Built-in baseline policies ────────────────────────────────────────────

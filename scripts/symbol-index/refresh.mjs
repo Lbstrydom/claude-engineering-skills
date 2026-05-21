@@ -47,7 +47,8 @@ import {
   setActiveEmbeddingModel,
   copyForwardUntouchedFiles,
   getActiveSnapshot,
-  getReadClient,
+  getRefreshRun,
+  findStaleRunningRefresh,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from '../lib/repo-identity.mjs';
 import { resolveModel } from '../lib/model-resolver.mjs';
@@ -215,15 +216,10 @@ async function main() {
       // Look up the prior run's walk commit so we have a concrete anchor.
       // Best-effort — if the lookup fails we fall through to full mode below.
       try {
-        const w = await getReadClient();
-        if (w) {
-          const { data: priorRun } = await w
-            .from('refresh_runs')
-            .select('walk_start_commit, walk_end_commit')
-            .eq('id', prior.refreshId)
-            .maybeSingle();
-          sinceCommit = priorRun?.walk_end_commit || priorRun?.walk_start_commit || null;
-        }
+        const priorRun = await getRefreshRun(prior.refreshId, {
+          select: ['walk_start_commit', 'walk_end_commit'],
+        });
+        sinceCommit = priorRun?.walk_end_commit || priorRun?.walk_start_commit || null;
       } catch { /* fall through */ }
     }
     if (!sinceCommit) {
@@ -249,15 +245,7 @@ async function main() {
       // cleanly when it observes status!='running'.
       logOk(`--force: aborting prior in-flight refresh for repo ${repoId}`);
       try {
-        const r = await getReadClient();
-        const { data: stale } = await r
-          .from('refresh_runs')
-          .select('id, last_heartbeat_at, started_at')
-          .eq('repo_id', repoId)
-          .eq('status', 'running')
-          .order('started_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+        const stale = await findStaleRunningRefresh(repoId);
         if (stale) {
           await abortRefreshRun({ refreshId: stale.id, reason: 'aborted by --force' });
           logOk(`--force: aborted refresh_run ${stale.id}`);

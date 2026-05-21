@@ -1,0 +1,184 @@
+/**
+ * Pins the public-export surface of `scripts/learning-store.mjs`.
+ *
+ * Plan §2 "Public API surface" / R3/M2: the frozen contract is the 93
+ * named persistence functions enumerated in the contract matrix, plus
+ * (post-M3 P3) the 9 caller-replacement helpers added for the
+ * raw-client de-leak. `getReadClient` / `getWriteClient` /
+ * `getPersonaSupabase` are NOT part of the contract — those are
+ * internal abstraction breaches removed in M3.
+ *
+ * Any accidental addition / removal of an export fails this test —
+ * forcing a deliberate update to the matrix + this pinned list.
+ */
+
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+import * as ls from '../scripts/learning-store.mjs';
+
+// The frozen public surface, alphabetically sorted. Mirrors the contract
+// matrix at docs/plans/postgres-parity-contract-matrix.md. Synced from
+// `node -e "console.log(Object.keys(await import('./scripts/learning-store.mjs')).sort())"`
+const EXPECTED_EXPORTS = [
+  // Lifecycle
+  'initLearningStore',
+  'isCloudEnabled',
+  'isPersonaCloudEnabled',
+
+  // ── frozen 93-function persistence contract ──────────────────────────────
+  // repo (4 — initLearningStore + isCloudEnabled live above)
+  'getRepoIdByName',
+  'getRepoIdByUuid',
+  'upsertRepo',
+  'upsertRepoByUuid',
+  // runs-findings (10, incl. _resetClassificationColumnCache test seam)
+  '_resetClassificationColumnCache',
+  'recordAdjudicationEvent',
+  'recordFindings',
+  'recordPassStats',
+  'recordRunComplete',
+  'recordRunStart',
+  'recordSuppressionEvents',
+  'updatePassStatsPostDeliberation',
+  'updateRunMeta',
+  'getPassTimings',
+  // debt (5)
+  'appendDebtEventsCloud',
+  'readDebtEntriesCloud',
+  'readDebtEventsCloud',
+  'removeDebtEntryCloud',
+  'upsertDebtEntries',
+  // bandit-fp (9)
+  'getFalsePositivePatterns',
+  'getPassEffectiveness',
+  'loadBanditArms',
+  'loadFalsePositivePatterns',
+  'syncBanditArms',
+  'syncExperiments',
+  'syncFalsePositivePatterns',
+  'syncPromptRevision',
+  'upsertPromptVariant',
+  // plans-ship (16)
+  'getUnlockedFixes',
+  'listConsistencyCandidates',
+  'promoteRegressionSpec',
+  'readAuditEffectiveness',
+  'readCorrelationsForFinding',
+  'readCorrelationsForRun',
+  'readPersistentPlanFailures',
+  'readPlanSatisfaction',
+  'recordPersonaAuditCorrelation',
+  'recordPlanVerificationItems',
+  'recordPlanVerificationRun',
+  'recordRegressionSpec',
+  'recordRegressionSpecRun',
+  'recordShipEvent',
+  'updatePlanStatus',
+  'upsertPlan',
+  // persona (5 — isPersonaCloudEnabled lives in Lifecycle)
+  'getPersonaSessionsByRepo',
+  'getPersonaSessionsByUrl',
+  'listPersonasForApp',
+  'recordPersonaSession',
+  'upsertPersona',
+  // security (5)
+  'callIncidentNeighbourhoodRpc',
+  'getMaxIncidentRefreshAt',
+  'getSecurityIncidentsByRepo',
+  'markIncidentsHistorical',
+  'recordSecurityIncidents',
+  // learning-decisions (10 frozen + 2 new caller helpers below)
+  'backfillLearningOutcome',
+  'callDeferFinding',
+  'callMarkFindingNeedsTriage',
+  'insertFrictionNote',
+  'insertLearningDecision',
+  'readNoBrainerRecommendations',
+  'readPendingTriageFindings',
+  'readRecentFriction',
+  'readStaleClusters',
+  'recordConvergenceState',
+  'recordDiffComplexity',
+  'recordFindingResolution',
+  // arch-memory (24 frozen + 7 new caller helpers below)
+  'abortRefreshRun',
+  'callNeighbourhoodRpc',
+  'computeDriftScore',
+  'copyForwardImports',
+  'copyForwardUntouchedFiles',
+  'getActiveEmbeddingModel',
+  'getActiveSnapshot',
+  'getDomainSummaries',
+  'getImportGraphPopulated',
+  'getImportersForFiles',
+  'getTopDuplicateClusters',
+  'heartbeatRefreshRun',
+  'listLayeringViolationsForSnapshot',
+  'listSymbolsForSnapshot',
+  'markImportGraphPopulated',
+  'openRefreshRun',
+  'publishRefreshRun',
+  'recordLayeringViolations',
+  'recordSymbolDefinitions',
+  'recordSymbolEmbedding',
+  'recordSymbolFileImports',
+  'recordSymbolIndex',
+  'setActiveEmbeddingModel',
+  'upsertDomainSummary',
+
+  // ── M3 P3 — 10 named exports for the raw-client de-leak ─────────────────
+  // runs-findings extension
+  'getAuditRunConvergence',
+  // repo extension
+  'listRepoIds',
+  // learning-decisions extensions
+  'readDecisionsPaginated',
+  'readUnresolvedDecisions',
+  // arch-memory extensions
+  'deleteRefreshRuns',
+  'demoteRefreshRuns',
+  'findStaleRunningRefresh',
+  'getRefreshRun',
+  'listPrunableRefreshRuns',
+  'listRollbacksForRepo',
+].sort();
+
+// Internal client accessors that must NOT escape (plan §2 / R3/M2).
+const FORBIDDEN_EXPORTS = ['getReadClient', 'getWriteClient', 'getPersonaSupabase'];
+
+describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () => {
+  it('exports exactly the pinned 102-function contract — no accidental additions / removals', () => {
+    const actual = Object.keys(ls).sort();
+    const missing = EXPECTED_EXPORTS.filter((e) => !actual.includes(e));
+    const extra   = actual.filter((e) => !EXPECTED_EXPORTS.includes(e));
+    assert.deepEqual(
+      { missing, extra },
+      { missing: [], extra: [] },
+      'public surface drift detected — update the contract matrix + the EXPECTED_EXPORTS list together'
+    );
+  });
+
+  it('does NOT export internal client accessors (M3 P3 removal)', () => {
+    for (const forbidden of FORBIDDEN_EXPORTS) {
+      assert.ok(
+        !(forbidden in ls),
+        `${forbidden} leaked back into the public surface — this is the abstraction breach M3 P3 closed`
+      );
+    }
+  });
+
+  it('every exported name is a callable function (no stray constants / classes)', () => {
+    for (const name of EXPECTED_EXPORTS) {
+      const v = ls[name];
+      assert.equal(
+        typeof v, 'function',
+        `${name} should be a function, got ${typeof v}`
+      );
+    }
+  });
+
+  it('matches the contract-matrix count: 93 frozen + 10 caller helpers = 103', () => {
+    assert.equal(EXPECTED_EXPORTS.length, 103);
+  });
+});

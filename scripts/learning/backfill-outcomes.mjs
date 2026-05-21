@@ -417,40 +417,26 @@ async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
     errors: 0,
     byType: { quickfix_hit: 0, arch_memory_band: 0, convergence_predict: 0 },
   };
-  let getClient;
-  try {
-    ({ getWriteClient: getClient } = await import('../lib/stores/supabase-store.mjs'));
-  } catch (err) {
-    out.errors += 1;
-    return out;
-  }
-  const client = await getClient();
-  if (!client) return out;
 
-  const cutoff = new Date(Date.now() - STALENESS_MS).toISOString();
   // Phase 3: resolve THREE decision types — quickfix_hit (Phase 2),
   // arch_memory_band (this phase), and convergence_predict (this phase).
   // Each has its own pure detector below; the resolver routes to the
   // right one based on `decision_type`.
   const RESOLVABLE_TYPES = ['quickfix_hit', 'arch_memory_band', 'convergence_predict'];
-  let q = client.from('learning_decisions')
-    .select('decision_key, decision_type, context, choice, created_at, audit_run_id, round, sequence')
-    .in('decision_type', RESOLVABLE_TYPES)
-    .is('outcome', null)
-    .lt('created_at', cutoff)
-    .limit(500);
-  if (repoId) q = q.eq('repo_id', repoId);
+  const cutoff = new Date(Date.now() - STALENESS_MS).toISOString();
 
   let rows = [];
   try {
-    const { data, error } = await q;
-    if (error) {
-      process.stderr.write(`[backfill] resolve read error: ${error.message}\n`);
-      out.errors += 1;
-      return out;
-    }
-    rows = data || [];
+    // M3 P3 — replaces raw `lib/stores/supabase-store::getWriteClient()` +
+    // a hand-rolled query with the typed `readUnresolvedDecisions` export.
+    rows = await learningStore.readUnresolvedDecisions({
+      types: RESOLVABLE_TYPES,
+      cutoff,
+      repoId: repoId || null,
+      limit: 500,
+    });
   } catch (err) {
+    process.stderr.write(`[backfill] resolve read error: ${err.message}\n`);
     out.errors += 1;
     return out;
   }
@@ -463,7 +449,9 @@ async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
     } else if (row.decision_type === 'arch_memory_band') {
       outcome = await computeArchMemoryBandOutcome(row);
     } else if (row.decision_type === 'convergence_predict') {
-      outcome = await computeConvergencePredictOutcome(row, { client });
+      // M3 P3 — the detector now takes the store, not a raw supabase client,
+      // so it can use the typed `getAuditRunConvergence` export.
+      outcome = await computeConvergencePredictOutcome(row, { learningStore });
     }
     if (!outcome) { out.stillPending += 1; continue; }
     if (dryRun) {
@@ -585,19 +573,23 @@ function defaultExecGit(args, opts) {
  * @returns {Promise<{action: string, evidence: string, converged_at: number, round: number}|null>}
  */
 export async function computeConvergencePredictOutcome(row, deps = {}) {
-  const client = deps.client;
-  if (!client || !row.audit_run_id || row.round == null) return null;
+  // M3 P3 — the legacy `deps.client` path (raw supabase client) is gone;
+  // callers inject the learning store instead and we use the typed
+  // `getAuditRunConvergence` export. The `deps.getRunConvergence` injection
+  // point stays for unit tests that want to stub without a real store.
+  if (!row.audit_run_id || row.round == null) return null;
+  const ls = deps.learningStore;
+  const getRunConvergence = deps.getRunConvergence
+    || (ls && typeof ls.getAuditRunConvergence === 'function' ? ls.getAuditRunConvergence : null);
+  if (!getRunConvergence) return null;
   let runRow = null;
   try {
-    const { data, error } = await client.from('audit_runs')
-      .select('round_converged_after, rigor_pressure_round, rounds')
-      .eq('id', row.audit_run_id).single();
-    if (error || !data) return null;
-    runRow = data;
+    runRow = await getRunConvergence(row.audit_run_id);
+    if (!runRow) return null;
   } catch { return null; }
 
-  const convergedAt        = runRow.round_converged_after;
-  const rigorPressureRound = runRow.rigor_pressure_round;
+  const convergedAt        = runRow.roundConvergedAfter;
+  const rigorPressureRound = runRow.rigorPressureRound;
   const finalRound         = runRow.rounds;
   // If the run is still in flight (no convergence + no rigor + no final round
   // recorded), leave pending.

@@ -101,6 +101,168 @@ export async function heartbeatRefreshRun({ refreshId }) {
   await updateWhere('refresh_runs', { last_heartbeat_at: new Date().toISOString() }, { id: refreshId });
 }
 
+// ── refresh_runs prune / inspect (replaces the raw-client callers) ─────────
+
+/**
+ * Read a single refresh_run by id. `select` is an optional column allowlist
+ * (defaults to a useful set). Replaces a raw-client SELECT in
+ * scripts/symbol-index/refresh.mjs.
+ *
+ * Plan §7 P3 — one of the 6 named exports the caller migrations consume.
+ *
+ * @param {string} refreshId
+ * @param {object} [opts]
+ * @param {string[]} [opts.select] - column allowlist
+ * @returns {Promise<object|null>}
+ */
+export async function getRefreshRun(refreshId, { select } = {}) {
+  if (!refreshId || !await isCloudEnabled()) return null;
+  const cols = (Array.isArray(select) && select.length > 0)
+    ? select.map((c) => `"${c}"`).join(', ')
+    : 'id, repo_id, mode, status, walk_start_commit, walk_end_commit, started_at, completed_at, retention_class, last_heartbeat_at, import_graph_populated';
+  try {
+    return await one(
+      `SELECT ${cols} FROM refresh_runs WHERE id = $1 LIMIT 1`,
+      [refreshId]
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find the most-recent stuck-on-running refresh for a repo. Used by
+ * `arch:refresh --force` to know which refresh to abort. Replaces a
+ * raw-client query in scripts/symbol-index/refresh.mjs.
+ *
+ * @param {string} repoId
+ * @returns {Promise<{id: string, last_heartbeat_at: string, started_at: string}|null>}
+ */
+export async function findStaleRunningRefresh(repoId) {
+  if (!repoId || !await isCloudEnabled()) return null;
+  try {
+    return await one(
+      `SELECT id, last_heartbeat_at, started_at
+         FROM refresh_runs
+        WHERE repo_id = $1 AND status = 'running'
+        ORDER BY started_at DESC
+        LIMIT 1`,
+      [repoId]
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Return refresh_run ids eligible for pruning, given a filter
+ * (`status` or `retention_class`) and a retention cutoff in days. Picks
+ * up BOTH cleanly-finished runs (completed_at < cutoff) AND crashed runs
+ * (completed_at IS NULL AND started_at < cutoff) — closing the
+ * Gemini-G3 leak where crashed refreshes lived forever.
+ *
+ * Plan §7 P3 — one of the 6 named exports.
+ *
+ * @param {{filterCol: 'status'|'retention_class', filterVal: string, retainDays: number}} args
+ * @returns {Promise<string[]>}
+ */
+export async function listPrunableRefreshRuns({ filterCol, filterVal, retainDays }) {
+  if (!await isCloudEnabled()) return [];
+  // Whitelist the column so the SQL is safe even though it's interpolated.
+  if (filterCol !== 'status' && filterCol !== 'retention_class') {
+    throw new Error(`listPrunableRefreshRuns: filterCol must be 'status' or 'retention_class' — got ${filterCol}`);
+  }
+  const cutoffIso = new Date(Date.now() - retainDays * 86400_000).toISOString();
+  try {
+    const rows = await many(
+      `SELECT id FROM refresh_runs
+        WHERE "${filterCol}" = $1
+          AND (
+            completed_at < $2
+            OR (completed_at IS NULL AND started_at < $2)
+          )`,
+      [filterVal, cutoffIso]
+    );
+    return rows.map((r) => r.id);
+  } catch (err) {
+    process.stderr.write(`  [arch] listPrunableRefreshRuns failed: ${err.message}\n`);
+    return [];
+  }
+}
+
+/**
+ * Bulk delete refresh_runs by id list. Returns count actually deleted.
+ *
+ * Plan §7 P3 — one of the 6 named exports.
+ */
+export async function deleteRefreshRuns(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return 0;
+  if (!await isCloudEnabled()) return 0;
+  try {
+    const pool = await getPool();
+    if (!pool) return 0;
+    const res = await pool.query(
+      `DELETE FROM refresh_runs WHERE id = ANY($1)`,
+      [ids]
+    );
+    return res.rowCount ?? 0;
+  } catch (err) {
+    process.stderr.write(`  [arch] deleteRefreshRuns failed: ${err.message}\n`);
+    return 0;
+  }
+}
+
+/**
+ * Bulk set retention_class for refresh_runs by id list. Used by the
+ * rollback-keep-N demotion in scripts/symbol-index/prune.mjs.
+ *
+ * Plan §7 P3 — one of the 6 named exports.
+ *
+ * @param {string[]} ids
+ * @param {'transient'|'weekly_checkpoint'|'rollback'|'aborted'} retentionClass
+ * @returns {Promise<number>} rows affected
+ */
+export async function demoteRefreshRuns(ids, retentionClass) {
+  if (!Array.isArray(ids) || ids.length === 0) return 0;
+  if (!await isCloudEnabled()) return 0;
+  try {
+    const pool = await getPool();
+    if (!pool) return 0;
+    const res = await pool.query(
+      `UPDATE refresh_runs SET retention_class = $1 WHERE id = ANY($2)`,
+      [retentionClass, ids]
+    );
+    return res.rowCount ?? 0;
+  } catch (err) {
+    process.stderr.write(`  [arch] demoteRefreshRuns failed: ${err.message}\n`);
+    return 0;
+  }
+}
+
+/**
+ * List rollback-class refresh_runs for a repo, ordered newest-first.
+ * Powers the keep-last-N rollback retention in
+ * scripts/symbol-index/prune.mjs.
+ *
+ * @param {string} repoId
+ * @returns {Promise<Array<{id: string, completed_at: string|null}>>}
+ */
+export async function listRollbacksForRepo(repoId) {
+  if (!repoId || !await isCloudEnabled()) return [];
+  try {
+    return await many(
+      `SELECT id, completed_at FROM refresh_runs
+        WHERE repo_id = $1 AND retention_class = 'rollback'
+        ORDER BY completed_at DESC NULLS LAST`,
+      [repoId]
+    );
+  } catch (err) {
+    process.stderr.write(`  [arch] listRollbacksForRepo failed: ${err.message}\n`);
+    return [];
+  }
+}
+
+
 /**
  * Read active snapshot pointers + the import-graph provenance flag.
  * Two-step: read repo pointers, then look up the active refresh's

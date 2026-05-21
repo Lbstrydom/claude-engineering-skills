@@ -108,10 +108,16 @@ describe('learning-store / Phase 1 per-repo filter contract (H1 fix)', () => {
 
   it('all three weekly-review reads have explicit repo_id filter (grep contract)', async () => {
     const fs = await import('node:fs');
-    const src = fs.readFileSync('scripts/learning-store.mjs', 'utf-8');
-    // Each Phase 1 read function must include `.eq('repo_id', repoId)`.
-    const matches = (src.match(/\.eq\('repo_id',\s*repoId\)/g) || []).length;
-    assert.ok(matches >= 3, `expected ≥3 .eq('repo_id', repoId) calls, found ${matches}`);
+    // M3 P3 — the contract moved with the read functions. They now live
+    // in scripts/lib/store/learning-decisions.mjs and use raw SQL with
+    // a `repo_id = $1` predicate instead of the legacy `.eq('repo_id', repoId)`.
+    // The contract is the same — each read MUST scope to repo_id.
+    const src = fs.readFileSync('scripts/lib/store/learning-decisions.mjs', 'utf-8');
+    const sqlMatches = (src.match(/WHERE\s+repo_id\s*=\s*\$1/gi) || []).length;
+    assert.ok(
+      sqlMatches >= 3,
+      `expected ≥3 "WHERE repo_id = $1" predicates in learning-decisions.mjs, found ${sqlMatches}`
+    );
   });
 });
 

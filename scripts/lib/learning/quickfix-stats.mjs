@@ -239,48 +239,23 @@ function computeWatermark(decisions) {
  * array on failure.
  */
 async function readQuickfixDecisions(learningStore, { repoId } = {}) {
-  // Use the read client; learning_decisions is service-role-only for write,
-  // but reads (for stats rebuild) use the anon client + RLS.  Phase 2 v1:
-  // we use the service-role write client for reads too, since the table is
-  // RLS-locked by default.  When a future iteration opens reads to anon,
-  // this can be relaxed.
-  let getClient;
+  // M3 P3 — replaced the raw `lib/stores/supabase-store::getWriteClient()` +
+  // a hand-rolled pagination loop with the typed `readDecisionsPaginated`
+  // export. The store passed in is the barrel learning-store; if it's
+  // missing the helper we degrade gracefully to empty results.
+  const ls = learningStore;
+  if (!ls || typeof ls.readDecisionsPaginated !== 'function') return [];
   try {
-    ({ getWriteClient: getClient } = await import('../stores/supabase-store.mjs'));
-  } catch {
+    return await ls.readDecisionsPaginated({
+      decisionType: 'quickfix_hit',
+      repoId: repoId || null,
+      pageSize: 1000,
+      hardCap: 50000,
+    });
+  } catch (err) {
+    process.stderr.write(`[quickfix-stats] read exception: ${err.message}\n`);
     return [];
   }
-  const client = await getClient();
-  if (!client) return [];
-
-  const all = [];
-  const pageSize = 1000;
-  let offset = 0;
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    let q = client.from('learning_decisions')
-      .select('decision_key, context, outcome, outcome_at, repo_id')
-      .eq('decision_type', 'quickfix_hit')
-      .range(offset, offset + pageSize - 1);
-    if (repoId) q = q.eq('repo_id', repoId);
-    let rows = null;
-    try {
-      const { data, error } = await q;
-      if (error) {
-        process.stderr.write(`[quickfix-stats] read error: ${error.message}\n`);
-        break;
-      }
-      rows = data || [];
-    } catch (err) {
-      process.stderr.write(`[quickfix-stats] read exception: ${err.message}\n`);
-      break;
-    }
-    if (rows.length === 0) break;
-    for (const r of rows) all.push(r);
-    if (rows.length < pageSize) break;
-    offset += pageSize;
-  }
-  return all;
 }
 
 /**
