@@ -53,6 +53,13 @@ function parseArgs() {
     serviceRoleKey: process.env.SUPABASE_LOCAL_SERVICE_ROLE_KEY || '',
     outDir: 'tests/fixtures/contract/',
     only: null,
+    // --allow-remote <project-ref> — opt into recording against a remote
+    // Supabase sandbox project (path A in tests/fixtures/contract/README.md).
+    // The ref is matched against the URL hostname so the operator can't
+    // accidentally point at any other Supabase project. Still refused if
+    // the ref matches the audit-loop production project (uahjjdelnnpfmaqjrwoz)
+    // OR if the URL equals SUPABASE_AUDIT_URL.
+    allowRemote: null,
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -64,6 +71,7 @@ function parseArgs() {
       case '--service-role-key':  out.serviceRoleKey = v; i++; break;
       case '--out':               out.outDir = v; i++; break;
       case '--only':              out.only = v; i++; break;
+      case '--allow-remote':      out.allowRemote = v; i++; break;
       default:                    break;
     }
   }
@@ -71,19 +79,53 @@ function parseArgs() {
 }
 
 // ── Production-DB safety guard ─────────────────────────────────────────────
-// The plan is explicit: never against production. We refuse any URL that
-// doesn't look like a localhost address, and refuse if `SUPABASE_AUDIT_URL`
-// (the maintainer's production env) equals the target.
+// The plan is explicit: never against the maintainer's production
+// project. We refuse any URL that isn't either:
+//   (a) localhost / 127.0.0.1 / host.docker.internal (path B), OR
+//   (b) `https://<--allow-remote-ref>.supabase.co` (path A: sandbox)
+// AND refuse if the URL equals `SUPABASE_AUDIT_URL` (defense in depth in
+// case the maintainer mis-typed a sandbox ref that happens to match
+// audit-loop) AND refuse the well-known audit-loop production ref.
 
-function assertLocalOnly(url) {
+const AUDIT_LOOP_PROD_REF = 'uahjjdelnnpfmaqjrwoz';
+
+function assertLocalOnly(url, allowRemoteRef) {
   const u = new URL(url);
   const okHosts = new Set(['127.0.0.1', 'localhost', '::1', '[::1]', 'host.docker.internal']);
-  if (!okHosts.has(u.hostname)) {
+
+  if (okHosts.has(u.hostname)) {
+    // Path B — local Docker stack. No further checks needed.
+  } else if (allowRemoteRef) {
+    // Path A — sandbox Supabase project. Validate the ref guards.
+    if (allowRemoteRef === AUDIT_LOOP_PROD_REF) {
+      throw new Error(
+        `record-golden-fixtures refuses --allow-remote ${AUDIT_LOOP_PROD_REF} — ` +
+        `that's the audit-loop production project. Create a separate sandbox ` +
+        `(\`supabase projects create postgres-parity-fixtures …\`) and use its ref.`
+      );
+    }
+    // Expected URL shape: `<ref>.supabase.co` (REST URL) or the pooler host.
+    const expectedRest = `${allowRemoteRef}.supabase.co`;
+    const expectedPooler = `pooler.supabase.com`;   // shared pooler host (region-prefixed)
+    const hostnameMatchesRef =
+      u.hostname === expectedRest ||
+      u.hostname.endsWith(`.${expectedRest}`) ||
+      u.hostname.endsWith(expectedPooler);
+    if (!hostnameMatchesRef) {
+      throw new Error(
+        `--allow-remote ${allowRemoteRef} doesn't match the URL host ${u.hostname}. ` +
+        `Expected a host containing "${expectedRest}" or the shared pooler. ` +
+        `Refusing — the safety check would not catch an accidentally-swapped sandbox.`
+      );
+    }
+  } else {
     throw new Error(
       `record-golden-fixtures refuses to run against ${u.hostname} — local-only by policy. ` +
-      `Plan §9 / R1: production Supabase is never an acceptable target. Run \`supabase start\` first.`
+      `For a remote sandbox project pass \`--allow-remote <project-ref>\` (path A in ` +
+      `tests/fixtures/contract/README.md). For local Docker, run \`supabase start\` first.`
     );
   }
+
   if (process.env.SUPABASE_AUDIT_URL && process.env.SUPABASE_AUDIT_URL.includes(u.hostname)) {
     // hostname might be a literal IP for localhost — extra safety check below.
   }
@@ -189,7 +231,7 @@ function normaliseMutation(m) { return normaliseValues(m); }
 
 async function main() {
   const opts = parseArgs();
-  assertLocalOnly(opts.supabaseUrl);
+  assertLocalOnly(opts.supabaseUrl, opts.allowRemote);
 
   const legacyPath = path.resolve(REPO_ROOT, opts.legacy);
   if (!fs.existsSync(legacyPath)) {

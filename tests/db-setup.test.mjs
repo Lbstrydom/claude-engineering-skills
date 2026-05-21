@@ -118,8 +118,11 @@ describe('setup-postgres diffSchemas', () => {
 
 describe('setup-postgres listMigrations + sha256 (filesystem-only)', () => {
   it('lists `supabase/migrations/*.sql` in lexicographic order', async () => {
+    // Gemini-G1 (M3+M4 audit): no hardcoded count. The relevant invariants
+    // are non-empty + already-sorted + .sql-only. Migration count grows
+    // over time and pinning it here just creates churn.
     const files = await setup.listMigrations();
-    assert.ok(files.length >= 30, `expected ≥ 30 migrations, got ${files.length}`);
+    assert.ok(files.length > 0, 'listMigrations should return at least one migration');
     const sorted = [...files].sort();
     assert.deepEqual(files, sorted, 'listMigrations result must be lexicographically sorted');
     for (const f of files) {
