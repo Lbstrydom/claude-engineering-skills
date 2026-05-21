@@ -1,0 +1,61 @@
+{
+  "$schema": "../../scripts/lib/persona-test/schemas.mjs#CanaryDefinitionSchema",
+  "_doc": "Starter canary for first-time adopters. Replace this comment block. Adapt routes + journey to your app's golden-path flow. Real journey example below: navigate → wait for surface → click a non-destructive button → wait for modal.",
+
+  "name": "first-canary",
+  "personaId": "default",
+  "fixtureSeed": null,
+
+  "authBootstrap": {
+    "_doc": "PICK ONE — most real SPAs need auth before state surfaces render. kind:'none' is the default but will land on a public landing page for any auth-walled app. See docs/consistency-contract.md §'Auth-walled surfaces' for guidance.",
+    "kind": "storageState",
+    "storageStatePath": ".persona-test/storage-states/authed.json"
+  },
+
+  "routes": {
+    "_doc": "Symbolic route names → URL paths. Referenced from journeySteps[].routeKey to avoid duplication.",
+    "home": "/?view=grid",
+    "analysis": "/?view=analysis"
+  },
+
+  "scripts": {},
+
+  "journeySteps": [
+    {
+      "action": "navigate",
+      "label": "open the app",
+      "routeKey": "home",
+      "waitUntil": "load"
+    },
+    {
+      "action": "wait",
+      "label": "wait for status chip to render",
+      "condition": {
+        "kind": "visible",
+        "locator": { "kind": "id", "id": "status-chip" },
+        "timeoutMs": 8000
+      }
+    },
+    {
+      "_doc": "READ-ONLY constraint — every click step MUST carry readOnly:true. Destructive clicks (apply, delete, submit) are rejected at canary load time. See docs/consistency-contract.md §'Read-only canaries'.",
+      "action": "click",
+      "label": "open analysis view",
+      "locator": {
+        "kind": "css",
+        "selector": "[data-cta-handler='analysis']"
+      },
+      "readOnly": true,
+      "postWait": {
+        "kind": "visible",
+        "locator": { "kind": "id", "id": "analysis-cta" },
+        "timeoutMs": 10000
+      }
+    }
+  ],
+
+  "expectedContradictions": {
+    "_doc": "First adopter setting: { min: 0, max: null } — observe what the rig finds without judgment. After 2-3 runs, tighten via 'shapes' to assert specific (surfaceId, kind) pairs you EXPECT to find OR NOT find. For broken-canary canaries (testing the rig itself), set min:1.",
+    "min": 0,
+    "max": null
+  }
+}

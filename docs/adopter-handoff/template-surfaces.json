@@ -1,0 +1,109 @@
+{
+  "$schema": "../../scripts/lib/persona-test/schemas.mjs#SurfaceManifestSchema",
+  "version": 1,
+  "_doc": "Starter manifest for persona-test consistency mode. Replace this comment block when adopting. Real surface entries below — adapt to your app's state-rendering elements + engine endpoints.",
+
+  "collections": [
+    {
+      "_doc": "Optional — declare collections (lists, grids, tables) before referencing them in surface engineFields with `scope`. Delete this block if your app has no collections.",
+      "id": "rows-example",
+      "urlPattern": "/api/example/rows",
+      "jsonPath": "rows",
+      "keyField": "id"
+    }
+  ],
+
+  "surfaces": [
+    {
+      "_doc": "Status chip / banner — single element projecting one engine field. The MINIMUM viable surface for first adoption. Recommended starting point: annotate ONE state-rendering surface, get the canary green, then expand.",
+      "id": "status-chip",
+      "locator": {
+        "_doc": "Prefer kind:'id' (stable HTML id). Fall back to kind:'testid' for data-testid. kind:'css' triggers a P2 warning at canary run time — only use for nested attribute selectors.",
+        "kind": "id",
+        "id": "status-chip"
+      },
+      "severityFloor": "P1",
+      "_severityFloorGuidance": "P0 = trust-critical (counts, financial state). P1 = important state for which graceful stale UX is OK (SWR-style chips). P2 = advisory copy where divergence is recoverable. P3 = informational. See docs/consistency-contract.md §Severity-floor-guidance.",
+      "engineFields": [
+        {
+          "field": "stateV2",
+          "type": "enum",
+          "semanticValues": ["organised", "minor", "major", "blocked", "unavailable"],
+          "networkSource": {
+            "urlPattern": "/api/status",
+            "method": "GET",
+            "jsonPath": "stateV2"
+          }
+        }
+      ]
+    },
+
+    {
+      "_doc": "Route-gated example — surface only applies on /?view=analysis (other views skip this check via appliesTo.routePattern). Delete this entry if your app has no view-routing.",
+      "id": "analysis-cta-card",
+      "locator": { "kind": "id", "id": "analysis-cta" },
+      "severityFloor": "P1",
+      "appliesTo": {
+        "routePattern": "view=analysis"
+      },
+      "engineFields": [
+        {
+          "field": "projection.moveCount",
+          "type": "count",
+          "networkSource": {
+            "urlPattern": "/api/analyse",
+            "method": "GET",
+            "jsonPath": "projection.moveCount",
+            "_doc": "Bump awaitTimeoutMs for slow recompute endpoints. Default is 3000ms.",
+            "awaitTimeoutMs": 6000
+          }
+        }
+      ]
+    },
+
+    {
+      "_doc": "State-gated example — surface only applies when stateV2='blocked'. The runner derives activeStateTags from chip-style domClaims (stateV2/state/mode/status engineFields on visible elements), so this gate is honoured iff one of your annotated surfaces projects the state value the rig needs.",
+      "id": "blocked-classifier-modal",
+      "locator": { "kind": "id", "id": "blocked-overlay" },
+      "severityFloor": "P0",
+      "appliesTo": {
+        "requiresState": ["blocked"]
+      },
+      "engineFields": [
+        {
+          "field": "stateV2",
+          "type": "enum",
+          "semanticValues": ["blocked"],
+          "networkSource": {
+            "urlPattern": "/api/status",
+            "method": "GET",
+            "jsonPath": "stateV2"
+          }
+        }
+      ]
+    },
+
+    {
+      "_doc": "Collection example — N rendered rows, each matched to a network response entry by `data-engine-key`. Delete if no collections.",
+      "id": "rows-cell",
+      "locator": {
+        "kind": "css",
+        "selector": ".row-cell[data-engine-scope='rows-example']"
+      },
+      "scope": "rows-example",
+      "severityFloor": "P1",
+      "appliesTo": { "routePattern": "view=grid" },
+      "engineFields": [
+        {
+          "field": "rows[].count",
+          "type": "count",
+          "networkSource": {
+            "urlPattern": "/api/example/rows",
+            "method": "GET",
+            "jsonPath": "rows[].count"
+          }
+        }
+      ]
+    }
+  ]
+}
