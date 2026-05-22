@@ -1,5 +1,34 @@
 # Project Status Log
 
+## 2026-05-22 — Sustainability cleanup WS2: dashboard renderer decomp
+
+Second workstream of the sustainability-cleanup-batch plan. `scripts/lib/dashboard/render.mjs` was a 607-line monolith with 8 inline section renderers + shared helpers; split into a slim orchestrator (~150 lines) + 8 per-section modules + a single `helpers.mjs` that owns the markup primitives.
+
+### Files added
+- [scripts/lib/dashboard/helpers.mjs](scripts/lib/dashboard/helpers.mjs) — the **only** module that defines `escapeHtml`, `jsonScriptSafe`, `statusDot`, `tab`, `panel`, `warningPanel`, `emptyPanel`, `splitUsage`, plus `NON_OK` and the `buildUi()` factory that constructs the frozen helper bundle the orchestrator passes to each section.
+- 8 section modules under [scripts/lib/dashboard/sections/](scripts/lib/dashboard/sections/) — `skills.mjs`, `cli.mjs`, `flows.mjs`, `architecture.mjs`, `plans.mjs`, `audit-runs.mjs`, `requirements.mjs`, `learning.mjs`. Each exports `default(viewModel, ui) → string` with a locked signature. Co-located constants stay with the section that owns them (`CLI_CATEGORY_ORDER`/`CLI_CATEGORY_TITLES` in `cli.mjs`; `ARCH_TIER_LABELS`/`archTiers`/`formatDepsSourceLine` in `architecture.mjs`; `planList` in `plans.mjs`; `REQ_STATUS_ORDER` in `requirements.mjs`).
+- [tests/dashboard-section-contract.test.mjs](tests/dashboard-section-contract.test.mjs) — 22 new tests in four groups: (1) one-way import direction (sections must NOT import `render.mjs` or `helpers.mjs` directly — they receive `ui` via the orchestrator); (2) shape contract (every section exports `default` with arity 2); (3) `ui` bundle drift detection (exact key set); (4) `render.mjs` re-exports the backward-compat surface (`escapeHtml`, `jsonScriptSafe`, `renderDocument`) and imports every section.
+
+### Files modified
+- [scripts/lib/dashboard/render.mjs](scripts/lib/dashboard/render.mjs) — was 607 LOC, now ~165 LOC. Keeps `freshnessBanner`, `nav`, `renderDocument`. Re-exports `escapeHtml` + `jsonScriptSafe` from `helpers.mjs` for backward compat (existing test imports unchanged). Adds `SLICERS` map — each section receives a narrow viewModel slice (`{src, payload}`) rather than the whole `data` object, limits coupling per plan §2 #4.
+
+### Decisions
+
+- **Slicers in orchestrator, not in sections** — keeps the whole "what does this section need from data" decision in one file. Sections stay narrow: `(viewModel, ui)` in, HTML string out.
+- **`buildUi()` factory pattern** — `helpers.mjs` exports a builder, not a literal `ui` object. Lets tests construct their own bundle if needed, and ensures the orchestrator gets a frozen instance per `renderDocument` call.
+- **U+2028 / U+2029 escape via `\u`-notation in regex source** — these are JS line terminators; writing them as literal characters inside regex literals breaks the parser. Used `/ /g` form instead. Caught when first attempt failed module load.
+
+### Verification
+
+- Full test suite: **2825/2842 passing, 0 failures** (22 new + existing — deterministic-render contract held byte-identical).
+- `npm run dashboard:build`: produces `dashboard/index.html` + `dashboard/telemetry.html` with `degraded: false`. Architecture-tab subtitle still reads "56 edges: 11 observed · 14 manual-only · 31 confirmed-by-both · refresh f5efcbe5" (the data path unchanged after WS2).
+
+### Plan reference
+
+[docs/plans/sustainability-cleanup-batch.md](docs/plans/sustainability-cleanup-batch.md) — WS1 + WS2 complete. WS3 (refresh.mjs hardening) remaining.
+
+---
+
 ## 2026-05-22 — Sustainability cleanup WS1: arch-memory god-module split
 
 First workstream of the sustainability-cleanup-batch plan. `scripts/lib/store/arch-memory.mjs` was an 838-line "largest M3 domain" file mixing 6 cohesive concerns; split into focused sub-modules under `scripts/lib/store/arch/` with the original path kept as a **thin barrel** so the `learning-store.mjs` frozen-export contract (107 names) holds unchanged.

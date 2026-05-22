@@ -8,6 +8,28 @@
 
 ## Implementation Log
 
+### 2026-05-22 — WS2 renderer decomp complete
+
+**Completed**: All §6 WS2 file-level work — `scripts/lib/dashboard/render.mjs` (607 LOC) split into orchestrator (~165 LOC) + 8 section modules + single `helpers.mjs`:
+
+| File | Purpose |
+|---|---|
+| `helpers.mjs` | The ONLY home for `escapeHtml`, `jsonScriptSafe`, `statusDot`, `tab`, `panel`, `warningPanel`, `emptyPanel`, `splitUsage`, `NON_OK`, plus the `buildUi()` factory |
+| `sections/skills.mjs` | `default({src, skills}, ui) → string` |
+| `sections/cli.mjs` | `default({src, cli}, ui) → string` + co-located `CLI_CATEGORY_ORDER`/`CLI_CATEGORY_TITLES` |
+| `sections/flows.mjs` | `default({src, flows}, ui) → string` |
+| `sections/architecture.mjs` | `default({src, architecture}, ui) → string` + co-located `archTiers`/`formatDepsSourceLine`/`ARCH_TIER_LABELS` |
+| `sections/plans.mjs` | `default({src, plans}, ui) → string` + co-located `planList` |
+| `sections/audit-runs.mjs` | `default({src, auditRuns}, ui) → string` |
+| `sections/requirements.mjs` | `default({src, requirements}, ui) → string` + co-located `REQ_STATUS_ORDER` |
+| `sections/learning.mjs` | `default({src, learning}, ui) → string` |
+
+Tests: 22 new tests in `tests/dashboard-section-contract.test.mjs` covering (1) one-way import direction (sections do NOT import render.mjs or helpers.mjs — receive `ui` via orchestrator); (2) section signature shape (default fn arity 2); (3) `ui` bundle drift detection (exact key set + frozen); (4) render.mjs re-exports backward-compat surface + imports every section. Full suite **2825/2842 passing**, 0 failures. Deterministic-render byte-identity held — no `tests/dashboard.test.mjs` fixture changes needed.
+
+**Deviations from the plan**: Hit a JavaScript regex-literal quirk — U+2028 / U+2029 (line/paragraph separators) cannot appear as literal characters inside a regex source because they're treated as line terminators. Fix is to use ` ` / ` ` escape sequences inside the regex (works without the `u` flag). First write attempt had the literal chars, broke module load; corrected via a small fix-script. No semantic change.
+
+**Pending**: WS3 (refresh.mjs hardening — VCS structured error contract + sensitive-paths canonical module + state-aware filter + full-vs-incremental parity + redacted-log policy).
+
 ### 2026-05-22 — WS1 store split complete
 
 **Completed**: All §6 WS1 file-level work — split `scripts/lib/store/arch-memory.mjs` (838 LOC, 31 exports) into thin barrel + 6 sub-modules under `arch/`:
