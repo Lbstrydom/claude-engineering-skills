@@ -125,6 +125,7 @@ details.row > div { padding-top: 8px; color: var(--muted); }
 .status-warn { background: var(--warn); }
 .status-err { background: var(--err); }
 .section-note { color: var(--muted); font-size: 13px; margin: 0 0 14px; }
+.section-note.section-warn { color: var(--warn); }
 
 /* ── Flow diagram ─────────────────────────────────────────────── */
 .flow { display: flex; flex-direction: column; gap: 4px; }

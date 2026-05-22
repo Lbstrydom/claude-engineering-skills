@@ -282,7 +282,7 @@ function archTiers(domains, deps) {
 function sectionArchitecture(data) {
   const src = data.sources.architecture || { status: 'ok', detail: '' };
   if (NON_OK.has(src.status)) return warningPanel('architecture', src);
-  const { domains, deps = {}, mapPath } = data.architecture;
+  const { domains, deps = {}, depsSource = null, mapPath } = data.architecture;
   if (!domains.length) {
     return emptyPanel('arch-empty',
       'No architecture-map.md — run `npm run arch:render` to generate it.');
@@ -324,10 +324,40 @@ function sectionArchitecture(data) {
     </div>`;
   }
   const mp = mapPath ? escapeHtml(mapPath) : 'docs/architecture-map.md';
+  // Plan: docs/plans/observed-domain-deps.md §6 — subtitle exposes observed
+  // vs manual provenance so operators see freshness + which layer drives tiers.
+  const depsLine = formatDepsSourceLine(depsSource);
   return `<p class="section-note">${escapeHtml(domains.length)} domains · `
     + `${escapeHtml(tierCount)} dependency tiers (top-level → foundation) · `
     + `bar width &prop; symbol count · full map: <code>${mp}</code></p>
+    ${depsLine}
     <div class="arch-graph">${bands}</div>`;
+}
+
+function formatDepsSourceLine(ds) {
+  if (!ds) return '';
+  const { observed = 0, manual = 0, both = 0 } = ds.edgeCounts || {};
+  const total = observed + manual + both;
+  if (ds.observedAvailable) {
+    const refresh = ds.observedRefreshId ? ` · refresh <code>${escapeHtml(ds.observedRefreshId.slice(0, 8))}</code>` : '';
+    if (manual === 0 && both === 0) {
+      return `<p class="section-note">${escapeHtml(total)} edges (all observed)${refresh}</p>`;
+    }
+    return `<p class="section-note">${escapeHtml(total)} edges: `
+      + `${escapeHtml(observed)} observed · ${escapeHtml(manual)} manual-only · ${escapeHtml(both)} confirmed-by-both`
+      + `${refresh}</p>`;
+  }
+  if (total === 0) {
+    return '<p class="section-note section-warn">No dependency data — run <code>npm run dashboard:setup</code></p>';
+  }
+  const reason = ds.observedRejectedReason || 'absent';
+  const hint = {
+    'absent': 'run <code>npm run dashboard:setup</code> to enable observed deps',
+    'stale-rules': 'observed deps rejected as stale; run <code>npm run arch:render</code>',
+    'schema-invalid': 'observed deps file corrupt; check stderr',
+    'unreadable': 'observed deps file unreadable; check stderr',
+  }[reason] || 'observed deps unavailable';
+  return `<p class="section-note section-warn">${escapeHtml(total)} edges (manual intent only — ${hint})</p>`;
 }
 
 function planList(plans) {

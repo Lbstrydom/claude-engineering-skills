@@ -121,6 +121,8 @@ function reportDegraded(results) {
     for (const [name, s] of Object.entries(r.sources)) {
       if (s.status === 'invalid' || s.status === 'unexpected-error') {
         process.stderr.write(`  [dashboard] ${r.target}: source "${name}" is ${s.status} — ${s.detail}\n`);
+      } else if (s.status === 'missing-optional' && name === 'architecture') {
+        process.stderr.write(`  [dashboard] ${r.target}: architecture data not built — run \`npm run dashboard:setup\` (or \`arch:refresh && arch:render\`) to populate the Architecture tab\n`);
       }
     }
   }

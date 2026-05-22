@@ -96,6 +96,42 @@ export function tagDomain(filePath, rules) {
 }
 
 /**
+ * Precompile a rule set into a fast tagger that reuses the same anchored
+ * regex per pattern instead of rebuilding it on every call. Use this when
+ * you'll tag many file paths against the same rules (e.g. tagging
+ * thousands of import edges in `computeObservedDomainDeps`).
+ *
+ * Returns a function `(filePath) => domain | null` with the same semantics
+ * as `tagDomain` — first-match-wins, malformed rules skipped, returns null
+ * when no rule matches. Plan: docs/plans/observed-domain-deps.md (Gemini-R3-G1).
+ *
+ * @param {Array<{pattern: string, domain: string}>} rules
+ * @returns {(filePath: string) => (string | null)}
+ */
+export function makeFastTagger(rules) {
+  if (!Array.isArray(rules) || rules.length === 0) {
+    return () => null;
+  }
+  const compiled = [];
+  for (const rule of rules) {
+    if (!rule || typeof rule.pattern !== 'string' || typeof rule.domain !== 'string') continue;
+    const norm = rule.pattern.replaceAll('\\', '/').replace(/^\.\//, '');
+    compiled.push({
+      re: new RegExp('^' + globToRegexBody(norm) + '$'),
+      domain: rule.domain,
+    });
+  }
+  return (filePath) => {
+    if (typeof filePath !== 'string') return null;
+    const norm = filePath.replaceAll('\\', '/').replace(/^\.\//, '');
+    for (const c of compiled) {
+      if (c.re.test(norm)) return c.domain;
+    }
+    return null;
+  };
+}
+
+/**
  * Compute the distinct domain tags for a list of target paths.
  * Used by /plan to anchor planning in the architecture map and surface
  * cross-domain work + untagged paths.

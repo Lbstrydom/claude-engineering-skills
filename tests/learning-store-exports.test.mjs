@@ -82,6 +82,12 @@ const EXPECTED_EXPORTS = [
   'listPersonasForApp',
   'recordPersonaSession',
   'upsertPersona',
+  // persona-test-candidates (3 — Phase 3 WS-PIPE1, aggregation table for
+  // consistency-mode canary findings; lifecycle distinct from
+  // persona_test_sessions so kept as a separate domain module)
+  'listPersonaTestCandidates',
+  'markPersonaTestCandidateProposed',
+  'upsertPersonaTestCandidate',
   // security (5)
   'callIncidentNeighbourhoodRpc',
   'getMaxIncidentRefreshAt',
@@ -114,6 +120,7 @@ const EXPECTED_EXPORTS = [
   'getImportersForFiles',
   'getTopDuplicateClusters',
   'heartbeatRefreshRun',
+  'listFileImportsForSnapshot',
   'listLayeringViolationsForSnapshot',
   'listSymbolsForSnapshot',
   'markImportGraphPopulated',
@@ -178,7 +185,7 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     }
   });
 
-  it('matches the contract-matrix count: 93 frozen + 10 caller helpers = 103', () => {
-    assert.equal(EXPECTED_EXPORTS.length, 103);
+  it('matches the contract-matrix count: 93 frozen + 10 caller helpers + 3 Phase 3 WS-PIPE1 + 1 observed-deps (listFileImportsForSnapshot) = 107', () => {
+    assert.equal(EXPECTED_EXPORTS.length, 107);
   });
 });

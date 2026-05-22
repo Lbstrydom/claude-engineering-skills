@@ -72,6 +72,10 @@ import {
   // Phase 1 — adaptive-learning-v1
   insertLearningDecision,
   backfillLearningOutcome,
+  // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
+  upsertPersonaTestCandidate,
+  listPersonaTestCandidates,
+  markPersonaTestCandidateProposed,
 } from './learning-store.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit } from './lib/cli-io.mjs';
@@ -277,6 +281,57 @@ async function cmdPromoteRegressionSpec() {
     candidateFingerprint: p.candidateFingerprint,
   });
   emit({ ok: r.ok, cloud: true, rowsAffected: r.rowsAffected });
+}
+
+// ── Phase 3 WS-PIPE1 — persona_test_candidates ─────────────────────────────
+
+async function cmdUpsertPersonaTestCandidate() {
+  const p = parsePayload();
+  if (!p.repoName || !p.fingerprint || !p.canaryName || !p.surfaceId || !p.severity) {
+    return emitError('BAD_INPUT',
+      'repoName, fingerprint, canaryName, surfaceId, severity are required');
+  }
+  if (!['P0', 'P1', 'P2', 'P3'].includes(p.severity)) {
+    return emitError('BAD_INPUT', `severity must be one of P0..P3 (got ${p.severity})`);
+  }
+  await initLearningStore();
+  if (!isCloudEnabled()) return emit({ ok: true, cloud: false });
+  const r = await upsertPersonaTestCandidate({
+    repoName: p.repoName,
+    fingerprint: p.fingerprint,
+    canaryName: p.canaryName,
+    surfaceId: p.surfaceId,
+    severity: p.severity
+  });
+  emit({ ok: r.ok, cloud: r.cloud, occurrences: r.occurrences, firstSeen: r.firstSeen, lastSeen: r.lastSeen });
+}
+
+async function cmdListPersonaTestCandidates() {
+  const p = parsePayload();
+  if (!p.repoName) return emitError('BAD_INPUT', 'repoName is required');
+  await initLearningStore();
+  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, candidates: [] });
+  const rows = await listPersonaTestCandidates({
+    repoName: p.repoName,
+    ageDays: p.ageDays,
+    occurrencesFloor: p.occurrencesFloor,
+    severityFloor: p.severityFloor
+  });
+  emit({ ok: true, cloud: true, candidates: rows });
+}
+
+async function cmdMarkPersonaTestCandidateProposed() {
+  const p = parsePayload();
+  if (!p.repoName || !p.fingerprint) {
+    return emitError('BAD_INPUT', 'repoName and fingerprint are required');
+  }
+  await initLearningStore();
+  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, rowsAffected: 0 });
+  const r = await markPersonaTestCandidateProposed({
+    repoName: p.repoName,
+    fingerprint: p.fingerprint
+  });
+  emit({ ok: r.ok, cloud: r.cloud, rowsAffected: r.rowsAffected });
 }
 
 async function cmdRecordRegressionSpecRun() {
@@ -1077,6 +1132,10 @@ const commands = {
   'record-regression-spec-run': cmdRecordRegressionSpecRun,
   'list-consistency-candidates': cmdListConsistencyCandidates,
   'promote-regression-spec':     cmdPromoteRegressionSpec,
+  // Phase 3 WS-PIPE1 — persona_test_candidates aggregation table.
+  'upsert-persona-test-candidate':       cmdUpsertPersonaTestCandidate,
+  'list-persona-test-candidates':        cmdListPersonaTestCandidates,
+  'mark-persona-test-candidate-proposed': cmdMarkPersonaTestCandidateProposed,
   'record-correlation': cmdRecordCorrelation,
   'record-ship-event': cmdRecordShipEvent,
   'record-plan-verify-run': cmdRecordPlanVerifyRun,

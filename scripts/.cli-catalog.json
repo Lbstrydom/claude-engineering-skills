@@ -163,6 +163,10 @@
       "description": "Build both dashboard pages (reference + telemetry) to dashboard/.",
       "category": "dashboard"
     },
+    "dashboard:setup": {
+      "description": "Bootstrap the dashboard: arch:refresh → arch:render → dashboard:build. Run after fresh clone, or after editing .audit-loop/domain-map.json.",
+      "category": "dashboard"
+    },
 
     "arch:refresh": {
       "description": "Refresh architectural-memory: extract symbols, embed, index in Supabase (changed files only).",

@@ -10,6 +10,31 @@
 > is the live, generated index of every symbol in this repo. Start there
 > when you need to find an existing function, class, or component before
 > writing a new one.
+>
+> **Bootstrap / refresh order** — when the map is stale, missing, or after
+> editing [`.audit-loop/domain-map.json`](.audit-loop/domain-map.json):
+> `npm run dashboard:setup` (chains `arch:refresh` → `arch:render` →
+> `dashboard:build`). Domain re-tagging happens in `arch:refresh` against
+> the symbol_index table — editing `domain-map.json` alone does not retag
+> existing DB rows; always start with `arch:refresh` after a rename.
+>
+> **Two-layer dependency model** (Architecture tab tiers):
+> - **Observed** — DB import graph from `symbol_file_imports`, written
+>   to [`.audit-loop/domain-deps-observed.json`](.audit-loop/domain-deps-observed.json)
+>   by `arch:render`, regenerated every render, gitignored. Evidence
+>   layer: this is what code *actually* imports.
+> - **Manual** — `allowedDeps` block inside `domain-map.json`, committed.
+>   Intent layer: architectural rules the import graph cannot see
+>   (dynamic imports, intentionally-forbidden edges, framework wiring).
+>
+> The dashboard reader merges both with per-edge provenance (`source ∈
+> {observed, manual, both}`). Manual entries are NOT a fallback — they
+> add architectural intent the import graph misses. The reader Zod-
+> validates the observed envelope and rejects it as stale when the
+> domain-map rules digest changes without a fresh `arch:render`.
+> Only AGENTS.md describes this — [CLAUDE.md](CLAUDE.md) intentionally
+> stays a thin Claude-Code-only addendum via `@./AGENTS.md`, so this
+> single-file change is the canonical surface.
 <!-- arch-map-discoverability:end -->
 
 ## Project Overview

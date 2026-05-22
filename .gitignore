@@ -70,6 +70,9 @@ node_modules/
 # Architectural-memory cache (regenerated, never commit).
 .audit-loop/cache/
 
+# Observed domain-deps envelope — derived from DB import graph by arch:render.
+.audit-loop/domain-deps-observed.json
+
 # .env backups from rearrangement scripts (may contain secrets).
 .env.bak.*
 
