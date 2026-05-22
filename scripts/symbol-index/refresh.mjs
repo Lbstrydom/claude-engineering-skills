@@ -24,9 +24,11 @@
  * @module scripts/symbol-index/refresh
  */
 
-import { execSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
+import * as vcs from '../lib/vcs.mjs';
+import { filterDiffFiles, formatSkipLog } from '../lib/sensitive-paths.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -72,67 +74,22 @@ function parseArgs(argv) {
 function logErr(s) { process.stderr.write(`  [refresh] ${s}\n`); }
 function logOk(s) { process.stderr.write(`  [refresh] ${s}\n`); }
 
-function gitCommitSha(cwd) {
-  try { return execSync('git rev-parse HEAD', { cwd, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim(); }
-  catch { return null; }
-}
-
 /**
- * Validate that `sinceCommit` is a safe git revision spec — defends against
- * command injection (R1 audit H6/H11). Allows: 40-char SHA prefix (4+ chars),
- * `HEAD` / `HEAD~N`, `@{upstream}`, `origin/<branch>`, plain branch/tag names.
- * Rejects anything containing shell metacharacters.
- */
-function isSafeGitRevision(s) {
-  if (typeof s !== 'string' || s.length === 0 || s.length > 200) return false;
-  // Strict allowlist — no spaces, no shell metas, no path-traversal.
-  // First char MUST NOT be `-` so a malformed/malicious arg like
-  // `--output=/path` cannot be passed through as a git argument and
-  // interpreted as a flag (git would otherwise treat any leading-`-`
-  // string as an option, not a revspec).
-  return /^[A-Za-z0-9._\/@{}~^][A-Za-z0-9._\/@{}~^-]*$/.test(s);
-}
-
-/**
- * Working-tree-aware diff (Gemini G1): include uncommitted + untracked.
- * Returns categorised file lists.
+ * Throw a tagged Error so the outer `main()` try/catch can abort the
+ * in-flight refresh_run BEFORE exiting. The catch block in `main()`
+ * inspects `err.vcsCode` to look up the exit code via `vcs.exitCodeFor`
+ * — direct `process.exit()` here would skip `abortRefreshRun`, leaving
+ * the row stuck in `running` and the per-repo lock held (R1-audit H10).
  *
- * Uses spawnSync with explicit args (no shell interpretation) — `sinceCommit`
- * is also pre-validated against `isSafeGitRevision` (R1 audit H6/H11).
+ * @param {{code: string, message: string, cause?: Error}} err
  */
-function gitDiffWithWorkingTree(cwd, sinceCommit) {
-  const out = { added: [], modified: [], deleted: [], renamed: [], untracked: [] };
-  if (sinceCommit) {
-    if (!isSafeGitRevision(sinceCommit)) {
-      logErr(`refusing unsafe --since-commit: ${JSON.stringify(sinceCommit).slice(0, 80)}`);
-      return out;
-    }
-    const r = spawnSync('git', ['diff', '--name-status', sinceCommit], {
-      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    if (r.status === 0) {
-      for (const line of (r.stdout || '').split('\n')) {
-        const m = line.match(/^([AMDR])\d*\s+(.+?)(?:\s+(.+))?$/);
-        if (!m) continue;
-        if (m[1] === 'A') out.added.push(m[2]);
-        else if (m[1] === 'M') out.modified.push(m[2]);
-        else if (m[1] === 'D') out.deleted.push(m[2]);
-        else if (m[1] === 'R') out.renamed.push({ from: m[2], to: m[3] });
-      }
-    } else {
-      logErr(`git diff failed (exit ${r.status}): ${(r.stderr || '').slice(0, 200)}`);
-    }
-  }
-  const ls = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], {
-    cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  if (ls.status === 0) {
-    for (const line of (ls.stdout || '').split('\n')) {
-      const t = line.trim();
-      if (t) out.untracked.push(t);
-    }
-  }
-  return out;
+function throwVcsError(err) {
+  const e = new Error(`vcs failure: ${err.code} — ${err.message}`);
+  e.code = 'VCS_FAILURE';
+  e.vcsCode = err.code;
+  e.vcsMessage = err.message;
+  if (err.cause) e.cause = err.cause;
+  throw e;
 }
 
 /**
@@ -208,7 +165,13 @@ async function main() {
   const repoId = repo.id;
 
   let mode = args.full ? 'full' : 'incremental';
-  let walkStartCommit = gitCommitSha(repoRoot);
+  // `walkStartCommit` is informational — the snapshot can publish without it.
+  // A `!sha.ok` result is NOT fatal here (terminal failures like missing-git
+  // or not-a-repo surface later when we try to read the diff). Empty repos
+  // (no commits yet → BAD_REVISION) are also tolerated so a brand-new repo
+  // can publish its first snapshot.
+  const shaResult = vcs.gitCommitSha(repoRoot);
+  let walkStartCommit = shaResult.ok ? shaResult.sha : null;
   let sinceCommit = args.sinceCommit;
 
   // R1 audit M7: when running incremental WITHOUT an explicit --since-commit,
@@ -277,7 +240,17 @@ async function main() {
       let restrictFiles = null;
       let touchedSet = null;
       if (mode === 'incremental' && sinceCommit) {
-        const diff = gitDiffWithWorkingTree(repoRoot, sinceCommit);
+        const diffResult = vcs.gitDiffWithWorkingTree(repoRoot, sinceCommit);
+        if (!diffResult.ok) {
+          throwVcsError(diffResult.error);
+        }
+        // State-aware filter: sensitive `modified` → rewritten as `deleted`
+        // so the indexer tombstones prior rows; sensitive `deleted` is
+        // preserved as tombstone. See sensitive-paths.mjs filterDiffFiles.
+        const { diff, skipped } = filterDiffFiles(diffResult.files, ['sensitive', 'generatedNoise']);
+        for (const line of formatSkipLog(skipped, { logger: 'refresh' })) {
+          process.stderr.write(`  ${line}\n`);
+        }
         const fileList = [
           ...diff.added,
           ...diff.modified,
@@ -451,9 +424,21 @@ async function main() {
     });
   } catch (err) {
     logErr(`refresh failed: ${err.message}`);
+    // ALWAYS abort the open refresh_run first so the row leaves `running`
+    // state + the per-repo lock is released. Only after that do we exit.
     try { await abortRefreshRun({ refreshId, reason: err.message }); } catch { /* best-effort */ }
-    process.stdout.write(JSON.stringify({ ok: false, error: { code: err.code || 'EXCEPTION', message: err.message } }) + '\n');
-    process.exit(2);
+    // Structured VCS failures: surface the precise exit code via
+    // vcs.exitCodeFor(vcsCode). Everything else exits 2.
+    const isVcsFailure = err.code === 'VCS_FAILURE' && typeof err.vcsCode === 'string';
+    const exitCode = isVcsFailure ? vcs.exitCodeFor(err.vcsCode) : 2;
+    process.stdout.write(JSON.stringify({
+      ok: false,
+      error: {
+        code: isVcsFailure ? err.vcsCode : (err.code || 'EXCEPTION'),
+        message: isVcsFailure ? err.vcsMessage : err.message,
+      },
+    }) + '\n');
+    process.exit(exitCode);
   }
 }
 

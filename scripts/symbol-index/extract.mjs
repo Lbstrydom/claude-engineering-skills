@@ -25,12 +25,12 @@ import { cruise } from 'dependency-cruiser';
 import { signatureHash } from '../lib/symbol-index.mjs';
 import {
   gateSymbolForEgress,
-  isPathSensitive,
   isExtensionAllowlisted,
   containsSecrets,
   redactSecrets,
   SECRET_REDACTED,
 } from '../lib/sensitive-egress-gate.mjs';
+import { shouldSkipForIndexing, formatSkipLog } from '../lib/sensitive-paths.mjs';
 import { isThinDelegate } from '../lib/symbol-index/thin-delegate.mjs';
 import { emit } from '../lib/cli-io.mjs';
 
@@ -62,6 +62,9 @@ function emitProgress(msg) {
  */
 function extractSymbols(filePaths, repoRoot, opts = {}) {
   const stats = { symbolCount: 0, skippedPath: 0, skippedExt: 0, skippedSize: 0, skippedDelegate: 0, redacted: 0 };
+  // Aggregate sensitive-path skips and emit ONE redacted log block at end
+  // (plan: docs/plans/sustainability-cleanup-batch.md WS3, Gemini-r2-G3).
+  const skippedSensitive = [];
   // skipAddingFilesFromTsConfig + skipFileDependencyResolution prevent ts-morph
   // from auto-loading imported modules (vendored types, monorepo siblings, etc.)
   // which is what ballooned the wine-cellar refresh to 4.3GB heap.
@@ -80,9 +83,15 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
 
   for (const abs of filePaths) {
     const rel = path.relative(repoRoot, abs).replace(/\\/g, '/');
-    if (isPathSensitive(rel)) {
+    // Skip filter covers BOTH categories. In incremental mode this is
+    // defence-in-depth (refresh.mjs already filtered the diff). In full
+    // mode (refresh.mjs passes no `--files`) this IS the discovery filter
+    // — so the same skip policy applies to both modes (plan §6 WS3 R3-H3).
+    // Sensitive entries aggregate; generatedNoise stays per-path (visible).
+    const skip = shouldSkipForIndexing(rel, ['sensitive', 'generatedNoise']);
+    if (skip.skip) {
       stats.skippedPath++;
-      emitProgress(`skip-path: ${rel}`);
+      skippedSensitive.push({ path: rel, category: skip.category, pattern: skip.pattern, action: 'dropped' });
       continue;
     }
     if (!isExtensionAllowlisted(rel)) {
@@ -203,6 +212,10 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
     // accumulate 800+ in-memory ASTs (memory growth was a contributor to
     // the 4.3GB heap in wine-cellar's hung run).
     try { project.removeSourceFile(sf); } catch { /* ignore */ }
+  }
+
+  for (const line of formatSkipLog(skippedSensitive, { logger: 'extract' })) {
+    process.stderr.write(`  ${line}\n`);
   }
 
   return stats;

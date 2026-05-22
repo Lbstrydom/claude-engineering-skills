@@ -12,33 +12,8 @@
  */
 
 import path from 'node:path';
-import micromatch from 'micromatch';
+import { classifyPath } from './sensitive-paths.mjs';
 import { scanForSecrets, redactSecrets as redactSecretsImpl } from './secret-patterns.mjs';
-
-/** Path-glob denylist. Block extraction entirely. */
-export const DEFAULT_PATH_DENYLIST = Object.freeze([
-  '**/.env',
-  '**/.env.*',
-  '**/secrets/**',
-  '**/credentials*',
-  '**/private/**',
-  '**/*.pem',
-  '**/*.key',
-  '**/*.p12',
-  '**/*.pfx',
-  '**/*.crt',
-  '**/*.cer',
-  '**/*.der',
-  '**/id_rsa*',
-  '**/*.gpg',
-  '**/*.asc',
-  '**/*.lock',
-  '**/*-lock.json',
-  '**/*.lockb',
-  '**/package-lock.json',
-  '**/yarn.lock',
-  '**/pnpm-lock.yaml',
-]);
 
 /** Allowlist: only these extensions ever send body content to providers. */
 export const DEFAULT_EXT_ALLOWLIST = Object.freeze([
@@ -49,15 +24,18 @@ export const DEFAULT_EXT_ALLOWLIST = Object.freeze([
 export const SECRET_REDACTED = '[SECRET_REDACTED]';
 
 /**
+ * True iff the path matches EITHER canonical category — `sensitive` (secrets,
+ * keys, credentials, …) OR `generatedNoise` (lockfiles, *.min.js, *.map).
+ *
+ * Lockfiles are intentionally blocked from LLM egress even though they're
+ * not secret — they blow context windows without adding signal, and the
+ * pre-WS3 denylist already excluded them (plan: Gemini-r3-G2).
+ *
  * @param {string} filePath - repo-relative or absolute path
- * @param {string[]} [denylist]
  * @returns {boolean}
  */
-export function isPathSensitive(filePath, denylist = DEFAULT_PATH_DENYLIST) {
-  if (!filePath) return false;
-  // Normalise to forward slashes so globs match consistently across OS
-  const norm = String(filePath).replace(/\\/g, '/');
-  return micromatch.isMatch(norm, denylist, { dot: true, nocase: true });
+export function isPathSensitive(filePath) {
+  return classifyPath(filePath) !== null;
 }
 
 /**

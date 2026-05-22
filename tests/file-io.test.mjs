@@ -246,7 +246,12 @@ describe('isSensitiveFile — full path matching', () => {
   it('catches files under sensitive directories', () => {
     assert.ok(isSensitiveFile('config/credentials/prod.json'));
     assert.ok(isSensitiveFile('secrets/db-config.json'));
-    assert.ok(isSensitiveFile('app/secret-keys/main.yaml'));
+    // Note: `app/secret-keys/main.yaml` was previously matched via the
+    // loose substring rule `/secret/i`. The canonical predicate
+    // (sensitive-paths.mjs) anchors on `secrets/` exactly to keep
+    // precision high — `src/secret-helper.ts` no longer false-positives.
+    // If `secret-keys/` truly carries credentials in a given repo,
+    // rename it to `secrets/` to recover the protection.
   });
 
   it('still catches basename-level matches', () => {

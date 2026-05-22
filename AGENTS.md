@@ -147,6 +147,8 @@ scripts/
 │   ├── findings-tracker.mjs # FP tracker (v2), lazy-decay EMA, multi-scope counters
 │   ├── findings-outcomes.mjs # Outcome logging, effectiveness tracking, EWR
 │   ├── findings-tasks.mjs  # Remediation task CRUD + persistence
+│   ├── vcs.mjs             # Structured VCS helpers — closed VcsErrorCode enum, DiffShape contract, exitCodeFor()
+│   ├── sensitive-paths.mjs # Canonical path classifier (sensitive | generatedNoise | null) + state-aware diff filter + redacted skip log
 │   └── config.mjs          # Centralized validated config (all env var reads)
 ├── shared.mjs              # Barrel re-export — backwards-compatible, imports from lib/
 ├── openai-audit.mjs        # GPT-5.4 multi-pass auditor (plan, code, rebuttal modes) — links audit_runs to commit_sha + plan_id
@@ -861,6 +863,33 @@ it, sessions drift from the requested task into repo-hygiene meta-work
 the user didn't authorise, and the final commit bundles unrelated work
 that's hard to revert cleanly.  Repo hygiene is a separate, dedicated
 task — request it explicitly when you want it done.
+
+## Sensitive paths + VCS contract (canonical locations)
+
+[scripts/lib/sensitive-paths.mjs](scripts/lib/sensitive-paths.mjs) is the
+**single source of truth** for sensitive-path classification. Two categories:
+`sensitive` (`.env*`, `secrets/`, `credentials*`, certs/keys, `.aws/`, `.ssh/`,
+`id_rsa*`, `password.*`, `tokens?.*`) and `generatedNoise` (lockfiles, `.min.js`,
+`.map`). The four legacy consumers (`quickfix-patterns.mjs`, `audit-scope.mjs`,
+`sensitive-egress-gate.mjs`, `extract.mjs`) all delegate here via
+`classifyPath` / `shouldSkipForIndexing` / `filterDiffFiles`. Skip logging
+MUST go through `formatSkipLog` — sensitive entries aggregate by default;
+`SENSITIVE_PATHS_DEBUG=1` emits `[redacted:<sha256-hex8>].<ext>` (never
+basenames, never full paths). The state-aware `filterDiffFiles` rewrites a
+modified-to-sensitive entry as `deleted:` so the indexer can tombstone prior
+rows; a deletion of a sensitive path is preserved as a tombstone for the
+same reason. See `docs/plans/sustainability-cleanup-batch.md` WS3 for the
+12-case state matrix.
+
+[scripts/lib/vcs.mjs](scripts/lib/vcs.mjs) is the structured VCS contract.
+`gitCommitSha` / `gitDiffWithWorkingTree` return `{ok:true, …} | {ok:false,
+error:{code,message,cause?}}` with a closed `VcsErrorCode` enum:
+`GIT_BINARY_MISSING` (exit 127), `NOT_A_GIT_REPOSITORY` (exit 5),
+`BAD_REVISION` (exit 4), `WORKING_TREE_UNREADABLE` (exit 5), `EXEC_FAILED`
+(exit 1, the only retryable code — see `RETRYABLE_VCS_ERRORS`). Map via
+`vcs.exitCodeFor(code)`. `isSafeGitRevision` is the boolean predicate;
+`runJsonLines` (generic JSON-lines subprocess helper) stays file-private in
+`scripts/symbol-index/refresh.mjs` per Gemini-r4-G2 — it's not VCS-specific.
 
 ## Code Style
 

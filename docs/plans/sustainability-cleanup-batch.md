@@ -1,12 +1,50 @@
 # Plan: Sustainability cleanup batch — god-module split + monolithic renderer decomp + refresh.mjs hardening
 
 - **Date**: 2026-05-22
-- **Status**: In Progress — WS1 complete (commit pending), WS2 + WS3 remaining
+- **Status**: Complete — WS1 (efca5ea), WS2 (13a0af9), WS3 (this commit)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: js-ts (+ postgres)
 
 ## Implementation Log
+
+### 2026-05-22 — WS3 refresh.mjs hardening complete
+
+**Completed**: All §6 WS3 file-level work landed in one bundled commit (per WS1/WS2 precedent — three logical sub-steps verified by tests at each phase).
+
+| File | Purpose |
+|---|---|
+| **NEW** `scripts/lib/vcs.mjs` | Closed `VcsErrorCode` enum + structured `gitCommitSha`/`gitDiffWithWorkingTree` contracts + `exitCodeFor` mapper + `RETRYABLE_VCS_ERRORS` set + relocated `isSafeGitRevision`. `runJsonLines` stays file-private in `refresh.mjs` (Gemini-r4-G2). |
+| **NEW** `scripts/lib/sensitive-paths.mjs` | Canonical two-category classifier (`sensitive` / `generatedNoise` / null) + state-aware `filterDiffFiles` (12-case matrix incl. tombstone preservation) + `shouldSkipForIndexing` + redacted `formatSkipLog` (default aggregates; `SENSITIVE_PATHS_DEBUG=1` emits `[redacted:<sha256-hex8>].<ext>` — never basenames). |
+| **EDIT** `scripts/symbol-index/refresh.mjs` | Inline VCS helpers deleted. `vcs.gitCommitSha` destructured via `{ok, sha}`. `vcs.gitDiffWithWorkingTree` failures route via `vcs.exitCodeFor` (new CLI exits: 4 / 5 / 127 / 1). Incremental path runs the state-aware `filterDiffFiles(['sensitive', 'generatedNoise'])` before extract; skip log via `formatSkipLog`. |
+| **EDIT** `scripts/symbol-index/extract.mjs` | `isPathSensitive` → `shouldSkipForIndexing(rel, ['sensitive', 'generatedNoise'])`. Aggregated skip log emitted ONCE at end via `formatSkipLog(logger:'extract')`, not per file. Now filters both categories so full-mode parity is achieved at extract's discovery (refresh.mjs's incremental still applies the diff-level filter first). |
+| **EDIT** `scripts/lib/quickfix-patterns.mjs` | Inline `SENSITIVE_PATH_PATTERNS` deleted. `isSensitivePath` thin-delegates to `classifyPath(p) === 'sensitive'`. `normalisePath` re-exports the canonical. |
+| **EDIT** `scripts/lib/audit-scope.mjs` | Inline `SENSITIVE_PATTERNS` array deleted. `isSensitiveFile` delegates. Lost the loose `secret-keys/`-substring catch (intentional precision trade — documented in `tests/file-io.test.mjs`). |
+| **EDIT** `scripts/lib/sensitive-egress-gate.mjs` | `DEFAULT_PATH_DENYLIST` + `micromatch` dependency dropped. `isPathSensitive` becomes `classifyPath(p) !== null` (blocks BOTH categories from LLM egress — preserves legacy lockfile-block behaviour per Gemini-r3-G2). |
+| **NEW** `tests/vcs.test.mjs` | 20 tests: all 5 `VcsErrorCode` values reachable, `DiffShape` contract incl. rename pairs, `exitCodeFor` mapping, `RETRYABLE_VCS_ERRORS == {EXEC_FAILED}`, `isSafeGitRevision` allowlist + rejection. |
+| **NEW** `tests/sensitive-paths.test.mjs` | 102 tests: per-pattern positive + negative fixtures, `classifyPath` three-way return, `filterDiffFiles` 12-case state-aware matrix incl. tombstone preservation + rename rewriting, idempotency property, `formatSkipLog` default aggregates / debug hash-only / generatedNoise per-path, superset gate (legacy quickfix snapshot frozen inline). |
+| **NEW** `tests/refresh-cli-contract.test.mjs` | 9 hermetic tests: real-git-fixture integration through the full `vcs.gitDiffWithWorkingTree → filterDiffFiles → formatSkipLog` pipeline, rename-to-sensitive rewriting (tombstone preserved), full-vs-incremental skip parity, source-inspection of `refresh.mjs` wiring (imports + structured-handling shape + `vcs.exitCodeFor` use + both-category filter). |
+| **EDIT** `tests/arch-memory-followups.test.mjs` | `isSafeGitRevision` source-inspection test now reads `scripts/lib/vcs.mjs` (was `scripts/symbol-index/refresh.mjs`). |
+| **EDIT** `tests/quickfix-patterns.test.mjs` | Dropped `SENSITIVE_PATH_PATTERNS` import; added `myenv.env` + `production.env` as superset-positive cases. |
+| **EDIT** `tests/file-io.test.mjs` | Dropped `app/secret-keys/main.yaml` over-aggressive fixture (canonical anchors on exact `secrets/`; substring `secret-keys/` is the precision/recall trade). |
+| **EDIT** `package.json` | Added `check:integration` opt-in script — end-to-end `arch:refresh --full` against the active repo + Postgres (NOT part of `npm test`). |
+| **EDIT** `scripts/.cli-catalog.json` | Catalog entry for `check:integration`. |
+| **EDIT** `AGENTS.md` | New "Sensitive paths + VCS contract" subsection documents the canonical locations and the closed `VcsErrorCode` enum. `Architecture` directory map updated with the two new files. |
+
+**arch:refresh blast-radius inventory** (plan §2 #7):
+- `npm run arch:refresh` / `:full` ([package.json](package.json)) — receives new exit codes (4/5/127/1) on VCS failure. No prior reliance on exit-0-on-failure.
+- `npm run dashboard:setup` ([package.json](package.json)) — `&&` chain already stops on first failure; no change.
+- [.github/workflows/architectural-drift.yml](.github/workflows/architectural-drift.yml#L59) — already uses `|| true` to ignore arch:refresh exit; new codes safe.
+- [.git/hooks/pre-push](.git/hooks/pre-push) — runs `npm run check`, not `arch:refresh`; unaffected.
+- `scripts/install-prepush-hook.mjs` — no arch:refresh references.
+
+**Deviations from the plan**:
+- Plan §3 sequencing called for three separate sub-commits; landed as ONE bundled commit (matches WS1/WS2 commit shape — `efca5ea` + `13a0af9` each shipped multi-step work in a single commit). Test suite verified green at each logical step during implementation; final suite is 2963/2980 (was 2825/2842 — +138 net tests, 0 failures).
+- Full-mode discovery stayed in `extract.mjs` (its existing fs walk) rather than moving into `refresh.mjs` via a new `git ls-files` enumeration. The plan called for refresh.mjs to enumerate; extracted's filter now handles BOTH categories so the **net behaviour** (parity of skip set across `--full` and incremental) matches the plan's intent without a parallel discovery path.
+- `app/secret-keys/main.yaml` is no longer caught (audit-scope previously matched it via the `/secret/i` substring rule; canonical anchors on `(secrets|credentials|private|\.aws|\.ssh)\//`). Intentional precision/recall trade — `src/secret-helper.ts` is no longer a false-positive either. Documented in `tests/file-io.test.mjs`.
+- Subprocess smoke test for the new exit codes was dropped from the hermetic suite — `assertRepoRoot` blocks running `refresh.mjs` outside the repo root, and cloud-disabled short-circuits before reaching any VCS call. End-to-end coverage lives in the opt-in `npm run check:integration` per the plan's testing strategy.
+
+**Pending**: none — all three workstreams (WS1, WS2, WS3) complete.
 
 ### 2026-05-22 — WS2 renderer decomp complete
 

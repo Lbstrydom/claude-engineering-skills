@@ -119,12 +119,13 @@ test('discoverPlans: two unparseable dates do NOT return NaN from comparator (Ge
 });
 
 // ── isSafeGitRevision argument-injection guard ──────────────────────────────
-// isSafeGitRevision is a private function in scripts/symbol-index/refresh.mjs;
-// we test the contract via string-matching the regex in the source. Pulling
-// in the whole refresh.mjs would initialise the learning store etc.
+// `isSafeGitRevision` lives in `scripts/lib/vcs.mjs` as of WS3
+// (sustainability-cleanup-batch). The regex contract is verified by
+// string-matching the source so we don't take a dep on importing the module
+// here (already covered behaviourally in tests/vcs.test.mjs).
 
 test('isSafeGitRevision: regex source rejects leading hyphen (Gemini-R4-G1)', () => {
-  const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts/symbol-index/refresh.mjs'), 'utf-8');
+  const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts/lib/vcs.mjs'), 'utf-8');
   // The fixed regex is: /^[A-Za-z0-9._\/@{}~^][A-Za-z0-9._\/@{}~^-]*$/
   // The unfixed regex was: /^[A-Za-z0-9._\/@{}~^-]+$/  (note the - inside the +)
   // The fix splits into a first-char class (no `-`) and a tail class (with `-`).

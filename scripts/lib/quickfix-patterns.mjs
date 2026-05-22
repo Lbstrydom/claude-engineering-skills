@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { redactSecrets } from './secret-patterns.mjs';
+import { classifyPath, normalisePath as canonicalNormalisePath } from './sensitive-paths.mjs';
 
 const STATS_CACHE_PATH = '.audit/quickfix-pattern-stats.json';
 
@@ -119,19 +120,6 @@ export const PATTERNS = Object.freeze([
 ]);
 
 /**
- * Sensitive-path patterns — files matching these are NEVER scanned.
- * Plan §11.D + §13.A — patterns use `(^|/)` so absolute paths match too.
- */
-export const SENSITIVE_PATH_PATTERNS = Object.freeze([
-  /(^|\/)\.env(\..+)?$/,
-  /(^|\/)\.env\.local$/,
-  /(^|\/)secrets?\.(json|yaml|yml|txt|env)$/,
-  /(^|\/)credentials?\..+$/,
-  /\.(pem|key|crt|p12|pfx)$/,
-  /(^|\/)(secrets|credentials|\.aws|\.ssh)\//,
-]);
-
-/**
  * Per-file-ext suppression syntax. Default fallback accepts either
  * `// quickfix-hook:ignore` or `# quickfix-hook:ignore`.
  */
@@ -152,30 +140,28 @@ export const SUPPRESS_BY_EXT = Object.freeze({
 });
 
 /**
- * Normalise a path to a canonical comparable form: forward slashes,
- * drive letter stripped, lower-cased, leading `./` removed.
+ * Re-export of the canonical `normalisePath` from `sensitive-paths.mjs`.
+ * Kept here so legacy importers (`tests/quickfix-patterns.test.mjs`,
+ * downstream consumers) don't have to change their import sites.
  *
  * @param {string} pathInput
  * @returns {string}
  */
 export function normalisePath(pathInput) {
-  return String(pathInput || '')
-    .replace(/\\/g, '/')
-    .replace(/^[a-zA-Z]:\//, '')
-    .toLowerCase()
-    .replace(/^\.\//, '');
+  return canonicalNormalisePath(pathInput);
 }
 
 /**
- * True iff the path matches a sensitive-path pattern (env files, keys,
- * credential dirs, etc.). Path is normalised before matching.
+ * True iff the path matches the canonical `sensitive` category. Thin
+ * delegate to `scripts/lib/sensitive-paths.mjs::classifyPath` — the
+ * single source of truth (plan: docs/plans/sustainability-cleanup-batch.md
+ * WS3, R1-H4).
  *
  * @param {string} pathInput
  * @returns {boolean}
  */
 export function isSensitivePath(pathInput) {
-  const p = normalisePath(pathInput);
-  return SENSITIVE_PATH_PATTERNS.some(re => re.test(p));
+  return classifyPath(pathInput) === 'sensitive';
 }
 
 /**

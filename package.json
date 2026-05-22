@@ -31,6 +31,7 @@
     "models:freshness:json": "node scripts/check-model-freshness.mjs --format json",
     "models:check": "node scripts/check-model-freshness.mjs --strict",
     "check": "npm run context:check && npm run skills:check && npm test",
+    "check:integration": "node scripts/symbol-index/refresh.mjs --full",
     "sync": "node scripts/sync-to-repos.mjs",
     "sync:dry": "node scripts/sync-to-repos.mjs --dry-run",
     "sync:check": "node scripts/check-sync.mjs",

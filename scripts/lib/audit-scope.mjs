@@ -8,20 +8,18 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { classifyPath } from './sensitive-paths.mjs';
 // normalizePath not used directly here but re-exported via file-io.mjs barrel
 
 // ── Sensitive File Filtering ────────────────────────────────────────────────
-
-const SENSITIVE_PATTERNS = [
-  /\.env$/i, /\.env\./i, /secret/i, /credential/i, /\.pem$/i, /\.key$/i,
-  /(?:^|[/\\])password(?:[/\\.]|$)/i,   // directory or file named "password", not "password-strength"
-  /(?:^|[/\\])tokens?(?:[/\\.]|$)/i,    // directory or file named "token(s)", not "tokenizer"
-  /\.pfx$/i, /\.p12$/i, /id_rsa/i, /id_ed25519/i
-];
+//
+// The canonical predicate lives in `scripts/lib/sensitive-paths.mjs`. This
+// module delegates so audit-context construction, debt capture, plan-path
+// discovery, and sanitiser share ONE source of truth (plan: docs/plans/
+// sustainability-cleanup-batch.md WS3, R1-H4).
 
 export function isSensitiveFile(relPath) {
-  const norm = relPath.replaceAll('\\', '/');
-  return SENSITIVE_PATTERNS.some(p => p.test(norm));
+  return classifyPath(relPath) === 'sensitive';
 }
 
 // ── Audit Infrastructure Exclusion ────────────────────────────────────────

@@ -6,7 +6,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PATTERNS,
-  SENSITIVE_PATH_PATTERNS,
   SUPPRESS_BY_EXT,
   normalisePath,
   isSensitivePath,
@@ -72,11 +71,18 @@ describe('isSensitivePath — AC54 + §13.A basename matching', () => {
     it(`true for ${p}`, () => assert.equal(isSensitivePath(p), true));
   }
 
+  // Canonical superset (plan WS3) now also classifies `foo.env` as sensitive
+  // — a hardening upgrade from the legacy "only dot-env" rule. Tests below
+  // pin the broadened-but-correct behaviour.
+  const sensitiveAfterMigration = ['myenv.env', 'production.env'];
+  for (const p of sensitiveAfterMigration) {
+    it(`true for ${p} (canonical superset)`, () => assert.equal(isSensitivePath(p), true));
+  }
+
   const nonSensitive = [
     'src/auth.js',
     'README.md',
     'package.json',
-    'myenv.env',                             // doesn't match (basename starts with non-`.`)
     'src/keys/manager.js',                   // 'keys' isn't a sensitive dir
   ];
   for (const p of nonSensitive) {

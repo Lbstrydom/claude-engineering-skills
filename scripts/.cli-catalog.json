@@ -103,6 +103,10 @@
       "description": "Combined gate: context drift + skills cross-check + full test suite.",
       "category": "diagnostic"
     },
+    "check:integration": {
+      "description": "Opt-in end-to-end arch:refresh against the active repo + Postgres (NOT part of npm test). Requires AUDIT_DB_URL.",
+      "category": "diagnostic"
+    },
 
     "sync": {
       "description": "Sync this bundle into all registered consumer repos (auto-fires fit-check on first sync).",
