@@ -217,6 +217,7 @@ export async function markPersonaTestCandidateProposed(args) {
   }
 }
 
-// ── Re-exported for tests / cross-skill CLI ──────────────────────────
-
-export { SEVERITY_RANK };
+// `SEVERITY_RANK` is intentionally module-internal — it's an
+// implementation detail of the rank-aware severity filter. Public
+// surface = the three async functions above; the upstream contract
+// test (`tests/learning-store-exports.test.mjs`) pins this set.
