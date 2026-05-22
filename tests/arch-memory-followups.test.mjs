@@ -151,7 +151,10 @@ test('isSafeGitRevision: regex source rejects leading hyphen (Gemini-R4-G1)', ()
 // ── listPrunableRefreshRuns global-by-design JSDoc note ─────────────────────
 
 test('listPrunableRefreshRuns: GLOBAL BY DESIGN JSDoc note is present', () => {
-  const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts/lib/store/arch-memory.mjs'), 'utf-8');
+  // Post-WS1 split: function (and its JSDoc) moved from arch-memory.mjs
+  // into arch/refresh-runs.mjs. The arch-memory.mjs barrel just re-exports
+  // — so the note now lives at the new path.
+  const src = fs.readFileSync(path.join(REPO_ROOT, 'scripts/lib/store/arch/refresh-runs.mjs'), 'utf-8');
   // The note documents design intent so a future audit doesn't "fix" the
   // missing repo_id predicate without understanding the prune policy.
   assert.match(src, /GLOBAL BY DESIGN/);

@@ -1,5 +1,40 @@
 # Project Status Log
 
+## 2026-05-22 — Sustainability cleanup WS1: arch-memory god-module split
+
+First workstream of the sustainability-cleanup-batch plan. `scripts/lib/store/arch-memory.mjs` was an 838-line "largest M3 domain" file mixing 6 cohesive concerns; split into focused sub-modules under `scripts/lib/store/arch/` with the original path kept as a **thin barrel** so the `learning-store.mjs` frozen-export contract (107 names) holds unchanged.
+
+### Files added
+- [scripts/lib/store/arch/_shared.mjs](scripts/lib/store/arch/_shared.mjs) — 23 lines, narrowly scoped: `UPSERT_CHUNK_SIZE`, `IN_CHUNK`, `chunk()`. **No re-exports of generic db primitives** (R2-M3 — prevents the child file from becoming a new god-tier one layer deeper).
+- [scripts/lib/store/arch/refresh-runs.mjs](scripts/lib/store/arch/refresh-runs.mjs) — 10 fns + file-private `GET_REFRESH_RUN_COLUMNS` (Gemini-r2-G1).
+- [scripts/lib/store/arch/snapshots.mjs](scripts/lib/store/arch/snapshots.mjs) — 3 fns (active snapshot + embedding-model config).
+- [scripts/lib/store/arch/symbols.mjs](scripts/lib/store/arch/symbols.mjs) — 7 fns + inline `vectorLiteral()` formatter for pgvector. **pgvector serialisation fix rolled into the split**: previous code passed JS `number[]` to `upsert()` which serialised as Postgres text-array `{"0.1",...}` → SQLSTATE 22P02 (`invalid input syntax for type vector`). Replaced with raw SQL using `[…]::vector` literal cast. Bug was pre-existing + flaky-reproducing; the split was the natural opportunity to land the fix.
+- [scripts/lib/store/arch/imports.mjs](scripts/lib/store/arch/imports.mjs) — 6 fns (file-import graph + populated flag).
+- [scripts/lib/store/arch/domain-summaries.mjs](scripts/lib/store/arch/domain-summaries.mjs) — 2 fns (per-domain Haiku cache).
+- [scripts/lib/store/arch/neighbourhood.mjs](scripts/lib/store/arch/neighbourhood.mjs) — 3 fns (drift / duplicates / neighbourhood RPC adapters).
+- [tests/arch-memory-split.test.mjs](tests/arch-memory-split.test.mjs) — 35 new tests in three groups: (1) explicit 31-name `EXPECTED_EXPORTS` manifest validates barrel resolution + `GET_REFRESH_RUN_COLUMNS` privacy + `learning-store.mjs` re-export coverage; (2) cloud-disabled neutral-value matrix per public fn (uses `before/after` hooks to unset `AUDIT_DB_URL` + drain pool, restore after); (3) cross-module separation (no sub-module imports a sibling).
+
+### Files modified
+- [scripts/lib/store/arch-memory.mjs](scripts/lib/store/arch-memory.mjs) — was 838 lines, now **31 lines**: pure `export *` × 6 sub-modules + a header comment with the export-ownership matrix. Path preserved so `learning-store.mjs` and the 18+ downstream callers behind it import everything unchanged.
+- [tests/arch-memory-followups.test.mjs](tests/arch-memory-followups.test.mjs) — JSDoc-presence test now reads `arch/refresh-runs.mjs` (was checking `arch-memory.mjs`) since the `GLOBAL BY DESIGN` note travelled with `listPrunableRefreshRuns`.
+
+### Decisions
+
+- **Sub-modules under `arch/`, not at `store/` top-level** — leaves room for non-arch store concerns (`bandit-fp.mjs`, `repo.mjs`, etc.) to remain top-level peers. The `arch/` bundle is conceptually one super-domain.
+- **`_shared.mjs` deliberately tiny (23 lines)** — would not pass Gemini-R2-M3 (refactor recreates god-module) if it re-exported db primitives. Each sub-module imports `many`/`one`/`upsert`/etc. directly from `../../db/query.mjs`.
+- **pgvector fix landed inside WS1** — strictly speaking WS1 was meant to be behaviour-preserving, but the pre-split code was already broken under realistic conditions (just flaky). Fixing during the split was the smallest commit that ships both the refactor AND a working `arch:refresh`.
+
+### Verification
+
+- Full test suite: **2803/2820 passing, 0 failures** (35 new + existing — frozen-export count 107 intact).
+- End-to-end `npm run arch:refresh`: succeeded against the live audit-loop Postgres (64 symbols embedded, 518 file-import edges, 1645 forward-copied untouched symbols, new snapshot `f5efcbe5…` published as active).
+
+### Next steps
+
+WS2 (renderer decomp) starts next session; WS3 (refresh.mjs hardening) after that. Plan: [docs/plans/sustainability-cleanup-batch.md](docs/plans/sustainability-cleanup-batch.md).
+
+---
+
 ## 2026-05-22 — Observed domain-deps + dashboard architecture polish
 
 Closes the architecture-tab bug class surfaced by the work-repo checklist
