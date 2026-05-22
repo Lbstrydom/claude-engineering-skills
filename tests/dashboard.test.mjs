@@ -39,7 +39,18 @@ function refData(overrides = {}) {
       usage: ['/plan x'], disableModelInvocation: false, path: 'skills/plan/SKILL.md',
     }],
     plans: { active: [], completed: [] },
-    architecture: { domains: [], deps: {}, mapPath: null },
+    architecture: {
+      domains: [], deps: {}, mergedDeps: {},
+      depsSource: {
+        observedAvailable: false,
+        observedRejectedReason: 'absent',
+        observedRefreshId: null,
+        observedGeneratedAt: null,
+        manualKeyCount: 0,
+        edgeCounts: { observed: 0, manual: 0, both: 0 },
+      },
+      mapPath: null,
+    },
     flows: { nodes: [{ id: 'plan', skill: 'plan', label: 'Plan' }], edges: [] },
     cli: [],
     ...overrides,
@@ -259,6 +270,18 @@ test('architecture renders domains in dependency layers', () => {
         { name: 'top', anchor: 'top', symbolCount: 5, summary: 'orchestrator.' },
       ],
       deps: { mid: ['base'], top: ['mid'] },
+      mergedDeps: {
+        mid: [{ to: 'base', source: 'manual' }],
+        top: [{ to: 'mid', source: 'manual' }],
+      },
+      depsSource: {
+        observedAvailable: false,
+        observedRejectedReason: 'absent',
+        observedRefreshId: null,
+        observedGeneratedAt: null,
+        manualKeyCount: 2,
+        edgeCounts: { observed: 0, manual: 2, both: 0 },
+      },
     },
   });
   const html = renderDocument(data, 'reference', ASSETS);

@@ -528,7 +528,7 @@ function nav(kind) {
   return `<nav class="dash-nav" aria-label="Dashboard pages">
     <a href="./index.html"${refCur}>Reference</a>
     <a href="./telemetry.html"${telCur}>Telemetry</a>
-    <span class="nav-hint">local pages: <code>npm run dashboard:build</code></span>
+    <span class="nav-hint">local pages: <code>npm run dashboard:setup</code> (first run) · <code>npm run dashboard:build</code> (refresh)</span>
   </nav>`;
 }
 

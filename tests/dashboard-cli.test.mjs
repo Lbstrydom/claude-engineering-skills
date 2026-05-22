@@ -208,7 +208,16 @@ test('renderDocument: CLI section renders with grouped entries', () => {
     },
     skills: [],
     plans: { active: [], completed: [] },
-    architecture: { domains: [], deps: {}, mapPath: null },
+    architecture: {
+      domains: [], deps: {}, mergedDeps: {},
+      depsSource: {
+        observedAvailable: false, observedRejectedReason: 'absent',
+        observedRefreshId: null, observedGeneratedAt: null,
+        manualKeyCount: 0,
+        edgeCounts: { observed: 0, manual: 0, both: 0 },
+      },
+      mapPath: null,
+    },
     flows: { nodes: [{ id: 'plan', skill: 'plan', label: 'Plan' }], edges: [] },
     cli: [
       { name: 'audit:code', command: 'node x', description: 'Run audit', category: 'audit',
@@ -240,7 +249,16 @@ test('renderDocument: uncatalogued entries get the warn chip + muted desc', () =
     },
     skills: [],
     plans: { active: [], completed: [] },
-    architecture: { domains: [], deps: {}, mapPath: null },
+    architecture: {
+      domains: [], deps: {}, mergedDeps: {},
+      depsSource: {
+        observedAvailable: false, observedRejectedReason: 'absent',
+        observedRefreshId: null, observedGeneratedAt: null,
+        manualKeyCount: 0,
+        edgeCounts: { observed: 0, manual: 0, both: 0 },
+      },
+      mapPath: null,
+    },
     flows: { nodes: [{ id: 'plan', skill: 'plan', label: 'Plan' }], edges: [] },
     cli: [
       { name: 'mystery', command: 'node x', description: '', category: 'other',

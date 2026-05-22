@@ -113,9 +113,34 @@ export const ReferenceDataSchema = z.object({
   }),
   architecture: z.object({
     domains: z.array(DomainSchema),
-    // domain → allowed-dependency domains (from .audit-loop/domain-map.json),
-    // used to lay the architecture tab out in dependency layers.
+    // Flat domain → allowed-dependency domains. Merged from observed
+    // (DB import graph, .audit-loop/domain-deps-observed.json) and manual
+    // (allowedDeps in domain-map.json) by readDomainDeps(). archTiers()
+    // reads this to lay the architecture tab out in dependency layers.
     deps: z.record(z.string(), z.array(z.string())),
+    // Provenance-tagged form: each `to` carries source ∈ observed|manual|both.
+    // Plumbed through for future per-edge UI; v1 unused by archTiers.
+    mergedDeps: z.record(
+      z.string(),
+      z.array(z.object({
+        to: z.string(),
+        source: z.enum(['observed', 'manual', 'both']),
+      })),
+    ),
+    // Architecture-panel subtitle metadata — drives formatDepsSourceLine.
+    // Plan: docs/plans/observed-domain-deps.md §6.
+    depsSource: z.object({
+      observedAvailable: z.boolean(),
+      observedRejectedReason: z.enum(['absent', 'unreadable', 'schema-invalid', 'stale-rules']).nullable(),
+      observedRefreshId: z.string().nullable(),
+      observedGeneratedAt: z.string().nullable(),
+      manualKeyCount: z.number().int().nonnegative(),
+      edgeCounts: z.object({
+        observed: z.number().int().nonnegative(),
+        manual: z.number().int().nonnegative(),
+        both: z.number().int().nonnegative(),
+      }),
+    }),
     mapPath: z.string().nullable(),
   }),
   flows: FlowManifestSchema.nullable(),
