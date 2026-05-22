@@ -14,6 +14,7 @@
  */
 
 import 'dotenv/config';
+import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
@@ -26,11 +27,20 @@ import {
   listLayeringViolationsForSnapshot,
   computeDriftScore,
   getImportersForFiles,
+  listFileImportsForSnapshot,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { renderArchitectureMap } from '../lib/arch-render.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
+import { loadDomainRules } from '../lib/symbol-index/domain-tagger.mjs';
+import {
+  OBSERVED_FILE,
+  OBSERVED_VERSION,
+  ObservedDepsSchema,
+  computeDomainMapDigest,
+  computeObservedDomainDeps,
+} from '../lib/observed-deps.mjs';
 
 function parseArgs(argv) {
   const args = { out: 'docs/architecture-map.md' };
@@ -51,6 +61,50 @@ function classify(score, threshold) {
   return 'RED';
 }
 
+/**
+ * R3-H1/H2: remove any lingering observed-deps file. Called from every
+ * early-exit path so the dashboard never reads a stale envelope when
+ * arch:render couldn't produce a fresh one (cloud-off, no repo, no
+ * active snapshot). Idempotent + silent when no file present.
+ */
+function cleanupStaleObservedDeps(repoRoot) {
+  const observedPath = path.join(repoRoot, OBSERVED_FILE);
+  try {
+    if (fs.existsSync(observedPath)) {
+      fs.unlinkSync(observedPath);
+      process.stderr.write(`arch:render: cleared stale ${OBSERVED_FILE} (render aborted before observed-deps step)\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`arch:render: failed to clear ${OBSERVED_FILE} — ${err.message}\n`);
+  }
+}
+
+/**
+ * Gemini-R3-M3 (split-brain prevention): when an early-exit aborts the
+ * render before we can produce a fresh `architecture-map.md`, replace any
+ * prior markdown with a stub so the architecture-map artifact and the
+ * (deleted) observed-deps file are CONSISTENTLY unavailable rather than
+ * presenting half-stale state to the dashboard.
+ */
+function writeAbortStub(outPath, identityName, reason, hint) {
+  const stub = [
+    '<!-- audit-loop:architectural-map -->',
+    `# Architecture Map — ${identityName}`,
+    '',
+    `- Generated: ${new Date().toISOString()}   commit: ${commitSha() || 'unknown'}   refresh_id: none`,
+    `- Status: ${reason}`,
+    '',
+    hint,
+    '',
+  ].join('\n');
+  // Gemini-R4-G2: do NOT swallow the write failure. If the stub can't be
+  // persisted (disk full, permissions, etc.), the main() top-level .catch()
+  // exits with code 1 instead of pretending the abort was "graceful". The
+  // dashboard then sees the non-zero exit and the operator gets the real
+  // error rather than a silently stale architecture-map.
+  atomicWriteFileSync(outPath, stub);
+}
+
 async function main() {
   assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
@@ -61,31 +115,34 @@ async function main() {
   const identity = resolveRepoIdentity(repoRoot);
 
   if (!isCloudEnabled()) {
-    const stub = [
-      '<!-- audit-loop:architectural-map -->',
-      `# Architecture Map — ${identity.name}`,
-      '',
-      `- Generated: ${new Date().toISOString()}   commit: ${commitSha() || 'unknown'}   refresh_id: none`,
-      `- Status: cloud-disabled — run \`npm run arch:refresh\` to populate`,
-      '',
-      'Architectural memory cloud store is not configured for this repo.',
-      'Set `SUPABASE_AUDIT_URL`, `SUPABASE_AUDIT_ANON_KEY`, and ',
-      '`SUPABASE_AUDIT_SERVICE_ROLE_KEY` then `npm run arch:refresh`.',
-      '',
-    ].join('\n');
-    atomicWriteFileSync(outPath, stub);
+    // Gemini-R2-M3-stub: clear stale observed-deps BEFORE writing the
+    // stub. If the stub write throws, the stale envelope is already gone —
+    // the dashboard can't accidentally consume both the old observed file
+    // AND the new cloud-disabled stub.
+    cleanupStaleObservedDeps(repoRoot);
+    writeAbortStub(outPath, identity.name, 'cloud-disabled — run `npm run arch:refresh` to populate',
+      'Architectural memory cloud store is not configured for this repo.\n' +
+      'Set `AUDIT_DB_URL` (Supabase Dashboard → Connect → Session pooler)\n' +
+      'in `.env`, then `npm run arch:refresh`. The legacy\n' +
+      '`SUPABASE_AUDIT_*` triplet was sunset in postgres-parity M4.');
     process.stderr.write(`arch:render: cloud disabled — wrote stub to ${outPath}\n`);
     process.exit(0);
   }
 
   const repo = await getRepoIdByUuid(identity.repoUuid);
   if (!repo) {
-    process.stderr.write(`arch:render: repo not found in store — run \`npm run arch:refresh\` first\n`);
+    cleanupStaleObservedDeps(repoRoot);
+    writeAbortStub(outPath, identity.name, 'repo-not-registered',
+      'Repo not found in architectural-memory store. Run `npm run arch:refresh` first.');
+    process.stderr.write(`arch:render: repo not found in store — wrote stub, run \`npm run arch:refresh\` first\n`);
     process.exit(0);
   }
   const snap = await getActiveSnapshot(repo.id);
   if (!snap?.refreshId) {
-    process.stderr.write(`arch:render: no active snapshot — run \`npm run arch:refresh\` first\n`);
+    cleanupStaleObservedDeps(repoRoot);
+    writeAbortStub(outPath, identity.name, 'no-active-snapshot',
+      'Repo is registered but has no active snapshot. Run `npm run arch:refresh` first.');
+    process.stderr.write(`arch:render: no active snapshot — wrote stub, run \`npm run arch:refresh\` first\n`);
     process.exit(0);
   }
 
@@ -186,6 +243,51 @@ async function main() {
 
   atomicWriteFileSync(outPath, markdown);
   process.stderr.write(`arch:render: wrote ${outPath} (${bytesWritten} bytes, ${allSymbols.length} symbols, ${violations.length} violations)\n`);
+
+  // Plan: docs/plans/observed-domain-deps.md §6 — write the observed-deps
+  // envelope from the DB import graph. Best-effort; thrown errors here must
+  // not abort the markdown render that already succeeded above.
+  const observedPath = path.join(repoRoot, OBSERVED_FILE);
+  try {
+    // R1-M7: distinguish "snapshot's import graph is populated but empty"
+    // (write a valid empty envelope) from "snapshot has no import graph at
+    // all" (delete any stale prior file). A populated graph with zero
+    // cross-domain edges IS current data — the dashboard should consume it,
+    // not fall back to manual-only via 'absent'.
+    if (snap.importGraphPopulated === true) {
+      const edges = await listFileImportsForSnapshot(snap.refreshId);
+      const rules = loadDomainRules(repoRoot);
+      const deps = computeObservedDomainDeps(edges, rules);
+      const envelope = {
+        version: OBSERVED_VERSION,
+        refreshId: snap.refreshId,
+        domainMapDigest: computeDomainMapDigest(rules),
+        generatedAt: new Date().toISOString(),
+        deps,
+      };
+      // R4-M2: validate at write time too. If computeObservedDomainDeps ever
+      // produces a malformed shape, fail loudly before persisting; the reader
+      // already validates so producer/consumer share the same schema.
+      ObservedDepsSchema.parse(envelope);
+      // R2-M4: ensure parent dir exists. `.audit-loop/` is committed in
+      // source-repo, but a fresh-cloned consumer could theoretically lack it.
+      fs.mkdirSync(path.dirname(observedPath), { recursive: true });
+      atomicWriteFileSync(observedPath, JSON.stringify(envelope, null, 2) + '\n');
+      const edgeCount = Object.values(deps).reduce((n, l) => n + l.length, 0);
+      process.stderr.write(`arch:render: wrote ${OBSERVED_FILE} — ${Object.keys(deps).length} domains, ${edgeCount} edges\n`);
+    } else if (fs.existsSync(observedPath)) {
+      fs.unlinkSync(observedPath);
+      process.stderr.write(`arch:render: removed stale ${OBSERVED_FILE} (snapshot import graph not populated)\n`);
+    } else {
+      process.stderr.write(`arch:render: skipped ${OBSERVED_FILE} — snapshot import graph not populated\n`);
+    }
+  } catch (err) {
+    // Gemini-G2: an RPC / write failure here must NOT leave a stale envelope
+    // on disk that the dashboard would consume as current. Best-effort
+    // cleanup of any prior file so the reader falls back to manual-only.
+    process.stderr.write(`arch:render: observed deps failed — ${err.message}; clearing any stale envelope\n`);
+    cleanupStaleObservedDeps(repoRoot);
+  }
 }
 
 main().catch(err => {

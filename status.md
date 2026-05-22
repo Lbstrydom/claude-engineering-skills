@@ -1,5 +1,68 @@
 # Project Status Log
 
+## 2026-05-22 — Observed domain-deps + dashboard architecture polish
+
+Closes the architecture-tab bug class surfaced by the work-repo checklist
+(`dashboard-arch-bug-checklist.md`) and replaces the manual-only
+`allowedDeps` reader with a two-layer evidence-plus-intent model.
+
+### 1. Tier A drive-bys (5 fixes)
+
+- [.audit-loop/domain-map.json](.audit-loop/domain-map.json) — 3 missing `allowedDeps` keys (`claudemd-management`, `memory-health`, `root-scripts`); `scripts/lib/stores/**` glob → `scripts/lib/store/**` (legacy plural never matched after M3); `dashboard: ["arch-memory", "shared-lib"]` declared.
+- [package.json](package.json) — `dashboard:setup` chain (`arch:refresh → arch:render → dashboard:build`).
+- [scripts/build-dashboard.mjs:118-129](scripts/build-dashboard.mjs#L118-L129) — `reportDegraded()` now surfaces `missing-optional` for the architecture source with an actionable `npm run dashboard:setup` hint.
+- [AGENTS.md](AGENTS.md) — bootstrap-order paragraph + two-layer dependency-model documentation.
+- [scripts/.cli-catalog.json](scripts/.cli-catalog.json) — `dashboard:setup` entry (regression-gate test).
+
+### 2. Tier B: observed-deps feature (plan `docs/plans/observed-domain-deps.md`)
+
+Plan went through `/plan` (backend scope) → `/audit-plan` (R1+R2 + Gemini APPROVE) → implementation → `/audit-code` (5 GPT rounds + 4 Gemini rounds → APPROVE). Final architecture:
+
+- **NEW** [scripts/lib/observed-deps.mjs](scripts/lib/observed-deps.mjs) — schema (Zod 4 `ObservedDepsSchema`), constants (`OBSERVED_FILE`, `OBSERVED_VERSION`), pure fns (`computeDomainMapDigest`, `computeObservedDomainDeps`, `mergeDomainDeps`, `flattenMergedDeps`). Lives at `lib/` not `lib/dashboard/` so writer (`arch-memory` domain) and reader (`dashboard` domain) both import a neutral `shared-lib` module rather than crossing domains.
+- [scripts/lib/store/arch-memory.mjs](scripts/lib/store/arch-memory.mjs) — `listFileImportsForSnapshot(refreshId)` returns `[{importer, imported}]` from `symbol_file_imports`.
+- [scripts/lib/symbol-index/domain-tagger.mjs](scripts/lib/symbol-index/domain-tagger.mjs) — `makeFastTagger(rules)` precompiles each rule's regex ONCE; ~50× faster than `tagDomain` for the ~190K hot-loop tag calls per render.
+- [scripts/symbol-index/render-mermaid.mjs](scripts/symbol-index/render-mermaid.mjs) — writes versioned envelope `{version, refreshId, domainMapDigest, generatedAt, deps}` via `atomicWriteFileSync` after each render. `cleanupStaleObservedDeps()` + `writeAbortStub()` keep `architecture-map.md` and `domain-deps-observed.json` consistently absent/stubbed when arch:render aborts on cloud-off / no-repo / no-snapshot (prevents split-brain state).
+- [scripts/lib/dashboard/collect-reference.mjs](scripts/lib/dashboard/collect-reference.mjs) — `readObservedEnvelope` + `readManualAllowedDeps` + `readDomainDeps` (exported for testing). Merges observed ∪ manual with per-edge `source ∈ {observed, manual, both}` provenance. Schema-validates the envelope, freshness-gates against current `domainMapDigest`, falls back to manual on any reject reason.
+- [scripts/lib/dashboard/render.mjs](scripts/lib/dashboard/render.mjs) — `formatDepsSourceLine()` adds Architecture-tab subtitle: `"23 edges: 18 observed · 3 manual-only · 2 confirmed-by-both · refresh abc12345"`.
+- [scripts/lib/dashboard/assets/dashboard.css:127-128](scripts/lib/dashboard/assets/dashboard.css#L127-L128) — `.section-note.section-warn` class for the muted-warning subtitle variant.
+- [.gitignore](.gitignore) — `.audit-loop/domain-deps-observed.json` (derived; regenerated every `arch:render`).
+
+### 3. Followup (4 items from prior Gemini /audit-code)
+
+Separate post-feature cleanup PR ([tests/arch-memory-followups.test.mjs](tests/arch-memory-followups.test.mjs)):
+- `getRefreshRun({select})` — `GET_REFRESH_RUN_COLUMNS` allowlist Set; throws on unknown columns; validation runs BEFORE the cloud-disabled early-return so programmer errors surface deterministically.
+- `listPrunableRefreshRuns` — JSDoc `GLOBAL BY DESIGN` paragraph documenting that arch:prune is intentionally repo-global (false-positive Gemini finding given closer review).
+- `discoverPlans` byDateDesc comparator — parses via `Date.parse`, uses comparison operators (not subtraction) to avoid `-Infinity - (-Infinity) = NaN` violating Array.sort contract.
+- `isSafeGitRevision` — regex split into first-char class `[A-Za-z0-9._/@{}~^]` (no `-`) and tail class with `-`; rejects `--output=...`-style git argument injection.
+
+### Test coverage
+
+- **NEW** [tests/observed-deps.test.mjs](tests/observed-deps.test.mjs) — 36 tests covering pure compute, merge semantics, digest stability, schema validation, reader fallback, flatten adapter, and the `DANGEROUS_KEYS` prototype-pollution defense.
+- **NEW** [tests/arch-memory-followups.test.mjs](tests/arch-memory-followups.test.mjs) — 7 tests for each followup fix + the NaN regression.
+- [tests/learning-store-exports.test.mjs](tests/learning-store-exports.test.mjs) — frozen-export count 106 → 107 (added `listFileImportsForSnapshot`).
+- Full suite: **2768 passing**.
+
+### Decisions
+
+- **Two-layer model (evidence + intent)**: observed deps from DB are NOT a replacement for manual `allowedDeps` — they're the evidence layer. Manual entries persist as the intent layer (dynamic imports, framework wiring, intentionally-forbidden edges the import graph can't see). The reader merges both with per-edge provenance.
+- **`observed-deps.mjs` lives in `shared-lib`**, not `dashboard/` — keeps writer (`scripts/symbol-index/`) and reader (`scripts/lib/dashboard/`) from importing each other's domains.
+- **Read-time freshness gate**: dashboard rejects the observed envelope when `domainMapDigest` mismatches the live rules (i.e. someone edited rules without `arch:render`), surfaces the reject reason in the subtitle.
+- **Split-brain prevention**: render-mermaid early-exits (cloud-off / no-repo / no-snapshot) now write a stub markdown AND clear any stale observed file so the two artifacts are consistently absent.
+
+### Out-of-scope deferred (Gemini-flagged pre-existing patterns to address later)
+
+These are existing patterns in files the followup touched. Not introduced by this PR; documented for a future cleanup cycle:
+- `scripts/lib/store/arch-memory.mjs` — sustainability split into smaller domain modules (god-module pattern).
+- `scripts/lib/dashboard/render.mjs` — monolithic renderer; HTML-escape audit pass.
+- `scripts/symbol-index/refresh.mjs` — sensitive-path discovery policy, structured VCS error reporting, child output JSON-lines protocol.
+
+### Next steps
+
+- Run `npm run arch:refresh && npm run arch:render` on this branch to materialise the first `.audit-loop/domain-deps-observed.json` and verify the Architecture tab renders with multiple tiers + correct edge-counts subtitle.
+- After merging, consider opening a follow-up plan for the deferred sustainability items above.
+
+---
+
 ## 2026-05-21 — Pre-public-release polish: dashboard mode label + repo-root cwd guard
 
 Two ergonomic fixes ahead of opening the repo publicly:

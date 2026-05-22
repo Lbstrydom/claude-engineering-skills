@@ -15,6 +15,14 @@ import { sha } from '../cli-io.mjs';
 import { loadAllSkills } from '../../skills-help.mjs';
 import { collectCli } from './collect-cli.mjs';
 import { FlowManifestSchema } from './schema.mjs';
+import {
+  OBSERVED_FILE,
+  ObservedDepsSchema,
+  computeDomainMapDigest,
+  mergeDomainDeps,
+  flattenMergedDeps,
+} from '../observed-deps.mjs';
+import { loadDomainRules } from '../symbol-index/domain-tagger.mjs';
 
 const FLOWS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'flows.json');
 
@@ -86,27 +94,147 @@ export function discoverPlans(root = process.cwd()) {
       });
     }
   }
-  const byDateDesc = (a, b) => String(b.date || '').localeCompare(String(a.date || '')) || a.path.localeCompare(b.path);
+  // Sort by parsed timestamp (newest first), NOT by raw date string.
+  // String sort of mixed formats ("2026-05-22" vs "May 22, 2026") breaks
+  // chronological order. Unparseable dates sink to the bottom; path used
+  // as the tiebreaker for stable ordering across equivalent timestamps.
+  //
+  // Use comparison operators rather than subtraction — `tsOf` returns
+  // -Infinity for unparseable dates, and `-Infinity - (-Infinity)` is
+  // NaN, which would violate the Array.sort comparator contract when
+  // two unparseable plans collide (Gemini-R1-G1).
+  const tsOf = (s) => {
+    const t = Date.parse(String(s || ''));
+    return Number.isNaN(t) ? -Infinity : t;
+  };
+  const byDateDesc = (a, b) => {
+    const tA = tsOf(a.date);
+    const tB = tsOf(b.date);
+    if (tA !== tB) return tB > tA ? 1 : -1;
+    return a.path.localeCompare(b.path);
+  };
   out.active.sort(byDateDesc);
   out.completed.sort(byDateDesc);
   return out;
 }
 
 /**
- * Read the domain → allowed-dependency map from `.audit-loop/domain-map.json`.
- * Best-effort — absent file or missing key → `{}` (the architecture tab then
- * lays domains out flat instead of in dependency layers).
+ * Read the observed-deps envelope from `.audit-loop/domain-deps-observed.json`.
+ * Validates via Zod and freshness-gates against the current domain-map rules.
+ * Plan: docs/plans/observed-domain-deps.md §6.
+ *
+ * @param {string} root
+ * @returns {{envelope: object|null, rejectedReason: string|null}}
+ *   rejectedReason values: 'absent' | 'unreadable' | 'schema-invalid' | 'stale-rules' | null
+ */
+function readObservedEnvelope(root) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(root, OBSERVED_FILE), 'utf-8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      process.stderr.write(`  [dashboard] ${OBSERVED_FILE}: unreadable — ${err.message}; falling back to manual allowedDeps\n`);
+      return { envelope: null, rejectedReason: 'unreadable' };
+    }
+    return { envelope: null, rejectedReason: 'absent' };
+  }
+  let parsed;
+  try {
+    parsed = ObservedDepsSchema.safeParse(JSON.parse(raw));
+  } catch (err) {
+    process.stderr.write(`  [dashboard] ${OBSERVED_FILE}: JSON parse failed — ${err.message}; falling back to manual allowedDeps\n`);
+    return { envelope: null, rejectedReason: 'unreadable' };
+  }
+  if (!parsed.success) {
+    process.stderr.write(`  [dashboard] ${OBSERVED_FILE}: schema validation failed — ${parsed.error.issues[0]?.message || 'invalid'}; falling back to manual allowedDeps\n`);
+    return { envelope: null, rejectedReason: 'schema-invalid' };
+  }
+  const rules = loadDomainRules(root);
+  const currentDigest = computeDomainMapDigest(rules);
+  if (parsed.data.domainMapDigest !== currentDigest) {
+    process.stderr.write(`  [dashboard] ${OBSERVED_FILE}: stale (rule digest mismatch — observed=${parsed.data.domainMapDigest.slice(0, 8)} current=${currentDigest.slice(0, 8)}); run npm run arch:render to refresh. Falling back to manual allowedDeps\n`);
+    return { envelope: null, rejectedReason: 'stale-rules' };
+  }
+  return { envelope: parsed.data, rejectedReason: null };
+}
+
+/**
+ * Read the manual `allowedDeps` (intent layer) from `.audit-loop/domain-map.json`.
+ *
+ * Distinguishes "no file" (ENOENT — common, silent return) from "file
+ * present but unparseable" (logged, returns {}) per R1-H2/R1-M11. We
+ * intentionally do NOT Zod-schema the manual file: it's hand-edited and
+ * may carry adjacent fields the loader has no opinion on; the spec is
+ * "allowedDeps is `{string: string[]}` if present, else nothing".
+ *
  * @param {string} root
  * @returns {Object<string, string[]>}
  */
-function readDomainDeps(root) {
+function readManualAllowedDeps(root) {
+  const filePath = path.join(root, '.audit-loop', 'domain-map.json');
+  let rawText;
   try {
-    const raw = fs.readFileSync(path.join(root, '.audit-loop', 'domain-map.json'), 'utf-8');
-    const deps = JSON.parse(raw).allowedDeps;
-    return (deps && typeof deps === 'object' && !Array.isArray(deps)) ? deps : {};
-  } catch {
+    rawText = fs.readFileSync(filePath, 'utf-8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      process.stderr.write(`  [dashboard] ${filePath}: unreadable — ${err.message}; manual allowedDeps treated as empty\n`);
+    }
     return {};
   }
+  let parsed;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (err) {
+    process.stderr.write(`  [dashboard] ${filePath}: JSON parse failed — ${err.message}; manual allowedDeps treated as empty\n`);
+    return {};
+  }
+  const deps = parsed?.allowedDeps;
+  if (deps == null) return {};
+  if (typeof deps !== 'object' || Array.isArray(deps)) {
+    process.stderr.write(`  [dashboard] ${filePath}: allowedDeps is not an object; manual layer treated as empty\n`);
+    return {};
+  }
+  return deps;
+}
+
+/**
+ * Read both layers (observed evidence + manual intent) and merge into the
+ * shape the dashboard renderer needs. Exported for testing (Group E).
+ *
+ * @param {string} root
+ * @returns {{
+ *   deps: Object<string, string[]>,
+ *   mergedDeps: Object<string, Array<{to: string, source: string}>>,
+ *   depsSource: {
+ *     observedAvailable: boolean,
+ *     observedRejectedReason: string|null,
+ *     observedRefreshId: string|null,
+ *     observedGeneratedAt: string|null,
+ *     manualKeyCount: number,
+ *     edgeCounts: {observed: number, manual: number, both: number},
+ *   },
+ * }}
+ */
+export function readDomainDeps(root) {
+  const { envelope, rejectedReason } = readObservedEnvelope(root);
+  const manual = readManualAllowedDeps(root);
+  const observed = envelope?.deps || {};
+  const merged = mergeDomainDeps(observed, manual);
+  const flat = flattenMergedDeps(merged);
+
+  const edgeCounts = { observed: 0, manual: 0, both: 0 };
+  for (const list of Object.values(merged)) {
+    for (const e of list) edgeCounts[e.source]++;
+  }
+  const depsSource = {
+    observedAvailable: !!envelope,
+    observedRejectedReason: rejectedReason,
+    observedRefreshId: envelope?.refreshId || null,
+    observedGeneratedAt: envelope?.generatedAt || null,
+    manualKeyCount: Object.keys(manual).length,
+    edgeCounts,
+  };
+  return { deps: flat, mergedDeps: merged, depsSource };
 }
 
 /**
@@ -267,7 +395,16 @@ export function collectReference(opts = {}) {
     sources,
     skills,
     plans,
-    architecture: { domains: arch.domains, deps: readDomainDeps(root), mapPath: arch.mapPath },
+    architecture: (() => {
+      const dd = readDomainDeps(root);
+      return {
+        domains: arch.domains,
+        deps: dd.deps,
+        mergedDeps: dd.mergedDeps,
+        depsSource: dd.depsSource,
+        mapPath: arch.mapPath,
+      };
+    })(),
     flows: flowRes.flows,
     cli,
   };

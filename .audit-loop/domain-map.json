@@ -30,7 +30,7 @@
       "domain": "install"
     },
     {
-      "pattern": "scripts/lib/stores/**",
+      "pattern": "scripts/lib/store/**",
       "domain": "stores"
     },
     {
@@ -259,6 +259,17 @@
       "shared-lib",
       "stores",
       "tech-debt"
+    ],
+    "claudemd-management": [],
+    "memory-health": [
+      "shared-lib"
+    ],
+    "root-scripts": [
+      "install"
+    ],
+    "dashboard": [
+      "arch-memory",
+      "shared-lib"
     ]
   }
 }

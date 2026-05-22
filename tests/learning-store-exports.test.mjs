@@ -120,6 +120,7 @@ const EXPECTED_EXPORTS = [
   'getImportersForFiles',
   'getTopDuplicateClusters',
   'heartbeatRefreshRun',
+  'listFileImportsForSnapshot',
   'listLayeringViolationsForSnapshot',
   'listSymbolsForSnapshot',
   'markImportGraphPopulated',
@@ -184,7 +185,7 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     }
   });
 
-  it('matches the contract-matrix count: 93 frozen + 10 caller helpers + 3 Phase 3 WS-PIPE1 = 106', () => {
-    assert.equal(EXPECTED_EXPORTS.length, 106);
+  it('matches the contract-matrix count: 93 frozen + 10 caller helpers + 3 Phase 3 WS-PIPE1 + 1 observed-deps (listFileImportsForSnapshot) = 107', () => {
+    assert.equal(EXPECTED_EXPORTS.length, 107);
   });
 });

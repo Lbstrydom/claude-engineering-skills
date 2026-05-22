@@ -110,16 +110,44 @@ export async function heartbeatRefreshRun({ refreshId }) {
  *
  * Plan §7 P3 — one of the 6 named exports the caller migrations consume.
  *
+/**
+ * Strict allowlist for getRefreshRun(refreshId, {select}). pg parameterises
+ * VALUES but not identifiers, so column names are still string-interpolated
+ * into the SELECT — without this gate, a caller string containing `"`
+ * could escape the quoting and inject SQL.
+ */
+const GET_REFRESH_RUN_COLUMNS = new Set([
+  'id', 'repo_id', 'mode', 'status',
+  'walk_start_commit', 'walk_end_commit',
+  'started_at', 'completed_at',
+  'retention_class', 'last_heartbeat_at', 'import_graph_populated',
+  'created_at', 'updated_at', 'parent_run_id',
+  'rigor_pressure_round', 'round_converged_after',
+  'commit_sha', 'branch', 'plan_id',
+]);
+
+/**
  * @param {string} refreshId
  * @param {object} [opts]
- * @param {string[]} [opts.select] - column allowlist
+ * @param {string[]} [opts.select] - columns to project; MUST be from
+ *   GET_REFRESH_RUN_COLUMNS. Unknown columns throw — no silent quoting.
  * @returns {Promise<object|null>}
  */
 export async function getRefreshRun(refreshId, { select } = {}) {
+  // Validate the `select` allowlist BEFORE checking cloud — invalid column
+  // names are programmer errors that must surface deterministically, not
+  // get silently masked by cloud-disabled fall-through.
+  let cols;
+  if (Array.isArray(select) && select.length > 0) {
+    const bad = select.filter((c) => typeof c !== 'string' || !GET_REFRESH_RUN_COLUMNS.has(c));
+    if (bad.length > 0) {
+      throw new Error(`getRefreshRun: unknown column(s) ${JSON.stringify(bad)} — must be one of ${[...GET_REFRESH_RUN_COLUMNS].sort().join(', ')}`);
+    }
+    cols = select.join(', ');
+  } else {
+    cols = 'id, repo_id, mode, status, walk_start_commit, walk_end_commit, started_at, completed_at, retention_class, last_heartbeat_at, import_graph_populated';
+  }
   if (!refreshId || !await isCloudEnabled()) return null;
-  const cols = (Array.isArray(select) && select.length > 0)
-    ? select.map((c) => `"${c}"`).join(', ')
-    : 'id, repo_id, mode, status, walk_start_commit, walk_end_commit, started_at, completed_at, retention_class, last_heartbeat_at, import_graph_populated';
   try {
     return await one(
       `SELECT ${cols} FROM refresh_runs WHERE id = $1 LIMIT 1`,
@@ -162,6 +190,17 @@ export async function findStaleRunningRefresh(repoId) {
  * Gemini-G3 leak where crashed refreshes lived forever.
  *
  * Plan §7 P3 — one of the 6 named exports.
+ *
+ * GLOBAL BY DESIGN — no `repo_id` predicate. The audit-loop's prune
+ * policy (status='aborted' >7d, retention_class='transient' >30d,
+ * 'weekly_checkpoint' >90d) is uniform across ALL repos in the store.
+ * The sole caller `scripts/symbol-index/prune.mjs` is a maintenance
+ * script that runs the policy globally. Per-repo retention (e.g.
+ * "keep last 4 rollbacks per repo") is handled separately in
+ * `listRollbacksForRepo` which DOES take `repoId`. A static analyser
+ * may flag this as a missing scope filter — it is not; do not "fix"
+ * by adding `repo_id` without first proving the prune policy is
+ * intended to be per-repo. See plan §2 "Snapshot retention".
  *
  * @param {{filterCol: 'status'|'retention_class', filterVal: string, retainDays: number}} args
  * @returns {Promise<string[]>}
@@ -530,6 +569,30 @@ export async function copyForwardImports({ fromRefreshId, toRefreshId, touchedFi
     offset += pageSize;
   }
   return { copied };
+}
+
+/**
+ * List every file-import edge in a snapshot. Used by render-mermaid to
+ * derive observed domain→domain deps. Plan: docs/plans/observed-domain-deps.md
+ *
+ * @param {string} refreshId
+ * @returns {Promise<Array<{importer: string, imported: string}>>}
+ */
+export async function listFileImportsForSnapshot(refreshId) {
+  if (!refreshId || !await isCloudEnabled()) return [];
+  try {
+    const rows = await many(
+      `SELECT importer_path, imported_path FROM symbol_file_imports
+        WHERE refresh_id = $1
+        ORDER BY importer_path, imported_path`,
+      [refreshId]
+    );
+    return rows.map((r) => ({ importer: r.importer_path, imported: r.imported_path }));
+  } catch (err) {
+    // R1-M9: preserve the underlying pg error as cause so callers can
+    // inspect SQLSTATE / connection metadata without parsing the message.
+    throw new Error(`listFileImportsForSnapshot failed: ${err.message}`, { cause: err });
+  }
 }
 
 export async function markImportGraphPopulated(refreshId) {

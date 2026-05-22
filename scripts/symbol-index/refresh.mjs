@@ -85,8 +85,12 @@ function gitCommitSha(cwd) {
  */
 function isSafeGitRevision(s) {
   if (typeof s !== 'string' || s.length === 0 || s.length > 200) return false;
-  // Strict allowlist — no spaces, no shell metas, no path-traversal
-  return /^[A-Za-z0-9._\/@{}~^-]+$/.test(s);
+  // Strict allowlist — no spaces, no shell metas, no path-traversal.
+  // First char MUST NOT be `-` so a malformed/malicious arg like
+  // `--output=/path` cannot be passed through as a git argument and
+  // interpreted as a flag (git would otherwise treat any leading-`-`
+  // string as an option, not a revspec).
+  return /^[A-Za-z0-9._\/@{}~^][A-Za-z0-9._\/@{}~^-]*$/.test(s);
 }
 
 /**
