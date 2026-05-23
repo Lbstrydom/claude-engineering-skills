@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-20T19:26:51Z",
+  "generatedAt": "2026-05-23T08:50:49Z",
   "schema": "public",
   "tables": [
     {
@@ -1902,6 +1902,74 @@
       ]
     },
     {
+      "table_name": "persona_test_candidates",
+      "columns": [
+        {
+          "column_name": "repo_name",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "fingerprint",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "canary_name",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "surface_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "severity",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "first_seen",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "last_seen",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "occurrences",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "1",
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "proposed_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        }
+      ]
+    },
+    {
       "table_name": "persona_test_sessions",
       "columns": [
         {
@@ -3141,7 +3209,7 @@
         {
           "column_name": "spec_path",
           "data_type": "text",
-          "is_nullable": "NO",
+          "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 3
         },
@@ -3207,6 +3275,55 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 12
+        },
+        {
+          "column_name": "candidate_fingerprint",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "witness_snapshot",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "contradiction_payload",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 15
+        },
+        {
+          "column_name": "journey_context",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 16
+        },
+        {
+          "column_name": "promoted_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 17
+        },
+        {
+          "column_name": "promoted_by",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 18
+        },
+        {
+          "column_name": "redaction_count",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "ordinal_position": 19
         }
       ]
     },
@@ -5049,7 +5166,7 @@
     },
     {
       "view_name": "unlocked_fixes",
-      "definition": " SELECT f.id AS audit_finding_id,\n    f.run_id AS audit_run_id,\n    r.repo_id,\n    f.severity,\n    f.category,\n    f.primary_file,\n    f.detail_snapshot,\n    r.created_at AS fixed_at,\n    ( SELECT count(*) AS count\n           FROM regression_specs rs\n          WHERE ((rs.source_finding_type = 'audit'::text) AND (rs.source_finding_id = f.id))) AS lock_spec_count\n   FROM (audit_findings f\n     JOIN audit_runs r ON ((r.id = f.run_id)))\n  WHERE ((f.severity = 'HIGH'::text) AND (f.adjudication_outcome = 'accepted'::text) AND (f.remediation_state = ANY (ARRAY['fixed'::text, 'verified'::text])) AND (r.created_at > (now() - '14 days'::interval)) AND (NOT (EXISTS ( SELECT 1\n           FROM regression_specs rs\n          WHERE ((rs.source_finding_type = 'audit'::text) AND (rs.source_finding_id = f.id))))));"
+      "definition": " SELECT f.id AS audit_finding_id,\n    f.run_id AS audit_run_id,\n    r.repo_id,\n    f.severity,\n    f.category,\n    f.primary_file,\n    f.detail_snapshot,\n    r.created_at AS fixed_at,\n    ( SELECT count(*) AS count\n           FROM regression_specs rs\n          WHERE ((rs.source_finding_type = 'audit'::text) AND (rs.source_finding_id = f.id) AND (rs.source_kind <> 'persona-consistency-candidate'::text))) AS lock_spec_count\n   FROM (audit_findings f\n     JOIN audit_runs r ON ((r.id = f.run_id)))\n  WHERE ((f.severity = 'HIGH'::text) AND (f.adjudication_outcome = 'accepted'::text) AND (f.remediation_state = ANY (ARRAY['fixed'::text, 'verified'::text])) AND (r.created_at > (now() - '14 days'::interval)) AND (NOT (EXISTS ( SELECT 1\n           FROM regression_specs rs\n          WHERE ((rs.source_finding_type = 'audit'::text) AND (rs.source_finding_id = f.id) AND (rs.source_kind <> 'persona-consistency-candidate'::text))))));"
     }
   ],
   "policies": [
@@ -5683,6 +5800,24 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "table_name": "persona_test_candidates",
+      "constraint_name": "persona_test_candidates_occurrences_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((occurrences >= 1))"
+    },
+    {
+      "table_name": "persona_test_candidates",
+      "constraint_name": "persona_test_candidates_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (repo_name, fingerprint)"
+    },
+    {
+      "table_name": "persona_test_candidates",
+      "constraint_name": "persona_test_candidates_severity_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((severity = ANY (ARRAY['P0'::text, 'P1'::text, 'P2'::text, 'P3'::text])))"
+    },
+    {
       "table_name": "persona_test_sessions",
       "constraint_name": "persona_test_sessions_persona_id_fkey",
       "constraint_type": "FOREIGN KEY",
@@ -5788,7 +5923,7 @@
       "table_name": "plans",
       "constraint_name": "plans_skill_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((skill = ANY (ARRAY['plan-backend'::text, 'plan-frontend'::text, 'manual'::text, 'other'::text])))"
+      "definition": "CHECK ((skill = ANY (ARRAY['plan'::text, 'plan-backend'::text, 'plan-frontend'::text, 'manual'::text, 'other'::text])))"
     },
     {
       "table_name": "plans",
@@ -5942,6 +6077,12 @@
     },
     {
       "table_name": "regression_specs",
+      "constraint_name": "regression_specs_row_shape_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'manual'::text, 'other'::text])) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NULL) AND (witness_snapshot IS NULL) AND (contradiction_payload IS NULL) AND (journey_context IS NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-candidate'::text) AND (spec_path IS NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NULL) AND (promoted_by IS NULL)) OR ((source_kind = 'persona-consistency-locked'::text) AND (spec_path IS NOT NULL) AND (candidate_fingerprint IS NOT NULL) AND (witness_snapshot IS NOT NULL) AND (contradiction_payload IS NOT NULL) AND (journey_context IS NOT NULL) AND (promoted_at IS NOT NULL))))"
+    },
+    {
+      "table_name": "regression_specs",
       "constraint_name": "regression_specs_source_finding_type_check",
       "constraint_type": "CHECK",
       "definition": "CHECK (((source_finding_type IS NULL) OR (source_finding_type = ANY (ARRAY['audit'::text, 'persona'::text, 'plan'::text]))))"
@@ -5950,7 +6091,7 @@
       "table_name": "regression_specs",
       "constraint_name": "regression_specs_source_kind_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'manual'::text, 'other'::text])))"
+      "definition": "CHECK ((source_kind = ANY (ARRAY['audit-loop-fix'::text, 'persona-test-p0'::text, 'persona-test-p1'::text, 'plan-frontend-verify'::text, 'plan-backend-verify'::text, 'persona-consistency-candidate'::text, 'persona-consistency-locked'::text, 'manual'::text, 'other'::text])))"
     },
     {
       "table_name": "security_incidents",
@@ -6413,6 +6554,21 @@
       "indexdef": "CREATE UNIQUE INDEX persona_audit_correlations_pkey ON public.persona_audit_correlations USING btree (id)"
     },
     {
+      "tablename": "persona_test_candidates",
+      "indexname": "persona_test_candidates_last_seen",
+      "indexdef": "CREATE INDEX persona_test_candidates_last_seen ON public.persona_test_candidates USING btree (repo_name, last_seen DESC)"
+    },
+    {
+      "tablename": "persona_test_candidates",
+      "indexname": "persona_test_candidates_pkey",
+      "indexdef": "CREATE UNIQUE INDEX persona_test_candidates_pkey ON public.persona_test_candidates USING btree (repo_name, fingerprint)"
+    },
+    {
+      "tablename": "persona_test_candidates",
+      "indexname": "persona_test_candidates_promotable",
+      "indexdef": "CREATE INDEX persona_test_candidates_promotable ON public.persona_test_candidates USING btree (repo_name, last_seen DESC, occurrences DESC) WHERE (proposed_at IS NULL)"
+    },
+    {
       "tablename": "persona_test_sessions",
       "indexname": "idx_persona_sessions_commit",
       "indexdef": "CREATE INDEX idx_persona_sessions_commit ON public.persona_test_sessions USING btree (commit_sha) WHERE (commit_sha IS NOT NULL)"
@@ -6586,6 +6742,16 @@
       "tablename": "regression_spec_runs",
       "indexname": "regression_spec_runs_pkey",
       "indexdef": "CREATE UNIQUE INDEX regression_spec_runs_pkey ON public.regression_spec_runs USING btree (id)"
+    },
+    {
+      "tablename": "regression_specs",
+      "indexname": "idx_regression_specs_candidate_fingerprint",
+      "indexdef": "CREATE UNIQUE INDEX idx_regression_specs_candidate_fingerprint ON public.regression_specs USING btree (repo_id, candidate_fingerprint) WHERE ((candidate_fingerprint IS NOT NULL) AND (source_kind = 'persona-consistency-candidate'::text) AND (repo_id IS NOT NULL))"
+    },
+    {
+      "tablename": "regression_specs",
+      "indexname": "idx_regression_specs_pending_candidates",
+      "indexdef": "CREATE INDEX idx_regression_specs_pending_candidates ON public.regression_specs USING btree (repo_id, created_at) WHERE (source_kind = 'persona-consistency-candidate'::text)"
     },
     {
       "tablename": "regression_specs",
@@ -7201,6 +7367,26 @@
     },
     {
       "grantee": "anon",
+      "object": "public.persona_test_candidates",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.persona_test_candidates",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.persona_test_candidates",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.persona_test_candidates",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
       "object": "public.persona_test_sessions",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -7743,6 +7929,11 @@
     },
     {
       "object_name": "persona_audit_correlations",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "persona_test_candidates",
       "object_kind": "r",
       "owner": "postgres"
     },
