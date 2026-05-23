@@ -34,11 +34,26 @@ each plan's paired `*-audit-summary.md` (the `/audit-code` convergence
 record) — kept next to its plan on purpose so the pair sorts adjacently.
 This folder is an archive; it's expected to grow unbounded.
 
-> **Note on legacy entries**: pre-`/ship` plans were bulk-moved here by
-> chore commits (`f5cb283`, `190406d`) before the Status-gate existed.
-> Several still have `Status: Draft` / `Audit-complete` / `In Progress`
-> rather than `Complete`. A 2026-05-23 audit corrected the multi-language
-> Phase A/B/C set; ~28 others remain pending review per-plan.
+**Two Status conventions** live here side by side and that's by design:
+
+| File shape | Status semantic | Typical value |
+|---|---|---|
+| `<plan-name>.md` | implementation status | `Complete` / `Superseded` |
+| `<plan-name>-audit-summary.md` | audit-cycle status | `Audit-complete. N fixes applied. M remaining HIGHs documented as known limitations.` |
+
+A plan and its summary track different facts: the plan tracks whether
+the work shipped; the summary tracks whether the audit cycle converged.
+Don't normalise the summary lines to `Complete` — the audit-summary's
+status IS the convergence sentence; that's the artefact's whole purpose.
+
+> **Historical note**: pre-`/ship` plans were bulk-moved here by chore
+> commits `f5cb283` + `190406d` before the Status-gate existed. A
+> systematic 2026-05-23 audit corrected 25 stale plan statuses across
+> six themed batches (arch-memory, brainstorm, learning, Phase D-I,
+> singletons, plus the earlier multi-language Phase A/B/C set). Two
+> Phase G subplans (SQLite + GitHub adapter) reclassified as
+> `Superseded` since the project went Postgres-only via `postgres-parity.md`.
+> Audit-summary `Status:` lines were left as-is per the convention above.
 
 ## `docs/audit/shared-references/` — shared skill references
 
