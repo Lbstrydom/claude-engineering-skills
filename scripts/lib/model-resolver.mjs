@@ -30,7 +30,11 @@
 
 export const STATIC_POOL = Object.freeze({
   openai: Object.freeze([
-    'gpt-5.4', 'gpt-5.4-mini',
+    // Newest first by family — resolver picks the head when sentinels
+    // resolve. 5.5 released 2026-04-23 (verified via live catalog
+    // 2026-05-23); 5.4-mini remains the newest mini tier (no 5.5-mini yet).
+    'gpt-5.5', 'gpt-5.5-pro',
+    'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-pro',
     'gpt-4.1-mini', 'gpt-4o-mini',
   ]),
   anthropic: Object.freeze([

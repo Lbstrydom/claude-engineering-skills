@@ -630,6 +630,29 @@ async function main() {
     }
   }
 
+  // Persona-test 2026-05-23 P1: the dashboard's HTML was always one push
+  // behind because `dashboard:build` only ran manually. Pre-push sync now
+  // rebuilds the committed reference dashboard so its `built from <SHA>`
+  // banner matches current HEAD. Non-blocking — a build failure logs but
+  // never blocks the push. Skip on dry-run + when SKIP_DASHBOARD_REBUILD=1
+  // (escape hatch for operators who don't want the latency on every push).
+  if (!DRY_RUN && totalErrors === 0 && process.env.SKIP_DASHBOARD_REBUILD !== '1') {
+    try {
+      const { execSync } = await import('node:child_process');
+      const dashboardScript = path.join(SOURCE_ROOT, 'scripts/build-dashboard.mjs');
+      if (fs.existsSync(dashboardScript)) {
+        process.stderr.write(`→ Rebuilding dashboard reference page...\n`);
+        execSync(`node "${dashboardScript}" reference`, {
+          cwd: SOURCE_ROOT,
+          stdio: ['ignore', 'pipe', 'inherit'],
+        });
+        process.stderr.write(`✓  dashboard rebuilt (reference)\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`⚠  dashboard rebuild errored — push continues: ${err.message?.split('\n')[0]}\n`);
+    }
+  }
+
   process.exit(totalErrors > 0 ? 1 : 0);
 }
 

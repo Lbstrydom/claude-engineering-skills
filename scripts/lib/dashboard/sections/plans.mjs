@@ -60,13 +60,17 @@ function renderInline(text) {
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
   out = out.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
   out = out.replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>');
-  // Inline links [text](url) — url restricted to http(s)/anchor/relative
-  // paths to avoid javascript: injection.
+  // Inline links [text](url). Persona-test 2026-05-23 caught that the
+  // prior allow-list regex (/^(https?:|#|\.|\/)/) rejected relative paths
+  // like `scripts/symbol-index/refresh.mjs#L99-L114` that don't start
+  // with `./` — those showed as literal `[text](url)` in the rendered
+  // body. Switched to a BLOCK-list: anything that doesn't open with a
+  // known-dangerous scheme renders as a link. URL is HTML-escaped before
+  // landing in the href attribute (escapeHtml already ran on `out`).
+  const DANGEROUS_SCHEME = /^\s*(javascript|data|vbscript|file):/i;
   out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, url) => {
-    if (/^(https?:|#|\.|\/)/i.test(url) || /^[\w-]+\.(md|html)/.test(url)) {
-      return `<a href="${url}">${text}</a>`;
-    }
-    return m;
+    if (DANGEROUS_SCHEME.test(url)) return m;
+    return `<a href="${url}">${text}</a>`;
   });
   // Restore inline codes (escaped inside the code element).
   out = out.replace(/ CODE(\d+) /g, (_, i) => `<code>${escapeHtml(inlineCodes[+i])}</code>`);
