@@ -24,10 +24,10 @@
  * @module scripts/symbol-index/refresh
  */
 
-import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import * as vcs from '../lib/vcs.mjs';
+import { runJsonLinesAsyncStrict, SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
 import { filterDiffFiles, formatSkipLog } from '../lib/sensitive-paths.mjs';
 import {
   initLearningStore,
@@ -92,26 +92,13 @@ function throwVcsError(err) {
   throw e;
 }
 
-/**
- * Run a child process and capture its JSON-line stdout.
- * @returns {object[]}
- */
-function runJsonLines(cmd, args, opts = {}) {
-  const r = spawnSync(cmd, args, {
-    cwd: opts.cwd || process.cwd(),
-    input: opts.input || undefined,
-    stdio: ['pipe', 'pipe', 'inherit'],
-    encoding: 'utf-8',
-    maxBuffer: 1024 * 1024 * 100,
-    env: { ...process.env, ...(opts.env || {}) },
-  });
-  if (r.status !== 0) {
-    throw new Error(`${cmd} ${args.join(' ')} exited ${r.status}`);
-  }
-  return r.stdout.split('\n').filter(Boolean).map(line => {
-    try { return JSON.parse(line); } catch { return null; }
-  }).filter(Boolean);
-}
+// Subprocess driver moved to scripts/lib/subprocess.mjs (WS-LIVE).
+// The async streaming runner restores `runWithHeartbeat` liveness during
+// the multi-minute extract → summarise → embed pipeline; `spawnSync` here
+// previously blocked the event loop, silencing heartbeats for the entire
+// duration. The strict wrapper hard-fails on malformed JSON (silent
+// `.filter(Boolean)` data loss was a documented invariant violation —
+// see docs/plans/liveness-and-canonical-paths.md cluster A).
 
 async function runWithHeartbeat(refreshId, intervalMs, fn) {
   let alive = true;
@@ -282,7 +269,7 @@ async function main() {
         logOk('WARNING: --include-delegates is a debug/visibility flag. Index will include thin-facade duplicates; do NOT publish this snapshot as a normal baseline. Re-run without the flag for standard operations.');
       }
       logOk(`extracting symbols...`);
-      const extracted = runJsonLines('node', extractArgs);
+      const extracted = await runJsonLinesAsyncStrict('node', extractArgs, { stage: 'extract' });
       const symbolsRaw = extracted.filter(r => r.type === 'symbol');
       const violations = extracted.filter(r => r.type === 'violation');
       const importEdges = extracted.filter(r => r.type === 'import');
@@ -290,16 +277,18 @@ async function main() {
 
       // 7. Summarise (only non-redacted)
       logOk(`summarising...`);
-      const summarised = runJsonLines('node', ['scripts/symbol-index/summarise.mjs'], {
+      const summarised = await runJsonLinesAsyncStrict('node', ['scripts/symbol-index/summarise.mjs'], {
         input: symbolsRaw.map(r => JSON.stringify(r)).join('\n') + '\n',
+        stage: 'summarise',
       });
       const summarisedSymbols = summarised.filter(r => r.type === 'symbol');
 
       // 8. Embed
       logOk(`embedding (model=${concreteEmbedModel})...`);
-      const embedded = runJsonLines('node', ['scripts/symbol-index/embed.mjs'], {
+      const embedded = await runJsonLinesAsyncStrict('node', ['scripts/symbol-index/embed.mjs'], {
         input: summarisedSymbols.map(r => JSON.stringify(r)).join('\n') + '\n',
         env: { ARCH_INDEX_EMBED_CONCRETE: concreteEmbedModel },
+        stage: 'embed',
       });
       const finalSymbols = embedded.filter(r => r.type === 'symbol');
 
@@ -423,7 +412,22 @@ async function main() {
       }) + '\n');
     });
   } catch (err) {
-    logErr(`refresh failed: ${err.message}`);
+    // WS-LIVE: stage-tagged subprocess errors get a precise log line
+    // (`stage=summarise exit=2`) so the operator knows which pipeline
+    // stage failed without grepping. Other errors fall through to the
+    // generic message.
+    const isSubprocFailure = Object.values(SUBPROC_ERROR_CODES).includes(err.code);
+    if (isSubprocFailure) {
+      const tags = [
+        err.stage ? `stage=${err.stage}` : null,
+        err.exitCode != null ? `exit=${err.exitCode}` : null,
+        err.signal ? `signal=${err.signal}` : null,
+        err.parseErrors ? `parseErrors=${err.parseErrors.length}` : null,
+      ].filter(Boolean).join(' ');
+      logErr(`pipeline failure: ${tags} — ${err.message}`);
+    } else {
+      logErr(`refresh failed: ${err.message}`);
+    }
     // ALWAYS abort the open refresh_run first so the row leaves `running`
     // state + the per-repo lock is released. Only after that do we exit.
     try { await abortRefreshRun({ refreshId, reason: err.message }); } catch { /* best-effort */ }
@@ -436,6 +440,13 @@ async function main() {
       error: {
         code: isVcsFailure ? err.vcsCode : (err.code || 'EXCEPTION'),
         message: isVcsFailure ? err.vcsMessage : err.message,
+        // Surface subprocess detail for CI/operator consumers when applicable.
+        ...(isSubprocFailure ? {
+          stage: err.stage ?? null,
+          exitCode: err.exitCode ?? null,
+          signal: err.signal ?? null,
+          parseErrorCount: err.parseErrors?.length ?? 0,
+        } : {}),
       },
     }) + '\n');
     process.exit(exitCode);
