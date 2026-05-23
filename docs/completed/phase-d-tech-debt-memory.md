@@ -1,7 +1,7 @@
 # Plan: Phase D — Persistent Tech-Debt Memory
 
 - **Date**: 2026-04-05
-- **Status**: Draft, pending audit-loop review
+- **Status**: Complete (shipped — `.audit/tech-debt.json` ledger + `scripts/lib/debt-ledger.mjs` (+ cloud `debt_entries` Supabase table). `/audit-code` Step 3.6 "Debt Capture" + Step 5.1 "Debt Resolution Prompt" both wired. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Scope**: Persist out-of-scope audit findings as a committed, repo-level debt ledger. Feed debt into normal audit suppression (zero resurfacing of known debt), track recurrence occurrences, and provide a standalone `debt-review` LLM pass that clusters debt into actionable refactor plans. Extend with advisory severity escalation, GitHub Actions PR surfacing, and team-ownership / per-file debt budgets.
 - **Parent plan**: follows Phase C (linter pre-pass) — builds on `LedgerEntrySchema` (Phase B) and `suppressReRaises()` (Phase 0)

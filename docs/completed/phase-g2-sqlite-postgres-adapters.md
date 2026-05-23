@@ -1,7 +1,7 @@
 # Plan: Phase G.2 — SQLite + Postgres Adapters + Shared Conformance
 
 - **Date**: 2026-04-05
-- **Status**: Draft (follows Phase G.1)
+- **Status**: Superseded (2026-05-23 update — the Postgres half shipped via the later `postgres-parity.md` plan: `scripts/lib/db/` is the one-Postgres-code-path implementation, 32/32 migrations live. The SQLite half was NOT pursued — project committed to a single-backend (Postgres-direct via the `pg` driver) architecture; "Supabase-hosted vs self-hosted" is just a connection string. Re-open if a genuine offline/embedded use case materialises.)
 - **Author**: Claude + Louis
 - **Parent**: [skill-bundle-mega-plan.md](./skill-bundle-mega-plan.md) / split from phase-g-storage-adapters
 - **Depends on**: Phase G.1 complete (adapter interfaces, facade, noop + supabase shipped)

@@ -1,7 +1,7 @@
 # Plan: Phase F — Install + Update Infrastructure
 
 - **Date**: 2026-04-05
-- **Status**: Draft (follows Phase E)
+- **Status**: Complete (shipped — `install.mjs` (one-shot `npx github:Lbstrydom/...` installer) + `scripts/install-prepush-hook.mjs` (consumer-repo pre-push hook installer) + `scripts/sync-to-repos.mjs` (cross-repo sync; the source-only sentinel) + `scripts/check-audit-tool-version.mjs` (staleness gate). Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Parent**: [skill-bundle-mega-plan.md](./skill-bundle-mega-plan.md)
 - **Depends on**: Phase E complete (skills vendored, repo renamed)

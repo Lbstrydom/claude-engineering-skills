@@ -1,7 +1,7 @@
 # Mega-Plan: Skill-Bundle Consolidation + Public Distribution
 
 - **Date**: 2026-04-05
-- **Status**: Parent doc — split into 4 sub-phases (E/F/G/H) after 2-round audit surfaced scope-too-large
+- **Status**: Complete (parent — split into sub-phases E (skill consolidation) / F (install + update infra) / G.1 (storage interface + Supabase) / H (public distribution). All shipped per individual sub-plan status lines. Two sub-phases (G.2 SQLite, G.3 GitHub adapter) were superseded by the simpler Postgres-only architecture in `postgres-parity.md`. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Scope**: Consolidate the 5 engineering skills (`audit-loop`, `plan-backend`, `plan-frontend`, `ship`, `audit`) into this repo as a bundle, add Python support, ship cross-platform install + update infrastructure, add pluggable storage backends, and prepare the repo for public distribution.
 - **Why split**: original combined plan hit HIGH count growth R1→R2 (7→8) during audit-loop review — classic signal of too many architectural concerns at once. Splitting into 4 focused phases makes each auditable in 2-3 rounds and shippable independently.

@@ -1,7 +1,7 @@
 # Plan: Phase E — Skill Consolidation + Python Profiles + Rename
 
 - **Date**: 2026-04-05
-- **Status**: Draft, pending audit-loop review
+- **Status**: Complete (shipped — `/audit-plan` + `/audit-code` skill split done (see `audit-loop-skill-split.md`); repo renamed to `claude-engineering-skills`. Python profiles partially shipped: `skills/plan/references/python-{backend,frontend}-profile.md` exist as placeholders but aren't yet loaded by Phase 2/3 of /plan — Python-specific principle injection deferred to a future iteration. The consolidation half (the load-bearing scope) is done. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Parent**: [skill-bundle-mega-plan.md](./skill-bundle-mega-plan.md)
 - **Scope**: Vendor the 4 external engineering skills (`plan-backend`, `plan-frontend`, `ship`, `audit`) into this repo alongside `audit-loop`. Add Python language profiles. Rename the repo. NO installer, NO storage adapters, NO public-distribution work.

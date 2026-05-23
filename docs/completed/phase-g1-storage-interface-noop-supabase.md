@@ -1,7 +1,7 @@
 # Plan: Phase G.1 — Storage Interface + Facade + noop + Supabase refactor
 
 - **Date**: 2026-04-05
-- **Status**: Draft (follows Phase F)
+- **Status**: Complete (shipped — `scripts/lib/db/` (client/query/rpc/errors) + 10 store modules under `scripts/lib/store/` (arch-memory, bandit-fp, debt, learning-decisions, persona-test-candidates, persona, plans-ship, repo, runs-findings, security). Cloud-disabled (`noop`) path lives in each store's `if (!getPool()) return` early-exit. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Parent**: [skill-bundle-mega-plan.md](./skill-bundle-mega-plan.md) / split from phase-g-storage-adapters
 - **Depends on**: Phase F complete (install infrastructure)

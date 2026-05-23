@@ -1,7 +1,7 @@
 # Plan: Phase H — Public-Distribution Hardening
 
 - **Date**: 2026-04-05
-- **Status**: Draft (follows Phase G)
+- **Status**: Complete (shipped — `install.mjs` (one-shot installer with key collection) + `scripts/check-deps.mjs` (dependency audit) + `scripts/lib/assert-repo-root.mjs` (boundary guard called by every entry point) + `.claude/settings.local.example.json` (per-developer personal-config template, gitignored from public repo). Repo is publicly distributable via `npx github:Lbstrydom/claude-engineering-skills`. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Parent**: [skill-bundle-mega-plan.md](./skill-bundle-mega-plan.md)
 - **Depends on**: Phase G complete (pluggable adapters shipped)

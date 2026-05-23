@@ -1,7 +1,7 @@
 # Plan: Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control
 
 - **Date**: 2026-04-06
-- **Status**: Draft
+- **Status**: Complete (shipped — `/ai-context-management` skill + `scripts/check-context-drift.mjs` (the strict-mode drift gate; runs in pre-push) + `scripts/sync-shared-audit-refs.mjs` (cross-skill byte-equality). CLAUDE.md now `@./AGENTS.md` imports — single source of truth pattern. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Parent**: [skill-bundle-mega-plan.md](./skill-bundle-mega-plan.md)
 - **Depends on**: Phase E (skills consolidated, single source of truth)

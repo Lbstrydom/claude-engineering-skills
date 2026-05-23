@@ -1,7 +1,7 @@
 # Plan: Phase G.3 — GitHub Adapter (Branch + Issues)
 
 - **Date**: 2026-04-06
-- **Status**: Draft (follows Phase G.2)
+- **Status**: Superseded (2026-05-23 update — NOT shipped. Project committed to a single-backend (Postgres) architecture via `postgres-parity.md`; a GitHub-as-storage-backend adapter was rendered redundant. The audit-loop's cross-skill data uses Supabase directly. Issues + PRs are still consumed via `gh` CLI in individual scripts (`memory-health.mjs`, `migration-drift.mjs` workflows) but not as a generic storage adapter. Re-open if a GitHub-only deployment ever becomes a requirement.)
 - **Author**: Claude + Louis
 - **Parent**: [skill-bundle-mega-plan.md](./skill-bundle-mega-plan.md) / split from phase-g-storage-adapters
 - **Depends on**: G.1 (interfaces + facade + envelope API) and G.2 (optional — reuses no-SQL primitives; conformance hardening benefits)
