@@ -1,7 +1,7 @@
 # Plan: Phase A — Language-Aware Code Analysis
 
 - **Date**: 2026-04-04
-- **Status**: Audit-complete, ready to implement
+- **Status**: Complete (shipped — `scripts/lib/repo-stack.mjs::detectRepoStack` is the production artefact; consumed by `/plan`, `/arch-intent`, `/skills:fit-check`. Status line corrected 2026-05-23 from "Audit-complete, ready to implement" after a docs-hygiene survey confirmed the modules exist.)
 - **Audit history**: 4 rounds (R1 H:2 M:4 L:1 → R2 H:2 M:5 L:1 → R3 H:3 M:4 L:2 → R4 H:3 M:3 L:1)
 - **Stopping criteria**: HIGH count plateaued at R3 (3) and did not decrease. R4 findings shifted to architectural refinement pressure (parser-based Python imports, full cross-platform path support, tighter module SRP) rather than correctness bugs. Remaining concerns captured in §7 Out of Scope.
 - **Author**: Claude + Louis

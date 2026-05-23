@@ -1,7 +1,7 @@
 # Plan: Phase C — Linter Pre-Pass Integration
 
 - **Date**: 2026-04-04
-- **Status**: Audit-complete, ready to implement
+- **Status**: Complete (shipped — `scripts/lib/linter.mjs` + the "Phase 0 Tool Pre-Pass" wave at the top of `openai-audit.mjs`. Visible in audit logs as `[tool] js/eslint not available — skipping` etc. Status line corrected 2026-05-23.)
 - **Audit history**: 2 rounds (R1 H:6 M:5 L:0 → R2 H:4 M:4 L:1)
 - **Stopping criteria**: HIGH count decreased meaningfully (6→4, -33%) and MEDIUM held (5→4). Phase C had the clearest convergence signal of the three plans. Remaining HIGH findings concern cross-source dedup (deferred to v2 by design), strict-mode determinism (pinned tooling = out of scope), and project-level diagnostics (scoped out for v1). Trust boundary is explicitly documented in §1.
 - **Author**: Claude + Louis

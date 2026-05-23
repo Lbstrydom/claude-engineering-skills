@@ -1,7 +1,7 @@
 # Plan: Phase B — SonarQube Classification for Findings
 
 - **Date**: 2026-04-04
-- **Status**: Audit-complete, ready to implement
+- **Status**: Complete (shipped — `scripts/lib/rule-metadata.mjs` carries the 41 `sonarType` mappings used by every finding pass. Status line corrected 2026-05-23.)
 - **Audit history**: 2 rounds (R1 H:5 M:6 L:0 → R2 H:5 M:3 L:1)
 - **Stopping criteria**: HIGH count flat at 5 across R1→R2, but MEDIUM count dropped meaningfully (6→3). The remaining R2 HIGH findings are scope-creep requests (cross-source dedup normalization, full semanticId redesign, producer-output routing refactor) that Phase B deliberately doesn't own. Known limitations documented inline: (1) LLMs currently emit `sourceKind`/`sourceName` via prompt — could be caller-injected post-hoc in a follow-up; (2) classification fields in `semanticId` inputs would break dedup — kept separate by design.
 - **Author**: Claude + Louis

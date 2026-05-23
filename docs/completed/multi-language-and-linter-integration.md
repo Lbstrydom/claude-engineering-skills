@@ -1,7 +1,7 @@
 # Plan: Multi-Language Audit Support + Linter Pre-Pass + SonarQube Taxonomy
 
 - **Date**: 2026-04-04
-- **Status**: In Progress (revised after Round 3 audit — converging)
+- **Status**: Complete (master — all three sub-phases shipped: see `phase-a-language-aware-analysis.md`, `phase-b-sonarqube-classification.md`, `phase-c-linter-pre-pass.md`. Status line corrected 2026-05-23 — the original "In Progress" was true at the time but never re-stamped after the sub-phases landed.)
 - **Author**: Claude + Louis
 - **Scope**: First-class Python/JS/TS parity, linter integration as mechanical pre-pass, SonarQube-style finding classification. Extensible to Go/Java/Rust later.
 
