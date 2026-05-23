@@ -1,6 +1,6 @@
 # Plan: Audit-Loop Reliability & Intelligence Improvements
 - **Date**: 2026-04-15
-- **Status**: Approved (R1 + Gemini G1-G4 + G2-extended fixes applied)
+- **Status**: Complete (shipped — reliability + intelligence improvements landed across `scripts/openai-audit.mjs` (P0 reduce fallback via `safeCallGPT`), `scripts/lib/robustness.mjs` (LlmError + classifyLlmError), `scripts/lib/ledger.mjs` (suppressReRaises + R2+ buildRulingsBlock), `scripts/lib/file-io.mjs` (atomic ledger writes), `scripts/lib/code-analysis.mjs` (greedy bin-packing buildAuditUnits). All R1 + Gemini G1-G4 fixes integrated. Status line corrected 2026-05-23 from "Approved (R1 + Gemini G1-G4 fixes applied)".)
 - **Author**: Claude + Louis
 
 ---

@@ -1,7 +1,7 @@
 # Plan: Proactive Security Memory v1
 
 - **Date**: 2026-05-04
-- **Status**: Draft v6 (post R1+R2+R3 GPT + Gemini ×2 — 14H/18M/2L addressed; 1 medium deferred to v1.1 with rationale)
+- **Status**: Complete (shipped — `/security-strategy` skill + `scripts/security-memory/` (refresh-incidents, parse-strategy, incident-status) + Supabase `security_incidents` table + `docs/security-strategy.md` (rendered output; INC-001 added 2026-05-23 for the symlink-bypass class). `get-incident-neighbourhood` RPC fires from `/plan` Phase 0.5c. Status line corrected 2026-05-23 from "Draft v6 (post R1+R2+R3 GPT + Gemini ×2)".)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: js-ts (Node ESM)

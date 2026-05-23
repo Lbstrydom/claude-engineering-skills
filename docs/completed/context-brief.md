@@ -1,6 +1,6 @@
 # Plan: Audit Context Brief Generator
 - **Date**: 2026-03-29
-- **Status**: Draft
+- **Status**: Complete (shipped — `scripts/lib/context.mjs` (`readProjectContextForPass`, `readRepoProfile`, `generateBriefViaGemini`, `generateBriefViaClaude` with sdk/cli backend routing). The brief is injected into every audit pass; visible in logs as `[brief] Generating via claude-haiku-4-5...` / `[brief] Final brief: 3584 chars`. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 
 ---

@@ -1,6 +1,6 @@
 # Plan: Tech Debt Wave 2 — Responsibility Splits & Safety Fixes
 - **Date**: 2026-04-17
-- **Status**: Draft
+- **Status**: Complete (shipped — `scripts/shared.mjs` god-module split into focused `scripts/lib/*.mjs` files: `code-analysis.mjs`, `audit-scope.mjs`, `diff-annotation.mjs`, `plan-paths.mjs`, `ledger.mjs`, `context.mjs`, `findings.mjs` + barrel; canonical paths via `file-io.mjs`. Documented in AGENTS.md "Architecture" section. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 
 ---
