@@ -1,7 +1,7 @@
 # Plan: Architectural Memory — Backend
 
 - **Date**: 2026-05-01
-- **Status**: Draft
+- **Status**: Complete (shipped — `scripts/symbol-index/{refresh,extract,summarise,embed,render-mermaid,drift,duplicates,prune}.mjs` + 6 Supabase tables. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Scope**: Backend half of the architectural-memory feature. The companion
   document `architectural-memory-frontend.md` covers rendered-markdown +

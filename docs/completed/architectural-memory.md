@@ -1,7 +1,7 @@
 # Plan: Architectural Memory
 
 - **Date**: 2026-05-01 (revised post-R1 + R2 + R3 + Gemini ×2 audit cycle)
-- **Status**: Draft — full audit cycle complete; ready for human review before implementation
+- **Status**: Complete (shipped — master plan; 6 tables live (symbol_index/definitions/embeddings/file_imports/layering_violations/refresh_runs), 10 scripts under `scripts/symbol-index/`, RPCs `get-neighbourhood` / `get-incident-neighbourhood` / `list-symbols-for-snapshot` / `get-active-refresh-id` / `compute-target-domains` all in `scripts/cross-skill.mjs`. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Composed from**:
   - [architectural-memory-backend.md](./architectural-memory-backend.md) — earlier backend draft (file-level detail)

@@ -1,7 +1,7 @@
 # Plan: Architectural Memory — Human-Facing Surfaces
 
 - **Date**: 2026-05-01
-- **Status**: Draft
+- **Status**: Complete (shipped — `Neighbourhood considered` callout fires in `/plan` Phase 0.5 + `/audit-code` Phase 0.5; `docs/architecture-map.md` auto-renders via `npm run arch:render`; `dashboard/index.html` Architecture tab. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Scope**: Everything humans read for the architectural-memory feature.
   Output is generated Markdown + Mermaid diagrams committed to the repo

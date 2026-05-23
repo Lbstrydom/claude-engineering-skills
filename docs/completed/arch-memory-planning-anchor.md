@@ -1,7 +1,7 @@
 # Plan: Arch-Memory Planning Anchor
 
 - **Date**: 2026-05-03
-- **Status**: Draft v6 (post R1+R2+R3 GPT + Gemini ×2 — 9H/14M/2L addressed; 2 Gemini-R1 HIGHs challenged as invalid claims about pre-existing code; all Gemini-R2 MEDIUMs accepted)
+- **Status**: Complete (shipped — `/plan` Phase 0.5 "Architectural-memory Neighbourhood" + `/audit-code` Phase 0.5 "Architectural-memory catalogue (--scope=full only)" both invoke this plan's `get-neighbourhood` consultation via `scripts/cross-skill.mjs`. Status line corrected 2026-05-23 from "Draft v6 (post R1+R2+R3 GPT + Gemini ×2)" — the audit was thorough but the post-audit shipping never re-stamped the line.)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: js-ts (Node ESM)
