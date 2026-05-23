@@ -1,5 +1,49 @@
 # Project Status Log
 
+## 2026-05-23 — Pipeline liveness + canonical-path enforcement (WS-LIVE + WS-CANON)
+
+Implements [docs/plans/liveness-and-canonical-paths.md](docs/plans/liveness-and-canonical-paths.md). Two pre-existing fragilities that had been recurring HIGH findings across multiple audit rounds are now retired:
+
+1. **WS-LIVE — pipeline liveness**. `scripts/symbol-index/refresh.mjs` used `spawnSync` to drive a multi-minute extract → summarise → embed pipeline. While spawnSync blocked, the `runWithHeartbeat` setInterval could not fire — the refresh row's `heartbeat_at` went silent for the entire duration. Replaced with a new `scripts/lib/subprocess.mjs` (`runJsonLinesAsync` + `runJsonLinesAsyncStrict` + closed `SubprocErrorCode` enum). Async streaming restores heartbeat liveness. Stage-tagged errors (`stage=summarise exit=2`) give the operator log a precise failure pinpoint. Hard-fail on malformed JSON lines closes the `.filter(Boolean)` silent-data-loss invariant.
+
+2. **WS-CANON — canonical-path enforcement**. The lexical sensitive-path classifier matched on the visible string `repo/notes.txt` — a symlink whose realpath target pointed into `~/.ssh/id_rsa` or `secrets/db.yaml` was not classified as sensitive. New `scripts/lib/sensitive-paths.mjs::resolveAndClassify` runs the cheap lexical check first, then `fs.realpathSync` + re-classify of the canonical target. Fail-closed on resolution errors (`resolutionFailed: true → category: 'sensitive'`) and on escapes outside `repoRoot` (`escapedRepo: true → 'sensitive'`). `gateSymbolForEgress` opts in via `repoRoot`; `extract.mjs` hoists per-file resolution + reads via the canonical path (so ts-morph sees the gate-approved file, not the unresolved one). `redactSecrets` rewritten to delegate to `redact.mjs::redactObject` — fail-closed; BigInt and circular refs can no longer leak.
+
+### Files added
+- [scripts/lib/subprocess.mjs](scripts/lib/subprocess.mjs) — async streaming subprocess runner. Two helpers (`runJsonLinesAsync`/`runJsonLinesAsyncStrict`), closed 4-code `SUBPROC_ERROR_CODES` enum. EPIPE-safe (Gemini-r1 G1). 18 tests including heartbeat-liveness property test.
+- [tests/subprocess.test.mjs](tests/subprocess.test.mjs) — full async + strict-wrapper coverage.
+- [tests/sensitive-paths-canonical.test.mjs](tests/sensitive-paths-canonical.test.mjs) — 18 hermetic POSIX tests for `resolveAndClassify` (symlink-bypass, escape detection, canonical re-classification, fail-closed).
+
+### Files modified
+- [scripts/symbol-index/refresh.mjs](scripts/symbol-index/refresh.mjs) — three call sites migrated from `spawnSync` → `runJsonLinesAsyncStrict({stage})`. Catch block recognises `SubprocErrorCode`s and surfaces `{stage, exitCode, signal, parseErrorCount}` in the structured error output.
+- [scripts/lib/sensitive-paths.mjs](scripts/lib/sensitive-paths.mjs) — added `resolveAndClassify` + top-of-file `fs` import.
+- [scripts/lib/sensitive-egress-gate.mjs](scripts/lib/sensitive-egress-gate.mjs) — `gateSymbolForEgress` accepts `repoRoot`; new `skip-symlink-escape` action; `generatedNoise` branch added in repoRoot path (Gemini-r2 G2 regression-fix). `redactSecrets` rewritten fail-closed via `redactObject`.
+- [scripts/lib/redact.mjs](scripts/lib/redact.mjs) — `redactObject` now walks KEYS as well as values (Gemini-r2 G1; closes a leak path WS-CANON introduced when we delegated object-payload redaction here).
+- [scripts/symbol-index/extract.mjs](scripts/symbol-index/extract.mjs) — hoisted `resolveAndClassify` to per-file (BEFORE `addSourceFileAtPathIfExists`). Reads via `cls.canonical`. Inner candidate loop simplified to `containsSecrets` only — path enforcement done once per file (Gemini-r1 G2).
+- [tests/redact.test.mjs](tests/redact.test.mjs) — 2 new tests for key redaction.
+- [tests/sensitive-egress.test.mjs](tests/sensitive-egress.test.mjs) — extended with `redactSecrets` fail-closed contract (circular + BigInt), `gateSymbolForEgress` WS-CANON behaviours, generated-noise blocking.
+- [docs/security-strategy.md](docs/security-strategy.md) — NEW `INC-001`: symlink-bypass of sensitive-path classifier. Mitigation form `manual` (regression-locked by the new test file). Lessons learned recorded.
+- [AGENTS.md](AGENTS.md) — "Sensitive paths + VCS contract" extended with the WS-CANON canonical-path layer + fail-closed redactor; VCS section updated to point at the new `scripts/lib/subprocess.mjs` for WS-LIVE.
+
+### Decisions
+- **WS-LIVE ships first.** Larger blast radius (touches refresh.mjs main pipeline); landing it first means WS-CANON's `extract.mjs` change rebases over a stable async pipeline rather than a sync one. Per plan §3.
+- **AbortSignal/timeout deferred.** Plan §5 "What we WON'T do" explicitly defers cross-process cancellation tokens. Heartbeat is one-way; cancellation is already checked between stages. Future work if a hanging-child scenario actually surfaces.
+- **Hard-fail on parse errors by default.** Behaviour change (the old `.filter(Boolean)` silently dropped malformed lines). No callers tolerated this today; escape hatch is `opts.maxParseErrors: Infinity` for the rare legacy-tolerance need.
+- **`extract.mjs` reads via canonical path** — even though ts-morph already loads the body into memory, feeding it `cls.canonical` rather than `abs` means we read exactly what the gate approved. Closes the TOCTOU window between gate-check and file-read.
+- **`redactObject` walks keys too** (Gemini-r2 G1). WS-CANON delegated object-payload redaction from a stringify-then-text-redact path to `redactObject`. The old path caught key-secrets incidentally; the new walker didn't, until this fix.
+- **REBUTTED 3 Gemini findings** as factually wrong: containment-check claim (code uses `path.relative` + `path.isAbsolute`, exactly what Gemini recommended), `MAX_FILE_BYTES` undefined (declared at line 378, accessible inside the function), parseArgs robustness (pre-existing, plan §5 defers).
+
+### Verification
+- Audit cycle: GPT R1 + Gemini ×3 rounds. HIGH count trajectory (real, not hallucinations): r1=2 → r2=2 → r3=0. Architectural coherence assessment rose from "Adequate" (r2) to "Strong" (r3). Stopped per audit-plan skill's rigor-pressure rule.
+- Full suite: **3116/3134 passing, 0 failures, 18 skipped** (was 3068/3086 baseline; +48 net tests from this plan).
+- Empirical smoke: extract.mjs runs against 906 files, emits real symbols (proves `MAX_FILE_BYTES` access is fine — Gemini-r3 G1 was a hallucination).
+
+### Out of scope (deferred)
+- Subprocess records-buffering memory pressure on very large repos.
+- `refresh.mjs` god-orchestrator decomposition (pre-existing).
+- `refresh.mjs::parseArgs` unknown-flag / missing-value strictness (pre-existing).
+
+---
+
 ## 2026-05-23 — Shared cloud-config for consumer repos (~/.audit-loop.env)
 
 Implements [docs/plans/shared-cloud-config.md](docs/plans/shared-cloud-config.md). Eliminates the silent-failure pattern that hit ai-organiser this week: `[learning] Cloud store not configured` printed once at startup, then arch-memory consultation, audit-loop cloud learning, and persona-test correlations all silently no-op'd because the consumer repo's `.env` didn't have `AUDIT_DB_URL`. Three trigger surfaces ensure the operator never misses it: explicit `npm run setup:cloud`, end-of-`npm run sync` auto-prompt, and the cloud-disabled fallback message now names the recovery command. Pattern locked in `[[first-deploy-plus-update-from-source-pattern]]` memory.

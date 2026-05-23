@@ -1,7 +1,7 @@
 # Plan: Pipeline liveness + canonical-path enforcement (WS3 follow-up)
 
 - **Date**: 2026-05-22
-- **Status**: Draft
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: js-ts
@@ -430,3 +430,32 @@ node scripts/cross-skill.mjs upsert-plan --json '{
 ```
 
 Update `status` to `in_progress` when WS-LIVE commit lands, `complete` when both workstreams are merged.
+
+## Implementation Log
+
+### 2026-05-23 — Both workstreams shipped + audited
+
+| Workstream | Commit | What landed |
+|---|---|---|
+| WS-LIVE | (this PR) | `scripts/lib/subprocess.mjs` (`runJsonLinesAsync` + `runJsonLinesAsyncStrict` + closed `SubprocErrorCode` enum) + `refresh.mjs` migrated sync→async with stage-tagged errors. Restores heartbeat liveness during the multi-minute extract→summarise→embed pipeline. 18 new tests including the load-bearing heartbeat-liveness property test. |
+| WS-CANON | (this PR) | `scripts/lib/sensitive-paths.mjs::resolveAndClassify` (lexical fast-path + `realpathSync` + repo-containment + fail-closed). `gateSymbolForEgress` opts in via `repoRoot`; new `skip-symlink-escape` action. `extract.mjs` hoists per-file resolution + reads via canonical path. `redactSecrets` rewritten to delegate to `redactObject` (fail-closed; no more BigInt/circular leak path). `INC-001` recorded in `docs/security-strategy.md`. AGENTS.md "Sensitive paths" subsection extended. 19 new tests. |
+
+**Audit cycle**:
+
+| Round | Verdict | Outcome |
+|---|---|---|
+| GPT R1 (WS-LIVE) | SIGNIFICANT_ISSUES H:1 M:5 L:2 | All findings out-of-scope (plan §5 deferred), pre-existing (refresh.mjs sprawl, parseArgs), or auditor confusion (paths). 0 in-scope actionable. |
+| Gemini r1 | CONCERNS, 2 HIGH | G1: EPIPE crash on subprocess stdin — accepted, added `child.stdin.on('error')`. G2: `extract.mjs` called `gateSymbolForEgress` in per-candidate inner loop AND ts-morph read pre-resolution path — accepted, hoisted resolution per-file, read via `canonical`. |
+| Gemini r2 | CONCERNS_REMAINING, 2 HIGH + 1 MED | G1: `redactObject` only redacted values, not keys — accepted, applied `redact()` to keys. G2: new `repoRoot` branch skipped `sensitive` but not `generatedNoise` — accepted, added the check. G3: containment-check uses `normalisePath` — REBUTTED, code uses `path.relative` + `path.isAbsolute` already (sensitive-paths.mjs:222–223), Gemini misread. |
+| Gemini r3 | CONCERNS, 1 new + 1 dropped-resurfaced | G1: `MAX_FILE_BYTES` undeclared in `extract.mjs` — REBUTTED, declared at line 378 (bottom of file). Empirically verified: extract runs against 906 files, emits symbols normally; if undefined nothing would emit. Gemini didn't scan the bottom of the file. M5 wrongly-dismissed: parseArgs robustness — REBUTTED, pre-existing, plan §5 explicitly defers. |
+
+**Stop rule**: Per audit-plan skill's rigor-pressure rule (max 3 Gemini rounds unless HIGH actively dropping). Real HIGH count: r1=2 → r2=2 → r3=0 (both r3 concerns are factually wrong). Architectural coherence assessment rose from r2 "Adequate" to r3 "Strong". Stopping.
+
+**Deferred to future work** (per plan §5 + new Gemini concerns we judged out-of-scope):
+
+- Cross-process AbortSignal / timeout for subprocess hangs (plan §5: deferred — heartbeat is one-way).
+- `runJsonLinesAsync` records-buffering memory pressure on very large repos (out of scope; addresses liveness not memory).
+- `refresh.mjs` parseArgs strictness for unknown-flag / missing-value (pre-existing; needs its own PR).
+- `refresh.mjs` god-orchestrator decomposition (pre-existing).
+
+**Tests**: 3116/3134 pass (was 3068/3086 baseline; +48 net from this plan).
