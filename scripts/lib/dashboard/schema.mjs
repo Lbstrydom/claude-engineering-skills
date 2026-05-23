@@ -70,6 +70,9 @@ const PlanSchema = z.object({
   status: z.string().nullable(),
   date: z.string().nullable(),
   malformed: z.boolean(),
+  // Full markdown body for inline render in the dashboard's Plans tab.
+  // Optional so older snapshots without `body` still validate.
+  body: z.string().optional(),
 });
 
 const DomainSchema = z.object({

@@ -91,6 +91,10 @@ export function discoverPlans(root = process.cwd()) {
         status: statusM ? statusM[1].trim() : null,
         date,
         malformed,
+        // Full body for inline render in the dashboard's Plans tab.
+        // Lets us bypass VS Code's flaky Mermaid preview entirely —
+        // the dashboard loads mermaid via CDN and renders cleanly.
+        body: raw,
       });
     }
   }
