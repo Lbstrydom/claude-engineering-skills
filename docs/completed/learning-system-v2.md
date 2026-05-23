@@ -1,6 +1,6 @@
 # Plan: Learning System v2 — Adaptive Prompt Evolution & Contextual Bandits
 - **Date**: 2026-04-02
-- **Status**: In Progress (consolidated rewrite after 3 audit rounds)
+- **Status**: Complete (shipped — Supabase tables `learning_decisions`, `recurring_finding_clusters`, `bandit_arms`, `false_positive_patterns` live; `scripts/learning/` has weekly-review + backfill-outcomes + replay; `scripts/lib/learning/` has beta-posterior + cold-start + decision-logger + quickfix-stats. `scripts/bandit.mjs` + `scripts/refine-prompts.mjs` + `scripts/evolve-prompts.mjs` ship. Adaptive Learning Phase 1/2/3 sub-plans (each marked Complete) cover the incremental delivery. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Scope**: Overhaul all learning subsystems — FP tracker, bandit, reward function, prompt refinement, outcome management, file-store abstraction
 

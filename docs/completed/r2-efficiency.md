@@ -1,6 +1,6 @@
 # Plan: Adaptive Audit Intelligence — Efficiency, Learning, and Continuous Improvement
 - **Date**: 2026-03-29
-- **Status**: Draft
+- **Status**: Complete (shipped — R2+ mode is the canonical audit re-run path: `R2_ROUND_MODIFIER` + `buildRulingsBlock` in `scripts/lib/audit/prompt-builder.mjs`; `suppressReRaises` post-output filter in `scripts/lib/debt-ledger.mjs` + `scripts/gemini-review.mjs`; `--round <n> --ledger <path>` CLI surface in `scripts/openai-audit.mjs`. AGENTS.md "R2+ Audit Mode (Phase 1)" documents the three-layer defence. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 
 ## Phasing Overview

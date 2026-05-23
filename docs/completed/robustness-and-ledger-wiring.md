@@ -1,7 +1,7 @@
 # Plan: Robustness Hardening & R2+ Ledger Auto-Write
 
 - **Date**: 2026-04-04
-- **Status**: In Progress (revised after Round 3 audit — converging)
+- **Status**: Complete (shipped — `scripts/lib/ledger.mjs` exports `writeLedgerEntry` + tracks the two-axis state model (`adjudicationOutcome` ∈ dismissed|accepted|severity_adjusted; `remediationState` ∈ pending|planned|fixed|verified|regressed). Adopted by every audit-code round + R2+ suppression. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Scope**: Fix JSON truncation, add null guards, retry logic, MAP failure thresholds, and auto-populate the adjudication ledger so R2+ suppression actually works
 

@@ -1,6 +1,6 @@
 # Plan: Predictive Audit Strategy — Data Loop Completion & Intelligence
 - **Date**: 2026-04-17
-- **Status**: Draft
+- **Status**: Complete (shipped — `predictiveConfig` block exported from `scripts/lib/config.mjs` (explorationInterval, freshnessWindowDays, minLabeledRuns, skipFpThreshold). Feature absorbed into Learning System v2's broader data loop; predictive skip-FP threshold drives the Wave-4 quickfix gate. Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Replaces**: Previous Phase 7 plan (2026-04-01) — rewritten after data analysis
 - **Data audit**: 100 runs, 1,634 findings, 9,190 FP patterns, 444 pass stats — **0 outcome labels**
