@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-05-23T18:28:14.229Z",
+  "generatedAt": "2026-05-23T18:54:26.492Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "92f7374b9d46027b9190e4605434fdd07fe81333",
+  "commitSha": "398f06b9875e717b2bf4fd38d04412b795eb1cad",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -17,7 +17,7 @@
     "scripts/cross-skill.mjs": "sha256:3ca43e9afca042b358eaf8100831faa4f474bb5bd843350e85c609c3bdc6770f",
     "scripts/explain-history.mjs": "sha256:4c76da6cbedcd1cf578f638c1f6bf99724cd5376db683deb80e234e7ad78ed6a",
     "scripts/friction-log.mjs": "sha256:25561b42b94160fab6bda79047bc6f116c5d2c6cc59ceb20aad06d0175bbebba",
-    "scripts/gemini-review.mjs": "sha256:7b6607d873ff7b5ade21964dc527085ce6dad6a973685bb265d575eb8db0dd40",
+    "scripts/gemini-review.mjs": "sha256:21b2759012ae5a7754afa2afae511cf3bf0006d94c35d53717f47261e71368fb",
     "scripts/learning-store.mjs": "sha256:f312d4a304caf4c6ec6f71fd9e6996fd20456e0714f4fe97e0bb78a2a80b1fcd",
     "scripts/learning/backfill-outcomes.mjs": "sha256:45a38029918204bc98c3e7bf0ae95efec799dc42f5332519c07b693a8380af49",
     "scripts/learning/replay.mjs": "sha256:d9052f90ee181086b0c113a99b3eb5b72dd11d34e05a538b2c4430f63c649ff0",
@@ -174,7 +174,7 @@
     "scripts/lib/ux-lock/candidate-spec.mjs": "sha256:8ef0190dd1447e79d551dfe64f1831fd762fc8437c1bda45cb6e759df51727aa",
     "scripts/lib/ux-lock/capture.mjs": "sha256:105099424acd8de4af7ddeed47fccebb4291f978957659e15a6383b1c9c92442",
     "scripts/lib/vcs.mjs": "sha256:067727cac623f2275569c8c5abcdb2a3458aaa27b2a95f2acc25c5a64fba8293",
-    "scripts/openai-audit.mjs": "sha256:32908a3b4720ec32fec5ef888664154b23d721907d6bd0d0b7ea43c3acf2de3c",
+    "scripts/openai-audit.mjs": "sha256:81f2ec9cc32b2e3a219f20a7606662f35771ffa9f84d9edcbed3ea90b3611e0c",
     "scripts/persona-consistency-promote.mjs": "sha256:ee96113f7b474a35845024d1482b6d6750a582e3a6f04234cdc2203054e23c8b",
     "scripts/persona-consistency-run.mjs": "sha256:39a462567cab963228ada6a3d819e471e097cb5315581aa4bf12be47b50a1ebd",
     "scripts/phase7-check.mjs": "sha256:1786b0bdbbcc974bab01558588240c2ca9cdd604012099382cb3cd7cf232acfa",
