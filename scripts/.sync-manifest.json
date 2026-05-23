@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-05-23T16:58:09.828Z",
+  "generatedAt": "2026-05-23T18:28:14.229Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "e2ca809b8cb58286ccf6b840999e9056a8f7b385",
+  "commitSha": "92f7374b9d46027b9190e4605434fdd07fe81333",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -74,7 +74,7 @@
     "scripts/lib/dashboard/sections/cli.mjs": "sha256:fbaddfcf5de2906d271d03fdac06ecc889737a6e817a6f950a8fc92ef833f7ca",
     "scripts/lib/dashboard/sections/flows.mjs": "sha256:4afb6d502ff926b76ce9d108366b913158baa0b818aff88b4abda59fd86b005a",
     "scripts/lib/dashboard/sections/learning.mjs": "sha256:819d920793cd5cc281c01186b6ad543ff6df52c19b93fb551f3ae2580dd31a36",
-    "scripts/lib/dashboard/sections/plans.mjs": "sha256:eb70df88de2f5c809e433047ad2cceaeb0a77572c27c1353f04cc97dca66dc68",
+    "scripts/lib/dashboard/sections/plans.mjs": "sha256:853755f78afacb3e9213ebf75db0cf49b79b42e837efbf8b17e595715735fff1",
     "scripts/lib/dashboard/sections/requirements.mjs": "sha256:36c9a30c6d42bbb04a561c06630e8b8657d1788597097ec35e05c61abb68f6dc",
     "scripts/lib/dashboard/sections/skills.mjs": "sha256:ba39f315f34bb5b808ded06d9a2186937b723f8453243272ff4192bfa38f3e98",
     "scripts/lib/dashboard/serve.mjs": "sha256:c62fef2fcb9b7624362552d5388a3959034034b805485178b3433efedff15835",
@@ -109,7 +109,7 @@
     "scripts/lib/linter.mjs": "sha256:f83b59132836cce878675d78ccf4d89a5816d6613e1543ceb7f60ed1c71efac1",
     "scripts/lib/llm-auditor.mjs": "sha256:31ede681e71e8a47adbe772d50ba4aaec5c7f69373c0c175b799bca3722761eb",
     "scripts/lib/llm-wrappers.mjs": "sha256:bcdece5e107f91fedffd6974cc13ed857caf36700d02da1837aabadfb81ab59c",
-    "scripts/lib/model-resolver.mjs": "sha256:db9f5869257ce509833430696ad2830ec9b2b1d34eca0078c1c7ff81528d8a89",
+    "scripts/lib/model-resolver.mjs": "sha256:0f83796d5060450454116d641e1fe60010e6d3dbd01e10cc25229a5ac80a54dd",
     "scripts/lib/module-graph.mjs": "sha256:8abb3c5b0a9fb79d794c7f5c27c74219e673a0faffdd04f386fe9e99dffbb041",
     "scripts/lib/neighbourhood-query.mjs": "sha256:d01ff5b1120fa8195021c9a67c0c5bf74035bed1797f322628a1b1d50f7b7d7b",
     "scripts/lib/observed-deps.mjs": "sha256:95043b050e7aa85987e609dd18dfefacae2313a2afeac23f38d566a6460af3ce",
