@@ -63,9 +63,12 @@ graph LR
     GATE --> RED
     EX --> SP_LIB
   end
-  note1[Two workstreams; independent;<br/>ship sequentially per WS1/WS2/WS3 precedent]
-  WS_LIVE -.- note1
-  WS_CANON -.- note1
+  %% Caption — anchored to one node in each subgraph rather than the
+  %% subgraph IDs (Mermaid graph syntax doesn't allow subgraphs as edge
+  %% endpoints; doing so silently failed VS Code preview).
+  note1["Two workstreams; independent;<br/>ship sequentially per WS1/WS2/WS3 precedent"]
+  R1 -.- note1
+  GATE -.- note1
 ```
 
 ### Key design decisions

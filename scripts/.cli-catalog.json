@@ -267,6 +267,14 @@
       "description": "Preview which plans would be archived (no file moves).",
       "category": "plans"
     },
+    "plans:lint": {
+      "description": "Static-check Mermaid blocks in docs/plans/*.md for the class of bugs GitHub renders leniently but VS Code preview rejects (e.g. subgraph IDs used as edge endpoints). Runs as part of `npm run check`.",
+      "category": "plans"
+    },
+    "plans:lint:json": {
+      "description": "plans:lint with machine-readable JSON output for CI.",
+      "category": "plans"
+    },
 
     "hooks:install": {
       "description": "Install local pre-push hooks (skill-driven checks before push).",
