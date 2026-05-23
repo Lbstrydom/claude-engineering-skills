@@ -165,7 +165,11 @@ function applyExclusions(files, patterns) {
 
 // ── Configuration (from centralized config) ─────────────────────────────────
 
-const MODEL = openaiConfig.model;
+// `let` not `const` — reassigned in main() after refreshModelCatalog()
+// pulls the live provider catalog. Module-load resolution uses STATIC_POOL
+// only, so without the reassignment we'd silently run on the static-pool
+// newest even when the live catalog has something newer.
+let MODEL = openaiConfig.model;
 const REASONING_EFFORT = openaiConfig.reasoning;
 const MAX_OUTPUT_TOKENS_CAP = openaiConfig.maxOutputTokensCap;
 const TIMEOUT_MS_CAP = openaiConfig.timeoutMsCap;
@@ -2961,20 +2965,23 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
 
 async function main() {
   assertRepoRoot(import.meta.url);
-  // Live-catalog refresh: populate session cache so providers' newest models
-  // are visible to resolveModel(). Module-load resolution (config.mjs) used
-  // STATIC_POOL only — the warning below surfaces drift so operators can
-  // restart with the env var pointing at the live newest. Set
-  // MODEL_CATALOG_REFRESH=skip in air-gapped CI / when API quota is scarce.
+  // Live-catalog refresh: populate session cache so providers' newest
+  // models are visible to resolveModel(). Module-load resolution
+  // (config.mjs) used STATIC_POOL only; we now RE-RESOLVE the sentinel
+  // against the freshly-populated live cache and reassign MODEL. This is
+  // the "always use latest" path — operators no longer have to update
+  // STATIC_POOL manually when a provider ships a new model.
+  // Set MODEL_CATALOG_REFRESH=skip in air-gapped CI / when API quota is
+  // scarce; resolution then stays at the module-load (static-pool) value.
   if (process.env.MODEL_CATALOG_REFRESH !== 'skip') {
     try { await refreshModelCatalog(); } catch { /* silent — falls back to static */ }
     try {
       const liveResolution = resolveModel(process.env.OPENAI_AUDIT_MODEL || 'latest-gpt', { silent: true });
       if (liveResolution !== MODEL) {
         process.stderr.write(
-          `  [startup] Live catalog suggests "${liveResolution}" but session uses "${MODEL}" ` +
-          '(resolved at module load before refresh). Restart to apply the newer model.\n'
+          `  [model-resolver] upgraded MODEL ${MODEL} → ${liveResolution} (live catalog newer than STATIC_POOL)\n`
         );
+        MODEL = liveResolution;
       }
     } catch { /* ignore — never block audit on resolver introspection */ }
   }

@@ -38,8 +38,11 @@ import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 // ── Configuration (from centralized config) ─────────────────────────────────
 
-const MODEL = geminiConfig.model;
-const CLAUDE_OPUS_MODEL = claudeConfig.finalReviewModel;
+// `let` not `const` — reassigned in main() after refreshModelCatalog()
+// pulls the live provider catalog, so we always use the newest available
+// model instead of whatever STATIC_POOL knew about at last commit.
+let MODEL = geminiConfig.model;
+let CLAUDE_OPUS_MODEL = claudeConfig.finalReviewModel;
 const TIMEOUT_MS = geminiConfig.timeoutMs;
 const MAX_OUTPUT_TOKENS = geminiConfig.maxOutputTokens;
 
@@ -697,12 +700,22 @@ function formatReviewResult(result, usage, latencyMs, provider) {
 async function refreshCatalogAndWarn() {
   if (process.env.MODEL_CATALOG_REFRESH === 'skip') return;
   try { await refreshModelCatalog(); } catch { /* silent */ }
+  // Re-resolve BOTH the Gemini reviewer model + the Claude Opus fallback
+  // against the freshly-populated live catalog, then reassign. "Always
+  // use the latest" path — operators no longer have to update STATIC_POOL
+  // manually when a provider ships a new model.
   try {
-    const liveResolution = resolveModel(process.env.GEMINI_REVIEW_MODEL || 'latest-pro', { silent: true });
-    if (liveResolution !== MODEL) {
-      process.stderr.write(
-        `  [startup] Live catalog suggests "${liveResolution}" but session uses "${MODEL}" — restart to apply.\n`,
-      );
+    const liveGemini = resolveModel(process.env.GEMINI_REVIEW_MODEL || 'latest-pro', { silent: true });
+    if (liveGemini !== MODEL) {
+      process.stderr.write(`  [model-resolver] upgraded Gemini reviewer ${MODEL} → ${liveGemini}\n`);
+      MODEL = liveGemini;
+    }
+  } catch { /* ignore */ }
+  try {
+    const liveOpus = resolveModel(process.env.CLAUDE_FINAL_REVIEW_MODEL || 'latest-opus', { silent: true });
+    if (liveOpus !== CLAUDE_OPUS_MODEL) {
+      process.stderr.write(`  [model-resolver] upgraded Claude Opus fallback ${CLAUDE_OPUS_MODEL} → ${liveOpus}\n`);
+      CLAUDE_OPUS_MODEL = liveOpus;
     }
   } catch { /* ignore */ }
 }

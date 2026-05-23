@@ -229,9 +229,30 @@ through `resolveModel()`.
    is authoritative (short-circuits version heuristics).
 3. If result is concrete, return as-is.
 
-**Live catalog** (optional): call `await refreshModelCatalog()` at the top of a
-script's `main()` to populate the session cache from the provider's `/models`
-endpoint. Silent on failure — falls back to the static pool. CLI self-check:
+**Live catalog (always-on for audit/brainstorm/gemini-review)**: the three
+heavy LLM entry points — `scripts/openai-audit.mjs`, `scripts/brainstorm-round.mjs`,
+`scripts/gemini-review.mjs` — call `await refreshModelCatalog()` at the top
+of their `main()`. The audit + gemini scripts then RE-RESOLVE the sentinel
+against the freshly-populated live catalog and reassign their `MODEL` (and
+`CLAUDE_OPUS_MODEL`) `let` bindings, so providers' newest models are picked
+up automatically — no manual `STATIC_POOL` updates required when a new
+GPT/Claude/Gemini ships.
+
+The startup log surfaces an upgrade when it fires:
+
+```
+  [model-resolver] upgraded MODEL gpt-5.5 → gpt-5.6 (live catalog newer than STATIC_POOL)
+```
+
+Operators can disable this with `MODEL_CATALOG_REFRESH=skip` (air-gapped
+CI / scarce API quota); resolution then stays at the module-load static-pool
+value. Silent on network failure — falls back to static pool cleanly.
+
+Other scripts (utility CLIs that don't make heavy LLM calls) skip the
+refresh to keep their startup latency low. They use the static-pool value
+which lags but never breaks.
+
+CLI self-check:
 
 ```bash
 node scripts/lib/model-resolver.mjs resolve             # show current resolution
@@ -250,9 +271,12 @@ node scripts/lib/model-resolver.mjs catalog             # live catalog delta vs 
   provider message. Don't collapse to `"API error ${status}"` — the provider's
   `error.message` is what tells you which model wasn't found.
 
-**Refreshing the static pool** (quarterly): update `STATIC_POOL` and
-`DEPRECATED_REMAP` in `scripts/lib/model-resolver.mjs` and run
-`node scripts/lib/model-resolver.mjs resolve` to verify.
+**Refreshing the static pool** (rarely needed since the live-catalog
+refresh handles new releases automatically): only update `STATIC_POOL`
+when supporting an air-gapped scenario or when a new MAJOR version's ID
+shape isn't recognised by the resolver's family-detection heuristics.
+Edit `STATIC_POOL` + `DEPRECATED_REMAP` in `scripts/lib/model-resolver.mjs`
+and run `node scripts/lib/model-resolver.mjs resolve` to verify.
 
 ## Memory-Health Gate
 
