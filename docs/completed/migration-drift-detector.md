@@ -1,7 +1,7 @@
 # Plan: Migration-drift detector for the audit-loop store
 
 - **Date**: 2026-05-23
-- **Status**: In Progress — code + tests + docs landed; operator runbook (step 6) is the remaining out-of-band action
+- **Status**: Complete — code shipped (edffa19), operator bootstrap done via Supabase CLI, expected-schema regenerated (b13552d), --check-drift reports 32/32 clean
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: js-ts
@@ -798,6 +798,31 @@ Steps 1-5 of §3 shipped in one PR (per the workstream's "tightly coupled" frami
 **Test suite**: 2994/3011 passing, 0 failures (was 2964 pre-implementation, +30 net new). 17 skipped — pre-existing.
 
 **Deviations from plan**: none material. The plan's §6 EDIT-package.json section was followed exactly. The check-drift exit-3 message and the `--format` validation in `parseArgs` (rejects bad values with `process.exit(2)`) are mild additions the plan didn't spell out but are necessary for the contract.
+
+### 2026-05-23 — Operator bootstrap executed (step 6 of §3)
+
+Ran the bootstrap end-to-end using the **Supabase CLI path** (cleaner than the dashboard-paste fallback documented in AGENTS.md). Sequence:
+
+| Step | Command | Result |
+|---|---|---|
+| 1 | `supabase migration repair --status applied 20260508120000 20260509120000 20260511120000 --linked` | Marked 3 dashboard-applied migrations as applied in the remote `supabase_migrations.schema_migrations` ledger. Metadata-only, no DDL re-run. |
+| 1b | `supabase migration repair --status reverted 20260508230517 20260509000741 20260511141400 --linked` | Removed 3 REMOTE-only orphan entries (CLI-applied long ago, no committed source file). Required before `db push` because Supabase CLI refuses to push while remote has entries the local doesn't recognise. |
+| 2 | `supabase db push --linked` | Applied the 3 truly-unapplied migrations: `plans_skill_unified.sql`, `consistency_source_kinds.sql`, `persona_test_candidates.sql`. Benign NOTICE on 20260520 (DROP CONSTRAINT IF EXISTS matched its intent). |
+| 3 | `supabase migration list --linked` | Confirmed every row has LOCAL == REMOTE filled (32 in sync). |
+| 4 | `node scripts/setup-postgres.mjs --adopt` | First attempt aborted with extra-in-live (expected — `tests/fixtures/expected-schema.json` was generated before the 3 new migrations existed; live now has more). Resolution: `npm run parity:expected-schema` to regenerate the manifest against the now-fully-migrated DB. Second `--adopt` attempt: **match** — 32 migration rows seeded into `audit_loop_migrations` with no DDL replay. |
+| 5 | `node scripts/setup-postgres.mjs --check-drift` | **`✓ no drift`** (32 applied / 32 source files). Final state clean. |
+
+**Schema regen commit**: `b13552d chore(parity): regenerate expected-schema.json after bootstrap` — +196 lines capturing the schema effects of the 3 newly-applied migrations. Required so future contributors who run `--adopt` against a freshly-migrated reference DB don't false-positive.
+
+**Silent failures now resolved end-to-end**: `/plan` registration (skill='plan' now in CHECK), `/persona-test --mode consistency` candidate writes (table + columns + check exist), WS-PIPE1 `persona_test_candidates` CLI.
+
+**Going forward**: future migrations apply via `supabase db push --linked` (or `npm run db:migrate`). Drift is detectable + caught within minutes by the new `migration-drift.yml` workflow's `push: paths: 'supabase/migrations/**'` trigger.
+
+### Deviations from the plan's documented runbook
+
+The AGENTS.md runbook (Step 1) said "manually apply outstanding migrations through the Supabase dashboard SQL editor". The operator pointed out the Supabase CLI is a cleaner path — implemented `supabase migration repair` + `db push` instead. The dashboard path remains documented as the explicit fallback for operators without `supabase` CLI installed. The two paths converge at Step 2 (`--adopt`) regardless.
+
+**This deviation should be folded back into AGENTS.md** as a follow-up (lead with the Supabase CLI path; demote dashboard to "fallback"). Not done in this commit to keep the chore atomic; tracked as a separate ergonomic improvement.
 
 ### 2026-05-23 — Gemini final review revisions
 
