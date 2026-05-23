@@ -1,5 +1,50 @@
 # Project Status Log
 
+## 2026-05-23 — Migration-drift detector + ledger bootstrap path
+
+Implements [docs/plans/migration-drift-detector.md](docs/plans/migration-drift-detector.md) (planId `a33b71f3`). Closes the silent-drift gap that bit us on 2026-05-22 — three migrations (`20260519`, `20260520`, `20260521`) had been committed to `supabase/migrations/` but never applied to the cloud, causing `/plan` upsert + `/persona-test --mode consistency` + WS-PIPE1 `persona_test_candidates` CLI to all silently no-op.
+
+### Files added
+- [scripts/setup-postgres.mjs](scripts/setup-postgres.mjs) `runCheckDrift` + `renderHumanDriftReport` — read-only drift detection with closed 4-code exit contract (0 clean/cloud-disabled, 1 drift, 2 hard-error, 3 needs-bootstrap). Three drift kinds surfaced separately (unapplied / sha-mismatch / orphan-ledger). DI signature `{format, migrationsDir, stdout, stderr}` so tests run hermetically against a `mkdtemp` directory + in-memory stub pool. NEVER calls `ensureLedger` — the read-only contract is load-bearing.
+- [.github/workflows/migration-drift.yml](.github/workflows/migration-drift.yml) — weekly cron (Mondays 09:45 UTC, 15-min stagger from architectural-drift) + push-on-`supabase/migrations/**` event-driven trigger + `workflow_dispatch`. Sticky GitHub issue with label `migration-drift`; auto-closes on green. Exit-2/3 fail the workflow loudly without polluting the issue tracker.
+- [tests/setup-postgres-check-drift.test.mjs](tests/setup-postgres-check-drift.test.mjs) — 25 hermetic tests: 3 drift-kinds × format combos + needs-bootstrap (exit 3) + output channel discipline (JSON-only on stdout / human-only on stderr) + parseArgs flag wiring + source-inspection (indexed-loop refactor, listMigrations DI, runCheckDrift no `ensureLedger`, main() branch ordering, package.json scripts, workflow file shape, AGENTS.md snippet shape).
+- [tests/hook-snippet-behaviour.test.mjs](tests/hook-snippet-behaviour.test.mjs) — 5 bash-driven tests extracting the operator-paste snippet from AGENTS.md and running it under `bash -e` with a mocked `node` shim returning each of {0,1,2,3}. Asserts the parent shell ALWAYS reaches the post-snippet sentinel — proves "advisory, never blocks" holds even under `set -e`.
+
+### Files modified
+- [scripts/setup-postgres.mjs](scripts/setup-postgres.mjs) — `parseArgs` refactored from `for (const a of argv)` to indexed `for (let i = 0; i < argv.length; i++)` so flag-with-value (`--format json`) can advance the iterator (Gemini-R2-H1 audit finding). `listMigrations(dir = MIGRATIONS_DIR)` accepts DI for tests. `main()` dispatch adds the `--check-drift` branch that handles cloud-disabled (pool null) → exit 0 BEFORE the generic null-pool guard, and skips preflight for read-only check-drift (faster pre-push). `_internals` extended with `runCheckDrift` + `renderHumanDriftReport` exports.
+- [package.json](package.json) — `db:check-drift`, `db:check-drift:json`, `db:migrate`, `db:adopt` scripts. `check:integration` extended to chain `--check-drift` after `arch:refresh:full`.
+- [scripts/.cli-catalog.json](scripts/.cli-catalog.json) — five catalog entries (four new + updated `check:integration` description).
+- [AGENTS.md](AGENTS.md) — new "Migration-drift detection" subsection under Postgres-Parity Store: detect commands, exit-code table, one-time bootstrap recipe, operator pre-push snippet (with `# managed-by: migration-drift-detector` marker), and break-glass recipe with cross-platform `node -e` sha256 derivation (replaces `sha256sum` which isn't on macOS — Gemini-R2-L1).
+
+### Decisions
+- **Single-PR workstream** rather than per-step commits. The plan §3 chain is tight enough that splitting added churn without independence — the check mode is useless without the dispatch wiring; the npm scripts are useless without the mode; the AGENTS.md runbook is useless without the npm scripts. WS1/WS2/WS3 precedent of one bundled commit per plan.
+- **`--check-drift` skips preflight** — preflight checks CREATEROLE + 3 extension installs (4 queries). The read-only check doesn't need any of that. Skipping keeps pre-push hook fast (the load-bearing use case).
+- **Cloud-disabled → exit 0**, not exit 2. Matches the `cloud:false` graceful-no-op pattern used across the audit-loop store (arch:refresh, persona-test). Lets `check:integration` chain `arch:refresh:full && --check-drift` cleanly when AUDIT_DB_URL is unset — both halves skip-gracefully rather than the second half hard-failing on the pool guard.
+- **Operator-paste pre-push snippet, NOT installer edit** (Gemini-R1 caught this). `scripts/install-prepush-hook.mjs` is the CONSUMER-repo installer (auto-runs `/audit-code`, uses `$AUDIT_LOOP_DIR`); editing it for the SOURCE-repo drift check was a category error. The snippet lives in AGENTS.md with a `managed-by:` marker comment that the test extracts.
+- **Hook-snippet test is bash-driven** — for the load-bearing "never blocks under `set -e`" contract there's no substitute for actually running the snippet through bash. The test mocks `node` via a PATH-prepend so it never touches the real DB.
+- **JSON output discipline**: `format=json` writes ONLY to stdout; `format=human` writes ONLY to stderr. This is the contract CI consumers depend on (`node ... --format json > file.json`). Tests assert both directions explicitly.
+
+### Verification
+- Full test suite: **2994/3011 passing, 0 failures** (was 2964; +30 net tests).
+- `node scripts/setup-postgres.mjs --check-drift` syntax-checks clean and `_internals` export is callable.
+- Workflow YAML lint clean.
+
+### Pending — operator action (out-of-band)
+Step 6 of plan §3 — Louis to run the one-time bootstrap to clear today's drift:
+
+```bash
+# Step 1: manually apply the 3 unapplied migrations via Supabase dashboard SQL editor:
+#   supabase/migrations/20260519120000_plans_skill_unified.sql
+#   supabase/migrations/20260520120000_consistency_source_kinds.sql
+#   supabase/migrations/20260521120000_persona_test_candidates.sql
+# Step 2: bootstrap the ledger via strict full-schema adopt
+AUDIT_DB_URL=… node scripts/setup-postgres.mjs --adopt
+# Step 3: confirm clean
+AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift
+```
+
+Until step 6 lands, `--check-drift` will exit 3 with the bootstrap message (correct behaviour — surfaces today's reality). Going forward, every new migration goes through `npm run db:migrate` (idempotent, ledger-tracking) and the weekly CI catches anything that slips.
+
 ## 2026-05-22 — Sustainability cleanup WS3: refresh.mjs hardening + canonical sensitive-paths + structured VCS contract
 
 Final workstream of the sustainability-cleanup-batch plan. `scripts/symbol-index/refresh.mjs` had ad-hoc subprocess error handling (try/catch-return-null), an inline `gitDiffWithWorkingTree` helper, and used five overlapping sensitive-path lists across consumer modules. WS3 collapses all three into two canonical modules with full structured contracts.

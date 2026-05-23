@@ -494,6 +494,90 @@ across 10 catalog categories (tables / functions / views / policies /
 constraints / indexes / triggers / sequences / extensions / grants).
 Any drift aborts with a per-category diff so the operator decides.
 
+### Migration-drift detection
+
+The `audit_loop_migrations` ledger (created on first `--migrate` or `--adopt`)
+records which `supabase/migrations/*.sql` files have been applied to the live
+DB. Drift = source files committed but not applied (or applied but later
+edited). Detect via:
+
+```
+AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift              # human report
+AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift --format json # CI/script
+```
+
+Exit codes: `0` clean (no drift OR `AUDIT_DB_URL` unset), `1` drift, `2` hard
+error, `3` needs bootstrap (ledger table missing).
+
+Surfaced two ways:
+
+- **Weekly CI + push-on-migration** (`.github/workflows/migration-drift.yml`):
+  cron Mondays 09:45 UTC + immediately on any commit landing
+  `supabase/migrations/**`. Opens a sticky GitHub issue with label
+  `migration-drift` on drift; auto-closes when clean.
+- **Pre-push (operator self-service)**: optional, requires you to paste
+  the snippet below into your source-repo `.git/hooks/pre-push`. CI is
+  the primary gate; this is just a faster local-feedback loop.
+
+**One-time bootstrap** when the live DB hasn't been ledger-tracked before:
+
+| Step | Command | Effect |
+|---|---|---|
+| 1 | Manually apply any outstanding migrations through the Supabase dashboard SQL editor. | Brings live schema to parity with `tests/fixtures/expected-schema.json`. One-time pain. |
+| 2 | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --adopt` | Strict full diff. On match → ledger is seeded with all source migrations. On drift → aborts with a per-category diff. |
+| 3 | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift` | Confirm clean. Exit 0 = ledger == source. |
+
+**Going forward** — use `node scripts/setup-postgres.mjs --migrate` for every
+new migration. It's idempotent (sha256-skip) and keeps the ledger current.
+The dashboard becomes a break-glass tool, not the default path.
+
+**Pre-push self-service snippet** — paste into source-repo `.git/hooks/pre-push`:
+
+```bash
+# managed-by: migration-drift-detector — operator self-service drift check
+# Only fires when AUDIT_DB_URL is set; advisory only, never blocks.
+# Git hooks already cwd to the repo root, so no cd or $REPO_ROOT needed.
+if [ -f "package.json" ] && [ -n "$AUDIT_DB_URL" ]; then
+  echo "→ Migration-drift check..."
+  DRIFT_EXIT=0
+  node scripts/setup-postgres.mjs --check-drift || DRIFT_EXIT=$?
+  case "$DRIFT_EXIT" in
+    0) ;;  # clean — silent pass
+    1) echo "⚠  migration-drift detected — push continues, but recover with:"
+       echo "     node scripts/setup-postgres.mjs --migrate" ;;
+    3) echo "⚠  audit_loop_migrations ledger missing — bootstrap with:"
+       echo "     node scripts/setup-postgres.mjs --adopt" ;;
+    *) echo "⚠  drift check infra error (exit $DRIFT_EXIT) — push continues" ;;
+  esac
+fi
+```
+
+**Break-glass** — if `--migrate` fails on a non-idempotent migration, the
+fix is to make the source file idempotent (`IF NOT EXISTS` / `DROP ... IF EXISTS`),
+commit, retry. Do NOT use the dashboard as a routine fallback — that
+re-introduces the silent-drift bypass this detector exists to eliminate.
+
+If a hot-fix genuinely requires the dashboard, record the apply atomically
+to preserve the ledger contract:
+
+```bash
+# Step 1: compute the canonical sha (cross-platform — uses the same
+# implementation as scripts/setup-postgres.mjs::sha256).
+SHA="$(node -e "console.log(require('node:crypto').createHash('sha256').update(require('node:fs').readFileSync(process.argv[1])).digest('hex'))" supabase/migrations/<filename>.sql)"
+
+# Step 2: dashboard SQL editor — migration body + ledger insert in the
+# SAME transaction. Both succeed or both roll back.
+BEGIN;
+  -- paste the migration SQL here
+  INSERT INTO audit_loop_migrations (filename, sha256)
+    VALUES ('<filename>.sql', '<PASTE $SHA FROM STEP 1>')
+    ON CONFLICT (filename) DO UPDATE SET sha256 = EXCLUDED.sha256, applied_at = now();
+COMMIT;
+
+# Step 3: verify clean
+AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift
+```
+
 ### Prerequisites
 
 - Postgres 13+ (uses `gen_random_uuid()` built-in; `pgcrypto` is the

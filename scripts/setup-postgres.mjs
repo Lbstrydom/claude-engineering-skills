@@ -47,18 +47,26 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
 
 function parseArgs(argv) {
   const args = {
-    mode: null,       // 'migrate' | 'adopt'
+    mode: null,       // 'migrate' | 'adopt' | 'check-drift'
     preflightOnly: false,
     bootstrapOnly: false,
     dryRun: false,
+    format: 'human',  // 'human' | 'json' — used by --check-drift
   };
-  for (const a of argv) {
+  // Indexed loop so flags-with-value (`--format json`) can advance the
+  // iterator via `++i` (plan migration-drift-detector R3-audit + Gemini-R2-H1).
+  // The existing flag set is bare-toggle-only, so this refactor is behaviour-
+  // preserving for every flag except the new `--format`.
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
     switch (a) {
       case '--migrate':         args.mode = 'migrate'; break;
       case '--adopt':           args.mode = 'adopt'; break;
+      case '--check-drift':     args.mode = 'check-drift'; break;
       case '--preflight-only':  args.preflightOnly = true; break;
       case '--bootstrap-only':  args.bootstrapOnly = true; break;
       case '--dry-run':         args.dryRun = true; break;
+      case '--format':          args.format = argv[++i]; break;
       default:
         if (a.startsWith('--')) {
           process.stderr.write(`${R}error${X}: unknown flag ${a}\n`);
@@ -68,8 +76,12 @@ function parseArgs(argv) {
   }
   if (!args.mode && !args.preflightOnly && !args.bootstrapOnly) {
     process.stderr.write(
-      `usage: setup-postgres.mjs --migrate | --adopt [--dry-run | --preflight-only | --bootstrap-only]\n`
+      `usage: setup-postgres.mjs --migrate | --adopt | --check-drift [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
     );
+    process.exit(2);
+  }
+  if (args.format !== 'human' && args.format !== 'json') {
+    process.stderr.write(`${R}error${X}: --format must be 'human' or 'json' (got: ${args.format})\n`);
     process.exit(2);
   }
   return args;
@@ -207,8 +219,8 @@ async function recordApplied(pool, filename, sha256) {
 
 // ── Migrations ─────────────────────────────────────────────────────────────
 
-async function listMigrations() {
-  const entries = await fs.promises.readdir(MIGRATIONS_DIR);
+async function listMigrations(dir = MIGRATIONS_DIR) {
+  const entries = await fs.promises.readdir(dir);
   return entries.filter((e) => e.endsWith('.sql')).sort();
 }
 
@@ -519,6 +531,101 @@ async function runAdopt(pool) {
   throw new Error('schema-drift detected during --adopt');
 }
 
+// ── Read-only drift check ─────────────────────────────────────────────────
+//
+// Compares `supabase/migrations/*.sql` source files against the
+// `audit_loop_migrations` ledger. Three drift kinds:
+//   - unapplied:    source exists, no ledger row
+//   - shaMismatch:  ledger sha ≠ current source sha
+//   - orphanLedger: ledger row, no source file
+//
+// Exit-code contract (returned via `result.exitCode`, propagated by main()):
+//   0 — clean (no drift) OR cloud-disabled
+//   1 — drift
+//   2 — hard error (thrown out of runCheckDrift; caught by main()'s try)
+//   3 — needs bootstrap: ledger table missing
+//
+// MUST be truly read-only — no DDL, no DML. The `ensureLedger` call from
+// runMigrate / runAdopt is deliberately NOT used here.
+//
+// Plan: docs/plans/migration-drift-detector.md §6 Addition 1.
+
+async function runCheckDrift(pool, {
+  format        = 'human',
+  migrationsDir = MIGRATIONS_DIR,
+  stdout        = process.stdout,
+  stderr        = process.stderr,
+} = {}) {
+  // R1-audit M1: TRULY read-only. If the table doesn't exist, exit 3
+  // with an actionable bootstrap hint — never create it.
+  const ledgerExists = await pool.query(
+    `SELECT to_regclass('public.audit_loop_migrations') AS t`
+  );
+  if (!ledgerExists.rows[0].t) {
+    const msg = 'audit_loop_migrations table missing — bootstrap via `node scripts/setup-postgres.mjs --adopt` first';
+    if (format === 'json') {
+      stdout.write(JSON.stringify({ hasDrift: false, needsBootstrap: true, message: msg }, null, 2) + '\n');
+    } else {
+      stderr.write(`\n${R}── Migration drift check ──${X}\n  ${R}error${X}: ${msg}\n`);
+    }
+    return { hasDrift: false, needsBootstrap: true, exitCode: 3 };
+  }
+
+  const ledger = await readLedger(pool);                      // Map<filename, sha256>
+  const files = await listMigrations(migrationsDir);          // sorted string[]
+
+  const sourceHashes = new Map();
+  for (const f of files) {
+    sourceHashes.set(f, await sha256(path.join(migrationsDir, f)));
+  }
+
+  const unapplied = files.filter((f) => !ledger.has(f));
+  const shaMismatch = files
+    .filter((f) => ledger.has(f) && ledger.get(f) !== sourceHashes.get(f))
+    .map((f) => ({ filename: f, ledgerSha: ledger.get(f), sourceSha: sourceHashes.get(f) }));
+  const orphanLedger = [...ledger.keys()].filter((f) => !sourceHashes.has(f));
+
+  const hasDrift = unapplied.length + shaMismatch.length + orphanLedger.length > 0;
+  const result = {
+    drift: { unapplied, shaMismatch, orphanLedger },
+    applied: ledger.size,
+    sourceTotal: files.length,
+    hasDrift,
+    needsBootstrap: false,
+    exitCode: hasDrift ? 1 : 0,
+  };
+
+  if (format === 'json') {
+    stdout.write(JSON.stringify(result, null, 2) + '\n');
+  } else {
+    renderHumanDriftReport(result, stderr);
+  }
+  return result;
+}
+
+function renderHumanDriftReport({ drift, applied, sourceTotal, hasDrift }, stderr = process.stderr) {
+  stderr.write(`\n${G}── Migration drift check ──${X}\n`);
+  stderr.write(`  ledger: ${applied} applied / ${sourceTotal} source files\n`);
+  if (!hasDrift) {
+    stderr.write(`  ${G}✓${X} no drift\n`);
+    return;
+  }
+  if (drift.unapplied.length) {
+    stderr.write(`\n  ${Y}unapplied${X} (${drift.unapplied.length}) — run \`node scripts/setup-postgres.mjs --migrate\`:\n`);
+    for (const f of drift.unapplied) stderr.write(`    + ${f}\n`);
+  }
+  if (drift.shaMismatch.length) {
+    stderr.write(`\n  ${R}sha-mismatch${X} (${drift.shaMismatch.length}) — committed migration edited after apply:\n`);
+    for (const m of drift.shaMismatch) {
+      stderr.write(`    ! ${m.filename}\n      ledger: ${m.ledgerSha.slice(0, 12)}…  source: ${m.sourceSha.slice(0, 12)}…\n`);
+    }
+  }
+  if (drift.orphanLedger.length) {
+    stderr.write(`\n  ${Y}orphan-ledger${X} (${drift.orphanLedger.length}) — applied but no source file (deleted?):\n`);
+    for (const f of drift.orphanLedger) stderr.write(`    ? ${f}\n`);
+  }
+}
+
 // ── Entry ──────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -526,6 +633,22 @@ async function main() {
 
   const { getPool, closePool } = await import('./lib/db/client.mjs');
   const pool = await getPool();
+
+  // R3-audit M1: --check-drift exits 0 (cloud:false) when AUDIT_DB_URL is
+  // unset. This lets `check:integration` chain arch:refresh:full && --check-drift
+  // — both halves short-circuit gracefully when no DB is configured. Branch
+  // taken BEFORE the generic "no pool → exit 2" guard below.
+  if (!pool && args.mode === 'check-drift') {
+    if (args.format === 'json') {
+      process.stdout.write(JSON.stringify({
+        cloud: false, skipped: true, reason: 'AUDIT_DB_URL unset',
+      }, null, 2) + '\n');
+    } else {
+      process.stderr.write(`\n${Y}── Migration drift check ──${X}\n  ${D}skipped${X} — AUDIT_DB_URL unset\n`);
+    }
+    process.exit(0);
+  }
+
   if (!pool) {
     process.stderr.write(
       `${R}error${X}: no DB pool — set AUDIT_DB_URL.\n` +
@@ -538,6 +661,14 @@ async function main() {
     // Mask the password in any URL we log.
     const masked = (process.env.AUDIT_DB_URL || '').replace(/:[^:@\s/]+@/, ':***@');
     process.stderr.write(`${G}Postgres setup${X}\n  URL: ${masked}\n  Schema: public\n`);
+
+    // --check-drift is read-only — skip preflight (no DDL, no role/extension
+    // requirements) and skip the bootstrap step. Keeps the check fast for
+    // pre-push use.
+    if (args.mode === 'check-drift') {
+      const r = await runCheckDrift(pool, { format: args.format });
+      process.exit(r.exitCode);
+    }
 
     const pre = await preflight(pool);
     const strict = args.mode === 'migrate' && !args.dryRun && !await isSupabaseManaged(pool);
@@ -583,5 +714,7 @@ export const _internals = Object.freeze({
   sha256,
   diffSchemas,
   canonicalise,
+  runCheckDrift,
+  renderHumanDriftReport,
   SHARED_CATALOG_QUERIES,
 });

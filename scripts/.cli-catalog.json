@@ -104,7 +104,23 @@
       "category": "diagnostic"
     },
     "check:integration": {
-      "description": "Opt-in end-to-end arch:refresh against the active repo + Postgres (NOT part of npm test). Requires AUDIT_DB_URL.",
+      "description": "Opt-in end-to-end smoke: arch:refresh:full + migration-drift check against the active repo + Postgres (NOT part of npm test). Requires AUDIT_DB_URL; both halves short-circuit gracefully when unset.",
+      "category": "diagnostic"
+    },
+    "db:check-drift": {
+      "description": "Read-only drift check: source supabase/migrations/*.sql vs audit_loop_migrations ledger. Exit 0 clean, 1 drift, 2 hard error, 3 needs bootstrap. AUDIT_DB_URL-conditional.",
+      "category": "diagnostic"
+    },
+    "db:check-drift:json": {
+      "description": "Drift check, JSON output for CI consumption (invoke `node` directly in CI, not via npm, to avoid npm log lines polluting stdout).",
+      "category": "diagnostic"
+    },
+    "db:migrate": {
+      "description": "Apply pending migrations (idempotent; skips already-applied via sha256). Requires AUDIT_DB_URL.",
+      "category": "diagnostic"
+    },
+    "db:adopt": {
+      "description": "Bootstrap audit_loop_migrations ledger by diffing live schema against tests/fixtures/expected-schema.json. Strict full-schema match required; manually apply outstanding migrations through the dashboard ONCE before running.",
       "category": "diagnostic"
     },
 
