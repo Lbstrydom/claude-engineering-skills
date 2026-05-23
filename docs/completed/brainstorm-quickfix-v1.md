@@ -1,7 +1,7 @@
 # Plan: Brainstorm-skill upgrades + Quick-fix detection (v1)
 
 - **Date**: 2026-05-05 (R2 — audit-plan revisions integrated)
-- **Status**: Draft (audit-plan R1 fixes applied — see §10 R1 Revisions)
+- **Status**: Complete (shipped — both halves: `/brainstorm` enhancements (see brainstorm-and-arch-discoverability) + quick-fix detection two-layer architecture (`.claude/hooks/quickfix-scan.mjs` prospective hook + `scripts/lib/quickfix-patterns.mjs` pattern library + 28 quickfix references inside the Wave-4 audit pass in `scripts/openai-audit.mjs`). Status line corrected 2026-05-23.)
 - **Author**: Claude + Louis
 - **Scope**: backend (js-ts; consumes brainstorm + audit-orchestration domains)
 
