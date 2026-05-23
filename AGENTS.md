@@ -1032,6 +1032,23 @@ rows; a deletion of a sensitive path is preserved as a tombstone for the
 same reason. See `docs/plans/sustainability-cleanup-batch.md` WS3 for the
 12-case state matrix.
 
+**Canonical-path layer (WS-CANON)**: `resolveAndClassify(p, {repoRoot})`
+sits on top of `classifyPath`. It runs the lexical check first (cheap;
+no FS touch); if that's `null` it calls `fs.realpathSync` and
+re-classifies the canonical target. A symlink whose visible name is
+innocent (`repo/notes.txt`) but whose target resolves into `~/.ssh/id_rsa`
+or `secrets/` is now caught. Fail-closed on resolution errors
+(`resolutionFailed: true` → `category: 'sensitive'`) and on symlinks
+that escape `repoRoot` (`escapedRepo: true` → `category: 'sensitive'`).
+`gateSymbolForEgress({…, repoRoot})` opts in; callers without `repoRoot`
+get the pre-WS-CANON lexical-only behaviour. `redactSecrets` is fail-
+closed too — non-string payloads route through
+[`scripts/lib/redact.mjs::redactObject`](scripts/lib/redact.mjs)
+(depth/node-capped, ancestor-stack cycle detection) and any failure
+returns `[REDACTED:redaction-failed]` rather than leaking the raw
+payload. INC-001 in [docs/security-strategy.md](docs/security-strategy.md)
+records the symlink-bypass class.
+
 [scripts/lib/vcs.mjs](scripts/lib/vcs.mjs) is the structured VCS contract.
 `gitCommitSha` / `gitDiffWithWorkingTree` return `{ok:true, …} | {ok:false,
 error:{code,message,cause?}}` with a closed `VcsErrorCode` enum:
@@ -1039,8 +1056,15 @@ error:{code,message,cause?}}` with a closed `VcsErrorCode` enum:
 `BAD_REVISION` (exit 4), `WORKING_TREE_UNREADABLE` (exit 5), `EXEC_FAILED`
 (exit 1, the only retryable code — see `RETRYABLE_VCS_ERRORS`). Map via
 `vcs.exitCodeFor(code)`. `isSafeGitRevision` is the boolean predicate;
-`runJsonLines` (generic JSON-lines subprocess helper) stays file-private in
-`scripts/symbol-index/refresh.mjs` per Gemini-r4-G2 — it's not VCS-specific.
+`runJsonLines` (generic JSON-lines subprocess helper) moved to
+[scripts/lib/subprocess.mjs](scripts/lib/subprocess.mjs) (WS-LIVE) as
+`runJsonLinesAsync` + `runJsonLinesAsyncStrict` — async streaming
+restores heartbeat liveness during the symbol-index pipeline. Closed
+`SubprocErrorCode` enum: `EXIT_NONZERO` / `SPAWN_FAILED` /
+`KILLED_BY_SIGNAL` / `PARSE_FAILED_HARD`. The strict wrapper hard-fails
+on parse errors by default (closes the `.filter(Boolean)` silent-data-
+loss invariant); pass `opts.maxParseErrors: Infinity` for legacy
+tolerant behaviour.
 
 ## Code Style
 

@@ -51,6 +51,7 @@
  */
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 /**
@@ -137,6 +138,112 @@ function matchingPattern(p, patterns) {
   for (const re of patterns) if (re.test(p)) return re;
   return null;
 }
+
+/**
+ * Resolve `p` through `fs.realpathSync` and classify BOTH the lexical
+ * path AND the canonical (resolved) target. Catches symlink-bypass
+ * attacks where the visible name is innocent (e.g. `repo/notes.txt`)
+ * but the realpath target points into a sensitive location
+ * (`~/.ssh/id_rsa`, `secrets/`, …) — the lexical classifier alone would
+ * miss this.
+ *
+ * Fail-closed semantics:
+ *   - Broken symlink, missing file, EACCES → `{category: 'sensitive',
+ *     resolutionFailed: true}`. We cannot read what we cannot resolve.
+ *   - Canonical path resolves OUTSIDE `repoRoot` → `{category:
+ *     'sensitive', escapedRepo: true}`. A symlink leaving the repo is
+ *     always treated as sensitive regardless of its visible name.
+ *
+ * Success semantics:
+ *   - Lexical classification first (cheap regex; no FS touch). If the
+ *     visible path is already sensitive, return that without resolving
+ *     — saves a syscall in the common case.
+ *   - Otherwise realpath, contain to repo, classify the canonical path.
+ *     The returned `canonical` is the path the caller should READ from
+ *     (so a TOCTOU window between gate and open is minimised; callers
+ *     should re-fstat after open for full defence-in-depth).
+ *
+ * Plan: docs/plans/liveness-and-canonical-paths.md WS-CANON #6.
+ *
+ * @param {string} p — repo-relative or absolute path
+ * @param {{repoRoot: string, fs?: typeof import('node:fs')}} opts
+ *        `fs` is injectable for tests; defaults to node:fs.
+ * @returns {{
+ *   category: SkipCategory | null,
+ *   lexical: SkipCategory | null,
+ *   canonical: string | null,
+ *   escapedRepo: boolean,
+ *   resolutionFailed: boolean,
+ * }}
+ */
+export function resolveAndClassify(p, opts) {
+  if (!opts || typeof opts.repoRoot !== 'string') {
+    throw new TypeError('resolveAndClassify: opts.repoRoot is required');
+  }
+  // `opts.fs` injectable for tests so unit tests can drive realpath
+  // behaviour without filesystem fixtures. Defaults to node:fs.
+  const fsMod = opts.fs || fs;
+  const repoRoot = path.resolve(opts.repoRoot);
+
+  const lexical = classifyPath(p);
+
+  // Cheap path: lexical match → no FS touch needed.
+  if (lexical === 'sensitive') {
+    return {
+      category: 'sensitive',
+      lexical,
+      canonical: null,
+      escapedRepo: false,
+      resolutionFailed: false,
+    };
+  }
+
+  // Resolve to absolute, then realpath. We resolve from the repo root
+  // if `p` is relative so a callsite that passes `'src/foo.ts'` doesn't
+  // depend on process.cwd().
+  const abs = path.isAbsolute(p) ? p : path.resolve(repoRoot, p);
+  let canonical;
+  try {
+    canonical = fsMod.realpathSync(abs);
+  } catch {
+    // ENOENT (broken symlink / missing file), EACCES, ELOOP (cycle) →
+    // fail-closed. We CANNOT read what we cannot resolve.
+    return {
+      category: 'sensitive',
+      lexical,
+      canonical: null,
+      escapedRepo: false,
+      resolutionFailed: true,
+    };
+  }
+
+  // Containment: any escape outside the repo is sensitive.
+  // path.relative returns '..' or '../…' when the target is outside.
+  const rel = path.relative(repoRoot, canonical);
+  const escapedRepo = rel.startsWith('..') || path.isAbsolute(rel);
+  if (escapedRepo) {
+    return {
+      category: 'sensitive',
+      lexical,
+      canonical,
+      escapedRepo: true,
+      resolutionFailed: false,
+    };
+  }
+
+  // Re-classify the canonical (resolved) path. If a symlink-followed
+  // target lives in `secrets/`, it's sensitive even though the visible
+  // name was `notes.txt`.
+  const canonicalCategory = classifyPath(rel);
+  return {
+    category: canonicalCategory ?? lexical,
+    lexical,
+    canonical,
+    escapedRepo: false,
+    resolutionFailed: false,
+  };
+}
+
 
 /**
  * THE canonical predicate for "should we skip this path at indexing-discovery

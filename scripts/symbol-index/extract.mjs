@@ -167,9 +167,20 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
         stats.skippedDelegate++;
         continue;
       }
-      const decision = gateSymbolForEgress({ filePath: rel, bodyText: c.bodyText });
-      if (decision.action === 'skip-path' || decision.action === 'skip-extension') {
-        // Already filtered above; defensive
+      // WS-CANON: pass repoRoot so the gate canonicalises the path via
+      // realpathSync and catches symlink-bypass attacks (innocent name
+      // pointing at a sensitive target). On `send`, the gate returns
+      // `canonicalAbsPath` we *could* read from — for extract we already
+      // hold the body in `c.bodyText` (ts-morph parsed it earlier), so
+      // the gain here is the classification layer, not the read.
+      const decision = gateSymbolForEgress({ filePath: rel, bodyText: c.bodyText, repoRoot });
+      if (decision.action === 'skip-path' ||
+          decision.action === 'skip-extension' ||
+          decision.action === 'skip-symlink-escape') {
+        // skip-symlink-escape is the new WS-CANON action: a symlink
+        // whose canonical target leaves repoRoot. Already-redacted skip
+        // logging happens upstream; this branch silently drops the
+        // symbol from the index (same as skip-path).
         continue;
       }
       const willRedact = decision.action === 'redact-content';

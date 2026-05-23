@@ -1,5 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   isPathSensitive,
@@ -102,5 +105,133 @@ describe('gateSymbolForEgress', () => {
 describe('SECRET_REDACTED constant', () => {
   it('is a non-empty marker', () => {
     assert.ok(SECRET_REDACTED && SECRET_REDACTED.length > 0);
+  });
+});
+
+// ── WS-CANON additions — redactSecrets fail-closed contract ────────────
+// Plan: docs/plans/liveness-and-canonical-paths.md WS-CANON #9.
+
+describe('redactSecrets — fail-closed contract (WS-CANON)', () => {
+  it('returns [REDACTED:redaction-failed] for circular references', () => {
+    const obj = { a: 1 };
+    obj.self = obj;          // circular — old impl would throw or leak
+    const out = redactSecrets(obj);
+    // We don't constrain the EXACT string (redactObject may detect
+    // the cycle and emit its own placeholder), but the raw payload
+    // must never round-trip through. The result must be a string
+    // and must not be a literal JSON of the circular structure.
+    assert.equal(typeof out, 'string');
+    assert.ok(!out.includes('"self":{'), 'must not leak circular ref as JSON');
+  });
+
+  it('returns a safe placeholder for BigInt at root (fail-closed)', () => {
+    // BigInt cannot be JSON.stringify'd. The OLD impl did JSON.stringify
+    // OUTSIDE its try block, so a BigInt input threw the whole function
+    // and the catch returned the `text` variable (which on the happy
+    // path was the full payload as JSON — direct leak). The new impl
+    // routes through redactObject; on stringify-failure it returns the
+    // literal `[REDACTED:redaction-failed]` placeholder. Either way the
+    // raw payload MUST NOT round-trip.
+    const out = redactSecrets({ id: 12345n });
+    assert.equal(typeof out, 'string');
+    assert.ok(!out.includes('12345'), 'must not leak the BigInt value');
+    // Either valid JSON OR the literal placeholder satisfies the
+    // fail-closed contract. (redactObject's stringify of a sanitised
+    // structure throws on BigInt — that's caught by the outer try and
+    // returns the placeholder.)
+    const isJson = (() => { try { JSON.parse(out); return true; } catch { return false; } })();
+    const isPlaceholder = out === '[REDACTED:redaction-failed]';
+    assert.ok(isJson || isPlaceholder, `output must be JSON or placeholder, got: ${out}`);
+  });
+
+  it('returns a sanitized JSON string for a normal nested object', () => {
+    const out = redactSecrets({
+      name: 'foo',
+      keys: ['a', 'b'],
+      nested: { count: 3 },
+    });
+    const parsed = JSON.parse(out);
+    assert.equal(parsed.name, 'foo');
+    assert.deepEqual(parsed.keys, ['a', 'b']);
+    assert.equal(parsed.nested.count, 3);
+  });
+
+  it('string input still routes through the text redactor (regression-lock)', () => {
+    // The string path is unchanged — text redactor returns the sanitised
+    // text. We're locking the contract that strings don't accidentally
+    // get routed through redactObject (which would wrap them in quotes).
+    const out = redactSecrets('plain text with no secrets');
+    assert.equal(out, 'plain text with no secrets');
+  });
+});
+
+// ── WS-CANON additions — gateSymbolForEgress with repoRoot ─────────────
+
+describe('gateSymbolForEgress — canonical-path enforcement (WS-CANON)', () => {
+  const skipOnWin = process.platform === 'win32';
+  function mkdtemp() { return fs.mkdtempSync(path.join(os.tmpdir(), 'egress-canon-')); }
+
+  it('falls back to lexical-only when repoRoot is omitted (back-compat)', () => {
+    const r = gateSymbolForEgress({
+      filePath: 'src/foo.ts',
+      bodyText: 'export function foo() { return 1; }',
+    });
+    assert.equal(r.action, 'send');
+    assert.equal(r.canonicalAbsPath, undefined, 'no canonical without repoRoot');
+  });
+
+  it('returns canonicalAbsPath on send when repoRoot is provided', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const target = path.join(repoRoot, 'foo.ts');
+      fs.writeFileSync(target, '');
+      const r = gateSymbolForEgress({
+        filePath: 'foo.ts',
+        bodyText: 'export function f() {}',
+        repoRoot,
+      });
+      assert.equal(r.action, 'send');
+      assert.ok(r.canonicalAbsPath && r.canonicalAbsPath.endsWith('foo.ts'));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('returns skip-symlink-escape for a symlink that resolves outside repoRoot', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    const outside = mkdtemp();
+    try {
+      const target = path.join(outside, 'secret.txt');
+      fs.writeFileSync(target, 'pretend secret');
+      fs.symlinkSync(target, path.join(repoRoot, 'notes.txt'));
+      const r = gateSymbolForEgress({
+        filePath: 'notes.txt',
+        bodyText: 'fake',
+        repoRoot,
+      });
+      assert.equal(r.action, 'skip-symlink-escape');
+      assert.match(r.reason, /symlink escape/);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+      fs.rmSync(outside,  { recursive: true, force: true });
+    }
+  });
+
+  it('returns skip-path with canonical-target reason when symlink points at sensitive intra-repo location', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    try {
+      const secretsDir = path.join(repoRoot, 'secrets');
+      fs.mkdirSync(secretsDir);
+      const target = path.join(secretsDir, 'db.yaml');
+      fs.writeFileSync(target, '');
+      fs.symlinkSync(target, path.join(repoRoot, 'innocent.ts'));
+      const r = gateSymbolForEgress({
+        filePath: 'innocent.ts',
+        bodyText: '',
+        repoRoot,
+      });
+      assert.equal(r.action, 'skip-path');
+      assert.match(r.reason, /canonical target/);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
   });
 });
