@@ -8,11 +8,19 @@ const CLI = path.resolve('scripts/cross-skill.mjs');
 function runCli(args, { env = {} } = {}) {
   // Force cloud:false mode: strip env vars AND point dotenv at a
   // non-existent file so it can't re-populate from .env on startup.
+  // shared-cloud-config follow-up: also strip SHARED_VARS and disable
+  // the ~/.audit-loop.env autoload (`AUDIT_LOOP_DISABLE_SHARED=1`) so
+  // the operator's bootstrapped shared file doesn't leak AUDIT_DB_URL
+  // (etc.) into the subprocess and turn these "no-op when cloud
+  // unavailable" tests into real-cloud round-trips.
   const cleanEnv = { ...process.env, ...env };
   delete cleanEnv.PERSONA_TEST_SUPABASE_URL;
   delete cleanEnv.PERSONA_TEST_SUPABASE_ANON_KEY;
   delete cleanEnv.SUPABASE_AUDIT_URL;
   delete cleanEnv.SUPABASE_AUDIT_ANON_KEY;
+  delete cleanEnv.AUDIT_DB_URL;
+  delete cleanEnv.AUDIT_DB_SSL_MODE;
+  cleanEnv.AUDIT_LOOP_DISABLE_SHARED = '1';
   cleanEnv.DOTENV_CONFIG_PATH = 'nonexistent-for-test';
   cleanEnv.DOTENV_CONFIG_QUIET = 'true';
 

@@ -39,6 +39,9 @@ function run(argv) {
   delete cleanEnv.SUPABASE_AUDIT_SERVICE_ROLE_KEY;
   delete cleanEnv.SUPABASE_AUDIT_ANON_KEY;
   delete cleanEnv.AUDIT_DB_URL;
+  delete cleanEnv.AUDIT_DB_SSL_MODE;
+  // shared-cloud-config follow-up: disable ~/.audit-loop.env autoload.
+  cleanEnv.AUDIT_LOOP_DISABLE_SHARED = '1';
   return spawnSync('node', [CLI, ...argv], {
     encoding: 'utf-8',
     timeout: 8000,

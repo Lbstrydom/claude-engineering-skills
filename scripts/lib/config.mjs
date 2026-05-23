@@ -35,8 +35,13 @@ dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
 // shared file holding DSN + LLM keys. Consumer repos auto-inherit. Silent
 // when absent; one-time stderr note when present + set ≥1 var. Layer 1
 // (cwd .env above) wins via override:false.
+//
+// Hermeticity escape hatch: `AUDIT_LOOP_DISABLE_SHARED=1` skips the autoload
+// entirely. Used by test helpers (`tests/cross-skill-persona.test.mjs`
+// runCli) so the operator's actual `~/.audit-loop.env` doesn't leak into
+// the subprocess and make "cloud unavailable" tests pass cloud-data through.
 const SHARED_CLOUD_ENV = path.join(os.homedir(), '.audit-loop.env');
-if (fs.existsSync(SHARED_CLOUD_ENV)) {
+if (process.env.AUDIT_LOOP_DISABLE_SHARED !== '1' && fs.existsSync(SHARED_CLOUD_ENV)) {
   const before = new Set(Object.keys(process.env));
   dotenv.config({ path: SHARED_CLOUD_ENV, override: false, quiet: true });
   const added = Object.keys(process.env).filter(k => !before.has(k));

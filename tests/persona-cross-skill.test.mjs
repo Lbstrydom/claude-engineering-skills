@@ -32,12 +32,17 @@ function run(argv, env = {}) {
   const cleanEnv = { ...process.env, ...env };
   // Strip env vars too so even if dotenv finds a stray .env it still
   // can't override our blank slate for these tests.
+  // shared-cloud-config follow-up: also strip SHARED_VARS + disable
+  // ~/.audit-loop.env autoload — see config.mjs AUDIT_LOOP_DISABLE_SHARED.
   delete cleanEnv.PERSONA_TEST_SUPABASE_URL;
   delete cleanEnv.PERSONA_TEST_SUPABASE_ANON_KEY;
   delete cleanEnv.PERSONA_TEST_SUPABASE_SERVICE_ROLE_KEY;
   delete cleanEnv.SUPABASE_AUDIT_URL;
   delete cleanEnv.SUPABASE_AUDIT_SERVICE_ROLE_KEY;
   delete cleanEnv.SUPABASE_AUDIT_ANON_KEY;
+  delete cleanEnv.AUDIT_DB_URL;
+  delete cleanEnv.AUDIT_DB_SSL_MODE;
+  cleanEnv.AUDIT_LOOP_DISABLE_SHARED = '1';
   return spawnSync('node', [CLI, ...argv], {
     encoding: 'utf-8',
     timeout: 8000,
