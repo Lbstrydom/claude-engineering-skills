@@ -10,7 +10,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { _internals } from '../scripts/lint-plan-mermaid.mjs';
 
-const { extractMermaidBlocks, parseGraphBlock, ruleSubgraphAsEdgeEndpoint } = _internals;
+const {
+  extractMermaidBlocks, parseGraphBlock,
+  ruleSubgraphAsEdgeEndpoint, ruleUnquotedSpecialCharsInLabel,
+} = _internals;
 
 describe('extractMermaidBlocks', () => {
   it('returns [] when no mermaid blocks are present', () => {
@@ -175,5 +178,75 @@ describe('ruleSubgraphAsEdgeEndpoint (load-bearing)', () => {
     const issues = ruleSubgraphAsEdgeEndpoint(parsed, 100);
     assert.equal(issues.length, 1);
     assert.equal(issues[0].lineNo, 105, 'should be 100 (offset) + 5 (intra-block)');
+  });
+});
+
+describe('ruleUnquotedSpecialCharsInLabel (portability)', () => {
+  it('warns on unquoted label containing <br/>', () => {
+    const issues = ruleUnquotedSpecialCharsInLabel(
+      'graph LR\n' +
+      '  R1[scripts/refresh.mjs<br/>main + CLI]\n',
+      0,
+    );
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].rule, 'unquoted-special-chars-in-label');
+    assert.equal(issues[0].severity, 'WARN');
+    assert.match(issues[0].message, /R1/);
+  });
+
+  it('warns on unquoted label containing em-dash', () => {
+    const issues = ruleUnquotedSpecialCharsInLabel(
+      'graph LR\n  SP[scripts/lib/subprocess.mjs — NEW]\n',
+      0,
+    );
+    assert.equal(issues.length, 1);
+    assert.match(issues[0].message, /SP/);
+  });
+
+  it('passes when label is quoted (the portable form)', () => {
+    const issues = ruleUnquotedSpecialCharsInLabel(
+      'graph LR\n  R1["scripts/refresh.mjs<br/>main + CLI"]\n',
+      0,
+    );
+    assert.equal(issues.length, 0);
+  });
+
+  it('passes plain ASCII unquoted labels', () => {
+    const issues = ruleUnquotedSpecialCharsInLabel(
+      'graph LR\n  A[plain node]\n  B[another one]\n  A --> B\n',
+      0,
+    );
+    assert.equal(issues.length, 0);
+  });
+
+  it('does not flag subgraph quoted labels (already valid)', () => {
+    const issues = ruleUnquotedSpecialCharsInLabel(
+      'graph LR\n  subgraph WS_LIVE["WS-LIVE — pipeline liveness"]\n    A[ok]\n  end\n',
+      0,
+    );
+    assert.equal(issues.length, 0);
+  });
+
+  it('catches multiple offenders in one block', () => {
+    const issues = ruleUnquotedSpecialCharsInLabel(
+      'graph LR\n' +
+      '  R1[refresh.mjs<br/>main]\n' +
+      '  SP[subprocess.mjs<br/>NEW]\n' +
+      '  HB[heartbeat — async]\n',
+      0,
+    );
+    assert.equal(issues.length, 3);
+    const ids = new Set(issues.map(i => i.message.match(/'([^']+)'/)[1]));
+    for (const id of ['R1', 'SP', 'HB']) assert.ok(ids.has(id), `missing: ${id}`);
+  });
+
+  it('applies fileLineOffset (1-based)', () => {
+    const issues = ruleUnquotedSpecialCharsInLabel(
+      'graph LR\n' +
+      '  A[<br/>oops]\n',  // intra-block line 2
+      50,
+    );
+    assert.equal(issues.length, 1);
+    assert.equal(issues[0].lineNo, 52, 'should be 50 (offset) + 2 (intra-block)');
   });
 });

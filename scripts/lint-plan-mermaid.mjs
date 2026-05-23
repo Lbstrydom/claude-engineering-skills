@@ -153,6 +153,58 @@ export function ruleSubgraphAsEdgeEndpoint(parsed, fileLineOffset) {
   return issues;
 }
 
+/**
+ * R2 — node label content with `<br/>`, em-dashes (`—`), or other non-ASCII
+ * symbols MUST be wrapped in double quotes. Empirically the bracketed-but-
+ * unquoted form `ID[label with <br/>]` parses correctly in current Mermaid
+ * but is rejected by older bundled versions (older VS Code preview, some
+ * CI renderers, embedded Markdown renderers). The quoted form `ID["..."]`
+ * is universally portable.
+ *
+ * Detects bracket pairs `[...]`, `(...)`, `{...}` (Mermaid node-shape
+ * brackets) whose contents start WITHOUT a `"` and contain any of:
+ *   - `<br` (line break)
+ *   - any non-ASCII codepoint (em-dash, em-space, etc.)
+ *
+ * Scans the raw block body (not the parsed AST) so it can flag the exact
+ * bracket location.
+ */
+export function ruleUnquotedSpecialCharsInLabel(blockBody, fileLineOffset) {
+  const issues = [];
+  // Match opening bracket + first non-bracket char to check for quote.
+  // `[...]`, `(...)`, `{...}` are the three Mermaid node-shape syntaxes.
+  // We deliberately ignore subgraph-bracket-labels (already handled by
+  // the `subgraph SG["..."]` form being valid + common).
+  const lines = blockBody.split('\n');
+  // Patterns we consider risky if found inside an UNQUOTED bracket label.
+  const RISKY_CONTENT = /<br|[^\x00-\x7F]/;
+  // Match a bracket label: <ID><[|(|{> ... <]|)|}> on a single line,
+  // capturing the content (lazy) so labels with mixed brackets stay sane.
+  // Subgraph declarations (`subgraph X["..."]`) are EXCLUDED — those are
+  // already quoted-friendly and we don't want to double-flag.
+  const BRACKET_RE = /(?<!subgraph\s+\S{1,80}\s*)([A-Za-z_][\w-]*)\s*([\[(\{])([^\]\)\}\n]+)([\])\}])/g;
+  lines.forEach((line, idx) => {
+    // Strip %% comments.
+    const commentAt = line.indexOf('%%');
+    const cleaned = commentAt === -1 ? line : line.slice(0, commentAt);
+    let m;
+    BRACKET_RE.lastIndex = 0;
+    while ((m = BRACKET_RE.exec(cleaned)) !== null) {
+      const [, id, open, content] = m;
+      if (id === 'subgraph') continue;            // skip subgraph declarations
+      if (content.startsWith('"')) continue;      // already quoted
+      if (!RISKY_CONTENT.test(content)) continue; // ASCII-only, safe unquoted
+      issues.push({
+        rule: 'unquoted-special-chars-in-label',
+        severity: 'WARN',
+        message: `Node '${id}' has an unquoted label containing <br/> or non-ASCII chars. Wrap in double quotes (\`${id}["..."]\`) for portability across Mermaid versions / VS Code preview / CI renderers.`,
+        lineNo: fileLineOffset + idx + 1,
+      });
+    }
+  });
+  return issues;
+}
+
 // ── Per-file lint ──────────────────────────────────────────────────────────
 
 export function lintFile(filePath) {
@@ -161,10 +213,15 @@ export function lintFile(filePath) {
   const allIssues = [];
   for (const block of blocks) {
     const parsed = parseGraphBlock(block.body);
-    if (!parsed) continue; // not a graph block; skip
-    const issues = ruleSubgraphAsEdgeEndpoint(parsed, block.startLine);
-    for (const i of issues) i.file = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
-    allIssues.push(...issues);
+    // R2 runs on raw block body — applies to any diagram type with
+    // node-shape brackets (graph, flowchart, classDiagram, …).
+    const r2 = ruleUnquotedSpecialCharsInLabel(block.body, block.startLine);
+    for (const i of r2) i.file = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
+    allIssues.push(...r2);
+    if (!parsed) continue; // not a graph block; only R2 applies
+    const r1 = ruleSubgraphAsEdgeEndpoint(parsed, block.startLine);
+    for (const i of r1) i.file = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
+    allIssues.push(...r1);
   }
   return { file: filePath, blockCount: blocks.length, issues: allIssues };
 }
@@ -202,13 +259,19 @@ function main() {
   }
 
   const results = files.map(lintFile);
-  const totalIssues = results.reduce((n, r) => n + r.issues.length, 0);
+  const errorCount = results.reduce(
+    (n, r) => n + r.issues.filter(i => i.severity === 'ERROR').length, 0);
+  const warnCount = results.reduce(
+    (n, r) => n + r.issues.filter(i => i.severity === 'WARN').length, 0);
+  const totalIssues = errorCount + warnCount;
 
   if (format === 'json') {
     process.stdout.write(JSON.stringify({
-      ok: totalIssues === 0,
+      ok: errorCount === 0,
       filesScanned: results.length,
       blocksScanned: results.reduce((n, r) => n + r.blockCount, 0),
+      errorCount,
+      warnCount,
       totalIssues,
       results,
     }, null, 2) + '\n');
@@ -224,10 +287,15 @@ function main() {
           process.stdout.write(`  ${i.severity} L${i.lineNo} [${i.rule}] ${i.message}\n`);
         }
       }
-      process.stdout.write(`\n${totalIssues} issue(s) across ${results.filter(r => r.issues.length > 0).length} file(s).\n`);
+      process.stdout.write(
+        `\n${errorCount} error(s), ${warnCount} warning(s) across ` +
+        `${results.filter(r => r.issues.length > 0).length} file(s).\n`
+      );
     }
   }
-  process.exit(totalIssues === 0 ? 0 : 1);
+  // Exit non-zero only on ERROR; WARN is advisory (don't block pre-push
+  // for portability nits — operators may have a reason to leave them).
+  process.exit(errorCount === 0 ? 0 : 1);
 }
 
 // Test seam — `_internals` mirrors the project convention.
@@ -235,6 +303,7 @@ export const _internals = Object.freeze({
   extractMermaidBlocks,
   parseGraphBlock,
   ruleSubgraphAsEdgeEndpoint,
+  ruleUnquotedSpecialCharsInLabel,
   lintFile,
 });
 

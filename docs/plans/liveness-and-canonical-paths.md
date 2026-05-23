@@ -48,25 +48,30 @@ Each cluster has been re-raised ≥3 times across audit cycles. Continuing to de
 
 ```mermaid
 graph LR
-  subgraph WS_LIVE["WS-LIVE — pipeline liveness (arch-memory)"]
-    R1[scripts/symbol-index/refresh.mjs<br/>main + CLI]
-    R1 --> SP[scripts/lib/subprocess.mjs<br/>NEW — async streaming runner]
-    SP --> CH[child_process.spawn]
-    R1 --> HB[runWithHeartbeat<br/>EDIT — async-safe]
+  subgraph WS_LIVE["WS-LIVE: pipeline liveness, arch-memory"]
+    R1["scripts/symbol-index/refresh.mjs<br/>main + CLI"]
+    SP["scripts/lib/subprocess.mjs<br/>NEW: async streaming runner"]
+    CH["child_process.spawn"]
+    HB["runWithHeartbeat<br/>EDIT: async-safe"]
+    R1 --> SP
+    SP --> CH
+    R1 --> HB
   end
-  subgraph WS_CANON["WS-CANON — canonical-path enforcement (shared-lib)"]
-    GATE[scripts/lib/sensitive-egress-gate.mjs<br/>EDIT]
-    SP_LIB[scripts/lib/sensitive-paths.mjs<br/>EDIT — add resolveAndClassify]
-    EX[scripts/symbol-index/extract.mjs<br/>EDIT — read via canonical]
-    RED[scripts/lib/redact.mjs<br/>REUSE — redactObject]
+  subgraph WS_CANON["WS-CANON: canonical-path enforcement, shared-lib"]
+    GATE["scripts/lib/sensitive-egress-gate.mjs<br/>EDIT"]
+    SP_LIB["scripts/lib/sensitive-paths.mjs<br/>EDIT: add resolveAndClassify"]
+    EX["scripts/symbol-index/extract.mjs<br/>EDIT: read via canonical"]
+    RED["scripts/lib/redact.mjs<br/>REUSE: redactObject"]
     GATE --> SP_LIB
     GATE --> RED
     EX --> SP_LIB
   end
-  %% Caption — anchored to one node in each subgraph rather than the
-  %% subgraph IDs (Mermaid graph syntax doesn't allow subgraphs as edge
-  %% endpoints; doing so silently failed VS Code preview).
-  note1["Two workstreams; independent;<br/>ship sequentially per WS1/WS2/WS3 precedent"]
+  %% Caption anchored to one node in each subgraph rather than the
+  %% subgraph IDs (Mermaid graph syntax doesn't allow subgraphs as
+  %% edge endpoints; that silently failed VS Code preview). All node
+  %% labels are quoted so <br/> and special chars parse uniformly in
+  %% every Mermaid version.
+  note1["Two workstreams, independent.<br/>Ship sequentially per WS1/WS2/WS3 precedent."]
   R1 -.- note1
   GATE -.- note1
 ```

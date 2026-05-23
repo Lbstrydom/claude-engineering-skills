@@ -118,6 +118,17 @@ npx @playwright/mcp@latest --version   # should print a version number
 
 BrightData Scraping Browser is also supported (handles anti-bot/CAPTCHA) but requires a paid account and KYC approval. Playwright is preferred for testing your own apps.
 
+## Mermaid validation (for plan diagrams)
+
+Two surfaces for catching broken Mermaid before it ships:
+
+- **Interactive (during plan generation)** — `.mcp.json` registers `mcp-mermaid`. Claude Code prompts to enable on first open (same flow as Playwright MCP). When enabled, I (Claude) can validate + render Mermaid blocks before persisting a plan — exposes `mcp__claude_ai_Mermaid_*` tools. No API key needed.
+- **Pre-push (static lint)** — `npm run plans:lint` scans `docs/plans/*.md` for two classes of bugs that GitHub renders leniently but VS Code preview / stricter renderers reject:
+  - **ERROR `subgraph-as-edge-endpoint`** — using a `subgraph` ID as an edge endpoint (`SG1 -.- other`). Mermaid graph syntax doesn't allow this; anchor the edge to a node *inside* the subgraph.
+  - **WARN `unquoted-special-chars-in-label`** — node label brackets containing `<br/>` or non-ASCII chars (em-dash, etc.) without surrounding quotes. The bracketed-but-unquoted form parses in current Mermaid but breaks in older bundled versions. Always use `ID["..."]` when the label has special chars.
+
+Runs as part of `npm run check` (the pre-push hook). ERRORs block; WARNs are advisory. Why narrow rule coverage: the full Mermaid parser is in the 76MB `mermaid` package, too heavy for one lint. `@mermaid-js/parser` (lightweight alternative) doesn't yet handle flowchart/graph — we'll switch when it does. Until then, this regex linter + the MCP cover the gap.
+
 ---
 
 ## Dependencies (CRITICAL — check versions before flagging issues)
