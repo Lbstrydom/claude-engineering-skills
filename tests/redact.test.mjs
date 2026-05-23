@@ -142,9 +142,14 @@ describe('redactObject', () => {
   it('redacts secrets that appear as object KEYS, not just values', () => {
     // Use an OpenAI-style key as the bait — it's one of the patterns
     // the project's secret-patterns module recognises.
+    // Prefix is concatenated at runtime so GitHub's secret scanner
+    // doesn't see a continuous `sk-proj-XXX...` literal in source.
+    const prefix = 'sk-' + 'proj-';
+    const topKey = prefix + 'LEAKEDLEAKEDLEAKEDLEAKEDLEAKEDLEAKEDLEAKED';
+    const nestedKey = prefix + 'DEEPLEAKDEEPLEAKDEEPLEAKDEEPLEAKDEEPLEAK';
     const input = {
-      'sk-proj-LEAKEDLEAKEDLEAKEDLEAKEDLEAKEDLEAKEDLEAKED': 'value-is-safe',
-      nested: { 'sk-proj-DEEPLEAKDEEPLEAKDEEPLEAKDEEPLEAKDEEPLEAK': 'also-safe' },
+      [topKey]: 'value-is-safe',
+      nested: { [nestedKey]: 'also-safe' },
     };
     const r = redactObject(input);
     const serialised = JSON.stringify(r.redacted);
