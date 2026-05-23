@@ -84,6 +84,15 @@ export function runJsonLinesAsync(cmd, args, opts = {}) {
       }
     }
 
+    // Gemini-G1: if the child exits early (e.g. embed.mjs crashes at
+    // startup) while Node is still flushing input to the pipe, the
+    // stdin stream will emit `EPIPE` / `ECONNRESET`. Unhandled stream
+    // errors crash the parent process, bypassing this Promise's catch.
+    // The actual child failure still surfaces through `close` (exitCode
+    // / signal); we just need to swallow the stdin write-side error so
+    // the orchestrator can report the real failure cleanly.
+    child.stdin.on('error', () => { /* see G1 comment above */ });
+
     child.stdout.setEncoding('utf-8');
     child.stdout.on('data', (chunk) => {
       stdoutBuf += chunk;

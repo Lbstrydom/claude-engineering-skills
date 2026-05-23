@@ -234,4 +234,39 @@ describe('gateSymbolForEgress — canonical-path enforcement (WS-CANON)', () => 
       assert.match(r.reason, /canonical target/);
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
   });
+
+  it('blocks generatedNoise files in the repoRoot branch (Gemini-r2-G2)', () => {
+    // Pre-WS-CANON, isPathSensitive() returned true for BOTH sensitive
+    // AND generatedNoise (lockfiles, *.min.js, *.map). The first cut of
+    // the new repoRoot branch only checked `sensitive`, so a
+    // `bundle.min.js` would pass through as `send` because `.js` is on
+    // the extension allowlist. Regression-lock the fix.
+    const repoRoot = mkdtemp();
+    try {
+      const target = path.join(repoRoot, 'bundle.min.js');
+      fs.writeFileSync(target, 'var x=1');
+      const r = gateSymbolForEgress({
+        filePath: 'bundle.min.js',
+        bodyText: 'var x=1',
+        repoRoot,
+      });
+      assert.equal(r.action, 'skip-path');
+      assert.match(r.reason, /generated-noise/);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('blocks package-lock.json (generatedNoise) in repoRoot branch', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const target = path.join(repoRoot, 'package-lock.json');
+      fs.writeFileSync(target, '{}');
+      const r = gateSymbolForEgress({
+        filePath: 'package-lock.json',
+        bodyText: '{}',
+        repoRoot,
+      });
+      assert.equal(r.action, 'skip-path');
+      assert.match(r.reason, /generated-noise/);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
 });

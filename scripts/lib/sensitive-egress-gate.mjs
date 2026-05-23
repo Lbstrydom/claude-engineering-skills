@@ -160,6 +160,16 @@ export function gateSymbolForEgress({ filePath, bodyText, repoRoot }) {
           : `canonical target matches sensitive denylist: ${filePath} → ${cls.canonical}`;
       return { action: 'skip-path', reason };
     }
+    // Gemini-r2-G2 (WS-CANON regression-fix): the pre-WS-CANON
+    // `isPathSensitive` returned true for BOTH categories — sensitive
+    // (secrets) AND generatedNoise (lockfiles, *.min.js, *.map). The
+    // new repoRoot branch only checked `sensitive`, so a `bundle.min.js`
+    // file slipped through with `action: 'send'` because `.js` is on
+    // the extension allowlist. Block generatedNoise here to preserve
+    // the pre-WS-CANON contract.
+    if (cls.category === 'generatedNoise') {
+      return { action: 'skip-path', reason: `path matches generated-noise denylist: ${filePath}` };
+    }
     if (!isExtensionAllowlisted(filePath)) {
       return { action: 'skip-extension', reason: `extension not in summarise allowlist: ${path.extname(filePath)}` };
     }

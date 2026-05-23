@@ -106,7 +106,19 @@ export function redactObject(value, opts = {}) {
       try {
         const out = {};
         for (const key of Object.keys(node)) {
-          out[key] = walk(node[key], currentDepth + 1);
+          // Gemini-r2-G1 (WS-CANON delegation): redact KEYS as well as
+          // values. The pre-WS-CANON path stringified the whole payload
+          // and ran the text redactor over the resulting JSON — keys
+          // were caught incidentally. The new object-delegation path
+          // walks values only; without this loop, secrets embedded in
+          // keys (`{"AKIA…": "v"}`) would survive untouched.
+          const keyRedaction = redact(key);
+          const safeKey = keyRedaction.count > 0 ? keyRedaction.redacted : key;
+          if (keyRedaction.count > 0) {
+            count += keyRedaction.count;
+            for (const p of keyRedaction.patternsHit) patterns.add(p);
+          }
+          out[safeKey] = walk(node[key], currentDepth + 1);
         }
         return out;
       } finally {

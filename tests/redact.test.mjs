@@ -133,4 +133,34 @@ describe('redactObject', () => {
     assert.equal(typeof _internals.MAX_OBJECT_NODES, 'number');
     assert.ok(_internals.MAX_OBJECT_NODES >= 1000);
   });
+
+  // ── Gemini-r2-G1 — redact KEYS as well as values ─────────────────
+  // WS-CANON delegated object payload redaction from a stringify+text-redact
+  // path to redactObject. The first cut only walked VALUES, so secrets
+  // embedded in keys (`{"AKIA…": "v"}`) survived. The fix walks keys too.
+
+  it('redacts secrets that appear as object KEYS, not just values', () => {
+    // Use an OpenAI-style key as the bait — it's one of the patterns
+    // the project's secret-patterns module recognises.
+    const input = {
+      'sk-proj-LEAKEDLEAKEDLEAKEDLEAKEDLEAKEDLEAKEDLEAKED': 'value-is-safe',
+      nested: { 'sk-proj-DEEPLEAKDEEPLEAKDEEPLEAKDEEPLEAKDEEPLEAK': 'also-safe' },
+    };
+    const r = redactObject(input);
+    const serialised = JSON.stringify(r.redacted);
+    assert.ok(
+      !serialised.includes('LEAKEDLEAKEDLEAKEDLEAKED'),
+      `top-level secret key leaked: ${serialised}`,
+    );
+    assert.ok(
+      !serialised.includes('DEEPLEAKDEEPLEAK'),
+      `nested secret key leaked: ${serialised}`,
+    );
+  });
+
+  it('leaves non-secret keys untouched', () => {
+    const r = redactObject({ ordinary: 'value', another: 42 });
+    const keys = Object.keys(r.redacted);
+    assert.deepEqual(keys, ['ordinary', 'another']);
+  });
 });

@@ -24,13 +24,15 @@ import { Project } from 'ts-morph';
 import { cruise } from 'dependency-cruiser';
 import { signatureHash } from '../lib/symbol-index.mjs';
 import {
-  gateSymbolForEgress,
+  // gateSymbolForEgress no longer needed at call sites — file-level
+  // enforcement is hoisted via resolveAndClassify (Gemini-G2 WS-CANON
+  // fix). The gate remains the single seam other callers can use.
   isExtensionAllowlisted,
   containsSecrets,
   redactSecrets,
   SECRET_REDACTED,
 } from '../lib/sensitive-egress-gate.mjs';
-import { shouldSkipForIndexing, formatSkipLog } from '../lib/sensitive-paths.mjs';
+import { shouldSkipForIndexing, formatSkipLog, resolveAndClassify } from '../lib/sensitive-paths.mjs';
 import { isThinDelegate } from '../lib/symbol-index/thin-delegate.mjs';
 import { emit } from '../lib/cli-io.mjs';
 
@@ -98,9 +100,33 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
       stats.skippedExt++;
       continue;
     }
-    // Size cap — skip generated/bundled monsters before they OOM ts-morph
+    // WS-CANON (Gemini-G2 fix): canonical-path resolution happens ONCE
+    // per file, BEFORE ts-morph reads the file into memory. The previous
+    // implementation called gateSymbolForEgress (and therefore
+    // fs.realpathSync) inside the inner per-candidate loop — dozens of
+    // syscalls per file, AND the file was already in ts-morph's memory
+    // via the unresolved path before any canonical check could run.
+    // Now: resolve once, skip the entire file if sensitive / escaped /
+    // unresolvable, AND feed ts-morph the canonical path so we read
+    // exactly what the gate approved.
+    const cls = resolveAndClassify(rel, { repoRoot });
+    if (cls.escapedRepo) {
+      stats.skippedPath++;
+      skippedSensitive.push({ path: rel, category: 'sensitive', pattern: null, action: 'skip-symlink-escape' });
+      continue;
+    }
+    if (cls.category === 'sensitive') {
+      stats.skippedPath++;
+      const action = cls.resolutionFailed ? 'skip-resolution-failed'
+                   : (cls.lexical === 'sensitive' ? 'dropped' : 'skip-canonical-sensitive');
+      skippedSensitive.push({ path: rel, category: 'sensitive', pattern: null, action });
+      continue;
+    }
+    // Size cap — skip generated/bundled monsters before they OOM ts-morph.
+    // Use the canonical path so a symlink to a huge real file is still caught.
+    const readPath = cls.canonical || abs;
     try {
-      const size = fs.statSync(abs).size;
+      const size = fs.statSync(readPath).size;
       if (size > MAX_FILE_BYTES) {
         stats.skippedSize++;
         emitProgress(`skip-size: ${rel} (${Math.round(size/1024)}KB > ${MAX_FILE_BYTES/1024}KB)`);
@@ -109,7 +135,7 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
     } catch { /* stat fail → skip */ continue; }
     let sf;
     try {
-      sf = project.addSourceFileAtPathIfExists(abs);
+      sf = project.addSourceFileAtPathIfExists(readPath);
     } catch (err) {
       emitProgress(`parse-error: ${rel} — ${err.message}`);
       continue;
@@ -167,23 +193,12 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
         stats.skippedDelegate++;
         continue;
       }
-      // WS-CANON: pass repoRoot so the gate canonicalises the path via
-      // realpathSync and catches symlink-bypass attacks (innocent name
-      // pointing at a sensitive target). On `send`, the gate returns
-      // `canonicalAbsPath` we *could* read from — for extract we already
-      // hold the body in `c.bodyText` (ts-morph parsed it earlier), so
-      // the gain here is the classification layer, not the read.
-      const decision = gateSymbolForEgress({ filePath: rel, bodyText: c.bodyText, repoRoot });
-      if (decision.action === 'skip-path' ||
-          decision.action === 'skip-extension' ||
-          decision.action === 'skip-symlink-escape') {
-        // skip-symlink-escape is the new WS-CANON action: a symlink
-        // whose canonical target leaves repoRoot. Already-redacted skip
-        // logging happens upstream; this branch silently drops the
-        // symbol from the index (same as skip-path).
-        continue;
-      }
-      const willRedact = decision.action === 'redact-content';
+      // WS-CANON (Gemini-G2 fix): path-level enforcement (sensitive,
+      // extension, symlink-escape) is done ONCE per file above — we
+      // know this file already passed. Inner loop only needs the
+      // body-secret check to decide whether to redact this specific
+      // candidate's body before egress.
+      const willRedact = containsSecrets(c.bodyText);
       if (willRedact) stats.redacted++;
 
       // R1 H3: signature can carry default-arg literals that contain secrets
