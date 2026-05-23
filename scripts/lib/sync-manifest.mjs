@@ -180,8 +180,38 @@ export function generateManifest(rootDir, files, opts = {}) {
 export function writeManifest(rootDir, files, opts = {}) {
   const manifest = generateManifest(rootDir, files, opts);
   const manifestPath = path.join(rootDir, MANIFEST_RELATIVE_PATH);
+
+  // Idempotency: if the file content hashes are unchanged from the
+  // on-disk manifest, skip the write. Without this, every sync run
+  // creates a new `generatedAt` timestamp (and possibly a new
+  // commitSha) — leaving scripts/.sync-manifest.json in a permanent
+  // `M` state after every push, even when no managed file changed.
+  // We compare ONLY the hashes (the load-bearing contract); the
+  // metadata fields are ignored.
+  if (fs.existsSync(manifestPath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+      const existingHashes = existing.files || {};
+      const newHashes = manifest.files || {};
+      if (hashesEqual(existingHashes, newHashes)) {
+        return { manifest: existing, path: manifestPath, skipped: true };
+      }
+    } catch { /* corrupt / unparseable existing — fall through to overwrite */ }
+  }
+
   atomicWriteFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
-  return { manifest, path: manifestPath };
+  return { manifest, path: manifestPath, skipped: false };
+}
+
+function hashesEqual(a, b) {
+  const ak = Object.keys(a).sort();
+  const bk = Object.keys(b).sort();
+  if (ak.length !== bk.length) return false;
+  for (let i = 0; i < ak.length; i++) {
+    if (ak[i] !== bk[i]) return false;
+    if (a[ak[i]] !== b[bk[i]]) return false;
+  }
+  return true;
 }
 
 /**
