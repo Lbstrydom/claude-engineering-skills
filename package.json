@@ -36,6 +36,7 @@
     "db:check-drift:json": "node scripts/setup-postgres.mjs --check-drift --format json",
     "db:migrate": "node scripts/setup-postgres.mjs --migrate",
     "db:adopt": "node scripts/setup-postgres.mjs --adopt",
+    "setup:cloud": "node scripts/setup-cloud.mjs",
     "sync": "node scripts/sync-to-repos.mjs",
     "sync:dry": "node scripts/sync-to-repos.mjs --dry-run",
     "sync:check": "node scripts/check-sync.mjs",

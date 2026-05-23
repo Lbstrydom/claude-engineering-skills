@@ -6,58 +6,49 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
 import { safeInt } from './file-io.mjs';
 import { resolveModel } from './model-resolver.mjs';
 
 // ── .env Discovery (worktree-safe) ──────────────────────────────────────────
 
-/**
- * Find .env file by walking up from CWD, then checking git main worktree root.
- * Handles git worktrees where .env only exists in the main checkout.
- * Sets DOTENV_CONFIG_PATH so `import 'dotenv/config'` picks it up.
- */
+// R1-audit M9/M11/M15: ONE walk-up + git-root resolver lives in
+// scripts/lib/shared-cloud-config.mjs (`discoverLocalEnvPath`). This function
+// is a thin adapter that sets the `DOTENV_CONFIG_PATH` env var as a side
+// effect for `dotenv.config()` to pick up — that side-effect is config.mjs-
+// specific, hence the wrapper. Resolution rule itself is shared.
+import { discoverLocalEnvPath } from './shared-cloud-config.mjs';
 function discoverDotenv() {
-  // Already found or explicitly set
   if (process.env.DOTENV_CONFIG_PATH) return;
-
-  // Walk up from CWD
-  let dir = process.cwd();
-  while (dir) {
-    const envPath = path.join(dir, '.env');
-    if (fs.existsSync(envPath)) {
-      process.env.DOTENV_CONFIG_PATH = envPath;
-      return;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  // Try git main worktree root (handles worktrees and branches)
-  try {
-    const gitRoot = execSync('git rev-parse --show-toplevel', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-    const envPath = path.join(gitRoot, '.env');
-    if (fs.existsSync(envPath)) {
-      process.env.DOTENV_CONFIG_PATH = envPath;
-      return;
-    }
-
-    // For worktrees: check the main worktree's .env
-    const gitCommonDir = execSync('git rev-parse --git-common-dir', { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
-    const mainRoot = path.resolve(gitCommonDir, '..');
-    const mainEnvPath = path.join(mainRoot, '.env');
-    if (mainEnvPath !== envPath && fs.existsSync(mainEnvPath)) {
-      process.env.DOTENV_CONFIG_PATH = mainEnvPath;
-    }
-  } catch { /* not a git repo — dotenv will use CWD default */ }
+  const found = discoverLocalEnvPath();
+  if (found) process.env.DOTENV_CONFIG_PATH = found;
 }
 
 // Run discovery then load .env (uses dotenv package directly, not 'dotenv/config')
 discoverDotenv();
 import dotenv from 'dotenv';
 dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
+
+// ── Shared cross-repo cloud config (Layer 2) ───────────────────────────────
+// Per docs/plans/shared-cloud-config.md: ~/.audit-loop.env is a per-user
+// shared file holding DSN + LLM keys. Consumer repos auto-inherit. Silent
+// when absent; one-time stderr note when present + set ≥1 var. Layer 1
+// (cwd .env above) wins via override:false.
+const SHARED_CLOUD_ENV = path.join(os.homedir(), '.audit-loop.env');
+if (fs.existsSync(SHARED_CLOUD_ENV)) {
+  const before = new Set(Object.keys(process.env));
+  dotenv.config({ path: SHARED_CLOUD_ENV, override: false, quiet: true });
+  const added = Object.keys(process.env).filter(k => !before.has(k));
+  if (added.length > 0 && process.env._AUDIT_LOOP_SHARED_LOADED !== '1') {
+    process.stderr.write(
+      `  [config] loaded shared cloud config from ~/.audit-loop.env (sets: ${added.join(', ')})\n`
+    );
+    // Sentinel propagates to spawned subprocesses (env inherits) so each
+    // child doesn't re-log the same notice.
+    process.env._AUDIT_LOOP_SHARED_LOADED = '1';
+  }
+}
 
 // ── Validation helpers ──────────────────────────────────────────────────────
 

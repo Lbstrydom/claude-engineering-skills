@@ -27,6 +27,7 @@ import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
+const NO_PROMPT = process.argv.includes('--no-prompt');
 const targetFilter = (() => {
   const idx = process.argv.indexOf('--target');
   return idx === -1 ? null : process.argv[idx + 1];
@@ -408,7 +409,7 @@ function deepMerge(target, source) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
-function main() {
+async function main() {
   assertRepoRoot(import.meta.url);
 
   if (!KEEP_GITHUB_SKILLS) {
@@ -612,7 +613,78 @@ function main() {
     console.log(`  Created: ${totalNew}  Updated: ${totalUpdated}  Unchanged: ${totalUnchanged}  Errors: ${totalErrors}`);
   }
 
+  // D2b — sync-time shared-cloud-config trigger. Skip on dry-run, errors,
+  // non-TTY, or --no-prompt. Silent on `already_current`; prompts on
+  // create/update divergence. Never overwrites without operator Y.
+  // Plan: docs/plans/shared-cloud-config.md §2 #5.
+  // Gemini-r3 G2: stdin.isTTY added to the gate. stdout-only is unsafe in
+  // CI pipelines where stdout is a pseudo-TTY (e.g. wrapped by a job
+  // runner) but stdin is closed/piped — the readline prompt would hang
+  // forever. Both streams must be interactive for the prompt to be safe.
+  if (!DRY_RUN && totalErrors === 0 && process.stdout.isTTY && process.stdin.isTTY && !NO_PROMPT) {
+    try {
+      await maybePromptSharedCloudUpdate({ sourceRepoDir: SOURCE_ROOT, stdio: process.stderr });
+    } catch (err) {
+      // Trigger is advisory — never fail the sync over it.
+      process.stderr.write(`[sync] shared-cloud-config trigger errored: ${err.message}\n`);
+    }
+  }
+
   process.exit(totalErrors > 0 ? 1 : 0);
 }
 
-main();
+async function maybePromptSharedCloudUpdate({ sourceRepoDir, stdio }) {
+  const { assessSharedCloudConfig, runSetupCloud, OUTCOMES } =
+    await import('./lib/shared-cloud-config.mjs');
+  const assessment = assessSharedCloudConfig({ sourceRepoDir });
+
+  // Silent on `already_current` — operator only sees output when actionable.
+  if (assessment.outcome === OUTCOMES.ALREADY_CURRENT) return;
+
+  // Misconfigured → one-line advisory, never blocks sync.
+  if (assessment.outcome === OUTCOMES.MISCONFIGURED) {
+    stdio.write(
+      `\n[sync] shared cloud config: ${assessment.reason} — skipping ` +
+      `(run \`npm run setup:cloud\` for details)\n`
+    );
+    return;
+  }
+
+  // CREATED or UPDATED — delegate to lib's runSetupCloud, with a readline
+  // prompt scoped to the sync flow.
+  const readline = await import('node:readline');
+  const prompt = (q) => new Promise((resolve) => {
+    const rl = readline.createInterface({ input: process.stdin, output: stdio });
+    rl.question(q, (answer) => {
+      rl.close();
+      // R1-audit M3/M13: accept only empty (default Y) or explicit y/yes.
+      const a = answer.trim().toLowerCase();
+      resolve(a === '' || a === 'y' || a === 'yes');
+    });
+  });
+  stdio.write('\n');
+  await runSetupCloud({ prompt, sourceRepoDir, stdio, autoYes: false });
+}
+
+// Test seam — exposes the sync-time D2b trigger helper so behaviour
+// tests can drive it directly instead of regex-asserting source text.
+export const _internals = Object.freeze({ maybePromptSharedCloudUpdate });
+
+// Only execute when invoked as a script (canonical-path compare). When
+// imported by a test, the module's exports are available without main()
+// running and clobbering consumer repos.
+import { pathToFileURL } from 'node:url';
+const invokedAsScript = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    return import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+})();
+if (invokedAsScript) {
+  main().catch((err) => {
+    process.stderr.write(`sync-to-repos: fatal: ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
+}

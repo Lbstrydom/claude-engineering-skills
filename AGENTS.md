@@ -578,6 +578,62 @@ COMMIT;
 AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift
 ```
 
+### Shared cloud config for consumer repos
+
+`AUDIT_DB_URL` and the LLM API keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`,
+`ANTHROPIC_API_KEY`) are **shared across all consumer repos** using this
+bundle — same Supabase project, same accounts. Rather than duplicating
+them in each repo's `.env`, the loader supports a per-user shared file at
+**`~/.audit-loop.env`** that consumers auto-inherit.
+
+**Loader precedence** (configured in [scripts/lib/config.mjs](scripts/lib/config.mjs)):
+1. cwd / git-root `.env` — wins on overrides. Repo-specific values live here.
+2. `~/.audit-loop.env` — fallback for any var not set above. Shared secrets.
+
+Loader is silent when the shared file is absent. First time it loads
+variables you'll see one stderr line:
+`[config] loaded shared cloud config from ~/.audit-loop.env (sets: AUDIT_DB_URL, OPENAI_API_KEY)`.
+
+**Setup**:
+
+```bash
+# From your source claude-engineering-skills repo (where .env has the canonical DSN):
+npm run setup:cloud
+#  → prompts "Create ~/.audit-loop.env from this repo's .env? (Y/n)"
+#  → writes the file with chmod 0600 (POSIX) atomically
+
+# Subsequent runs (idempotent; reconciles against source .env):
+npm run setup:cloud
+#  → "shared cloud config: ~/.audit-loop.env — in sync with source repo .env"
+#    OR "Update ~/.audit-loop.env? (with delta preview)"
+npm run setup:cloud -- --yes        # non-interactive (CI)
+npm run setup:cloud -- --dry-run    # preview, no write
+```
+
+**Updating after rotation**: when you edit `AUDIT_DB_URL` (or any shared var)
+in source `.env`, the next `npm run sync` detects the divergence and prompts
+with the specific delta (e.g. `AUDIT_DB_URL host: aws-1-eu-west-2 → aws-1-us-east-1`).
+Skip with `npm run sync -- --no-prompt` (CI). The prompt also skips when
+not running in a TTY.
+
+**From a consumer repo**: any cloud-aware command (arch:refresh,
+audit-loop, persona-test) automatically inherits the shared config.
+When `[learning] Cloud store not configured` warns, the message itself
+points at `npm run setup:cloud` for recovery.
+
+**What lives where**:
+
+| File | Holds | Wins on conflict |
+|---|---|---|
+| consumer repo `.env` | repo-specific (`PERSONA_TEST_REPO_NAME`, custom overrides) | Yes (override:false) |
+| `~/.audit-loop.env` | shared secrets (DSN, LLM keys) | Fallback only |
+| source repo `.env` | canonical for shared secrets (the file `setup:cloud` reads from) | n/a (consumers don't load it) |
+
+**Opt-out**: don't run `setup:cloud`. The file never gets created;
+consumer repos that need cloud just set `AUDIT_DB_URL` in their own
+`.env` directly. Public-repo safety — the file lives in `os.homedir()`,
+never in any git tree.
+
 ### Prerequisites
 
 - Postgres 13+ (uses `gen_random_uuid()` built-in; `pgcrypto` is the

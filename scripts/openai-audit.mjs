@@ -2879,7 +2879,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         sid,
         round,
         startedAt: new Date().toISOString(),
-        mode,
+        mode: 'code',                     // runMultiPassCodeAudit is code-mode only
         plan: planFile ? path.basename(planFile) : null,
         totalInputTokens: cacheMetrics.totalInputTokens,
         totalCachedTokens: cacheMetrics.totalCachedTokens,

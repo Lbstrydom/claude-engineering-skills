@@ -13,13 +13,29 @@ import path from 'node:path';
 // ── Atomic File Writes ──────────────────────────────────────────────────────
 // Write to a temp file in the same directory, then rename for crash-safety.
 
-export function atomicWriteFileSync(filePath, data) {
-  const absPath = path.resolve(filePath);
+export function atomicWriteFileSync(filePath, data, { mode } = {}) {
+  let absPath = path.resolve(filePath);
+  // Gemini-r3-r2 G1: symlink preservation. If the target is a symlink
+  // (common for dotfiles managed by stow / chezmoi / etc., e.g. ~/.audit-loop.env
+  // → ~/dotfiles/audit-loop.env), follow it to the physical target so the
+  // atomic rename replaces the file's CONTENTS, not the symlink itself.
+  // Without this, the rename destroys the symlink and breaks the operator's
+  // dotfile manager. Best-effort: if lstat/realpath errors, fall through.
+  try {
+    if (fs.lstatSync(absPath).isSymbolicLink()) {
+      absPath = fs.realpathSync(absPath);
+    }
+  } catch { /* target doesn't exist yet — first write — no symlink to follow */ }
   const dir = path.dirname(absPath);
   fs.mkdirSync(dir, { recursive: true });
   const tmpPath = path.join(dir, `.tmp-${process.pid}-${Date.now()}`);
+  // Forward mode to fs.writeFileSync so the temp file is created with the
+  // requested permission bits AT OPEN — secure-mode-at-create for secrets
+  // files (plan: docs/plans/shared-cloud-config.md Gemini-G4). Default
+  // (mode undefined) preserves Node's prior open-with-umask behaviour.
+  const writeOpts = mode !== undefined ? { encoding: 'utf-8', mode } : 'utf-8';
   try {
-    fs.writeFileSync(tmpPath, data, 'utf-8');
+    fs.writeFileSync(tmpPath, data, writeOpts);
     fs.renameSync(tmpPath, absPath);
   } catch (err) {
     try { fs.unlinkSync(tmpPath); } catch (cleanupErr) {

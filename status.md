@@ -1,5 +1,45 @@
 # Project Status Log
 
+## 2026-05-23 — Shared cloud-config for consumer repos (~/.audit-loop.env)
+
+Implements [docs/plans/shared-cloud-config.md](docs/plans/shared-cloud-config.md). Eliminates the silent-failure pattern that hit ai-organiser this week: `[learning] Cloud store not configured` printed once at startup, then arch-memory consultation, audit-loop cloud learning, and persona-test correlations all silently no-op'd because the consumer repo's `.env` didn't have `AUDIT_DB_URL`. Three trigger surfaces ensure the operator never misses it: explicit `npm run setup:cloud`, end-of-`npm run sync` auto-prompt, and the cloud-disabled fallback message now names the recovery command. Pattern locked in `[[first-deploy-plus-update-from-source-pattern]]` memory.
+
+### Files added
+- [scripts/lib/shared-cloud-config.mjs](scripts/lib/shared-cloud-config.mjs) — pure lib (558 LOC). Exports `SHARED_VARS` / `REQUIRED_VARS` / `OUTCOMES` / `EXIT_CODE_FOR` / `sharedEnvPath` / `discoverLocalEnvPath` / `parseEnvText` / `parseEnvFile` / `serializeEnvValue` / `diffSharedEnv` / `writeSharedEnv` / `resolveCloudConfig` / `resolveSourceRepo` / `assessSharedCloudConfig` / `runSetupCloud` / `formatDeltaPreview` / `_internals`. Tagged-union `resolveSourceRepo` returns `{type: 'resolved'|'invalid-override'|'ambiguous'|'none', ...}`. Lossless mixed-quote serializer with safety guards (newline / `#` / leading-quote / surrounding WS blockers).
+- [scripts/setup-cloud.mjs](scripts/setup-cloud.mjs) — thin argv→executor CLI (116 LOC). Strict allowlist prompt (`'' | y | yes`). Short-flag rejection in `--source-repo`/`--format` value parsing. TTY check forces `--yes` when stdin is not a TTY.
+- [tests/shared-cloud-config.test.mjs](tests/shared-cloud-config.test.mjs) — 39 tests (1 skipped on Windows). Covers all 6 assess outcomes + executor branches + tagged-union resolveSourceRepo + serializer edge cases including mixed-quote bare round-trip + bare-form-blocker throws + explicit-empty-string process.env override.
+- [tests/sync-shared-env-trigger.test.mjs](tests/sync-shared-env-trigger.test.mjs) — 12 tests via `_internals` import (R1-audit M16 — real behaviour, not regex-asserting source text). ALREADY_CURRENT silent path + MISCONFIGURED one-line advisory + structural import-form contract (matches BOTH static `import ... from` AND dynamic `import(...)` so a future refactor can't silently bypass the lib-only rule).
+- [tests/config-shared-env.test.mjs](tests/config-shared-env.test.mjs) — 7 subprocess-driven tests for the config.mjs autoload. cwd `.env` wins over shared; shared fills unset vars; loader silent when shared file absent; one-time stderr note when shared loads; sentinel suppression for subprocess inheritance (R1-audit M17).
+- [tests/fixtures/config-shared-env-child.mjs](tests/fixtures/config-shared-env-child.mjs) — committed test fixture (R1-audit M19).
+- [docs/plans/shared-cloud-config.md](docs/plans/shared-cloud-config.md) — plan (Status: Complete).
+
+### Files modified
+- [scripts/lib/config.mjs](scripts/lib/config.mjs) — autoloads `~/.audit-loop.env` as a fallback layer (`override: false`) after the local `.env` walk-up; sets `_AUDIT_LOOP_SHARED_LOADED=1` sentinel in `process.env` so spawned subprocesses don't re-log the "loaded shared cloud config" notice. Refactored `discoverDotenv` to share `discoverLocalEnvPath` from the new lib (DRY).
+- [scripts/lib/file-io.mjs](scripts/lib/file-io.mjs) — `atomicWriteFileSync({mode})` parameter forwarded to `fs.writeFileSync` for secure-mode-at-create (chmod 0600 on POSIX). Symlink-preservation: `lstat` + `realpath` before rename so dotfile managers (GNU Stow, chezmoi) that symlink `~/.audit-loop.env → ~/dotfiles/...` keep their setup intact.
+- [scripts/sync-to-repos.mjs](scripts/sync-to-repos.mjs) — end-of-`main()` D2b trigger; both `stdin.isTTY` AND `stdout.isTTY` required (CI-hang fix). `--no-prompt` flag added. `_internals` export for direct test access.
+- [scripts/install-prepush-hook.mjs](scripts/install-prepush-hook.mjs) — bash sibling-scan aligned with JS resolveSourceRepo: single `sync-to-repos.mjs` sentinel (the old dual-file check false-matched consumer repos that had both files synced).
+- [scripts/check-setup.mjs](scripts/check-setup.mjs) — uses `resolveCloudConfig` for effective-config evaluation; reports source attribution (`inherited from ~/.audit-loop.env` / `set via shell export` / unset).
+- [scripts/lib/store/repo.mjs](scripts/lib/store/repo.mjs) — cloud-disabled message now names `npm run setup:cloud` as the recovery command.
+- [scripts/openai-audit.mjs](scripts/openai-audit.mjs) — drive-by fix for `mode is not defined` ReferenceError in cache log (1-character; `runMultiPassCodeAudit` is code-mode only).
+- [tests/shared.test.mjs](tests/shared.test.mjs) — POSIX-only regression test for `atomicWriteFileSync` symlink preservation.
+- [scripts/.cli-catalog.json](scripts/.cli-catalog.json) + [package.json](package.json) — `setup:cloud` entry.
+- [AGENTS.md](AGENTS.md) — new "Shared cloud config for consumer repos" subsection: loader precedence, setup recipe, update-from-source path, opt-out, public-repo safety note.
+
+### Decisions
+- **Pure lib + thin CLI + sync trigger**, not a monolithic CLI. The plan considered three call sites (setup-cloud CLI, sync end-of-run, check-setup diagnostic) and chose to put all logic in a pure lib so each surface is a thin adapter that imports the same `runSetupCloud` executor. Sync trigger calls the lib directly — NEVER imports from `scripts/setup-cloud.mjs` (R3-audit M2; enforced by structural test).
+- **Tagged-union return for `resolveSourceRepo`** (R2-audit M2/M8). Always returns `{type: 'resolved'|'invalid-override'|'ambiguous'|'none', ...}` instead of `null|object` polymorphism. Explicit `--source-repo <bad-path>` returns `invalid-override` so we surface the operator's mistake instead of silently falling through to cwd/sibling auto-discovery (R2-audit H3).
+- **Throw fail-fast → bare-form lossless** (Gemini-r3 M7). Initial R2-audit decision was to throw on values containing both `'` and `"`. Gemini's deliberation correctly identified that dotenv reads unquoted/bare values verbatim until newline, providing a lossless escape hatch. Implementation now attempts bare emission first; throws only when the value has a bare-form blocker (newline / `#` / leading-quote / surrounding whitespace). Regression tests cover both the round-trip and the throw cases.
+- **Symlink preservation via `lstat` + `realpath`** (Gemini-r3-r2 G1). Power users manage `~/.audit-loop.env` through dotfile managers (GNU Stow, chezmoi). Without symlink-following, `fs.renameSync` would destroy the symlink and replace it with a regular file, detaching the operator's config from their dotfiles repo.
+- **`stdin.isTTY` + `stdout.isTTY` both required** (Gemini-r3 G2). Stdout-only TTY check was vulnerable to CI environments where stdout is a pseudo-TTY but stdin is closed/piped — readline would hang forever.
+- **Out-of-scope deferred**: `audit_repos` schema qualification (H1) and `upsertRepoByUuid` race condition (H2) in `scripts/lib/store/repo.mjs` are real concerns but predate this PR. Atomic-upsert refactor with proper unique constraints warrants its own PR.
+
+### Verification
+- Full test suite: **3052/3070 passing, 0 failures, 18 skipped**.
+- Audit history: GPT R1 (H:7 M:10 L:5) → R2 (H:4 M:10 L:3) → R3 (in-scope HIGH: 0). **Gemini ×5 rounds** — final verdict **APPROVE** with `claude_bias_detected: false`, `architectural_coherence: Strong`. Quality summary: *"Claude demonstrated excellent architectural judgment, correctly distinguishing between pre-existing out-of-scope debt and new logic flaws. Claude successfully rebutted the symlink issue (G1) with precise codebase evidence showing it was already resolved, while rightly accepting and fixing the empty-string diagnostic drift (G2)."*
+- `npm run setup:cloud --dry-run` syntax-checks clean.
+
+---
+
 ## 2026-05-23 — Migration-drift detector + ledger bootstrap path
 
 Implements [docs/plans/migration-drift-detector.md](docs/plans/migration-drift-detector.md) (planId `a33b71f3`). Closes the silent-drift gap that bit us on 2026-05-22 — three migrations (`20260519`, `20260520`, `20260521`) had been committed to `supabase/migrations/` but never applied to the cloud, causing `/plan` upsert + `/persona-test --mode consistency` + WS-PIPE1 `persona_test_candidates` CLI to all silently no-op.

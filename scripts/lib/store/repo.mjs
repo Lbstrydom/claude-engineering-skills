@@ -46,7 +46,11 @@ export async function initLearningStore() {
     return false;
   }
   if (!pool) {
-    process.stderr.write('  [learning] Cloud store not configured — using local mode\n');
+    process.stderr.write(
+      '  [learning] Cloud store not configured — using local mode.\n' +
+      '             Run `npm run setup:cloud` from your claude-engineering-skills install to inherit shared config,\n' +
+      '             OR set AUDIT_DB_URL in this repo\'s .env directly.\n'
+    );
     return false;
   }
   // Connectivity probe — single SELECT against audit_repos so we surface

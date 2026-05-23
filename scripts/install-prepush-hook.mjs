@@ -65,16 +65,18 @@ PLAN_FILE=$(ls -t "$PLANS_DIR"/*.md 2>/dev/null | head -1)
 
 # Locate the audit-loop install — rename-resilient discovery.  Search order:
 #   1. \$CLAUDE_AUDIT_LOOP_DIR — explicit env override (manual escape hatch)
-#   2. Sibling-dir scan: any ../<dir>/ that contains BOTH
-#      scripts/openai-audit.mjs AND scripts/install-prepush-hook.mjs.
-#      (the install-prepush-hook.mjs presence is specific enough to avoid
-#       false positives on unrelated sibling repos that happen to vendor
-#       openai-audit.mjs)
+#   2. Sibling-dir scan: any ../<dir>/ that contains scripts/sync-to-repos.mjs.
+#      Gemini-r3 G1 fix: aligned with the JS resolveSourceRepo's
+#      single-deterministic-sentinel approach — sync-to-repos.mjs is
+#      source-exclusive (never synced to consumer repos), so its mere
+#      presence is sufficient proof of source-repo identity. The old
+#      dual-file check (openai-audit.mjs + install-prepush-hook.mjs)
+#      false-matched consumer repos that had both synced.
 #   3. (No fallback) — print warning + skip.  Never aborts the push.
 AUDIT_LOOP_DIR="$CLAUDE_AUDIT_LOOP_DIR"
 if [ -z "$AUDIT_LOOP_DIR" ]; then
   for sibling in ../*/; do
-    if [ -f "$sibling/scripts/openai-audit.mjs" ] && [ -f "$sibling/scripts/install-prepush-hook.mjs" ]; then
+    if [ -f "$sibling/scripts/sync-to-repos.mjs" ]; then
       AUDIT_LOOP_DIR="\${sibling%/}"
       break
     fi

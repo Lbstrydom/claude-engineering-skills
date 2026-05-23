@@ -123,6 +123,10 @@
       "description": "Bootstrap audit_loop_migrations ledger by diffing live schema against tests/fixtures/expected-schema.json. Strict full-schema match required; manually apply outstanding migrations through the dashboard ONCE before running.",
       "category": "diagnostic"
     },
+    "setup:cloud": {
+      "description": "Create or refresh ~/.audit-loop.env from the source repo's .env so consumer repos auto-inherit shared cloud config (DSN + LLM keys). Idempotent. --yes for CI, --dry-run to preview, --source-repo <path> to override discovery.",
+      "category": "diagnostic"
+    },
 
     "sync": {
       "description": "Sync this bundle into all registered consumer repos (auto-fires fit-check on first sync).",

@@ -19,6 +19,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  resolveCloudConfig, sharedEnvPath, discoverLocalEnvPath,
+} from './lib/shared-cloud-config.mjs';
 
 // ── Arg parsing ───────────────────────────────────────────────────────────────
 
@@ -179,11 +182,31 @@ async function checkAuditSupabase(env, report) {
   // SUPABASE_AUDIT_URL + ANON_KEY pair is sunset for runtime; we still
   // surface them as informational (other tooling may read them during
   // the transition).
-  if (!env.AUDIT_DB_URL) {
-    report.warn('AUDIT_DB_URL not set', 'audit runs will be local-only (no cloud learning)');
+  // Plan: docs/plans/shared-cloud-config.md — evaluate EFFECTIVE merged
+  // config so the warn correctly reflects whether ~/.audit-loop.env is
+  // providing the value. process.env first (genuine externals), then local
+  // .env via worktree-safe discovery, then ~/.audit-loop.env.
+  const cloud = resolveCloudConfig({
+    processEnv: env,                                     // env from loadEnv() — the target repo's local .env contents
+    localEnvPath: discoverLocalEnvPath(REPO_PATH),
+  });
+  if (cloud.AUDIT_DB_URL.source === 'unset') {
+    if (fs.existsSync(sharedEnvPath())) {
+      report.warn('AUDIT_DB_URL not set anywhere',
+        '~/.audit-loop.env exists but does not contain AUDIT_DB_URL — check the shared file');
+    } else {
+      report.warn('AUDIT_DB_URL not set',
+        'run `npm run setup:cloud` from your claude-engineering-skills install to inherit it');
+    }
     return;
   }
-  report.pass('AUDIT_DB_URL');
+  if (cloud.AUDIT_DB_URL.source === 'shared') {
+    report.pass('AUDIT_DB_URL  (inherited from ~/.audit-loop.env)');
+  } else if (cloud.AUDIT_DB_URL.source === 'process-env') {
+    report.pass('AUDIT_DB_URL  (set via shell export — not in any .env file)');
+  } else {
+    report.pass('AUDIT_DB_URL');
+  }
 
   const REQUIRED = ['audit_repos', 'audit_runs', 'audit_findings', 'audit_pass_stats',
     'bandit_arms', 'false_positive_patterns', 'debt_entries'];

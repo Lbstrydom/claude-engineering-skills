@@ -81,6 +81,25 @@ describe('atomicWriteFileSync', () => {
     assert.equal(files.length, 1);
     assert.equal(files[0], 'clean.json');
   });
+
+  it('preserves symlinks — writes through to physical target (Gemini-r3-r2 G1)', () => {
+    // Power users manage dotfiles via stow / chezmoi / etc., which symlink
+    // ~/.audit-loop.env to a physical file in their dotfiles repo. Without
+    // symlink-following, the atomic rename would destroy the symlink and
+    // replace it with a regular file, breaking the operator's setup.
+    if (process.platform === 'win32') return; // skip — Windows symlinks need elevation
+    const physical = path.join(tmpDir, 'physical.txt');
+    const link     = path.join(tmpDir, 'link.txt');
+    fs.writeFileSync(physical, 'initial');
+    fs.symlinkSync(physical, link);
+    atomicWriteFileSync(link, 'updated');
+    // Symlink survives.
+    assert.equal(fs.lstatSync(link).isSymbolicLink(), true, 'symlink must survive write');
+    // Contents reach the physical target.
+    assert.equal(fs.readFileSync(physical, 'utf-8'), 'updated', 'physical target must hold new content');
+    // Link still resolves to the physical target.
+    assert.equal(fs.realpathSync(link), fs.realpathSync(physical));
+  });
 });
 
 // ── zodToGeminiSchema ───────────────────────────────────────────────────────
