@@ -563,3 +563,85 @@ describe('runSetupCloud executor', () => {
     } finally { fs.rmSync(home, { recursive: true, force: true }); }
   });
 });
+
+// ── JSON output masking (dogfooding follow-up, post-/ship 2026-05-23) ─────
+// `npm run setup:cloud -- --dry-run --yes --format json` was dumping
+// cleartext OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY values to
+// stdout, defeating the chmod 0600 design of `~/.audit-loop.env`. The
+// `formatDeltaPreview` human renderer already masked these; the JSON
+// emitter did not. Closed by `_internals.maskDeltasForOutput`.
+
+describe('JSON output secret masking (_internals.maskDeltasForOutput)', () => {
+  it('masks SHARED_VARS values (LLM keys → ***, DSN → password masked)', () => {
+    const masked = _internals.maskDeltasForOutput({
+      add: {
+        AUDIT_DB_URL:    'postgresql://user:supersecret@h.example:5432/db',
+        OPENAI_API_KEY:  'sk-proj-LEAKED',
+        GEMINI_API_KEY:  'AIza-LEAKED',
+        ANTHROPIC_API_KEY: 'sk-ant-LEAKED',
+      },
+      change: {
+        AUDIT_DB_URL_OTHER: { from: 'sk-old', to: 'sk-new' },  // unknown key → mask
+        AUDIT_DB_URL:       { from: 'postgresql://u:oldpw@h:5432/db',
+                              to:   'postgresql://u:newpw@h:5432/db' },
+      },
+      remove: { OLD_KEY: 'value' },
+      unchanged: { OPENAI_API_KEY: 'sk-proj-original' },
+    });
+    // add: AUDIT_DB_URL keeps host + port (diagnostic value); password masked.
+    assert.match(masked.add.AUDIT_DB_URL, /postgresql:\/\/user:\*\*\*@h\.example:5432\/db/);
+    assert.equal(masked.add.OPENAI_API_KEY,    '***');
+    assert.equal(masked.add.GEMINI_API_KEY,    '***');
+    assert.equal(masked.add.ANTHROPIC_API_KEY, '***');
+    // change: AUDIT_DB_URL from/to both masked.
+    assert.match(masked.change.AUDIT_DB_URL.from, /postgresql:\/\/u:\*\*\*@h:5432\/db/);
+    assert.match(masked.change.AUDIT_DB_URL.to,   /postgresql:\/\/u:\*\*\*@h:5432\/db/);
+    assert.equal(masked.change.AUDIT_DB_URL_OTHER.from, '***');
+    assert.equal(masked.change.AUDIT_DB_URL_OTHER.to,   '***');
+    // remove: key reported (value not sensitive — it's already invalid in source).
+    assert.deepEqual(masked.remove, { OLD_KEY: 'value' });
+    // unchanged: masked too — raw secret in JSON stdout is still a leak.
+    assert.equal(masked.unchanged.OPENAI_API_KEY, '***');
+    // Crucially: no plaintext secret survives anywhere in the serialised form.
+    const serialised = JSON.stringify(masked);
+    assert.doesNotMatch(serialised, /sk-proj-LEAKED|AIza-LEAKED|sk-ant-LEAKED|supersecret|oldpw|newpw|sk-proj-original/);
+  });
+
+  it('runSetupCloud emits masked JSON (end-to-end via captured stdout)', async () => {
+    // Hijack process.stdout.write to capture the JSON output, then run the
+    // executor in dry-run mode and verify no secrets leak.
+    const home = mkdtemp();
+    const src  = mkdtemp();
+    fs.mkdirSync(path.join(src, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(src, 'scripts/sync-to-repos.mjs'), '// fixture\n');
+    fs.writeFileSync(path.join(src, '.env'),
+      'AUDIT_DB_URL=postgresql://u:topsecret@h:5432/d\nOPENAI_API_KEY=sk-PLAINTEXT-LEAK\n');
+    const captured = [];
+    const origWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk, ...rest) => {
+      captured.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    };
+    try {
+      await runSetupCloud({
+        autoYes: true, dryRun: true, format: 'json',
+        sourceRepoDir: src, homedir: home, stdio: collectStream(),
+      });
+    } finally {
+      process.stdout.write = origWrite;
+      fs.rmSync(home, { recursive: true, force: true });
+      fs.rmSync(src,  { recursive: true, force: true });
+    }
+    const out = captured.join('');
+    // The JSON should parse cleanly.
+    const parsed = JSON.parse(out);
+    assert.equal(parsed.outcome, OUTCOMES.CREATED);
+    assert.equal(parsed.dryRun, true);
+    // Critical: no cleartext secret leaks.
+    assert.doesNotMatch(out, /topsecret/);
+    assert.doesNotMatch(out, /sk-PLAINTEXT-LEAK/);
+    // Visible masking shape:
+    assert.match(out, /postgresql:\/\/u:\*\*\*@h:5432\/d/);
+    assert.match(out, /"OPENAI_API_KEY":\s*"\*\*\*"/);
+  });
+});

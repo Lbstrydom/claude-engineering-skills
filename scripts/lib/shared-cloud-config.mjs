@@ -486,11 +486,41 @@ export async function runSetupCloud({
   return emitResult(assessment, { format, stdio });
 }
 
+// Dogfooding finding (post-/ship 2026-05-23): the JSON renderer was
+// emitting cleartext secret values from the `add` / `change` buckets,
+// defeating the chmod 0600 design. Mask the same way `formatDeltaPreview`
+// does — AUDIT_DB_URL keeps its host/port (masked password) for
+// diagnostic value; all other SHARED_VARS render as `***`.
+function maskDeltasForOutput(deltas) {
+  if (!deltas) return deltas;
+  const m = { add: {}, change: {}, remove: { ...deltas.remove }, unchanged: { ...deltas.unchanged } };
+  for (const [k, v] of Object.entries(deltas.add)) {
+    m.add[k] = k === 'AUDIT_DB_URL' ? maskDsn(v) : '***';
+  }
+  for (const [k, { from, to }] of Object.entries(deltas.change)) {
+    m.change[k] = {
+      from: k === 'AUDIT_DB_URL' ? maskDsn(from) : '***',
+      to:   k === 'AUDIT_DB_URL' ? maskDsn(to)   : '***',
+    };
+  }
+  // `unchanged` is operator-controlled data we read back from the file;
+  // mask the same way for consistency (a value being "unchanged" is itself
+  // information, but the raw secret in stdout is the leak we're closing).
+  for (const k of Object.keys(deltas.unchanged)) {
+    m.unchanged[k] = k === 'AUDIT_DB_URL' ? maskDsn(deltas.unchanged[k]) : '***';
+  }
+  return m;
+}
+
 function emitResult(assessment, { format, stdio }) {
   const result = { ...assessment, exitCode: EXIT_CODE_FOR[assessment.outcome] };
   if (format === 'json') {
     // JSON output is contractual; goes to stdout regardless of stdio injection.
-    process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+    // Mask secret values — the JSON output is for machine introspection
+    // ("did the assessment succeed? what bucket is each key in?"), NOT for
+    // exfiltrating the raw secrets which the operator already has in .env.
+    const safe = { ...result, deltas: maskDeltasForOutput(result.deltas) };
+    process.stdout.write(JSON.stringify(safe, null, 2) + '\n');
   } else {
     renderHumanResult(result, stdio);
   }
@@ -529,6 +559,7 @@ function renderHumanResult(r, stdio) {
 export const _internals = Object.freeze({
   isSourceRepo,
   maskDsn,
+  maskDeltasForOutput,
   emitResult,
   renderHumanResult,
 });
