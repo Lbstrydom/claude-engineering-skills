@@ -1,0 +1,562 @@
+---
+name: click-test
+description: |
+  Structural DOM audit of a live app — walk every interactive element and assert
+  semantic-HTML contracts (duplicate IDs, orphan labels, inputs without names,
+  ARIA misuse, heading hierarchy, missing alt text, undersized touch targets).
+  Complements /persona-test: where persona-test catches narrative UX issues a real
+  user would hit, click-test catches structural issues that hide in JS-rendered
+  surfaces and would silently break assistive tech, form submissions, or
+  React reconciliation.
+  Drives a browser via Playwright MCP. Optional dynamic-surface coverage opens
+  each modal, dropdown, and dialog trigger and rescans.
+  Triggers on: "click test", "click-test", "structural audit", "DOM audit",
+  "accessibility audit", "duplicate ID check", "walk every element",
+  "audit the DOM", "structural QA", "/click-test".
+  Usage:
+    /click-test <url>                                         — scan the URL's initial render
+    /click-test <url> --routes "/a,/b,/c"                     — scan multiple routes
+    /click-test <url> --with-modals                           — also open + scan each modal/dropdown
+    /click-test <url> --scope a11y|forms|ids|all              — focus the assertion set (default: all)
+  Examples:
+    /click-test http://localhost:3000
+    /click-test https://myapp.railway.app --routes "/,/cellar,/admin"
+    /click-test http://localhost:3000 --with-modals --scope a11y
+---
+
+# Click-Test — Structural DOM Audit
+
+Walk every interactive element on each target route and assert the structural
+HTML contract. **Not a persona test.** This is the mechanical sibling of
+`/persona-test`:
+
+| Skill | Catches | Misses |
+|---|---|---|
+| `/persona-test` | Narrative UX, confusing copy, missed migration glyphs, FAB-modal stacking, broken happy paths | Duplicate IDs (rendered fine), orphan labels (no visible symptom), undersized touch targets the persona's finger happens not to miss |
+| `/click-test` | Structural / semantic / a11y contract violations across every interactive element | Whether the flow makes sense for any human |
+
+Run **both**. Findings from each rarely overlap.
+
+---
+
+## Phase 0 — Parse Arguments
+
+Parse `$ARGUMENTS`:
+1. **url** — first URL-shaped token (or `PERSONA_TEST_APP_URL` env). Validate
+   with `new URL(value)` — reject non-URL with usage error.
+2. **routes** — `--routes "/a,/b,/c"` (comma-separated). When omitted, the
+   default target is **the base URL itself** (preserves any path prefix —
+   `https://host/app` is scanned, not `https://host/`). When provided, each
+   token is resolved as `new URL(routeToken, base).href` — supports absolute
+   routes, root-relative routes (explicit `/` means origin-root), and
+   path-relative routes. Empty/whitespace tokens dropped. Duplicates after
+   normalisation dropped. Examples:
+   - `--routes` omitted, base `https://host/app` → scans `https://host/app`
+   - `--routes "/"` against base `https://host/app` → scans `https://host/`
+   - `--routes "settings"` against base `https://host/app/` → scans `https://host/app/settings`
+3. **with_modals** — `--with-modals` flag (default: off)
+4. **scope** — `--scope a11y|forms|ids|all` (default: `all`). Unknown value →
+   fail with usage.
+5. **ready_selector** — `--ready-selector "<css>"` (optional). Default:
+   `[data-testid=app-ready], [data-click-test-ready=true]`. If neither
+   attribute exists in the app, **pass an explicit selector** that
+   uniquely identifies the loaded state — do not fall back to generic
+   `main` / `#root` (those match on skeleton DOMs and produce false
+   "scanned" verdicts on still-loading pages).
+6. **ready_timeout_ms** — `--ready-timeout 8000` (default 8000).
+7. **force_cache_bust** — `--force-cache-bust` flag (default: off, see Phase 2).
+8. **max_triggers_per_route** — `--max-triggers 50` (default 50, Phase 4b only).
+9. **viewport** — `--viewport <W>x<H>` (default `1280x720`). Width and height
+   must be integers in `[320, 4096]`. Applied via `browser_resize` before
+   the first `browser_navigate`. Invalid format → fail with usage.
+
+Required: `url`. If missing, output usage and STOP. Unknown flags → fail
+with usage. Duplicate flags → last wins, log a stderr warning.
+
+---
+
+## Phase 0b — Run Contract (recorded in report)
+
+Capture these defaults at the start of each session and include them
+verbatim in the Phase 6 report so two runs against the same commit can be
+compared:
+
+| Field | Default | Override |
+|---|---|---|
+| Viewport | 1280×720 | `--viewport 390x844` (single MCP `browser_resize`) |
+| Browser | whatever the MCP tool provides (Playwright MCP = Chromium) | — |
+| Locale / timezone | tool default (do NOT randomise) | — |
+| Auth | none — public surface only | Out of scope for v1; see "Auth-gated routes" below |
+| Network idle | wait for `load` + ready-selector or 8000ms | `--ready-timeout` |
+
+**Auth-gated routes**: after each navigation, BEFORE running the static
+scan, check:
+
+1. **Cross-origin redirect** (OAuth / SSO): if `new URL(location.href).origin !==
+   new URL(targetUrl).origin`, classify as `coverageStatus: "auth-required"`
+   regardless of DOM content. Catches OAuth providers (Google, Okta, Auth0)
+   that redirect to a third-party domain — never scan accessibility of those
+   pages and attribute findings to the audited app.
+2. **Same-origin password form**: if URL is same-origin AND DOM contains
+   `[type=password]`, classify as `coverageStatus: "auth-required"`. Catches
+   first-party login walls.
+
+Do NOT attempt to log in — credentials are out of scope. The OVERALL verdict
+becomes at most `Incomplete` (never `Clean`) when any route is `auth-required`.
+
+---
+
+## Phase 1 — Detect Browser Tool
+
+Same logic as persona-test — see
+[`../persona-test/references/browser-tool-detection.md`](../persona-test/references/browser-tool-detection.md).
+
+Own-app hostnames → Playwright MCP. External anti-bot sites → BrightData
+fallback. Static-only WebFetch is **not enough** for click-test — the DOM
+scanner needs `page.evaluate`. If only WebFetch is available, exit with a
+clear diagnostic.
+
+**Required capabilities** (verify the selected tool supports each before
+the first scan — log which tool was chosen and which capabilities passed):
+`navigate`, `evaluate`, `click`, `keyboard` (Escape press), `wait`,
+`currentUrl`. If any required capability is missing, abort before scanning
+with `[BLOCKED] Tool <name> missing capability: <cap>`.
+
+---
+
+## Phase 2 — Pre-flight Cache-bust (own-app only by default)
+
+Service workers silently serve stale bundles, masking real deploys (the
+wine-cellar-app failure mode). The cache-bust is **mandatory for own-app
+hostnames** (localhost, `*.local`, `*.railway.app`, `*.vercel.app`,
+`*.netlify.app`) where the cost of clearing user state is zero.
+
+**For external URLs**: do NOT cache-bust by default. Clearing
+`serviceWorker` + `caches` on a third-party origin can log out the operator,
+remove offline data, or alter the very state being measured. Require the
+explicit `--force-cache-bust` flag — and even then, warn loudly on stderr.
+
+| Hostname class | Default behaviour |
+|---|---|
+| Own-app (localhost / `*.railway.app` / `*.vercel.app` / `*.netlify.app` / `*.local`) | Cache-bust runs unconditionally |
+| External | Skip cache-bust. `--force-cache-bust` overrides with stderr warning |
+| WebFetch (no JS context) | Skip; not applicable |
+
+Cache-bust script (when it runs). Both APIs (`serviceWorker`, `caches`) can
+be undefined globally in non-secure contexts (HTTP-only test URLs) —
+referencing them throws `ReferenceError` BEFORE optional chaining is
+evaluated. Always check `typeof` first:
+
+```js
+// browser_evaluate
+(async () => {
+  let unregistered = 0, cachesDeleted = 0;
+  if (typeof navigator !== 'undefined' && navigator.serviceWorker) {
+    const regs = await navigator.serviceWorker.getRegistrations().catch(() => []);
+    await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+    unregistered = regs.length;
+  }
+  if (typeof caches !== 'undefined') {
+    const keys = await caches.keys().catch(() => []);
+    await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
+    cachesDeleted = keys.length;
+  }
+  return { unregistered, cachesDeleted };
+})()
+```
+
+Then `browser_navigate(url)` again to force a fresh fetch. Log result:
+`[cache-bust] unregistered <n> SW, cleared <n> caches (own-app)` or
+`[cache-bust] skipped (external host; pass --force-cache-bust to override)`.
+
+Record `cacheBustMode: "own-app" | "forced" | "skipped-external" | "n/a"`
+in the run contract for the Phase 6 report.
+
+---
+
+## Phase 3 — Crawl Routes
+
+For each route in `routes`:
+
+1. `browser_navigate({url: new URL(route, base).href})` — never string-concat
+2. **Readiness protocol** (replaces vague "stable string" wait):
+   a. Wait for `load` event (most MCPs do this implicitly on navigate).
+   b. Poll: ready-selector matches AND `document.querySelector('[aria-busy="true"], [role="progressbar"]')` returns null.
+   c. Timeout after `--ready-timeout` ms (default 8000).
+   d. If timeout fires, classify the route as `coverageStatus: "readiness-timeout"`
+      and skip its scan — do NOT scan a skeleton DOM.
+3. **Route execution status** — independent of finding count. Record one of:
+   - `scanned` — readiness met AND scanner output validated. (May still have findings.)
+   - `auth-required` — landed on login (URL changed AND `[type=password]` present)
+   - `navigation-error` — `browser_navigate` threw (rendered app-level 404/500 pages
+     count as `scanned` unless the tool exposes a real response status and it's 4xx/5xx)
+   - `readiness-timeout` — readiness selector never matched within timeout
+   - `scanner-error` — `browser_evaluate` threw or returned schema-invalid shape
+   - `skipped-external-anchor` — route resolved to a different origin
+4. If state is `scanned`, run **Phase 4 — Static scan** (one pass per settled DOM state — see Reminders)
+5. If `with_modals` AND state is `scanned`, run **Phase 4b — Dynamic-surface scan**
+6. Record findings tagged with `{route, coverageStatus, via}`; record per-route
+   element counts and dynamic-surface counts in the run metrics (Phase 4 schema).
+
+---
+
+## Phase 4 — Static Scan
+
+`browser_evaluate` with the scanner from
+[`references/dom-scanner.md`](references/dom-scanner.md). The scanner returns
+a single result object — **validate before use** (a hostile or malformed
+page could return anything from `browser_evaluate`):
+
+```js
+// pseudo-Zod (canonical contract — runner enforces, report consumes)
+ClickTestFinding = {
+  kind: enum("duplicate-id", "orphan-label", "input-no-name",
+             "button-no-name", "link-no-name", "form-field-no-name",
+             "duplicate-aria-label", "aria-hidden-focusable",
+             "empty-link", "heading-skip", "img-no-alt",
+             "small-touch-target", "positive-tabindex"),  // 13 kinds
+  severity: enum("P0","P1","P2","P3"),
+  selector: string.max(500),
+  snippet: string.max(200),  // outerHTML truncated; redact before persist
+  detail: string.max(500),
+}
+ClickTestScanResult = {
+  schemaVersion: literal(1),
+  routeUrl: string,                  // the final navigated URL
+  elementsScanned: number,           // document.querySelectorAll('*').length at scan time
+  interactiveElementsScanned: number, // count of button/a/input/select/textarea/[role=button|link]
+  findings: ClickTestFinding[].max(999),  // reject >999 — flags scanner-error
+  shadowGapCount: number,            // open shadow roots not traversed
+  iframeGapCount: number,            // iframes not traversed
+}
+```
+
+If validation fails, classify the route as `coverageStatus: "scanner-error"`
+and skip its findings — never persist or report unvalidated output.
+
+**Per-route aggregation** when `--with-modals` produces multiple scan results
+(one static + one per opened modal): the per-route record stores the static
+scan's `elementsScanned` / `interactiveElementsScanned` as the route totals
+(modals are subsets, not additions). For `shadowGapCount` / `iframeGapCount`,
+take the **max** observed across passes (NOT sum — each modal pass re-scans
+the whole DOM, so the static gaps would be double-counted). The interpretation
+is "the worst coverage gap seen on this route", which is what the verdict
+cares about. `findings` are unioned and deduped by `{route, via, kind, selector}`.
+Each finding's `via` field records its origin (`static` or `modal:<accessible-name>`).
+
+**Redaction**: before printing or persisting any `snippet`, run it through
+the existing redactor (`scripts/lib/redact.mjs::redact` for string-typed
+content; use `redactObject` if the runner ever boxes the snippet inside a
+larger payload). DOM `outerHTML` can contain emails, tokens in `data-*`
+attributes, hidden form values, customer content. The default scanner
+already truncates to 200 chars; redaction is the second layer.
+
+### Finding taxonomy (canonical rule registry)
+
+13 rules, 1:1 with the `kind` enum above:
+
+| Kind | Default severity | In `ids` | In `forms` | In `a11y` |
+|---|---|---|---|---|
+| `duplicate-id` | P0 | ✓ | ✓ | ✓ |
+| `orphan-label` | P0 | — | ✓ | ✓ |
+| `input-no-name` | P0 | — | ✓ | ✓ |
+| `button-no-name` | P0 | — | — | ✓ |
+| `link-no-name` | P1 | — | — | ✓ |
+| `form-field-no-name` | P1 | ✓ | ✓ | — |
+| `duplicate-aria-label` | P2 *(see note)* | — | — | ✓ |
+| `aria-hidden-focusable` | P1 | — | — | ✓ |
+| `empty-link` | P1 | — | — | ✓ |
+| `heading-skip` | P2 | — | — | ✓ |
+| `img-no-alt` | P2 | — | — | ✓ |
+| `small-touch-target` | P2 | — | — | ✓ |
+| `positive-tabindex` | P2 | — | — | ✓ |
+
+`button-no-name` and `link-no-name` are separate kinds (one rule per kind)
+so the severity is unambiguous in the enum. The scanner emits one or the
+other based on element type — never both for the same node.
+
+`--scope all` → keep everything. `--scope <name>` → keep rows with `✓` in
+that column. Invalid scope → fail with usage.
+
+**`duplicate-aria-label` FP note**: this rule has high false-positive rates
+on grid/card layouts where shared "Edit" / "Delete" buttons are
+contextually disambiguated by surrounding text. The scanner downgrades it
+to P2 by default and only fires when the duplicates share the same `role`
+AND same parent component region (closest `[role="list"]`, `[role="grid"]`,
+`<table>`, `<form>` — see scanner impl). If you want it ignored entirely,
+use `--scope ids` or `--scope forms`.
+
+---
+
+## Phase 4b — Dynamic-surface Scan (`--with-modals` only)
+
+### Trigger discovery (one evaluate per route, before clicking)
+
+```js
+// browser_evaluate — returns DiscoveredTrigger[]
+// DiscoveredTrigger = { idx, selector, role, accessibleName, regionKey,
+//                       destructiveReason: string|null, disabled: bool,
+//                       href: string|null, formAction: string|null }
+```
+
+The runner stores this array, then iterates by `idx`. Before each click:
+
+1. `browser_evaluate` re-queries by the stored `selector` — if it returns
+   null or a different element (compared by `idx → selector → accessibleName`
+   triple), skip with `coverageStatus: "trigger-stale"`.
+2. If `destructiveReason` is non-null → skip with that reason.
+3. If `disabled === true` → skip with `"disabled"`.
+4. Otherwise proceed to click.
+
+The trigger candidate set: `[aria-haspopup="true"], [data-modal-trigger],
+button[aria-controls], [role="combobox"]`.
+
+### Per-trigger flow
+
+1. **Safety classifier** — skip if the trigger is destructive (see below)
+2. **URL snapshot** — record `currentUrl` before click
+3. `browser_click(<trigger>)`
+4. Wait for modal mount: poll for `[role="dialog"]`, `<dialog[open]>`, or
+   `aria-expanded="true"` on the trigger, up to 1000ms. Timeout → log
+   "trigger opened nothing" and skip.
+5. Re-run the scanner — tag findings with `via: "modal:<accessible-name>"`
+6. Close: `Escape` key → if dialog still mounted, click `[aria-label="Close"]`
+   inside it → if still mounted, click outside the dialog at `(8, 8)`.
+7. **Verify closed AND URL unchanged** — if URL changed, treat as
+   navigation side-effect: re-navigate to the route's URL **then re-run
+   the Phase 3 readiness protocol** (don't assume the page is ready
+   immediately after navigation). Resume the trigger loop only once
+   readiness is met. If dialog still mounted after all 3 close attempts,
+   log `coverageStatus: "modal-stuck"` for this route and stop the
+   dynamic scan for that route.
+8. Continue to next trigger until **`--max-triggers`** (default 50) reached.
+   Excess triggers logged as `skipped: budget-exceeded`.
+
+### Safety classifier — destructive-trigger filter
+
+Skip a trigger if **any** of these match (case-insensitive, accent-folded):
+
+- Accessible name (computed: `aria-label`, `aria-labelledby`, visible text,
+  `title` — in that order) matches `/^(delete|destroy|remove|purge|reset|sign\s*out|log\s*out|cancel\s*subscription|deactivate|close\s*account|drop|truncate|wipe)/i`
+- `data-destructive="true"` or `data-action` value matches the regex above
+- `role="link"` with `href` pointing to a different origin or matching
+  `/logout|signout|delete/i`
+- Inside a form whose `action` matches the destructive regex
+- `aria-disabled="true"` or `[disabled]` (don't click disabled controls)
+
+Log each skipped trigger with reason: `skipped-destructive: <accessible-name> (matched: <pattern>)`.
+
+**Deduplication**: two triggers are dupes when they share `(accessibleName, role, closest [role="dialog"]/section ancestor)`. Skip dupes after the first.
+
+**Why this matters**: React/Vue/Svelte mount duplicate IDs *into* the live
+DOM when a modal opens. Static scan won't see them — they only exist while
+the modal is mounted. This is exactly what static template audits miss.
+
+---
+
+## Phase 5 — Severity Model
+
+The authoritative severity-per-kind mapping is the table in Phase 4 ("Finding
+taxonomy"). The intuition behind those assignments:
+
+| Code | Rule |
+|---|---|
+| **P0** | Breaks core function: React reconciliation (duplicate IDs), form submission (no name on field — wait, that's P1; let me explain), screen-reader announcement (input/button with no accessible name), click-to-focus (orphan `<label for>`) |
+| **P1** | Degrades experience but flow still works: aria-hidden focusable, empty `<a href="#">`, form-field-no-name (browser still submits the form, but that field's value is dropped) |
+| **P2** | Polish / a11y suggestion: heading-skip, img-no-alt (decorative needs `alt=""`), small-touch-target, positive-tabindex, duplicate-aria-label (high FP rate) |
+| **P3** | Reserved for future suggestions (redundant ARIA, decorative-near-interactive) — none enabled in v1 |
+
+Confidence is not a click-test concept — assertions are deterministic. Either
+the DOM violates the contract or it doesn't. If runs vary across same
+URL + commit, something non-deterministic (A/B test, random ID generator,
+load-order race) is involved; flag that meta-finding itself.
+
+---
+
+## Phase 6 — Structured Report
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  CLICK-TEST REPORT
+  URL: <base>
+  Routes: <list>
+  Scope: <scope>   Modals: <on|off>   Cache-bust: <own-app|forced|skipped-external|n/a>
+  Viewport: <WxH>   Ready-selector: <css>   Ready-timeout: <ms>
+  Tool: <browser_tool> — <N> elements scanned — <duration>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+FINDINGS (<total>)
+────────────────────────────────────────────────────
+  [P0] duplicate-id "wine-card-3" (4 occurrences)
+     Route:    /cellar
+     Via:      static
+     Selector: #wine-card-3
+     Detail:   Repeated by the wine grid renderer when filter is active;
+               React will reconcile the wrong nodes on next render
+     Snippet:  <div id="wine-card-3" class="..."> [redacted if needed]
+
+  [P0] input-no-name <input type="text">
+     Route:    /cellar
+     Via:      modal:"Add bottle"
+     Selector: form.add-bottle > input[type=text]:nth-child(2)
+     Detail:   No label, aria-label, aria-labelledby, or placeholder.
+               Screen readers announce this as "edit text" with no context.
+     Snippet:  <input type="text" class="form-control">
+
+  ...
+
+ROUTE COVERAGE
+────────────────────────────────────────────────────
+  /          — scanned          — 47 elements — 0 findings
+  /cellar    — scanned          — 312 elements — 8 findings (P0:2, P1:1, P2:5)
+  /admin     — auth-required    — 0 elements — skipped (login wall)
+  /reports   — readiness-timeout — 0 elements — skipped (ready-selector never matched)
+
+DYNAMIC SURFACES (--with-modals)
+────────────────────────────────────────────────────
+  /cellar: 12 triggers — 8 scanned, 2 skipped-destructive, 2 modal-stuck
+  /admin:  — (route skipped)
+
+OVERALL: <Broken | Broken+Incomplete | Has issues | Incomplete | Clean>
+  Reason: <one sentence>
+
+OVERALL VERDICT RULES (deterministic precedence — first match wins):
+  Coverage condition (referenced below):
+    "covered"     = every route coverageStatus="scanned" AND
+                    shadowGapCount == 0 AND iframeGapCount == 0 AND
+                    no dynamic-scan failure
+                    (failure = modal-stuck/budget-exceeded OR trigger-stale > 25% of triggers)
+    "gaps"        = NOT covered
+
+  1. Broken+Incomplete → any P0 finding AND gaps
+  2. Has issues+Incomplete → any P1/P2 finding (no P0) AND gaps
+  3. Broken             → any P0 finding AND covered
+  4. Has issues         → any P1/P2 finding (no P0) AND covered
+  5. Incomplete         → zero findings AND gaps
+  6. Clean              → zero findings AND covered
+
+  Issues are NEVER masked by coverage gaps — verdict 2 explicitly surfaces
+  the P1/P2 + gap combination rather than letting it fall through to
+  "Incomplete" (which would hide the discovered defects).
+
+  Notes:
+    - "Has issues" applies regardless of P1 vs P2; the count distinction lives
+      in the FINDINGS block, not the verdict.
+    - The verdict precedence is independent of coverage — a Broken+Incomplete
+      run with one P0 and one auth-required route is more severe than either
+      alone and gets its own label so /ship can gate appropriately.
+```
+
+Sort findings P0 first, then by `kind` alphabetical so similar issues group.
+
+---
+
+## Phase 7 — Persistence (Out of Scope for v1)
+
+Persisting click-test findings to the shared cross-skill store (so `/ship`
+can surface P0s as pre-push warnings) is **deferred to v2**. The v1 skill
+is authoritative purely from its local report — print, read, fix, re-run.
+
+Why deferred:
+- The required `scripts/cross-skill.mjs record-click-test` subcommand
+  doesn't exist yet, nor does the typed payload schema, table mapping,
+  or `/ship` read path.
+- Declaring "graceful no-op when subcommand missing" would ship a dead
+  integration path that silently never works — worse than no integration.
+- The local Phase 6 report covers the immediate use case (run, fix, ship).
+
+**v2 work item** (when the integration matters): add a new
+`record-click-test` subcommand with Zod-validated payload, decide table
+strategy (new `click_test_runs` table vs reusing `regression_specs` with
+a discriminator), update `/ship` to surface unresolved P0s, add tests.
+Tracked in [docs/plans/click-test-v2-persistence.md] (file to be created
+when v2 starts; not a v1 blocker).
+
+---
+
+## Integration (skill deployment)
+
+This skill ships through the same auto-sync as every other skill in the
+bundle. No manual file list needed:
+
+- `scripts/sync-to-repos.mjs::buildSkillFiles()` enumerates `skills/*/` and
+  picks up `skills/click-test/` automatically.
+- `scripts/lib/install/copilot-prompts.mjs::SKILL_ENTRY_SCRIPTS` has an
+  entry for `click-test` (added when this skill landed) so `.github/prompts/`
+  shims generate alongside the others.
+- The `.claude/skills/click-test/` mirror is regenerated on
+  `npm run skills:regenerate`.
+
+Deployment recipe:
+
+```bash
+npm run skills:regenerate     # update .claude/skills/click-test/ mirror
+npm run sync                  # push to every consumer repo in the registry
+```
+
+Both commands are idempotent and report drift / changed files in stderr.
+
+### Deployment acceptance criteria
+
+After running the recipe, verify ALL of these before declaring deployment complete:
+
+1. `.claude/skills/click-test/SKILL.md` exists and matches `skills/click-test/SKILL.md`
+   byte-for-byte (the generator copies, not re-formats).
+2. `.claude/skills/click-test/references/dom-scanner.md` exists.
+3. `.github/prompts/click-test.prompt.md` exists with a managed-block marker
+   (generated by `scripts/lib/install/copilot-prompts.mjs`).
+4. `npm run skills:check` passes (validates each reference file's `summary:`
+   frontmatter byte-matches the parent SKILL.md's reference-index row).
+5. For each consumer repo synced: `.claude/skills/click-test/SKILL.md`
+   present at the consumer repo root.
+
+If any of these fail, the deployment did NOT complete — fix the failure
+and re-run rather than declaring partial success.
+
+---
+
+## Out of Scope (v2) — deferred from R3 audit
+
+These were raised by the GPT plan-auditor in R3. Each is a real concern,
+but v1 ships without them because (a) the local Phase 6 report still
+flags coverage gaps and (b) addressing them would require runner code
+that doesn't exist yet (this is a skill spec, not a CLI).
+
+| Concern | Why deferred | v2 mitigation |
+|---|---|---|
+| Dynamic-trigger classifier doesn't skip `Save/Submit/Publish/Apply` controls — could mutate state in `--with-modals` mode | The current safety regex catches obviously destructive labels (`delete`, `sign out`, etc.); state-changing labels are harder to enumerate without false positives. v1 is opt-in via `--with-modals` and users testing their own apps know which buttons are safe. | Extend regex + form-association classifier. Add a `--dry-run-dynamic` mode that lists triggers without clicking. |
+| `routeStatus` vs `dynamicStatus` aggregation not fully specified — a route can be `scanned` while modal coverage failed | The Phase 6 verdict rules cover the headline case (any P0+gap → Broken+Incomplete). The deep ROUTE COVERAGE block can report both fields per route. | Split the model formally when implementing — `RouteResult = { routeStatus, findings, dynamicCoverage: { triggersTotal, triggersScanned, failureReasons[] } }` |
+| Scanner-returned `severity` is trusted across the browser boundary — page could lie | Browser-side scanner is repo-controlled JS injected fresh each scan; a hostile page can't override it. If we run against attacker-controlled pages in v2, the runner should re-derive severity from `kind` (the kind → severity map is canonical in SKILL.md). | Re-derive `severity` runner-side using the taxonomy table; ignore the scanner's emitted severity. |
+| Lossy handling of finding sets at 999-cap | Capping silently truncates evidence. v1 returns `scanner-error` for >999 to fail loudly; counts above the cap suggest the scanner needs a separate per-rule cap or the page has runaway templates worth investigating manually. | Per-rule caps (e.g. max 50 duplicate-id rows from one ID collision) + total cap. |
+| Own-app classifier matches `*.local` which is reserved for mDNS — false positive risk | mDNS overlap is theoretical; in practice `*.local` in browser context means dev environments where cache-bust is safe. | Tighten classifier if we ever see a real collision. |
+| `auth-required` detection runs after readiness gate — login-only routes may readiness-timeout first | Both classifications correctly indicate "could not scan", so the OVERALL verdict still becomes Incomplete. The reason differs but the outcome doesn't. | Run a quick `[type=password]` check immediately after `load`, before readiness polling. |
+| Redaction boundary too narrow — only redacts `snippet`, not `selector` / `detail` | `selector` is structural (no PII expected); `detail` is composed by the scanner from rule descriptions (no user content). Genuine leakage path is `snippet`. | Audit each field; redact `detail` if/when the scanner starts interpolating page content. |
+| `ready-selector` not validated for CSS-correctness | An invalid selector throws when used; we surface the error as `scanner-error` with the message. Pre-validation would duplicate the engine's selector parser. | Wrap user selector in try/catch with a clearer error message. |
+
+---
+
+## Reminders
+
+- **Cache-bust first, always** — stale SW will hand you yesterday's DOM.
+- **Don't click destructive triggers** in `--with-modals` mode.
+- **Run alongside `/persona-test`, not instead of it** — disjoint coverage.
+- **Findings are deterministic** — same URL + commit = same findings. If
+  they vary, something non-deterministic (load order, A/B test, random ID)
+  is involved — flag that as a finding itself.
+- **One scanner pass per settled DOM state** — one static pass per route,
+  plus one pass per successfully opened dynamic surface in `--with-modals` mode.
+  Aggregate findings in JS using `{route, via, kind, selector}` as the dedup key
+  so a finding present in both static + modal states is reported once.
+
+---
+
+## Reference files
+
+| File | Summary | Read when |
+|---|---|---|
+| `references/dom-scanner.md` | The full browser_evaluate scanner JS — every assertion's implementation, selector-stringifier helpers, severity mapping. | About to run Phase 4 or Phase 4b. |
+
+Phase 1 also delegates to the persona-test browser-tool detection protocol —
+see [`../persona-test/references/browser-tool-detection.md`](../persona-test/references/browser-tool-detection.md)
+(tier priority, fallback rules, Windows caveats). It's a cross-skill reference,
+not a click-test reference file, so it sits outside the index table.

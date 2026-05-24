@@ -15,12 +15,14 @@ description: |
     /persona-test list [url]                                        — show all personas for an app
     /persona-test add "<name>" "<description>" <url> [app name]     — register a new persona
     /persona-test "<persona or name>" <url> [focus area]            — run an exploratory test session (MCP-driven)
+    /persona-test --pair "<p1>" "<p2>" <url> [focus area]           — run two opposed personas back-to-back, diff findings
     /persona-test --mode consistency --canary <name> <url>          — run a deterministic consistency-mode canary (code-driven Playwright)
   Examples:
     /persona-test list https://myapp.railway.app
     /persona-test add "Pieter" "wine enthusiast, 40s, drinks daily, mobile-first" https://myapp.railway.app "Wine Cellar App"
     /persona-test "Pieter" https://myapp.railway.app "adding a bottle"
     /persona-test "first-time user on mobile" https://myapp.railway.app
+    /persona-test --pair "Elena (sommelier)" "Martha (newer drinker)" https://myapp.railway.app "browsing the cellar"
     /persona-test --mode consistency --canary oliver-infeasible-reorg http://localhost:3000
 ---
 
@@ -37,6 +39,7 @@ Read the first word of `$ARGUMENTS`:
 
 - `list` → **Sub-command: LIST**
 - `add` → **Sub-command: ADD**
+- contains `--pair` anywhere → **Sub-command: PAIR** (see Phase 7 at the end)
 - otherwise → **Phase 0b: Parse Test Arguments** (normal test run)
 
 ---
@@ -179,6 +182,39 @@ Set `browser_tool = "Playwright MCP" | "BrightData" | "WebFetch (degraded)"`
 and stick with it for the whole session.
 
 Full tier-fallback protocol + Windows MCP caveats: `references/browser-tool-detection.md`.
+
+---
+
+## Phase 1b — Service-worker cache-bust (MANDATORY for own apps)
+
+Service workers silently serve stale bundles. A fix that *is* deployed
+appears to "not be deployed" because the SW handed the persona last week's
+JS. This was a real failure mode in wine-cellar-app — burned ~30min of
+verification before we realised. Always cache-bust before the first action.
+
+Skip when `browser_tool = "WebFetch (degraded)"` (no JS context). Skip when
+the URL is a static-hosted page with no service worker (`*.github.io`, etc.).
+Otherwise, **run this before Phase 2**:
+
+```js
+// browser_evaluate
+(async () => {
+  const regs = await navigator.serviceWorker?.getRegistrations() ?? [];
+  await Promise.all(regs.map(r => r.unregister().catch(() => {})));
+  const keys = await caches?.keys() ?? [];
+  await Promise.all(keys.map(k => caches.delete(k).catch(() => {})));
+  return { unregistered: regs.length, cachesDeleted: keys.length };
+})()
+```
+
+Then `browser_navigate({url})` again to force a fresh fetch. If the evaluate
+returns `{unregistered: 0, cachesDeleted: 0}`, the page had no SW — proceed
+without the reload. Log the result one-line:
+`[cache-bust] unregistered <n> SW, cleared <n> caches`.
+
+**Don't** treat a non-zero `cachesDeleted` as a finding — caches are normal.
+The finding-worthy event is when a fix doesn't appear after cache-bust;
+that's a real deploy failure, not a caching artefact.
 
 ---
 
@@ -440,6 +476,126 @@ issues (≥2 occurrences), persistent P0s (via the `persistent_p0s` view).
 Skip silently when Supabase vars are not set.
 
 Full query shapes + output format: `references/session-history.md`.
+
+---
+
+## Phase 7 — Pair Mode (--pair)
+
+Triggered by `--pair "<p1>" "<p2>"` anywhere in `$ARGUMENTS`. Skip Phases
+0b–6c above and follow the flow below.
+
+**Why pair mode exists**: two personas of opposed expertise surface disjoint
+findings — in the wine-cellar-app session that motivated this feature,
+Elena (sommelier) and Martha (newer drinker) overlapped on exactly 1 of
+~12 findings. Solo runs miss half the issues an opposed-expertise pair
+catches. Pair mode formalises that.
+
+### Step P1 — Parse pair arguments
+
+Parse from `$ARGUMENTS`:
+1. **persona_a** — first quoted string after `--pair`
+2. **persona_b** — second quoted string
+3. **url** — URL in remaining args (or `PERSONA_TEST_APP_URL` env)
+4. **focus** — anything after the URL
+
+Required: both personas + url. If missing, output usage and STOP.
+
+### Step P2 — Run persona A end-to-end
+
+Run **Phases 0c → 6c** for persona A as if it were a solo run. Capture:
+- `report_a` (Phase 5 report text)
+- `findings_a` (the structured findings array used in Phase 5)
+- `verdict_a`
+- `session_id_a` (from Phase 6, may be null if memory disabled)
+
+Then close the browser session (`browser_close`) — persona B gets a fresh
+context, including a fresh cache-bust in Phase 1b. **Do not skip the
+cache-bust for persona B** — it's not redundant; the browser context was
+torn down.
+
+### Step P3 — Run persona B end-to-end
+
+Same flow for persona B. Capture `report_b`, `findings_b`, `verdict_b`,
+`session_id_b`.
+
+### Step P4 — Diff the findings
+
+Two findings overlap if **either**:
+- Same `element` selector AND same `severity`, OR
+- Jaccard similarity of `observed` text ≥ 0.6 (token-level after lowercasing
+  + stripping punctuation; ignore stopwords)
+
+Classify each finding into:
+- **CONSENSUS** — overlapping pair from A and B (high signal — both saw it)
+- **A-ONLY** — finding from A with no overlap in B (coverage signal — A's expertise caught it)
+- **B-ONLY** — finding from B with no overlap in A (coverage signal — B's expertise caught it)
+
+### Step P5 — Emit pair report
+
+After both solo reports (printed in full so the reader sees per-persona
+context), append:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  PAIR DIFF — <persona_a> ∥ <persona_b>
+  URL: <url>
+  Focus: <focus or "exploratory">
+  A verdict: <verdict_a>   B verdict: <verdict_b>
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+CONSENSUS (<n>) — both personas saw these
+────────────────────────────────────────────────────
+  [P<n>] <title>
+     A's framing: <observed_a — first 80 chars>
+     B's framing: <observed_b — first 80 chars>
+     Fix: <merged fix or A's if identical>
+
+A-ONLY (<n>) — caught by <persona_a>'s expertise
+────────────────────────────────────────────────────
+  [P<n>] <title> — <observed_a — first 100 chars>
+  ...
+
+B-ONLY (<n>) — caught by <persona_b>'s expertise
+────────────────────────────────────────────────────
+  [P<n>] <title> — <observed_b — first 100 chars>
+  ...
+
+COVERAGE METRIC
+────────────────────────────────────────────────────
+  Overlap rate: <consensus / (consensus + a_only + b_only)>
+  Interpretation:
+    < 0.20  — Strong disjoint coverage. Both personas were the right call.
+    0.20–0.50 — Healthy mix of consensus + coverage.
+    > 0.50 — High overlap. Consider picking more dissimilar personas next time.
+
+OVERALL: <Ship | Needs work | Blocked>
+  Reason: <one sentence — usually driven by max(verdict_a, verdict_b)>
+```
+
+### Step P6 — Skip the secondary debrief
+
+Each solo run already produced a Phase 5b debrief. Don't generate a third
+"pair debrief" — the two debriefs side-by-side are the artefact. Pair mode
+is about finding-level diff, not narrative synthesis.
+
+### Step P7 — Session linkage
+
+When both `session_id_a` and `session_id_b` are non-null (memory enabled),
+record the pairing:
+
+```bash
+node scripts/cross-skill.mjs link-persona-pair --json '{
+  "sessionA": "<session_id_a>",
+  "sessionB": "<session_id_b>",
+  "consensusCount": <n>,
+  "aOnlyCount": <n>,
+  "bOnlyCount": <n>,
+  "overlapRate": <0-1>
+}'
+```
+
+Graceful no-op if the subcommand doesn't exist yet — log one stderr line
+and continue. The pair report on stdout is the authoritative artefact.
 
 ---
 

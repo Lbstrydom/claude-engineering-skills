@@ -79,6 +79,11 @@ export const SKILL_ENTRY_SCRIPTS = Object.freeze({
     cli: 'node scripts/ux-lock.mjs ${input:mode_and_args}',
     summary: 'Generate Playwright e2e specs that lock fixed behaviour or grade a plan.',
   },
+  'click-test': {
+    script: 'click-test.mjs',
+    cli: 'node scripts/click-test.mjs ${input:url} ${input:flags}',
+    summary: 'Structural DOM audit — walk every interactive element and assert semantic-HTML contracts. Complement to /persona-test.',
+  },
   'brainstorm': {
     script: 'brainstorm-round.mjs',
     cli: 'node scripts/brainstorm-round.mjs --topic-stdin ${input:flags}',

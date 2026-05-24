@@ -39,7 +39,7 @@
 
 ## Project Overview
 
-**Purpose**: A bundle of 6 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
+**Purpose**: A bundle of 7 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
 **Runtime**: Node.js (ESM modules, `"type": "module"`)
 **Deployment**: CLI scripts + skill files, invoked by AI coding assistants (Claude Code, Copilot, Cursor, Windsurf)
 **Repo**: Renamed from `claude-audit-loop` to `claude-engineering-skills` (Phase E)
@@ -59,7 +59,8 @@
         ↓
 deploy to Railway / live URL
         ↓
-/persona-test                    → live UX testing as a persona (browser + screenshots)
+/click-test    +    /persona-test  → live verification: structural DOM audit ∥ narrative UX testing
+  (structural)        (narrative)    Run both — disjoint coverage. Pair mode (--pair) for opposed-expertise personas.
         ↓
 /ship                            → commit + push (with UX P0 warning from persona-test)
 ```
@@ -92,9 +93,11 @@ Each skill is a sibling — they share env vars and Supabase stores but have dis
 - **audit-code**: code that was just written (5-pass parallel static analysis + LLM audit + R2+ suppression).
 - **audit-loop**: thin orchestrator dispatching to /audit-plan or /audit-code by input shape.
 - **ux-lock**: code that was just fixed (Playwright e2e regression lock). **Verify mode** (`/ux-lock verify <plan.md>`) grades a plan-frontend plan against its live implementation — each criterion becomes a Playwright test case; results populate `plan_verification_runs` + `plan_verification_items`.
-- **persona-test**: deployed app. Two execution modes:
+- **persona-test**: deployed app, narrative QA. Three execution modes:
   - **Exploratory** (default, MCP-driven): persona walks the app via Playwright MCP, finds UX issues, writes a P0-P3 report + debrief.
+  - **Pair** (`--pair "<p1>" "<p2>" <url>`): runs two opposed-expertise personas back-to-back, diffs findings into CONSENSUS / A-ONLY / B-ONLY buckets. Use when coverage matters more than speed — empirically ~92% disjoint findings.
   - **Consistency mode** (`--mode consistency --canary <name>`, code-driven Playwright): deterministic runner against a canary journey + a `surfaces.json` manifest declaring `data-engine-claim` HTML attributes. Detects cross-step UI/state contradictions (DOM-vs-network-truth, stale-projection, undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright specs. See `docs/consistency-contract.md` for the HTML attribute contract.
+- **click-test**: deployed app, structural DOM audit. Mechanical complement to persona-test — walks every interactive element, asserts semantic-HTML contracts (duplicate IDs, orphan labels, inputs without names, ARIA misuse, heading hierarchy, missing alt, undersized touch targets). Catches issues personas never trigger because there's no narrative reason to notice them. Optional `--with-modals` opens each modal/dropdown and re-scans the live DOM. Cache-busts service workers before scanning.
 - **ship**: packaging and delivery (now includes Step 5.6 candidate promotion when consistency mode is adopted)
 
 ## Browser Tool Setup (persona-test)

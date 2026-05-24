@@ -1,5 +1,62 @@
 # Project Status Log
 
+## 2026-05-24 — New /click-test skill + /persona-test enhancements (SW cache-bust, --pair mode)
+
+### Changes
+
+**New skill `/click-test`** ([skills/click-test/SKILL.md](skills/click-test/SKILL.md))
+- Structural DOM audit complementing /persona-test. Walks every interactive element on each route and asserts 13 semantic-HTML contracts (duplicate IDs, orphan labels, inputs/buttons without accessible names, ARIA misuse, heading skips, missing alt, undersized touch targets, positive tabindex).
+- Optional `--with-modals` opens each modal/dropdown trigger and re-scans the live DOM — catches duplicate IDs and orphan labels that only exist while modals are mounted (the class of bugs persona-test can't reach).
+- Pre-flight SW cache-bust gated to own-app hostnames (localhost / `*.railway.app` / `*.vercel.app` / `*.netlify.app` / `*.local`); external URLs require explicit `--force-cache-bust` to avoid clearing operator state.
+- Run contract captured in report (viewport, ready-selector, cache-bust mode); per-route `coverageStatus` distinguishes `scanned`/`auth-required`/`navigation-error`/`readiness-timeout`/`scanner-error`.
+- Verdict precedence (6 buckets) explicitly handles `Broken+Incomplete` and `Has issues+Incomplete` so findings are never masked by coverage gaps.
+- 8 concerns deferred to "Out of Scope (v2)" with rationale (state-changing trigger classifier extension, shadow-DOM/iframe traversal, browser-side severity re-derivation, etc.).
+- Scanner ([references/dom-scanner.md](skills/click-test/references/dom-scanner.md)) returns canonical `ClickTestScanResult` object with `elementsScanned` / `interactiveElementsScanned` / `shadowGapCount` / `iframeGapCount` metrics. Region-scoped `duplicate-aria-label` rule reduces FP rate on grid/card layouts.
+
+**`/persona-test` enhancements** ([skills/persona-test/SKILL.md](skills/persona-test/SKILL.md))
+- **Phase 1b** — mandatory SW cache-bust (with `typeof`-guarded script for non-secure contexts). Wine-cellar-app failure mode is now eliminated for any browser-driven persona session.
+- **Phase 7 — Pair mode** (`--pair "<p1>" "<p2>"`). Runs two opposed-expertise personas back-to-back, diffs findings into CONSENSUS / A-ONLY / B-ONLY using Jaccard token overlap on `observed` text. Emits overlap-rate metric (<0.20 = strong disjoint coverage signal).
+- Frontmatter usage block updated to advertise pair mode.
+
+**Registry + docs**
+- [scripts/lib/install/copilot-prompts.mjs](scripts/lib/install/copilot-prompts.mjs): added `click-test` entry to `SKILL_ENTRY_SCRIPTS` so `.github/prompts/click-test.prompt.md` shim generates.
+- [AGENTS.md](AGENTS.md): skill count 6→7, skill chain diagram now shows `/click-test ∥ /persona-test` as parallel live-verification surfaces, persona-test entry gained Pair mode description.
+
+**Audit trail** (extensive — 5 audit rounds total)
+- GPT R1 → R2 → R3: HIGH count 7→3→5. Stopped per rigor-pressure rule. Quick fixes for R3-H1/H2/H3 (route default for path-prefix base, `--viewport` flag, coverage gaps gate verdict). R3-H4/H5 deferred to "Out of Scope".
+- Gemini R1: 4 concerns (state re-init, metric aggregation, verdict logic hole, redact API ref) — all fixed.
+- Gemini R2: 3 concerns (OAuth redirect detection, metric double-counting, caches ReferenceError) — all fixed. Exceeded protocol's 2-round cap by 1 round because findings were concrete bugs, not rigor pressure.
+
+### Files Affected
+- [skills/click-test/SKILL.md](skills/click-test/SKILL.md) — new (~360 lines)
+- [skills/click-test/references/dom-scanner.md](skills/click-test/references/dom-scanner.md) — new (~250 lines including the `browser_evaluate` scanner JS)
+- [skills/persona-test/SKILL.md](skills/persona-test/SKILL.md) — added Phase 1b + Phase 7 (~156 line diff)
+- [.claude/skills/click-test/](.claude/skills/click-test/) — generated mirror
+- [.claude/skills/persona-test/SKILL.md](.claude/skills/persona-test/SKILL.md) — regenerated mirror
+- [.github/prompts/click-test.prompt.md](.github/prompts/click-test.prompt.md) — Copilot shim
+- [scripts/lib/install/copilot-prompts.mjs](scripts/lib/install/copilot-prompts.mjs) — registry entry
+- [AGENTS.md](AGENTS.md) — skill chain + skill list updates
+- [dashboard/index.html](dashboard/index.html) — auto-rebuilt during `npm run sync`
+
+### Decisions Made
+- **Persistence to cross-skill store deferred to v2.** `record-click-test` subcommand doesn't exist yet; declaring it as out-of-scope avoids shipping a dead integration path. v1 ships authoritatively from the local Phase 6 report.
+- **Naming pair `/click-test` + `/persona-test`** chosen over alternatives (`/click-audit`, `/dom-test`, `/ui-audit`) for parallel `-test` suffix and clear "click vs persona" mnemonic.
+- **Exceed Gemini 2-round cap when findings are concrete bugs** — user confirmed this judgment; new feedback memory `[[rigor-cap-genuine-bugs-exception]]` captures the rule.
+- **Shadow DOM / iframe traversal deferred to v2** — feasible (recursive descent into `el.shadowRoot`, `iframe.contentDocument`) but not load-bearing for v1. Counts always populated as `shadowGapCount`/`iframeGapCount` so verdict can flag the coverage gap.
+
+### Memories Saved
+- `feedback_sw_cache_bust_before_verify.md` — clear SW + caches before suspecting deploy issues
+- `feedback_reverify_fix_on_live_env.md` — passing tests ≠ landed fix
+- `feedback_click_test_complements_persona_test.md` — structural vs narrative coverage
+- `feedback_rigor_cap_genuine_bugs_exception.md` — when to exceed audit-loop round caps
+
+### Deployment
+- `npm run skills:regenerate` → 4 writes (mirror created)
+- `npm run skills:check` → 13 passed, 0 failed
+- `npm run sync` → click-test deployed to ai-organiser + wine-cellar-app (.claude/skills/click-test/ + dom-scanner.md present in both)
+
+---
+
 ## 2026-05-23 — Pipeline liveness + canonical-path enforcement (WS-LIVE + WS-CANON)
 
 Implements [docs/plans/liveness-and-canonical-paths.md](docs/plans/liveness-and-canonical-paths.md). Two pre-existing fragilities that had been recurring HIGH findings across multiple audit rounds are now retired:
