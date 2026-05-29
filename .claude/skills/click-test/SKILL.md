@@ -14,14 +14,19 @@ description: |
   "accessibility audit", "duplicate ID check", "walk every element",
   "audit the DOM", "structural QA", "/click-test".
   Usage:
-    /click-test <url>                                         — scan the URL's initial render
+    /click-test <url>                                         — scan the URL's initial render (default device: desktop)
     /click-test <url> --routes "/a,/b,/c"                     — scan multiple routes
     /click-test <url> --with-modals                           — also open + scan each modal/dropdown
     /click-test <url> --scope a11y|forms|ids|all              — focus the assertion set (default: all)
+    /click-test <url> --device <preset>                       — run in a specific device preset
+    /click-test <url> --devices "<p1>,<p2>,..."               — matrix mode: run in each preset, merge findings
+  Device presets: desktop (default) | desktop-large | tablet | mobile | mobile-small
   Examples:
     /click-test http://localhost:3000
     /click-test https://myapp.railway.app --routes "/,/cellar,/admin"
     /click-test http://localhost:3000 --with-modals --scope a11y
+    /click-test https://myapp.railway.app --device mobile                            — mobile only
+    /click-test https://myapp.railway.app --devices "desktop,mobile" --with-modals   — cross-device coverage
 ---
 
 # Click-Test — Structural DOM Audit
@@ -66,9 +71,27 @@ Parse `$ARGUMENTS`:
 6. **ready_timeout_ms** — `--ready-timeout 8000` (default 8000).
 7. **force_cache_bust** — `--force-cache-bust` flag (default: off, see Phase 2).
 8. **max_triggers_per_route** — `--max-triggers 50` (default 50, Phase 4b only).
-9. **viewport** — `--viewport <W>x<H>` (default `1280x720`). Width and height
-   must be integers in `[320, 4096]`. Applied via `browser_resize` before
-   the first `browser_navigate`. Invalid format → fail with usage.
+9. **device / viewport** — three mutually-exclusive ways to pick the viewport
+   (and adjacent emulation flags). Specify at most one; supplying two → fail
+   with usage:
+   - `--device <preset>` — one of `desktop`, `desktop-large`, `tablet`,
+     `mobile`, `mobile-small` (canonical registry:
+     [`scripts/lib/device-presets.mjs`](../../scripts/lib/device-presets.mjs)).
+     Sets viewport + `isMobile` + `hasTouch` flags. Unknown name → fail.
+   - `--devices "<p1>,<p2>,...">` — **matrix mode**. Each preset runs the full
+     route crawl independently; findings are tagged with `device` and merged.
+     Cost is multiplicative — be explicit, this is opt-in.
+   - `--viewport <W>x<H>` — legacy direct viewport (W and H in `[320, 4096]`).
+     Synthesises a `custom` device record with `isMobile/hasTouch` inferred
+     from width (`<768 → mobile/touch`). Kept for back-compat; prefer `--device`.
+   - None of the above → default device = `desktop` (1280×720). Identical to
+     today's behaviour for callers passing nothing.
+
+   The selected device is applied via a single `browser_resize` call before
+   the first `browser_navigate` of each route (matrix mode resizes once per
+   device-pass). UA emulation, real touch events, and DPR scaling are NOT
+   provided — Playwright MCP doesn't expose context-level launch options. For
+   full emulation, use `/persona-test --mode consistency` (code-driven Playwright).
 
 Required: `url`. If missing, output usage and STOP. Unknown flags → fail
 with usage. Duplicate flags → last wins, log a stderr warning.
@@ -83,7 +106,7 @@ compared:
 
 | Field | Default | Override |
 |---|---|---|
-| Viewport | 1280×720 | `--viewport 390x844` (single MCP `browser_resize`) |
+| Device | `desktop` (1280×720, touch=false) | `--device <preset>` / `--devices "<list>"` (matrix) / `--viewport WxH` (legacy) |
 | Browser | whatever the MCP tool provides (Playwright MCP = Chromium) | — |
 | Locale / timezone | tool default (do NOT randomise) | — |
 | Auth | none — public surface only | Out of scope for v1; see "Auth-gated routes" below |
@@ -176,6 +199,58 @@ in the run contract for the Phase 6 report.
 
 ## Phase 3 — Crawl Routes
 
+### Get the device-pass contract (MANDATORY; do not skip)
+
+Before any browser work, call:
+
+```bash
+node scripts/lib/device-presets.mjs prep-matrix \
+  [--device <preset>] [--devices "<list>"] [--viewport <WxH>]
+```
+
+(Pass the same flag your `$ARGUMENTS` contained — none if neither flag
+was supplied; defaults to a single `desktop` pass.)
+
+The CLI returns:
+
+```json
+{
+  "kind": "click-test-prep",
+  "version": 1,
+  "matrixMode": true|false,
+  "totalPasses": 1 | N,
+  "passes": [
+    {
+      "passIndex": 0,
+      "device": { "name": "desktop", "viewport": {"width": 1280, "height": 720}, ... },
+      "expectedFirstMcpCall": { "tool": "browser_resize", "args": {"width": 1280, "height": 720} },
+      "logLine": "[device-profile] explicit → desktop (1280x720, touch=false) [pass 1/2]"
+    },
+    ...
+  ]
+}
+```
+
+The LLM does NOT pick device order, dimensions, or pass count — it walks
+`passes` in array order, executing each `expectedFirstMcpCall` verbatim.
+Mutual-exclusion conflicts (e.g. `--device` + `--devices`) cause the CLI
+to exit non-zero with the error on stderr; surface that, do not proceed.
+
+### Device pass loop
+
+For each `pass` in `contract.passes` (in array order):
+
+1. Echo `pass.logLine` to stderr.
+2. Call `browser_resize` with `pass.expectedFirstMcpCall.args` verbatim
+   — once per device-pass, BEFORE the first navigate.
+3. Tag every finding from this pass with `device: pass.device.name`.
+4. Run the per-route loop below.
+
+Cache-bust (Phase 2) runs **once at session start**, not per device-pass —
+service-worker state is global to the browser context.
+
+### Per-route loop (within a device pass)
+
 For each route in `routes`:
 
 1. `browser_navigate({url: new URL(route, base).href})` — never string-concat
@@ -195,7 +270,7 @@ For each route in `routes`:
    - `skipped-external-anchor` — route resolved to a different origin
 4. If state is `scanned`, run **Phase 4 — Static scan** (one pass per settled DOM state — see Reminders)
 5. If `with_modals` AND state is `scanned`, run **Phase 4b — Dynamic-surface scan**
-6. Record findings tagged with `{route, coverageStatus, via}`; record per-route
+6. Record findings tagged with `{device, route, coverageStatus, via}`; record per-route
    element counts and dynamic-surface counts in the run metrics (Phase 4 schema).
 
 ---
@@ -219,10 +294,12 @@ ClickTestFinding = {
   selector: string.max(500),
   snippet: string.max(200),  // outerHTML truncated; redact before persist
   detail: string.max(500),
+  device: string,            // preset name ("desktop", "mobile", …) or "custom"
 }
 ClickTestScanResult = {
   schemaVersion: literal(1),
   routeUrl: string,                  // the final navigated URL
+  device: string,                    // matches each finding's device tag
   elementsScanned: number,           // document.querySelectorAll('*').length at scan time
   interactiveElementsScanned: number, // count of button/a/input/select/textarea/[role=button|link]
   findings: ClickTestFinding[].max(999),  // reject >999 — flags scanner-error
@@ -230,6 +307,21 @@ ClickTestScanResult = {
   iframeGapCount: number,            // iframes not traversed
 }
 ```
+
+**Device-pass aggregation** (when `--devices` produces multiple device passes):
+each finding's `device` field is set by the runner from the active pass — the
+scanner does not need to know. Findings dedupe by `{device, route, via, kind, selector}` —
+the same duplicate-id on `mobile` AND `desktop` is reported twice (correctly:
+it's two regressions that may have different fix sites if responsive CSS
+hides one). The Phase 6 report's PER-DEVICE COVERAGE table surfaces which
+device flagged which.
+
+`small-touch-target` deserves special note: this rule is **device-sensitive**
+by design. A 24×24 button is acceptable on desktop with a mouse but fails the
+44×44 touch-target minimum on mobile. The scanner emits it on every pass, but
+the report should downgrade desktop-pass `small-touch-target` findings by one
+severity (P2 → P3) when both desktop and mobile passes ran — the mobile pass
+is the authoritative read.
 
 If validation fails, classify the route as `coverageStatus: "scanner-error"`
 and skip its findings — never persist or report unvalidated output.
@@ -241,7 +333,7 @@ scan's `elementsScanned` / `interactiveElementsScanned` as the route totals
 take the **max** observed across passes (NOT sum — each modal pass re-scans
 the whole DOM, so the static gaps would be double-counted). The interpretation
 is "the worst coverage gap seen on this route", which is what the verdict
-cares about. `findings` are unioned and deduped by `{route, via, kind, selector}`.
+cares about. `findings` are unioned and deduped by `{device, route, via, kind, selector}`.
 Each finding's `via` field records its origin (`static` or `modal:<accessible-name>`).
 
 **Redaction**: before printing or persisting any `snippet`, run it through
@@ -380,14 +472,16 @@ load-order race) is involved; flag that meta-finding itself.
   CLICK-TEST REPORT
   URL: <base>
   Routes: <list>
+  Devices: <name(s)>   (e.g. "mobile (390x844)" or "desktop, mobile" for matrix)
   Scope: <scope>   Modals: <on|off>   Cache-bust: <own-app|forced|skipped-external|n/a>
-  Viewport: <WxH>   Ready-selector: <css>   Ready-timeout: <ms>
-  Tool: <browser_tool> — <N> elements scanned — <duration>
+  Ready-selector: <css>   Ready-timeout: <ms>
+  Tool: <browser_tool> — <N> elements scanned (across all device passes) — <duration>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 FINDINGS (<total>)
 ────────────────────────────────────────────────────
   [P0] duplicate-id "wine-card-3" (4 occurrences)
+     Device:   mobile
      Route:    /cellar
      Via:      static
      Selector: #wine-card-3
@@ -396,6 +490,7 @@ FINDINGS (<total>)
      Snippet:  <div id="wine-card-3" class="..."> [redacted if needed]
 
   [P0] input-no-name <input type="text">
+     Device:   mobile
      Route:    /cellar
      Via:      modal:"Add bottle"
      Selector: form.add-bottle > input[type=text]:nth-child(2)
@@ -405,17 +500,32 @@ FINDINGS (<total>)
 
   ...
 
-ROUTE COVERAGE
+ROUTE COVERAGE  (single-device run)
 ────────────────────────────────────────────────────
   /          — scanned          — 47 elements — 0 findings
   /cellar    — scanned          — 312 elements — 8 findings (P0:2, P1:1, P2:5)
   /admin     — auth-required    — 0 elements — skipped (login wall)
   /reports   — readiness-timeout — 0 elements — skipped (ready-selector never matched)
 
+ROUTE COVERAGE  (per-device matrix — only when --devices used)
+────────────────────────────────────────────────────
+  device=desktop (1280x720)
+    /          — scanned — 47 elements — 0 findings
+    /cellar    — scanned — 312 elements — 4 findings (P0:1, P2:3)
+  device=mobile (390x844)
+    /          — scanned — 47 elements — 1 finding (P2:1 small-touch-target)
+    /cellar    — scanned — 308 elements — 9 findings (P0:2, P1:2, P2:5)
+
+  CROSS-DEVICE
+    Shared (both):     4 findings — duplicate-id × 2, orphan-label × 2
+    Desktop-only:      0
+    Mobile-only:       6 findings — small-touch-target × 4, input-no-name × 2
+    Interpretation: 6 issues only surface on mobile — typical responsive-CSS gap.
+
 DYNAMIC SURFACES (--with-modals)
 ────────────────────────────────────────────────────
-  /cellar: 12 triggers — 8 scanned, 2 skipped-destructive, 2 modal-stuck
-  /admin:  — (route skipped)
+  device=mobile  /cellar: 12 triggers — 8 scanned, 2 skipped-destructive, 2 modal-stuck
+  device=mobile  /admin:  — (route skipped)
 
 OVERALL: <Broken | Broken+Incomplete | Has issues | Incomplete | Clean>
   Reason: <one sentence>
@@ -543,10 +653,13 @@ that doesn't exist yet (this is a skill spec, not a CLI).
 - **Findings are deterministic** — same URL + commit = same findings. If
   they vary, something non-deterministic (load order, A/B test, random ID)
   is involved — flag that as a finding itself.
-- **One scanner pass per settled DOM state** — one static pass per route,
-  plus one pass per successfully opened dynamic surface in `--with-modals` mode.
-  Aggregate findings in JS using `{route, via, kind, selector}` as the dedup key
-  so a finding present in both static + modal states is reported once.
+- **One scanner pass per settled DOM state** — one static pass per route per
+  device, plus one pass per successfully opened dynamic surface in
+  `--with-modals` mode. Aggregate findings in JS using
+  `{device, route, via, kind, selector}` as the dedup key so a finding
+  present in both static + modal states (on the same device) is reported
+  once, but the same finding on two different devices is reported twice
+  (responsive CSS can cause a duplicate-id to surface on only one viewport).
 
 ---
 

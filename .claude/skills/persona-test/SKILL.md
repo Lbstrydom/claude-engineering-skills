@@ -12,16 +12,18 @@ description: |
   "test the site as", "browse the app as", "QA as", "list personas", "add persona",
   "who are my personas", "which persona should test".
   Usage:
-    /persona-test list [url]                                        — show all personas for an app
-    /persona-test add "<name>" "<description>" <url> [app name]     — register a new persona
-    /persona-test "<persona or name>" <url> [focus area]            — run an exploratory test session (MCP-driven)
-    /persona-test --pair "<p1>" "<p2>" <url> [focus area]           — run two opposed personas back-to-back, diff findings
-    /persona-test --mode consistency --canary <name> <url>          — run a deterministic consistency-mode canary (code-driven Playwright)
+    /persona-test list [url]                                                       — show all personas for an app
+    /persona-test add "<name>" "<description>" <url> [app name]                    — register a new persona
+    /persona-test "<persona or name>" <url> [focus] [--device <preset>]            — run an exploratory test (device auto-resolved from persona description)
+    /persona-test --pair "<p1>" "<p2>" <url> [focus] [--device <preset>]           — pair mode (--device overrides both personas)
+    /persona-test --mode consistency --canary <name> <url>                         — deterministic consistency canary (code-driven Playwright)
+  Device presets: desktop (default fallback) | desktop-large | tablet | mobile | mobile-small
   Examples:
     /persona-test list https://myapp.railway.app
     /persona-test add "Pieter" "wine enthusiast, 40s, drinks daily, mobile-first" https://myapp.railway.app "Wine Cellar App"
     /persona-test "Pieter" https://myapp.railway.app "adding a bottle"
     /persona-test "first-time user on mobile" https://myapp.railway.app
+    /persona-test "Pieter" https://myapp.railway.app --device mobile-small      — override resolved device
     /persona-test --pair "Elena (sommelier)" "Martha (newer drinker)" https://myapp.railway.app "browsing the cellar"
     /persona-test --mode consistency --canary oliver-infeasible-reorg http://localhost:3000
 ---
@@ -117,7 +119,10 @@ Report success with `personaId`. STOP.
 Parse `$ARGUMENTS`:
 1. **persona_input** — first quoted string or first unparsed token
 2. **url** — URL in the remaining args (or `PERSONA_TEST_APP_URL` env)
-3. **focus** — any remaining text after the URL
+3. **focus** — any remaining text after the URL (strip out flag tokens before assigning)
+4. **device_override** — value of `--device <preset>` if present (must be one of:
+   `desktop`, `desktop-large`, `tablet`, `mobile`, `mobile-small`). Unknown
+   preset → fail with usage. Drives Phase 1a's explicit-override branch.
 
 Required: `persona_input` + `url`. If either is missing, output usage and STOP.
 
@@ -182,6 +187,92 @@ Set `browser_tool = "Playwright MCP" | "BrightData" | "WebFetch (degraded)"`
 and stick with it for the whole session.
 
 Full tier-fallback protocol + Windows MCP caveats: `references/browser-tool-detection.md`.
+
+---
+
+## Phase 1a — Device Profile Resolution (MANDATORY)
+
+A persona who describes themselves as "mobile-first" or "tablet user" must
+be tested in that viewport — otherwise responsive bugs, mobile-only CTAs,
+narrow-width overflow, and touch-target sizing are silently invisible.
+The resolver lives at [`scripts/lib/device-presets.mjs`](../../scripts/lib/device-presets.mjs)
+— it keyword-matches the persona's description against five presets
+(desktop, desktop-large, tablet, mobile, mobile-small) and falls back to
+desktop when no cue is present.
+
+### Step 1a.1 — Get the device contract (MANDATORY; do not skip)
+
+Skip ONLY when `browser_tool = "WebFetch (degraded)"` (no viewport concept).
+Otherwise, this is non-negotiable — the LLM does not pick the device.
+
+Run from the consumer-repo root:
+
+```bash
+node scripts/lib/device-presets.mjs prep "<persona.description or ad-hoc persona_input>" [--device <override-preset>]
+```
+
+Pass `--device <preset>` only when `$ARGUMENTS` contained an explicit
+`--device` flag (Phase 0b item 4). The CLI returns a JSON contract:
+
+```json
+{
+  "kind": "persona-test-prep",
+  "version": 1,
+  "device": { "name": "mobile", "viewport": {"width": 390, "height": 844}, "isMobile": true, "hasTouch": true, ... },
+  "expectedFirstMcpCall": { "tool": "browser_resize", "args": {"width": 390, "height": 844} },
+  "personaMentalModelTags": ["mobile-viewport", "thumb-reach", ...],
+  "logLine": "[device-profile] mobile-first → mobile (390x844, touch=true)"
+}
+```
+
+**Echo the `logLine` verbatim to stderr.** This is the audit trail — if
+the device choice is later questioned, the line in the transcript proves
+which preset was applied.
+
+### Step 1a.2 — Execute `expectedFirstMcpCall` verbatim
+
+Call `browser_resize` with the args from `expectedFirstMcpCall.args` —
+**before Phase 1b's first `browser_navigate`**. Do not modify the args;
+do not pick your own dimensions. If the contract said `{width: 390,
+height: 844}`, that's what you call.
+
+Resizing mid-session does not retroactively change media queries that
+fired on the initial render — order matters.
+
+### Step 1a.3 — Apply `personaMentalModelTags` to Phase 2
+
+When `device.isMobile === true`, the contract's `personaMentalModelTags`
+array carries implicit constraints (`thumb-reach`, `one-handed`,
+`distracted-attention`, `slow-network-assumption`). Apply these to
+Phase 2's persona mental model **silently** — they shape Reflect
+scoring (downgrade desktop-hover findings, upgrade thumb-reach
+findings), but do NOT leak into Phase 5b's first-person persona voice.
+A real mobile user doesn't narrate "I'm on mobile so I…" — they just
+behave that way. The device is a runner-side fact, not persona dialogue.
+
+### Limits — what viewport-only emulation does NOT cover
+
+`browser_resize` changes the visual viewport. It does **not**:
+
+- Inject a mobile user-agent at the network layer (server-side UA
+  sniffing still sees Chromium desktop).
+- Fire real touch events — synthesised clicks remain mouse events;
+  touch-only handlers (`touchstart` without `click` fallback) won't trigger.
+- Change `navigator.maxTouchPoints` or pointer-type media queries.
+- Apply device-pixel-ratio scaling that affects `@media (resolution: ...)`.
+
+For full emulation — proper touch events, UA injection, DPR-correct
+rendering, geolocation, network throttling — use `--mode consistency`
+(code-driven Playwright with launch context). The exploratory loop
+trades fidelity for narrative coverage; if a bug depends on real touch
+events or UA-sniffed server responses, write a consistency canary.
+
+### Pair-mode interaction
+
+In `--pair` mode (Phase 7), each persona gets its own device resolution.
+Persona A may run in mobile while persona B runs in desktop — that's
+intentional cross-device coverage. The pair report (Step P5) records
+both devices in the header.
 
 ---
 
@@ -386,6 +477,7 @@ confidence descending:
   Persona: <persona>
   URL: <url>
   Focus: <focus or "exploratory">
+  Device: <preset_name> <WxH> (touch=<bool>, resolved-from=<description|explicit|fallback>)
   Tool: <browser_tool> — <N> steps — <duration>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -540,6 +632,7 @@ context), append:
   PAIR DIFF — <persona_a> ∥ <persona_b>
   URL: <url>
   Focus: <focus or "exploratory">
+  A device: <preset_a> <WxH>   B device: <preset_b> <WxH>
   A verdict: <verdict_a>   B verdict: <verdict_b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

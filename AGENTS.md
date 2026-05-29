@@ -163,6 +163,7 @@ scripts/
 │   ├── findings-tasks.mjs  # Remediation task CRUD + persistence
 │   ├── vcs.mjs             # Structured VCS helpers — closed VcsErrorCode enum, DiffShape contract, exitCodeFor()
 │   ├── sensitive-paths.mjs # Canonical path classifier (sensitive | generatedNoise | null) + state-aware diff filter + redacted skip log
+│   ├── device-presets.mjs  # Shared device-emulation registry + resolver for /persona-test + /click-test (prep + prep-matrix CLI emits runner-enforcement contracts)
 │   └── config.mjs          # Centralized validated config (all env var reads)
 ├── shared.mjs              # Barrel re-export — backwards-compatible, imports from lib/
 ├── openai-audit.mjs        # GPT-5.4 multi-pass auditor (plan, code, rebuttal modes) — links audit_runs to commit_sha + plan_id

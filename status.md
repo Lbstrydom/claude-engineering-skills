@@ -1,5 +1,61 @@
 # Project Status Log
 
+## 2026-05-29 — Device-profile emulation for /persona-test + /click-test (+ runner enforcement)
+
+### Changes
+
+**New shared module** ([scripts/lib/device-presets.mjs](scripts/lib/device-presets.mjs))
+- Five device presets: `desktop` (default), `desktop-large`, `tablet`, `mobile` (390×844 iPhone 13/14), `mobile-small` (360×640 Pixel-baseline).
+- `resolveDevicePreset(description)` — keyword-match resolver. Patterns ordered most-specific-first (`mobile-small` before `mobile`); avoids overbroad cues like "power user" (a power user can be on mobile). Falls back to `desktop` when no cue.
+- `parseViewportFlag("WxH")` / `parseDevicesFlag("a,b")` — input helpers for the legacy + matrix flag paths.
+- CLI: `list` / `resolve` / `get` / `prep` / `prep-matrix`. The last two are the runner-enforcement contracts (below).
+
+**`/persona-test`** — new Phase 1a "Device Profile Resolution" ([skills/persona-test/SKILL.md](skills/persona-test/SKILL.md))
+- Inserts BEFORE Phase 1b (cache-bust). Mandates calling `device-presets.mjs prep "<description>" [--device <override>]` and executing the returned `expectedFirstMcpCall` (a `browser_resize` invocation) verbatim — LLM does not pick dimensions.
+- Mental-model tags (`thumb-reach`, `one-handed`, …) injected silently into Phase 2 when `isMobile=true`; never leaked into Phase 5b persona-voice debrief.
+- Report (Phase 5) + pair-mode report (Step P5) gain a `Device:` header line. Pair mode resolves each persona's device independently — intentional cross-device coverage.
+- New `--device <preset>` flag overrides description-based resolution.
+
+**`/click-test`** — `--device` / `--devices` matrix mode ([skills/click-test/SKILL.md](skills/click-test/SKILL.md))
+- Phase 0 gains `--device <preset>` (single pass) and `--devices "<list>"` (matrix mode, multiplicative cost, opt-in only). Mutually exclusive with each other AND with legacy `--viewport WxH`.
+- Phase 3 mandates calling `device-presets.mjs prep-matrix` first and walking the returned `passes` array — runner-enforced ordering, no LLM judgement on device sequence.
+- Finding schema gains `device: string`. Dedup key becomes `{device, route, via, kind, selector}` — same duplicate-id on mobile + desktop is two regressions (responsive CSS can hide one), reported twice.
+- Report adds PER-DEVICE COVERAGE table + CROSS-DEVICE diff (Shared / Desktop-only / Mobile-only). `small-touch-target` desktop findings auto-downgrade when mobile pass also ran (mobile is authoritative).
+
+**Runner enforcement** (`prep` + `prep-matrix` CLI helpers)
+- Both skills now MANDATE invoking the prep CLI as their first device-related step. The CLI returns a typed contract (`{kind, version, device, expectedFirstMcpCall, logLine, ...}`) the LLM consumes verbatim. Removes the failure mode where the LLM forgets to resize or picks the wrong dimensions for "mobile-first" personas.
+- Mutual-exclusion violations (e.g. `--device` + `--devices`) cause non-zero exit on stderr — skill instructions surface and stop, never proceed silently.
+
+**Tests** ([tests/device-presets.test.mjs](tests/device-presets.test.mjs))
+- 48 tests across 8 suites: registry shape, resolver patterns + determinism, getPreset / parseViewportFlag / parseDevicesFlag input helpers, `prepPersonaTest` contract shape + override precedence + mental-model tagging, `prepClickTest` matrix expansion + mutual-exclusion errors.
+- Full suite: 3199 tests, 3181 pass, 0 fail (18 pre-existing skips).
+
+**Implementation brief** ([docs/plans/device-profile-emulation.md](docs/plans/device-profile-emulation.md))
+- Portable plan document for porting the same patch to other repos (e.g. work codebases that use a different skill-bundle structure). Covers motivation, architecture, acceptance criteria, implementation order (~3-4 hours), back-compat guarantees, trade-offs worth flagging in code review.
+
+### Files Affected
+- `scripts/lib/device-presets.mjs` — new shared module + CLI
+- `tests/device-presets.test.mjs` — new test suite (48 tests)
+- `skills/persona-test/SKILL.md` — Phase 1a inserted; usage + Phase 0b + report headers updated
+- `skills/click-test/SKILL.md` — Phase 0 args + Phase 3 device-pass loop + Phase 4 finding shape + Phase 6 report all updated
+- `.claude/skills/persona-test/SKILL.md`, `.claude/skills/click-test/SKILL.md` — regenerated mirrors
+- `AGENTS.md` — added `device-presets.mjs` to scripts/lib/ tree
+- `docs/plans/device-profile-emulation.md` — new portable implementation brief
+
+### Decisions Made
+- **No DB schema change.** Device resolution runs from description text at session start (deterministic for stable descriptions). Persistence on the persona row is deferred — revisit only after we see description-drift cause silent device shifts.
+- **Viewport-only emulation, not full device emulation.** Playwright MCP exposes `browser_resize`, not context-level launch options. UA / real touch events / DPR-correct rendering require code-driven Playwright — that's what `--mode consistency` already provides. Don't pretend to support what MCP can't deliver.
+- **Runner enforcement via prep CLI, not full LLM-to-runner conversion.** The LLM still drives MCP tool calls; the CLI just emits a structured contract the LLM consumes verbatim. Keeps the skill spec readable, removes the variance in device selection.
+- **`small-touch-target` desktop downgrade when mobile also ran.** Desktop reading is non-authoritative (no touch); mobile is. Avoids spurious P2s on desktop-pass output of matrix runs.
+- **Pre-existing uncommitted changes left untouched** per scope discipline: `dashboard/index.html`, `scripts/setup-postgres.mjs`, `scripts/sync-to-repos.mjs`.
+
+### Next Steps
+- Real-world verification: run `/persona-test` against a registered mobile-first persona (e.g. Pieter on wine-cellar-app); confirm the `[device-profile]` log line + `browser_resize(390,844)` MCP call land in that order.
+- Real-world verification: run `/click-test https://<own-app> --devices "desktop,mobile"`; confirm CROSS-DEVICE section surfaces mobile-only findings (probably `small-touch-target` ×N).
+- If the brief is shared and a work repo ports the patch, capture any resolver-pattern misses they hit (descriptions we should be matching but aren't) and add them to RESOLVER_PATTERNS.
+
+---
+
 ## 2026-05-24 — New /click-test skill + /persona-test enhancements (SW cache-bust, --pair mode)
 
 ### Changes
