@@ -104,6 +104,12 @@ const CORE_ENTRY = [
   // adapter at runtime; no static caller in this repo so the walker
   // doesn't pull it in. Ship explicitly.
   'scripts/lib/persona-test/semantic-compare.mjs',
+  // CLI-invoked from skills/persona-test/SKILL.md Phase 1a and
+  // skills/click-test/SKILL.md Phase 3 as `node scripts/lib/device-presets.mjs
+  // prep|prep-matrix ...` — bash-shelled, not statically imported, so the
+  // walker cannot reach it. Required at runtime for device-profile
+  // emulation (the contracts both SKILL.mds tell the LLM to consume verbatim).
+  'scripts/lib/device-presets.mjs',
 ];
 
 /**
