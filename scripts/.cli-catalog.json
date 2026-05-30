@@ -115,6 +115,14 @@
       "description": "Drift check, JSON output for CI consumption (invoke `node` directly in CI, not via npm, to avoid npm log lines polluting stdout).",
       "category": "diagnostic"
     },
+    "db:check-rls": {
+      "description": "List every public table without Row-Level Security enabled, plus anon/authenticated DML grants on those tables (= practical exposure on Supabase). Exit 0 clean / cloud-off, 1 findings, 2 connectivity error. AUDIT_DB_URL-conditional.",
+      "category": "diagnostic"
+    },
+    "db:check-rls:json": {
+      "description": "RLS check, JSON output for CI consumption (invoke `node` directly in CI, not via npm, to avoid npm log lines polluting stdout).",
+      "category": "diagnostic"
+    },
     "db:migrate": {
       "description": "Apply pending migrations (idempotent; skips already-applied via sha256). Requires AUDIT_DB_URL.",
       "category": "diagnostic"
