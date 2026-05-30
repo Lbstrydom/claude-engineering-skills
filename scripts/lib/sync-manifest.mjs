@@ -65,6 +65,12 @@ export const SyncManifestSchema = z.object({
   branch: z.string().min(1),
   commitSha: z.string().nullable(),
   files: z.record(RelPathSchema, HashStringSchema),
+  // Layout signals which on-disk shape this manifest describes:
+  //  'legacy'   — files live at canonical `scripts/X` paths in the consumer (pre-isolation)
+  //  'isolated' — files live under `scripts/.claude-skills/X` (post-isolation, gitignored)
+  // Optional + defaults to 'legacy' for backwards-compat with manifests
+  // published before the field was added. Strict subset of strings.
+  layout: z.enum(['legacy', 'isolated']).optional().default('legacy'),
 });
 
 export function hashFile(absPath) {
@@ -174,6 +180,7 @@ export function generateManifest(rootDir, files, opts = {}) {
     branch: opts.branch || meta.branch || 'main',
     commitSha: opts.commitSha || meta.commitSha || null,
     files: hashes,
+    layout: opts.layout || 'legacy',
   };
 }
 
@@ -193,7 +200,13 @@ export function writeManifest(rootDir, files, opts = {}) {
       const existing = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
       const existingHashes = existing.files || {};
       const newHashes = manifest.files || {};
-      if (hashesEqual(existingHashes, newHashes)) {
+      const existingLayout = existing.layout || 'legacy';
+      const newLayout = manifest.layout || 'legacy';
+      // Idempotency: skip rewrite only when BOTH the file map AND layout
+      // are identical. A layout transition (legacy→isolated) is a real
+      // semantic change even if no individual file hash moved, so we
+      // must rewrite the manifest to publish the new layout signal.
+      if (existingLayout === newLayout && hashesEqual(existingHashes, newHashes)) {
         return { manifest: existing, path: manifestPath, skipped: true };
       }
     } catch { /* corrupt / unparseable existing — fall through to overwrite */ }

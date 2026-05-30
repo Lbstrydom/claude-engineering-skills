@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-05-23T18:54:26.492Z",
+  "generatedAt": "2026-05-29T07:47:03.005Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "398f06b9875e717b2bf4fd38d04412b795eb1cad",
+  "commitSha": "022ca61eb659826bbcfc60a2c614e92716079632",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -88,6 +88,7 @@
     "scripts/lib/debt-ledger.mjs": "sha256:a41c4916bab2ca909ffce504233d76cc94911048c41b41e66d9970d6c4abb6e7",
     "scripts/lib/debt-memory.mjs": "sha256:b2d2dca1c8f00ac0e0d9ab6109cd6198bbea2c28592c229db336d7ef14c6020d",
     "scripts/lib/debt-review-helpers.mjs": "sha256:d930644c38a3e646b262016bfad9f63f6481b8985b952c6a7b82739af1fb9c3e",
+    "scripts/lib/device-presets.mjs": "sha256:a682f74b2593afd153b3683677065008ddc13a41e623c3fb5f27dc1010c91284",
     "scripts/lib/diff-annotation.mjs": "sha256:b62112a1a5a1b4a710df31c4a1444ac5190d10a9f3211ede1ebf1f9620494ce0",
     "scripts/lib/doc-sections.mjs": "sha256:5ef8cccd28cd5152880ba79cbd2f53a2bdeaee39f7725ffd3c7480c009fa656b",
     "scripts/lib/file-io.mjs": "sha256:02cb9c7c41564bc1c56bd4716e4aec40ed7d0530810eb774079e93f05c538746",
@@ -182,7 +183,7 @@
     "scripts/security-memory/incident-status.mjs": "sha256:3f6bcb37931859307726e55b42e5cb6c47a2a6cbef7c9e5d88d33e0398f1d02c",
     "scripts/security-memory/parse-strategy.mjs": "sha256:0bb7248890b4009ad1b6b2cf07b819ca6a0197ed580b52f7a62a4a122af2b5a7",
     "scripts/security-memory/refresh-incidents.mjs": "sha256:baadae35cd660323b27a805b91d1a9c5b27d23712f1f7c3d24174cdb05074074",
-    "scripts/setup-postgres.mjs": "sha256:62cf04dee8e2db83d26767f35f9109b2602781827f174f4b246b2d53662b7e4c",
+    "scripts/setup-postgres.mjs": "sha256:818ae54adbfacb1e469d71f1db0222ca140b24aeafe699377f8f8df63d5f93dc",
     "scripts/shared.mjs": "sha256:1eb66d3114f9e7412625dd531882ba95ecc4ef08b0fbae47e2468b0cf3718d82",
     "scripts/skills-fit-check.mjs": "sha256:f9dc973161025ff7e8bc678ff81b58d6b6003509197900aa95dec9b5d20543a0",
     "scripts/skills-help.mjs": "sha256:8178a3d205b1e9e678bcc6e5ae8dfd558745aa5ecef36f0fd2c42a85a734fbd3",

@@ -154,8 +154,13 @@ function archMemoryNeighbourhood(topic, opts = {}) {
     k: opts.limit || 10,
   });
   let raw;
+  // Resolve cross-skill.mjs as a sibling of this script (works in source
+  // layout `scripts/cross-skill.mjs` AND consumer layout
+  // `scripts/.claude-skills/cross-skill.mjs` — hardcoding `scripts/...`
+  // would break after consumer-side relocation).
+  const crossSkillPath = fileURLToPath(new URL('./cross-skill.mjs', import.meta.url));
   try {
-    raw = execFileSync('node', ['scripts/cross-skill.mjs', 'get-neighbourhood', '--json', payload], {
+    raw = execFileSync('node', [crossSkillPath, 'get-neighbourhood', '--json', payload], {
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: 15_000,
@@ -381,7 +386,7 @@ async function main() {
 
 // Run main() only when invoked as a script, not when imported by tests.
 // pathToFileURL match handles the Windows file:///C:/... vs unix /... differences.
-import { pathToFileURL } from 'node:url';
+import { pathToFileURL, fileURLToPath } from 'node:url';
 const isMain = import.meta.url === pathToFileURL(process.argv[1] || '').href;
 if (isMain) {
   main().catch(err => {

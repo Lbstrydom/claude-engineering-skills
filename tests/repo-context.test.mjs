@@ -25,8 +25,13 @@ describe('getRepoContext — tiers against the real repo', () => {
 
   it('T1 lists public exports of imported-unchanged modules', () => {
     // repo-context.mjs imports repo-inventory / module-graph / arch-context.
+    // maxTokens lifted from the default to ensure the adjacency_context block
+    // (which is appended AFTER the T0 inventory) survives truncation as the
+    // repo's file count grows. The test checks for content, not budget
+    // behaviour; budget behaviour is exercised separately.
     const r = getRepoContext({
       tier: 'T1', targetPaths: ['scripts/lib/repo-context.mjs'], baseDir: process.cwd(),
+      maxTokens: 100_000,
     });
     assert.equal(r.resolvedTier, 'T1');
     assert.match(r.block, /<adjacency_context/);

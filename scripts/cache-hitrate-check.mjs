@@ -26,8 +26,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import 'dotenv/config';
+import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 
-const AUDIT_DIR = path.resolve(import.meta.dirname, '..', '.audit');
+if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+
+// Resolve `.audit/` via the canonical repo-root finder. This script always
+// lives under a `scripts/` ancestor (in source: `scripts/`; in consumer:
+// `scripts/.claude-skills/`), so findRepoRootFromScript always returns a
+// value. See lib/assert-repo-root.mjs for why a parent-resolve pattern
+// (going UP one level from import.meta.dirname) would break in the
+// consumer-isolated layout — it resolves to `scripts/` or `.claude-skills/`
+// rather than the actual repo root.
+const REPO_ROOT = findRepoRootFromScript(import.meta.url);
+const AUDIT_DIR = path.join(REPO_ROOT, '.audit');
 const args = process.argv.slice(2);
 const JSON_OUT = args.includes('--json');
 // Cutoff: the bugfix commit landed on 2026-05-11. Audits BEFORE this reported

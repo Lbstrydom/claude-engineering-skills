@@ -73,6 +73,7 @@ function renderMarkdownViaShared(drift, threshold, status, identity, clusters) {
 }
 
 async function main() {
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
   await initLearningStore();

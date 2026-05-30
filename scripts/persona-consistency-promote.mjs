@@ -32,6 +32,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 
 import { atomicWriteFileSync } from './lib/file-io.mjs';
@@ -61,11 +62,16 @@ import {
 // read path. promoteRegressionSpec, getRepoIdByUuid, recordShipEvent
 // remain direct imports because the plan didn't explicitly route them
 // through the facade.
+// Resolve cross-skill.mjs as a sibling of this script (source layout:
+// `scripts/cross-skill.mjs`; consumer layout: `scripts/.claude-skills/cross-skill.mjs`).
+// Hardcoding `scripts/...` would break after consumer-side relocation.
+const CROSS_SKILL_PATH = fileURLToPath(new URL('./cross-skill.mjs', import.meta.url));
+
 function callCrossSkill(repoRoot, command, payload) {
   try {
     const out = execFileSync(
       'node',
-      ['scripts/cross-skill.mjs', command, '--json', JSON.stringify(payload)],
+      [CROSS_SKILL_PATH, command, '--json', JSON.stringify(payload)],
       { cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
     return JSON.parse(out.trim());

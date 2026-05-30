@@ -24,6 +24,10 @@ import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
 import { writeManifest } from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
+import { rewriteCommandSurface, buildOwnedSourceTails } from './lib/sync-rewriter.mjs';
+import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
@@ -89,6 +93,10 @@ const CORE_ENTRY = [
   // Walker pulls in the lib/db/ closure (client.mjs / query.mjs / rpc.mjs /
   // errors.mjs) automatically.
   'scripts/setup-postgres.mjs',
+  // Companion diagnostic — list public tables without RLS enabled. Useful
+  // for consumer repos to audit their Supabase project's exposure after a
+  // migration. Same lib/db/ closure as setup-postgres.mjs.
+  'scripts/check-rls.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   // Persona-test consistency mode CLIs (docs/plans/persona-test-consistency-mode.md).
   // Both are user-invoked CLIs; the import-graph walker pulls in their
@@ -142,6 +150,15 @@ const CORE_ASSETS = [
  * migrations ship to consumer repos automatically. Returns an empty
  * array if the directory doesn't exist (graceful — running in a
  * non-canonical repo).
+ *
+ * Important — destination path is `.audit-loop/migrations/<f>` in the
+ * consumer repo, NOT `supabase/migrations/<f>`. This isolates audit-loop
+ * infrastructure migrations from any consumer-app Supabase product
+ * migrations: a careless `supabase db push` from the consumer won't pick
+ * them up and apply them against the wrong Supabase project (see
+ * `reference_supabase_project.md` — audit-loop uses a dedicated project).
+ * The src path remap is handled by the sync loop (search for
+ * `.audit-loop/migrations` in the loop body).
  */
 function syncMigrations() {
   const dir = path.join(SOURCE_ROOT, 'supabase', 'migrations');
@@ -196,6 +213,28 @@ const ARCH_ENTRY = [
   'scripts/lib/arch-intent/adapters/java.mjs',
   'scripts/lib/arch-intent/adapters/python.mjs',
   'scripts/lib/arch-intent/adapters/postgres.mjs',
+];
+
+/**
+ * Sync-isolation infrastructure (Phase 1 of the scripts/.claude-skills/
+ * isolation work). These modules ship to consumers so the verifier and
+ * migration helper exist at the post-hydration path. Without this, the
+ * consumer can't run `sync-isolation-verify` or `remove-legacy-synced`.
+ */
+const SYNC_ISOLATION_ENTRY = [
+  'scripts/lib/sync-path-map.mjs',
+  'scripts/lib/sync-rewriter.mjs',
+  'scripts/lib/sync-gitignore.mjs',
+  // NOTE: sync-inventory.mjs intentionally OMITTED — it imports
+  // consumer-repos.mjs which uses `path.resolve(import.meta.dirname, '..', '..')`
+  // to find the source repo's parent directory. That's source-only logic
+  // (consumers don't have ai-organiser as a sibling). The verifier's
+  // --selfcheck-inventory mode is source-side only and never runs on the
+  // consumer; the runtime gates use buildOwnedSourceTailsFromConsumerManifest
+  // from sync-rewriter.mjs to derive ownership without source-side state.
+  'scripts/lib/sync-isolation-verify.mjs',
+  'scripts/lib/npm-script-enumerator.mjs',
+  'scripts/lib/remove-legacy-synced.mjs',
 ];
 
 /**
@@ -355,7 +394,7 @@ const NON_CODE_FILES = [
  */
 function bundleForRepo(repoName) {
   const entries = [
-    ...CORE_ENTRY, ...LEARNING_ENTRY, ...ARCH_ENTRY,
+    ...CORE_ENTRY, ...LEARNING_ENTRY, ...ARCH_ENTRY, ...SYNC_ISOLATION_ENTRY,
     ...(repoName === 'wine-cellar-app' ? DEBT_ENTRY : []),
   ];
   const { files, unresolved } = resolveBundle(entries, CORE_ASSETS);
@@ -472,63 +511,190 @@ async function main() {
     }
 
     let repoNew = 0, repoUpdated = 0, repoUnchanged = 0, repoErrors = 0;
+    let repoRemaps = 0, repoRewrites = 0, repoGcDeletions = 0;
 
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
 
-    for (const relFile of repo.files) {
-      const srcPath = path.join(SOURCE_ROOT, relFile);
-      const dstPath = path.join(repo.path, relFile);
+    // ── Pre-flight: ownership-aware preflight + gitignore validation ───────
+    // Build ownership set from the source-side inventory. The verifier on the
+    // consumer side derives an equivalent set from the manifest; for sync
+    // itself we use the source paths directly.
+    const ownedSourceTails = buildOwnedSourceTails(repo.files);
+    const rewriteConfig = { ownedSourceTails };
 
-      // Source must exist
+    // Read the consumer's prior manifest BEFORE any write. Used for both
+    // ownership preflight (collision detection) and GC (deletions).
+    const priorManifestPath = path.join(repo.path, LAYOUT_CONSTANTS.MANIFEST_PATH);
+    let priorManifest = null;
+    try {
+      if (fs.existsSync(priorManifestPath)) {
+        priorManifest = JSON.parse(fs.readFileSync(priorManifestPath, 'utf-8'));
+      }
+    } catch { /* corrupt prior manifest — treat as missing */ }
+    const priorLayout = priorManifest?.layout || 'legacy';
+    const priorFiles = priorManifest?.files || {};
+
+    // Pre-flight #1: gitignore managed-block well-formedness. Abort BEFORE
+    // any write if the block is in a malformed state — fail-fast prevents
+    // a half-installed tree paired with stale ignores.
+    const giPath = path.join(repo.path, '.gitignore');
+    let priorGitignore = null;
+    try {
+      priorGitignore = fs.existsSync(giPath) ? fs.readFileSync(giPath, 'utf-8') : null;
+    } catch { priorGitignore = null; }
+    const giPreview = updateManagedBlock(
+      priorGitignore,
+      [LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR + '/'],
+    );
+    if (giPreview.action === 'abort') {
+      console.log(`  ${R}ABORT${X}  .gitignore preflight: ${giPreview.error}`);
+      totalErrors++;
+      console.log('');
+      continue;
+    }
+
+    // Pre-flight #2: ownership scan. For each destination we intend to write
+    // OR delete, ensure no foreign file is at that destination. Foreign =
+    // exists on disk AND not present in the prior manifest under any layout
+    // (legacy or isolated).
+    const intendedWrites = new Map(); // dstRel → srcRel
+    for (const srcRel of repo.files) {
+      const dstRel = sourceRelToDestRel(srcRel);
+      intendedWrites.set(dstRel, srcRel);
+    }
+    const inProgressJournalPath = path.join(repo.path, LAYOUT_CONSTANTS.IN_PROGRESS_JOURNAL);
+    let journalDestinations = new Set();
+    if (fs.existsSync(inProgressJournalPath)) {
+      try {
+        const journal = JSON.parse(fs.readFileSync(inProgressJournalPath, 'utf-8'));
+        if (Array.isArray(journal.destinations)) {
+          for (const d of journal.destinations) journalDestinations.add(d);
+        }
+      } catch { /* malformed journal — treat as empty */ }
+    }
+    const collisions = [];
+    for (const [dstRel] of intendedWrites) {
+      const dstAbsPath = path.join(repo.path, dstRel);
+      if (!fs.existsSync(dstAbsPath)) continue;
+      // Layout-aware ownership lookup: check both the destination key
+      // (isolated layout) and the source-derived legacy key.
+      const ownedAsIsolated = Object.prototype.hasOwnProperty.call(priorFiles, dstRel);
+      const ownedAsLegacyMap = priorLayout === 'legacy' &&
+        Object.prototype.hasOwnProperty.call(priorFiles, intendedWrites.get(dstRel));
+      const ownedByInterruptedRun = journalDestinations.has(dstRel);
+      if (!ownedAsIsolated && !ownedAsLegacyMap && !ownedByInterruptedRun) {
+        collisions.push(dstRel);
+      }
+    }
+    if (collisions.length && !DRY_RUN) {
+      console.log(`  ${R}ABORT${X}  ${collisions.length} unowned collision(s); will not overwrite.`);
+      for (const c of collisions.slice(0, 10)) console.log(`    ${R}collide${X}  ${c}`);
+      if (collisions.length > 10) console.log(`    ${D}... ${collisions.length - 10} more${X}`);
+      totalErrors++;
+      console.log('');
+      continue;
+    }
+
+    // Pre-flight passed; write the in-progress journal so a crash here on
+    // first-migration can be recognised next run.
+    if (!DRY_RUN) {
+      try {
+        atomicWriteFileSync(
+          inProgressJournalPath,
+          JSON.stringify({
+            startedAt: new Date().toISOString(),
+            destinations: [...intendedWrites.keys()],
+          }, null, 2) + '\n',
+        );
+      } catch (err) {
+        console.log(`  ${Y}journal write failed${X}: ${err.message?.slice(0, 100)}`);
+      }
+    }
+
+    // ── Per-file writes ────────────────────────────────────────────────────
+    for (const srcRel of repo.files) {
+      const dstRel = sourceRelToDestRel(srcRel);
+      const srcPath = path.join(SOURCE_ROOT, srcRel);
+      const dstPath = path.join(repo.path, dstRel);
+
       if (!fs.existsSync(srcPath)) {
-        console.log(`  ${Y}skip${X}  ${relFile} ${D}(not in source)${X}`);
+        console.log(`  ${Y}skip${X}  ${srcRel} ${D}(not in source)${X}`);
         continue;
       }
 
-      const srcSha = sha256(srcPath);
-      const dstSha = sha256(dstPath);
+      if (dstRel !== srcRel) repoRemaps++;
 
-      if (srcSha === dstSha) {
-        repoUnchanged++;
-        totalUnchanged++;
-        // Quiet for unchanged — only show in verbose mode
+      // Read source content; apply ownership-aware command rewriter where
+      // applicable. JSON files: merge with existing consumer content first,
+      // then rewrite the merged tree. Text files: rewrite directly.
+      let srcContent;
+      try { srcContent = fs.readFileSync(srcPath, 'utf-8'); }
+      catch (err) {
+        console.log(`  ${R}ERR${X}  ${srcRel}: read failed: ${err.message?.slice(0, 100)}`);
+        repoErrors++; totalErrors++;
         continue;
       }
 
-      const isNew = dstSha === null;
-      const label = isNew ? `${G}new${X}  ` : `${Y}upd${X}  `;
+      let outContent = srcContent;
+      const isJson = dstRel.endsWith('.json');
+      const dstExists = fs.existsSync(dstPath);
 
-      console.log(`  ${label} ${relFile}`);
-
-      if (DRY_RUN && !isNew) {
-        const diff = unifiedDiff(srcPath, dstPath, relFile);
-        // Show at most 40 lines of diff to keep output manageable
-        const lines = diff.split('\n');
-        const preview = lines.slice(0, 40).join('\n');
-        const truncated = lines.length > 40;
-        // Indent each diff line
-        console.log(preview.split('\n').map(l => '    ' + l).join('\n'));
-        if (truncated) console.log(`    ${D}... ${lines.length - 40} more lines${X}`);
-      }
-
-      if (!DRY_RUN) {
+      if (isJson && dstExists) {
+        // Existing deepMerge behaviour preserved for JSON; rewriter runs
+        // AFTER merge on the final value (plan §2 KD #9 + Gemini v3 G4 fix).
         try {
-          // Ensure parent directory exists
-          fs.mkdirSync(path.dirname(dstPath), { recursive: true });
-          // JSON config files: merge instead of overwrite to preserve local customizations
-          if (relFile.endsWith('.json') && !isNew) {
-            const src = JSON.parse(fs.readFileSync(srcPath, 'utf-8'));
-            const dst = JSON.parse(fs.readFileSync(dstPath, 'utf-8'));
-            // Deep merge: source keys take precedence within shared objects (e.g. servers/mcpServers)
-            const merged = deepMerge(dst, src);
-            fs.writeFileSync(dstPath, JSON.stringify(merged, null, 2) + '\n');
-          } else {
-            fs.copyFileSync(srcPath, dstPath);
-          }
+          const src = JSON.parse(srcContent);
+          const dst = JSON.parse(fs.readFileSync(dstPath, 'utf-8'));
+          const merged = deepMerge(dst, src);
+          outContent = JSON.stringify(merged, null, 2) + '\n';
         } catch (err) {
-          console.log(`  ${R}ERR${X}  ${relFile}: ${err.message}`);
-          repoErrors++;
-          totalErrors++;
+          console.log(`  ${R}ERR${X}  ${dstRel}: JSON merge failed: ${err.message?.slice(0, 100)}`);
+          repoErrors++; totalErrors++;
+          continue;
+        }
+      }
+
+      const rewriteResult = rewriteCommandSurface({
+        relPath: dstRel,
+        content: outContent,
+        config: rewriteConfig,
+      });
+      outContent = rewriteResult.rewritten;
+      if (rewriteResult.changed) repoRewrites++;
+
+      // Compute hashes against final outbound content (so the manifest's
+      // hashes match what we actually write).
+      const srcHash = crypto.createHash('sha256').update(outContent).digest('hex');
+      const dstHash = dstExists
+        ? crypto.createHash('sha256').update(fs.readFileSync(dstPath)).digest('hex')
+        : null;
+
+      if (srcHash === dstHash) {
+        repoUnchanged++; totalUnchanged++;
+        continue;
+      }
+
+      const isNew = dstHash === null;
+      const remappedLabel = dstRel !== srcRel ? ` ${D}(was ${srcRel})${X}` : '';
+      const rewriteLabel = rewriteResult.hits ? ` ${D}[${rewriteResult.hits} rewrites]${X}` : '';
+      const label = isNew ? `${G}new${X}  ` : `${Y}upd${X}  `;
+      console.log(`  ${label} ${dstRel}${remappedLabel}${rewriteLabel}`);
+
+      if (DRY_RUN) {
+        if (!isNew) {
+          const lines = unifiedDiff(srcPath, dstPath, dstRel).split('\n');
+          const preview = lines.slice(0, 40).join('\n');
+          const truncated = lines.length > 40;
+          console.log(preview.split('\n').map((l) => '    ' + l).join('\n'));
+          if (truncated) console.log(`    ${D}... ${lines.length - 40} more lines${X}`);
+        }
+      } else {
+        try {
+          fs.mkdirSync(path.dirname(dstPath), { recursive: true });
+          atomicWriteFileSync(dstPath, outContent);
+        } catch (err) {
+          console.log(`  ${R}ERR${X}  ${dstRel}: ${err.message}`);
+          repoErrors++; totalErrors++;
           continue;
         }
       }
@@ -537,10 +703,81 @@ async function main() {
       else { repoUpdated++; totalUpdated++; }
     }
 
+    // ── GC: delete files removed from upstream (Gemini v3 G3 fix) ──────────
+    // Compute set diff: priorFiles' isolated keys MINUS intendedWrites.
+    const intendedDests = new Set(intendedWrites.keys());
+    const gcDeletions = [];
+    for (const priorDestRel of Object.keys(priorFiles)) {
+      if (!priorDestRel.startsWith(`${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/`)) continue;
+      if (intendedDests.has(priorDestRel)) continue;
+      gcDeletions.push(priorDestRel);
+    }
+    if (gcDeletions.length) {
+      if (DRY_RUN) {
+        console.log(`  ${D}gc dry-run: ${gcDeletions.length} file(s) would be deleted${X}`);
+      } else {
+        for (const dRel of gcDeletions) {
+          const abs = path.join(repo.path, dRel);
+          try { fs.unlinkSync(abs); repoGcDeletions++; }
+          catch (err) {
+            if (err.code !== 'ENOENT') {
+              console.log(`  ${Y}gc warn${X}  ${dRel}: ${err.message?.slice(0, 80)}`);
+            }
+          }
+        }
+        if (repoGcDeletions) console.log(`  ${D}gc: removed ${repoGcDeletions} stale file(s)${X}`);
+      }
+    }
+
+    // ── Commit point: write per-consumer manifest with layout: 'isolated' ──
+    if (!DRY_RUN) {
+      try {
+        // For consumer-side: compute hashes of the actual DESTINATION files
+        // (post-rewrite). The source-side `.sync-manifest.json` produced
+        // earlier is independent and stays.
+        const consumerFileMap = {};
+        for (const dstRel of intendedDests) {
+          const abs = path.join(repo.path, dstRel);
+          if (!fs.existsSync(abs)) continue;
+          const buf = fs.readFileSync(abs);
+          consumerFileMap[dstRel] = 'sha256:' + crypto.createHash('sha256').update(buf).digest('hex');
+        }
+        const consumerManifest = {
+          generatedAt: new Date().toISOString(),
+          repo: 'Lbstrydom/claude-engineering-skills',
+          branch: 'main',
+          commitSha: null,
+          files: consumerFileMap,
+          layout: 'isolated',
+        };
+        atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
+      } catch (err) {
+        console.log(`  ${R}manifest write failed${X}: ${err.message?.slice(0, 120)}`);
+      }
+    }
+
+    // ── Apply managed .gitignore block (preflight already validated) ───────
+    if (!DRY_RUN && giPreview.action !== 'noop') {
+      try {
+        atomicWriteFileSync(giPath, giPreview.content);
+      } catch (err) {
+        console.log(`  ${R}.gitignore write failed${X}: ${err.message?.slice(0, 120)}`);
+      }
+    }
+
+    // ── Last step: delete the in-progress journal (sync complete) ──────────
+    if (!DRY_RUN) {
+      try { fs.unlinkSync(inProgressJournalPath); }
+      catch (err) { if (err.code !== 'ENOENT') { /* leave dangling — next run will reconcile */ } }
+    }
+
     const parts = [];
     if (repoNew > 0) parts.push(`${G}+${repoNew} new${X}`);
     if (repoUpdated > 0) parts.push(`${Y}~${repoUpdated} updated${X}`);
     if (repoUnchanged > 0) parts.push(`${D}${repoUnchanged} unchanged${X}`);
+    if (repoRemaps > 0) parts.push(`${D}${repoRemaps} remapped${X}`);
+    if (repoRewrites > 0) parts.push(`${D}${repoRewrites} rewritten${X}`);
+    if (repoGcDeletions > 0) parts.push(`${D}${repoGcDeletions} gc-deleted${X}`);
     if (repoErrors > 0) parts.push(`${R}${repoErrors} errors${X}`);
     console.log(`  ${parts.join('  ')}`);
 

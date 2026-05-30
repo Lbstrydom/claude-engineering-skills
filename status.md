@@ -1,5 +1,47 @@
 # Project Status Log
 
+## 2026-05-30 — RLS hardening of `audit_loop_migrations` + sync-isolation WIP bundled
+
+### Changes
+
+**Supabase security finding — `rls_disabled_in_public` on `audit_loop_migrations`** ([supabase/migrations/20260530120000_audit_loop_migrations_rls.sql](supabase/migrations/20260530120000_audit_loop_migrations_rls.sql))
+- Investigated the Supabase scanner alert on project `uahjjdelnnpfmaqjrwoz` ("Audit-loop"). Naming was historical (repo renamed `claude-audit-loop` → `claude-engineering-skills`); the project is legitimately this repo's cloud learning store.
+- Live-DB enumeration via a `pg_catalog` query confirmed: exactly one of 35 public tables without RLS — `audit_loop_migrations`, the ledger table created by [`scripts/setup-postgres.mjs::ensureLedger()`](scripts/setup-postgres.mjs#L213-L219). Outside the `supabase/migrations/` flow, so the existing per-migration `ENABLE ROW LEVEL SECURITY` discipline didn't reach it.
+- The `anon` and `authenticated` roles had full DML grants (SELECT/INSERT/UPDATE/DELETE/TRUNCATE). Practical exposure if the project anon key ever leaked: ledger tampering → silent migration skip / DoS via sha-mismatch.
+- **Fix**: new migration enables RLS with no policy → deny-all for anon/authenticated; postgres owner role (runtime DSN) bypasses RLS so the audit-loop keeps working. Idempotent.
+- `ensureLedger()` also updated so fresh installs on other Supabase projects don't repeat the issue.
+- Applied to live DB via `node -r dotenv/config scripts/setup-postgres.mjs --migrate`. Re-verified: 35/35 tables now have RLS.
+
+**New diagnostic — `npm run db:check-rls`** ([scripts/check-rls.mjs](scripts/check-rls.mjs))
+- Lists every public table without RLS, plus the anon/authenticated grants that make a no-RLS table actually exploitable on Supabase.
+- Modes: human-readable (default) and `--format json`. Exit codes: `0` clean / cloud-off, `1` findings, `2` connectivity error.
+- Promoted from a `.audit/` scratch script (one-shot during investigation) into `scripts/check-rls.mjs` using the shared [`lib/db/client.mjs`](scripts/lib/db/client.mjs) pool. Added to `CORE_ENTRY` in `sync-to-repos.mjs` so consumer repos get it too.
+
+**Sync-isolation WIP bundled** (not authored this session — user's in-progress work)
+- `scripts/.claude-skills/` consumer-repo layout: tooling files synced to a subdirectory rather than the consumer's natural `scripts/` to avoid name collisions. Documented in [AGENTS.md](AGENTS.md#L100-L156) "Consumer-repo layout (isolation)" section and [docs/plans/scripts-claude-skills-isolation.md](docs/plans/scripts-claude-skills-isolation.md).
+- New modules: `scripts/lib/sync-path-map.mjs`, `sync-rewriter.mjs`, `sync-gitignore.mjs`, `sync-inventory.mjs`, `sync-isolation-verify.mjs`, `remove-legacy-synced.mjs`, `npm-script-enumerator.mjs`.
+- `scripts/setup-postgres.mjs` MIGRATIONS_DIR now prefers `.audit-loop/migrations/` (consumer) and falls back to `supabase/migrations/` (source repo).
+- Bundled into this commit at user direction rather than committed separately.
+
+### Files Affected
+- `supabase/migrations/20260530120000_audit_loop_migrations_rls.sql` — new migration (RLS on ledger)
+- `scripts/check-rls.mjs` — new diagnostic CLI
+- `scripts/setup-postgres.mjs` — `LEDGER_RLS` added to `ensureLedger()` (also bundles unrelated MIGRATIONS_DIR fallback from user's WIP)
+- `scripts/sync-to-repos.mjs` — `check-rls.mjs` added to `CORE_ENTRY` (also bundles user's sync-isolation imports + `SYNC_ISOLATION_ENTRY` block + `syncMigrations` doc-comment)
+- `package.json` — `db:check-rls` + `db:check-rls:json` npm scripts
+- AGENTS.md, scripts/lib/sync-*.mjs (new), docs/consumer-adoption.md (new), docs/plans/scripts-claude-skills-isolation.md (new), tests/sync-*.test.mjs (new), tests/relocation-guard.test.mjs (new), tests/npm-script-enumerator.test.mjs (new), and several other M/?? files from the sync-isolation WIP — see git diff for the full list
+
+### Decisions Made
+- **RLS-on + no-policy** (not + permissive policy) for `audit_loop_migrations`. Matches the established backend-only pattern already used by `friction_log`, `learning_decisions`, `personas`, etc. (RLS on, deny-by-default for anon, postgres owner bypasses).
+- **REVOKE not bundled.** Considered explicitly revoking anon/authenticated DML grants on the ledger for defense-in-depth. Skipped this commit — RLS-on with no policy already denies anon. Revoke can be a follow-up if we want belt-and-braces.
+- **Bundled commit at user direction.** RLS fix + sync-isolation WIP shipped together. The two are independent but ship together to avoid a half-state on disk; git history will show one commit with two themes.
+
+### Next Steps
+- Watch Supabase scanner for `rls_disabled_in_public` to clear on next scan cycle (typically a few hours).
+- If revoking anon/authenticated grants is desired, follow-up migration: `REVOKE ALL ON audit_loop_migrations FROM anon, authenticated`.
+
+---
+
 ## 2026-05-29 — Device-profile emulation for /persona-test + /click-test (+ runner enforcement)
 
 ### Changes

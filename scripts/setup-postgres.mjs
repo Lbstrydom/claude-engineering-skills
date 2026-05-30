@@ -37,7 +37,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..');
 
-const MIGRATIONS_DIR = path.join(REPO_ROOT, 'supabase', 'migrations');
+// Audit-loop migrations live at `supabase/migrations/` in the canonical
+// claude-engineering-skills source repo, and at `.audit-loop/migrations/`
+// in consumer repos after `npm run sync` (the destination path is
+// audit-loop-private to avoid colliding with consumer-app Supabase product
+// migrations — see scripts/sync-to-repos.mjs::syncMigrations()). Prefer
+// the audit-loop-private path when present; fall back to supabase/ for
+// source-repo and pre-relocation contexts.
+const MIGRATIONS_DIR_PRIVATE = path.join(REPO_ROOT, '.audit-loop', 'migrations');
+const MIGRATIONS_DIR_LEGACY = path.join(REPO_ROOT, 'supabase', 'migrations');
+const MIGRATIONS_DIR = fs.existsSync(MIGRATIONS_DIR_PRIVATE)
+  ? MIGRATIONS_DIR_PRIVATE
+  : MIGRATIONS_DIR_LEGACY;
 const BOOTSTRAP_SQL = path.join(REPO_ROOT, 'scripts', 'lib', 'db', 'compat-bootstrap.sql');
 const EXPECTED_SCHEMA_PATH = path.join(REPO_ROOT, 'tests', 'fixtures', 'expected-schema.json');
 
@@ -200,8 +211,14 @@ const LEDGER_DDL = `
   )
 `;
 
+// Deny-by-default for anon/authenticated. Owner role (the runtime DSN's
+// postgres user) bypasses RLS, so the ledger remains writeable by the
+// audit-loop. Idempotent on re-run.
+const LEDGER_RLS = `ALTER TABLE audit_loop_migrations ENABLE ROW LEVEL SECURITY`;
+
 async function ensureLedger(pool) {
   await pool.query(LEDGER_DDL);
+  await pool.query(LEDGER_RLS);
 }
 
 async function readLedger(pool) {

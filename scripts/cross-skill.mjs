@@ -1182,6 +1182,7 @@ const commands = {
 };
 
 async function main() {
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   if (!subcommand || subcommand === '--help' || subcommand === '-h') {
     process.stdout.write(
       'Usage: node scripts/cross-skill.mjs <subcommand> [--json <payload>|--stdin]\n\n' +

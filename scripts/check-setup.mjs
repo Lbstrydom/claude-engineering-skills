@@ -463,6 +463,7 @@ async function checkConsistencyMode(env, report) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   const env = loadEnv(REPO_PATH);
   const report = new Report();
 

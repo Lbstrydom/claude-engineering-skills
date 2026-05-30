@@ -73,4 +73,21 @@ export function assertRepoRoot(importMetaUrl, opts = {}) {
   return { root: expectedRoot, cwd };
 }
 
+/**
+ * Non-asserting variant: return the expected repo root for a given script
+ * URL without performing the cwd check or exiting on mismatch. Useful for
+ * computing repo-rooted paths at module load time, where the asserting form
+ * would crash any importer whose cwd doesn't match (e.g. a verifier importing
+ * a library from a different repo).
+ *
+ * Returns null when the script doesn't live under a `scripts/` ancestor.
+ *
+ * @param {string} importMetaUrl
+ * @returns {string | null}
+ */
+export function findRepoRootFromScript(importMetaUrl) {
+  const scriptPath = fileURLToPath(importMetaUrl);
+  return findExpectedRoot(scriptPath);
+}
+
 export const _internals = Object.freeze({ findExpectedRoot });

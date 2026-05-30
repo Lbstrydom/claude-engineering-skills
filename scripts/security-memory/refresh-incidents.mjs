@@ -124,6 +124,7 @@ async function generateEmbedding(ai, text, modelId, dim) {
 }
 
 async function main() {
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   assertRepoRoot(import.meta.url);
   const repoRoot = path.resolve(process.cwd());
   const strategyAbs = path.join(repoRoot, STRATEGY_PATH);
