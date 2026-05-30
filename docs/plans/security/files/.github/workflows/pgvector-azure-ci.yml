@@ -1,0 +1,294 @@
+name: pgvector-azure-ci
+
+# Exercises the pgvector-ON embedding path for the /security-strategy Postgres port.
+#
+# WHY THIS EXISTS
+# ---------------
+# Local dev Postgres (Windows-native, 17.x) ships without the `vector` extension,
+# so the embedding write path (azureEmbed -> VECTOR(768) column -> HNSW index ->
+# cosine-distance similarity RPC) is UNTESTABLE locally. It only runs in the
+# pgvector-OFF / path-overlap fallback there. This CI job provisions a Postgres
+# image that DOES have pgvector and drives the migration + refresh + retrieval
+# against it, closing the coverage gap called out in
+# docs/plans/security-strategy-postgres-port.md (§6 Phase 0 pre-flight, §8 risk
+# register, and the 2026-05-30 "Advisory (Opus LOW, deferred)" note).
+#
+# COVERAGE
+#  - migration 003-security.pg.sql applies WITH pgvector present
+#    (acceptance criteria 6: schema_version v=5 + vector ext + embedding column
+#     + HNSW index + security_incident_neighbourhood RPC created)
+#  - the full node:test suite, incl. azure-embed.test.mjs (the mocked dim/empty
+#    guards for the otherwise-untested pgvector-ON write contract)
+#  - OPTIONAL live leg (only when Azure secrets are configured): security:refresh
+#    against a fixture doc, exercising real azureEmbed + a real HNSW-backed
+#    similarity query through cross-skill get-incident-neighbourhood
+#    (acceptance criteria 10 & 11).
+#
+# The schema + mocked legs run on every push/PR (no secrets needed). The live
+# Azure embedding leg is gated on `secrets.AZURE_OPENAI_API_KEY` so forks and
+# untrusted PRs skip it cleanly instead of failing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/lib/stores/sql/**'
+      - 'scripts/lib/security/**'
+      - 'scripts/lib/store/security.mjs'
+      - 'scripts/security-memory/**'
+      - 'scripts/cross-skill.mjs'
+      - 'tests/**'
+      - '.github/workflows/pgvector-azure-ci.yml'
+  pull_request:
+    paths:
+      - 'scripts/lib/stores/sql/**'
+      - 'scripts/lib/security/**'
+      - 'scripts/lib/store/security.mjs'
+      - 'scripts/security-memory/**'
+      - 'scripts/cross-skill.mjs'
+      - 'tests/**'
+      - '.github/workflows/pgvector-azure-ci.yml'
+  workflow_dispatch: {}
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: pgvector-azure-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pgvector:
+    name: pgvector-ON migration + embedding path
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # pgvector's official image = Postgres + the `vector` extension preinstalled.
+        # pg17 matches the local dev major version documented in the plan (§3).
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: audit
+          POSTGRES_PASSWORD: audit
+          POSTGRES_DB: audit_loop
+        ports:
+          - 5432:5432
+        # Wait until Postgres accepts connections before the job's steps run.
+        options: >-
+          --health-cmd "pg_isready -U audit -d audit_loop"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      # Both names are accepted by lib/db/client.mjs (resolveDbUrl chains
+      # AUDIT_DB_URL -> AUDIT_POSTGRES_URL). Set both for belt-and-suspenders.
+      AUDIT_STORE: postgres
+      AUDIT_DB_URL: postgres://audit:audit@localhost:5432/audit_loop
+      AUDIT_POSTGRES_URL: postgres://audit:audit@localhost:5432/audit_loop
+      # Local container, no TLS — disable SSL so the pg driver connects.
+      AUDIT_POSTGRES_SSL_MODE: disable
+      PGPASSWORD: audit
+      # Pin the security-domain repo name so the refresh WRITER and the
+      # cross-skill READER key the same repo_id even though Actions checks out a
+      # detached HEAD on a clone whose `origin` may differ. Without this the live
+      # leg could write under one repo_id and query another (empty) one.
+      SECURITY_REPO_NAME: ${{ github.event.repository.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Sanity — confirm pgvector is actually available in the service
+        run: |
+          set -euo pipefail
+          # psql is preinstalled on ubuntu-latest runners.
+          psql "$AUDIT_DB_URL" -v ON_ERROR_STOP=1 -c \
+            "SELECT name, default_version FROM pg_available_extensions WHERE name = 'vector';"
+          # Fail loudly if the image regressed and lost pgvector — otherwise the
+          # rest of the job would silently degrade to the path-only fallback and
+          # this CI would stop testing what it exists to test.
+          AVAIL=$(psql "$AUDIT_DB_URL" -tAc \
+            "SELECT count(*) FROM pg_available_extensions WHERE name = 'vector';")
+          if [ "$AVAIL" -lt 1 ]; then
+            echo "::error::pgvector not available in the postgres service image — this job must run against a pgvector-capable Postgres."
+            exit 1
+          fi
+
+      - name: Apply schema (001-core + 003-security migrations)
+        run: npm run db:setup-postgres
+
+      - name: Assert pgvector-ON schema objects (acceptance criterion 6)
+        run: |
+          set -euo pipefail
+          psql "$AUDIT_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            -- (a) migration ledger reached v=5 (003-security applied)
+            IF NOT EXISTS (SELECT 1 FROM schema_version WHERE v = 5) THEN
+              RAISE EXCEPTION 'schema_version v=5 missing — 003-security.pg.sql did not apply';
+            END IF;
+
+            -- (b) the vector extension actually loaded
+            IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'vector') THEN
+              RAISE EXCEPTION 'vector extension not installed';
+            END IF;
+
+            -- (c) the conditional embedding column exists on this build
+            IF NOT EXISTS (
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'security_incidents'
+                AND column_name = 'embedding'
+            ) THEN
+              RAISE EXCEPTION 'security_incidents.embedding column missing under pgvector';
+            END IF;
+
+            -- (d) the HNSW index was created
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_indexes
+              WHERE schemaname = 'public'
+                AND tablename = 'security_incidents'
+                AND indexname = 'idx_security_incidents_embedding'
+            ) THEN
+              RAISE EXCEPTION 'HNSW index idx_security_incidents_embedding missing';
+            END IF;
+
+            -- (e) the cosine-distance neighbourhood RPC exists (pgvector-only)
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_proc
+              WHERE proname = 'security_incident_neighbourhood'
+            ) THEN
+              RAISE EXCEPTION 'security_incident_neighbourhood RPC missing under pgvector';
+            END IF;
+
+            RAISE NOTICE 'pgvector-ON schema objects present: ext + embedding column + HNSW + RPC.';
+          END $$;
+          SQL
+
+      - name: Run full test suite (incl. mocked pgvector-ON write guards)
+        run: npm test
+
+      # ──────────────────────────────────────────────────────────────────────
+      # OPTIONAL live leg — only runs when Azure embedding secrets are present.
+      # Exercises the REAL azureEmbed call + a real HNSW-backed similarity query.
+      # ──────────────────────────────────────────────────────────────────────
+      - name: Probe for Azure secrets
+        id: azure
+        run: |
+          if [ -n "${{ secrets.AZURE_OPENAI_API_KEY }}" ] && [ -n "${{ secrets.AZURE_OPENAI_ENDPOINT }}" ]; then
+            echo "have_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have_secrets=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Azure embedding secrets not configured — skipping the live azureEmbed leg. Schema + mocked guards still ran."
+          fi
+
+      - name: Seed a fixture security-strategy doc
+        if: steps.azure.outputs.have_secrets == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p docs
+          cat > docs/security-strategy.md <<'MD'
+          # Security Strategy (CI fixture)
+
+          <!-- threat-model:start -->
+          ## Threat Model
+          - SQL injection via unparameterised identifiers in dynamic query builders.
+          - Secret leakage into the incident index via pasted credentials.
+          <!-- threat-model:end -->
+
+          <!-- incidents-list:start -->
+          ## Incidents
+
+          ### INC-001 — Unparameterised identifier in a dynamic query builder
+          - Description: A dynamic SQL builder concatenated a table identifier without quoting, enabling an injection vector in the audit query layer.
+          - Affected paths: scripts/lib/db/query.mjs, scripts/lib/store/security.mjs
+          - Mitigation ref: scripts/lib/db/query.mjs
+          - Mitigation kind: file-ref
+          - Status: manual-verification-required
+          - Classification: INTERNAL
+          - Compliance tags: GDPR
+          - Lessons learned: Always route dynamic identifiers through quoteIdent().
+          <!-- incidents-list:end -->
+          MD
+
+      - name: Live embedding refresh (real azureEmbed -> VECTOR(768) -> HNSW)
+        if: steps.azure.outputs.have_secrets == 'true'
+        env:
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          # Commit sha is mandatory (NOT NULL) — pass HEAD explicitly so the run
+          # is deterministic even though Actions checks out a detached HEAD.
+          SECURITY_REFRESH_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # On pgvector, an embed FAILURE must surface as exit 2 (acceptance
+          # criterion 10). A clean run must exit 0 and write a non-null embedding.
+          npm run security:refresh -- --commit "$SECURITY_REFRESH_COMMIT"
+
+      - name: Assert the live embedding actually landed (dim = 768, HNSW usable)
+        if: steps.azure.outputs.have_secrets == 'true'
+        run: |
+          set -euo pipefail
+          psql "$AUDIT_DB_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          DECLARE
+            n_embedded INTEGER;
+            dim INTEGER;
+          BEGIN
+            SELECT count(*) INTO n_embedded
+              FROM security_incidents WHERE embedding IS NOT NULL;
+            IF n_embedded < 1 THEN
+              RAISE EXCEPTION 'no rows carry a non-null embedding after security:refresh';
+            END IF;
+
+            SELECT vector_dims(embedding) INTO dim
+              FROM security_incidents WHERE embedding IS NOT NULL LIMIT 1;
+            IF dim <> 768 THEN
+              RAISE EXCEPTION 'embedding dim % != 768', dim;
+            END IF;
+
+            -- Exercise the cosine-distance operator end-to-end against the HNSW
+            -- index — proves the VECTOR(768) column + <=> operator + RPC path are
+            -- live, not just declared.
+            PERFORM 1 - (embedding <=> embedding) FROM security_incidents
+              WHERE embedding IS NOT NULL LIMIT 1;
+
+            RAISE NOTICE 'live embedding verified: % row(s), dim=768, cosine operator OK.', n_embedded;
+          END $$;
+          SQL
+
+      - name: Live neighbourhood retrieval through cross-skill RPC (criterion 11)
+        if: steps.azure.outputs.have_secrets == 'true'
+        env:
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+        run: |
+          set -euo pipefail
+          # embedding+path mode (pgvector present) — at most k rows, sorted by
+          # path_overlap DESC, similarity DESC NULLS LAST.
+          node scripts/cross-skill.mjs get-incident-neighbourhood \
+            --paths "scripts/lib/db/query.mjs" \
+            --intent-text "dynamic identifier injection in the query builder" \
+            --k 5 | tee /tmp/neighbourhood.json
+          node -e '
+            const fs = require("fs");
+            const r = JSON.parse(fs.readFileSync("/tmp/neighbourhood.json", "utf8"));
+            if (!r.ok) { console.error("cross-skill returned ok=false"); process.exit(1); }
+            if (r.mode !== "embedding+path") {
+              console.error("expected mode=embedding+path under pgvector, got " + r.mode);
+              process.exit(1);
+            }
+            if (!Array.isArray(r.rows) || r.rows.length < 1) {
+              console.error("expected at least one neighbourhood row"); process.exit(1);
+            }
+            console.log("neighbourhood OK: mode=" + r.mode + ", rows=" + r.rows.length);
+          '

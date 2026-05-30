@@ -1,5 +1,16 @@
 # Project Status Log
 
+## 2026-05-30 — Sync-manifest regen + security porting-kit staged
+
+### Changes
+- Regenerated `scripts/.sync-manifest.json` to reflect the last few commits (picked up `scripts/check-rls.mjs`, updated `cross-skill.mjs`, `explain-history.mjs`, `check-setup.mjs`, etc.).
+- Staged the corporate security-strategy **porting kit** under [docs/plans/security/](docs/plans/security/) — a path-mirrored copy of the corporate-hardened `/security-strategy` subsystem (Azure embeddings, `classification`/`compliance_tags`/`commit_sha NOT NULL`, secret pre-write gate, `security_strategy_events` audit trail, pgvector-optional, dashboard Security section) plus its PLAN/AUDIT-SUMMARY/README. Reference material for the back-port into this repo.
+
+### Next Steps
+- Back-port the genuine security improvements from the kit into this repo's existing security subsystem, **adapted to this repo's stack** (Gemini/model-resolver embeddings — NOT Azure; `supabase/migrations/` — not `scripts/lib/stores/sql/`). Target: secret gate, corporate-hardening columns, audit trail, pgvector-optional, heartbeat CLI, and a dashboard Security UI section.
+
+---
+
 ## 2026-05-30 — RLS hardening of `audit_loop_migrations` + sync-isolation WIP bundled
 
 ### Changes
