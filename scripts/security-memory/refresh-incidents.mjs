@@ -31,9 +31,11 @@ import {
   recordSecurityIncidents,
   getSecurityIncidentsByRepo,
   markIncidentsHistorical,
+  recordSecurityEvents,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from '../lib/repo-identity.mjs';
 import { redactSecrets } from '../lib/secret-patterns.mjs';
+import { preWriteSecretGate } from '../lib/security/secret-classifier.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { parseSecurityStrategy } from './parse-strategy.mjs';
 import { classifyMitigation, runSemgrepIfNeeded } from './incident-status.mjs';
@@ -55,6 +57,24 @@ function gitArgs(cwd, args) {
 function gitHeadSha(cwd) {
   try { return gitArgs(cwd, ['rev-parse', 'HEAD']); }
   catch { return 'unknown'; }
+}
+
+// Current branch name for the audit trail (best-effort; 'unknown' on detached
+// HEAD / non-git). Distinct from isOnDefaultBranch() which decides sweep gating.
+function currentBranchName(cwd) {
+  try {
+    const b = gitArgs(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']);
+    return b || 'unknown';
+  } catch { return 'unknown'; }
+}
+
+// Who ran the refresh — git config user.name, falling back to the OS user.
+function gitWho(cwd) {
+  try {
+    const name = gitArgs(cwd, ['config', 'user.name']);
+    if (name) return name;
+  } catch { /* git config unset — fall through */ }
+  return process.env.USER || process.env.USERNAME || null;
 }
 
 function isOnDefaultBranch(cwd) {
@@ -188,13 +208,51 @@ async function main() {
   const existingByIncidentId = new Map(existing.map(r => [r.incident_id, r]));
   const onDefault = isOnDefaultBranch(repoRoot);
   const headSha = gitHeadSha(repoRoot);
+  const branch = currentBranchName(repoRoot);
+  const who = gitWho(repoRoot);
 
   const semgrepCache = new Map();
   const toUpsert = [];
   const embedFailures = [];
+  // Audit-trail events (security_strategy_events) collected this run; written
+  // once after the upsert + sweep. Back-port: docs/plans/security/PLAN.md §4.2.
+  const auditEvents = [];
+  const refused = [];
 
   for (const inc of parsed) {
     const prior = existingByIncidentId.get(inc.incident_id);
+
+    // ── Secret pre-write gate (back-port: docs/plans/security/PLAN.md §4.4) ──
+    // REFUSE on high-confidence secret shapes (the incident is NOT indexed —
+    // forcing the operator to fix the markdown). REDACT low-confidence PII into
+    // the STORED value (description + lessons), not just the embedding text, so
+    // a leaked email never lands in the DB. Run per stored field.
+    const gd = preWriteSecretGate(inc.description || '');
+    const gl = preWriteSecretGate(inc.lessons_learned || '');
+    if (!gd.ok || !gl.ok) {
+      const refusedEvents = [...(gd.ok ? [] : gd.events), ...(gl.ok ? [] : gl.events)];
+      for (const ev of refusedEvents) {
+        auditEvents.push({
+          incident_id: inc.incident_id, event_kind: 'refused_secret',
+          branch, commit_sha: headSha, who, detail: ev.detail,
+        });
+      }
+      const detail = gd.ok ? gl.detail : gd.detail;
+      refused.push({ incident_id: inc.incident_id, detail });
+      logWarn(`REFUSED ${inc.incident_id}: ${detail}`);
+      continue;
+    }
+    // Apply redactions to the stored values + log the redaction events.
+    inc.description = gd.content;
+    inc.lessons_learned = gl.content;
+    for (const ev of [...gd.events, ...gl.events]) {
+      auditEvents.push({
+        incident_id: inc.incident_id, event_kind: 'redacted_secret',
+        branch, commit_sha: headSha, who, detail: ev.detail,
+      });
+    }
+    const wasRedacted = gd.kind === 'redacted' || gl.kind === 'redacted';
+
     const fingerprintChanged = !prior || prior.source_fingerprint !== inc.source_fingerprint;
     const modelChanged = !prior || prior.embedding_model !== modelToUse || prior.embedding_dim !== dimToUse;
     const needsEmbed = fingerprintChanged || modelChanged;
@@ -247,6 +305,21 @@ async function main() {
       status,
       status_check_at: new Date().toISOString(),
     });
+
+    // Audit trail: record meaningful changes only — a new row → 'inserted',
+    // a fingerprint change → 'updated'. An idempotent re-upsert (same
+    // fingerprint) emits nothing, keeping the trail signal-rich.
+    if (!prior) {
+      auditEvents.push({
+        incident_id: inc.incident_id, event_kind: 'inserted',
+        branch, commit_sha: headSha, who, detail: { status, redacted: wasRedacted },
+      });
+    } else if (fingerprintChanged) {
+      auditEvents.push({
+        incident_id: inc.incident_id, event_kind: 'updated',
+        branch, commit_sha: headSha, who, detail: { status, redacted: wasRedacted },
+      });
+    }
   }
 
   if (toUpsert.length > 0) {
@@ -279,8 +352,32 @@ async function main() {
     if (removedIds.length > 0) {
       await markIncidentsHistorical(repoId, removedIds);
       swept = removedIds.length;
+      for (const rid of removedIds) {
+        auditEvents.push({
+          incident_id: rid, event_kind: 'marked_historical',
+          branch, commit_sha: headSha, who, detail: { reason: 'absent-from-default-markdown' },
+        });
+      }
       logInfo(`sweep: marked ${swept} removed-from-markdown as historical: ${removedIds.join(', ')}`);
     }
+  }
+
+  // Audit-trail write (best-effort, non-fatal). Deviation from the kit's
+  // single withTx: events land after the upsert+sweep succeed rather than in
+  // the same transaction. A trail-write failure logs but does not fail the run
+  // — the incident index is the source of truth; the trail is supplementary.
+  if (auditEvents.length > 0) {
+    try {
+      const { recorded } = await recordSecurityEvents(repoId, auditEvents);
+      logInfo(`recorded ${recorded} audit-trail event(s)`);
+    } catch (err) {
+      logWarn(`audit-trail write failed (non-fatal): ${err.message}`);
+    }
+  }
+
+  if (refused.length > 0) {
+    logWarn(`${refused.length} incident(s) REFUSED (high-confidence secret) — NOT indexed. Fix docs/security-strategy.md:`);
+    for (const r of refused) logWarn(`  - ${r.incident_id}: ${r.detail}`);
   }
 
   if (embedFailures.length > 0) {
@@ -294,14 +391,17 @@ async function main() {
     repoId,
     parsed: parsed.length,
     upserted: toUpsert.length,
+    refused: refused.length,
+    redacted: auditEvents.filter(e => e.event_kind === 'redacted_secret').length,
     embedFailures: embedFailures.length,
     swept,
     sweepBlockedBy,
     onDefaultBranch: onDefault,
   });
-  // R2-H6: if any incident failed to embed AND we have parser warnings,
-  // surface a non-zero exit so CI catches half-built indexes.
-  process.exit(embedFailures.length > 0 ? 2 : 0);
+  // Non-zero exit so CI catches a half-built index: embed failures (R2-H6) OR
+  // a refused secret (a real incident kept OUT of the index — must not pass
+  // silently; back-port hardening of the original exit contract).
+  process.exit((embedFailures.length > 0 || refused.length > 0) ? 2 : 0);
 }
 
 main().catch(err => {

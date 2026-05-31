@@ -151,6 +151,124 @@ export async function callIncidentNeighbourhoodRpc({ repoId, targetPaths, intent
   }));
 }
 
+// ── audit trail (security_strategy_events) ──────────────────────────────────
+
+/**
+ * Append a batch of audit-trail events (security_strategy_events). Append-only:
+ * uses a plain multi-row INSERT (no ON CONFLICT) since each event is a distinct
+ * historical fact — inserted/updated/marked_historical/refused_secret/
+ * redacted_secret. Back-port: docs/plans/security/PLAN.md §4.2.
+ *
+ * `detail` is JSON-encoded for the jsonb column (only masked samples reach it).
+ *
+ * @param {string} repoId
+ * @param {Array<{incident_id:string, event_kind:string, branch:string,
+ *                commit_sha?:string|null, who?:string|null, detail?:object}>} events
+ * @returns {Promise<{recorded: number}>}
+ */
+export async function recordSecurityEvents(repoId, events) {
+  if (!repoId || !Array.isArray(events) || events.length === 0) return { recorded: 0 };
+  if (!await isCloudEnabled()) return { recorded: 0 };
+  const rows = events.map((e) => ({
+    repo_id: repoId,
+    incident_id: e.incident_id,
+    event_kind: e.event_kind,
+    who: e.who ?? null,
+    branch: e.branch,
+    commit_sha: e.commit_sha ?? null,
+    detail: JSON.stringify(e.detail ?? {}),
+  }));
+  // Append-only by construction: upsert() with no onConflict emits a plain
+  // multi-row INSERT (buildUpsert contract). Even if that contract changed, the
+  // append semantics are STRUCTURALLY guaranteed — security_strategy_events has
+  // no UNIQUE/PK conflict target other than the gen_random_uuid() id, so an
+  // ON CONFLICT clause has nothing to match and every row is a fresh insert.
+  // Chunked (Gemini gate LOW): a pathological markdown with thousands of PII
+  // redactions could otherwise exceed Postgres's 65535 bind-param ceiling.
+  for (const batch of chunk(rows, UPSERT_CHUNK_SIZE)) {
+    await upsert('security_strategy_events', batch, {});
+  }
+  return { recorded: rows.length };
+}
+
+/**
+ * Recent audit-trail events, newest first. Used by the dashboard Security
+ * section + any "what did the last refresh do?" reader.
+ */
+export async function getSecurityEvents(repoId, limit = 10) {
+  if (!repoId || !await isCloudEnabled()) return [];
+  return many(
+    `SELECT incident_id, event_kind, branch, commit_sha, detail, created_at
+       FROM security_strategy_events
+      WHERE repo_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2`,
+    [repoId, limit]
+  );
+}
+
+/**
+ * Governance roll-up for the dashboard Security section: per-status incident
+ * counts, embedding coverage, last-refresh timestamp, event-kind tallies, and
+ * the 10 most recent audit-trail events. Resilient — any query failure degrades
+ * to `cloud:false` rather than throwing into the collector.
+ *
+ * @param {string} repoId
+ * @returns {Promise<{cloud:boolean, totalIncidents:number,
+ *   byStatus:Record<string,number>, embedded:number, lastRefreshAt:string|null,
+ *   eventCounts:Record<string,number>, recentEvents:Array<object>}>}
+ */
+export async function getSecurityStats(repoId) {
+  const empty = {
+    cloud: false, totalIncidents: 0, byStatus: {}, embedded: 0,
+    lastRefreshAt: null, eventCounts: {}, recentEvents: [],
+  };
+  if (!repoId || !await isCloudEnabled()) return empty;
+  try {
+    const statusRows = await many(
+      `SELECT status, count(*)::int AS n
+         FROM security_incidents WHERE repo_id = $1 GROUP BY status`,
+      [repoId]
+    );
+    const cover = await one(
+      `SELECT count(*)::int AS total, count(embedding)::int AS embedded
+         FROM security_incidents WHERE repo_id = $1`,
+      [repoId]
+    );
+    const lastRow = await one(
+      `SELECT max(updated_at) AS last FROM security_incidents WHERE repo_id = $1`,
+      [repoId]
+    );
+    const eventRows = await many(
+      `SELECT event_kind, count(*)::int AS n
+         FROM security_strategy_events WHERE repo_id = $1 GROUP BY event_kind`,
+      [repoId]
+    );
+    const recentEvents = await getSecurityEvents(repoId, 10);
+
+    const byStatus = {};
+    for (const r of statusRows) byStatus[r.status] = r.n;
+    const eventCounts = {};
+    for (const r of eventRows) eventCounts[r.event_kind] = r.n;
+
+    return {
+      cloud: true,
+      totalIncidents: cover?.total ?? 0,
+      byStatus,
+      embedded: cover?.embedded ?? 0,
+      lastRefreshAt: lastRow?.last ?? null,
+      eventCounts,
+      recentEvents,
+    };
+  } catch (err) {
+    // Degrade to empty so the dashboard collector still renders — but surface
+    // the cause: a swallowed error here would make a failing/permission-denied
+    // store look identical to "no incidents yet" (false-health reporting).
+    process.stderr.write(`  [security-store] getSecurityStats failed (rendering empty): ${err.message}\n`);
+    return empty;
+  }
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 /**

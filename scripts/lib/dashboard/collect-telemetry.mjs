@@ -12,6 +12,9 @@ import 'dotenv/config';
 import { fetchCloudMetrics, computeLocalMetrics } from '../../audit-metrics.mjs';
 import { getLearningStats } from '../learning/stats.mjs';
 import { redactSecrets } from '../sanitizer.mjs';
+import { resolveRepoIdentity } from '../repo-identity.mjs';
+import { getRepoIdByUuid } from '../store/repo.mjs';
+import { getSecurityStats } from '../store/security.mjs';
 
 const DAYS = 30;
 const MAX_REQ_ITEMS = 200;
@@ -144,6 +147,55 @@ async function collectLearning(root) {
   }
 }
 
+/** Empty security telemetry shape (schema-valid; used on absence/error). */
+function emptySecurity() {
+  return {
+    cloud: false, totalIncidents: 0, embedded: 0,
+    byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [],
+  };
+}
+
+/** Re-shape getSecurityStats() (maps + raw rows) into the render data object. */
+function securityData(stats) {
+  const iso = (v) => (v ? new Date(v).toISOString() : null);
+  return {
+    cloud: true,
+    totalIncidents: stats.totalIncidents,
+    embedded: stats.embedded,
+    byStatus: Object.entries(stats.byStatus).map(([status, c]) => ({ status, count: c })),
+    eventCounts: Object.entries(stats.eventCounts).map(([kind, c]) => ({ kind, count: c })),
+    lastRefreshAt: iso(stats.lastRefreshAt),
+    recentEvents: (stats.recentEvents || []).map((e) => ({
+      incidentId: String(e.incident_id || ''),
+      eventKind: String(e.event_kind || ''),
+      branch: String(e.branch || ''),
+      createdAt: iso(e.created_at) || '',
+    })),
+  };
+}
+
+/**
+ * Collect the security section. Keyed by the SAME repo identity the writers
+ * use (resolveRepoIdentity → repo_uuid → audit_repos.id) so the dashboard
+ * reads the rows refresh-incidents.mjs wrote — not a different, empty repo_id.
+ */
+async function collectSecurity(root) {
+  try {
+    const identity = resolveRepoIdentity(root);
+    const repoRow = await getRepoIdByUuid(identity.repoUuid);
+    if (!repoRow?.id) {
+      return { data: emptySecurity(), status: { status: 'missing-optional', detail: 'no security incidents indexed for this repo' } };
+    }
+    const stats = await getSecurityStats(repoRow.id);
+    if (!stats.cloud) {
+      return { data: emptySecurity(), status: { status: 'missing-optional', detail: 'security telemetry needs cloud + a service-role key' } };
+    }
+    return { data: securityData(stats), status: { status: 'ok', detail: '' } };
+  } catch (err) {
+    return { data: emptySecurity(), status: { status: 'unexpected-error', detail: redactSecrets(`security stats failed: ${err.message}`) } };
+  }
+}
+
 /**
  * Collect the full telemetry-data object.
  * @param {{git?: {baseSha: string}}} [opts]
@@ -155,7 +207,11 @@ export async function collectTelemetry(opts = {}) {
 
   // M4 — collectAuditRuns no longer needs a client param; it pulls from the
   // shared pg pool via lib/db/client.mjs. Pass null for the legacy positional.
-  const [auditRuns, learning] = await Promise.all([collectAuditRuns(null), collectLearning(root)]);
+  const [auditRuns, learning, security] = await Promise.all([
+    collectAuditRuns(null),
+    collectLearning(root),
+    collectSecurity(root),
+  ]);
   const requirements = collectRequirements(root);
 
   return {
@@ -169,13 +225,15 @@ export async function collectTelemetry(opts = {}) {
       auditRuns: auditRuns.status,
       requirements: requirements.status,
       learning: learning.status,
+      security: security.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
     learning: learning.data,
+    security: security.data,
   };
 }
 
 // Internal exports for tests — collectRequirements is a pure file read, so
 // it is fixturable; aggregatePasses is pure.
-export const __test__ = { collectRequirements, aggregatePasses };
+export const __test__ = { collectRequirements, aggregatePasses, securityData, emptySecurity };

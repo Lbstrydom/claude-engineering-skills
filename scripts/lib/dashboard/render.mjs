@@ -27,6 +27,7 @@ import sectionPlans from './sections/plans.mjs';
 import sectionAuditRuns from './sections/audit-runs.mjs';
 import sectionRequirements from './sections/requirements.mjs';
 import sectionLearning from './sections/learning.mjs';
+import sectionSecurity from './sections/security.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -45,6 +46,7 @@ const SLICERS = {
   auditRuns:    (d) => ({ src: d.sources.auditRuns || { status: 'ok', detail: '' }, auditRuns: d.auditRuns }),
   requirements: (d) => ({ src: d.sources.requirements || { status: 'ok', detail: '' }, requirements: d.requirements }),
   learning:     (d) => ({ src: d.sources.learning || { status: 'ok', detail: '' }, learning: d.learning }),
+  security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
 };
 
 const REGISTRY = {
@@ -59,6 +61,7 @@ const REGISTRY = {
     { id: 'audit',        title: 'Audit Runs',     build: sectionAuditRuns,    slice: SLICERS.auditRuns },
     { id: 'requirements', title: 'Requirements',   build: sectionRequirements, slice: SLICERS.requirements },
     { id: 'learning',     title: 'Learning',       build: sectionLearning,     slice: SLICERS.learning },
+    { id: 'security',     title: 'Security',       build: sectionSecurity,     slice: SLICERS.security },
   ],
 };
 

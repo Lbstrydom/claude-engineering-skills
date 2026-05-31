@@ -1,5 +1,42 @@
 # Project Status Log
 
+## 2026-05-31 — Security hardening back-port: secret gate + audit trail + dashboard
+
+### Changes
+Back-ported the **security-substantive** parts of the corporate `/security-strategy`
+hardening kit ([docs/plans/security/](docs/plans/security/)) into this repo's existing
+security subsystem, adapted to this repo's stack (Gemini/model-resolver embeddings — NOT
+Azure; `supabase/migrations/` — not `scripts/lib/stores/sql/`). Per user scope decision:
+brought the secret gate, audit trail, dashboard, and graceful-degradation; **skipped** the
+Wartsila governance columns (`classification`/`compliance_tags`/`commit_sha NOT NULL`), the
+Azure modules, the deprecated `.github/skills` mirror, and pgvector-optional.
+
+**Secret pre-write gate** ([scripts/lib/security/secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs))
+- Hybrid refuse/redact: high-confidence key shapes (OpenAI/AWS/Slack/GitHub/JWT/PEM) → REFUSE (incident not indexed, refresh exits 2); low-confidence PII (email/phone) → auto-redact into the **stored** value, not just the embedding text. Proper-names detection-only.
+- Adapted the kit's `sanitizer.mjs` import → this repo's gentle `secret-patterns.mjs` (`sanitizer.redactSecrets` blanket-redacts any 20+ char token and would corrupt incident prose mentioning long identifiers).
+
+**Audit trail** — new migration [supabase/migrations/20260531120000_security_strategy_events.sql](supabase/migrations/20260531120000_security_strategy_events.sql)
+- Append-only `security_strategy_events` (inserted/updated/marked_historical/refused_secret/redacted_secret + branch/commit/who). RLS deny-all + owner-bypass (same posture as `security_incidents`; consistent with the 2026-05-30 RLS hardening).
+- Store: `recordSecurityEvents` / `getSecurityEvents` / `getSecurityStats` in [scripts/lib/store/security.mjs](scripts/lib/store/security.mjs) (chunked append; resilient stats roll-up that logs swallowed errors).
+
+**Refresh wiring** ([scripts/security-memory/refresh-incidents.mjs](scripts/security-memory/refresh-incidents.mjs)) — per-incident gate (refuse → skip + event; redact → store redacted + event), inserted/updated/marked_historical events on real change only, exit 2 on refusal OR embed failure.
+
+**Dashboard Security tab** — [scripts/lib/dashboard/sections/security.mjs](scripts/lib/dashboard/sections/security.mjs) + collector/schema/render registration. Keyed by `resolveRepoIdentity` UUID (same as writers) so the reader sees the rows the refresh wrote — avoids the package.json-name-vs-git-name divergence the kit's P2 fixed. Degrades to an empty panel (logged cause) when migration unapplied / cloud off.
+
+### Verification
+- Full suite **3263 pass / 0 fail** (added `tests/secret-classifier.test.mjs`, `tests/dashboard-security.test.mjs`; updated the pinned `learning-store` export contract 107→110 and the dashboard section-contract list).
+- `/audit-code --scope diff` vs the kit PLAN: GPT R1 surfaced H:7/M:19/L:5 — **all 7 HIGH were plan-drift** (Azure/`002.sql`/`.github` mirror) or pre-existing untouched files or already-guarded (H7 sweep guard already exists). Fixed 3 genuine in-scope items (M15 header accuracy, M18 append-only doc, M10/M13 error logging). **Gemini final gate (gemini-pro-latest): APPROVE**, 0 wrongly-dismissed; its 1 LOW (bulk-insert chunking) fixed.
+- Dashboard built clean; Security tab renders (empty until migration applied + `security:refresh` run).
+
+### Decisions Made
+- Dropped the kit's `repo-name.mjs` git-remote-name helper — this repo's UUID identity (`resolveRepoIdentity`) is stronger and adopting git-name would re-introduce the very divergence the kit fixed elsewhere.
+- Audit-trail event write is best-effort/non-atomic (deviation from the kit's single `withTx`) — the incident index is source of truth; a trail-write failure logs but never fails the refresh.
+
+### Next Steps
+- **Apply the migration to the live store**: `node -r dotenv/config scripts/setup-postgres.mjs --migrate` (blocked this session as an unauthorized shared-infra DDL change). Until then the dashboard Security tab + audit trail render empty (graceful). The migration-drift workflow will flag it on push until applied.
+
+---
+
 ## 2026-05-30 — Sync-manifest regen + security porting-kit staged
 
 ### Changes

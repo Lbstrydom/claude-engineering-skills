@@ -193,6 +193,22 @@ export const TelemetryDataSchema = z.object({
     noBrainerCount: count,
     staleClusterCount: count,
   }),
+  // Security governance telemetry. Optional so telemetry snapshots captured
+  // before this section existed still validate (back-port: docs/plans/security).
+  security: z.object({
+    cloud: z.boolean(),
+    totalIncidents: count,
+    embedded: count,
+    byStatus: z.array(z.object({ status: z.string(), count })),
+    eventCounts: z.array(z.object({ kind: z.string(), count })),
+    lastRefreshAt: z.string().nullable(),
+    recentEvents: z.array(z.object({
+      incidentId: z.string(),
+      eventKind: z.string(),
+      branch: z.string(),
+      createdAt: z.string(),
+    })),
+  }).optional(),
 });
 
 /**

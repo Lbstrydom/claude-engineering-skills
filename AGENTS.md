@@ -950,6 +950,46 @@ If `docs/security-strategy.md` doesn't exist for this repo, run
 `/security-strategy bootstrap` once to seed it. Single-line
 post-push reminders surface security-relevant commits via `/ship`.
 
+### Secret pre-write gate + audit trail (back-port from corporate kit)
+
+`npm run security:refresh` runs every parsed incident through a hybrid
+secret/PII gate before it touches the DB
+([scripts/lib/security/secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs)):
+
+- **High-confidence secret shapes** (OpenAI/AWS/Slack/GitHub keys, JWTs,
+  PEM blocks) → **REFUSE**: the incident is NOT indexed and the refresh
+  exits non-zero so CI catches a real incident kept out of the index.
+  The operator must scrub `docs/security-strategy.md` and re-run.
+- **Low-confidence PII** (emails, phone numbers) → **auto-REDACT** into the
+  stored `description`/`lessons_learned` (not just the embedding text), so a
+  leaked address never lands in the row. Proper-names are detection-only
+  (`classifySecrets` exposes them; the gate does not act on them).
+- Defence-in-depth: the gentle pattern-based `lib/secret-patterns.mjs`
+  redactor runs as a final pass (NOT `sanitizer.mjs`, which blanket-redacts
+  any 20+ char token and would corrupt legitimate incident prose).
+
+Every refresh write is logged to the append-only **`security_strategy_events`**
+audit trail (migration `20260531120000`, RLS-enabled deny-all + owner-bypass,
+same posture as `security_incidents`): `inserted` / `updated` /
+`marked_historical` / `refused_secret` / `redacted_secret`, with branch +
+commit + who. The trail is governance evidence of what the skill indexed and
+what it kept out. Read it via `getSecurityStats(repoId)` /
+`getSecurityEvents(repoId, limit)` in [scripts/lib/store/security.mjs](scripts/lib/store/security.mjs).
+
+**Dashboard Security tab** — `build-dashboard.mjs telemetry` renders a
+Security section (incident count + embedding coverage, per-status breakdown,
+secret-gate tallies, recent audit-trail events) keyed by the SAME
+`resolveRepoIdentity` UUID the writers use, so the reader sees the rows the
+refresh wrote. Degrades to an empty panel (with a logged cause) when the
+migration is unapplied or cloud is off.
+
+> **Embedding provider stays Gemini/model-resolver here** — the corporate
+> kit used Azure (an org-only constraint). This repo's `refresh-incidents.mjs`
+> keeps its existing Gemini embeddings. The kit's Azure modules, the
+> `scripts/lib/stores/sql/` migration layout, the `.github/skills` mirror, and
+> pgvector-optional were intentionally NOT ported (see
+> [docs/plans/security/](docs/plans/security/) for the full kit + rationale).
+
 ---
 
 **Empirical effectiveness test** (run once per repo when deploying, and

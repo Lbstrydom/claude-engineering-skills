@@ -35,6 +35,7 @@ const SECTION_FILES = [
   'audit-runs.mjs',
   'requirements.mjs',
   'learning.mjs',
+  'security.mjs',
 ];
 
 const FORBIDDEN_IN_SECTIONS = [
