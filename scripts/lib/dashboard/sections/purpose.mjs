@@ -41,16 +41,31 @@ export default function sectionPurpose({ src, purposes }, ui) {
     for (const r of n.requirements) invariantIds.add(r.id);
   }
 
-  // Coverage ratio (Sofia/persona P2): show the DENOMINATOR so the reader sees
-  // that the mapped invariants are a fraction of the ledger, not the whole.
-  const totalInvariants = invariantIds.size + (h.unattachedRequirements?.length || 0);
+  // Stratified coverage (v2 Part 1): show direct vs platform vs unmapped so the
+  // platform-foundation catch-all sweep doesn't inflate the headline. Falls back
+  // to the v1 single-ratio form if `coverage` is absent (old snapshot).
+  const cov = p.coverage;
+  let invariantsLine;
+  if (cov && cov.total > 0) {
+    invariantsLine = `<strong>${esc(cov.direct)}</strong> direct · `
+      + `<strong>${esc(cov.platform)}</strong> platform · `
+      + `<strong>${esc(cov.unmapped)}</strong> unmapped (of ${esc(cov.total)})`;
+  } else {
+    const totalInvariants = invariantIds.size + (h.unattachedRequirements?.length || 0);
+    invariantsLine = `<strong>${esc(invariantIds.size)}</strong>${totalInvariants > invariantIds.size ? ` of ${esc(totalInvariants)}` : ''} invariants mapped`;
+  }
+  const catchAllNote = (cov && cov.platform > 0)
+    ? `<p class="section-note section-warn">Platform is a substrate sweep — ${esc(cov.catchAllPct)}% of it maps only via the <code>shared-lib</code> catch-all.</p>`
+    : '';
   const summary = `<p class="section-note">`
     + `<strong>${esc(p.nodes.length)}</strong> purposes · `
     + `<strong>${esc(mappedDomains.size)}</strong> domains mapped · `
-    + `<strong>${esc(invariantIds.size)}</strong>${totalInvariants > invariantIds.size ? ` of ${esc(totalInvariants)}` : ''} invariants mapped`
+    + invariantsLine
     + (h.unmappedDomains?.length ? ` · ${esc(h.unmappedDomains.length)} domains unmapped` : '')
     + (p.ledgerPresent ? '' : ' · <em>no requirements ledger</em>')
-    + `</p>`;
+    + `</p>`
+    + catchAllNote
+    + `<p class="section-note">Live governance health → <strong>Telemetry → Purpose Health</strong>.</p>`;
 
   const regions = p.nodes.map((n) => renderNode(n, p.ledgerPresent, esc)).join('');
   const hygiene = renderHygiene(h, esc);

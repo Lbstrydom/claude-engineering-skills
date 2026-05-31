@@ -42,27 +42,33 @@
       }
     });
 
-    // ── Cross-tab links (Purpose → Architecture) ─────────────────────────
-    // Bound on <main> (NOT the tabstrip): the chips live inside a tab PANEL,
-    // which is a sibling of .tabstrip, so a tabstrip listener never sees the
-    // bubble. Activates the Architecture tab, then reveals + scrolls to the
-    // target domain box. `select` takes a DOM element and is in scope here.
+    // ── Generic cross-tab links (Purpose ↔ Architecture, either way) ─────
+    // Bound on <main> (NOT the tabstrip): chips live inside a tab PANEL, a
+    // sibling of .tabstrip, so a tabstrip listener never sees the bubble. The
+    // target tab is resolved from the href's element → its tabpanel → the tab
+    // controlling it — so both link directions use one handler. `select` takes
+    // a DOM element and is in scope here.
     var main = document.getElementById('main') || document.body;
     main.addEventListener('click', function (e) {
       var link = e.target.closest('a[data-cross-tab]');
       if (!link) return;
-      var hash = (link.getAttribute('href') || '').replace(/^#/, '');
-      if (!hash) return;
-      e.preventDefault();
-      var archTab = tabs.filter(function (t) {
-        return t.getAttribute('aria-controls') === 'panel-architecture';
-      })[0];
-      if (archTab) { select(archTab); archTab.focus(); }
-      var target = document.getElementById(hash);
-      if (target) {
-        if (target.tagName === 'DETAILS') target.open = true;
-        target.scrollIntoView({ block: 'center' });
-      }
+      var href = link.getAttribute('href') || '';
+      if (href.charAt(0) !== '#') return;            // not a same-page hash → let native run
+      var target = document.getElementById(href.slice(1));
+      if (!target) return;                            // dead anchor → native, no trap
+      var panel = target.closest('[role="tabpanel"]');
+      if (!panel) return;
+      var tab = tabs.filter(function (t) { return t.getAttribute('aria-controls') === panel.id; })[0];
+      if (!tab) return;                               // no controlling tab → native, no preventDefault
+      e.preventDefault();                             // only now: we can fully service the click
+      select(tab); tab.focus();
+      // Reveal the target: open ancestor <details> outermost → innermost.
+      var chain = [];
+      var d = target.closest('details');
+      while (d) { chain.unshift(d); d = d.parentElement ? d.parentElement.closest('details') : null; }
+      chain.forEach(function (el) { el.open = true; });
+      if (target.tagName === 'DETAILS') target.open = true;
+      target.scrollIntoView({ block: 'center' });
     });
   }
 

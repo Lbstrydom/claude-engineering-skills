@@ -218,6 +218,20 @@ details.row > div { padding-top: 8px; color: var(--muted); }
 .arch-domain[open] > summary::before { transform: rotate(90deg); }
 .arch-domain > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Purpose Health badges (v2 Part 3) — colour AND text label (WCAG 1.4.1) */
+.health-badge { font-size: 0.8rem; white-space: nowrap; }
+.health-ok { color: var(--ok); }
+.health-at-risk { color: var(--warn); }
+.health-failing { color: var(--err); }
+.health-na { color: var(--muted); }
+
+/* Architecture "serves:" reverse-link chips (v2 Part 2) */
+.arch-serves { margin-top: 6px; font-size: 0.78rem; color: var(--muted); }
+.serves-chip { display: inline-flex; align-items: center; margin: 0 4px 4px 0; padding: 3px 9px; min-height: 26px; box-sizing: border-box;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--accent); text-decoration: none; font-size: 0.76rem; }
+.serves-chip:hover { border-color: var(--accent); }
+.serves-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* ── Purpose tab ──────────────────────────────────────────────── */
 .purpose-list { display: flex; flex-direction: column; gap: var(--gap); margin-top: var(--gap); }
 .purpose { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }

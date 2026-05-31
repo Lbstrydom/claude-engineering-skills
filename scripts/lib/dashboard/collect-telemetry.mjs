@@ -15,6 +15,8 @@ import { redactSecrets } from '../sanitizer.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { getRepoIdByUuid } from '../store/repo.mjs';
 import { getSecurityStats } from '../store/security.mjs';
+import { getPurposeHealth } from '../store/purpose-health.mjs';
+import { PurposeConfigSchema } from './schema.mjs';
 
 const DAYS = 30;
 const MAX_REQ_ITEMS = 200;
@@ -196,6 +198,91 @@ async function collectSecurity(root) {
   }
 }
 
+const WINDOW_DAYS = 30;
+// In v2, only this purpose is confidently attributable from a single signal.
+const ATTRIBUTED_PURPOSE = 'preserve-trust-safety';
+
+/** Empty purposeHealth data (schema-shaped). */
+function emptyPurposeHealth() {
+  return {
+    asOf: new Date().toISOString(),
+    windowDays: WINDOW_DAYS,
+    repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null },
+    purposeBadges: [],
+  };
+}
+
+/**
+ * Collect the Purpose Health telemetry section (cloud). Owns the taxonomy join:
+ * reads the purposes from .audit-loop/domain-map.json (the same committed source
+ * the reference Purpose tab uses), calls the pure store reader for counts, and
+ * assembles `purposeBadges` (every purpose; only `preserve-trust-safety`
+ * attributed). Source-state lives in the returned `status` (NOT in `data`).
+ */
+async function collectPurposeHealth(root) {
+  // 1. Taxonomy (graceful ENOENT — a consumer repo without the purpose map).
+  let purposes;
+  try {
+    const raw = fs.readFileSync(path.join(root, '.audit-loop', 'domain-map.json'), 'utf-8');
+    const map = JSON.parse(raw);   // parse once (M7/M11)
+    const parsed = PurposeConfigSchema.safeParse({
+      purposes: map.purposes,
+      domainPurposes: map.domainPurposes || {},
+    });
+    if (!parsed.success) {
+      return { data: emptyPurposeHealth(), status: { status: 'missing-optional', detail: 'purpose config invalid — see the Purpose tab' } };
+    }
+    purposes = parsed.data.purposes;
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      return { data: emptyPurposeHealth(), status: { status: 'missing-optional', detail: 'no purpose map (.audit-loop/domain-map.json)' } };
+    }
+    return { data: emptyPurposeHealth(), status: { status: 'unexpected-error', detail: redactSecrets(`purpose taxonomy unreadable: ${err.message}`) } };
+  }
+
+  // 2. Counts (cloud).
+  let repoId = null;
+  let counts;
+  try {
+    repoId = (await getRepoIdByUuid(resolveRepoIdentity(root).repoUuid))?.id || null;
+    counts = await getPurposeHealth(repoId, { windowDays: WINDOW_DAYS });
+  } catch (err) {
+    return { data: emptyPurposeHealth(), status: { status: 'unexpected-error', detail: redactSecrets(`purpose health query failed: ${err.message}`) } };
+  }
+  if (!repoId || !counts.cloud) {
+    return { data: emptyPurposeHealth(), status: { status: 'missing-optional', detail: 'needs a cloud database connection (AUDIT_DB_URL)' } };
+  }
+
+  // 3. Assemble badges — every purpose, only trust-safety attributed.
+  const refused = counts.refusedSecrets;
+  const purposeBadges = purposes.map((p) => {
+    if (p.id === ATTRIBUTED_PURPOSE) {
+      const health = refused == null ? 'na' : (refused > 0 ? 'at-risk' : 'ok');
+      return {
+        id: p.id, label: p.label, health, scope: 'purpose-specific',
+        reason: refused == null ? 'secret-events query unavailable'
+          : `${refused} refused secret(s) in ${WINDOW_DAYS}d`,
+      };
+    }
+    return { id: p.id, label: p.label, health: 'na', scope: 'repo-wide-only', reason: 'repo-wide only — see summary' };
+  });
+
+  const partial = [counts.recentHighFindings, counts.plansWithFailingCriteria, counts.refusedSecrets].some((v) => v == null);
+  return {
+    data: {
+      asOf: new Date().toISOString(),
+      windowDays: WINDOW_DAYS,
+      repoWide: {
+        recentHighFindings: counts.recentHighFindings,
+        plansWithFailingCriteria: counts.plansWithFailingCriteria,
+        refusedSecrets: counts.refusedSecrets,
+      },
+      purposeBadges,
+    },
+    status: { status: 'ok', detail: partial ? 'some metrics unavailable (shown as —)' : '' },
+  };
+}
+
 /**
  * Collect the full telemetry-data object.
  * @param {{git?: {baseSha: string}}} [opts]
@@ -207,10 +294,11 @@ export async function collectTelemetry(opts = {}) {
 
   // M4 — collectAuditRuns no longer needs a client param; it pulls from the
   // shared pg pool via lib/db/client.mjs. Pass null for the legacy positional.
-  const [auditRuns, learning, security] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth] = await Promise.all([
     collectAuditRuns(null),
     collectLearning(root),
     collectSecurity(root),
+    collectPurposeHealth(root),
   ]);
   const requirements = collectRequirements(root);
 
@@ -226,14 +314,16 @@ export async function collectTelemetry(opts = {}) {
       requirements: requirements.status,
       learning: learning.status,
       security: security.status,
+      purposeHealth: purposeHealth.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
     learning: learning.data,
     security: security.data,
+    purposeHealth: purposeHealth.data,
   };
 }
 
 // Internal exports for tests — collectRequirements is a pure file read, so
 // it is fixturable; aggregatePasses is pure.
-export const __test__ = { collectRequirements, aggregatePasses, securityData, emptySecurity };
+export const __test__ = { collectRequirements, aggregatePasses, securityData, emptySecurity, collectPurposeHealth, emptyPurposeHealth };

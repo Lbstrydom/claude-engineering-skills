@@ -280,7 +280,8 @@
     { "id": "learn-from-outcomes",   "label": "Learn & improve from outcomes", "kind": "curated",     "flowNodes": [],                      "summary": "Close the loop: FP tracking, bandit selection, prompt evolution, recurrence health." },
     { "id": "preserve-trust-safety", "label": "Preserve trust & safety",       "kind": "curated",     "flowNodes": [],                      "summary": "Secret exclusion, RLS, redaction, atomic writes, graceful degradation." },
     { "id": "ship-and-sync",         "label": "Ship & sync",                   "kind": "skill-chain", "flowNodes": ["ship"],                "summary": "Commit, push, and propagate the bundle to consumer repos." },
-    { "id": "understand-the-repo",   "label": "Understand the repo",           "kind": "curated",     "flowNodes": [],                      "summary": "Architectural memory, symbol index, requirements ledger, and this dashboard." }
+    { "id": "understand-the-repo",   "label": "Understand the repo",           "kind": "curated",     "flowNodes": [],                      "summary": "Architectural memory, symbol index, requirements ledger, and this dashboard." },
+    { "id": "platform-foundation",   "label": "Platform & tooling foundation", "kind": "curated",     "flowNodes": [],                      "summary": "The shared substrate every outcome rests on: utilities, CLI tooling, install, and the test suite — and the invariants that keep it sound." }
   ],
   "domainPurposes": {
     "plan": ["plan-and-design"],
@@ -302,6 +303,11 @@
     "skills-content": ["ship-and-sync"],
     "arch-memory": ["understand-the-repo"],
     "dashboard": ["understand-the-repo"],
-    "docs": ["understand-the-repo"]
+    "docs": ["understand-the-repo"],
+    "shared-lib": ["platform-foundation"],
+    "scripts": ["platform-foundation"],
+    "install": ["platform-foundation"],
+    "root-scripts": ["platform-foundation"],
+    "tests": ["platform-foundation"]
   }
 }

@@ -158,6 +158,14 @@ export const PurposesSchema = z.object({
       assertion: z.string(),
     })),
   })),
+  // Coverage stratification (v2 Part 1). Optional so v1 snapshots validate.
+  coverage: z.object({
+    direct: count,
+    platform: count,
+    unmapped: count,
+    total: count,
+    catchAllPct: count,
+  }).optional(),
   hygiene: z.object({
     unmappedDomains: z.array(z.string()),
     unattachedRequirements: z.array(z.string()),
@@ -211,6 +219,12 @@ export const ReferenceDataSchema = z.object({
       }),
     }),
     mapPath: z.string().nullable(),
+    // v2 Part 2 — inverse edge {domainId: [{id,label}]} for Architecture→Purpose
+    // "serves:" chips. Optional so v1 snapshots validate.
+    domainPurposes: z.record(z.string(), z.array(z.object({
+      id: z.string(),
+      label: z.string(),
+    }))).optional(),
   }),
   flows: FlowManifestSchema.nullable(),
   cli: z.array(CliEntrySchema),
@@ -276,6 +290,25 @@ export const TelemetryDataSchema = z.object({
       eventKind: z.string(),
       branch: z.string(),
       createdAt: z.string(),
+    })),
+  }).optional(),
+  // Purpose Health (v2 Part 3) — cloud governance overlay. NO status here (the
+  // source-state lives in sources.purposeHealth, like security/learning).
+  // Optional so snapshots without it validate.
+  purposeHealth: z.object({
+    asOf: z.string(),
+    windowDays: count,
+    repoWide: z.object({
+      recentHighFindings: count.nullable(),
+      plansWithFailingCriteria: count.nullable(),
+      refusedSecrets: count.nullable(),
+    }),
+    purposeBadges: z.array(z.object({
+      id: z.string(),
+      label: z.string(),
+      health: z.enum(['ok', 'at-risk', 'failing', 'na']),
+      scope: z.enum(['purpose-specific', 'repo-wide-only']),
+      reason: z.string(),
     })),
   }).optional(),
 });

@@ -29,6 +29,7 @@ import sectionRequirements from './sections/requirements.mjs';
 import sectionLearning from './sections/learning.mjs';
 import sectionSecurity from './sections/security.mjs';
 import sectionPurpose from './sections/purpose.mjs';
+import sectionPurposeHealth from './sections/purpose-health.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -49,6 +50,7 @@ const SLICERS = {
   requirements: (d) => ({ src: d.sources.requirements || { status: 'ok', detail: '' }, requirements: d.requirements }),
   learning:     (d) => ({ src: d.sources.learning || { status: 'ok', detail: '' }, learning: d.learning }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
+  purposeHealth:(d) => ({ src: d.sources.purposeHealth || { status: 'ok', detail: '' }, purposeHealth: d.purposeHealth || { asOf: '', windowDays: 30, repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null }, purposeBadges: [] } }),
 };
 
 const REGISTRY = {
@@ -65,6 +67,7 @@ const REGISTRY = {
     { id: 'requirements', title: 'Requirements',   build: sectionRequirements, slice: SLICERS.requirements },
     { id: 'learning',     title: 'Learning',       build: sectionLearning,     slice: SLICERS.learning },
     { id: 'security',     title: 'Security',       build: sectionSecurity,     slice: SLICERS.security },
+    { id: 'purposeHealth',title: 'Purpose Health', build: sectionPurposeHealth,slice: SLICERS.purposeHealth },
   ],
 };
 
@@ -121,7 +124,7 @@ export function renderDocument(data, kind, assets) {
     // Must list EVERY telemetry section source — omitting one (e.g. security)
     // would show the page-level "nothing yet" placeholder while that section
     // actually has data, hiding it entirely.
-    const allMissing = ['auditRuns', 'requirements', 'learning', 'security']
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'security', 'purposeHealth']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',

@@ -27,6 +27,8 @@ function emptyResult(status, detail, ledgerPresent) {
     detail,
     ledgerPresent: !!ledgerPresent,
     nodes: [],
+    coverage: { direct: 0, platform: 0, unmapped: 0, total: 0, catchAllPct: 0 },
+    domainPurposeIndex: {},
     hygiene: {
       unmappedDomains: [],
       unattachedRequirements: [],
@@ -118,9 +120,18 @@ export function collectPurposes(root, ctx = {}) {
   }
 
   // 6. requirement → domain (derived) → purpose (transitive). Dedup per purpose.
+  //    Also classify each into the coverage buckets (Part 1 stratification):
+  //    direct (hits a NON-platform purpose) wins over platform (only platform-
+  //    foundation) wins over unmapped. catchAll = a platform invariant whose
+  //    ONLY platform-mapped domain is the shared-lib catch-all.
+  const PLATFORM_PURPOSE = 'platform-foundation';
+  const CATCH_ALL_DOMAIN = 'shared-lib';
   const purposeReqs = new Map(purposeOrder.map((id) => [id, new Map()])); // pid → (reqId → req)
   const unattachedRequirements = [];
   let skippedRequirements = 0;
+  let directCount = 0;
+  let platformCount = 0;
+  let sharedLibOnlyCount = 0;
 
   for (const r of requirements) {
     const id = r?.id;
@@ -130,15 +141,28 @@ export function collectPurposes(root, ctx = {}) {
     const kind = String(r.kind || 'unknown');
     const derived = appliesTo.length ? computeTargetDomains(appliesTo, rules).domains : [];
     const hitPurposes = new Set();
+    const platformDomainsHit = [];
     for (const d of derived) {
       if (!mappedDomains.has(d)) continue;
-      for (const pid of (cfg.domainPurposes[d] || [])) {
+      const pids = cfg.domainPurposes[d] || [];
+      if (pids.includes(PLATFORM_PURPOSE)) platformDomainsHit.push(d);
+      for (const pid of pids) {
         if (purposeById.has(pid)) hitPurposes.add(pid);
       }
     }
     if (hitPurposes.size === 0) { unattachedRequirements.push(id); continue; }
     for (const pid of hitPurposes) {
       purposeReqs.get(pid).set(id, { id, kind, assertion });
+    }
+    // Bucket: direct wins ties over platform.
+    const nonPlatform = [...hitPurposes].some((pid) => pid !== PLATFORM_PURPOSE);
+    if (nonPlatform) {
+      directCount += 1;
+    } else {
+      platformCount += 1;
+      if (platformDomainsHit.length > 0 && platformDomainsHit.every((d) => d === CATCH_ALL_DOMAIN)) {
+        sharedLibOnlyCount += 1;
+      }
     }
   }
 
@@ -171,11 +195,34 @@ export function collectPurposes(root, ctx = {}) {
     };
   });
 
+  // Part 2: inverse edge {domainId: [{id,label}]}, keys + arrays sorted (M1
+  // determinism). Single source — derived from the SAME cfg we just validated.
+  const domainPurposeIndex = {};
+  for (const d of [...mappedDomains].sort()) {
+    domainPurposeIndex[d] = [...new Set(cfg.domainPurposes[d] || [])]
+      .filter((pid) => purposeById.has(pid))
+      .sort()
+      .map((pid) => ({ id: pid, label: purposeById.get(pid).label }));
+  }
+
+  // Part 1: coverage stratification. total = classified (id+assertion) reqs;
+  // skipped (malformed) tracked separately in hygiene.
+  const platform = platformCount;
+  const coverage = {
+    direct: directCount,
+    platform,
+    unmapped: unattachedRequirements.length,
+    total: directCount + platform + unattachedRequirements.length,
+    catchAllPct: platform > 0 ? Math.round((sharedLibOnlyCount / platform) * 100) : 0,
+  };
+
   return {
     status: 'ok',
     detail: '',
     ledgerPresent: !!ledgerPresent,
     nodes,
+    coverage,
+    domainPurposeIndex,
     hygiene: {
       unmappedDomains,
       unattachedRequirements: unattachedRequirements.sort(),

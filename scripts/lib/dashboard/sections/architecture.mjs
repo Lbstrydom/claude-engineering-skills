@@ -11,7 +11,7 @@
  * @module scripts/lib/dashboard/sections/architecture
  */
 
-import { archDomainElementId } from '../anchors.mjs';
+import { archDomainElementId, purposeTitleElementId } from '../anchors.mjs';
 
 const SECTION = 'architecture';
 
@@ -73,7 +73,7 @@ function formatDepsSourceLine(ds, ui) {
 
 export default function sectionArchitecture({ src, architecture }, ui) {
   if (ui.NON_OK.has(src.status)) return ui.warningPanel(SECTION, src);
-  const { domains, deps = {}, depsSource = null, mapPath } = architecture;
+  const { domains, deps = {}, depsSource = null, mapPath, domainPurposes = {} } = architecture;
   if (!domains.length) {
     return ui.emptyPanel('arch-empty',
       'No architecture-map.md — run `npm run arch:render` to generate it.');
@@ -100,13 +100,20 @@ export default function sectionArchitecture({ src, architecture }, ui) {
       const depLine = ds.length
         ? `<div class="arch-deps">&#8627; depends on: ${ds.map((x) => ui.escapeHtml(x)).join(', ')}</div>`
         : '<div class="arch-deps arch-deps-none">foundation — no domain deps</div>';
+      // v2 Part 2 — reverse cross-link: which purpose(s) this domain serves.
+      // Silent when none (no empty "serves:" label).
+      const purposes = domainPurposes[d.name] || [];
+      const servesLine = purposes.length
+        ? `<div class="arch-serves">serves: ${purposes.map((p) =>
+            `<a class="serves-chip" data-cross-tab href="#${ui.escapeHtml(purposeTitleElementId(p.id))}">${ui.escapeHtml(p.label)}</a>`).join('')}</div>`
+        : '';
       return `<details class="arch-domain" id="${ui.escapeHtml(archDomainElementId(d.name))}">
         <summary>
           <span class="arch-name">${ui.escapeHtml(d.name)}</span>
           <span class="arch-sym">${ui.escapeHtml(sym)}</span>
           <span class="arch-bar" title="${ui.escapeHtml(sym)} symbols"><span style="width:${barPct}%"></span></span>
         </summary>
-        <div class="arch-body"><p>${ui.escapeHtml(d.summary || 'No summary.')}</p>${depLine}</div>
+        <div class="arch-body"><p>${ui.escapeHtml(d.summary || 'No summary.')}</p>${depLine}${servesLine}</div>
       </details>`;
     }).join('');
     bands += `<div class="arch-layer">

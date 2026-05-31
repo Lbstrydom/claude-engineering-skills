@@ -10,7 +10,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { collectPurposes } from '../scripts/lib/dashboard/collect-purposes.mjs';
 import sectionPurpose from '../scripts/lib/dashboard/sections/purpose.mjs';
+import sectionArchitecture from '../scripts/lib/dashboard/sections/architecture.mjs';
 import { buildUi } from '../scripts/lib/dashboard/helpers.mjs';
+import { purposeTitleElementId, archDomainElementId } from '../scripts/lib/dashboard/anchors.mjs';
 
 // ── fixture helpers ──────────────────────────────────────────────────────
 
@@ -199,4 +201,90 @@ test('renderer shows ledger hint when ledgerPresent=false', () => {
   fx.nodes[0].requirements = [];
   const html = sectionPurpose({ src: { status: 'ok', detail: '' }, purposes: fx }, buildUi());
   assert.match(html, /npm run requirements/);
+});
+
+// ── v2 Part 1: coverage stratification ───────────────────────────────────
+
+const V2_PURPOSES = [
+  { id: 'audits', label: 'Deliver audits', summary: 's', kind: 'skill-chain', flowNodes: ['audit-code'] },
+  { id: 'platform-foundation', label: 'Platform & tooling foundation', summary: 's', kind: 'curated', flowNodes: [] },
+];
+const V2_RULES = [
+  { pattern: 'a/**', domain: 'da' },
+  { pattern: 'lib/**', domain: 'shared-lib' },
+  { pattern: 'b/**', domain: 'db' },
+];
+const V2_ARCH = [{ name: 'da' }, { name: 'shared-lib' }, { name: 'db' }];
+
+test('coverage stratifies direct / platform / unmapped + catchAllPct', (t) => {
+  const root = fixtureRoot(t, {
+    rules: V2_RULES,
+    purposes: V2_PURPOSES,
+    domainPurposes: { da: ['audits'], 'shared-lib': ['platform-foundation'], db: ['platform-foundation'] },
+  });
+  const reqs = [
+    { id: 'R1', kind: 'correctness', assertion: 'x', appliesTo: ['a/x.mjs'] },          // da → audits → direct
+    { id: 'R2', kind: 'correctness', assertion: 'x', appliesTo: ['lib/y.mjs'] },        // shared-lib only → platform + catchAll
+    { id: 'R3', kind: 'correctness', assertion: 'x', appliesTo: ['b/z.mjs'] },          // db → platform (NOT catchAll)
+    { id: 'R4', kind: 'correctness', assertion: 'x', appliesTo: ['a/x.mjs', 'lib/y.mjs'] }, // direct wins tie
+    { id: 'R5', kind: 'correctness', assertion: 'x', appliesTo: ['zzz/none.mjs'] },     // unmapped
+  ];
+  const out = collectPurposes(root, { architectureDomains: V2_ARCH, flows: { nodes: [{ id: 'audit-code' }] }, rules: V2_RULES, requirements: reqs, ledgerPresent: true });
+  assert.deepEqual(out.coverage, { direct: 2, platform: 2, unmapped: 1, total: 5, catchAllPct: 50 });
+});
+
+test('catchAllPct is 0 (never NaN) when platform bucket is empty', (t) => {
+  const root = fixtureRoot(t, { rules: V2_RULES, purposes: V2_PURPOSES, domainPurposes: { da: ['audits'] } });
+  const out = collectPurposes(root, { architectureDomains: V2_ARCH, flows: null, rules: V2_RULES, requirements: [{ id: 'R1', kind: 'correctness', assertion: 'x', appliesTo: ['a/x.mjs'] }], ledgerPresent: true });
+  assert.equal(out.coverage.platform, 0);
+  assert.equal(out.coverage.catchAllPct, 0);
+});
+
+// ── v2 Part 2: inverse index + reverse-link rendering ────────────────────
+
+test('domainPurposeIndex is the inverse edge, sorted', (t) => {
+  const root = fixtureRoot(t, { purposes: V2_PURPOSES, domainPurposes: { da: ['audits', 'platform-foundation'], db: ['platform-foundation'] } });
+  const out = collectPurposes(root, { architectureDomains: V2_ARCH, flows: null, rules: V2_RULES, requirements: [], ledgerPresent: true });
+  assert.deepEqual(out.domainPurposeIndex.da, [
+    { id: 'audits', label: 'Deliver audits' },
+    { id: 'platform-foundation', label: 'Platform & tooling foundation' },
+  ]);
+  assert.deepEqual(out.domainPurposeIndex.db, [{ id: 'platform-foundation', label: 'Platform & tooling foundation' }]);
+});
+
+test('purposeTitleElementId mirrors the purpose section aria-labelledby', () => {
+  assert.equal(purposeTitleElementId('audits'), 'purpose-audits-title');
+});
+
+test('architecture renders escaped serves: chips → purpose anchors; silent when none', () => {
+  const ui = buildUi();
+  const html = sectionArchitecture({
+    src: { status: 'ok', detail: '' },
+    architecture: {
+      domains: [{ name: 'da', anchor: 'da', symbolCount: 5, summary: 'sum' }, { name: 'db', anchor: 'db', symbolCount: 2, summary: 'sum' }],
+      deps: {}, depsSource: null, mapPath: 'm',
+      domainPurposes: { da: [{ id: 'audits', label: '<b>Deliver</b> audits' }] },  // db has none
+    },
+  }, ui);
+  assert.match(html, /class="serves-chip" data-cross-tab href="#purpose-audits-title"/);
+  assert.match(html, /&lt;b&gt;Deliver&lt;\/b&gt; audits/);          // escaped
+  // db has no purposes → no serves line. Exactly one serves-chip in the whole render.
+  assert.equal((html.match(/class="serves-chip"/g) || []).length, 1);
+  assert.equal((html.match(/class="arch-serves"/g) || []).length, 1);
+});
+
+test('purpose summary header shows stratified coverage', () => {
+  const ui = buildUi();
+  const html = sectionPurpose({
+    src: { status: 'ok', detail: '' },
+    purposes: {
+      status: 'ok', detail: '', ledgerPresent: true,
+      coverage: { direct: 31, platform: 84, unmapped: 0, total: 115, catchAllPct: 100 },
+      nodes: [{ id: 'p', label: 'P', kind: 'curated', summary: 's', flowNodes: [], domains: [], requirements: [] }],
+      hygiene: { unmappedDomains: [], unattachedRequirements: [], skippedRequirements: 0, unknownDomains: [], domainsMissingArchitecture: [] },
+    },
+  }, ui);
+  assert.match(html, /31<\/strong> direct · <strong>84<\/strong> platform · <strong>0<\/strong> unmapped \(of 115\)/);
+  assert.match(html, /substrate sweep/);
+  assert.match(html, /Telemetry → Purpose Health/);
 });

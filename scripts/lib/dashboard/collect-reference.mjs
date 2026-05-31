@@ -427,13 +427,17 @@ export function collectReference(opts = {}) {
   // Purpose tab — join curated taxonomy + flows + architecture domains +
   // requirements ledger. Deterministic; sources.purposes mirrors its status.
   const ledger = readRequirementsLedger(root);
-  const purposes = collectPurposes(root, {
+  const purposesFull = collectPurposes(root, {
     architectureDomains: arch.domains,
     flows: flowRes.flows,
     rules: loadDomainRules(root),
     requirements: ledger.requirements,
     ledgerPresent: ledger.ledgerPresent,
   });
+  // Relocate the inverse edge onto the architecture slice (the Architecture
+  // section's slicer can only reach `d.architecture`) — v2 Part 2. `purposes`
+  // keeps nodes/coverage/hygiene.
+  const { domainPurposeIndex, ...purposes } = purposesFull;
   sources.purposes = {
     status: purposes.status,
     detail: ledger.note ? `${purposes.detail}${purposes.detail ? '; ' : ''}${ledger.note}` : purposes.detail,
@@ -453,6 +457,7 @@ export function collectReference(opts = {}) {
         mergedDeps: dd.mergedDeps,
         depsSource: dd.depsSource,
         mapPath: arch.mapPath,
+        domainPurposes: domainPurposeIndex,   // v2 Part 2 — Architecture→Purpose
       };
     })(),
     flows: flowRes.flows,

@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-05-31 — Dashboard Purpose view v2 (coverage · reverse-link · live health)
+
+### Changes
+Shipped via `/cycle` (plan → audit-plan → implement → audit-code → live UI test → ship). Plan: [docs/completed/dashboard-purpose-view-v2.md](docs/completed/dashboard-purpose-view-v2.md) (Complete). Three parts:
+
+- **Part 1 — coverage stratification** + a `platform-foundation` purpose. The persona (Sofia) found ~84 invariants orphaned in unmapped infra. Mapped `shared-lib`/`scripts`/`tests`/`install`/`root-scripts` to a "Platform & tooling foundation" purpose, and [collect-purposes.mjs](scripts/lib/dashboard/collect-purposes.mjs) now emits `coverage:{direct,platform,unmapped,total,catchAllPct}`. Header reads **"31 direct · 84 platform · 0 unmapped (of 115)"** + a catch-all-concentration note — the number rose AND its quality is visible (no inflation).
+- **Part 2 — reverse cross-link** (Architecture → Purpose). New `purposeTitleElementId` in [anchors.mjs](scripts/lib/dashboard/anchors.mjs); `collectPurposes` emits a `domainPurposeIndex` (relocated onto `architecture.domainPurposes`); [architecture.mjs](scripts/lib/dashboard/sections/architecture.mjs) renders escaped "serves:" chips; [dashboard.js](scripts/lib/dashboard/assets/dashboard.js) handler **generalised** (resolve target panel from the href element → its tabpanel → tab) so ONE handler services both link directions. Verified live: bidirectional.
+- **Part 3 — live health** (cloud telemetry section, keeps the reference page deterministic). New [store/purpose-health.mjs](scripts/lib/store/purpose-health.mjs) (3 repo-scoped `count(*)::int` queries — audit_findings⋈audit_runs, plan_verification_items⋈plans, security_strategy_events), `collectPurposeHealth` in [collect-telemetry.mjs](scripts/lib/dashboard/collect-telemetry.mjs) (owns the taxonomy join), and [sections/purpose-health.mjs](scripts/lib/dashboard/sections/purpose-health.mjs). **Honest by design**: only `preserve-trust-safety` is attributed; the rest render `n/a — repo-wide only` with a footnote. Health conveyed by text label + colour (WCAG 1.4.1).
+
+### Quality
+`/audit-plan` — GPT R1→R2→R3 (cap) + **3 Gemini passes** (caught a real `count(*)` bigint→string crash, a dual-status convention error, edge guards; coherence **Strong**). `/audit-code` — R1 (genuine: render page-empty omitted `purposeHealth`; windowDays clamp; double-JSON.parse; repo-scoping test) → Gemini **APPROVE**. Click-test **clean** (0 dup ids, serves-chips sized/named/valid). Persona **Ready for users**. Reference page **byte-deterministic** across builds. Full suite **3297 / 0**.
+
+### Next (v3, plan §11)
+Per-domain `audit_findings.primary_file → domain → purpose` attribution to light up more than 1 purpose badge; finer domain rules to de-concentrate the `shared-lib` catch-all; outcome×domain matrix.
+
+---
+
 ## 2026-05-31 — Dashboard Purpose tab (v1) + /ship archive-rebuild ordering fix
 
 ### Changes

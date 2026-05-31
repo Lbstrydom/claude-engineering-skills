@@ -15,3 +15,12 @@
 export function archDomainElementId(domainName) {
   return `arch-domain-${domainName}`;
 }
+
+/**
+ * Element id of a purpose's title in the Purpose tab — the same id
+ * sections/purpose.mjs stamps as the `<section aria-labelledby>` target. Used
+ * as the reverse cross-link target (Architecture "serves:" chip → Purpose).
+ */
+export function purposeTitleElementId(purposeId) {
+  return `purpose-${purposeId}-title`;
+}
