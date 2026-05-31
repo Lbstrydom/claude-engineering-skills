@@ -36,6 +36,7 @@ const SECTION_FILES = [
   'requirements.mjs',
   'learning.mjs',
   'security.mjs',
+  'purpose.mjs',
 ];
 
 const FORBIDDEN_IN_SECTIONS = [

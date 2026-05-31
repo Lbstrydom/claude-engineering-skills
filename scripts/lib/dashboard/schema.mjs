@@ -101,6 +101,72 @@ const CliEntrySchema = z.object({
   uncatalogued: z.boolean(),
 });
 
+// ── Purpose view (outcome map) ───────────────────────────────────────────
+//
+// docs/plans/dashboard-purpose-view.md. Two schemas:
+//   PurposeConfigSchema — validates the hand-edited `.audit-loop/domain-map.json`
+//     {purposes, domainPurposes} blocks at the collector boundary (H1).
+//   PurposesSchema — the single discriminated COLLECTOR OUTPUT contract shared
+//     by the collector, ReferenceDataSchema, and sections/purpose.mjs (R2-H1).
+
+/** Raw config slug. */
+const purposeIdSlug = z.string().regex(/^[a-z][a-z0-9-]*$/, 'purpose id must be a lower-kebab slug');
+
+export const PurposeConfigSchema = z.object({
+  purposes: z.array(z.object({
+    id: purposeIdSlug,
+    label: z.string().min(1),
+    summary: z.string().min(1),
+    kind: z.enum(['skill-chain', 'curated']),
+    flowNodes: z.array(z.string()).default([]),
+  })),
+  domainPurposes: z.record(z.string(), z.array(z.string())),
+}).superRefine((cfg, ctx) => {
+  const ids = cfg.purposes.map((p) => p.id);
+  const dup = ids.find((id, i) => ids.indexOf(id) !== i);
+  if (dup) ctx.addIssue({ code: 'custom', message: `duplicate purpose id "${dup}"` });
+  const idset = new Set(ids);
+  for (const [domain, plist] of Object.entries(cfg.domainPurposes)) {
+    for (const pid of plist) {
+      if (!idset.has(pid)) {
+        ctx.addIssue({ code: 'custom', message: `domainPurposes["${domain}"] references unknown purpose id "${pid}"` });
+      }
+    }
+  }
+});
+
+export const PurposesSchema = z.object({
+  status: z.enum(['ok', 'missing-optional', 'invalid']),
+  detail: z.string(),
+  // false ⇒ renderer shows "run npm run requirements"; true + empty node
+  // requirements ⇒ "no invariants mapped here".
+  ledgerPresent: z.boolean(),
+  nodes: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    kind: z.enum(['skill-chain', 'curated']),  // same closed set as PurposeConfigSchema
+    summary: z.string(),
+    flowNodes: z.array(z.string()),
+    domains: z.array(z.object({
+      id: z.string(),
+      anchor: z.string().nullable(),     // dashboard arch-domain id, or null when the domain has no architecture-map entry
+      alsoServes: count,                 // # of OTHER purposes this domain also serves
+    })),
+    requirements: z.array(z.object({
+      id: z.string(),
+      kind: z.string(),
+      assertion: z.string(),
+    })),
+  })),
+  hygiene: z.object({
+    unmappedDomains: z.array(z.string()),
+    unattachedRequirements: z.array(z.string()),
+    skippedRequirements: count,
+    unknownDomains: z.array(z.string()),
+    domainsMissingArchitecture: z.array(z.string()),
+  }),
+});
+
 export const ReferenceDataSchema = z.object({
   kind: z.literal('reference'),
   provenance: z.object({
@@ -148,6 +214,9 @@ export const ReferenceDataSchema = z.object({
   }),
   flows: FlowManifestSchema.nullable(),
   cli: z.array(CliEntrySchema),
+  // Optional so reference snapshots captured before the Purpose tab existed
+  // still validate (docs/plans/dashboard-purpose-view.md).
+  purposes: PurposesSchema.optional(),
 });
 
 // ── Telemetry data ───────────────────────────────────────────────────────

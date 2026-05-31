@@ -23,6 +23,7 @@ import {
   flattenMergedDeps,
 } from '../observed-deps.mjs';
 import { loadDomainRules } from '../symbol-index/domain-tagger.mjs';
+import { collectPurposes } from './collect-purposes.mjs';
 
 const FLOWS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'flows.json');
 
@@ -242,6 +243,36 @@ export function readDomainDeps(root) {
 }
 
 /**
+ * Read the committed requirements ledger (`.requirements/ledger.json`) for the
+ * Purpose tab. Mirrors `collect-telemetry.mjs::collectRequirements`'s plain
+ * file read. Returns the requirements array AND whether the file was present
+ * (the renderer distinguishes "ledger absent" from "purpose has no invariants"
+ * via `ledgerPresent` — docs/plans/dashboard-purpose-view.md Gemini2-M).
+ *
+ * @param {string} root
+ * @returns {{requirements: object[], ledgerPresent: boolean, note: string|null}}
+ */
+function readRequirementsLedger(root) {
+  let raw;
+  try {
+    raw = fs.readFileSync(path.join(root, '.requirements', 'ledger.json'), 'utf-8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      return { requirements: [], ledgerPresent: false, note: `requirements ledger unreadable: ${err.message}` };
+    }
+    return { requirements: [], ledgerPresent: false, note: null };
+  }
+  try {
+    const ledger = JSON.parse(raw);
+    const reqs = Array.isArray(ledger.requirements) ? ledger.requirements : [];
+    return { requirements: reqs, ledgerPresent: true, note: null };
+  } catch (err) {
+    // Present but malformed — treat as empty so the join still runs, but flag it.
+    return { requirements: [], ledgerPresent: true, note: `requirements ledger malformed: ${err.message}` };
+  }
+}
+
+/**
  * Parse ONLY the stable `## Contents` block of `docs/architecture-map.md`
  * — domain name + symbol count + the per-domain `>` summary blurb. Mermaid
  * blocks and symbol tables are deliberately NOT scraped (Gemini-G2): a
@@ -393,6 +424,21 @@ export function collectReference(opts = {}) {
     sources.cli = { status: 'unexpected-error', detail: `collectCli failed: ${err.message}` };
   }
 
+  // Purpose tab — join curated taxonomy + flows + architecture domains +
+  // requirements ledger. Deterministic; sources.purposes mirrors its status.
+  const ledger = readRequirementsLedger(root);
+  const purposes = collectPurposes(root, {
+    architectureDomains: arch.domains,
+    flows: flowRes.flows,
+    rules: loadDomainRules(root),
+    requirements: ledger.requirements,
+    ledgerPresent: ledger.ledgerPresent,
+  });
+  sources.purposes = {
+    status: purposes.status,
+    detail: ledger.note ? `${purposes.detail}${purposes.detail ? '; ' : ''}${ledger.note}` : purposes.detail,
+  };
+
   const data = {
     kind: 'reference',
     provenance: { baseSha: git.baseSha, dirty: git.dirty, sourceHash: '' },
@@ -411,11 +457,13 @@ export function collectReference(opts = {}) {
     })(),
     flows: flowRes.flows,
     cli,
+    purposes,
   };
   // sourceHash over content (everything but provenance) — committed-page
-  // determinism (no timestamp; plan §8 / M3).
+  // determinism (no timestamp; plan §8 / M3). `purposes` is a pure function of
+  // committed files, so folding it in keeps the page byte-reproducible.
   data.provenance.sourceHash = sha(JSON.stringify({
-    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources,
+    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources, purposes,
   }), 8);
   return data;
 }

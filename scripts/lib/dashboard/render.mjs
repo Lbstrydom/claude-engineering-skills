@@ -28,6 +28,7 @@ import sectionAuditRuns from './sections/audit-runs.mjs';
 import sectionRequirements from './sections/requirements.mjs';
 import sectionLearning from './sections/learning.mjs';
 import sectionSecurity from './sections/security.mjs';
+import sectionPurpose from './sections/purpose.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -42,6 +43,7 @@ const SLICERS = {
   cli:          (d) => ({ src: d.sources.cli || { status: 'ok', detail: '' }, cli: d.cli }),
   flows:        (d) => ({ src: d.sources.flows || { status: 'ok', detail: '' }, flows: d.flows }),
   architecture: (d) => ({ src: d.sources.architecture || { status: 'ok', detail: '' }, architecture: d.architecture }),
+  purpose:      (d) => ({ src: d.sources.purposes || { status: 'ok', detail: '' }, purposes: d.purposes || { status: 'missing-optional', detail: '', ledgerPresent: false, nodes: [], hygiene: { unmappedDomains: [], unattachedRequirements: [], skippedRequirements: 0, unknownDomains: [], domainsMissingArchitecture: [] } } }),
   plans:        (d) => ({ src: d.sources.plans || { status: 'ok', detail: '' }, plans: d.plans }),
   auditRuns:    (d) => ({ src: d.sources.auditRuns || { status: 'ok', detail: '' }, auditRuns: d.auditRuns }),
   requirements: (d) => ({ src: d.sources.requirements || { status: 'ok', detail: '' }, requirements: d.requirements }),
@@ -55,6 +57,7 @@ const REGISTRY = {
     { id: 'cli',          title: 'CLI',            build: sectionCli,          slice: SLICERS.cli },
     { id: 'flows',        title: 'Process Flows',  build: sectionFlows,        slice: SLICERS.flows },
     { id: 'architecture', title: 'Architecture',   build: sectionArchitecture, slice: SLICERS.architecture },
+    { id: 'purpose',      title: 'Purpose',        build: sectionPurpose,      slice: SLICERS.purpose },
     { id: 'plans',        title: 'Plans',          build: sectionPlans,        slice: SLICERS.plans },
   ],
   telemetry: [
@@ -115,7 +118,10 @@ export function renderDocument(data, kind, assets) {
   // possibly fallback data) to show, so the tabs render instead.
   let pageLevelEmpty = '';
   if (kind === 'telemetry') {
-    const allMissing = ['auditRuns', 'requirements', 'learning']
+    // Must list EVERY telemetry section source — omitting one (e.g. security)
+    // would show the page-level "nothing yet" placeholder while that section
+    // actually has data, hiding it entirely.
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'security']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',

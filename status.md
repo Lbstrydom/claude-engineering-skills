@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-05-31 — Dashboard Purpose tab (v1) + /ship archive-rebuild ordering fix
+
+### Changes
+**Purpose tab (v1)** — outcome/requirement view ([docs/plans/dashboard-purpose-view.md](docs/plans/dashboard-purpose-view.md), Approved). Deterministic, committed-file, no-cloud. Joins the curated taxonomy ([.audit-loop/domain-map.json](.audit-loop/domain-map.json) `purposes`/`domainPurposes`) + skill-chain flows + architecture domains + the requirements ledger (requirement→domain derived from `appliesTo`, transitive→purpose).
+- New: [collect-purposes.mjs](scripts/lib/dashboard/collect-purposes.mjs) (pure join), [sections/purpose.mjs](scripts/lib/dashboard/sections/purpose.mjs) (renderer — escaped, `<section aria-labelledby>` + `<details>` a11y, kind-grouped invariants, hygiene region), [anchors.mjs](scripts/lib/dashboard/anchors.mjs) (canonical cross-link id helper shared by purpose + architecture), `PurposeConfigSchema`/`PurposesSchema` in [schema.mjs](scripts/lib/dashboard/schema.mjs), `tests/dashboard-purpose.test.mjs` (15 tests).
+- Wiring: [collect-reference.mjs](scripts/lib/dashboard/collect-reference.mjs) loads the ledger + folds `purposes` into `sourceHash`; registered in [render.mjs](scripts/lib/dashboard/render.mjs) `REGISTRY.reference`; cross-tab click handler in `dashboard.js` (bound on `<main>`); CSS on existing tokens. `architecture.mjs` gained `id="arch-domain-<name>"` + a disclosure marker.
+- Live: **7 purposes · 20 domains mapped · 31 of 115 invariants · 5 unmapped**.
+
+**Quality**: `/audit-code` → Gemini gate **APPROVE** (R1 2H/12M fixed/triaged, R2 HIGH cleared; most M cited pre-existing CSS). `/click-test` → **CLEAN** (1 a11y finding fixed; cross-link verified). `/persona-test` (Sofia, system designer) → **Ready for users** — applied her 2 findings (header now shows the invariant-coverage denominator "31 of 115"; invariants lead with assertion text, REQ-id demoted). Full suite **3280 / 0**.
+
+**`/ship` fix** — added Step 5.5b: rebuild the dashboard AFTER plan archiving (Step 5.5), not only at Step 0.5d (before). Previously a just-completed+archived plan showed in the Plans tab's Active list for one ship cycle. Build is deterministic so the post-archive re-run is byte-identical when nothing moved.
+
+### Next
+- v2: a "Platform & tooling foundation" purpose (lift invariant coverage), reverse link (Architecture domain → "serves: \<purposes\>"), and live health colouring from cloud telemetry — being taken through `/cycle`.
+
+---
+
 ## 2026-05-31 — Security hardening back-port: secret gate + audit trail + dashboard
 
 ### Changes

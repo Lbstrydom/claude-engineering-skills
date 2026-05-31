@@ -41,6 +41,29 @@
         select(tabs[next]);
       }
     });
+
+    // ── Cross-tab links (Purpose → Architecture) ─────────────────────────
+    // Bound on <main> (NOT the tabstrip): the chips live inside a tab PANEL,
+    // which is a sibling of .tabstrip, so a tabstrip listener never sees the
+    // bubble. Activates the Architecture tab, then reveals + scrolls to the
+    // target domain box. `select` takes a DOM element and is in scope here.
+    var main = document.getElementById('main') || document.body;
+    main.addEventListener('click', function (e) {
+      var link = e.target.closest('a[data-cross-tab]');
+      if (!link) return;
+      var hash = (link.getAttribute('href') || '').replace(/^#/, '');
+      if (!hash) return;
+      e.preventDefault();
+      var archTab = tabs.filter(function (t) {
+        return t.getAttribute('aria-controls') === 'panel-architecture';
+      })[0];
+      if (archTab) { select(archTab); archTab.focus(); }
+      var target = document.getElementById(hash);
+      if (target) {
+        if (target.tagName === 'DETAILS') target.open = true;
+        target.scrollIntoView({ block: 'center' });
+      }
+    });
   }
 
   // ── Panel-scoped search (skills + CLI) ─────────────────────────

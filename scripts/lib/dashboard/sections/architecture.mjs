@@ -11,6 +11,8 @@
  * @module scripts/lib/dashboard/sections/architecture
  */
 
+import { archDomainElementId } from '../anchors.mjs';
+
 const SECTION = 'architecture';
 
 const ARCH_TIER_LABELS = ['foundation', 'core', 'top-level'];
@@ -98,7 +100,7 @@ export default function sectionArchitecture({ src, architecture }, ui) {
       const depLine = ds.length
         ? `<div class="arch-deps">&#8627; depends on: ${ds.map((x) => ui.escapeHtml(x)).join(', ')}</div>`
         : '<div class="arch-deps arch-deps-none">foundation — no domain deps</div>';
-      return `<details class="arch-domain">
+      return `<details class="arch-domain" id="${ui.escapeHtml(archDomainElementId(d.name))}">
         <summary>
           <span class="arch-name">${ui.escapeHtml(d.name)}</span>
           <span class="arch-sym">${ui.escapeHtml(sym)}</span>

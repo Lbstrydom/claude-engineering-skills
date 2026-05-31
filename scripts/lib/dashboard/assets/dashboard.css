@@ -209,3 +209,46 @@ details.row > div { padding-top: 8px; color: var(--muted); }
   .grid { grid-template-columns: 1fr; }
   [role="tabpanel"], .tabstrip, .dash-header { padding-left: 14px; padding-right: 14px; }
 }
+
+/* Architecture domain disclosure marker — native marker is lost once the
+   summary is display:flex; supply an explicit triangle (matches .purpose). */
+.arch-domain > summary { list-style: none; }
+.arch-domain > summary::-webkit-details-marker { display: none; }
+.arch-domain > summary::before { content: "\25B6"; display: inline-block; margin-right: 6px; font-size: 0.7em; color: var(--muted); transition: transform 0.12s ease; }
+.arch-domain[open] > summary::before { transform: rotate(90deg); }
+.arch-domain > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── Purpose tab ──────────────────────────────────────────────── */
+.purpose-list { display: flex; flex-direction: column; gap: var(--gap); margin-top: var(--gap); }
+.purpose { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.purpose > details > summary { cursor: pointer; padding: 10px 14px; list-style: none; min-height: 40px; box-sizing: border-box; }
+.purpose > details > summary::-webkit-details-marker { display: none; }
+/* H2: native marker removed → provide an explicit disclosure triangle so the
+   collapsed/expanded state stays visible. */
+.purpose > details > summary::before { content: "\25B6"; display: inline-block; margin-right: 8px; font-size: 0.7em; color: var(--muted); transition: transform 0.12s ease; }
+.purpose > details[open] > summary::before { transform: rotate(90deg); }
+.purpose > details > summary:focus-visible,
+.kind-group > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.purpose-title { display: inline-flex; align-items: center; gap: 10px; margin: 0; font-size: 1.05rem; }
+.purpose-kind { font-size: 0.7rem; font-weight: 500; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.purpose-flows { font-size: 0.72rem; color: var(--accent); }
+.purpose-body { padding: 0 14px 12px; }
+.purpose-summary { color: var(--muted); margin: 4px 0 10px; }
+.domain-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.domain-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem; padding: 5px 11px; min-height: 30px; box-sizing: border-box; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--accent); text-decoration: none; }
+.domain-chip:hover { border-color: var(--accent); }
+.domain-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.domain-chip-nolink { color: var(--muted); cursor: default; }
+.chip-badge { font-size: 0.68rem; color: var(--warn); }
+.purpose-reqs { display: flex; flex-direction: column; gap: 6px; }
+.purpose-noreq { color: var(--muted); font-size: 0.85rem; margin: 0; }
+.kind-group > summary { cursor: pointer; font-size: 0.82rem; color: var(--text); }
+.kind-count { color: var(--muted); }
+.kind-group ul { margin: 6px 0 6px 18px; padding: 0; }
+.kind-group li { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
+.req-id { color: var(--accent); font-family: ui-monospace, monospace; font-size: 0.72rem; }
+.hygiene { margin-top: var(--gap); border: 1px solid var(--warn); border-radius: var(--radius); background: var(--panel); padding: 10px 14px; }
+.hygiene-title { margin: 0 0 6px; font-size: 0.9rem; color: var(--warn); }
+.hygiene ul { margin: 0; padding-left: 18px; }
+.hygiene li { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
