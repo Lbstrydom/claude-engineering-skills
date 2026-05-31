@@ -163,6 +163,12 @@ CLI exits non-zero on a **degraded** build (a source was invalid/errored):
 This keeps the committed reference dashboard current with the skills/plans
 being shipped. `dashboard/telemetry.html` is never staged (gitignored).
 
+> **Note**: this early build is superseded by **Step 5.5b**, which rebuilds
+> AFTER plan archiving so the Plans tab reflects the final active/completed
+> split. The build is deterministic (content `sourceHash`, no timestamp), so
+> the 5.5b re-run is byte-identical when nothing archived — and corrects the
+> page when a plan moved. If you only run one, run 5.5b.
+
 ---
 
 ## Step 1 — Assess What Changed
@@ -266,6 +272,32 @@ v2 draft that shouldn't move yet).  Preview with
 
 If anything moves, include the renamed paths in the Step 6 stage list
 (git tracks them as renames automatically).
+
+### Step 5.5b — Rebuild the dashboard AFTER archiving (source-repo only)
+
+The reference dashboard's Plans tab buckets by **directory** (`docs/plans/`
+= active, `docs/completed/` = completed). The archive move above changes
+that split, so the **authoritative** dashboard rebuild must run HERE, after
+the move — not at Step 0.5d (which runs before the archive and would commit
+a page showing the just-completed plan still in the Active list, lagging one
+ship cycle).
+
+Source-repo-gated (`package.json.name === "claude-engineering-skills"`); skip
+silently in consumer repos. Run WITHOUT `|| true` — the exit code is the
+staging signal:
+
+```bash
+node scripts/build-dashboard.mjs reference 2>&1
+```
+
+- Exit 0 → stage `dashboard/index.html` in the Step 6 list.
+- Exit non-zero (degraded build) → do NOT stage it; print a one-line
+  heads-up; ship continues.
+
+This supersedes the Step 0.5d rebuild whenever a ship reaches this step
+(i.e. unless `--no-archive` AND the source-repo gate both skip it). When
+0.5d already built a clean page and nothing archived, re-running here is
+idempotent (same inputs → same `sourceHash` → byte-identical page).
 
 ---
 
