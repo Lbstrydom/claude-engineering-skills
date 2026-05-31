@@ -88,12 +88,104 @@ test('all purpose-health queries are repo-scoped + ::int cast + windowed', () =>
   // both count shapes used by the 3 queries carry the cast.
   assert.match(src, /count\(\*\)::int/);
   assert.match(src, /count\(DISTINCT i\.plan_id\)::int/);
-  // every count query bounds the window (one interval predicate per query).
-  assert.equal((src.match(/now\(\) - \(\$2 \* interval '1 day'\)/g) || []).length, 3);
+  // every count query bounds the window (one interval predicate per query) —
+  // 4 now: recentHigh, plansFailing, refusedSecrets, + v3 highByFile.
+  assert.equal((src.match(/now\(\) - \(\$2 \* interval '1 day'\)/g) || []).length, 4);
+  // v3 highByFile: repo-scoped (r.repo_id) + grouped by file.
+  assert.match(src, /GROUP BY f\.primary_file/);
 });
 
 test('windowDays is clamped to a positive integer range', async () => {
   // The clamp is internal; assert the source pins [1,365] floor (no DB needed).
   const src = fs.readFileSync(new URL('../scripts/lib/store/purpose-health.mjs', import.meta.url), 'utf-8');
   assert.match(src, /Math\.max\(1, Math\.min\(365, raw\)\)/);
+});
+
+// ── v3 Part A: pure attribution + classifier ──────────────────────────────
+
+const { attributeHighByFile, classifyPurposeBadges } = __test__;
+const A_RULES = [
+  { pattern: 'a/**', domain: 'da' },
+  { pattern: 'b/**', domain: 'db' },
+];
+const A_DP = { da: ['p1'], db: ['p1', 'p2'] };   // db serves two purposes
+const A_PIDS = ['p1', 'p2', 'preserve-trust-safety'];
+
+test('attributeHighByFile: tags files → domains → purposes; multi-purpose counts each', () => {
+  const r = attributeHighByFile([
+    { file: 'a/x.mjs', n: 2 },   // da → p1
+    { file: 'b/y.mjs', n: 1 },   // db → p1 AND p2
+  ], { rules: A_RULES, domainPurposesCfg: A_DP, purposeIds: A_PIDS });
+  assert.equal(r.attributionAvailable, true);
+  assert.equal(r.highTally.p1, 3);   // 2 + 1
+  assert.equal(r.highTally.p2, 1);
+  assert.equal(r.unattributable, 0);
+});
+
+test('attributeHighByFile: null file / non-path / no-purpose domain → unattributable', () => {
+  const r = attributeHighByFile([
+    { file: null, n: 1 },           // null → unattributable
+    { file: 'Structure', n: 1 },    // section-name, no rule match → unattributable
+    { file: 'zzz/none.mjs', n: 2 }, // matches no rule → unattributable
+  ], { rules: A_RULES, domainPurposesCfg: A_DP, purposeIds: A_PIDS });
+  assert.equal(r.unattributable, 4);
+  assert.equal(r.highTally.p1, 0);
+});
+
+test('attributeHighByFile: a sensitive file is skipped (never attributed)', () => {
+  const r = attributeHighByFile([{ file: '.env', n: 3 }], { rules: A_RULES, domainPurposesCfg: A_DP, purposeIds: A_PIDS });
+  assert.equal(r.unattributable, 3);
+  assert.equal(r.highTally.p1, 0);
+});
+
+test('attributeHighByFile: null highByFile → attribution unavailable', () => {
+  const r = attributeHighByFile(null, { rules: A_RULES, domainPurposesCfg: A_DP, purposeIds: A_PIDS });
+  assert.equal(r.attributionAvailable, false);
+  assert.equal(r.unattributable, null);
+});
+
+const PURPS = [
+  { id: 'p1', label: 'P1' },
+  { id: 'preserve-trust-safety', label: 'Trust' },
+  { id: 'empty', label: 'Empty' },
+];
+
+test('classifier: HIGH in a purpose domain → at-risk; clean → ok; no domains → na', () => {
+  const b = classifyPurposeBadges({
+    purposes: PURPS,
+    domainCountByPurpose: { p1: 2, 'preserve-trust-safety': 1, empty: 0 },
+    highTally: { p1: 2, 'preserve-trust-safety': 0, empty: 0 },
+    refusedSecrets: 0, attributionAvailable: true,
+  });
+  const by = Object.fromEntries(b.map((x) => [x.id, x]));
+  assert.equal(by.p1.health, 'at-risk');
+  assert.equal(by['preserve-trust-safety'].health, 'ok');
+  assert.equal(by.empty.health, 'na');           // no domains → na, not false ok
+});
+
+test('classifier: trust-safety stays on refusedSecrets when HIGH attribution unavailable', () => {
+  const b = classifyPurposeBadges({
+    purposes: PURPS,
+    domainCountByPurpose: { p1: 2, 'preserve-trust-safety': 1, empty: 0 },
+    highTally: { p1: 0, 'preserve-trust-safety': 0, empty: 0 },
+    refusedSecrets: 2, attributionAvailable: false,    // HIGH unavailable, secrets available
+  });
+  const by = Object.fromEntries(b.map((x) => [x.id, x]));
+  assert.equal(by.p1.health, 'na');                       // HIGH-only purpose → na
+  assert.equal(by['preserve-trust-safety'].health, 'at-risk'); // still judged on secrets
+});
+
+test('classifier: trust-safety na only when BOTH signals unavailable', () => {
+  const b = classifyPurposeBadges({
+    purposes: PURPS, domainCountByPurpose: { 'preserve-trust-safety': 1, p1: 1, empty: 0 },
+    highTally: { 'preserve-trust-safety': 0, p1: 0, empty: 0 },
+    refusedSecrets: null, attributionAvailable: false,
+  });
+  assert.equal(b.find((x) => x.id === 'preserve-trust-safety').health, 'na');
+});
+
+test('attributeHighByFile: a duplicate pid in a domain array counts ONCE (no double-count)', () => {
+  const r = attributeHighByFile([{ file: 'a/x.mjs', n: 2 }],
+    { rules: A_RULES, domainPurposesCfg: { da: ['p1', 'p1'] }, purposeIds: A_PIDS });
+  assert.equal(r.highTally.p1, 2);   // not 4
 });

@@ -302,6 +302,10 @@ export const TelemetryDataSchema = z.object({
       recentHighFindings: count.nullable(),
       plansWithFailingCriteria: count.nullable(),
       refusedSecrets: count.nullable(),
+      // v3 Part A — HIGH findings not attributable to a purpose (null file /
+      // non-path / no-purpose domain / sensitive). null when attribution
+      // unavailable. Optional so v2 snapshots validate.
+      unattributable: count.nullable().optional(),
     }),
     purposeBadges: z.array(z.object({
       id: z.string(),

@@ -17,6 +17,8 @@ import { getRepoIdByUuid } from '../store/repo.mjs';
 import { getSecurityStats } from '../store/security.mjs';
 import { getPurposeHealth } from '../store/purpose-health.mjs';
 import { PurposeConfigSchema } from './schema.mjs';
+import { loadDomainRules, tagDomain } from '../symbol-index/domain-tagger.mjs';
+import { classifyPath } from '../sensitive-paths.mjs';
 
 const DAYS = 30;
 const MAX_REQ_ITEMS = 200;
@@ -207,7 +209,7 @@ function emptyPurposeHealth() {
   return {
     asOf: new Date().toISOString(),
     windowDays: WINDOW_DAYS,
-    repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null },
+    repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null, unattributable: null },
     purposeBadges: [],
   };
 }
@@ -233,6 +235,7 @@ async function collectPurposeHealth(root) {
       return { data: emptyPurposeHealth(), status: { status: 'missing-optional', detail: 'purpose config invalid — see the Purpose tab' } };
     }
     purposes = parsed.data.purposes;
+    var domainPurposesCfg = parsed.data.domainPurposes;
   } catch (err) {
     if (err.code === 'ENOENT') {
       return { data: emptyPurposeHealth(), status: { status: 'missing-optional', detail: 'no purpose map (.audit-loop/domain-map.json)' } };
@@ -253,21 +256,34 @@ async function collectPurposeHealth(root) {
     return { data: emptyPurposeHealth(), status: { status: 'missing-optional', detail: 'needs a cloud database connection (AUDIT_DB_URL)' } };
   }
 
-  // 3. Assemble badges — every purpose, only trust-safety attributed.
-  const refused = counts.refusedSecrets;
-  const purposeBadges = purposes.map((p) => {
-    if (p.id === ATTRIBUTED_PURPOSE) {
-      const health = refused == null ? 'na' : (refused > 0 ? 'at-risk' : 'ok');
-      return {
-        id: p.id, label: p.label, health, scope: 'purpose-specific',
-        reason: refused == null ? 'secret-events query unavailable'
-          : `${refused} refused secret(s) in ${WINDOW_DAYS}d`,
-      };
-    }
-    return { id: p.id, label: p.label, health: 'na', scope: 'repo-wide-only', reason: 'repo-wide only — see summary' };
+  // 3. Per-domain attribution (v3 Part A) — tag each HIGH finding's file to a
+  //    domain → purpose. The whole block is guarded: any throw sets
+  //    attributionAvailable=false (HIGH-based purposes → na; trust-safety still
+  //    uses refusedSecrets). NEVER crashes the section.
+  const domainCountByPurpose = {};      // purposeId → # mapped domains (for the no-domains→na rule)
+  for (const p of purposes) domainCountByPurpose[p.id] = 0;
+  for (const [, plist] of Object.entries(domainPurposesCfg || {})) {
+    // Dedup per domain (a hand-edited `da:['p1','p1']` must count that domain
+    // ONCE for p1, not twice) — matches collect-purposes' per-domain dedup.
+    for (const pid of new Set(plist)) if (pid in domainCountByPurpose) domainCountByPurpose[pid] += 1;
+  }
+  const purposeIds = purposes.map((p) => p.id);
+  let attribution;
+  try {
+    const rules = loadDomainRules(root);   // the throwy part (I/O) stays here
+    attribution = attributeHighByFile(counts.highByFile, { rules, domainPurposesCfg, purposeIds });
+  } catch (err) {
+    process.stderr.write(`  [purpose-health] attribution failed (→ na): ${err.message}\n`);
+    attribution = { highTally: Object.fromEntries(purposeIds.map((id) => [id, 0])), unattributable: null, attributionAvailable: false };
+  }
+  const { highTally, unattributable, attributionAvailable } = attribution;
+
+  const purposeBadges = classifyPurposeBadges({
+    purposes, domainCountByPurpose, highTally,
+    refusedSecrets: counts.refusedSecrets, attributionAvailable,
   });
 
-  const partial = [counts.recentHighFindings, counts.plansWithFailingCriteria, counts.refusedSecrets].some((v) => v == null);
+  const partial = [counts.recentHighFindings, counts.plansWithFailingCriteria, counts.refusedSecrets, counts.highByFile].some((v) => v == null);
   return {
     data: {
       asOf: new Date().toISOString(),
@@ -276,11 +292,77 @@ async function collectPurposeHealth(root) {
         recentHighFindings: counts.recentHighFindings,
         plansWithFailingCriteria: counts.plansWithFailingCriteria,
         refusedSecrets: counts.refusedSecrets,
+        unattributable,
       },
       purposeBadges,
     },
     status: { status: 'ok', detail: partial ? 'some metrics unavailable (shown as —)' : '' },
   };
+}
+
+/**
+ * Pure attribution (v3 Part A) — tag each HIGH-by-file row to a domain→purpose.
+ * No I/O (rules passed in). Returns per-purpose HIGH tallies + the
+ * `unattributable` bucket (null file / sensitive / non-path / no-purpose domain;
+ * a finding in a multi-purpose domain counts toward EACH). `attributionAvailable`
+ * is false only when the by-file data itself is absent.
+ *
+ * @param {Array<{file:string|null, n:number}>|null} highByFile
+ * @param {{rules:object[], domainPurposesCfg:object, purposeIds:string[]}} ctx
+ */
+function attributeHighByFile(highByFile, { rules, domainPurposesCfg, purposeIds }) {
+  const highTally = Object.fromEntries(purposeIds.map((id) => [id, 0]));
+  if (!Array.isArray(highByFile)) return { highTally, unattributable: null, attributionAvailable: false };
+  let unattributable = 0;
+  for (const row of highByFile) {
+    const n = Number(row.n) || 0;
+    const file = row.file;
+    if (file == null) { unattributable += n; continue; }              // guard before String()
+    const norm = String(file).replace(/\\/g, '/').replace(/^\.\//, '');
+    if (classifyPath(norm) === 'sensitive') { unattributable += n; continue; } // never attribute a secret file
+    const domain = tagDomain(norm, rules);
+    // Dedup per domain so a `da:['p1','p1']` doesn't add n twice to p1.
+    const hit = [...new Set(domain ? (domainPurposesCfg[domain] || []) : [])].filter((pid) => pid in highTally);
+    if (hit.length === 0) { unattributable += n; continue; }
+    for (const pid of hit) highTally[pid] += n;                       // multi-purpose → each (distinct)
+  }
+  return { highTally, unattributable, attributionAvailable: true };
+}
+
+/**
+ * Pure per-purpose health classifier (v3 Part A). Each signal is judged on its
+ * OWN availability — never conflate "unavailable" with "healthy".
+ * @returns {Array<{id,label,health,scope,reason}>}
+ */
+function classifyPurposeBadges({ purposes, domainCountByPurpose, highTally, refusedSecrets, attributionAvailable }) {
+  return purposes.map((p) => {
+    const highOn = attributionAvailable && highTally[p.id] > 0;
+    if (p.id === ATTRIBUTED_PURPOSE) {
+      const secretAvail = refusedSecrets != null;
+      const secretOn = secretAvail && refusedSecrets > 0;
+      if (!attributionAvailable && !secretAvail) {
+        return { id: p.id, label: p.label, health: 'na', scope: 'repo-wide-only', reason: 'signals unavailable' };
+      }
+      const health = (highOn || secretOn) ? 'at-risk' : 'ok';
+      const bits = [];
+      if (attributionAvailable) bits.push(`${highTally[p.id]} recent HIGH in its domains`);
+      if (secretAvail) bits.push(`${refusedSecrets} refused secret(s)`);
+      else bits.push('refused-secret signal unavailable');
+      return { id: p.id, label: p.label, health, scope: 'purpose-specific', reason: bits.join(' · ') };
+    }
+    // HIGH-attributed-only purposes.
+    if (!attributionAvailable) {
+      return { id: p.id, label: p.label, health: 'na', scope: 'repo-wide-only', reason: 'HIGH attribution unavailable this run' };
+    }
+    if (domainCountByPurpose[p.id] === 0) {
+      return { id: p.id, label: p.label, health: 'na', scope: 'repo-wide-only', reason: 'no domains to assess' };
+    }
+    const health = highOn ? 'at-risk' : 'ok';
+    return {
+      id: p.id, label: p.label, health, scope: 'purpose-specific',
+      reason: highOn ? `${highTally[p.id]} recent HIGH in its domains` : `no HIGH findings in its domains (${WINDOW_DAYS}d)`,
+    };
+  });
 }
 
 /**
@@ -326,4 +408,4 @@ export async function collectTelemetry(opts = {}) {
 
 // Internal exports for tests — collectRequirements is a pure file read, so
 // it is fixturable; aggregatePasses is pure.
-export const __test__ = { collectRequirements, aggregatePasses, securityData, emptySecurity, collectPurposeHealth, emptyPurposeHealth };
+export const __test__ = { collectRequirements, aggregatePasses, securityData, emptySecurity, collectPurposeHealth, emptyPurposeHealth, classifyPurposeBadges, attributeHighByFile };

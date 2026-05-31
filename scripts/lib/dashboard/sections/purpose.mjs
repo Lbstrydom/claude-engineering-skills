@@ -69,8 +69,33 @@ export default function sectionPurpose({ src, purposes }, ui) {
 
   const regions = p.nodes.map((n) => renderNode(n, p.ledgerPresent, esc)).join('');
   const hygiene = renderHygiene(h, esc);
+  const matrix = renderMatrix(p.nodes, esc);
 
-  return summary + `<div class="purpose-list">${regions}</div>` + hygiene;
+  return summary + `<div class="purpose-list">${regions}</div>` + hygiene + matrix;
+}
+
+/**
+ * Outcome × domain matrix (v3 Part B) — a collapsed validation grid: purposes
+ * (rows) × the sorted union of mapped domains (cols); a cell is "delivered" when
+ * the domain ∈ that purpose's domains. Built from `nodes` (no collector change).
+ * A real data grid: <th scope="col">/<th scope="row"> + visible ✓ + SR text.
+ */
+function renderMatrix(nodes, esc) {
+  if (!nodes || !nodes.length) return '';
+  const allDomains = [...new Set(nodes.flatMap((n) => n.domains.map((d) => d.id)))].sort();
+  if (!allDomains.length) return '';
+  const head = `<tr><th scope="col">Purpose</th>${allDomains.map((d) => `<th scope="col">${esc(d)}</th>`).join('')}</tr>`;
+  const body = nodes.map((n) => {
+    const own = new Set(n.domains.map((d) => d.id));
+    const cells = allDomains.map((d) => own.has(d)
+      ? `<td class="cell-on">✓<span class="visually-hidden"> delivers</span></td>`
+      : `<td></td>`).join('');
+    return `<tr><th scope="row">${esc(n.label)}</th>${cells}</tr>`;
+  }).join('');
+  return `<details class="purpose-matrix">`
+    + `<summary><h3 id="purpose-matrix-title" class="purpose-title">Outcome × domain matrix</h3></summary>`
+    + `<div class="table-wrap matrix-scroll" role="group" aria-labelledby="purpose-matrix-title" tabindex="0">`
+    + `<table><thead>${head}</thead><tbody>${body}</tbody></table></div></details>`;
 }
 
 function renderNode(n, ledgerPresent, esc) {

@@ -33,12 +33,18 @@ export default function sectionPurposeHealth({ src, purposeHealth }, ui) {
 
   const rw = ph.repoWide || {};
   const n = (v) => (v == null ? '—' : esc(v));
+  // (M4) unattributable: show "N" when attribution available (incl. 0 — honest
+  // transparency that attribution is complete); OMIT when null (unavailable —
+  // showing 0 would falsely imply complete attribution).
+  const unattr = rw.unattributable != null
+    ? ` · <strong>${esc(rw.unattributable)}</strong> HIGH unattributable`
+    : '';
   const summary = `<p class="section-note">`
     + `Governance · last ${esc(ph.windowDays)}d · as of <code>${esc(ph.asOf)}</code></p>`
     + `<p class="section-note">`
     + `<strong>${n(rw.recentHighFindings)}</strong> recent HIGH audit finding(s) · `
     + `<strong>${n(rw.plansWithFailingCriteria)}</strong> plan(s) with failing P0/P1 · `
-    + `<strong>${n(rw.refusedSecrets)}</strong> refused secret(s)</p>`;
+    + `<strong>${n(rw.refusedSecrets)}</strong> refused secret(s)${unattr}</p>`;
 
   const rows = ph.purposeBadges.map((b) => {
     const badge = BADGE[b.health] || BADGE.na;
@@ -51,9 +57,11 @@ export default function sectionPurposeHealth({ src, purposeHealth }, ui) {
   const table = `<div class="table-wrap"><table><thead><tr>`
     + `<th>Purpose</th><th>Health</th><th>Why</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 
-  const note = `<p class="section-note section-warn">Per-purpose attribution is repo-wide in v2 — `
-    + `only <strong>Preserve trust &amp; safety</strong> is attributed (from refused-secret events). `
-    + `The HIGH/failing-plan counts above are repo-wide, not per purpose.</p>`;
+  const note = `<p class="section-note section-warn">Per-purpose health = recent HIGH findings `
+    + `attributed to each purpose's domains (a finding in a multi-purpose domain counts toward each — `
+    + `the tallies over-count vs the repo total by design). <strong>Preserve trust &amp; safety</strong> `
+    + `also reflects refused-secret events. The failing-plan count is repo-wide. `
+    + `Findings with no file / no purpose-domain are counted as <em>unattributable</em>.</p>`;
 
   return summary + table + note;
 }

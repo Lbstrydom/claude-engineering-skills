@@ -288,3 +288,43 @@ test('purpose summary header shows stratified coverage', () => {
   assert.match(html, /substrate sweep/);
   assert.match(html, /Telemetry → Purpose Health/);
 });
+
+// ── v3 Part B: outcome×domain matrix ─────────────────────────────────────
+
+test('matrix renders a real grid: th scope col/row, ✓ + visually-hidden, focusable scroll', () => {
+  const ui = buildUi();
+  const html = sectionPurpose({
+    src: { status: 'ok', detail: '' },
+    purposes: {
+      status: 'ok', detail: '', ledgerPresent: true,
+      coverage: { direct: 1, platform: 0, unmapped: 0, total: 1, catchAllPct: 0 },
+      nodes: [
+        { id: 'a', label: 'Alpha', kind: 'curated', summary: 's', flowNodes: [], domains: [{ id: 'd1', anchor: null, alsoServes: 0 }], requirements: [] },
+        { id: 'b', label: 'Beta', kind: 'curated', summary: 's', flowNodes: [], domains: [{ id: 'd2', anchor: null, alsoServes: 0 }], requirements: [] },
+      ],
+      hygiene: { unmappedDomains: [], unattachedRequirements: [], skippedRequirements: 0, unknownDomains: [], domainsMissingArchitecture: [] },
+    },
+  }, ui);
+  assert.match(html, /class="purpose-matrix"/);
+  assert.match(html, /role="group" aria-labelledby="purpose-matrix-title" tabindex="0"/);
+  assert.match(html, /<th scope="col">d1<\/th>/);
+  assert.match(html, /<th scope="row">Alpha<\/th>/);
+  // Alpha delivers d1 (✓ + SR text), not d2 (empty cell)
+  assert.match(html, /<td class="cell-on">✓<span class="visually-hidden"> delivers<\/span><\/td>/);
+  // exactly 2 ✓ cells (Alpha→d1, Beta→d2) across a 2×2 domain grid
+  assert.equal((html.match(/class="cell-on"/g) || []).length, 2);
+});
+
+test('matrix escapes domain ids and purpose labels', () => {
+  const ui = buildUi();
+  const html = sectionPurpose({
+    src: { status: 'ok', detail: '' },
+    purposes: {
+      status: 'ok', detail: '', ledgerPresent: true,
+      nodes: [{ id: 'x', label: '<b>P</b>', kind: 'curated', summary: 's', flowNodes: [], domains: [{ id: 'd"<x', anchor: null, alsoServes: 0 }], requirements: [] }],
+      hygiene: { unmappedDomains: [], unattachedRequirements: [], skippedRequirements: 0, unknownDomains: [], domainsMissingArchitecture: [] },
+    },
+  }, ui);
+  assert.doesNotMatch(html, /<th scope="row"><b>P<\/b>/);
+  assert.match(html, /&lt;b&gt;P&lt;\/b&gt;/);
+});

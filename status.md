@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-05-31 — Dashboard Purpose view v3 (per-domain health · outcome×domain matrix)
+
+Shipped via `/cycle`. Plan: [docs/completed/dashboard-purpose-view-v3.md](docs/completed/dashboard-purpose-view-v3.md) (Complete). Two dashboard-contained items from v2 §11; the `shared-lib` re-tag was deliberately excluded (global arch-memory blast radius).
+
+- **Part A — per-domain health attribution.** v2 attributed only `preserve-trust-safety`; now every purpose gets a real badge. A new repo-scoped `highByFile` query in [store/purpose-health.mjs](scripts/lib/store/purpose-health.mjs) groups HIGH findings by `primary_file`; two PURE helpers in [collect-telemetry.mjs](scripts/lib/dashboard/collect-telemetry.mjs) — `attributeHighByFile` (`primary_file → tagDomain → purpose`, **sensitive-path skip**, null/non-path/no-purpose → `unattributable`, multi-purpose counts each, dedup) and `classifyPurposeBadges` (each signal judged on its OWN availability; trust-safety worst-of HIGH + refused-secrets). Honest: per-purpose tallies over-count by design; an `unattributable` count is surfaced. **Live: 8/8 purposes now attributed** (all `ok` — 0 recent HIGH this repo).
+- **Part B — outcome×domain matrix.** A collapsed validation grid in the Purpose tab ([sections/purpose.mjs](scripts/lib/dashboard/sections/purpose.mjs) `renderMatrix`), built from existing `nodes` (no collector/schema change). Real `<table>` with `<th scope="col/row">`, `✓` + `.visually-hidden` text (not colour/aria-label-only), a keyboard-focusable `.matrix-scroll` region. Deterministic.
+
+**Quality**: `/audit-plan` GPT R1-R3 + Gemini **APPROVE** (coherence Strong). `/audit-code` → genuine v3 bug fixed (duplicate-pid double-count in `domainCountByPurpose` + `attributeHighByFile`); Gemini **APPROVE** (0/0). Click-test: matrix is a clean SR-navigable grid (26 col / 8 row headers, 0 dup ids, focusable scroll). Persona Ready-for-users. Reference page byte-deterministic. Suite **3306/0**.
+
+### Next (v4, plan §11)
+Finer domain rules to de-concentrate the `shared-lib` catch-all (global arch-memory re-tag); health history/sparkline; `failing` tier from plan-verification attributed per-purpose; matrix transpose for very large domain counts.
+
+---
+
 ## 2026-05-31 — Dashboard Purpose view v2 (coverage · reverse-link · live health)
 
 ### Changes

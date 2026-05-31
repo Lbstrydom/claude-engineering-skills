@@ -11,7 +11,7 @@
  *
  * @module scripts/lib/store/purpose-health
  */
-import { one } from '../db/query.mjs';
+import { one, many } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
 
 /**
@@ -54,7 +54,24 @@ export async function getPurposeHealth(repoId, opts = {}) {
         AND created_at >= now() - ($2 * interval '1 day')`,
     [repoId, windowDays], 'refusedSecrets');
 
-  return { cloud: true, recentHighFindings, plansWithFailingCriteria, refusedSecrets };
+  // v3 Part A: HIGH findings grouped by file → the collector attributes each
+  // file to a domain → purpose. primary_file is nullable (its bucket becomes
+  // "unattributable"). null on query failure (degrades like the scalars).
+  let highByFile = null;
+  try {
+    highByFile = await many(
+      `SELECT f.primary_file AS file, count(*)::int AS n
+         FROM audit_findings f JOIN audit_runs r ON f.run_id = r.id
+        WHERE r.repo_id = $1 AND f.severity = 'HIGH'
+          AND f.created_at >= now() - ($2 * interval '1 day')
+        GROUP BY f.primary_file`,
+      [repoId, windowDays]);
+  } catch (err) {
+    process.stderr.write(`  [purpose-health] highByFile query failed (→ null): ${err.message}\n`);
+    highByFile = null;
+  }
+
+  return { cloud: true, recentHighFindings, plansWithFailingCriteria, refusedSecrets, highByFile };
 }
 
 async function scalarOrNull(sql, params, label) {
