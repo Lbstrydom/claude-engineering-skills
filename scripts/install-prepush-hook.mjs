@@ -97,6 +97,22 @@ if [ "$EXIT" != "0" ]; then
   echo "[prepush-hook] audit script returned $EXIT — proceeding anyway (set AUDIT_PREPUSH_BLOCK=1 to gate)" >&2
   [ "$AUDIT_PREPUSH_BLOCK" = "1" ] && exit "$EXIT"
 fi
+
+# ── Surfaces-manifest drift (persona-test consistency mode) ─────────────────
+# When the synced builder + a .persona-test/ dir are present, verify the
+# committed .persona-test/surfaces.json still matches its *.persona-test.json
+# fragments. This is the local counterpart to the CI contract test, which
+# skips because the gitignored .claude-skills/ tree isn't hydrated in CI.
+# BLOCKING by design: drift = a fragment edited without regenerating the
+# merged file, a definite error. Bypass: SURFACES_DRIFT_DISABLE=1 or
+# \`git push --no-verify\`.
+SURFACES_BUILDER="scripts/.claude-skills/build-surfaces-manifest.mjs"
+if [ "$SURFACES_DRIFT_DISABLE" != "1" ] && [ -f "$SURFACES_BUILDER" ] && [ -d ".persona-test" ]; then
+  if ! node "$SURFACES_BUILDER" --verify >&2; then
+    echo "[prepush-hook] surfaces.json drift — run \\\`npm run surfaces:build\\\` and stage it (bypass: SURFACES_DRIFT_DISABLE=1)" >&2
+    exit 1
+  fi
+fi
 exit 0
 `;
 
