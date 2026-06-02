@@ -836,3 +836,27 @@ CI-side drift coverage, either add a consumer pre-push hook running
 `npm run surfaces:build -- --verify`, or land the deferred **v2 CI-hydration
 bootstrap** (the plan's §5 "Deferred to v2") — wine having CI is the trigger
 that makes that bootstrap worth building.
+
+### Tooling-divergence review — RESOLVED: nothing to port (2026-06-02)
+
+The "~7 divergent files" follow-up was investigated (5 substantive files via
+parallel analysis + 2 small ones normalized by hand). **Unanimous result: nothing
+to integrate upstream — 0 genuine wine fixes.** The apparent divergence was:
+
+1. **CRLF-vs-LF noise** — the `.audit/wine-tooling-divergence/` capture diffed
+   LF canonical against CRLF wine blobs, rendering whole files as changed.
+   `observed-deps.mjs` + `build-dashboard.mjs` are byte-identical once normalized.
+2. **Wine trailing canonical on recent features** — `setup-postgres.mjs` (isolated
+   migrations path + ledger RLS), `collect-reference.mjs` / `schema.mjs` /
+   `render.mjs` / `sections/architecture.mjs` (Purpose tab/view + security
+   telemetry). Every divergence is canonical-newer; wine never forked the logic.
+
+**Conclusion:** wine did not actually fork our tooling. The only genuinely
+wine-authored tool was `build-surfaces-manifest.mjs`, already promoted upstream
+(above). The override (migration) loses nothing; the re-sync brought wine current
+(verified: dashboard build runs clean, all Purpose-tab siblings hydrated). The
+`.audit/wine-tooling-divergence/` scratch was deleted as misleading (CRLF-inflated).
+
+**Lesson for future divergence audits:** normalize line endings
+(`git diff --no-index` / `diff --strip-trailing-cr`) and diff against the actual
+on-disk synced copy, not the pre-isolation tracked path, before triaging.
