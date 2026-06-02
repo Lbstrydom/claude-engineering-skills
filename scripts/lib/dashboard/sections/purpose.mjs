@@ -69,9 +69,14 @@ export default function sectionPurpose({ src, purposes }, ui) {
 
   const regions = p.nodes.map((n) => renderNode(n, p.ledgerPresent, esc)).join('');
   const hygiene = renderHygiene(h, esc);
+  // Code-less-by-design domains are NOT a hygiene warning — a calm note.
+  const codeless = (h.codelessMapped && h.codelessMapped.length)
+    ? `<p class="section-note">Code-less by design (${esc(h.codelessMapped.length)}): `
+      + `${h.codelessMapped.map(esc).join(', ')} — markdown / SQL / skill-only, no code box expected.</p>`
+    : '';
   const matrix = renderMatrix(p.nodes, esc);
 
-  return summary + `<div class="purpose-list">${regions}</div>` + hygiene + matrix;
+  return summary + `<div class="purpose-list">${regions}</div>` + hygiene + codeless + matrix;
 }
 
 /**

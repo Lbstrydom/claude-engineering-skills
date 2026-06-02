@@ -172,6 +172,9 @@ export const PurposesSchema = z.object({
     skippedRequirements: count,
     unknownDomains: z.array(z.string()),
     domainsMissingArchitecture: z.array(z.string()),
+    // v3.1 — mapped domains that are code-less by design (informational, not a
+    // ⚠ warning). Optional so older snapshots validate.
+    codelessMapped: z.array(z.string()).optional(),
   }),
 });
 

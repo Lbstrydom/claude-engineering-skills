@@ -328,3 +328,26 @@ test('matrix escapes domain ids and purpose labels', () => {
   assert.doesNotMatch(html, /<th scope="row"><b>P<\/b>/);
   assert.match(html, /&lt;b&gt;P&lt;\/b&gt;/);
 });
+
+// ── v3.1: code-less-by-design partition ──────────────────────────────────
+
+test('a code-less-by-design domain goes to codelessMapped, NOT the actionable warning', (t) => {
+  const root = fixtureRoot(t, {
+    purposes: PURPOSES,
+    domainPurposes: { dc: ['audits'], db: ['trust'] },  // dc has no arch entry (ARCH=[da,db]); db has one
+    codelessDomains: ['dc'],                              // dc is code-less by design
+  });
+  const out = collectPurposes(root, { architectureDomains: ARCH, flows: FLOWS, rules: RULES, requirements: [], ledgerPresent: true });
+  assert.deepEqual(out.hygiene.codelessMapped, ['dc']);
+  assert.ok(!out.hygiene.domainsMissingArchitecture.includes('dc'), 'dc must NOT be in the actionable warning');
+});
+
+test('a mapped-no-arch domain NOT in codelessDomains stays an actionable warning', (t) => {
+  const root = fixtureRoot(t, {
+    purposes: PURPOSES,
+    domainPurposes: { dc: ['audits'] },                  // dc no arch entry, NOT code-less
+  });
+  const out = collectPurposes(root, { architectureDomains: ARCH, flows: FLOWS, rules: RULES, requirements: [], ledgerPresent: true });
+  assert.ok(out.hygiene.domainsMissingArchitecture.includes('dc'));
+  assert.deepEqual(out.hygiene.codelessMapped, []);
+});

@@ -313,5 +313,7 @@
     "install": ["platform-foundation"],
     "root-scripts": ["platform-foundation"],
     "tests": ["platform-foundation"]
-  }
+  },
+  "_comment_codeless": "Domains that are code-less BY DESIGN (markdown / SQL / SKILL.md-only) — they have no JS symbols, so they will never appear in the code-symbol architecture map. The Purpose-tab hygiene treats a mapped-but-no-arch domain in this list as INFORMATIONAL (a neutral note), not an actionable 'stale rule' warning. Only add a domain here once you've confirmed it genuinely has no indexable code (vs a dead/mis-targeted rule that should be fixed instead).",
+  "codelessDomains": ["ship", "skills-content", "supabase", "docs"]
 }

@@ -35,6 +35,7 @@ function emptyResult(status, detail, ledgerPresent) {
       skippedRequirements: 0,
       unknownDomains: [],
       domainsMissingArchitecture: [],
+      codelessMapped: [],
     },
   };
 }
@@ -80,6 +81,10 @@ export function collectPurposes(root, ctx = {}) {
     return emptyResult('invalid', `purpose config invalid: ${parsed.error.issues[0]?.message || 'schema error'}`, ledgerPresent);
   }
   const cfg = parsed.data;
+  // Domains that are code-less BY DESIGN (markdown/SQL/skill-only) — a
+  // mapped-but-no-arch domain in this set is informational, not an actionable
+  // stale-rule warning. Read from the raw map (not part of PurposeConfigSchema).
+  const codelessSet = new Set(Array.isArray(rawMap.codelessDomains) ? rawMap.codelessDomains : []);
 
   // 3. flowNodes cross-check — only when the flow manifest is present
   //    (ReferenceDataSchema types flows as nullable; a missing manifest must
@@ -228,7 +233,11 @@ export function collectPurposes(root, ctx = {}) {
       unattachedRequirements: unattachedRequirements.sort(),
       skippedRequirements,
       unknownDomains: [...unknownDomains].sort(),
-      domainsMissingArchitecture: [...domainsMissingArchitecture].sort(),
+      // Actionable: mapped, no arch entry, NOT code-less-by-design (likely a
+      // dead/mis-targeted rule). codelessMapped: the expected-code-less ones
+      // (informational, rendered as a neutral note, not a ⚠ warning).
+      domainsMissingArchitecture: [...domainsMissingArchitecture].filter((d) => !codelessSet.has(d)).sort(),
+      codelessMapped: [...domainsMissingArchitecture].filter((d) => codelessSet.has(d)).sort(),
     },
   };
 }
