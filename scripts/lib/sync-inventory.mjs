@@ -37,6 +37,10 @@ const CORE_ENTRY = [
   'scripts/write-code-outcomes.mjs',
   'scripts/build-dashboard.mjs',
   'scripts/setup-postgres.mjs',
+  // Companion RLS-exposure diagnostic — same lib/db/ closure as
+  // setup-postgres.mjs. Authoritative list lives in sync-to-repos.mjs;
+  // keep in lock-step (see plan §7 R2 H2 — single-source-of-truth intent).
+  'scripts/check-rls.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   'scripts/persona-consistency-run.mjs',
   'scripts/persona-consistency-promote.mjs',
@@ -54,6 +58,10 @@ const CORE_NON_IMPORTABLE = [
   './lib/redact.mjs',
   'scripts/lib/redact.mjs',
   'scripts/lib/persona-test/semantic-compare.mjs',
+  // Bash-shelled from persona-test/click-test SKILL.mds (`node
+  // scripts/lib/device-presets.mjs prep|prep-matrix`) — never statically
+  // imported, so the walker can't reach it. Mirrors sync-to-repos.mjs.
+  'scripts/lib/device-presets.mjs',
 ];
 
 const LEARNING_ENTRY = [
