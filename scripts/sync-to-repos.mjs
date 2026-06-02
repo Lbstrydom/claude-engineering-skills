@@ -104,6 +104,12 @@ const CORE_ENTRY = [
   // automatically.
   'scripts/persona-consistency-run.mjs',
   'scripts/persona-consistency-promote.mjs',
+  // Consumer-invoked CLI: builds a consumer's .persona-test/surfaces.json from
+  // colocated *.persona-test.json fragments, validated against our
+  // SurfaceManifestSchema. Lives upstream so every consumer shares one merge +
+  // collision-detection + validation impl; the walker pulls in its
+  // lib/persona-test/schemas.mjs import automatically.
+  'scripts/build-surfaces-manifest.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.
@@ -573,6 +579,7 @@ async function main() {
       } catch { /* malformed journal — treat as empty */ }
     }
     const collisions = [];
+    const inventoryOwned = []; // non-relocating managed surfaces absent from prior manifest
     for (const [dstRel] of intendedWrites) {
       const dstAbsPath = path.join(repo.path, dstRel);
       if (!fs.existsSync(dstAbsPath)) continue;
@@ -582,9 +589,27 @@ async function main() {
       const ownedAsLegacyMap = priorLayout === 'legacy' &&
         Object.prototype.hasOwnProperty.call(priorFiles, intendedWrites.get(dstRel));
       const ownedByInterruptedRun = journalDestinations.has(dstRel);
+      // Inventory-ownership (root fix for incomplete legacy manifests): a file
+      // we intend to write whose dest == src (a NON-relocating managed surface
+      // — .claude/skills/**, .github/prompts/**, editor configs, the manifest
+      // itself) is ours by namespace definition. Older sync versions never
+      // recorded these in the manifest, so the prior-manifest test
+      // false-positives on the first isolated migration. This is safe: those
+      // paths are our exclusive managed namespace, and the two genuinely
+      // co-owned configs (.claude/settings.json, .vscode/mcp.json) are written
+      // via deepMerge, which preserves consumer keys regardless of this claim.
+      // The relocating namespace (scripts/.claude-skills/**, dst != src) is NOT
+      // covered — a foreign file there still aborts, preserving real collision
+      // protection.
+      const ownedByInventoryNonRelocating =
+        !ownedAsIsolated && !ownedAsLegacyMap && dstRel === intendedWrites.get(dstRel);
       if (!ownedAsIsolated && !ownedAsLegacyMap && !ownedByInterruptedRun) {
-        collisions.push(dstRel);
+        if (ownedByInventoryNonRelocating) inventoryOwned.push(dstRel);
+        else collisions.push(dstRel);
       }
+    }
+    if (inventoryOwned.length && !DRY_RUN) {
+      console.log(`  ${Y}note${X}  ${inventoryOwned.length} managed-surface file(s) not in prior manifest — treating as owned (legacy manifest predates skill/prompt tracking).`);
     }
     if (collisions.length && !DRY_RUN) {
       console.log(`  ${R}ABORT${X}  ${collisions.length} unowned collision(s); will not overwrite.`);

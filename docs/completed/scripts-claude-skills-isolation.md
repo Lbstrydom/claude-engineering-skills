@@ -1,7 +1,8 @@
 # Plan: Isolate engineering-skills tooling in consumer repos under `scripts/.claude-skills/`
 
 - **Date**: 2026-05-29
-- **Status**: Approved (6 audit rounds — 3 GPT + 3 Gemini — 30 findings fixed; ready for implementation)
+- **Status**: **Complete (2026-06-02) — archived to docs/completed/.** All phases done; both consumers migrated. Phases 0/1/5 (source infra + docs) shipped earlier; Phases 2/3/4 executed 2026-06-02. ai-organiser → PR #3, wine-cellar-app → PR #19, source fixes + surfaces-builder promotion + pre-push drift hook → PR #47. Tooling-divergence review resolved (nothing to port). See "Execution outcome" below.
+- **Status (original)**: Approved (6 audit rounds — 3 GPT + 3 Gemini — 30 findings fixed; ready for implementation)
 - **Author**: Claude + Louis
 - **Scope**: backend (sync infrastructure + cross-repo migration)
 - **Target domains**: `install`, `shared-lib` (cross-domain — expected; this is sync infrastructure)
@@ -787,3 +788,75 @@ Six audit rounds total (3 GPT + 3 Gemini) surfaced 30 findings, every one of whi
 The plan stops here. Remaining concerns are best caught at implementation time by `/audit-code --scope=diff` against the actual code — plan-level audit has saturated.
 
 Status: **CONCERNS_REMAINING (acceptable for implementation)**. The Gemini v3 verdict was `CONCERNS` but all 4 findings were addressed in this deliberation. No new audit round will be initiated; subsequent verification is deferred to code-audit on the implementation diff.
+
+---
+
+## Execution outcome (2026-06-02)
+
+Phases 2–4 ran against the live consumers. Reality diverged from several plan assumptions; documented here for the record.
+
+**Phase 2 (dry-run validation)** — passed all 6 assertions × 2 consumers after fixing one source bug: `sync-inventory.mjs`'s `CORE_ENTRY` had drifted from `sync-to-repos.mjs` (the authoritative list), so the inventory was blind to `check-rls.mjs` + `device-presets.mjs`. Reconciled (PR #47).
+
+**Key plan-assumption misses (both consumers):**
+1. **Bundle was already gitignored wholesale, not tracked.** The git-status/commit pollution the plan targeted was already mitigated by prior wholesale `scripts/` + `.claude/` ignores. Remaining benefit delivered: physical filesystem isolation + structural governance.
+2. **Legacy manifests were incomplete** — they recorded only `scripts/*` + hooks + migrations, never `.claude/skills/**`, prompts, editor configs, or the manifest itself. The preflight ownership test therefore flagged 62 of our own managed-surface files as "unowned collisions" and aborted. Fixed with inventory-ownership (PR #47): a non-relocating file in our current inventory is ours by namespace definition.
+3. **Gate-2B self-hash** — the manifest can't record its own final hash; verifier now skips it (PR #47).
+4. **Stale orphan skills/prompts** (`audit-loop`, `plan-backend`, `plan-frontend`) from earlier skill restructures lingered in both consumers. Deleted (our orphans only; consumers' own skills untouched).
+5. **Consumer `package.json` `arch:*` scripts** pointed at relocated `symbol-index/` tooling — repointed at `scripts/.claude-skills/symbol-index/`.
+
+**Phase 3 (ai-organiser)** — clean tree; migrated to PR #3. 202 legacy flat files removed, tooling isolated, all 8 gates pass. An unrelated in-flight `dompurify` dependency change was excluded from the migration commit.
+
+**Phase 4 (wine-cellar-app)** — materially messier:
+- wine had **tracked** copies of our tooling (105 files — real commit/blame pollution) + our audit-loop migrations **interleaved with wine's app DB migrations** in `supabase/migrations/` (32 stale copies removed; canonical now under `.audit-loop/migrations/`).
+- **The wine team had been force-forking our tooling in place** (build-dashboard, dashboard/*, setup-postgres, observed-deps). Governing principle: **our canonical structure must govern — consumers cannot fork our tooling.** The migration enforces this structurally (tooling is now gitignored + synced; in-place edits are overwritten every sync). Their divergent versions are preserved in wine git history (`8d4b1df6`) and captured as diffs in `.audit/wine-tooling-divergence/` (source repo, gitignored) for **upstream integration review** — genuine fixes to be ported into canonical source, then discarded from the fork.
+- **One legitimate coupling**: wine's own `build-surfaces-manifest.mjs` imports our `SurfaceManifestSchema`. Repointed at the isolated path (`scripts/.claude-skills/lib/persona-test/schemas.mjs`) rather than vendoring a copy. Full unit suite green.
+
+**Follow-up (open):** review `.audit/wine-tooling-divergence/*.diff` and port any genuine wine fixes upstream into canonical source. ~7 files diverge (setup-postgres ~720 vs 737 lines, 4 dashboard files, observed-deps); the rest were byte-identical.
+
+### Surfaces-manifest builder — first concrete upstream integration (2026-06-02)
+
+wine PR #19's CI caught a real regression my migration introduced: wine's
+**tracked** `build-surfaces-manifest.mjs` imported our `SurfaceManifestSchema`
+from the **gitignored** `scripts/.claude-skills/` tree — a fresh CI clone (no
+sync) can't resolve it. This is the general hazard: *tracked consumer code must
+not import from the sync-hydrated tree.*
+
+Resolution (the governance-correct one — "useful generic tools live upstream,
+deploy via sync"): the builder was generic, so it was **promoted upstream**
+(`scripts/build-surfaces-manifest.mjs` + node:test unit test; added to the sync
+bundle; `ROOT` now resolves from `cwd` so it's relocation-safe). wine deleted
+its copy + the builder's unit test, repointed its contract test to import the
+**synced** builder with a graceful skip when the tree isn't hydrated, and added
+`npm run surfaces:build`. Builder output is byte-identical, so the committed
+`surfaces.json` drift check still holds.
+
+**Residual tradeoff:** the drift/contract check **skips in CI** (the gitignored
+builder isn't hydrated there) and runs locally / pre-commit instead. To restore
+CI-side drift coverage, either add a consumer pre-push hook running
+`npm run surfaces:build -- --verify`, or land the deferred **v2 CI-hydration
+bootstrap** (the plan's §5 "Deferred to v2") — wine having CI is the trigger
+that makes that bootstrap worth building.
+
+### Tooling-divergence review — RESOLVED: nothing to port (2026-06-02)
+
+The "~7 divergent files" follow-up was investigated (5 substantive files via
+parallel analysis + 2 small ones normalized by hand). **Unanimous result: nothing
+to integrate upstream — 0 genuine wine fixes.** The apparent divergence was:
+
+1. **CRLF-vs-LF noise** — the `.audit/wine-tooling-divergence/` capture diffed
+   LF canonical against CRLF wine blobs, rendering whole files as changed.
+   `observed-deps.mjs` + `build-dashboard.mjs` are byte-identical once normalized.
+2. **Wine trailing canonical on recent features** — `setup-postgres.mjs` (isolated
+   migrations path + ledger RLS), `collect-reference.mjs` / `schema.mjs` /
+   `render.mjs` / `sections/architecture.mjs` (Purpose tab/view + security
+   telemetry). Every divergence is canonical-newer; wine never forked the logic.
+
+**Conclusion:** wine did not actually fork our tooling. The only genuinely
+wine-authored tool was `build-surfaces-manifest.mjs`, already promoted upstream
+(above). The override (migration) loses nothing; the re-sync brought wine current
+(verified: dashboard build runs clean, all Purpose-tab siblings hydrated). The
+`.audit/wine-tooling-divergence/` scratch was deleted as misleading (CRLF-inflated).
+
+**Lesson for future divergence audits:** normalize line endings
+(`git diff --no-index` / `diff --strip-trailing-cr`) and diff against the actual
+on-disk synced copy, not the pre-isolation tracked path, before triaging.
