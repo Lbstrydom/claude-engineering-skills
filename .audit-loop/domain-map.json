@@ -134,11 +134,15 @@
       "domain": "memory-health"
     },
     {
-      "pattern": "scripts/persona-test.mjs",
+      "pattern": "scripts/persona-consistency-*.mjs",
       "domain": "persona-test"
     },
     {
-      "pattern": "scripts/ux-lock.mjs",
+      "pattern": "scripts/lib/persona-test/**",
+      "domain": "persona-test"
+    },
+    {
+      "pattern": "scripts/lib/ux-lock/**",
       "domain": "ux-lock"
     },
     {
@@ -146,7 +150,7 @@
       "domain": "ship"
     },
     {
-      "pattern": "scripts/explain.mjs",
+      "pattern": "scripts/explain*.mjs",
       "domain": "explain"
     },
     {

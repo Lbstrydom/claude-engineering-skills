@@ -1,5 +1,15 @@
 # Project Status Log
 
+## 2026-06-02 — Fix stale domain rules → Purpose hygiene "missing arch" 7→3
+
+The Purpose tab's "Mapped but no architecture entry (7)" hygiene warning traced to **3 dead domain rules** in [.audit-loop/domain-map.json](.audit-loop/domain-map.json) pointing at files that don't exist (`scripts/explain.mjs`, `scripts/persona-test.mjs`, `scripts/ux-lock.mjs`), so the real code (`scripts/explain-history.mjs`, `scripts/persona-consistency-*.mjs`, `scripts/lib/persona-test/**`, `scripts/lib/ux-lock/**`) was being swept into the `scripts`/`shared-lib` catch-alls → those domains had zero indexed symbols → no architecture box → link-less Purpose chips.
+
+- **Fix**: corrected the 3 rules (`explain*.mjs`, `persona-consistency-*` + `lib/persona-test/**`, `lib/ux-lock/**`), then `arch:refresh` (incremental, 586 symbols, published `c7c5033e`) → `arch:render` (regenerated [docs/architecture-map.md](docs/architecture-map.md), now 22 domains incl. explain/persona-test/ux-lock) → `dashboard:build`. The 3 domains now have architecture boxes + working reverse cross-links; `docs` resolved too.
+- **Remaining (3, by design)**: `ship` (SKILL.md-only skill), `skills-content` (`skills/**` markdown), `supabase` (`supabase/**` SQL) — genuinely code-less, so no code-symbol box. Left as an honest informational hygiene note (not suppressed).
+- This was the narrow, safe slice of the v4 "finer domain rules" item — fixing *dead* rules, not the global `shared-lib` re-tag. Suite 3307/0.
+
+---
+
 ## 2026-05-31 — Dashboard Purpose view v3 (per-domain health · outcome×domain matrix)
 
 Shipped via `/cycle`. Plan: [docs/completed/dashboard-purpose-view-v3.md](docs/completed/dashboard-purpose-view-v3.md) (Complete). Two dashboard-contained items from v2 §11; the `shared-lib` re-tag was deliberately excluded (global arch-memory blast radius).
