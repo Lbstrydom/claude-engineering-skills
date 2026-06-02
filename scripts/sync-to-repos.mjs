@@ -104,6 +104,12 @@ const CORE_ENTRY = [
   // automatically.
   'scripts/persona-consistency-run.mjs',
   'scripts/persona-consistency-promote.mjs',
+  // Consumer-invoked CLI: builds a consumer's .persona-test/surfaces.json from
+  // colocated *.persona-test.json fragments, validated against our
+  // SurfaceManifestSchema. Lives upstream so every consumer shares one merge +
+  // collision-detection + validation impl; the walker pulls in its
+  // lib/persona-test/schemas.mjs import automatically.
+  'scripts/build-surfaces-manifest.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.

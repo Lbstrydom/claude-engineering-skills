@@ -44,6 +44,10 @@ const CORE_ENTRY = [
   '.claude/hooks/quickfix-scan.mjs',
   'scripts/persona-consistency-run.mjs',
   'scripts/persona-consistency-promote.mjs',
+  // Consumer-invoked surfaces.json builder (validates against our
+  // SurfaceManifestSchema). Authoritative list is sync-to-repos.mjs; keep
+  // in lock-step. Walker pulls in its lib/persona-test/schemas.mjs import.
+  'scripts/build-surfaces-manifest.mjs',
 ];
 
 // CORE_NON_IMPORTABLE lists modules that are documented runtime injection
