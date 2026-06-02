@@ -221,6 +221,10 @@ function gate2B(consumerRoot, manifest) {
   const missing = [];
   const mismatched = [];
   for (const [destRel, expected] of Object.entries(manifest.files || {})) {
+    // The manifest cannot record its own final hash: writing the self-entry
+    // mutates the file, which changes the hash (chicken-and-egg). Skip it —
+    // gate 2B verifies the files the manifest governs, not the manifest body.
+    if (destRel === 'scripts/.sync-manifest.json') continue;
     const abs = path.join(consumerRoot, destRel);
     if (!fs.existsSync(abs)) { missing.push(destRel); continue; }
     let actual;
