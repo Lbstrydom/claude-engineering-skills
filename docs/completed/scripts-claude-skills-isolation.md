@@ -1,7 +1,7 @@
 # Plan: Isolate engineering-skills tooling in consumer repos under `scripts/.claude-skills/`
 
 - **Date**: 2026-05-29
-- **Status**: **Complete (2026-06-02)** — Phases 0/1/5 (source infra + docs) shipped earlier; Phases 2/3/4 executed 2026-06-02. ai-organiser → PR #3, wine-cellar-app → PR #19, source fixes → PR #47. See "Execution outcome" below.
+- **Status**: **Complete (2026-06-02) — archived to docs/completed/.** All phases done; both consumers migrated. Phases 0/1/5 (source infra + docs) shipped earlier; Phases 2/3/4 executed 2026-06-02. ai-organiser → PR #3, wine-cellar-app → PR #19, source fixes + surfaces-builder promotion + pre-push drift hook → PR #47. Tooling-divergence review resolved (nothing to port). See "Execution outcome" below.
 - **Status (original)**: Approved (6 audit rounds — 3 GPT + 3 Gemini — 30 findings fixed; ready for implementation)
 - **Author**: Claude + Louis
 - **Scope**: backend (sync infrastructure + cross-repo migration)

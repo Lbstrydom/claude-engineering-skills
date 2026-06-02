@@ -124,7 +124,7 @@ Azure modules, the deprecated `.github/skills` mirror, and pgvector-optional.
 - Promoted from a `.audit/` scratch script (one-shot during investigation) into `scripts/check-rls.mjs` using the shared [`lib/db/client.mjs`](scripts/lib/db/client.mjs) pool. Added to `CORE_ENTRY` in `sync-to-repos.mjs` so consumer repos get it too.
 
 **Sync-isolation WIP bundled** (not authored this session — user's in-progress work)
-- `scripts/.claude-skills/` consumer-repo layout: tooling files synced to a subdirectory rather than the consumer's natural `scripts/` to avoid name collisions. Documented in [AGENTS.md](AGENTS.md#L100-L156) "Consumer-repo layout (isolation)" section and [docs/plans/scripts-claude-skills-isolation.md](docs/plans/scripts-claude-skills-isolation.md).
+- `scripts/.claude-skills/` consumer-repo layout: tooling files synced to a subdirectory rather than the consumer's natural `scripts/` to avoid name collisions. Documented in [AGENTS.md](AGENTS.md#L100-L156) "Consumer-repo layout (isolation)" section and [docs/completed/scripts-claude-skills-isolation.md](docs/completed/scripts-claude-skills-isolation.md) (Complete — both consumers migrated).
 - New modules: `scripts/lib/sync-path-map.mjs`, `sync-rewriter.mjs`, `sync-gitignore.mjs`, `sync-inventory.mjs`, `sync-isolation-verify.mjs`, `remove-legacy-synced.mjs`, `npm-script-enumerator.mjs`.
 - `scripts/setup-postgres.mjs` MIGRATIONS_DIR now prefers `.audit-loop/migrations/` (consumer) and falls back to `supabase/migrations/` (source repo).
 - Bundled into this commit at user direction rather than committed separately.
