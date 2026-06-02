@@ -812,3 +812,27 @@ Phases 2–4 ran against the live consumers. Reality diverged from several plan 
 - **One legitimate coupling**: wine's own `build-surfaces-manifest.mjs` imports our `SurfaceManifestSchema`. Repointed at the isolated path (`scripts/.claude-skills/lib/persona-test/schemas.mjs`) rather than vendoring a copy. Full unit suite green.
 
 **Follow-up (open):** review `.audit/wine-tooling-divergence/*.diff` and port any genuine wine fixes upstream into canonical source. ~7 files diverge (setup-postgres ~720 vs 737 lines, 4 dashboard files, observed-deps); the rest were byte-identical.
+
+### Surfaces-manifest builder — first concrete upstream integration (2026-06-02)
+
+wine PR #19's CI caught a real regression my migration introduced: wine's
+**tracked** `build-surfaces-manifest.mjs` imported our `SurfaceManifestSchema`
+from the **gitignored** `scripts/.claude-skills/` tree — a fresh CI clone (no
+sync) can't resolve it. This is the general hazard: *tracked consumer code must
+not import from the sync-hydrated tree.*
+
+Resolution (the governance-correct one — "useful generic tools live upstream,
+deploy via sync"): the builder was generic, so it was **promoted upstream**
+(`scripts/build-surfaces-manifest.mjs` + node:test unit test; added to the sync
+bundle; `ROOT` now resolves from `cwd` so it's relocation-safe). wine deleted
+its copy + the builder's unit test, repointed its contract test to import the
+**synced** builder with a graceful skip when the tree isn't hydrated, and added
+`npm run surfaces:build`. Builder output is byte-identical, so the committed
+`surfaces.json` drift check still holds.
+
+**Residual tradeoff:** the drift/contract check **skips in CI** (the gitignored
+builder isn't hydrated there) and runs locally / pre-commit instead. To restore
+CI-side drift coverage, either add a consumer pre-push hook running
+`npm run surfaces:build -- --verify`, or land the deferred **v2 CI-hydration
+bootstrap** (the plan's §5 "Deferred to v2") — wine having CI is the trigger
+that makes that bootstrap worth building.
