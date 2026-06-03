@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { buildDebtEntry } from './lib/debt-capture.mjs';
 import { writeDebtEntries } from './lib/debt-ledger.mjs';
-import { upsertRepo, upsertDebtEntries, initLearningStore } from './learning-store.mjs';
+import { resolveRepoForStore, upsertDebtEntries, initLearningStore } from './learning-store.mjs';
 import { generateRepoProfile } from './lib/context.mjs';
 
 // ── Arg parsing ──────────────────────────────────────────────────────────────
@@ -198,8 +198,9 @@ async function syncToCloud(entries) {
   try {
     await initLearningStore();
     const profile = generateRepoProfile();
-    const repoName = path.basename(process.cwd());
-    const repoId = await upsertRepo(profile, repoName);
+    // Cluster A (§2.1): stable repo_uuid identity, not the volatile fingerprint.
+    const ref = await resolveRepoForStore({ profile });
+    const repoId = ref?.repoRowId ?? null;
     if (!repoId) return null;
     const { ok } = await upsertDebtEntries(repoId, entries);
     return ok;

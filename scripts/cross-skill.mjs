@@ -56,6 +56,7 @@ import {
   // Architectural memory (Phase A)
   upsertRepoByUuid,
   getRepoIdByUuid,
+  resolveRepoForStore,
   openRefreshRun,
   publishRefreshRun,
   abortRefreshRun,
@@ -139,19 +140,30 @@ function currentBranch() {
 }
 
 /**
- * Best-effort repo lookup — we already have a fingerprint-based upsert in
- * learning-store, but the skills don't always have a profile built. For now,
- * caller passes repoId explicitly OR we skip (cross-skill tables all allow
- * repo_id NULL). The more robust path is to let the audit-loop orchestrator
- * be the sole producer of audit_repos rows, and have the skills reference
- * by name via a side query.
+ * Resolve the STABLE storage repo id (`audit_repos.id`) for a cross-skill write.
+ *
+ * Cluster A (§2.1): resolve via the repo_uuid identity so `plans`,
+ * `persona_audit_correlations`, `ship_events`, etc. attach to the SAME canonical
+ * row the audit/learning path uses — instead of a fragmented fingerprint row or
+ * NULL. Priority: explicit `repoId` → explicit `repoUuid` lookup →
+ * resolveRepoForStore (current repo's identity).
+ *
+ * Returns `null` in any of: store disabled; an explicit `repoUuid` that does not
+ * resolve (authoritative — we do NOT silently fall back to the current repo);
+ * current-repo resolution fails. Callers treat null as "no repo scope" — the
+ * cross-skill tables all accept NULL repo_id.
  */
 async function resolveRepoId(payload) {
   if (payload.repoId) return payload.repoId;
-  // Leave null — the schema accepts it. When audit-loop has run, it will have
-  // produced an audit_repos row whose id the skills can query by name, but for
-  // MVP we rely on explicit passing from /audit-loop and let the others use null.
-  return null;
+  // An EXPLICIT repoUuid is authoritative: resolve it, or return null — never
+  // silently redirect the write to the current/default repo on a miss.
+  if (payload.repoUuid) {
+    const repo = await getRepoIdByUuid(payload.repoUuid).catch(() => null);
+    return repo?.id ?? null;
+  }
+  // No explicit identity → resolve from the current repo (mints/finds canonical).
+  const ref = await resolveRepoForStore({}).catch(() => null);
+  return ref?.repoRowId ?? null;
 }
 
 // ── Subcommands ─────────────────────────────────────────────────────────────
@@ -160,7 +172,7 @@ async function cmdUpsertPlan() {
   const p = parsePayload();
   if (!p.path || !p.skill) return emitError('BAD_INPUT', 'path and skill are required');
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, planId: null });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, planId: null });
   const repoId = await resolveRepoId(p);
   const planId = await upsertPlan(repoId, {
     path: p.path,
@@ -178,7 +190,7 @@ async function cmdUpdatePlanStatus() {
   const p = parsePayload();
   if (!p.planId || !p.status) return emitError('BAD_INPUT', 'planId and status are required');
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
   await updatePlanStatus(p.planId, p.status);
   emit({ ok: true, cloud: true });
 }
@@ -226,7 +238,7 @@ async function cmdRecordRegressionSpec() {
     }
   }
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, specId: null });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, specId: null });
   const repoId = await resolveRepoId(p);
   // Resolves R1-H3 — repo scoping enforced at the CLI boundary. Both
   // candidate AND locked rows require a resolved repoId; without it the
@@ -256,7 +268,7 @@ async function cmdRecordRegressionSpec() {
 async function cmdListConsistencyCandidates() {
   const p = parsePayload();
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, candidates: [] });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, candidates: [] });
   const repoId = await resolveRepoId(p);
   if (!repoId) {
     return emitError('BAD_INPUT', 'repoId could not be resolved; pass repoId or repoUuid');
@@ -274,7 +286,7 @@ async function cmdPromoteRegressionSpec() {
     return emitError('BAD_INPUT', 'specId, specPath, promotedBy are required');
   }
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, rowsAffected: 0 });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rowsAffected: 0 });
   const r = await promoteRegressionSpec(p.specId, {
     specPath: p.specPath,
     promotedBy: p.promotedBy,
@@ -295,7 +307,7 @@ async function cmdUpsertPersonaTestCandidate() {
     return emitError('BAD_INPUT', `severity must be one of P0..P3 (got ${p.severity})`);
   }
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
   const r = await upsertPersonaTestCandidate({
     repoName: p.repoName,
     fingerprint: p.fingerprint,
@@ -310,7 +322,7 @@ async function cmdListPersonaTestCandidates() {
   const p = parsePayload();
   if (!p.repoName) return emitError('BAD_INPUT', 'repoName is required');
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, candidates: [] });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, candidates: [] });
   const rows = await listPersonaTestCandidates({
     repoName: p.repoName,
     ageDays: p.ageDays,
@@ -326,7 +338,7 @@ async function cmdMarkPersonaTestCandidateProposed() {
     return emitError('BAD_INPUT', 'repoName and fingerprint are required');
   }
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, rowsAffected: 0 });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rowsAffected: 0 });
   const r = await markPersonaTestCandidateProposed({
     repoName: p.repoName,
     fingerprint: p.fingerprint
@@ -340,7 +352,7 @@ async function cmdRecordRegressionSpecRun() {
     return emitError('BAD_INPUT', 'specId and passed (bool) are required');
   }
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
   await recordRegressionSpecRun(p.specId, {
     passed: p.passed,
     commitSha: p.commitSha || currentCommitSha(),
@@ -358,7 +370,7 @@ async function cmdRecordCorrelation() {
     return emitError('BAD_INPUT', 'personaSessionId, personaFindingHash, personaSeverity, correlationType required');
   }
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
   await recordPersonaAuditCorrelation(p.personaSessionId, {
     personaFindingHash: p.personaFindingHash,
     personaSeverity: p.personaSeverity,
@@ -377,7 +389,7 @@ async function cmdRecordPlanVerifyRun() {
     return emitError('BAD_INPUT', 'planId and totalCriteria (number) are required');
   }
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, runId: null });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, runId: null });
   const runId = await recordPlanVerificationRun({
     planId: p.planId,
     specId: p.specId,
@@ -399,14 +411,14 @@ async function cmdRecordPlanVerifyItems() {
     return emitError('BAD_INPUT', 'runId, planId, and non-empty items array are required');
   }
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, inserted: 0 });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, inserted: 0 });
   await recordPlanVerificationItems(p.runId, p.planId, p.items);
   emit({ ok: true, cloud: true, inserted: p.items.length });
 }
 
 async function cmdPlanSatisfaction() {
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, row: null, persistentFailures: [] });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, row: null, persistentFailures: [] });
   const planId = argOption('plan-id');
   if (!planId) return emitError('BAD_INPUT', '--plan-id is required');
   const [row, persistent] = await Promise.all([
@@ -420,7 +432,7 @@ async function cmdRecordShipEvent() {
   const p = parsePayload();
   if (!p.outcome) return emitError('BAD_INPUT', 'outcome is required');
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
   const repoId = await resolveRepoId(p);
   await recordShipEvent(repoId, {
     commitSha: p.commitSha || currentCommitSha(),
@@ -441,7 +453,7 @@ async function cmdRecordShipEvent() {
 
 async function cmdListUnlockedFixes() {
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
   const repoId = argOption('repo-id');
   const rows = await getUnlockedFixes(repoId);
   emit({ ok: true, cloud: true, rows });
@@ -449,7 +461,7 @@ async function cmdListUnlockedFixes() {
 
 async function cmdAuditEffectiveness() {
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, row: null });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, row: null });
   const repoId = argOption('repo-id');
   if (!repoId) return emitError('BAD_INPUT', '--repo-id is required');
   const row = await readAuditEffectiveness(repoId);
@@ -650,7 +662,7 @@ async function cmdWhoami() {
 
 async function cmdGetActiveRefreshId() {
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, refreshId: null });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, refreshId: null });
   const repoUuid = argOption('repo-uuid');
   if (!repoUuid) return emitError('BAD_INPUT', '--repo-uuid required');
   const repo = await getRepoIdByUuid(repoUuid);
@@ -669,7 +681,7 @@ async function cmdGetActiveRefreshId() {
 async function cmdGetIncidentNeighbourhood() {
   const p = parsePayload();
   await initLearningStore();
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     return emit({
       ok: true, cloud: false, records: [], totalCandidatesConsidered: 0,
       freshnessWarning: null,
@@ -718,7 +730,7 @@ async function cmdGetCallersForFile() {
     return emitError('BAD_INPUT', 'path required', {}, 1);
   }
   await initLearningStore();
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     return emit({
       ok: true, cloud: false, callers: [], callerDomains: [],
       snapshotProvenance: 'cloud-disabled',
@@ -780,7 +792,7 @@ async function cmdGetCallersForFile() {
 async function cmdGetNeighbourhood() {
   const p = parsePayload();
   await initLearningStore();
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     return emit({
       ok: true, cloud: false, refreshId: null, records: [], totalCandidatesConsidered: 0,
       truncated: false, hint: 'cloud disabled — run `npm run arch:refresh` to enable',
@@ -921,7 +933,7 @@ async function cmdListSymbolsForSnapshot() {
   const p = parsePayload();
   if (!p.refreshId) return emitError('BAD_INPUT', 'refreshId required');
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
   try {
     const rows = await listSymbolsForSnapshot(p);
     emit({ ok: true, cloud: true, rows, count: rows.length });
@@ -934,7 +946,7 @@ async function cmdListLayeringViolationsForSnapshot() {
   const refreshId = argOption('refresh-id');
   if (!refreshId) return emitError('BAD_INPUT', '--refresh-id required');
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, rows: [] });
   try {
     const rows = await listLayeringViolationsForSnapshot(refreshId);
     emit({ ok: true, cloud: true, rows });
@@ -947,7 +959,7 @@ async function cmdComputeDriftScore() {
   const p = parsePayload();
   if (!p.repoId || !p.refreshId) return emitError('BAD_INPUT', 'repoId and refreshId required');
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, drift: null });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, drift: null });
   try {
     const drift = await computeDriftScore(p);
     emit({ ok: true, cloud: true, drift });
@@ -982,7 +994,7 @@ async function cmdLearningRecord() {
   }
 
   await initLearningStore();
-  if (!isCloudEnabled()) return emit({ ok: true, cloud: false, decisionKey: null });
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, decisionKey: null });
 
   // Build decision_key the same way decision-logger does.
   const decisionKey = auditBound

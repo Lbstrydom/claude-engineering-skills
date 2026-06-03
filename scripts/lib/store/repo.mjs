@@ -21,7 +21,8 @@
  */
 
 import { getPool } from '../db/client.mjs';
-import { one, insertReturning, upsert, many } from '../db/query.mjs';
+import { one, insertReturning, updateWhere, many } from '../db/query.mjs';
+import { resolveRepoIdentity } from '../repo-identity.mjs';
 
 // ── Lifecycle helpers ──────────────────────────────────────────────────────
 
@@ -84,6 +85,14 @@ export async function isCloudEnabled() {
 // ── audit_repos CRUD ───────────────────────────────────────────────────────
 
 /**
+ * @deprecated Cluster A (§2.1): keys `audit_repos` on the VOLATILE content
+ * `fingerprint`, which is what fragmented B1 (a new row per evolving-repo
+ * audit). All live callers were migrated to `resolveRepoForStore()` (stable
+ * `repo_uuid` identity). Retained only for the frozen public-export contract;
+ * do NOT call from new code — it will re-introduce fragmentation, and the
+ * `audit_repos`-fragmentation guardrail test will fail. Removal tracked as a
+ * follow-up once the export contract can drop it.
+ *
  * Upsert a repo profile keyed on `fingerprint`. Returns the row id, or
  * null when the store is disabled / the upsert fails.
  *
@@ -96,24 +105,99 @@ export async function isCloudEnabled() {
  * @param {string} repoName - Human-readable repo name
  * @returns {Promise<string|null>} row id
  */
-export async function upsertRepo(profile, repoName) {
+export async function upsertRepo(profile, _repoName) {
+  // Deprecated path: DELEGATE to the stable repo_uuid resolver. This (a) stops
+  // legacy callers re-fragmenting, and (b) survives the unify migration — the
+  // old `onConflict: 'fingerprint'` upsert would now throw (the fingerprint
+  // UNIQUE constraint was dropped). `repoName` is ignored: identity derives the
+  // name. Return shape (id | null) is preserved for the frozen contract.
+  const ref = await resolveRepoForStore({ profile });
+  return ref?.repoRowId ?? null;
+}
+
+/**
+ * **Storage-identity contract (signal-recovery Cluster A, §2.1).** The single
+ * seam the audit/plan/learning write path uses to resolve a STABLE repo row.
+ *
+ * `repo_uuid` (from `resolveRepoIdentity()`) is the stable logical identity —
+ * the dedupe key. `audit_repos.id` is the storage FK that every child table's
+ * `repo_id` column references. This returns `repoRowId` (= `audit_repos.id`) so
+ * callers store THAT in child rows — NOT the raw `repo_uuid` (which would create
+ * dangling FKs, R1-H1).
+ *
+ * Resolution is select-by-uuid → update-profile-or-insert (NOT `ON CONFLICT`):
+ * the live `idx_audit_repos_repo_uuid` is a PARTIAL unique index whose predicate
+ * the `upsert()` helper can't express (Gemini-G2), and after the unify migration
+ * the `fingerprint` column is no longer unique (R2-H2), so a plain INSERT can't
+ * collide. Profile telemetry (`stack`/`fileBreakdown`/`focusAreas`/`fingerprint`)
+ * is preserved on both branches — switching the key from fingerprint to uuid must
+ * not drop the data `upsertRepo` used to persist (Gemini-1).
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.cwd] - repo root to resolve identity from (default cwd)
+ * @param {object} [opts.profile] - generateRepoProfile() output (optional)
+ * @returns {Promise<{repoRowId: string, repoUuid: string, name: string} | null>}
+ *   null when the store is disabled.
+ */
+export async function resolveRepoForStore({ cwd, profile } = {}) {
   if (!await isCloudEnabled()) return null;
+  const { repoUuid, name } = resolveRepoIdentity(cwd);
+  const profileCols = profile ? {
+    stack:          profile.stack,
+    file_breakdown: profile.fileBreakdown,
+    focus_areas:    profile.focusAreas,
+    fingerprint:    profile.repoFingerprint,
+  } : {};
   try {
-    const rows = await upsert(
-      'audit_repos',
-      [{
-        fingerprint:      profile.repoFingerprint,
-        name:             repoName,
-        stack:            profile.stack,
-        file_breakdown:   profile.fileBreakdown,
-        focus_areas:      profile.focusAreas,
-        last_audited_at:  new Date().toISOString(),
-      }],
-      { onConflict: 'fingerprint', update: 'all', returning: ['id'] }
+    // 1. Existing canonical row → update profile, return its id.
+    const existing = await one(
+      `SELECT id FROM audit_repos WHERE repo_uuid = $1 LIMIT 1`,
+      [repoUuid],
     );
-    return rows[0]?.id ?? null;
+    if (existing?.id) {
+      // Only WRITE when a profile was supplied (a real audit). A profile-less
+      // call is a pure id lookup (e.g. cross-skill reads) — it must NOT bump
+      // last_audited_at or it would corrupt "last audited" into "last touched"
+      // on every read (Gemini-r2 finding).
+      if (profile) {
+        try {
+          await updateWhere(
+            'audit_repos',
+            { ...profileCols, name, last_audited_at: new Date().toISOString() },
+            { id: existing.id },
+          );
+        } catch (e) {
+          // Best-effort (identity already resolved) but don't swallow silently —
+          // surface schema/permission/connectivity issues.
+          process.stderr.write(`  [learning] resolveRepoForStore profile-refresh skipped: ${e.message}\n`);
+        }
+      }
+      return { repoRowId: existing.id, repoUuid, name };
+    }
+    // 2. No canonical row yet → plain INSERT (fingerprint no longer unique).
+    try {
+      const row = await insertReturning(
+        'audit_repos',
+        {
+          repo_uuid:       repoUuid,
+          name,
+          ...profileCols,
+          last_audited_at: new Date().toISOString(),
+        },
+        { returning: ['id'] },
+      );
+      if (row?.id) return { repoRowId: row.id, repoUuid, name };
+    } catch (insErr) {
+      // Race: a concurrent process inserted the canonical row between our SELECT
+      // and INSERT. The partial unique index on repo_uuid rejects the loser —
+      // re-SELECT and return the winner's id rather than failing the audit.
+      const raced = await one(`SELECT id FROM audit_repos WHERE repo_uuid = $1 LIMIT 1`, [repoUuid]).catch(() => null);
+      if (raced?.id) return { repoRowId: raced.id, repoUuid, name };
+      throw insErr;
+    }
+    return null;
   } catch (err) {
-    process.stderr.write(`  [learning] upsertRepo failed: ${err.message}\n`);
+    process.stderr.write(`  [learning] resolveRepoForStore failed: ${err.message}\n`);
     return null;
   }
 }
@@ -152,12 +236,9 @@ export async function getRepoIdByUuid(repoUuid) {
 }
 
 /**
- * Upsert a repo row keyed on `repo_uuid`. Two-step: try update-existing
- * first, then insert when absent. Mirrors the legacy `upsertRepoByUuid`
- * behaviour exactly (it does the same select-then-upsert sequence).
- *
- * The fingerprint fallback to `repo_uuid:<uuid>` preserves backward
- * compat with the old fingerprint-only unique constraint.
+ * Upsert a repo row keyed on `repo_uuid` (arch/symbol-index path). Two-step:
+ * select-by-uuid → plain INSERT when absent. `repo_uuid` is the only identity
+ * key (post-unify migration); `fingerprint` is a plain optional attribute.
  *
  * @param {{repoUuid: string, name: string, fingerprint?: string}} input
  * @returns {Promise<{id: string}|null>}
@@ -172,19 +253,24 @@ export async function upsertRepoByUuid({ repoUuid, name, fingerprint }) {
     );
     if (existing?.id) return { id: existing.id };
 
-    // Step 2 — upsert on fingerprint (the canonical unique constraint).
-    const fp = fingerprint || `repo_uuid:${repoUuid}`;
-    const rows = await upsert(
-      'audit_repos',
-      [{
-        repo_uuid:        repoUuid,
-        name,
-        fingerprint:      fp,
-        last_audited_at:  new Date().toISOString(),
-      }],
-      { onConflict: 'fingerprint', update: 'all', returning: ['id'] }
-    );
-    return rows[0] ? { id: rows[0].id } : null;
+    // Step 2 — plain INSERT. The fingerprint UNIQUE constraint was dropped by
+    // the unify migration, so the old `onConflict: 'fingerprint'` upsert would
+    // now throw. `fingerprint` is written as a plain attribute (nullable).
+    try {
+      const row = await insertReturning(
+        'audit_repos',
+        { repo_uuid: repoUuid, name, fingerprint: fingerprint ?? null, last_audited_at: new Date().toISOString() },
+        { returning: ['id'] },
+      );
+      if (row?.id) return { id: row.id };
+    } catch (insErr) {
+      // Race: another process inserted this repo_uuid between SELECT and INSERT;
+      // the partial unique index rejects the loser. Re-select the winner.
+      const raced = await one(`SELECT id FROM audit_repos WHERE repo_uuid = $1 LIMIT 1`, [repoUuid]).catch(() => null);
+      if (raced?.id) return { id: raced.id };
+      throw insErr;
+    }
+    return null;
   } catch (err) {
     process.stderr.write(`  [arch] upsertRepoByUuid failed: ${err.message}\n`);
     return null;

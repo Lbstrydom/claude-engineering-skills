@@ -6,6 +6,10 @@
       "description": "Run the full Node built-in test suite (everything under tests/).",
       "category": "test"
     },
+    "test:db": {
+      "description": "Gated DB-integration tests (repo-identity stability + fragmentation guardrail). Requires a disposable AUDIT_DB_TEST_URL; skipped when unset. Never touches the live store.",
+      "category": "test"
+    },
 
     "audit": {
       "description": "Run /audit-loop — dispatches to /audit-plan or /audit-code by input shape.",

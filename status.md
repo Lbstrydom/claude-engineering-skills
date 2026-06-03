@@ -1,5 +1,29 @@
 # Project Status Log
 
+## 2026-06-03 — Learning-store signal recovery: Cluster A (repo-identity unification) — CODE landed, live-apply gated
+
+Implemented Cluster A of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md) — the B1 fix. The audit/plan/learning write path keyed `audit_repos` on a volatile content `fingerprint` (a new row per evolving-repo audit → wine-cellar-app fragmented across 193 rows). Now everything resolves the STABLE `repo_uuid` identity and stores `audit_repos.id` (`repoRowId`).
+
+### Changes (code only — no live DB mutation)
+- **`supabase/migrations/20260603120000_unify_repo_identity.sql`** (new): preflight-aborts on duplicate non-null `repo_uuid`, then DROPs the `fingerprint` UNIQUE constraint (demotes it to a plain attribute). Reuses the pre-existing partial `idx_audit_repos_repo_uuid` as the integrity guard (deviation from the plan's "add full UNIQUE" — the partial index already exists and the `upsert()` helper can't emit a partial `ON CONFLICT`, Gemini-G2).
+- **`scripts/lib/store/repo.mjs`**: new `resolveRepoForStore()` (§2.1 contract — select-by-uuid → update-or-insert, returns stable `repoRowId`, profile preserved, race-hardened, write-only-when-profile). `upsertRepo` now DELEGATES to it (deprecated; the old fingerprint upsert would break post-migration); `upsertRepoByUuid` step-2 switched to plain INSERT for the same reason.
+- **Rewired off the fingerprint path → `repoRowId`**: `openai-audit.mjs` (+ fixed unawaited `isCloudEnabled`), `cross-skill.mjs` `resolveRepoId` (+ 24 unawaited `isCloudEnabled` guards), `debt-auto-capture.mjs`, `debt-resolve.mjs`, dashboard `collect-telemetry.mjs` learning-stats (Gemini-G3 — canonical id, not volatile name).
+- **`scripts/reconcile-repo-identity.mjs`** (new): one-shot backfill. `--dry-run` default writes an operator-approved `.audit-loop/repo-alias-map.json` (+ lists the tables `--apply` will repoint); `--apply` runs in one advisory-locked transaction with shape-validation + in-txn revalidation of legacy/canonical + name/uuid invariants, exhaustive base-table FK discovery, collision-aware dedup, atomic map write, safe-ident guard, `--selfcheck-relocation`.
+- **Tests**: `reconcile-repo-identity.test.mjs` (pure proposal/quarantine unit), `repo-identity-store.test.mjs` (DB-gated on `AUDIT_DB_TEST_URL` — fingerprint-invariance + fragmentation guardrail, transaction-rollback, never the live store), `npm run test:db` lane + `.cli-catalog.json` + export-contract (110→111) updated.
+
+### Quality
+3 GPT rounds + **2 Gemini rounds (the cap)**. Genuine bugs caught + fixed (incl. the migration breaking `upsertRepo`/`upsertRepoByUuid`; unawaited `isCloudEnabled`; write-on-read `last_audited_at`); 2 Gemini round-1 findings challenged-as-false with evidence (hoisted `argValue`; `redactSecrets` confusion in an unchanged file). Coherence rated **Strong**. Full `npm run check` green (3333 tests, 2 DB-gated skipped). Accepted-with-rationale: collision canonical-wins dedup + name-based proposal (both one-shot, dry-run-previewed, operator-reviewed — matches plan R2-H4).
+
+### GATED — not done (require human action)
+1. Apply the migration to the shared store: `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --migrate` (must run BEFORE the new code's audit runs).
+2. Reconcile the 296 fragmented rows: `node scripts/reconcile-repo-identity.mjs` (dry-run) → review `.audit-loop/repo-alias-map.json` → `--apply`.
+3. Sync the stable-identity code to consumer repos (`npm run sync`) so their audit runs also write `repoRowId`.
+
+### Follow-ups
+- `scripts/write-code-outcomes.mjs` has an unawaited `isCloudEnabled()` (Gemini out-of-scope note) — fold into Cluster B's isCloudEnabled-await sweep.
+
+---
+
 ## 2026-06-03 — Codify the Gemini gate's 2-round cap (was operator-memory only)
 
 Process defect found: the GPT plan-audit cap ("Max 3 rounds") is hard-coded in `skills/audit-plan/SKILL.md` in 5 places, but the **Gemini gate had no numeric cap** — just a `CONCERNS → re-run Gemini` loop with no ceiling. The 2-round cap lived only in operator memory, so without it the gate runs unbounded (the 6–7-round "Strong + 1 implementation-completeness nit/round" runaway).

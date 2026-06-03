@@ -27,11 +27,13 @@ const EXPECTED_EXPORTS = [
   'isPersonaCloudEnabled',
 
   // ── frozen 93-function persistence contract ──────────────────────────────
-  // repo (4 — initLearningStore + isCloudEnabled live above)
+  // repo (5 — initLearningStore + isCloudEnabled live above)
   'getRepoIdByName',
   'getRepoIdByUuid',
   'upsertRepo',
   'upsertRepoByUuid',
+  'resolveRepoForStore', // signal-recovery Cluster A §2.1 — stable repoRowId resolver
+
   // runs-findings (10, incl. _resetClassificationColumnCache test seam)
   '_resetClassificationColumnCache',
   'recordAdjudicationEvent',
@@ -158,7 +160,7 @@ const EXPECTED_EXPORTS = [
 const FORBIDDEN_EXPORTS = ['getReadClient', 'getWriteClient', 'getPersonaSupabase'];
 
 describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () => {
-  it('exports exactly the pinned 105-function contract — no accidental additions / removals', () => {
+  it('exports exactly the pinned 111-function contract — no accidental additions / removals', () => {
     const actual = Object.keys(ls).sort();
     const missing = EXPECTED_EXPORTS.filter((e) => !actual.includes(e));
     const extra   = actual.filter((e) => !EXPECTED_EXPORTS.includes(e));
@@ -189,6 +191,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
   });
 
   it('matches the contract-matrix count: 93 frozen + 10 caller helpers + 3 Phase 3 WS-PIPE1 + 1 observed-deps (listFileImportsForSnapshot) + 3 security audit-trail/stats (docs/plans/security) = 110', () => {
-    assert.equal(EXPECTED_EXPORTS.length, 110);
+    assert.equal(EXPECTED_EXPORTS.length, 111);
   });
 });

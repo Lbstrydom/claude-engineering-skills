@@ -73,7 +73,7 @@ import { executeTools, normalizeToolResults, formatLintSummary } from './lib/lin
 import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from './lib/debt-memory.mjs';
-import { initLearningStore, isCloudEnabled, upsertRepo, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
+import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from './lib/learning/decision-logger.mjs';
 import { PromptBandit, computeReward, buildContext } from './bandit.mjs';
 import { openaiConfig, PASS_NAMES, modelPricing } from './lib/config.mjs';
@@ -1469,8 +1469,12 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   // Record audit start in cloud store (fire-and-forget)
   let cloudRunId = null;
   let cloudRepoId = null;
-  if (isCloudEnabled() && repoProfile) {
-    cloudRepoId = await upsertRepo(repoProfile, path.basename(path.resolve('.'))).catch(() => null);
+  if ((await isCloudEnabled()) && repoProfile) {
+    // Cluster A (§2.1): resolve the STABLE audit_repos.id via repo_uuid identity
+    // (not the volatile content fingerprint that fragmented B1). The returned
+    // repoRowId is what every child table's repo_id FK stores.
+    const repoRef = await resolveRepoForStore({ profile: repoProfile }).catch(() => null);
+    cloudRepoId = repoRef?.repoRowId ?? null;
     if (cloudRepoId) {
       // Best-effort commit + branch capture — anchors the audit run to a code state.
       let commitSha = null;

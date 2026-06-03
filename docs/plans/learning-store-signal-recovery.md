@@ -1,7 +1,7 @@
 # Plan: Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops
 
 - **Date**: 2026-06-03
-- **Status**: Approved (audit-converged)
+- **Status**: In Progress (Cluster A code landed 2026-06-03; live migration + reconcile gated; Clusters B–D pending)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `cross-skill-bridge`, `shared-lib`, `stores`, `scripts`

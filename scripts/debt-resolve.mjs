@@ -24,7 +24,7 @@
 // Load .env without the banner (keeps CLI stdout clean for JSON output)
 import dotenv from 'dotenv';
 dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
-import { initLearningStore, isCloudEnabled, upsertRepo } from './learning-store.mjs';
+import { initLearningStore, isCloudEnabled, resolveRepoForStore } from './learning-store.mjs';
 import { selectEventSource, removeDebt, appendEvents } from './lib/debt-memory.mjs';
 import { readDebtLedger, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
 import { DEFAULT_DEBT_EVENTS_PATH } from './lib/debt-events.mjs';
@@ -91,9 +91,11 @@ async function main() {
   let repoId = null;
   if (!opts.noCloud) {
     await initLearningStore().catch(() => {});
-    if (isCloudEnabled()) {
+    if (await isCloudEnabled()) {
       const profile = generateRepoProfile();
-      repoId = await upsertRepo(profile, path.basename(path.resolve('.'))).catch(() => null);
+      // Cluster A (§2.1): stable repo_uuid identity, not the volatile fingerprint.
+      const ref = await resolveRepoForStore({ profile }).catch(() => null);
+      repoId = ref?.repoRowId ?? null;
     }
   }
 

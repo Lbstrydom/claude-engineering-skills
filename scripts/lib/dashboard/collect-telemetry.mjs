@@ -134,10 +134,13 @@ function repoName(root) {
 /** Collect the learning section via the shared accessor. */
 async function collectLearning(root) {
   try {
-    // getLearningStats is pure — the caller owns identity resolution.
-    // Falls back from LEARNING_REPO_NAME to the package.json name (the key
-    // the learning store actually uses) so the tab works with zero config.
-    const r = await getLearningStats({ repoName: repoName(root) });
+    // Cluster A (§2.1 / Gemini-G3): resolve the STABLE canonical repoRowId via
+    // repo_uuid identity — NOT the volatile repoName — so learning stats group
+    // on the same id the writers use (matches the other collectors below).
+    // Fall back to repoName only when the canonical row isn't resolvable.
+    let repoId = null;
+    try { repoId = (await getRepoIdByUuid(resolveRepoIdentity(root).repoUuid))?.id || null; } catch { /* fall back to name */ }
+    const r = await getLearningStats(repoId ? { repoId } : { repoName: repoName(root) });
     const s = r.stats || { pendingTriageCount: 0, noBrainerCount: 0, staleClusterCount: 0 };
     return {
       data: { cloud: r.cloud, ...s },

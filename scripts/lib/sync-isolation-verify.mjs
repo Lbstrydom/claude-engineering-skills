@@ -49,6 +49,7 @@ const CLI_SMOKE_SET = [
   'cache-hitrate-check.mjs',
   'symbol-index/drift.mjs',
   'security-memory/refresh-incidents.mjs',
+  'reconcile-repo-identity.mjs',
 ];
 
 const LIB_IMPORT_SET = [
