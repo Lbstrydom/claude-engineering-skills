@@ -259,8 +259,49 @@ tests/                      # Node.js built-in test runner (node --test)
 
 ### Testing
 
-Run: `npm test` (uses Node.js built-in test runner, 47 tests)
-Covers: atomic writes, schema derivation, ledger operations, finding identity, FP tracker, bandit posterior, reward computation.
+Run: `npm test` (Node.js built-in test runner — the suite under `tests/`).
+Covers atomic writes, schema derivation, ledger operations, finding identity,
+FP tracker, bandit posterior, reward computation, sensitive-path egress, the
+sync/relocation contract, and more.
+
+#### Testing doctrine — which seam gets which kind of test
+
+Blanket TDD is theatre at the LLM boundary (you can't red-green-refactor a
+prompt). But test-first is high-value at deterministic seams and **mandatory**
+at the two seams where a silent regression is both likely and expensive. Three
+tiers (origin: `/brainstorm --with-gemini`, 2026-06; consensus of GPT-5.5,
+Gemini-pro, Claude):
+
+- **Tier 1 — test-first / TDD for deterministic seams.** Modules with crisp
+  inputs/outputs where a regression is cheap to assert and expensive to ship:
+  `schemas`, `sensitive-paths`, `vcs`, `bandit`, `ledger`, `findings-*`,
+  `config`, `file-io`, `sync-path-map`, `sync-rewriter`. New behaviour here
+  lands with its test.
+
+- **Tier 2 — eval / fixture / invariant testing for LLM-orchestration seams.**
+  `openai-audit`, `gemini-review`, prompt builders. **Do NOT** assert on model
+  prose or mock the whole provider API to test orchestration order — that tests
+  the mock. Instead assert **invariants** ("Gemini final review always runs
+  regardless of GPT convergence"; "Supabase failure never blocks the local
+  ledger write"; "sensitive paths never enter a provider payload") and use
+  canned-response fixtures for the parse / fallback / dedup paths.
+
+- **Tier 3 — HARD test-first (non-negotiable) for the two silent-regression-prone
+  seams.** A change here lands with its test in the **same commit**:
+  1. **Sensitive-path egress** — a leak ships credentials to a third-party LLM.
+     Guarded end-to-end by `tests/sensitive-egress.test.mjs` (the gate) +
+     `tests/audit-scope-egress.test.mjs` (the assembly path real audits use).
+  2. **Consumer sync / relocation contract** — a break ships *silently* to
+     consumer repos you can't observe. Guarded by `tests/sync-path-map.test.mjs`,
+     `tests/sync-rewriter.test.mjs`, `tests/relocation-guard.test.mjs` (the
+     `--selfcheck-relocation` string is *present*) + `tests/relocation-selfcheck-smoke.test.mjs`
+     (the handler actually *works* under a hermetic env).
+
+This is descriptive, not a new gate — it writes down where rigor already pays.
+`fast-check` property-based fuzzing and an offline LLM eval matrix are
+deliberately deferred (no new deps) — revisit if schema-boundary bugs recur.
+See the **Do NOT** list below for the companion hard rules (no `.env` to
+external APIs, etc.).
 
 ## Model Resolution
 

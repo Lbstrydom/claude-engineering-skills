@@ -1,5 +1,25 @@
 # Project Status Log
 
+## 2026-06-03 — Tiered testing doctrine + egress/relocation behavioral-gap backfill
+
+Plan: [docs/plans/testing-doctrine-and-egress-relocation-gaps.md](docs/plans/testing-doctrine-and-egress-relocation-gaps.md) (Complete). Implemented via full `/cycle --autonomous` (flat plan → no cluster loop; implement → audit-code → ship). Origin: a `/brainstorm --with-gemini` on "is TDD worth it here" → consensus that blanket TDD is theatre at the LLM boundary but mandatory at two silent-regression seams. Investigation found those seams already well-tested; the real gaps were narrower.
+
+### Changes
+- **AGENTS.md `### Testing`**: replaced 2 stale lines (claimed "47 tests") with a 3-tier testing doctrine — Tier 1 test-first for deterministic seams, Tier 2 eval/fixture/invariant for LLM-orchestration seams (no prose assertions / no whole-API mocks), Tier 3 HARD test-first for the two silent-regression-prone seams (sensitive-path egress; consumer sync/relocation).
+- **`tests/relocation-selfcheck-smoke.test.mjs`** (new): *executes* `--selfcheck-relocation` for every `CLI_SMOKE_SET` script under a hermetic allowlist env + `.env`-free cwd; asserts exit 0 + stdout `OK` + clean stderr (no config/credential markers → proves the early short-circuit). Companion to `relocation-guard.test.mjs` (which only greps for the string). Non-vacuity guard + scripts/ containment + deterministic negative control (no hang).
+- **`tests/audit-scope-egress.test.mjs`** (new): assembly-level egress — two-sided leak invariant through `readFilesAsContext` (benign content + header present, secret content/header absent, exclusion footer present), end-to-end chain symlink-escape, and `safeReadFile` fail-closed realpath containment (win32-guarded, mirrors `sensitive-egress.test.mjs`).
+
+### Quality
+- `/audit-plan` (prior session): GPT R1→R3 (HIGH 2→1→0) + Gemini APPROVE.
+- `/audit-code`: GPT R1 H:0 M:8 → adopted 4 substantive MEDIUMs (stderr leak check, non-vacuity guard, scripts/ containment, end-to-end chain coverage), declined 4 with rationale (one would break on the legit exclusion footer that contains ".env"; others mirror existing patterns) → R2 **PASS H:0 M:0 quickFix:0**. **Gemini final APPROVE** (coherence Strong; validated the dismissals). Full `npm run check` green (3345 tests pass).
+- Also fixed a mermaid `subgraph-as-edge-endpoint` lint error in `learning-store-signal-recovery.md` (Cluster D edge) surfaced by the pre-push gate.
+
+### Notes
+- AGENTS.md-canonical repo: CLAUDE.md is a thin `@./AGENTS.md` addendum — not mirrored; `context:check` confirms no drift.
+- Heads-up: `dashboard/index.html` had a pre-existing unrelated modification at session start — left untouched.
+
+---
+
 ## 2026-06-03 — Plan-declared execution clustering across the skill chain
 
 Plan: [docs/completed/execution-clustering-skill-chain.md](docs/completed/execution-clustering-skill-chain.md) (Complete). Lets multi-phase plans declare how phases group for implementation + audit, so `/cycle` audits coupled phases together (token-efficient *and* quality-positive — the cross-cutting wiring pass sees the seam) instead of re-auditing per-phase or drowning a giant union diff. Semantic clustering lives in the **plan** (so `/audit-plan` reviews it before any code); diff-budget enforcement is runtime. Core invariant: `/cycle` never **merges** across a declared boundary.
