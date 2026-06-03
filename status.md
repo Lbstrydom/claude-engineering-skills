@@ -1,5 +1,15 @@
 # Project Status Log
 
+## 2026-06-03 — Bandit "worth it?" analysis → data-gated decision rule in signal-recovery plan
+
+Investigated whether Thompson-sampling prompt selection is genuinely effective. Pulled live `bandit_arms`: 14 arms, **1,269 total pulls**, top arm 538 (α154/β386), differentiated posteriors (~0.20–0.44) — **correcting an earlier overclaim** that the bandit was starved/frozen (it isn't). Real issues surfaced instead: single `context_bucket='global'` (contextual machinery unused) and arms re-seeded today to uniform α8.86/β29.14 (B1 fragmentation likely reaching the bandit).
+
+- **Decision**: the keep-vs-simplify call is **downstream of signal-recovery by construction** — "worth it" = "does the picked variant yield better audits," measurable only via `audit_effectiveness` (B3), dark until B2 lands. So NOT folded into the plan as phases.
+- **Integration**: added a sharpened **decision-criterion row to §8** of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md) — instrument (Phase 7 bandit panel + effectiveness view), three evaluation questions, and a concrete **simplify trigger** (replace Thompson sampling with fixed argmax-of-best-variant if no measurable lift after Clusters A–C + ≥30 days clean data).
+- Heads-up: `dashboard/index.html` is a hook-regenerated reference artifact (left for its own `chore(sync)` commit, per `a38f78e`).
+
+---
+
 ## 2026-06-03 — Tiered testing doctrine + egress/relocation behavioral-gap backfill
 
 Plan: [docs/plans/testing-doctrine-and-egress-relocation-gaps.md](docs/plans/testing-doctrine-and-egress-relocation-gaps.md) (Complete). Implemented via full `/cycle --autonomous` (flat plan → no cluster loop; implement → audit-code → ship). Origin: a `/brainstorm --with-gemini` on "is TDD worth it here" → consensus that blanket TDD is theatre at the LLM boundary but mandatory at two silent-regression seams. Investigation found those seams already well-tested; the real gaps were narrower.
