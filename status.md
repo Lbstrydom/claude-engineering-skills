@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-06-03 — Codify the Gemini gate's 2-round cap (was operator-memory only)
+
+Process defect found: the GPT plan-audit cap ("Max 3 rounds") is hard-coded in `skills/audit-plan/SKILL.md` in 5 places, but the **Gemini gate had no numeric cap** — just a `CONCERNS → re-run Gemini` loop with no ceiling. The 2-round cap lived only in operator memory, so without it the gate runs unbounded (the 6–7-round "Strong + 1 implementation-completeness nit/round" runaway).
+
+- **`skills/audit-plan/SKILL.md`**: added a "Gemini round cap — max 2 rounds" subsection to Step 6 (finding-character triage: design defect → one more round; implementation-completeness / rising-praise → STOP + hand to code audit) + Key Principle #7 (symmetric caps GPT ≤3, Gemini ≤2).
+- **`docs/audit/shared-references/gemini-gate.md`** (canonical, syncs to **audit-plan + audit-code**): replaced the terse "CONCERNS again after 2 rounds → present to user" with the same character-based triage. One edit, both gates.
+- **`skills/cycle/SKILL.md`** Step 3C.2: capped the consolidated Gemini gate at 2 rounds (was "Exit only on APPROVE or explicit handback" — unbounded).
+- Regenerated `.claude/skills/**` copies; `skills:check` 13/13 IN SYNC; full `npm run check` 3346/0.
+
+### Rationale
+Plan/PR gates prove **design soundness**; implementation-completeness nits ("specify the store step", parameter placement) belong to the **code** audit, which verifies them against real code. Symmetric caps; exceed either only for a concrete net-new design bug, never rigor pressure.
+
+### Next
+Deploy to local consumer repos (`npm run sync`), then signal-recovery Cluster A is the next implementation candidate.
+
+---
+
 ## 2026-06-03 — Bandit "worth it?" analysis → data-gated decision rule in signal-recovery plan
 
 Investigated whether Thompson-sampling prompt selection is genuinely effective. Pulled live `bandit_arms`: 14 arms, **1,269 total pulls**, top arm 538 (α154/β386), differentiated posteriors (~0.20–0.44) — **correcting an earlier overclaim** that the bandit was starved/frozen (it isn't). Real issues surfaced instead: single `context_bucket='global'` (contextual machinery unused) and arms re-seeded today to uniform α8.86/β29.14 (B1 fragmentation likely reaching the bandit).

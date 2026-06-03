@@ -73,7 +73,23 @@ missed them. Gemini must verify its own concerns were addressed. This
 closes the loop properly.
 
 If Gemini returns `APPROVE` on re-review → done.
-If `CONCERNS` again after 2 rounds → present to user.
+
+**After round 2, do NOT auto-run a 3rd round.** Triage the round-2 `CONCERNS`
+by finding *character* (mirrors the GPT "exceed cap only for genuine bugs" rule):
+
+- **Concrete design/correctness defect** (wrong contract, unsafe migration,
+  dangling FK, data loss) → the genuine-bug exception: fix + run ONE more round.
+  Rare.
+- **Implementation-completeness** ("specify the store step", "where does the
+  cooldown go", a missing parameter) → **STOP**. Fold the items into the
+  plan/PR as captured notes; these belong to the **code** audit, which checks
+  them against the real implementation — the correct artifact. The gate proves
+  *design soundness*, not implementation completeness.
+- **Rising coherence/praise + ~1 nit/round** → **STOP**. The diminishing-returns
+  tail; record the nit and close.
+
+Record the stop (round count + why). Escalate to the user only for an
+unresolved design defect, never for the implementation tail.
 
 ## When Gemini makes category errors
 

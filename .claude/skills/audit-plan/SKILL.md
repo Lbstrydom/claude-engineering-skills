@@ -239,6 +239,27 @@ node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript.json \
 Verdict handling: `APPROVE` → done. `CONCERNS` → deliberate on findings, edit
 plan, re-run Gemini. `REJECT` → present to user with recommendation.
 
+### Gemini round cap — **max 2 rounds** (symmetric with the GPT cap)
+
+The Gemini gate has the **same infinite-refinement surface** as the GPT loop:
+on a detailed plan it yields ~1–3 new edge findings *per round indefinitely*,
+and the verdict drifts from design defects → praise + implementation-completeness
+nits ("you didn't specify the store step / where the cooldown goes"). That is
+the **stop signal**, not a reason to run again.
+
+**Hard cap: 2 Gemini rounds.** After round 2, if the verdict is still `CONCERNS`:
+
+| Round-2 finding character | Action |
+|---|---|
+| Concrete **design** defect (wrong contract, unsafe migration, dangling FK) | One more round IS warranted — fix + re-run (rare; the genuine-bug exception) |
+| **Implementation-completeness** (missing step, parameter placement, "specify X") | **STOP** — fold into the plan as captured items; hand off to `/cycle`'s **code** audit, which verifies them against real code (the right artifact) |
+| Rising **coherence/praise** + 1 nit/round | **STOP** — diminishing returns; record the nit, close the gate |
+
+This mirrors the GPT "max 3 rounds unless HIGH actively dropping" rule: cap by
+default, exceed only for a concrete net-new *design* bug — never for rigor
+pressure or implementation detail. Record the stop decision (round count +
+why) in the plan's audit trail.
+
 Full transcript-building, verdict routing, deliberation protocol, and
 category-error handling: `references/gemini-gate.md`.
 
@@ -260,6 +281,7 @@ category-error handling: `references/gemini-gate.md`.
 4. **Always `--mode plan`** — without it, Gemini flags absent implementations
 5. **No self-review** — Step 6 final gate reviews Claude-GPT transcript
 6. **Audit the §11 clustering** — when present, check partition / coupling / fix-gate placement / ordering / derived scope (the first of two validation layers; `/cycle` re-validates at runtime)
+7. **Symmetric round caps** — GPT ≤3, **Gemini ≤2**. Both exceed the cap only for a concrete net-new *design* bug, never for rigor pressure / implementation-completeness. The Gemini cap is as load-bearing as the GPT one — implementation nits belong to the code audit, not the plan gate.
 
 ---
 

@@ -183,8 +183,15 @@ After all clusters (+ close-out), run **one** Gemini review over the
 **closed loop**: `APPROVE` → done; `CONCERNS`/`REJECT` → deliberate, apply
 fixes scoped to the union diff (the per-cluster out-of-scope stop does NOT
 apply here — no active cluster; touched `gate-clear` clusters are flagged
-`stale` for the next run), **re-run Gemini**. Exit only on `APPROVE` or
-explicit handback. Never replaced by GPT rebuttal. Invocation: build the
+`stale` for the next run), **re-run Gemini**. **Max 2 consolidated rounds**
+(symmetric with `/audit-plan`'s Gemini cap): after round 2 with `CONCERNS`,
+triage by finding character — a concrete **design/correctness** defect earns one
+more round (rare); **implementation-completeness** nits ("specify the store
+step", parameter placement) or **rising praise + ~1 nit/round** → **STOP**, the
+classic `/audit-code` path (Step 4) already verified the code against the real
+implementation, so record + close rather than re-running the union gate. Exit on
+`APPROVE`, the capped stop, or explicit handback. Never replaced by GPT
+rebuttal. Invocation: build the
 transcript the way `/audit-code` does (`changed_files`=union file set,
 accumulated per-cluster findings as the `rounds[]` trail), then
 `node scripts/gemini-review.mjs review <target> <transcript.json> --out …` —
