@@ -79,6 +79,7 @@ node_modules/
 # Brainstorm temp files: topic stdin + malformed-payload debug JSONs (0o600).
 .claude/tmp/
 .audit/orphan-metrics.jsonl
+.audit/cache-metrics.jsonl
 
 # Requirements layer — extraction intermediates are regenerable; the
 # reconciled ledger + hand-curated overrides ARE committed (shared rubric).
