@@ -433,6 +433,21 @@ For each file to be created or modified:
 - **Dependencies** (imports + what imports it)
 - **Why this file** (which principle justifies it)
 
+##### 7b. Implementation Phases (conditional — Gate 1)
+Emit an ordered phase list ONLY when the work is genuinely large —
+**Gate 1**: ≥6 files touched, OR ≥2 distinct subsystems/domains, OR a
+sequential dependency chain (from Phase 1.5), OR clearly >1 sitting of
+work. Otherwise the plan stays flat (§7 only) — **no phases, never a lone
+"Phase 1"** (anti-degenerate invariant: a plan with phases always has ≥2).
+Keeps ceremony proportional to the work.
+
+Format each phase: `**Phase N — <name>**: <what it does>. Files: <path>
+(create|modify|delete), …` — **every file intent-tagged** (the tag drives
+`/cycle`'s clustered-audit preflight; see §11). Mechanical close-out
+(regenerate / build / lint / verify) is **NOT** a phase — list it
+separately as `**Close-out (not a phase)**: <commands>`, excluded from the
+§11 partition.
+
 #### 8. Risk & Trade-off Register
 - Trade-offs made + why
 - What could go wrong
@@ -472,6 +487,30 @@ responsive if mobile is a target.
 
 If you can't write ≥5 criteria for a non-trivial frontend plan, it may
 be under-specified — revisit Phase 1 and §5 (State Map).
+
+### Always (conditional)
+
+#### 11. Execution Clustering (conditional — Gate 2)
+
+Emit ONLY when §7b fired AND the phases group into **≥2 clusters** (a real
+merge/split decision exists). A large-but-cohesive plan keeps §7b with no
+§11; small plans have neither. `/cycle` reads this block to drive clustered
+implementation + audit. **Cluster coupled phases** so `/audit-code`'s
+cross-cutting wiring pass can inspect the seam between them — clustering is
+quality-positive, not just a token saving.
+
+**Grammar** (the contract `/cycle` and `/audit-plan` consume):
+1. One bullet per cluster: `- **Cluster <ID>** — Phases <contiguous range> — fix-gate: <yes|final|none>`. Clusters are **contiguous ascending ranges** of §7b, listed in order — this makes cluster order a valid topological order without a separate dependency graph.
+2. `Coupling:` sub-bullet (**required**) — WHY these phases group (the auditable claim; the shared seam).
+3. **Cluster audit scope is derived, not restated**: it is the union of the member phases' `Files:` (plus an optional `Additional files:` sub-bullet, each entry intent-tagged per §7b). Never add a free-standing per-cluster `Files:` line — that is a second source of truth that drifts.
+4. `fix-gate: yes` → cluster must reach `/audit-code` convergence (`HIGH == 0 && MEDIUM <= 2 && quickFix == 0`) before the next builds on it; `final` → last cluster, gated by the consolidated Gemini pass; `none` → no blocking gate.
+5. Trailing `- **Final gate**:` line (**required**) — declares the mandatory consolidated Gemini review over the union diff.
+6. **Partition invariant**: every §7b *implementation* phase appears in exactly one cluster (none omitted/duplicated); close-out work is outside the phase set and is not clustered.
+
+**Authoring**: group coupled phases (cite the seam in `Coupling:`); keep
+independent phases splittable; place `fix-gate: yes` before any cluster
+that builds on a prior cluster's output; the last cluster is `fix-gate:
+final`. ≥2 clusters or omit the block entirely.
 
 ---
 
@@ -525,6 +564,7 @@ Update status as implementation progresses.
 - **Name the principles** — every design choice cites which principle(s) it serves (#N)
 - **One document, one audit** — no merging child plans, no archive cruft
 - **Section 10 acceptance criteria is the ship gate** for frontend/full-stack — `/ux-lock verify` grades against these
+- **Phase the work only when it's large** — §7b/§11 are conditional (Gate 1: ≥6 files / ≥2 subsystems / dep-chain; Gate 2: ≥2 clusters). Never emit a lone "Phase 1"; cluster coupled phases so the audit sees the seam
 - **Show every state** — Empty/Loading/Error/Success for any component you design
 - **Wireframe before code** — ASCII layouts prevent expensive rework
 - **Accessibility is not optional** — baseline, not nice-to-have

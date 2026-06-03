@@ -115,6 +115,25 @@ For each finding, record three orthogonal judgements:
 - `validity=valid` + `scope=out-of-scope` → `defer` to "Out of Scope (Future)" plan section
 - `validity=valid` + `scope=in-scope` + LOW → operator choice
 
+### Execution-clustering rubric (when the plan has a §11 block)
+
+The whole plan file is already in the GPT/Gemini context, so no new
+machinery — but **deliberately scrutinize the §11 Execution Clustering
+boundaries**, because `/cycle` executes them and a bad boundary makes it
+build on un-audited coupled code. Check: (a) **partition** — every §7b
+implementation phase in exactly one cluster, none omitted/duplicated,
+close-out correctly outside the phase set; (b) **coupling soundness** —
+grouped phases share a real seam; split phases are genuinely independent;
+(c) **fix-gate placement** — `fix-gate: yes` before every cluster that
+depends on a prior cluster's output; (d) **ordering** — clusters are
+contiguous ascending ranges (valid topological order); (e) **derived
+scope** — each cluster's scope resolves from member phases' `Files:`
+(+ tagged `Additional files:`); flag any free-standing per-cluster `Files:`
+line as a second source of truth. A malformed block is a HIGH finding when
+it would cause `/cycle` to build on un-audited coupled code. (`/cycle` also
+re-validates fail-closed at execution time — this is the first of two
+layers.)
+
 ### Tiered rebuttal
 
 | Severity | Deliberation |
@@ -240,6 +259,7 @@ category-error handling: `references/gemini-gate.md`.
 3. **Stop at rigor pressure** — max 3 rounds unless HIGH actively dropping
 4. **Always `--mode plan`** — without it, Gemini flags absent implementations
 5. **No self-review** — Step 6 final gate reviews Claude-GPT transcript
+6. **Audit the §11 clustering** — when present, check partition / coupling / fix-gate placement / ordering / derived scope (the first of two validation layers; `/cycle` re-validates at runtime)
 
 ---
 

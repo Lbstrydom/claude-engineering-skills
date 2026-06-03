@@ -15,6 +15,9 @@ description: |
   Usage: /cycle <plan-file> --no-uxlock     — Skip ux-lock step (no UI changes)
   Usage: /cycle <plan-file> --no-ship       — Stop after audit; don't commit or push
   Usage: /cycle <plan-file> --max-rounds N  — Pass through to /audit-plan and /audit-code
+  Usage: /cycle --autonomous <plan-file>    — Opt-in: autonomously implement + audit each §11 cluster (default still pauses for the human)
+  Usage: /cycle code <plan-file> --cluster <ID> [--baseline-ref <sha>]  — Resume one declared cluster (human clustered path)
+  Usage: /cycle --autonomous <plan-file> --authorize-stale-reaudit      — Resume a halted autonomous run; re-process stale clusters
 ---
 
 # Feature Cycle Orchestrator
@@ -44,6 +47,17 @@ Optional flags:
 - `--no-uxlock` — skip /ux-lock (use when no UI changes shipped)
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
+- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster (see "Clustered execution"). Without it, `/cycle` pauses for the human at Step 3 exactly as today — the autonomous behaviour is never silent.
+- `--cluster <ID>` — implement/audit a single declared cluster (human resume path).
+- `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
+- `--authorize-stale-reaudit` — resume a halted autonomous run by re-processing exactly the `stale` clusters.
+- `--no-cluster` — ignore any §11 block; fall back to the single-audit path.
+
+**§11 detection**: parse the target plan for an `## 11. Execution Clustering`
+block. If present (and not `--no-cluster`), set `hasClustering` and parse
+the clusters + each cluster's derived file scope. This activates the
+clustered-execution path (Step 0.7 preflight + Step 3 branch). Absent → the
+classic linear flow below, unchanged.
 
 Show kickoff card:
 
@@ -54,6 +68,24 @@ Show kickoff card:
   Skipped: --no-persona, --no-uxlock
 ═══════════════════════════════════════
 ```
+
+---
+
+## Step 0.7 — Clustering preflight (when `hasClustering`; fail-closed)
+
+Validate the §11 block **before any execution** — `/cycle code <plan>`
+reaches here without having passed `/audit-plan`, so this is the
+execution-time safety net (the second of two validation layers). Check:
+
+- **partition** — every §7b implementation phase in exactly one cluster; none omitted/duplicated; close-out outside the phase set;
+- **contiguous** ascending cluster ranges (grammar rule 1);
+- every `fix-gate` value in `{yes, final, none}`; `Coupling:` present on each cluster;
+- trailing `Final gate` line present;
+- **derived scope** (member `Files:` + tagged `Additional files:`) is non-empty and fully intent-tagged, validated **per cluster against that cluster's `gateStatus`** in the state record, NOT the global `/cycle` mode: a `pending`/absent cluster uses pre-implementation expectations (`(modify)`/`(delete)` resolve on disk; `(create)` has a resolvable parent dir, no collision, no sensitive-path); an `audited`/`gate-clear`/`stale` cluster uses post-implementation expectations (`(create)`/`(delete)` already done — no false collision on resume).
+
+**On any failure**: stop, present the defect, offer (1) correct the plan or
+(2) `--no-cluster` fallback to the single-audit path. Never silently
+proceed with a malformed block.
 
 ---
 
@@ -79,16 +111,24 @@ GPT-5.4 + Gemini final gate. Max 3 rounds; rigor-pressure stop.
 
 ---
 
-## Step 3 — Wait for Implementation
+## Step 3 — Implementation gate (branches on mode)
 
-This is the human-in-the-loop step. The plan is ready; the human (or
-Claude in another session) implements it.
-
-**`/cycle` pauses here.** It does not implement the plan automatically —
-that's the human's job, OR can be done with a separate manual `/cycle code <plan>`
-invocation later when implementation is done.
-
-Output:
+- **No §11 block** (either mode) → **today's behaviour, unchanged**: `/cycle`
+  **pauses here** for the human to implement (or resume later via
+  `/cycle code <plan>`). Output the "paused at implementation gate" card
+  below. Skipped automatically in SKIP_PLAN / SKIP_TO_CODE modes (the human
+  already implemented).
+- **§11 block + default (no `--autonomous`)** → still pauses, but prints the
+  cluster plan as implementation guidance and instructs the operator to
+  **implement only the next cluster**, then resume with `/cycle code <plan>
+  --cluster <ID>` (the `--cluster` arg is **required** on every human resume
+  — `/cycle` does not auto-divine the next cluster). On resume, Step 4 runs
+  the **per-cluster** audit (see Step 3C). If the operator implemented
+  several clusters at once (per-cluster isolation impossible), `/cycle` says
+  so and falls back to a single union-diff audit.
+- **§11 block + `--autonomous`** → enter **Step 3C** (the implement-and-audit
+  cluster loop). This is the explicit authorization that relaxes the
+  "never auto-fix" hard rule, scoped to within-cluster fixes.
 
 ```
 ═══════════════════════════════════════
@@ -98,12 +138,63 @@ Output:
 ═══════════════════════════════════════
 ```
 
-(In SKIP_PLAN and SKIP_TO_CODE modes, this step is skipped automatically
-— the human has already implemented the plan before invoking /cycle.)
+---
+
+## Step 3C — Clustered execution (when `hasClustering`)
+
+### Cluster execution state — `.audit/cycle-cluster-state.json`
+
+Durable, gitignored, lock-guarded (`withFileLock` for read-modify-write,
+atomic temp+rename; lock-acquire failure → stop, no racy overwrite).
+Schema: `{ schemaVersion:1, repoId, entries: { <canonicalPlanPath>: {
+clusters: { <clusterId>: <record> } } } }` — the path maps to a
+**collection** of cluster records (not the §11 content hash, so amending
+the plan never orphans cleared clusters). Per-cluster record: `{ clusterId,
+gateStatus: pending|audited|gate-clear|stale, scopeHash (this cluster's §11
+declaration + derivedScope), auditedBaselineRef, derivedScope:[…tagged
+paths…], auditedFileHashes:{path:sha256 over all derivedScope paths},
+lastAuditRound, lastUpdated }`. A `gate-clear` cluster flips to **`stale`**
+if any `derivedScope` hash changes OR its `scopeHash` changes; amending one
+cluster updates/invalidates only that cluster's record.
+
+### Loop (autonomous)
+
+State-driven + resumable: read state first, **skip `gate-clear` clusters**.
+For each remaining cluster in declared order:
+
+1. **Implement** the cluster's member-file phases.
+2. **Budget**: no runtime splitting in v1 — invoke `/audit-code` on the cluster's derived scope and let its internal map-reduce handle large diffs. `/cycle` only enforces **never merge** across a declared boundary.
+3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins; invoke `/audit-code --scope=diff` with `--changed`=the derived scope and a `clusterStartRef..WORKTREE` `--diff`. Reconcile changed-files: a changed file belonging to **no** cluster's derived scope is an out-of-scope edit → **fail closed** (stop, summarize, ask to amend or take the union fallback). On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default `--diff` to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.
+4. **Fix-gate**: `fix-gate: yes` → reach `/audit-code` convergence (`HIGH==0 && MEDIUM<=2 && quickFix==0`) before the next cluster; `none` skips; `final` defers to the consolidated gate. Within-cluster fixing is authorized; a fix needing files **outside** the cluster's scope → **stop** for confirmation (mark any touched `gate-clear` cluster `stale`). Persistent non-convergence → hand back with a summary.
+5. **After the loop**: if any `gate-clear` cluster went `stale`, **halt + summarize**; resume only with `--authorize-stale-reaudit`, which re-processes exactly the stale clusters (their out-of-scope reconciliation ignores files owned by *other* clusters, since later clusters legitimately committed since the old baseline). No autonomous loop-back.
+
+### Step 3C.1 — Close-out execution (autonomous)
+
+The loop only iterates §7b phases, so the plan's unclustered close-out
+(e.g. `npm run skills:regenerate` + `npm run skills:check`, build/codegen)
+would never run. After the last cluster clears and **before** the
+consolidated gate, parse and execute the plan's close-out step(s),
+surfacing failures. (Human path leaves close-out to the operator.)
+
+### Step 3C.2 — Consolidated Gemini gate (closed loop, mandatory)
+
+After all clusters (+ close-out), run **one** Gemini review over the
+**union diff** — mandatory regardless of per-cluster GPT convergence, and a
+**closed loop**: `APPROVE` → done; `CONCERNS`/`REJECT` → deliberate, apply
+fixes scoped to the union diff (the per-cluster out-of-scope stop does NOT
+apply here — no active cluster; touched `gate-clear` clusters are flagged
+`stale` for the next run), **re-run Gemini**. Exit only on `APPROVE` or
+explicit handback. Never replaced by GPT rebuttal. Invocation: build the
+transcript the way `/audit-code` does (`changed_files`=union file set,
+accumulated per-cluster findings as the `rounds[]` trail), then
+`node scripts/gemini-review.mjs review <target> <transcript.json> --out …` —
+reuse `/audit-code`'s transcript path, no new gate machinery. Generated
+`.claude/skills/**` copies are byte-verified by `skills:check`, not
+re-reviewed. Then continue to Step 5.
 
 ---
 
-## Step 4 — Audit Code
+## Step 4 — Audit Code (classic path — no §11 block)
 
 Invoke `/audit-code <plan-file>` (default `--scope=diff`). Multi-pass
 parallel GPT-5.4 audit with R2+ ledger suppression and Gemini final
@@ -160,7 +251,9 @@ changed). No additional action needed here.
   /cycle complete — <PLAN-NAME>
   Plan:        docs/plans/<name>.md
   Audit-plan:  3 rounds, APPROVE
-  Audit-code:  4 rounds, CONVERGED, H:0 M:1 L:2
+  Clusters:    A converged H:0; B converged H:0 (autonomous)   ← only if hasClustering
+  Audit-code:  4 rounds, CONVERGED, H:0 M:1 L:2                 ← classic path (no §11)
+  Final gate:  Gemini APPROVE over union diff                  ← only if hasClustering
   Persona:    0 P0, 1 P1 (deferred)
   UX-lock:    2 specs generated
   Ship:       commit abc1234 pushed to main
@@ -170,18 +263,23 @@ changed). No additional action needed here.
 ```
 
 If any step was skipped, note why. If any step exited non-success,
-surface as a warning at the top.
+surface as a warning at the top. For clustered runs, show the per-cluster
+gate result and the preflight outcome.
 
 ---
 
 ## Hard rules
 
-- **Never auto-fix** between steps without user confirmation. Each
-  audit's findings are surfaced; user decides whether to proceed.
+- **Never auto-fix** between steps without user confirmation — **except** in
+  `--autonomous` mode, where the opt-in flag authorizes within-cluster fixes
+  scoped to the active cluster's derived file set (summaries still surfaced;
+  cross-cluster fixes and persistent non-convergence still hand back).
 - **Never skip `/audit-plan`** unless explicitly in SKIP_PLAN or SKIP_TO_CODE mode.
 - **Never skip `/audit-code`** unless explicitly in SKIP_TO_SHIP mode (not currently exposed; reserved).
-- **Cycle is human-orchestrated, not autonomous** — it pauses at the implementation gate (Step 3) so the human writes/reviews code, then resumes from `/cycle code <plan>`.
-- **Cost cap awareness**: estimate total cost upfront from input size and surface it in the kickoff card. A typical full cycle costs $1–3.
+- **Default is human-orchestrated** — `/cycle` pauses at the implementation gate (Step 3); only the **opt-in `--autonomous`** flag implements code, and it never activates silently.
+- **`/cycle` reads the §11 block; it never authors or merges clusters** — it may split-equivalent (defer oversized diffs to `/audit-code`'s map-reduce) but never merges across a declared boundary. Clustering is the plan's job.
+- **The consolidated Gemini gate is mandatory** after clustered execution, regardless of per-cluster convergence.
+- **Cost cap awareness**: estimate total cost upfront from input size and surface it in the kickoff card. A typical full cycle costs $1–3; autonomous clustered runs cost more (one audit per cluster + the final gate).
 
 ---
 

@@ -1,5 +1,20 @@
 # Project Status Log
 
+## 2026-06-03 — Plan-declared execution clustering across the skill chain
+
+Plan: [docs/completed/execution-clustering-skill-chain.md](docs/completed/execution-clustering-skill-chain.md) (Complete). Lets multi-phase plans declare how phases group for implementation + audit, so `/cycle` audits coupled phases together (token-efficient *and* quality-positive — the cross-cutting wiring pass sees the seam) instead of re-auditing per-phase or drowning a giant union diff. Semantic clustering lives in the **plan** (so `/audit-plan` reviews it before any code); diff-budget enforcement is runtime. Core invariant: `/cycle` never **merges** across a declared boundary.
+
+- **`/plan`** ([skills/plan/SKILL.md](skills/plan/SKILL.md)): new conditional **§7b Implementation Phases** (Gate 1: ≥6 files / ≥2 subsystems / dep-chain — never a lone "Phase 1") + **§11 Execution Clustering** (Gate 2: ≥2 clusters). 6-rule grammar: contiguous ranges, required `Coupling:`, derived audit scope (union of member phases' intent-tagged `Files:`), `fix-gate` enum, mandatory final-gate line, partition invariant over implementation phases only (close-out excluded).
+- **`/audit-plan`** ([skills/audit-plan/SKILL.md](skills/audit-plan/SKILL.md)): §11 scrutiny rubric (partition / coupling / fix-gate placement / ordering / derived scope) + Key Principle — first of two validation layers, no new machinery (the block is already in GPT/Gemini context).
+- **`/cycle`** ([skills/cycle/SKILL.md](skills/cycle/SKILL.md)): opt-in `--autonomous` (+ `--cluster`, `--baseline-ref`, `--authorize-stale-reaudit`, `--no-cluster`). **Default unchanged — still pauses for the human.** Fail-closed **Step 0.7 preflight** (per-cluster `gateStatus`-aware intent checks). **Step 3C cluster loop**: durable lock-guarded state (`.audit/cycle-cluster-state.json`, per-cluster `scopeHash` so amending one cluster never orphans others), audit envelope via `/audit-code`'s `--changed`/`--diff` + `clusterStartRef` (no silent-skip-on-resume), fix-gate at `/audit-code` native convergence. **Step 3C.1 close-out execution** (autonomous runs `skills:regenerate`). **Step 3C.2 closed-loop consolidated Gemini gate** over the union diff (mandatory).
+
+**Quality**: `/audit-plan` GPT R1→R3 (HIGH 4→2→1) + **4 Gemini rounds** — 35 findings total, all applied. Gemini caught the subtle ones GPT missed: state-key orphaning, silent-skip-on-resume, autonomous-never-runs-close-out, fix-gate threshold misalignment, interrupted-run false-collision (fixed via per-cluster `gateStatus`). Stopped at the diminishing-returns point (findings decayed to edge-polish; see new memory). Implemented manually cluster-by-cluster (the feature can't yet dogfood itself). Full `npm run check` **3340/0**; `skills:check` 13/13 IN SYNC.
+
+### Next
+First real consumer: when a future multi-phase plan ships, exercise `/cycle --autonomous` end-to-end. v2 candidates (deferred, in plan §Out-of-Scope): runtime cluster splitting behind an `/audit-code` scope-status contract; non-contiguous clusters with `Depends on:`; a `plans:lint` rule for §11 structural validation.
+
+---
+
 ## 2026-06-02 — Fix stale domain rules → Purpose hygiene "missing arch" 7→3
 
 The Purpose tab's "Mapped but no architecture entry (7)" hygiene warning traced to **3 dead domain rules** in [.audit-loop/domain-map.json](.audit-loop/domain-map.json) pointing at files that don't exist (`scripts/explain.mjs`, `scripts/persona-test.mjs`, `scripts/ux-lock.mjs`), so the real code (`scripts/explain-history.mjs`, `scripts/persona-consistency-*.mjs`, `scripts/lib/persona-test/**`, `scripts/lib/ux-lock/**`) was being swept into the `scripts`/`shared-lib` catch-alls → those domains had zero indexed symbols → no architecture box → link-less Purpose chips.
