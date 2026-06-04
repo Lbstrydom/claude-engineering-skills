@@ -73,6 +73,11 @@ node_modules/
 # Observed domain-deps envelope — derived from DB import graph by arch:render.
 .audit-loop/domain-deps-observed.json
 
+# Repo-identity reconcile intermediate — operator-curated, one-time, applied
+# then spent (the merge it proposes lands in the DB, not the repo). Like the
+# requirements-layer candidates/gaps intermediates: kept locally, never committed.
+.audit-loop/repo-alias-map.json
+
 # .env backups from rearrangement scripts (may contain secrets).
 .env.bak.*
 
