@@ -572,6 +572,39 @@ async function main() {
       continue;
     }
 
+    // Pre-flight #1b: managed .gitattributes block. We write synced surfaces
+    // with LF; on Windows consumers (core.autocrlf) git checks them out as CRLF
+    // and reports every synced .md/.json as perpetually "modified" (EOL-only
+    // churn). Pin the TRACKED synced surfaces to `eol=lf` so git stores +
+    // checks them out as LF — no churn. Reuses the same content-agnostic
+    // managed-block machinery as .gitignore (same marker sentinels; one block
+    // per file). Precise globs only — never the consumer's own files.
+    // (scripts/.claude-skills/** is gitignored, so not pinned here.)
+    const gaPath = path.join(repo.path, '.gitattributes');
+    let priorGitattributes = null;
+    try {
+      priorGitattributes = fs.existsSync(gaPath) ? fs.readFileSync(gaPath, 'utf-8') : null;
+    } catch { priorGitattributes = null; }
+    const gaPreview = updateManagedBlock(
+      priorGitattributes,
+      [
+        '.claude/skills/** text eol=lf',
+        '.claude/hooks/** text eol=lf',
+        '.claude/settings.json text eol=lf',
+        '.github/prompts/** text eol=lf',
+        '.vscode/mcp.json text eol=lf',
+        'docs/consistency-contract.md text eol=lf',
+        'scripts/.sync-manifest.json text eol=lf',
+        '.audit-loop/migrations/** text eol=lf',
+      ],
+    );
+    if (gaPreview.action === 'abort') {
+      console.log(`  ${R}ABORT${X}  .gitattributes preflight: ${gaPreview.error}`);
+      totalErrors++;
+      console.log('');
+      continue;
+    }
+
     // Pre-flight #2: ownership scan. For each destination we intend to write
     // OR delete, ensure no foreign file is at that destination. Foreign =
     // exists on disk AND not present in the prior manifest under any layout
@@ -800,6 +833,15 @@ async function main() {
         atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
       } catch (err) {
         console.log(`  ${R}manifest write failed${X}: ${err.message?.slice(0, 120)}`);
+      }
+    }
+
+    // ── Apply managed .gitattributes block (EOL pins; preflight validated) ──
+    if (!DRY_RUN && gaPreview.action !== 'noop') {
+      try {
+        atomicWriteFileSync(gaPath, gaPreview.content);
+      } catch (err) {
+        console.log(`  ${R}.gitattributes write failed${X}: ${err.message?.slice(0, 120)}`);
       }
     }
 

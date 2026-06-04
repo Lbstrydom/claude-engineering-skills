@@ -60,14 +60,18 @@ managed entries. Stating the cliffs:
    be redundant with `sync:dry` (the over-engineering cliff). AGENTS.md points at
    the two existing entrypoints.
 
-4. **EOL churn fix — DEFERRED (right-sized out).** A managed `.gitattributes`
-   block pinning synced surfaces to `eol=lf` is the proper fix, but it requires
-   generalising `updateManagedBlock` (currently hardcoded to the gitignore
-   markers) + a new write-path + preflight + tests — real code for a **cosmetic**
-   problem (EOL churn shows files as modified but never breaks anything). That's
-   disproportionate to bundle here (the cure approaching the disease). Deferred
-   as its own small change; interim, consumers can set `core.autocrlf=false` or
-   add `* text=auto eol=lf`. Tracked in "Out of Scope" below.
+4. **EOL churn fix — DONE (cheaper than the deferral assumed).** A managed
+   `.gitattributes` block pins the TRACKED synced surfaces (`.claude/skills/**`,
+   `.github/prompts/**`, `.claude/hooks/**`, `.claude/settings.json`,
+   `.vscode/mcp.json`, `docs/consistency-contract.md`, `scripts/.sync-manifest.json`,
+   `.audit-loop/migrations/**`) to `eol=lf`, so Windows consumers stop seeing
+   them as perpetually modified. The earlier deferral assumed this needed
+   generalising `updateManagedBlock` — but that helper is already
+   content-agnostic (it just writes lines between marker sentinels, which work
+   identically in `.gitattributes`), so it was REUSED as-is: a parallel
+   preflight + write mirroring the `.gitignore` path, no refactor. Precise globs
+   only (never the consumer's own files); `scripts/.claude-skills/**` is
+   gitignored so not pinned. One-time renormalization in consumers is expected.
 
 5. **gitignore coverage.** Extend the sync-managed `.gitignore` block to cover
    the generated ephemera our tooling produces in consumers: `dashboard/index.html`,
