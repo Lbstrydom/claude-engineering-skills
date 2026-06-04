@@ -101,20 +101,26 @@ Unifying `run_id` must NOT lose per-round/invocation metadata. The split:
 
 - **Per-round/per-pass data stays in `audit_pass_stats`** — BUT today that table
   keys only on `(run_id, pass_name)` with **no `round` column** (verified:
-  `20260330063355_learning_store.sql`). Under per-invocation runs that was fine
-  (each round was a different `run_id`); under a unified `run_id`, round-2's
-  `structure` pass would **collide** with round-1's (R2-H1). **Required migration**:
-  add `round INTEGER NOT NULL DEFAULT 1` to `audit_pass_stats`; **DROP the
-  existing `UNIQUE(run_id, pass_name)` constraint, THEN add `UNIQUE(run_id,
-  pass_name, round)`** (Gemini-R2-M4 — the old constraint must go first or the
-  add fails / the upsert targets the wrong index). `recordPassStats` gains a
-  `round` arg (callers already thread `round` for `recordFindings.round_raised`).
-- **Every pass-stats writer/updater must carry `round` (Gemini-R2-H1)**: in
-  particular `updatePassStatsPostDeliberation` currently matches rows by
-  `(run_id, pass_name)` only — under unification that matches ALL rounds and
-  double-counts/overwrites. Its WHERE clause must add `round`. This is the
-  load-bearing reason Phase 1 does a full pass-stats-writer inventory before
-  editing. Then token/cost/timing/pass attribution is genuinely round-resolved.
+  `20260330063355_learning_store.sql`). **Implementation reality (verified during
+  build)**: `audit_pass_stats` has **NO `UNIQUE(run_id, pass_name)` constraint** —
+  only `idx_pass_stats_run` (a plain index) + `PRIMARY KEY (id)` — and
+  `recordPassStats` does a plain `INSERT` (`insertReturning`), not an upsert. So
+  Gemini-R2-M4's "drop+re-add UNIQUE" does not apply (no constraint exists to
+  swap); under unification each round already INSERTs its own row. **The migration
+  is therefore just `ADD COLUMN round INTEGER NOT NULL DEFAULT 1`** (forward-only;
+  existing rows default 1). `recordPassStats` gains a `round` arg (column-probe
+  tolerant — below).
+- **The real collision is `updatePassStatsPostDeliberation` (Gemini-R2-H1)**: it
+  matches rows by `(run_id, pass_name)` only — under unification that matches ALL
+  rounds' rows for the pass and overwrites each with the same run-final counts.
+  Post-deliberation accepted/dismissed are **run-final** (not round-specific) and
+  the canonical adjudication truth is `audit_findings.adjudication_outcome`
+  anyway; the pass_stats counts are denormalized telemetry. **Resolution**: scope
+  the update to the **latest round's** row per pass —
+  `WHERE run_id=$1 AND pass_name=$2 AND round=(SELECT max(round) FROM
+  audit_pass_stats WHERE run_id=$1 AND pass_name=$2)` — so the final counts land
+  on the convergence-round row, unambiguously, without touching earlier rounds.
+  (Verified: this is the inventory's sole problematic updater.)
 - **Column-probe tolerance — the migration is operator-gated (CRITICAL)**: the
   `round` migration is applied **out-of-band** by the operator
   (`setup-postgres.mjs --migrate`), NOT by this code. So `recordPassStats` /
