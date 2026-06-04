@@ -9,11 +9,28 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import {
   mergeFragments,
   canonicalLocator,
   renderManifest,
 } from '../scripts/build-surfaces-manifest.mjs';
+
+// Regression guard (root cause of a wine-cellar vitest failure, 2026-06): this
+// builder is import-intended (consumer contract tests `import()` it), but a
+// `#!/usr/bin/env node` shebang throws "Invalid or unexpected token" under
+// bundler test-runners (vitest 4) that don't strip it like node does. It's
+// always invoked as `node <path>`, so the shebang is vestigial + harmful — keep
+// it gone.
+describe('build-surfaces-manifest.mjs — import portability', () => {
+  it('has NO shebang (it is imported by consumer vitest contract tests)', () => {
+    const src = fs.readFileSync(
+      fileURLToPath(new URL('../scripts/build-surfaces-manifest.mjs', import.meta.url)), 'utf-8');
+    assert.ok(!src.startsWith('#!'),
+      'build-surfaces-manifest.mjs must not start with a shebang — it breaks `import()` under vitest/esbuild module runners');
+  });
+});
 
 function syntheticSurface(id, locator, field = 'stateV2') {
   return {

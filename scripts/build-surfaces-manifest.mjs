@@ -1,7 +1,14 @@
-#!/usr/bin/env node
 /**
  * @fileoverview Build a consumer's `.persona-test/surfaces.json` from per-fragment
  * `*.persona-test.json` files colocated with the surface code they describe.
+ *
+ * NO SHEBANG (deliberate). This module is BOTH a CLI and an importable library —
+ * consumer contract tests `import()` it (it guards `main()` precisely for that).
+ * A `#!/usr/bin/env node` shebang throws `SyntaxError: Invalid or unexpected
+ * token` under bundler test-runners (e.g. vitest 4) whose module runner doesn't
+ * strip the shebang the way `node` does. It's always invoked as `node <path>`,
+ * so the shebang was vestigial — its only effect was breaking the import path.
+ * Regression-guarded in tests/build-surfaces-manifest.test.mjs.
  *
  * This is ENGINEERING-SKILLS tooling (persona-test consistency mode), synced into
  * consumer repos under `scripts/.claude-skills/` and invoked as a CLI from the
