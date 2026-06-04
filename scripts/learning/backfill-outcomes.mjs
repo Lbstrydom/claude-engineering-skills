@@ -33,6 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { redactSecrets } from '../lib/secret-patterns.mjs';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -238,9 +239,13 @@ async function drainJsonlToCloud({ learningStore, repoId, dryRun }) {
           repoId: repoId || null,
           context: {
             pattern: m.name,
-            file: record.file,
+            // Defence-in-depth (Gemini): the quickfix hook already redacts +
+            // skips sensitive paths at write-time, but re-redact at the cloud
+            // egress boundary so a stale/hand-edited jsonl line can't leak a
+            // secret upstream.
+            file: redactSecrets(String(record.file ?? '')).text,
             severity: m.severity,
-            snippet: m.snippet,
+            snippet: redactSecrets(String(m.snippet ?? '')).text,
             ts: record.ts,
           },
           contextHash: '',

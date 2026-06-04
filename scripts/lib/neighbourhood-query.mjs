@@ -180,11 +180,16 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
 
   // 2. Cache lookup or generate
   const ttlMs = symbolIndexConfig?.intentEmbedCacheTtlMs ?? CACHE_TTL_MS_DEFAULT;
-  const key = cacheKey(v.intentDescription, active.activeEmbeddingModel, active.activeEmbeddingDim);
+  // Redact BEFORE deriving the cache key (defence-in-depth): a secret-bearing
+  // intent must not produce a stable on-disk hash of the raw secret, nor split
+  // the cache across secret variants. The embedding egress already redacts
+  // internally; this aligns the key + egress to the same safe text.
+  const safeIntent = redactSecrets(v.intentDescription || '').text;
+  const key = cacheKey(safeIntent, active.activeEmbeddingModel, active.activeEmbeddingDim);
   let intentEmbedding = getCached(repoRoot, key, ttlMs);
   if (!intentEmbedding) {
     const emb = await generateIntentEmbedding(
-      v.intentDescription,
+      safeIntent,
       active.activeEmbeddingModel,
       active.activeEmbeddingDim
     );
