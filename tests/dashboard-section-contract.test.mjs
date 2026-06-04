@@ -35,6 +35,7 @@ const SECTION_FILES = [
   'audit-runs.mjs',
   'requirements.mjs',
   'learning.mjs',
+  'prompt-variants.mjs',
   'security.mjs',
   'purpose.mjs',
   'purpose-health.mjs',

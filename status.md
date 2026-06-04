@@ -1,5 +1,24 @@
 # Project Status Log
 
+## 2026-06-04 — Learning-store signal recovery: Cluster D (dashboard surfacing — Prompt Variants panel)
+
+Implemented Cluster D / Phase 7 (the plan's final cluster, read-only presentation). Surfaces the restored signal in the dashboard.
+
+### Delivered: Prompt Variants (bandit) panel
+End-to-end vertical: `collectPromptVariants` (→ `loadBanditArms`, global arms, posterior mean = α/(α+β)) → `sections/prompt-variants.mjs` (table with empty + cold-start states, arity-2 default export, no render/helpers imports per the section contract) → `render.mjs` REGISTRY + SLICER → `schema.mjs` `promptVariants` block → `dashboard-section-contract.test`. **Render-smoke against the live store: schema VALID, 14 arms** — best `gemini-review` variant posterior 0.45 vs the most-pulled at 0.29 (the comparison the panel exists to show).
+
+### Scope — explicit deferral (not silent)
+Phase 7 named three panels; I shipped the **data-backed** one. **`audit-effectiveness` + `ship-health` deferred with rationale** (recorded in the plan): both render ~empty today — `audit_effectiveness` needs `persona_audit_correlations` rows (Cluster C activated the writer, but it's exploratory-persona/model-driven, none yet); `ship_events` has 4 rows + **no reader** (`readShipEvents` is the prerequisite). Each is a mechanical repeat of this vertical once its data/reader lands.
+
+### Quality
+audit-code 1 round + **Gemini 2 rounds (cap) → APPROVE**, coherence Strong. Gemini caught a real bug I'd wrongly dismissed as scope-noise: the page-level `allMissing` empty-state guard in `render.mjs` (a file in this diff) omitted `promptVariants`, so a repo with *only* bandit data would hide all tabs — **fixed** (added to the list; the inline comment warns of this exact failure). Full `npm run check` 3345/0; dashboard tests 52/0.
+
+### Signal-recovery scorecard (A–D)
+- ✅ A identity (live) · ✅ B outcomes+resolver (live, 332 resolved) · ✅ C recurring clusters (live, 353) + cross-skill activation · ✅ D bandit panel (live).
+- **Remaining**: audit-effectiveness + ship-health panels (data-gated), per-repo Audit Runs tab, and the two determinism follow-ups (outcome-capture, ux-lock runners).
+
+---
+
 ## 2026-06-04 — Learning-store signal recovery: Cluster C (cross-skill activation + recurring-cluster aggregation)
 
 Implemented Cluster C (Phases 5-6) of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md). The cluster splits by architecture: Phase 6 is fully deterministic backend; Phase 5's high-value writes are model/MCP-driven (exploratory persona-test, ux-lock), so activation = explicit mandatory adapter steps (the B5 root cause was reliance on reference-prose).

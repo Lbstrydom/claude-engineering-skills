@@ -14,6 +14,7 @@ import { getLearningStats } from '../learning/stats.mjs';
 import { redactSecrets } from '../sanitizer.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { getRepoIdByUuid } from '../store/repo.mjs';
+import { loadBanditArms } from '../store/bandit-fp.mjs';
 import { getSecurityStats } from '../store/security.mjs';
 import { getPurposeHealth } from '../store/purpose-health.mjs';
 import { PurposeConfigSchema } from './schema.mjs';
@@ -150,6 +151,43 @@ async function collectLearning(root) {
     return {
       data: { cloud: false, pendingTriageCount: 0, noBrainerCount: 0, staleClusterCount: 0 },
       status: { status: 'unexpected-error', detail: redactSecrets(`learning stats failed: ${err.message}`) },
+    };
+  }
+}
+
+/**
+ * Collect prompt-variant (bandit) effectiveness — surfaces the Thompson-sampling
+ * arms (Cluster D / Phase 7). Arms are global (`context_bucket`), so no repo
+ * scoping. Posterior mean = alpha/(alpha+beta); sorted by pulls desc.
+ */
+async function collectPromptVariants() {
+  try {
+    const armsMap = await loadBanditArms();
+    if (!armsMap) {
+      return {
+        data: { cloud: false, arms: [] },
+        status: { status: 'missing-optional', detail: 'no bandit arms yet (needs cloud + a deliberation/rebuttal run)' },
+      };
+    }
+    const arms = Object.values(armsMap)
+      .map((a) => {
+        const denom = a.alpha + a.beta;
+        return {
+          passName: String(a.passName),
+          variantId: String(a.variantId),
+          pulls: Number(a.pulls) || 0,
+          mean: denom > 0 ? Number((a.alpha / denom).toFixed(3)) : 0,
+          alpha: Number(a.alpha.toFixed(2)),
+          beta: Number(a.beta.toFixed(2)),
+          contextBucket: String(a.contextBucket || 'global'),
+        };
+      })
+      .sort((x, y) => y.pulls - x.pulls);
+    return { data: { cloud: true, arms }, status: { status: 'ok', detail: '' } };
+  } catch (err) {
+    return {
+      data: { cloud: false, arms: [] },
+      status: { status: 'unexpected-error', detail: redactSecrets(`bandit arms query failed: ${err.message}`) },
     };
   }
 }
@@ -379,11 +417,12 @@ export async function collectTelemetry(opts = {}) {
 
   // M4 — collectAuditRuns no longer needs a client param; it pulls from the
   // shared pg pool via lib/db/client.mjs. Pass null for the legacy positional.
-  const [auditRuns, learning, security, purposeHealth] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants] = await Promise.all([
     collectAuditRuns(null),
     collectLearning(root),
     collectSecurity(root),
     collectPurposeHealth(root),
+    collectPromptVariants(),
   ]);
   const requirements = collectRequirements(root);
 
@@ -400,12 +439,14 @@ export async function collectTelemetry(opts = {}) {
       learning: learning.status,
       security: security.status,
       purposeHealth: purposeHealth.status,
+      promptVariants: promptVariants.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
     learning: learning.data,
     security: security.data,
     purposeHealth: purposeHealth.data,
+    promptVariants: promptVariants.data,
   };
 }
 

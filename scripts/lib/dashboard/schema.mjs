@@ -318,6 +318,20 @@ export const TelemetryDataSchema = z.object({
       reason: z.string(),
     })),
   }).optional(),
+  // Prompt-variant (bandit) effectiveness — Cluster D / Phase 7. Optional so
+  // snapshots captured before this section existed still validate.
+  promptVariants: z.object({
+    cloud: z.boolean(),
+    arms: z.array(z.object({
+      passName: z.string(),
+      variantId: z.string(),
+      pulls: count,
+      mean: z.number(),
+      alpha: z.number(),
+      beta: z.number(),
+      contextBucket: z.string(),
+    })),
+  }).optional(),
 });
 
 /**

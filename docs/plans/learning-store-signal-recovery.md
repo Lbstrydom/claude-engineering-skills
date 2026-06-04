@@ -1,7 +1,7 @@
 # Plan: Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops
 
 - **Date**: 2026-06-03
-- **Status**: In Progress (Cluster A landed+applied 2026-06-03; Clusters B+C landed 2026-06-04; Cluster D + ux-lock-runner determinism follow-up pending)
+- **Status**: In Progress (A applied 2026-06-03; B+C landed 2026-06-04; D bandit panel landed 2026-06-04 — audit-effectiveness/ship-health panels data-gated + the two determinism follow-ups remain)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `cross-skill-bridge`, `shared-lib`, `stores`, `scripts`
@@ -339,18 +339,26 @@ graph TD
 - **`scripts/lib/dashboard/collect-telemetry.mjs`** (modify): add collectors
   calling the existing readers (`readAuditEffectiveness`, correlation readers,
   `loadBanditArms`, ship/regression/verify readers in `plans-ship.mjs`).
-- **`scripts/lib/dashboard/sections/audit-effectiveness.mjs`**,
-  **`.../prompt-variants.mjs`** (bandit), **`.../ship-health.mjs`** (create):
-  new section modules following the `(src, data, ui) → string` signature.
-- **`scripts/lib/dashboard/render.mjs`** (modify): register the new sections in
-  the telemetry `REGISTRY`; **expand the Audit Runs tab to per-repo** (it's
-  project-wide today — meaningful only after A).
-- **`scripts/lib/dashboard/schema.mjs`** (modify): extend `TelemetryDataSchema`.
-- **`tests/dashboard-section-contract.test.mjs`** (modify): add new sections to
-  the contract set.
-- **Why**: makes the recovered signal *visible* — precision/recall trend,
-  persona↔audit correlation, prompt-variant effectiveness, ship/verify health.
-  Without it the improvements exist in the DB but never reach a human.
+- **`scripts/lib/dashboard/sections/prompt-variants.mjs`** (create — **DONE
+  2026-06-04**): bandit-arm effectiveness panel (pass × variant, pulls, posterior
+  mean, α/β; cold-start markers). Wired end-to-end — collector
+  (`collectPromptVariants` → `loadBanditArms`), `render.mjs` REGISTRY +
+  SLICER, `schema.mjs` `promptVariants` block, `dashboard-section-contract.test`.
+  Renders live: 14 arms (best `gemini-review` variant mean 0.45 vs most-pulled
+  0.29). This is the data-backed panel that surfaces the bandit we analysed.
+- **`audit-effectiveness.mjs` + `ship-health.mjs` — DEFERRED (rationale, not a
+  silent omission)**: both render ~empty on today's data, so they're held until
+  the data justifies a panel. `audit_effectiveness` needs `persona_audit_correlations`
+  rows (Cluster C activated the writer, but it's exploratory-persona/model-driven
+  — no rows yet). `ship_events` has 4 rows and **lacks a reader** (only
+  `recordShipEvent` exists) — a `readShipEvents` reader is the prerequisite.
+  Each is a mechanical repeat of the prompt-variants vertical once its data/reader
+  lands. Tracked here as the remaining Phase 7 work.
+- **`scripts/lib/dashboard/render.mjs`** (modify — partial): prompt-variants
+  registered. **Deferred**: expanding the Audit Runs tab to per-repo (now
+  coherent post-A, but a separate change).
+- **Why**: makes the recovered signal *visible* — the bandit panel ships now;
+  effectiveness/ship-health follow their data.
 
 ### Close-out (not a phase)
 `npm run arch:refresh && npm run dashboard:build && npm test` — regenerate the
