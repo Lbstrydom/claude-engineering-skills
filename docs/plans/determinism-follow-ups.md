@@ -115,6 +115,16 @@ Unifying `run_id` must NOT lose per-round/invocation metadata. The split:
   double-counts/overwrites. Its WHERE clause must add `round`. This is the
   load-bearing reason Phase 1 does a full pass-stats-writer inventory before
   editing. Then token/cost/timing/pass attribution is genuinely round-resolved.
+- **Column-probe tolerance — the migration is operator-gated (CRITICAL)**: the
+  `round` migration is applied **out-of-band** by the operator
+  (`setup-postgres.mjs --migrate`), NOT by this code. So `recordPassStats` /
+  `updatePassStatsPostDeliberation` MUST probe for the column the same way
+  `detectClassificationColumns()` probes `sonar_type` (cached 0-row SELECT) and
+  **fall back to the columnless write/match when `round` is absent**. This makes
+  the shipped code safe against an un-migrated shared store (it behaves exactly
+  as today until the migration lands), so code and migration can ship/apply
+  independently. A `_resetPassStatsRoundColumnCache()` test seam mirrors the
+  classification one.
 - **The single `audit_runs` row carries the audit-level aggregate**: final
   `rounds` (count), `round_converged_after`, `rigor_pressure_round`, summed
   `total_duration_ms`, `labeled`, `commit_sha`/`branch`/`plan_id`. `recordRunStart`
