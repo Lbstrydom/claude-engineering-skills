@@ -188,6 +188,17 @@ Scope hint: compare the finding's cited files against `--changed` /
 `--scope diff`. A finding pointing at code your PR didn't touch is
 `out-of-scope` by definition.
 
+**Honest-deferral check (Design right-sizing, AGENTS.md — the band-aid escape
+hatch).** `defer` is the place "patched the easy way" hides. A `defer` of a
+`valid` `in-scope` finding must name three things: (1) the **root cause**;
+(2) the **minimal in-scope fix you considered and rejected**; (3) the **residual
+risk**. Invariant: **never `defer` because the correct fix is merely larger** —
+size is not scope. Legitimate `defer` = a true scope boundary (out-of-scope) or
+explicitly accepted, documented debt. Strongest form: drop a `TODO` at the cited
+line naming the root cause, so the dodge becomes a visible artifact. (The
+over-engineering cliff is caught symmetrically by Gemini's `over_engineering_flags`
+in the final review.)
+
 ### Mechanical vs architectural
 
 Each finding has `is_mechanical: true/false` from GPT:

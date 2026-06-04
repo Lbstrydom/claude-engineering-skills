@@ -336,6 +336,24 @@ If backend-only scope: skip this phase entirely.
 
 Resist the urge to solve only the immediate problem. Every plan answers:
 
+### Right-sizing gate (when the plan introduces new structure)
+
+The flexibility checklist below biases toward abstraction; this is its
+counterweight (**Design right-sizing**, AGENTS.md). **When the plan introduces a
+new abstraction, dependency, persistent artifact, or config surface** (the §7b
+Gate-1 trigger class — skip for trivial plans), write three lines so the chosen
+design is visibly in the middle, not on either cliff:
+
+- **Band-aid extreme** — the quickest patch that leaves the root cause to resurface.
+- **Over-engineered extreme** — the fully general/abstract/configurable version.
+- **Chosen** — and the **current** requirement it serves. *No current requirement
+  → drop the abstraction.* "Might need it later" / "cleaner" / "extensible" is not
+  a current requirement (YAGNI overrides the flexibility checklist).
+
+This is a brake, not ceremony: it fires only when new structure is on the table.
+Writing both extremes is the forcing function — it makes the right-sized middle
+obvious and is harder to rationalise past than a yes/no self-check.
+
 ### System-level thinking (always)
 
 - **What assumptions does this design encode?** Which might change?

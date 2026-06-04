@@ -58,6 +58,16 @@
 > in the messy middle until 2026-06 — see `docs/completed/local-dashboard.md` §2.1.)
 <!-- arch-map-discoverability:end -->
 
+> **Design right-sizing — the simplest structurally-honest solution.** At any
+> non-trivial fork, reject BOTH cliffs: the **band-aid** (patch the symptom or
+> defer the real fix *because it's harder* — the root cause resurfaces) and the
+> **over-engineering** (an abstraction / config / artifact no *current*
+> requirement needs). Forcing question before committing: *"what's the band-aid,
+> what's the over-built version, and why is mine the smallest thing that's a true
+> function of the problem?"* `/plan` and `/audit-code` carry the full check; a
+> `defer`/accept-debt is honest only as a true scope boundary or documented debt,
+> **never because the correct fix is larger**.
+
 ## Project Overview
 
 **Purpose**: A bundle of 7 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
