@@ -24,6 +24,37 @@
 
 ---
 
+## Updates since audit (2026-06 session — no structural rework)
+
+Three things changed in the repo after this plan was audited; none alter the
+design, but they sharpen the resume:
+
+1. **`audit_pass_stats.round` migration is APPLIED** to the shared store
+   (2026-06-04, `--migrate`, drift verified clean). So WS1's per-round path is
+   **live the moment the store code lands** — no separate apply step in Cluster
+   A. The column-probe tolerance (§1.3a) stays as **defense-in-depth** for
+   un-migrated/air-gapped/fresh self-hosted stores (it'll simply detect the
+   column present on the shared store and use the per-round path).
+
+2. **New binding invariant** — AGENTS.md "Generated-artifact policy": a tracked
+   file must be a pure, verifiable function of committed source; everything
+   derived/volatile is gitignored (Category A). This work introduces **zero
+   tracked generated artifacts** and must keep it that way: WS1's `run_id`
+   sidecar lives in gitignored `.audit/` (`session-audit-*.json`), and WS2's
+   Playwright JSON report is a `os.tmpdir()`/gitignored temp file
+   (`PLAYWRIGHT_JSON_OUTPUT_NAME`). **Added acceptance criterion (both WS):** the
+   change adds no tracked, regenerated-on-run file. (This is the same lesson
+   that retired the committed dashboard reference page this session.)
+
+3. **Dirty-aware `--scope diff` base + removed sync dashboard-rebuild** — no
+   interaction. `/cycle` autonomous passes an **explicit** `--changed` +
+   `clusterStartRef..WORKTREE --diff` (§3C), which bypasses `openai-audit`'s
+   auto base-resolution entirely — so the new dirty-aware default never fires
+   during clustered cluster-audits. The plan touches neither `sync-to-repos.mjs`
+   nor any dashboard file (verified — no overlap).
+
+---
+
 ## 0. Shared principle
 
 Adjudication (WS1) and spec authoring (WS2) are **irreducibly the model's
