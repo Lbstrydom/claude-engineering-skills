@@ -6,7 +6,7 @@
  * violate the section import-direction contract (it is neither render.mjs nor
  * helpers.mjs).
  *
- * Plan: docs/plans/dashboard-purpose-view.md (cross-link contract).
+ * Plan: docs/completed/dashboard-purpose-view.md (cross-link contract).
  *
  * @module scripts/lib/dashboard/anchors
  */

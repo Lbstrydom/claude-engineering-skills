@@ -1,7 +1,7 @@
 # Plan: Dashboard "Purpose" view — outcome/requirement map
 
 - **Date**: 2026-05-31
-- **Status**: Approved
+- **Status**: Complete (v1 shipped — `purpose.mjs` renders the Purpose tab; extended by `dashboard-purpose-view-v2.md` + `-v3.md`, both in `docs/completed/`)
 - **Author**: Claude + Louis
 - **Scope**: full-stack (deterministic reference-data collector + Zod schema + a new section renderer + a thin client-JS interaction; v2 adds a cloud-backed health overlay)
 - **Target domain(s)**: `dashboard` (single domain — not cross-domain; `ruleCount=47`)

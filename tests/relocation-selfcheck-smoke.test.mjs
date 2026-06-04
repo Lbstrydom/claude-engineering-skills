@@ -14,7 +14,7 @@
  * ALLOWLIST env from scratch + run in an .env-free mkdtemp cwd. If the script
  * can reach a secret, the test setup is wrong, not the assertion.
  *
- * Plan: docs/plans/testing-doctrine-and-egress-relocation-gaps.md (D2).
+ * Plan: docs/completed/testing-doctrine-and-egress-relocation-gaps.md (D2).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

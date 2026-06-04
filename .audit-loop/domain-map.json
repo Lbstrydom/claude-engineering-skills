@@ -276,7 +276,7 @@
       "shared-lib"
     ]
   },
-  "_comment_purposes": "Outcome/purpose taxonomy + domain->purpose edges for the dashboard Purpose tab (docs/plans/dashboard-purpose-view.md). purposes: curated outcome nodes (7); kind=skill-chain when backed by flows.json node ids, else curated. domainPurposes: manual domain->purpose edges; a domain may serve several purposes (rendered with an 'also serves N' badge). Unmapped domains + domains absent from the architecture map surface as hygiene warnings in the tab.",
+  "_comment_purposes": "Outcome/purpose taxonomy + domain->purpose edges for the dashboard Purpose tab (docs/completed/dashboard-purpose-view.md). purposes: curated outcome nodes (7); kind=skill-chain when backed by flows.json node ids, else curated. domainPurposes: manual domain->purpose edges; a domain may serve several purposes (rendered with an 'also serves N' badge). Unmapped domains + domains absent from the architecture map surface as hygiene warnings in the tab.",
   "purposes": [
     { "id": "plan-and-design",       "label": "Plan & design work",            "kind": "skill-chain", "flowNodes": ["plan", "audit-plan"], "summary": "Turn intent into an audited, buildable plan." },
     { "id": "deliver-quality-audits","label": "Deliver quality audits",         "kind": "skill-chain", "flowNodes": ["audit-code"],          "summary": "Multi-pass GPT + Gemini code audit driven to a clean gate." },

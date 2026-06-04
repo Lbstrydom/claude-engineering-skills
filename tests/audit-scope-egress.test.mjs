@@ -16,7 +16,7 @@
  *  - `classifyFiles` does NOT filter sensitive files (pure routing) — not tested
  *    for egress here.
  *
- * Plan: docs/plans/testing-doctrine-and-egress-relocation-gaps.md (D3).
+ * Plan: docs/completed/testing-doctrine-and-egress-relocation-gaps.md (D3).
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';

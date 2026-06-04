@@ -4,7 +4,7 @@
  * flow manifest, the architecture-map domains, and the typed requirements
  * ledger into ONE discriminated output object for the dashboard Purpose tab.
  *
- * Plan: docs/plans/dashboard-purpose-view.md. Pure + deterministic (no cloud,
+ * Plan: docs/completed/dashboard-purpose-view.md. Pure + deterministic (no cloud,
  * no Date/random) — the normalized output is folded into the reference page's
  * content `sourceHash`, so identical committed inputs ⇒ identical page.
  *

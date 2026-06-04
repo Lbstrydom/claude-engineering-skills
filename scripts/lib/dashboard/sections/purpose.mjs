@@ -5,7 +5,7 @@
  * the typed requirements that constrain it (grouped by kind), plus a hygiene
  * region surfacing curation gaps.
  *
- * Plan: docs/plans/dashboard-purpose-view.md.
+ * Plan: docs/completed/dashboard-purpose-view.md.
  * Signature: `default({src, purposes}, ui) → string`.
  *
  * ALL dynamic values (labels, summaries, assertions, domain ids, anchors) are

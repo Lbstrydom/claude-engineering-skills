@@ -247,7 +247,7 @@ export function readDomainDeps(root) {
  * Purpose tab. Mirrors `collect-telemetry.mjs::collectRequirements`'s plain
  * file read. Returns the requirements array AND whether the file was present
  * (the renderer distinguishes "ledger absent" from "purpose has no invariants"
- * via `ledgerPresent` — docs/plans/dashboard-purpose-view.md Gemini2-M).
+ * via `ledgerPresent` — docs/completed/dashboard-purpose-view.md Gemini2-M).
  *
  * @param {string} root
  * @returns {{requirements: object[], ledgerPresent: boolean, note: string|null}}
