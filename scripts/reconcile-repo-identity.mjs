@@ -51,40 +51,57 @@ const ALIAS_MAP_PATH = '.audit-loop/repo-alias-map.json';
 const ADVISORY_LOCK_KEY = 760414233; // 'reconcile-repo-identity' arbitrary fixed key
 
 /**
+ * Last path segment of a repo name. The two identity systems wrote names in
+ * different forms — the arch path uses `owner/repo` (from the git origin), the
+ * old audit path used the bare directory basename — so matching must normalize
+ * to the basename. `wine-cellar-app` and `Lbstrydom/wine-cellar-app` are the
+ * same repo.
+ */
+export function repoBaseName(name) {
+  const s = String(name ?? '');
+  return s.split('/').filter(Boolean).pop() || s;
+}
+
+/**
  * Pure proposal builder (exported for unit tests). Maps fragmented legacy rows
- * (repo_uuid NULL) to canonical rows (repo_uuid NOT NULL) by exact `name`:
- * a 1:1 name match → proposal; 0 or >1 → quarantine (never force-merge, R2-H4).
+ * (repo_uuid NULL) to canonical rows (repo_uuid NOT NULL) by BASENAME:
+ * a 1:1 basename match → proposal; 0 or >1 → quarantine (never force-merge,
+ * R2-H4). A pure rename (different basename, e.g. `claude-audit-loop` →
+ * `claude-engineering-skills`) intentionally quarantines — the operator adds an
+ * explicit alias after reviewing the dry-run map.
  *
  * @param {Array<{id:string,name:string,repo_uuid:string}>} canonical
  * @param {Array<{id:string,name:string,run_count?:number|string}>} legacy
- * @returns {{proposals: object[], quarantined: object[], byName: Map<string, object[]>}}
+ * @returns {{proposals: object[], quarantined: object[], byBase: Map<string, object[]>}}
  */
 export function buildProposals(canonical, legacy) {
-  const byName = new Map();
+  const byBase = new Map();
   for (const c of canonical) {
-    if (!byName.has(c.name)) byName.set(c.name, []);
-    byName.get(c.name).push(c);
+    const k = repoBaseName(c.name);
+    if (!byBase.has(k)) byBase.set(k, []);
+    byBase.get(k).push(c);
   }
   const proposals = [];
   const quarantined = [];
   for (const l of legacy) {
-    const targets = byName.get(l.name) || [];
+    const targets = byBase.get(repoBaseName(l.name)) || [];
     if (targets.length === 1) {
       proposals.push({
         legacyId: l.id, legacyName: l.name, runCount: Number(l.run_count) || 0,
         canonicalId: targets[0].id, canonicalName: targets[0].name,
         canonicalRepoUuid: targets[0].repo_uuid,
+        matchedBy: l.name === targets[0].name ? 'exact' : 'basename',
       });
     } else {
       quarantined.push({
         legacyId: l.id, legacyName: l.name, runCount: Number(l.run_count) || 0,
         reason: targets.length === 0
-          ? 'no canonical (repo_uuid) row with this name — run arch:refresh in that repo first'
-          : `${targets.length} canonical rows share this name — ambiguous, resolve manually`,
+          ? 'no canonical (repo_uuid) row matches this basename — likely a rename or ephemeral repo; add an explicit alias in proposals[] if the merge is intended'
+          : `${targets.length} canonical rows share this basename — ambiguous, resolve manually`,
       });
     }
   }
-  return { proposals, quarantined, byName };
+  return { proposals, quarantined, byBase };
 }
 
 async function main() {
@@ -114,7 +131,7 @@ async function main() {
         WHERE r.repo_uuid IS NULL`,
     );
 
-    const { proposals, quarantined, byName } = buildProposals(canonical, legacy);
+    const { proposals, quarantined } = buildProposals(canonical, legacy);
 
     // Tables --apply will re-point: every BASE TABLE with a repo_id column.
     // Surfaced in BOTH dry-run and apply so the operator can veto the set
@@ -154,12 +171,17 @@ async function main() {
         `  tables --apply will re-point:   ${fkTablesPreview.length} (${fkTablesPreview.join(', ')})\n` +
         `\n  Review the map (incl. tablesToRepoint), then re-run with --apply to commit (one transaction).\n`,
       );
-      for (const [name, rows] of byName) {
-        const merges = proposals.filter((p) => p.canonicalName === name);
-        if (merges.length) {
-          const runs = merges.reduce((s, m) => s + m.runCount, 0);
-          process.stderr.write(`  • ${name}: ${merges.length} legacy → 1 canonical (${runs} audit_runs re-pointed)\n`);
-        }
+      const byCanonical = new Map();
+      for (const p of proposals) {
+        if (!byCanonical.has(p.canonicalName)) byCanonical.set(p.canonicalName, []);
+        byCanonical.get(p.canonicalName).push(p);
+      }
+      for (const [cname, merges] of byCanonical) {
+        const runs = merges.reduce((s, m) => s + m.runCount, 0);
+        process.stderr.write(`  • ${cname}: ${merges.length} legacy → 1 canonical (${runs} audit_runs re-pointed)\n`);
+      }
+      if (quarantined.length) {
+        process.stderr.write(`  quarantined (review): ${quarantined.map((q) => `${q.legacyName}(${q.runCount})`).join(', ')}\n`);
       }
       console.log(JSON.stringify({ ok: true, mode: 'dry-run', proposals: proposals.length, quarantined: quarantined.length, mapPath: ALIAS_MAP_PATH }));
       return;

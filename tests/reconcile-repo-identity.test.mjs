@@ -5,9 +5,9 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildProposals } from '../scripts/reconcile-repo-identity.mjs';
+import { buildProposals, repoBaseName } from '../scripts/reconcile-repo-identity.mjs';
 
-test('1:1 name match → proposal carrying the canonical id + run count', () => {
+test('1:1 exact name match → proposal carrying the canonical id + run count', () => {
   const canonical = [{ id: 'canon-wine', name: 'wine-cellar-app', repo_uuid: 'uuid-wine' }];
   const legacy = [
     { id: 'leg1', name: 'wine-cellar-app', run_count: 9 },
@@ -19,8 +19,39 @@ test('1:1 name match → proposal carrying the canonical id + run count', () => 
   assert.deepEqual(proposals[0], {
     legacyId: 'leg1', legacyName: 'wine-cellar-app', runCount: 9,
     canonicalId: 'canon-wine', canonicalName: 'wine-cellar-app', canonicalRepoUuid: 'uuid-wine',
+    matchedBy: 'exact',
   });
   assert.equal(proposals[1].runCount, 3, 'string run_count is coerced to number');
+});
+
+test('basename match: legacy bare name → canonical owner/repo name (the real-data case)', () => {
+  // The arch path wrote "Lbstrydom/wine-cellar-app"; the old audit path wrote
+  // the bare "wine-cellar-app". They are the same repo and must merge.
+  const canonical = [{ id: 'canon-wine', name: 'Lbstrydom/wine-cellar-app', repo_uuid: 'u' }];
+  const legacy = [{ id: 'leg1', name: 'wine-cellar-app', run_count: 193 }];
+  const { proposals, quarantined } = buildProposals(canonical, legacy);
+  assert.equal(proposals.length, 1);
+  assert.equal(quarantined.length, 0);
+  assert.equal(proposals[0].canonicalId, 'canon-wine');
+  assert.equal(proposals[0].matchedBy, 'basename');
+});
+
+test('pure rename (different basename) → quarantine, not auto-merge', () => {
+  // claude-audit-loop was renamed to claude-engineering-skills — basenames
+  // differ, so it must NOT auto-merge; the operator adds an explicit alias.
+  const canonical = [{ id: 'canon-ces', name: 'Lbstrydom/claude-engineering-skills', repo_uuid: 'u' }];
+  const legacy = [{ id: 'leg-old', name: 'claude-audit-loop', run_count: 47 }];
+  const { proposals, quarantined } = buildProposals(canonical, legacy);
+  assert.equal(proposals.length, 0);
+  assert.equal(quarantined.length, 1);
+  assert.match(quarantined[0].reason, /rename or ephemeral/);
+});
+
+test('repoBaseName normalizes owner/repo and bare forms', () => {
+  assert.equal(repoBaseName('Lbstrydom/wine-cellar-app'), 'wine-cellar-app');
+  assert.equal(repoBaseName('wine-cellar-app'), 'wine-cellar-app');
+  assert.equal(repoBaseName('github.com/o/r'), 'r');
+  assert.equal(repoBaseName(''), '');
 });
 
 test('no canonical row with the name → quarantine (never force-merge)', () => {
