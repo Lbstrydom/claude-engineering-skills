@@ -28,6 +28,7 @@
  *
  * @module scripts/write-code-outcomes
  */
+import 'dotenv/config'; // load .env for standalone CLI use (matches sibling CLIs)
 import fs from 'node:fs';
 import path from 'node:path';
 import { recordTriageOutcomes } from './lib/outcome-sync.mjs';
@@ -83,7 +84,9 @@ async function main() {
   const round = Number.isInteger(args.round) ? args.round : (result.round || 1);
 
   await initLearningStore().catch(() => { /* cloud optional */ });
-  const cloud = isCloudEnabled();
+  // isCloudEnabled() is async — without await, `cloud` is a (truthy) Promise and
+  // the store is built even when the cloud is off (Cluster B / Gemini follow-up).
+  const cloud = await isCloudEnabled();
   // outcome-sync writes the cloud branch only when both `store` and `runId`
   // are present; pass null when cloud is off so it cleanly degrades to the
   // local `.audit/outcomes.jsonl` write.

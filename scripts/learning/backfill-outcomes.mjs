@@ -76,7 +76,9 @@ export async function runBackfill(opts = {}) {
   if (typeof learningStore.initLearningStore === 'function') {
     await learningStore.initLearningStore();
   }
-  const cloudEnabled = typeof learningStore.isCloudEnabled === 'function' && learningStore.isCloudEnabled();
+  // isCloudEnabled() is async — without await, `&&` yields a (truthy) Promise,
+  // so the cloud-disabled guard below never fires (Cluster B fix).
+  const cloudEnabled = typeof learningStore.isCloudEnabled === 'function' && await learningStore.isCloudEnabled();
   if (!cloudEnabled) {
     return { ...summary, ok: true, cloud: false, reason: 'cloud-disabled' };
   }
@@ -121,6 +123,14 @@ export async function runBackfill(opts = {}) {
     }
   }
 
+  // Honest status (Gemini-r1): a reconciliation job must not report ok:true
+  // when sub-steps errored. Surface the failure rather than masking it.
+  const totalErrors = (summary.drain?.errors || 0)
+    + (summary.frictionDrain?.errors || 0)
+    + (summary.resolve?.errors || 0);
+  summary.errorCount = totalErrors;
+  summary.ok = totalErrors === 0;
+  if (totalErrors > 0) summary.degraded = true;
   return summary;
 }
 
@@ -187,9 +197,15 @@ async function drainJsonlToCloud({ learningStore, repoId, dryRun }) {
   const lines = endsWithNewline
     ? rawLines.filter(Boolean)
     : rawLines.slice(0, -1).filter(Boolean); // drop partial tail
-  const partialBytes = endsWithNewline
-    ? 0
-    : Buffer.byteLength(rawLines[rawLines.length - 1] || '', 'utf-8');
+  // Compute the retained partial-tail length from the RAW buffer, not the
+  // toString'd tail: a half-written multibyte char at EOF becomes U+FFFD (3
+  // bytes) under toString and would miscount the cursor (Gemini-r1). The last
+  // LF byte (0x0a) is a char boundary; everything after it is the partial tail.
+  let partialBytes = 0;
+  if (!endsWithNewline) {
+    const lastNl = buf.lastIndexOf(0x0a);
+    partialBytes = lastNl === -1 ? buf.length : buf.length - (lastNl + 1);
+  }
 
   // Audit-fix Phase 3 R1 H6: track per-line byte offsets so we only
   // advance the cursor past records that COMPLETELY succeeded.  If any
@@ -415,14 +431,14 @@ async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
     resolved: 0,
     stillPending: 0,
     errors: 0,
-    byType: { quickfix_hit: 0, arch_memory_band: 0, convergence_predict: 0 },
+    byType: { quickfix_hit: 0, arch_memory_band: 0, convergence_predict: 0, pass_selection: 0 },
   };
 
   // Phase 3: resolve THREE decision types — quickfix_hit (Phase 2),
   // arch_memory_band (this phase), and convergence_predict (this phase).
   // Each has its own pure detector below; the resolver routes to the
   // right one based on `decision_type`.
-  const RESOLVABLE_TYPES = ['quickfix_hit', 'arch_memory_band', 'convergence_predict'];
+  const RESOLVABLE_TYPES = ['quickfix_hit', 'arch_memory_band', 'convergence_predict', 'pass_selection'];
   const cutoff = new Date(Date.now() - STALENESS_MS).toISOString();
 
   let rows = [];
@@ -452,6 +468,9 @@ async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
       // M3 P3 — the detector now takes the store, not a raw supabase client,
       // so it can use the typed `getAuditRunConvergence` export.
       outcome = await computeConvergencePredictOutcome(row, { learningStore });
+    } else if (row.decision_type === 'pass_selection') {
+      // Cluster B / Phase 4 — resolve against the run's finding adjudications.
+      outcome = await computePassSelectionOutcome(row, { learningStore });
     }
     if (!outcome) { out.stillPending += 1; continue; }
     if (dryRun) {
@@ -615,6 +634,53 @@ export async function computeConvergencePredictOutcome(row, deps = {}) {
     rigor_pressure_round: rigorPressureRound ?? null,
     hit_max: hitMax,
     round: decisionRound,
+  };
+}
+
+// ── pass_selection outcome detector ───────────────────────────────────────
+
+/**
+ * Resolve a `pass_selection` decision (Cluster B / Phase 4, plan R1-H7) by
+ * joining it to the adjudication outcomes of the findings its run raised.
+ * Reward = fraction of the run's findings the deliberation sustained
+ * (`adjudication_outcome = 'accepted'`).
+ *
+ * Stays PENDING (returns null) until the run's findings have been adjudicated
+ * (outcome-sync has run) — so we never resolve to a false 0 before the labels
+ * exist. **Zero-findings guard (Gemini-3)**: a run with 0 findings → terminal
+ * `low-yield` with neutral reward 0, never a division-by-zero.
+ *
+ * Terminal states: `useful` (reward ≥ 0.5) / `low-yield` (< 0.5 or empty).
+ * Idempotency: the resolver keys on the decision's own decision_key.
+ *
+ * @param {object} row - learning_decisions row (has audit_run_id)
+ * @param {object} [deps] - { learningStore, getOutcomeCounts? } injection for tests
+ */
+export async function computePassSelectionOutcome(row, deps = {}) {
+  if (!row.audit_run_id) return null;
+  const ls = deps.learningStore;
+  const getCounts = deps.getOutcomeCounts
+    || (ls && typeof ls.getRunFindingOutcomeCounts === 'function' ? ls.getRunFindingOutcomeCounts : null);
+  if (!getCounts) return null;
+
+  let counts = null;
+  try { counts = await getCounts(row.audit_run_id); } catch { return null; }
+  if (!counts) return null;
+
+  // Findings exist but none adjudicated yet → leave pending (resolves once
+  // outcome-sync labels them). This is the Phase-3 → Phase-4 coupling.
+  if (counts.total > 0 && !counts.anyAdjudicated) return null;
+
+  if (counts.total === 0) {
+    return { action: 'low-yield', reward: 0, total: 0, accepted_or_fixed: 0, evidence: 'run raised no findings' };
+  }
+  const reward = counts.acceptedOrFixed / counts.total;
+  return {
+    action: reward >= 0.5 ? 'useful' : 'low-yield',
+    reward,
+    total: counts.total,
+    accepted_or_fixed: counts.acceptedOrFixed,
+    evidence: `${counts.acceptedOrFixed}/${counts.total} accepted`,
   };
 }
 

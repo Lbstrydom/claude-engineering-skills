@@ -238,6 +238,36 @@ export async function updatePassStatsPostDeliberation(runId, passCounts) {
  * @param {string} runId
  * @returns {Promise<{roundConvergedAfter: number|null, rigorPressureRound: number|null, rounds: number|null}|null>}
  */
+/**
+ * Per-run finding-outcome counts, used by the `pass_selection` resolver
+ * (Cluster B / Phase 4). `acceptedOrFixed` counts findings the deliberation
+ * sustained; `anyAdjudicated` tells the resolver whether outcome-sync has run
+ * yet (if not, the decision stays pending rather than resolving to a false 0).
+ *
+ * @param {string} runId
+ * @returns {Promise<{total:number, acceptedOrFixed:number, anyAdjudicated:boolean}|null>}
+ */
+export async function getRunFindingOutcomeCounts(runId) {
+  if (!runId || !await isCloudEnabled()) return null;
+  try {
+    const row = await one(
+      `SELECT count(*)::int AS total,
+              count(*) FILTER (WHERE adjudication_outcome = 'accepted')::int AS accepted_or_fixed,
+              count(*) FILTER (WHERE adjudication_outcome IS NOT NULL)::int AS adjudicated
+         FROM audit_findings WHERE run_id = $1`,
+      [runId],
+    );
+    if (!row) return null;
+    return {
+      total: Number(row.total),
+      acceptedOrFixed: Number(row.accepted_or_fixed),
+      anyAdjudicated: Number(row.adjudicated) > 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function getAuditRunConvergence(runId) {
   if (!runId || !await isCloudEnabled()) return null;
   try {

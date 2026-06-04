@@ -260,6 +260,21 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
           process.stderr.write(`[learning:tel:arch_memory_band] record failure for ${rec.id}: ${err.message || ''}\n`);
         }
       }
+      // Flush HERE (Cluster B / Phase 4): this fn runs from the cross-skill CLI
+      // (get-neighbourhood), a short-lived process that never installs the
+      // beforeExit lifecycle hook — so without an explicit flush the enqueued
+      // arch_memory_band decisions are lost on exit (why the cloud table was
+      // empty). flush is idempotent (decision_key UNIQUE) so a double-flush
+      // from the /plan path is harmless.
+      try {
+        const [{ flush }, store] = await Promise.all([
+          import('./learning/decision-logger.mjs'),
+          import('../learning-store.mjs'),
+        ]);
+        await flush({ store });
+      } catch (err) {
+        process.stderr.write(`[learning:tel:arch_memory_band] flush failure: ${err.message || ''}\n`);
+      }
     } catch (err) {
       process.stderr.write(`[learning:tel:arch_memory_band] import failure: ${err.message || ''}\n`);
     }

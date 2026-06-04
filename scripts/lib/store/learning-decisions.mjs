@@ -104,6 +104,13 @@ export async function recordConvergenceState(runId, state) {
 
 /**
  * Update audit_findings resolution columns.
+ *
+ * @deprecated Cluster B (§Phase 3): writes the `user_action` column, but the
+ * single source of truth for finding outcomes is `adjudication_outcome` (written
+ * by `recordAdjudicationEvent` and consumed by the `audit_effectiveness` view).
+ * This function has no production callers; it is retained only for the frozen
+ * public-export contract + graceful-degradation test. Do not wire new code to
+ * `user_action` — use the adjudication path.
  */
 export async function recordFindingResolution(findingId, resolution) {
   if (!findingId || !await isCloudEnabled()) return { ok: true };

@@ -1,5 +1,29 @@
 # Project Status Log
 
+## 2026-06-04 — Learning-store signal recovery: Cluster B (outcome labeling + resolver completeness)
+
+Implemented Cluster B (Phases 3-4) of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md) — makes audit effectiveness *measurable*. Builds on Cluster A's stable identity.
+
+### Key discovery (simplified the plan)
+The `audit_effectiveness` view ALREADY keys on `adjudication_outcome = 'accepted'`, and `recordAdjudicationEvent` ALREADY patches `audit_findings.adjudication_outcome`. So the plan's "redefine the view / collapse user_action into it" was a misread — **no view migration needed**. The B2 gap was purely: (a) the outcome-sync is never invoked, and (b) a latent unawaited `isCloudEnabled()` in `write-code-outcomes.mjs` (would no-op even if invoked).
+
+### Changes
+- **Phase 3** — `write-code-outcomes.mjs`: fixed the unawaited `isCloudEnabled()` (+ added `dotenv/config`). `recordFindingResolution` (0 callers, writes the dead `user_action`) marked `@deprecated` — `adjudication_outcome` is the single source of truth (kept for the frozen export contract, not deleted).
+- **Phase 4** — `pass_selection` resolver: `computePassSelectionOutcome` (run-scoped: reward = accepted/total of the run's findings; zero-findings → terminal `low-yield`; stays *pending* until outcome-sync labels findings — the Phase-3→4 coupling) + `getRunFindingOutcomeCounts` store reader. `arch_memory_band` decisions now **flush** on the cross-skill CLI path (they were enqueued then lost on process exit — why that table was empty). Fixed another unawaited `isCloudEnabled()` in `runBackfill`.
+- **Reliability (Gemini gate)**: JSONL drain `partialBytes` now computed from the raw buffer (a half-written multibyte char at EOF no longer miscounts the cursor); `runBackfill` reports honest `ok`/`degraded`/`errorCount` instead of always-`ok:true` on partial failure.
+- Tests: `learning-pass-selection.test.mjs` (pure detector) + 112-export contract.
+
+### Quality
+audit-code 2 GPT rounds + **2 Gemini rounds (cap) → APPROVE**, coherence Strong. Full `npm run check` 3343/0. Most R1/R2 findings were cross-cluster scope-noise (Cluster C/D), recurring Cluster-A accepted items, or pre-existing code in touched files — triaged + dismissed with rationale.
+
+### No gated live migration (view already correct). Follow-ups
+- **Sync to consumers** (`npm run sync`) so their audits outcome-sync too.
+- (Optional) run `npm run learning:backfill-outcomes` once to resolve the now-resolvable `convergence_predict`/`pass_selection` telemetry + drain `arch_memory_band`.
+- **Pre-existing egress hardening** (real, out of Cluster B scope, logged): `neighbourhood-query.generateIntentEmbedding` redacts but doesn't sensitive-path-filter before Gemini egress; quickfix-hit drain uploads raw `file`/`snippet`; intent-embedding cache lacks schema validation.
+- **Architectural**: fully model-INDEPENDENT outcome capture needs per-round-run unification + a finalize hook (adjudication is irreducibly the skill's triage; today's sync relies on the skill's Step 3.5b / the autonomous audit loop).
+
+---
+
 ## 2026-06-03 — Learning-store signal recovery: Cluster A (repo-identity unification) — CODE landed, live-apply gated
 
 Implemented Cluster A of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md) — the B1 fix. The audit/plan/learning write path keyed `audit_repos` on a volatile content `fingerprint` (a new row per evolving-repo audit → wine-cellar-app fragmented across 193 rows). Now everything resolves the STABLE `repo_uuid` identity and stores `audit_repos.id` (`repoRowId`).
