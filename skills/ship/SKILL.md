@@ -217,16 +217,24 @@ examples, config values.
 
 ---
 
-## Step 4 — Sync AGENTS.md
+## Step 4 — Verify AGENTS.md ↔ CLAUDE.md alignment (do NOT mirror)
 
-AGENTS.md mirrors CLAUDE.md exactly. After any CLAUDE.md changes:
+**`AGENTS.md` is the canonical shared context** (every agent — Claude Code,
+Copilot, Cursor, Codex, Windsurf — reads it). **`CLAUDE.md` is a thin addendum**
+that `@./AGENTS.md`-imports it and holds only Claude-Code-only notes. They are
+**not** byte-mirrors.
 
-1. Read CLAUDE.md
-2. Write identical content to AGENTS.md
-3. Verify in sync
-
-If CLAUDE.md wasn't modified in Step 3, check if AGENTS.md is already
-identical. If so, skip. If drifted, re-sync.
+- **NEVER copy `CLAUDE.md` over `AGENTS.md`** — a thin CLAUDE.md would overwrite
+  and destroy the canonical file. (This step used to say "mirror exactly"; that
+  was a landmine — removed.)
+- Put **shared** content in `AGENTS.md`; **Claude-only** notes in `CLAUDE.md`.
+- Then run **`npm run context:check`** — it enforces the topology (CLAUDE.md
+  `@`-imports AGENTS.md, stays ≤ the line cap, only allowlisted Claude-only
+  headings, no shared-section drift). Fix any findings by moving shared content
+  to AGENTS.md — **never** by mirroring.
+- If a repo is still in the legacy full-mirror state (CLAUDE.md == AGENTS.md),
+  migrate it with **`/ai-context-management migrate`** (flips to AGENTS.md-canonical
+  + thin CLAUDE.md); do not hand-resolve.
 
 ---
 
@@ -491,7 +499,8 @@ prints `{"ok":true,"cloud":false}` and returns 0.
 - **Always check git diff first** — understand what changed before documenting
 - **status.md is a log** — append, never rewrite history
 - **CLAUDE.md only changes when needed** — no cosmetic edits
-- **AGENTS.md is a mirror** — always identical to CLAUDE.md
+- **AGENTS.md is canonical; CLAUDE.md is a thin `@`-import addendum** — never
+  mirror/overwrite AGENTS.md from CLAUDE.md; verify with `npm run context:check`
 - **No confirmation needed** — `/ship` is the approval. Execute autonomously
 - **Be specific in the log** — name files, functions, endpoints
 - **The commit message matters** — it's the permanent record in git history

@@ -354,6 +354,15 @@ This is a brake, not ceremony: it fires only when new structure is on the table.
 Writing both extremes is the forcing function — it makes the right-sized middle
 obvious and is harder to rationalise past than a yes/no self-check.
 
+**Manual vs scripted (right-sizing applied to execution).** When a change repeats
+across many similar sites — a rename, codemod, data backfill, ≥~5 regular edits —
+prefer a **one-off script** *only if* the transformation is regular and
+**verifiable** (you can assert the result). If the sites vary, the edit is
+judgment-heavy, or there are < ~5 — **do it by hand** (a fragile codemod for
+trivial/irregular work is the over-engineering cliff; grinding 50 regular edits
+by hand is the band-aid cliff). A throwaway script is a Category-A artifact
+(tmp / gitignored), never committed. State which path and why in the plan.
+
 ### System-level thinking (always)
 
 - **What assumptions does this design encode?** Which might change?
