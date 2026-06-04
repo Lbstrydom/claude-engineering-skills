@@ -547,16 +547,44 @@ warning — session is preserved; stats self-heal on the next reconciler run.
 
 ---
 
-## Phase 6b — Emit Audit-Loop Correlations
+## Phase 6b — Emit Audit-Loop Correlations (MANDATORY — populates the highest-leverage table)
 
-Skip if `audit_link = false` OR Phase 0d candidates are empty OR no P0/P1
-findings produced in this session.
+Skip ONLY if `audit_link = false` OR no P0/P1 findings produced this session.
+Otherwise this step is **mandatory and runs in-flow** — it is the sole writer of
+`persona_audit_correlations` (the bandit's user-impact reward signal). Do not
+defer it to "later" or treat the reference as optional reading.
 
-For every P0/P1 finding, emit one correlation row via
-`cross-skill.mjs record-correlation` classified per the rules table.
+**For every P0/P1 finding, run exactly one command** (canonical contract, so the
+hash matches the audit side byte-for-byte — `semanticId()` is the single source):
 
-Full classification rules, hashing, reverse-direction (audit false positives)
-protocol: `references/audit-correlation.md`.
+```bash
+node scripts/cross-skill.mjs record-correlation --json '{
+  "personaSessionId": "<sessionId from Phase 6>",
+  "personaFindingHash": "<semanticId of the persona finding>",
+  "personaSeverity": "P0|P1",
+  "auditFindingId": "<matching audit_findings.id, or omit if none>",
+  "auditRunId": "<the matched run id, or omit>",
+  "correlationType": "confirmed_hit | audit_missed | severity_understated",
+  "matchScore": 0.0,
+  "matchRationale": "<one line>"
+}'
+```
+
+- **Match** each P0/P1 against the Phase-0d audit candidates by `semanticId()`
+  computed the SAME way both sides. A match → `confirmed_hit` with the
+  `auditFindingId`/`auditRunId`.
+- **No match → still emit** with `correlationType: 'audit_missed'` and the audit
+  link omitted. A persona-only P0/P1 is an audit *miss* — exactly what
+  `audit_effectiveness.audit_misses` measures; dropping it loses the signal.
+- Idempotent: the writer dedupes on `(persona_session_id, persona_finding_hash,
+  audit_finding_id)`, so re-running is safe.
+- **Shell safety**: `matchRationale` (and any free text) may contain quotes —
+  write the JSON to a temp file and pipe via `--stdin` rather than inlining a
+  single-quoted `--json '...'`, so a `'` in the text can't break the shell or
+  inject. (The CLI accepts `--stdin`; same convention as `/brainstorm`.)
+
+Full classification rules + reverse-direction (audit false positives) protocol:
+`references/audit-correlation.md`.
 
 ---
 

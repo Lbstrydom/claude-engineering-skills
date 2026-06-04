@@ -7,8 +7,10 @@
  *    `learning_decisions` cloud table (one INSERT per `hit_id` with
  *    outcome=null).  Idempotent via `decision_key UNIQUE`.
  *
- * 2. **Resolve outcomes** for unresolved quickfix_hit decisions older
- *    than 30 minutes, by examining the file state NOW vs. at hit time:
+ * 2. **Resolve outcomes** for unresolved decisions older than 30 minutes —
+ *    `quickfix_hit`, `arch_memory_band`, `convergence_predict`, and (Cluster B)
+ *    `pass_selection` — each via its own detector. For quickfix_hit, by
+ *    examining the file state NOW vs. at hit time:
  *      - line still present, no ignore-marker  → `ignore`
  *      - line still present, with marker added → `suppress`
  *      - line removed / changed                → `accept`
@@ -114,6 +116,37 @@ export async function runBackfill(opts = {}) {
     }
   }
 
+  // Cluster C / Phase 6 — recompute recurring_finding_clusters for the repo
+  // (cadence: the same maintenance pass that drains/resolves). Per-repo only;
+  // a global (repoId-less) backfill skips it (the recompute is repo-scoped).
+  if (!dryRun && typeof learningStore.refreshRecurringClusters === 'function') {
+    // Per-repo recompute. With an explicit repoId, refresh that repo; in the
+    // repo-less (global maintenance) mode, refresh EVERY repo so the scheduled
+    // path doesn't silently skip the recompute (R2 finding).
+    let repoIds = [];
+    try {
+      repoIds = repoId
+        ? [repoId]
+        : (typeof learningStore.listRepoIds === 'function' ? await learningStore.listRepoIds() : []);
+    } catch (err) {
+      process.stderr.write(`[backfill] cluster refresh: listRepoIds failed: ${err.message}\n`);
+      summary.clusterRefreshError = true;
+    }
+    let total = 0;
+    // Per-repo isolation (Gemini): one repo's failure must NOT abort the rest
+    // or reset the accumulated count.
+    for (const id of repoIds) {
+      try {
+        total += await learningStore.refreshRecurringClusters(id);
+      } catch (err) {
+        process.stderr.write(`[backfill] cluster refresh failed for ${id}: ${err.message}\n`);
+        summary.clusterRefreshError = true;
+      }
+    }
+    summary.clustersRefreshed = total;
+    summary.clustersRefreshedRepos = repoIds.length;
+  }
+
   if (rebuildStats && !dryRun) {
     try {
       const { rebuildFromCloud } = await import('../lib/learning/quickfix-stats.mjs');
@@ -128,7 +161,9 @@ export async function runBackfill(opts = {}) {
   // when sub-steps errored. Surface the failure rather than masking it.
   const totalErrors = (summary.drain?.errors || 0)
     + (summary.frictionDrain?.errors || 0)
-    + (summary.resolve?.errors || 0);
+    + (summary.resolve?.errors || 0)
+    + (summary.clusterRefreshError ? 1 : 0)
+    + (summary.rebuild && summary.rebuild.ran && summary.rebuild.ok === false ? 1 : 0);
   summary.errorCount = totalErrors;
   summary.ok = totalErrors === 0;
   if (totalErrors > 0) summary.degraded = true;

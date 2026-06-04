@@ -200,6 +200,26 @@ export async function readStaleClusters({ repoId, ageDays = 30, limit = 50 }) {
   }
 }
 
+/**
+ * Recompute recurring_finding_clusters for one repo from audit_findings
+ * (signal-recovery Cluster C / Phase 6). Idempotent full per-repo recompute via
+ * the `refresh_recurring_clusters` RPC; returns the upserted cluster count (0
+ * when cloud is off). Never throws — best-effort maintenance.
+ *
+ * @param {string} repoId
+ * @returns {Promise<number>}
+ */
+export async function refreshRecurringClusters(repoId) {
+  if (!repoId || !await isCloudEnabled()) return 0;
+  try {
+    const row = await one(`SELECT refresh_recurring_clusters($1) AS n`, [repoId]);
+    return Number(row?.n) || 0;
+  } catch (err) {
+    process.stderr.write(`  [learning] refreshRecurringClusters failed: ${err.message}\n`);
+    return 0;
+  }
+}
+
 // ── Friction log ───────────────────────────────────────────────────────────
 
 /**

@@ -95,11 +95,23 @@ If the spec fails, debug and fix. Common issues:
 - Auth needs `E2E_BEARER_TOKEN` for authenticated endpoints
 - Timing: add `await page.waitForSelector(...)` before assertions
 
-### Step 4 — Persist spec + run record
+### Step 4 — Persist spec + run record (MANDATORY — both writes, in-flow)
 
-Register the spec via `cross-skill.mjs record-regression-spec`, capture
-`specId`, then record the run outcome via `record-regression-spec-run`.
-Full CLI payloads + source_kind selection rules:
+Two writes, both required (these are the sole writers of `regression_specs` +
+`regression_spec_runs` — skipping them leaves the tables empty, which is the bug
+this step exists to fix). After generating the spec AND running it once:
+
+```bash
+# 4a — register the spec, capture the returned specId
+node scripts/cross-skill.mjs record-regression-spec --json '{"sourceKind":"...","description":"...","specPath":"<path>","commitSha":"<sha>","assertionCount":<n>}'
+# 4b — record THIS run's pass/fail against that specId (idempotent per run)
+node scripts/cross-skill.mjs record-regression-spec-run --json '{"specId":"<from 4a>","passed":true,"commitSha":"<sha>","durationMs":<ms>}'
+```
+
+Run 4b every time the spec executes (lock-in proof + future regression saves).
+**Shell safety**: `description` (free text) may contain quotes — pipe the JSON
+via `--stdin` (temp file) rather than inline single-quoted `--json` to avoid
+breaking the shell. Full payloads + `source_kind` selection:
 `references/lock-mode-spec-generation.md`.
 
 ### Step 5 — Report
@@ -147,11 +159,21 @@ criterion, using the translation-rules table.
 Full template + translation rules + persistence protocol:
 `references/verify-mode-generation.md`.
 
-### Step V3–V5 — Register → run → record
+### Step V3–V5 — Register → run → record (MANDATORY — both writes, in-flow)
 
-Each criterion outcome records to `plan_verification_items` with its
-stable `criterion_hash` so `persistent_plan_failures` surfaces chronic
-gaps over time. Full CLI shapes: `references/verify-mode-generation.md`.
+After running the spec, persist outcomes (sole writers of
+`plan_verification_runs` + `plan_verification_items` — required, not optional):
+
+```bash
+# V5a — one run row, capture runId
+node scripts/cross-skill.mjs record-plan-verify-run --json '{"planId":"<id>","specId":"<id>","commitSha":"<sha>","url":"<url>","totalCriteria":<n>,"passedCount":<n>,"failedCount":<n>,"skippedCount":<n>,"durationMs":<ms>}'
+# V5b — one row PER criterion (stable criterion_hash → persistent_plan_failures over time)
+node scripts/cross-skill.mjs record-plan-verify-items --json '{"runId":"<from V5a>","planId":"<id>","items":[{"criterionHash":"...","criterionIndex":0,"severity":"P0","category":"...","description":"...","passed":true,"durationMs":<ms>}]}'
+```
+
+**Shell safety**: `description`/`error_message` (free text) may contain quotes —
+pipe the JSON via `--stdin` (temp file), not inline single-quoted `--json`.
+Full template + translation rules + CLI shapes: `references/verify-mode-generation.md`.
 
 ### Step V6 — Report
 

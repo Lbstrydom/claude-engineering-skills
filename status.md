@@ -1,5 +1,29 @@
 # Project Status Log
 
+## 2026-06-04 — Learning-store signal recovery: Cluster C (cross-skill activation + recurring-cluster aggregation)
+
+Implemented Cluster C (Phases 5-6) of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md). The cluster splits by architecture: Phase 6 is fully deterministic backend; Phase 5's high-value writes are model/MCP-driven (exploratory persona-test, ux-lock), so activation = explicit mandatory adapter steps (the B5 root cause was reliance on reference-prose).
+
+### Phase 6 — recurring_finding_clusters aggregation (deterministic, the headline win)
+- **`supabase/migrations/20260604120000_recurring_clusters_refresh.sql`**: `refresh_recurring_clusters(repo_id)` — full per-repo recompute aggregating `audit_findings` into the **existing** schema (no columns added). `cluster_key` = a coarse SQL `lower(category)|lower(file)` grouping (deliberately NOT a `semanticId` reimplementation — that hash includes detail and would never cluster; R3-M5). Recurring = same key across ≥2 runs. **UPSERT-only**, staleness via `last_seen` aging (preserves `defer_finding`-sourced rows + leaves `status` to the human/fix path). SECURITY DEFINER + pinned search_path (matches the existing definer fns).
+- **`refreshRecurringClusters(repoId)`** wrapper + **backfill cadence** (per-repo with an explicit id; iterates all repos in repo-less global mode, with per-repo error isolation so one repo's failure doesn't abort the batch).
+
+### Phase 5 — cross-skill write activation (model-driven)
+The writers + cross-skill adapters already existed; they just weren't invoked. Made them **explicit mandatory in-flow steps** with the exact commands: persona-test **Phase 6b** (`record-correlation` per P0/P1, canonical `semanticId()` both sides, null-link = audit-miss) and ux-lock **Step 4** (`record-regression-spec` + `record-regression-spec-run`) + **V5** (`record-plan-verify-run`/`-items`). Added shell-safety notes (free-text fields → `--stdin`, not inline `--json`, to avoid injection — Gemini/audit). Deliberately did **not** force consistency-mode DOM contradictions into `persona_audit_correlations` (cross-domain noise).
+
+### Bandit
+Verified already correctly wired (`syncBanditArms` at openai-audit.mjs:2750/3393, global `context_bucket`) — it was *starved*, not broken. Now fed once correlations flow (Phase 5) + on the canonical `repoRowId` (Cluster A). No code change.
+
+### Quality
+audit-code 2 GPT rounds (H 7→3, the residual all scope-noise/Cluster-A-accepted) + **2 Gemini rounds (cap) → APPROVE**, coherence Strong. Full `npm run check` 3343/0. 113-export contract.
+
+### Gated / follow-ups
+- **Apply the migration** (function-only, non-destructive): `node scripts/setup-postgres.mjs --migrate`, then `npm run learning:backfill-outcomes` populates `recurring_finding_clusters`.
+- **Sync to consumers** (`npm run sync`).
+- **Deferred (real)**: fully-deterministic ux-lock Playwright runners for `regression_spec_runs` + `plan_verification_*` (model-driven today; needs new runner scripts — same class as the outcome-capture-determinism follow-up).
+
+---
+
 ## 2026-06-04 — Learning-store signal recovery: Cluster B (outcome labeling + resolver completeness)
 
 Implemented Cluster B (Phases 3-4) of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md) — makes audit effectiveness *measurable*. Builds on Cluster A's stable identity.
