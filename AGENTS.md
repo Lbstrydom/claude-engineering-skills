@@ -140,6 +140,19 @@ side via a managed block in their root `.gitignore`. The directory
 isn't tracked — fresh clones of a consumer repo need to re-run
 `npm run sync --target <name>` from THIS repo to hydrate it.
 
+> **Upstream-owned — never patch the synced copy (governance).** A failure in a
+> consumer's `scripts/.claude-skills/**` file is an **UPSTREAM** bug: push back
+> and fix it HERE (claude-engineering-skills) + re-sync — do **not** edit the
+> synced copy in the consumer. It's gitignored (invisible to review), overwritten
+> on the next sync (your fix is lost), and the bug persists for every other
+> consumer. Each synced tooling file now carries a banner saying exactly this
+> (injected by `sync-banner.mjs`). Drift backstops (already exist — no new
+> tooling): `npm run sync:dry` from this repo shows any consumer file that
+> differs from source; the synced `sync-isolation-verify` hash-checks a
+> consumer's tree against its manifest. This is the band-aid-vs-root-cause rule
+> at the consumer/upstream seam — the local edit is the band-aid; the upstream
+> fix is the root.
+
 ### Why isolated
 
 ai-organiser has its own `scripts/` with `automated-tests.js`,

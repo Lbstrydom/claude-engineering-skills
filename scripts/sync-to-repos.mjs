@@ -26,6 +26,7 @@ import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
 import { rewriteCommandSurface, buildOwnedSourceTails } from './lib/sync-rewriter.mjs';
+import { injectUpstreamBanner } from './lib/sync-banner.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 
@@ -550,7 +551,19 @@ async function main() {
     } catch { priorGitignore = null; }
     const giPreview = updateManagedBlock(
       priorGitignore,
-      [LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR + '/'],
+      [
+        LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR + '/',
+        // Generated ephemera our synced tooling produces in consumers — ignored
+        // so they don't nag as untracked (Category A artifacts; never committed).
+        // consumer-deployment-hardening. Precise paths (not blanket dirs) so a
+        // consumer's own dashboard/ or logs/ isn't swept.
+        'dashboard/index.html',
+        'dashboard/telemetry.html',
+        '.brainstorm/',
+        '.skills-fit-check.json',
+        'logs/mcp-*.log',
+        'logs/mcp-*.log.gz',
+      ],
     );
     if (giPreview.action === 'abort') {
       console.log(`  ${R}ABORT${X}  .gitignore preflight: ${giPreview.error}`);
@@ -686,6 +699,15 @@ async function main() {
       });
       outContent = rewriteResult.rewritten;
       if (rewriteResult.changed) repoRewrites++;
+
+      // Inject the "UPSTREAM-OWNED — do not edit" banner into relocated,
+      // comment-capable tooling (scripts/.claude-skills/**) so an agent can't
+      // open the synced copy to patch it without being told to fix upstream +
+      // re-sync (consumer-deployment-hardening). No-op for tracked
+      // skills/prompts and JSON. Runs BEFORE the hash so the manifest matches
+      // what we write (idempotent — source is banner-free, so re-sync is a
+      // no-op "unchanged").
+      outContent = injectUpstreamBanner(outContent, dstRel);
 
       // Compute hashes against final outbound content (so the manifest's
       // hashes match what we actually write).
