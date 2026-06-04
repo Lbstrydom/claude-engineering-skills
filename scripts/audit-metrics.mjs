@@ -42,21 +42,35 @@ const DAYS = Number.parseInt(args[args.indexOf('--days') + 1] || '30', 10) || 30
  *
  * @param {*} _sb - legacy positional arg, ignored under the pg path
  * @param {number} days lookback window
+ * @param {string|null} [repoId] - when supplied (an `audit_repos.id` UUID),
+ *   scopes all three queries to that repo: `audit_runs` directly via
+ *   `repo_id`, and `audit_pass_stats`/`audit_findings` (which carry only
+ *   `run_id`) via a windowed `run_id IN (…)` subquery. Omitted/null →
+ *   project-wide (the pre-existing behaviour; CLI `main()` stays global).
  * @returns {Promise<{runs,passStats,findings,labeled}|null>} null when no DB pool
  */
-export async function fetchCloudMetrics(_sb, days) {
+export async function fetchCloudMetrics(_sb, days, repoId = null) {
   const pool = await getPool();
   if (!pool) return null;
 
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
+  // Back-compat: no repoId → project-wide ($2 IS NULL short-circuits the
+  // predicate). With a repoId, runs filter on repo_id; the run_id-only
+  // child tables filter via a subquery windowed to the same `since` cutoff.
+  const params = [since, repoId];
+  const runScope = `($2::uuid IS NULL OR repo_id = $2)`;
+  const childScope =
+    `($2::uuid IS NULL OR run_id IN ` +
+    `(SELECT id FROM audit_runs WHERE created_at >= $1 AND repo_id = $2))`;
+
   const [runs, passStats, findings] = await Promise.all([
-    many(`SELECT * FROM audit_runs WHERE created_at >= $1`, [since]),
-    many(`SELECT * FROM audit_pass_stats WHERE created_at >= $1`, [since]),
+    many(`SELECT * FROM audit_runs WHERE created_at >= $1 AND ${runScope}`, params),
+    many(`SELECT * FROM audit_pass_stats WHERE created_at >= $1 AND ${childScope}`, params),
     many(
       `SELECT severity, adjudication_outcome, pass_name
-         FROM audit_findings WHERE created_at >= $1`,
-      [since]
+         FROM audit_findings WHERE created_at >= $1 AND ${childScope}`,
+      params
     ),
   ]);
 

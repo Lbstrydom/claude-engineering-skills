@@ -1,5 +1,17 @@
 # Project Status Log
 
+## 2026-06-04 — Per-repo scoping for the dashboard "Audit Runs" tab (signal-recovery refinement)
+
+The Audit Runs tab was project-wide (all repos sharing the Supabase store). Scoped it to the current directory's canonical `audit_repos` row, with the project-wide query preserved as a back-compatible fallback.
+
+- **`scripts/audit-metrics.mjs`** — `fetchCloudMetrics(_sb, days, repoId = null)` gains an optional 3rd param. Non-null → `audit_runs` filtered by `repo_id`; the run_id-only child tables (`audit_pass_stats`, `audit_findings`) filtered via a windowed `run_id IN (SELECT id FROM audit_runs WHERE created_at >= $1 AND repo_id = $2)` subquery. `($2::uuid IS NULL)` short-circuits → project-wide. CLI `main()` keeps its 2-arg (project-wide) call. Reuses existing `idx_audit_runs_repo` + `idx_pass_stats_run` indexes — no migration.
+- **`scripts/lib/dashboard/collect-telemetry.mjs`** — `collectAuditRuns(repoId)` (repurposed the dead `sb` arg) passes repoId through and tags `data.scope` ∈ `{repo, project}`; `collectTelemetry` resolves it via the existing `canonicalRepoId(root)` helper. `scope` is emitted `repo` **only on the cloud-success path** — non-cloud/error paths report `project` so the data never claims a repo-scope it didn't fetch.
+- **`scripts/lib/dashboard/schema.mjs`** — `auditRuns.scope` enum `['repo','project']` with `.default('project')` (pre-scope snapshots still validate).
+- **`scripts/lib/dashboard/sections/audit-runs.mjs`** — labels "Supabase (this repo)" when scoped, else "Supabase (project-wide)".
+
+### Quality
+audit-code 1 round (H:4/M:8/L:2 — 1 genuine fix applied [scope/cloud coherence]; 5 dismissed as false/pre-existing [relocation-guard claim wrong: file not in `CLI_SMOKE_SET`; index already exists; computeLocalMetrics root===cwd]; 8 deferred as rigor-pressure/out-of-scope). **Gemini round 1 → APPROVE, 0 concerns.** Verified live: project-wide 341 runs vs this-repo 86. Tests: dashboard 26/0 (+2 new: per-repo label + schema-default), section-contract 34/0.
+
 ## 2026-06-04 — Cluster D follow-up: the two data-gated dashboard panels (ship-health + audit-effectiveness)
 
 Completed the remaining Phase 7 panels that were deferred for sparse data — built with precise empty-states so they're present now and populate as data accrues.

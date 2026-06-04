@@ -45,28 +45,43 @@ function aggregatePasses(passStats) {
   return Object.values(byPass).sort((a, b) => b.runs - a.runs);
 }
 
-/** Collect the audit-runs section. */
-async function collectAuditRuns(sb) {
+/**
+ * Collect the audit-runs section.
+ *
+ * @param {string|null} [repoId] canonical `audit_repos.id` for the cwd repo.
+ *   When non-null the cloud query is scoped to that repo (`scope: 'repo'`);
+ *   null falls back to the project-wide query (`scope: 'project'`) — the
+ *   pre-scope behaviour, preserved for repos with no resolvable row / cloud
+ *   off. (Replaces the dead legacy `sb` positional — pg path ignores it.)
+ */
+async function collectAuditRuns(repoId = null) {
   const local = computeLocalMetrics(DAYS);
   const localPart = { total: local.total, labeled: local.labeled };
+  // `scope` describes the CLOUD result that is actually displayed. The
+  // non-cloud paths below report 'project' because no repo-scoped cloud
+  // query succeeded — emitting 'repo' there would be incoherent (the
+  // section only consults scope when cloud===true, but the data must not
+  // lie about what was fetched).
   let cloud = null;
   try {
-    cloud = await fetchCloudMetrics(sb, DAYS);
+    cloud = await fetchCloudMetrics(null, DAYS, repoId);
   } catch (err) {
     return {
-      data: { cloud: false, runCount: 0, labeledCount: 0, passes: [], local: localPart },
+      data: { cloud: false, runCount: 0, labeledCount: 0, passes: [], local: localPart, scope: 'project' },
       status: { status: 'unexpected-error', detail: redactSecrets(`cloud metrics query failed: ${err.message}`) },
     };
   }
   if (!cloud) {
     const empty = !local.total;
     return {
-      data: { cloud: false, runCount: 0, labeledCount: 0, passes: [], local: localPart },
+      data: { cloud: false, runCount: 0, labeledCount: 0, passes: [], local: localPart, scope: 'project' },
       status: empty
         ? { status: 'missing-optional', detail: 'no cloud store and no local outcomes' }
         : { status: 'ok', detail: 'local-only' },
     };
   }
+  // Cloud query succeeded: scope reflects whether it was repo-filtered.
+  const scope = repoId ? 'repo' : 'project';
   return {
     data: {
       cloud: true,
@@ -74,8 +89,9 @@ async function collectAuditRuns(sb) {
       labeledCount: cloud.labeled.length,
       passes: aggregatePasses(cloud.passStats),
       local: localPart,
+      scope,
     },
-    status: { status: 'ok', detail: '' },
+    status: { status: 'ok', detail: scope === 'repo' ? 'per-repo' : 'project-wide (no canonical repo row)' },
   };
 }
 
@@ -486,10 +502,12 @@ export async function collectTelemetry(opts = {}) {
   const root = process.cwd();
   const git = opts.git || { baseSha: 'unknown' };
 
-  // M4 — collectAuditRuns no longer needs a client param; it pulls from the
-  // shared pg pool via lib/db/client.mjs. Pass null for the legacy positional.
+  // M4 — collectAuditRuns pulls from the shared pg pool via lib/db/client.mjs.
+  // Scope the Audit Runs tab to this directory's canonical repo row when
+  // resolvable; null → project-wide fallback (cloud off / never-audited repo).
+  const auditRepoId = await canonicalRepoId(root);
   const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness] = await Promise.all([
-    collectAuditRuns(null),
+    collectAuditRuns(auditRepoId),
     collectLearning(root),
     collectSecurity(root),
     collectPurposeHealth(root),

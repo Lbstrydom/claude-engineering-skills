@@ -1,7 +1,8 @@
 /**
  * @fileoverview Audit Runs telemetry tab — cloud + local pass stats with
  * a degraded-mode data-preservation rule (cloud error never discards
- * local fallback rows).
+ * local fallback rows). Cloud query is per-repo when the cwd resolves to a
+ * canonical audit_repos row (`scope==='repo'`), else project-wide.
  *
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS2).
  *
@@ -23,10 +24,11 @@ export default function sectionAuditRuns({ src, auditRuns }, ui) {
     return warn || ui.emptyPanel('telemetry-empty',
       'No audit data yet — run /audit-code to generate audit telemetry.');
   }
-  // The Supabase query is filtered by date only — it is project-wide, not
-  // per-repo (inherited from audit-metrics.mjs). Labelled honestly so the
-  // user is not misled; per-repo filtering is deferred (plan §Out of Scope).
-  let out = warn + `<p class="section-note">${a.cloud ? 'Supabase (project-wide)' : 'local-only'} · `
+  // The cloud query is scoped to this repo's canonical audit_repos row when
+  // one resolves (`scope==='repo'`); otherwise it falls back to the
+  // project-wide query. Labelled honestly so the user knows which they see.
+  const cloudLabel = a.scope === 'repo' ? 'Supabase (this repo)' : 'Supabase (project-wide)';
+  let out = warn + `<p class="section-note">${a.cloud ? cloudLabel : 'local-only'} · `
     + `${ui.escapeHtml(a.runCount)} runs · ${ui.escapeHtml(a.labeledCount)} labeled</p>`;
   if (a.passes.length) {
     const rows = a.passes.map((p) => `<tr>

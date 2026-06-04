@@ -1,7 +1,7 @@
 # Plan: Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops
 
 - **Date**: 2026-06-03
-- **Status**: In Progress (A applied 2026-06-03; B+C landed 2026-06-04; D all 3 panels landed 2026-06-04 — bandit + ship-health + audit-effectiveness; remaining: per-repo Audit Runs tab refinement + the two determinism follow-ups)
+- **Status**: In Progress (A applied 2026-06-03; B+C landed 2026-06-04; D all 3 panels landed 2026-06-04 — bandit + ship-health + audit-effectiveness; per-repo Audit Runs tab refinement landed 2026-06-04; remaining: the two determinism follow-ups — outcome-capture run-unification + deterministic ux-lock runners)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `cross-skill-bridge`, `shared-lib`, `stores`, `scripts`
@@ -354,9 +354,16 @@ graph TD
   `recordShipEvent` exists) — a `readShipEvents` reader is the prerequisite.
   Each is a mechanical repeat of the prompt-variants vertical once its data/reader
   lands. Tracked here as the remaining Phase 7 work.
-- **`scripts/lib/dashboard/render.mjs`** (modify — partial): prompt-variants
-  registered. **Deferred**: expanding the Audit Runs tab to per-repo (now
-  coherent post-A, but a separate change).
+- **`scripts/lib/dashboard/render.mjs`** (modify): prompt-variants
+  registered. **Done (2026-06-04)**: the Audit Runs tab is now per-repo —
+  `fetchCloudMetrics(_sb, days, repoId)` gained an optional `repoId` filtering
+  `audit_runs` by `repo_id` and the run_id-only child tables via a windowed
+  subquery; `collectAuditRuns(repoId)` resolves the canonical row via
+  `canonicalRepoId(root)` and tags `auditRuns.scope` (`repo|project`,
+  schema-defaulted `project` for back-compat). Section labels "Supabase (this
+  repo)" vs "(project-wide)". `($2::uuid IS NULL)` short-circuit preserves the
+  CLI's project-wide path. Verified live (project-wide 341 vs this-repo 86).
+  Gemini gate APPROVE.
 - **Why**: makes the recovered signal *visible* — the bandit panel ships now;
   effectiveness/ship-health follow their data.
 

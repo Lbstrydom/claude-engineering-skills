@@ -260,6 +260,10 @@ export const TelemetryDataSchema = z.object({
     labeledCount: count,
     passes: z.array(PassStatSchema),
     local: z.object({ total: count, labeled: count }),
+    // 'repo' when the cloud query was scoped to this directory's canonical
+    // audit_repos row; 'project' for the project-wide fallback (no resolvable
+    // repo row, or local-only). `.default` keeps pre-scope snapshots valid.
+    scope: z.enum(['repo', 'project']).default('project'),
   }),
   requirements: z.object({
     present: z.boolean(),

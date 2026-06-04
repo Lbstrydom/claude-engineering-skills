@@ -155,6 +155,25 @@ test('telemetry tables are wrapped for horizontal scroll', () => {
   assert.ok(html.includes('project-wide'), 'audit-runs honestly labelled project-wide');
 });
 
+test('audit-runs labels per-repo scope when scope=repo', () => {
+  const data = telData({
+    sources: { auditRuns: { status: 'ok', detail: 'per-repo' }, requirements: { status: 'missing-optional', detail: '' }, learning: { status: 'missing-optional', detail: '' } },
+    auditRuns: {
+      cloud: true, runCount: 3, labeledCount: 1, scope: 'repo',
+      passes: [{ name: 'structure', runs: 3, raised: 2, accepted: 1, dismissed: 1 }],
+      local: { total: 0, labeled: 0 },
+    },
+  });
+  const html = renderDocument(data, 'telemetry', ASSETS);
+  assert.ok(html.includes('Supabase (this repo)'), 'audit-runs labelled per-repo when scoped');
+  assert.ok(!html.includes('project-wide'), 'per-repo scope must not also claim project-wide');
+});
+
+test('telemetry schema fills scope=project by default for pre-scope snapshots', () => {
+  const parsed = validateDashboardData('telemetry', telData());
+  assert.equal(parsed.auditRuns.scope, 'project', 'absent scope defaults to project (back-compat)');
+});
+
 test('telemetry page-level placeholder shows only when all sources non-ok', () => {
   const allOff = renderDocument(telData(), 'telemetry', ASSETS);
   assert.ok(allOff.includes('data-testid="telemetry-empty"'), 'page-level placeholder present');
