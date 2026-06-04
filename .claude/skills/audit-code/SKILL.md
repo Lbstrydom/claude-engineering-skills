@@ -75,11 +75,27 @@ everything in scope. Choose deliberately:
 
 | Scope mode | When to use | Behaviour |
 |---|---|---|
-| `--scope diff` (**DEFAULT**) | "audit my recent work", after implementing a phase | Auto-scopes to `git diff HEAD~1..HEAD` + unstaged + untracked files |
+| `--scope diff` (**DEFAULT**) | "audit my recent work", after implementing a phase | Auto-scopes to changed files with a **dirty-aware base** + unstaged + untracked (see below) |
 | `--scope plan` | Large refactor touching many files; user wants broad view | All files referenced in the plan |
 | `--scope full` | "audit the entire codebase" — explicit codebase-wide request | Full repo audit — slowest, catches cross-cutting issues |
 
 Default is `--scope diff`. Switch only when the user explicitly asks or `git diff` is empty.
+
+**Dirty-aware base (default) + the `--base` override (read this before clustered/resumed audits).**
+With no `--base`, `openai-audit.mjs` resolves the diff base by the working
+tree's state: **dirty → `HEAD`** (audit only your *uncommitted* work) /
+**clean → `HEAD~1`** (audit your last commit). This prevents the over-capture
+failure where an **already-shipped + already-audited** prior commit gets
+re-pulled into scope and floods the audit with out-of-scope findings (observed
+in ai-organiser: 33/34 findings were a previous audited cluster). The resolved
+base is logged as `[scope] base resolved to <ref> …`.
+
+⚠ **When the prior commit was already audited but you have BOTH committed and
+uncommitted work** (e.g. resuming a clustered build where Cluster A/B is
+committed and Cluster C is in-flight), pass `--base` explicitly to scope to
+exactly the new work — e.g. `--base <clusterStartRef>` or `--base HEAD` — and
+likewise scope the Gemini gate's `--diff` to the same range. Never rely on the
+default to separate audited-from-unaudited across a commit boundary.
 
 ---
 
@@ -101,7 +117,14 @@ Full flag contract, smart pass selection, automatic behaviour, and
 tool pre-pass rules: `references/r2-plus-mode.md`.
 
 ```bash
-git diff HEAD~1 -- . > /tmp/$SID-diff.patch
+# Dirty-aware base — match R1's scope (which uses `git status --porcelain`, so
+# UNTRACKED files count as dirty; do NOT use `git diff --quiet`, it ignores
+# untracked). Dirty tree → HEAD (uncommitted work only); clean → HEAD~1 (last
+# commit). The CLI's `[scope] base resolved to <ref>` log is the source of
+# truth. Pass --base/clusterStartRef instead when separating audited-from-
+# unaudited across a commit boundary.
+BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)
+git diff "$BASE" -- . > /tmp/$SID-diff.patch
 node scripts/openai-audit.mjs code <plan-file> \
   --round 2 \
   --ledger /tmp/$SID-ledger.json \
@@ -299,7 +322,7 @@ After fixes, re-audit using R2+ mode (back to Step 2):
 
 1. Collect files modified during Step 4 → `--changed`
 2. Compute scope: changed + importers → `--files`
-3. Generate diff: `git diff HEAD~1 -- . > /tmp/$SID-diff.patch`
+3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff "$BASE" -- . > /tmp/$SID-diff.patch`
 4. Build `--passes` from file types
 5. Run R2+ audit with `--round <N> --ledger --diff --changed --files`
 

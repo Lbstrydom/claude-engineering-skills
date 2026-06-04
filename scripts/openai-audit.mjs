@@ -2965,6 +2965,28 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
 
 // resolveLedgerPath imported from lib/robustness.mjs
 
+/**
+ * Resolve the git base ref for `--scope diff`. Pure + deterministic so the
+ * decision is unit-testable apart from the git subprocess (repo testing
+ * doctrine Tier 1 — deterministic seam lands with its test).
+ *
+ * - Explicit `--base <ref>` always wins (clustered/resume audits).
+ * - Otherwise dirty-aware: a dirty working tree means the operator is auditing
+ *   UNCOMMITTED work → `HEAD` (don't re-pull an already-committed/audited prior
+ *   commit). A clean tree means "audit my last commit" → `HEAD~1`.
+ *
+ * `workingTreeDirty` MUST be derived from `git status --porcelain` (untracked
+ * files count as dirty) — NOT `git diff --quiet`, which ignores untracked.
+ *
+ * @param {string|null} explicitBase value of `--base`, or null when absent
+ * @param {boolean} workingTreeDirty whether `git status --porcelain` was non-empty
+ * @returns {string} the git ref to diff `..HEAD` against
+ */
+function resolveDiffBase(explicitBase, workingTreeDirty) {
+  if (explicitBase) return explicitBase;
+  return workingTreeDirty ? 'HEAD' : 'HEAD~1';
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -3068,9 +3090,17 @@ async function main() {
   const scopeIdx = args.indexOf('--scope');
   const scopeMode = scopeIdx !== -1 && args[scopeIdx + 1] ? args[scopeIdx + 1] : 'diff';
 
-  // --base <ref>: git ref to diff against for --scope diff (default: HEAD~1)
+  // --base <ref>: git ref to diff against for --scope diff. When omitted the
+  // base is DIRTY-AWARE (resolved in the diff block below), NOT a blind
+  // HEAD~1: a HEAD~1 default re-pulls the previous commit into scope, so an
+  // already-shipped+audited commit floods the audit with out-of-scope findings
+  // (observed: 33/34 GPT findings were a prior already-audited cluster). The
+  // dirty-aware rule audits uncommitted work against HEAD when the tree is
+  // dirty, and the last commit (HEAD~1..HEAD) only when the tree is clean.
+  // Explicit --base always wins (clustered/resume: --base <clusterStartRef>).
   const baseIdx = args.indexOf('--base');
-  const diffBase = baseIdx !== -1 && args[baseIdx + 1] ? args[baseIdx + 1] : 'HEAD~1';
+  const explicitBase = baseIdx !== -1 && args[baseIdx + 1] ? args[baseIdx + 1] : null;
+  let diffBase = explicitBase || 'HEAD~1'; // provisional; refined dirty-aware in the diff block
 
   // --exclude-paths <list>: comma-separated glob patterns to exclude from scope
   // e.g. --exclude-paths 'scripts/**,vendor/**,.audit-loop/**'
@@ -3113,7 +3143,7 @@ async function main() {
   if (!mode || !planFile || !['plan', 'code', 'rebuttal'].includes(mode)) {
     console.error('Usage: node scripts/openai-audit.mjs <plan|code> <plan-file> [--json] [--out <file>] [--history <file>] [--passes <list>] [--files <list>]');
     console.error('       node scripts/openai-audit.mjs code <plan-file> [--scope diff|plan|full] [--base <git-ref>]');
-    console.error('         --scope diff (default): auto-scope to git-changed files (vs HEAD~1)');
+    console.error('         --scope diff (default): auto-scope to git-changed files (dirty-aware base: HEAD if tree dirty, else HEAD~1; --base overrides)');
     console.error('         --scope plan          : audit all plan-referenced files');
     console.error('         --scope full          : audit entire repo (slowest, most comprehensive)');
     console.error('       node scripts/openai-audit.mjs code <plan-file> --round 2 --ledger <ledger.json> --diff <diff.patch> --changed <file1,file2>');
@@ -3183,6 +3213,23 @@ async function main() {
     if (!effectiveFileFilter && scopeMode === 'diff') {
       try {
         const { execFileSync } = await import('node:child_process');
+        // Dirty-aware base resolution (only when --base was not explicit).
+        // A dirty working tree means the operator is auditing UNCOMMITTED work
+        // → base at HEAD so an already-committed (and usually already-audited)
+        // prior commit is not re-pulled into scope. A clean tree means "audit
+        // my last commit" → HEAD~1..HEAD. This fixes the over-capture where a
+        // shipped+audited cluster reappears as out-of-scope findings.
+        if (!explicitBase) {
+          let workingTreeDirty = false;
+          try {
+            const porcelain = execFileSync('git', ['status', '--porcelain'], {
+              encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
+            }).trim();
+            workingTreeDirty = porcelain.length > 0;
+          } catch { /* not a git repo / git missing — treat as clean (HEAD~1) */ }
+          diffBase = resolveDiffBase(explicitBase, workingTreeDirty);
+          process.stderr.write(`  [scope] base resolved to ${diffBase} (working tree ${workingTreeDirty ? 'dirty → uncommitted work only' : 'clean → last commit'}; pass --base <ref> to override)\n`);
+        }
         const diffOutput = execFileSync('git', ['diff', '--name-only', `${diffBase}..HEAD`], {
           encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000
         }).trim();
@@ -3467,7 +3514,7 @@ async function main() {
 // set the env var, so the export is undefined and the test scaffolding is
 // dead code at runtime cost.
 export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
-  ? { _callGPTOnce, callGPT, safeCallGPT, normalisePromptInput }
+  ? { _callGPTOnce, callGPT, safeCallGPT, normalisePromptInput, resolveDiffBase }
   : undefined;
 
 // CLI entry — only fire main() when this module is executed directly,

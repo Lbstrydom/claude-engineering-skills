@@ -1,5 +1,16 @@
 # Project Status Log
 
+## 2026-06-04 — Fix: dirty-aware `--scope diff` base (audit over-capture)
+
+`/audit-code --scope diff` defaulted `--base` to `HEAD~1`, scoping to `HEAD~1..HEAD` ∪ uncommitted ∪ untracked. When the prior commit was already shipped+audited (e.g. a clustered build's Cluster A/B), its files re-entered scope and flooded the audit with out-of-scope findings (observed in ai-organiser: 33/34 findings were a prior audited cluster; the operator had to hand-scope the Gemini gate).
+
+- **`scripts/openai-audit.mjs`** — extracted a pure, testable `resolveDiffBase(explicitBase, workingTreeDirty)` (in `__testExports`). The `--scope=diff` block now resolves the base dirty-aware via `git status --porcelain`: dirty → `HEAD` (audit uncommitted work only), clean → `HEAD~1` (audit last commit). Explicit `--base <ref>` always wins. Resolved base logged as `[scope] base resolved to <ref>`. The orphan-introduced detector's own `HEAD~1..HEAD` semantics are intentionally untouched.
+- **`skills/audit-code/SKILL.md`** — scope table + dirty-aware-base note + prominent `--base`/clusterStartRef override guidance for separating audited-from-unaudited across a commit boundary. R2+ patch generation aligned to `git status --porcelain` semantics (untracked counts — `git diff --quiet` would miss them).
+- **`tests/diff-base-resolver.test.mjs`** — Tier-1 deterministic-seam test pinning the decision table, incl. an explicit over-capture guard (null base + dirty must not yield `HEAD~1`).
+
+### Quality
+audit-code PASS (H:0/M:2/L:1 — both MEDIUM fixed [contract-drift between code's porcelain check and the doc's `git diff --quiet`; missing deterministic-seam test], LOW mitigated). **Gemini APPROVE, 0 new.** Verified live: `[scope] base resolved to HEAD (working tree dirty → uncommitted work only)`. Tests 22/0.
+
 ## 2026-06-04 — Per-repo scoping for the dashboard "Audit Runs" tab (signal-recovery refinement)
 
 The Audit Runs tab was project-wide (all repos sharing the Supabase store). Scoped it to the current directory's canonical `audit_repos` row, with the project-wide query preserved as a back-compatible fallback.
