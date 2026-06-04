@@ -191,16 +191,19 @@ correction — see §1.2).
   (semanticId is content-derived), so the same fingerprint across rounds patches
   the one row; an unmatched ledger entry is logged + skipped (never silently
   dropped).
-- **run_id persisted in a SIDECAR, not by restructuring the ledger
-  (Gemini-R1-H1 + Gemini-R2-M2)**: the join needs `run_id`, but the manual
-  `/audit-code` Step 3.5b syncs without `--run-id`. Restructuring the ledger root
-  from a JSON **array** to `{runId, entries}` would break every existing
-  array-based ledger parser (`write-code-outcomes.mjs`, ledger readers) — a
-  non-starter. Instead `openai-audit` writes `run_id` to a **sidecar** beside the
-  ledger (the existing per-session manifest `.audit/session-audit-*.json`, or a
-  `<ledger>.runid` companion). `finalize-outcomes` resolves `run_id` from
-  `--run-id` → else the sidecar; the manual path reads the sidecar too. The
-  ledger array shape is **unchanged** (zero parser breakage).
+- **run_id flows via `--run-id` + the result's existing `_cloudRunId`
+  (Gemini-R1-H1; simplified during build — NO sidecar)**: the join needs
+  `run_id`, but the manual `/audit-code` Step 3.5b syncs without `--run-id`.
+  Restructuring the ledger array → `{runId, entries}` would break parsers
+  (rejected — Gemini-R2-M2). A run_id **sidecar file** was the next idea, but
+  the Cluster-A build audit flagged it as implicit file-coupling — and it's
+  **unnecessary**: `openai-audit` already persists the run_id it used (minted OR
+  reused via `--run-id`) on the result JSON as **`_cloudRunId`**, and under
+  unification the final round's result carries the unified id. So
+  `write-code-outcomes` (manual Step 3.5b) reads `result._cloudRunId` (it already
+  does today), and the orchestrated path passes `--run-id` explicitly. No
+  sidecar, no ledger restructure — run identity travels by explicit flag + the
+  result it's already written to. The ledger array shape is unchanged.
 - **`finalize-outcomes` idempotency + transaction (R1-H2)**: idempotent by
   construction — it sets `adjudication_outcome` by `(run_id, semanticId)`, so a
   retry after a process/CI/network failure converges to the same state. The sync

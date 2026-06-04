@@ -45,15 +45,59 @@ async function detectClassificationColumns() {
   return _hasClassificationColumns;
 }
 
+// Cached probe for the run-unification `audit_pass_stats.round` column
+// (migration 20260605120000). Mirrors the classification probe so the round
+// code degrades to the columnless path on an un-migrated store (WS1 §1.3a —
+// defense-in-depth: the shared store has it applied, but air-gapped / fresh
+// self-hosted stores may not).
+let _hasPassStatsRoundColumn = null;
+
+/** Test-only reset for the round-column probe cache. */
+export function _resetPassStatsRoundColumnCache() {
+  _hasPassStatsRoundColumn = null;
+}
+
+async function detectPassStatsRoundColumn() {
+  if (_hasPassStatsRoundColumn !== null) return _hasPassStatsRoundColumn;
+  if (!await isCloudEnabled()) {
+    _hasPassStatsRoundColumn = false;
+    return false;
+  }
+  try {
+    await many(`SELECT round FROM audit_pass_stats LIMIT 0`);
+    _hasPassStatsRoundColumn = true;
+  } catch {
+    _hasPassStatsRoundColumn = false;
+    process.stderr.write('  [learning] audit_pass_stats.round not present — run migration 20260605120000 for per-round pass telemetry\n');
+  }
+  return _hasPassStatsRoundColumn;
+}
+
 // ── audit_runs ─────────────────────────────────────────────────────────────
 
 /**
  * Insert a new audit_runs row. Returns the new run's id, or null when
  * cloud is disabled / the insert fails.
  */
-export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId } = {}) {
+export async function recordRunStart(repoId, planFile, mode, { scopeMode, commitSha, branch, planId, runId } = {}) {
   if (!await isCloudEnabled()) return null;
+  // Run-unification (WS1 §1.2/§1.3b): when the orchestrator threads an explicit
+  // `runId`, REUSE the existing audit_runs row so all rounds of one audit share
+  // a single run_id. Idempotent — a second call with the same runId returns it
+  // without inserting a duplicate or clobbering round-1 metadata. When `runId`
+  // is absent (manual single-shot /audit-code) behaviour is byte-identical to
+  // before (mint a fresh row).
+  if (runId) {
+    try {
+      const existing = await one(`SELECT id FROM audit_runs WHERE id = $1`, [runId]);
+      if (existing?.id) return existing.id; // reuse — do not re-insert
+    } catch (err) {
+      process.stderr.write(`  [learning] recordRunStart reuse-probe failed: ${err.message}\n`);
+      // fall through to insert with the explicit id
+    }
+  }
   const row = {
+    ...(runId ? { id: runId } : {}),
     repo_id: repoId,
     plan_file: planFile,
     mode,
@@ -185,9 +229,15 @@ export async function recordFindings(runId, findings, passName, round) {
 
 /**
  * Insert a pass-level stats row.
+ *
+ * @param {number} [round] 1-based audit round. Written only when the `round`
+ *   column exists (migration 20260605120000); on an un-migrated store it is
+ *   omitted and the row defaults to round 1 server-side — preserving today's
+ *   behaviour (WS1 §1.3a).
  */
-export async function recordPassStats(runId, passName, stats) {
+export async function recordPassStats(runId, passName, stats, round) {
   if (!runId || !await isCloudEnabled()) return;
+  const hasRound = await detectPassStatsRoundColumn();
   try {
     await insertReturning('audit_pass_stats', {
       run_id: runId,
@@ -201,6 +251,7 @@ export async function recordPassStats(runId, passName, stats) {
       latency_ms: stats.latencyMs,
       reasoning_effort: stats.reasoning,
       prompt_variant_id: stats.promptVariantId,
+      ...(hasRound && Number.isInteger(round) ? { round } : {}),
     });
   } catch (err) {
     process.stderr.write(`  [learning] recordPassStats failed: ${err.message}\n`);
@@ -213,16 +264,31 @@ export async function recordPassStats(runId, passName, stats) {
  */
 export async function updatePassStatsPostDeliberation(runId, passCounts) {
   if (!runId || !await isCloudEnabled()) return;
+  // Post-deliberation counts are run-FINAL (canonical adjudication truth lives in
+  // audit_findings.adjudication_outcome; these are denormalized telemetry). Under
+  // run-unification one run_id spans many per-round pass_stats rows, so matching
+  // on (run_id, pass_name) alone overwrites EVERY round's row. Scope to the LATEST
+  // round's row per pass so the final counts land unambiguously on the
+  // convergence-round row (WS1 §1.3a / Gemini-R2-H1). On an un-migrated store
+  // (no `round` column) fall back to the original match — today's behaviour.
+  const hasRound = await detectPassStatsRoundColumn();
   for (const [passName, counts] of Object.entries(passCounts)) {
     try {
-      await updateWhere('audit_pass_stats',
-        {
-          findings_accepted: counts.accepted,
-          findings_dismissed: counts.dismissed,
-          findings_compromised: counts.compromised || 0,
-        },
-        { run_id: runId, pass_name: passName }
-      );
+      const patch = {
+        findings_accepted: counts.accepted,
+        findings_dismissed: counts.dismissed,
+        findings_compromised: counts.compromised || 0,
+      };
+      if (hasRound) {
+        const maxRow = await one(
+          `SELECT max(round) AS r FROM audit_pass_stats WHERE run_id = $1 AND pass_name = $2`,
+          [runId, passName]
+        );
+        if (maxRow?.r == null) continue; // no row for this pass under the run
+        await updateWhere('audit_pass_stats', patch, { run_id: runId, pass_name: passName, round: maxRow.r });
+      } else {
+        await updateWhere('audit_pass_stats', patch, { run_id: runId, pass_name: passName });
+      }
     } catch (err) {
       process.stderr.write(`  [learning] updatePassStats(${passName}) failed: ${err.message}\n`);
     }

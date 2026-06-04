@@ -1428,7 +1428,7 @@ function deriveFindingsFromReport(report) {
   return findings;
 }
 
-async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext = '', { passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null, changedFiles = [], repoProfile = null, bandit = null, fpTracker = null, noLedger = false, noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false, debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null, sessionCacheHit = null, scopeMode = null, planFile = null } = {}) {
+async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext = '', { passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null, changedFiles = [], repoProfile = null, bandit = null, fpTracker = null, noLedger = false, noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false, debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null, sessionCacheHit = null, scopeMode = null, planFile = null, runId = null } = {}) {
   const totalStart = Date.now();
 
   // Initialize pass result cache — survives merge crashes
@@ -1502,7 +1502,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       }
 
       cloudRunId = await recordRunStart(cloudRepoId, planFile || 'ad-hoc', 'code', {
-        scopeMode, commitSha, branch, planId,
+        scopeMode, commitSha, branch, planId, runId,
       }).catch(() => null);
 
       // Phase 1 — adaptive-learning-v1 telemetry.  Compute diff_complexity
@@ -2729,7 +2729,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         outputTokens: pr.result?.usage?.output_tokens,
         latencyMs: pr.result?.latencyMs,
         reasoning: pr.name === 'sustainability' ? 'medium' : pr.name === 'quickfix' ? 'low' : 'high'
-      }).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+      }, round).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
 
     // Record suppression events if R2+
@@ -2839,6 +2839,11 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   // debtRunId is the stable SID for this session (audit-<timestamp>).
   const sid = debtRunId;
   mergedResult._sid = sid;
+  // Run-unification (WS1 §1.3b): the run_id this audit used (minted or reused
+  // via --run-id) is already persisted on the result as `_cloudRunId` below, so
+  // both the orchestrated path (passes --run-id explicitly) and the manual
+  // Step 3.5b path (reads `result._cloudRunId`) resolve it without any sidecar
+  // file. No implicit file-coupling needed.
 
   // Always increment runsSinceDebtReview in the stable session ledger
   try {
@@ -3067,6 +3072,13 @@ async function main() {
   const roundIdx = args.indexOf('--round');
   const round = roundIdx !== -1 && args[roundIdx + 1] ? Number.parseInt(args[roundIdx + 1], 10) : 1;
 
+  // --run-id <uuid>: run-unification (WS1). When the orchestrator
+  // (audit-loop.mjs / /cycle Step 3C) mints one run_id and passes it to every
+  // round's invocation, all rounds attach to a single audit_runs row.
+  // Absent → openai-audit mints its own (manual single-shot → today's behaviour).
+  const runIdIdx = args.indexOf('--run-id');
+  const explicitRunId = runIdIdx !== -1 && args[runIdIdx + 1] ? args[runIdIdx + 1] : null;
+
   // --ledger <file>: adjudication ledger — single canonical read+write path
   const ledgerIdx = args.indexOf('--ledger');
   const ledgerFileArg = ledgerIdx !== -1 && args[ledgerIdx + 1] ? args[ledgerIdx + 1] : null;
@@ -3271,7 +3283,7 @@ async function main() {
     const codePassMultiplier = passFilter ? passFilter.length : PASS_NAMES.length;
     printCostPreflight('code', codeContextChars * codePassMultiplier, MODEL,
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
-    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile });
+    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId });
     return;
   }
 

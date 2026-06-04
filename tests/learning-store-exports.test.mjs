@@ -34,8 +34,10 @@ const EXPECTED_EXPORTS = [
   'upsertRepoByUuid',
   'resolveRepoForStore', // signal-recovery Cluster A §2.1 — stable repoRowId resolver
 
-  // runs-findings (10, incl. _resetClassificationColumnCache test seam)
+  // runs-findings (11, incl. _resetClassificationColumnCache + _resetPassStatsRoundColumnCache test seams)
   '_resetClassificationColumnCache',
+  '_resetPassStatsRoundColumnCache', // WS1 run-unification — audit_pass_stats.round probe cache reset
+
   'recordAdjudicationEvent',
   'recordFindings',
   'recordPassStats',
@@ -163,7 +165,12 @@ const EXPECTED_EXPORTS = [
 const FORBIDDEN_EXPORTS = ['getReadClient', 'getWriteClient', 'getPersonaSupabase'];
 
 describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () => {
-  it('exports exactly the pinned 114-function contract — no accidental additions / removals', () => {
+  it('EXPECTED_EXPORTS has no duplicate names (a dup could mask a missing export)', () => {
+    const dups = EXPECTED_EXPORTS.filter((e, i) => EXPECTED_EXPORTS.indexOf(e) !== i);
+    assert.deepEqual([...new Set(dups)], [], `duplicate pinned names: ${[...new Set(dups)].join(', ')}`);
+  });
+
+  it('exports exactly the pinned contract — no accidental additions / removals', () => {
     const actual = Object.keys(ls).sort();
     const missing = EXPECTED_EXPORTS.filter((e) => !actual.includes(e));
     const extra   = actual.filter((e) => !EXPECTED_EXPORTS.includes(e));
@@ -172,6 +179,9 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
       { missing: [], extra: [] },
       'public surface drift detected — update the contract matrix + the EXPECTED_EXPORTS list together'
     );
+    // Length-equality is the backstop: includes-based missing/extra can't catch
+    // a duplicate-vs-missing cancellation, so pin the counts match exactly.
+    assert.equal(actual.length, EXPECTED_EXPORTS.length, 'exported-name count drifted from the pin');
   });
 
   it('does NOT export internal client accessors (M3 P3 removal)', () => {
@@ -193,7 +203,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     }
   });
 
-  it('matches the contract-matrix count: 93 frozen + 10 caller helpers + 3 Phase 3 WS-PIPE1 + 1 observed-deps (listFileImportsForSnapshot) + 3 security audit-trail/stats (docs/plans/security) = 110', () => {
-    assert.equal(EXPECTED_EXPORTS.length, 114);
+  it('pins the total export count (update deliberately when the surface changes)', () => {
+    // The single authoritative number is this assertion + the EXPECTED_EXPORTS
+    // list above; the per-domain section comments are descriptive only and not
+    // a second source of truth (their historical sub-counts are not summed here).
+    assert.equal(EXPECTED_EXPORTS.length, 115);
   });
 });
