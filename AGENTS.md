@@ -35,6 +35,27 @@
 > Only AGENTS.md describes this — [CLAUDE.md](CLAUDE.md) intentionally
 > stays a thin Claude-Code-only addendum via `@./AGENTS.md`, so this
 > single-file change is the canonical surface.
+
+> **Generated-artifact policy (invariant — avoid the "messy middle").** Every
+> generated file lands in exactly ONE of two categories; never tracked-but-
+> unverified-and-volatile:
+> - **A — derived from external/mutable state OR carrying volatile provenance
+>   (timestamps, HEAD shas) → gitignored.** It is not source and cannot be a
+>   pure function of committed source. Examples: `.audit-loop/domain-deps-observed.json`
+>   (DB import graph), `.audit-loop/cache/`, **`dashboard/index.html` +
+>   `dashboard/telemetry.html`** (local-only, rebuilt by `npm run dashboard`),
+>   `.audit-loop/repo-alias-map.json` (spent reconcile intermediate).
+> - **B — a pure, deterministic function of committed source → committed AND
+>   freshness-verified in the pre-push `check`.** Regeneration must be byte-
+>   identical (no clocks/shas/network). Example: `.claude/skills/**` (regen by
+>   `skills:regenerate`, enforced by `skills:check`). `docs/architecture-map.md`
+>   is committed because it's structural-from-source.
+>
+> The test for a tracked generated file: *would two regenerations on the same
+> commit be byte-identical, and does a check enforce it?* If no → it belongs in
+> A (gitignore it), not committed. A committed artifact whose dirtiness carries
+> no information is churn, not a reference. (The dashboard reference page lived
+> in the messy middle until 2026-06 — see `docs/completed/local-dashboard.md` §2.1.)
 <!-- arch-map-discoverability:end -->
 
 ## Project Overview

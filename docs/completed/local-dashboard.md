@@ -81,6 +81,22 @@ artefacts*, not two builds:
    Same files; clean URLs; the cross-page link is robust (no `file://`
    quirks).
 
+> **Addendum (2026-06) — asymmetric commit policy RETIRED.** Fork A's
+> "reference page is committed" resolution was reversed. In practice nobody
+> read the committed copy (no GitHub Pages / public showcase; the owner views
+> exclusively via `npm run dashboard`), and the committed page embeds a
+> `built from <SHA>` provenance banner — so the pre-push rebuild that kept the
+> banner current re-dirtied the tracked file on **every** push and it could
+> never be clean. A generated view of repo+cloud state is not source. Both
+> pages are now **gitignored, local-only artifacts** (Category A — same as
+> `domain-deps-observed.json`), rebuilt on demand by `npm run dashboard`
+> (serve rebuilds both). The pre-push rebuild step in `sync-to-repos.mjs` was
+> removed. Fork A's "one file cannot be half-committed" reasoning is moot now
+> that neither page is committed; the two-page split still stands on its other
+> merit (self-contained pages, robust cross-links). Entry point (1) becomes
+> "double-click a locally-built file" rather than a committed one; a fresh
+> clone has no dashboard until the first `npm run dashboard`.
+
 ### 2.2 Component diagram
 
 ```

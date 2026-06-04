@@ -898,28 +898,13 @@ async function main() {
     }
   }
 
-  // Persona-test 2026-05-23 P1: the dashboard's HTML was always one push
-  // behind because `dashboard:build` only ran manually. Pre-push sync now
-  // rebuilds the committed reference dashboard so its `built from <SHA>`
-  // banner matches current HEAD. Non-blocking — a build failure logs but
-  // never blocks the push. Skip on dry-run + when SKIP_DASHBOARD_REBUILD=1
-  // (escape hatch for operators who don't want the latency on every push).
-  if (!DRY_RUN && totalErrors === 0 && process.env.SKIP_DASHBOARD_REBUILD !== '1') {
-    try {
-      const { execSync } = await import('node:child_process');
-      const dashboardScript = path.join(SOURCE_ROOT, 'scripts/build-dashboard.mjs');
-      if (fs.existsSync(dashboardScript)) {
-        process.stderr.write(`→ Rebuilding dashboard reference page...\n`);
-        execSync(`node "${dashboardScript}" reference`, {
-          cwd: SOURCE_ROOT,
-          stdio: ['ignore', 'pipe', 'inherit'],
-        });
-        process.stderr.write(`✓  dashboard rebuilt (reference)\n`);
-      }
-    } catch (err) {
-      process.stderr.write(`⚠  dashboard rebuild errored — push continues: ${err.message?.split('\n')[0]}\n`);
-    }
-  }
+  // Dashboard reference page is no longer committed (2026-06): it embedded a
+  // "built from <SHA>" banner, so rebuilding it on every push only ever
+  // re-dirtied a tracked file that the hook never committed — perpetual churn
+  // for an artifact nobody reads from git. It's now a local-only build (Category
+  // A, gitignored), rebuilt on demand by `npm run dashboard` (serve rebuilds
+  // both pages). No pre-push rebuild needed. See docs/completed/local-dashboard.md
+  // §2.1 addendum + .gitignore.
 
   process.exit(totalErrors > 0 ? 1 : 0);
 }

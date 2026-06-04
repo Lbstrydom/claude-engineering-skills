@@ -98,10 +98,15 @@ node_modules/
 persona-step*.png
 persona-final-*.png
 
-# Local dashboard — the telemetry page is per-user / per-machine (audit
-# findings, learning counts) and must never be committed. The reference
-# page (dashboard/index.html) IS committed — asymmetric commit policy,
-# see docs/plans/local-dashboard.md §2.1.
+# Local dashboard — BOTH pages are locally-built, per-machine artifacts,
+# never committed. `npm run dashboard` rebuilds them on serve; nothing reads a
+# committed copy (no GitHub Pages / public showcase — confirmed with the owner
+# 2026-06). The reference page WAS committed under an earlier asymmetric policy
+# (docs/completed/local-dashboard.md §2.1) but it embeds a "built from <SHA>"
+# banner, so the pre-push rebuild re-dirtied it on every push and it could never
+# be clean. Retired: a generated view of repo+cloud state is not source — it
+# belongs in the same "derived → gitignored" category as domain-deps-observed.json.
+dashboard/index.html
 dashboard/telemetry.html
 
 # Persona-test consistency mode — session ledgers + LLM-egress derived
