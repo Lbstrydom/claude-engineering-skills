@@ -332,10 +332,23 @@ async function discoverRepoScopedUniqueKeys(many, tables) {
   const tableSet = new Set(tables);
   for (const r of rows) {
     if (!tableSet.has(r.table_name)) continue;
-    if (!r.cols.includes('repo_id')) continue;
-    (out[r.table_name] ||= []).push(r.cols);
+    // pg may return array_agg as a JS array OR as a `{a,b}` array-literal string
+    // depending on the element type's parser — normalize to a JS string array.
+    const cols = pgTextArray(r.cols);
+    if (!cols.includes('repo_id')) continue;
+    (out[r.table_name] ||= []).push(cols);
   }
   return out;
+}
+
+/** Coerce a pg array (JS array or `{a,b,"c"}` literal string) to a string[]. */
+function pgTextArray(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v !== 'string') return [];
+  return v.replace(/^\{|\}$/g, '')
+    .split(',')
+    .map((s) => s.replace(/^"|"$/g, '').trim())
+    .filter(Boolean);
 }
 
 function argValue(flag) {
