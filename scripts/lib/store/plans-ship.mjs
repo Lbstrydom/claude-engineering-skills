@@ -427,3 +427,32 @@ export async function recordShipEvent(repoId, event) {
     process.stderr.write(`  [learning] recordShipEvent failed: ${err.message}\n`);
   }
 }
+
+/**
+ * Read ship-event health for a repo (Cluster D / Phase 7 dashboard).
+ * Returns per-outcome counts + the most recent events, or null when cloud is
+ * off / the query fails. Repo-scoped (the caller resolves the canonical id).
+ *
+ * @param {string} repoId
+ * @param {{limit?: number}} [opts]
+ * @returns {Promise<{byOutcome: Array<{outcome:string,count:number}>, recent: object[]}|null>}
+ */
+export async function readShipEvents(repoId, { limit = 10 } = {}) {
+  if (!repoId || !await isCloudEnabled()) return null;
+  try {
+    const byOutcome = await many(
+      `SELECT outcome, count(*)::int AS count FROM ship_events
+        WHERE repo_id = $1 GROUP BY outcome ORDER BY count DESC`,
+      [repoId],
+    );
+    const recent = await many(
+      `SELECT outcome, branch, commit_sha, overridden_by_user, created_at
+         FROM ship_events WHERE repo_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [repoId, limit],
+    );
+    return { byOutcome, recent };
+  } catch (err) {
+    process.stderr.write(`  [learning] readShipEvents failed: ${err.message}\n`);
+    return null;
+  }
+}

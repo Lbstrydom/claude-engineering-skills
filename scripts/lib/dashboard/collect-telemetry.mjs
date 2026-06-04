@@ -15,6 +15,7 @@ import { redactSecrets } from '../sanitizer.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { getRepoIdByUuid } from '../store/repo.mjs';
 import { loadBanditArms } from '../store/bandit-fp.mjs';
+import { readShipEvents, readAuditEffectiveness } from '../store/plans-ship.mjs';
 import { getSecurityStats } from '../store/security.mjs';
 import { getPurposeHealth } from '../store/purpose-health.mjs';
 import { PurposeConfigSchema } from './schema.mjs';
@@ -189,6 +190,76 @@ async function collectPromptVariants() {
       data: { cloud: false, arms: [] },
       status: { status: 'unexpected-error', detail: redactSecrets(`bandit arms query failed: ${err.message}`) },
     };
+  }
+}
+
+/** Resolve the canonical repoRowId for the cwd repo (Cluster A identity). */
+async function canonicalRepoId(root) {
+  try { return (await getRepoIdByUuid(resolveRepoIdentity(root).repoUuid))?.id || null; }
+  catch { return null; }
+}
+
+/** Collect ship-event health (Cluster D / Phase 7) — per-repo outcome mix + recent. */
+async function collectShipHealth(root) {
+  const empty = { cloud: false, byOutcome: [], recent: [] };
+  try {
+    const repoId = await canonicalRepoId(root);
+    if (!repoId) return { data: empty, status: { status: 'missing-optional', detail: 'no canonical repo row for this directory' } };
+    const r = await readShipEvents(repoId, { limit: 10 });
+    if (!r) return { data: empty, status: { status: 'missing-optional', detail: 'ship telemetry needs cloud + a service-role key' } };
+    if (!r.byOutcome.length) return { data: { cloud: true, byOutcome: [], recent: [] }, status: { status: 'missing-optional', detail: 'no ship events recorded yet' } };
+    return {
+      data: {
+        cloud: true,
+        byOutcome: r.byOutcome.map((o) => ({ outcome: String(o.outcome), count: Number(o.count) || 0 })),
+        recent: r.recent.map((e) => ({
+          outcome: String(e.outcome),
+          branch: String(e.branch || ''),
+          commitSha: String(e.commit_sha || '').slice(0, 8),
+          overridden: !!e.overridden_by_user,
+          createdAt: e.created_at ? new Date(e.created_at).toISOString() : '',
+        })),
+      },
+      status: { status: 'ok', detail: '' },
+    };
+  } catch (err) {
+    return { data: empty, status: { status: 'unexpected-error', detail: redactSecrets(`ship events query failed: ${err.message}`) } };
+  }
+}
+
+/** Empty audit-effectiveness shape (schema-valid). */
+function emptyEffectiveness() {
+  return { cloud: false, confirmedHits: 0, auditMisses: 0, falsePositives: 0, severityUnderstated: 0, severityOverstated: 0, precision: null, recall: null };
+}
+
+/** Collect audit-effectiveness (Cluster D / Phase 7) — per-repo precision/recall vs persona ground truth. */
+async function collectAuditEffectiveness(root) {
+  try {
+    const repoId = await canonicalRepoId(root);
+    if (!repoId) return { data: emptyEffectiveness(), status: { status: 'missing-optional', detail: 'no canonical repo row for this directory' } };
+    const row = await readAuditEffectiveness(repoId);
+    if (!row) return { data: emptyEffectiveness(), status: { status: 'missing-optional', detail: 'effectiveness needs cloud + a service-role key' } };
+    const n = (v) => (v == null ? 0 : Number(v) || 0);
+    const data = {
+      cloud: true,
+      confirmedHits: n(row.confirmed_hits),
+      auditMisses: n(row.audit_misses),
+      falsePositives: n(row.audit_false_positives),
+      severityUnderstated: n(row.severity_understated),
+      severityOverstated: n(row.severity_overstated),
+      precision: row.user_visible_precision == null ? null : Number(row.user_visible_precision),
+      recall: row.user_visible_recall == null ? null : Number(row.user_visible_recall),
+    };
+    // No correlations yet → all-zero/null. Surface that as the empty state so the
+    // panel reads "awaiting persona↔audit correlations", not a false "0% precision".
+    const hasSignal = data.confirmedHits || data.auditMisses || data.falsePositives
+      || data.severityUnderstated || data.severityOverstated;
+    if (!hasSignal) {
+      return { data, status: { status: 'missing-optional', detail: 'no persona↔audit correlations yet (run /persona-test with audit linkage)' } };
+    }
+    return { data, status: { status: 'ok', detail: '' } };
+  } catch (err) {
+    return { data: emptyEffectiveness(), status: { status: 'unexpected-error', detail: redactSecrets(`effectiveness query failed: ${err.message}`) } };
   }
 }
 
@@ -417,12 +488,14 @@ export async function collectTelemetry(opts = {}) {
 
   // M4 — collectAuditRuns no longer needs a client param; it pulls from the
   // shared pg pool via lib/db/client.mjs. Pass null for the legacy positional.
-  const [auditRuns, learning, security, purposeHealth, promptVariants] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness] = await Promise.all([
     collectAuditRuns(null),
     collectLearning(root),
     collectSecurity(root),
     collectPurposeHealth(root),
     collectPromptVariants(),
+    collectShipHealth(root),
+    collectAuditEffectiveness(root),
   ]);
   const requirements = collectRequirements(root);
 
@@ -440,6 +513,8 @@ export async function collectTelemetry(opts = {}) {
       security: security.status,
       purposeHealth: purposeHealth.status,
       promptVariants: promptVariants.status,
+      shipHealth: shipHealth.status,
+      auditEffectiveness: auditEffectiveness.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
@@ -447,6 +522,8 @@ export async function collectTelemetry(opts = {}) {
     security: security.data,
     purposeHealth: purposeHealth.data,
     promptVariants: promptVariants.data,
+    shipHealth: shipHealth.data,
+    auditEffectiveness: auditEffectiveness.data,
   };
 }
 

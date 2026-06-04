@@ -332,6 +332,29 @@ export const TelemetryDataSchema = z.object({
       contextBucket: z.string(),
     })),
   }).optional(),
+  // Ship-event health — Cluster D / Phase 7. Optional (back-compat).
+  shipHealth: z.object({
+    cloud: z.boolean(),
+    byOutcome: z.array(z.object({ outcome: z.string(), count })),
+    recent: z.array(z.object({
+      outcome: z.string(),
+      branch: z.string(),
+      commitSha: z.string(),
+      overridden: z.boolean(),
+      createdAt: z.string(),
+    })),
+  }).optional(),
+  // Audit effectiveness (precision/recall vs persona ground truth) — Cluster D.
+  auditEffectiveness: z.object({
+    cloud: z.boolean(),
+    confirmedHits: count,
+    auditMisses: count,
+    falsePositives: count,
+    severityUnderstated: count,
+    severityOverstated: count,
+    precision: z.number().nullable(),
+    recall: z.number().nullable(),
+  }).optional(),
 });
 
 /**

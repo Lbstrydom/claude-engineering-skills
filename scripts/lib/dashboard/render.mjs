@@ -28,6 +28,8 @@ import sectionAuditRuns from './sections/audit-runs.mjs';
 import sectionRequirements from './sections/requirements.mjs';
 import sectionLearning from './sections/learning.mjs';
 import sectionPromptVariants from './sections/prompt-variants.mjs';
+import sectionShipHealth from './sections/ship-health.mjs';
+import sectionAuditEffectiveness from './sections/audit-effectiveness.mjs';
 import sectionSecurity from './sections/security.mjs';
 import sectionPurpose from './sections/purpose.mjs';
 import sectionPurposeHealth from './sections/purpose-health.mjs';
@@ -51,6 +53,8 @@ const SLICERS = {
   requirements: (d) => ({ src: d.sources.requirements || { status: 'ok', detail: '' }, requirements: d.requirements }),
   learning:     (d) => ({ src: d.sources.learning || { status: 'ok', detail: '' }, learning: d.learning }),
   promptVariants:(d) => ({ src: d.sources.promptVariants || { status: 'ok', detail: '' }, promptVariants: d.promptVariants || { cloud: false, arms: [] } }),
+  shipHealth:   (d) => ({ src: d.sources.shipHealth || { status: 'ok', detail: '' }, shipHealth: d.shipHealth || { cloud: false, byOutcome: [], recent: [] } }),
+  auditEffectiveness:(d) => ({ src: d.sources.auditEffectiveness || { status: 'ok', detail: '' }, auditEffectiveness: d.auditEffectiveness || { cloud: false, confirmedHits: 0, auditMisses: 0, falsePositives: 0, severityUnderstated: 0, severityOverstated: 0, precision: null, recall: null } }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
   purposeHealth:(d) => ({ src: d.sources.purposeHealth || { status: 'ok', detail: '' }, purposeHealth: d.purposeHealth || { asOf: '', windowDays: 30, repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null }, purposeBadges: [] } }),
 };
@@ -69,6 +73,8 @@ const REGISTRY = {
     { id: 'requirements', title: 'Requirements',   build: sectionRequirements, slice: SLICERS.requirements },
     { id: 'learning',     title: 'Learning',       build: sectionLearning,     slice: SLICERS.learning },
     { id: 'promptVariants',title: 'Prompt Variants',build: sectionPromptVariants, slice: SLICERS.promptVariants },
+    { id: 'auditEffectiveness',title: 'Audit Effectiveness',build: sectionAuditEffectiveness, slice: SLICERS.auditEffectiveness },
+    { id: 'shipHealth',   title: 'Ship Health',    build: sectionShipHealth,   slice: SLICERS.shipHealth },
     { id: 'security',     title: 'Security',       build: sectionSecurity,     slice: SLICERS.security },
     { id: 'purposeHealth',title: 'Purpose Health', build: sectionPurposeHealth,slice: SLICERS.purposeHealth },
   ],
@@ -127,7 +133,7 @@ export function renderDocument(data, kind, assets) {
     // Must list EVERY telemetry section source — omitting one (e.g. security)
     // would show the page-level "nothing yet" placeholder while that section
     // actually has data, hiding it entirely.
-    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'security', 'purposeHealth']
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',

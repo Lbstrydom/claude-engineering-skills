@@ -1,7 +1,7 @@
 # Plan: Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops
 
 - **Date**: 2026-06-03
-- **Status**: In Progress (A applied 2026-06-03; B+C landed 2026-06-04; D bandit panel landed 2026-06-04 — audit-effectiveness/ship-health panels data-gated + the two determinism follow-ups remain)
+- **Status**: In Progress (A applied 2026-06-03; B+C landed 2026-06-04; D all 3 panels landed 2026-06-04 — bandit + ship-health + audit-effectiveness; remaining: per-repo Audit Runs tab refinement + the two determinism follow-ups)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `cross-skill-bridge`, `shared-lib`, `stores`, `scripts`

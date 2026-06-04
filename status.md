@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-06-04 — Cluster D follow-up: the two data-gated dashboard panels (ship-health + audit-effectiveness)
+
+Completed the remaining Phase 7 panels that were deferred for sparse data — built with precise empty-states so they're present now and populate as data accrues.
+
+- **Ship Health**: new `readShipEvents(repoId)` reader (`plans-ship.mjs`) + `collectShipHealth` + `sections/ship-health.mjs` (per-outcome counts + recent ships). Empty-state: "no ship events recorded yet" (the 4 legacy `ship_events` rows have null `repo_id`; new ones attach to the canonical id).
+- **Audit Effectiveness**: `collectAuditEffectiveness` (`readAuditEffectiveness`) + `sections/audit-effectiveness.mjs` (user-visible precision/recall + confirmed/missed/false-positive + severity skew). Empty-state: "no persona↔audit correlations yet" (model-driven; "—" for null rates rather than a false 0%).
+- Both repo-scoped via `canonicalRepoId` (resolveRepoIdentity → getRepoIdByUuid), registered in REGISTRY/SLICERS/schema/section-contract, and **added to the `allMissing` empty-state list** (the bug Gemini caught for prompt-variants — not repeated). `readShipEvents` → 114-export contract.
+
+### Quality
+audit-code 1 round (H:3/M:14 — all pre-existing non-diff code, scope-noise, or Cluster-A-accepted; none new) + **Gemini round 1 → APPROVE**, coherence Strong, which explicitly validated the triage ("correctly triaged as out-of-scope to prevent scope creep"). Render-smoke vs live store: schema VALID, both panels show their specific empty-states. `npm run check` 3349/0; dashboard 34/0.
+
+### Remaining (small)
+- **Per-repo Audit Runs tab** — deferred: modifies the working project-wide tab via `audit-metrics.mjs` (`fetchCloudMetrics` would need a repoId param); a separate refinement, not a data-gated panel.
+- The two determinism follow-ups (outcome-capture, ux-lock runners) — unchanged.
+
+---
+
 ## 2026-06-04 — Learning-store signal recovery: Cluster D (dashboard surfacing — Prompt Variants panel)
 
 Implemented Cluster D / Phase 7 (the plan's final cluster, read-only presentation). Surfaces the restored signal in the dashboard.
