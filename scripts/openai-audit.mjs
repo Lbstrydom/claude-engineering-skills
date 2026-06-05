@@ -28,7 +28,6 @@
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
 import fs from 'node:fs';
 import path from 'node:path';
-import OpenAI from 'openai';
 import { z } from 'zod';
 import { zodTextFormat } from 'openai/helpers/zod';
 import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema } from './lib/schemas.mjs';
@@ -76,8 +75,11 @@ import {
 import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from './lib/learning/decision-logger.mjs';
 import { PromptBandit, computeReward, buildContext } from './bandit.mjs';
-import { openaiConfig, PASS_NAMES, modelPricing } from './lib/config.mjs';
+import { openaiConfig, PASS_NAMES, modelPricing, azureConfig } from './lib/config.mjs';
 import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey } from './lib/model-resolver.mjs';
+import { createOpenAIClient } from './lib/openai-client.mjs';
+import { classifyResponsesSupport } from './lib/openai-responses-capability.mjs';
+import { zodResponseFormat } from 'openai/helpers/zod';
 
 /**
  * Print a one-line cost-estimate preflight to stderr so users see what
@@ -501,6 +503,66 @@ function normalisePromptInput(opts) {
   ];
 }
 
+// The wire-level model id. Public path: the resolved sentinel (MODEL). Azure
+// path: the deployment name (§1.5 H4 — never feed a deployment through
+// resolveModel; the sentinel stays for logging/pricing only).
+function wireModel() {
+  return azureConfig.active ? azureConfig.gptDeployment : MODEL;
+}
+
+// Process-level latch: once a deployment proves it lacks the Responses route,
+// route every subsequent pass via chat-completions (don't re-probe per call).
+let _responsesUnsupported = false;
+
+/**
+ * Call the Responses API, transparently falling back to chat-completions +
+ * `zodResponseFormat` ONLY when the deployment positively reports the Responses
+ * route is unsupported (a chat-only Azure deployment like `gpt-5.3-chat`). A
+ * generic 404 / config error is rethrown — never masked (AGENTS.md). Returns a
+ * Responses-API-shaped object so the caller's extraction code is unchanged.
+ */
+async function parseStructured(openai, requestParams, callOpts, ctx) {
+  if (!_responsesUnsupported) {
+    try {
+      return await openai.responses.parse(requestParams, callOpts);
+    } catch (err) {
+      if (classifyResponsesSupport(err) !== 'unsupported') throw err;
+      _responsesUnsupported = true;
+      process.stderr.write(
+        `  [openai-audit] Responses API unsupported on deployment "${ctx.model}" — ` +
+        `using chat-completions + zodResponseFormat for the rest of this run.\n`,
+      );
+    }
+  }
+  // normalisePromptInput already returns chat-shaped [{role, content:string}],
+  // so `input` is directly usable as `messages`.
+  const params = {
+    model: ctx.model,
+    messages: ctx.input,
+    response_format: zodResponseFormat(ctx.schema, ctx.schemaName),
+    max_completion_tokens: ctx.tokens,
+  };
+  if (supportsReasoningEffort(ctx.model)) params.reasoning_effort = ctx.effort;
+  const completion = await openai.chat.completions.parse(params, callOpts);
+  const choice = completion.choices?.[0];
+  const u = completion.usage || {};
+  const parsed = choice?.message?.parsed ?? null;
+  const truncated = choice?.finish_reason === 'length';
+  return {
+    output_parsed: parsed,
+    status: truncated ? 'incomplete' : 'completed',
+    incomplete_details: truncated ? { reason: 'max_tokens' } : undefined,
+    // Surface raw text for the bracket-repair path only when parsing failed.
+    output: parsed ? [] : [{ type: 'output_text', text: choice?.message?.content ?? '' }],
+    usage: {
+      input_tokens: u.prompt_tokens ?? 0,
+      input_tokens_details: { cached_tokens: u.prompt_tokens_details?.cached_tokens ?? 0 },
+      output_tokens: u.completion_tokens ?? 0,
+      output_tokens_details: { reasoning_tokens: u.completion_tokens_details?.reasoning_tokens ?? 0 },
+    },
+  };
+}
+
 async function _callGPTOnce(openai, opts) {
   const { schema, schemaName, reasoning, maxTokens, timeoutMs, passName } = opts;
   const effort = reasoning ?? REASONING_EFFORT;
@@ -522,18 +584,22 @@ async function _callGPTOnce(openai, opts) {
   }
 
   try {
+    const wm = wireModel();
     const requestParams = {
-      model: MODEL,
+      model: wm,
       input,
       text: { format: zodTextFormat(schema, schemaName) },
       max_output_tokens: tokens
     };
 
-    if (supportsReasoningEffort(MODEL)) {
+    if (supportsReasoningEffort(wm)) {
       requestParams.reasoning = { effort };
     }
 
-    const response = await openai.responses.parse(requestParams, { signal: controller.signal });
+    const response = await parseStructured(
+      openai, requestParams, { signal: controller.signal },
+      { model: wm, input, schema, schemaName, effort, tokens },
+    );
     clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
 
@@ -3201,7 +3267,7 @@ async function main() {
   const bandit = new PromptBandit();
   const fpTracker = new FalsePositiveTracker();
 
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const openai = await createOpenAIClient({ purpose: 'gpt' });
 
   // Increment run counter for meta-assessment interval tracking
   incrementRunCounter();

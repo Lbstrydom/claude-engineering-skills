@@ -36,7 +36,8 @@ import {
 import { resolveRepoIdentity, persistRepoIdentity } from '../lib/repo-identity.mjs';
 import { redactSecrets } from '../lib/secret-patterns.mjs';
 import { preWriteSecretGate } from '../lib/security/secret-classifier.mjs';
-import { symbolIndexConfig } from '../lib/config.mjs';
+import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
+import { embedText } from '../lib/embed-text.mjs';
 import { parseSecurityStrategy } from './parse-strategy.mjs';
 import { classifyMitigation, runSemgrepIfNeeded } from './incident-status.mjs';
 import { emit } from '../lib/cli-io.mjs';
@@ -124,23 +125,12 @@ function isOnDefaultBranch(cwd) {
 // out at the writer rather than silently fail at INSERT time.
 const SECURITY_EMBED_DIM_V1 = 768;
 
-async function generateEmbedding(ai, text, modelId, dim) {
-  const resp = await ai.models.embedContent({
-    model: modelId,
-    contents: text,
-    config: { outputDimensionality: dim },
-  });
-  const vec = resp.embeddings?.[0]?.values || resp.embedding?.values || null;
-  // R2-H4: validate writer contract — non-empty array, exact dim match.
-  // RPC filters embedding IS NOT NULL, so a silently-null persist (R2-H6)
-  // would make the row invisible to retrieval.
-  if (!Array.isArray(vec) || vec.length === 0) {
-    throw new Error(`embedding API returned empty/invalid vector (model=${modelId})`);
-  }
-  if (vec.length !== dim) {
-    throw new Error(`embedding dim mismatch: got ${vec.length}, expected ${dim} (model=${modelId})`);
-  }
-  return vec;
+async function generateEmbedding(text, modelId, dim) {
+  // Provider routing + empty/dim validation live in embed-text.mjs (Azure
+  // OpenAI when the work profile is active, else Gemini). Same VECTOR(768)
+  // writer contract as before — embedText throws on empty/dim-mismatch.
+  const { result } = await embedText(text, { dim, model: modelId });
+  return result;
 }
 
 async function main() {
@@ -177,7 +167,11 @@ async function main() {
   // override) but the fallback is the same value the QUERY path uses,
   // so writer and reader can never silently drift.
   const active = await getActiveSnapshot(repoId);
-  const modelToUse = active?.activeEmbeddingModel || symbolIndexConfig.embedModel;
+  // Under the Azure profile, embed-text uses the Azure deployment — record THAT
+  // as the provenance model so reads and writes agree on the vector space.
+  const modelToUse = azureConfig.active
+    ? azureConfig.embedDeployment
+    : (active?.activeEmbeddingModel || symbolIndexConfig.embedModel);
   const dimToUse = active?.activeEmbeddingDim || symbolIndexConfig.embedDim;
 
   // R2-H5: v1 storage hard-coded to VECTOR(768). Hard-fail before any
@@ -190,10 +184,11 @@ async function main() {
     );
   }
 
-  // R2-M8/M9: instantiate Gemini client ONCE at process startup, not per-row.
-  const { GoogleGenAI } = await import('@google/genai');
-  if (!process.env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY not set');
-  const aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  // Embedding provider is resolved inside embed-text.mjs (Azure work profile
+  // or Gemini). Require at least one to be configured before doing work.
+  if (!azureConfig.active && !process.env.GEMINI_API_KEY) {
+    throw new Error('No embedding provider — set GEMINI_API_KEY or the Azure work profile (AZURE_OPENAI_ENDPOINT).');
+  }
 
   // Parse markdown
   const markdownText = fs.readFileSync(strategyAbs, 'utf-8');
@@ -262,7 +257,7 @@ async function main() {
     if (needsEmbed) {
       try {
         const text = redactSecrets(`${inc.description} ${inc.lessons_learned || ''}`).text;
-        embedding = await generateEmbedding(aiClient, text, modelToUse, dimToUse);
+        embedding = await generateEmbedding(text, modelToUse, dimToUse);
       } catch (err) {
         embedError = err.message;
         logWarn(`embed failed for ${inc.incident_id}: ${err.message}`);

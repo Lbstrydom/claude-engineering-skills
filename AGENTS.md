@@ -884,6 +884,61 @@ when revisited): [scripts/symbol-index/summarise.mjs](scripts/symbol-index/summa
 **Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through
 whichever backend the env resolves to.
 
+## Azure AI Foundry Work Profile
+
+Run the **same** bundle in a corporate Azure environment (restricted models)
+without drifting from the public-profile repo. Full guide:
+[`docs/azure-work-profile.md`](docs/azure-work-profile.md); plan +
+audit trail: [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.md).
+
+> **Opt-in invariant (load-bearing).** The Azure path activates **only** when
+> `AZURE_OPENAI_ENDPOINT` is set. With no Azure env vars, client construction and
+> resolved models are **byte-identical** to the public path (regression-guarded
+> by `tests/openai-client.test.mjs`). It never touches your personal setup.
+
+| Role | Public | Azure work profile |
+|---|---|---|
+| GPT auditor | `new OpenAI()` → api.openai.com | Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` |
+| Final reviewer | Gemini → Claude Opus fallback | **Opus on Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` — replaces Gemini |
+| Embeddings | Gemini `gemini-embedding-001` | Azure `text-embedding-3-small` (`dimensions: 768`) |
+
+**Seam (mirrors `anthropic-client.mjs`)**: [`scripts/lib/openai-client.mjs`](scripts/lib/openai-client.mjs)
+`createOpenAIClient({purpose})` returns an Azure-v1 or public `OpenAI` client by
+env presence; [`scripts/lib/embed-text.mjs`](scripts/lib/embed-text.mjs)
+`embedText()` routes embeddings the same way. The GPT auditor swaps
+`responses.parse()` → chat-completions + `zodResponseFormat` **only** on a
+positive Responses-unsupported signal ([`openai-responses-capability.mjs`](scripts/lib/openai-responses-capability.mjs)
+— a generic 404 stays fatal, per the "never retry 404" rule). `azureConfig` lives
+in [config.mjs](scripts/lib/config.mjs) (`buildAzureConfig`, fail-fast + redacted).
+
+**Deployment names vs sentinels**: `OPENAI_AUDIT_MODEL` /
+`CLAUDE_FINAL_REVIEW_MODEL` stay logical sentinels (logging/pricing); the wire
+deployment comes from the `AZURE_*_DEPLOYMENT` vars — this dodges the
+`gpt-5.3 → latest-gpt` remap footgun. `MODEL_CATALOG_REFRESH` auto-skips under
+Azure.
+
+**Vector-space safety**: embeddings are only comparable within one provider's
+space. Adopting Azure on a Gemini-built index is **refused** (provenance guard
+in `neighbourhood-query.mjs`); rebuild once with `npm run arch:refresh` +
+`npm run security:refresh`.
+
+**Final-reviewer precedence** (top wins): `--provider` flag → Azure (`azure-claude`)
+→ Gemini → public Claude Opus. Foundry transport is OpenAI-shaped by default;
+`AZURE_CLAUDE_API_SHAPE=anthropic` switches to native Anthropic via baseURL.
+The exact Foundry route (`/openai/v1` vs `/models`) is
+**manual-verification-required** against the live endpoint — `AZURE_FOUNDRY_API_PATH`
+overrides it.
+
+**Postgres**: still just a DSN (local now, AWS/Azure-managed later, no code
+change). `node scripts/setup-postgres.mjs --ensure-local` is a **guided**
+preflight — detects `psql`, prints the `winget`/`choco`/`apt`/`brew` command if
+missing (never auto-installs), then chains `--migrate`. Legacy
+`AUDIT_POSTGRES_URL` / `AUDIT_POSTGRES_SSL_MODE` are accepted as back-compat
+aliases (one-time notice; canonical wins). `AUDIT_STORE=postgres` without a DSN
+fails fast.
+
+Template: [`defaults/work-profile.env.example`](defaults/work-profile.env.example).
+
 ## Cross-Skill Data Loop
 
 Migration `20260419120000_cross_skill_data_loop.sql` closes the feedback loop

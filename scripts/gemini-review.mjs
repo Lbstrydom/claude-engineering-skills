@@ -25,8 +25,10 @@ import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
-import { geminiConfig, claudeConfig } from './lib/config.mjs';
+import { geminiConfig, claudeConfig, azureConfig } from './lib/config.mjs';
 import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
+import { createOpenAIClient } from './lib/openai-client.mjs';
+import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { PromptBandit } from './bandit.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
@@ -467,6 +469,78 @@ async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, 
   }
 }
 
+/**
+ * Final review via Claude Opus on Azure AI Foundry (replaces Gemini on the work
+ * profile). Two transports per `AZURE_CLAUDE_API_SHAPE`:
+ *   - `openai` (default): OpenAI-shaped chat-completions on the Foundry endpoint.
+ *   - `anthropic`: native Anthropic Messages via an Azure-baseURL'd client.
+ * JSON is requested via the system prompt + parsed (not strict response_format),
+ * matching `callClaudeOpus` — Foundry Claude may not honour OpenAI strict mode.
+ * Same `{result, usage, latencyMs}` contract as the other providers.
+ */
+async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, passName }) {
+  const startMs = Date.now();
+  const model = azureConfig.claudeDeployment;
+  const shape = azureConfig.claudeApiShape;
+  if (!model) {
+    throw new Error('[azure-claude] AZURE_FOUNDRY_CLAUDE_DEPLOYMENT is required for the Azure final reviewer.');
+  }
+  if (passName) {
+    process.stderr.write(`  [${passName}] Starting Azure Foundry Claude ${model} (${shape} shape, timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
+  }
+  const sys = `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`;
+  const timeoutPromise = new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
+  });
+
+  let requestPromise, extractText, extractUsage;
+  if (shape === 'anthropic') {
+    requestPromise = client.messages.create({
+      model, max_tokens: MAX_OUTPUT_TOKENS, system: sys,
+      messages: [{ role: 'user', content: userPrompt }],
+    });
+    extractText = (r) => r.content?.[0]?.text?.trim() || '{}';
+    extractUsage = (r) => ({ input_tokens: r.usage?.input_tokens ?? 0, output_tokens: r.usage?.output_tokens ?? 0, thinking_tokens: 0 });
+  } else {
+    requestPromise = client.chat.completions.create({
+      model, max_tokens: MAX_OUTPUT_TOKENS,
+      messages: [{ role: 'system', content: sys }, { role: 'user', content: userPrompt }],
+    });
+    extractText = (r) => r.choices?.[0]?.message?.content?.trim() || '{}';
+    extractUsage = (r) => ({ input_tokens: r.usage?.prompt_tokens ?? 0, output_tokens: r.usage?.completion_tokens ?? 0, thinking_tokens: 0 });
+  }
+
+  try {
+    const response = await Promise.race([requestPromise, timeoutPromise]);
+    const latencyMs = Date.now() - startMs;
+    const text = extractText(response);
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch (parseErr) {
+      throw new Error(`Failed to parse Azure Claude JSON response: ${parseErr.message}\nRaw: ${text.slice(0, 500)}`);
+    }
+    if (zodSchema) {
+      const validated = zodSchema.safeParse(result);
+      if (validated.success) result = validated.data;
+      else process.stderr.write(`  [${passName ?? 'azure-claude'}] Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
+    }
+    const usage = { ...extractUsage(response), latency_ms: latencyMs };
+    if (passName) {
+      process.stderr.write(`  [${passName}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out)\n`);
+    }
+    return { result, usage, latencyMs };
+  } catch (err) {
+    const latencyMs = Date.now() - startMs;
+    const detail = err.status ? `HTTP ${err.status}${err.message ? `: ${err.message}` : ''}` : (err.message || 'unknown error');
+    const msg = `[${passName ?? 'azure-claude'}] ${detail} (${(latencyMs / 1000).toFixed(1)}s)`;
+    process.stderr.write(`  [${passName ?? 'azure-claude'}] FAILED: ${msg}\n`);
+    const wrapped = new Error(msg);
+    if (err.status) wrapped.status = err.status;
+    throw wrapped;
+  }
+}
+
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
 /**
@@ -590,8 +664,8 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     codeContext || '(No code files found — review based on transcript only)',
   ].filter(Boolean).join('\n');
 
-  const modelMap = { gemini: MODEL, 'claude-opus': CLAUDE_OPUS_MODEL };
-  const labelMap = { gemini: 'Gemini', 'claude-opus': 'Claude Opus' };
+  const modelMap = { gemini: MODEL, 'claude-opus': CLAUDE_OPUS_MODEL, 'azure-claude': azureConfig.claudeDeployment };
+  const labelMap = { gemini: 'Gemini', 'claude-opus': 'Claude Opus', 'azure-claude': 'Azure Foundry Claude' };
   const selectedModel = modelMap[provider] || provider;
   const providerLabel = labelMap[provider] || provider;
   process.stderr.write(`\n── ${providerLabel} Final Review ──\n`);
@@ -618,6 +692,15 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     });
   }
 
+  if (provider === 'azure-claude') {
+    return callAzureClaude(client, {
+      systemPrompt,
+      userPrompt,
+      zodSchema: GeminiFinalReviewSchema,
+      passName: 'azure-claude-review'
+    });
+  }
+
   return callClaudeOpus(client, {
     systemPrompt,
     userPrompt,
@@ -630,7 +713,7 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
 
 function formatReviewResult(result, usage, latencyMs, provider) {
   const lines = [];
-  const selectedModel = provider === 'gemini' ? MODEL : CLAUDE_OPUS_MODEL;
+  const selectedModel = provider === 'gemini' ? MODEL : (provider === 'azure-claude' ? azureConfig.claudeDeployment : CLAUDE_OPUS_MODEL);
   const title = provider === 'gemini'
     ? 'Gemini 3.1 Pro — Independent Final Review'
     : 'Claude Opus — Independent Final Review';
@@ -785,9 +868,19 @@ function selectProvider(providerOverride) {
     }
     return 'gemini';
   }
+  if (providerOverride === 'azure-claude') {
+    assertAzureClaudeReady();
+    return 'azure-claude';
+  }
   if (providerOverride) {
-    console.error(`Error: Unknown provider "${providerOverride}". Use "gemini" or "anthropic".`);
+    console.error(`Error: Unknown provider "${providerOverride}". Use "gemini", "anthropic", or "azure-claude".`);
     process.exit(1);
+  }
+  // §1.5 precedence: Azure work profile replaces Gemini as the final reviewer
+  // (above auto Gemini/Claude selection; CLI override above still wins).
+  if (azureConfig.active) {
+    assertAzureClaudeReady();
+    return 'azure-claude';
   }
   if (process.env.GEMINI_API_KEY) return 'gemini';
   if (process.env.ANTHROPIC_API_KEY) return 'claude-opus';
@@ -798,9 +891,33 @@ function selectProvider(providerOverride) {
   return null;
 }
 
+/**
+ * Fail-fast (Cluster-A audit H3): the azure-claude final reviewer needs the
+ * Foundry endpoint + deployment regardless of which transport shape is used.
+ */
+function assertAzureClaudeReady() {
+  const missing = [];
+  if (!azureConfig.aiEndpoint) missing.push('AZURE_AI_ENDPOINT');
+  if (!azureConfig.claudeDeployment) missing.push('AZURE_FOUNDRY_CLAUDE_DEPLOYMENT');
+  if (missing.length > 0) {
+    console.error(
+      `Error: Azure final reviewer requires ${missing.join(' + ')}. ` +
+      `Set ${missing.length > 1 ? 'them' : 'it'} or unset AZURE_OPENAI_ENDPOINT to use Gemini/Claude.`,
+    );
+    process.exit(1);
+  }
+}
+
 async function buildClient(provider) {
   if (provider === 'gemini') {
     return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+  if (provider === 'azure-claude') {
+    process.stderr.write(`  [final-review] Azure work profile — Opus via Foundry (${azureConfig.claudeApiShape} shape, ${azureConfig.claudeDeployment}).\n`);
+    if (azureConfig.claudeApiShape === 'anthropic') {
+      return createAnthropicClient({ baseURL: azureConfig.aiEndpoint });
+    }
+    return createOpenAIClient({ purpose: 'foundry-claude' });
   }
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   process.stderr.write(`  [final-review] GEMINI_API_KEY missing; using Claude Opus fallback (${CLAUDE_OPUS_MODEL}).\n`);
@@ -911,7 +1028,7 @@ function addSemanticIds(result, provider) {
 
 function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile) {
   if (jsonMode || outFile) {
-    const selectedModel = provider === 'gemini' ? MODEL : CLAUDE_OPUS_MODEL;
+    const selectedModel = provider === 'gemini' ? MODEL : (provider === 'azure-claude' ? azureConfig.claudeDeployment : CLAUDE_OPUS_MODEL);
     const data = { ...result, _model: selectedModel, _provider: provider, _usage: usage };
     if (outFile) {
       const newCount = result.new_findings?.length ?? 0;

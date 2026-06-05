@@ -269,3 +269,89 @@ export const dbConfig = Object.freeze({
   sslMode: (process.env.AUDIT_DB_SSL_MODE || 'require').trim(),
   poolMax: safeInt(process.env.AUDIT_DB_POOL_MAX, 4),
 });
+
+// ── Azure AI Foundry Work Profile (opt-in) ──────────────────────────────────
+// Plan: docs/plans/azure-work-profile.md §1.5. The ENTIRE Azure path is gated
+// on presence of AZURE_OPENAI_ENDPOINT. With it absent, `active` is false and
+// every consumer falls back to its public construction — byte-identical to the
+// pre-Azure behaviour (the load-bearing opt-in invariant).
+//
+// Pure builder (exported for tests — ESM reads process.env once at import, so
+// the frozen `azureConfig` below is a snapshot; tests call buildAzureConfig
+// with a synthetic env instead of re-importing the module).
+
+const VALID_CLAUDE_SHAPES = new Set(['openai', 'anthropic']);
+
+/**
+ * Build the Azure config from an env-like object. Throws (fail-fast, redacted —
+ * never echoes key material) when Azure is half-configured.
+ * @param {Record<string,string|undefined>} env
+ * @returns {Readonly<{active:boolean, openaiEndpoint:string|null, aiEndpoint:string|null,
+ *   apiKey:string|null, apiVersion:string, gptDeployment:string|null,
+ *   claudeDeployment:string|null, embedDeployment:string, claudeApiShape:string,
+ *   foundryApiPath:string}>}
+ */
+export function buildAzureConfig(env = process.env) {
+  const openaiEndpoint = (env.AZURE_OPENAI_ENDPOINT || '').trim() || null;
+  const active = !!openaiEndpoint;
+
+  if (!active) {
+    // Inert snapshot — no validation, no env mutation. Public path unchanged.
+    return Object.freeze({
+      active: false,
+      openaiEndpoint: null, aiEndpoint: null, apiKey: null,
+      apiVersion: 'preview', gptDeployment: null, claudeDeployment: null,
+      embedDeployment: 'text-embedding-3-small', claudeApiShape: 'openai',
+      foundryApiPath: '/openai/v1',
+    });
+  }
+
+  const apiKey = (env.AZURE_OPENAI_API_KEY || '').trim() || null;
+  const gptDeployment = (env.AZURE_OPENAI_GPT_DEPLOYMENT || '').trim() || null;
+
+  // All-or-nothing (§1.5): endpoint set ⇒ key + GPT deployment required.
+  // Error names the missing var(s) only — never the values.
+  const missing = [];
+  if (!apiKey) missing.push('AZURE_OPENAI_API_KEY');
+  if (!gptDeployment) missing.push('AZURE_OPENAI_GPT_DEPLOYMENT');
+  if (missing.length > 0) {
+    throw new Error(
+      `[config] AZURE_OPENAI_ENDPOINT is set (Azure work profile active) but ` +
+      `${missing.join(' + ')} ${missing.length > 1 ? 'are' : 'is'} missing. ` +
+      `Set ${missing.length > 1 ? 'them' : 'it'} or unset AZURE_OPENAI_ENDPOINT to use the public profile.`,
+    );
+  }
+
+  const claudeApiShape = (env.AZURE_CLAUDE_API_SHAPE || 'openai').trim();
+  if (!VALID_CLAUDE_SHAPES.has(claudeApiShape)) {
+    throw new Error(
+      `[config] Invalid AZURE_CLAUDE_API_SHAPE="${claudeApiShape}". ` +
+      `Valid values: ${[...VALID_CLAUDE_SHAPES].join(', ')}.`,
+    );
+  }
+
+  return Object.freeze({
+    active: true,
+    openaiEndpoint,
+    aiEndpoint: (env.AZURE_AI_ENDPOINT || '').trim() || null,
+    apiKey,
+    apiVersion: (env.AZURE_OPENAI_API_VERSION || 'preview').trim(),
+    gptDeployment,
+    claudeDeployment: (env.AZURE_FOUNDRY_CLAUDE_DEPLOYMENT || '').trim() || null,
+    embedDeployment: (env.AZURE_OPENAI_EMBED_DEPLOYMENT || 'text-embedding-3-small').trim(),
+    claudeApiShape,
+    // Foundry Serverless non-OpenAI models may route at /models rather than
+    // /openai/v1 (Gemini-R3-M, manual-verification-required). Overridable for
+    // the live-smoke without a code change.
+    foundryApiPath: (env.AZURE_FOUNDRY_API_PATH || '/openai/v1').trim(),
+  });
+}
+
+export const azureConfig = buildAzureConfig(process.env);
+
+// When the Azure profile is active, the live model catalog (api.openai.com /
+// generativelanguage / api.anthropic.com) would 404 against Azure-only access,
+// so default the catalog refresh to skip unless the operator overrode it.
+if (azureConfig.active && process.env.MODEL_CATALOG_REFRESH === undefined) {
+  process.env.MODEL_CATALOG_REFRESH = 'skip';
+}

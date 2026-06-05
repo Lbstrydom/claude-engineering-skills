@@ -21,9 +21,9 @@ import {
   NeighbourhoodResultSchema,
 } from './symbol-index-contracts.mjs';
 import { recommendationFromSimilarity } from './symbol-index.mjs';
-import { symbolIndexConfig } from './config.mjs';
+import { symbolIndexConfig, azureConfig } from './config.mjs';
 import { redactSecrets } from './secret-patterns.mjs';
-import { getGeminiClient } from './llm-wrappers.mjs';
+import { embedText } from './embed-text.mjs';
 
 const CACHE_REL = '.audit-loop/cache/intent-embeddings.json';
 const CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
@@ -81,47 +81,48 @@ function putCached(repoRoot, key, embedding) {
  * @returns {Promise<{result: number[], usage: {totalTokens: number}, latencyMs: number}>}
  */
 export async function generateIntentEmbedding(intentDescription, activeModel, activeDim) {
-  const client = await getGeminiClient();
-  if (!client) {
-    const err = new Error('GEMINI_API_KEY not set — cannot generate intent embedding');
-    err.code = 'EMBED_FAILED';
-    throw err;
-  }
-  // R-Gemini-G1 + plan AC12: redaction at the function boundary —
-  // defense-in-depth so callers that forget to pre-redact (the older
-  // arch-memory caller did) cannot leak secrets to the Gemini endpoint.
-  // Applying it twice is idempotent.
-  const safeText = redactSecrets(intentDescription).text;
-  const start = Date.now();
-  // Pin outputDimensionality so gemini-embedding-001 (and friends) return the
-  // exact dim stored in audit_repos.active_embedding_dim — otherwise the
-  // length check below will reject the response.
-  const res = await client.models.embedContent({
-    model: activeModel,
-    contents: safeText,
-    config: { outputDimensionality: activeDim },
-  });
-  const latencyMs = Date.now() - start;
-  const embedding = res?.embeddings?.[0]?.values || [];
-  if (!Array.isArray(embedding) || embedding.length === 0) {
-    const err = new Error(`Embedding provider returned empty vector for model ${activeModel}`);
-    err.code = 'EMBED_FAILED';
-    throw err;
-  }
-  if (embedding.length !== activeDim) {
+  // Provenance guard (Gemini-R2-H1 / consolidated-gate-H1): the query MUST
+  // embed in the SAME vector space the index was built in. We detect the
+  // GEMINI provider (its model ids always contain `gemini` or the `models/`
+  // prefix) and treat everything else — including arbitrary custom Azure
+  // deployment names like `corporate-embed` — as Azure. Inferring "is Azure"
+  // from a name prefix would misclassify custom deployment names; inferring
+  // "is Gemini" is robust because Gemini's naming is fixed. A cross-provider
+  // query returns garbage similarity even at equal dim — refuse it.
+  const storedIsGemini = /gemini|^models\//i.test(String(activeModel));
+  const storedIsAzure = !storedIsGemini;
+  if (storedIsAzure !== azureConfig.active) {
     const err = new Error(
-      `Embedding dim mismatch: provider returned ${embedding.length}, repo active_embedding_dim=${activeDim}`
+      `Embedding provider mismatch: index built with "${activeModel}" but the active profile is ` +
+      `${azureConfig.active ? 'Azure OpenAI' : 'Gemini'}. Re-run \`npm run arch:refresh\` under the ` +
+      `current profile to rebuild the index in the matching vector space.`,
     );
     err.code = 'EMBEDDING_MISMATCH';
-    err.expected = { model: activeModel, dim: activeDim };
-    err.actualDim = embedding.length;
     throw err;
   }
-  return {
-    result: embedding,
-    usage: { totalTokens: res?.usageMetadata?.totalTokenCount || intentDescription.length },
-    latencyMs,
-  };
+  // Intra-Azure guard (consolidated-gate R2-H): under Azure, embedText embeds
+  // with `azureConfig.embedDeployment` and ignores `activeModel`. Two different
+  // Azure embedding deployments can share dim 768 yet occupy different vector
+  // spaces, which the provider + dim guards both miss. Refuse when the index's
+  // model doesn't match the deployment now in use.
+  if (azureConfig.active && String(activeModel) !== azureConfig.embedDeployment) {
+    const err = new Error(
+      `Embedding deployment mismatch: index built with "${activeModel}" but the active Azure embed ` +
+      `deployment is "${azureConfig.embedDeployment}". Re-run \`npm run arch:refresh\` to rebuild the ` +
+      `index with the current deployment.`,
+    );
+    err.code = 'EMBEDDING_MISMATCH';
+    throw err;
+  }
+  // embedText routes to the active provider, redacts at the boundary
+  // (defense-in-depth; idempotent with any caller pre-redaction), validates the
+  // dim, and returns the {result, usage, latencyMs} contract this caller expects.
+  try {
+    return await embedText(intentDescription, { dim: activeDim, model: activeModel });
+  } catch (err) {
+    if (!err.code) err.code = 'EMBED_FAILED';
+    throw err;
+  }
 }
 
 /**

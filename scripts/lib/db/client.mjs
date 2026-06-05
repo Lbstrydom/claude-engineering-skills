@@ -72,9 +72,39 @@ let _initPromise = null;
  *
  * @returns {string | null} DSN or null when cloud mode is disabled.
  */
-function resolveDbUrl() {
-  const url = (process.env.AUDIT_DB_URL || '').trim();
+// Back-compat alias warnings — emitted at most once per (alias) per process.
+const _aliasWarned = new Set();
+function warnAliasOnce(alias, canonical) {
+  if (_aliasWarned.has(alias)) return;
+  _aliasWarned.add(alias);
+  process.stderr.write(
+    `  [db] ${alias} is a deprecated alias for ${canonical} — using it. ` +
+    `Rename to ${canonical} to silence this notice.\n`,
+  );
+}
+
+/** For tests — reset the alias-warning latch. */
+export function _resetAliasWarnings() {
+  _aliasWarned.clear();
+}
+
+export function resolveDbUrl() {
+  const canonical = (process.env.AUDIT_DB_URL || '').trim();
+  const alias = (process.env.AUDIT_POSTGRES_URL || '').trim();
+  // Canonical wins when both set; warn whenever the alias contributes.
+  if (alias && !canonical) warnAliasOnce('AUDIT_POSTGRES_URL', 'AUDIT_DB_URL');
+  const url = canonical || alias;
   if (url) return url;
+
+  // §1.5 M4: AUDIT_STORE=postgres is a validation signal, not a silent no-op.
+  // Asking for postgres without a DSN must fail fast, not degrade to local-only.
+  if ((process.env.AUDIT_STORE || '').trim().toLowerCase() === 'postgres') {
+    throw new Error(
+      'AUDIT_STORE=postgres is set but no Postgres DSN is configured. ' +
+      'Set AUDIT_DB_URL (or the legacy AUDIT_POSTGRES_URL alias) to your ' +
+      'connection string, or unset AUDIT_STORE to use local-only mode.',
+    );
+  }
 
   const hasLegacy =
     !!process.env.SUPABASE_AUDIT_URL ||
@@ -126,8 +156,11 @@ function assertPublicSchema() {
  * @param {string} url
  * @param {object} pgTypes - the live `pg.types` module (for default parsers)
  */
-function buildPoolConfig(url, pgTypes) {
-  const sslMode = (process.env.AUDIT_DB_SSL_MODE || 'require').trim();
+export function buildPoolConfig(url, pgTypes) {
+  if (!process.env.AUDIT_DB_SSL_MODE && process.env.AUDIT_POSTGRES_SSL_MODE) {
+    warnAliasOnce('AUDIT_POSTGRES_SSL_MODE', 'AUDIT_DB_SSL_MODE');
+  }
+  const sslMode = (process.env.AUDIT_DB_SSL_MODE || process.env.AUDIT_POSTGRES_SSL_MODE || 'require').trim();
   const maxConns = Number(process.env.AUDIT_DB_POOL_MAX || 4);
 
   const customTypes = {

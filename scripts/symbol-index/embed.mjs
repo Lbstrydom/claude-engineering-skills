@@ -11,10 +11,10 @@
  */
 
 import readline from 'node:readline';
-import { symbolIndexConfig } from '../lib/config.mjs';
+import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
 import { chunkBatches } from '../lib/symbol-index.mjs';
 import { emit } from '../lib/cli-io.mjs';
-import { getGeminiClient } from '../lib/llm-wrappers.mjs';
+import { embedText } from '../lib/embed-text.mjs';
 
 function logProgress(s) { process.stderr.write(`  [embed] ${s}\n`); }
 
@@ -24,9 +24,11 @@ function logProgress(s) { process.stderr.write(`  [embed] ${s}\n`); }
  * @returns {Promise<{vectors: number[][], dim: number}>}
  */
 async function embedBatch(texts, modelId) {
-  const client = await getGeminiClient();
-  if (!client) {
-    logProgress(`GEMINI_API_KEY missing — emitting null embeddings`);
+  // Provider routing lives in embed-text.mjs (Azure OpenAI when the work
+  // profile is active, else Gemini). Short-circuit only when NEITHER is
+  // available.
+  if (!azureConfig.active && !process.env.GEMINI_API_KEY) {
+    logProgress(`no embedding provider (set GEMINI_API_KEY or the Azure work profile) — emitting null embeddings`);
     return { vectors: texts.map(() => null), dim: symbolIndexConfig.embedDim };
   }
   let dim = symbolIndexConfig.embedDim;
@@ -43,12 +45,8 @@ async function embedBatch(texts, modelId) {
   // simultaneously.
   async function embedOne(t, attempt = 1) {
     try {
-      const r = await client.models.embedContent({
-        model: modelId,
-        contents: t,
-        config: { outputDimensionality: targetDim },
-      });
-      return r?.embeddings?.[0]?.values || null;
+      const { result } = await embedText(t, { dim: targetDim, model: modelId });
+      return result || null;
     } catch (err) {
       const msg = String(err.message || err);
       const transient = msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED')
@@ -81,7 +79,13 @@ function compose(s) {
 async function main() {
   // Concrete model ID: caller passes via env so refresh.mjs can resolve sentinels once
   // and persist + propagate the concrete ID. Default falls back to symbolIndexConfig.embedModel.
-  const concreteModel = process.env.ARCH_INDEX_EMBED_CONCRETE || symbolIndexConfig.embedModel;
+  // Provenance: the persisted `embeddingModel` MUST name the provider that
+  // actually produced the vectors, so the read-side guard (neighbourhood-query)
+  // matches. Under the Azure profile, embed-text uses the Azure deployment
+  // regardless of the Gemini default — so record THAT, not a stale Gemini name.
+  const concreteModel = azureConfig.active
+    ? azureConfig.embedDeployment
+    : (process.env.ARCH_INDEX_EMBED_CONCRETE || symbolIndexConfig.embedModel);
 
   const rl = readline.createInterface({ input: process.stdin });
   const records = [];

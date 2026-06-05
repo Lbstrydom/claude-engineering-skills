@@ -43,7 +43,13 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
+
+/** Short, non-reversible token for cache keys — never store raw key material. */
+function keyDigest(k) {
+  return k ? createHash('sha256').update(String(k)).digest('hex').slice(0, 16) : '';
+}
 
 // ── CLI envelope schema ─────────────────────────────────────────────────────
 // Validates the JSON shape emitted by `claude -p --output-format json`.
@@ -156,7 +162,16 @@ export async function createAnthropicClient(options = {}) {
   const backend = options.backend || resolveBackend();
   // Resolve effective env values BEFORE building the cache key so that two
   // unparameterised calls share a cache entry.
-  const effectiveApiKey = options.apiKey || process.env.ANTHROPIC_API_KEY || '';
+  // baseURL override (Azure AI Foundry `anthropic` shape). Absent → public
+  // api.anthropic.com (today's behaviour, unchanged). When a baseURL is set
+  // AND an Azure key is present, the Foundry endpoint authenticates via the
+  // `api-key` header (the SDK's default `x-api-key` is insufficient there).
+  const effectiveBaseURL = options.baseURL || process.env.ANTHROPIC_BASE_URL || '';
+  const azureKey = effectiveBaseURL ? (process.env.AZURE_OPENAI_API_KEY || '') : '';
+  // When targeting an Azure/Foundry endpoint, the Azure key MUST win over a
+  // stray public ANTHROPIC_API_KEY — otherwise we'd send the public key to the
+  // corporate endpoint. An explicit options.apiKey still overrides everything.
+  const effectiveApiKey = options.apiKey || (effectiveBaseURL ? azureKey : '') || process.env.ANTHROPIC_API_KEY || '';
   const effectiveClaudeBin = options.claudeBin || process.env.CLAUDE_BIN || 'claude';
   const effectiveTimeoutMs = resolveTimeoutMs(options.timeoutMs);
 
@@ -174,7 +189,7 @@ export async function createAnthropicClient(options = {}) {
   // a string key, returning the wrong redactor to the second caller.
   const defaultRedactor = await getDefaultRedactor();
   const cacheable = effectiveRedactor === null || effectiveRedactor === defaultRedactor;
-  const cacheKey = `${backend}:${effectiveApiKey}:${effectiveClaudeBin}:${effectiveTimeoutMs}:${effectiveRedactor === null ? 'n' : 'd'}`;
+  const cacheKey = `${backend}:${keyDigest(effectiveApiKey)}:${effectiveBaseURL}:${effectiveClaudeBin}:${effectiveTimeoutMs}:${effectiveRedactor === null ? 'n' : 'd'}`;
   if (!options.fresh && cacheable && _clientCache.has(cacheKey)) {
     return _clientCache.get(cacheKey);
   }
@@ -191,7 +206,13 @@ export async function createAnthropicClient(options = {}) {
     if (!effectiveApiKey) {
       throw new Error('[anthropic-client] ANTHROPIC_API_KEY required for sdk backend');
     }
-    const rawClient = new Anthropic({ apiKey: effectiveApiKey });
+    const anthropicOpts = { apiKey: effectiveApiKey };
+    if (effectiveBaseURL) {
+      anthropicOpts.baseURL = effectiveBaseURL;
+      // Foundry expects `api-key`; keep the SDK's x-api-key too for safety.
+      if (azureKey) anthropicOpts.defaultHeaders = { 'api-key': azureKey };
+    }
+    const rawClient = new Anthropic(anthropicOpts);
     client = effectiveRedactor ? wrapSdkWithRedactor(rawClient, effectiveRedactor) : rawClient;
   }
 

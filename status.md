@@ -1,5 +1,57 @@
 # Project Status Log
 
+## 2026-06-05 — Feat: Azure AI Foundry work profile (opt-in)
+
+### Changes
+- Run the same bundle in a corporate Azure environment with restricted models
+  (GPT-5.3-chat + Opus 4.6 via Foundry + Azure-OpenAI embeddings + local
+  Postgres), eliminating drift between the personal and work repos.
+- **Opt-in invariant** (regression-tested): with no `AZURE_OPENAI_ENDPOINT`,
+  client construction + resolved models are byte-identical to the public path.
+- New shared seam mirroring `anthropic-client.mjs`: `createOpenAIClient({purpose})`
+  (Azure-v1 vs public) + `embedText()` (Azure-OpenAI vs Gemini embeddings).
+- GPT auditor: capability-classified `responses.parse()` → chat-completions +
+  `zodResponseFormat` fallback (a generic 404 stays fatal — never-retry-404).
+- Final reviewer: `azure-claude` provider replaces Gemini on the work profile
+  (OpenAI-shaped Foundry by default; `AZURE_CLAUDE_API_SHAPE=anthropic` for the
+  native shape via anthropic-client `baseURL` + Azure `api-key` header).
+- Embeddings: all 3 sites routed through `embedText` with a vector-space
+  provenance guard (refuses cross-provider + intra-Azure-deployment mismatches).
+- DB: `AUDIT_POSTGRES_URL`/`AUDIT_POSTGRES_SSL_MODE` back-compat aliases
+  (warn-once) + `AUDIT_STORE=postgres` fail-fast; `setup-postgres --ensure-local`
+  guided (never silent) Postgres install.
+
+### Files Affected
+- `scripts/lib/config.mjs` — `azureConfig` + `buildAzureConfig` (fail-fast, redacted)
+- `scripts/lib/openai-client.mjs`, `embed-text.mjs`, `openai-responses-capability.mjs` (new)
+- `scripts/openai-audit.mjs`, `gemini-review.mjs`, `lib/anthropic-client.mjs` — provider wiring
+- `scripts/lib/neighbourhood-query.mjs`, `symbol-index/embed.mjs`, `security-memory/refresh-incidents.mjs` — embed adoption
+- `scripts/lib/db/client.mjs`, `scripts/setup-postgres.mjs` — DB aliases + guided install
+- `defaults/work-profile.env.example`, `docs/azure-work-profile.md`, `AGENTS.md` — operator surface
+- 6 new test files (openai-client, azure-config, embed-text, responses-capability, anthropic-baseurl, db-alias)
+
+### Decisions Made
+- Logical sentinels vs Azure deployment names kept separate (avoids `gpt-5.3 →
+  latest-gpt` remap footgun); deployment from `AZURE_*_DEPLOYMENT` vars.
+- Reused official `zodResponseFormat` instead of a custom Zod→JSON-Schema adapter.
+- No client-level egress redaction on the OpenAI path (would break byte-identical
+  + corrupt code payloads); egress safety stays upstream.
+
+### Verification
+- Full suite 3417 pass / 0 fail; skills + plans lint in sync.
+- Audit trail: GPT plan R1–R2, Gemini gate R1–R3, code audits per cluster,
+  consolidated union gate R1–R2 (capped). See plan audit trail.
+- **Manual-verification-required**: live Azure/Foundry endpoint smoke (cannot run
+  from this network) — see `docs/azure-work-profile.md` §4.
+
+### Next Steps
+- In the work env: copy `defaults/work-profile.env.example`, run
+  `setup-postgres --ensure-local`, `arch:refresh`, then smoke-test the endpoints.
+- Accepted scope boundary: arch-index summarizer (`summarise*.mjs`) not yet
+  Azure-routed (needs a summary-model choice — Azure lacks Haiku).
+
+---
+
 ## 2026-06-04 — Fix: dirty-aware `--scope diff` base (audit over-capture)
 
 `/audit-code --scope diff` defaulted `--base` to `HEAD~1`, scoping to `HEAD~1..HEAD` ∪ uncommitted ∪ untracked. When the prior commit was already shipped+audited (e.g. a clustered build's Cluster A/B), its files re-entered scope and flooded the audit with out-of-scope findings (observed in ai-organiser: 33/34 findings were a prior audited cluster; the operator had to hand-scope the Gemini gate).

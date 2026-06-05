@@ -73,6 +73,7 @@ function parseArgs(argv) {
     switch (a) {
       case '--migrate':         args.mode = 'migrate'; break;
       case '--adopt':           args.mode = 'adopt'; break;
+      case '--ensure-local':    args.mode = 'ensure-local'; break;
       case '--check-drift':     args.mode = 'check-drift'; break;
       case '--preflight-only':  args.preflightOnly = true; break;
       case '--bootstrap-only':  args.bootstrapOnly = true; break;
@@ -87,7 +88,7 @@ function parseArgs(argv) {
   }
   if (!args.mode && !args.preflightOnly && !args.bootstrapOnly) {
     process.stderr.write(
-      `usage: setup-postgres.mjs --migrate | --adopt | --check-drift [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
+      `usage: setup-postgres.mjs --migrate | --adopt | --ensure-local | --check-drift [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
     );
     process.exit(2);
   }
@@ -645,8 +646,70 @@ function renderHumanDriftReport({ drift, applied, sourceTotal, hasDrift }, stder
 
 // ── Entry ──────────────────────────────────────────────────────────────────
 
+/**
+ * `--ensure-local` — guided local-Postgres preflight. ORCHESTRATES; never
+ * silently installs a server or creates roles. Returns when it's safe to
+ * proceed to `--migrate`; otherwise prints the next action and exits non-zero.
+ * Plan: docs/plans/azure-work-profile.md §7 #12.
+ */
+async function runEnsureLocal() {
+  const { spawnSync } = await import('node:child_process');
+  const isTTY = !!process.stdout.isTTY;
+  const plat = process.platform;
+
+  const commandExists = (cmd) => {
+    try {
+      const r = spawnSync(cmd, ['--version'], { stdio: 'ignore', shell: plat === 'win32' });
+      return r.status === 0;
+    } catch { return false; }
+  };
+
+  // State 1 — tools present?
+  if (!commandExists('psql')) {
+    const installCmd = plat === 'win32'
+      ? 'winget install -e --id PostgreSQL.PostgreSQL   (or: choco install postgresql)'
+      : plat === 'darwin'
+        ? 'brew install postgresql@16'
+        : 'sudo apt-get install -y postgresql postgresql-contrib';
+    process.stderr.write(
+      `\n${Y}Postgres not detected (no \`psql\` on PATH).${X}\n` +
+      `  Install it — we do NOT auto-install:\n    ${installCmd}\n` +
+      `  Then re-run: ${D}node scripts/setup-postgres.mjs --ensure-local${X}\n`,
+    );
+    process.exit(1);
+  }
+
+  // State 2 — DSN present? (resolveDbUrl also fail-fasts on AUDIT_STORE=postgres w/o DSN)
+  const { resolveDbUrl } = await import('./lib/db/client.mjs');
+  let dsn;
+  try { dsn = resolveDbUrl(); } catch (e) { process.stderr.write(`\n${R}${e.message}${X}\n`); process.exit(1); }
+  if (!dsn) {
+    process.stderr.write(
+      `\n${Y}Postgres is installed but no DSN is configured.${X}\n` +
+      `  Set AUDIT_DB_URL, e.g.:\n` +
+      `    ${D}AUDIT_DB_URL=postgres://postgres:<password>@localhost:5432/audit_loop${X}\n` +
+      `  Create the database if it doesn't exist yet:\n    ${D}createdb audit_loop${X}\n`,
+    );
+    process.exit(1);
+  }
+
+  process.stderr.write(
+    `${G}Postgres present + DSN configured${X}` +
+    `${isTTY ? '' : ' (non-interactive)'} — proceeding to migrate.\n`,
+  );
+  // Connection failure / missing extensions surface in the normal --migrate
+  // preflight path below; --ensure-local just got us there safely.
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+
+  // --ensure-local runs BEFORE getPool() (the whole point is to detect a
+  // missing server/DSN). On success it degrades into the --migrate path.
+  if (args.mode === 'ensure-local') {
+    await runEnsureLocal();
+    args.mode = 'migrate';
+  }
 
   const { getPool, closePool } = await import('./lib/db/client.mjs');
   const pool = await getPool();
