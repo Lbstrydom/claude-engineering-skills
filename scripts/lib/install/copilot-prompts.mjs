@@ -128,6 +128,12 @@ function yamlQuote(s) {
  * malformed frontmatter — caller decides whether to skip.
  */
 export function parseSkillFrontmatter(content) {
+  // Normalize line endings first. On a Windows checkout (core.autocrlf=true,
+  // no .gitattributes pin) SKILL.md arrives CRLF; the block-scalar regex below
+  // anchors on \n and its `.` won't cross \r, so a CRLF file truncates a
+  // `description: |` block to its first line. Normalizing here makes the parser
+  // correct regardless of the contributor's git config.
+  content = content.replace(/\r\n/g, '\n');
   if (!content.startsWith('---')) return null;
   const endIdx = content.indexOf('\n---', 3);
   if (endIdx < 0) return null;

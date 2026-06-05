@@ -1,0 +1,25 @@
+# Normalize line endings across platforms. Without this, a Windows checkout
+# with core.autocrlf=true rewrites committed LF files to CRLF in the working
+# tree — producing phantom "modified" churn AND breaking generators that parse
+# their own source (see scripts/lib/install/copilot-prompts.mjs block-scalar
+# parser, which anchored on \n and truncated CRLF `description: |` blocks).
+#
+# text=auto lets git detect text vs binary; eol=lf forces LF in the working
+# tree on every platform. Already-committed content is LF, so this introduces
+# no churn — it only pins future checkouts.
+* text=auto eol=lf
+
+# Windows-native scripts genuinely need CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Treat common binaries as binary (no eol munging, no diff).
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary

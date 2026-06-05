@@ -39,6 +39,27 @@ body`;
       assert.match(fm.description, /Continues here\./);
     });
 
+    it('extracts full block-scalar description from a CRLF checkout', () => {
+      // Regression: on Windows (core.autocrlf=true) SKILL.md is checked out
+      // with \r\n. The block-scalar regex anchors on \n and `.` won't cross \r,
+      // so without normalization this truncated to the first line only.
+      const content = [
+        '---',
+        'name: foo',
+        'description: |',
+        '  Multi-line description.',
+        '  Continues here.',
+        '  Triggers on: ...',
+        '---',
+        'body',
+      ].join('\r\n');
+      const fm = parseSkillFrontmatter(content);
+      assert.equal(fm.name, 'foo');
+      assert.match(fm.description, /Multi-line description\./);
+      assert.match(fm.description, /Continues here\./);
+      assert.match(fm.description, /Triggers on:/);
+    });
+
     it('returns null for missing frontmatter', () => {
       assert.equal(parseSkillFrontmatter('# Heading\n\nNo frontmatter.'), null);
     });
