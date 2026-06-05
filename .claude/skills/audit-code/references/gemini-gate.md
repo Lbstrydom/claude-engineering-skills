@@ -4,7 +4,7 @@ summary: Step 7 Gemini independent review protocol — transcript, verdict handl
 
 # Gemini Independent Review — Step 7 Protocol
 
-After the final GPT-5.4 audit round (whether converged or not), run
+After the final GPT audit round (whether converged or not), run
 Gemini 3.1 Pro as an independent third reviewer. This step is MANDATORY —
 Gemini provides cross-model perspective that catches blind spots in the
 Claude-GPT deliberation.

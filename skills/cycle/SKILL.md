@@ -102,7 +102,7 @@ plan document at `docs/plans/<descriptive-name>.md`.
 ## Step 2 — Audit Plan
 
 Invoke `/audit-plan <plan-file>`. Iteratively refines the plan with
-GPT-5.4 + Gemini final gate. Max 3 rounds; rigor-pressure stop.
+GPT + Gemini final gate. Max 3 rounds; rigor-pressure stop.
 
 **On verdict**:
 - `APPROVE` (Gemini) → proceed to Step 3
@@ -204,7 +204,7 @@ re-reviewed. Then continue to Step 5.
 ## Step 4 — Audit Code (classic path — no §11 block)
 
 Invoke `/audit-code <plan-file>` (default `--scope=diff`). Multi-pass
-parallel GPT-5.4 audit with R2+ ledger suppression and Gemini final
+parallel GPT audit with R2+ ledger suppression and Gemini final
 review. Max 6 rounds; quality threshold `HIGH==0 && MEDIUM<=2 && quickFix==0`.
 
 **On verdict**:

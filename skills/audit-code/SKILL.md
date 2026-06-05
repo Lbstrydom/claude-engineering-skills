@@ -15,7 +15,7 @@ description: |
 
 # Code Audit Loop
 
-Multi-pass code audit with GPT-5.4 + Gemini final review. Iterates until
+Multi-pass code audit with GPT + Gemini final review. Iterates until
 findings stabilise or max 6 rounds.
 
 **Input**: `$ARGUMENTS` — plan file path (the spec the code is being audited
@@ -423,7 +423,7 @@ and category-error handling: `references/gemini-gate.md`.
 ## Key Principles
 
 1. **Peer relationship** — neither model blindly defers
-2. **Three-model system** — Claude (author) + GPT-5.4 (auditor) + Gemini (final arbiter)
+2. **Three-model system** — Claude (author) + GPT (auditor) + Gemini (final arbiter)
 3. **Fix all HIGH**, MEDIUM until ≤2, LOW optional
 4. **Stability over speed** — 2 clean rounds required
 5. **No quick fixes** — band-aids rejected by all models

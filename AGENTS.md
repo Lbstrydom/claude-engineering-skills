@@ -277,7 +277,7 @@ scripts/
 │   ├── device-presets.mjs  # Shared device-emulation registry + resolver for /persona-test + /click-test (prep + prep-matrix CLI emits runner-enforcement contracts)
 │   └── config.mjs          # Centralized validated config (all env var reads)
 ├── shared.mjs              # Barrel re-export — backwards-compatible, imports from lib/
-├── openai-audit.mjs        # GPT-5.4 multi-pass auditor (plan, code, rebuttal modes) — links audit_runs to commit_sha + plan_id
+├── openai-audit.mjs        # GPT multi-pass auditor (plan, code, rebuttal modes) — links audit_runs to commit_sha + plan_id
 ├── gemini-review.mjs       # Gemini 3.1 Pro independent final reviewer (Claude Opus fallback)
 ├── bandit.mjs              # Thompson Sampling + user-impact-aware reward (consumes persona_audit_correlations)
 ├── learning-store.mjs      # Supabase cloud persistence for audit outcomes + learning + cross-skill data loop
@@ -295,7 +295,7 @@ tests/                      # Node.js built-in test runner (node --test)
 ### Script Responsibilities
 
 - **lib/*.mjs**: Focused modules — import directly from `./lib/<module>.mjs` for explicit deps, or from `./shared.mjs` barrel for convenience. Schemas are the single source of truth (JSON Schemas derived via `zodToGeminiSchema()`).
-- **openai-audit.mjs**: 5-pass parallel code audit (structure, wiring, backend, frontend, sustainability). Plan audit. Rebuttal deliberation. Uses GPT-5.4 with `responses.parse()` + Zod schemas. Integrates bandit reward updates + Supabase cloud sync.
+- **openai-audit.mjs**: 5-pass parallel code audit (structure, wiring, backend, frontend, sustainability). Plan audit. Rebuttal deliberation. Uses GPT with `responses.parse()` + Zod schemas. Integrates bandit reward updates + Supabase cloud sync.
 - **gemini-review.mjs**: Independent final review (MANDATORY — not gated by convergence). Receives full audit transcript. Detects bias, false consensus, missed issues. Uses Gemini 3.1 Pro (16K thinking budget), with Claude Opus fallback. Claude deliberates on CONCERNS, then Gemini re-verifies.
 - **learning-store.mjs**: Cloud persistence via Supabase — repos, runs, findings, pass stats, bandit arms, FP patterns, adjudication events. Graceful fallback to local-only mode.
 

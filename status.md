@@ -1,5 +1,36 @@
 # Project Status Log
 
+## 2026-06-05 — Docs: genericize stale "GPT-5.4" auditor labels
+
+### Changes
+- The audit-loop narration hard-coded "GPT-5.4" as the auditor model in
+  user-facing prose, but the runtime resolves the `latest-gpt` sentinel
+  (→ GPT-5.5 via `STATIC_POOL` + live-catalog refresh). The label had
+  silently gone stale when 5.5 shipped (2026-04-23).
+- Genericized "GPT-5.4" → "GPT" across all active prose so it can't
+  re-stale on the next release. Left real catalog IDs in `STATIC_POOL`,
+  historical `docs/completed/**`, tests, and the deprecated `.github/skills`
+  mirror untouched.
+- brainstorm example heading uses `gpt-5.x` to preserve the concrete-vs-
+  sentinel teaching contrast without pinning a version.
+
+### Files Affected
+- `docs/audit/shared-references/gemini-gate.md` — canonical shared ref (synced into audit skills)
+- `skills/{audit-plan,audit-code,cycle,brainstorm}/SKILL.md` — auditor prose
+- `.claude/skills/**` — regenerated copies (byte-equal check passes)
+- `AGENTS.md`, `README.md` — architecture comments + feature table
+
+### Decisions Made
+- Genericize rather than bump to "GPT-5.5" — avoids the re-stale trap; the
+  prose is non-load-bearing (model selection is `latest-gpt` at runtime).
+- Scope held to active surfaces only (no `docs/completed/**` rewrite — those
+  are historical point-in-time records).
+
+### Next Steps
+- None. The runtime was already correct; this was a cosmetic-label fix.
+
+---
+
 ## 2026-06-05 — Feat: Azure AI Foundry work profile (opt-in)
 
 ### Changes

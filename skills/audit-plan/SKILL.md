@@ -13,7 +13,7 @@ description: |
 
 # Plan Audit Loop
 
-Iteratively refine a plan with GPT-5.4 + Gemini final review until findings
+Iteratively refine a plan with GPT + Gemini final review until findings
 plateau, then gate with the independent reviewer.
 
 **Input**: `$ARGUMENTS` — either a plan file path (PLAN_AUDIT) or a task
@@ -276,7 +276,7 @@ category-error handling: `references/gemini-gate.md`.
 ## Key Principles
 
 1. **Peer relationship** — neither model blindly defers
-2. **Three-model system** — Claude (author) + GPT-5.4 (auditor) + Gemini (final arbiter)
+2. **Three-model system** — Claude (author) + GPT (auditor) + Gemini (final arbiter)
 3. **Stop at rigor pressure** — max 3 rounds unless HIGH actively dropping
 4. **Always `--mode plan`** — without it, Gemini flags absent implementations
 5. **No self-review** — Step 6 final gate reviews Claude-GPT transcript

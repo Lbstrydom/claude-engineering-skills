@@ -151,7 +151,7 @@ user verbatim.
 
 Read the JSON from `--out`. For each provider entry, render exactly one
 block. Use the resolved model ID from the helper's `resolvedModels` field
-in the heading (e.g. `### OpenAI (gpt-5.4)` not `### OpenAI (latest-gpt)`).
+in the heading (e.g. `### OpenAI (gpt-5.x)` not `### OpenAI (latest-gpt)`).
 
 State-driven rendering (the helper guarantees one of these states per
 provider):

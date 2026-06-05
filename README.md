@@ -2,7 +2,7 @@
 
 A bundle of **AI-pair-programming skills** for planning, auditing, testing, and shipping code. Works with Claude Code, VS Code Copilot, Cursor, Windsurf, and any terminal.
 
-Three-model audit loop (Claude plans/codes, GPT-5.4 audits, Gemini 3.1 Pro reviews) with adaptive learning, real-user persona testing against live URLs, and an architectural-memory layer that catches duplicate-function drift before code gets written.
+Three-model audit loop (Claude plans/codes, GPT audits, Gemini reviews) with adaptive learning, real-user persona testing against live URLs, and an architectural-memory layer that catches duplicate-function drift before code gets written.
 
 ## Quick Reference
 
@@ -12,7 +12,7 @@ Three-model audit loop (Claude plans/codes, GPT-5.4 audits, Gemini 3.1 Pro revie
 |---|---|
 | Design a feature (auto-detects backend / frontend / full-stack) | `/plan <task>` |
 | Run the whole feature flow on autopilot | `/cycle <task>` |
-| Iterate on a plan with GPT-5.4 + Gemini (max 3 rounds) | `/audit-plan <plan-file>` |
+| Iterate on a plan with GPT + Gemini (max 3 rounds) | `/audit-plan <plan-file>` |
 | Audit code against its plan (multi-pass + Gemini final) | `/audit-code <plan-file>` |
 | QA a deployed app as a persona (Playwright + P0–P3) | `/persona-test "<persona>" <url>` |
 | Lock a fix's behaviour with a Playwright spec | `/ux-lock <commit-or-description>` |
@@ -90,7 +90,7 @@ All skills support **JS/TS** and **Python** (FastAPI, Django, Flask) with automa
 | Skill | Purpose |
 |-------|---------|
 | **[plan](skills/plan/SKILL.md)** | Unified planner — auto-detects backend/frontend/full-stack scope, lazy-loads the right principle set |
-| **[audit-plan](skills/audit-plan/SKILL.md)** | Iteratively audit a plan with GPT-5.4 + Gemini final gate (max 3 rounds, rigor-pressure stop) |
+| **[audit-plan](skills/audit-plan/SKILL.md)** | Iteratively audit a plan with GPT + Gemini final gate (max 3 rounds, rigor-pressure stop) |
 | **[audit-code](skills/audit-code/SKILL.md)** | Multi-pass code audit, R2+ ledger suppression, debt capture, Gemini final review |
 | **[cycle](skills/cycle/SKILL.md)** | End-to-end orchestrator: plan → audit-plan → impl gate → audit-code → persona-test → ux-lock → ship |
 | **[explain](skills/explain/SKILL.md)** | Synthesises arch-memory + git history + AGENTS.md principles to answer "why is this here?" |
@@ -122,14 +122,14 @@ Don't memorise every skill — surface them on demand. The `/skills` skill reads
 ```
 Claude/Copilot (plans + implements)
     ↓
-GPT-5.4 (5 parallel passes: structure, wiring, backend, frontend, sustainability)
+GPT (5 parallel passes: structure, wiring, backend, frontend, sustainability)
     ↓ deliberation: accept / challenge / compromise
 Gemini 3.1 Pro (independent final review: bias, consensus, missed issues)
     ↓
 Adaptive learning (bandit arms, FP tracker, meta-assessment, prompt evolution)
 ```
 
-1. **GPT-5.4 audits** in 5 focused passes
+1. **GPT audits** in 5 focused passes
 2. **Claude triages** each finding — accept, challenge, or defer
 3. **GPT deliberates** on challenges — sustain, overrule, or compromise
 4. **Fixes applied**, then R2+ re-audits with suppression of resolved findings
@@ -212,7 +212,7 @@ Windows users — see [CLAUDE.md](CLAUDE.md#claude-code-only-notes) for the `npx
 
 | Variable | Required | Purpose |
 |----------|----------|---------|
-| `OPENAI_API_KEY` | **Yes** | GPT-5.4 auditing |
+| `OPENAI_API_KEY` | **Yes** | GPT auditing |
 | `GEMINI_API_KEY` | No | Gemini final review + Flash context briefs |
 | `ANTHROPIC_API_KEY` | No | Claude Opus fallback + Haiku purpose summaries |
 | `AUDIT_DB_URL` | No | Postgres DSN for the cloud learning store (Supabase pooler or self-hosted). Unset → local-only mode |
