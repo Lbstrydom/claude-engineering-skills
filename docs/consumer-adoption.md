@@ -294,3 +294,42 @@ consumer's OWN remote by hand. The synced `scripts/.claude-skills/**` tooling is
 gitignored on the consumer, so it never appears in that push (re-hydrate a fresh
 clone with another `sync:refresh`). **Never edit the synced tooling in the
 consumer — fix it upstream here and re-sync.**
+
+---
+
+## Two ways to deploy this bundle
+
+There are two distinct shapes — pick by whether the target repo has **its own
+code** worth keeping.
+
+### A) As a consumer (layer the skills INTO an existing repo)
+The repo has its own application code; you want `/plan`, `/audit-code`, `/ship`,
+etc. available inside it. Use the sync flow above (`npm run sync:refresh --
+--target <alias>`). Tooling lands gitignored under `scripts/.claude-skills/`;
+only skill `.md` + config are tracked. This is the right shape for
+`wine-cellar-app`, `ai-organiser`, and any product repo.
+
+### B) As a private fork/mirror (the bundle IS the repo, on a private remote)
+The target repo has **nothing of its own** — it exists only to run this bundle
+(e.g. an old, redundant tooling checkout you want to retire). Don't make it a
+thin consumer (you'd get a near-empty repo). Instead make it a fork that tracks
+this canonical repo as `upstream` and pushes to your private remote as `origin`:
+
+```bash
+git clone <canonical-url> <repo>
+cd <repo>
+git remote rename origin upstream          # canonical (read-only, pull updates)
+git remote add origin <your-private-url>    # your backup remote (push here)
+git push -u origin main --force             # replaces any old unrelated history
+
+# stay updated — one-directional, no automation:
+git pull upstream main      # latest canonical
+git push origin main        # mirror to your private remote
+```
+
+Secrets live in a gitignored `.env` (or `~/.audit-loop.env`), so they never
+reach either remote. The fork is fully self-contained + runnable from a fresh
+clone — including the Azure work profile, which ships in this bundle. Keep the
+fork's `main` identical to upstream (no local commits on `main`) so pulls stay
+fast-forward; put any machine-specific config in the gitignored `.env` or the
+gitignored `consumer-repos.local.json`, not in tracked files.
