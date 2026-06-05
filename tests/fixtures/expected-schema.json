@@ -373,7 +373,7 @@
         {
           "column_name": "fingerprint",
           "data_type": "text",
-          "is_nullable": "NO",
+          "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 3
         },
