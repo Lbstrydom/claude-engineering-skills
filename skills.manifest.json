@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "5f9403063759261f",
+  "bundleVersion": "763ba5b250529af6",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-05-19T18:36:41.987Z",
+  "updatedAt": "2026-06-05T12:33:57.243Z",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
@@ -55,14 +55,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "26c3e345166d",
-      "size": 15411,
+      "sha": "b072c1f24b3b",
+      "size": 17963,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "26c3e345166d",
-          "size": 15411
+          "sha": "b072c1f24b3b",
+          "size": 17963
         },
         {
           "relPath": "references/debt-capture.md",
@@ -71,8 +71,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "d791f74d9633",
-          "size": 5393
+          "sha": "fa3646c6812d",
+          "size": 6297
         },
         {
           "relPath": "references/ledger-format.md",
@@ -88,19 +88,19 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "46369e03ded2",
-      "size": 8874,
+      "sha": "4563b2b0aef5",
+      "size": 11879,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "46369e03ded2",
-          "size": 8874
+          "sha": "4563b2b0aef5",
+          "size": 11879
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "d791f74d9633",
-          "size": 5393
+          "sha": "fa3646c6812d",
+          "size": 6297
         },
         {
           "relPath": "references/ledger-format.md",
@@ -111,27 +111,45 @@
     },
     "brainstorm": {
       "path": "skills/brainstorm/SKILL.md",
-      "sha": "f1430f55d38f",
-      "size": 13058,
+      "sha": "ffdebc2b15b0",
+      "size": 13702,
       "summary": "Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "f1430f55d38f",
-          "size": 13058
+          "sha": "ffdebc2b15b0",
+          "size": 13702
+        }
+      ]
+    },
+    "click-test": {
+      "path": "skills/click-test/SKILL.md",
+      "sha": "03b119756b7a",
+      "size": 36011,
+      "summary": "Structural DOM audit of a live app — walk every interactive element and assert",
+      "files": [
+        {
+          "relPath": "SKILL.md",
+          "sha": "03b119756b7a",
+          "size": 36011
+        },
+        {
+          "relPath": "references/dom-scanner.md",
+          "sha": "0c32935d46db",
+          "size": 15440
         }
       ]
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "098cbfcebb85",
-      "size": 7522,
+      "sha": "3b1f331b93a8",
+      "size": 16807,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "098cbfcebb85",
-          "size": 7522
+          "sha": "3b1f331b93a8",
+          "size": 16807
         }
       ]
     },
@@ -150,14 +168,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "f45876fae77d",
-      "size": 15701,
+      "sha": "395696fe09cd",
+      "size": 33661,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "f45876fae77d",
-          "size": 15701
+          "sha": "395696fe09cd",
+          "size": 33661
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -173,6 +191,11 @@
           "relPath": "references/browser-tool-detection.md",
           "sha": "33700fa2d34b",
           "size": 3460
+        },
+        {
+          "relPath": "references/consistency-mode.md",
+          "sha": "9bac52694e88",
+          "size": 10815
         },
         {
           "relPath": "references/interop.md",
@@ -193,14 +216,19 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "c06fcce8537e",
-      "size": 21001,
+      "sha": "0e142e7ab6ea",
+      "size": 28178,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c06fcce8537e",
-          "size": 21001
+          "sha": "0e142e7ab6ea",
+          "size": 28178
+        },
+        {
+          "relPath": "examples/mermaid-blocks.md",
+          "sha": "c1798a3e01c0",
+          "size": 2937
         },
         {
           "relPath": "references/engineering-principles.md",
@@ -244,14 +272,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "7dc57972abb0",
-      "size": 15844,
+      "sha": "bef8592b07c9",
+      "size": 20554,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "7dc57972abb0",
-          "size": 15844
+          "sha": "bef8592b07c9",
+          "size": 20554
         },
         {
           "relPath": "references/python-environment-discovery.md",
@@ -280,14 +308,14 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "3a0b86ad3da2",
-      "size": 8145,
+      "sha": "57a736e55323",
+      "size": 9813,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "3a0b86ad3da2",
-          "size": 8145
+          "sha": "57a736e55323",
+          "size": 9813
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",
