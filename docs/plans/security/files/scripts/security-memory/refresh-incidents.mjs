@@ -124,7 +124,7 @@ async function main() {
   }
   const runComplianceTags = typeof flags['compliance-tags'] === 'string'
     ? flags['compliance-tags'].split(',').map(t => t.trim()).filter(Boolean)
-    : ['wartsila-security'];
+    : ['org-security'];
 
   const branch = currentBranch() || 'unknown';
   const headSha = currentCommitSha();

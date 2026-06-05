@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS security_incidents (
   commit_sha          TEXT NOT NULL,                          -- mandatory git linkage; no orphan incidents
   classification      TEXT NOT NULL DEFAULT 'INTERNAL'
                         CHECK (classification IN ('PUBLIC', 'INTERNAL', 'CONFIDENTIAL', 'RESTRICTED')),
-  compliance_tags     TEXT[] NOT NULL DEFAULT '{}',           -- ['wartsila-security', 'wartsila-data', ...]
+  compliance_tags     TEXT[] NOT NULL DEFAULT '{}',           -- ['org-security', 'org-data', ...]
 
   -- Embedding columns: only populated when pgvector available (column added
   -- conditionally below). embedding_model / embedding_dim are always present.

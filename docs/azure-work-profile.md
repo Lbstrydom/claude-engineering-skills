@@ -67,7 +67,7 @@ npm run security:refresh    # re-embeds incidents via Azure OpenAI
 node scripts/gemini-review.mjs ping   # final-reviewer (Opus) connectivity
 ```
 
-**Verified contract** (smoke-tested live against `gd-ai-dev-aif`, 2026-06-05):
+**Verified contract** (smoke-tested live against the work Azure resource, 2026-06-05):
 - GPT (`gpt-5.3-chat`) + embeddings (`text-embedding-3-small`, 768) →
   `…/openai/v1/...` with the `api-key` header. The Responses API works on the v1
   surface, so the chat-completions fallback is rarely needed.

@@ -18,7 +18,7 @@ if (cmd !== 'log') {
     '         [--mode bootstrap|add|add-from-commit]\n' +
     `         [--classification ${VALID_CLASSIFICATIONS.join('|')}]\n` +
     '         [--commit-sha <sha>]\n' +
-    '         [--compliance-tags wartsila-security,wartsila-data]\n' +
+    '         [--compliance-tags org-security,org-data]\n' +
     '         [--repo <name>]\n' +
     '         [--operator <git-user>]\n'
   );
@@ -43,7 +43,7 @@ if (!VALID_CLASSIFICATIONS.includes(classification)) {
   process.exit(2);
 }
 const commitSha = flag('commit-sha', null) || null;
-const complianceTags = (flag('compliance-tags', 'wartsila-security')).split(',').map(t => t.trim()).filter(Boolean);
+const complianceTags = (flag('compliance-tags', 'org-security')).split(',').map(t => t.trim()).filter(Boolean);
 const repoName = flag('repo', null) || null;
 const operator = flag('operator', null) || null;
 

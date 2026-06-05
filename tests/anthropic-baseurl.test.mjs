@@ -17,7 +17,7 @@ describe('createAnthropicClient — baseURL (Azure Foundry anthropic shape)', ()
   });
 
   it('passes options.baseURL into the SDK client', async () => {
-    const url = 'https://gd-ai-dev-aif.services.ai.azure.com';
+    const url = 'https://example.services.ai.azure.com';
     const c = await createAnthropicClient({ ...BASE, baseURL: url });
     assert.equal(c.baseURL, url);
   });

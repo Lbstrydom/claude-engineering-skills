@@ -311,7 +311,7 @@ hardening kit ([docs/plans/security/](docs/plans/security/)) into this repo's ex
 security subsystem, adapted to this repo's stack (Gemini/model-resolver embeddings — NOT
 Azure; `supabase/migrations/` — not `scripts/lib/stores/sql/`). Per user scope decision:
 brought the secret gate, audit trail, dashboard, and graceful-degradation; **skipped** the
-Wartsila governance columns (`classification`/`compliance_tags`/`commit_sha NOT NULL`), the
+Org governance columns (`classification`/`compliance_tags`/`commit_sha NOT NULL`), the
 Azure modules, the deprecated `.github/skills` mirror, and pgvector-optional.
 
 **Secret pre-write gate** ([scripts/lib/security/secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs))

@@ -20,7 +20,7 @@ We protect customer telemetry. Attackers are drive-by + insiders.
 
 **Classification**: CONFIDENTIAL
 
-**Compliance tags**: \`wartsila-security\`, \`wartsila-data\`
+**Compliance tags**: \`org-security\`, \`org-data\`
 
 **Mitigation**: \`semgrep:symlink-guard\`
 
@@ -40,7 +40,7 @@ test('parses a full incident with corporate fields', () => {
   assert.match(i.description, /Symlink bypass/);
   assert.deepEqual(i.affected_paths, ['scripts/lib/a.mjs', 'scripts/lib/b.mjs']);
   assert.equal(i.classification, 'CONFIDENTIAL');
-  assert.deepEqual(i.compliance_tags, ['wartsila-security', 'wartsila-data']);
+  assert.deepEqual(i.compliance_tags, ['org-security', 'org-data']);
   assert.equal(i.mitigation_ref, 'semgrep:symlink-guard');
   assert.equal(i.mitigation_kind, 'semgrep');
   assert.equal(i.commit_sha, 'abc1234def5678');

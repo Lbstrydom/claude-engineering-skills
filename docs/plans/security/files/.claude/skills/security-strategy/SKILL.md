@@ -70,7 +70,7 @@ answers (Assets / Actors / Compliance / Concerns), and write back:
 4. Run:
    ```
    npm run security:log -- --incident-id bootstrap --mode bootstrap \
-     --classification INTERNAL --compliance-tags wartsila-security
+     --classification INTERNAL --compliance-tags org-security
    ```
 
 ---
@@ -85,8 +85,8 @@ For ADD_FROM_COMMIT: pre-fill from `git show <sha>`:
 - affected_paths: `git show --name-only <sha>` filtered to source files
 - classification: infer from changed paths —
   `scripts/lib/db/`, auth, credentials → **CONFIDENTIAL**; else **INTERNAL**
-- compliance_tags: always include `wartsila-security`; add `wartsila-data`
-  if JSONB/PII columns changed; add `wartsila-access` if auth paths changed
+- compliance_tags: always include `org-security`; add `org-data`
+  if JSONB/PII columns changed; add `org-access` if auth paths changed
 - commit_sha: `<sha>` (full 40-char SHA — REQUIRED in this mode)
 - mitigation_ref: if commit added a Semgrep rule under `semgrep/`,
   reference it; else "manual"
@@ -107,7 +107,7 @@ For interactive ADD, prompt the user for each field with examples.
 
    **Classification**: INTERNAL | CONFIDENTIAL | RESTRICTED | PUBLIC
 
-   **Compliance tags**: `wartsila-security` [, `wartsila-data`, `wartsila-access`]
+   **Compliance tags**: `org-security` [, `org-data`, `org-access`]
 
    **Mitigation**: `<semgrep:rule-id | scripts/path | manual>`
 
@@ -125,7 +125,7 @@ For interactive ADD, prompt the user for each field with examples.
    npm run security:log -- --incident-id INC-NNN \
      --mode <add|add-from-commit> \
      --classification <value> \
-     --compliance-tags wartsila-security \
+     --compliance-tags org-security \
      --commit-sha <sha-or-omit>
    ```
 6. Check current branch — if NOT main/master, surface the branch-gate
@@ -159,5 +159,5 @@ For interactive ADD, prompt the user for each field with examples.
 - **One incident per security-relevant fix** — not per CVE in a third-party dep, not per Dependabot bump. Genuine post-incident learning material.
 - **Classification defaults to INTERNAL**. Never set PUBLIC for this repo without explicit user confirmation — this is a corporate environment.
 - **`commit_sha` is mandatory** for `add-from-commit` mode. For interactive `add`, prompt for it — omit only when there is genuinely no associated commit.
-- **`wartsila-security` tag is always required** in compliance_tags. Add additional tags only when clearly applicable.
+- **`org-security` tag is always required** in compliance_tags. Add additional tags only when clearly applicable.
 - **Postgres audit trail is hard-fail on DB-unavailable**: `npm run security:log` exits non-zero (exit 1) when Postgres is unreachable — a compliance audit trail must not silently report success. The markdown write itself is the source of truth; if logging fails, surface the error and retry once Postgres is reachable. Do NOT treat a logging failure as success.

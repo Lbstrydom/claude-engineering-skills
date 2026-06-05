@@ -622,7 +622,7 @@ cluster commit(s); no stateful teardown because nothing persists Azure state.
   Azure-routed — see "Accepted scope boundary" above.
 
 ### 2026-06-05 (live verification + follow-ups)
-- **Smoke-tested live** against the user's Foundry (`gd-ai-dev-aif`): ✓ GPT
+- **Smoke-tested live** against the user's Foundry resource: ✓ GPT
   `gpt-5.3-chat` (Responses API), ✓ embeddings `text-embedding-3-small` (768),
   ✓ Opus `claude-opus-4-6`, ✓ Sonnet `claude-sonnet-4-6`.
 - **Corrected contract from ai-organiser's adapters**: Foundry Claude is the

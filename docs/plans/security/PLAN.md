@@ -242,7 +242,7 @@ INSERT INTO schema_version (v) VALUES (5) ON CONFLICT DO NOTHING;
 
 **Mandatory `commit_sha`**: every memory item traces to a real fix in git history. The skill's `add-incident` interactive mode prompts for `--commit <sha>` and `add-incident from-commit <sha>` pre-fills it. The migration adds the column with `NOT NULL` so no orphan rows can exist.
 
-**`classification` enum**: Wartsila document-classification convention. `Internal` default — safe baseline. `Confidential` for memory tied to customer data, payment, or regulated material. CHECK constraint enforces the closed set.
+**`classification` enum**: an organisation-specific document-classification convention. `Internal` default — safe baseline. `Confidential` for memory tied to customer data, payment, or regulated material. CHECK constraint enforces the closed set.
 
 **`compliance_tags TEXT[]`**: open-vocabulary tags for regulated-data flagging (`PII`, `payment`, `PHI`, `GDPR`, `PCI`). Used by `/plan` Phase 0.5c to elevate matched incidents to higher-priority review.
 

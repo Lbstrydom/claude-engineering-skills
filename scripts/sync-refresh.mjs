@@ -72,7 +72,7 @@ function main() {
       process.stdout.write(`  ${D}no tracked changes — already up to date.${X}\n`);
     } else {
       process.stdout.write(status.split('\n').map((l) => `  ${l}`).join('\n') + '\n');
-      process.stdout.write(`  ${Y}review, then commit + push to its own remote (Wärtsilä).${X}\n`);
+      process.stdout.write(`  ${Y}review, then commit + push to its own remote.${X}\n`);
       process.stdout.write(`  ${D}(scripts/.claude-skills/** is gitignored and won't appear here.)${X}\n`);
     }
   }

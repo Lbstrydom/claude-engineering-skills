@@ -6,8 +6,8 @@ import { buildAzureConfig } from '../scripts/lib/config.mjs';
 const INACTIVE = buildAzureConfig({}); // no AZURE_OPENAI_ENDPOINT → inactive
 
 const AZURE_ENV = {
-  AZURE_OPENAI_ENDPOINT: 'https://gd-ai-dev-aif.openai.azure.com',
-  AZURE_AI_ENDPOINT: 'https://gd-ai-dev-aif.services.ai.azure.com',
+  AZURE_OPENAI_ENDPOINT: 'https://example.openai.azure.com',
+  AZURE_AI_ENDPOINT: 'https://example.services.ai.azure.com',
   AZURE_OPENAI_API_KEY: 'fake-azure-key',
   AZURE_OPENAI_GPT_DEPLOYMENT: 'gpt-5.3-chat',
   AZURE_FOUNDRY_CLAUDE_DEPLOYMENT: 'opus-4-6',
@@ -37,7 +37,7 @@ describe('createOpenAIClient — Azure routing', () => {
   it('gpt purpose targets AZURE_OPENAI_ENDPOINT /openai/v1 with api-key + api-version', async () => {
     const cfg = buildAzureConfig(AZURE_ENV);
     const client = await createOpenAIClient({ purpose: 'gpt', azure: cfg, fresh: true });
-    assert.equal(client.baseURL, 'https://gd-ai-dev-aif.openai.azure.com/openai/v1');
+    assert.equal(client.baseURL, 'https://example.openai.azure.com/openai/v1');
     assert.equal(client.apiKey, 'fake-azure-key');
   });
 
@@ -53,13 +53,13 @@ describe('createOpenAIClient — Azure routing', () => {
   it('foundry-claude purpose targets AZURE_AI_ENDPOINT', async () => {
     const cfg = buildAzureConfig(AZURE_ENV);
     const client = await createOpenAIClient({ purpose: 'foundry-claude', azure: cfg, fresh: true });
-    assert.equal(client.baseURL, 'https://gd-ai-dev-aif.services.ai.azure.com/openai/v1');
+    assert.equal(client.baseURL, 'https://example.services.ai.azure.com/openai/v1');
   });
 
   it('foundry-claude honours AZURE_FOUNDRY_API_PATH override (/models)', async () => {
     const cfg = buildAzureConfig({ ...AZURE_ENV, AZURE_FOUNDRY_API_PATH: '/models' });
     const client = await createOpenAIClient({ purpose: 'foundry-claude', azure: cfg, fresh: true });
-    assert.equal(client.baseURL, 'https://gd-ai-dev-aif.services.ai.azure.com/models');
+    assert.equal(client.baseURL, 'https://example.services.ai.azure.com/models');
   });
 
   it('rejects an invalid purpose', async () => {
