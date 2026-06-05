@@ -37,6 +37,7 @@
 
 import { createHash } from 'node:crypto';
 import { azureConfig } from './config.mjs';
+import { azureMaxRetries } from './azure-throttle.mjs';
 
 const VALID_PURPOSES = new Set(['gpt', 'foundry-claude', 'embed']);
 
@@ -110,6 +111,10 @@ export async function createOpenAIClient(options = {}) {
       apiKey: cfg.apiKey,
       defaultHeaders: { 'api-key': cfg.apiKey },
       defaultQuery: { 'api-version': cfg.apiVersion },
+      // The SDK retries 429/503 honouring the `Retry-After` / `x-ratelimit-reset-*`
+      // headers with exponential backoff — the primary 429 absorber on Azure's
+      // small default quotas.
+      maxRetries: azureMaxRetries(),
     });
   } else {
     const apiKey = options.apiKey || process.env.OPENAI_API_KEY || '';

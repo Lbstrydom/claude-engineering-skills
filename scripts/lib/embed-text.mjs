@@ -33,6 +33,7 @@ import { azureConfig, symbolIndexConfig } from './config.mjs';
 import { redactSecrets } from './secret-patterns.mjs';
 import { getGeminiClient } from './llm-wrappers.mjs';
 import { createOpenAIClient } from './openai-client.mjs';
+import { azureThrottle } from './azure-throttle.mjs';
 
 /**
  * Default Gemini embedding model — single source of truth is
@@ -78,11 +79,11 @@ export async function embedText(text, opts = {}) {
 
   if (cfg.active) {
     const client = opts.client || await createOpenAIClient({ purpose: 'embed', azure: cfg });
-    const resp = await client.embeddings.create({
+    const resp = await azureThrottle(() => client.embeddings.create({
       model: cfg.embedDeployment,
       input: safeText,
       dimensions: dim,
-    });
+    }));
     const vec = resp?.data?.[0]?.embedding;
     validateVector(vec, dim, cfg.embedDeployment);
     return {

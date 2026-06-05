@@ -31,6 +31,7 @@ import { resolveModel } from '../lib/model-resolver.mjs';
 import { redactSecrets } from '../lib/secret-patterns.mjs';
 import { azureConfig } from '../lib/config.mjs';
 import { createAnthropicClient } from '../lib/anthropic-client.mjs';
+import { azureThrottle } from '../lib/azure-throttle.mjs';
 
 // Bump on ANY prompt change. Forces cache invalidation across all repos.
 export const PROMPT_TEMPLATE_VERSION = 1;
@@ -80,11 +81,11 @@ async function callHaiku(prompt, modelId, timeoutMs = 60000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const resp = await client.messages.create({
+    const resp = await azureThrottle(() => client.messages.create({
       model,
       max_tokens: 200,
       messages: [{ role: 'user', content: prompt }],
-    }, { signal: ctrl.signal });
+    }, { signal: ctrl.signal }));
     clearTimeout(timer);
     const text = resp?.content?.[0]?.text?.trim() || '';
     return {

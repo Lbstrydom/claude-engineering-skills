@@ -212,7 +212,9 @@ export async function createAnthropicClient(options = {}) {
       // `${baseURL}/v1/messages` with `Authorization: Bearer <key>` (verified
       // against ai-organiser's azureClaudeAdapter). `authToken` is the SDK
       // option that emits the Bearer header (NOT x-api-key / api-key).
-      anthropicOpts = { baseURL: effectiveBaseURL, authToken: azureKey };
+      // maxRetries: the SDK honours Retry-After on 429 (Azure's small quotas).
+      const { azureMaxRetries } = await import('./azure-throttle.mjs');
+      anthropicOpts = { baseURL: effectiveBaseURL, authToken: azureKey, maxRetries: azureMaxRetries() };
     } else if (effectiveBaseURL) {
       anthropicOpts = { apiKey: effectiveApiKey, baseURL: effectiveBaseURL };
     } else {

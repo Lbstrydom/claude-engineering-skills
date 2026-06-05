@@ -22,6 +22,7 @@ import { chunkBatches } from '../lib/symbol-index.mjs';
 import { redactSecrets } from '../lib/sensitive-egress-gate.mjs';
 import { emit } from '../lib/cli-io.mjs';
 import { createAnthropicClient } from '../lib/anthropic-client.mjs';
+import { azureThrottle } from '../lib/azure-throttle.mjs';
 
 const MODEL = symbolIndexConfig.summariseModel || briefConfig.claudeModel;
 
@@ -51,11 +52,11 @@ async function summariseBatch(batch) {
     `If a symbol's body is empty or unparseable, write "<no body>".\n\n` +
     lines.join('\n\n');
   try {
-    const res = await client.messages.create({
+    const res = await azureThrottle(() => client.messages.create({
       model,
       max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }],
-    });
+    }));
     const text = res.content?.map(c => c.text || '').join('') || '';
     // Parse "N. summary" lines
     const out = batch.map(() => null);

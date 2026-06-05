@@ -78,6 +78,7 @@ import { PromptBandit, computeReward, buildContext } from './bandit.mjs';
 import { openaiConfig, PASS_NAMES, modelPricing, azureConfig } from './lib/config.mjs';
 import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey } from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
+import { azureThrottle } from './lib/azure-throttle.mjs';
 import { classifyResponsesSupport } from './lib/openai-responses-capability.mjs';
 import { zodResponseFormat } from 'openai/helpers/zod';
 
@@ -524,7 +525,7 @@ let _responsesUnsupported = false;
 async function parseStructured(openai, requestParams, callOpts, ctx) {
   if (!_responsesUnsupported) {
     try {
-      return await openai.responses.parse(requestParams, callOpts);
+      return await azureThrottle(() => openai.responses.parse(requestParams, callOpts));
     } catch (err) {
       if (classifyResponsesSupport(err) !== 'unsupported') throw err;
       _responsesUnsupported = true;
@@ -543,7 +544,7 @@ async function parseStructured(openai, requestParams, callOpts, ctx) {
     max_completion_tokens: ctx.tokens,
   };
   if (supportsReasoningEffort(ctx.model)) params.reasoning_effort = ctx.effort;
-  const completion = await openai.chat.completions.parse(params, callOpts);
+  const completion = await azureThrottle(() => openai.chat.completions.parse(params, callOpts));
   const choice = completion.choices?.[0];
   const u = completion.usage || {};
   const parsed = choice?.message?.parsed ?? null;

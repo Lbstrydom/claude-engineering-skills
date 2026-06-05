@@ -29,6 +29,7 @@ import { geminiConfig, claudeConfig, azureConfig } from './lib/config.mjs';
 import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
+import { azureThrottle } from './lib/azure-throttle.mjs';
 import { PromptBandit } from './bandit.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
@@ -493,16 +494,16 @@ async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, pa
     setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
   });
 
-  let requestPromise, extractText, extractUsage;
+  let makeRequest, extractText, extractUsage;
   if (shape === 'anthropic') {
-    requestPromise = client.messages.create({
+    makeRequest = () => client.messages.create({
       model, max_tokens: MAX_OUTPUT_TOKENS, system: sys,
       messages: [{ role: 'user', content: userPrompt }],
     });
     extractText = (r) => r.content?.[0]?.text?.trim() || '{}';
     extractUsage = (r) => ({ input_tokens: r.usage?.input_tokens ?? 0, output_tokens: r.usage?.output_tokens ?? 0, thinking_tokens: 0 });
   } else {
-    requestPromise = client.chat.completions.create({
+    makeRequest = () => client.chat.completions.create({
       model, max_tokens: MAX_OUTPUT_TOKENS,
       messages: [{ role: 'system', content: sys }, { role: 'user', content: userPrompt }],
     });
@@ -511,7 +512,8 @@ async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, pa
   }
 
   try {
-    const response = await Promise.race([requestPromise, timeoutPromise]);
+    // Defer the request behind the Azure concurrency gate (no-op on public path).
+    const response = await Promise.race([azureThrottle(makeRequest), timeoutPromise]);
     const latencyMs = Date.now() - startMs;
     const text = extractText(response);
     let result;

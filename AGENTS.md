@@ -944,6 +944,18 @@ missing (never auto-installs), then chains `--migrate`. Legacy
 aliases (one-time notice; canonical wins). `AUDIT_STORE=postgres` without a DSN
 fails fast.
 
+**Rate limits**: Azure deployments ship with tiny default quotas (commonly
+**10 RPM / 10K TPM**). `npm run azure:limits` probes each deployment and prints
+its live TPM/RPM + reset window. Management (all opt-in, no-op on the public
+path): a global in-flight concurrency cap ([`scripts/lib/azure-throttle.mjs`](scripts/lib/azure-throttle.mjs),
+`AZURE_MAX_CONCURRENCY`, default 2) paces the burst sources (the embedder's
+25-wide `Promise.all`, parallel audit passes), and the OpenAI/Anthropic SDK
+clients run with `maxRetries` (`AZURE_MAX_RETRIES`, default 6) so 429s are
+absorbed honouring Azure's `Retry-After` / `x-ratelimit-reset-*` headers. A
+single call larger than the per-minute TPM can't be fixed client-side — raise
+the deployment quota in the Foundry portal. RPM is as binding as TPM for batched
+work (embeddings/summaries), so raise both.
+
 Template: [`defaults/work-profile.env.example`](defaults/work-profile.env.example).
 
 ## Cross-Skill Data Loop

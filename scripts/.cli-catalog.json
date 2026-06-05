@@ -46,6 +46,10 @@
       "description": "One-shot Anthropic API ping (verifies the configured backend — sdk or cli).",
       "category": "diagnostic"
     },
+    "azure:limits": {
+      "description": "Probe each Azure deployment and print its live TPM/RPM rate limits + reset windows.",
+      "category": "diagnostic"
+    },
     "audit:refine": {
       "description": "LLM-driven prompt refinement from outcome data.",
       "category": "audit"

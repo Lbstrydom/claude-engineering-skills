@@ -17,6 +17,7 @@
     "audit:gemini-review": "node scripts/gemini-review.mjs review",
     "audit:gemini-ping": "node scripts/gemini-review.mjs ping",
     "anthropic:ping": "node scripts/anthropic-ping.mjs",
+    "azure:limits": "node scripts/azure-limits.mjs",
     "audit:refine": "node scripts/refine-prompts.mjs",
     "audit:bandit": "node scripts/bandit.mjs stats",
     "audit:phase7": "node scripts/phase7-check.mjs",
