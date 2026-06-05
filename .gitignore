@@ -13,6 +13,10 @@ node_modules/
 # IDE settings (per-machine)
 .claude/settings.local.json
 .claude/worktrees/
+
+# Private/corporate consumer registry — names a non-public consumer repo,
+# must never be committed to this public repo (see consumer-repos.local.example.json).
+scripts/lib/consumer-repos.local.json
 .claude/scheduled_tasks.lock
 
 # Audit-loop operational state (local to each machine)

@@ -13,24 +13,54 @@
  *
  * @module scripts/lib/consumer-repos
  */
+import fs from 'node:fs';
 import path from 'node:path';
 
 // `import.meta.dirname` resolves to scripts/lib/, so '../..' is the
 // claude-audit-loop repo root.
 const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
 
-export const CONSUMER_REPOS = Object.freeze([
-  Object.freeze({
-    name:  'wine-cellar-app',
-    alias: 'wine',
-    path:  path.resolve(REPO_ROOT, '..', 'wine-cellar-app'),
-  }),
-  Object.freeze({
-    name:  'ai-organiser',
-    alias: 'ai',
-    path:  path.resolve(REPO_ROOT, '..', 'ai-organiser'),
-  }),
-]);
+// Public, committed consumer entries.
+const BASE_REPOS = [
+  { name: 'wine-cellar-app', alias: 'wine', path: path.resolve(REPO_ROOT, '..', 'wine-cellar-app') },
+  { name: 'ai-organiser',    alias: 'ai',   path: path.resolve(REPO_ROOT, '..', 'ai-organiser') },
+];
+
+/**
+ * Local, GITIGNORED override for private/corporate consumers that must NOT be
+ * named in this public repo. Create `scripts/lib/consumer-repos.local.json` on
+ * the dev machine (see consumer-repos.local.example.json). Shape:
+ *   { "repos": [ { "name": "...", "alias": "work", "path": "../audit-loop" } ] }
+ * `path` may be absolute or relative to the repo root. Never committed.
+ * @returns {Array<{name:string,alias:string,path:string}>}
+ */
+function loadLocalRepos() {
+  const localPath = path.join(import.meta.dirname, 'consumer-repos.local.json');
+  if (!fs.existsSync(localPath)) return [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(localPath, 'utf8'));
+    const entries = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.repos) ? raw.repos : []);
+    return entries
+      .filter((e) => e && e.name && e.alias && e.path)
+      .map((e) => ({
+        name:  String(e.name),
+        alias: String(e.alias),
+        path:  path.isAbsolute(e.path) ? e.path : path.resolve(REPO_ROOT, e.path),
+      }));
+  } catch (err) {
+    process.stderr.write(`  [consumer-repos] ignoring malformed consumer-repos.local.json: ${err.message}\n`);
+    return [];
+  }
+}
+
+// Local entries win on alias/name collision so a developer can repoint a base.
+const _merged = [...BASE_REPOS];
+for (const local of loadLocalRepos()) {
+  const i = _merged.findIndex((r) => r.alias === local.alias || r.name === local.name);
+  if (i >= 0) _merged[i] = local; else _merged.push(local);
+}
+
+export const CONSUMER_REPOS = Object.freeze(_merged.map((r) => Object.freeze(r)));
 
 /** @returns {string[]} the alias values, useful for CLI help text */
 export function consumerAliases() {

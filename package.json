@@ -42,6 +42,7 @@
     "db:adopt": "node scripts/setup-postgres.mjs --adopt",
     "setup:cloud": "node scripts/setup-cloud.mjs",
     "sync": "node scripts/sync-to-repos.mjs",
+    "sync:refresh": "node scripts/sync-refresh.mjs",
     "sync:dry": "node scripts/sync-to-repos.mjs --dry-run",
     "sync:check": "node scripts/check-sync.mjs",
     "sync:version-check": "node scripts/check-audit-tool-version.mjs",

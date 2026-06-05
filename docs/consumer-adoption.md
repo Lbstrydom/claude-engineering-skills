@@ -258,3 +258,39 @@ node scripts/.claude-skills/lib/remove-legacy-synced.mjs \
 
 The `--force-dirty` flag is logged in the JSON summary so PR reviewers
 can see it was used.
+
+---
+
+## Private / corporate consumers (keep the name out of this public repo)
+
+`scripts/lib/consumer-repos.mjs` is committed to this **public** repo, so don't
+add a corporate consumer there. Instead create a **gitignored local override**
+on the dev machine:
+
+```bash
+cp scripts/lib/consumer-repos.local.example.json scripts/lib/consumer-repos.local.json
+# edit: { "repos": [ { "name": "audit-loop", "alias": "work", "path": "../audit-loop" } ] }
+```
+
+`path` is absolute or relative to the repo root; the consumer must sit beside
+this clone (e.g. `C:\GIT\claude-engineering-skills` + `C:\GIT\audit-loop`).
+`consumer-repos.local.json` is gitignored and never leaves the machine; local
+entries merge into `--target` resolution (and win on alias collision).
+
+## Keeping a consumer updated (one-directional)
+
+Sync is **canonical → local clone → consumer**. Nothing pushes back to
+`claude-engineering-skills`, and nothing auto-commits the consumer. One command
+pulls canonical + re-hydrates the consumer:
+
+```bash
+npm run sync:refresh -- --target work          # pull canonical, sync into the consumer
+npm run sync:refresh -- --target work --no-pull # sync only (offline / pinned clone)
+```
+
+It prints the consumer's tracked changes (skill `.md`, prompts, manifest,
+migrations) so you can review and `git commit && git push` them to the
+consumer's OWN remote by hand. The synced `scripts/.claude-skills/**` tooling is
+gitignored on the consumer, so it never appears in that push (re-hydrate a fresh
+clone with another `sync:refresh`). **Never edit the synced tooling in the
+consumer — fix it upstream here and re-sync.**

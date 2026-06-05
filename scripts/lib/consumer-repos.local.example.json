@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to consumer-repos.local.json (gitignored) to register PRIVATE/corporate consumer repos without naming them in this public repo. `path` is absolute or relative to the repo root. Local entries win on alias/name collision.",
+  "repos": [
+    { "name": "audit-loop", "alias": "work", "path": "../audit-loop" }
+  ]
+}

@@ -148,6 +148,10 @@
       "description": "Sync this bundle into all registered consumer repos (auto-fires fit-check on first sync).",
       "category": "sync"
     },
+    "sync:refresh": {
+      "description": "Pull canonical then sync into one consumer (--target); shows its tracked changes. No commit/push.",
+      "category": "sync"
+    },
     "sync:dry": {
       "description": "Dry-run sync — preview what would be created/updated, no writes.",
       "category": "sync"
