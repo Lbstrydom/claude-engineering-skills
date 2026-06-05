@@ -152,6 +152,17 @@ isn't tracked — fresh clones of a consumer repo need to re-run
 > consumer's tree against its manifest. This is the band-aid-vs-root-cause rule
 > at the consumer/upstream seam — the local edit is the band-aid; the upstream
 > fix is the root.
+>
+> **Upstream bug, but you're blocked? Source patch = forbidden; a labelled
+> runtime/env workaround is OK and must reconcile.** Editing upstream-owned
+> *source* in a fork/consumer is never allowed (above). But a **runtime/env/DB**
+> unblock (e.g. an `ALTER` while a schema migration is pending upstream) is
+> acceptable IF you (1) report the bug so it's fixed here, (2) **label it
+> `TEMP — pending upstream fix`**, and (3) **reconcile** once the fix lands
+> (`git pull upstream` + `setup-postgres --migrate`, etc.). Prefer waiting when
+> not urgent. A local DB workaround that *diverges* from the eventual upstream
+> migration, or that silently leaves the live schema ahead of the migration
+> ledger, is the failure mode this rule prevents.
 
 ### Why isolated
 
