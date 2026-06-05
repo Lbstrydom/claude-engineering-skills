@@ -620,3 +620,17 @@ cluster commit(s); no stateful teardown because nothing persists Azure state.
   `tests/azure-config.test.mjs` (was `model-resolver-azure.test.mjs`).
 - **Accepted scope boundary**: arch-index summarizer (`summarise*.mjs`) not
   Azure-routed — see "Accepted scope boundary" above.
+
+### 2026-06-05 (live verification + follow-ups)
+- **Smoke-tested live** against the user's Foundry (`gd-ai-dev-aif`): ✓ GPT
+  `gpt-5.3-chat` (Responses API), ✓ embeddings `text-embedding-3-small` (768),
+  ✓ Opus `claude-opus-4-6`, ✓ Sonnet `claude-sonnet-4-6`.
+- **Corrected contract from ai-organiser's adapters**: Foundry Claude is the
+  **native Anthropic API** at `/anthropic/v1/messages` with `Authorization: Bearer`
+  (NOT OpenAI-shaped, NOT api-key). `AZURE_CLAUDE_API_SHAPE` now defaults to
+  `anthropic`; anthropic-client uses the SDK `authToken` (Bearer) + `${aiEndpoint}/anthropic`
+  baseURL. GPT/embeddings confirmed on `/openai/v1` + `api-key`.
+- **Config ergonomics**: GPT deployment falls back to a concrete `OPENAI_AUDIT_MODEL`;
+  Claude/summary deployments default to `claude-opus-4-6` / `claude-sonnet-4-6`.
+- **Scope boundary CLOSED**: arch-index summariser now routes to Sonnet on
+  Foundry (`summarise.mjs` + `summarise-domains.mjs`).

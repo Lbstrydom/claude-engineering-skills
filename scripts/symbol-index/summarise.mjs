@@ -17,10 +17,11 @@
 
 import readline from 'node:readline';
 import { briefConfig } from '../lib/config.mjs';
-import { symbolIndexConfig } from '../lib/config.mjs';
+import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
 import { chunkBatches } from '../lib/symbol-index.mjs';
 import { redactSecrets } from '../lib/sensitive-egress-gate.mjs';
 import { emit } from '../lib/cli-io.mjs';
+import { createAnthropicClient } from '../lib/anthropic-client.mjs';
 
 const MODEL = symbolIndexConfig.summariseModel || briefConfig.claudeModel;
 
@@ -31,12 +32,16 @@ function logProgress(s) { process.stderr.write(`  [summarise] ${s}\n`); }
  * Falls back to truncated body if Anthropic SDK unavailable or call fails.
  */
 async function summariseBatch(batch) {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    logProgress(`ANTHROPIC_API_KEY missing — emitting empty summaries`);
+  // Under the Azure work profile, summaries run on Sonnet via Foundry (native
+  // Anthropic, Bearer). Otherwise the public Anthropic API (Haiku by default).
+  if (!azureConfig.active && !process.env.ANTHROPIC_API_KEY) {
+    logProgress(`no Claude provider (set ANTHROPIC_API_KEY or the Azure work profile) — emitting empty summaries`);
     return batch.map(() => null);
   }
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = azureConfig.active
+    ? await createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl })
+    : await createAnthropicClient();
+  const model = azureConfig.active ? azureConfig.summaryDeployment : MODEL;
   const lines = batch.map((s, i) =>
     `${i + 1}. ${s.kind} \`${s.symbolName}\` in \`${s.filePath}\` (lines ${s.startLine}-${s.endLine}):\n` +
     '```\n' + redactSecrets((s.bodyText || '').slice(0, 1500)) + '\n```'
@@ -47,7 +52,7 @@ async function summariseBatch(batch) {
     lines.join('\n\n');
   try {
     const res = await client.messages.create({
-      model: MODEL,
+      model,
       max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }],
     });

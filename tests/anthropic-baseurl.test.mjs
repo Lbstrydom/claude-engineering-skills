@@ -28,12 +28,13 @@ describe('createAnthropicClient — baseURL (Azure Foundry anthropic shape)', ()
     assert.equal(c.baseURL, 'https://env.example.com');
   });
 
-  it('adds the Azure api-key header when baseURL + AZURE_OPENAI_API_KEY present', async () => {
+  it('uses Bearer auth (authToken) for the Azure Foundry path', async () => {
     process.env.AZURE_OPENAI_API_KEY = 'azkey';
-    const c = await createAnthropicClient({ backend: 'sdk', baseURL: 'https://foundry.example', redactor: null, fresh: true });
-    // The SDK stores constructor defaultHeaders; assert the Azure header is set.
-    const hdr = c._options?.defaultHeaders?.['api-key'];
-    assert.equal(hdr, 'azkey');
+    const c = await createAnthropicClient({ backend: 'sdk', baseURL: 'https://foundry.example/anthropic', redactor: null, fresh: true });
+    // Azure Foundry uses `Authorization: Bearer <key>` — the SDK's authToken,
+    // NOT x-api-key/api-key. The SDK stores it as `c.authToken`.
+    assert.equal(c.authToken, 'azkey');
+    assert.equal(c.baseURL, 'https://foundry.example/anthropic');
   });
 });
 

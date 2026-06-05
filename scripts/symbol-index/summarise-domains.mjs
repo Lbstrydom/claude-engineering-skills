@@ -29,6 +29,8 @@ import {
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { resolveModel } from '../lib/model-resolver.mjs';
 import { redactSecrets } from '../lib/secret-patterns.mjs';
+import { azureConfig } from '../lib/config.mjs';
+import { createAnthropicClient } from '../lib/anthropic-client.mjs';
 
 // Bump on ANY prompt change. Forces cache invalidation across all repos.
 export const PROMPT_TEMPLATE_VERSION = 1;
@@ -63,20 +65,23 @@ export function cacheHit(prior, { compositionHash, symbolCount, promptTemplateVe
 }
 
 async function callHaiku(prompt, modelId, timeoutMs = 60000) {
-  // Lazy-import the SDK so the CLI cold-start stays cheap when fully cached.
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  if (!process.env.ANTHROPIC_API_KEY) {
-    const e = new Error('ANTHROPIC_API_KEY not set');
+  // Under the Azure work profile, domain summaries run on Sonnet via Foundry
+  // (native Anthropic, Bearer); otherwise the public Anthropic API.
+  if (!azureConfig.active && !process.env.ANTHROPIC_API_KEY) {
+    const e = new Error('No Claude provider (set ANTHROPIC_API_KEY or the Azure work profile)');
     e.code = 'MISSING_KEY';
     throw e;
   }
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const client = azureConfig.active
+    ? await createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl })
+    : await createAnthropicClient();
+  const model = azureConfig.active ? azureConfig.summaryDeployment : modelId;
   const startMs = Date.now();
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const resp = await client.messages.create({
-      model: modelId,
+      model,
       max_tokens: 200,
       messages: [{ role: 'user', content: prompt }],
     }, { signal: ctrl.signal });

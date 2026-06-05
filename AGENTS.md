@@ -923,11 +923,18 @@ in `neighbourhood-query.mjs`); rebuild once with `npm run arch:refresh` +
 `npm run security:refresh`.
 
 **Final-reviewer precedence** (top wins): `--provider` flag → Azure (`azure-claude`)
-→ Gemini → public Claude Opus. Foundry transport is OpenAI-shaped by default;
-`AZURE_CLAUDE_API_SHAPE=anthropic` switches to native Anthropic via baseURL.
-The exact Foundry route (`/openai/v1` vs `/models`) is
-**manual-verification-required** against the live endpoint — `AZURE_FOUNDRY_API_PATH`
-overrides it.
+→ Gemini → public Claude Opus. **Verified live** (2026-06-05): Foundry serves
+Claude as the **native Anthropic API** at `…/anthropic/v1/messages` with
+`Authorization: Bearer` — so `AZURE_CLAUDE_API_SHAPE` defaults to `anthropic`
+(the `openai` value is for a rare OpenAI-shaped Foundry deployment). Deployments:
+`claude-opus-4-6` (reviewer), `claude-sonnet-4-6` (summaries). GPT auditor
+deployment falls back to a concrete `OPENAI_AUDIT_MODEL` (e.g. `gpt-5.3-chat`)
+when `AZURE_OPENAI_GPT_DEPLOYMENT` is unset.
+
+**Arch-index summaries on Azure** route to **Sonnet** via Foundry
+(`summarise.mjs` / `summarise-domains.mjs` → `createAnthropicClient({baseURL})`,
+deployment `AZURE_FOUNDRY_SUMMARY_DEPLOYMENT`, default `claude-sonnet-4-6`) — the
+former scope boundary is now closed since Azure has no Haiku.
 
 **Postgres**: still just a DSN (local now, AWS/Azure-managed later, no code
 change). `node scripts/setup-postgres.mjs --ensure-local` is a **guided**

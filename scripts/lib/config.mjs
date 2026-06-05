@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { safeInt } from './file-io.mjs';
-import { resolveModel } from './model-resolver.mjs';
+import { resolveModel, isSentinel } from './model-resolver.mjs';
 
 // ── .env Discovery (worktree-safe) ──────────────────────────────────────────
 
@@ -301,19 +301,28 @@ export function buildAzureConfig(env = process.env) {
       active: false,
       openaiEndpoint: null, aiEndpoint: null, apiKey: null,
       apiVersion: 'preview', gptDeployment: null, claudeDeployment: null,
-      embedDeployment: 'text-embedding-3-small', claudeApiShape: 'openai',
-      foundryApiPath: '/openai/v1',
+      summaryDeployment: 'claude-sonnet-4-6',
+      embedDeployment: 'text-embedding-3-small', claudeApiShape: 'anthropic',
+      claudeBaseUrl: null, foundryApiPath: '/openai/v1',
     });
   }
 
   const apiKey = (env.AZURE_OPENAI_API_KEY || '').trim() || null;
-  const gptDeployment = (env.AZURE_OPENAI_GPT_DEPLOYMENT || '').trim() || null;
 
-  // All-or-nothing (§1.5): endpoint set ⇒ key + GPT deployment required.
-  // Error names the missing var(s) only — never the values.
+  // Deployment resolution (forgiving): prefer the dedicated AZURE_*_DEPLOYMENT
+  // var, else fall back to a CONCRETE (non-sentinel) OPENAI_AUDIT_MODEL /
+  // CLAUDE_FINAL_REVIEW_MODEL. This lets the natural `OPENAI_AUDIT_MODEL=gpt-5.3-chat`
+  // config work without a second var, while still keeping sentinels (latest-*)
+  // out of the wire path (they'd 404 as Azure deployment names).
+  const concrete = (v) => { const s = (v || '').trim(); return s && !isSentinel(s) ? s : null; };
+  const gptDeployment = (env.AZURE_OPENAI_GPT_DEPLOYMENT || '').trim() || concrete(env.OPENAI_AUDIT_MODEL);
+  const claudeDeployment = (env.AZURE_FOUNDRY_CLAUDE_DEPLOYMENT || '').trim()
+    || concrete(env.CLAUDE_FINAL_REVIEW_MODEL) || 'claude-opus-4-6';
+
+  // All-or-nothing (§1.5): endpoint set ⇒ key + a GPT deployment required.
   const missing = [];
   if (!apiKey) missing.push('AZURE_OPENAI_API_KEY');
-  if (!gptDeployment) missing.push('AZURE_OPENAI_GPT_DEPLOYMENT');
+  if (!gptDeployment) missing.push('AZURE_OPENAI_GPT_DEPLOYMENT (or a concrete OPENAI_AUDIT_MODEL)');
   if (missing.length > 0) {
     throw new Error(
       `[config] AZURE_OPENAI_ENDPOINT is set (Azure work profile active) but ` +
@@ -322,7 +331,10 @@ export function buildAzureConfig(env = process.env) {
     );
   }
 
-  const claudeApiShape = (env.AZURE_CLAUDE_API_SHAPE || 'openai').trim();
+  // Foundry serves Claude as the NATIVE Anthropic API at `/anthropic/v1/messages`
+  // with `Authorization: Bearer` (verified against ai-organiser's azureClaudeAdapter).
+  // So `anthropic` is the correct default, NOT the OpenAI-shaped surface.
+  const claudeApiShape = (env.AZURE_CLAUDE_API_SHAPE || 'anthropic').trim();
   if (!VALID_CLAUDE_SHAPES.has(claudeApiShape)) {
     throw new Error(
       `[config] Invalid AZURE_CLAUDE_API_SHAPE="${claudeApiShape}". ` +
@@ -330,19 +342,22 @@ export function buildAzureConfig(env = process.env) {
     );
   }
 
+  const aiEndpoint = (env.AZURE_AI_ENDPOINT || '').trim() || null;
   return Object.freeze({
     active: true,
     openaiEndpoint,
-    aiEndpoint: (env.AZURE_AI_ENDPOINT || '').trim() || null,
+    aiEndpoint,
     apiKey,
     apiVersion: (env.AZURE_OPENAI_API_VERSION || 'preview').trim(),
     gptDeployment,
-    claudeDeployment: (env.AZURE_FOUNDRY_CLAUDE_DEPLOYMENT || '').trim() || null,
+    claudeDeployment,
+    // Arch-index summariser deployment (Sonnet on Foundry by default).
+    summaryDeployment: (env.AZURE_FOUNDRY_SUMMARY_DEPLOYMENT || 'claude-sonnet-4-6').trim(),
     embedDeployment: (env.AZURE_OPENAI_EMBED_DEPLOYMENT || 'text-embedding-3-small').trim(),
     claudeApiShape,
-    // Foundry Serverless non-OpenAI models may route at /models rather than
-    // /openai/v1 (Gemini-R3-M, manual-verification-required). Overridable for
-    // the live-smoke without a code change.
+    // Native-Anthropic base for the Foundry Claude path — the SDK appends
+    // `/v1/messages`, yielding `…/anthropic/v1/messages`.
+    claudeBaseUrl: aiEndpoint ? `${aiEndpoint.replace(/\/+$/, '')}/anthropic` : null,
     foundryApiPath: (env.AZURE_FOUNDRY_API_PATH || '/openai/v1').trim(),
   });
 }

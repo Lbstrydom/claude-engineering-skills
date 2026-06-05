@@ -206,11 +206,17 @@ export async function createAnthropicClient(options = {}) {
     if (!effectiveApiKey) {
       throw new Error('[anthropic-client] ANTHROPIC_API_KEY required for sdk backend');
     }
-    const anthropicOpts = { apiKey: effectiveApiKey };
-    if (effectiveBaseURL) {
-      anthropicOpts.baseURL = effectiveBaseURL;
-      // Foundry expects `api-key`; keep the SDK's x-api-key too for safety.
-      if (azureKey) anthropicOpts.defaultHeaders = { 'api-key': azureKey };
+    let anthropicOpts;
+    if (effectiveBaseURL && azureKey) {
+      // Azure AI Foundry serves Claude as the NATIVE Anthropic API at
+      // `${baseURL}/v1/messages` with `Authorization: Bearer <key>` (verified
+      // against ai-organiser's azureClaudeAdapter). `authToken` is the SDK
+      // option that emits the Bearer header (NOT x-api-key / api-key).
+      anthropicOpts = { baseURL: effectiveBaseURL, authToken: azureKey };
+    } else if (effectiveBaseURL) {
+      anthropicOpts = { apiKey: effectiveApiKey, baseURL: effectiveBaseURL };
+    } else {
+      anthropicOpts = { apiKey: effectiveApiKey };
     }
     const rawClient = new Anthropic(anthropicOpts);
     client = effectiveRedactor ? wrapSdkWithRedactor(rawClient, effectiveRedactor) : rawClient;

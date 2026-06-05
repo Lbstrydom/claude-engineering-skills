@@ -915,7 +915,8 @@ async function buildClient(provider) {
   if (provider === 'azure-claude') {
     process.stderr.write(`  [final-review] Azure work profile — Opus via Foundry (${azureConfig.claudeApiShape} shape, ${azureConfig.claudeDeployment}).\n`);
     if (azureConfig.claudeApiShape === 'anthropic') {
-      return createAnthropicClient({ baseURL: azureConfig.aiEndpoint });
+      // Native Anthropic at ${aiEndpoint}/anthropic/v1/messages, Bearer auth.
+      return createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl });
     }
     return createOpenAIClient({ purpose: 'foundry-claude' });
   }

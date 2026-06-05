@@ -15,7 +15,7 @@ describe('buildAzureConfig — opt-in gate', () => {
     assert.equal(c.openaiEndpoint, null);
     assert.equal(c.apiVersion, 'preview'); // v1-surface literal
     assert.equal(c.embedDeployment, 'text-embedding-3-small');
-    assert.equal(c.claudeApiShape, 'openai');
+    assert.equal(c.claudeApiShape, 'anthropic');
   });
 
   it('activates and defaults correctly with the minimal valid set', () => {

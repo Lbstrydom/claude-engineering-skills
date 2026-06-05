@@ -61,20 +61,20 @@ npm run arch:refresh        # re-embeds symbols via Azure OpenAI
 npm run security:refresh    # re-embeds incidents via Azure OpenAI
 ```
 
-### 4. Smoke-test the live endpoints (manual — can't be done from CI)
-
-The exact Foundry calling convention can only be confirmed against your
-corporate endpoint:
+### 4. Smoke-test the live endpoints
 
 ```bash
-npm run anthropic:ping        # exercises the configured Claude backend
-node scripts/gemini-review.mjs ping   # final-reviewer connectivity
+node scripts/gemini-review.mjs ping   # final-reviewer (Opus) connectivity
 ```
 
-If the Foundry Claude call 404s, your deployment may route at `/models` rather
-than `/openai/v1` — set `AZURE_FOUNDRY_API_PATH=/models`. If it speaks the
-native Anthropic API rather than the OpenAI-shaped one, set
-`AZURE_CLAUDE_API_SHAPE=anthropic`.
+**Verified contract** (smoke-tested live against `gd-ai-dev-aif`, 2026-06-05):
+- GPT (`gpt-5.3-chat`) + embeddings (`text-embedding-3-small`, 768) →
+  `…/openai/v1/...` with the `api-key` header. The Responses API works on the v1
+  surface, so the chat-completions fallback is rarely needed.
+- Claude Opus/Sonnet → **native Anthropic** at `…/anthropic/v1/messages` with
+  `Authorization: Bearer` (this is the default `AZURE_CLAUDE_API_SHAPE=anthropic`).
+- Deployments: `claude-opus-4-6` (reviewer), `claude-sonnet-4-6` (arch
+  summaries), `text-embedding-3-small` (embeddings).
 
 ## Provider precedence (final reviewer)
 
