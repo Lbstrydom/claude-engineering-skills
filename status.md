@@ -1,5 +1,47 @@
 # Project Status Log
 
+## 2026-06-08 — Azure work profile: refresh deployment selection as Foundry quota expanded
+
+### Changes
+- The `gd-ai-dev-aif` Foundry project grew from 2 usable models to 13. Refreshed
+  the bundle's deployment choices to match the new quota landscape:
+  - **Final reviewer**: `claude-opus-4-6` → **`claude-opus-4-7`**. The real driver
+    is quota, not version — the reviewer takes the full audit transcript (10–30K
+    tokens) in one call, and opus-4-6 at 10K TPM 429s unrecoverably on large
+    audits. opus-4-7 at 100K TPM holds it. Family stays Claude-on-purpose:
+    independence from the GPT *auditor* is the axis that matters, and Foundry has
+    no third family (no Gemini), so Opus-vs-GPT-auditor is the best available.
+  - **GPT auditor** (doc/example string): `gpt-5.3-chat` → **`gpt-5.5`**. The old
+    one is 10K TPM *and* retires 2026-06-29. Live value still comes from the
+    operator's `OPENAI_AUDIT_MODEL` env var.
+  - **`AZURE_MAX_CONCURRENCY`** default `2` → **`4`** — the old default was sized
+    for ~10 RPM quotas that no longer bind the workhorses (now 100–600 RPM).
+- **Haiku now exists on Foundry** (`claude-haiku-4-5`) but arch summaries stay on
+  Sonnet deliberately: Haiku is 10K/10 here vs Sonnet's 200K/200, and
+  `arch:refresh` is RPM-bound batch. Updated the stale "Azure has no Haiku"
+  rationale — the availability changed, the decision shouldn't.
+
+### Files Affected
+- `scripts/lib/config.mjs` — final-reviewer deployment default → claude-opus-4-7
+- `scripts/lib/azure-throttle.mjs` — AZURE_MAX_CONCURRENCY default 2 → 4 + rationale
+- `defaults/work-profile.env.example` — example deployment strings + concurrency note
+- `docs/azure-work-profile.md` — verified-contract deployments, table, Haiku note
+- `AGENTS.md` — deployment refresh, killed stale "no Haiku" reasoning, rate-limit para
+
+### Decisions Made
+- "Bump to 4.7" reframed as a quota-correctness fix (10K TPM was a latent 429 bug
+  for the transcript-sized final-review call), not a version chase.
+- Keep Sonnet for summaries despite Haiku now being available — Azure deployment
+  quota, not per-token cost, is the binding constraint for batch arch:refresh.
+- Embeddings stay on `text-embedding-3-small` (best RPM at 600; Cohere `embed-v-4-0`
+  would force a vector-space rebuild for lower RPM).
+
+### Next Steps
+- Operator: set `OPENAI_AUDIT_MODEL=gpt-5.5` in the work `.env`, then
+  `npm run azure:limits` to confirm both deployments resolve live.
+
+---
+
 ## 2026-06-05 — Docs: genericize stale "GPT-5.4" auditor labels
 
 ### Changes

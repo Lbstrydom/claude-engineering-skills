@@ -938,14 +938,21 @@ in `neighbourhood-query.mjs`); rebuild once with `npm run arch:refresh` +
 Claude as the **native Anthropic API** at `…/anthropic/v1/messages` with
 `Authorization: Bearer` — so `AZURE_CLAUDE_API_SHAPE` defaults to `anthropic`
 (the `openai` value is for a rare OpenAI-shaped Foundry deployment). Deployments:
-`claude-opus-4-6` (reviewer), `claude-sonnet-4-6` (summaries). GPT auditor
-deployment falls back to a concrete `OPENAI_AUDIT_MODEL` (e.g. `gpt-5.3-chat`)
-when `AZURE_OPENAI_GPT_DEPLOYMENT` is unset.
+`claude-opus-4-7` (reviewer — 100K TPM, large enough to hold a full audit
+transcript in one call; the older `claude-opus-4-6` at 10K TPM can 429
+unrecoverably on big audits), `claude-sonnet-4-6` (summaries). GPT auditor
+deployment falls back to a concrete `OPENAI_AUDIT_MODEL` (`gpt-5.5`; the prior
+`gpt-5.3-chat` is 10K TPM and retires 2026-06-29) when
+`AZURE_OPENAI_GPT_DEPLOYMENT` is unset.
 
 **Arch-index summaries on Azure** route to **Sonnet** via Foundry
 (`summarise.mjs` / `summarise-domains.mjs` → `createAnthropicClient({baseURL})`,
-deployment `AZURE_FOUNDRY_SUMMARY_DEPLOYMENT`, default `claude-sonnet-4-6`) — the
-former scope boundary is now closed since Azure has no Haiku.
+deployment `AZURE_FOUNDRY_SUMMARY_DEPLOYMENT`, default `claude-sonnet-4-6`).
+`claude-haiku-4-5` now *exists* on Foundry, but summaries deliberately stay on
+Sonnet: Haiku here is 10K TPM / 10 RPM vs Sonnet's 200K / 200, and `arch:refresh`
+is a hundreds-of-calls batch where Azure deployment quota — not per-token cost —
+is the binding constraint. (The original boundary was "Azure has no Haiku"; the
+availability changed, the decision shouldn't.)
 
 **Postgres**: still just a DSN (local now, AWS/Azure-managed later, no code
 change). `node scripts/setup-postgres.mjs --ensure-local` is a **guided**
@@ -955,11 +962,14 @@ missing (never auto-installs), then chains `--migrate`. Legacy
 aliases (one-time notice; canonical wins). `AUDIT_STORE=postgres` without a DSN
 fails fast.
 
-**Rate limits**: Azure deployments ship with tiny default quotas (commonly
-**10 RPM / 10K TPM**). `npm run azure:limits` probes each deployment and prints
-its live TPM/RPM + reset window. Management (all opt-in, no-op on the public
-path): a global in-flight concurrency cap ([`scripts/lib/azure-throttle.mjs`](scripts/lib/azure-throttle.mjs),
-`AZURE_MAX_CONCURRENCY`, default 2) paces the burst sources (the embedder's
+**Rate limits**: fresh Azure deployments often ship with tiny default quotas, but
+the `gd-ai-dev-aif` workhorses now sit at **100K TPM / 100 RPM** (`gpt-5.5`
+auditor, `claude-opus-4-7` reviewer), with `claude-sonnet-4-6` at 200K/200 and
+`text-embedding-3-small` at 100K/600. `npm run azure:limits` probes each
+deployment and prints its live TPM/RPM + reset window. Management (all opt-in,
+no-op on the public path): a global in-flight concurrency cap ([`scripts/lib/azure-throttle.mjs`](scripts/lib/azure-throttle.mjs),
+`AZURE_MAX_CONCURRENCY`, default 4 — TPM-bound on the large GPT passes; raise
+toward 6–8 for RPM-bound batch work) paces the burst sources (the embedder's
 25-wide `Promise.all`, parallel audit passes), and the OpenAI/Anthropic SDK
 clients run with `maxRetries` (`AZURE_MAX_RETRIES`, default 6) so 429s are
 absorbed honouring Azure's `Retry-After` / `x-ratelimit-reset-*` headers. A

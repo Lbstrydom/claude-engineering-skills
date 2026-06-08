@@ -317,7 +317,7 @@ export function buildAzureConfig(env = process.env) {
   const concrete = (v) => { const s = (v || '').trim(); return s && !isSentinel(s) ? s : null; };
   const gptDeployment = (env.AZURE_OPENAI_GPT_DEPLOYMENT || '').trim() || concrete(env.OPENAI_AUDIT_MODEL);
   const claudeDeployment = (env.AZURE_FOUNDRY_CLAUDE_DEPLOYMENT || '').trim()
-    || concrete(env.CLAUDE_FINAL_REVIEW_MODEL) || 'claude-opus-4-6';
+    || concrete(env.CLAUDE_FINAL_REVIEW_MODEL) || 'claude-opus-4-7';
 
   // All-or-nothing (§1.5): endpoint set ⇒ key + a GPT deployment required.
   const missing = [];

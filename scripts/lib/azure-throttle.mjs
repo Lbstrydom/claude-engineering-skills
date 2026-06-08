@@ -21,11 +21,14 @@
 
 import { azureConfig } from './config.mjs';
 
-// Max simultaneous Azure LLM calls process-wide. Default 2 — low because the
-// common Azure default quota is ~10 RPM and a single audit call can be large.
+// Max simultaneous Azure LLM calls process-wide. Default 4 — the workhorse
+// deployments now sit at 100K TPM / 100 RPM (GPT auditor, Opus reviewer) and
+// 200/600 RPM (Sonnet summaries, embeddings), so the binding constraint is TPM
+// on the large GPT passes (~2–4 big calls/min), not the old ~10 RPM quota. Raise
+// further if RPM-bound batch work (embeddings/arch summaries) dominates.
 function maxConcurrency() {
   const n = Number(process.env.AZURE_MAX_CONCURRENCY);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 2;
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 4;
 }
 
 let _active = 0;

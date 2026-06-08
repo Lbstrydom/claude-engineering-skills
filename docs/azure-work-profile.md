@@ -14,8 +14,8 @@ drifting from the work repo.
 
 | Role | Public profile | Azure work profile |
 |---|---|---|
-| GPT auditor | `api.openai.com` | Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` |
-| Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` |
+| GPT auditor | `api.openai.com` | Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` (`gpt-5.5`) |
+| Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` (`claude-opus-4-7`) |
 | Embeddings | Gemini `gemini-embedding-001` | Azure OpenAI `text-embedding-3-small` (`dimensions: 768`) |
 | Author (coding) | your choice in the IDE | Sonnet 4.6 in VS Code (unchanged; out of the bundle's scope) |
 
@@ -67,14 +67,20 @@ npm run security:refresh    # re-embeds incidents via Azure OpenAI
 node scripts/gemini-review.mjs ping   # final-reviewer (Opus) connectivity
 ```
 
-**Verified contract** (smoke-tested live against the work Azure resource, 2026-06-05):
-- GPT (`gpt-5.3-chat`) + embeddings (`text-embedding-3-small`, 768) →
-  `…/openai/v1/...` with the `api-key` header. The Responses API works on the v1
-  surface, so the chat-completions fallback is rarely needed.
+**Verified contract** (smoke-tested live against the work Azure resource, 2026-06-05;
+deployment selection refreshed 2026-06-08 as the Foundry quota expanded):
+- GPT + embeddings (`text-embedding-3-small`, 768) → `…/openai/v1/...` with the
+  `api-key` header. The Responses API works on the v1 surface, so the
+  chat-completions fallback is rarely needed.
 - Claude Opus/Sonnet → **native Anthropic** at `…/anthropic/v1/messages` with
   `Authorization: Bearer` (this is the default `AZURE_CLAUDE_API_SHAPE=anthropic`).
-- Deployments: `claude-opus-4-6` (reviewer), `claude-sonnet-4-6` (arch
-  summaries), `text-embedding-3-small` (embeddings).
+- Deployments: `gpt-5.5` (auditor — replaces the deprecating `gpt-5.3-chat`,
+  retires 2026-06-29), `claude-opus-4-7` (reviewer — 100K TPM, holds a full audit
+  transcript; the older `claude-opus-4-6` at 10K TPM can 429 unrecoverably),
+  `claude-sonnet-4-6` (arch summaries), `text-embedding-3-small` (embeddings).
+- **`claude-haiku-4-5` now exists on Foundry** but summaries deliberately stay on
+  Sonnet: Haiku here is 10K TPM / 10 RPM vs Sonnet's 200K / 200, and `arch:refresh`
+  is a hundreds-of-calls batch where Azure quota — not per-token cost — binds.
 
 ## Provider precedence (final reviewer)
 
