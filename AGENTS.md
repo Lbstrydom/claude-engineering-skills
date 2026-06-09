@@ -933,8 +933,19 @@ space. Adopting Azure on a Gemini-built index is **refused** (provenance guard
 in `neighbourhood-query.mjs`); rebuild once with `npm run arch:refresh` +
 `npm run security:refresh`.
 
-**Final-reviewer precedence** (top wins): `--provider` flag → Azure (`azure-claude`)
-→ Gemini → public Claude Opus. **Verified live** (2026-06-05): Foundry serves
+**Final-reviewer precedence** (top wins): `--provider` flag → `FINAL_REVIEW_PROVIDER`
+persistent setting → **Gemini** (when `GEMINI_API_KEY` present) → Azure
+(`azure-claude`, only when the profile is active) → public Claude Opus. The
+per-repo default stack is **GPT auditor + Gemini reviewer**; a *configured*
+Azure profile no longer silently hijacks the reviewer (a stray
+`AZURE_OPENAI_ENDPOINT` in the environment used to reroute a private-repo review
+to Foundry Opus). To make a repo use Azure permanently, persist the setting:
+`node scripts/gemini-review.mjs set-provider azure-claude` (writes
+`FINAL_REVIEW_PROVIDER=azure-claude` to the repo `.env`; `set-provider default`
+reverts). The two Anthropic-shaped paths (public Opus + Foundry Claude) **stream**
+the response — `max_tokens` (32000) exceeds the SDK's non-streaming ceiling, so a
+plain `messages.create()` throws "Streaming is required…". **Verified live**
+(2026-06-05): Foundry serves
 Claude as the **native Anthropic API** at `…/anthropic/v1/messages` with
 `Authorization: Bearer` — so `AZURE_CLAUDE_API_SHAPE` defaults to `anthropic`
 (the `openai` value is for a rare OpenAI-shaped Foundry deployment). Deployments:

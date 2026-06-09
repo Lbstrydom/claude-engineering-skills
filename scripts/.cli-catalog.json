@@ -42,6 +42,10 @@
       "description": "One-shot Gemini API ping (verifies GEMINI_API_KEY + model resolution).",
       "category": "diagnostic"
     },
+    "final-review:set": {
+      "description": "Persist the per-repo final-review provider (gemini | azure-claude | anthropic | default) to .env. Pass the provider as an arg: `npm run final-review:set -- azure-claude`. The work-repo lever for opting into Azure Foundry Opus.",
+      "category": "diagnostic"
+    },
     "anthropic:ping": {
       "description": "One-shot Anthropic API ping (verifies the configured backend — sdk or cli).",
       "category": "diagnostic"

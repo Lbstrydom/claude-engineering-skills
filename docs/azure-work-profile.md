@@ -15,7 +15,7 @@ drifting from the work repo.
 | Role | Public profile | Azure work profile |
 |---|---|---|
 | GPT auditor | `api.openai.com` | Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` (`gpt-5.5`) |
-| Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` (`claude-opus-4-7`) |
+| Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` (`claude-opus-4-7`) — opt in with `set-provider azure-claude` (no longer automatic; see Provider precedence below) |
 | Embeddings | Gemini `gemini-embedding-001` | Azure OpenAI `text-embedding-3-small` (`dimensions: 768`) |
 | Author (coding) | your choice in the IDE | Sonnet 4.6 in VS Code (unchanged; out of the bundle's scope) |
 
@@ -86,10 +86,26 @@ deployment selection refreshed 2026-06-08 as the Foundry quota expanded):
 
 Deterministic, top wins:
 
-1. Explicit `--provider <gemini|anthropic|azure-claude>` CLI flag.
-2. Azure work profile active → **azure-claude** (replaces Gemini).
-3. `GEMINI_API_KEY` present → Gemini.
-4. `ANTHROPIC_API_KEY` present → public Claude Opus.
+1. Explicit `--provider <gemini|anthropic|azure-claude>` CLI flag (per-invocation).
+2. **`FINAL_REVIEW_PROVIDER`** persistent per-repo setting (the work-repo lever).
+3. `GEMINI_API_KEY` present → **Gemini** (the default reviewer).
+4. Azure work profile active → **azure-claude**.
+5. `ANTHROPIC_API_KEY` present → public Claude Opus.
+
+> **Why Gemini outranks an active Azure profile (changed 2026-06-09).** The
+> per-repo default stack is "GPT auditor + Gemini reviewer". A *configured* Azure
+> profile no longer auto-replaces Gemini — a stray `AZURE_OPENAI_ENDPOINT` in the
+> shell used to silently reroute a private-repo review to Foundry Opus (and hit
+> the non-streaming SDK error). The work repo opts into Azure **explicitly and
+> permanently**:
+>
+> ```bash
+> node scripts/gemini-review.mjs set-provider azure-claude   # or: npm run final-review:set -- azure-claude
+> ```
+>
+> This writes `FINAL_REVIEW_PROVIDER=azure-claude` to the repo `.env`, so it wins
+> regardless of whether a Gemini key leaks in via `~/.audit-loop.env`.
+> `set-provider default` clears it.
 
 ## Env-var reference
 

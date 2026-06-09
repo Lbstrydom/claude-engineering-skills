@@ -16,6 +16,7 @@
     "audit:rebuttal": "node scripts/openai-audit.mjs rebuttal",
     "audit:gemini-review": "node scripts/gemini-review.mjs review",
     "audit:gemini-ping": "node scripts/gemini-review.mjs ping",
+    "final-review:set": "node scripts/gemini-review.mjs set-provider",
     "anthropic:ping": "node scripts/anthropic-ping.mjs",
     "azure:limits": "node scripts/azure-limits.mjs",
     "audit:refine": "node scripts/refine-prompts.mjs",

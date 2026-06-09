@@ -1,5 +1,46 @@
 # Project Status Log
 
+## 2026-06-09 — Final-review provider: Gemini default + persistent setting + streaming fix
+
+### Changes
+- **Root cause (two bugs).** (1) An active Azure profile silently hijacked the
+  final reviewer — a stray `AZURE_OPENAI_ENDPOINT` in the environment rerouted a
+  review to Foundry Opus. (2) Both Anthropic-shaped paths (`callClaudeOpus` +
+  `callAzureClaude`) used non-streaming `messages.create()` with
+  `max_tokens=32000`, above the SDK's ~21K non-streaming ceiling → "Streaming is
+  required for operations that may take longer than 10 minutes". Gemini already
+  streamed, so `--provider gemini` was the only thing that worked.
+- **Provider precedence reworked** in `scripts/gemini-review.mjs`: `--provider`
+  flag → `FINAL_REVIEW_PROVIDER` persistent setting → Gemini (default when key
+  present) → Azure-if-active → public Opus. A configured Azure profile no longer
+  auto-hijacks. Per-repo default stack is now reliably "GPT-latest + Gemini".
+- **New persistent setting + trigger**: `gemini-review.mjs set-provider
+  <gemini|azure-claude|anthropic|default>` (npm: `final-review:set`) writes/clears
+  `FINAL_REVIEW_PROVIDER` in the repo `.env` — the work-repo lever for opting into
+  Azure, robust against a Gemini key leaking via `~/.audit-loop.env`.
+- **Streaming fix**: one `streamAnthropicMessage` helper, wired into both
+  Anthropic paths (returns the same `{content, usage}` shape — downstream
+  unchanged). Guarded `main()` to direct-invocation; exported + tested
+  `selectProvider` and pure `applyProviderSetting` (10 new tests).
+- **Consumer repos checked.** ai-organiser had Azure active + Gemini → it was the
+  exposed repo (Foundry Opus reviewer + streaming bug); cleaned its `.env` to the
+  public stack (removed AZURE_* + OPENAI_AUDIT_MODEL pin). wine-cellar-app had no
+  Azure → unaffected. Both had stale synced tooling; this ship re-syncs the fix.
+
+### Files Affected
+- `scripts/gemini-review.mjs` — precedence rework, set-provider command, streaming helper, main() guard
+- `tests/final-review-provider.test.mjs` — precedence + .env-mutation tests (new, 10 cases)
+- `package.json` / `scripts/.cli-catalog.json` — `final-review:set` script + catalog entry
+- `AGENTS.md` / `docs/azure-work-profile.md` / `defaults/work-profile.env.example` — precedence + setting docs
+- (consumer, not committed) `c:/GIT/ai-organiser/.env` — reverted to public stack
+
+### Decisions Made
+- Gemini outranks an active Azure profile by default (was the reverse). Azure is
+  now opt-in-permanent via `FINAL_REVIEW_PROVIDER`, not implicit-on-endpoint.
+- ai-organiser chosen as public-stack (option a) — Azure vars were leftover.
+
+---
+
 ## 2026-06-08 — Azure work profile: refresh deployment selection as Foundry quota expanded
 
 ### Changes

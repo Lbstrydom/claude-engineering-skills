@@ -3,13 +3,17 @@
  * @fileoverview Independent final reviewer for the audit loop.
  *
  * This script provides an unbiased third-model perspective after Claude (author)
- * and GPT-5.4 (auditor) have converged. It prefers Gemini 3.1 Pro and falls back
- * to Claude Opus when Gemini credentials are unavailable.
+ * and GPT (auditor) have converged. The default reviewer is Gemini whenever
+ * GEMINI_API_KEY is present; otherwise an active Azure profile (Foundry Opus),
+ * else public Claude Opus. The default is overridable per-repo via the
+ * FINAL_REVIEW_PROVIDER setting (see `set-provider`) or per-invocation via
+ * --provider. See selectProvider() for the full precedence.
  *
  * Usage:
  *   node scripts/gemini-review.mjs review <plan-file> <transcript-file>         # Full review
  *   node scripts/gemini-review.mjs review <plan-file> <transcript-file> --json   # JSON output
  *   node scripts/gemini-review.mjs review <plan-file> <transcript-file> --out <file>  # File output
+ *   node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|default>  # Persist the per-repo reviewer
  *   node scripts/gemini-review.mjs ping                                          # Verify API connectivity
  *
  * Requires: GEMINI_API_KEY or ANTHROPIC_API_KEY in .env or environment
@@ -18,11 +22,14 @@
  */
 
 // dotenv loaded by lib/config.mjs (worktree-safe discovery)
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { ProducerFindingSchema, zodToGeminiSchema } from './lib/schemas.mjs';
 import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
-import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile } from './lib/file-io.mjs';
+import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
 import { geminiConfig, claudeConfig, azureConfig } from './lib/config.mjs';
@@ -405,6 +412,42 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
  * @param {string} [opts.passName]
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
+/**
+ * Consume an Anthropic streaming Messages response, returning the SAME
+ * `{content: [{type:'text', text}], usage}` shape a non-streaming
+ * `messages.create()` produces — so call sites need no other change.
+ *
+ * Why streaming is mandatory: MAX_OUTPUT_TOKENS (32000) exceeds the Anthropic
+ * SDK's non-streaming ceiling (~21333 — the SDK's 10-minute heuristic), which
+ * makes a plain `create()` throw "Streaming is required for operations that may
+ * take longer than 10 minutes". The Gemini path already streams for the same
+ * reason. Affects BOTH the public Opus path and the Azure Foundry Claude path.
+ *
+ * The Foundry client is the redactor-wrapped adapter that exposes only
+ * `.messages.create()` (not `.stream()`), so we request `stream: true` through
+ * create(). A non-streaming adapter (e.g. the cli backend) that ignores
+ * `stream:true` and returns a final message is handled by the iterator guard.
+ */
+async function streamAnthropicMessage(client, params) {
+  const resp = await client.messages.create({ ...params, stream: true });
+  // Adapter ignored stream:true (e.g. cli backend) → already a final message.
+  if (!resp || typeof resp[Symbol.asyncIterator] !== 'function') return resp;
+  let text = '';
+  const usage = { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0 };
+  for await (const event of resp) {
+    if (event.type === 'message_start') {
+      usage.input_tokens = event.message?.usage?.input_tokens ?? usage.input_tokens;
+      usage.cache_creation_input_tokens =
+        event.message?.usage?.cache_creation_input_tokens ?? usage.cache_creation_input_tokens;
+    } else if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+      text += event.delta.text;
+    } else if (event.type === 'message_delta') {
+      usage.output_tokens = event.usage?.output_tokens ?? usage.output_tokens;
+    }
+  }
+  return { content: [{ type: 'text', text }], usage };
+}
+
 async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, passName }) {
   const startMs = Date.now();
 
@@ -416,7 +459,10 @@ async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, 
     setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
   });
 
-  const requestPromise = anthropic.messages.create({
+  // Stream (see streamAnthropicMessage) — non-streaming create() throws on
+  // max_tokens=32000. Returns the same {content, usage} shape, so the parse +
+  // usage code below is unchanged.
+  const requestPromise = streamAnthropicMessage(anthropic, {
     model: CLAUDE_OPUS_MODEL,
     max_tokens: MAX_OUTPUT_TOKENS,
     system: `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
@@ -496,7 +542,10 @@ async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, pa
 
   let makeRequest, extractText, extractUsage;
   if (shape === 'anthropic') {
-    makeRequest = () => client.messages.create({
+    // Stream — max_tokens (32000) is above the Anthropic SDK's non-streaming
+    // ceiling; a plain create() throws "Streaming is required...". The adapter's
+    // redactor wrapper exposes only .create(), so stream:true goes through it.
+    makeRequest = () => streamAnthropicMessage(client, {
       model, max_tokens: MAX_OUTPUT_TOKENS, system: sys,
       messages: [{ role: 'user', content: userPrompt }],
     });
@@ -855,42 +904,128 @@ function parseReviewArgs(args) {
   return { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode };
 }
 
-function selectProvider(providerOverride) {
-  if (providerOverride === 'anthropic' || providerOverride === 'claude-opus') {
-    if (!process.env.ANTHROPIC_API_KEY) {
-      console.error('Error: --provider anthropic requires ANTHROPIC_API_KEY');
+/**
+ * Resolve the final-review provider.
+ *
+ * Precedence (top wins):
+ *   1. Explicit choice — the CLI `--provider` flag OR the persistent
+ *      `FINAL_REVIEW_PROVIDER` per-repo setting (both arrive via `choice`).
+ *   2. Auto-detect default stack — `GEMINI_API_KEY` present → Gemini.
+ *   3. Active Azure profile → azure-claude.
+ *   4. `ANTHROPIC_API_KEY` → public Claude Opus.
+ *
+ * The per-repo default is "GPT auditor + Gemini reviewer": Gemini is preferred
+ * whenever its key is present, and a *configured* Azure profile no longer
+ * silently hijacks the reviewer (a stray AZURE_OPENAI_ENDPOINT in the
+ * environment used to reroute a private-repo review to Foundry Opus). To make
+ * a repo use Azure permanently, set `FINAL_REVIEW_PROVIDER=azure-claude`
+ * (`node scripts/gemini-review.mjs set-provider azure-claude`).
+ *
+ * @param {string|null} choice - explicit provider (flag or setting), or null
+ * @param {{env?:object, azureActive?:boolean}} [deps] - injected for tests
+ */
+export function selectProvider(choice, { env = process.env, azureActive = azureConfig.active } = {}) {
+  // ── 1. Explicit choice (flag or FINAL_REVIEW_PROVIDER setting) — always wins.
+  if (choice === 'anthropic' || choice === 'claude-opus') {
+    if (!env.ANTHROPIC_API_KEY) {
+      console.error('Error: provider "anthropic" requires ANTHROPIC_API_KEY');
       process.exit(1);
     }
     return 'claude-opus';
   }
-  if (providerOverride === 'gemini') {
-    if (!process.env.GEMINI_API_KEY) {
-      console.error('Error: --provider gemini requires GEMINI_API_KEY');
+  if (choice === 'gemini') {
+    if (!env.GEMINI_API_KEY) {
+      console.error('Error: provider "gemini" requires GEMINI_API_KEY');
       process.exit(1);
     }
     return 'gemini';
   }
-  if (providerOverride === 'azure-claude') {
+  if (choice === 'azure-claude') {
     assertAzureClaudeReady();
     return 'azure-claude';
   }
-  if (providerOverride) {
-    console.error(`Error: Unknown provider "${providerOverride}". Use "gemini", "anthropic", or "azure-claude".`);
+  if (choice) {
+    console.error(`Error: Unknown provider "${choice}". Use "gemini", "anthropic", or "azure-claude".`);
     process.exit(1);
   }
-  // §1.5 precedence: Azure work profile replaces Gemini as the final reviewer
-  // (above auto Gemini/Claude selection; CLI override above still wins).
-  if (azureConfig.active) {
+  // ── 2-4. Auto-detect. Gemini first (default reviewer); Azure only when no
+  // Gemini key AND the profile is active; public Opus last.
+  if (env.GEMINI_API_KEY) return 'gemini';
+  if (azureActive) {
     assertAzureClaudeReady();
     return 'azure-claude';
   }
-  if (process.env.GEMINI_API_KEY) return 'gemini';
-  if (process.env.ANTHROPIC_API_KEY) return 'claude-opus';
-  console.error('Error: Final review requires GEMINI_API_KEY, ANTHROPIC_API_KEY, or OPENAI_API_KEY');
-  console.error('Set GEMINI_API_KEY for Gemini, or ANTHROPIC_API_KEY for Claude Opus fallback.');
-  console.error('Or use --provider gemini|anthropic to force a specific provider.');
+  if (env.ANTHROPIC_API_KEY) return 'claude-opus';
+  console.error('Error: Final review requires GEMINI_API_KEY, ANTHROPIC_API_KEY, or an active Azure profile.');
+  console.error('Set GEMINI_API_KEY (Gemini), ANTHROPIC_API_KEY (Claude Opus), or run');
+  console.error('`node scripts/gemini-review.mjs set-provider azure-claude` for the Azure work profile.');
   process.exit(1);
   return null;
+}
+
+/** The persistent per-repo final-review setting (FINAL_REVIEW_PROVIDER), or null. */
+function resolveProviderSetting() {
+  const v = (process.env.FINAL_REVIEW_PROVIDER || '').trim();
+  return v || null;
+}
+
+export const SETTING_PROVIDERS = new Set(['gemini', 'azure-claude', 'anthropic', 'default']);
+const SETTING_COMMENT = '# Final-review provider — persistent per-repo setting (managed by `set-provider`).';
+
+/**
+ * Pure: compute new `.env` contents after applying a final-review provider
+ * setting. `default` removes the managed line (+ its comment) and reverts to
+ * auto-detection. Returns `{ text, changed }`; `text` is the original when
+ * nothing changed. Throws on an invalid provider. Exported for tests (no IO).
+ * @param {string} existingText
+ * @param {string} provider
+ * @returns {{text: string, changed: boolean}}
+ */
+export function applyProviderSetting(existingText, provider) {
+  if (!SETTING_PROVIDERS.has(provider)) throw new Error(`invalid provider "${provider}"`);
+  const lines = existingText && existingText.length ? existingText.split(/\r?\n/) : [];
+  const idx = lines.findIndex((l) => /^\s*FINAL_REVIEW_PROVIDER\s*=/.test(l));
+
+  if (provider === 'default') {
+    if (idx === -1) return { text: existingText, changed: false };
+    lines.splice(idx, 1);
+    if (idx - 1 >= 0 && /managed by `set-provider`/.test(lines[idx - 1] || '')) lines.splice(idx - 1, 1);
+  } else if (idx === -1) {
+    if (lines.length && lines[lines.length - 1].trim() !== '') lines.push('');
+    lines.push(SETTING_COMMENT);
+    lines.push(`FINAL_REVIEW_PROVIDER=${provider}`);
+  } else {
+    lines[idx] = `FINAL_REVIEW_PROVIDER=${provider}`;
+  }
+  const text = lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\s*$/, '') + '\n';
+  return { text, changed: true };
+}
+
+/**
+ * Persist (or clear) the per-repo final-review provider in the repo-root `.env`.
+ * This is the user-triggered "permanent setting".
+ * @param {string} provider
+ */
+function runSetProvider(provider) {
+  if (!provider || !SETTING_PROVIDERS.has(provider)) {
+    console.error('Usage: node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|default>');
+    console.error('  gemini       — final review via Gemini (the default when GEMINI_API_KEY is present)');
+    console.error('  azure-claude — Opus on Azure Foundry (the work-repo setting)');
+    console.error('  anthropic    — public Claude Opus');
+    console.error('  default      — clear the setting; revert to auto-detection');
+    process.exit(1);
+  }
+  const envPath = resolve(process.cwd(), '.env');
+  const existing = existsSync(envPath) ? readFileSync(envPath, 'utf8') : '';
+  const { text, changed } = applyProviderSetting(existing, provider);
+  if (!changed) {
+    console.log('FINAL_REVIEW_PROVIDER is not set — already on auto-detection (Gemini → Azure-if-active → Opus).');
+    return;
+  }
+  atomicWriteFileSync(envPath, text);
+  console.log(provider === 'default'
+    ? `✓ Cleared FINAL_REVIEW_PROVIDER in ${envPath} — reverted to auto-detection.`
+    : `✓ Set FINAL_REVIEW_PROVIDER=${provider} in ${envPath}. This repo now uses "${provider}" for the final review.`);
 }
 
 /**
@@ -1122,10 +1257,12 @@ async function main() {
   const args = process.argv.slice(2);
   const mode = args[0];
   if (mode === 'ping') return runPing();
+  if (mode === 'set-provider') return runSetProvider(args[1]);
 
   const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode } = parseReviewArgs(args);
   if (mode !== 'review' || !planFile || !transcriptFile) {
-    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|anthropic] [--mode plan|code]');
+    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic] [--mode plan|code]');
+    console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|default>');
     console.error('       node scripts/gemini-review.mjs ping');
     process.exit(1);
   }
@@ -1134,7 +1271,8 @@ async function main() {
     process.exit(1);
   }
 
-  const provider = selectProvider(providerOverride);
+  // CLI --provider wins; else the persistent FINAL_REVIEW_PROVIDER setting; else auto-detect.
+  const provider = selectProvider(providerOverride || resolveProviderSetting());
   const planContent = readFileOrDie(planFile);
   const transcriptContent = readFileOrDie(transcriptFile);
   await initAuditBrief();
@@ -1155,4 +1293,8 @@ async function main() {
   }
 }
 
-main();
+// Auto-run only when invoked directly (node scripts/gemini-review.mjs ...),
+// not when imported by a test — lets tests exercise selectProvider() in-process.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
