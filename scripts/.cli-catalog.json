@@ -211,6 +211,10 @@
       "description": "Build both dashboard pages (reference + telemetry) to dashboard/.",
       "category": "dashboard"
     },
+    "dashboard:audit-run": {
+      "description": "Build a read-only per-run findings page (dashboard/audit-runs/<id>.html) from the cloud store. Resolves --run <id> or .audit/last-audit-run.json.",
+      "category": "dashboard"
+    },
     "dashboard:setup": {
       "description": "Bootstrap the dashboard: arch:refresh → arch:render → dashboard:build. Run after fresh clone, or after editing .audit-loop/domain-map.json.",
       "category": "dashboard"

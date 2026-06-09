@@ -361,15 +361,90 @@ export const TelemetryDataSchema = z.object({
   }).optional(),
 });
 
+// ── Audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md) ──
+//
+// A per-run findings detail page. Unlike reference/telemetry it carries a
+// discriminated collector `status.code` in `src.status` (NOT the 4-value
+// SourceStatus enum), and a `provenance` block in the non-reference shape
+// (generatedAt/baseSha/mode). The two no-id collector codes
+// (missing_run_pointer / invalid_run_pointer) never reach the renderer — they
+// are CLI-only (stderr + non-zero exit, no HTML) — so only the four
+// id-resolved codes appear here (plan §5, §9, G3).
+
+const AuditRunMetaSchema = z.object({
+  id: z.string(),
+  planFile: z.string().nullable(),
+  mode: z.string().nullable(),
+  rounds: z.number().int().nullable(),
+  geminiVerdict: z.string().nullable(),
+  totalFindings: z.number().int().nullable(),
+  roundConvergedAfter: z.number().int().nullable(),
+  commitSha: z.string().nullable(),
+  branch: z.string().nullable(),
+  planId: z.string().nullable(),
+  createdAt: z.string().nullable(),
+});
+
+// Closed presentation-token sets — the presenter is the ONLY producer (M7).
+const SEV_CLASS = z.enum(['sev-high', 'sev-med', 'sev-low']);
+const SEV_TOKEN = z.enum(['HIGH', 'MEDIUM', 'LOW']);
+const STATUS_TOKEN = z.enum([
+  'accepted', 'dismissed', 'severity_adjusted', 'pending',
+  'fixed', 'verified', 'regressed', 'none',
+]);
+// data-pass closed set (plan §3 filter contract) + 'other' defensive bucket.
+const PASS_TOKEN = z.enum([
+  'structure', 'wiring', 'backend', 'frontend', 'sustainability', 'quickfix', 'other',
+]);
+
+const PresentedFindingSchema = z.object({
+  id: z.string(),
+  fingerprint: z.string(),
+  category: z.string(),
+  detail: z.string(),
+  round: z.number().int().nullable(),
+  file: z.string().nullable(),
+  // Presenter tokens (closed enums → safe in data-* attributes, H3):
+  sevClass: SEV_CLASS,
+  sevToken: SEV_TOKEN,
+  sevLabel: z.string(),
+  passToken: PASS_TOKEN,
+  passLabel: z.string(),
+  statusToken: STATUS_TOKEN,
+  statusLabel: z.string(),
+  fileLabel: z.string(),
+});
+
+export const AuditRunDataSchema = z.object({
+  kind: z.literal('audit-run'),
+  provenance: z.object({
+    generatedAt: z.string(),
+    baseSha: z.string(),
+    mode: z.string(),
+    dirty: z.boolean().optional(),
+  }),
+  src: z.object({
+    status: z.enum(['ok', 'cloud_disabled', 'run_not_found', 'query_error']),
+    detail: z.string().optional(),
+  }),
+  auditRun: z.object({
+    runId: z.string(),
+    meta: AuditRunMetaSchema.nullable(),
+    findings: z.array(PresentedFindingSchema),
+    convergedAfter: z.number().int().nullable(),
+  }),
+});
+
 /**
  * Validate a collected data object against the schema for its `kind`.
  * Throws a ZodError on mismatch (boundary validation — plan §4).
- * @param {'reference'|'telemetry'} kind
+ * @param {'reference'|'telemetry'|'audit-run'} kind
  * @param {unknown} data
  * @returns {object} the parsed (and thus trusted) object
  */
 export function validateDashboardData(kind, data) {
   if (kind === 'reference') return ReferenceDataSchema.parse(data);
   if (kind === 'telemetry') return TelemetryDataSchema.parse(data);
+  if (kind === 'audit-run') return AuditRunDataSchema.parse(data);
   throw new Error(`Unknown dashboard kind: ${kind}`);
 }

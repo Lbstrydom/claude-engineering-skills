@@ -279,3 +279,37 @@ details.row > div { padding-top: 8px; color: var(--muted); }
 .hygiene-title { margin: 0 0 6px; font-size: 0.9rem; color: var(--warn); }
 .hygiene ul { margin: 0; padding-left: 18px; }
 .hygiene li { font-size: 0.82rem; color: var(--muted); margin-bottom: 4px; }
+
+/* ── Audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md) ── */
+.audit-run-title { margin: 0 0 6px; font-size: 1.05rem; }
+.audit-run-title code { font-size: 0.85em; color: var(--accent); }
+
+/* Severity bands — color is REDUNDANT with the text label + data-severity
+   attribute (never color-only). Left border drives pre-attentive triage. */
+.finding-row.sev-high { border-left: 3px solid var(--err); }
+.finding-row.sev-med  { border-left: 3px solid var(--warn); }
+.finding-row.sev-low  { border-left: 3px solid var(--border); }
+.finding-row td { vertical-align: top; }
+.sev-badge { display: inline-block; padding: 1px 7px; border-radius: 100px; font-size: 11px; font-weight: 600; border: 1px solid var(--border); }
+.sev-badge.sev-high { color: var(--err); border-color: var(--err); }
+.sev-badge.sev-med  { color: var(--warn); border-color: var(--warn); }
+.sev-badge.sev-low  { color: var(--muted); }
+
+.findings-table { width: 100%; }
+.finding-summary { color: var(--text); }
+.detail-cell details { margin-top: 4px; }
+.detail-cell summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+.evidence { margin-top: 6px; }
+.evidence-meta { color: var(--muted); font-size: 11px; margin: 0 0 4px; }
+.evidence-meta code { color: var(--accent); }
+.evidence-detail { white-space: pre-wrap; word-break: break-word; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12px; margin: 0; }
+
+/* Filter bar — chips are real <button type="button"> toggles (aria-pressed). */
+.filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 12px 0; }
+.filter-group { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.filter-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+.filter-chip { background: var(--panel-2); border: 1px solid var(--border); border-radius: 100px; padding: 2px 10px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.filter-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.filter-file { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; font-size: 12px; color: var(--text); }
+.filter-reset { background: transparent; border: 1px solid var(--border); border-radius: 6px; padding: 2px 10px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.filter-nomatch { color: var(--warn); font-size: 13px; margin: 0 0 12px; }

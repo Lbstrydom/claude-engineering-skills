@@ -5,13 +5,19 @@
  * persistence surface — every audit run lands here, every finding is
  * recorded here, and every adjudication event mutates here.
  *
- * 11 functions:
- *   audit_runs:      recordRunStart, recordRunComplete, updateRunMeta
- *   audit_findings:  recordFindings (+ _resetClassificationColumnCache test seam)
+ * Functions by domain:
+ *   audit_runs:      recordRunStart, recordRunComplete, updateRunMeta,
+ *                    getAuditRunConvergence, getRunMeta (dashboard read)
+ *   audit_findings:  recordFindings, getRunFindingOutcomeCounts,
+ *                    getRunFindings (dashboard read)
+ *                    (+ _resetClassificationColumnCache test seam)
  *   audit_pass_stats: recordPassStats, updatePassStatsPostDeliberation,
  *                    getPassTimings
  *   suppression_events: recordSuppressionEvents
  *   finding_adjudication_events: recordAdjudicationEvent
+ *
+ * The dashboard read queries (getRunFindings / getRunMeta) power the read-only
+ * audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md).
  *
  * @module scripts/lib/store/runs-findings
  */
@@ -385,6 +391,153 @@ export async function getPassTimings() {
     process.stderr.write(`  [learning] getPassTimings failed: ${err.message}\n`);
     return [];
   }
+}
+
+// ── audit-run read queries (dashboard findings viewer, plan §7.0) ───────────
+
+// Generic cached optional-column probe for the read path. The two existing
+// probes above (detectClassificationColumns / detectPassStatsRoundColumn) are
+// column-specific booleans; the dashboard read-query needs to probe a DIFFERENT
+// set of later-migration columns (adjudication_outcome / remediation_state on
+// audit_findings; round_converged_after / commit_sha / branch / plan_id on
+// audit_runs). This follows the SAME cached `SELECT col … LIMIT 0` pattern,
+// generalised so an un-migrated store still returns rows (just without the
+// optional columns). Keyed `<table>.<col>`.
+const _runReadColumnCache = new Map();
+
+/** Test-only reset for the read-path column probe cache. */
+export function _resetRunReadColumnCache() {
+  _runReadColumnCache.clear();
+}
+
+/**
+ * @param {string} table  hardcoded table literal (never user input)
+ * @param {string} col    hardcoded column literal (never user input)
+ * @param {(sql:string, params?:unknown[]) => Promise<unknown[]>} manyFn
+ * @param {() => Promise<boolean>} cloudFn
+ * @returns {Promise<boolean>}
+ */
+async function columnExists(table, col, manyFn, cloudFn) {
+  const key = `${table}.${col}`;
+  if (_runReadColumnCache.has(key)) return _runReadColumnCache.get(key);
+  if (!await cloudFn()) {
+    _runReadColumnCache.set(key, false);
+    return false;
+  }
+  try {
+    await manyFn(`SELECT "${col}" FROM ${table} LIMIT 0`);
+    _runReadColumnCache.set(key, true);
+    return true;
+  } catch (err) {
+    // Only a genuine "absent" signal — undefined_column (42703) or
+    // undefined_table (42P01) — is a STABLE capability fact worth caching.
+    // A transient connectivity/auth/timeout error must NOT poison the cache:
+    // caching `false` there would permanently omit a column that actually
+    // exists, silently dropping adjudication/remediation data for the whole
+    // process. On a transient error, omit the column for THIS call only and
+    // leave the cache unset so the next call re-probes.
+    if (err && (err.code === '42703' || err.code === '42P01')) {
+      _runReadColumnCache.set(key, false);
+    }
+    return false;
+  }
+}
+
+/**
+ * Read all findings for one audit run as domain rows (plan §7.0). Pure
+ * persistence + raw→domain mapping — NO presentation tokens (M7); the
+ * presenter maps these to UI classes downstream.
+ *
+ * Returns:
+ *   - `null` ONLY when cloud is disabled (`isCloudEnabled()` false).
+ *   - `[]` when the run exists but has zero findings (a valid result, mapped
+ *     differently from `null` by the collector — §5).
+ *   - `AuditRunFinding[]` otherwise, in deterministic severity/round order.
+ *
+ * `deps` is an optional dependency-injection seam for unit tests (plan §9):
+ * a fake `{ one, many, isCloudEnabled }` lets the store contract be asserted
+ * without a live DB. Production callers omit it and get the real helpers.
+ *
+ * @param {string} runId
+ * @param {{ one?: Function, many?: Function, isCloudEnabled?: Function }} [deps]
+ * @returns {Promise<Array<object>|null>}
+ */
+export async function getRunFindings(runId, deps = {}) {
+  const { many: manyFn = many, isCloudEnabled: cloudFn = isCloudEnabled } = deps;
+  if (!runId) return null;
+  if (!await cloudFn()) return null;
+
+  const cols = [
+    'id', 'finding_fingerprint', 'pass_name', 'severity', 'category',
+    'primary_file', 'detail_snapshot', 'round_raised', 'created_at',
+  ];
+  if (await columnExists('audit_findings', 'adjudication_outcome', manyFn, cloudFn)) cols.push('adjudication_outcome');
+  if (await columnExists('audit_findings', 'remediation_state', manyFn, cloudFn)) cols.push('remediation_state');
+
+  const sql =
+    `SELECT ${cols.map((c) => `"${c}"`).join(', ')}\n` +
+    `  FROM audit_findings\n` +
+    ` WHERE run_id = $1\n` +
+    ` ORDER BY CASE severity WHEN 'HIGH' THEN 0 WHEN 'MEDIUM' THEN 1 ELSE 2 END,\n` +
+    `          round_raised, pass_name, primary_file NULLS LAST, id`;
+
+  const rows = await manyFn(sql, [runId]);
+  return rows.map((r) => ({
+    id: r.id,
+    fingerprint: r.finding_fingerprint,
+    pass: r.pass_name,
+    severity: r.severity,
+    category: r.category,
+    file: r.primary_file ?? null,
+    detail: r.detail_snapshot ?? '',
+    round: r.round_raised,
+    adjudication: r.adjudication_outcome ?? null,
+    remediation: r.remediation_state ?? null,
+  }));
+}
+
+/**
+ * Read one audit run's metadata as a domain row (plan §7.0). `null` when the
+ * run is absent (collector → `run_not_found`) OR cloud is disabled (collector
+ * distinguishes the two by checking `isCloudEnabled()` first — M1). Later-
+ * migration columns are probe-guarded so an un-migrated store still returns a
+ * row (just with those fields null).
+ *
+ * `round_converged_after` is frequently NULL even when the column exists (it is
+ * resolved out-of-band by the learning pipeline), so the collector treats a
+ * present-and-non-null value as authoritative and otherwise consults
+ * `getAuditRunConvergence` for the §5 empty-state decision (G1).
+ *
+ * @param {string} runId
+ * @param {{ one?: Function, many?: Function, isCloudEnabled?: Function }} [deps]
+ * @returns {Promise<object|null>}
+ */
+export async function getRunMeta(runId, deps = {}) {
+  const { one: oneFn = one, many: manyFn = many, isCloudEnabled: cloudFn = isCloudEnabled } = deps;
+  if (!runId) return null;
+  if (!await cloudFn()) return null;
+
+  const cols = ['id', 'plan_file', 'mode', 'rounds', 'gemini_verdict', 'total_findings', 'created_at'];
+  for (const c of ['round_converged_after', 'commit_sha', 'branch', 'plan_id']) {
+    if (await columnExists('audit_runs', c, manyFn, cloudFn)) cols.push(c);
+  }
+
+  const sql = `SELECT ${cols.map((c) => `"${c}"`).join(', ')} FROM audit_runs WHERE id = $1`;
+  const row = await oneFn(sql, [runId]);
+  if (!row) return null;
+  return {
+    id: row.id,
+    planFile: row.plan_file ?? null,
+    mode: row.mode ?? null,
+    rounds: row.rounds ?? null,
+    geminiVerdict: row.gemini_verdict ?? null,
+    totalFindings: row.total_findings ?? null,
+    roundConvergedAfter: row.round_converged_after ?? null,
+    commitSha: row.commit_sha ?? null,
+    branch: row.branch ?? null,
+    planId: row.plan_id ?? null,
+    createdAt: row.created_at ?? null,
+  };
 }
 
 // ── suppression_events ─────────────────────────────────────────────────────

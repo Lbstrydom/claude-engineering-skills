@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
  * @fileoverview CLI entry for the local dashboard generator. Builds the
- * committed reference dashboard and/or the gitignored telemetry dashboard,
- * or serves them over a path-contained localhost server.
+ * reference and telemetry dashboards (both gitignored, per-machine local-only
+ * — see .gitignore) and per-run audit-findings pages, or serves them over a
+ * path-contained localhost server.
  *
  * Usage:
  *   node scripts/build-dashboard.mjs reference     # dashboard/index.html
  *   node scripts/build-dashboard.mjs telemetry     # dashboard/telemetry.html
  *   node scripts/build-dashboard.mjs all           # both
+ *   node scripts/build-dashboard.mjs audit-run [--run <id>]  # dashboard/audit-runs/<id>.html
  *   node scripts/build-dashboard.mjs serve [--port N]   # build all, then serve
  *
  * Output paths are fixed (no --out). For the build subcommands the exit
@@ -24,6 +26,7 @@ import { ArgvError, emit, ensureDir } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { collectReference } from './lib/dashboard/collect-reference.mjs';
 import { collectTelemetry } from './lib/dashboard/collect-telemetry.mjs';
+import { collectAuditRun } from './lib/dashboard/collect-audit-run.mjs';
 import { renderDocument } from './lib/dashboard/render.mjs';
 import { loadAssets } from './lib/dashboard/load-assets.mjs';
 import { serve } from './lib/dashboard/serve.mjs';
@@ -35,20 +38,24 @@ USAGE
   node scripts/build-dashboard.mjs reference        Build dashboard/index.html
   node scripts/build-dashboard.mjs telemetry        Build dashboard/telemetry.html
   node scripts/build-dashboard.mjs all              Build both
+  node scripts/build-dashboard.mjs audit-run [--run <id>]  Build dashboard/audit-runs/<id>.html
   node scripts/build-dashboard.mjs serve [--port N] Build both, then serve
 
 Output paths are fixed under dashboard/. The build subcommands
-(reference|telemetry|all) exit non-zero on a degraded build. \`serve\` is a
+(reference|telemetry|all|audit-run) exit non-zero on a degraded build.
+\`audit-run\` resolves the run from --run or .audit/last-audit-run.json; with no
+resolvable id it exits non-zero without writing a file. \`serve\` is a
 long-running server: it reports any degraded state to stderr and serves
 anyway (a degraded page must stay viewable — its warnings are the point).`;
 
 const OUT_DIR = path.join(process.cwd(), 'dashboard');
 const REF_OUT = path.join(OUT_DIR, 'index.html');
 const TEL_OUT = path.join(OUT_DIR, 'telemetry.html');
+const AUDIT_RUN_DIR = path.join(OUT_DIR, 'audit-runs');
 const DEFAULT_PORT = 4173;
 
 function parseArgs(argv) {
-  const args = { cmd: null, port: DEFAULT_PORT, explicitPort: false, help: false };
+  const args = { cmd: null, port: DEFAULT_PORT, explicitPort: false, run: undefined, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { args.help = true; }
@@ -60,6 +67,12 @@ function parseArgs(argv) {
       }
       args.port = n;
       args.explicitPort = true;
+    } else if (a === '--run') {
+      const v = argv[++i];
+      if (v == null || v.startsWith('--') || !String(v).trim()) {
+        throw new ArgvError('--run requires a run id value');
+      }
+      args.run = String(v).trim();
     } else if (a.startsWith('--')) {
       throw new ArgvError(`Unknown flag: ${a}`);
     } else if (!args.cmd) {
@@ -69,15 +82,31 @@ function parseArgs(argv) {
     }
   }
   if (!args.help) {
-    if (!args.cmd) throw new ArgvError('Missing subcommand (reference|telemetry|all|serve)');
-    if (!['reference', 'telemetry', 'all', 'serve'].includes(args.cmd)) {
+    if (!args.cmd) throw new ArgvError('Missing subcommand (reference|telemetry|all|audit-run|serve)');
+    if (!['reference', 'telemetry', 'all', 'audit-run', 'serve'].includes(args.cmd)) {
       throw new ArgvError(`Unknown subcommand: ${args.cmd}`);
     }
     if (args.explicitPort && args.cmd !== 'serve') {
       throw new ArgvError('--port is only valid with the `serve` subcommand');
     }
+    if (args.run !== undefined && args.cmd !== 'audit-run') {
+      throw new ArgvError('--run is only valid with the `audit-run` subcommand');
+    }
   }
   return args;
+}
+
+/**
+ * Filename slug for a run id (L2): lowercase, non-`[a-z0-9-]` → `-`, collapse
+ * repeats, trim edges. Empty result is an error (never write `-.html`).
+ */
+function slugifyRunId(runId) {
+  const slug = String(runId).toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  if (!slug) throw new ArgvError(`Cannot derive a safe filename from run id "${runId}"`);
+  return slug;
 }
 
 /** Best-effort git provenance (base HEAD + dirty flag). */
@@ -113,6 +142,44 @@ async function buildTelemetry(git, assets) {
   ensureDir(OUT_DIR);
   atomicWriteFileSync(TEL_OUT, html);
   return { target: 'telemetry', out: TEL_OUT, degraded: isDegraded(data.sources), sources: data.sources };
+}
+
+/**
+ * Build one per-run audit-findings page. The output path depends solely on
+ * whether a runId resolved (H1, G3): the two no-id codes
+ * (missing/invalid pointer) return a `{ cliError }` so the CLI boundary
+ * (`main`) owns the stderr message + non-zero exit — a build helper should not
+ * terminate the process (mirrors buildReference/buildTelemetry, which return
+ * result objects). Every id-resolved code (ok / cloud_disabled /
+ * run_not_found / query_error) renders its panel and writes
+ * dashboard/audit-runs/<slug>.html, returning a normal build result.
+ */
+async function buildAuditRun(git, assets, runArg) {
+  // build-dashboard owns the wall-clock stamp (scripts can't always call it
+  // mid-pipeline — plan §7.0 G2) and augments gitProvenance with it + mode.
+  const provenance = { baseSha: git.baseSha, dirty: git.dirty, generatedAt: new Date().toISOString(), mode: 'audit-run' };
+  const { data, status } = await collectAuditRun({ runId: runArg, provenance });
+
+  if (status.code === 'missing_run_pointer') {
+    return { cliError: { code: status.code, message: 'No run specified and no .audit/last-audit-run.json — run an audit or pass --run <id>.' } };
+  }
+  if (status.code === 'invalid_run_pointer') {
+    return { cliError: { code: status.code, message: '.audit/last-audit-run.json is unreadable or malformed — pass --run <id> explicitly.' } };
+  }
+
+  const slug = slugifyRunId(data.auditRun.runId);
+  const html = renderDocument(data, 'audit-run', assets);
+  ensureDir(AUDIT_RUN_DIR);
+  const out = path.join(AUDIT_RUN_DIR, `${slug}.html`);
+  atomicWriteFileSync(out, html);
+  // query_error is the only degraded id-resolved code (cloud_disabled /
+  // run_not_found render valid, intentional panels).
+  return {
+    target: 'audit-run',
+    out,
+    degraded: status.code === 'query_error',
+    sources: { auditRun: { status: status.code === 'query_error' ? 'unexpected-error' : 'ok', detail: data.src.detail || '' } },
+  };
 }
 
 function reportDegraded(results) {
@@ -166,6 +233,15 @@ async function main() {
   } else if (args.cmd === 'telemetry') {
     results.push(await buildTelemetry(git, assets));
     commanded = results.slice();
+  } else if (args.cmd === 'audit-run') {
+    const r = await buildAuditRun(git, assets, args.run);
+    // No-id CLI-only states (G3): the boundary owns stderr + non-zero exit.
+    if (r.cliError) {
+      process.stderr.write(`  [dashboard] ${r.cliError.message}\n`);
+      process.exit(2);
+    }
+    results.push(r);
+    commanded = [r];
   } else { // all | serve
     results.push(...await Promise.all([buildReference(git, assets), buildTelemetry(git, assets)]));
     commanded = results.slice();

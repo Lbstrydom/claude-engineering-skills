@@ -57,6 +57,7 @@
     "skills:fit-check": "node scripts/skills-fit-check.mjs",
     "dashboard": "node scripts/build-dashboard.mjs serve",
     "dashboard:build": "node scripts/build-dashboard.mjs all",
+    "dashboard:audit-run": "node scripts/build-dashboard.mjs audit-run",
     "dashboard:setup": "npm run arch:refresh && npm run arch:render && npm run dashboard:build",
     "arch:refresh": "node scripts/symbol-index/refresh.mjs",
     "arch:refresh:full": "node scripts/symbol-index/refresh.mjs --full",

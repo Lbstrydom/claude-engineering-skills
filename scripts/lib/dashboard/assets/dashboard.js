@@ -101,4 +101,67 @@
   }
   wireSearch('[data-role="skill-search"]', '[data-role="skill-count"]', 'skills');
   wireSearch('[data-role="cli-search"]',   '[data-role="cli-count"]',   'commands');
+
+  // ── Audit-run findings filters (docs/plans/dashboard-audit-run-viewer.md) ──
+  // Namespaced + guarded: no-ops unless a [data-dashboard-kind="audit-run"]
+  // root is present, so index.html / telemetry.html are unaffected (M3).
+  // OR within a chip group, AND across groups; the free-text file filter is an
+  // ANDed case-insensitive substring on the file cell's textContent (the file
+  // is arbitrary text, never a data-* attribute — H3).
+  function initAuditRunFilters(root) {
+    if (!root) return;
+    var bar = root.querySelector('.filter-bar');
+    var rows = Array.prototype.slice.call(root.querySelectorAll('.finding-row'));
+    if (!bar || !rows.length) return;
+    var fileInput = root.querySelector('[data-filter-file]');
+    var noMatch = root.querySelector('[data-filter-nomatch]');
+
+    function activeValues(group) {
+      var pressed = bar.querySelectorAll('.filter-chip[data-filter-group="' + group + '"][aria-pressed="true"]');
+      return Array.prototype.map.call(pressed, function (c) { return c.getAttribute('data-filter-value'); });
+    }
+
+    function apply() {
+      var sevs = activeValues('severity');
+      var passes = activeValues('pass');
+      var statuses = activeValues('status');
+      var fileQ = (fileInput && fileInput.value ? fileInput.value : '').trim().toLowerCase();
+      var shown = 0;
+      rows.forEach(function (row) {
+        var okSev = !sevs.length || sevs.indexOf(row.getAttribute('data-severity')) !== -1;
+        var okPass = !passes.length || passes.indexOf(row.getAttribute('data-pass')) !== -1;
+        var okStatus = !statuses.length || statuses.indexOf(row.getAttribute('data-status')) !== -1;
+        var okFile = true;
+        if (fileQ) {
+          var cell = row.querySelector('[data-filter-file-cell]');
+          var text = cell ? (cell.textContent || '').toLowerCase() : '';
+          okFile = text.indexOf(fileQ) !== -1;
+        }
+        var visible = okSev && okPass && okStatus && okFile;
+        row.hidden = !visible;
+        if (visible) shown++;
+      });
+      if (noMatch) noMatch.hidden = shown !== 0;
+    }
+
+    bar.addEventListener('click', function (e) {
+      var chip = e.target.closest('.filter-chip');
+      if (chip) {
+        chip.setAttribute('aria-pressed', chip.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+        apply();
+        return;
+      }
+      var reset = e.target.closest('[data-filter-reset]');
+      if (reset) {
+        Array.prototype.forEach.call(bar.querySelectorAll('.filter-chip'), function (c) {
+          c.setAttribute('aria-pressed', 'false');
+        });
+        if (fileInput) fileInput.value = '';
+        apply();
+      }
+    });
+    if (fileInput) fileInput.addEventListener('input', apply);
+    apply();
+  }
+  initAuditRunFilters(document.querySelector('[data-dashboard-kind="audit-run"]'));
 })();

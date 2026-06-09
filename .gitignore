@@ -112,6 +112,10 @@ persona-final-*.png
 # belongs in the same "derived → gitignored" category as domain-deps-observed.json.
 dashboard/index.html
 dashboard/telemetry.html
+# Per-run audit-findings pages (docs/plans/dashboard-audit-run-viewer.md) —
+# same category-A "derived → gitignored" rule; sourced from the durable cloud
+# audit_findings, rebuilt per run, never committed.
+dashboard/audit-runs/
 
 # Persona-test consistency mode — session ledgers + LLM-egress derived
 # state. Per-machine artifacts; surfaces.json + canaries/*.json ARE

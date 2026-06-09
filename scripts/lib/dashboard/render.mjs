@@ -33,6 +33,7 @@ import sectionAuditEffectiveness from './sections/audit-effectiveness.mjs';
 import sectionSecurity from './sections/security.mjs';
 import sectionPurpose from './sections/purpose.mjs';
 import sectionPurposeHealth from './sections/purpose-health.mjs';
+import sectionAuditRunDetail from './sections/audit-run-detail.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -57,6 +58,9 @@ const SLICERS = {
   auditEffectiveness:(d) => ({ src: d.sources.auditEffectiveness || { status: 'ok', detail: '' }, auditEffectiveness: d.auditEffectiveness || { cloud: false, confirmedHits: 0, auditMisses: 0, falsePositives: 0, severityUnderstated: 0, severityOverstated: 0, precision: null, recall: null } }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
   purposeHealth:(d) => ({ src: d.sources.purposeHealth || { status: 'ok', detail: '' }, purposeHealth: d.purposeHealth || { asOf: '', windowDays: 30, repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null }, purposeBadges: [] } }),
+  // audit-run uses a top-level `src` (discriminated collector status code), NOT
+  // the `sources` map — see AuditRunDataSchema (docs/plans/dashboard-audit-run-viewer.md).
+  auditRunDetail:(d) => ({ src: d.src, auditRun: d.auditRun }),
 };
 
 const REGISTRY = {
@@ -78,6 +82,10 @@ const REGISTRY = {
     { id: 'security',     title: 'Security',       build: sectionSecurity,     slice: SLICERS.security },
     { id: 'purposeHealth',title: 'Purpose Health', build: sectionPurposeHealth,slice: SLICERS.purposeHealth },
   ],
+  // Single-section per-run detail page (docs/plans/dashboard-audit-run-viewer.md).
+  'audit-run': [
+    { id: 'auditRunDetail', title: 'Audit Run', build: sectionAuditRunDetail, slice: SLICERS.auditRunDetail },
+  ],
 };
 
 // ── Header / banner ──────────────────────────────────────────────────────
@@ -96,12 +104,15 @@ function freshnessBanner(data) {
     + `· ${escapeHtml(p.mode)}</p>`;
 }
 
-function nav(kind) {
+// `pathPrefix` lets a nested page (e.g. dashboard/audit-runs/<id>.html) link
+// back up to the top-level pages without 404ing (G1). Existing kinds pass the
+// default './'; the audit-run kind passes '../'.
+function nav(kind, pathPrefix = './') {
   const refCur = kind === 'reference' ? ' class="current" aria-current="page"' : '';
   const telCur = kind === 'telemetry' ? ' class="current" aria-current="page"' : '';
   return `<nav class="dash-nav" aria-label="Dashboard pages">
-    <a href="./index.html"${refCur}>Reference</a>
-    <a href="./telemetry.html"${telCur}>Telemetry</a>
+    <a href="${pathPrefix}index.html"${refCur}>Reference</a>
+    <a href="${pathPrefix}telemetry.html"${telCur}>Telemetry</a>
     <span class="nav-hint">local pages: <code>npm run dashboard:setup</code> (first run) · <code>npm run dashboard:build</code> (refresh)</span>
   </nav>`;
 }
@@ -111,8 +122,8 @@ function nav(kind) {
 /**
  * Render a complete self-contained dashboard page.
  * Pure: no I/O. Validates `data` against the schema for `kind` first.
- * @param {object} data — collected reference or telemetry data object
- * @param {'reference'|'telemetry'} kind
+ * @param {object} data — collected reference / telemetry / audit-run data object
+ * @param {'reference'|'telemetry'|'audit-run'} kind
  * @param {{css: string, js: string}} assets
  * @returns {string} a complete HTML document
  */
@@ -122,7 +133,9 @@ export function renderDocument(data, kind, assets) {
   const ui = buildUi();
   const title = kind === 'reference'
     ? 'Claude Engineering Skills — Reference'
-    : 'Claude Engineering Skills — Telemetry';
+    : kind === 'telemetry'
+      ? 'Claude Engineering Skills — Telemetry'
+      : 'Claude Engineering Skills — Audit Run';
 
   // Telemetry: the page-level placeholder is for the genuine "nothing
   // collected yet" case — i.e. every section is `missing-optional`. A
@@ -170,7 +183,7 @@ export function renderDocument(data, kind, assets) {
 <header class="dash-header">
   <div class="dash-titlerow">
     <h1>${escapeHtml(title)}</h1>
-    ${nav(kind)}
+    ${nav(kind, kind === 'audit-run' ? '../' : './')}
   </div>
   ${freshnessBanner(validated)}
 </header>

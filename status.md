@@ -1,5 +1,33 @@
 # Project Status Log
 
+## 2026-06-10 — Read-only audit-run findings viewer (dashboard module)
+
+### Changes
+- New dashboard `kind: 'audit-run'` — a read-only per-run findings page (severity bands, pass/severity/status/file filters, collapsible `<details>` evidence), sourced from the durable cloud `audit_findings`/`audit_runs`. Reuses the existing collect→schema→render pipeline.
+- Store read-query: `getRunFindings(runId)` / `getRunMeta(runId)` (probe-guarded optional columns, deterministic ordering, `null` only when cloud off vs `[]` for zero findings).
+- New CLI: `npm run dashboard:audit-run` (`build-dashboard.mjs audit-run [--run <id>]`) → `dashboard/audit-runs/<id>.html` (gitignored, category-A).
+- Built + audited autonomously via `/cycle code` (clustered): Cluster A (store query, fix-gate yes) + Cluster B (pipeline, fix-gate final) + mandatory consolidated Gemini gate (APPROVE).
+
+### Files Affected
+- `scripts/lib/store/runs-findings.mjs` — `getRunFindings`/`getRunMeta` + generic `columnExists` probe (caches false only on 42703/42P01, not transient errors).
+- `scripts/lib/dashboard/collect-audit-run.mjs` (new) — discriminated `{data,status}` collector (ok/cloud_disabled/run_not_found/query_error + CLI-only missing/invalid pointer).
+- `scripts/lib/dashboard/audit-run-presenter.mjs` (new) — pure domain→UI-token mapping (closed enums; XSS-safe attributes).
+- `scripts/lib/dashboard/sections/audit-run-detail.mjs` (new) — section renderer.
+- `scripts/lib/dashboard/schema.mjs`, `render.mjs`, `assets/dashboard.js` (`initAuditRunFilters`), `assets/dashboard.css`, `scripts/build-dashboard.mjs` — pipeline wiring + G1/G2/G3 shell fixes.
+- `tests/dashboard-audit-run.test.mjs` (new, 33 tests); `tests/learning-store-exports.test.mjs` — pinned export surface +3.
+- `package.json`, `scripts/.cli-catalog.json`, `.gitignore` — CLI script, catalog entry, output-dir ignore.
+
+### Decisions Made
+- Store stays a pure read seam returning domain shapes; the collector owns the discriminated status model; the presenter owns UI tokens (M7 separation).
+- Dependency-injection seam on the store queries enables a no-live-DB unit-test contract (repo uses no ESM module mocking).
+- Rejected (rigor-pressure/over-engineering): tenant/repo scoping (UUID point-lookup, single-tenant), shared-status-enum module, slug-collision hardening (UUIDs), distinct UNKNOWN-severity token.
+- `run_not_found` runId is XSS-safe via `ui.emptyPanel`'s internal escaping (Gemini-flagged, empirically refuted + regression-locked).
+
+### Next Steps
+- None — feature complete. `dashboard/audit-runs/` is gitignored, rebuilt per run.
+
+---
+
 ## 2026-06-09 — Final-review provider: Gemini default + persistent setting + streaming fix
 
 ### Changes
