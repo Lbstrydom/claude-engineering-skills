@@ -609,6 +609,8 @@ backoff (3 attempts: 200ms/600ms/1.8s); failures are counted as
 | `CLAUDE_BACKEND` | No | `sdk` | Routing for Claude calls: `sdk` (raw API) or `cli` (`claude -p` headless — draws from Max 20x Agent SDK $200/mo credit from 2026-06-15). See "Anthropic Backend Routing" below. |
 | `CLAUDE_BIN` | No | `claude` | Path/name of the `claude` CLI (cli backend only) |
 | `CLAUDE_FINAL_REVIEW_MODEL` | No | `latest-opus` | Claude Opus override (Step 7 fallback) |
+| `FINAL_REVIEW_SHADOW` | No | — | Opt-in **shadow** final reviewer (observation-only A/B): `claude-opus` \| `anthropic` \| `gemini`. Runs a second blind reviewer in parallel with the primary; never gates the build. No-op when unset or under an Azure profile. See "Shadow final-review A/B" below. |
+| `FINAL_REVIEW_SHADOW_MODEL` | No | per-provider | Concrete model / sentinel for the shadow reviewer. Unset → derived from the provider (`claude-opus`→`latest-opus`, `gemini`→`latest-pro`). A family mismatch is a logged no-op. |
 | `BRIEF_MODEL_GEMINI` | No | `latest-flash` | Brief-generation Gemini model |
 | `BRIEF_MODEL_CLAUDE` | No | `latest-haiku` | Brief-generation Claude model |
 | `META_ASSESS_MODEL` | No | `latest-flash` | Meta-assessment Gemini model |
@@ -894,6 +896,38 @@ when revisited): [scripts/symbol-index/summarise.mjs](scripts/symbol-index/summa
 
 **Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through
 whichever backend the env resolves to.
+
+## Shadow Final-Review A/B
+
+Plan: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
+An **opt-in, observation-only** second final reviewer that runs **blind** (same
+audit transcript, never sees the primary's output) in parallel with the primary
+final review, to empirically test whether a second final gate is worth keeping.
+
+- **Enable**: set `FINAL_REVIEW_SHADOW=claude-opus` (or `gemini`). Unset → the
+  shadow path is not entered at all (byte-identical to today). **No-op under an
+  active Azure profile** — Claude/Fable/Mythos aren't on Foundry (load-bearing
+  guard). The shadow **never gates the build** — its verdict is logged to the
+  `--out` `_shadow` block but never touches `gemini_verdict`.
+- **Attribution + persistence** (needs `--run-id`, wired by `/audit-code`):
+  each finding gets `audit_findings.source_model` (resolved concrete id) +
+  `bucket ∈ {both, primary-only, shadow-only}` (the diff of the two reviewers by
+  semantic hash). `audit_runs` records `final_review_model`,
+  `final_review_shadow_model`, and shadow token/latency cost. Persistence is an
+  **idempotent replace** (delete+insert in one tx, keyed by `run_id`), so reruns
+  don't double-count. Primary persistence is **decoupled** from the shadow — a
+  skipped/failed shadow never suppresses primary telemetry.
+- **Measure**: `node scripts/cross-skill.mjs final-review-stats --repo <name>`
+  → per-`source_model` × `bucket` × `severity` DISTINCT-fingerprint counts + the
+  shadow-only **spot-check queue** + aggregate shadow token/latency cost.
+  Adjudicate a shadow-only finding (human, sidesteps self-eval bias):
+  `final-review-adjudicate --run-id <id> --fingerprint <hash> --action <accepted|dismissed>`.
+- **Pre-registered stopping rule** (decided before data collection): collect
+  `N ≥ 20` runs for a fixed (primary, shadow) concrete-model pair. **KEEP** the
+  shadow iff human-accepted shadow-only HIGH/MEDIUM findings occur at **≥ 1 per
+  5 runs** AND token+time cost is within tolerance. **DROP** if shadow-only
+  findings are predominantly dismissed or LOW/polish ("a second gate always
+  catches something" ≠ effectiveness). Inconclusive → extend once to `N ≥ 40`.
 
 ## Azure AI Foundry Work Profile
 

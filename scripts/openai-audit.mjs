@@ -2805,7 +2805,11 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     }
   }
 
-  // Attach cloud run ID to result for orchestrator reference
+  // Attach cloud run ID to result for orchestrator reference. The /audit-code
+  // skill reads `_cloudRunId` from the audit --out JSON and forwards it to
+  // gemini-review.mjs as `--run-id`, which keys the final-review (+ shadow A/B)
+  // per-finding cloud persistence to this run. Absent when cloud is off →
+  // gemini-review runs local-only (docs/plans/final-review-shadow-reviewer.md).
   if (cloudRunId) mergedResult._cloudRunId = cloudRunId;
 
   // Phase C: surface tool-pre-pass capability state

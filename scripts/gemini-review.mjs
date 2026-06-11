@@ -32,7 +32,8 @@ import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
-import { geminiConfig, claudeConfig, azureConfig } from './lib/config.mjs';
+import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig } from './lib/config.mjs';
+import { recordFinalReviewFindings } from './learning-store.mjs';
 import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
@@ -304,11 +305,14 @@ function getReviewPrompt() {
  * @param {string} [opts.passName] - For logging
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema, passName }) {
+async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema, passName, modelOverride }) {
   const startMs = Date.now();
+  // modelOverride lets the shadow reviewer use a distinct resolved model; default
+  // is the module-global MODEL so existing (primary) calls are unchanged.
+  const useModel = modelOverride || MODEL;
 
   if (passName) {
-    process.stderr.write(`  [${passName}] Starting Gemini ${MODEL} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
+    process.stderr.write(`  [${passName}] Starting Gemini ${useModel} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
   }
 
   const controller = new AbortController();
@@ -318,7 +322,7 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
     // Use streaming to support maxOutputTokens > 21333 (SDK hard limit for
     // non-streaming). Accumulate chunks then parse the final JSON.
     const stream = await ai.models.generateContentStream({
-      model: MODEL,
+      model: useModel,
       contents: userPrompt,
       config: {
         systemInstruction: systemPrompt,
@@ -448,11 +452,14 @@ async function streamAnthropicMessage(client, params) {
   return { content: [{ type: 'text', text }], usage };
 }
 
-async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, passName }) {
+async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, passName, modelOverride }) {
   const startMs = Date.now();
+  // modelOverride lets the shadow reviewer use a distinct resolved model; default
+  // is the module-global CLAUDE_OPUS_MODEL so existing calls are unchanged.
+  const useModel = modelOverride || CLAUDE_OPUS_MODEL;
 
   if (passName) {
-    process.stderr.write(`  [${passName}] Starting Claude ${CLAUDE_OPUS_MODEL} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
+    process.stderr.write(`  [${passName}] Starting Claude ${useModel} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
   }
 
   const timeoutPromise = new Promise((_, reject) => {
@@ -463,7 +470,7 @@ async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, 
   // max_tokens=32000. Returns the same {content, usage} shape, so the parse +
   // usage code below is unchanged.
   const requestPromise = streamAnthropicMessage(anthropic, {
-    model: CLAUDE_OPUS_MODEL,
+    model: useModel,
     max_tokens: MAX_OUTPUT_TOKENS,
     system: `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
     messages: [{ role: 'user', content: userPrompt }]
@@ -603,7 +610,7 @@ async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, pa
  * @param {string} projectContext
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function runFinalReview(provider, client, planContent, transcriptContent, projectContext, auditMode = 'code') {
+async function runFinalReview(provider, client, planContent, transcriptContent, projectContext, auditMode = 'code', modelOverride = null) {
   // Parse transcript to extract code file paths for direct code inclusion
   let transcript;
   try {
@@ -717,9 +724,11 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
 
   const modelMap = { gemini: MODEL, 'claude-opus': CLAUDE_OPUS_MODEL, 'azure-claude': azureConfig.claudeDeployment };
   const labelMap = { gemini: 'Gemini', 'claude-opus': 'Claude Opus', 'azure-claude': 'Azure Foundry Claude' };
-  const selectedModel = modelMap[provider] || provider;
+  // modelOverride (shadow reviewer) wins over the provider's module-global model.
+  const selectedModel = modelOverride || modelMap[provider] || provider;
   const providerLabel = labelMap[provider] || provider;
-  process.stderr.write(`\n── ${providerLabel} Final Review ──\n`);
+  const shadowTag = modelOverride ? ' [shadow]' : '';
+  process.stderr.write(`\n── ${providerLabel} Final Review${shadowTag} ──\n`);
   process.stderr.write(`  Model: ${selectedModel}\n`);
   process.stderr.write(`  Context: ~${(userPrompt.length / 4).toFixed(0)} tokens (estimated)\n`);
 
@@ -739,7 +748,8 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
       userPrompt,
       zodSchema: GeminiFinalReviewSchema,
       jsonSchema: GeminiFinalReviewJsonSchema,
-      passName: 'gemini-review'
+      passName: 'gemini-review',
+      modelOverride,
     });
   }
 
@@ -756,7 +766,8 @@ async function runFinalReview(provider, client, planContent, transcriptContent, 
     systemPrompt,
     userPrompt,
     zodSchema: GeminiFinalReviewSchema,
-    passName: 'claude-opus-review'
+    passName: 'claude-opus-review',
+    modelOverride,
   });
 }
 
@@ -825,6 +836,209 @@ function formatReviewResult(result, usage, latencyMs, provider) {
   lines.push(result.overall_reasoning);
 
   return lines.join('\n');
+}
+
+// ── Shadow Final Review (observation-only A/B) ──────────────────────────────
+//
+// Plan: docs/plans/final-review-shadow-reviewer.md. An opt-in SECOND reviewer
+// that runs BLIND on the same transcript as the primary (never sees the
+// primary's output), is attributed per source_model, and NEVER gates the
+// build. Guarded so that with FINAL_REVIEW_SHADOW unset the shadow path is not
+// entered at all (byte-identical to today), and a no-op under an active Azure
+// profile (these models aren't on Foundry).
+
+/** Canonical provider specs keyed by the raw FINAL_REVIEW_SHADOW value. */
+const SHADOW_PROVIDER_SPECS = {
+  'claude-opus': { canonical: 'claude-opus', family: 'claude', defaultSentinel: 'latest-opus', keyEnv: 'ANTHROPIC_API_KEY' },
+  'anthropic':   { canonical: 'claude-opus', family: 'claude', defaultSentinel: 'latest-opus', keyEnv: 'ANTHROPIC_API_KEY' },
+  'gemini':      { canonical: 'gemini',      family: 'gemini', defaultSentinel: 'latest-pro',  keyEnv: 'GEMINI_API_KEY' },
+};
+
+/** Cheap family check so an explicit model can't be paired with a wrong provider (R3 M1). */
+function shadowModelMatchesFamily(modelId, family) {
+  const id = (modelId || '').toLowerCase();
+  if (family === 'gemini') return id.includes('gemini');
+  // claude family — opus/sonnet/haiku today, mythos/fable when they land.
+  return /claude|opus|sonnet|haiku|mythos|fable/.test(id);
+}
+
+/**
+ * Resolve the shadow reviewer config into a concrete plan, or a skip reason.
+ * Never throws (optional feature must not break the mandatory audit path).
+ * Deps are injectable for tests (mirrors selectProvider).
+ * @param {{shadowConfig?: object, env?: object, azureActive?: boolean, resolve?: Function}} [deps]
+ * @returns {{provider: string|null, model: string|null, family?: string, state: string}}
+ */
+function resolveShadow({
+  shadowConfig = shadowReviewConfig,
+  env = process.env,
+  azureActive = azureConfig.active,
+  resolve = resolveModel,
+} = {}) {
+  const raw = shadowConfig.provider;
+  if (!raw) return { provider: null, model: null, state: 'skipped-unset' };
+  // Azure guard (load-bearing): Claude/Fable/Mythos are not on Foundry.
+  if (azureActive) return { provider: raw, model: null, state: 'skipped-azure' };
+  const spec = SHADOW_PROVIDER_SPECS[raw];
+  if (!spec) return { provider: raw, model: null, state: 'skipped-unsupported-provider' };
+  if (!env[spec.keyEnv]) return { provider: spec.canonical, model: null, state: 'skipped-no-key' };
+  // Derive the model: explicit override (validated against family) or per-
+  // provider default. config injects NO default, so an unset model means
+  // "derive from provider" (Gemini R2 G3).
+  let model;
+  if (shadowConfig.model) {
+    model = resolve(shadowConfig.model, { silent: true });
+    if (!shadowModelMatchesFamily(model, spec.family)) {
+      return { provider: spec.canonical, model, state: 'skipped-unsupported-provider' };
+    }
+  } else {
+    model = resolve(spec.defaultSentinel, { silent: true });
+  }
+  return { provider: spec.canonical, model, family: spec.family, state: 'ready' };
+}
+
+/** Build a provider-appropriate client for the shadow reviewer. */
+async function buildShadowClient(canonicalProvider) {
+  if (canonicalProvider === 'gemini') {
+    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  }
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
+  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+}
+
+/**
+ * Run the shadow review BLIND on the same transcript as the primary, then
+ * apply the identical suppression/scope/semantic-id pipeline so finding counts
+ * are comparable. Returns {result, usage, latencyMs}.
+ */
+async function runShadowReview(shadow, planContent, transcriptContent, projectContext, auditMode) {
+  const client = await buildShadowClient(shadow.provider);
+  const r = await runReviewWithRetry(
+    shadow.provider, client, planContent, transcriptContent, projectContext, auditMode, shadow.model
+  );
+  const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
+  await applyDebtSuppression(result, usedTranscript);
+  await applyScopeFilter(result, usedTranscript);
+  addSemanticIds(result, shadow.provider);
+  return { result, usage, latencyMs };
+}
+
+/**
+ * Dedup a reviewer's findings by semantic hash (R3 M2 — no count inflation).
+ * A finding is normally pre-stamped with `_hash` by addSemanticIds(); if one
+ * arrives without it (defensive — a programming error upstream), we compute
+ * semanticId(f) as a fallback rather than SILENTLY DROPPING it (cluster-A R2 H1
+ * — silent data loss). Only a truly empty/nullish entry is skipped.
+ */
+function dedupByHash(findings) {
+  const seen = new Map();
+  for (const f of (findings || [])) {
+    if (!f) continue;
+    const key = f._hash || semanticId(f);
+    if (!seen.has(key)) seen.set(key, f);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * Classify each reviewer's findings into both / primary-only / shadow-only by
+ * semantic-hash set membership (after per-reviewer dedup). Stamps `_bucket` on
+ * each finding. The SINGLE writer of the three bucket literals (R3 M5).
+ */
+function diffFindingBuckets(primaryResult, shadowResult) {
+  const p = dedupByHash(primaryResult?.new_findings);
+  const s = dedupByHash(shadowResult?.new_findings);
+  const pHashes = new Set(p.map((f) => f._hash));
+  const sHashes = new Set(s.map((f) => f._hash));
+  for (const f of p) f._bucket = sHashes.has(f._hash) ? 'both' : 'primary-only';
+  for (const f of s) f._bucket = pHashes.has(f._hash) ? 'both' : 'shadow-only';
+  return {
+    primary: p,
+    shadow: s,
+    counts: {
+      both: p.filter((f) => f._bucket === 'both').length,
+      primaryOnly: p.filter((f) => f._bucket === 'primary-only').length,
+      shadowOnly: s.filter((f) => f._bucket === 'shadow-only').length,
+    },
+  };
+}
+
+/** The empty/skip `_shadow` block for a given skip state. */
+function shadowSkipBlock(shadow) {
+  return {
+    state: shadow.state, provider: shadow.provider, model: shadow.model,
+    verdict: null, usage: null, buckets: null, shadowOnlyFindings: null, error: null,
+  };
+}
+
+/**
+ * Run the shadow reviewer (when enabled) and persist both reviewers' findings.
+ * Mutates `result` to add `result._shadow`. Returns nothing — observation only.
+ *
+ * Decoupling (Gemini G2): primary final-review rows persist whenever
+ * cloud+runId, INDEPENDENT of the shadow. Shadow rows + shadow model/usage
+ * persist only when the shadow actually ran (`state==='ran'`).
+ *
+ * @param {object} result          primary reviewer result (already id-stamped)
+ * @param {string} primaryModel    primary reviewer's resolved concrete model id
+ * @param {string|null} runId      audit_runs.id (null → local-only, no cloud)
+ */
+async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }) {
+  const shadow = resolveShadow();
+  let diff = null;
+
+  if (shadow.state !== 'ready') {
+    result._shadow = shadowSkipBlock(shadow);
+    if (shadow.state !== 'skipped-unset') {
+      process.stderr.write(`  [shadow-review] ${shadow.state} (provider=${shadow.provider ?? '-'})\n`);
+    }
+  } else {
+    try {
+      const sr = await runShadowReview(shadow, planContent, transcriptContent, projectContext, auditMode);
+      diff = diffFindingBuckets(result, sr.result);
+      for (const f of diff.primary) f._sourceModel = primaryModel;
+      for (const f of diff.shadow) f._sourceModel = shadow.model;
+      result._shadow = {
+        state: 'ran', provider: shadow.provider, model: shadow.model,
+        verdict: sr.result.verdict,
+        usage: { input_tokens: sr.usage.input_tokens, output_tokens: sr.usage.output_tokens, latency_ms: sr.latencyMs },
+        buckets: diff.counts,
+        shadowOnlyFindings: diff.shadow
+          .filter((f) => f._bucket === 'shadow-only')
+          .map((f) => ({ fingerprint: f._hash, severity: f.severity, category: f.category, section: f.section, detail: (f.detail || '').slice(0, 600) })),
+        error: null,
+      };
+      process.stderr.write(`  [shadow-review] ran ${shadow.model} — buckets both:${diff.counts.both} primary-only:${diff.counts.primaryOnly} shadow-only:${diff.counts.shadowOnly}\n`);
+    } catch (err) {
+      result._shadow = {
+        state: 'error-unavailable', provider: shadow.provider, model: shadow.model,
+        verdict: null, usage: null, buckets: null, shadowOnlyFindings: null,
+        error: (err.message || 'unknown error').slice(0, 300),
+      };
+      process.stderr.write(`  [shadow-review] FAILED (non-fatal, primary review unaffected): ${err.message}\n`);
+    }
+  }
+
+  // Cloud persistence — primary always (when cloud+runId); shadow only when ran.
+  if (!runId) return;
+  const ran = result._shadow.state === 'ran';
+  const primaryFindings = (diff?.primary) || dedupByHash(result.new_findings);
+  for (const f of primaryFindings) {
+    f._sourceModel = primaryModel;
+    if (!ran) f._bucket = null; // bucket only meaningful when both reviewers ran
+  }
+  const shadowFindings = ran ? diff.shadow : [];
+  await recordFinalReviewFindings(runId, {
+    primary: primaryFindings,
+    shadow: shadowFindings,
+    models: {
+      primaryModel,
+      shadowModel: ran ? shadow.model : null,
+      shadowInputTokens: result._shadow.usage?.input_tokens ?? null,
+      shadowOutputTokens: result._shadow.usage?.output_tokens ?? null,
+      shadowLatencyMs: result._shadow.usage?.latency_ms ?? null,
+    },
+  });
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
@@ -901,7 +1115,11 @@ function parseReviewArgs(args) {
   const providerOverride = providerIdx !== -1 && args[providerIdx + 1] ? args[providerIdx + 1] : null;
   const modeIdx = args.indexOf('--mode');
   const auditMode = modeIdx !== -1 && args[modeIdx + 1] ? args[modeIdx + 1] : 'code';
-  return { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode };
+  // --run-id <audit_runs.id> — enables per-finding cloud persistence keyed to
+  // this run (shadow A/B). Absent → local-only, today's behaviour unchanged.
+  const runIdIdx = args.indexOf('--run-id');
+  const runId = runIdIdx !== -1 && args[runIdIdx + 1] ? args[runIdIdx + 1] : null;
+  return { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId };
 }
 
 /**
@@ -1068,12 +1286,12 @@ function isJsonTruncationError(err) {
     || err.message?.includes('parse');
 }
 
-async function runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode) {
+async function runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null) {
   const MAX_ATTEMPTS = 2;
   let txContent = transcriptContent;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const r = await runFinalReview(provider, client, planContent, txContent, projectContext, auditMode);
+      const r = await runFinalReview(provider, client, planContent, txContent, projectContext, auditMode, modelOverride);
       return { ...r, transcriptContent: txContent };
     } catch (err) {
       if (!isJsonTruncationError(err) || attempt >= MAX_ATTEMPTS) throw err;
@@ -1181,7 +1399,7 @@ function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile)
   console.log(formatReviewResult(result, usage, latencyMs, provider));
 }
 
-function recordNewFindings(result, fpTracker, repoFP, revId) {
+function recordNewFindings(result, fpTracker, repoFP, revId, modelId = 'gemini') {
   if (!Array.isArray(result.new_findings)) return;
   for (const f of result.new_findings) {
     appendOutcome('.audit/outcomes.jsonl', {
@@ -1190,7 +1408,7 @@ function recordNewFindings(result, fpTracker, repoFP, revId) {
       category: f.category,
       section: f.section,
       pass: 'gemini-new',
-      model: 'gemini',
+      model: modelId,
       accepted: null,
       gemini_reconfirmed: true,
       round: 0,
@@ -1202,7 +1420,7 @@ function recordNewFindings(result, fpTracker, repoFP, revId) {
   }
 }
 
-function recordWronglyDismissed(result, revId) {
+function recordWronglyDismissed(result, revId, modelId = 'gemini') {
   if (!Array.isArray(result.wrongly_dismissed)) return;
   for (const w of result.wrongly_dismissed) {
     appendOutcome('.audit/outcomes.jsonl', {
@@ -1211,7 +1429,7 @@ function recordWronglyDismissed(result, revId) {
       category: `[wrongly-dismissed] ${w.original_finding_id}`,
       section: w.reason_claude_was_wrong?.slice(0, 120) || '',
       pass: 'gemini-wrongly-dismissed',
-      model: 'gemini',
+      model: modelId,
       accepted: null,
       gemini_reconfirmed: true,
       round: 0,
@@ -1226,15 +1444,15 @@ function recordWronglyDismissed(result, revId) {
   }
 }
 
-function recordGeminiOutcomes(result) {
+function recordGeminiOutcomes(result, modelId = 'gemini') {
   try {
     const repoProfile = generateRepoProfile();
     const repoFP = repoProfile?.repoFingerprint || null;
     const bandit = new PromptBandit();
     const fpTracker = new FalsePositiveTracker();
     const revId = getActiveRevisionId('gemini-review') || 'default';
-    recordNewFindings(result, fpTracker, repoFP, revId);
-    recordWronglyDismissed(result, revId);
+    recordNewFindings(result, fpTracker, repoFP, revId, modelId);
+    recordWronglyDismissed(result, revId, modelId);
     const VERDICT_REWARDS = { APPROVE: 0.8, CONCERNS: 0.5, CONCERNS_REMAINING: 0.35, REJECT: 0.2 };
     const verdictReward = VERDICT_REWARDS[result.verdict] ?? 0.5;
     bandit.update('gemini-review', revId, verdictReward);
@@ -1259,9 +1477,9 @@ async function main() {
   if (mode === 'ping') return runPing();
   if (mode === 'set-provider') return runSetProvider(args[1]);
 
-  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode } = parseReviewArgs(args);
+  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId } = parseReviewArgs(args);
   if (mode !== 'review' || !planFile || !transcriptFile) {
-    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic] [--mode plan|code]');
+    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic] [--mode plan|code] [--run-id <audit_runs.id>]');
     console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|default>');
     console.error('       node scripts/gemini-review.mjs ping');
     process.exit(1);
@@ -1285,13 +1503,31 @@ async function main() {
     await applyDebtSuppression(result, usedTranscript);
     await applyScopeFilter(result, usedTranscript);
     addSemanticIds(result, provider);
+    // Primary reviewer's resolved concrete model id (for source_model attribution).
+    const primaryModel = provider === 'gemini' ? MODEL
+      : provider === 'azure-claude' ? azureConfig.claudeDeployment
+      : CLAUDE_OPUS_MODEL;
+    // Shadow reviewer + cloud persistence — runs BEFORE emit so the --out
+    // artifact carries the _shadow block (R1 M1). Observation-only; never
+    // throws out (its own try/catch keeps the primary review unaffected).
+    await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile);
-    recordGeminiOutcomes(result);
+    recordGeminiOutcomes(result, primaryModel);
   } catch (err) {
     console.error(`Error: ${err.message}`);
     process.exit(1);
   }
 }
+
+// Test-only exports for the shadow A/B internals (mirrors the project's
+// _internals pattern, e.g. anthropic-client.mjs). Underscore signals private.
+export const _internals = {
+  resolveShadow,
+  diffFindingBuckets,
+  dedupByHash,
+  shadowModelMatchesFamily,
+  SHADOW_PROVIDER_SPECS,
+};
 
 // Auto-run only when invoked directly (node scripts/gemini-review.mjs ...),
 // not when imported by a test — lets tests exercise selectProvider() in-process.

@@ -34,12 +34,15 @@ const EXPECTED_EXPORTS = [
   'upsertRepoByUuid',
   'resolveRepoForStore', // signal-recovery Cluster A §2.1 — stable repoRowId resolver
 
-  // runs-findings (11, incl. _resetClassificationColumnCache + _resetPassStatsRoundColumnCache test seams)
+  // runs-findings (14, incl. _resetClassificationColumnCache + _resetPassStatsRoundColumnCache test seams)
   '_resetClassificationColumnCache',
   '_resetPassStatsRoundColumnCache', // WS1 run-unification — audit_pass_stats.round probe cache reset
 
   'recordAdjudicationEvent',
   'recordFindings',
+  'recordFinalReviewFindings',      // shadow A/B — idempotent replace-persistence
+  'adjudicateFinalReviewFinding',   // shadow A/B — human-adjudication writeback
+  'getFinalReviewStats',            // shadow A/B — measurement read surface
   'recordPassStats',
   'recordRunComplete',
   'recordRunStart',
@@ -211,6 +214,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 118);
+    assert.equal(EXPECTED_EXPORTS.length, 121);
   });
 });

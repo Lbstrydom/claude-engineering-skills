@@ -226,6 +226,20 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 22
+        },
+        {
+          "column_name": "source_model",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 23
+        },
+        {
+          "column_name": "bucket",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 24
         }
       ]
     },
@@ -675,6 +689,41 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 32
+        },
+        {
+          "column_name": "final_review_model",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 33
+        },
+        {
+          "column_name": "final_review_shadow_model",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 34
+        },
+        {
+          "column_name": "final_review_shadow_input_tokens",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 35
+        },
+        {
+          "column_name": "final_review_shadow_output_tokens",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 36
+        },
+        {
+          "column_name": "final_review_shadow_latency_ms",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 37
         }
       ]
     },
@@ -6922,6 +6971,11 @@
       "tablename": "symbol_layering_violations",
       "indexname": "symbol_layering_violations_refresh_id_rule_name_from_path_t_key",
       "indexdef": "CREATE UNIQUE INDEX symbol_layering_violations_refresh_id_rule_name_from_path_t_key ON public.symbol_layering_violations USING btree (refresh_id, rule_name, from_path, to_path)"
+    },
+    {
+      "tablename": "audit_findings",
+      "indexname": "audit_findings_source_model_idx",
+      "indexdef": "CREATE INDEX audit_findings_source_model_idx ON public.audit_findings USING btree (run_id, source_model) WHERE (source_model IS NOT NULL)"
     }
   ],
   "triggers": [

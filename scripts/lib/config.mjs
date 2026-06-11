@@ -111,6 +111,23 @@ export const claudeConfig = Object.freeze({
   finalReviewModel: resolveModel(process.env.CLAUDE_FINAL_REVIEW_MODEL || 'latest-opus'),
 });
 
+// ── Shadow Final-Review Config (A/B test — observation-only) ─────────────────
+//
+// Opt-in second reviewer that runs blind-parallel with the primary final
+// review (plan: docs/plans/final-review-shadow-reviewer.md). Deliberately
+// PERMISSIVE — raw strings, NO allow-list validation, NO resolveModel() here,
+// NO injected default model. An unknown/garbage provider must never throw at
+// import (it would break the MANDATORY audit path for an OPTIONAL feature);
+// resolveShadow() in gemini-review.mjs handles unknown values as a logged
+// no-op (_shadow.state='skipped-unsupported-provider'). The per-provider
+// default model is derived in resolveShadow(), NOT here, so it can tell
+// "user explicitly pinned a model" from "unset → derive from provider"
+// (plan Gemini R2 G3). `model` is null when unset — never 'latest-opus'.
+export const shadowReviewConfig = Object.freeze({
+  provider: (process.env.FINAL_REVIEW_SHADOW || '').trim() || null,
+  model: (process.env.FINAL_REVIEW_SHADOW_MODEL || '').trim() || null,
+});
+
 // ── Brief Generation Config ─────────────────────────────────────────────────
 
 export const briefConfig = Object.freeze({

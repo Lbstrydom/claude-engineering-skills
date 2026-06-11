@@ -170,6 +170,29 @@ export async function updateRunMeta(runId, meta) {
   if (meta.labeled != null)        update.labeled          = meta.labeled;
   if (meta.acceptedCount != null)  update.accepted_count   = meta.acceptedCount;
   if (meta.dismissedCount != null) update.dismissed_count  = meta.dismissedCount;
+  // Final-review model attribution + shadow cost telemetry (migration
+  // 20260610120000). columnExists-guarded so the write degrades cleanly on an
+  // un-migrated store (omit the absent column rather than fail the UPDATE).
+  if (meta.finalReviewModel != null
+      && await columnExists('audit_runs', 'final_review_model', many, isCloudEnabled)) {
+    update.final_review_model = meta.finalReviewModel;
+  }
+  if (meta.finalReviewShadowModel != null
+      && await columnExists('audit_runs', 'final_review_shadow_model', many, isCloudEnabled)) {
+    update.final_review_shadow_model = meta.finalReviewShadowModel;
+  }
+  if (meta.finalReviewShadowInputTokens != null
+      && await columnExists('audit_runs', 'final_review_shadow_input_tokens', many, isCloudEnabled)) {
+    update.final_review_shadow_input_tokens = meta.finalReviewShadowInputTokens;
+  }
+  if (meta.finalReviewShadowOutputTokens != null
+      && await columnExists('audit_runs', 'final_review_shadow_output_tokens', many, isCloudEnabled)) {
+    update.final_review_shadow_output_tokens = meta.finalReviewShadowOutputTokens;
+  }
+  if (meta.finalReviewShadowLatencyMs != null
+      && await columnExists('audit_runs', 'final_review_shadow_latency_ms', many, isCloudEnabled)) {
+    update.final_review_shadow_latency_ms = meta.finalReviewShadowLatencyMs;
+  }
   if (Object.keys(update).length === 0) return;
   if (!await isCloudEnabled()) return;
   try {
@@ -181,13 +204,38 @@ export async function updateRunMeta(runId, meta) {
 
 // ── audit_findings ─────────────────────────────────────────────────────────
 
+/** The closed domain of the final-review diff bucket (app-layer enforced). */
+const VALID_BUCKETS = new Set(['both', 'primary-only', 'shadow-only']);
+
+/** Coerce a bucket value to the valid domain or null (logs unexpected values). */
+function normaliseBucket(b) {
+  if (b == null) return null;
+  if (VALID_BUCKETS.has(b)) return b;
+  process.stderr.write(`  [learning] unexpected bucket value '${b}' coerced to null\n`);
+  return null;
+}
+
 /**
  * Insert a batch of findings rows. Optionally includes the Phase B
  * classification columns when the schema supports them.
+ *
+ * @param {string} runId
+ * @param {object[]} findings
+ * @param {string} passName  Role: 'structure'|'wiring'|…|'final-review'|'final-review-shadow'.
+ * @param {number} round
+ * @param {{client?: import('pg').PoolClient}} [opts]  When `client` is supplied
+ *   the multi-row INSERT runs on that pg client (e.g. inside a `withTx`
+ *   transaction) instead of grabbing its own pool connection. This lets a
+ *   caller make a delete+insert atomic (final-review replace-persistence). The
+ *   default `{}` preserves every existing call site byte-for-byte.
  */
-export async function recordFindings(runId, findings, passName, round) {
+export async function recordFindings(runId, findings, passName, round, opts = {}) {
   if (!runId || !await isCloudEnabled()) return;
   const hasClassification = await detectClassificationColumns();
+  // Final-review attribution columns (migration 20260610120000) — written
+  // only when present so the path degrades cleanly on an un-migrated store.
+  const hasSourceModel = await columnExists('audit_findings', 'source_model', many, isCloudEnabled);
+  const hasBucket = await columnExists('audit_findings', 'bucket', many, isCloudEnabled);
   const rows = findings.map((f) => {
     const base = {
       run_id: runId,
@@ -199,21 +247,29 @@ export async function recordFindings(runId, findings, passName, round) {
       detail_snapshot: f.detail?.slice(0, 600),
       round_raised: round,
     };
-    if (!hasClassification) return base;
-    return {
-      ...base,
-      sonar_type: f.classification?.sonarType ?? null,
-      effort: f.classification?.effort ?? null,
-      source_kind: f.classification?.sourceKind ?? null,
-      source_name: f.classification?.sourceName ?? null,
-    };
+    if (hasClassification) {
+      base.sonar_type = f.classification?.sonarType ?? null;
+      base.effort = f.classification?.effort ?? null;
+      base.source_kind = f.classification?.sourceKind ?? null;
+      base.source_name = f.classification?.sourceName ?? null;
+    }
+    // f._sourceModel / f._bucket are stamped by the final-review diff; absent
+    // (null) for normal audit-pass findings, which is the correct value.
+    if (hasSourceModel) base.source_model = f._sourceModel ?? null;
+    // App-layer validation of the bucket domain (plan R3 M5 / cluster-A M5,M7,M10:
+    // the migration deliberately has no DB CHECK — Postgres lacks idempotent
+    // ADD CONSTRAINT — so the write boundary enforces the literal domain here).
+    // An unexpected value is coerced to null + logged rather than silently
+    // persisting drift.
+    if (hasBucket) base.bucket = normaliseBucket(f._bucket);
+    return base;
   });
   if (rows.length === 0) return;
-  // Bulk INSERT — use the pool directly since we want a multi-row insert
-  // with consistent column shape (rows are homogeneous here by construction).
+  // Bulk INSERT — homogeneous rows by construction. Use the caller's tx client
+  // when provided (atomic delete+insert); otherwise grab a pool connection.
   try {
-    const pool = await getPool();
-    if (!pool) return;
+    const exec = opts.client ?? await getPool();
+    if (!exec) return;
     const cols = Object.keys(rows[0]);
     const params = [];
     const valueGroups = rows.map((row) => {
@@ -225,9 +281,166 @@ export async function recordFindings(runId, findings, passName, round) {
     });
     const sql = `INSERT INTO audit_findings (${cols.map((c) => `"${c}"`).join(', ')})
                  VALUES ${valueGroups.join(', ')}`;
-    await pool.query(sql, params);
+    await exec.query(sql, params);
   } catch (err) {
     process.stderr.write(`  [learning] recordFindings failed: ${err.message}\n`);
+  }
+}
+
+/**
+ * Idempotent replace-persistence for the final review's findings (plan
+ * docs/plans/final-review-shadow-reviewer.md). A retry or manual rerun with
+ * the same runId must NOT double-count, so this DELETEs the prior final-review
+ * rows for the run and re-INSERTs — all inside ONE transaction so the
+ * delete+insert is atomic (Gemini G1: recordFindings alone would grab its own
+ * pool connection).
+ *
+ * Primary/shadow decoupling (Gemini G2): the CALLER decides what to pass —
+ * `primary` is populated whenever the primary review ran; `shadow` is `[]`
+ * (and `models.shadow*` null) unless the shadow actually ran. A skipped/failed
+ * shadow therefore clears any stale shadow rows and leaves primary intact.
+ *
+ * @param {string} runId
+ * @param {{
+ *   primary?: object[],   // primary reviewer findings, each stamped _sourceModel/_bucket
+ *   shadow?: object[],    // shadow reviewer findings (empty unless shadow ran)
+ *   models?: {
+ *     primaryModel?: string, shadowModel?: string|null,
+ *     shadowInputTokens?: number|null, shadowOutputTokens?: number|null,
+ *     shadowLatencyMs?: number|null,
+ *   },
+ * }} payload
+ */
+export async function recordFinalReviewFindings(runId, { primary = [], shadow = [], models = {} } = {}) {
+  if (!runId || !await isCloudEnabled()) return;
+  // (a) Run metadata — overwrite-idempotent, so it's fine outside the findings
+  // tx. Null shadow fields are simply not written (updateRunMeta guards on
+  // `!= null`), which is correct when the shadow didn't run.
+  await updateRunMeta(runId, {
+    finalReviewModel: models.primaryModel,
+    finalReviewShadowModel: models.shadowModel,
+    finalReviewShadowInputTokens: models.shadowInputTokens,
+    finalReviewShadowOutputTokens: models.shadowOutputTokens,
+    finalReviewShadowLatencyMs: models.shadowLatencyMs,
+  });
+  // (b) Replace the findings atomically.
+  try {
+    await withTx(async (client) => {
+      // Scoped to final-review pass_names so the GPT audit's own rows are
+      // untouched. Raw parameterized DELETE on the tx client (no dependency on
+      // buildDelete IN-clause support).
+      await client.query(
+        `DELETE FROM audit_findings WHERE run_id = $1 AND pass_name IN ('final-review', 'final-review-shadow')`,
+        [runId]
+      );
+      await recordFindings(runId, primary, 'final-review', 0, { client });
+      if (shadow.length > 0) {
+        await recordFindings(runId, shadow, 'final-review-shadow', 0, { client });
+      }
+    });
+  } catch (err) {
+    process.stderr.write(`  [learning] recordFinalReviewFindings failed: ${err.message}\n`);
+  }
+}
+
+/**
+ * Human-adjudication writeback for a shadow-only final-review finding (plan
+ * D6). Sets `audit_findings.user_action`, mapping the user-facing verb to the
+ * existing CHECK enum (20260508120000): accepted → 'accepted-permanent',
+ * dismissed → 'dismissed'. Scoped to the shadow-only bucket so the fingerprint
+ * disambiguates (R2 M2); returns the affected row count so the CLI can report
+ * a multi-match.
+ *
+ * @param {string} runId
+ * @param {string} fingerprint  finding_fingerprint of the shadow-only finding
+ * @param {'accepted'|'dismissed'} action
+ * @returns {Promise<{ok: boolean, updated: number, cloud: boolean}>}
+ */
+export async function adjudicateFinalReviewFinding(runId, fingerprint, action) {
+  if (!await isCloudEnabled()) return { ok: false, updated: 0, cloud: false };
+  const userAction = action === 'accepted' ? 'accepted-permanent'
+    : action === 'dismissed' ? 'dismissed'
+    : null;
+  if (!userAction) throw new Error(`adjudicateFinalReviewFinding: action must be 'accepted' or 'dismissed', got '${action}'`);
+  if (!await columnExists('audit_findings', 'bucket', many, isCloudEnabled)) {
+    process.stderr.write('  [learning] adjudicate: bucket column absent — run migration 20260610120000\n');
+    return { ok: false, updated: 0, cloud: true };
+  }
+  try {
+    const res = await updateWhere(
+      'audit_findings',
+      { user_action: userAction },
+      { run_id: runId, finding_fingerprint: fingerprint, bucket: 'shadow-only' }
+    );
+    return { ok: true, updated: res.rowCount ?? 0, cloud: true };
+  } catch (err) {
+    process.stderr.write(`  [learning] adjudicateFinalReviewFinding failed: ${err.message}\n`);
+    return { ok: false, updated: 0, cloud: true };
+  }
+}
+
+/**
+ * Read the shadow-A/B measurement surface for a repo by name (plan §6). Queries
+ * BASE TABLES directly (no view — avoids the view/RLS-bypass question, R1 H5).
+ * Returns {ok, cloud, repoId, buckets, shadowOnlyQueue, runs} where:
+ *   - buckets: per (source_model, bucket, severity) DISTINCT-fingerprint counts
+ *     (COUNT DISTINCT — R3 M2 dedup at the query layer too).
+ *   - shadowOnlyQueue: the human spot-check list — shadow-only findings with
+ *     their adjudication state (user_action), newest first.
+ *   - runs: per (final_review_model, final_review_shadow_model) run count +
+ *     aggregate shadow token/latency cost (the operator's cost overlay).
+ *
+ * @param {string} repoName
+ * @param {{queueLimit?: number}} [opts]
+ */
+export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
+  if (!await isCloudEnabled()) return { ok: true, cloud: false, repoId: null, buckets: [], shadowOnlyQueue: [], runs: [] };
+  const repoRow = await one(`SELECT id FROM audit_repos WHERE name = $1 ORDER BY created_at DESC LIMIT 1`, [repoName]);
+  const repoId = repoRow?.id || null;
+  if (!repoId) return { ok: true, cloud: true, repoId: null, buckets: [], shadowOnlyQueue: [], runs: [] };
+  // Guard: bail cleanly on an un-migrated store (no source_model column).
+  if (!await columnExists('audit_findings', 'source_model', many, isCloudEnabled)) {
+    process.stderr.write('  [final-review-stats] source_model column absent — run migration 20260610120000\n');
+    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], runs: [], error: 'NOT_MIGRATED' };
+  }
+  try {
+    const buckets = await many(
+      `SELECT f.source_model, f.bucket, f.severity,
+              COUNT(DISTINCT f.finding_fingerprint) AS n
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE r.repo_id = $1
+          AND f.pass_name IN ('final-review', 'final-review-shadow')
+        GROUP BY f.source_model, f.bucket, f.severity
+        ORDER BY f.source_model, f.bucket, f.severity`,
+      [repoId]
+    );
+    const shadowOnlyQueue = await many(
+      `SELECT f.run_id, f.finding_fingerprint, f.severity, f.category,
+              f.primary_file, f.detail_snapshot, f.source_model, f.user_action, f.created_at
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+        WHERE r.repo_id = $1 AND f.bucket = 'shadow-only'
+        ORDER BY f.created_at DESC
+        LIMIT $2`,
+      [repoId, queueLimit]
+    );
+    const runs = await many(
+      `SELECT r.final_review_model, r.final_review_shadow_model,
+              COUNT(*) AS n,
+              COALESCE(SUM(r.final_review_shadow_input_tokens), 0)  AS shadow_input_tokens,
+              COALESCE(SUM(r.final_review_shadow_output_tokens), 0) AS shadow_output_tokens,
+              COALESCE(SUM(r.final_review_shadow_latency_ms), 0)    AS shadow_latency_ms
+         FROM audit_runs r
+        WHERE r.repo_id = $1 AND r.final_review_model IS NOT NULL
+        GROUP BY r.final_review_model, r.final_review_shadow_model
+        ORDER BY n DESC`,
+      [repoId]
+    );
+    return { ok: true, cloud: true, repoId, buckets, shadowOnlyQueue, runs };
+  } catch (err) {
+    process.stderr.write(`  [final-review-stats] query failed: ${err.message}\n`);
+    return { ok: false, cloud: true, repoId, buckets: [], shadowOnlyQueue: [], runs: [], error: err.message };
   }
 }
 

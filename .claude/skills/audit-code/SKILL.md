@@ -399,12 +399,24 @@ Run Gemini 3.1 Pro as the final gate. Falls back to Claude Opus when
 `GEMINI_API_KEY` is absent.
 
 ```bash
+# Pass --run-id <_cloudRunId> when the audit --out JSON carries one, so the
+# final-review (and the optional shadow A/B reviewer) persist their per-finding
+# results keyed to this audit_run. Read it from the audit result:
+#   RUN_ID=$(node -e "process.stdout.write(require('/tmp/'+process.env.SID+'-result.json')._cloudRunId||'')")
+# Omit --run-id when absent (cloud off) → gemini-review runs local-only.
 node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript.json \
-  --out /tmp/$SID-gemini-result.json 2>/tmp/$SID-gemini-stderr.log
+  --out /tmp/$SID-gemini-result.json \
+  ${RUN_ID:+--run-id "$RUN_ID"} 2>/tmp/$SID-gemini-stderr.log
 ```
 
 Verdict handling: `APPROVE` → done. `CONCERNS` → deliberate, fix, re-run
 Gemini. `REJECT` → present to user.
+
+**Shadow A/B reviewer (optional, observation-only)**: set `FINAL_REVIEW_SHADOW`
+(e.g. `claude-opus`) to run a second blind reviewer in parallel with the
+primary — it never gates the build, attributes findings per `source_model`, and
+persists the diff for `final-review-stats`. No-op when unset or under an Azure
+profile. See `docs/plans/final-review-shadow-reviewer.md`.
 
 Full transcript-building, verdict routing, Step 7.1 deliberation protocol,
 and category-error handling: `references/gemini-gate.md`.

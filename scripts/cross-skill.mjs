@@ -77,6 +77,9 @@ import {
   upsertPersonaTestCandidate,
   listPersonaTestCandidates,
   markPersonaTestCandidateProposed,
+  // Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md)
+  getFinalReviewStats,
+  adjudicateFinalReviewFinding,
 } from './learning-store.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit } from './lib/cli-io.mjs';
@@ -466,6 +469,33 @@ async function cmdAuditEffectiveness() {
   if (!repoId) return emitError('BAD_INPUT', '--repo-id is required');
   const row = await readAuditEffectiveness(repoId);
   emit({ ok: true, cloud: true, row });
+}
+
+// ── Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md) ──────
+
+async function cmdFinalReviewStats() {
+  await initLearningStore();
+  const repoName = argOption('repo');
+  if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required');
+  const limitFlag = argOption('queue-limit');
+  const res = await getFinalReviewStats(repoName, limitFlag ? { queueLimit: Number(limitFlag) } : {});
+  emit(res);
+}
+
+async function cmdFinalReviewAdjudicate() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, updated: 0 });
+  const runId = argOption('run-id');
+  const fingerprint = argOption('fingerprint');
+  const action = argOption('action');
+  if (!runId || !fingerprint || !action) {
+    return emitError('BAD_INPUT', '--run-id <id> --fingerprint <hash> --action <accepted|dismissed> are all required');
+  }
+  if (action !== 'accepted' && action !== 'dismissed') {
+    return emitError('BAD_INPUT', `--action must be 'accepted' or 'dismissed', got '${action}'`);
+  }
+  const res = await adjudicateFinalReviewFinding(runId, fingerprint, action);
+  emit(res);
 }
 
 // ── Persona-test subcommands (replace curl blocks in persona-test SKILL.md) ──
@@ -1155,6 +1185,8 @@ const commands = {
   'plan-satisfaction': cmdPlanSatisfaction,
   'list-unlocked-fixes': cmdListUnlockedFixes,
   'audit-effectiveness': cmdAuditEffectiveness,
+  'final-review-stats': cmdFinalReviewStats,
+  'final-review-adjudicate': cmdFinalReviewAdjudicate,
   'detect-stack': cmdDetectStack,
   'list-personas': cmdListPersonas,
   'add-persona': cmdAddPersona,
