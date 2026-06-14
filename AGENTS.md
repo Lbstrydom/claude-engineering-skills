@@ -67,6 +67,20 @@
 > function of the problem?"* `/plan` and `/audit-code` carry the full check; a
 > `defer`/accept-debt is honest only as a true scope boundary or documented debt,
 > **never because the correct fix is larger**.
+>
+> **Scope is decided by impact, not authorship (load-bearing test).** The
+> companion failure mode: dismissing a finding as "out-of-scope / pre-existing /
+> not introduced by this change" when the change being shipped actually *depends*
+> on the cited code path. Authorship ("did I write this line?") and ownership
+> ("does the plan own this section?") are the wrong test; **impact** is the right
+> one — *does the correctness or stability of what I'm shipping ride on this
+> path?* If yes, it is in-scope **for the fix/defer decision** even when
+> pre-existing, and a silent defer is the band-aid. A pre-existing finding in a
+> *changed* file is a yellow flag (you usually touched it because your change now
+> rides on it), and passing tests don't clear it — a green suite only covers
+> exercised paths. Legitimate `defer` therefore requires naming the
+> **independence** (the new code does not call/depend on the cited path), not the
+> authorship. `/audit-code` (Step 3) and `/audit-plan` (Step 3) both enforce this.
 
 ## Project Overview
 

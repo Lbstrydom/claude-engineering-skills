@@ -180,20 +180,39 @@ orthogonal judgements:
 - `validity=invalid` → action MUST be `dismiss` or `rebut`
 - `validity=uncertain` → action MUST be `rebut` (GPT deliberation)
 - `validity=valid` + `scope=in-scope` + HIGH/MEDIUM → `fix-now` (unless accepted-permanent debt)
-- `validity=valid` + `scope=out-of-scope` → `defer` eligible (pre-existing debt)
+- `validity=valid` + `scope=out-of-scope` + **load-bearing** → `fix-now` (treat as in-scope — see impact test below)
+- `validity=valid` + `scope=out-of-scope` + **independent** → `defer` eligible (pre-existing debt)
 - `validity=valid` + `scope=in-scope` + LOW → operator choice
 - Only `validity=valid` findings can be deferred
 
-Scope hint: compare the finding's cited files against `--changed` /
-`--scope diff`. A finding pointing at code your PR didn't touch is
-`out-of-scope` by definition.
+**Scope is decided by impact, not authorship (load-bearing test).** "My PR
+didn't touch this line" is NOT a defer pass. Before any `out-of-scope` finding
+routes to `defer`, apply the test: *does the correctness or stability of the
+change I'm shipping depend on the cited code path?*
+
+- **Load-bearing** — the new code calls into, reads state from, or otherwise
+  rides on the cited path → it is in-scope **for the fix/defer decision** even
+  if pre-existing. `fix-now`, or explicitly gate the feature on it and say so.
+  **Never silent-defer a load-bearing finding.**
+- **Independent** — the path fails identically with or without this change; the
+  new code does not depend on it → genuine `defer` (pre-existing debt).
+
+A pre-existing finding **in a file you changed** is a yellow flag, not a green
+one: you usually touched the file *because* your change now rides on its
+behaviour. Default such findings to "prove independence" rather than to defer.
+Passing tests don't clear this — a green suite only covers exercised paths, not
+the load-bearing path's failure modes.
 
 **Honest-deferral check (Design right-sizing, AGENTS.md — the band-aid escape
 hatch).** `defer` is the place "patched the easy way" hides. A `defer` of a
 `valid` `in-scope` finding must name three things: (1) the **root cause**;
 (2) the **minimal in-scope fix you considered and rejected**; (3) the **residual
-risk**. Invariant: **never `defer` because the correct fix is merely larger** —
-size is not scope. Legitimate `defer` = a true scope boundary (out-of-scope) or
+risk**. A `defer` of an `out-of-scope` finding must additionally name the
+**independence** — one sentence stating the new code does not call/depend on the
+cited path (the load-bearing test above). If you can't write that sentence
+truthfully, it's load-bearing → `fix-now`. Invariant: **never `defer` because
+the correct fix is merely larger** — size is not scope, and neither is
+authorship. Legitimate `defer` = a true (impact-tested) scope boundary or
 explicitly accepted, documented debt. Strongest form: drop a `TODO` at the cited
 line naming the root cause, so the dodge becomes a visible artifact. (The
 over-engineering cliff is caught symmetrically by Gemini's `over_engineering_flags`

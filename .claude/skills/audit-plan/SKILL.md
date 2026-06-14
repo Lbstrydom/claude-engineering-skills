@@ -112,8 +112,27 @@ For each finding, record three orthogonal judgements:
 - `validity=invalid` → action MUST be `dismiss` or `rebut`
 - `validity=uncertain` → action MUST be `rebut` (GPT deliberation)
 - `validity=valid` + `scope=in-scope` + HIGH/MEDIUM → `fix-now`
-- `validity=valid` + `scope=out-of-scope` → `defer` to "Out of Scope (Future)" plan section
+- `validity=valid` + `scope=out-of-scope` + **load-bearing** → `fix-now` (fold into the plan — see impact test below)
+- `validity=valid` + `scope=out-of-scope` + **independent** → `defer` to "Out of Scope (Future)" plan section
 - `validity=valid` + `scope=in-scope` + LOW → operator choice
+
+**Scope is decided by impact, not ownership (load-bearing test).** "The plan
+doesn't own that section" is NOT a defer pass. Before any `out-of-scope` finding
+routes to `defer`, apply the test: *does the success of this plan's design
+depend on the cited concern?*
+
+- **Load-bearing** — the plan's design rides on the cited contract / constraint
+  / subsystem behaviour (it would be wrong or unsafe if the concern holds) →
+  in-scope **for the fix/defer decision** even if the plan didn't name it.
+  Fold the resolution into the plan, or add an explicit dependency note that
+  states the assumption and how it's validated. **Never silent-defer it to
+  "Out of Scope (Future)".**
+- **Independent** — a genuine future enhancement / adjacent concern the plan's
+  correctness does not rest on → defer to "Out of Scope (Future)".
+
+A `defer` of an `out-of-scope` finding must name the **independence** in its
+rationale (one sentence: the plan's design does not depend on the cited
+concern). If you can't write it truthfully, it's load-bearing → fold it in.
 
 ### Execution-clustering rubric (when the plan has a §11 block)
 

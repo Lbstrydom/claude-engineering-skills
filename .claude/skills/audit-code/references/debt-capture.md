@@ -13,6 +13,14 @@ diluting signal.
 — meaning `validity = valid` AND (`scope = out-of-scope` OR an explicit
 deferred reason).
 
+> **Impact-tested, not authorship-tested.** A finding is only `defer`-eligible
+> once it passes the Step 3 **load-bearing test**: the change being shipped must
+> not depend on the cited code path. A pre-existing finding in a *changed* file
+> that the new code rides on is `fix-now`, not debt — see Step 3 "Scope is
+> decided by impact, not authorship". The `deferredRationale` for an
+> `out-of-scope` entry must state the **independence** (the new code does not
+> call/depend on the cited path), not merely that it's pre-existing.
+
 ## Required fields per deferredReason
 
 | `deferredReason` | Valid scope | Additional required fields |

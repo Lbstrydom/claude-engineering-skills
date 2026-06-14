@@ -1,5 +1,29 @@
 # Project Status Log
 
+## 2026-06-14 — Audit-finding triage: impact, not authorship (load-bearing test)
+
+### Changes
+- Closed a triage gap surfaced in real usage: an audit deferred pre-existing findings (incl. a security gap) as "out-of-scope / in touched files / not introduced by this change", using **authorship** as the fix-vs-defer test. Corrected to an **impact (load-bearing) test**: a finding is `defer`-eligible only when the change being shipped does not depend on the cited code path.
+- `/audit-code` Step 3 + `/audit-plan` Step 3 triage rules now split `out-of-scope` into **load-bearing** (`fix-now`) vs **independent** (`defer`); a `defer` of an out-of-scope finding must name the independence in its rationale.
+- Principle added to AGENTS.md "Design right-sizing" block (canonical) as the companion failure mode to the band-aid cliff.
+
+### Files Affected
+- `skills/audit-code/SKILL.md` — Step 3 triage rules, scope hint, honest-deferral check (impact test + independence requirement).
+- `skills/audit-plan/SKILL.md` — Step 3 triage rules (ownership→impact; load-bearing folds into plan vs defer to "Out of Scope (Future)").
+- `skills/audit-code/references/debt-capture.md` — eligibility note: impact-tested, not authorship-tested.
+- `AGENTS.md` — "Scope is decided by impact, not authorship (load-bearing test)" paragraph.
+- `.claude/skills/**` — regenerated copies (`npm run skills:regenerate`; `skills:check` green).
+
+### Decisions Made
+- "In a changed file" is a **yellow flag**, not a green one — you usually touched the file because your change now rides on it. Passing tests don't clear bucket-2 risk (a green suite only covers exercised paths).
+- Applied symmetrically to plan audits: the same error appears as ownership-scoping ("the plan doesn't own that section").
+- Did NOT loosen scope discipline — only changed the fix/defer **criterion** from authorship to impact.
+
+### Next Steps
+- Deploy to consumer repos via `npm run sync` (ai-organiser, wine-cellar-app).
+
+---
+
 ## 2026-06-10 — Read-only audit-run findings viewer (dashboard module)
 
 ### Changes
