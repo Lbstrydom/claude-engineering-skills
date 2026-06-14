@@ -2,9 +2,11 @@
 /**
  * @fileoverview Comprehensive setup health check for any repo using the audit-loop skills.
  *
- * Validates env vars and Supabase tables for every active feature:
- *   - audit-loop (SUPABASE_AUDIT_URL + tables)
- *   - persona-test (PERSONA_TEST_SUPABASE_URL + tables)
+ * Validates env vars and Postgres tables for every active feature. Post-M4 all
+ * features share one Postgres store via AUDIT_DB_URL (no supabase-js / separate
+ * persona project):
+ *   - audit-loop (AUDIT_DB_URL + tables)
+ *   - persona-test (AUDIT_DB_URL + persona tables)
  *
  * Usage:
  *   node scripts/check-setup.mjs                     # check current repo
@@ -173,10 +175,6 @@ function checkAuditApiKeys(env, report) {
   }
 }
 
-function shortUrl(url) {
-  return url.replaceAll(/^https?:\/\//g, '').slice(0, 30) + '...';
-}
-
 async function checkAuditSupabase(env, report) {
   // M4 — AUDIT_DB_URL is the new runtime persistence env. The legacy
   // SUPABASE_AUDIT_URL + ANON_KEY pair is sunset for runtime; we still
@@ -251,20 +249,12 @@ async function checkAuditLoop(env, report) {
 async function checkPersonaTest(env, report) {
   report.section('Persona-Test');
 
-  if (!env.PERSONA_TEST_SUPABASE_URL) {
-    report.fail('PERSONA_TEST_SUPABASE_URL missing', 'required for persona session memory',
-      `Add PERSONA_TEST_SUPABASE_URL=https://<ref>.supabase.co to .env`);
-    return;
-  }
-  report.pass('PERSONA_TEST_SUPABASE_URL', shortUrl(env.PERSONA_TEST_SUPABASE_URL));
-
-  if (!env.PERSONA_TEST_SUPABASE_ANON_KEY) {
-    report.fail('PERSONA_TEST_SUPABASE_ANON_KEY missing', '',
-      'Add PERSONA_TEST_SUPABASE_ANON_KEY=... to .env');
-    return;
-  }
-  report.pass('PERSONA_TEST_SUPABASE_ANON_KEY');
-
+  // M4: persona session memory lives in the SAME Postgres store as the audit
+  // loop (AUDIT_DB_URL), reached through the shared `getPool()` — see
+  // scripts/lib/store/persona.mjs ("no special client"). There is no separate
+  // Supabase project or supabase-js client anymore; the legacy
+  // PERSONA_TEST_SUPABASE_URL / _ANON_KEY vars are read by NO runtime code.
+  // Probe the persona tables through the same pg seam the audit tables use.
   if (env.PERSONA_TEST_REPO_NAME) {
     report.pass('PERSONA_TEST_REPO_NAME', env.PERSONA_TEST_REPO_NAME);
   } else {
@@ -272,22 +262,22 @@ async function checkPersonaTest(env, report) {
       `Add PERSONA_TEST_REPO_NAME=${REPO_NAME} to .env`);
   }
 
-  const TABLES = ['personas', 'persona_test_sessions'];
-  const VIEWS  = ['persona_dashboard'];
-
-  let sb;
-  try {
-    sb = await getSupabaseClient(env.PERSONA_TEST_SUPABASE_URL, env.PERSONA_TEST_SUPABASE_ANON_KEY);
-  } catch {
-    report.fail('Supabase connection failed', 'check PERSONA_TEST_SUPABASE_URL and anon key');
+  // DSN is injected by injectResolvedDbEnv() in main(). Absent → cloud is off;
+  // persona memory degrades to local-only just like the audit loop.
+  if (!process.env.AUDIT_DB_URL) {
+    report.warn('AUDIT_DB_URL not set — persona tables not checked',
+      'persona session memory shares the audit-loop Postgres store; configure AUDIT_DB_URL (see Audit-Loop section)');
     return;
   }
 
+  const TABLES = ['personas', 'persona_test_sessions'];
+  const VIEWS  = ['persona_dashboard'];
+
   let tableResults;
   try {
-    tableResults = await checkTables(sb, [...TABLES, ...VIEWS]);
+    tableResults = await checkTables(null, [...TABLES, ...VIEWS]);
   } catch (err) {
-    report.fail('Table query failed', err.message.slice(0, 80));
+    report.fail('Postgres connection / table query failed', err.message.slice(0, 80));
     return;
   }
 
@@ -300,8 +290,8 @@ async function checkPersonaTest(env, report) {
 
   if (missing.length > 0) {
     report.fix(
-      'Create missing tables — save SQL to /tmp/persona-test-schema.sql then run:',
-      `npx supabase db query --linked -f /tmp/persona-test-schema.sql\n\n${PERSONA_TEST_SQL}`
+      'Create missing persona tables — apply the migrations to your Postgres store:',
+      `node scripts/setup-postgres.mjs --migrate\n\n(or apply the SQL below directly)\n\n${PERSONA_TEST_SQL}`
     );
   }
 }
@@ -462,9 +452,42 @@ async function checkConsistencyMode(env, report) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+/**
+ * Make the pg probes test what the report says PASS.
+ *
+ * `getPool()` / `db/client.mjs` read `AUDIT_DB_URL` + `AUDIT_DB_SSL_MODE`
+ * straight from `process.env`. But `loadEnv()` deliberately keeps the target
+ * repo's `.env` out of `process.env` (isolation), and this CLI never imports
+ * `config.mjs` — whose import side-effect is what loads `~/.audit-loop.env`.
+ * So `getPool()` would see an empty `process.env` and return null ("No DB
+ * pool") even when `resolveCloudConfig` found a perfectly good DSN. Resolve the
+ * EFFECTIVE config (target repo `.env` layered over `~/.audit-loop.env`) and
+ * inject it. main() runs once for a single `--repo-path`, so there is no
+ * cross-repo leak.
+ *
+ * `AUDIT_DB_SSL_MODE` is load-bearing, not optional: `client.mjs` defaults to
+ * strict `require`, which fails TLS against Supabase session poolers (internal
+ * CA). Personal/public profiles run on Supabase (`no-verify`); a work install
+ * runs on its own Postgres. Injecting both makes the probe correct for either.
+ * Never clobber a genuine shell export (`process.env[key] === undefined` guard).
+ */
+function injectResolvedDbEnv(env) {
+  const cloud = resolveCloudConfig({
+    processEnv: env,
+    localEnvPath: discoverLocalEnvPath(REPO_PATH),
+  });
+  for (const key of ['AUDIT_DB_URL', 'AUDIT_DB_SSL_MODE']) {
+    const v = cloud[key]?.value;
+    if (v != null && v !== '' && process.env[key] === undefined) {
+      process.env[key] = v;
+    }
+  }
+}
+
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   const env = loadEnv(REPO_PATH);
+  injectResolvedDbEnv(env);
   const report = new Report();
 
   await checkAuditLoop(env, report);
