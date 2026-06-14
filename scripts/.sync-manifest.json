@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-06-14T15:18:21.174Z",
+  "generatedAt": "2026-06-14T15:37:45.007Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "0da64d6d2823d17ae19a37ea123f2922a6a1720e",
+  "commitSha": "fe6b2b5a8d12af64265a279ad1d2aeac63f8ea06",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -16,7 +16,7 @@
     "scripts/check-rls.mjs": "sha256:83840939b1a9bc4b49305ce63aa0d7eccafd1902e8d6e008389842e12eb03ccc",
     "scripts/check-setup.mjs": "sha256:9a8b2be209578f41f9942455208975c256ac94f1bfa6835f71ab11d8eb83f449",
     "scripts/check-sync.mjs": "sha256:e07fc013076f7aafcc0754f7ba9eb3fc822f052eecea7f944ecc478e39324242",
-    "scripts/cross-skill.mjs": "sha256:b71c618d21d7e80635c12b497cc502529b76e5926f13f5d34ecddcd74e9118d9",
+    "scripts/cross-skill.mjs": "sha256:e93674e74d0400c304272a2d731586dc95a5123eb294718e653a348b41c8b029",
     "scripts/explain-history.mjs": "sha256:104bfb065fa2210f7498204dc480bf4be83f91268eb2fa567b09893e0efcb33c",
     "scripts/friction-log.mjs": "sha256:25561b42b94160fab6bda79047bc6f116c5d2c6cc59ceb20aad06d0175bbebba",
     "scripts/gemini-review.mjs": "sha256:cb0e1984f76a3520dda0a24200581b2ebcd8c211e4f63c0bff4e712e477e0966",
