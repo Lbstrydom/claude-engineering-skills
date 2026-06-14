@@ -24,7 +24,7 @@
 
 import { many, one, insertReturning, updateWhere, deleteWhere, withTx } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
-import { isCloudEnabled } from './repo.mjs';
+import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 
 // Cached classification-column probe (column shape doesn't change mid-run).
 let _hasClassificationColumns = null;
@@ -706,6 +706,58 @@ export async function getRunFindings(runId, deps = {}) {
     round: r.round_raised,
     adjudication: r.adjudication_outcome ?? null,
     remediation: r.remediation_state ?? null,
+  }));
+}
+
+/**
+ * Recent findings for a repo across its audit runs — powers /persona-test
+ * Phase 0d pre-test enrichment (replaces the dead PostgREST curl removed in
+ * M4; the supabase-js/anon-read path no longer exists). Resolves repoName →
+ * repo_id, then joins audit_findings → audit_runs for that repo.
+ *
+ * Returns `[]` when cloud is off, the repo is unknown, or there are no
+ * findings — the persona skill treats an empty candidate set as "no audit
+ * context", never an error. `deps` is the same DI seam as getRunFindings.
+ *
+ * @param {{ repoName: string, severities?: string[], limit?: number }} args
+ * @param {{ many?: Function, isCloudEnabled?: Function, getRepoIdByName?: Function }} [deps]
+ * @returns {Promise<Array<object>>}
+ */
+export async function getRecentFindingsByRepo(
+  { repoName, severities = ['HIGH', 'MEDIUM'], limit = 20 } = {},
+  deps = {},
+) {
+  const {
+    many: manyFn = many,
+    isCloudEnabled: cloudFn = isCloudEnabled,
+    getRepoIdByName: repoIdFn = getRepoIdByName,
+  } = deps;
+  if (!repoName || !await cloudFn()) return [];
+  const repoId = await repoIdFn(repoName);
+  if (!repoId) return [];
+
+  const sevs = (Array.isArray(severities) && severities.length > 0)
+    ? severities : ['HIGH', 'MEDIUM'];
+  const n = Math.max(1, Math.min(Number(limit) || 20, 100));
+
+  const sql =
+    `SELECT f.id, f.run_id, f.severity, f.category, f.primary_file,\n` +
+    `       f.detail_snapshot, f.created_at\n` +
+    `  FROM audit_findings f\n` +
+    `  JOIN audit_runs r ON r.id = f.run_id\n` +
+    ` WHERE r.repo_id = $1 AND f.severity = ANY($2)\n` +
+    ` ORDER BY f.created_at DESC\n` +
+    ` LIMIT $3`;
+
+  const rows = await manyFn(sql, [repoId, sevs, n]);
+  return rows.map((r) => ({
+    id: r.id,
+    runId: r.run_id,
+    severity: r.severity,
+    category: r.category,
+    file: r.primary_file ?? null,
+    detail: r.detail_snapshot ?? '',
+    createdAt: r.created_at,
   }));
 }
 

@@ -52,6 +52,7 @@ import {
   recordPersonaSession,
   getPersonaSessionsByRepo,
   getPersonaSessionsByUrl,
+  getRecentFindingsByRepo,
   isPersonaCloudEnabled,
   // Architectural memory (Phase A)
   upsertRepoByUuid,
@@ -621,6 +622,33 @@ async function cmdGetPersonaSessionsByRepo() {
 
   const rows = await getPersonaSessionsByRepo(parsed.data);
   emit({ ok: true, cloud: true, rows });
+}
+
+// /persona-test Phase 0d pre-test enrichment: recent HIGH/MEDIUM audit
+// findings for a repo, so the persona explores known-fragile flows with
+// sharper Reflect judgement. Replaces the dead PostgREST curl (M4 removed
+// supabase-js). Graceful empty result when cloud is off or the repo is
+// unknown — the skill treats `[]` as "no audit context", never an error.
+async function cmdGetRecentFindings() {
+  const repoFlag = argOption('repo');
+  const limitFlag = argOption('limit');
+  const severityFlag = argOption('severity'); // CSV, e.g. "HIGH,MEDIUM"
+
+  const p = repoFlag
+    ? {
+        repoName: repoFlag,
+        ...(limitFlag ? { limit: Number(limitFlag) } : {}),
+        ...(severityFlag ? { severities: severityFlag.split(',').map(s => s.trim()).filter(Boolean) } : {}),
+      }
+    : parsePayload();
+
+  if (!p?.repoName || typeof p.repoName !== 'string') {
+    return emitError('BAD_INPUT', '--repo <name> required (optional: --limit <n>, --severity HIGH,MEDIUM)');
+  }
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, findings: [] });
+
+  const findings = await getRecentFindingsByRepo(p);
+  emit({ ok: true, cloud: true, findings });
 }
 
 const GetPersonaSessionsByUrlSchema = z.object({
@@ -1197,6 +1225,7 @@ const commands = {
   'record-persona-session': cmdRecordPersonaSession,
   'get-persona-sessions-by-repo': cmdGetPersonaSessionsByRepo,
   'get-persona-sessions-by-url': cmdGetPersonaSessionsByUrl,
+  'get-recent-findings': cmdGetRecentFindings,
   'whoami': cmdWhoami,
   // Architectural memory
   'resolve-repo-identity':            cmdResolveRepoIdentity,

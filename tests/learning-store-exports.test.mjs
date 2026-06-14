@@ -153,6 +153,7 @@ const EXPECTED_EXPORTS = [
   // dashboard audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md)
   'getRunFindings',
   'getRunMeta',
+  'getRecentFindingsByRepo', // /persona-test Phase 0d enrichment — recent findings by repo
   '_resetRunReadColumnCache', // read-path optional-column probe cache reset (test seam)
   // repo extension
   'listRepoIds',
@@ -214,6 +215,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 121);
+    assert.equal(EXPECTED_EXPORTS.length, 122);
   });
 });

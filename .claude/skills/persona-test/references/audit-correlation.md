@@ -14,17 +14,28 @@ row shifts how audit-loop weights its prompt-variant selection.
 ## Pre-test enrichment (Phase 0d)
 
 Fetch recent HIGH + MEDIUM findings for this repo from the audit-loop
-database. **Include `id` and `run_id` fields** so correlations can point
-at the exact finding rows:
+database **through the CLI** — never hand-write a curl. The M4 migration
+removed the supabase-js / PostgREST anon-read path; the CLI resolves the DSN,
+joins `audit_findings → audit_runs` for this repo, and degrades to an empty
+list (`cloud:false` or unknown repo) without erroring:
 
 ```bash
-curl -s "$SUPABASE_AUDIT_URL/rest/v1/audit_findings?severity=in.(HIGH,MEDIUM)&order=created_at.desc&limit=20&select=id,run_id,category,primary_file,detail_snapshot,severity,created_at" \
-  -H "apikey: $SUPABASE_AUDIT_ANON_KEY" \
-  -H "Authorization: Bearer $SUPABASE_AUDIT_ANON_KEY"
+node scripts/cross-skill.mjs get-recent-findings --repo "$PERSONA_TEST_REPO_NAME" --limit 20
 ```
 
-Remember the full JSON response. Call it the **audit candidates** set —
-you need the `id` and `run_id` fields in post-test correlation emission.
+The response is `{ ok, cloud, findings: [{ id, runId, severity, category, file,
+detail, createdAt }] }`. Call `findings` the **audit candidates** set — each
+row's `id` and `runId` are what post-test correlation emission points at. When
+`cloud` is false or `findings` is empty, skip enrichment and proceed (no audit
+context this run).
+
+> **Repo-name match matters.** `--repo` must be the name the **audit loop**
+> registered the repo under (git-remote `owner/repo`, e.g.
+> `Lbstrydom/wine-cellar-app`), which can differ from a bare
+> `PERSONA_TEST_REPO_NAME`. If this returns empty while you know audits exist,
+> that bare-vs-`owner/repo` mismatch is the cause — it's the known
+> repo-identity-fragmentation issue tracked in the learning-store signal-
+> recovery work, not a fault in this call. Pass the `owner/repo` form to match.
 
 Add a **Known Code Fragilities** section to the persona mental model in
 Phase 2 (after the main profile):
