@@ -30,7 +30,7 @@ import {
   deriveMetricsFromEvents,
 } from './debt-events.mjs';
 import {
-  isCloudEnabled, upsertDebtEntries, removeDebtEntryCloud,
+  upsertDebtEntries, removeDebtEntryCloud,
   appendDebtEventsCloud, readDebtEventsCloud,
 } from '../learning-store.mjs';
 
@@ -56,12 +56,15 @@ export const EventSource = Object.freeze({
  * @param {string|null} [opts.repoId=null] - Cloud repo UUID (null = no cloud)
  * @returns {{ source: string, canWrite: boolean, repoId: string|null }}
  */
-export function selectEventSource({ noDebtLedger = false, readOnly = false, repoId = null } = {}) {
+export function selectEventSource({ noDebtLedger = false, readOnly = false, repoId = null, cloudEnabled = false } = {}) {
   if (noDebtLedger) {
     process.stderr.write('  [debt] --no-debt-ledger → disabled\n');
     return { source: EventSource.DISABLED, canWrite: false, repoId: null };
   }
-  if (isCloudEnabled() && repoId) {
+  // `cloudEnabled` is supplied by the caller (which has already awaited the
+  // async isCloudEnabled()). Keeping the resolved boolean as a parameter lets
+  // this stay a pure, synchronous decision function.
+  if (cloudEnabled && repoId) {
     process.stderr.write(`  [debt] event source: cloud (repo_id=${repoId.slice(0, 8)}…)\n`);
     return { source: EventSource.CLOUD, canWrite: !readOnly, repoId };
   }

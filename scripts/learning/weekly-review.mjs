@@ -358,7 +358,7 @@ export async function runWeeklyReview(opts = {}) {
   }
 
   await initLearningStore();
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     return { ok: true, cloud: false, repoName, posted: false, reason: 'cloud-disabled' };
   }
 

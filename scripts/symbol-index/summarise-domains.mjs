@@ -182,7 +182,7 @@ export async function summariseDomains({ repoId, refreshId, model }) {
 // CLI thin wrapper
 async function main() {
   await initLearningStore();
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     process.stderr.write('arch:summarise-domains: cloud disabled — skipping\n');
     process.exit(0);
   }

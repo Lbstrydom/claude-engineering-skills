@@ -114,7 +114,7 @@ export async function runFrictionLog(args, deps = {}) {
   if (typeof ls.initLearningStore === 'function') {
     await ls.initLearningStore().catch(() => {});
   }
-  const cloudEnabled = typeof ls.isCloudEnabled === 'function' && ls.isCloudEnabled();
+  const cloudEnabled = typeof ls.isCloudEnabled === 'function' && await ls.isCloudEnabled();
 
   let cloudResult = null;
   if (cloudEnabled) {

@@ -1616,6 +1616,9 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     noDebtLedger,
     readOnly: readOnlyDebt,
     repoId: cloudRepoId,
+    // cloudRepoId is only set inside the `await isCloudEnabled()` block above,
+    // so a non-null value proves cloud is on and the repo resolved.
+    cloudEnabled: cloudRepoId != null,
   });
   // Opportunistic local→cloud reconciliation when we're online (fix R3-H3)
   if (debtContext.source === 'cloud') {

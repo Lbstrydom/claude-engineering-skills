@@ -204,7 +204,7 @@ export async function runConsistency(args, deps = {}) {
 
     // ── 5. Resolve repo identity for candidate emission (soft) ────────────
     await initLearningStore();
-    const cloudOn = isCloudEnabled();
+    const cloudOn = await isCloudEnabled();
     let repoId = null;
     let resolveErr = null;
     if (cloudOn) {
@@ -226,7 +226,7 @@ export async function runConsistency(args, deps = {}) {
     // should.
     if (!cloudOn) {
       process.stderr.write(
-        'ℹ audit-loop linkage off (no SUPABASE_AUDIT_URL) — contradictions ' +
+        'ℹ audit-loop linkage off (cloud off) — contradictions ' +
         'will be logged to the session ledger only; no regression_specs ' +
         'candidates written. This is fine for first-run adoption.\n',
       );

@@ -34,7 +34,7 @@ export async function getLearningStats(opts = {}) {
   const repoName = opts.repoName || null;
   await initLearningStore();
 
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     return {
       cloud: false, repoId: null, repoName, stats: null,
       status: { status: 'missing-optional', detail: 'learning cloud store not configured' },

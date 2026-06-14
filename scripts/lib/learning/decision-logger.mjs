@@ -283,7 +283,7 @@ export async function flush({ store = null, outboxDir = OUTBOX_DIR_DEFAULT } = {
     return summary;
   }
 
-  const cloudEnabled = !!(store && typeof store.isCloudEnabled === 'function' && store.isCloudEnabled());
+  const cloudEnabled = !!(store && typeof store.isCloudEnabled === 'function' && await store.isCloudEnabled());
   const inCi = isCiEnv();
 
   // Track per-queue retained indices so we can splice survivors back in.
@@ -347,7 +347,7 @@ export async function flush({ store = null, outboxDir = OUTBOX_DIR_DEFAULT } = {
 export async function reconcileOutbox({ store, outboxDir = OUTBOX_DIR_DEFAULT } = {}) {
   const summary = { processed: 0, succeeded: 0, failed: 0 };
   if (!fs.existsSync(outboxDir)) return summary;
-  if (!store || typeof store.isCloudEnabled !== 'function' || !store.isCloudEnabled()) return summary;
+  if (!store || typeof store.isCloudEnabled !== 'function' || !await store.isCloudEnabled()) return summary;
 
   const files = fs.readdirSync(outboxDir).filter(f => f.endsWith('.json'));
   for (const f of files) {

@@ -100,7 +100,7 @@ export async function rebuildFromCloud({ repoId = null, cachePath = CACHE_PATH, 
   if (typeof learningStore.initLearningStore === 'function') {
     await learningStore.initLearningStore();
   }
-  const cloudEnabled = typeof learningStore.isCloudEnabled === 'function' && learningStore.isCloudEnabled();
+  const cloudEnabled = typeof learningStore.isCloudEnabled === 'function' && await learningStore.isCloudEnabled();
   if (!cloudEnabled) {
     return { ok: false, totalDecisions: 0, patternCount: 0, error: 'cloud-disabled' };
   }

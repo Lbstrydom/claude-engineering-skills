@@ -121,7 +121,7 @@ async function main() {
   }
   await initLearningStore();
 
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     process.stderr.write(`architectural-memory: cloud disabled — skipping refresh\n`);
     process.stdout.write(JSON.stringify({ ok: true, cloud: false, skipped: true, reason: 'cloud-disabled' }) + '\n');
     process.exit(0);

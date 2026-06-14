@@ -77,7 +77,7 @@ async function main() {
   assertRepoRoot(import.meta.url);
   const args = parseArgs(process.argv);
   await initLearningStore();
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     process.stderr.write('arch:drift: cloud disabled — skipping\n');
     process.exit(0);
   }

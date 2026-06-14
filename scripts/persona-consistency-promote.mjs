@@ -202,7 +202,7 @@ export async function promoteCandidates(args, deps = {}) {
   await reconcilePromotionJournal(args.repoRoot);
 
   await initLearningStore();
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     process.stdout.write('Cloud off — no candidates to promote.\n');
     return result;
   }
@@ -445,7 +445,7 @@ export async function reconcilePromotionJournal(repoRoot) {
   // set.
   await initLearningStore();
   let repoId = null;
-  if (isCloudEnabled()) {
+  if (await isCloudEnabled()) {
     try {
       const uuid = readLocalRepoUuid(repoRoot);
       if (uuid) repoId = await getRepoIdByUuid(uuid);

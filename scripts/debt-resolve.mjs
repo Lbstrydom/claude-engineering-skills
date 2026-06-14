@@ -99,7 +99,9 @@ async function main() {
     }
   }
 
-  const ctx = selectEventSource({ repoId });
+  // repoId is only set inside the `await isCloudEnabled()` block above, so a
+  // non-null repoId is itself proof that cloud is on and resolved.
+  const ctx = selectEventSource({ repoId, cloudEnabled: repoId != null });
 
   // Verify entry exists
   const ledger = readDebtLedger({ ledgerPath: opts.ledgerPath, events: [] });

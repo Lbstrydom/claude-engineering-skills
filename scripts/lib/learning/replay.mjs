@@ -195,7 +195,7 @@ export async function readDecisionsForType({ store = null, decisionType, sinceMs
   if (typeof ls.initLearningStore === 'function') {
     await ls.initLearningStore().catch(() => {});
   }
-  const cloud = typeof ls.isCloudEnabled === 'function' && ls.isCloudEnabled();
+  const cloud = typeof ls.isCloudEnabled === 'function' && await ls.isCloudEnabled();
   if (!cloud) return [];
 
   // M3 P3 — replaced the raw `getWriteClient()` + hand-rolled pagination

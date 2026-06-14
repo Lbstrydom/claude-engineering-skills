@@ -147,7 +147,7 @@ async function main() {
   }
 
   await initLearningStore();
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     logInfo('cloud disabled — skipping');
     emit({ ok: true, cloud: false, skipped: 'cloud-disabled' });
     process.exit(0);

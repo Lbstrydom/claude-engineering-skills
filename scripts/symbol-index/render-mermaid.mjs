@@ -114,7 +114,7 @@ async function main() {
 
   const identity = resolveRepoIdentity(repoRoot);
 
-  if (!isCloudEnabled()) {
+  if (!await isCloudEnabled()) {
     // Gemini-R2-M3-stub: clear stale observed-deps BEFORE writing the
     // stub. If the stub write throws, the stale envelope is already gone —
     // the dashboard can't accidentally consume both the old observed file
