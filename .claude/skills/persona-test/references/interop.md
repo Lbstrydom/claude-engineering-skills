@@ -52,7 +52,8 @@ as fragile.
 ## /audit-loop — Gemini Arbiter Context + Bandit Reward
 
 In the final review step (Step 7), the Gemini arbiter receives a transcript
-of all Claude-GPT deliberations. If `PERSONA_TEST_SUPABASE_URL` is set,
+of all Claude-GPT deliberations. When the cloud store is on (`AUDIT_DB_URL`
+set — persona sessions live in the same Postgres store post-M4),
 `/audit-loop` appends to the transcript:
 
 ```json

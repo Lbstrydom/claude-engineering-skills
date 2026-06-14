@@ -130,27 +130,30 @@ Required: `persona_input` + `url`. If either is missing, output usage and STOP.
 
 | Env var | Purpose |
 |---|---|
-| `PERSONA_TEST_SUPABASE_URL` + `..._ANON_KEY` | Memory enabled — saves sessions, reads history |
+| `AUDIT_DB_URL` | Cloud store on — saves sessions, reads history, and (with a repo name) cross-references audit findings. One Postgres store backs every feature post-M4. |
 | `PERSONA_TEST_REPO_NAME` | Enables audit-loop cross-reference (`audit_link = true`) |
-| `SUPABASE_AUDIT_URL` + `SUPABASE_AUDIT_ANON_KEY` | Audit-loop DB — used by Phase 0d pre-test enrichment |
 
-**Do NOT read these from the Claude Code session's `process.env`.** The
-consumer repo's `.env` is not loaded into the session, so a bare env check
-reports false negatives — the vars look unset even when they exist, and the
-session silently runs stateless. `cross-skill.mjs` loads `.env` itself via
-`dotenv/config`; the pre-flight probe must do the same.
+**Do NOT read `AUDIT_DB_URL` from the Claude Code session's `process.env`.** The
+consumer repo's `.env` (and the shared `~/.audit-loop.env`) are not loaded into
+the session, so a bare env check reports false negatives — the var looks unset
+even when cloud is fully configured, and the session silently runs stateless.
+`cross-skill.mjs` resolves config itself (it loads `.env` + the shared file via
+`config.mjs`); the pre-flight probe must go through it rather than reading
+`process.env` directly.
 
 Run this probe from the consumer-repo root (the same cwd used for every
-`node scripts/cross-skill.mjs` call):
+`node scripts/cross-skill.mjs` call) — `whoami` reports the real cloud state
+via `isCloudEnabled()` (an actual pool-presence check, not an env guess):
 
 ```bash
-node -e "import('dotenv/config').then(()=>console.log(JSON.stringify({memory_enabled:!!(process.env.PERSONA_TEST_SUPABASE_URL&&process.env.PERSONA_TEST_SUPABASE_ANON_KEY),audit_link:!!(process.env.SUPABASE_AUDIT_URL&&process.env.SUPABASE_AUDIT_ANON_KEY),repo_name:process.env.PERSONA_TEST_REPO_NAME||null})))"
+node scripts/cross-skill.mjs whoami
 ```
 
-Set `memory_enabled` and `audit_link` from the probe's JSON output. `audit_link`
-additionally requires a resolved `repo_name` (probe value, or git remote — see
-Phase 0c). When both flags are off, the skill runs in "stateless" mode — tests
-complete but nothing is saved or cross-referenced.
+Set `memory_enabled = .cloud` from the probe's JSON output. `audit_link =
+.cloud && repo_name` — it additionally requires a resolved `repo_name` (the
+`PERSONA_TEST_REPO_NAME` env value, or git remote — see Phase 0c). When `cloud`
+is false the skill runs in "stateless" mode — tests complete but nothing is
+saved or cross-referenced.
 
 ---
 

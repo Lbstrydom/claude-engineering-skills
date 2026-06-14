@@ -678,13 +678,17 @@ async function cmdDetectStack() {
 
 async function cmdWhoami() {
   await initLearningStore();
+  // M4: a single Postgres store (AUDIT_DB_URL) backs every feature. `cloud`
+  // is the one source of truth — isCloudEnabled() is async (pool-presence),
+  // so it MUST be awaited or it serialises as a pending Promise (`{}`). The
+  // legacy supabaseConfigured/serviceRoleConfigured fields keyed off the
+  // sunset SUPABASE_AUDIT_* vars (no runtime code reads them) and were
+  // dropped.
   emit({
     ok: true,
-    cloud: isCloudEnabled(),
+    cloud: await isCloudEnabled(),
     commitSha: currentCommitSha(),
     branch: currentBranch(),
-    supabaseConfigured: !!process.env.SUPABASE_AUDIT_URL,
-    serviceRoleConfigured: !!process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY,
   });
 }
 

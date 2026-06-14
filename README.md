@@ -221,7 +221,6 @@ Windows users — see [CLAUDE.md](CLAUDE.md#claude-code-only-notes) for the `npx
 | `META_ASSESS_INTERVAL` | No | Run meta-assessment every N audits (default 4) |
 | `ARCH_RENDER_MAX_SYMBOLS` | No | Cap on symbols pulled into the rendered map (default 50000) |
 | `ARCH_DRIFT_SCORE_THRESHOLD` | No | Drift score above this is RED (default 20) |
-| `PERSONA_TEST_SUPABASE_URL` + `PERSONA_TEST_SUPABASE_ANON_KEY` | No | Persona-test session memory |
 | `PERSONA_TEST_APP_URL` | No | Default app URL for `/persona-test list` |
 | `PERSONA_TEST_REPO_NAME` | No | Repo name for cross-referencing audit findings |
 
