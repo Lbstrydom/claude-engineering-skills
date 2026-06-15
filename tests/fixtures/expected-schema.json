@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-23T08:50:49Z",
+  "generatedAt": "2026-06-15T04:18:29Z",
   "schema": "public",
   "tables": [
     {
@@ -244,6 +244,32 @@
       ]
     },
     {
+      "table_name": "audit_loop_migrations",
+      "columns": [
+        {
+          "column_name": "filename",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "applied_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "sha256",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        }
+      ]
+    },
+    {
       "table_name": "audit_pass_stats",
       "columns": [
         {
@@ -364,6 +390,13 @@
           "is_nullable": "YES",
           "column_default": "0",
           "ordinal_position": 17
+        },
+        {
+          "column_name": "round",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "1",
+          "ordinal_position": 18
         }
       ]
     },
@@ -2167,6 +2200,13 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 21
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 22
         }
       ]
     },
@@ -3494,6 +3534,74 @@
       ]
     },
     {
+      "table_name": "security_strategy_events",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "incident_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "event_kind",
+          "data_type": "USER-DEFINED",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "who",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "branch",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "commit_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "detail",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": "'{}'::jsonb",
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 9
+        }
+      ]
+    },
+    {
       "table_name": "ship_events",
       "columns": [
         {
@@ -4689,6 +4797,13 @@
       "config": "search_path=pg_catalog, public"
     },
     {
+      "function_name": "refresh_recurring_clusters",
+      "args": "p_repo_id uuid",
+      "return_type": "integer",
+      "security_definer": true,
+      "config": "search_path=pg_catalog, public"
+    },
+    {
       "function_name": "set_limit",
       "args": "real",
       "return_type": "real",
@@ -5513,6 +5628,12 @@
       "definition": "CHECK (((source_kind IS NULL) OR (source_kind = ANY (ARRAY['MODEL'::text, 'REVIEWER'::text, 'LINTER'::text, 'TYPE_CHECKER'::text]))))"
     },
     {
+      "table_name": "audit_loop_migrations",
+      "constraint_name": "audit_loop_migrations_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (filename)"
+    },
+    {
       "table_name": "audit_pass_stats",
       "constraint_name": "audit_pass_stats_pkey",
       "constraint_type": "PRIMARY KEY",
@@ -5523,12 +5644,6 @@
       "constraint_name": "audit_pass_stats_run_id_fkey",
       "constraint_type": "FOREIGN KEY",
       "definition": "FOREIGN KEY (run_id) REFERENCES audit_runs(id) ON DELETE CASCADE"
-    },
-    {
-      "table_name": "audit_repos",
-      "constraint_name": "audit_repos_fingerprint_key",
-      "constraint_type": "UNIQUE",
-      "definition": "UNIQUE (fingerprint)"
     },
     {
       "table_name": "audit_repos",
@@ -5880,6 +5995,12 @@
     },
     {
       "table_name": "persona_test_sessions",
+      "constraint_name": "persona_test_sessions_repo_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id)"
+    },
+    {
+      "table_name": "persona_test_sessions",
       "constraint_name": "persona_test_sessions_session_id_key",
       "constraint_type": "UNIQUE",
       "definition": "UNIQUE (session_id)"
@@ -6161,6 +6282,18 @@
       "definition": "UNIQUE (repo_id, incident_id)"
     },
     {
+      "table_name": "security_strategy_events",
+      "constraint_name": "security_strategy_events_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "security_strategy_events",
+      "constraint_name": "security_strategy_events_repo_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id) ON DELETE CASCADE"
+    },
+    {
       "table_name": "ship_events",
       "constraint_name": "ship_events_outcome_check",
       "constraint_type": "CHECK",
@@ -6329,6 +6462,11 @@
     },
     {
       "tablename": "audit_findings",
+      "indexname": "audit_findings_source_model_idx",
+      "indexdef": "CREATE INDEX audit_findings_source_model_idx ON public.audit_findings USING btree (run_id, source_model) WHERE (source_model IS NOT NULL)"
+    },
+    {
+      "tablename": "audit_findings",
       "indexname": "audit_findings_user_action_idx",
       "indexdef": "CREATE INDEX audit_findings_user_action_idx ON public.audit_findings USING btree (user_action) WHERE (user_action IS NOT NULL)"
     },
@@ -6358,6 +6496,11 @@
       "indexdef": "CREATE INDEX idx_audit_findings_source_kind ON public.audit_findings USING btree (source_kind) WHERE (source_kind IS NOT NULL)"
     },
     {
+      "tablename": "audit_loop_migrations",
+      "indexname": "audit_loop_migrations_pkey",
+      "indexdef": "CREATE UNIQUE INDEX audit_loop_migrations_pkey ON public.audit_loop_migrations USING btree (filename)"
+    },
+    {
       "tablename": "audit_pass_stats",
       "indexname": "audit_pass_stats_pkey",
       "indexdef": "CREATE UNIQUE INDEX audit_pass_stats_pkey ON public.audit_pass_stats USING btree (id)"
@@ -6368,9 +6511,9 @@
       "indexdef": "CREATE INDEX idx_pass_stats_run ON public.audit_pass_stats USING btree (run_id)"
     },
     {
-      "tablename": "audit_repos",
-      "indexname": "audit_repos_fingerprint_key",
-      "indexdef": "CREATE UNIQUE INDEX audit_repos_fingerprint_key ON public.audit_repos USING btree (fingerprint)"
+      "tablename": "audit_pass_stats",
+      "indexname": "idx_pass_stats_run_pass_round",
+      "indexdef": "CREATE INDEX idx_pass_stats_run_pass_round ON public.audit_pass_stats USING btree (run_id, pass_name, round)"
     },
     {
       "tablename": "audit_repos",
@@ -6629,6 +6772,11 @@
     },
     {
       "tablename": "persona_test_sessions",
+      "indexname": "idx_persona_sessions_repo_id",
+      "indexdef": "CREATE INDEX idx_persona_sessions_repo_id ON public.persona_test_sessions USING btree (repo_id)"
+    },
+    {
+      "tablename": "persona_test_sessions",
       "indexname": "persona_test_sessions_pkey",
       "indexdef": "CREATE UNIQUE INDEX persona_test_sessions_pkey ON public.persona_test_sessions USING btree (id)"
     },
@@ -6843,6 +6991,16 @@
       "indexdef": "CREATE UNIQUE INDEX security_incidents_repo_id_incident_id_key ON public.security_incidents USING btree (repo_id, incident_id)"
     },
     {
+      "tablename": "security_strategy_events",
+      "indexname": "idx_security_strategy_events_repo",
+      "indexdef": "CREATE INDEX idx_security_strategy_events_repo ON public.security_strategy_events USING btree (repo_id, created_at DESC)"
+    },
+    {
+      "tablename": "security_strategy_events",
+      "indexname": "security_strategy_events_pkey",
+      "indexdef": "CREATE UNIQUE INDEX security_strategy_events_pkey ON public.security_strategy_events USING btree (id)"
+    },
+    {
       "tablename": "ship_events",
       "indexname": "idx_ship_events_commit",
       "indexdef": "CREATE INDEX idx_ship_events_commit ON public.ship_events USING btree (commit_sha) WHERE (commit_sha IS NOT NULL)"
@@ -6971,11 +7129,6 @@
       "tablename": "symbol_layering_violations",
       "indexname": "symbol_layering_violations_refresh_id_rule_name_from_path_t_key",
       "indexdef": "CREATE UNIQUE INDEX symbol_layering_violations_refresh_id_rule_name_from_path_t_key ON public.symbol_layering_violations USING btree (refresh_id, rule_name, from_path, to_path)"
-    },
-    {
-      "tablename": "audit_findings",
-      "indexname": "audit_findings_source_model_idx",
-      "indexdef": "CREATE INDEX audit_findings_source_model_idx ON public.audit_findings USING btree (run_id, source_model) WHERE (source_model IS NOT NULL)"
     }
   ],
   "triggers": [
@@ -7061,6 +7214,26 @@
     },
     {
       "grantee": "anon",
+      "object": "public.audit_loop_migrations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.audit_loop_migrations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.audit_loop_migrations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.audit_loop_migrations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
       "object": "public.audit_pass_stats",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -7737,6 +7910,26 @@
     {
       "grantee": "service_role",
       "object": "public.security_incidents",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.security_strategy_events",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.security_strategy_events",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.security_strategy_events",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.security_strategy_events",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -7927,6 +8120,11 @@
       "owner": "postgres"
     },
     {
+      "object_name": "audit_loop_migrations",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
       "object_name": "audit_pass_stats",
       "object_kind": "r",
       "owner": "postgres"
@@ -8053,6 +8251,11 @@
     },
     {
       "object_name": "security_incidents",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "security_strategy_events",
       "object_kind": "r",
       "owner": "postgres"
     },
