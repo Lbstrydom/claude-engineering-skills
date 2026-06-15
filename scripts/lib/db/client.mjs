@@ -38,6 +38,47 @@ export const PG_OID_TIMESTAMP   = 1114;
 export const PG_OID_DATE        = 1082;
 const STRING_OIDS = new Set([PG_OID_TIMESTAMPTZ, PG_OID_TIMESTAMP, PG_OID_DATE]);
 
+// Accepted SSL modes (plan §2). `require` = strict verify; `no-verify` = TLS
+// without cert verification (Supabase poolers' internal CA); `disable` = no TLS.
+const VALID_SSL_MODES = new Set(['require', 'no-verify', 'disable']);
+// Upper bound on AUDIT_DB_POOL_MAX — the audit-loop's chunked upserts never need
+// more; a huge value usually signals a typo, not intent.
+const MAX_POOL_SIZE = 50;
+
+/**
+ * Reject DSNs that are structurally invalid or use a forbidden connection mode.
+ * Called once at pool init (getPool). Throws with an actionable message.
+ *
+ * The Supabase **Transaction pooler (port 6543)** is forbidden: it doesn't
+ * preserve server-side prepared statements or the `options=-c search_path=public`
+ * startup pin the db/ seam relies on (plan §2 R9 / postgres-parity). The check
+ * is scoped to Supabase pooler hosts so a self-hosted Postgres on 6543 is
+ * unaffected.
+ *
+ * @param {string} url
+ */
+export function assertSafeDsn(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('AUDIT_DB_URL is not a valid URL — expected a postgresql:// connection string.');
+  }
+  if (!/^postgres(ql)?:$/.test(parsed.protocol)) {
+    throw new Error(
+      `AUDIT_DB_URL must be a postgresql:// connection string; got protocol "${parsed.protocol}".`,
+    );
+  }
+  if (parsed.port === '6543' && /(^|\.)pooler\.supabase\.com$/i.test(parsed.hostname)) {
+    throw new Error(
+      'AUDIT_DB_URL points at the Supabase Transaction pooler (port 6543), which does not ' +
+      'preserve prepared statements or the search_path startup pin this store requires. ' +
+      'Use the Session pooler (port 5432) — Supabase dashboard → Connect → Session pooler — ' +
+      'or a Direct connection (plan §2 R9).',
+    );
+  }
+}
+
 /**
  * AsyncLocalStorage context that withTx populates with the active
  * { client, savepointDepth } so query helpers can auto-bind to the
@@ -169,7 +210,27 @@ export function buildPoolConfig(url, pgTypes) {
     warnAliasOnce('AUDIT_POSTGRES_SSL_MODE', 'AUDIT_DB_SSL_MODE');
   }
   const sslMode = (process.env.AUDIT_DB_SSL_MODE || process.env.AUDIT_POSTGRES_SSL_MODE || 'require').trim();
-  const maxConns = Number(process.env.AUDIT_DB_POOL_MAX || 4);
+  // Validate the SSL mode explicitly — an unknown value silently fell through to
+  // strict `require`, masking a typo as a confusing TLS failure at connect time.
+  if (!VALID_SSL_MODES.has(sslMode)) {
+    throw new Error(
+      `AUDIT_DB_SSL_MODE="${sslMode}" is invalid. Use one of: ` +
+      `${[...VALID_SSL_MODES].join(' | ')}.`,
+    );
+  }
+  // Validate pool size: a positive integer within a sane bound. The prior
+  // `Number(... ) > 0` accepted fractional/huge values that `pg` mishandles.
+  const rawMax = process.env.AUDIT_DB_POOL_MAX;
+  let maxConns = 4;
+  if (rawMax != null && String(rawMax).trim() !== '') {
+    const n = Number(rawMax);
+    if (!Number.isInteger(n) || n < 1 || n > MAX_POOL_SIZE) {
+      throw new Error(
+        `AUDIT_DB_POOL_MAX="${rawMax}" is invalid. Use a positive integer 1–${MAX_POOL_SIZE}.`,
+      );
+    }
+    maxConns = n;
+  }
 
   const customTypes = {
     /**
@@ -193,7 +254,7 @@ export function buildPoolConfig(url, pgTypes) {
     // the race that a `SET search_path` issued from an async connect hook
     // could lose against the first user query on a fresh client.
     options: '-c search_path=public',
-    max: Number.isFinite(maxConns) && maxConns > 0 ? maxConns : 4,
+    max: maxConns, // validated above (positive integer 1–MAX_POOL_SIZE)
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
     ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode !== 'no-verify' },
@@ -228,6 +289,7 @@ export async function getPool() {
     assertPublicSchema();
     const url = resolveDbUrl();
     if (!url) return null;
+    assertSafeDsn(url); // reject forbidden/invalid DSNs (txn pooler 6543, non-postgres) before connecting
 
     let pg;
     try {

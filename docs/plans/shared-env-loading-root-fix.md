@@ -529,3 +529,11 @@ changed core scripts).
   cross-key risk; comprehensive hermetic tests"). Full suite 3503/0. **Status:
   Complete.** Deferred follow-ups (independent, flagged): pooler-6543
   enforcement + DSN/SSL structural validation in db/client.mjs.
+- **Deferred follow-ups DONE (2026-06-15, same session)**: `db/client.mjs` now
+  has `assertSafeDsn()` (called in `getPool` before connecting) — rejects the
+  Supabase Transaction pooler (port 6543 on a `*.pooler.supabase.com` host;
+  scoped so self-hosted 6543 is unaffected) + non-postgres/invalid URLs; and
+  `buildPoolConfig` validates `AUDIT_DB_SSL_MODE` (enum: require|no-verify|disable)
+  + `AUDIT_DB_POOL_MAX` (positive integer 1–50, was accepting fractional/unbounded).
+  `tests/db-dsn-validation.test.mjs` (10 cases). Live DSN verified safe (Session
+  pooler 5432 / no-verify). Full suite 3513/0.
