@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-06-14T16:25:32.888Z",
+  "generatedAt": "2026-06-15T04:22:22.637Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "62ef3b87eaa1a3b69a21b4fef8d0f4bf39cbca21",
+  "commitSha": "388fbd31ad079c2e18028ae3535762d6319271a8",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -16,7 +16,7 @@
     "scripts/check-rls.mjs": "sha256:83840939b1a9bc4b49305ce63aa0d7eccafd1902e8d6e008389842e12eb03ccc",
     "scripts/check-setup.mjs": "sha256:9a8b2be209578f41f9942455208975c256ac94f1bfa6835f71ab11d8eb83f449",
     "scripts/check-sync.mjs": "sha256:e07fc013076f7aafcc0754f7ba9eb3fc822f052eecea7f944ecc478e39324242",
-    "scripts/cross-skill.mjs": "sha256:d608e2a283d66ee05cda6004e3949ef35dbfe1fb4cb2229b95da69d7ea7b389f",
+    "scripts/cross-skill.mjs": "sha256:408b23957324c948f568a63f9d17f9d59722549d29fae82cbae8afa00950a9bb",
     "scripts/explain-history.mjs": "sha256:104bfb065fa2210f7498204dc480bf4be83f91268eb2fa567b09893e0efcb33c",
     "scripts/friction-log.mjs": "sha256:b69bb24dc579a241dde07e466fa2eaad1c9d28922497175cc6d278dbbc0f94c1",
     "scripts/gemini-review.mjs": "sha256:cb0e1984f76a3520dda0a24200581b2ebcd8c211e4f63c0bff4e712e477e0966",
@@ -178,11 +178,11 @@
     "scripts/lib/store/debt.mjs": "sha256:87b5bf8a23dfc95b4164442031dae1a969a1f5fc40154c615db90a5be51e9aac",
     "scripts/lib/store/learning-decisions.mjs": "sha256:526b924197563638baa8c8c0f8f96961ee56d30dfc5de66258a15d26724a0e47",
     "scripts/lib/store/persona-test-candidates.mjs": "sha256:6294ca272c19209e697e5b758bd692c3e01f52919a213e61ae2da881188b7741",
-    "scripts/lib/store/persona.mjs": "sha256:0af9c13f94969b12b6db679164e2ae7a558720897dc28d458a61ba24228368f9",
+    "scripts/lib/store/persona.mjs": "sha256:db1b4ba8f46b04ae464bd737b3468b82d84c704d935d12ef054aa957b42e978e",
     "scripts/lib/store/plans-ship.mjs": "sha256:626011f4315824b177f48f6f9e43cc01d9f9ea1a63950b82d409b8ddc19382e7",
     "scripts/lib/store/purpose-health.mjs": "sha256:b81370cfe6788dbba2a018a64e7fdb445cdafdd9b696744be3ff0376e5c2feb7",
     "scripts/lib/store/repo.mjs": "sha256:a93481afba5a87511c3b27f1af9e6c0ba0c96b8167c5a30def3b09798d75e05f",
-    "scripts/lib/store/runs-findings.mjs": "sha256:b6a4f3bb8dff267f99d8ea8fc9e45e59f58c1fe48bb84f2bfe240840e0e0fc54",
+    "scripts/lib/store/runs-findings.mjs": "sha256:696db40c73fe693ec7a58f6061cb3c89f2ac9ee9f7a85d538b60713c0329c745",
     "scripts/lib/store/security.mjs": "sha256:0b7dfa99ab7c568acec57d82eaa0a3aaa64d94af3a330fda1a5db3bcc0298578",
     "scripts/lib/subprocess.mjs": "sha256:7cf7d2a9831eb29d5b871f25abf5b302a1279b045a56c6de559f80575b404f28",
     "scripts/lib/suppression-policy.mjs": "sha256:f2efa4332fdc9272923c5d48d056b8fca1673e8946430f04ac805d426fe5386a",
@@ -260,7 +260,8 @@
     "supabase/migrations/20260604120000_recurring_clusters_refresh.sql": "sha256:4ff71ee403f1123191947917748648effb1b49819d16d1dd4d6cc488abacc8de",
     "supabase/migrations/20260605120000_pass_stats_round.sql": "sha256:04621efaa47c37ee1f29b241ac933409dfbc421a6e4bb9d07d2cafb74c47be32",
     "supabase/migrations/20260605130000_audit_repos_fingerprint_nullable.sql": "sha256:121f146a513609fd4ef0f3d3b80c828167a0d84c849529a05fce068629767fec",
-    "supabase/migrations/20260610120000_final_review_shadow.sql": "sha256:e350656ae32e15249979188fa851640d06b7588686720aa24690009a65e84e5d"
+    "supabase/migrations/20260610120000_final_review_shadow.sql": "sha256:e350656ae32e15249979188fa851640d06b7588686720aa24690009a65e84e5d",
+    "supabase/migrations/20260615120000_persona_session_repo_id.sql": "sha256:b82b9dc3f29acf8610407a30b4b67a0add423b649c2a2939f9a6dbf4c55e1813"
   },
   "layout": "legacy"
 }
