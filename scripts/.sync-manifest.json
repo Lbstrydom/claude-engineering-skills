@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-06-15T04:22:22.637Z",
+  "generatedAt": "2026-06-15T07:33:54.604Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "388fbd31ad079c2e18028ae3535762d6319271a8",
+  "commitSha": "87738e8315fd54671e47ace4a3f10f459b1c56c8",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -11,7 +11,7 @@
     "scripts/brainstorm-round.mjs": "sha256:818484832f7b4f74967bedde4b6655acddb1b41c8a228bdde49d6ea6d75ced04",
     "scripts/build-dashboard.mjs": "sha256:f43286842fa26d6640756d1d5a8c119f06ed3c6999afad404afbee045e5dce14",
     "scripts/build-surfaces-manifest.mjs": "sha256:cf6aa2f7ba15e26e875bf48826728275c04931f57ba161a5d4c8b5613d53bf8a",
-    "scripts/cache-hitrate-check.mjs": "sha256:0288bfb391ed96c01c4d45a39b5d3c4fd40ca1f2987e2cfab4978c44e3bc0816",
+    "scripts/cache-hitrate-check.mjs": "sha256:3789a7041f4b2d89fdf86091f256418da4235dd87f40b46ceebad08155ca6496",
     "scripts/check-audit-tool-version.mjs": "sha256:36c7e04597aad8ce6ea29e15e5d77e12cf238374c06406c3c89728ab49b4059c",
     "scripts/check-rls.mjs": "sha256:83840939b1a9bc4b49305ce63aa0d7eccafd1902e8d6e008389842e12eb03ccc",
     "scripts/check-setup.mjs": "sha256:9a8b2be209578f41f9942455208975c256ac94f1bfa6835f71ab11d8eb83f449",
