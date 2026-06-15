@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-06-15T09:43:15.517Z",
+  "generatedAt": "2026-06-15T09:55:58.020Z",
   "repo": "Lbstrydom/claude-engineering-skills",
   "branch": "main",
-  "commitSha": "c8b93785b3ed275941e2732e75211a6bfa1ec950",
+  "commitSha": "ed334ca4d63f61e6e2e152d06f021d52be57029e",
   "files": {
     ".claude/hooks/quickfix-scan.mjs": "sha256:40590017cdea84a54a1a289d81e10bb13ef9ccef5bef535d5ff15b8ffa1b202d",
     "scripts/arch-intent-bootstrap.mjs": "sha256:44ad41d50e2fbe3a1cc56aa2825b53c7b23018c0195889088edc99720ed1e34f",
@@ -92,7 +92,7 @@
     "scripts/lib/dashboard/sections/ship-health.mjs": "sha256:dc5223e4c216dedcdffd5f737bab383aa01aaed79ac86e3093e88704d5871b1d",
     "scripts/lib/dashboard/sections/skills.mjs": "sha256:ba39f315f34bb5b808ded06d9a2186937b723f8453243272ff4192bfa38f3e98",
     "scripts/lib/dashboard/serve.mjs": "sha256:c62fef2fcb9b7624362552d5388a3959034034b805485178b3433efedff15835",
-    "scripts/lib/db/client.mjs": "sha256:4bf7e0096419afd077d44ad63e6a1f6a6692b697eb59deee91861d184b21d44a",
+    "scripts/lib/db/client.mjs": "sha256:52da57170308ecdf8653c1252e65161c26fed853fa0e54819785aca8722b2219",
     "scripts/lib/db/errors.mjs": "sha256:9b6400ef489d71680c4357cb161591c97f75b1ab2ad37f2a3509057ff5fb339b",
     "scripts/lib/db/query.mjs": "sha256:293c0a593dfe4e99cc5dd5017768b597ade61762f852f567a599c06fb197d195",
     "scripts/lib/db/rpc.mjs": "sha256:db30c2d25c026173cb7feb87c04bfdb07dbd081f55703dd69eb8278a2113f7c2",
