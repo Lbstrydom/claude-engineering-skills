@@ -151,6 +151,14 @@ export async function recordRunComplete(runId, stats) {
   if (stats.cacheCachedTokens != null) update.cache_cached_tokens = stats.cacheCachedTokens;
   if (stats.cacheHitRate != null) update.cache_hit_rate = stats.cacheHitRate;
   if (stats.cacheEstimatedSavingsPct != null) update.cache_estimated_savings_pct = stats.cacheEstimatedSavingsPct;
+  // cache_seed_enabled is a later-migration column — probe-guard it so a
+  // pre-migration store skips ONLY this field instead of failing the whole
+  // run-completion update (R1-H2: ADD COLUMN IF NOT EXISTS protects the
+  // migration, not this UPDATE).
+  if (stats.cacheSeedEnabled != null
+      && await columnExists('audit_runs', 'cache_seed_enabled', many, isCloudEnabled)) {
+    update.cache_seed_enabled = stats.cacheSeedEnabled;
+  }
   try {
     await updateWhere('audit_runs', update, { id: runId });
   } catch (err) {

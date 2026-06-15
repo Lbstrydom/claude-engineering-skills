@@ -858,6 +858,12 @@ function throwIfConfigError(settled) {
   }
 }
 
+// Run-scoped flag: true once ANY pass in this run effectively used the cache
+// seed (decideSeed → seedUsed). Read at cache-telemetry aggregation to record
+// run-level `cache_seed_enabled`. Safe in the CLI-per-invocation model (one run
+// per process; reset at runMultiPassCodeAudit start for any in-process re-run).
+let _runSeedUsed = false;
+
 // Cache-seed eligibility policy (plan §7c). Returns the seed decision
 // envelope { seedEligible, seedUsed, seedSkipReason, seedUnitIdx, seedUnitTokens }
 // so the audit-pass telemetry can record which mode ran.
@@ -964,6 +970,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
   const seedDecision = decideSeed(units, passName, buildPromptForUnit);
   let results;
   if (seedDecision.seedUsed) {
+    _runSeedUsed = true; // run-level effective-seed flag for cache_seed_enabled telemetry
     const seedIdx = seedDecision.seedUnitIdx;
     process.stderr.write(`  [${passName}] cache-seed: warming with unit ${seedIdx} (~${seedDecision.seedUnitTokens} tok), then fanning out\n`);
     const runOneAtIdx = (i) => runOneMapUnit(openai, units[i], i, units.length, passName, buildPromptForUnit, changedFileSet, acquireSlot, releaseSlot);
@@ -1497,6 +1504,7 @@ function deriveFindingsFromReport(report) {
 
 async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext = '', { passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null, changedFiles = [], repoProfile = null, bandit = null, fpTracker = null, noLedger = false, noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false, debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null, sessionCacheHit = null, scopeMode = null, planFile = null, runId = null } = {}) {
   const totalStart = Date.now();
+  _runSeedUsed = false; // reset run-scoped cache-seed flag (CLI = one run/process)
 
   // Initialize pass result cache — survives merge crashes
   initResultCache(outFile);
@@ -2670,6 +2678,10 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     hitRate: totalUsage.input_tokens > 0
       ? totalUsage.cached_tokens / totalUsage.input_tokens : 0,
     estimatedSavingsPct: 0,
+    // Effective cache-seed state for this run (plan R1-M4): true iff ≥1 pass
+    // actually warmed the prefix cache (decideSeed→seedUsed), NOT just the env
+    // flag. Powers the seed-ON cohort in `cache-hitrate-check`.
+    seedUsed: _runSeedUsed,
     perPass: {},
   };
   cacheMetrics.estimatedSavingsPct = cacheMetrics.hitRate * 0.5; // OpenAI ~50% discount
@@ -2876,6 +2888,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       cacheCachedTokens: cacheMetrics?.totalCachedTokens ?? null,
       cacheHitRate: cacheMetrics?.hitRate ?? null,
       cacheEstimatedSavingsPct: cacheMetrics?.estimatedSavingsPct ?? null,
+      cacheSeedEnabled: cacheMetrics?.seedUsed ?? null,
     }).catch(e => process.stderr.write(`  [learning] recordRunComplete: ${e.message}\n`));
 
     // Phase 1 — adaptive-learning-v1.  Backfill the pass_selection decision
@@ -2968,6 +2981,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         startedAt: new Date().toISOString(),
         mode: 'code',                     // runMultiPassCodeAudit is code-mode only
         plan: planFile ? path.basename(planFile) : null,
+        seedUsed: cacheMetrics.seedUsed,  // effective cache-seed state (cohort key for cache:check)
         totalInputTokens: cacheMetrics.totalInputTokens,
         totalCachedTokens: cacheMetrics.totalCachedTokens,
         hitRate: cacheMetrics.hitRate,

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-06-15T04:18:29Z",
+  "generatedAt": "2026-06-15T09:36:36Z",
   "schema": "public",
   "tables": [
     {
@@ -757,6 +757,13 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 37
+        },
+        {
+          "column_name": "cache_seed_enabled",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 38
         }
       ]
     },

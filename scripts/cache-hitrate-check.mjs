@@ -25,6 +25,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 // Import config.mjs (not bare 'dotenv/config') for its env-loading side effect:
 // it loads the cwd/git-root .env AND the shared ~/.audit-loop.env, where the
 // AUDIT_DB_URL DSN usually lives. Bare 'dotenv/config' only reads cwd .env, so
@@ -84,7 +85,7 @@ async function loadFromSupabase() {
   const rows = await many(
     `SELECT id, rounds, created_at,
             cache_input_tokens, cache_cached_tokens,
-            cache_hit_rate, cache_estimated_savings_pct
+            cache_hit_rate, cache_estimated_savings_pct, cache_seed_enabled
        FROM audit_runs
       WHERE created_at >= $1
         AND rounds >= 2
@@ -100,6 +101,8 @@ async function loadFromSupabase() {
     totalCachedTokens: r.cache_cached_tokens ?? 0,
     hitRate: r.cache_hit_rate ?? 0,
     estimatedSavingsPct: r.cache_estimated_savings_pct ?? 0,
+    // null/undefined → unknown cohort (pre-canary rows have no seed state).
+    seedEnabled: r.cache_seed_enabled ?? null,
   }));
 }
 
@@ -115,11 +118,53 @@ function loadFromLocal() {
       const startedAt = entry.startedAt ? new Date(entry.startedAt).getTime() : null;
       if (startedAt === null || startedAt < SINCE_MS) continue;
       if (entry.round && entry.round >= 2) {
-        r2Plus.push({ ...entry, startedAt });
+        // normalize the local `seedUsed` field to `seedEnabled` (undefined on
+        // pre-canary lines → unknown cohort).
+        r2Plus.push({ ...entry, startedAt, seedEnabled: entry.seedUsed ?? null });
       }
     } catch { /* skip malformed line */ }
   }
   return r2Plus;
+}
+
+/**
+ * Pure segmentation + decision (exported for unit tests). Splits R2+ runs into
+ * seed-ON / seed-OFF / unknown cohorts and decides off the seed-ON cohort —
+ * because seed-OFF runs never warm the cache (structural ~0%) and would
+ * contaminate a global median into a permanent HOLD.
+ *
+ * @param {Array<{hitRate:number, seedEnabled:boolean|null}>} runs
+ * @param {{ minRuns?: number, flipThreshold?: number }} [opts]
+ */
+function segmentAndDecide(runs, { minRuns = MIN_RUNS, flipThreshold = FLIP_THRESHOLD } = {}) {
+  const seedOn = runs.filter((r) => r.seedEnabled === true);
+  const seedOff = runs.filter((r) => r.seedEnabled === false);
+  const unknown = runs.filter((r) => r.seedEnabled !== true && r.seedEnabled !== false);
+
+  const seedOnMedian = median(seedOn.map((r) => r.hitRate));
+  const seedOffMedian = median(seedOff.map((r) => r.hitRate));
+  const baseline = `Seed-OFF baseline: ${(seedOffMedian * 100).toFixed(1)}% across ${seedOff.length} run(s)` +
+    (unknown.length ? `; ${unknown.length} pre-canary run(s) have unknown seed state (excluded).` : '.');
+
+  let recommendation, reason;
+  if (seedOn.length < minRuns) {
+    recommendation = 'INSUFFICIENT_SEED_ON_DATA';
+    reason = `Need >= ${minRuns} seed-ON R2+ runs to decide; have ${seedOn.length}. ` +
+      `Run a canary: set AUDIT_CACHE_SEED=1 and run audits to accumulate seed-ON data. ${baseline}`;
+  } else if (seedOnMedian > flipThreshold) {
+    recommendation = 'FLIP_TO_ON';
+    reason = `Seed-ON median hit-rate ${(seedOnMedian * 100).toFixed(1)}% > ${(flipThreshold * 100).toFixed(0)}% ` +
+      `across ${seedOn.length} seed-ON runs. Set AUDIT_CACHE_SEED=1 as default. ${baseline}`;
+  } else {
+    recommendation = 'HOLD';
+    reason = `Seed-ON median hit-rate ${(seedOnMedian * 100).toFixed(1)}% does not exceed ` +
+      `${(flipThreshold * 100).toFixed(0)}% across ${seedOn.length} seed-ON runs — seeding isn't paying off. ${baseline}`;
+  }
+  return {
+    recommendation, reason,
+    seedOnCount: seedOn.length, seedOffCount: seedOff.length, unknownCount: unknown.length,
+    seedOnMedian, seedOffMedian,
+  };
 }
 
 async function analyse() {
@@ -140,22 +185,23 @@ async function analyse() {
     }
   }
 
-  const medianHitRate = median(r2Plus.map(r => r.hitRate));
   const N = r2Plus.length;
+  const decision = segmentAndDecide(r2Plus);
 
-  let recommendation, reason;
-  if (N < MIN_RUNS) {
-    recommendation = 'INSUFFICIENT_DATA';
-    reason = `Need >= ${MIN_RUNS} R2+ audit runs since ${SINCE} to decide; have ${N}.`;
-  } else if (medianHitRate > FLIP_THRESHOLD) {
-    recommendation = 'FLIP_TO_ON';
-    reason = `Median R2+ hit-rate ${(medianHitRate * 100).toFixed(1)}% > ${(FLIP_THRESHOLD * 100).toFixed(0)}% threshold across ${N} runs. Set AUDIT_CACHE_SEED=1 as default.`;
-  } else {
-    recommendation = 'HOLD';
-    reason = `Median R2+ hit-rate ${(medianHitRate * 100).toFixed(1)}% does not exceed ${(FLIP_THRESHOLD * 100).toFixed(0)}% across ${N} runs. Keep default OFF or investigate cache stability.`;
-  }
-
-  return { ok: true, recommendation, reason, runCount: N, medianHitRate, since: SINCE, source: sourceLabel, runs: r2Plus };
+  return {
+    ok: true,
+    recommendation: decision.recommendation,
+    reason: decision.reason,
+    runCount: N,
+    seedOnCount: decision.seedOnCount,
+    seedOffCount: decision.seedOffCount,
+    unknownCount: decision.unknownCount,
+    medianHitRate: decision.seedOnMedian, // headline = the cohort we decide on
+    seedOffMedian: decision.seedOffMedian,
+    since: SINCE,
+    source: sourceLabel,
+    runs: r2Plus,
+  };
 }
 
 function renderHuman(result) {
@@ -166,12 +212,12 @@ function renderHuman(result) {
   console.log('═══════════════════════════════════════');
   console.log('  AUDIT_CACHE_SEED — empirical check');
   console.log('═══════════════════════════════════════');
-  console.log(`  Recommendation: ${result.recommendation}`);
-  console.log(`  Source:         ${result.source ?? '(unknown)'}`);
-  console.log(`  Since:          ${result.since}`);
-  console.log(`  R2+ runs:       ${result.runCount}`);
-  console.log(`  Median hitRate: ${(result.medianHitRate * 100).toFixed(1)}%`);
-  console.log(`  Threshold:      >${(FLIP_THRESHOLD * 100).toFixed(0)}% AND >= ${MIN_RUNS} runs`);
+  console.log(`  Recommendation:  ${result.recommendation}`);
+  console.log(`  Source:          ${result.source ?? '(unknown)'}`);
+  console.log(`  Since:           ${result.since}`);
+  console.log(`  R2+ runs:        ${result.runCount} (seed-ON ${result.seedOnCount ?? 0} / seed-OFF ${result.seedOffCount ?? 0} / unknown ${result.unknownCount ?? 0})`);
+  console.log(`  Seed-ON median:  ${(result.medianHitRate * 100).toFixed(1)}%   (seed-OFF baseline: ${((result.seedOffMedian ?? 0) * 100).toFixed(1)}%)`);
+  console.log(`  Threshold:       seed-ON median >${(FLIP_THRESHOLD * 100).toFixed(0)}% AND >= ${MIN_RUNS} seed-ON runs`);
   console.log('');
   console.log(`  ${result.reason}`);
   if (result.runs.length > 0) {
@@ -179,16 +225,24 @@ function renderHuman(result) {
     console.log('  Per-run breakdown:');
     for (const r of result.runs) {
       const date = new Date(r.startedAt).toISOString().slice(0, 10);
-      console.log(`    ${date} R${r.round} sid=${r.sid.slice(-12)}: ${(r.hitRate * 100).toFixed(1)}% (${r.totalCachedTokens}/${r.totalInputTokens})`);
+      const seed = r.seedEnabled === true ? 'seed' : r.seedEnabled === false ? 'off ' : '????';
+      console.log(`    ${date} R${r.round} [${seed}] sid=${String(r.sid).slice(-12)}: ${(r.hitRate * 100).toFixed(1)}% (${r.totalCachedTokens}/${r.totalInputTokens})`);
     }
   }
   console.log('');
 }
 
-const result = await analyse();
-if (JSON_OUT) {
-  console.log(JSON.stringify(result, null, 2));
-} else {
-  renderHuman(result);
+// Run as a CLI only when invoked directly — import the module (e.g. tests)
+// without triggering analyse()/process.exit().
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isMain) {
+  const result = await analyse();
+  if (JSON_OUT) {
+    console.log(JSON.stringify(result, null, 2));
+  } else {
+    renderHuman(result);
+  }
+  process.exit(result.ok ? 0 : 1);
 }
-process.exit(result.ok ? 0 : 1);
+
+export { segmentAndDecide, median };
