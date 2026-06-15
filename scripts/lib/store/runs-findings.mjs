@@ -712,19 +712,25 @@ export async function getRunFindings(runId, deps = {}) {
 /**
  * Recent findings for a repo across its audit runs — powers /persona-test
  * Phase 0d pre-test enrichment (replaces the dead PostgREST curl removed in
- * M4; the supabase-js/anon-read path no longer exists). Resolves repoName →
- * repo_id, then joins audit_findings → audit_runs for that repo.
+ * M4; the supabase-js/anon-read path no longer exists). Then joins
+ * audit_findings → audit_runs for that repo.
+ *
+ * Pass a canonical `repoId` (audit_repos.id, resolved from the stable
+ * repo_uuid) for an identity-correct lookup — this is the preferred path and
+ * matches regardless of the bare-vs-owner/repo display name. `repoName` is a
+ * fallback that resolves via the volatile `name` column (legacy / cross-repo
+ * queries from a non-repo cwd).
  *
  * Returns `[]` when cloud is off, the repo is unknown, or there are no
  * findings — the persona skill treats an empty candidate set as "no audit
  * context", never an error. `deps` is the same DI seam as getRunFindings.
  *
- * @param {{ repoName: string, severities?: string[], limit?: number }} args
+ * @param {{ repoId?: string, repoName?: string, severities?: string[], limit?: number }} args
  * @param {{ many?: Function, isCloudEnabled?: Function, getRepoIdByName?: Function }} [deps]
  * @returns {Promise<Array<object>>}
  */
 export async function getRecentFindingsByRepo(
-  { repoName, severities = ['HIGH', 'MEDIUM'], limit = 20 } = {},
+  { repoId = null, repoName, severities = ['HIGH', 'MEDIUM'], limit = 20 } = {},
   deps = {},
 ) {
   const {
@@ -732,9 +738,10 @@ export async function getRecentFindingsByRepo(
     isCloudEnabled: cloudFn = isCloudEnabled,
     getRepoIdByName: repoIdFn = getRepoIdByName,
   } = deps;
-  if (!repoName || !await cloudFn()) return [];
-  const repoId = await repoIdFn(repoName);
-  if (!repoId) return [];
+  if (!await cloudFn()) return [];
+  // Prefer the canonical repoId; fall back to name resolution only when absent.
+  const id = repoId || (repoName ? await repoIdFn(repoName) : null);
+  if (!id) return [];
 
   const sevs = (Array.isArray(severities) && severities.length > 0)
     ? severities : ['HIGH', 'MEDIUM'];
@@ -749,7 +756,7 @@ export async function getRecentFindingsByRepo(
     ` ORDER BY f.created_at DESC\n` +
     ` LIMIT $3`;
 
-  const rows = await manyFn(sql, [repoId, sevs, n]);
+  const rows = await manyFn(sql, [id, sevs, n]);
   return rows.map((r) => ({
     id: r.id,
     runId: r.run_id,

@@ -560,6 +560,7 @@ const RecordPersonaSessionRequestSchema = z.object({
   commitSha: z.string().optional(),
   deploymentId: z.string().optional(),
   repoName: z.string().optional(),
+  repoId: z.string().optional(),
   personaId: z.string().optional(),
 });
 
@@ -574,7 +575,19 @@ async function cmdRecordPersonaSession() {
   const cloud = await isPersonaCloudEnabled();
   if (!cloud) return emit({ ok: true, cloud: false, sessionId: null, existed: false, statsUpdated: false });
 
-  const result = await recordPersonaSession(parsed.data);
+  // Resolve the CANONICAL repo identity (stable repo_uuid → audit_repos.id) from
+  // the runner's cwd, so the session joins natively to audit_runs/findings
+  // regardless of the bare-vs-owner/repo display name. resolveRepoForStore mints
+  // the canonical row if this repo has never been audited (persona is a
+  // legitimate identity writer). Best-effort: a resolution failure leaves repo_id
+  // null and the session still records by name.
+  const data = { ...parsed.data };
+  if (!data.repoId) {
+    const ref = await resolveRepoForStore({}).catch(() => null);
+    if (ref?.repoRowId) data.repoId = ref.repoRowId;
+  }
+
+  const result = await recordPersonaSession(data);
   emit({ ok: !!result.sessionId, cloud: true, ...result });
 }
 
@@ -634,18 +647,28 @@ async function cmdGetRecentFindings() {
   const limitFlag = argOption('limit');
   const severityFlag = argOption('severity'); // CSV, e.g. "HIGH,MEDIUM"
 
-  const p = repoFlag
+  const p = (repoFlag || limitFlag || severityFlag)
     ? {
-        repoName: repoFlag,
+        ...(repoFlag ? { repoName: repoFlag } : {}),
         ...(limitFlag ? { limit: Number(limitFlag) } : {}),
         ...(severityFlag ? { severities: severityFlag.split(',').map(s => s.trim()).filter(Boolean) } : {}),
       }
     : parsePayload();
 
-  if (!p?.repoName || typeof p.repoName !== 'string') {
-    return emitError('BAD_INPUT', '--repo <name> required (optional: --limit <n>, --severity HIGH,MEDIUM)');
-  }
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, findings: [] });
+
+  // Identity-first: resolve the CANONICAL repo_id (stable repo_uuid →
+  // audit_repos.id) from the runner's cwd, so enrichment matches the audit
+  // findings regardless of the bare-vs-owner/repo display name. --repo <name>
+  // is a fallback for cross-repo queries from a non-repo cwd.
+  if (!p.repoId) {
+    const repoUuid = resolveRepoIdentity(process.cwd())?.repoUuid;
+    const row = repoUuid ? await getRepoIdByUuid(repoUuid).catch(() => null) : null;
+    if (row?.id) p.repoId = row.id;
+  }
+  if (!p.repoId && !p.repoName) {
+    return emitError('BAD_INPUT', 'no repo identity — run from a repo root or pass --repo <name> (optional: --limit <n>, --severity HIGH,MEDIUM)');
+  }
 
   const findings = await getRecentFindingsByRepo(p);
   emit({ ok: true, cloud: true, findings });

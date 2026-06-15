@@ -32,10 +32,19 @@ describe('getRecentFindingsByRepo', () => {
     assert.equal(f.calls.length, 0);
   });
 
-  it('returns [] when repoName is missing', async () => {
+  it('returns [] when neither repoId nor repoName is given', async () => {
     const f = fake();
     assert.deepEqual(await getRecentFindingsByRepo({}, f.deps), []);
     assert.equal(f.calls.length, 0);
+  });
+
+  it('prefers a canonical repoId — queries directly, never resolves by name', async () => {
+    const f = fake({ rows: [ROW] });
+    const out = await getRecentFindingsByRepo({ repoId: 'repo-canonical', repoName: 'owner/repo' }, f.deps);
+    assert.equal(out.length, 1);
+    assert.ok(!f.calls.some((c) => c.resolve), 'must not call getRepoIdByName when repoId is supplied');
+    const q = f.calls.find((c) => c.sql);
+    assert.equal(q.params[0], 'repo-canonical');
   });
 
   it('returns [] when the repo name does not resolve', async () => {

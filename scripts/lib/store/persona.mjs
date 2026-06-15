@@ -113,6 +113,10 @@ export async function recordPersonaSession(session) {
       commit_sha: session.commitSha || null,
       deployment_id: session.deploymentId || null,
       repo_name: session.repoName || null,
+      // Canonical unified identity (audit_repos.id), resolved by the caller from
+      // the repo root — lets sessions join natively to audit_runs/findings
+      // regardless of the bare-vs-owner/repo display name. Falls back to null.
+      repo_id: session.repoId || null,
       persona_id: session.personaId || null,
     }], { onConflict: 'session_id', update: 'all', returning: ['id'] });
     sessionId = rows[0]?.id || null;
