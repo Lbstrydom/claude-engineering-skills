@@ -34,6 +34,7 @@ import sectionSecurity from './sections/security.mjs';
 import sectionPurpose from './sections/purpose.mjs';
 import sectionPurposeHealth from './sections/purpose-health.mjs';
 import sectionAuditRunDetail from './sections/audit-run-detail.mjs';
+import sectionAuthorTier from './sections/author-tier.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -56,6 +57,7 @@ const SLICERS = {
   promptVariants:(d) => ({ src: d.sources.promptVariants || { status: 'ok', detail: '' }, promptVariants: d.promptVariants || { cloud: false, arms: [] } }),
   shipHealth:   (d) => ({ src: d.sources.shipHealth || { status: 'ok', detail: '' }, shipHealth: d.shipHealth || { cloud: false, byOutcome: [], recent: [] } }),
   auditEffectiveness:(d) => ({ src: d.sources.auditEffectiveness || { status: 'ok', detail: '' }, auditEffectiveness: d.auditEffectiveness || { cloud: false, confirmedHits: 0, auditMisses: 0, falsePositives: 0, severityUnderstated: 0, severityOverstated: 0, precision: null, recall: null } }),
+  authorTier:   (d) => ({ src: d.sources.authorTier || { status: 'ok', detail: '' }, authorTier: d.authorTier || { cloud: false, total: 0, bySuggestedTier: [], ladders: [], distinctProviderLadders: 0, diversityGateMet: false, agreement: { agree: 0, disagree: 0, declaredUnknown: 0 } } }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
   purposeHealth:(d) => ({ src: d.sources.purposeHealth || { status: 'ok', detail: '' }, purposeHealth: d.purposeHealth || { asOf: '', windowDays: 30, repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null }, purposeBadges: [] } }),
   // audit-run uses a top-level `src` (discriminated collector status code), NOT
@@ -81,6 +83,7 @@ const REGISTRY = {
     { id: 'shipHealth',   title: 'Ship Health',    build: sectionShipHealth,   slice: SLICERS.shipHealth },
     { id: 'security',     title: 'Security',       build: sectionSecurity,     slice: SLICERS.security },
     { id: 'purposeHealth',title: 'Purpose Health', build: sectionPurposeHealth,slice: SLICERS.purposeHealth },
+    { id: 'authorTier',   title: 'Author Tier',    build: sectionAuthorTier,   slice: SLICERS.authorTier },
   ],
   // Single-section per-run detail page (docs/plans/dashboard-audit-run-viewer.md).
   'audit-run': [
@@ -146,7 +149,7 @@ export function renderDocument(data, kind, assets) {
     // Must list EVERY telemetry section source — omitting one (e.g. security)
     // would show the page-level "nothing yet" placeholder while that section
     // actually has data, hiding it entirely.
-    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth']
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',

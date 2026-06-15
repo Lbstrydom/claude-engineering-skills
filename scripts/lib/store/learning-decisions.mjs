@@ -184,6 +184,38 @@ export async function readNoBrainerRecommendations({ repoId, limit = 50 }) {
   }
 }
 
+/**
+ * Aggregate author_tier observation rows for a repo (model-tier-observation —
+ * observation-only telemetry). Returns RAW grouped rows; the dashboard collector
+ * shapes them via aggregateAuthorTier(). Graceful: cloud off / no repo → empty.
+ *
+ * @param {{repoId:string|null}} opts
+ * @returns {Promise<{cloud:boolean, rows:Array}>}
+ */
+export async function getAuthorTierStats({ repoId }) {
+  if (!repoId || !await isCloudEnabled()) return { cloud: false, rows: [] };
+  try {
+    const rows = await many(
+      `SELECT
+          context->>'declaredTierSource' AS declared_source,
+          context->>'authorProvider'     AS provider,
+          context->>'authorFamily'       AS family,
+          context->>'authorModel'        AS model,
+          choice->>'suggestedTier'       AS suggested_tier,
+          choice->>'declaredTier'        AS declared_tier,
+          (outcome->>'converged')        AS converged,
+          COUNT(*)::int                  AS n
+         FROM learning_decisions
+        WHERE decision_type = 'author_tier' AND repo_id = $1
+        GROUP BY 1, 2, 3, 4, 5, 6, 7`,
+      [repoId]
+    );
+    return { cloud: true, rows };
+  } catch {
+    return { cloud: false, rows: [] };
+  }
+}
+
 export async function readStaleClusters({ repoId, ageDays = 30, limit = 50 }) {
   if (!repoId) throw new Error('repoId is required');
   if (!await isCloudEnabled()) return [];

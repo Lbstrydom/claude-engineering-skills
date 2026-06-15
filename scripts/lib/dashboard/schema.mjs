@@ -359,6 +359,18 @@ export const TelemetryDataSchema = z.object({
     precision: z.number().nullable(),
     recall: z.number().nullable(),
   }).optional(),
+  // Author-tier observation (model-tier-observation) — observation-only. Suggested
+  // tier × converged, declared ladder partition keys, the cross-model-bias
+  // diversity gate. Optional so pre-feature snapshots validate.
+  authorTier: z.object({
+    cloud: z.boolean(),
+    total: count,
+    bySuggestedTier: z.array(z.object({ tier: z.string(), total: count, converged: count, convergedPct: count })),
+    ladders: z.array(z.object({ provider: z.string(), family: z.string(), model: z.string(), count })),
+    distinctProviderLadders: count,
+    diversityGateMet: z.boolean(),
+    agreement: z.object({ agree: count, disagree: count, declaredUnknown: count }),
+  }).optional(),
 });
 
 // ── Audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md) ──

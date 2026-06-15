@@ -1,5 +1,29 @@
 # Project Status Log
 
+## 2026-06-15 — Author-Tier dashboard panel + arch-index refresh (model-tier-observation follow-up)
+
+### Changes
+- **Arch index refreshed** (`arch:refresh` → `arch:render` → `dashboard:build`): the new
+  `author-tier-observation.mjs` + `model-resolver` tier functions are now indexed
+  (`docs/architecture-map.md`, 2071 symbols; 0 violations) so arch-memory consultation
+  sees them and won't blind-duplicate `deriveSignals`/`tierForModel`.
+- **New telemetry tab — "Author Tier"** (observation-only reader for the `author_tier`
+  rows): suggested-tier × convergence, declared author-model **ladders** (the
+  cross-model-bias partition key), and the **diversity gate** (≥3 provider ladders) the
+  deferred routing phase waits on. Per-repo, graceful-degrading.
+  - `scripts/lib/store/learning-decisions.mjs`: `getAuthorTierStats({repoId})` reader.
+  - `scripts/lib/dashboard/author-tier-agg.mjs` (new, pure + unit-tested): `aggregateAuthorTier`.
+  - Wired through `collect-telemetry.mjs`, `schema.mjs` (Zod), `sections/author-tier.mjs`,
+    `render.mjs`.
+- Tests: new `dashboard-author-tier-agg.test.mjs` (8); updated the pinned learning-store
+  export contract (123) and a brittle `compute-target-domains` stderr assertion (now matches
+  both streams — the shared-env config notice is informational stderr noise).
+- Full suite: **3554 pass, 0 fail**. Dashboard builds clean (`degraded: false`). Panel
+  currently shows the honest empty state — the recorder shipped after this session's audits,
+  so the next `/audit-code` run populates it.
+
+---
+
 ## 2026-06-15 — Model-tier observation (provider-agnostic, observation-only) — `/cycle code --autonomous`
 
 ### Changes

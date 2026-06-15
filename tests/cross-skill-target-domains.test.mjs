@@ -86,7 +86,11 @@ describe('cross-skill compute-target-domains', () => {
   it('missing targetPaths → exit 1', () => {
     const r = runCrossSkill('compute-target-domains', {});
     assert.equal(r.status, 1);
-    assert.match(r.stderr || r.stdout, /BAD_INPUT|targetPaths/);
+    // Match BOTH streams: the BAD_INPUT JSON goes to stdout, while stderr may
+    // carry the informational `[config] loaded shared cloud config …` line when
+    // the shared env sets a var not already in the spawn env. `stderr || stdout`
+    // would mask the error whenever that notice is present.
+    assert.match(`${r.stderr || ''}\n${r.stdout || ''}`, /BAD_INPUT|targetPaths/);
   });
 
   it('exposes ruleCount for visibility into config state', () => {

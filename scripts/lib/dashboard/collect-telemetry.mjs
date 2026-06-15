@@ -18,6 +18,8 @@ import { loadBanditArms } from '../store/bandit-fp.mjs';
 import { readShipEvents, readAuditEffectiveness } from '../store/plans-ship.mjs';
 import { getSecurityStats } from '../store/security.mjs';
 import { getPurposeHealth } from '../store/purpose-health.mjs';
+import { getAuthorTierStats } from '../store/learning-decisions.mjs';
+import { aggregateAuthorTier } from './author-tier-agg.mjs';
 import { PurposeConfigSchema } from './schema.mjs';
 import { loadDomainRules, tagDomain } from '../symbol-index/domain-tagger.mjs';
 import { classifyPath } from '../sensitive-paths.mjs';
@@ -240,6 +242,30 @@ async function collectShipHealth(root) {
     };
   } catch (err) {
     return { data: empty, status: { status: 'unexpected-error', detail: redactSecrets(`ship events query failed: ${err.message}`) } };
+  }
+}
+
+/** Empty author-tier shape (schema-valid). */
+function emptyAuthorTier() {
+  return { cloud: false, total: 0, bySuggestedTier: [], ladders: [], distinctProviderLadders: 0, diversityGateMet: false, agreement: { agree: 0, disagree: 0, declaredUnknown: 0 } };
+}
+
+/**
+ * Collect the author-tier observation panel (model-tier-observation —
+ * observation-only). Per-repo, keyed by the same canonical repo id the recorder
+ * writes with. Surfaces suggested-tier × converged, the declared ladder partition
+ * keys, and the cross-model-bias diversity gate. Graceful degradation throughout.
+ */
+async function collectAuthorTier(root) {
+  try {
+    const repoId = await canonicalRepoId(root);
+    if (!repoId) return { data: emptyAuthorTier(), status: { status: 'missing-optional', detail: 'no canonical repo row for this directory' } };
+    const r = await getAuthorTierStats({ repoId });
+    if (!r.cloud) return { data: emptyAuthorTier(), status: { status: 'missing-optional', detail: 'author-tier telemetry needs cloud + a service-role key' } };
+    if (!r.rows.length) return { data: { cloud: true, ...aggregateAuthorTier([]) }, status: { status: 'missing-optional', detail: 'no author_tier observations recorded yet' } };
+    return { data: { cloud: true, ...aggregateAuthorTier(r.rows) }, status: { status: 'ok', detail: '' } };
+  } catch (err) {
+    return { data: emptyAuthorTier(), status: { status: 'unexpected-error', detail: redactSecrets(`author-tier query failed: ${err.message}`) } };
   }
 }
 
@@ -506,7 +532,7 @@ export async function collectTelemetry(opts = {}) {
   // Scope the Audit Runs tab to this directory's canonical repo row when
   // resolvable; null → project-wide fallback (cloud off / never-audited repo).
   const auditRepoId = await canonicalRepoId(root);
-  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier] = await Promise.all([
     collectAuditRuns(auditRepoId),
     collectLearning(root),
     collectSecurity(root),
@@ -514,6 +540,7 @@ export async function collectTelemetry(opts = {}) {
     collectPromptVariants(),
     collectShipHealth(root),
     collectAuditEffectiveness(root),
+    collectAuthorTier(root),
   ]);
   const requirements = collectRequirements(root);
 
@@ -533,6 +560,7 @@ export async function collectTelemetry(opts = {}) {
       promptVariants: promptVariants.status,
       shipHealth: shipHealth.status,
       auditEffectiveness: auditEffectiveness.status,
+      authorTier: authorTier.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
@@ -542,6 +570,7 @@ export async function collectTelemetry(opts = {}) {
     promptVariants: promptVariants.data,
     shipHealth: shipHealth.data,
     auditEffectiveness: auditEffectiveness.data,
+    authorTier: authorTier.data,
   };
 }
 
