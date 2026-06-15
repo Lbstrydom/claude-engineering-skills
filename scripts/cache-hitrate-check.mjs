@@ -25,7 +25,13 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import 'dotenv/config';
+// Import config.mjs (not bare 'dotenv/config') for its env-loading side effect:
+// it loads the cwd/git-root .env AND the shared ~/.audit-loop.env, where the
+// AUDIT_DB_URL DSN usually lives. Bare 'dotenv/config' only reads cwd .env, so
+// a cron/routine run (DSN in the shared file) would not see AUDIT_DB_URL, fall
+// back to the per-machine local log, find nothing, and falsely report
+// INSUFFICIENT_DATA — even though the DB has plenty of R2+ runs.
+import './lib/config.mjs';
 import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
