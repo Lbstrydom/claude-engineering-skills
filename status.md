@@ -1,5 +1,52 @@
 # Project Status Log
 
+## 2026-06-15 — Shared-env loading root-fix + cache-seed experiment record (`/cycle --autonomous`)
+
+### Changes
+- **Root-fixed the "shared-env not loaded" bug class** at the single DSN reader.
+  Extracted config.mjs's env-loading into `scripts/lib/load-shared-env.mjs`
+  (`loadSharedEnv`); `db/client.mjs::resolveDbUrl`/`getPool` call it
+  (`includeCwd:false`) so the shared `~/.audit-loop.env` DSN resolves regardless
+  of entrypoint — no more per-CLI `dotenv/config`-only blindness (check-setup,
+  setup-postgres, cache-hitrate were the symptoms). DB config is one
+  provenance-keyed bundle (SSoT `DB_GROUP_KEYS` in shared-cloud-config.mjs):
+  a higher layer's DSN means the shared layer contributes none of the DB-group
+  keys. Non-throwing read (no TOCTOU), one-FS-check/process latch.
+- **Cache-seed experiment record**: migration `20260615130000` adds
+  `audit_runs.cache_seed_enabled`; openai-audit records run-level effective
+  `seedUsed`; `cache-hitrate-check` now segments seed-ON/seed-OFF/unknown cohorts
+  and decides on the seed-ON cohort (was contaminated by structural seed-OFF 0%).
+- Audited via `/cycle --autonomous`: Cluster A GPT R1–R3 (genuine bugs fixed),
+  Cluster B fix-gate:final, **consolidated Gemini gate APPROVE** (coherence Strong).
+
+### Files Affected
+- `scripts/lib/load-shared-env.mjs` (new), `scripts/lib/config.mjs`,
+  `scripts/lib/db/client.mjs`, `scripts/lib/shared-cloud-config.mjs`
+  (`DB_GROUP_KEYS`/`DSN_GROUP_KEYS` SSoT).
+- `scripts/openai-audit.mjs` (run-scoped seed flag + telemetry),
+  `scripts/lib/store/runs-findings.mjs` (`cache_seed_enabled`, columnExists-guarded),
+  `scripts/cache-hitrate-check.mjs` (cohort segmentation + main-guard + shared-env load).
+- `supabase/migrations/20260615130000_audit_runs_cache_seed.sql` (new, applied live).
+- Tests: `tests/shared-env-loading.test.mjs` (new, hermetic + structural guard),
+  `tests/cache-hitrate-check.test.mjs` (new), + hermetic fixes to
+  `db-config-resolver`, `arch-memory-split`, `setup-postgres-check-drift`.
+- `tests/fixtures/expected-schema.json` (regen), `docs/plans/shared-env-loading-root-fix.md`.
+
+### Decisions Made
+- **B2 deviation** (justified): the reader adds the SHARED layer only
+  (`includeCwd:false`); cwd `.env` is the entrypoint's job (every real CLI does
+  `import 'dotenv/config'`). Loading cwd at the reader polluted in-repo tests and
+  was redundant. More correct + test-isolatable.
+- **Deferred** (independent, pre-existing): pooler-6543 enforcement + DSN/SSL
+  structural validation in db/client.mjs — a separate hardening follow-up.
+
+### Next Steps
+- Optional: the deferred db/client.mjs DSN-validation hardening.
+- Run the cache-seed canary (`AUDIT_CACHE_SEED=1` for N audits) to feed the new
+  seed-ON cohort, then `npm run cache:check` for a real flip/hold decision.
+
+---
+
 ## 2026-06-14 — Audit-finding triage: impact, not authorship (load-bearing test)
 
 ### Changes
