@@ -13,6 +13,7 @@ import {
   _resetForTest,
   _getStateForTest,
   _internals,
+  _resolveQueueCap,
 } from '../scripts/lib/learning/decision-logger.mjs';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -65,6 +66,39 @@ describe('decision-logger / buildDecisionKey', () => {
 
   it('throws when neither audit-bound nor external_id provided', () => {
     assert.throws(() => buildDecisionKey({ decisionType: 'pass_selection' }));
+  });
+
+  it('rejects malformed key fields by TYPE + RANGE (audit R3-H)', () => {
+    // non-string auditRunId, negative/non-integer counters, empty externalId all
+    // fall through to the throw rather than producing a colliding/unstable key.
+    assert.throws(() => buildDecisionKey({ decisionType: 'pass_selection', auditRunId: 12345, round: 0, sequence: 0 }));
+    assert.throws(() => buildDecisionKey({ decisionType: 'pass_selection', auditRunId: 'r', round: -1, sequence: 0 }));
+    assert.throws(() => buildDecisionKey({ decisionType: 'pass_selection', auditRunId: 'r', round: 1.5, sequence: 0 }));
+    assert.throws(() => buildDecisionKey({ decisionType: 'pass_selection', auditRunId: '  ', round: 0, sequence: 0 }));
+    assert.throws(() => buildDecisionKey({ decisionType: 'quickfix_hit', externalId: '' }));
+    // valid still builds
+    assert.equal(buildDecisionKey({ decisionType: 'quickfix_hit', externalId: 'h1' }), 'quickfix_hit:h1');
+  });
+
+  it('rejects colon-bearing id components + unknown decisionType (audit R4 delimiter)', () => {
+    // a ':' in a caller id could forge an extra key segment → collision
+    assert.throws(() => buildDecisionKey({ decisionType: 'pass_selection', auditRunId: 'r:1', round: 0, sequence: 0 }));
+    assert.throws(() => buildDecisionKey({ decisionType: 'quickfix_hit', externalId: 'a:b' }));
+    // unknown decisionType is rejected even on the direct-call path
+    assert.throws(() => buildDecisionKey({ decisionType: 'not_a_type', externalId: 'h1' }),
+      /unknown decisionType/);
+  });
+});
+
+describe('decision-logger / resolveQueueCap (audit R3-M config validation)', () => {
+  it('accepts a positive integer; rejects NaN/0/negative/partial → default 64', () => {
+    assert.equal(_resolveQueueCap('128'), 128);
+    assert.equal(_resolveQueueCap(undefined), 64);   // unset → default
+    assert.equal(_resolveQueueCap(''), 64);
+    assert.equal(_resolveQueueCap('0'), 64);          // 0 would disable the cap
+    assert.equal(_resolveQueueCap('-5'), 64);
+    assert.equal(_resolveQueueCap('10abc'), 64);      // Number() rejects partial parse
+    assert.equal(_resolveQueueCap('abc'), 64);
   });
 });
 

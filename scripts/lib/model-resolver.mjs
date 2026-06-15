@@ -133,7 +133,10 @@ export function parseGeminiModel(id) {
     };
   }
 
-  const m = /^gemini-(\d+)(?:\.(\d+))?-(pro|flash|flash-lite)(?:-(preview|lite|tts|image|exp|\d+))?$/.exec(id);
+  // Alternation order matters: `flash-lite` MUST precede `flash`, else `flash`
+  // matches first and `-lite` is swallowed as a suffix → flash-lite mis-tiered
+  // as flash (audit Cluster-A finding).
+  const m = /^gemini-(\d+)(?:\.(\d+))?-(pro|flash-lite|flash)(?:-(preview|lite|tts|image|exp|\d+))?$/.exec(id);
   if (!m) return null;
   return {
     provider: 'google',
@@ -150,7 +153,10 @@ export function parseGeminiModel(id) {
 
 /** Parse an OpenAI model ID. */
 export function parseOpenAIModel(id) {
-  const m = /^(gpt|o)-?(\d+)(?:\.(\d+))?(?:-(mini|nano|turbo|preview|[\d-]+))?$/.exec(id);
+  // `o?` after the major handles the omni family shape (`gpt-4o`, `gpt-4o-mini`);
+  // `pro` is an accepted variant (`gpt-5.5-pro`). Both were STATIC_POOL ids the
+  // prior digit-only regex rejected (audit Cluster-A finding).
+  const m = /^(gpt|o)-?(\d+)o?(?:\.(\d+))?(?:-(mini|nano|turbo|pro|preview|[\d-]+))?$/.exec(id);
   if (!m) return null;
   const variant = m[4] || null;
   return {
@@ -163,6 +169,109 @@ export function parseOpenAIModel(id) {
     isPreview: /preview/.test(variant || ''),
     original: id,
   };
+}
+
+// ── Logical-tier abstraction (provider-agnostic) ─────────────────────────────
+// Provider-neutral tiers so routing/observation logic is written ONCE, in
+// logical space, and bound to concrete models per active provider. See
+// docs/plans/model-tier-observation.md.
+
+export const LOGICAL_TIERS = Object.freeze(['economy', 'standard', 'frontier']);
+
+// Logical tier → concrete sentinel, per provider. Every sentinel here already
+// exists in SENTINEL_TO_TIER — no new sentinels. OpenAI standard===frontier
+// (===latest-gpt): the tier axis there is reasoning effort, not model id.
+export const TIER_MAP = Object.freeze({
+  anthropic: Object.freeze({ economy: 'latest-haiku',      standard: 'latest-sonnet', frontier: 'latest-opus' }),
+  google:    Object.freeze({ economy: 'latest-flash-lite', standard: 'latest-flash',  frontier: 'latest-pro'  }),
+  openai:    Object.freeze({ economy: 'latest-gpt-mini',   standard: 'latest-gpt',    frontier: 'latest-gpt'  }),
+});
+
+// Anthropic/Google tiers map 1:1; OpenAI mini/nano→economy, other gpt→standard.
+const _CLAUDE_TIER_TO_LOGICAL = { opus: 'frontier', sonnet: 'standard', haiku: 'economy' };
+const _GEMINI_TIER_TO_LOGICAL = { pro: 'frontier', flash: 'standard', 'flash-lite': 'economy' };
+
+/** Try each provider parser; null if none match. */
+function parseAnyModel(id) {
+  return parseClaudeModel(id) || parseGeminiModel(id) || parseOpenAIModel(id) || null;
+}
+
+function logicalFromParsed(p) {
+  if (!p) return 'unknown';
+  if (p.provider === 'anthropic') return _CLAUDE_TIER_TO_LOGICAL[p.tier] ?? 'unknown';
+  if (p.provider === 'google')    return _GEMINI_TIER_TO_LOGICAL[p.tier] ?? 'unknown';
+  if (p.provider === 'openai')    return p.isLite ? 'economy' : 'standard';
+  return 'unknown';
+}
+
+/**
+ * Classify any model id (sentinel or concrete) into a logical tier.
+ * Never throws; returns 'unknown' for unrecognised ids.
+ * @returns {'economy'|'standard'|'frontier'|'unknown'}
+ */
+export function tierForModel(modelId) {
+  if (typeof modelId !== 'string' || !modelId) return 'unknown';
+  // Canonicalise deprecated ids to their sentinel FIRST so classification and
+  // resolution agree (audit R3-M: a deprecated concrete id must tier the same as
+  // the sentinel it remaps to — the bias-partition key depends on this).
+  modelId = deprecatedRemap(modelId, { silent: true });
+  if (isSentinel(modelId)) {
+    const s = SENTINEL_TO_TIER[modelId.toLowerCase()];
+    if (s.tier) return { ..._CLAUDE_TIER_TO_LOGICAL, ..._GEMINI_TIER_TO_LOGICAL }[s.tier] ?? 'unknown';
+    if (s.provider === 'openai') return s.variant === 'mini' ? 'economy' : 'standard';
+    return 'unknown';
+  }
+  const parsed = parseAnyModel(modelId);
+  if (parsed) return logicalFromParsed(parsed);
+  // Coarse OpenAI fallback — the strict parser doesn't cover every variant
+  // (e.g. `gpt-4o-mini`, `gpt-5.5-pro`). Classify by family + mini/nano marker;
+  // non-mini gpt → standard (consistent with the OpenAI standard≡frontier
+  // collapse). Non-OpenAI unrecognised ids stay 'unknown' (e.g. local Qwen).
+  const lc = modelId.toLowerCase();
+  if (/^(gpt-|o\d|chatgpt)/.test(lc)) return /mini|nano/.test(lc) ? 'economy' : 'standard';
+  return 'unknown';
+}
+
+/**
+ * Logical tier → the matching `latest-*` sentinel for a provider, or null when
+ * the provider/tier isn't in TIER_MAP (degrade, never throw). For all three
+ * current providers every tier resolves (OpenAI frontier→latest-gpt collapse).
+ */
+export function sentinelForTier(logicalTier, opts) {
+  // Normalise inside the body — a `= {}` default only catches `undefined`, so an
+  // explicit `null` options arg would throw on destructure. Contract: degrade to
+  // null for any unsupported input, never throw (audit R3-H).
+  const provider = (opts && typeof opts === 'object') ? opts.provider : undefined;
+  const ladder = TIER_MAP[provider];
+  if (!ladder || !LOGICAL_TIERS.includes(logicalTier)) return null;
+  return ladder[logicalTier] ?? null;
+}
+
+/**
+ * The bias-partition key: provider + family + concrete model + logical tier for
+ * a model id (resolving a sentinel to its concrete id first). null if
+ * unrecognised. Used by the author-tier observation so per-ladder data is never
+ * pooled across distinct models.
+ * @returns {{provider:string, family:string, tier:string, concreteModel:string}|null}
+ */
+export function describeModel(modelId) {
+  if (typeof modelId !== 'string' || !modelId) return null;
+  // Remap deprecated ids first so the partition key for a stale id matches the
+  // key for its live sentinel (audit R3-M: no bias-data split across the same
+  // effective model).
+  modelId = deprecatedRemap(modelId, { silent: true });
+  const concrete = isSentinel(modelId) ? resolveModel(modelId, { silent: true }) : modelId;
+  const p = parseAnyModel(concrete);
+  if (!p) {
+    // Coarse OpenAI fallback (mirrors tierForModel) so variant shapes the strict
+    // parser misses (`gpt-4o-mini`, `gpt-5.5-pro`) still yield a partition key.
+    const lc = concrete.toLowerCase();
+    if (/^(gpt-|o\d|chatgpt)/.test(lc)) {
+      return { provider: 'openai', family: 'gpt', tier: tierForModel(concrete), concreteModel: concrete };
+    }
+    return null;
+  }
+  return { provider: p.provider, family: p.family, tier: tierForModel(concrete), concreteModel: concrete };
 }
 
 // ── Tier pickers ────────────────────────────────────────────────────────────

@@ -151,7 +151,9 @@ scope** — each cluster's scope resolves from member phases' `Files:`
 line as a second source of truth. A malformed block is a HIGH finding when
 it would cause `/cycle` to build on un-audited coupled code. (`/cycle` also
 re-validates fail-closed at execution time — this is the first of two
-layers.)
+layers.) The optional `author-tier:` sub-bullet is **advisory/observation-only**
+(`/cycle` records it, never routes on it) — do NOT treat its presence, absence,
+or value as a gate or a finding; a wrong tier hint has zero execution impact.
 
 ### Tiered rebuttal
 

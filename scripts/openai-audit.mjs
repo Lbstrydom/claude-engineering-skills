@@ -74,6 +74,8 @@ import {
 } from './lib/debt-memory.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from './lib/learning/decision-logger.mjs';
+import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from './lib/learning/author-tier-observation.mjs';
+import { loadDomainRules as _loadDomainRules, computeTargetDomains as _computeTargetDomains } from './lib/symbol-index/domain-tagger.mjs';
 import { PromptBandit, computeReward, buildContext } from './bandit.mjs';
 import { openaiConfig, PASS_NAMES, modelPricing, azureConfig } from './lib/config.mjs';
 import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey } from './lib/model-resolver.mjs';
@@ -2867,6 +2869,37 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
         outcome: null,
       });
     } catch { /* validation failure — best-effort telemetry */ }
+  }
+
+  // model-tier-observation (docs/plans/model-tier-observation.md) — author_tier
+  // telemetry.  Observation-ONLY: records aggregates-only scope signals × the
+  // heuristic suggested tier × the (optional) declared author tier + ladder
+  // partition key × this round's converged outcome.  NOTHING reads these to
+  // route.  Per-round audit-bound key (mirrors convergence_predict above);
+  // run-level rounds-to-converge derives at read.  Skip when nothing was
+  // authored (no changed files).  Best-effort — never blocks the audit.
+  if (cloudRunId && Array.isArray(changedFiles) && changedFiles.length > 0) {
+    try {
+      let domains = [];
+      try {
+        // resolved domain tags (aggregates-only); absent/invalid map → no signal
+        domains = _computeTargetDomains(changedFiles, _loadDomainRules(process.cwd())).domains || [];
+      } catch { /* domain-map absent or invalid — proceed without domain signal */ }
+      const signals = _deriveTierSignals({ changedFiles, domains, diffLines: diffLinesChanged ?? 0 });
+      const highCount   = allFindings.filter(f => f.severity === 'HIGH').length;
+      const mediumCount = allFindings.filter(f => f.severity === 'MEDIUM').length;
+      const quickFix    = allFindings.filter(f => f.is_quick_fix).length;
+      // converged = the same quality threshold /audit-code gates on, this round
+      const converged   = highCount === 0 && mediumCount <= 2 && quickFix === 0;
+      _learningRecordDecision(_buildAuthorTierObservation({
+        runId: cloudRunId,
+        round: round || 1,
+        signals,
+        converged,
+        authorTierHint: process.env.AUDIT_AUTHOR_TIER_HINT || null,
+        repoId: cloudRepoId,
+      }));
+    } catch { /* validation/record failure — best-effort telemetry */ }
   }
 
   // Phase 5b: Finalise cloud run record with counts + run metadata

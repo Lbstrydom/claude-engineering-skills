@@ -1,5 +1,37 @@
 # Project Status Log
 
+## 2026-06-15 — Model-tier observation (provider-agnostic, observation-only) — `/cycle code --autonomous`
+
+### Changes
+- Shipped `docs/plans/model-tier-observation.md` (Clusters A+B) — **instrument before
+  routing**: capture, per audit round, aggregates-only scope signals × a heuristic
+  suggested tier × the (optional) declared author tier + a cross-model-bias **ladder
+  partition key** × this round's converged outcome. **Nothing routes on it** — a future
+  data-gated phase consumes the rows via replay.
+- **Cluster A (pure)** — `scripts/lib/model-resolver.mjs`: `LOGICAL_TIERS`, `TIER_MAP`
+  (deep-frozen), `tierForModel`/`sentinelForTier`/`describeModel`/`parseAnyModel`,
+  provider-agnostic `{economy,standard,frontier}` with the OpenAI standard≡frontier
+  collapse; deprecated-id remap applied before classification (partition-key consistency).
+  `scripts/lib/learning/author-tier-observation.mjs` (new): `deriveSignals`
+  (aggregates-only — raw paths consumed + discarded), `suggestTier`, `normalizeTierHint`,
+  `buildAuthorTierObservation` (audit-bound per-round key, Zod-validated, egress-safe).
+- **Cluster B (wiring + docs)** — `scripts/openai-audit.mjs`: per-round `author_tier`
+  recorder next to `convergence_predict` (best-effort, never blocks, skip-on-no-changes).
+  `decision-logger.mjs`: `author_tier` decision type + key-field type/range/delimiter
+  validation + `resolveQueueCap` config validation. §11 advisory `author-tier:` hint
+  documented in `skills/{plan,audit-plan,cycle}` (observation-only; never gates/routes).
+- New env var `AUDIT_AUTHOR_TIER_HINT` (observation-only); documented in AGENTS.md.
+
+### Audit
+- Cluster A converged at R4 (H:0 M:2 QF:0; fix-gate yes) — 2 MEDIUMs deferred with
+  documented independence (decision-logger generics author_tier doesn't exercise).
+- Consolidated Gemini gate over the union diff: coherence **Strong**, 0 over-engineering;
+  R1 camelCase/PascalCase `SECURITY_PATH_RE` gap fixed; R2 (cap) — wrongly-dismissed
+  parser claim empirically refuted + `authentication`/`authorization` keywords added.
+- Full suite: **3546 pass, 0 fail, 20 skipped**.
+
+---
+
 ## 2026-06-15 — Shared-env loading root-fix + cache-seed experiment record (`/cycle --autonomous`)
 
 ### Changes

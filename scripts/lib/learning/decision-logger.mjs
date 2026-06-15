@@ -18,8 +18,36 @@ import crypto from 'node:crypto';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-const PER_TYPE_QUEUE_CAP = parseInt(process.env.LEARNING_QUEUE_CAP_PER_TYPE || '64', 10);
+const DEFAULT_QUEUE_CAP = 64;
+// Validate strictly: an un-checked parseInt accepts `NaN`/`0`/negative/`"10abc"`,
+// and `queue.length >= NaN` is ALWAYS false → the cap silently disappears and
+// every queue grows unbounded (audit finding). Accept only a finite positive
+// safe integer; otherwise warn once and fall back to the documented default.
+function resolveQueueCap(raw) {
+  if (raw === undefined || raw === null || raw === '') return DEFAULT_QUEUE_CAP;
+  const n = Number(raw); // Number() rejects "10abc" as NaN (parseInt would accept 10)
+  if (!Number.isSafeInteger(n) || n < 1) {
+    process.stderr.write(
+      `  [decision-logger] WARNING: LEARNING_QUEUE_CAP_PER_TYPE="${raw}" is not a positive integer; ` +
+      `falling back to ${DEFAULT_QUEUE_CAP}.\n`
+    );
+    return DEFAULT_QUEUE_CAP;
+  }
+  return n;
+}
+const PER_TYPE_QUEUE_CAP = resolveQueueCap(process.env.LEARNING_QUEUE_CAP_PER_TYPE);
 const OUTBOX_DIR_DEFAULT = '.audit/learning-outbox';
+
+// Decision-key field predicates — the single source of truth shared by
+// validateInput() and buildDecisionKey() so the validation gate and the key
+// builder agree byte-for-byte on what a well-formed key field is (audit R3-H).
+// A clean key string is a non-empty trimmed string with NO ':' — the key
+// delimiter. Rejecting ':' in caller-controlled id components stops a component
+// from forging extra key segments and colliding with a different decision
+// (audit R4 delimiter-injection finding). decisionType is separately constrained
+// to VALID_DECISION_TYPES (also colon-free), so the joined key is unambiguous.
+const _isNonEmptyString = (v) => typeof v === 'string' && v.trim() !== '' && !v.includes(':');
+const _isKeyInt = (v) => Number.isSafeInteger(v) && v >= 0;
 
 /**
  * Read CI flag at CALL TIME (not module-load time) so tests can toggle the
@@ -38,6 +66,7 @@ const VALID_DECISION_TYPES = Object.freeze([
   'auto_deferral',
   'needs_triage_route',
   'quickfix_hit',
+  'author_tier',
 ]);
 
 const STDERR_WARN_THROTTLE_MS = 1000;
@@ -100,11 +129,15 @@ function validateInput(input) {
   }
 
   // Schema CHECK: either fully audit-bound OR has external_id.  Mirror of the
-  // SQL constraint `decision_key_audit_or_external`.
-  const auditBound = auditRunId && Number.isInteger(round) && Number.isInteger(sequence);
-  if (!auditBound && !externalId) {
+  // SQL constraint `decision_key_audit_or_external`.  Key fields are validated
+  // by TYPE + RANGE (not just truthiness) — a malformed auditRunId or a
+  // negative/non-integer counter would produce a colliding or unstable
+  // persistence key (audit R3-H).
+  const auditBound = _isNonEmptyString(auditRunId) && _isKeyInt(round) && _isKeyInt(sequence);
+  const externalBound = _isNonEmptyString(externalId);
+  if (!auditBound && !externalBound) {
     throw new DecisionLoggerError(
-      'must provide either (auditRunId, round, sequence) OR externalId',
+      'must provide either (auditRunId:non-empty-string + round/sequence:non-negative-int) OR externalId:non-empty-string',
       'BAD_INPUT'
     );
   }
@@ -120,10 +153,17 @@ function validateInput(input) {
 // decisions and the stored-procedure-internal builder agree byte-for-byte.
 
 export function buildDecisionKey({ decisionType, auditRunId, round, sequence, externalId }) {
-  if (auditRunId && Number.isInteger(round) && Number.isInteger(sequence)) {
+  // decisionType must be a known, colon-free type even on the direct-call path
+  // (recordDecision validates it upstream; this guards independent callers — audit R4).
+  if (!VALID_DECISION_TYPES.includes(decisionType)) {
+    throw new DecisionLoggerError(`unknown decisionType: ${decisionType}`, 'BAD_INPUT');
+  }
+  // Same type+range gate as validateInput (shared predicates) so the builder
+  // never emits a key from malformed fields even if called directly (audit R3-H).
+  if (_isNonEmptyString(auditRunId) && _isKeyInt(round) && _isKeyInt(sequence)) {
     return `${auditRunId}:${decisionType}:r${round}:s${sequence}`;
   }
-  if (externalId) {
+  if (_isNonEmptyString(externalId)) {
     return `${decisionType}:${externalId}`;
   }
   throw new DecisionLoggerError('cannot build decision_key from input', 'BAD_INPUT');
@@ -487,6 +527,9 @@ export function _resetForTest() {
   _hooksInstalled = false;
   _resolvedStore = null;
 }
+
+// Exposed for unit tests (queue-cap validation) — see audit R3-M config finding.
+export { resolveQueueCap as _resolveQueueCap };
 
 export function _getStateForTest() {
   return {
