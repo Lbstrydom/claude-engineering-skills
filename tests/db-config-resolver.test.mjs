@@ -14,13 +14,19 @@ import { getPool, _resetForTest } from '../scripts/lib/db/client.mjs';
 
 const ENV_KEYS = [
   'AUDIT_DB_URL',
+  'AUDIT_POSTGRES_URL',
   'AUDIT_DB_SSL_MODE',
+  'AUDIT_POSTGRES_SSL_MODE',
   'AUDIT_DB_POOL_MAX',
   'AUDIT_DB_SCHEMA',
   'AUDIT_POSTGRES_SCHEMA',
   'SUPABASE_AUDIT_URL',
   'SUPABASE_AUDIT_ANON_KEY',
   'SUPABASE_AUDIT_SERVICE_ROLE_KEY',
+  // resolveDbUrl() now loads the shared ~/.audit-loop.env layer (reader-fix).
+  // Disable it so these resolver tests stay hermetic against the operator's
+  // real shared file; manage the key so afterEach restores it.
+  'AUDIT_LOOP_DISABLE_SHARED',
 ];
 
 let snapshot;
@@ -32,6 +38,9 @@ beforeEach(async () => {
     snapshot[k] = process.env[k];
     delete process.env[k];
   }
+  // Hermetic: block the shared-env layer so resolveDbUrl reads only what each
+  // case sets in process.env.
+  process.env.AUDIT_LOOP_DISABLE_SHARED = '1';
 });
 
 afterEach(async () => {

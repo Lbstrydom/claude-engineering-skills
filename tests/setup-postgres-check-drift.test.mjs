@@ -445,7 +445,11 @@ function spawnNode(args, { stripDbUrl = false } = {}) {
   const env = { ...process.env };
   if (stripDbUrl) {
     delete env.AUDIT_DB_URL;
+    delete env.AUDIT_POSTGRES_URL;
     delete env.SUPABASE_AUDIT_URL;
+    // resolveDbUrl() now loads the shared ~/.audit-loop.env layer in the child;
+    // disable it so "AUDIT_DB_URL unset" genuinely reaches the cloud-off path.
+    env.AUDIT_LOOP_DISABLE_SHARED = '1';
   }
   const r = spawnSync(process.execPath, ['scripts/setup-postgres.mjs', ...args], {
     cwd: REPO_ROOT,

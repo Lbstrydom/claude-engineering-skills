@@ -27,6 +27,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { loadSharedEnv } from '../load-shared-env.mjs';
 
 // ── pg type-parser OIDs (timestamps + dates → string, not Date) ────────────
 // These are the canonical Postgres OIDs the `pg` driver receives for the
@@ -89,6 +90,13 @@ export function _resetAliasWarnings() {
 }
 
 export function resolveDbUrl() {
+  // Guarantee the shared-env precondition at the single DSN reader: load the
+  // shared `~/.audit-loop.env` layer here, so cloud connectivity no longer
+  // depends on some entrypoint having imported config.mjs first. `includeCwd:
+  // false` — the cwd `.env` is the entrypoint's job (every real CLI does
+  // `import 'dotenv/config'`/config.mjs first); the bug was only the missing
+  // shared layer. Sync + idempotent + latched → no-op after the first call.
+  loadSharedEnv({ includeCwd: false });
   const canonical = (process.env.AUDIT_DB_URL || '').trim();
   const alias = (process.env.AUDIT_POSTGRES_URL || '').trim();
   // Canonical wins when both set; warn whenever the alias contributes.
@@ -212,6 +220,11 @@ export async function getPool() {
   if (_initPromise) return _initPromise;
 
   _initPromise = (async () => {
+    // Load the shared-env layer BEFORE any env read in this init path
+    // (assertPublicSchema reads AUDIT_DB_SCHEMA), so every getPool() env read
+    // sees the same resolved layers. Idempotent + latched → resolveDbUrl()'s
+    // own call below is a no-op.
+    loadSharedEnv({ includeCwd: false });
     assertPublicSchema();
     const url = resolveDbUrl();
     if (!url) return null;

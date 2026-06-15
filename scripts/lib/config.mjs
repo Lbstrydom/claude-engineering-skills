@@ -5,55 +5,20 @@
  * @module scripts/lib/config
  */
 
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { safeInt } from './file-io.mjs';
 import { resolveModel, isSentinel } from './model-resolver.mjs';
+import { loadSharedEnv } from './load-shared-env.mjs';
 
-// ── .env Discovery (worktree-safe) ──────────────────────────────────────────
-
-// R1-audit M9/M11/M15: ONE walk-up + git-root resolver lives in
-// scripts/lib/shared-cloud-config.mjs (`discoverLocalEnvPath`). This function
-// is a thin adapter that sets the `DOTENV_CONFIG_PATH` env var as a side
-// effect for `dotenv.config()` to pick up — that side-effect is config.mjs-
-// specific, hence the wrapper. Resolution rule itself is shared.
-import { discoverLocalEnvPath } from './shared-cloud-config.mjs';
-function discoverDotenv() {
-  if (process.env.DOTENV_CONFIG_PATH) return;
-  const found = discoverLocalEnvPath();
-  if (found) process.env.DOTENV_CONFIG_PATH = found;
-}
-
-// Run discovery then load .env (uses dotenv package directly, not 'dotenv/config')
-discoverDotenv();
-import dotenv from 'dotenv';
-dotenv.config({ path: process.env.DOTENV_CONFIG_PATH || '.env', quiet: true });
-
-// ── Shared cross-repo cloud config (Layer 2) ───────────────────────────────
-// Per docs/plans/shared-cloud-config.md: ~/.audit-loop.env is a per-user
-// shared file holding DSN + LLM keys. Consumer repos auto-inherit. Silent
-// when absent; one-time stderr note when present + set ≥1 var. Layer 1
-// (cwd .env above) wins via override:false.
-//
-// Hermeticity escape hatch: `AUDIT_LOOP_DISABLE_SHARED=1` skips the autoload
-// entirely. Used by test helpers (`tests/cross-skill-persona.test.mjs`
-// runCli) so the operator's actual `~/.audit-loop.env` doesn't leak into
-// the subprocess and make "cloud unavailable" tests pass cloud-data through.
-const SHARED_CLOUD_ENV = path.join(os.homedir(), '.audit-loop.env');
-if (process.env.AUDIT_LOOP_DISABLE_SHARED !== '1' && fs.existsSync(SHARED_CLOUD_ENV)) {
-  const before = new Set(Object.keys(process.env));
-  dotenv.config({ path: SHARED_CLOUD_ENV, override: false, quiet: true });
-  const added = Object.keys(process.env).filter(k => !before.has(k));
-  if (added.length > 0 && process.env._AUDIT_LOOP_SHARED_LOADED !== '1') {
-    process.stderr.write(
-      `  [config] loaded shared cloud config from ~/.audit-loop.env (sets: ${added.join(', ')})\n`
-    );
-    // Sentinel propagates to spawned subprocesses (env inherits) so each
-    // child doesn't re-log the same notice.
-    process.env._AUDIT_LOOP_SHARED_LOADED = '1';
-  }
-}
+// ── Environment layering (worktree-safe) ────────────────────────────────────
+// All env loading now lives in ONE place: load-shared-env.mjs. It layers the
+// cwd/git-root `.env` then the per-user shared `~/.audit-loop.env`
+// (`override:false`, gated by `AUDIT_LOOP_DISABLE_SHARED=1`), with the DB-group
+// provenance guard. The SAME loader is called at the DB-URL reader
+// (`db/client.mjs::resolveDbUrl`) so the shared DSN resolves regardless of
+// entrypoint — not just when config.mjs happens to be imported. Calling it at
+// config.mjs module-load preserves the prior behaviour for every config reader
+// below.
+loadSharedEnv();
 
 // ── Validation helpers ──────────────────────────────────────────────────────
 

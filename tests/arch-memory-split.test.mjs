@@ -105,17 +105,26 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
   // Force cloud-disabled by unsetting the env + draining the cached pool
   // before each subtest; restore after. This isolates the neutral-value
   // contract from whatever cloud state the developer's .env has.
-  let savedAuditDbUrl;
+  // resolveDbUrl() now reads the canonical DSN, its deprecated alias, AND the
+  // AUDIT_STORE signal, plus loads the shared ~/.audit-loop.env layer. Unset ALL
+  // of them (+ disable the shared layer) so cloud is genuinely off here.
+  const CLOUD_OFF_KEYS = ['AUDIT_DB_URL', 'AUDIT_POSTGRES_URL', 'AUDIT_STORE'];
+  const saved = {};
 
   before(async () => {
-    savedAuditDbUrl = process.env.AUDIT_DB_URL;
-    delete process.env.AUDIT_DB_URL;
+    saved.disableShared = process.env.AUDIT_LOOP_DISABLE_SHARED;
+    for (const k of CLOUD_OFF_KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+    process.env.AUDIT_LOOP_DISABLE_SHARED = '1';
     await closePool();  // drop any pool the prior tests may have created
   });
 
   after(async () => {
     await closePool();  // drop the no-pool we may have created during these tests
-    if (savedAuditDbUrl !== undefined) process.env.AUDIT_DB_URL = savedAuditDbUrl;
+    for (const k of CLOUD_OFF_KEYS) {
+      if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k];
+    }
+    if (saved.disableShared === undefined) delete process.env.AUDIT_LOOP_DISABLE_SHARED;
+    else process.env.AUDIT_LOOP_DISABLE_SHARED = saved.disableShared;
   });
 
   test('getRefreshRun returns null when cloud-off', async () => {

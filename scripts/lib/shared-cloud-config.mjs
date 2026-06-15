@@ -33,6 +33,21 @@ export const SHARED_VARS = Object.freeze([
 // REQUIRED_VAR is missing from source.
 export const REQUIRED_VARS = Object.freeze(['AUDIT_DB_URL']);
 
+// Single source of truth for the "DB connection group" — every env var that
+// `db/client.mjs` (resolveDbUrl + buildPoolConfig) consumes to build a pool.
+// `load-shared-env.mjs` reads this so the shared layer treats DB config as one
+// provenance-keyed bundle (a higher layer's DSN → shared contributes none of
+// these). Defined here (a leaf module imported by both load-shared-env and the
+// db client) to avoid duplicating the key set and to dodge a load-shared-env ↔
+// client.mjs import cycle. DSN_GROUP_KEYS is the subset that resolveDbUrl reads
+// as the URL (canonical + deprecated alias).
+export const DSN_GROUP_KEYS = Object.freeze(['AUDIT_DB_URL', 'AUDIT_POSTGRES_URL']);
+export const DB_GROUP_KEYS = Object.freeze([
+  ...DSN_GROUP_KEYS,
+  'AUDIT_DB_SSL_MODE', 'AUDIT_POSTGRES_SSL_MODE',
+  'AUDIT_DB_POOL_MAX',
+]);
+
 // Outcome model — single source of truth for both assess + execute + CLI exit.
 export const OUTCOMES = Object.freeze({
   CREATED:         'created',          // file didn't exist; we wrote it
