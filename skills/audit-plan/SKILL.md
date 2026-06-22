@@ -134,6 +134,21 @@ A `defer` of an `out-of-scope` finding must name the **independence** in its
 rationale (one sentence: the plan's design does not depend on the cited
 concern). If you can't write it truthfully, it's load-bearing → fold it in.
 
+### Grounding rubric (is the plan traced to real code?)
+
+The whole plan file is in context — no new machinery. Check that **§1's Code
+Trace** evidences Phase 1 actually happened: on a **non-trivial** plan (§7b
+Gate-1 class — ≥6 files, ≥2 subsystems, a dependency chain, or >1 sitting),
+the Context Summary must cite concrete `file_path:line` refs and a call path,
+not a hand-waved "the codebase does X." An **absent, empty, or generic** Code
+Trace on a non-trivial plan is a **HIGH finding** — `ungrounded-plan` — because
+every downstream claim about "what exists today" is then unverified, and the
+falsehood won't surface until code-audit runs against an implementation (far
+too late). Where a "what exists today" assertion drives a design decision,
+spot-check that the cited path plausibly supports it; a design built on a
+mis-described existing contract is HIGH regardless of trace presence. Trivial
+single-file plans are exempt (a bare `Code Trace: <file>` is fine).
+
 ### Execution-clustering rubric (when the plan has a §11 block)
 
 The whole plan file is already in the GPT/Gemini context, so no new

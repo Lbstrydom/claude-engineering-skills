@@ -397,6 +397,15 @@ Structure ONE consolidated output document. Section presence depends on scope:
 #### 1. Context Summary
 - Detected scope + stack + Python framework (one line)
 - What exists today (Phase 1)
+- **Code Trace** — the evidence that Phase 1 actually happened. Cite the
+  `file_path:line` refs you read and the call path you followed (e.g.
+  `route handler `api/wines.js:42` → `wineService.add()` `services/wine.js:88`
+  → `db.insert` `db/wines.js:15``). Required on any **non-trivial** plan (the
+  §7b Gate-1 trigger class: ≥6 files, ≥2 subsystems, a dependency chain, or
+  >1 sitting of work). Trivial single-file plans may write `Code Trace: <file>`
+  and move on. An absent or hand-waved trace on a non-trivial plan means the
+  design is ungrounded — go back to Phase 1. This bullet makes "trace before
+  designing" leave a footprint instead of being an honour-system instruction.
 - Patterns reused vs new
 - Known user-visible issues (if persona data + frontend scope)
 - Neighbourhood considered (if Phase 0.5 fired with results)
@@ -588,7 +597,7 @@ Update status as implementation progresses.
 ## Reminders
 
 - **Detect scope first** — Phase 0 is load-bearing; the rest of the flow keys off it
-- **Explore before proposing** — codebase is ground truth, not assumptions
+- **Explore before proposing** — codebase is ground truth, not assumptions; §1's **Code Trace** is the artifact that proves you did (required on non-trivial plans)
 - **Name the principles** — every design choice cites which principle(s) it serves (#N)
 - **One document, one audit** — no merging child plans, no archive cruft
 - **Section 10 acceptance criteria is the ship gate** for frontend/full-stack — `/ux-lock verify` grades against these
