@@ -1,7 +1,12 @@
 # Plan: Learning-Store Signal Recovery — Identity, Outcomes, Dead Loops
 
 - **Date**: 2026-06-03
-- **Status**: In Progress (A applied 2026-06-03; B+C landed 2026-06-04; D all 3 panels landed 2026-06-04 — bandit + ship-health + audit-effectiveness; per-repo Audit Runs tab refinement landed 2026-06-04; remaining: the two determinism follow-ups — outcome-capture run-unification + deterministic ux-lock runners)
+- **Status**: **Complete** (Clusters A–D landed 2026-06-03/04 with their own
+  2-round Gemini gate; the sole remaining tail — the two determinism follow-ups
+  — shipped 2026-06-22 as `docs/completed/determinism-follow-ups.md`: WS1
+  run-unification + finalize-outcomes `8248429`, WS2 deterministic ux-lock
+  runners `b691717`). Two follow-ups remain tracked but OUT OF SCOPE here — see
+  the close-out note below.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `audit-orchestration`, `cross-skill-bridge`, `shared-lib`, `stores`, `scripts`
@@ -474,3 +479,33 @@ symbol index + dashboard, run the suite.
   indefinitely" rule; remaining surface is implementation-time detail, each item
   captured above as an explicit design clause (Gemini-G1/G2/G3). Architectural
   coherence rated **Strong** by Gemini both rounds.
+
+---
+
+## Close-out (2026-06-22)
+
+All seven breaks (B1–B7) are addressed and shipped. The plan's remaining tail —
+the two determinism follow-ups carved out into
+`docs/completed/determinism-follow-ups.md` — landed today:
+
+- **WS1** (`8248429`) — one unified `run_id` across audit rounds +
+  `finalize-outcomes` deterministic capture (closes B2's *deterministic*
+  invocation: `write-code-outcomes` was made runnable in Cluster B, but capture
+  was still model-remembered until WS1's finalize hook).
+- **WS2** (`b691717`) — deterministic `/ux-lock` runner that writes
+  `regression_spec_runs` / `plan_verification_*` without the model (activates
+  the B5 cross-skill writers from runner code, not skill prose).
+
+### Tracked follow-ups (deliberately OUT OF SCOPE — not new phases)
+
+1. **`resolveRepoId` transient fail-open** (surfaced by WS1's Gemini gate). On a
+   *transient* DB error resolving an explicit `repoUuid`, `resolveRepoId` /
+   `getRepoIdByUuid` swallow the error and return `null` → an unscoped
+   (`repo_id` null) cross-skill write — the same transient-vs-absent bug class
+   WS1 fixed in the audit_pass_stats / classification column probes. Independent
+   of WS1/WS2's paths (finalize keys on `run_id`); worth a small standalone fix
+   applying the same 42703-vs-transient distinction to the repo resolver.
+2. **Bandit "keep vs simplify"** (already noted in §8) — data-gated, NOT
+   foldable here: it needs ≥30 days of the clean labeled data this plan restores
+   before the Thompson-vs-fixed-best call can be made on real
+   `audit_effectiveness` signal.
