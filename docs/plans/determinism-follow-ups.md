@@ -561,3 +561,30 @@ Phase 1's committed store code is verified, not rebuilt.
   validation). The DB-level "3-round ⇒ 1 run" reuse is store-integration,
   env-gated like `learning-store-phase1.test.mjs`, not unit-mocked.
   `learning-store-exports.test.mjs` pin updated (+2 exports → 125).
+- **Gemini final gate (WS1 diff) — CONCERNS_REMAINING R1, deliberated**:
+  - **H2 (Gemini-correct, fixed)**: `recordRunStart` reuse was NOT repo-scoped.
+    The store is single-tenant but **multi-repo**; a mis-threaded `run_id` could
+    attach findings to another repo's run. Reuse now checks `repo_id` and
+    refuses a cross-repo id. (My R1 "single-tenant ⇒ n/a" dismissal was wrong —
+    single-tenant ≠ single-repo.)
+  - **M6 (fixed)**: capability probes now retry once on a transient error before
+    degrading and cache only an authoritative result (`probeColumn` helper) — a
+    DB blip no longer mislabels one pass-stat row as round 1.
+  - **H3 (deferred — independent, CAPTURED not dropped)**: `resolveRepoId` is
+    fail-open on a *transient* lookup failure (same bug class as the probes),
+    returning `null` → an unscoped (`repo_id` null) cross-skill write. WS1's
+    `finalize-outcomes` does NOT call `resolveRepoId` (it keys on `run_id` +
+    `auditRunExists`), so it is genuinely independent of WS1. **Follow-up
+    (pre-existing, separate fix)**: apply the same transient-vs-absent
+    distinction to `resolveRepoId`/`getRepoIdByUuid` so a DB blip on an explicit
+    `repoUuid` doesn't silently downgrade to an unscoped write.
+  - **Gemini R2 (CONCERNS, 0 wrongly-dismissed — deliberation accepted)**: caught
+    a **genuine consistency bug** — the `23505` race-fallback (the M4 fix) reused
+    a run row WITHOUT the repo_id check just added to the primary path. Fixed:
+    both reuse paths are now repo-scoped. Also added `42P01` (undefined_table) to
+    `isUndefinedColumnError` (a missing table ⇒ column definitively absent). The
+    remaining R2 LOW (`CRITERION_RE` single-line capture in
+    `plan-criteria-parser.mjs`) is **Cluster B / WS2 code** — out of WS1 scope,
+    addressed there. WS1 stops at the 2-round Gemini cap with only that
+    out-of-scope LOW residual (documented stop rule: genuine bugs fixed,
+    remainder is out-of-scope, not rigor-pressure churn).

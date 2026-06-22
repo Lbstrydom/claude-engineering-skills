@@ -36,7 +36,13 @@ import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
  * process (M3/M5).
  */
 function isUndefinedColumnError(err) {
-  return !!err && (err.code === '42703' || /column .* does not exist/i.test(err.message || ''));
+  // 42703 undefined_column AND 42P01 undefined_table both mean the probed
+  // column is definitively unavailable (a missing table can't have the column)
+  // — either is an authoritative "absent", distinct from a transient blip.
+  return !!err && (
+    err.code === '42703' || err.code === '42P01'
+    || /column .* does not exist|relation .* does not exist/i.test(err.message || '')
+  );
 }
 
 // Cached classification-column probe (column shape doesn't change mid-run).
@@ -47,28 +53,43 @@ export function _resetClassificationColumnCache() {
   _hasClassificationColumns = null;
 }
 
+/**
+ * Run a 0-row column probe with ONE retry on a transient error. Returns
+ * `{ present, definitive }`: `definitive` is true only when the result is
+ * authoritative — the column was confirmed present (probe succeeded) OR a
+ * `42703` confirmed it absent. A transient/unexpected failure (after the
+ * retry) yields `{ present:false, definitive:false }`, so the caller falls
+ * back columnless for THIS call WITHOUT caching the negative — one DB blip can
+ * never poison the cached column state for the process, and the retry absorbs
+ * most blips before they degrade a single write (M3/M5/M6).
+ */
+async function probeColumn(sql) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await many(sql);
+      return { present: true, definitive: true };
+    } catch (err) {
+      if (isUndefinedColumnError(err)) return { present: false, definitive: true };
+      if (attempt === 0) continue; // transient — retry once before degrading
+      process.stderr.write(`  [learning] column probe failed transiently (${err.code || err.message}); columnless for this call\n`);
+      return { present: false, definitive: false };
+    }
+  }
+  return { present: false, definitive: false };
+}
+
 async function detectClassificationColumns() {
   if (_hasClassificationColumns !== null) return _hasClassificationColumns;
   if (!await isCloudEnabled()) {
     _hasClassificationColumns = false;
     return false;
   }
-  try {
-    // Probe with a 0-row SELECT — succeeds if the column exists.
-    await many(`SELECT sonar_type FROM audit_findings LIMIT 0`);
-    _hasClassificationColumns = true;
-  } catch (err) {
-    if (!isUndefinedColumnError(err)) {
-      // Transient/unexpected — do NOT cache the negative; a later call retries.
-      // Fall back to columnless for THIS write only (safe), without committing
-      // the false result for the process.
-      process.stderr.write(`  [learning] classification-column probe failed transiently (${err.code || err.message}); will retry\n`);
-      return false;
-    }
-    _hasClassificationColumns = false; // genuinely absent (42703) — cache it
-    process.stderr.write('  [learning] classification columns not present — run migration to enable\n');
+  const { present, definitive } = await probeColumn(`SELECT sonar_type FROM audit_findings LIMIT 0`);
+  if (definitive) {
+    _hasClassificationColumns = present; // cache only an authoritative result
+    if (!present) process.stderr.write('  [learning] classification columns not present — run migration to enable\n');
   }
-  return _hasClassificationColumns;
+  return present;
 }
 
 // Cached probe for the run-unification `audit_pass_stats.round` column
@@ -89,19 +110,12 @@ async function detectPassStatsRoundColumn() {
     _hasPassStatsRoundColumn = false;
     return false;
   }
-  try {
-    await many(`SELECT round FROM audit_pass_stats LIMIT 0`);
-    _hasPassStatsRoundColumn = true;
-  } catch (err) {
-    if (!isUndefinedColumnError(err)) {
-      // Transient/unexpected — don't poison the cache; retry on the next call.
-      process.stderr.write(`  [learning] pass_stats.round probe failed transiently (${err.code || err.message}); will retry\n`);
-      return false;
-    }
-    _hasPassStatsRoundColumn = false; // genuinely absent (42703) — cache it
-    process.stderr.write('  [learning] audit_pass_stats.round not present — run migration 20260605120000 for per-round pass telemetry\n');
+  const { present, definitive } = await probeColumn(`SELECT round FROM audit_pass_stats LIMIT 0`);
+  if (definitive) {
+    _hasPassStatsRoundColumn = present; // cache only an authoritative result
+    if (!present) process.stderr.write('  [learning] audit_pass_stats.round not present — run migration 20260605120000 for per-round pass telemetry\n');
   }
-  return _hasPassStatsRoundColumn;
+  return present;
 }
 
 // ── audit_runs ─────────────────────────────────────────────────────────────
@@ -120,8 +134,21 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
   // before (mint a fresh row).
   if (runId) {
     try {
-      const existing = await one(`SELECT id FROM audit_runs WHERE id = $1`, [runId]);
-      if (existing?.id) return existing.id; // reuse — do not re-insert
+      const existing = await one(`SELECT id, repo_id FROM audit_runs WHERE id = $1`, [runId]);
+      if (existing?.id) {
+        // Repo-scoped reuse (Gemini H2): the store is single-TENANT but
+        // multi-REPO — many consumer repos share it. A run_id must belong to
+        // THIS audit's repo; reusing a row whose repo_id differs would attach
+        // these findings to another repo's run. A randomUUID run_id never
+        // legitimately collides across repos, so a mismatch means a
+        // mis-threaded id — refuse to reuse (return null → the audit proceeds
+        // cloud-degraded rather than corrupting another repo's run).
+        if (existing.repo_id && repoId && existing.repo_id !== repoId) {
+          process.stderr.write(`  [learning] recordRunStart: run_id ${runId} belongs to a different repo — refusing reuse\n`);
+          return null;
+        }
+        return existing.id; // reuse — do not re-insert
+      }
     } catch (err) {
       process.stderr.write(`  [learning] recordRunStart reuse-probe failed: ${err.message}\n`);
       // fall through to insert with the explicit id
@@ -153,8 +180,13 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
     // existing row instead of failing, so reuse never creates a second row and
     // never returns null for a run that actually exists.
     if (runId && err?.code === '23505') {
-      const existing = await one(`SELECT id FROM audit_runs WHERE id = $1`, [runId]).catch(() => null);
-      if (existing?.id) return existing.id;
+      const existing = await one(`SELECT id, repo_id FROM audit_runs WHERE id = $1`, [runId]).catch(() => null);
+      // Same repo-scoped guard as the primary reuse path (Gemini R2): never
+      // reuse a row that raced in for a DIFFERENT repo — that would attach this
+      // audit's findings to another repo's run.
+      if (existing?.id && (!existing.repo_id || !repoId || existing.repo_id === repoId)) {
+        return existing.id;
+      }
     }
     process.stderr.write(`  [learning] recordRunStart failed: ${err.message}\n`);
     return null;
