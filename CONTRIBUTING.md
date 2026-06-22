@@ -24,7 +24,7 @@ node --test tests/install/*.test.mjs        # Installer tests only
 ## Project Structure
 
 - `skills/` -- **canonical source of truth** for all 6 skill directories. Edit only here.
-- `.claude/skills/` + `.github/skills/` -- **generated copies** — NEVER edit directly. Run `npm run skills:regenerate`.
+- `.claude/skills/` -- **generated copy** — NEVER edit directly. Run `npm run skills:regenerate`.
 - `scripts/` -- CLI tools and core audit-loop scripts
 - `scripts/lib/` -- focused modules (schemas, file-io, stores, skill-packaging, skill-refs-parser, repo-stack)
 - `tests/` -- Node.js built-in test runner

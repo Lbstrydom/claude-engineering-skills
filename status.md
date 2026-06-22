@@ -1,5 +1,27 @@
 # Project Status Log
 
+## 2026-06-22 — Remove deprecated `.github/skills/` mirror
+
+### Changes
+- Deleted the tracked `.github/skills/` directory (26 files, 6 skills — a stale
+  *partial* mirror vs the 13 live skills in `.claude/skills/`). No documented tool
+  reads it (Copilot reads `.github/prompts/` + `.github/copilot-instructions.md` +
+  `AGENTS.md`; Claude reads `.claude/skills/`). Decommissioned in Phase 4 of
+  ai-context-sync; this removes the orphan the `regenerate-skill-copies --check`
+  deprecation warning kept flagging.
+- Verified safe before deleting: `regenerate-skill-copies.mjs` only includes
+  `.github/skills/` in `DEST_ROOTS` under `--keep-github-skills` (not used in the
+  pre-push hook or sync), so `skills:check` is unaffected; the lone test reference
+  (`tests/install/receipt.test.mjs`) is a fixture string, not an on-disk dependency.
+- `CONTRIBUTING.md`: dropped `.github/skills/` from the "generated copies" line.
+- Full `npm run check` green afterward (3554 tests pass, context/skills/plans clean).
+
+### Files Affected
+- `.github/skills/**` — deleted (26 files)
+- `CONTRIBUTING.md` — generated-copies line now lists only `.claude/skills/`
+
+---
+
 ## 2026-06-22 — GitHub Actions cost reduction (hit 100% of 3,000 included minutes)
 
 ### Changes
