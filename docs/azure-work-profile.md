@@ -8,7 +8,7 @@ drifting from the work repo.
 > `AZURE_OPENAI_ENDPOINT` is set. With no Azure env vars, the bundle behaves
 > byte-identically to the public profile (public OpenAI/Gemini/Anthropic +
 > whatever `AUDIT_DB_URL` points at). Plan + design rationale:
-> [`docs/plans/azure-work-profile.md`](plans/azure-work-profile.md).
+> [`docs/completed/azure-work-profile.md`](completed/azure-work-profile.md).
 
 ## What changes under the Azure profile
 

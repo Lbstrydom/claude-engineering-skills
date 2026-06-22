@@ -949,7 +949,7 @@ final review, to empirically test whether a second final gate is worth keeping.
 Run the **same** bundle in a corporate Azure environment (restricted models)
 without drifting from the public-profile repo. Full guide:
 [`docs/azure-work-profile.md`](docs/azure-work-profile.md); plan +
-audit trail: [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.md).
+audit trail: [`docs/completed/azure-work-profile.md`](docs/completed/azure-work-profile.md).
 
 > **Opt-in invariant (load-bearing).** The Azure path activates **only** when
 > `AZURE_OPENAI_ENDPOINT` is set. With no Azure env vars, client construction and
