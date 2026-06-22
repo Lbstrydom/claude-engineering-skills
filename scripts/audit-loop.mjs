@@ -16,6 +16,7 @@
  * Requires: OPENAI_API_KEY. Optional: GEMINI_API_KEY, ANTHROPIC_API_KEY, SUPABASE_AUDIT_URL.
  */
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -241,12 +242,20 @@ async function main() {
   const roundResults = [];
   let sessionId = null; // populated from R1 result._sid, passed to R2+
 
+  // Run-unification (WS1 Phase 1d): the orchestrator mints ONE run_id and
+  // threads it to every round's openai-audit invocation. recordRunStart reuses
+  // the row on rounds 2+ (idempotent reuse-probe), so all rounds of one audit
+  // share a single audit_runs row instead of inserting one per invocation.
+  // Cloud-off → the id is simply unused (recordRunStart no-ops). A purely local
+  // uuid needs no cloud. (docs/plans/determinism-follow-ups.md §1.2/§1.3b)
+  const auditRunId = randomUUID();
+
   while (round <= args.maxRounds) {
     const outFile = path.join(outDir, `${sid}-r${round}-result.json`);
     const stderrFile = path.join(outDir, `${sid}-r${round}-stderr.log`);
 
-    // Build audit args
-    const auditArgs = ['--out', outFile, '--round', String(round)];
+    // Build audit args — thread the unified run_id every round (Phase 1d)
+    const auditArgs = ['--out', outFile, '--round', String(round), '--run-id', auditRunId];
     if (round >= 2) {
       auditArgs.push('--ledger', ledgerFile);
 

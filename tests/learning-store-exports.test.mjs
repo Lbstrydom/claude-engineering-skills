@@ -151,6 +151,8 @@ const EXPECTED_EXPORTS = [
   // runs-findings extension
   'getAuditRunConvergence',
   'getRunFindingOutcomeCounts', // Cluster B / Phase 4 — pass_selection resolver input
+  'auditRunExists',             // determinism WS1 Phase 2 — finalize run-existence probe
+  'markRunFindingsNeedsTriage', // determinism WS1 Phase 2 — finalize reconciliation writeback
   // dashboard audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md)
   'getRunFindings',
   'getRunMeta',
@@ -216,6 +218,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 123);
+    assert.equal(EXPECTED_EXPORTS.length, 125);
   });
 });

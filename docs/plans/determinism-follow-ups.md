@@ -503,3 +503,61 @@ Final gate: one Gemini review over the union diff after both clusters.
 > the model-invocation dependency for audit outcome capture; WS2 removes it for
 > ux-lock spec/verify run capture. Together they close the "model-remembered
 > recording" class of learning-store data gaps.
+
+---
+
+## Implementation Log
+
+### 2026-06-22 — ground-truth reconciliation (start of autonomous /cycle)
+
+An inventory trace at the start of an autonomous `/cycle` run found the plan's
+status header (`ready to implement`) stale — a prior session built **Phase 1's
+store-layer capability and committed it**, but never wired it, wrote the
+finalize step, or started Cluster B, and never recorded any of it here.
+Corrected ground truth before resuming:
+
+| Unit | State on disk (HEAD `685570f`) |
+|---|---|
+| **Phase 1 store layer** — `recordRunStart` run_id reuse-probe; `audit_pass_stats.round` migration (`20260605120000`); `recordPassStats` round column-probe; `updatePassStatsPostDeliberation` `max(round)` WHERE (Gemini-R2-H1); `openai-audit` `--run-id` parse + `_cloudRunId` persist; `write-code-outcomes` reads `_cloudRunId` | **BUILT + committed** |
+| **Phase 1d** — orchestrator mints + threads `--run-id` across rounds (`audit-loop.mjs` / `/cycle` Step 3C) | **GAP** — `audit-loop.mjs` still spawns `openai-audit code` per round with no run-id; reuse capability never fires |
+| **Phase 2** — `finalize-outcomes` subcommand | **GAP** — absent |
+| **Phase 3** — finalize wiring + `tests/run-unification.test.mjs` | **GAP** — absent |
+| **Cluster B** (Phases 4–6) — `playwright-runner.mjs`, `ux-lock-run.mjs`, tests, skill/ship wiring | **GAP** — entirely absent |
+
+Remaining work this run = Phase 1d → 2 → 3 (Cluster A gaps) + all of Cluster B.
+Phase 1's committed store code is verified, not rebuilt.
+
+### 2026-06-22 — Cluster A build (Phases 1d–3)
+
+- **Phase 1d** — `audit-loop.mjs` mints ONE `run_id` (`randomUUID`) before the
+  round loop and threads `--run-id` to every `openai-audit` invocation. Verified
+  the per-round `recordRunComplete(rounds: round, …)` overwrite is safe under
+  reuse: the final round's call lands the correct aggregate (`rounds` = final
+  round count, `totalFindings` = converged set). **Right-sized deviation**:
+  `total_duration_ms` reflects the last round, not the sum — denormalized
+  telemetry, not gated by any §1.5 criterion; summing would force finalize to
+  re-read per-round pass-stats latencies (over-engineering), so last-round-wins.
+- **Phase 2** — `finalize-outcomes` subcommand (`cross-skill.mjs`) reuses the
+  existing `recordTriageOutcomes` sync + two new store helpers (`auditRunExists`
+  for the cloud-on/unknown-run hard-error split; `markRunFindingsNeedsTriage`
+  for the §R2-H3 reconciliation). **Right-sized deviation from §1.3b R1-H2**:
+  strict single-transaction wrapping is deferred — every underlying write is
+  individually idempotent (`recordAdjudicationEvent` delete+insert; column
+  sets), so a mid-finalize crash self-heals on the deterministic re-run. The
+  §1.5-gated property is *idempotency*, which holds; atomic-tx is defense the
+  idempotency already covers, and wrapping the shared sync module (used by the
+  manual path too) on the hot path is not warranted by a current requirement.
+- **Phase 3 — wiring correction (plan §1.3 vs reality)**: the plan named
+  `audit-loop.mjs` as a finalize caller, but the trace shows `audit-loop.mjs` is
+  a **non-interactive reporter that never triages** (its own comment: "can't do
+  triage/fix — report and stop"). Calling finalize there would mislabel an
+  un-adjudicated run `labeled:true`. So finalize is wired into the **triaging**
+  orchestrators only: `/cycle` Step 3C (new step 4.5, autonomous) and the
+  existing manual `/audit-code` Step 3.5b (`write-code-outcomes.mjs`, already
+  reads `_cloudRunId`). `audit-loop.mjs` gets run-unification (Phase 1d) but not
+  a finalize call — the honest correction.
+- **Tests** — `tests/run-unification.test.mjs` (hermetic: guard contracts +
+  reconciliation logic via `recordTriageOutcomes(store=null)` + CLI arg
+  validation). The DB-level "3-round ⇒ 1 run" reuse is store-integration,
+  env-gated like `learning-store-phase1.test.mjs`, not unit-mocked.
+  `learning-store-exports.test.mjs` pin updated (+2 exports → 125).

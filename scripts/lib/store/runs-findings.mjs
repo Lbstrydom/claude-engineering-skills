@@ -26,6 +26,19 @@ import { many, one, insertReturning, updateWhere, deleteWhere, withTx } from '..
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 
+/**
+ * True only for PostgreSQL `undefined_column` (SQLSTATE 42703) — the one error
+ * that genuinely means "this column is absent" (an un-migrated store). Every
+ * other failure (connection refused, permission, pool exhaustion, statement
+ * timeout) is transient/unexpected and must NOT be cached as "column missing":
+ * a migration capability probe has to distinguish a real schema gap from a DB
+ * blip, or one transient error poisons the columnless fallback for the whole
+ * process (M3/M5).
+ */
+function isUndefinedColumnError(err) {
+  return !!err && (err.code === '42703' || /column .* does not exist/i.test(err.message || ''));
+}
+
 // Cached classification-column probe (column shape doesn't change mid-run).
 let _hasClassificationColumns = null;
 
@@ -44,8 +57,15 @@ async function detectClassificationColumns() {
     // Probe with a 0-row SELECT — succeeds if the column exists.
     await many(`SELECT sonar_type FROM audit_findings LIMIT 0`);
     _hasClassificationColumns = true;
-  } catch {
-    _hasClassificationColumns = false;
+  } catch (err) {
+    if (!isUndefinedColumnError(err)) {
+      // Transient/unexpected — do NOT cache the negative; a later call retries.
+      // Fall back to columnless for THIS write only (safe), without committing
+      // the false result for the process.
+      process.stderr.write(`  [learning] classification-column probe failed transiently (${err.code || err.message}); will retry\n`);
+      return false;
+    }
+    _hasClassificationColumns = false; // genuinely absent (42703) — cache it
     process.stderr.write('  [learning] classification columns not present — run migration to enable\n');
   }
   return _hasClassificationColumns;
@@ -72,8 +92,13 @@ async function detectPassStatsRoundColumn() {
   try {
     await many(`SELECT round FROM audit_pass_stats LIMIT 0`);
     _hasPassStatsRoundColumn = true;
-  } catch {
-    _hasPassStatsRoundColumn = false;
+  } catch (err) {
+    if (!isUndefinedColumnError(err)) {
+      // Transient/unexpected — don't poison the cache; retry on the next call.
+      process.stderr.write(`  [learning] pass_stats.round probe failed transiently (${err.code || err.message}); will retry\n`);
+      return false;
+    }
+    _hasPassStatsRoundColumn = false; // genuinely absent (42703) — cache it
     process.stderr.write('  [learning] audit_pass_stats.round not present — run migration 20260605120000 for per-round pass telemetry\n');
   }
   return _hasPassStatsRoundColumn;
@@ -121,6 +146,16 @@ export async function recordRunStart(repoId, planFile, mode, { scopeMode, commit
     const out = await insertReturning('audit_runs', row, { returning: ['id'] });
     return out?.id ?? null;
   } catch (err) {
+    // Race-safe idempotency (WS1 §1.3b R1-H2): the SELECT-then-INSERT reuse
+    // probe above has a TOCTOU window — two concurrent recordRunStart calls
+    // with the same explicit runId can both miss the SELECT and race the
+    // INSERT. The loser hits a PK unique-violation (SQLSTATE 23505); reuse the
+    // existing row instead of failing, so reuse never creates a second row and
+    // never returns null for a run that actually exists.
+    if (runId && err?.code === '23505') {
+      const existing = await one(`SELECT id FROM audit_runs WHERE id = $1`, [runId]).catch(() => null);
+      if (existing?.id) return existing.id;
+    }
     process.stderr.write(`  [learning] recordRunStart failed: ${err.message}\n`);
     return null;
   }
@@ -384,6 +419,58 @@ export async function adjudicateFinalReviewFinding(runId, fingerprint, action) {
   } catch (err) {
     process.stderr.write(`  [learning] adjudicateFinalReviewFinding failed: ${err.message}\n`);
     return { ok: false, updated: 0, cloud: true };
+  }
+}
+
+/**
+ * Existence probe for one audit_runs row. Used by the deterministic
+ * `finalize-outcomes` step (WS1 §1.3b R2-H2) to distinguish "cloud off"
+ * (graceful no-op) from "cloud on but the run_id genuinely does not exist"
+ * (a hard error — the orchestrator threaded a bad id).
+ * @param {string} runId
+ * @returns {Promise<boolean>}
+ */
+export async function auditRunExists(runId) {
+  if (!runId || !await isCloudEnabled()) return false;
+  try {
+    const row = await one(`SELECT id FROM audit_runs WHERE id = $1`, [runId]);
+    return !!row?.id;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reconciliation writeback (WS1 §1.3b R2-H3): flag findings the final ledger
+ * never adjudicated as `needs_triage` rather than leaving them silently
+ * `pending`/null, so a truncated ledger can't dark-drop a finding. Idempotent
+ * and NON-destructive — only rows with no terminal `adjudication_outcome` and
+ * no existing user_action (or already `needs_triage`) are touched, so a real
+ * accepted/dismissed outcome is never clobbered on a re-run.
+ * @param {string} runId
+ * @param {string[]} fingerprints  finding_fingerprint values the ledger omitted
+ * @returns {Promise<{updated: number}>}
+ */
+export async function markRunFindingsNeedsTriage(runId, fingerprints) {
+  if (!runId || !await isCloudEnabled()
+      || !Array.isArray(fingerprints) || fingerprints.length === 0) {
+    return { updated: 0 };
+  }
+  try {
+    const rows = await many(
+      `UPDATE audit_findings
+          SET user_action = 'needs_triage'
+        WHERE run_id = $1
+          AND finding_fingerprint = ANY($2::text[])
+          AND adjudication_outcome IS NULL
+          AND (user_action IS NULL OR user_action = 'needs_triage')
+        RETURNING id`,
+      [runId, fingerprints],
+    );
+    return { updated: Array.isArray(rows) ? rows.length : 0 };
+  } catch (err) {
+    process.stderr.write(`  [learning] markRunFindingsNeedsTriage failed: ${err.message}\n`);
+    return { updated: 0 };
   }
 }
 

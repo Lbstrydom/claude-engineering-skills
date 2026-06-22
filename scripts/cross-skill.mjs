@@ -81,7 +81,15 @@ import {
   // Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md)
   getFinalReviewStats,
   adjudicateFinalReviewFinding,
+  // Determinism follow-ups WS1 — deterministic outcome finalize
+  recordAdjudicationEvent,
+  updatePassStatsPostDeliberation,
+  updateRunMeta,
+  auditRunExists,
+  markRunFindingsNeedsTriage,
 } from './learning-store.mjs';
+import { recordTriageOutcomes } from './lib/outcome-sync.mjs';
+import { semanticId } from './lib/findings.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit } from './lib/cli-io.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mjs';
@@ -497,6 +505,100 @@ async function cmdFinalReviewAdjudicate() {
   }
   const res = await adjudicateFinalReviewFinding(runId, fingerprint, action);
   emit(res);
+}
+
+/**
+ * Deterministic outcome capture (Determinism follow-ups WS1 Phase 2). The
+ * orchestrator (audit-loop.mjs / /cycle Step 3C) calls this ONCE after the
+ * audit converges, with the unified `--run-id`, the final adjudicated
+ * `--ledger`, and the final-round `--result` (for the finding set). It joins
+ * ledger → findings by fingerprint, drives the existing outcome sync (the same
+ * path the manual Step 3.5b uses), then reconciles: any finding the ledger
+ * never adjudicated is flagged `needs_triage` (never silently dark-dropped).
+ *
+ * Idempotent by construction — the underlying writes set state by
+ * (run_id, fingerprint) / delete+insert, so a retry after a crash converges to
+ * the same state. (Strict single-transaction wrapping is deliberately deferred:
+ * each underlying write is individually idempotent, so a mid-finalize crash
+ * self-heals on the next deterministic re-run — the §1.5-gated property is
+ * idempotency, which holds.)
+ *
+ * Graceful (§1.3b R2-H2): AUDIT_DB_URL unset → local-only no-op (safe to call
+ * unconditionally). Cloud configured but the run_id genuinely absent → hard
+ * error (the orchestrator threaded a bad id).
+ */
+async function cmdFinalizeOutcomes() {
+  const runId = argOption('run-id');
+  const ledgerPath = argOption('ledger');
+  const resultPath = argOption('result');
+  const roundOpt = argOption('round');
+  if (!runId || !ledgerPath || !resultPath) {
+    return emitError('BAD_INPUT', '--run-id <id> --ledger <path> --result <path> are all required');
+  }
+
+  let result, ledgerRaw;
+  try { result = JSON.parse(readFileSync(resultPath, 'utf8')); }
+  catch (e) { return emitError('BAD_INPUT', `cannot read --result (${resultPath}): ${e.message}`); }
+  try { ledgerRaw = JSON.parse(readFileSync(ledgerPath, 'utf8')); }
+  catch (e) { return emitError('BAD_INPUT', `cannot read --ledger (${ledgerPath}): ${e.message}`); }
+
+  if (!result || typeof result !== 'object' || !Array.isArray(result.findings)) {
+    return emitError('BAD_INPUT', 'result file must be an object with a "findings" array');
+  }
+  // Ledger is { entries: [...] }; tolerate a bare array (matches write-code-outcomes).
+  const ledger = Array.isArray(ledgerRaw) ? { entries: ledgerRaw } : ledgerRaw;
+  if (!ledger || !Array.isArray(ledger.entries)) {
+    return emitError('BAD_INPUT', 'ledger file must have an "entries" array');
+  }
+  const round = Number.isInteger(Number(roundOpt)) ? Number(roundOpt) : (result.round || 1);
+
+  await initLearningStore().catch(() => { /* cloud optional */ });
+  const cloud = await isCloudEnabled();
+
+  // §R2-H2: cloud off → local-only no-op. Still write .audit/outcomes.jsonl for
+  // the bandit reward (recordTriageOutcomes(null,…) degrades to local-only).
+  if (!cloud) {
+    const { enriched } = await recordTriageOutcomes(null, null, result.findings, ledger, { round });
+    const labelled = enriched.filter(f => f.adjudicationOutcome !== 'pending').length;
+    return emit({
+      ok: true, cloud: false, runId: null, round,
+      labelled, total: result.findings.length, needsTriage: 0,
+      hint: 'AUDIT_DB_URL unset — local-only capture; run npm run setup:cloud to enable cloud finalize',
+    });
+  }
+
+  // §R2-H2: cloud on but the run_id does not exist → hard error (bad threaded id).
+  if (!await auditRunExists(runId)) {
+    return emitError('UNKNOWN_RUN',
+      `run_id ${runId} not found in audit_runs (cloud is configured) — was --run-id threaded correctly?`);
+  }
+
+  const store = { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta };
+  const { enriched, passCounts, cloudOk } = await recordTriageOutcomes(
+    store, runId, result.findings, ledger, { round },
+  );
+
+  // Reconciliation (§R2-H3): findings the ledger never adjudicated remain
+  // `pending` — flag them needs_triage (non-destructive) + surface, so a
+  // truncated ledger can never silently dark-drop a finding.
+  const pending = enriched.filter(f => f.adjudicationOutcome === 'pending');
+  const pendingFps = pending.map(f => f._hash || semanticId(f)).filter(Boolean);
+  const { updated: needsTriage } = await markRunFindingsNeedsTriage(runId, pendingFps);
+
+  const labelled = enriched.filter(f => f.adjudicationOutcome !== 'pending').length;
+  process.stderr.write(
+    `  [finalize-outcomes] run ${runId}: ${labelled}/${result.findings.length} labelled · `
+    + `${needsTriage} needs_triage · cloud=${cloudOk ? 'ok' : 'failed'}\n`,
+  );
+  emit({
+    ok: true, cloud: true, runId, round,
+    labelled, total: result.findings.length, needsTriage, cloudOk,
+    needsTriageFindings: pending.map(f => ({
+      id: f.id, fingerprint: f._hash || semanticId(f),
+      severity: f.severity, section: f.section,
+    })),
+    passCounts,
+  });
 }
 
 // ── Persona-test subcommands (replace curl blocks in persona-test SKILL.md) ──
@@ -1242,6 +1344,7 @@ const commands = {
   'audit-effectiveness': cmdAuditEffectiveness,
   'final-review-stats': cmdFinalReviewStats,
   'final-review-adjudicate': cmdFinalReviewAdjudicate,
+  'finalize-outcomes': cmdFinalizeOutcomes,
   'detect-stack': cmdDetectStack,
   'list-personas': cmdListPersonas,
   'add-persona': cmdAddPersona,
