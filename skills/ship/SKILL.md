@@ -92,6 +92,19 @@ If > 0:
   Consider: /ux-lock <commit-hash> for each.
 ```
 
+**Re-running existing regression specs before a push** (optional gate): drive
+them through the deterministic runner with the ship `run_context` so the
+`regression_spec_runs` rows are tagged correctly and written without the model:
+
+```bash
+node scripts/ux-lock-run.mjs spec --specs 'tests/e2e/*.spec.js' \
+  --commit <sha> --run-context ship-gate [--url <base-url>]
+```
+
+A non-zero exit means a locked contract broke — treat as a `test-failure`
+block reason. Cloud off → it still runs + prints; Playwright missing → exit 5
+(skip the gate, don't fail the ship on a missing optional dep).
+
 ### 0.5c — Override flags
 
 If `$ARGUMENTS` contains `--no-tests`, `--ignore-p0`, or `--skip-ux-lock`,

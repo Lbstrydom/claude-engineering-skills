@@ -1,11 +1,12 @@
 # Plan: Determinism Follow-ups — Model-Independent Outcome Capture + Deterministic ux-lock Runners
 
 - **Date**: 2026-06-04
-- **Status**: Audited — ready to implement (GPT R1 5H/6M/1L → R2 4H/4M, all
-  addressed; Gemini R1 3 concerns + R2 4 concerns, all addressed; **gate closed at
-  the 2-round Gemini cap** per the audit-plan rigor-pressure rule — coherence
-  "Strong", remaining items are implementation-completeness verified by the
-  per-cluster /audit-code passes against real code, the correct artifact)
+- **Status**: **Complete** — both workstreams implemented, audited, and shipped
+  via autonomous `/cycle` (2026-06-22). WS1 (run-unification + finalize): GPT
+  R1+R2 + Gemini 2-round gate (deliberated), shipped `8248429`. WS2 (ux-lock
+  runner): GPT R1 + genuine fixes + **Gemini APPROVE**. See the Implementation
+  Log for the full audit trail + right-sized deviations. (Was: Audited — ready
+  to implement; the prior session had silently built only Phase 1's store layer.)
 - **Author**: Claude + Louis
 - **Scope**: backend (audit run lifecycle + a code-driven Playwright runner; one SKILL.md doc edit each)
 - **Target domain(s)**: `audit-core`, `cross-skill`, `ux-lock`
@@ -588,3 +589,46 @@ Phase 1's committed store code is verified, not rebuilt.
     addressed there. WS1 stops at the 2-round Gemini cap with only that
     out-of-scope LOW residual (documented stop rule: genuine bugs fixed,
     remainder is out-of-scope, not rigor-pressure churn).
+
+### 2026-06-22 — Cluster B build (WS2, Phases 4–6)
+
+- **Phase 4**: `scripts/lib/playwright-runner.mjs` (new) — `runPlaywrightJson`
+  (non-throwing `spawnSync` + JSON-report-from-FILE + closed status enum; R1-H4
+  trap handled: non-zero exit + valid report still parses), `flattenReport`
+  (flaky-retry last-wins + criterion_hash annotation), `statusToPassed`,
+  `mapCriteriaToItems` (verify coverage algorithm — extracted PURE for
+  testability), `normalizeSpecPath`/`resolveRepoRoot`. `scripts/ux-lock-run.mjs`
+  (new) — `spec` + `verify` subcommands. **Deviation from §2.2** (the plan's
+  explicit escape hatch): did NOT refactor `persona-consistency-run.mjs` onto the
+  shared core — it drives Playwright via the in-process Node API, not the
+  `npx playwright test` subprocess model, so they share no runnable body; the
+  shared module lands, consistency-run is untouched. Registered the new CLI in
+  all three lock-step entry lists + CLI_SMOKE_SET.
+- **Phase 5**: `tests/ux-lock-run.test.mjs` — hermetic seam coverage via an
+  injected `_spawn` (R1-H4, PW-missing, REPORT_UNREADABLE), the status map, and
+  `mapCriteriaToItems` edge cases (missing/duplicate/multiple/orphan).
+- **Phase 6**: rewrote ux-lock SKILL lock Step 3 + verify V4–V5 + both references
+  onto the single deterministic runner call; added the REQUIRED `criterion_hash`
+  annotation to the verify-spec template (the runner maps on it); wired the
+  `ship-gate` run-context into `/ship`.
+- **GPT /audit-code R1 (6H/17M/1L) → genuine fixes**: H4/H6 **glob bug** (the
+  `--specs` glob string was used as a literal exact-match filter → every test
+  dropped as orphan, recording nothing) — fixed; M9/M14/M15 → extracted +
+  unit-tested `mapCriteriaToItems`; M5/M13 → verify exit-code contract aligned
+  (**report, exits 0 even on criterion fail**; non-zero = could-not-run only)
+  across code + both docs. The new test caught a real orphan-detection bug (a
+  test whose hash matches no EXPECTED criterion is also an orphan) — fixed.
+  Dismissed: H1 (sync-created `.claude-skills/` path), H3 (matches plan §2.3 by
+  design), M1 (false flag), M3/M10 (no-dep arg-parsing convention). Deferred
+  (independent pre-existing): H2 (two-call non-atomicity — same as the manual
+  path), H5 (/ship Step 1 diff egress), M6/M8/M11/M16 (sync-inventory list
+  duplication — added one entry, didn't author it).
+- **Gemini final gate: APPROVE** (0 wrongly-dismissed). Two advisories on the
+  passing verdict: the MEDIUM (`--spec` + `--specs` together dropped glob
+  results) fixed — a glob now skips the exact filter even alongside an exact
+  `--spec`; the LOW (`NESTED_RE` bold-label tolerance) is pre-existing
+  `plan-criteria-parser.mjs` WS2 only consumes — deferred.
+
+> **Consolidated-gate note**: WS1 shipped independently with its own Gemini gate
+> (`8248429`) at the operator's direction, so the §3C.2 "union" gate reduced to
+> WS2's own Gemini APPROVE — both workstreams are independently shippable.

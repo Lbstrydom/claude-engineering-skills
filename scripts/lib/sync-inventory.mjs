@@ -44,6 +44,10 @@ const CORE_ENTRY = [
   '.claude/hooks/quickfix-scan.mjs',
   'scripts/persona-consistency-run.mjs',
   'scripts/persona-consistency-promote.mjs',
+  // Deterministic /ux-lock runner (WS2). Authoritative list is sync-to-repos.mjs;
+  // keep in lock-step. Walker pulls in lib/playwright-runner.mjs +
+  // lib/plan-criteria-parser.mjs.
+  'scripts/ux-lock-run.mjs',
   // Consumer-invoked surfaces.json builder (validates against our
   // SurfaceManifestSchema). Authoritative list is sync-to-repos.mjs; keep
   // in lock-step. Walker pulls in its lib/persona-test/schemas.mjs import.

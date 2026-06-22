@@ -71,42 +71,35 @@ tests/e2e/<ticket-or-round>-<description>.spec.js
 Examples: `r18-quality-gate.spec.js`, `fix-modal-close.spec.js`,
 `pr42-wine-grid-a11y.spec.js`.
 
-## Persistence — register the spec
+## Persistence — run + record in ONE deterministic call
 
-After the spec runs and passes (Step 4), register it in the cross-skill
-store:
-
-```bash
-node scripts/cross-skill.mjs record-regression-spec --json '{
-  "specPath": "tests/e2e/<name>.spec.js",
-  "description": "<one-line summary of the fix being locked>",
-  "assertionCount": <N>,
-  "domContractTypes": ["role", "axe", ...],
-  "sourceKind": "audit-loop-fix" | "persona-test-p0" | "persona-test-p1" | "manual",
-  "sourceFindingId": "<audit_findings.id OR persona finding hash if known, else null>",
-  "sourceFindingType": "audit" | "persona" | null
-}'
-```
-
-Response `{"ok": true, "cloud": ..., "specId": "<uuid>"}`. **Capture
-specId** for the run record. If cloud mode is off (`cloud: false`), the
-CLI still succeeds with `specId: null` — proceed without recording a run.
-
-Then record the spec-run outcome:
+`scripts/ux-lock-run.mjs spec` (SKILL Step 3) runs the authored spec, parses
+the JSON report, and writes BOTH the `regression_specs` row (auto-registered by
+`repo_id` + `spec_path`) and the `regression_spec_runs` outcome itself — no
+separate `record-regression-spec` / `record-regression-spec-run` calls, no
+hand-parsing, no shell-quoting of free text:
 
 ```bash
-node scripts/cross-skill.mjs record-regression-spec-run --json '{
-  "specId": "<uuid from above>",
-  "passed": true,
-  "durationMs": <ms>,
-  "runContext": "ux-lock-verify"
-}'
+node scripts/ux-lock-run.mjs spec \
+  --spec tests/e2e/<name>.spec.js \
+  --commit <sha> --run-context ux-lock \
+  --source-kind audit-loop-fix    # or persona-test-p0 | persona-test-p1 | manual
+  # [--specs <glob>]   run + group a suite by spec_path (one run row per file)
+  # [--url <base-url>] exported to the spec as E2E_BASE_URL
+  # [--no-register]    record nothing (spec is unknown / throwaway)
 ```
 
-If the spec fails unexpectedly on code that was supposed to satisfy the
-contract (the fix didn't actually work), pass `"capturedRegression": true`
-and the full `"errorMessage"`. That flags the row as a "save" and
-surfaces in the `regression_saves` view.
+The runner derives the `description` from the spec filename and supplies the
+required `source_kind`. Cloud off → it runs + prints and skips recording (no
+`specId` needed). A *failing* run is recorded as `passed:false` (the runner's
+exit code is non-zero so `/ship`/CI can gate); it is the natural "regression
+save" signal — a spec that should pass but doesn't surfaces in the
+`regression_saves` view. Multi-spec runs (`--specs`) emit one
+`regression_spec_runs` row per `spec_path` (passed = AND of that file's tests).
+
+> Direct `cross-skill.mjs record-regression-spec[-run]` still exists for
+> non-Playwright callers, but `/ux-lock` no longer drives them by hand — the
+> runner is the single deterministic writer.
 
 ## Choosing `source_kind`
 

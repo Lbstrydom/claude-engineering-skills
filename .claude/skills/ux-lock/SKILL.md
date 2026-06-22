@@ -84,35 +84,36 @@ Use the template + fix-type assertion map in
 `references/lock-mode-spec-generation.md`. One file per fix, named
 `tests/e2e/<ticket-or-round>-<description>.spec.js`.
 
-### Step 3 — Verify it runs
+### Step 3 — Run + record (deterministic — ONE call)
+
+The spec is authored (Step 2). Execution and recording are now a single
+deterministic call — the runner runs `npx playwright test`, parses the JSON
+report from a file (never stdout), and writes BOTH the `regression_specs` and
+`regression_spec_runs` rows itself. This replaces the old model-remembered
+sequence (run → hand-parse → `record-regression-spec` → `record-regression-spec-run`)
+that left the tables empty whenever a step was skipped or mis-parsed:
 
 ```bash
-npx playwright test tests/e2e/<new-spec>.spec.js --project chromium-desktop
+node scripts/ux-lock-run.mjs spec \
+  --spec tests/e2e/<new-spec>.spec.js \
+  --commit <sha> --run-context ux-lock \
+  --source-kind manual [--url <base-url>]
 ```
 
-If the spec fails, debug and fix. Common issues:
-- Base URL needs `E2E_BASE_URL` env var
-- Auth needs `E2E_BEARER_TOKEN` for authenticated endpoints
-- Timing: add `await page.waitForSelector(...)` before assertions
+- **Auto-registers** the spec (upsert by `repo_id` + `spec_path`, supplying the
+  required `source_kind` + a derived `description`) and records this run's
+  pass/fail + duration. `--no-register` skips registration (records nothing).
+- **Exit code reflects test pass/fail** — non-zero means the spec failed, so you
+  (and `/ship`/CI) see it. A *failing* run is still recorded as `passed:false`
+  (not silently dropped).
+- **Graceful**: cloud off → runs + prints, skips recording with a hint;
+  Playwright missing → exit 5 (install hint); malformed report → hard error.
+- No hand-parsing, no shell-quoting of free text (the runner owns the writes).
 
-### Step 4 — Persist spec + run record (MANDATORY — both writes, in-flow)
-
-Two writes, both required (these are the sole writers of `regression_specs` +
-`regression_spec_runs` — skipping them leaves the tables empty, which is the bug
-this step exists to fix). After generating the spec AND running it once:
-
-```bash
-# 4a — register the spec, capture the returned specId
-node scripts/cross-skill.mjs record-regression-spec --json '{"sourceKind":"...","description":"...","specPath":"<path>","commitSha":"<sha>","assertionCount":<n>}'
-# 4b — record THIS run's pass/fail against that specId (idempotent per run)
-node scripts/cross-skill.mjs record-regression-spec-run --json '{"specId":"<from 4a>","passed":true,"commitSha":"<sha>","durationMs":<ms>}'
-```
-
-Run 4b every time the spec executes (lock-in proof + future regression saves).
-**Shell safety**: `description` (free text) may contain quotes — pipe the JSON
-via `--stdin` (temp file) rather than inline single-quoted `--json` to avoid
-breaking the shell. Full payloads + `source_kind` selection:
-`references/lock-mode-spec-generation.md`.
+If the spec itself fails for environment reasons, debug: base URL via
+`E2E_BASE_URL` (the runner sets it from `--url`); auth via `E2E_BEARER_TOKEN`;
+timing via `await page.waitForSelector(...)`. `source_kind` selection +
+multi-spec (`--specs`) details: `references/lock-mode-spec-generation.md`.
 
 ### Step 5 — Report
 
@@ -159,21 +160,40 @@ criterion, using the translation-rules table.
 Full template + translation rules + persistence protocol:
 `references/verify-mode-generation.md`.
 
-### Step V3–V5 — Register → run → record (MANDATORY — both writes, in-flow)
+### Step V3–V5 — Run + record (deterministic — ONE call)
 
-After running the spec, persist outcomes (sole writers of
-`plan_verification_runs` + `plan_verification_items` — required, not optional):
+After authoring the verify spec (one `test()` per criterion, each carrying its
+`criterion_hash` as an annotation — see the reference), run + record in one
+deterministic call. The runner runs the spec, maps each test result back to its
+criterion via the `criterion_hash` annotation, and writes the
+`plan_verification_runs` + `plan_verification_items` rows itself — replacing the
+old model-remembered run → parse → `record-plan-verify-run` →
+`record-plan-verify-items` sequence:
 
 ```bash
-# V5a — one run row, capture runId
-node scripts/cross-skill.mjs record-plan-verify-run --json '{"planId":"<id>","specId":"<id>","commitSha":"<sha>","url":"<url>","totalCriteria":<n>,"passedCount":<n>,"failedCount":<n>,"skippedCount":<n>,"durationMs":<ms>}'
-# V5b — one row PER criterion (stable criterion_hash → persistent_plan_failures over time)
-node scripts/cross-skill.mjs record-plan-verify-items --json '{"runId":"<from V5a>","planId":"<id>","items":[{"criterionHash":"...","criterionIndex":0,"severity":"P0","category":"...","description":"...","passed":true,"durationMs":<ms>}]}'
+node scripts/ux-lock-run.mjs verify \
+  --plan docs/plans/<plan>.md --spec tests/e2e/<verify-spec>.spec.js \
+  --plan-id <plan-uuid> --commit <sha> --url <base-url>
 ```
 
-**Shell safety**: `description`/`error_message` (free text) may contain quotes —
-pipe the JSON via `--stdin` (temp file), not inline single-quoted `--json`.
-Full template + translation rules + CLI shapes: `references/verify-mode-generation.md`.
+- **Every criterion is accounted for** (plan §2.3): a criterion with no matching
+  test → `passed:false` ("no matching test result"); multiple results for one
+  hash → fail if ANY failed; a test with no expected criterion (orphan) is
+  logged + counted but NOT inserted (the items table is strictly
+  per-expected-criterion).
+- The `criterion_hash` is recomputed from the plan by the runner (via
+  `plan-criteria-parser.mjs`), so it matches the authored spec's annotation
+  exactly. Pass `--plan-id` (the `plans` row UUID) or the run is not recorded.
+- **Graceful**: cloud off → runs + prints, skips recording; Playwright missing →
+  exit 5. **Verify is a report, not a blocker** — it exits 0 even when criteria
+  fail (gating is `/ship`'s job via the status rubric + `plan_satisfaction`); a
+  non-zero exit means the spec could not RUN (PW missing / fatal), not that a
+  criterion failed.
+
+The verify-spec template MUST emit each test with
+`{ annotation: [{ type: 'criterion_hash', description: '<hash>' }] }` — naming
+the test by prose is NOT enough (the hash can't be recovered from a title).
+Full template + translation rules: `references/verify-mode-generation.md`.
 
 ### Step V6 — Report
 

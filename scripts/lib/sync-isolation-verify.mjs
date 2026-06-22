@@ -50,6 +50,7 @@ const CLI_SMOKE_SET = [
   'symbol-index/drift.mjs',
   'security-memory/refresh-incidents.mjs',
   'reconcile-repo-identity.mjs',
+  'ux-lock-run.mjs', // WS2 deterministic /ux-lock runner
 ];
 
 const LIB_IMPORT_SET = [

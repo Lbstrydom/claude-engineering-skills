@@ -105,6 +105,11 @@ const CORE_ENTRY = [
   // automatically.
   'scripts/persona-consistency-run.mjs',
   'scripts/persona-consistency-promote.mjs',
+  // Deterministic /ux-lock runner (WS2): runs authored regression/verify specs
+  // and records the run rows in one deterministic call. The walker pulls in its
+  // scripts/lib/playwright-runner.mjs + scripts/lib/plan-criteria-parser.mjs
+  // closure automatically.
+  'scripts/ux-lock-run.mjs',
   // Consumer-invoked CLI: builds a consumer's .persona-test/surfaces.json from
   // colocated *.persona-test.json fragments, validated against our
   // SurfaceManifestSchema. Lives upstream so every consumer shares one merge +

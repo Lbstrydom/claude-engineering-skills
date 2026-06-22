@@ -70,7 +70,12 @@ import { expectNoA11yViolations } from './helpers/axe.js';
 test.describe('Plan verify: <plan-slug>', () => {
   <for each criterion c, emit>
   test(`[${c.severity}] [${c.category}] ${c.description}`, {
-    tag: [`@${c.severity}`, `@${c.category}`, '@plan-verify']
+    tag: [`@${c.severity}`, `@${c.category}`, '@plan-verify'],
+    // REQUIRED — the deterministic runner (scripts/ux-lock-run.mjs verify) maps
+    // each test result back to its plan criterion by this annotation. Naming the
+    // test by prose is NOT enough: the hash can't be recovered from the title.
+    // `<c.hash>` is the parser's criterion_hash (sha256(SEVERITY|category|description)[:16]).
+    annotation: [{ type: 'criterion_hash', description: '<c.hash>' }]
   }, async ({ page }) => {
     // Setup: <c.setup ?? 'direct navigation'>
     await page.goto('/');
@@ -120,63 +125,41 @@ node scripts/cross-skill.mjs record-regression-spec --json '{
 
 Capture `specId`.
 
-## Step V4 — Run the spec
+## Step V4–V5 — Run + record in ONE deterministic call
+
+`scripts/ux-lock-run.mjs verify` runs the spec, re-parses the plan's criteria
+(so the `criterion_hash` set matches the authored spec's annotations exactly),
+maps each test result back to its criterion via the `criterion_hash`
+annotation, and writes BOTH `plan_verification_runs` (totals) and
+`plan_verification_items` (one row per EXPECTED criterion) — no manual run,
+parse, `record-plan-verify-run`, or `record-plan-verify-items`:
 
 ```bash
-export E2E_BASE_URL="<baseUrl>"
-START=$(date +%s%3N)
-npx playwright test tests/e2e/verify-<plan-slug>.spec.js \
-  --reporter=json \
-  --output=.audit/plan-verify-results.json \
-  > .audit/plan-verify-output.txt 2>&1
-TOTAL_MS=$(( $(date +%s%3N) - START ))
+node scripts/ux-lock-run.mjs verify \
+  --plan docs/plans/<plan>.md \
+  --spec tests/e2e/verify-<plan-slug>.spec.js \
+  --plan-id <planId> --commit <sha> --url <baseUrl>
 ```
 
-Parse the JSON report. For each criterion, extract
-`status ∈ {passed, failed, skipped}` plus `duration` and (on fail)
-`errors[].message`.
+Coverage guarantees (the runner enforces them, plan §2.3):
 
-## Step V5 — Record run + per-criterion outcomes
+- **Every expected criterion gets a row.** A criterion with no matching test →
+  `passed:false`, `errorMessage:"no matching test result"`. Multiple results
+  for one `criterion_hash` → fail if ANY failed. A duplicate expected hash is
+  recorded once (warned).
+- **Orphan tests** (a `test()` whose `criterion_hash` matches no parsed
+  criterion) are logged + counted in the run summary but **NOT** inserted as
+  items — the items table is strictly per-expected-criterion, so its time-series
+  never gets a fabricated row.
+- `--plan-id` is required to persist (the `plans` row UUID); without it the run
+  prints but records nothing. Cloud off → run + print, skip recording. **Verify
+  is a report, not a blocker** — it exits 0 even when criteria fail (consistent
+  with the existing `/ux-lock verify` contract below; `/ship` gates via the
+  status rubric + `plan_satisfaction`). A non-zero exit means the spec could not
+  RUN (Playwright missing → 5, fatal → 3), not that a criterion failed.
 
-Record the overall run:
-
-```bash
-node scripts/cross-skill.mjs record-plan-verify-run --json '{
-  "planId": "<planId>",
-  "specId": "<specId>",
-  "url": "<baseUrl>",
-  "totalCriteria": <N>,
-  "passedCount": <n>,
-  "failedCount": <n>,
-  "skippedCount": <n>,
-  "durationMs": <totalMs>,
-  "runContext": "ux-lock-verify"
-}'
-```
-
-Capture `runId`. Then batch all per-item outcomes:
-
-```bash
-node scripts/cross-skill.mjs record-plan-verify-items --json '{
-  "runId": "<runId>",
-  "planId": "<planId>",
-  "items": [
-    {
-      "criterionHash": "<from parser>",
-      "criterionIndex": <i>,
-      "severity": "P0",
-      "category": "visibility",
-      "description": "<original text>",
-      "setupText": "<original setup or null>",
-      "assertText": "<original assertion or null>",
-      "passed": true,
-      "errorMessage": null,
-      "durationMs": <ms>
-    },
-    ...
-  ]
-}'
-```
+This depends on the spec template emitting the `criterion_hash` annotation per
+test (Step V2 above) — without it the runner cannot map results to criteria.
 
 ## Step V6 — Report
 
