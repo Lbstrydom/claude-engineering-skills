@@ -1,5 +1,55 @@
 # Project Status Log
 
+## 2026-06-22 — GitHub Actions cost reduction (hit 100% of 3,000 included minutes)
+
+### Changes
+- **Root cause**: `postgres-parity.yml` had `push: branches:[main]` with **no path
+  filter** → its 2-job DB-container suite ran on **every** main push (95 runs in 30d)
+  plus **26 from Dependabot PRs** (package-lock.json is in the path filter). 137 runs
+  total ≈ the entire 3,000-min overage. Every other workflow was a no-op.
+- **Discovery**: the weekly cron checks (architectural-drift, memory-health,
+  learning-weekly-review, migration-drift) were **silently skipping** — they passed the
+  sunset `SUPABASE_AUDIT_*` env vars, but the pg-driver store
+  (`scripts/lib/db/client.mjs`) only connects via `AUDIT_DB_URL` and *rejects* the legacy
+  triplet. The "weekly architecture check" hadn't done real work since the postgres-parity
+  migration.
+- **Fixes applied**:
+  - `postgres-parity.yml`: added `paths:` filter to the `push` trigger (mirrors the PR
+    filter) → ~137 → ~18 runs/month.
+  - `dependabot.yml`: npm version updates **weekly → monthly** (security alerts
+    unaffected; they're independent of the version-update schedule) → ~26 → ~7 dep-driven
+    DB-suite runs.
+  - Rewired `architectural-drift`, `memory-health`, `learning-weekly-review` from
+    `SUPABASE_AUDIT_*` → `AUDIT_DB_URL` + `AUDIT_DB_SSL_MODE: no-verify`. Un-gated the arch
+    refresh + prune steps from the dead `SUPABASE_AUDIT_SERVICE_ROLE_KEY` (the DSN password
+    IS the privilege in the pg model). **Option A** — full weekly arch refresh now actually
+    runs instead of skipping.
+  - Added `timeout-minutes` to **all 7** workflows (was relying on GitHub's 360-min
+    default — the biggest latent runaway-bill risk).
+
+### Files Affected
+- `.github/workflows/postgres-parity.yml` — push path filter + job timeouts
+- `.github/workflows/architectural-drift.yml` — AUDIT_DB_URL rewire, un-gate refresh/prune, timeout
+- `.github/workflows/{memory-health,learning-weekly-review}.yml` — AUDIT_DB_URL rewire + timeout
+- `.github/workflows/{migration-drift,model-freshness,release}.yml` — timeout only (already wired correctly)
+- `.github/dependabot.yml` — npm schedule weekly → monthly
+
+### Decisions Made
+- Kept the weekly architecture check **weekly** (user-directed — it's valuable), but the
+  real fix was making it *run* (secret rewire), not trimming cadence.
+- `postgres-parity` push trigger keeps `package.json`/`package-lock.json` in scope so a
+  `pg`/`pgvector` bump still gets DB-tested; controlled Dependabot volume via cadence instead.
+- Did NOT set a $0 Actions budget (would block the legitimate DB suite) — recommended a
+  modest cap + 80% alert as a backstop instead.
+
+### Next Steps (manual — dashboard-only, cannot be done from code)
+- Add repo secrets: `AUDIT_DB_URL` (Supabase Session pooler URI), `GEMINI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`. Until added, all crons safely **skip** (no error).
+- Delete the now-unused `SUPABASE_AUDIT_URL` / `SUPABASE_AUDIT_ANON_KEY` secrets.
+- Set an Actions budget cap with an 80% alert (Billing → Budgets).
+
+---
+
 ## 2026-06-15 — Author-Tier dashboard panel + arch-index refresh (model-tier-observation follow-up)
 
 ### Changes

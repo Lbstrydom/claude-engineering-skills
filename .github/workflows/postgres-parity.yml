@@ -32,6 +32,23 @@ on:
       - '.github/workflows/postgres-parity.yml'
   push:
     branches: [main]
+    # Mirror the pull_request path filter — a direct push to main only runs
+    # the DB-container suite when DB code / migrations / deps actually change.
+    # Without this the suite ran on EVERY main push (the dominant Actions cost).
+    paths:
+      - 'scripts/lib/db/**'
+      - 'scripts/lib/store/**'
+      - 'scripts/setup-postgres.mjs'
+      - 'scripts/learning-store.mjs'
+      - 'supabase/migrations/**'
+      - 'tests/db-*.test.mjs'
+      - 'tests/learning-store-*.test.mjs'
+      - 'tests/sync-packaging.test.mjs'
+      - 'tests/fixtures/expected-schema.json'
+      - 'tests/fixtures/contract/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/postgres-parity.yml'
   workflow_dispatch:
 
 permissions:
@@ -44,6 +61,7 @@ concurrency:
 jobs:
   unit:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -65,6 +83,7 @@ jobs:
 
   db-suite:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     services:
       postgres:

@@ -26,6 +26,7 @@ concurrency:
 jobs:
   health:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -39,14 +40,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Verify Supabase secrets present
+      - name: Verify Postgres DSN present
         id: secrets-check
         env:
-          SUPABASE_AUDIT_URL: ${{ secrets.SUPABASE_AUDIT_URL }}
-          SUPABASE_AUDIT_ANON_KEY: ${{ secrets.SUPABASE_AUDIT_ANON_KEY }}
+          AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}
         run: |
-          if [ -z "$SUPABASE_AUDIT_URL" ] || [ -z "$SUPABASE_AUDIT_ANON_KEY" ]; then
-            echo "::warning::SUPABASE_AUDIT_URL / SUPABASE_AUDIT_ANON_KEY not set — skipping health check"
+          if [ -z "$AUDIT_DB_URL" ]; then
+            echo "::warning::AUDIT_DB_URL not set — skipping health check"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -56,8 +56,8 @@ jobs:
         if: steps.secrets-check.outputs.skip != 'true'
         id: health
         env:
-          SUPABASE_AUDIT_URL: ${{ secrets.SUPABASE_AUDIT_URL }}
-          SUPABASE_AUDIT_ANON_KEY: ${{ secrets.SUPABASE_AUDIT_ANON_KEY }}
+          AUDIT_DB_URL: ${{ secrets.AUDIT_DB_URL }}
+          AUDIT_DB_SSL_MODE: no-verify
           MEMORY_HEALTH_WINDOW_DAYS: ${{ inputs.window-days || '30' }}
         run: |
           set +e

@@ -3,7 +3,12 @@ updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "weekly"
+      # Monthly (was weekly): every npm bump touches package-lock.json, which is
+      # in postgres-parity's path filter and runs the 2-job DB-container suite
+      # (~18 min). Weekly version bumps were ~470 Actions-min/month. SECURITY
+      # updates are unaffected — Dependabot security alerts fire immediately,
+      # independent of this version-update schedule.
+      interval: "monthly"
     # Lowered from 10 → 5: with grouping below, ~2-3 PRs/week is the steady state.
     open-pull-requests-limit: 5
     groups:
