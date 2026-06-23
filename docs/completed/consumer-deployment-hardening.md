@@ -1,7 +1,15 @@
 # Plan: Harden consumer deployment — prevent silent local-patching of synced tooling
 
 - **Date**: 2026-06-04
-- **Status**: Draft
+- **Status**: **Complete** — all three phases built, tested, and deployed (the
+  "Draft" label was stale). Phase 1 banner: `scripts/lib/sync-banner.mjs`
+  (`injectUpstreamBanner`) wired into `sync-to-repos.mjs`, 26 passing tests, and
+  the banner is live in consumers (verified in wine-cellar-app's synced
+  `cross-skill.mjs`). Phase 2: the managed `.gitignore` ephemera block (six §5
+  paths) + managed `.gitattributes` EOL pins (`eol=lf`) are applied by
+  `sync-to-repos.mjs` and present in consumers. Phase 3: the upstream-owned
+  governance policy is in AGENTS.md. The `sync:verify` idea was dropped at build
+  time (Gemini-R2 — redundant with `sync:dry`).
 - **Author**: Claude + Louis
 - **Scope**: backend (sync subsystem) + a one-line AGENTS.md policy
 - **Target domain(s)**: `cross-skill` / sync
