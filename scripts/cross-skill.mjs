@@ -161,16 +161,31 @@ function currentBranch() {
  * resolveRepoForStore (current repo's identity).
  *
  * Returns `null` in any of: store disabled; an explicit `repoUuid` that does not
- * resolve (authoritative — we do NOT silently fall back to the current repo);
- * current-repo resolution fails. Callers treat null as "no repo scope" — the
- * cross-skill tables all accept NULL repo_id.
+ * resolve to a row (genuine not-found — authoritative, we do NOT silently fall
+ * back to the current repo); current-repo resolution fails. Callers treat null
+ * as "no repo scope" — the cross-skill tables all accept NULL repo_id.
+ *
+ * A TRANSIENT DB error resolving an explicit `repoUuid` is NOT treated as
+ * not-found: it fails the command closed (`emitError`) rather than silently
+ * downgrading to an unscoped (`repo_id` null) write — see the strict lookup.
  */
 async function resolveRepoId(payload) {
   if (payload.repoId) return payload.repoId;
-  // An EXPLICIT repoUuid is authoritative: resolve it, or return null — never
-  // silently redirect the write to the current/default repo on a miss.
+  // An EXPLICIT repoUuid is authoritative. A genuine not-found → null (we never
+  // redirect to the current repo). But a TRANSIENT lookup failure must NOT be
+  // swallowed as null — that downgrades this explicit-repo write to an unscoped
+  // write. Use the strict lookup and fail closed on a real DB error.
   if (payload.repoUuid) {
-    const repo = await getRepoIdByUuid(payload.repoUuid).catch(() => null);
+    let repo;
+    try {
+      repo = await getRepoIdByUuid(payload.repoUuid, { strict: true });
+    } catch (err) {
+      return emitError(
+        'REPO_RESOLVE_FAILED',
+        `repoUuid ${payload.repoUuid} lookup failed (transient DB error) — refusing an unscoped write rather than silently dropping repo scope: ${err.message}`,
+        {}, 1,
+      );
+    }
     return repo?.id ?? null;
   }
   // No explicit identity → resolve from the current repo (mints/finds canonical).

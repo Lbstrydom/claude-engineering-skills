@@ -498,9 +498,14 @@ the two determinism follow-ups carved out into
 
 ### Tracked follow-ups (deliberately OUT OF SCOPE — not new phases)
 
-1. **`resolveRepoId` transient fail-open** (surfaced by WS1's Gemini gate). On a
+1. **`resolveRepoId` transient fail-open** — ✅ **RESOLVED 2026-06-23**:
+   `getRepoIdByUuid` gained a `{strict}` opt-in (default contract unchanged for
+   its ~15 callers; genuine not-found still returns null INSIDE the try); the
+   `catch` now re-throws under `strict`. `resolveRepoId` uses `strict:true` and
+   fails the command closed (`REPO_RESOLVE_FAILED`, exit 1) on a transient
+   lookup error instead of silently writing unscoped. _Original finding:_ on a
    *transient* DB error resolving an explicit `repoUuid`, `resolveRepoId` /
-   `getRepoIdByUuid` swallow the error and return `null` → an unscoped
+   `getRepoIdByUuid` swallowed the error and returned `null` → an unscoped
    (`repo_id` null) cross-skill write — the same transient-vs-absent bug class
    WS1 fixed in the audit_pass_stats / classification column probes. Independent
    of WS1/WS2's paths (finalize keys on `run_id`); worth a small standalone fix

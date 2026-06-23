@@ -211,7 +211,7 @@ export async function resolveRepoForStore({ cwd, profile } = {}) {
  *
  * @param {string} repoUuid
  */
-export async function getRepoIdByUuid(repoUuid) {
+export async function getRepoIdByUuid(repoUuid, { strict = false } = {}) {
   if (!await isCloudEnabled()) return null;
   try {
     const row = await one(
@@ -230,7 +230,14 @@ export async function getRepoIdByUuid(repoUuid) {
       activeEmbeddingModel: row.active_embedding_model,
       activeEmbeddingDim: row.active_embedding_dim,
     };
-  } catch {
+  } catch (err) {
+    // A genuine "not found" already returned null INSIDE the try (`if (!row)`),
+    // so reaching here is a REAL DB error (connection/permission/timeout) — NOT
+    // an absent row. Default: swallow → null (read paths that fall back to the
+    // repo name tolerate this). `strict`: re-throw so a WRITE caller can
+    // fail-closed instead of silently downgrading an explicit-repo lookup to an
+    // unscoped (`repo_id` null) write — the transient fail-open this guards.
+    if (strict) throw err;
     return null;
   }
 }
