@@ -67,6 +67,20 @@ export function walk(ast, visit) {
   }
 }
 
+/** Unwrap an ObjectExpression that may be wrapped in `Object.freeze(...)`,
+ *  `Object.assign({}, …)`, or a TS `as const` / `satisfies` (audit feedback #3 —
+ *  `VIEWS = Object.freeze({...})` is the common SSoT shape). */
+export function unwrapObjectExpression(node) {
+  if (!node) return null;
+  if (node.type === 'ObjectExpression') return node;
+  if (node.type === 'CallExpression') {
+    const arg = (node.arguments || []).find((a) => a?.type === 'ObjectExpression');
+    if (arg) return arg;
+  }
+  if (node.type === 'TSAsExpression' || node.type === 'TSSatisfiesExpression') return unwrapObjectExpression(node.expression);
+  return null;
+}
+
 /** The component/function name a node introduces, or null. */
 export function componentNameOf(node) {
   if ((node.type === 'FunctionDeclaration' || node.type === 'ClassDeclaration') && node.id) return node.id.name;

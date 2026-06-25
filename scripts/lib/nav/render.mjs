@@ -9,6 +9,29 @@ import { OBSERVED_FILE } from './schema.mjs';
 
 const SEV_ORDER = { P0: 0, P1: 1, P2: 2, P3: 3 };
 
+/** Per-persona reachability scorecard — the headline "offered vs needed" view. */
+export function renderScorecard(scorecard) {
+  const { anchorsFunctional, rows } = scorecard || { anchorsFunctional: false, rows: [] };
+  if (!rows.length) return 'PER-PERSONA REACHABILITY\n────────────────────────────────────────────────\n  (no declared persona intents — add them to nav-contract.json)';
+  const lines = ['PER-PERSONA REACHABILITY (offered vs needed)', '─'.repeat(48)];
+  if (!anchorsFunctional) {
+    lines.push('  ⚠ Anchor attribution is not functional for this app — layer placement');
+    lines.push('    cannot be judged. Declare DOM-container anchors (e.g. `#primary-nav`)');
+    lines.push('    in navLayers (vanilla/template) or component anchors (React). Showing');
+    lines.push('    discovery only (reached / not-reached).');
+  }
+  const MARK = { ok: '✓', red: '✗', unverified: '?', unknown: '•' };
+  for (const r of rows) {
+    const mark = MARK[r.status] ?? (r.reached ? '•' : '✗');
+    let where;
+    if (r.status === 'unverified') where = `reached, but anchor is dynamic — run --verify to confirm '${r.requiredInLayer || 'nav'}'`;
+    else if (!anchorsFunctional) where = `${r.reached ? 'reached' : 'NOT reached'} in nav`;
+    else where = `expected ${(r.expectedAnchors || []).join('/') || '—'} · observed ${(r.observedAnchors || []).join('/') || '—'}`;
+    lines.push(`  [${mark}] ${r.persona}/${r.intent} → ${r.destination}  (${where})`);
+  }
+  return lines.join('\n');
+}
+
 /** Human-readable findings list, sorted by severity then class. */
 export function renderFindings(findings) {
   if (!findings.length) return 'No nav findings.';

@@ -5,7 +5,7 @@
  *
  * @module scripts/lib/nav/adapters/vanilla-switchview
  */
-import { walk } from '../ast.mjs';
+import { walk, unwrapObjectExpression } from '../ast.mjs';
 import { normalizeDestination } from '../normalize.mjs';
 
 export const name = 'vanilla-switchview';
@@ -37,8 +37,9 @@ export function discoverDestinations(parsed) {
 }
 
 function viewsObjectOf(node) {
-  if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && VIEW_NAMES.has(node.id.name) && node.init?.type === 'ObjectExpression') return node.init;
-  if (node.type === 'AssignmentExpression' && node.left?.type === 'Identifier' && VIEW_NAMES.has(node.left.name) && node.right?.type === 'ObjectExpression') return node.right;
+  // Unwraps Object.freeze({...}) etc. — the common SSoT shape (feedback #3).
+  if (node.type === 'VariableDeclarator' && node.id?.type === 'Identifier' && VIEW_NAMES.has(node.id.name)) return unwrapObjectExpression(node.init);
+  if (node.type === 'AssignmentExpression' && node.left?.type === 'Identifier' && VIEW_NAMES.has(node.left.name)) return unwrapObjectExpression(node.right);
   return null;
 }
 

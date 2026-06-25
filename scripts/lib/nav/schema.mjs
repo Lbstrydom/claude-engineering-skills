@@ -72,8 +72,17 @@ export const NavPersonaSchema = z.object({
 
 export const NavContractSchema = z.object({
   version: z.literal(1),
+  // Doc-comment keys are allowed (JSON has no comments) while strict mode still
+  // catches real typos on the meaningful fields (feedback #8).
+  _note: z.string().optional(),
+  _comment: z.string().optional(),
   appRoots: z.array(z.string().min(1)).optional(),
-  // navLayers: { primary: [anchor,…], secondary: [anchor,…], … }
+  // Extra non-app path excludes (globs) on top of the built-in tests/fixtures/
+  // build defaults — e.g. a sibling app dir like `dashboard/**` (feedback #4).
+  exclude: z.array(z.string().min(1)).optional(),
+  // navLayers: { primary: [anchor,…], secondary: [anchor,…], … }. An anchor is a
+  // component symbol (React) OR a DOM-container selector like `#primary-nav` /
+  // `.sub-tabs-row` (vanilla/template apps — feedback #1).
   navLayers: z.record(z.string(), z.array(z.string().min(1))).default({}),
   personas: z.array(NavPersonaSchema).default([]),
 }).strict();

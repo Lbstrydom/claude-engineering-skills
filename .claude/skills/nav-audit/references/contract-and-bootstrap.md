@@ -54,12 +54,31 @@ summary: The two-artifact split — navMeta/docblock grammar, nav-contract.json 
    are canonicalized to the same id space the extractor produces, so
    `/projects/[id]` matches an observed `/projects/:param`.
 
-## Anchor identity
+## Anchor identity — two modes
 
-An anchor string is the exported component/symbol name (from the symbol index),
-disambiguated `Name@path.tsx` on collision. The model attributes each edge to
-**all** its declared-anchor ancestors via render-containment, so a component
-reused under several anchors is reachable from all of them.
+- **React/component apps**: an anchor is the exported component/symbol name (from
+  the symbol index), disambiguated `Name@path.tsx` on collision. The model
+  attributes each edge to **all** its declared-anchor ancestors via render-
+  containment, so a component reused under several anchors is reachable from all.
+- **Vanilla / template apps**: an anchor is a **DOM-container selector** — `#id`
+  or a nav-ish `.class` (e.g. `"navLayers": {"primary": ["#primary-nav"],
+  "secondary": [".sub-tabs-row"]}`). Embedded affordances (`<a href>`, inline
+  `switchView`, `data-view="…"`) are attributed to their nearest enclosing
+  container in the template HTML.
+
+## `exclude` + dynamic-nav reality
+
+- `nav-contract.json` may carry an `"exclude": ["dashboard/**", …]` array to drop
+  sibling apps / non-app dirs on top of the built-in tests/fixtures/build excludes.
+- `VIEWS = Object.freeze({...})` is read by **value** (`DRINK_SOON: 'drinksoon'`),
+  not by kebab-casing the key.
+- When nav is **data-driven** (`data-view="${x}"`, `switchView(el.dataset.view)`),
+  destinations are discovered (from the `VIEWS` registry) but per-view *anchors*
+  are statically undeterminable. The audit then degrades honestly: a reached-but-
+  unanchored intent is a **P3 `coverage-unverified`** (not a P1 gate), many
+  zero-inbound views roll up into one **`dynamic-nav-detected`** advisory, and the
+  scorecard marks those rows **`?` (run --verify)** rather than a false `✗`. For
+  these apps, **`--verify <url>` is the authoritative offered-vs-needed signal.**
 
 ## Bootstrap = review queue, never a baseline
 

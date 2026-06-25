@@ -34,9 +34,15 @@ export function buildModel(edges, { contract = null, sources = [], destinations:
 
   const reverseContainment = buildReverseContainment(sources);
 
-  // Attribute anchors: ALL declared ancestors (not just nearest), with the
-  // nearest recorded on the edge for display + a depth-based confidence decay.
+  // Attribute anchors. A pre-set DOM-container anchor (vanilla/template apps,
+  // e.g. `#primary-nav`) is honored directly; otherwise attribute ALL declared
+  // component ancestors via render-containment (React apps), nearest recorded on
+  // the edge with a depth-based confidence decay.
   const attributed = edges.map((e) => {
+    if (e.anchor) {
+      // DOM anchor already attributed by the extractor.
+      return { ...e, anchorAncestors: [e.anchor], layer: layerOfAnchor.get(e.anchor) ?? e.layer };
+    }
     const { anchors, nearest, depth } = declaredAncestors(e.entryPoint, declaredAnchors, reverseContainment);
     let confidence = e.confidence;
     if (nearest && depth >= 2 && confidence === 'high') confidence = 'medium';

@@ -16,10 +16,8 @@ import path from 'node:path';
 import { NavObservedSchema, OBSERVED_FILE, computeContractDigest, computeConfigDigest } from '../nav/schema.mjs';
 import { readContract } from '../nav/contract.mjs';
 import { buildModel } from '../nav/model.mjs';
-import { runTaxonomy } from '../nav/findings.mjs';
+import { runTaxonomy, personaScorecard } from '../nav/findings.mjs';
 import { partitionFindings, ageDivergences, readDriftLedger } from '../nav/drift.mjs';
-
-const PROMINENT = new Set(['primary', 'secondary']);
 
 /**
  * @param {string} root
@@ -44,7 +42,7 @@ export function collectNav(root) {
   }
 
   const model = buildModel(env.envelope.edges, { contract, sources: [], destinations: env.envelope.destinations });
-  const scorecard = buildScorecard(contract, model);
+  const scorecard = personaScorecard(model, contract).rows;
 
   // Nav Drift = ADVISORY divergences (orphans, etc.), aged (plan §3, Gemini-1-H).
   // Aging is cloud-sourced; with no history here, new divergences age to 0 (the
@@ -63,34 +61,6 @@ export function collectNav(root) {
   }));
 
   return wrap({ contract, scorecard, drift, status: { status: 'ok', detail: '' } });
-}
-
-/** Per-(persona,intent) reachability rows: expected anchor(s) vs observed, RED
- *  when a high-value intent drops out of the primary nav layer. */
-function buildScorecard(contract, model) {
-  const rows = [];
-  for (const p of contract.personas || []) {
-    for (const intent of p.intents || []) {
-      const d = model.destinations.get(intent.destination);
-      const observedAnchors = d ? [...d.anchors] : [];
-      const inProminent = observedAnchors.some((a) => PROMINENT.has(model.layerOfAnchor.get(a)));
-      const requiredOk = !intent.requiredInLayer
-        || observedAnchors.some((a) => model.layerOfAnchor.get(a) === intent.requiredInLayer);
-      const status = requiredOk && (intent.frequency !== 'high' || inProminent) ? 'ok' : 'red';
-      rows.push({
-        persona: p.id,
-        intent: intent.id,
-        destination: intent.destination,
-        expectedAnchors: intent.approvedAnchors,
-        observedAnchors,
-        requiredInLayer: intent.requiredInLayer,
-        frequency: intent.frequency,
-        source: intent.source,
-        status,
-      });
-    }
-  }
-  return rows;
 }
 
 function readEnvelope(root, expectedConfigDigest) {

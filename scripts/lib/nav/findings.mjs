@@ -26,6 +26,16 @@ export function runTaxonomy(model, { contract = null, routeMeta = new Map(), bas
   const findings = [];
   const dests = model.destinations;
 
+  // Is anchor attribution FUNCTIONAL for this app? (i.e. did the contract's
+  // declared anchors actually match any edges?) On vanilla/template apps with no
+  // exported nav components and no declared DOM-container anchors, NOTHING gets a
+  // layer — so coverage-gap/anchor-regression would be all false positives
+  // (feedback #1/#5). When non-functional, those classes degrade to a SINGLE
+  // advisory note instead of per-persona FP gates.
+  const anchorsFunctional = [...dests.values()].some((d) => d.anchors.size > 0);
+  const hasPrimaryLayer = Object.values(contract?.navLayers ?? {}).some((a) => Array.isArray(a) && a.length)
+    && Object.keys(contract?.navLayers ?? {}).includes('primary');
+
   // 1 — redundancy / over-exposure
   for (const d of dests.values()) {
     const prominentAnchors = [...d.anchors].filter((a) => PROMINENT_LAYERS.has(model.layerOfAnchor.get(a)));
@@ -39,40 +49,77 @@ export function runTaxonomy(model, { contract = null, routeMeta = new Map(), bas
     }
   }
 
-  // 2 — coverage gap (declared intent not in its required layer) — GATE-ELIGIBLE
-  for (const intent of declaredIntents(contract)) {
-    if (!intent.requiredInLayer) continue;
-    const d = dests.get(intent.destination);
-    const reachableInLayer = d && [...d.anchors].some((a) => model.layerOfAnchor.get(a) === intent.requiredInLayer);
-    if (!reachableInLayer) {
-      findings.push(mk('P1', 'coverage-gap', intent.destination,
-        [`declared intent '${intent.id}' requires layer '${intent.requiredInLayer}'; not reachable there`],
-        'high', true,
-        `needed in ${intent.requiredInLayer} for the persona but not offered there`));
+  // 2 — coverage gap (declared intent not in its required layer) — GATE-ELIGIBLE,
+  // but ONLY when anchor attribution is functional (else it's all FP — feedback #1/#5).
+  if (!anchorsFunctional && declaredIntents(contract).some((i) => i.requiredInLayer)) {
+    findings.push(mk('P3', 'anchor-attribution-unavailable', '(all)',
+      ['no edge was attributed to a declared nav anchor — coverage-gap/regression not evaluated. Declare DOM-container anchors (e.g. `#primary-nav`) in navLayers for vanilla/template apps, or component anchors for React.'],
+      'high', false,
+      'cannot judge offered-vs-needed: the nav-layer model does not fit this app yet'));
+  } else if (anchorsFunctional) {
+    for (const intent of declaredIntents(contract)) {
+      if (!intent.requiredInLayer) continue;
+      const d = dests.get(intent.destination);
+      if (!d || d.inDegree === 0) continue; // destination not discovered/reached → recall miss, not a coverage gap
+      const anchors = [...d.anchors];
+      const reachableInLayer = anchors.some((a) => model.layerOfAnchor.get(a) === intent.requiredInLayer);
+      if (reachableInLayer) continue;
+      if (anchors.length === 0) {
+        // Reached, but via dynamic nav we couldn't attribute to any anchor — we
+        // CANNOT assert it's missing from the required layer (it usually isn't).
+        // Advisory, NOT a gate (feedback #1/#5 — the data-driven-nav case).
+        findings.push(mk('P3', 'coverage-unverified', intent.destination,
+          [`declared intent '${intent.id}' is reached, but its nav anchor is dynamic/undeterminable statically — run --verify <url> to confirm it's in '${intent.requiredInLayer}'`],
+          'low', false,
+          `likely offered (reached at runtime) but static analysis can't place the layer`));
+      } else {
+        // Reached from a real anchor, just not the required layer — genuine gap.
+        findings.push(mk('P1', 'coverage-gap', intent.destination,
+          [`declared intent '${intent.id}' reached from ${anchors.join('/')} but not a '${intent.requiredInLayer}' anchor`],
+          'high', true,
+          `needed in ${intent.requiredInLayer} for the persona but not offered there`));
+      }
     }
   }
 
-  // 3 — orphan (zero inbound) — guarded by deepLinkOnly/utility classification
-  for (const d of dests.values()) {
-    if (d.inDegree > 0) continue;
-    const meta = routeMeta.get(d.id) ?? {};
-    if (meta.deepLinkOnly || meta.utility || isUtilityRoute(d.id)) continue; // FP guard
-    findings.push(mk('P2', 'orphan', d.id,
-      ['no inbound navigation edges'], 'medium', false,
-      'a destination exists but nothing offers it'));
+  // 3 — orphan (zero inbound) — guarded by deepLinkOnly/utility classification.
+  // Dynamic-nav guard (feedback): when a large fraction of DISCOVERED destinations
+  // have zero static inbound edges, the app drives nav from data (data-view /
+  // switchView(var)) and per-view orphan findings are unreliable — roll them up
+  // into ONE advisory pointing at --verify, rather than N false orphans.
+  const discovered = [...dests.values()].filter((d) => d.discovered);
+  const zeroIn = discovered.filter((d) => d.inDegree === 0 && !isUtilityRoute(d.id) && !(routeMeta.get(d.id)?.deepLinkOnly || routeMeta.get(d.id)?.utility));
+  const dynamicDominated = discovered.length >= 5 && zeroIn.length / discovered.length > 0.4;
+  if (dynamicDominated) {
+    findings.push(mk('P3', 'dynamic-nav-detected', `(${zeroIn.length} views)`,
+      [`${zeroIn.length} of ${discovered.length} discovered views have no static inbound edge (e.g. ${zeroIn.slice(0, 4).map((d) => d.id).join(', ')}…) — this app drives nav from data (data-view/switchView(var)). Static orphan/coverage findings are unreliable here; run --verify <url> to confirm reachability.`],
+      'medium', false,
+      'data-driven nav: static recall is limited — use --verify'));
+  } else {
+    for (const d of dests.values()) {
+      if (d.inDegree > 0) continue;
+      const meta = routeMeta.get(d.id) ?? {};
+      if (meta.deepLinkOnly || meta.utility || isUtilityRoute(d.id)) continue; // FP guard
+      findings.push(mk('P2', 'orphan', d.id,
+        ['no inbound navigation edges'], 'medium', false,
+        'a destination exists but nothing offers it'));
+    }
   }
 
-  // 4 — dead-end (a destination/view that emits no outbound nav)
-  const emitters = new Set(model.edges.map((e) => e.entryPoint));
-  for (const d of dests.values()) {
-    const meta = routeMeta.get(d.id) ?? {};
-    if (meta.terminal) continue; // FP guard: declared wizard-final
-    // Heuristic: a destination whose own view symbol emits nothing onward.
-    const viewName = d.id.replace(/^.*[/#]/, '');
-    if (viewName && !emitters.has(viewName) && d.inDegree > 0 && /[A-Za-z]/.test(viewName) && !d.id.includes('/')) {
-      findings.push(mk('P3', 'dead-end', d.id,
-        ['view offers no onward navigation'], 'low', false,
-        'reachable but offers no next action'));
+  // 4 — dead-end (a destination/view that emits no outbound nav). SUPPRESSED when
+  // the app has a global/persistent primary nav layer — then no view is terminal,
+  // so this would be all FP (feedback #6).
+  if (!hasPrimaryLayer) {
+    const emitters = new Set(model.edges.map((e) => e.entryPoint));
+    for (const d of dests.values()) {
+      const meta = routeMeta.get(d.id) ?? {};
+      if (meta.terminal) continue; // FP guard: declared wizard-final
+      const viewName = d.id.replace(/^.*[/#]/, '');
+      if (viewName && !emitters.has(viewName) && d.inDegree > 0 && /[A-Za-z]/.test(viewName) && !d.id.includes('/')) {
+        findings.push(mk('P3', 'dead-end', d.id,
+          ['view offers no onward navigation'], 'low', false,
+          'reachable but offers no next action'));
+      }
     }
   }
 
@@ -145,8 +192,8 @@ export function runTaxonomy(model, { contract = null, routeMeta = new Map(), bas
     }
   }
 
-  // 10 — anchor-reachability regression — GATE-ELIGIBLE (needs base model)
-  if (baseModel) {
+  // 10 — anchor-reachability regression — GATE-ELIGIBLE (needs base model + functional anchors)
+  if (baseModel && anchorsFunctional) {
     for (const intent of declaredIntents(contract)) {
       const before = baseModel.destinations.get(intent.destination);
       const after = dests.get(intent.destination);
@@ -164,6 +211,43 @@ export function runTaxonomy(model, { contract = null, routeMeta = new Map(), bas
   }
 
   return findings;
+}
+
+const PROMINENT_FOR_SCORECARD = new Set(['primary', 'secondary']);
+
+/**
+ * Per-(persona,intent) reachability scorecard (plan §3). Shared by the CLI report
+ * and the dashboard panel. Returns `anchorsFunctional:false` when the nav-layer
+ * model doesn't fit the app (so callers can show the honest caveat, not red FPs).
+ * @param {object} model
+ * @param {object|null} contract
+ * @returns {{anchorsFunctional: boolean, rows: object[]}}
+ */
+export function personaScorecard(model, contract) {
+  const anchorsFunctional = [...model.destinations.values()].some((d) => d.anchors.size > 0);
+  const rows = [];
+  for (const p of contract?.personas ?? []) {
+    for (const intent of p.intents ?? []) {
+      const d = model.destinations.get(intent.destination);
+      const observedAnchors = d ? [...d.anchors] : [];
+      const inProminent = observedAnchors.some((a) => PROMINENT_FOR_SCORECARD.has(model.layerOfAnchor.get(a)));
+      const requiredOk = !intent.requiredInLayer
+        || observedAnchors.some((a) => model.layerOfAnchor.get(a) === intent.requiredInLayer);
+      const reached = !!d && d.inDegree > 0;
+      let status;
+      if (!anchorsFunctional) status = 'unknown';                       // model doesn't fit this app
+      else if (requiredOk && (intent.frequency !== 'high' || inProminent)) status = 'ok';
+      else if (observedAnchors.length > 0) status = 'red';              // reached from a REAL anchor, wrong layer → genuine gap
+      else status = 'unverified';                                       // no static anchor (dynamic nav / not statically reached) — can't assert
+      rows.push({
+        persona: p.id, intent: intent.id, destination: intent.destination,
+        expectedAnchors: intent.approvedAnchors, observedAnchors,
+        requiredInLayer: intent.requiredInLayer, frequency: intent.frequency,
+        source: intent.source, reached, status,
+      });
+    }
+  }
+  return { anchorsFunctional, rows };
 }
 
 function mk(severity, klass, destination, evidence, confidence, gateEligible, verdict) {

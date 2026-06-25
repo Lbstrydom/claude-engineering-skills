@@ -17,9 +17,9 @@ import { writeOutput } from './lib/file-io.mjs';
 import { readSources, extractEdges } from './lib/nav/extract.mjs';
 import { readContract, parseNavMeta, bootstrapContract, writeContract } from './lib/nav/contract.mjs';
 import { buildModel } from './lib/nav/model.mjs';
-import { runTaxonomy } from './lib/nav/findings.mjs';
+import { runTaxonomy, personaScorecard } from './lib/nav/findings.mjs';
 import { partitionFindings, scopeToChanged, divergenceKey } from './lib/nav/drift.mjs';
-import { renderFindings, renderTable, renderMermaid } from './lib/nav/render.mjs';
+import { renderFindings, renderTable, renderMermaid, renderScorecard } from './lib/nav/render.mjs';
 import { assembleEnvelope, writeObservedEnvelope } from './lib/nav/envelope.mjs';
 import { computeContractDigest } from './lib/nav/schema.mjs';
 import { runVerify } from './lib/nav/verify.mjs';
@@ -41,11 +41,11 @@ async function main() {
     process.exit(2);
   }
 
-  // Read the contract early so its appRoots drive extraction namespacing.
+  // Read the contract early so its appRoots/exclude drive extraction.
   const { contract: earlyContract } = readContract(root);
   const appRoots = earlyContract?.appRoots ?? [];
 
-  const { sources } = readSources(root, sourceFiles);
+  const { sources } = readSources(root, sourceFiles, { exclude: earlyContract?.exclude ?? [] });
   const { edges, destinations, adapters, recall, warnings } = extractEdges(sources, { root, appRoots });
 
   // Bootstrap mode: emit a review-queue contract skeleton and stop.
@@ -119,6 +119,10 @@ async function main() {
     process.stderr.write(`[nav-audit] envelope write skipped: ${err.message}\n`);
   }
 
+  // Per-persona reachability scorecard — the headline feature; ALWAYS surfaced
+  // (was previously dashboard-only — feedback #7).
+  const scorecard = personaScorecard(model, contract);
+
   const result = {
     ok: true,
     scope: args.scope,
@@ -127,6 +131,7 @@ async function main() {
     warnings,
     findingCounts: countBySeverity(findings),
     findings,
+    scorecard,
     blockingDivergences: blocking.map(divergenceKey),
   };
 
@@ -134,6 +139,7 @@ async function main() {
     writeOutput(result, args.out, `[nav-audit] ${findings.length} findings (${blocking.length} gate-eligible on changed surface)`);
   } else {
     const out = [
+      renderScorecard(scorecard), '',
       renderFindings(findings), '',
       renderTable(model), '',
       renderMermaid(model),
@@ -142,10 +148,18 @@ async function main() {
     if (args.out) writeOutput(result, args.out, out); else process.stdout.write(out + '\n');
   }
 
-  // Gate: hard-fail only with --gate AND a gate-eligible divergence on the changed surface.
-  if (args.gate && blocking.length > 0) {
-    process.stderr.write(`[nav-audit] GATE: ${blocking.length} declared-intent divergence(s) on changed surface — ${blocking.map(divergenceKey).join(', ')}\n`);
-    process.exit(1);
+  // Gate: hard-fail only with --gate AND a gate-eligible divergence on the changed
+  // surface. Clarify the advisory-vs-blocking distinction so the message can't read
+  // as a contradiction (feedback #8).
+  const gateEligibleTotal = gateEligible.length;
+  if (args.gate) {
+    if (blocking.length > 0) {
+      process.stderr.write(`[nav-audit] GATE FAIL: ${blocking.length} declared-intent divergence(s) ON THE CHANGED SURFACE — ${blocking.map(divergenceKey).join(', ')}\n`);
+      process.exit(1);
+    }
+    process.stderr.write(`[nav-audit] GATE PASS: ${gateEligibleTotal} gate-eligible finding(s) total, 0 on the changed surface (advisory only).\n`);
+  } else if (gateEligibleTotal > 0) {
+    process.stderr.write(`[nav-audit] ${gateEligibleTotal} gate-eligible finding(s) — advisory (run with --gate to block on changed-surface regressions).\n`);
   }
   process.exit(0);
 }

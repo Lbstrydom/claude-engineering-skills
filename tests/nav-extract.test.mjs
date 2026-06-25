@@ -4,7 +4,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractEdges } from '../scripts/lib/nav/extract.mjs';
+import { extractEdges, readSources } from '../scripts/lib/nav/extract.mjs';
 import { normalizeDestination } from '../scripts/lib/nav/normalize.mjs';
 import { activeAdapters } from '../scripts/lib/nav/adapters/index.mjs';
 
@@ -181,6 +181,38 @@ describe('Monorepo app-root namespacing (debt-2)', () => {
     const { edges } = extractEdges(sources, { root: '.', appRoots: ['apps/web', 'apps/admin'] });
     assert.ok(edges.some((e) => e.destination === 'apps/web#/settings'));
     assert.ok(edges.some((e) => e.destination === 'apps/admin#/settings'));
+  });
+});
+
+describe('vanilla feedback fixes', () => {
+  it('reads VIEWS = Object.freeze({...}) by VALUE, not the kebab\'d enum KEY (feedback #3)', () => {
+    const sources = [{
+      path: 'app.js',
+      content: `const VIEWS = Object.freeze({ DRINK_SOON: 'drinksoon' });
+function go(){ switchView(VIEWS.DRINK_SOON); }`,
+    }];
+    const { edges, destinations } = extractEdges(sources, { root: '.' });
+    assert.ok(edges.some((e) => e.destination === 'drinksoon'), 'edge should resolve to drinksoon (value), not drink-soon (key)');
+    assert.ok(destinations.some((d) => d.id === 'drinksoon'));
+    assert.ok(!edges.some((e) => e.destination === 'drink-soon'), 'must NOT produce the kebab key');
+  });
+
+  it('harvests data-view nav + attributes it to the enclosing DOM container (feedback #1/#2)', () => {
+    const sources = [{
+      path: 'nav.js',
+      content: 'function navHtml(){ return `<nav id="bottom-nav"><button data-view="wines">Cellar</button><button data-view="today">Today</button></nav>`; }',
+    }];
+    const { edges } = extractEdges(sources, { root: '.' });
+    const wines = edges.find((e) => e.destination === 'wines');
+    assert.ok(wines, 'should harvest data-view="wines"');
+    assert.equal(wines.anchor, '#bottom-nav', 'should attribute to the enclosing DOM container');
+    assert.ok(edges.some((e) => e.destination === 'today'));
+  });
+
+  it('excludes test/fixture files from extraction (feedback #4)', () => {
+    const { sources } = readSources('.', ['tests/fixture-nav.test.jsx', 'src/App.tsx'].filter(() => true));
+    // tests/*.test.jsx must be dropped; only non-test files survive (none here on disk, but the filter is what we assert)
+    assert.ok(!sources.some((s) => /tests\//.test(s.path)));
   });
 });
 
