@@ -52,6 +52,9 @@ const CORE_ENTRY = [
   // SurfaceManifestSchema). Authoritative list is sync-to-repos.mjs; keep
   // in lock-step. Walker pulls in its lib/persona-test/schemas.mjs import.
   'scripts/build-surfaces-manifest.mjs',
+  // /nav-audit CLI entry — walker pulls in scripts/lib/nav/** closure.
+  // Authoritative list is sync-to-repos.mjs; keep in lock-step.
+  'scripts/nav-audit.mjs',
 ];
 
 // CORE_NON_IMPORTABLE lists modules that are documented runtime injection

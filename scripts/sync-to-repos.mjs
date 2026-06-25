@@ -116,6 +116,12 @@ const CORE_ENTRY = [
   // collision-detection + validation impl; the walker pulls in its
   // lib/persona-test/schemas.mjs import automatically.
   'scripts/build-surfaces-manifest.mjs',
+  // /nav-audit CLI: static navigation / IA audit + --verify live mode. A new
+  // top-level entry imported by nothing, so it must be declared here; the walker
+  // pulls in its scripts/lib/nav/** closure (ast, extract, adapters/*, model,
+  // findings, drift, render, verify, approot, …) automatically. `playwright` is a
+  // runtime dynamic import (external pkg), so the static walker stops there.
+  'scripts/nav-audit.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.
