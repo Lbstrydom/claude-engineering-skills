@@ -77,6 +77,11 @@ scripts/lib/consumer-repos.local.json
 # Observed domain-deps envelope — derived from DB import graph by arch:render.
 .audit-loop/domain-deps-observed.json
 
+# /nav-audit observed nav graph + local drift-aging cache — regenerated each
+# run (Category-A: volatile provenance), never committed. Aging is cloud-sourced.
+.audit-loop/nav-graph-observed.json
+.audit-loop/nav-drift-ledger.json
+
 # Repo-identity reconcile intermediate — operator-curated, one-time, applied
 # then spent (the merge it proposes lands in the DB, not the repo). Like the
 # requirements-layer candidates/gaps intermediates: kept locally, never committed.

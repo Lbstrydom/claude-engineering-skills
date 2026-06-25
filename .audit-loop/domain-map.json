@@ -38,6 +38,14 @@
       "domain": "claudemd-management"
     },
     {
+      "pattern": "scripts/lib/nav/**",
+      "domain": "nav-audit"
+    },
+    {
+      "pattern": "scripts/nav-audit.mjs",
+      "domain": "nav-audit"
+    },
+    {
       "pattern": "scripts/symbol-index/**",
       "domain": "arch-memory"
     },
@@ -274,6 +282,9 @@
     "dashboard": [
       "arch-memory",
       "shared-lib"
+    ],
+    "nav-audit": [
+      "shared-lib"
     ]
   },
   "_comment_purposes": "Outcome/purpose taxonomy + domain->purpose edges for the dashboard Purpose tab (docs/completed/dashboard-purpose-view.md). purposes: curated outcome nodes (7); kind=skill-chain when backed by flows.json node ids, else curated. domainPurposes: manual domain->purpose edges; a domain may serve several purposes (rendered with an 'also serves N' badge). Unmapped domains + domains absent from the architecture map surface as hygiene warnings in the tab.",
@@ -296,6 +307,7 @@
     "tech-debt": ["deliver-quality-audits"],
     "ux-lock": ["verify-live-ux"],
     "persona-test": ["verify-live-ux"],
+    "nav-audit": ["verify-live-ux"],
     "learning-store": ["learn-from-outcomes"],
     "memory-health": ["learn-from-outcomes"],
     "stores": ["preserve-trust-safety", "learn-from-outcomes"],

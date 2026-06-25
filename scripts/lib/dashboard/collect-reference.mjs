@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { sha } from '../cli-io.mjs';
 import { loadAllSkills } from '../../skills-help.mjs';
 import { collectCli } from './collect-cli.mjs';
+import { collectNav } from './collect-nav.mjs';
 import { FlowManifestSchema } from './schema.mjs';
 import {
   OBSERVED_FILE,
@@ -424,6 +425,17 @@ export function collectReference(opts = {}) {
     sources.cli = { status: 'unexpected-error', detail: `collectCli failed: ${err.message}` };
   }
 
+  // Nav-audit section (REGISTRY.reference) — Per-Persona Reachability Scorecard
+  // + Nav Drift. Degrades to an empty panel with a logged cause (cloud-off /
+  // not-yet-run), mirroring collectArchitecture's status contract.
+  let navAudit = { scorecard: [], drift: [], status: { status: 'missing-optional', detail: '' } };
+  try {
+    navAudit = collectNav(root).navAudit;
+  } catch (err) {
+    navAudit = { scorecard: [], drift: [], status: { status: 'unexpected-error', detail: `collectNav failed: ${err.message}` } };
+  }
+  sources.navAudit = navAudit.status;
+
   // Purpose tab — join curated taxonomy + flows + architecture domains +
   // requirements ledger. Deterministic; sources.purposes mirrors its status.
   const ledger = readRequirementsLedger(root);
@@ -463,12 +475,13 @@ export function collectReference(opts = {}) {
     flows: flowRes.flows,
     cli,
     purposes,
+    navAudit,
   };
   // sourceHash over content (everything but provenance) — committed-page
   // determinism (no timestamp; plan §8 / M3). `purposes` is a pure function of
   // committed files, so folding it in keeps the page byte-reproducible.
   data.provenance.sourceHash = sha(JSON.stringify({
-    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources, purposes,
+    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources, purposes, navAudit,
   }), 8);
   return data;
 }

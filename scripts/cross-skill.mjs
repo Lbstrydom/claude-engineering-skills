@@ -455,6 +455,19 @@ async function cmdPlanSatisfaction() {
   emit({ ok: true, cloud: true, row, persistentFailures: persistent });
 }
 
+async function cmdRecordNavAuditRun() {
+  // /nav-audit run telemetry (plan §4a.E). Idempotent by (repoId, headSha,
+  // scope). v1 introduces NO migration: when cloud is enabled but no dedicated
+  // nav-audit sink exists, this is a logged no-op (the durable per-run row is a
+  // v2 item). Graceful no-op when cloud is off.
+  const p = parsePayload();
+  if (!p.headSha) return emitError('BAD_INPUT', 'headSha is required');
+  if (!Array.isArray(p.driftKeys)) return emitError('BAD_INPUT', 'driftKeys (array) is required');
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
+  emit({ ok: true, cloud: true, persisted: false, note: 'nav-audit run persistence deferred to v2 (no migration in v1)' });
+}
+
 async function cmdRecordShipEvent() {
   const p = parsePayload();
   if (!p.outcome) return emitError('BAD_INPUT', 'outcome is required');
@@ -1352,6 +1365,7 @@ const commands = {
   'mark-persona-test-candidate-proposed': cmdMarkPersonaTestCandidateProposed,
   'record-correlation': cmdRecordCorrelation,
   'record-ship-event': cmdRecordShipEvent,
+  'record-nav-audit-run': cmdRecordNavAuditRun,
   'record-plan-verify-run': cmdRecordPlanVerifyRun,
   'record-plan-verify-items': cmdRecordPlanVerifyItems,
   'plan-satisfaction': cmdPlanSatisfaction,

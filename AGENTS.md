@@ -84,7 +84,7 @@
 
 ## Project Overview
 
-**Purpose**: A bundle of 7 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
+**Purpose**: A bundle of 8 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
 **Runtime**: Node.js (ESM modules, `"type": "module"`)
 **Deployment**: CLI scripts + skill files, invoked by AI coding assistants (Claude Code, Copilot, Cursor, Windsurf)
 **Repo**: Renamed from `claude-audit-loop` to `claude-engineering-skills` (Phase E)
@@ -104,8 +104,8 @@
         ↓
 deploy to Railway / live URL
         ↓
-/click-test    +    /persona-test  → live verification: structural DOM audit ∥ narrative UX testing
-  (structural)        (narrative)    Run both — disjoint coverage. Pair mode (--pair) for opposed-expertise personas.
+/click-test  +  /persona-test  +  /nav-audit  → three lenses: page-level DOM audit ∥ journey-level narrative QA ∥ system-level IA/nav audit
+  (structural)     (narrative)      (system)      Disjoint coverage — run all three on UI/nav PRs. /nav-audit is static (--verify <url> confirms against the live app).
         ↓
 /ship                            → commit + push (with UX P0 warning from persona-test)
 ```
@@ -143,6 +143,7 @@ Each skill is a sibling — they share env vars and Supabase stores but have dis
   - **Pair** (`--pair "<p1>" "<p2>" <url>`): runs two opposed-expertise personas back-to-back, diffs findings into CONSENSUS / A-ONLY / B-ONLY buckets. Use when coverage matters more than speed — empirically ~92% disjoint findings.
   - **Consistency mode** (`--mode consistency --canary <name>`, code-driven Playwright): deterministic runner against a canary journey + a `surfaces.json` manifest declaring `data-engine-claim` HTML attributes. Detects cross-step UI/state contradictions (DOM-vs-network-truth, stale-projection, undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright specs. See `docs/consistency-contract.md` for the HTML attribute contract.
 - **click-test**: deployed app, structural DOM audit. Mechanical complement to persona-test — walks every interactive element, asserts semantic-HTML contracts (duplicate IDs, orphan labels, inputs without names, ARIA misuse, heading hierarchy, missing alt, undersized touch targets). Catches issues personas never trigger because there's no narrative reason to notice them. Optional `--with-modals` opens each modal/dropdown and re-scans the live DOM. Cache-busts service workers before scanning.
+- **nav-audit**: the **system-level** third UX lens (persona-test = journey-first, click-test = page-first, nav-audit = system-first). Static, code-derived audit of the WHOLE navigation graph — extracts every entry point × destination via `@babel/parser` AST (+ a string/template scan so vanilla template-HTML apps work), attributes anchors by render-containment, and runs a 10-class taxonomy (orphan, coverage-gap, redundancy, competing-models, anchor-regression, …) asking "is what's OFFERED what's NEEDED?" grounded in the persona registry. Two-artifact split: route-owned facts colocate in code (`navMeta`/`@nav` docblock); product intent lives in a tiny committed `nav-contract.json`; the observed graph is gitignored + regenerated. CI gate is **drift-only** (hard-fails only on a declared-intent regression on the changed surface). `--verify <url>` drives headless Chromium to reconcile static-vs-live (confirmed / static-only / runtime-only) and surface runtime-gated nav. Dashboard "Nav Audit" tab (REGISTRY.reference): Per-Persona Reachability Scorecard + Nav Drift. Plan: `docs/plans/nav-audit-skill.md`.
 - **ship**: packaging and delivery (now includes Step 5.6 candidate promotion when consistency mode is adopted)
 
 ## Consumer-repo layout (isolation)

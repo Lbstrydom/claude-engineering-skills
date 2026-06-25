@@ -59,6 +59,7 @@
     "dashboard:build": "node scripts/build-dashboard.mjs all",
     "dashboard:audit-run": "node scripts/build-dashboard.mjs audit-run",
     "dashboard:setup": "npm run arch:refresh && npm run arch:render && npm run dashboard:build",
+    "nav:audit": "node scripts/nav-audit.mjs --scope diff",
     "arch:refresh": "node scripts/symbol-index/refresh.mjs",
     "arch:refresh:full": "node scripts/symbol-index/refresh.mjs --full",
     "arch:render": "node scripts/symbol-index/render-mermaid.mjs",
@@ -104,6 +105,7 @@
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.88.0",
+    "@babel/parser": "^8.0.0",
     "@google/genai": "^1.50.1",
     "codeowners-utils": "^1.0.2",
     "dotenv": "17.4.2",

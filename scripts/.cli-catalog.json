@@ -10,7 +10,6 @@
       "description": "Gated DB-integration tests (repo-identity stability + fragmentation guardrail). Requires a disposable AUDIT_DB_TEST_URL; skipped when unset. Never touches the live store.",
       "category": "test"
     },
-
     "audit": {
       "description": "Run /audit-loop — dispatches to /audit-plan or /audit-code by input shape.",
       "category": "audit",
@@ -66,7 +65,6 @@
       "description": "Pre-flight check that Step 7 (Gemini final review) prerequisites are met.",
       "category": "diagnostic"
     },
-
     "cache:check": {
       "description": "Audit-loop cache hit-rate diagnostic.",
       "category": "diagnostic"
@@ -147,7 +145,6 @@
       "description": "Create or refresh ~/.audit-loop.env from the source repo's .env so consumer repos auto-inherit shared cloud config (DSN + LLM keys). Idempotent. --yes for CI, --dry-run to preview, --source-repo <path> to override discovery.",
       "category": "diagnostic"
     },
-
     "sync": {
       "description": "Sync this bundle into all registered consumer repos (auto-fires fit-check on first sync).",
       "category": "sync"
@@ -168,7 +165,6 @@
       "description": "Compare consumer-repo audit-tool versions against the source manifest.",
       "category": "sync"
     },
-
     "skills:regenerate": {
       "description": "Regenerate .claude/skills/* mirrors from skills/* authoritative sources.",
       "category": "skills"
@@ -202,7 +198,6 @@
       "category": "skills",
       "outputs": ".skills-fit-check.json"
     },
-
     "dashboard": {
       "description": "Build the dashboard, then serve it on a localhost port (default 4173).",
       "category": "dashboard"
@@ -219,7 +214,6 @@
       "description": "Bootstrap the dashboard: arch:refresh → arch:render → dashboard:build. Run after fresh clone, or after editing .audit-loop/domain-map.json.",
       "category": "dashboard"
     },
-
     "arch:refresh": {
       "description": "Refresh architectural-memory: extract symbols, embed, index in Supabase (changed files only).",
       "category": "arch"
@@ -248,12 +242,10 @@
       "description": "One-off spike-extract: experimental symbol extraction without indexing.",
       "category": "arch"
     },
-
     "security:refresh": {
       "description": "Refresh the security-incident memory from docs/security-strategy.md.",
       "category": "security"
     },
-
     "learning:weekly-review": {
       "description": "Generate the weekly learning digest + post the sticky GitHub issue.",
       "category": "learning"
@@ -286,7 +278,6 @@
       "description": "Replay-evaluate a candidate policy against historical decisions (counterfactual).",
       "category": "learning"
     },
-
     "plans:archive": {
       "description": "Move completed plans into docs/completed/ (with deferred items preserved).",
       "category": "plans"
@@ -303,7 +294,6 @@
       "description": "plans:lint with machine-readable JSON output for CI.",
       "category": "plans"
     },
-
     "hooks:install": {
       "description": "Install local pre-push hooks (skill-driven checks before push).",
       "category": "hooks"
@@ -316,12 +306,10 @@
       "description": "Remove locally-installed pre-push hooks.",
       "category": "hooks"
     },
-
     "audit:wtf": {
       "description": "Friction log — capture a 'what happened, what hurt' note for later review.",
       "category": "diagnostic"
     },
-
     "parity:check-refs": {
       "description": "Postgres-parity: verify non-core code respects the schema boundary.",
       "category": "parity"
@@ -341,6 +329,10 @@
     "parity:record-fixtures": {
       "description": "Postgres-parity: record golden fixtures (run once after schema changes).",
       "category": "parity"
+    },
+    "nav:audit": {
+      "description": "Static navigation / IA audit — system-level nav-graph lens; offered-vs-needed, drift-only CI gate.",
+      "category": "audit"
     }
   }
 }

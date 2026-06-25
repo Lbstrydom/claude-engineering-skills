@@ -1,5 +1,50 @@
 # Project Status Log
 
+## 2026-06-25 — New `/nav-audit` skill (system-level IA/nav audit) + `--verify`
+
+### Changes
+- Added the **8th skill, `/nav-audit`** — static, code-derived navigation /
+  information-architecture audit (the system-level third lens beside
+  /persona-test and /click-test). Full chain: brainstorm → plan → audit-plan
+  (GPT 3-round + Gemini 2-round) → `/cycle code --autonomous` (3 clusters,
+  consolidated Gemini gate) → debt remediation.
+- **Extraction is AST-based** (`@babel/parser` + hand-rolled walker, no
+  `@babel/traverse`) with a hybrid string/template-literal scan so vanilla
+  template-HTML apps are covered. Anchor attribution via render-containment;
+  10-class P0–P3 taxonomy; two-artifact split (`navMeta`/`@nav` in code +
+  tiny `nav-contract.json`); gitignored regenerated observed envelope.
+- **Drift-only CI gate** (declared-intent regression on the changed surface,
+  merge-base diff). **`--verify <url>`** drives headless Chromium to reconcile
+  static-vs-live (confirmed/static-only/runtime-only) — verified live against
+  wine-cellar-app. Nested-route composition + monorepo app-root namespacing.
+- Dashboard "Nav Audit" tab (Per-Persona Reachability Scorecard + Nav Drift),
+  `record-nav-audit-run` cross-skill subcommand (v2-deferred persistence),
+  Copilot prompt shim, CLI catalog + relocation-guard entries.
+
+### Files Affected
+- `scripts/lib/nav/**` (15 modules: ast, extract, adapters/*, model, findings,
+  contract, schema, envelope, drift, render, normalize, approot, verify, ast-lite)
+- `scripts/nav-audit.mjs` (CLI), `scripts/lib/dashboard/{collect-nav,sections/nav-audit}.mjs`
+- `skills/nav-audit/**` + `.claude/skills/nav-audit/**` (regenerated)
+- `tests/nav-*.test.mjs` (7 files), `docs/plans/nav-audit-skill.md`
+- Modified: `cross-skill.mjs`, `dashboard/{collect-reference,render}.mjs`,
+  `copilot-prompts.mjs`, `sync-isolation-verify.mjs`, `.cli-catalog.json`,
+  `domain-map.json`, `.gitignore`, `package.json` (`@babel/parser`)
+
+### Decisions Made
+- Chose AST over regex after Gemini review (debt-1 remediation); kept the
+  string/template scan so vanilla apps still work — a hybrid, not pure-AST.
+- CI gate is drift-only (declared-intent regression) — a raw graph-diff gate
+  gets disabled within a week (brainstorm consensus).
+- Aging is cloud-sourced (run-history), not a gitignored ledger (would be
+  empty in stateless CI).
+
+### Next Steps
+- Sync to consumer repos; run `/nav-audit --bootstrap` in wine-cellar-app.
+- v1.1: deeper taps-to-reach BFS in `--verify`; v2 durable per-run persistence.
+
+---
+
 ## 2026-06-22 — Remove deprecated `.github/skills/` mirror
 
 ### Changes

@@ -51,6 +51,7 @@ const CLI_SMOKE_SET = [
   'security-memory/refresh-incidents.mjs',
   'reconcile-repo-identity.mjs',
   'ux-lock-run.mjs', // WS2 deterministic /ux-lock runner
+  'nav-audit.mjs',   // /nav-audit CLI orchestrator
 ];
 
 const LIB_IMPORT_SET = [
@@ -58,6 +59,10 @@ const LIB_IMPORT_SET = [
   { rel: 'lib/sync-path-map.mjs', mustExport: ['sourceRelToDestRel', 'destRelToSourceRel'] },
   { rel: 'lib/sync-rewriter.mjs', mustExport: ['rewriteCommandSurface'] },
   { rel: 'security-memory/incident-status.mjs', mustExport: ['classifyMitigation'] },
+  { rel: 'lib/nav/extract.mjs', mustExport: ['extractEdges', 'readSources'] },
+  { rel: 'lib/nav/model.mjs', mustExport: ['buildModel'] },
+  { rel: 'lib/nav/findings.mjs', mustExport: ['runTaxonomy'] },
+  { rel: 'lib/nav/drift.mjs', mustExport: ['partitionFindings', 'ageDivergences'] },
 ];
 
 const CMD_SCAN_PATHS = [

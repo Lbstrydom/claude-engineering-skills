@@ -49,6 +49,11 @@ export const SKILL_ENTRY_SCRIPTS = Object.freeze({
     cli: 'node scripts/cycle.mjs ${input:task_or_plan}',
     summary: 'End-to-end feature cycle: plan → audit-plan → impl gate → audit-code → persona-test → ux-lock → ship.',
   },
+  'nav-audit': {
+    script: 'nav-audit.mjs',
+    cli: 'node scripts/nav-audit.mjs --scope diff',
+    summary: 'Static navigation / IA audit — the system-level lens; offered-vs-needed, drift-only CI gate.',
+  },
   'explain': {
     script: 'explain.mjs',
     cli: 'node scripts/explain.mjs ${input:target}',
