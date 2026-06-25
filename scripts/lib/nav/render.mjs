@@ -20,13 +20,26 @@ export function renderScorecard(scorecard) {
     lines.push('    in navLayers (vanilla/template) or component anchors (React). Showing');
     lines.push('    discovery only (reached / not-reached).');
   }
-  const MARK = { ok: '✓', red: '✗', unverified: '?', unknown: '•' };
+  const live = rows.some((r) => r.live);
+  if (live) lines.push('  (live-verified · pass=in required layer · misplaced=live but wrong layer · missing=not in live nav · unverified=partial coverage)');
+  const MARK = { ok: '✓', red: '✗', unverified: '?', unknown: '•', pass: '✓', misplaced: '✗', missing: '✗' };
   for (const r of rows) {
     const mark = MARK[r.status] ?? (r.reached ? '•' : '✗');
     let where;
-    if (r.status === 'unverified') where = `reached, but anchor is dynamic — run --verify to confirm '${r.requiredInLayer || 'nav'}'`;
-    else if (!anchorsFunctional) where = `${r.reached ? 'reached' : 'NOT reached'} in nav`;
-    else where = `expected ${(r.expectedAnchors || []).join('/') || '—'} · observed ${(r.observedAnchors || []).join('/') || '—'}`;
+    if (r.live) {
+      // live-verified verdicts (plan v1.1)
+      const st = (r.states || []).join(',');
+      if (r.status === 'pass') where = `in ${(r.observedLayers || []).join('/') || 'nav'}${st ? ` @ ${st}` : ''}${r.requiredInLayer ? '' : ' (reachable)'}`;
+      else if (r.status === 'misplaced') where = `live in ${(r.observedLayers || []).join('/') || 'a non-nav container'}, required ${r.requiredInLayer}`;
+      else if (r.status === 'missing') where = 'not found in live nav';
+      else where = `partial coverage — re-run --verify`;
+    } else if (r.status === 'unverified') {
+      where = `reached, but anchor is dynamic — run --verify to confirm '${r.requiredInLayer || 'nav'}'`;
+    } else if (!anchorsFunctional) {
+      where = `${r.reached ? 'reached' : 'NOT reached'} in nav`;
+    } else {
+      where = `expected ${(r.expectedAnchors || []).join('/') || '—'} · observed ${(r.observedAnchors || []).join('/') || '—'}`;
+    }
     lines.push(`  [${mark}] ${r.persona}/${r.intent} → ${r.destination}  (${where})`);
   }
   return lines.join('\n');

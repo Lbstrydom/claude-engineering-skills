@@ -80,6 +80,19 @@ summary: The two-artifact split — navMeta/docblock grammar, nav-contract.json 
   scorecard marks those rows **`?` (run --verify)** rather than a false `✗`. For
   these apps, **`--verify <url>` is the authoritative offered-vs-needed signal.**
 
+## Bootstrap from the live app (`--from-url`)
+
+`node scripts/nav-audit.mjs --bootstrap --from-url <url>` crawls the **live** nav
+containers (the same multi-state Playwright drive `--verify` uses) and drafts a
+`navLayers` map (most-prominent nav container → `primary`, sub-tab rows →
+`secondary`) plus an `observedTargets` list (written under a `_note` comment), so a
+first-time user **edits a smart baseline instead of a blank page**. Deterministic —
+no LLM (cut for egress safety). It **refuses to overwrite an existing
+`nav-contract.json`** (pass `--force` to replace) — bootstrap is never destructive.
+The draft is a starting point: you'll typically consolidate per-tab ids into your
+real `#primary-nav` / `.sub-tabs-row` selectors and map `observedTargets` to
+persona intents.
+
 ## Bootstrap = review queue, never a baseline
 
 `node scripts/nav-audit.mjs --bootstrap` writes a skeleton with every inferred

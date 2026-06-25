@@ -14,13 +14,35 @@ description: |
     /nav-audit --scope full            — analyse the whole nav graph, not just the changed surface
     /nav-audit --bootstrap             — emit a review-queue nav-contract.json skeleton (first run)
     /nav-audit --gate                  — exit non-zero on a declared-intent regression on the changed surface
-    /nav-audit --verify <url>          — drive the live app (Playwright) to confirm reachability + surface runtime-gated nav
+    /nav-audit --verify <url>          — live-verify: multi-state DOM layer attribution → scorecard pass/misplaced/missing
+    /nav-audit --verify <url> --breakpoints mobile,desktop --storage-state auth.json   — states to capture (default mobile,desktop) + auth
+    /nav-audit --bootstrap --from-url <url>   — draft nav-contract.json navLayers from the live app (refuses to clobber; --force to replace)
 ---
 
-# /nav-audit — Static Navigation / IA Audit
+# /nav-audit — Contract-backed Navigation Verifier (with static assists)
 
 The third UX-quality lens. **persona-test is journey-first, click-test is
-page-first, nav-audit is system-first.** Its unit of analysis is the whole
+page-first, nav-audit is system-first.**
+
+## Three modes (know which one you're in)
+
+1. **static-only** (`/nav-audit`, no URL) — route/destination **inventory** + the
+   pre-deploy **CI drift-gate** on declared-intent edges. Runs on a PR with no
+   deployed URL. **Low confidence on data-driven nav** (the persona scorecard
+   shows `?` and the audit says "run --verify"); honest by design.
+2. **live-verified** (`/nav-audit --verify <url>`) — drives the live app across
+   viewports and **authoritatively attributes each destination to its nav layer**,
+   resolving the scorecard to `pass` / `misplaced` / `missing`. This is the
+   trustworthy mode for dynamic/server-rendered nav.
+3. **contract-backed live** (a committed `nav-contract.json` + `--verify`) — the
+   full IA audit: per-persona offered-vs-needed verdicts grounded in live DOM
+   evidence. `--bootstrap --from-url <url>` drafts the contract's `navLayers` from
+   the live app so you edit a smart baseline instead of a blank page.
+
+Static analysis cannot model arbitrary data-driven nav (`data-view="${x}"`,
+`switchView(el.dataset.view)`) — `--verify` is where the authority lives. The
+static engine is kept for what live can't do: the pre-deploy gate + completeness
+(orphans/unreachable a live crawl never clicks into). Its unit of analysis is the whole
 navigation graph — all entry points × all destinations — and it answers: *is
 the information architecture coherent — is what's offered what's needed, and
 is it sequenced right?* A finding here (e.g. "two nav models coexist") is

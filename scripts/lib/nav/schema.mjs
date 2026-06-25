@@ -25,6 +25,7 @@ export const NAV_TOOL_VERSION = 1;
 
 export const OBSERVED_FILE = '.audit-loop/nav-graph-observed.json';
 export const DRIFT_LEDGER_FILE = '.audit-loop/nav-drift-ledger.json';
+export const VERIFY_RESULT_FILE = '.audit-loop/nav-verify-result.json';
 export const CONTRACT_FILE = 'nav-contract.json';
 
 /** Affordance types — a primary tab is not an obscure CTA (plan §2.3); raw
@@ -104,6 +105,29 @@ export const NavObservedSchema = z.object({
     lowConfidence: z.number().int().nonnegative(),
     opaque: z.number().int().nonnegative(),
   }).optional(),
+});
+
+/**
+ * The `--verify` live-result artifact (gitignored, Category-A). Persists the live
+ * DOM attribution so the dashboard can show the authoritative pass/misplaced/
+ * missing verdicts, not just the static scorecard. Tied to `contractDigest` so a
+ * contract edit invalidates a stale live result (mirrors the observed envelope).
+ */
+export const NavVerifyResultSchema = z.object({
+  version: z.literal(1),
+  url: z.string().min(1),
+  generatedAt: z.iso.datetime({ offset: true }),
+  contractDigest: z.string().regex(/^[0-9a-f]{64}$/),
+  statesRequested: z.array(z.string()).default([]),
+  statesCollected: z.array(z.string()).default([]),
+  liveAttribution: z.record(z.string(), z.object({
+    placements: z.array(z.object({
+      container: z.string().nullable(), layer: z.string().nullable(),
+      state: z.string().nullable(), role: z.string().nullable(),
+    })).default([]),
+    layers: z.array(z.string()).default([]),
+    states: z.array(z.string()).default([]),
+  })).default({}),
 });
 
 /**

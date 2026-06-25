@@ -81,6 +81,7 @@ scripts/lib/consumer-repos.local.json
 # run (Category-A: volatile provenance), never committed. Aging is cloud-sourced.
 .audit-loop/nav-graph-observed.json
 .audit-loop/nav-drift-ledger.json
+.audit-loop/nav-verify-result.json
 
 # Repo-identity reconcile intermediate — operator-curated, one-time, applied
 # then spent (the merge it proposes lands in the DB, not the repo). Like the

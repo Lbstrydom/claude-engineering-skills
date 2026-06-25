@@ -24,13 +24,25 @@ export default function sectionNavAudit({ src, navAudit }, ui) {
     return ui.emptyPanel(null, 'No declared persona intents or divergences yet.');
   }
 
+  const vm = n.verifyMeta || { live: false };
+  const banner = vm.live
+    ? `<p class="summary">🟢 <strong>Live-verified</strong> from <code>${ui.escapeHtml(vm.url)}</code> · states ${ui.escapeHtml((vm.states || []).join(', '))} · ${ui.escapeHtml(vm.generatedAt)}</p>`
+    : `<p class="summary">⚪ <strong>Static</strong> — run <code>nav-audit --verify &lt;url&gt;</code> for authoritative layer verdicts (pass/misplaced/missing)${vm.reason ? ` · ${ui.escapeHtml(vm.reason)}` : ''}.</p>`;
+
   const scorecard = n.scorecard.length
-    ? `<h4>Per-persona reachability</h4><div class="table-wrap"><table>`
+    ? banner + `<h4>Per-persona reachability</h4><div class="table-wrap"><table>`
       + `<thead><tr><th>Persona</th><th>Intent</th><th>Destination</th><th>Expected anchor</th><th>Observed anchor</th><th>Status</th></tr></thead><tbody>`
       + n.scorecard.map((r) => {
-          const status = r.status === 'red'
-            ? `<td><span aria-label="out of primary nav" title="out of primary nav">🔴 buried</span></td>`
-            : `<td><span aria-label="reachable">🟢 ok</span></td>`;
+          // Handle live verdicts (pass/misplaced/missing) + static (ok/red/
+          // unverified/unknown). A missed status must NOT silently render green.
+          const LABEL = {
+            pass: ['🟢', 'in required layer'], ok: ['🟢', 'reachable'],
+            missing: ['🔴', 'not in live nav'], red: ['🔴', 'out of primary nav'],
+            misplaced: ['🟡', 'live, wrong layer'], unverified: ['🟡', 'unverified — run --verify'],
+            unknown: ['🟡', 'unknown'],
+          };
+          const [icon, text] = LABEL[r.status] || ['⚪', r.status || '—'];
+          const status = `<td><span aria-label="${ui.escapeHtml(text)}" title="${ui.escapeHtml(text)}">${icon} ${ui.escapeHtml(text)}</span></td>`;
           const src2 = r.source === 'inferred' ? ' <em>(inferred)</em>' : '';
           return `<tr><td>${ui.escapeHtml(r.persona)}</td><td>${ui.escapeHtml(r.intent)}${src2}</td>`
             + `<td><code>${ui.escapeHtml(r.destination)}</code></td>`

@@ -75,6 +75,16 @@ export function readContract(root) {
   if (!result.success) {
     return { contract: null, present: true, error: `contract failed schema: ${result.error.issues[0]?.message ?? 'invalid'}` };
   }
+  // Validate every intent's requiredInLayer references a real navLayers key
+  // (R3-M4) — a dangling layer name is a contract error, not a silent miss.
+  const layerKeys = new Set(Object.keys(result.data.navLayers ?? {}));
+  for (const p of result.data.personas) {
+    for (const i of p.intents) {
+      if (i.requiredInLayer && !layerKeys.has(i.requiredInLayer)) {
+        return { contract: null, present: true, error: `intent '${i.id}' requiredInLayer '${i.requiredInLayer}' is not a key of navLayers (have: ${[...layerKeys].join(', ') || 'none'})` };
+      }
+    }
+  }
   // Canonicalize human-authored intent destinations to the SAME id space the
   // extractor produces (audit M15) — so a contract `/projects/[id]` matches an
   // observed `/projects/:param`. Anchors are identity strings, left untouched.
@@ -187,7 +197,12 @@ function coerce(type, rawVal) {
  * @param {string[]} [args.appRoots]
  * @returns {object} a NavContract (all intents source:inferred)
  */
-export function bootstrapContract({ destinations = [], personaIntents = [], appRoots = [] } = {}) {
+/** True when a nav-contract.json already exists (refuse-clobber guard). */
+export function contractExists(root) {
+  return fs.existsSync(path.join(root, CONTRACT_FILE));
+}
+
+export function bootstrapContract({ destinations = [], personaIntents = [], appRoots = [], draftNavLayers = null, observedTargets = null } = {}) {
   const personas = new Map();
   for (const seed of personaIntents) {
     if (!personas.has(seed.personaId)) personas.set(seed.personaId, { id: seed.personaId, intents: [] });
@@ -203,7 +218,10 @@ export function bootstrapContract({ destinations = [], personaIntents = [], appR
   const contract = {
     version: 1,
     ...(appRoots.length ? { appRoots } : {}),
-    navLayers: {},
+    // observedTargets from a live crawl go under the allowed _note comment key
+    // (a side-artifact for the human, NOT a validated field — plan §4a/R2-H3).
+    ...(observedTargets?.length ? { _note: `bootstrap observedTargets (live): ${observedTargets.join(', ')}` } : {}),
+    navLayers: draftNavLayers && (draftNavLayers.primary?.length || draftNavLayers.secondary?.length) ? draftNavLayers : {},
     personas: [...personas.values()],
   };
   // Attach an inferred-utility hint list as a side artifact for the human review

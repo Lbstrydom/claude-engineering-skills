@@ -11,6 +11,7 @@
  * @module scripts/lib/nav/findings
  */
 import { isUtilityRoute } from './contract.mjs';
+import { mergeScorecard, STATUS } from './live-attribution.mjs';
 
 const PROMINENT_LAYERS = new Set(['primary', 'secondary']);
 
@@ -223,7 +224,7 @@ const PROMINENT_FOR_SCORECARD = new Set(['primary', 'secondary']);
  * @param {object|null} contract
  * @returns {{anchorsFunctional: boolean, rows: object[]}}
  */
-export function personaScorecard(model, contract) {
+export function personaScorecard(model, contract, opts = {}) {
   const anchorsFunctional = [...model.destinations.values()].some((d) => d.anchors.size > 0);
   const rows = [];
   for (const p of contract?.personas ?? []) {
@@ -246,6 +247,15 @@ export function personaScorecard(model, contract) {
         source: intent.source, reached, status,
       });
     }
+  }
+  // Live mode (plan v1.1 §4a): when --verify supplied a live-DOM attribution map,
+  // the live verdict REPLACES the static status (pass/misplaced/missing).
+  if (opts.liveAttribution) {
+    const merged = mergeScorecard(rows, opts.liveAttribution, {
+      statesRequested: opts.statesRequested ?? [],
+      statesCollected: opts.statesCollected ?? [],
+    });
+    return { anchorsFunctional, rows: merged, live: true };
   }
   return { anchorsFunctional, rows };
 }

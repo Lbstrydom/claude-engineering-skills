@@ -50,10 +50,33 @@ file-sha digest can't see a link added in a new file); it's handled by
 regenerating the envelope every run + an advisory "may be stale — re-run
 /nav-audit" banner when `headSha`/`generatedAt` lags the latest nav-source commit.
 
-## --verify
+## --verify (the authoritative mode)
 
-`--verify <url>` drives the live app with Playwright (headless Chromium) and
-reconciles the static model against the live nav surface, producing three buckets:
+`--verify <url>` drives the live app with Playwright (headless Chromium) **across
+multiple states** (viewports via `--breakpoints`, default `mobile,desktop`; plus an
+optional `--storage-state <path>` for auth) and does two things:
+
+**1. Layer attribution → the per-persona scorecard (the headline).** For each live
+nav target it records the **DOM container** it sits in (`el.closest()` against your
+`navLayers` selectors), unioned across states, then resolves every persona row to a
+definitive verdict — replacing the static `?`:
+- **pass** — the destination appears in its `requiredInLayer` container in ≥1 state.
+- **misplaced** — it's live, but never in the required layer (e.g. found in
+  `.sub-tabs-row` when the contract requires `#primary-nav`).
+- **missing** — not in the live nav in any fully-collected state.
+- **unverified** — a requested state failed (partial coverage); re-run.
+This is what makes the skill trustworthy on data-driven nav the static engine can't
+attribute. `runVerify` is a library fn (returns `{ok:false}` on a browser failure;
+the CLI maps that to exit 2 + a "install chromium" hint). Authenticated runs redact
+live labels and print a notice.
+
+Each `--verify` run persists its live attribution to a gitignored
+`.audit-loop/nav-verify-result.json` (tied to the contract digest). The **dashboard
+Nav Audit tab** reads it and shows the authoritative live verdicts (with a
+"Live-verified from `<url>` · `<states>`" banner); it falls back to the static
+scorecard when no fresh live result exists.
+
+**2. Static-vs-live reconciliation** — the three buckets:
 
 - **confirmed** — static destinations that appear in the live nav (slug↔path
   tolerant, so a static `wines` matches a live `/wines`).

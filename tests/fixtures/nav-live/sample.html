@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>nav-live fixture</title>
+<style>
+  /* desktop sidebar visible ≥700px; mobile bottom-nav visible <700px */
+  #primary-nav { display: none; }
+  .sub-tabs-row { display: block; }
+  @media (max-width: 699px) {
+    #desktop-sidebar { display: none; }
+    #primary-nav { display: block; }
+  }
+  @media (min-width: 700px) {
+    #desktop-sidebar { display: block; }
+  }
+</style>
+</head>
+<body>
+  <!-- Desktop sidebar (primary on desktop) -->
+  <nav id="desktop-sidebar">
+    <a href="?view=wines">Wines</a>
+    <a href="?view=pairing">Pairing</a>
+  </nav>
+
+  <!-- Mobile bottom nav (primary on mobile) -->
+  <div id="primary-nav">
+    <a href="?view=today">Today</a>
+    <a href="?view=wines">Wines</a>
+  </div>
+
+  <!-- Secondary sub-tabs (always present) -->
+  <div class="sub-tabs-row">
+    <a href="?view=grid">Grid</a>
+    <a href="?view=drinksoon">Drink Soon</a>
+  </div>
+
+  <!-- A body link NOT in any nav container (footer) -->
+  <footer>
+    <a href="?view=wines">Browse the cellar</a>
+  </footer>
+</body>
+</html>

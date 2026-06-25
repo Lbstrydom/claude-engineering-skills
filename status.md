@@ -1,5 +1,47 @@
 # Project Status Log
 
+## 2026-06-25 — `/nav-audit` v1.1: live-DOM layer attribution + bootstrap-from-live + dashboard persistence
+
+### Changes
+- **`--verify` live-DOM layer attribution → scorecard merge** (the high-leverage
+  bet from a /brainstorm --with-gemini). `--verify` now drives MULTIPLE viewport
+  states (device-presets) + optional `--storage-state`, records each live nav
+  target's DOM container (`closest()` vs declared `navLayers` selectors), and
+  merges it into the per-persona scorecard — resolving the static `?` rows to
+  definitive `pass` / `misplaced` / `missing` verdicts. Validated live on
+  wine-cellar-app (drink-soon=pass; the dynamic-bottom-nav intents=misplaced).
+- **`--bootstrap --from-url`**: crawls the live app, drafts `navLayers` +
+  observedTargets, refuses to clobber an existing contract. Deterministic (LLM
+  naming pass cut during plan audit for egress safety).
+- **Static re-scoped, not gutted**: scorecard is the headline; SKILL.md reframed
+  to "contract-backed navigation verifier with static assists" + three modes.
+- **Dashboard persistence (v1.2, closed same session)**: `--verify` persists its
+  live attribution to a gitignored `.audit-loop/nav-verify-result.json` (contract-
+  digest staleness); the dashboard Nav Audit tab reads it and shows the live
+  verdicts with a "Live-verified" banner, falling back to static.
+
+### Files Affected
+- New: `scripts/lib/nav/{live-attribution,bootstrap-draft,verify-store}.mjs`
+- Modified: `scripts/lib/nav/{verify,findings,render,contract,schema}.mjs`,
+  `scripts/nav-audit.mjs`, `scripts/lib/dashboard/{collect-nav,sections/nav-audit}.mjs`
+- Tests: `tests/nav-{live-attribution,bootstrap-draft,live-collector,verify-store}.test.mjs`
+  + `tests/fixtures/nav-live/sample.html` (deterministic file:// collector test)
+- `skills/nav-audit/**` (3 modes reframe), `docs/plans/nav-audit-v1.1-live-attribution.md`
+
+### Decisions Made
+- Pure/browser split held: attribution + bootstrap-draft are 100% unit-tested
+  with plain fixtures; the browser drive has one live path + a file:// fixture.
+- Reused device-presets + the playwright dep — no parallel harness, no new
+  framework adapters (the explicitly-rejected adapter-explosion trap).
+- multi-state UNION: a target is "in layer L" if seen there in ANY collected
+  state; `missing` only under full coverage (partial failure → unverified).
+
+### Next Steps
+- Sync to consumer repos (verify-store.mjs flows automatically — nav-audit.mjs
+  is a registered sync entry). v1.2+: taps-to-reach BFS in --verify.
+
+---
+
 ## 2026-06-25 — New `/nav-audit` skill (system-level IA/nav audit) + `--verify`
 
 ### Changes

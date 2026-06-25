@@ -18,6 +18,7 @@ import { readContract } from '../nav/contract.mjs';
 import { buildModel } from '../nav/model.mjs';
 import { runTaxonomy, personaScorecard } from '../nav/findings.mjs';
 import { partitionFindings, ageDivergences, readDriftLedger } from '../nav/drift.mjs';
+import { readVerifyResult } from '../nav/verify-store.mjs';
 
 /**
  * @param {string} root
@@ -41,8 +42,20 @@ export function collectNav(root) {
     });
   }
 
+  // Prefer the authoritative LIVE verdicts from the last `--verify` run (gitignored
+  // result, tied to the contract digest so a contract edit invalidates it). Falls
+  // back to the static scorecard when no fresh live result exists.
   const model = buildModel(env.envelope.edges, { contract, sources: [], destinations: env.envelope.destinations });
-  const scorecard = personaScorecard(model, contract).rows;
+  const verify = readVerifyResult(root, computeContractDigest(contract));
+  const live = verify.result;
+  const scorecard = personaScorecard(model, contract, live ? {
+    liveAttribution: live.liveAttribution,
+    statesRequested: live.statesRequested,
+    statesCollected: live.statesCollected,
+  } : {}).rows;
+  const verifyMeta = live
+    ? { live: true, url: live.url, generatedAt: live.generatedAt, states: live.statesCollected }
+    : { live: false, reason: verify.rejectedReason };
 
   // Nav Drift = ADVISORY divergences (orphans, etc.), aged (plan §3, Gemini-1-H).
   // Aging is cloud-sourced; with no history here, new divergences age to 0 (the
@@ -60,7 +73,7 @@ export function collectNav(root) {
     class: finding.class, destination: finding.destination, severity: finding.severity, verdict: finding.verdict, ageDays,
   }));
 
-  return wrap({ contract, scorecard, drift, status: { status: 'ok', detail: '' } });
+  return wrap({ contract, scorecard, drift, verifyMeta, status: { status: 'ok', detail: '' } });
 }
 
 function readEnvelope(root, expectedConfigDigest) {
@@ -79,6 +92,6 @@ function readEnvelope(root, expectedConfigDigest) {
   return { envelope: parsed.data, reason: null };
 }
 
-function wrap({ scorecard = [], drift = [], status }) {
-  return { navAudit: { scorecard, drift, status } };
+function wrap({ scorecard = [], drift = [], status, verifyMeta = { live: false } }) {
+  return { navAudit: { scorecard, drift, status, verifyMeta } };
 }

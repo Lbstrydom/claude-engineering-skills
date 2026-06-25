@@ -15,7 +15,8 @@ import { execFileSync } from 'node:child_process';
 import process from 'node:process';
 import { writeOutput } from './lib/file-io.mjs';
 import { readSources, extractEdges } from './lib/nav/extract.mjs';
-import { readContract, parseNavMeta, bootstrapContract, writeContract } from './lib/nav/contract.mjs';
+import { readContract, parseNavMeta, bootstrapContract, writeContract, contractExists } from './lib/nav/contract.mjs';
+import { draftContractFromLive } from './lib/nav/bootstrap-draft.mjs';
 import { buildModel } from './lib/nav/model.mjs';
 import { runTaxonomy, personaScorecard } from './lib/nav/findings.mjs';
 import { partitionFindings, scopeToChanged, divergenceKey } from './lib/nav/drift.mjs';
@@ -23,6 +24,7 @@ import { renderFindings, renderTable, renderMermaid, renderScorecard } from './l
 import { assembleEnvelope, writeObservedEnvelope } from './lib/nav/envelope.mjs';
 import { computeContractDigest } from './lib/nav/schema.mjs';
 import { runVerify } from './lib/nav/verify.mjs';
+import { writeVerifyResult } from './lib/nav/verify-store.mjs';
 
 async function main() {
   // CLI smoke contract — must prove imports survive relocation (AGENTS.md).
@@ -31,14 +33,15 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const root = args.root || '.';
 
-  let sourceFiles;
+  let sourceFiles = [];
   let changedFiles = null;
   try {
     sourceFiles = listSourceFiles(root);
     if (args.scope === 'diff' && !args.verify) changedFiles = new Set(gitChangedFiles(root));
   } catch (err) {
-    process.stderr.write(`[nav-audit] git/file error: ${err.message}\n`);
-    process.exit(2);
+    // Non-fatal: --bootstrap --from-url and --verify are live-driven and need no
+    // local source/git. Static extraction simply yields nothing here.
+    process.stderr.write(`[nav-audit] no git/source files (${err.message.split('\n')[0]}) — continuing (live modes don't need them).\n`);
   }
 
   // Read the contract early so its appRoots/exclude drive extraction.
@@ -50,10 +53,32 @@ async function main() {
 
   // Bootstrap mode: emit a review-queue contract skeleton and stop.
   if (args.bootstrap) {
-    const { contract, inferredUtility } = bootstrapContract({ destinations: destinations.map((d) => d.id) });
+    // Refuse to clobber an existing contract without --force (the accidental-
+    // overwrite incident — plan §2.4).
+    if (contractExists(root) && !args.force) {
+      process.stderr.write('[nav-audit] nav-contract.json already exists — refusing to overwrite. Pass --force to replace it.\n');
+      process.exit(2);
+    }
+    // Optional: draft navLayers + observedTargets from the LIVE app.
+    let draftNavLayers = null;
+    let observedTargets = null;
+    const bootUrl = args.fromUrl || args.verify;
+    if (bootUrl) {
+      const model = buildModel(edges, { contract: null, sources, destinations });
+      const report = await runVerify({ url: bootUrl, model, contract: null, breakpoints: args.breakpoints, storageState: args.storageState });
+      if (!report.ok) {
+        process.stderr.write(`[nav-audit] bootstrap --from-url limited mode — ${report.reason}\n`);
+        process.exit(2);
+      }
+      const draft = draftContractFromLive(report.liveEvidence);
+      draftNavLayers = draft.navLayers;
+      observedTargets = draft.observedTargets;
+    }
+    const { contract, inferredUtility } = bootstrapContract({ destinations: destinations.map((d) => d.id), draftNavLayers, observedTargets });
     const written = writeContract(root, contract);
-    const payload = { ok: true, mode: 'bootstrap', written, inferredUtility, adapters };
-    writeOutput(payload, args.out, `[nav-audit] bootstrap → ${written} (${inferredUtility.length} inferred-utility routes flagged)`);
+    const payload = { ok: true, mode: 'bootstrap', written, inferredUtility, adapters, draftedFrom: bootUrl || null, navLayers: contract.navLayers };
+    const layerNote = draftNavLayers ? ` · drafted navLayers from ${bootUrl} (primary: ${draftNavLayers.primary.join(',') || '—'}; secondary: ${draftNavLayers.secondary.join(',') || '—'})` : '';
+    writeOutput(payload, args.out, `[nav-audit] bootstrap → ${written}${layerNote}`);
     process.exit(0);
   }
 
@@ -62,27 +87,53 @@ async function main() {
   // only checked when a contract is present.
   if (args.verify) {
     const model = buildModel(edges, { contract: earlyContract, sources, destinations });
-    let report;
-    try {
-      report = await runVerify({ url: args.verify, model, contract: earlyContract });
-    } catch (err) {
-      process.stderr.write(`[nav-audit] verify failed: ${err.message}\n`);
+    const report = await runVerify({
+      url: args.verify, model, contract: earlyContract,
+      breakpoints: args.breakpoints, storageState: args.storageState,
+    });
+    // runVerify is a library fn — the CLI owns the exit code (plan §4a).
+    if (!report.ok) {
+      process.stderr.write(`[nav-audit] limited mode — ${report.reason}\n`);
+      if (report.code === 'NO_PLAYWRIGHT' || report.code === 'NO_CHROMIUM') {
+        process.stderr.write('  install the browser: npx playwright install chromium\n');
+      }
       process.exit(2);
     }
+    // Merge live evidence into the per-persona scorecard — the headline.
+    const scorecard = personaScorecard(model, earlyContract, {
+      liveAttribution: report.liveAttribution,
+      statesRequested: report.statesRequested,
+      statesCollected: report.statesCollected,
+    });
+    if (args.storageState) process.stderr.write('[nav-audit] authenticated run (--storage-state) — live labels may include account text (redacted on persist).\n');
+    // Persist the live result (gitignored, Category-A) so the dashboard can show
+    // the authoritative live verdicts. Only when a contract is present (the digest
+    // ties freshness to it). generatedAt is a real wall-clock event (volatile
+    // artifact — the no-Date.now() rule is for committed deterministic paths).
+    if (earlyContract) {
+      try {
+        writeVerifyResult(root, {
+          version: 1, url: args.verify, generatedAt: new Date().toISOString(),
+          contractDigest: computeContractDigest(earlyContract),
+          statesRequested: report.statesRequested, statesCollected: report.statesCollected,
+          liveAttribution: report.liveAttribution,
+        });
+      } catch (err) { process.stderr.write(`[nav-audit] verify-result persist skipped: ${err.message}\n`); }
+    }
+    const out = { ...report, scorecard };
     if (args.format === 'json') {
-      writeOutput(report, args.out, `[nav-audit] verify: ${report.confirmed.length} confirmed, ${report.staticOnly.length} static-only, ${report.runtimeOnly.length} runtime-only`);
+      writeOutput(out, args.out, `[nav-audit] verify (${report.statesCollected.join('+')}): ${report.confirmed.length} confirmed, ${report.staticOnly.length} static-only, ${report.runtimeOnly.length} runtime-only`);
     } else {
       const lines = [
-        `NAV VERIFY — ${report.url}`, '─'.repeat(48),
-        `Live nav targets: ${report.liveNavCount}`,
+        renderScorecard(scorecard), '',
+        `NAV VERIFY — ${report.url}  (states: ${report.statesCollected.join(', ')})`, '─'.repeat(48),
+        `Live nav occurrences: ${report.liveNavCount}`,
         `✓ Confirmed (static ∩ live):   ${report.confirmed.join(', ') || '—'}`,
         `△ Static-only (not in live nav): ${report.staticOnly.join(', ') || '—'}`,
         `● Runtime-only (live, not static): ${report.runtimeOnly.join(', ') || '—'}`,
-        '',
-        'Declared-intent landing reachability:',
-        ...report.intentReachability.map((r) => `  [${r.reachableInLandingNav ? '✓' : '✗'}] ${r.persona}/${r.intent} → ${r.destination}`),
+        ...(report.stateWarnings?.length ? ['', `⚠ ${report.stateWarnings.join(' · ')}`] : []),
       ];
-      if (args.out) writeOutput(report, args.out, lines.join('\n')); else process.stdout.write(lines.join('\n') + '\n');
+      if (args.out) writeOutput(out, args.out, lines.join('\n')); else process.stdout.write(lines.join('\n') + '\n');
     }
     process.exit(0);
   }
@@ -184,7 +235,8 @@ function collectRouteMeta(sources, destinations) {
 }
 
 function parseArgs(argv) {
-  const a = { scope: 'diff', format: 'human', gate: false, bootstrap: false, verify: null, out: null, root: null };
+  const a = { scope: 'diff', format: 'human', gate: false, bootstrap: false, verify: null, out: null, root: null,
+    breakpoints: ['mobile', 'desktop'], storageState: null, fromUrl: null, force: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--scope') a.scope = argv[++i];
@@ -194,6 +246,10 @@ function parseArgs(argv) {
     else if (t === '--verify') a.verify = argv[++i];
     else if (t === '--out') a.out = argv[++i];
     else if (t === '--root') a.root = argv[++i];
+    else if (t === '--breakpoints') a.breakpoints = String(argv[++i] || '').split(',').map((s) => s.trim()).filter(Boolean);
+    else if (t === '--storage-state') a.storageState = argv[++i];
+    else if (t === '--from-url') a.fromUrl = argv[++i];
+    else if (t === '--force') a.force = true;
   }
   return a;
 }
