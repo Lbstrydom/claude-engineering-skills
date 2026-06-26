@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>nav-live late-mount fixture</title></head>
+<body>
+  <!-- Static secondary nav — populated at t=0 (mirrors wine-cellar's static sub-tabs).
+       The OLD `.some(populated)` race short-circuited here and snapshotted before
+       the JS-built primary nav below mounted. -->
+  <div class="sub-tabs-row">
+    <a href="?view=grid">Grid</a>
+    <a href="?view=drinksoon">Drink Soon</a>
+  </div>
+
+  <!-- Primary bottom-nav: present but EMPTY at load; buttons mounted by JS after a
+       delay, exactly like wine-cellar-app's primaryNav.js (data-nav-view, no href). -->
+  <nav id="primary-nav" aria-label="Primary"></nav>
+
+  <!-- A hidden auth tab that should be SKIPPED even though it has a target. -->
+  <div id="auth-tabs" style="display:none">
+    <button data-nav-view="signin">Sign in</button>
+  </div>
+
+  <script>
+    setTimeout(() => {
+      const nav = document.getElementById('primary-nav');
+      for (const v of ['today', 'pairing', 'grid']) {
+        const b = document.createElement('button');
+        b.dataset.navView = v;
+        b.textContent = v;
+        nav.appendChild(b);
+      }
+    }, 700);
+  </script>
+</body>
+</html>

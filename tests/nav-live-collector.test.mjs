@@ -29,6 +29,31 @@ before(async () => {
   catch { available = false; }
 });
 
+const lateUrl = url.pathToFileURL(path.join(__dirname, 'fixtures', 'nav-live', 'late-nav.html')).href;
+const lateModel = { destinations: new Map([['today', {}], ['pairing', {}], ['grid', {}], ['drinksoon', {}], ['signin', {}]]) };
+const lateContract = {
+  version: 1,
+  navLayers: { primary: ['#primary-nav'], secondary: ['.sub-tabs-row'] },
+  personas: [{ id: 'p', intents: [{ id: 'today', destination: 'today', requiredInLayer: 'primary' }] }],
+};
+
+describe('collectLiveNav settle-race (late JS-mounted primary nav)', () => {
+  it('waits for an empty-but-present primary nav to populate (the wine-cellar fix)', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    // hydrateMs=4000 > the fixture's 700ms mount. The OLD `.some` race resolved at
+    // t≈0 on the static .sub-tabs-row and MISSED #primary-nav; `.every`-over-present
+    // waits for #primary-nav to fill.
+    const report = await runVerify({ url: lateUrl, model: lateModel, contract: lateContract, breakpoints: ['mobile'], hydrateMs: 4000, timeoutMs: 15000 });
+    assert.equal(report.ok, true, report.reason || '');
+    const attr = report.liveAttribution;
+    assert.ok(attr['today'], 'today must be captured from the LATE-mounted primary nav');
+    assert.ok(attr['today'].layers.includes('primary'), 'late primary nav must attribute to primary');
+    assert.ok(attr['pairing']?.layers.includes('primary'));
+    // The hidden auth tab (display:none) must be skipped despite having a target.
+    assert.equal(attr['signin'], undefined, 'hidden auth-tab affordance must be skipped');
+  });
+});
+
 describe('collectLiveNav via file:// fixture', () => {
   it('attributes targets to the nearest DECLARED container, across viewports', async (t) => {
     if (!available) return t.skip('chromium unavailable');

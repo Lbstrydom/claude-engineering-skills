@@ -109,10 +109,12 @@ export function selectorLayers(contract) {
  * @param {string[]} [args.breakpoints=['mobile','desktop']] - device-presets names
  * @param {string|null} [args.storageState=null] - Playwright storageState path
  * @param {number} [args.timeoutMs=30000]
- * @param {number} [args.hydrateMs=1500]
+ * @param {number} [args.hydrateMs=6000] - max settle budget; the populate-wait
+ *   resolves early when declared nav containers fill, so fast apps don't pay it.
+ *   Auth-gated SPAs mount their nav at ~2–5s, so 1500 was too short.
  * @returns {Promise<object>}
  */
-export async function runVerify({ url, model, contract, breakpoints = ['mobile', 'desktop'], storageState = null, timeoutMs = 30000, hydrateMs = 1500 }) {
+export async function runVerify({ url, model, contract, breakpoints = ['mobile', 'desktop'], storageState = null, timeoutMs = 30000, hydrateMs = 6000 }) {
   const selLayers = selectorLayers(contract);
   const declaredSelectors = selLayers.map((s) => s.selector);
   const statesRequested = breakpoints.slice();
@@ -139,17 +141,29 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
         context = await browser.newContext({ viewport, ...(storageState ? { storageState } : {}) });
         const page = await context.newPage();
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-        // Settle delay raced against a declared container becoming POPULATED
-        // (≥1 child) — NOT merely present. Late-rendered nav (JS-built bottom
-        // bars) leaves the container in the DOM but empty for a beat; waiting on
-        // mere existence resolves the race instantly and misses the children
-        // (R1-H). Per-selector try/catch so one invalid declared selector can't
-        // crash the wait (R1-M). On absence/error the predicate never matches →
-        // never-resolving `.catch` → the timeout wins (consolidated-3).
+        // Settle: wait until EVERY declared container that is PRESENT in the DOM
+        // is POPULATED (≥1 child), and at least one is. The earlier `.some` short-
+        // circuited the instant ANY container had children — fatal when a STATIC
+        // secondary nav is populated at t≈0 but the JS-built primary bottom-bar
+        // mounts seconds later (auth-gated SPA): the snapshot captured the pre-
+        // hydration shell and the primary nav was never seen (live wine-cellar-app
+        // finding, 2026-06-26). `.every`-over-PRESENT fixes it: an empty-but-
+        // present late nav (`<nav id="primary-nav">` static-empty) is waited for,
+        // while a never-rendered declared selector is simply absent and can't hang
+        // the wait. The waitForFunction polls and resolves AS SOON AS the nav
+        // populates (≈2–5s here), so the raised hydrateMs cap only bounds the
+        // genuinely-never-populating case — fast apps still exit in <1s. Per-
+        // selector try/catch (R1-M); on timeout the never-resolving `.catch` lets
+        // the waitForTimeout win (consolidated-3).
         await Promise.race([
           page.waitForTimeout(hydrateMs),
           ...(declaredSelectors.length ? [page.waitForFunction(
-            (sels) => sels.some((s) => { try { const el = document.querySelector(s); return !!el && el.childElementCount > 0; } catch { return false; } }),
+            (sels) => {
+              const present = [];
+              for (const s of sels) { try { const el = document.querySelector(s); if (el) present.push(el); } catch { /* invalid selector */ } }
+              if (!present.length) return false;                       // none present yet — keep waiting (capped)
+              return present.every((el) => el.childElementCount > 0);  // all present containers populated
+            },
             declaredSelectors,
             { timeout: hydrateMs },
           ).catch(() => new Promise(() => {}))] : []),
@@ -275,7 +289,23 @@ async function collectLiveNav(page, selLayers) {
       }
       return cands;
     };
+    // Skip elements hidden by display:none / visibility:hidden (on the element or
+    // an ancestor) or [hidden] — e.g. an authed app's collapsed signin/signup tabs
+    // still live in the DOM but are not real affordances (live wine-cellar finding).
+    // visibility:hidden but NOT offsetParent (a fixed bottom-nav has null
+    // offsetParent yet is visible), so walk computed display/visibility, not layout.
+    const isHidden = (el) => {
+      if (el.hidden) return true;
+      let cur = el;
+      while (cur && cur.nodeType === 1) {
+        let st; try { st = getComputedStyle(cur); } catch { return false; }
+        if (st && (st.display === 'none' || st.visibility === 'hidden')) return true;
+        cur = cur.parentElement;
+      }
+      return false;
+    };
     document.querySelectorAll(CANDIDATES).forEach((el) => {
+      if (isHidden(el)) return;
       const dataAttrs = {};
       for (const a of el.attributes) if (a.name.startsWith('data-')) dataAttrs[a.name.slice(5)] = a.value;
       const matches = [];

@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-06-26 — `/nav-audit` v1.2 follow-up: settle-race fix (authenticated wine-cellar finding)
+
+### Changes
+- Authenticated live eval **proved v1.2's attribution correct** (the race patch flips today/pairing/grid to the oracle). The blocker was a snapshot-timing bug, not auth or attribution.
+- **`runVerify` settle-race**: `declaredSelectors.some(populated)` → `.every`-over-**present**. The static secondary sub-tabs populate at t≈0, so `.some` short-circuited and snapshotted before the JS-built `#primary-nav` mounted (~2–5s). `.every`-over-present waits for the empty-but-present late nav; a never-rendered selector can't hang it. `hydrateMs` default 1500 → 6000 (wait resolves early when nav fills, so fast apps don't pay it).
+- **Hidden-element skip**: collector now skips `display:none`/`visibility:hidden`/`[hidden]` (authed app's collapsed signin/signup tabs were collected as runtime-only).
+- **Regression lock**: `tests/fixtures/nav-live/late-nav.html` (static secondary + `setTimeout`-mounted primary + hidden auth tab) + collector test. 116 nav tests green.
+
+### Files Affected
+- `scripts/lib/nav/verify.mjs` — settle-race `.every`-over-present, hydrateMs default, isHidden skip.
+- `tests/fixtures/nav-live/late-nav.html` + `tests/nav-live-collector.test.mjs` — late-mount regression test.
+
+### Next Steps
+- User to re-run **authenticated** `--verify` against wine-cellar-app → expect today/pairing/grid green, bootstrap proposing `#primary-nav`.
+
+---
+
 ## 2026-06-26 — `/nav-audit` v1.2: container-authoritative live attribution (data-driven nav fix)
 
 ### Changes
