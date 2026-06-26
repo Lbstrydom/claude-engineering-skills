@@ -17,6 +17,10 @@
 
 const FOCUS_PROPS = ['outline-style', 'outline-width', 'outline-color', 'box-shadow', 'border-top-color', 'border-top-width', 'background-color', 'color'];
 const HOVER_PROPS = ['background-color', 'color', 'border-top-color', 'box-shadow', 'opacity', 'transform', 'text-decoration-line'];
+// SVG-internal nodes never carry a meaningful hover/focus/disabled signifier — a
+// role/onclick on a `<use>`/`<path>` shouldn't probe the signifier matrix
+// (shakedown pass-4 #2: trims the report-only state_has_no_visual_delta noise).
+const DECORATIVE_TAGS = new Set(['use', 'path', 'g', 'defs', 'symbol', 'stop', 'lineargradient', 'radialgradient', 'clippath', 'mask', 'marker', 'pattern']);
 
 /**
  * @param {object[]} nodes - evidence nodes (one device×theme); interactive nodes
@@ -27,6 +31,7 @@ export function runSignifiers(nodes) {
   const out = [];
   for (const node of nodes || []) {
     if (node?.displayed === false) continue;
+    if (DECORATIVE_TAGS.has(node.tag)) continue;
     const base = node.computed || {};
     const pseudo = node.pseudo || {};
 

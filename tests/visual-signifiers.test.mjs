@@ -48,6 +48,15 @@ test('hover with a background change passes', () => {
   assert.equal(out.filter((f) => f.class === 'state_has_no_visual_delta').length, 0);
 });
 
+test('SVG-internal decorative node is not probed for signifiers (pass-4 #2)', () => {
+  // a <use> with a role/onclick marked interactive must NOT emit state_has_no_visual_delta
+  const out = runSignifiers([{
+    ...base, nodeKey: 'u', tag: 'use', interactive: true, focusable: true,
+    computed: { 'background-color': 'rgb(0,0,0)' }, pseudo: { hover: { 'background-color': 'rgb(0,0,0)' } },
+  }]);
+  assert.equal(out.length, 0);
+});
+
 test('disabled control with no visual signifier → disabled_not_signified; opacity<1 passes', () => {
   const bad = runSignifiers([{ ...base, nodeKey: 'b', disabled: true, computed: { opacity: '1', cursor: 'pointer', filter: 'none' } }]);
   assert.ok(bad.some((f) => f.class === 'disabled_not_signified'));

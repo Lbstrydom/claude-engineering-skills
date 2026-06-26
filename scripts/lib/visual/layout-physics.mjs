@@ -13,6 +13,11 @@
 
 const CLIP_ESCAPE_WRAP = new Set(['break-word', 'anywhere', 'break-all']);
 const SAFE_OBJECT_FIT = new Set(['contain', 'cover', 'scale-down']);
+// Below this, a box is collapsed/empty (e.g. an unauthenticated empty-state label
+// at clientWidth 1px), not clipping readable text — a collapse/visibility concern,
+// not text-overflow. `content_clipping` is the wrong class for it, so we don't fire
+// (shakedown pass-4 #1). A genuinely-clipping element is always wider than this.
+const MIN_CLIP_DIM = 4;
 
 /**
  * @param {object[]} nodes - evidence nodes (one device×theme)
@@ -32,7 +37,8 @@ export function runLayoutPhysics(nodes, contract, { viewportWidth = null } = {})
     }
     const sw = scroll.scrollWidth;
     const cw = scroll.clientWidth;
-    if (Number.isFinite(sw) && Number.isFinite(cw) && sw > cw + 1) {
+    const degenerate = cw < MIN_CLIP_DIM || (rect.height ?? 0) < MIN_CLIP_DIM;
+    if (!degenerate && Number.isFinite(sw) && Number.isFinite(cw) && sw > cw + 1) {
       const ellipsis = String(computed['text-overflow'] || '').includes('ellipsis');
       const wrap = CLIP_ESCAPE_WRAP.has(String(computed['overflow-wrap'] || computed['word-break'] || '').trim());
       const scrolls = /(auto|scroll)/.test(String(computed['overflow-x'] || ''));

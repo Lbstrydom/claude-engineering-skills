@@ -20,6 +20,14 @@ test('scrollWidth>clientWidth without escape → content_clipping; with ellipsis
   assert.equal(ok.filter((f) => f.class === 'content_clipping').length, 0);
 });
 
+test('degenerate box (clientWidth 1px) does not flag content_clipping (pass-4 #1)', () => {
+  const out = runLayoutPhysics([node({ nodeKey: 'lbl', auditInstanceId: 'lbl', rect: { x: 0, y: 0, width: 1, height: 16 }, scroll: { scrollWidth: 120, clientWidth: 1 }, computed: {} })], {}, {});
+  assert.equal(out.filter((f) => f.class === 'content_clipping').length, 0);
+  // a normally-sized clipped box still fires
+  const real = runLayoutPhysics([node({ nodeKey: 'r', auditInstanceId: 'r', rect: { x: 0, y: 0, width: 100, height: 16 }, scroll: { scrollWidth: 200, clientWidth: 100 }, computed: {} })], {}, {});
+  assert.ok(real.some((f) => f.class === 'content_clipping'));
+});
+
 test('parent/child overlap is NOT flagged (containment); sibling overlap IS (G3)', () => {
   const parent = node({ nodeKey: 'p', auditInstanceId: 'p', parentInstanceId: null, rect: { x: 0, y: 0, width: 200, height: 200 }, scroll: {} });
   const child = node({ nodeKey: 'c', auditInstanceId: 'c', parentInstanceId: 'p', rect: { x: 10, y: 10, width: 50, height: 50 }, scroll: {} });
