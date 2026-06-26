@@ -21,7 +21,11 @@ import { z } from 'zod';
 
 /** Bumped when the extractor's edge semantics change — part of the config digest
  *  so a tool upgrade correctly invalidates a stale envelope. */
-export const NAV_TOOL_VERSION = 1;
+export const NAV_TOOL_VERSION = 1;             // OBSERVED-envelope schema version (NavObservedSchema)
+// Verify-RESULT tool-semantics version (separate from the observed-envelope schema
+// version, which it must not be coupled to). Bumped when the LIVE-result semantics
+// change so a stale persisted result is rejected. v1.4 capture honesty (unverifiableLayers) → 2.
+export const NAV_VERIFY_TOOL_VERSION = 2;
 
 export const OBSERVED_FILE = '.audit-loop/nav-graph-observed.json';
 export const DRIFT_LEDGER_FILE = '.audit-loop/nav-drift-ledger.json';
@@ -148,6 +152,9 @@ export const NavVerifyResultSchema = z.object({
   // Optional so a legacy (un-versioned) envelope still PARSES — readVerifyResult
   // then treats a missing/mismatched toolVersion as stale.
   toolVersion: z.number().int().optional(),
+  // v1.4: layers we couldn't verify (stalled/never-observable) → the dashboard
+  // degrades them to `unverified` instead of a misleading verdict. Back-compat default.
+  unverifiableLayers: z.array(z.string()).default([]),
 });
 
 /**

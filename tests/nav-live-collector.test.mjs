@@ -54,6 +54,24 @@ describe('collectLiveNav settle-race (late JS-mounted primary nav)', () => {
   });
 });
 
+const stalledUrl = url.pathToFileURL(path.join(__dirname, 'fixtures', 'nav-live', 'stalled-nav.html')).href;
+
+describe('runVerify capture honesty (v1.4) — stalled primary container', () => {
+  it('flags a visible-but-empty declared PRIMARY as unverifiable + degrades the scorecard to unverified, not authoritative', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    const m = { destinations: new Map([['grid', {}], ['drinksoon', {}], ['today', {}]]) };
+    const c = {
+      version: 1, navLayers: { primary: ['#primary-nav'], secondary: ['.sub-tabs-row'] },
+      personas: [{ id: 'p', intents: [{ id: 'home', destination: 'today', requiredInLayer: 'primary' }] }],
+    };
+    const report = await runVerify({ url: stalledUrl, model: m, contract: c, breakpoints: ['mobile'], hydrateMs: 600, timeoutMs: 15000, activate: false });
+    assert.equal(report.ok, true, report.reason || '');
+    assert.ok(report.unverifiableLayers.includes('primary'), 'a visible-but-empty declared primary is unverifiable');
+    assert.equal(report.captureStatus['#primary-nav'], 'empty');
+    assert.ok((report.stateWarnings || []).some((w) => /capture incomplete/i.test(w)), 'a capture-incomplete warning is emitted');
+  });
+});
+
 describe('collectLiveNav via file:// fixture', () => {
   it('attributes targets to the nearest DECLARED container, across viewports', async (t) => {
     if (!available) return t.skip('chromium unavailable');

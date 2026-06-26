@@ -51,3 +51,18 @@ describe('runVerify activation pass (collapsed menu)', () => {
     assert.ok((report.stateWarnings || []).some((w) => /navigated away|discarded/i.test(w)), 'the navigating trigger is discarded with a warning');
   });
 });
+
+const degradedUrl = url.pathToFileURL(path.join(__dirname, 'fixtures', 'nav-live', 'degraded-activation.html')).href;
+
+describe('runVerify activation adaptive early-stop (v1.4)', () => {
+  it('aborts after 3 consecutive unactionable triggers, run completes', async (t) => {
+    if (!available) return t.skip('chromium unavailable');
+    const m = { destinations: new Map([['grid', {}], ['drinksoon', {}]]) };
+    const c = { version: 1, navLayers: { secondary: ['.sub-tabs-row'] }, personas: [] };
+    const report = await runVerify({ url: degradedUrl, model: m, contract: c, breakpoints: ['mobile'], hydrateMs: 400, timeoutMs: 15000, activate: true });
+    assert.equal(report.ok, true, report.reason || '');
+    assert.ok((report.stateWarnings || []).some((w) => /activation aborted/i.test(w)), 'aborts with the adaptive-stop warning');
+    // No activation state succeeded (all triggers unactionable); base still collected.
+    assert.deepEqual(report.statesCollected, ['mobile']);
+  });
+});

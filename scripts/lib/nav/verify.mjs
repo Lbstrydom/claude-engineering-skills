@@ -16,7 +16,7 @@
  */
 import { normalizeDestination } from './normalize.mjs';
 import { getPreset } from '../device-presets.mjs';
-import { resolveContainer, attributeLive } from './live-attribution.mjs';
+import { resolveContainer, attributeLive, computeCaptureStatus } from './live-attribution.mjs';
 
 const VIEW_PARAMS = ['view', 'tab', 'page', 'screen'];
 
@@ -114,8 +114,9 @@ export function selectorLayers(contract) {
  *   Auth-gated SPAs mount their nav at ~2–5s, so 1500 was too short.
  * @returns {Promise<object>}
  */
-const ACTIVATION_CAP = 8;   // max collapsible-nav activations per viewport (#3)
-const ACTIVATE_MS = 1500;   // settle budget after an activation click
+const ACTIVATION_CAP = 8;        // max collapsible-nav activations per viewport (#3)
+const ACTIVATE_MS = 1500;        // settle budget after an activation click
+const ACTIVATION_FAIL_STOP = 3;  // consecutive unactionable triggers → abort the pass (v1.4)
 
 export async function runVerify({ url, model, contract, breakpoints = ['mobile', 'desktop'], storageState = null, timeoutMs = 30000, hydrateMs = 6000, activate = true }) {
   const selLayers = selectorLayers(contract);
@@ -124,6 +125,7 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   const statesCollected = [];
   const liveEvidence = [];     // one row per occurrence
   const stateWarnings = [];
+  const presenceByState = {};  // v1.4: per-state visibility-aware declared-selector presence
 
   let chromium;
   try { ({ chromium } = await import('playwright')); }
@@ -174,6 +176,22 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
         // Collect the current DOM into liveEvidence under `evState`. Reused by the
         // base per-viewport snapshot AND each activation-derived state (v1.3 #3).
         const collectState = async (evState) => {
+          // v1.4: visibility-aware presence probe — distinguishes a stalled
+          // (visible-but-empty) declared container from a responsive hidden one.
+          try {
+            presenceByState[evState] = await page.evaluate((sels) => {
+              const out = {};
+              for (const s of sels) {
+                try {
+                  const el = document.querySelector(s);
+                  if (!el) { out[s] = 'absent'; continue; }
+                  const cs = getComputedStyle(el); const box = el.getBoundingClientRect();
+                  out[s] = (cs.display !== 'none' && cs.visibility !== 'hidden' && (box.width > 0 || box.height > 0)) ? 'visible' : 'hidden';
+                } catch { out[s] = 'absent'; }
+              }
+              return out;
+            }, declaredSelectors);
+          } catch { /* probe is best-effort */ }
           const shapes = await collectLiveNav(page, selLayers);
           const seen = new Set();
           for (const sh of shapes) {
@@ -205,6 +223,11 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
         if (activate) {
           let triggers = [];
           try { triggers = await discoverExpandTriggers(page, declaredSelectors); } catch { triggers = []; }
+          // v1.4: adaptive early-stop — if ACTIVATION_FAIL_STOP triggers in a row are
+          // unactionable (click THROWS — the cold-init/stall signature), abort the rest
+          // so a degraded app's per-trigger goto isolation doesn't keep amplifying the
+          // storm. A successful click resets the counter REGARDLESS of new evidence.
+          let consecutiveFails = 0;
           for (let i = 0; i < Math.min(triggers.length, ACTIVATION_CAP); i++) {
             const evState = `${stateName}+a${i}`;
             try {
@@ -213,13 +236,18 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
               const handle = await page.$(triggers[i].selector).catch(() => null);
               if (!handle) { stateWarnings.push(`activation ${evState}: trigger no longer present`); continue; }
               const urlBefore = page.url();
-              await handle.click({ timeout: 1000 });
+              await handle.click({ timeout: 1000 });   // throws if unactionable → counted as a fail below
+              consecutiveFails = 0;                     // click succeeded → reset (success regardless of new evidence)
               await page.waitForTimeout(ACTIVATE_MS);
               if (page.url() !== urlBefore) { stateWarnings.push(`activation ${evState}: navigated away — discarded`); continue; }
               await collectState(evState);
               statesCollected.push(evState);
             } catch (err) {
               stateWarnings.push(`activation ${evState} failed: ${err.message}`);
+              if (++consecutiveFails >= ACTIVATION_FAIL_STOP) {
+                stateWarnings.push(`activation aborted — ${ACTIVATION_FAIL_STOP} consecutive triggers unresponsive; app likely degraded`);
+                break;
+              }
             }
           }
         }
@@ -243,6 +271,15 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   const recon = reconcile([...model.destinations.keys()], liveTargets);
   const liveAttribution = attributeLive(evidence);
 
+  // v1.4 capture honesty: which declared layers couldn't be verified (stalled or
+  // never observable) — so the scorecard/findings degrade to `unverified`.
+  const placedContainers = new Set(evidence.map((e) => e.container).filter(Boolean));
+  const { captureStatus, unverifiableLayers, absentDeclared } = computeCaptureStatus(presenceByState, placedContainers, selLayers);
+  for (const [sel, status] of Object.entries(captureStatus)) {
+    if (status === 'empty') stateWarnings.push(`primary capture incomplete — unreliable (${sel})`);
+  }
+  for (const sel of absentDeclared) stateWarnings.push(`declared container matched no element — check the selector (${sel})`);
+
   return {
     ok: true,
     url,
@@ -255,6 +292,8 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
     runtimeOnly: recon.runtimeOnly,
     liveEvidence: evidence,
     liveAttribution,
+    unverifiableLayers,
+    captureStatus,
   };
 }
 

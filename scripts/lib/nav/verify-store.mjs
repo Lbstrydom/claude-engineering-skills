@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../file-io.mjs';
-import { NavVerifyResultSchema, VERIFY_RESULT_FILE, NAV_TOOL_VERSION } from './schema.mjs';
+import { NavVerifyResultSchema, VERIFY_RESULT_FILE, NAV_VERIFY_TOOL_VERSION } from './schema.mjs';
 
 /**
  * Atomically write the live-verify result. Validated before write.
@@ -51,7 +51,7 @@ export function readVerifyResult(root, expectedContractDigest) {
   }
   // Tool-version binding (debt fix 3): a result produced by older nav semantics
   // (or a legacy un-versioned result) must not render against the current reader.
-  if (parsed.data.toolVersion !== NAV_TOOL_VERSION) {
+  if (parsed.data.toolVersion !== NAV_VERIFY_TOOL_VERSION) {
     return { result: null, rejectedReason: 'verify-result stale: nav tool version changed since the last --verify — re-run --verify' };
   }
   return { result: parsed.data, rejectedReason: null };

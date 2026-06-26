@@ -22,7 +22,7 @@ import { runTaxonomy, runLiveTaxonomy, personaScorecard } from './lib/nav/findin
 import { partitionFindings, scopeToChanged, divergenceKey } from './lib/nav/drift.mjs';
 import { renderFindings, renderLiveFindings, renderTable, renderMermaid, renderScorecard } from './lib/nav/render.mjs';
 import { assembleEnvelope, writeObservedEnvelope } from './lib/nav/envelope.mjs';
-import { computeContractDigest, NAV_TOOL_VERSION } from './lib/nav/schema.mjs';
+import { computeContractDigest, NAV_VERIFY_TOOL_VERSION } from './lib/nav/schema.mjs';
 import { runVerify } from './lib/nav/verify.mjs';
 import { writeVerifyResult } from './lib/nav/verify-store.mjs';
 
@@ -117,12 +117,15 @@ async function main() {
       liveAttribution: report.liveAttribution,
       statesRequested: report.statesRequested,
       statesCollected: report.statesCollected,
+      unverifiableLayers: report.unverifiableLayers ?? [],   // v1.4 capture honesty
     });
     // Run the layer-attribution-dependent finding classes over LIVE evidence
     // (v1.3 #4) — competing-models / over-exposure / sequencing finally fire on
     // data-driven apps the static taxonomy can't model. source:'live' tagged.
+    // Suppressed when a prominent layer couldn't be captured (v1.4 honesty).
     const liveFindings = runLiveTaxonomy(report.liveAttribution, earlyContract, {
       destinations: model.destinations, states: report.statesCollected,
+      unverifiableLayers: report.unverifiableLayers ?? [],
     });
     if (args.storageState) process.stderr.write('[nav-audit] authenticated run (--storage-state) — live labels may include account text (redacted on persist).\n');
     // Persist the live result (gitignored, Category-A) so the dashboard can show
@@ -134,10 +137,11 @@ async function main() {
         writeVerifyResult(root, {
           version: 2, url: args.verify, generatedAt: new Date().toISOString(),
           contractDigest: computeContractDigest(earlyContract),
-          toolVersion: NAV_TOOL_VERSION,
+          toolVersion: NAV_VERIFY_TOOL_VERSION,
           statesRequested: report.statesRequested, statesCollected: report.statesCollected,
           liveAttribution: report.liveAttribution,
           liveFindings,
+          unverifiableLayers: report.unverifiableLayers ?? [],
         });
       } catch (err) { process.stderr.write(`[nav-audit] verify-result persist skipped: ${err.message}\n`); }
     }

@@ -1,5 +1,27 @@
 # Project Status Log
 
+## 2026-06-26 — `/nav-audit` v1.4: capture honesty + activation adaptive-stop
+
+### Changes
+- **Capture honesty (A)** — `--verify` no longer emits authoritative `misplaced`/`missing` verdicts on a nav layer it failed to capture. New pure `computeCaptureStatus` (visibility-aware): a required layer is **unverifiable** iff ANY declared container is *visible-but-empty* (a stall — e.g. `#primary-nav` under a cold-init rate-limit storm) OR all its containers are absent/hidden (never observable). `mergeScorecard` degrades such verdicts (pinned + unpinned intents) to `unverified` + a warning; `runLiveTaxonomy` suppresses its layer-classes when a prominent layer is unverifiable. A `display:none` responsive container is a legitimate variant, not a stall.
+- **Activation adaptive-stop (B)** — the collapsed-menu activation pass aborts after 3 consecutive unactionable (click-throw) triggers, bounding the cold-boot storm at the point the app proves degraded (was up to 16 cold boots). Per-trigger goto-isolation kept.
+- **Version decoupling** — `NAV_VERIFY_TOOL_VERSION=2` (live-result semantics) split from `NAV_TOOL_VERSION=1` (observed-envelope schema) so v1.4 invalidates stale pre-v1.4 live results without breaking observed envelopes.
+
+### Files Affected
+- `scripts/lib/nav/live-attribution.mjs` — `computeCaptureStatus` + `mergeScorecard` degradation (null-proto maps).
+- `scripts/lib/nav/verify.mjs` — visibility-aware presence probe + post-collection capture computation; activation adaptive early-stop.
+- `scripts/lib/nav/{findings,schema,verify-store}.mjs`, `scripts/nav-audit.mjs`, `scripts/lib/dashboard/collect-nav.mjs` — thread/persist/suppress + version decoupling.
+- New: `tests/nav-capture-status.test.mjs`, `stalled-nav.html` + `degraded-activation.html` fixtures.
+
+### Decisions Made
+- Plan `nav-audit-v1.4-capture-honesty.md` — GPT 3-round + **Gemini 3-round** (the concrete-design-defect exception fired each round: failure-classifier, multi-container soundness, visibility, runLiveTaxonomy honesty). Consolidated code gate: Gemini APPROVE.
+- The undecidable "stall-so-severe-it-never-rendered vs legitimately-absent-responsive" distinction is handled with an advisory warning, not a false verdict.
+
+### Next Steps
+- Authenticated wine-cellar `--verify` re-run: expect today/grid stable (or honestly `unverified` under the storm, never flip-flopping), and the activation pass to abort early instead of amplifying. App-side: PR #42 (badge backoff).
+
+---
+
 ## 2026-06-26 — `/nav-audit` v1.3: live-evidence findings + multi-state capture + digest/decouple debt
 
 ### Changes

@@ -234,6 +234,7 @@ export function personaScorecard(model, contract, opts = {}) {
     const merged = mergeScorecard(rows, opts.liveAttribution, {
       statesRequested: opts.statesRequested ?? [],
       statesCollected: opts.statesCollected ?? [],
+      unverifiableLayers: opts.unverifiableLayers ?? [],
     });
     return { anchorsFunctional, rows: merged, live: true };
   }
@@ -359,8 +360,12 @@ export function liveLayerSets(liveAttribution, { state }) {
  * @param {object|null} contract
  * @param {{destinations?: Map, states?: string[]}} opts
  */
-export function runLiveTaxonomy(liveAttribution, contract, { destinations = new Map(), states = [] } = {}) {
+export function runLiveTaxonomy(liveAttribution, contract, { destinations = new Map(), states = [], unverifiableLayers = [] } = {}) {
   void destinations; // metadata fallback only; live layerData is authoritative
+  // v1.4 honesty: if a PROMINENT layer couldn't be captured, the layer-attribution
+  // classes (competing-models / over-exposure / sequencing) can't be trusted —
+  // suppress them rather than emit a structural finding grounded in missing data.
+  if ([...new Set(unverifiableLayers)].some((l) => PROMINENT_LAYERS.has(l))) return [];
   const stateList = states.length
     ? states
     : [...new Set(Object.values(liveAttribution || {}).flatMap((a) => (a?.placements || []).map((p) => p.state)))].filter(Boolean);

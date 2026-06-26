@@ -51,6 +51,7 @@ export function collectNav(root) {
         liveAttribution: r.liveAttribution,
         statesRequested: r.statesRequested,
         statesCollected: r.statesCollected,
+        unverifiableLayers: r.unverifiableLayers ?? [],   // v1.4
       }).rows;
       return wrap({
         contract, scorecard, drift: [], liveFindings: r.liveFindings ?? [],
@@ -76,6 +77,7 @@ export function collectNav(root) {
     liveAttribution: live.liveAttribution,
     statesRequested: live.statesRequested,
     statesCollected: live.statesCollected,
+    unverifiableLayers: live.unverifiableLayers ?? [],   // v1.4
   } : {}).rows;
   const verifyMeta = live
     ? { live: true, url: live.url, generatedAt: live.generatedAt, states: live.statesCollected }

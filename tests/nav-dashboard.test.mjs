@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { collectNav } from '../scripts/lib/dashboard/collect-nav.mjs';
 import { writeObservedEnvelope, assembleEnvelope } from '../scripts/lib/nav/envelope.mjs';
-import { computeContractDigest, NAV_TOOL_VERSION } from '../scripts/lib/nav/schema.mjs';
+import { computeContractDigest, NAV_VERIFY_TOOL_VERSION } from '../scripts/lib/nav/schema.mjs';
 import { writeVerifyResult } from '../scripts/lib/nav/verify-store.mjs';
 
 let dir;
@@ -43,7 +43,7 @@ describe('collectNav degradation (section-contract)', () => {
     // No observed envelope written — only a fresh verify result.
     writeVerifyResult(live, {
       version: 2, url: 'https://app.test/', generatedAt: '2026-06-25T10:00:00+02:00',
-      contractDigest: computeContractDigest(contract), toolVersion: NAV_TOOL_VERSION,
+      contractDigest: computeContractDigest(contract), toolVersion: NAV_VERIFY_TOOL_VERSION,
       statesRequested: ['mobile'], statesCollected: ['mobile'],
       liveAttribution: { wines: { placements: [{ container: '#primary-nav', layer: 'primary', state: 'mobile', role: null }], layers: ['primary'], states: ['mobile'] } },
       liveFindings: [{ class: 'competing-models', severity: 'P2', destination: 'primary|secondary', evidence: ['x'], confidence: 'high', gateEligible: false, verdict: 'two nav systems', source: 'live' }],

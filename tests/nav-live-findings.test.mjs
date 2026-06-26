@@ -90,4 +90,14 @@ describe('runLiveTaxonomy (layer classes over live evidence)', () => {
     assert.deepEqual(runLiveTaxonomy({}, null, { states: [] }), []);
     assert.deepEqual(runLiveTaxonomy(null, null, {}), []);
   });
+
+  it('SUPPRESSES live findings when a PROMINENT layer is unverifiable (v1.4 honesty)', () => {
+    // Same fixture that fires competing-models, but primary couldn't be captured.
+    const attr = {
+      a: { placements: [P('#p', 'primary', 'm')] }, b: { placements: [P('#p', 'primary', 'm')] },
+      c: { placements: [P('#s', 'secondary', 'm')] }, d: { placements: [P('#s', 'secondary', 'm')] },
+    };
+    assert.equal(runLiveTaxonomy(attr, null, { states: ['m'] }).length > 0, true, 'fires without the flag');
+    assert.deepEqual(runLiveTaxonomy(attr, null, { states: ['m'], unverifiableLayers: ['primary'] }), [], 'suppressed when primary unverifiable');
+  });
 });

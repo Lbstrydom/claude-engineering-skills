@@ -120,4 +120,28 @@ describe('mergeScorecard verdicts (the §4a/Gemini precedence rule)', () => {
     ]);
     assert.equal(mergeScorecard(rows, attr, full)[0].status, STATUS.PASS);
   });
+
+  // v1.4 capture honesty
+  it('UNVERIFIED (not misplaced) when the dest is elsewhere but the required layer is unverifiable', () => {
+    const attr = attributeLive([{ target: 'wines', container: '.sub-tabs-row', layer: 'secondary', state: 'mobile' }]);
+    const merged = mergeScorecard(rows, attr, { ...full, unverifiableLayers: ['primary'] });
+    assert.equal(merged[0].status, STATUS.UNVERIFIED);
+  });
+  it('UNVERIFIED (not missing) when no placement and the required layer is unverifiable', () => {
+    const merged = mergeScorecard(rows, {}, { ...full, unverifiableLayers: ['primary'] });
+    assert.equal(merged[0].status, STATUS.UNVERIFIED);
+  });
+  it('still MISSING when the required layer is VERIFIABLE (captured) but the dest is nowhere', () => {
+    const merged = mergeScorecard(rows, {}, { ...full, unverifiableLayers: [] });
+    assert.equal(merged[0].status, STATUS.MISSING);
+  });
+  it('UNPINNED intent with no placement + a non-empty unverifiableLayers → UNVERIFIED (could be uncaptured)', () => {
+    const unpinned = [{ persona: 'p', intent: 'x', destination: 'wines', requiredInLayer: null }];
+    const merged = mergeScorecard(unpinned, {}, { ...full, unverifiableLayers: ['secondary'] });
+    assert.equal(merged[0].status, STATUS.UNVERIFIED);
+  });
+  it('the arg accepts an array (normalised to a Set internally)', () => {
+    const attr = attributeLive([{ target: 'wines', container: '#primary-nav', layer: 'primary', state: 'mobile' }]);
+    assert.equal(mergeScorecard(rows, attr, { ...full, unverifiableLayers: ['secondary'] })[0].status, STATUS.PASS);
+  });
 });

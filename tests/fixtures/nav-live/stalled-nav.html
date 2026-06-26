@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>nav-live stalled-primary fixture</title></head>
+<body>
+  <!-- Declared PRIMARY container, present + VISIBLE, but never populated (no
+       affordances) — the cold-init/stall signature. Must read as a STALL
+       (unverifiable), NOT an authoritative verdict. -->
+  <nav id="primary-nav" style="display:block; min-height:10px;"></nav>
+
+  <!-- Secondary nav IS captured. -->
+  <div class="sub-tabs-row">
+    <a href="?view=grid">Grid</a>
+    <a href="?view=drinksoon">Drink Soon</a>
+  </div>
+</body>
+</html>
