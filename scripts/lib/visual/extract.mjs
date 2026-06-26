@@ -41,7 +41,11 @@ export const COLLECTED_PROPS = [
 ];
 
 const FREEZE_CSS = '*,*::before,*::after{transition:none!important;animation:none!important;animation-duration:0s!important;transition-duration:0s!important;}';
-const ANIM_FREEZE_INIT = `(()=>{const s=document.createElement('style');s.textContent=${JSON.stringify(FREEZE_CSS)};(document.head||document.documentElement).appendChild(s);})()`;
+// addInitScript runs at document-start where document.head is null — appending to
+// <html> then does NOT survive to capture time. Defer to DOMContentLoaded so the
+// freeze lands in <head> and persists. (The runtime re-assert in applyTheme is the
+// real guarantee; this just freezes initial-load animation too.)
+const ANIM_FREEZE_INIT = `(()=>{const inject=()=>{const s=document.createElement('style');s.setAttribute('data-va-freeze','1');s.textContent=${JSON.stringify(FREEZE_CSS)};(document.head||document.documentElement).appendChild(s);};if(document.head){inject();}else{document.addEventListener('DOMContentLoaded',inject,{once:true});}})()`;
 
 /**
  * @param {object} args
@@ -140,6 +144,24 @@ async function applyTheme(page, apply) {
   if (apply?.settleSelector) {
     await page.waitForSelector(apply.settleSelector, { timeout: 5000 }).catch(() => {});
   }
+  // Re-assert the transition/animation freeze AT RUNTIME after the theme flip. The
+  // addInitScript copy is appended at document-start (head === null → lands on
+  // <html>) and does not survive to capture time, so the data-theme flip above
+  // would otherwise be read mid-transition → the theme/contrast tiers capture the
+  // FROM-theme value (fabricated theme_unmapped_token + contrast_failure). Setting
+  // `transition:none` cancels any in-flight transition, snapping computed styles to
+  // the settled value. Await fonts BEFORE forcing the reflow — a naive reflow races
+  // web-font loading and fabricates theme_geometry_drift on text widths.
+  await page.evaluate(async (css) => {
+    if (!document.querySelector('style[data-va-freeze]')) {
+      const s = document.createElement('style');
+      s.setAttribute('data-va-freeze', '1');
+      s.textContent = css;
+      (document.head || document.documentElement).appendChild(s);
+    }
+    if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch { /* ignore */ } }
+    void document.body.offsetWidth; // force synchronous style/layout recalc
+  }, FREEZE_CSS);
 }
 
 /**

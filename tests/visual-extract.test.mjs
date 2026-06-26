@@ -70,3 +70,45 @@ test('runExtract returns evidence shape OR skips cleanly without Chromium', asyn
   // hover background should differ from base (effective, not interpolated)
   assert.notEqual(button.pseudo.hover['background-color'], (button.computed['background-color']), 'effective hover delta captured');
 });
+
+// Regression for the theme-transition capture FP (found by wine-cellar-app shakedown):
+// a theme-aware element with a transition was captured mid-interpolation → the
+// FROM-theme value, fabricating theme_unmapped_token + contrast_failure.
+const TRANSITION_FIXTURE = `<!doctype html><html data-theme="light"><head><style>
+  :root[data-theme="light"]{--btn:#ffffff}
+  :root[data-theme="dark"]{--btn:#101010}
+  body{margin:0;background:#fff}
+  .grid{padding:8px}
+  /* a deliberately LONG transition so it can't naturally settle during capture */
+  button{background:var(--btn);transition:background 5s linear;color:#777}
+</style></head><body><main class="grid"><button id="b">Go</button></main></body></html>`;
+
+const transitionContract = {
+  version: 1,
+  surfaces: [{ id: 'main', selector: '.grid', sourceGlobs: ['x/**'], excludeSelectors: [], allowOverlapWith: [], nodeBudget: 400, interactiveBudget: 50 }],
+  themes: [
+    { name: 'light', apply: { mode: 'attribute', target: 'html', attribute: 'data-theme', value: 'light' } },
+    { name: 'dark', apply: { mode: 'attribute', target: 'html', attribute: 'data-theme', value: 'dark' } },
+  ],
+};
+
+test('theme flip is captured at the SETTLED value, not mid-transition (shakedown transition-FP)', async (t) => {
+  const http2 = await import('node:http');
+  const server = http2.createServer((_req, res) => { res.setHeader('content-type', 'text/html'); res.end(TRANSITION_FIXTURE); });
+  await new Promise((r) => server.listen(0, r));
+  const url = `http://127.0.0.1:${server.address().port}/`;
+  try {
+    const result = await runExtract({ url, contract: transitionContract, devices, timeoutMs: 15000 });
+    if (!result.ok && result.code === 'NO_CHROMIUM') { t.skip('Chromium not installed'); return; }
+    assert.ok(result.ok, `extract failed: ${result.reason || ''}`);
+    const darkState = result.perState.find((s) => s.theme === 'dark');
+    assert.ok(darkState, 'captured the dark state');
+    const button = darkState.nodes.find((n) => n.tag === 'button');
+    assert.ok(button, 'found the button in dark');
+    // settled dark token is #101010 = rgb(16,16,16); the light FROM-value is rgb(255,255,255).
+    const r = parseInt((button.computed['background-color'].match(/\d+/) || [])[0], 10);
+    assert.ok(r < 64, `dark button background must be SETTLED dark, not the light from-value (got ${button.computed['background-color']})`);
+  } finally {
+    server.close();
+  }
+});
