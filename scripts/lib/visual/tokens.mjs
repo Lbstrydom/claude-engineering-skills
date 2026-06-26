@@ -109,18 +109,26 @@ function round1(n) { return Math.round(n * 10) / 10; }
 
 // ── Adapter registry ────────────────────────────────────────────────────────
 
+const LENGTH_RE = /^-?[\d.]+(px|rem|em)$/;
+
 /** Heuristic family for a CSS custom-property name + value. */
 function familyForVar(name, value) {
   const n = name.toLowerCase();
+  const isLength = LENGTH_RE.test(String(value).trim());
   if (normalizeColor(value)) return 'colors';
   if (/radius|rounded/.test(n)) return 'radius';
   if (/shadow|elevation/.test(n)) return 'shadow';
   if (/font-?weight|weight/.test(n)) return 'fontWeight';
   if (/line-?height|leading/.test(n)) return 'lineHeight';
-  if (/font-?size|text-?size|\btext\b/.test(n)) return 'fontSize';
+  if (/font-?size|text-?size/.test(n)) return 'fontSize';
+  // A `--font-*` / `--text-*` / `--*-font-*` token whose VALUE is a length is a
+  // font SIZE — apps name the type scale `--font-sm`/`--btn-font-lg` without the
+  // literal "size" (shakedown #1: 260 on-scale sizes were misfiled as spacing).
+  // Weight (unitless) + lineHeight already matched above; font-family is non-length.
+  if (isLength && /\bfont\b|font-|text-|\btext\b/.test(n)) return 'fontSize';
   if (/border|stroke/.test(n)) return 'borderWidth';
   if (/space|spacing|gap|margin|padding|\bpad\b|inset/.test(n)) return 'spacing';
-  if (/^-?[\d.]+(px|rem|em)$/.test(String(value).trim())) return 'spacing';
+  if (isLength) return 'spacing';
   return null;
 }
 

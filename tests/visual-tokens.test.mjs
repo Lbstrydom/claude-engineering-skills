@@ -49,6 +49,18 @@ test('extractAllowedSet reads css-vars + json and builds a usable index', async 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('`--font-*` named length tokens classify as fontSize, not spacing (shakedown #1)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'visual-font-'));
+  fs.writeFileSync(path.join(dir, 'vars.css'), ':root{--font-sm:0.85rem;--btn-font-lg:1.2rem;--space-2:8px;--font-weight-bold:700;}');
+  const { allowedSet, tokenIndex } = await extractAllowedSet(dir, { tokenSources: [{ type: 'css-vars', path: 'vars.css' }] });
+  assert.ok(tokenIndex.has('fontSize', '13.6px'), '0.85rem → 13.6px in fontSize (rem→px)');
+  assert.ok(tokenIndex.has('fontSize', '19.2px'), '--btn-font-lg 1.2rem → 19.2px in fontSize');
+  assert.ok(tokenIndex.has('spacing', '8px'), '--space-2 stays spacing');
+  assert.ok(!(allowedSet.families.spacing || []).some((t) => t.value === '13.6px'), 'font sizes no longer pollute spacing');
+  assert.ok(tokenIndex.has('fontWeight', '700'), '--font-weight-bold stays fontWeight (unitless)');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('extractAllowedSet with no sources → inferredMode', async () => {
   const { allowedSet } = await extractAllowedSet('/nonexistent', { tokenSources: [] });
   assert.equal(allowedSet.inferredMode, true);

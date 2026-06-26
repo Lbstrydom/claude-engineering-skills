@@ -32,10 +32,19 @@ test('parent/child overlap is NOT flagged (containment); sibling overlap IS (G3)
   assert.ok(siblings.some((f) => f.class === 'unexpected_overlap'), 'overlapping siblings flagged');
 });
 
-test('out-of-flow overlay (position:fixed/absolute) does not flag overlap (shakedown noise #3)', () => {
-  const page = node({ nodeKey: 'p', auditInstanceId: 'p', parentInstanceId: null, rect: { x: 0, y: 0, width: 200, height: 200 }, scroll: {}, computed: { position: 'static' } });
-  const modal = node({ nodeKey: 'm', auditInstanceId: 'm', parentInstanceId: null, rect: { x: 20, y: 20, width: 160, height: 160 }, scroll: {}, computed: { position: 'fixed' } });
-  assert.equal(runLayoutPhysics([page, modal], {}, {}).filter((f) => f.class === 'unexpected_overlap').length, 0);
+test('a STATIC child of a fixed overlay does not flag overlap with the page behind (shakedown #2)', () => {
+  // the real FP: #auth-screen(fixed) > .auth-card > div(static) overlaps header(static, page)
+  const pageHeader = node({ nodeKey: 'h', auditInstanceId: 'h', parentInstanceId: null, rect: { x: 0, y: 0, width: 200, height: 40 }, scroll: {}, computed: { position: 'static' } });
+  const overlay = node({ nodeKey: 'ov', auditInstanceId: 'ov', parentInstanceId: null, rect: { x: 0, y: 0, width: 200, height: 200 }, scroll: {}, computed: { position: 'fixed' } });
+  const overlayChild = node({ nodeKey: 'oc', auditInstanceId: 'oc', parentInstanceId: 'ov', rect: { x: 20, y: 10, width: 100, height: 30 }, scroll: {}, computed: { position: 'static' } });
+  const out = runLayoutPhysics([pageHeader, overlay, overlayChild], {}, {});
+  assert.equal(out.filter((f) => f.class === 'unexpected_overlap').length, 0, 'overlay subtree vs page is intentional');
+});
+
+test('two siblings in the SAME layer still flag a real overlap', () => {
+  const a = node({ nodeKey: 'x', auditInstanceId: 'x', parentInstanceId: null, rect: { x: 0, y: 0, width: 60, height: 60 }, scroll: {}, computed: { position: 'static' } });
+  const b = node({ nodeKey: 'y', auditInstanceId: 'y', parentInstanceId: null, rect: { x: 40, y: 40, width: 60, height: 60 }, scroll: {}, computed: { position: 'static' } });
+  assert.ok(runLayoutPhysics([a, b], {}, {}).some((f) => f.class === 'unexpected_overlap'));
 });
 
 test('overlapAllowed nodes are exempt from overlap', () => {

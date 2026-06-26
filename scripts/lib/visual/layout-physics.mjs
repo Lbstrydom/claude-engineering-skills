@@ -58,7 +58,8 @@ export function runLayoutPhysics(nodes, contract, { viewportWidth = null } = {})
 function detectOverlaps(nodes) {
   const out = [];
   const parentOf = new Map();
-  for (const n of nodes) if (n.auditInstanceId) parentOf.set(n.auditInstanceId, n.parentInstanceId ?? null);
+  const byId = new Map();
+  for (const n of nodes) if (n.auditInstanceId) { parentOf.set(n.auditInstanceId, n.parentInstanceId ?? null); byId.set(n.auditInstanceId, n); }
 
   const isAncestor = (ancId, descId) => {
     let cur = parentOf.get(descId);
@@ -68,6 +69,25 @@ function detectOverlaps(nodes) {
       cur = parentOf.get(cur);
     }
     return false;
+  };
+
+  // The stacking LAYER a node lives in: the nearest fixed/absolute ancestor (or
+  // self), else null (the in-flow page). Two nodes in DIFFERENT layers — a static
+  // child of a fixed overlay vs the page chrome behind it — overlap by design
+  // (shakedown #2), so we don't flag them; same-layer overlaps still fire.
+  const layerCache = new Map();
+  const layerRoot = (id) => {
+    if (layerCache.has(id)) return layerCache.get(id);
+    let cur = id;
+    let hops = 0;
+    let root = null;
+    while (cur != null && hops++ < 64) {
+      const pos = String((byId.get(cur)?.computed || {}).position || 'static').trim();
+      if (pos === 'fixed' || pos === 'absolute') { root = cur; break; }
+      cur = parentOf.get(cur);
+    }
+    layerCache.set(id, root);
+    return root;
   };
 
   // Events sorted by x — a node is "active" between its left and right edge.
@@ -89,10 +109,9 @@ function detectOverlaps(nodes) {
         const bId = other.auditInstanceId;
         if (ev.n.overlapAllowed || other.overlapAllowed) continue;
         if (isAncestor(aId, bId) || isAncestor(bId, aId)) continue; // containment, not overlap
-        // Out-of-flow / layered nodes (a fixed modal/overlay, an absolute dropdown)
-        // intentionally cover in-flow content — not an unexpected overlap (shakedown
-        // noise #3). Only flag when BOTH are in normal flow.
-        if (isOutOfFlow(ev.n) || isOutOfFlow(other)) continue;
+        // Different stacking layers (overlay subtree vs page behind) → intentional
+        // cover, not an unexpected overlap (shakedown #2). Same-layer overlaps fire.
+        if (layerRoot(aId) !== layerRoot(bId)) continue;
         const pairKey = [String(aId), String(bId)].sort().join('::');
         if (seenPair.has(pairKey)) continue;
         seenPair.add(pairKey);
@@ -106,13 +125,6 @@ function detectOverlaps(nodes) {
 
 function rectsIntersect(a, b) {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-/** A node taken out of normal flow (fixed/absolute/sticky) layers over content by
- *  design — its overlaps are intentional. */
-function isOutOfFlow(node) {
-  const pos = String((node.computed || {}).position || 'static').trim();
-  return pos === 'fixed' || pos === 'absolute' || pos === 'sticky';
 }
 
 function mk(_tag, cls, node, property, expected, actual) {
