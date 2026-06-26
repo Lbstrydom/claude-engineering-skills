@@ -87,6 +87,14 @@ async function main() {
   const themeNames = args.themes ? args.themes.split(',').map((s) => s.trim()).filter(Boolean) : null;
   const ext = await runExtract({ url: args.verify, contract, devices, themeNames, storageState: args.storageState, timeoutMs: args.timeoutMs });
   if (!ext.ok) { process.stderr.write(`  [visual-audit] extract failed (${ext.code}): ${ext.reason}\n`); process.exit(2); }
+  // Capture honesty: zero states captured (every device×theme navigation failed —
+  // e.g. the server is down → ERR_CONNECTION_REFUSED) is NOT a clean pass. A dead
+  // server must never be indistinguishable from a clean audit (shakedown pass-3 #2).
+  if (!ext.perState.length) {
+    const why = (ext.warnings && ext.warnings.length) ? ext.warnings.join('; ') : 'navigation failed for all device×theme cells';
+    process.stderr.write(`  [visual-audit] no states captured (${why}) — is ${args.verify} reachable? Reporting UNVERIFIED, not a clean pass.\n`);
+    process.exit(2);
+  }
 
   const findings = assembleLiveFindings({ perState: ext.perState, allowedSet, tokenIndex, contract });
 

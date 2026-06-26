@@ -41,6 +41,15 @@ test('a STATIC child of a fixed overlay does not flag overlap with the page behi
   assert.equal(out.filter((f) => f.class === 'unexpected_overlap').length, 0, 'overlay subtree vs page is intentional');
 });
 
+test('overlay set by an ANCESTOR above the contracted root (surfaceLayer) suppresses overlap (pass-3 #1)', () => {
+  // #auth-screen(fixed) is OUTSIDE the contracted .auth-card subtree, so extract tags
+  // the surface with surfaceLayer; the card's static children must not flag overlap
+  // with the page header (a different/no layer).
+  const header = node({ nodeKey: 'h', auditInstanceId: 'h', parentInstanceId: null, surfaceLayer: null, rect: { x: 0, y: 0, width: 300, height: 40 }, scroll: {}, computed: { position: 'static' } });
+  const cardChild = node({ nodeKey: 'c', auditInstanceId: 'c', parentInstanceId: null, surfaceLayer: 'ovl:#auth-screen', rect: { x: 20, y: 10, width: 200, height: 50 }, scroll: {}, computed: { position: 'static' } });
+  assert.equal(runLayoutPhysics([header, cardChild], {}, {}).filter((f) => f.class === 'unexpected_overlap').length, 0);
+});
+
 test('two siblings in the SAME layer still flag a real overlap', () => {
   const a = node({ nodeKey: 'x', auditInstanceId: 'x', parentInstanceId: null, rect: { x: 0, y: 0, width: 60, height: 60 }, scroll: {}, computed: { position: 'static' } });
   const b = node({ nodeKey: 'y', auditInstanceId: 'y', parentInstanceId: null, rect: { x: 40, y: 40, width: 60, height: 60 }, scroll: {}, computed: { position: 'static' } });

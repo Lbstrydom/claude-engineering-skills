@@ -219,6 +219,19 @@ async function collectState(page, { surfaces, props, timeoutMs }) {
       captured.push(surface.id);
       const excl = (surface.excludeSelectors || []);
       const allowOverlap = (surface.allowOverlapWith || []);
+      // The stacking LAYER this surface lives in is often set by an ancestor ABOVE
+      // the contracted root (a fixed/absolute overlay like `#auth-screen`), which is
+      // outside the captured subtree — the overlap guard can't see it from the nodes
+      // alone. Walk the root's ancestors once and tag the whole surface so layout-
+      // physics treats overlay-vs-page overlap as intentional (shakedown pass-3 #1).
+      let surfaceLayer = null;
+      let anc = root.parentElement;
+      let aHops = 0;
+      while (anc && aHops++ < 50) {
+        const ap = getComputedStyle(anc).position;
+        if (ap === 'fixed' || ap === 'absolute') { surfaceLayer = anc.id ? `ovl:#${anc.id}` : `ovl:${surface.id}`; break; }
+        anc = anc.parentElement;
+      }
       const all = [root, ...root.querySelectorAll('*')];
       const budget = surface.nodeBudget || 400;
       let count = 0;
@@ -237,6 +250,7 @@ async function collectState(page, { surfaces, props, timeoutMs }) {
         const parentEl = el.parentElement;
         out.push({
           surfaceId: surface.id,
+          surfaceLayer,
           auditInstanceId: id,
           parentInstanceId: parentEl?.getAttribute('data-va-instance') || null,
           depth: ancestorPath(el, root).length,

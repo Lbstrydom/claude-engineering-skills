@@ -86,6 +86,10 @@ function detectOverlaps(nodes) {
       if (pos === 'fixed' || pos === 'absolute') { root = cur; break; }
       cur = parentOf.get(cur);
     }
+    // No in-subtree overlay → fall back to the ancestor-derived surfaceLayer (set
+    // by extract.mjs when a fixed/absolute ancestor sits ABOVE the contracted root,
+    // e.g. a `#auth-screen` overlay containing a static `.auth-card`).
+    if (root == null) root = byId.get(id)?.surfaceLayer ?? null;
     layerCache.set(id, root);
     return root;
   };
