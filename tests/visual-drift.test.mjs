@@ -3,7 +3,11 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { partitionFindings, scopeToChanged, ageDivergences, divergenceKey, firstSeenFromHistory } from '../scripts/lib/visual/drift.mjs';
+import { readBaseline, writeBaseline } from '../scripts/lib/visual/store.mjs';
 
 test('partitionFindings splits by gateEligible', () => {
   const { gateEligible, advisory } = partitionFindings([
@@ -30,6 +34,22 @@ test('ageDivergences computes ageDays from cloud firstSeen', () => {
   const lookup = (k) => (k.startsWith('token_violation') ? '2026-06-01T00:00:00+00:00' : null);
   const aged = ageDivergences([{ class: 'token_violation', surfaceId: 's', nodeKey: 'k', property: 'color' }], { firstSeenLookup: lookup, headCommitDate: '2026-06-11T00:00:00+00:00' });
   assert.equal(aged[0].ageDays, 10);
+});
+
+test('baseline ratchet: absent → null; round-trips; novelty filter blocks only new keys', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'visual-baseline-'));
+  assert.equal(readBaseline(dir), null, 'no baseline file → null (gate hints to create one)');
+
+  const preexisting = { class: 'token_violation', surfaceId: 's', nodeKey: 'k1', property: 'color' };
+  const fresh = { class: 'token_violation', surfaceId: 's', nodeKey: 'k2', property: 'color' };
+  writeBaseline(dir, [divergenceKey(preexisting)], '2026-06-26T00:00:00+00:00');
+
+  const baseline = readBaseline(dir);
+  assert.ok(baseline.has(divergenceKey(preexisting)), 'accepted key present');
+
+  const blockers = [preexisting, fresh].filter((b) => !baseline.has(divergenceKey(b)));
+  assert.deepEqual(blockers, [fresh], 'only the NEW finding survives the baseline filter');
+  fs.rmSync(dir, { recursive: true, force: true });
 });
 
 test('firstSeenFromHistory ignores invalid timestamps and keeps the earliest', () => {

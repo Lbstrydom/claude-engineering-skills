@@ -80,7 +80,8 @@ second flag `--allow-external-screenshot`.
 | `--device <csv>` | device presets, default `desktop,mobile` (`desktop\|desktop-large\|tablet\|mobile\|mobile-small`) |
 | `--theme <csv>` | subset of contract themes to capture (default all) |
 | `--storage-state <file>` | Playwright storageState for auth |
-| `--gate` | drift-only CI exit (non-zero on a changed-surface gate-blocker) |
+| `--gate` | drift-only CI exit (non-zero on a changed-surface gate-blocker NOT in the baseline) |
+| `--update-baseline` | snapshot today's gate-eligible findings into `visual-audit-baseline.json` (committed) so `--gate` then blocks only on NEW findings |
 | `--explain [--allow-external-screenshot]` | opt-in VLM narration (advisory; egress-guarded) |
 | `--out <file>` / `--format human\|json` / `--root <dir>` | output plumbing |
 

@@ -25,6 +25,24 @@ No merge-base (`changedPaths == null`) → **empty** (never false-block). `--sco
 sets `changedPaths == null` for analysis but, with `--gate`, treats every surface as
 in-scope by passing the full surface set.
 
+## Novelty baseline (the accepted-findings ratchet)
+
+Visual findings are **absolute** (this value is off-scale), not relative-to-a-base
+like nav's regressions — so a changed-surface gate would otherwise block on every
+pre-existing defensible finding (off-scale type, alpha-derived colors). The committed
+**`visual-audit-baseline.json`** is the ratchet: `--gate` blocks only on gate-eligible
+changed-surface findings whose `divergenceKey` (`class:surfaceId:nodeKey:property`)
+is **not** in the baseline.
+
+- **Adopt a blocking gate on a noisy app**: `visual-audit --verify <url> --update-baseline`
+  snapshots all current gate-eligible findings as accepted; thereafter `--gate` fires
+  only on NEW findings. Commit the baseline.
+- **No baseline file** → `--gate` blocks on ALL changed-surface findings (backward
+  compatible) and prints a hint to create one.
+- A finding that's fixed simply stops appearing; a finding that's newly introduced
+  isn't in the baseline → blocks. Re-run `--update-baseline` to re-accept after a
+  deliberate, reviewed change.
+
 ## Capture honesty (degrade, never false-fire)
 
 - A declared surface that is absent OR **present-but-empty** (a CSR skeleton that never

@@ -21,15 +21,15 @@ import path from 'node:path';
 import { writeOutput } from './lib/file-io.mjs';
 import { parseDevicesFlag } from './lib/device-presets.mjs';
 import {
-  VISUAL_TOOL_VERSION, computeContractDigest, computeConfigDigest,
+  VISUAL_TOOL_VERSION, computeContractDigest, computeConfigDigest, BASELINE_FILE,
 } from './lib/visual/schema.mjs';
 import { readContract, writeContract, bootstrapContract, contractExists } from './lib/visual/contract.mjs';
 import { extractAllowedSet } from './lib/visual/tokens.mjs';
 import { runSourceCoherence } from './lib/visual/source-coherence.mjs';
 import { runExtract } from './lib/visual/extract.mjs';
 import { assembleLiveFindings } from './lib/visual/findings.mjs';
-import { partitionFindings, scopeToChanged } from './lib/visual/drift.mjs';
-import { writeObservedEnvelope, writeVerifyResult } from './lib/visual/store.mjs';
+import { partitionFindings, scopeToChanged, divergenceKey } from './lib/visual/drift.mjs';
+import { writeObservedEnvelope, writeVerifyResult, readBaseline, writeBaseline } from './lib/visual/store.mjs';
 import { renderHuman, buildJson, buildScorecard } from './lib/visual/render.mjs';
 
 async function main() {
@@ -97,21 +97,35 @@ async function main() {
   }
 
   const findings = assembleLiveFindings({ perState: ext.perState, allowedSet, tokenIndex, contract });
+  const { gateEligible } = partitionFindings(findings);
+
+  // --update-baseline: snapshot ALL current gate-eligible findings as accepted, so a
+  // noisy app can adopt a blocking gate that then fires only on NEW regressions.
+  if (args.updateBaseline) {
+    const n = writeBaseline(root, gateEligible.map(divergenceKey), gitHeadDate(root) || '');
+    process.stderr.write(`  [visual-audit] baseline updated: ${n} accepted gate-eligible finding(s) → ${BASELINE_FILE}\n`);
+  }
 
   // Gate scope (only meaningful with --gate).
-  const { gateEligible } = partitionFindings(findings);
   let gateBlockers = 0;
   if (args.gate) {
     const changedPaths = args.scope === 'full' ? null : gitChangedFiles(root);
     const contractChanged = changedPaths ? [...changedPaths].some((p) => p.endsWith('visual-contract.json')) : false;
     const changedTokenFamilies = tokenSourceFamiliesChanged(contract, changedPaths);
-    const blockers = scopeToChanged(gateEligible, {
+    let blockers = scopeToChanged(gateEligible, {
       changedPaths: changedPaths ? [...changedPaths] : (args.scope === 'full' ? null : changedPaths),
       contractChanged,
       changedTokenFamilies,
       surfaces: contract.surfaces || [],
       globalStyleGlobs: contract.globalStyleGlobs || [],
     });
+    // Novelty ratchet: block only on findings NOT in the committed baseline, so the
+    // gate fires on new regressions rather than pre-existing defensible findings.
+    const baseline = readBaseline(root);
+    if (baseline) blockers = blockers.filter((b) => !baseline.has(divergenceKey(b)));
+    else if (blockers.length) {
+      process.stderr.write(`  [visual-audit] no ${BASELINE_FILE} — gate blocks on ALL ${blockers.length} changed-surface finding(s). Run with --update-baseline to accept today's findings and block only on new ones.\n`);
+    }
     gateBlockers = blockers.length;
   }
 
@@ -150,6 +164,7 @@ function parseArgs(argv) {
     verify: verifyIdx >= 0 ? argv[verifyIdx + 1] : null,
     scope: get('--scope') || 'diff',
     gate: argv.includes('--gate'),
+    updateBaseline: argv.includes('--update-baseline'),
     devices: get('--device') || get('--devices') || 'desktop,mobile',
     themes: get('--theme') || get('--themes'),
     storageState: get('--storage-state'),

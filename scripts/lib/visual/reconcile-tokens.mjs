@@ -51,7 +51,11 @@ function borderPainted(computed, side) {
  */
 export function runReconcileTokens(nodes, tokenIndex, allowedSet, contract) {
   if (!allowedSet || allowedSet.inferredMode) return []; // token-less app → clustering path
-  const audited = new Set(contract?.propertyPolicy?.tokenAudited ?? []);
+  // tokenAudited: absent/undefined → audit ALL families (default); explicit [] →
+  // audit NONE (the contract off-switch for the token tier — `?? []` made [] a
+  // no-op that still audited everything); a subset → just those (shakedown gate #2a).
+  const policy = contract?.propertyPolicy?.tokenAudited;
+  const audited = Array.isArray(policy) ? new Set(policy) : null;
   // Per-family empty-scale guard (shakedown noise #1): a family with NO declared
   // tokens isn't tokenized by this app — reconciling it emits a gate-eligible
   // violation on every node (e.g. ~1,300 P1s for typography an app keeps as raw
@@ -64,7 +68,7 @@ export function runReconcileTokens(nodes, tokenIndex, allowedSet, contract) {
     if (DECORATIVE_TAGS.has(node.tag)) continue;
     const computed = node.computed || {};
     for (const { family, property } of AUDITED_PROPERTIES) {
-      if (audited.size && !audited.has(family)) continue;
+      if (audited && !audited.has(family)) continue; // null = audit all; Set = subset/none
       if (!tokenized.has(family)) continue; // empty-scale guard
       if (property === 'border-top-color' && !borderPainted(computed, 'top')) continue;
       const raw = computed[property];
@@ -74,6 +78,16 @@ export function runReconcileTokens(nodes, tokenIndex, allowedSet, contract) {
 
       const onScale = tokenIndex.has(family, norm, node.theme);
       if (onScale) continue;
+
+      // rgba(var(--token-rgb), α) composites a token RGB triplet with alpha — the
+      // alpha'd value isn't enumerated in the scale, but its OPAQUE base is, so it's
+      // a tokened color at reduced opacity, not a violation (shakedown gate #2b: 12
+      // alpha-derived error/scrim colors). Only the opaque-base match is trusted;
+      // a coincidental literal would also need the alpha to line up.
+      if (family === 'colors') {
+        const parts = norm.split(',');
+        if (parts.length === 4 && tokenIndex.has('colors', parts.slice(0, 3).join(','), node.theme)) continue;
+      }
 
       // Provenance: does the WINNING declaration use a token var? (catches a token
       // whose value isn't enumerated in our allowed-set but is legitimately a var)

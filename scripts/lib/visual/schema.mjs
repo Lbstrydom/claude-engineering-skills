@@ -30,6 +30,11 @@ export const VISUAL_TOOL_VERSION = 1;
 export const VISUAL_VERIFY_TOOL_VERSION = 1;
 
 export const CONTRACT_FILE = 'visual-contract.json';
+// Committed accepted-findings ratchet (like a lint baseline): `--gate` blocks only
+// on gate-eligible findings whose divergenceKey is NOT in here, so a noisy app can
+// adopt a blocking gate by snapshotting today's defensible findings as accepted and
+// failing only on NEW regressions. `--update-baseline` rewrites it.
+export const BASELINE_FILE = 'visual-audit-baseline.json';
 export const OBSERVED_FILE = '.audit-loop/visual-observed.json';
 export const VERIFY_RESULT_FILE = '.audit-loop/visual-verify-result.json';
 export const DRIFT_LEDGER_FILE = '.audit-loop/visual-drift-ledger.json';

@@ -69,3 +69,19 @@ test('SVG-internal decorative nodes (use/path) are skipped', () => {
   const out = runReconcileTokens([node({ tag: 'use', computed: { color: '#010203', 'font-size': '13px' } })], tokenIndex, allowedSet, contract);
   assert.equal(out.length, 0);
 });
+
+test('tokenAudited: [] is a real off-switch (audits NONE); absent audits all (gate #2a)', () => {
+  const offByEmpty = runReconcileTokens([node({ computed: { color: '#010203' } })], tokenIndex, allowedSet, { propertyPolicy: { tokenAudited: [] } });
+  assert.equal(offByEmpty.length, 0, 'explicit [] audits no families');
+  const onByAbsent = runReconcileTokens([node({ computed: { color: '#010203' } })], tokenIndex, allowedSet, {});
+  assert.equal(onByAbsent.length, 1, 'absent tokenAudited audits all families');
+});
+
+test('rgba(var(--token-rgb), α) is absolved by its opaque base on-scale (gate #2b)', () => {
+  // colors scale has 51,102,255; a reduced-alpha use of it composites to 51,102,255,0.15
+  const out = runReconcileTokens([node({ computed: { 'background-color': 'rgba(51,102,255,0.15)' } })], tokenIndex, allowedSet, contract);
+  assert.equal(out.length, 0, 'a token color at reduced alpha is tokened, not a violation');
+  // but an alpha color whose opaque base is NOT on scale still flags
+  const bad = runReconcileTokens([node({ computed: { 'background-color': 'rgba(1,2,3,0.15)' } })], tokenIndex, allowedSet, contract);
+  assert.equal(bad.length, 1);
+});

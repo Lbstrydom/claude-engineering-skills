@@ -14,7 +14,7 @@ import path from 'node:path';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import {
   VisualObservedSchema, VisualVerifyResultSchema,
-  OBSERVED_FILE, VERIFY_RESULT_FILE, DRIFT_LEDGER_FILE,
+  OBSERVED_FILE, VERIFY_RESULT_FILE, DRIFT_LEDGER_FILE, BASELINE_FILE,
   VISUAL_VERIFY_TOOL_VERSION,
 } from './schema.mjs';
 
@@ -106,4 +106,35 @@ export function writeDriftLedger(root, activeKeys, headCommitDate, prior = {}) {
   for (const key of activeKeys) firstSeen[key] = prior[key] || headCommitDate;
   atomicWriteFileSync(path.join(root, DRIFT_LEDGER_FILE), `${JSON.stringify({ version: 1, firstSeen }, null, 2)}\n`);
   return firstSeen;
+}
+
+// ── Accepted-findings baseline (committed ratchet) ──────────────────────────
+
+/**
+ * Read the committed baseline of accepted finding keys.
+ * @param {string} root
+ * @returns {Set<string>|null} the accepted divergenceKeys, or null when no baseline
+ *   file exists (distinct from an empty baseline — lets the gate hint to create one).
+ */
+export function readBaseline(root) {
+  let raw;
+  try { raw = fs.readFileSync(path.join(root, BASELINE_FILE), 'utf-8'); }
+  catch { return null; }
+  try {
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed.accepted) ? parsed.accepted : []);
+  } catch { return new Set(); } // malformed → treat as empty (everything is novel), never crash
+}
+
+/**
+ * Rewrite the committed baseline from the current gate-eligible finding keys.
+ * @param {string} root
+ * @param {Iterable<string>} keys - divergenceKeys to accept
+ * @param {string} generatedAt - provenance stamp (git commit date; no wall clock)
+ * @returns {number} count written
+ */
+export function writeBaseline(root, keys, generatedAt) {
+  const accepted = [...new Set(keys)].sort();
+  atomicWriteFileSync(path.join(root, BASELINE_FILE), `${JSON.stringify({ version: 1, generatedAt, accepted }, null, 2)}\n`);
+  return accepted.length;
 }
