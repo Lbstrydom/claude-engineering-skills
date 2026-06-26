@@ -1,5 +1,28 @@
 # Project Status Log
 
+## 2026-06-26 — `/nav-audit` v1.2: container-authoritative live attribution (data-driven nav fix)
+
+### Changes
+- Fixed the v1.1 blocking defect: `--verify`'s live collector only recognised `a[href]` + a few `data-*` attrs, so it MISSED data-driven nav like `<button data-nav-view="today">` (no href/role) — wine-cellar-app's real primary bottom-nav pattern. Result was 3/5 false-misplaced.
+- **Collector → target-presence gate**: one broadened, tag-agnostic scan. `extractTarget` (new pure, exported helper) resolves a usable href OR a nav `data-*` (last-segment ∈ {view,target,route,page,tab}, or a bare whitelist; excludes `data-nav-id`/`data-auto`). Collection is global; layer attribution stays container-scoped via `closest()` against declared `navLayers`.
+- **`normalizeLiveTarget`**: bare-slug verbatim (so `data-nav-view="today"` → `today`), hash-router strip (`#/wines`), and **external-origin reject** (audit HIGH — `https://other.com/wines` no longer matches internal `wines`).
+- **Readiness**: settle now races a declared container becoming POPULATED (≥1 child), not merely present (audit HIGH — late-rendered JS nav); per-selector try/catch; selectors emitted via `CSS.escape`, preferring the nav-ish-matching token.
+- **Bootstrap (`draftContractFromLive`)**: proposes CONTAINERS holding ≥2 distinct targets (never single-button ids), sticky-aware, drawer/hamburger no longer force-secondary.
+
+### Files Affected
+- `scripts/lib/nav/verify.mjs` — broadened collector, `extractTarget`, readiness, origin reject, slug/hash normalize.
+- `scripts/lib/nav/bootstrap-draft.mjs` — container grouping (≥2 distinct targets), sticky-aware classification.
+- `tests/nav-live-*.test.mjs`, `tests/nav-bootstrap-draft.test.mjs`, `tests/fixtures/nav-live/sample.html` — 115 nav tests (fixture mirrors the wine-cellar-app `data-nav-view` button pattern).
+
+### Decisions Made
+- Plan audited GPT 3-round + Gemini 2-round (Approved); consolidated code audit GPT + Gemini 2-round. Test-fixture a11y findings dismissed (the fixture deliberately mirrors real markup to exercise the collector).
+- **Live anonymous `--verify` still shows misplaced — diagnosed as auth-gating**: wine-cellar-app's `#primary-nav` is empty in a logged-out headless session (app's client-side view/nav init never runs). The fix is proven by the deterministic fixture test; confirming the flip on the real app needs `--storage-state <authed.json>`.
+
+### Next Steps
+- Re-sync to consumer repos; run authenticated `--verify` against wine-cellar-app to confirm the 3 flips on the real primary nav.
+
+---
+
 ## 2026-06-25 — `/nav-audit` v1.1: live-DOM layer attribution + bootstrap-from-live + dashboard persistence
 
 ### Changes

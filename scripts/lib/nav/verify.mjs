@@ -31,9 +31,24 @@ const VIEW_PARAMS = ['view', 'tab', 'page', 'screen'];
 export function normalizeLiveTarget(raw, baseUrl) {
   if (typeof raw !== 'string' || !raw) return null;
   if (/^(mailto:|tel:|javascript:)/i.test(raw)) return null;
+  // Hash-router routes (`#/wines`, `#!/wines`) are real destinations — strip the
+  // leading `#`/`#!` and treat the rest as the path (Gemini2-M).
+  const hashRoute = raw.match(/^#!?(\/.*)$/);
+  if (hashRoute) raw = hashRoute[1];
+  // A bare view slug (e.g. `data-nav-view="today"`) — no path/query/hash separator —
+  // IS a view id; return it verbatim rather than URL-resolving it (which against a
+  // file:// base would mangle it). Matches the static VIEWS-slug destinations.
+  if (/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(raw)) return raw;
   let u;
   try { u = new URL(raw, baseUrl || 'http://localhost'); }
   catch { return null; }
+  // External-origin links are NOT internal nav (R1-H): when a real baseUrl is
+  // known and an ABSOLUTE href resolves to a different origin, drop it — else
+  // `https://docs.other.com/wines` would falsely match the internal `wines`.
+  if (baseUrl) {
+    let base; try { base = new URL(baseUrl); } catch { base = null; }
+    if (base && u.origin !== base.origin) return null;
+  }
   // query-param view routing (vanilla SPAs)
   for (const p of VIEW_PARAMS) {
     const v = u.searchParams.get(p);
@@ -124,25 +139,42 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
         context = await browser.newContext({ viewport, ...(storageState ? { storageState } : {}) });
         const page = await context.newPage();
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-        // settle delay raced against ANY declared selector. On selector
-        // error/absence the selector promise must NOT resolve (a resolving
-        // `.catch(()=>{})` would short-circuit the race and skip the settle —
-        // consolidated-3); use a never-resolving fallback so the timeout wins.
+        // Settle delay raced against a declared container becoming POPULATED
+        // (≥1 child) — NOT merely present. Late-rendered nav (JS-built bottom
+        // bars) leaves the container in the DOM but empty for a beat; waiting on
+        // mere existence resolves the race instantly and misses the children
+        // (R1-H). Per-selector try/catch so one invalid declared selector can't
+        // crash the wait (R1-M). On absence/error the predicate never matches →
+        // never-resolving `.catch` → the timeout wins (consolidated-3).
         await Promise.race([
           page.waitForTimeout(hydrateMs),
-          ...(declaredSelectors.length ? [page.waitForSelector(declaredSelectors.join(','), { timeout: hydrateMs }).catch(() => new Promise(() => {}))] : []),
+          ...(declaredSelectors.length ? [page.waitForFunction(
+            (sels) => sels.some((s) => { try { const el = document.querySelector(s); return !!el && el.childElementCount > 0; } catch { return false; } }),
+            declaredSelectors,
+            { timeout: hydrateMs },
+          ).catch(() => new Promise(() => {}))] : []),
         ]);
-        const occ = await collectLiveNav(page, selLayers);
-        for (const o of occ) {
-          const container = resolveContainer(o.matches, contract);
+        const shapes = await collectLiveNav(page, selLayers);
+        const seen = new Set();
+        for (const sh of shapes) {
+          const raw = extractTarget(sh);          // pure gate (plan §4a)
+          if (!raw) continue;                     // no resolvable nav target → skip
+          const target = normalizeLiveTarget(raw, url);
+          if (!target) continue;
+          const container = resolveContainer(sh.matches, contract);
+          // Dedupe by (target, container, state) — a real <a> also caught by the
+          // container scan isn't double-counted (plan §4a).
+          const key = `${target}|${container?.selector ?? ''}|${stateName}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
           liveEvidence.push({
-            target: normalizeLiveTarget(o.target, url),
-            label: o.label,
+            target,
+            label: sh.label,
             container: container?.selector ?? null,
             layer: container?.layer ?? null,
             state: stateName,
-            role: o.role ?? null,
-            navIsh: o.navIsh ?? null,   // for bootstrap drafting (no contract)
+            role: sh.role ?? null,
+            containerCandidates: sh.containerCandidates ?? [], // for bootstrap drafting
           });
         }
         statesCollected.push(stateName);
@@ -190,7 +222,10 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
  * @param {Array<{selector,layer}>} selLayers
  */
 async function collectLiveNav(page, selLayers) {
-  return page.evaluate((sl) => {
+  // Pre-filter: clickable tags ∪ enumerated data-* (superset of any target-bearing
+  // element — plan §4a). The pure `extractTarget` node-side is the real gate.
+  const CANDIDATES = 'a[href],area[href],button,[role=button],[onclick],[tabindex],[data-view],[data-nav-view],[data-target],[data-nav],[data-tab],[data-route],[data-page]';
+  return page.evaluate(({ sl, CANDIDATES }) => {
     const out = [];
     const depthTo = (el, sel) => {
       let cur = el; let d = 0;
@@ -202,43 +237,97 @@ async function collectLiveNav(page, selLayers) {
     };
     const navRole = (el) => {
       let cur = el;
-      while (cur) {
-        if (cur.tagName === 'NAV' || cur.getAttribute?.('role') === 'navigation') return true;
-        cur = cur.parentElement;
-      }
+      while (cur) { if (cur.tagName === 'NAV' || cur.getAttribute?.('role') === 'navigation') return true; cur = cur.parentElement; }
       return false;
     };
-    // Nearest nav-ish container (for bootstrap drafting, no declared selectors):
-    // a <nav>/[role=navigation] or an id/class matching nav-ish words.
-    const navIsh = (el) => {
-      const re = /nav|tabs?|menu|sidebar|toolbar|primary|bottom-?nav|sub-?tabs?/i;
-      let cur = el;
+    // Nav-ish ancestor CONTAINERS (for bootstrap), excluding page-level wrappers.
+    // Each carries a sticky flag (computed position fixed/sticky). NOT counted here
+    // (≥2-children is decided node-side post-extractTarget — plan §4a R2-M2).
+    const EXCLUDE = new Set(['BODY', 'MAIN', 'HTML', 'HEADER']);
+    const re = /nav|tabs?|menu|sidebar|toolbar|primary|bottom-?nav|navbar|tabbar|sub-?tabs?|drawer|hamburger|breadcrumb|secondary/i;
+    const containerCandidates = (el) => {
+      const cands = [];
+      let cur = el.parentElement;
       while (cur) {
-        const isNav = cur.tagName === 'NAV' || cur.getAttribute?.('role') === 'navigation';
-        const id = cur.id || '';
-        const cls = (cur.getAttribute?.('class') || '');
-        if (isNav || re.test(id) || re.test(cls)) {
-          const selector = id ? `#${id}` : (cls.split(/\s+/).find((c) => re.test(c)) ? `.${cls.split(/\s+/).find((c) => re.test(c))}` : (isNav ? 'nav' : null));
-          if (selector) return { selector, tag: cur.tagName, role: cur.getAttribute?.('role') || (cur.tagName === 'NAV' ? 'navigation' : null) };
+        if (!EXCLUDE.has(cur.tagName)) {
+          const isNav = cur.tagName === 'NAV' || cur.getAttribute?.('role') === 'navigation';
+          const id = cur.id || '';
+          const cls = (cur.getAttribute?.('class') || '');
+          if (isNav || re.test(id) || re.test(cls)) {
+            // CSS.escape so a numeric/special id or class (e.g. `123-nav`) yields a
+            // VALID selector in the drafted contract — never `#123-nav` (Gemini-H kernel).
+            const esc = (v) => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v);
+            const clsTok = cls.split(/\s+/).find((c) => re.test(c));
+            // Prefer whichever of id/class actually MATCHED the nav-ish regex, so a
+            // semantic `.primary-nav` isn't shadowed by a non-semantic `#header-123`
+            // (which would also break PRIMARY_RE classification) — Gemini2-M.
+            const selector = (id && re.test(id)) ? `#${esc(id)}`
+              : (clsTok ? `.${esc(clsTok)}`
+              : (id ? `#${esc(id)}` : (isNav ? 'nav' : null)));
+            if (selector) {
+              let sticky = false;
+              try { const p = getComputedStyle(cur).position; sticky = p === 'fixed' || p === 'sticky'; } catch { /* jsdom/headless */ }
+              cands.push({ selector, sticky });
+            }
+          }
         }
         cur = cur.parentElement;
       }
-      return null;
+      return cands;
     };
-    const record = (el, target, label) => {
-      if (!target) return;
+    document.querySelectorAll(CANDIDATES).forEach((el) => {
+      const dataAttrs = {};
+      for (const a of el.attributes) if (a.name.startsWith('data-')) dataAttrs[a.name.slice(5)] = a.value;
       const matches = [];
-      for (const { selector, layer } of sl) {
-        const d = depthTo(el, selector);
-        if (d >= 0) matches.push({ selector, layer, depth: d });
-      }
-      out.push({ target, label: (label || '').trim().slice(0, 40), role: navRole(el) ? 'navigation' : null, matches, navIsh: navIsh(el) });
-    };
-    document.querySelectorAll('a[href]').forEach((a) => record(a, a.getAttribute('href'), a.textContent));
-    document.querySelectorAll('[data-view],[data-target],[data-nav],[data-tab]').forEach((el) => {
-      const t = el.getAttribute('data-view') || el.getAttribute('data-target') || el.getAttribute('data-nav') || el.getAttribute('data-tab');
-      record(el, t, el.textContent);
+      for (const { selector, layer } of sl) { const d = depthTo(el, selector); if (d >= 0) matches.push({ selector, layer, depth: d }); }
+      out.push({
+        tag: el.tagName,
+        href: el.getAttribute('href'),
+        dataAttrs,
+        label: (el.textContent || '').trim().slice(0, 40),
+        role: navRole(el) ? 'navigation' : null,
+        matches,
+        containerCandidates: containerCandidates(el),
+      });
     });
     return out;
-  }, selLayers);
+  }, { sl: selLayers, CANDIDATES });
+}
+
+// ── Pure target extraction (plan §4a) — exported for deterministic test ──────
+const TARGET_LAST_SEG = ['view', 'target', 'route', 'page', 'tab']; // priority order
+const TARGET_WHITELIST = new Set(['data-nav', 'data-target', 'data-tab', 'data-route', 'data-page', 'data-view']);
+
+/** Is an href lexically navigational (not js:/mailto:/tel:/bare-anchor)? Hash-router
+ *  hrefs (`#/`, `#!`) ARE kept. */
+function usableHref(h) {
+  if (typeof h !== 'string' || !h) return false;
+  if (/^(javascript:|mailto:|tel:)/i.test(h)) return false;
+  if (h === '#' || /^#[^/!]/.test(h)) return false; // bare same-page anchor
+  return true;
+}
+
+/**
+ * Resolve a candidate element's nav destination (pure; plan §4a precedence).
+ * @param {{href?: string|null, dataAttrs?: Object<string,string>}} shape
+ * @returns {string|null} the raw target (pre-normalisation), or null
+ */
+export function extractTarget(shape) {
+  if (!shape) return null;
+  if (usableHref(shape.href)) return shape.href;
+  const data = shape.dataAttrs || {};
+  const matched = [];
+  for (const [name, val] of Object.entries(data)) {
+    if (!val) continue;
+    const lastSeg = name.split('-').pop().toLowerCase();
+    if (TARGET_LAST_SEG.includes(lastSeg) || TARGET_WHITELIST.has(`data-${name}`)) {
+      matched.push({ name, val, lastSeg });
+    }
+  }
+  if (!matched.length) return null;
+  matched.sort((a, b) => {
+    const ra = TARGET_LAST_SEG.indexOf(a.lastSeg); const rb = TARGET_LAST_SEG.indexOf(b.lastSeg);
+    return (ra === -1 ? 99 : ra) - (rb === -1 ? 99 : rb) || a.name.localeCompare(b.name);
+  });
+  return matched[0].val;
 }

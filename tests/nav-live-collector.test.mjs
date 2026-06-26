@@ -37,13 +37,19 @@ describe('collectLiveNav via file:// fixture', () => {
     assert.deepEqual(report.statesCollected.sort(), ['desktop', 'mobile']);
 
     const attr = report.liveAttribution;
-    // grid lives in .sub-tabs-row (secondary) in both states.
+    // today is a <button data-nav-view="today"> (NO href/role) inside #primary-nav
+    // → MUST attribute to primary (the v1.2 fix).
+    assert.ok(attr['today'], 'today must be collected from the data-nav-view button');
+    assert.ok(attr['today'].layers.includes('primary'), 'today must attribute to primary');
+    // grid lives in .sub-tabs-row (secondary).
     assert.ok(attr['grid'].layers.includes('secondary'));
-    // today is in #primary-nav (primary) — visible at the mobile bottom nav.
-    assert.ok(attr['today'].layers.includes('primary'));
-    // wines appears in primary (sidebar/bottom-nav) AND outside any nav (footer) —
-    // every occurrence kept, so ≥2 placements and 'primary' present.
-    assert.ok(attr['wines'].placements.length >= 2);
+    // wines appears in primary (#primary-nav button + #desktop-sidebar link).
     assert.ok(attr['wines'].layers.includes('primary'));
+    // The action button "Scan" (data-nav-id only, NO target) is NOT collected.
+    assert.equal(attr['scan'], undefined, 'targetless action button must be skipped');
+    // A target-bearing button OUTSIDE any declared container is collected but has
+    // NO layer (container null) — cannot make a row pass.
+    assert.ok(attr['promo'], 'out-of-container target is still collected (reachability)');
+    assert.deepEqual(attr['promo'].layers, [], 'out-of-container element has no layer');
   });
 });

@@ -5,6 +5,53 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { attributeLive, mergeScorecard, resolveContainer, STATUS } from '../scripts/lib/nav/live-attribution.mjs';
+import { extractTarget, normalizeLiveTarget } from '../scripts/lib/nav/verify.mjs';
+
+describe('normalizeLiveTarget origin + slug (R1-H, v1.2)', () => {
+  const base = 'https://app.example.com/?view=today';
+  it('drops an external-origin absolute URL (no false internal match)', () => {
+    assert.equal(normalizeLiveTarget('https://docs.other.com/wines', base), null);
+  });
+  it('keeps a same-origin absolute URL', () => {
+    assert.equal(normalizeLiveTarget('https://app.example.com/wines', base), '/wines');
+  });
+  it('returns a bare slug verbatim (data-nav-view value)', () => {
+    assert.equal(normalizeLiveTarget('today', base), 'today');
+  });
+  it('resolves a query-param view route', () => {
+    assert.equal(normalizeLiveTarget('?view=grid', base), 'grid');
+  });
+  it('strips a hash-router prefix', () => {
+    assert.equal(normalizeLiveTarget('#/wines', base), '/wines');
+  });
+});
+
+describe('extractTarget (pure, v1.2)', () => {
+  it('resolves a data-nav-view button (no href) — the core fix', () => {
+    assert.equal(extractTarget({ dataAttrs: { 'nav-view': 'today', 'nav-id': 'today' } }), 'today');
+  });
+  it('ignores data-nav-id (suffix id ∉ set) and data-auto (false-suffix)', () => {
+    assert.equal(extractTarget({ dataAttrs: { 'nav-id': 'x', auto: 'y' } }), null);
+  });
+  it('prefers a usable href over data-*', () => {
+    assert.equal(extractTarget({ href: '/wines', dataAttrs: { view: 'grid' } }), '/wines');
+  });
+  it('falls through a bare-anchor href to data-* (no regression)', () => {
+    assert.equal(extractTarget({ href: '#', dataAttrs: { view: 'today' } }), 'today');
+  });
+  it('keeps a hash-router href (#/wines)', () => {
+    assert.equal(extractTarget({ href: '#/wines' }), '#/wines');
+  });
+  it('rejects javascript:/mailto: hrefs, falls through', () => {
+    assert.equal(extractTarget({ href: 'javascript:void(0)', dataAttrs: { route: 'r' } }), 'r');
+  });
+  it('returns null for a targetless element', () => {
+    assert.equal(extractTarget({ href: null, dataAttrs: { 'nav-id': 'x' } }), null);
+  });
+  it('priority order: view > target > route > page > tab', () => {
+    assert.equal(extractTarget({ dataAttrs: { tab: 't', view: 'v', route: 'r' } }), 'v');
+  });
+});
 
 const contract = { version: 1, navLayers: { primary: ['#primary-nav'], secondary: ['.sub-tabs-row'] } };
 

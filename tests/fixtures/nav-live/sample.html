@@ -21,10 +21,12 @@
     <a href="?view=pairing">Pairing</a>
   </nav>
 
-  <!-- Mobile bottom nav (primary on mobile) -->
+  <!-- Mobile bottom nav (primary on mobile) — buttons with data-nav-view, NO href,
+       NO role/aria — exactly the wine-cellar-app pattern the v1.2 fix targets. -->
   <div id="primary-nav">
-    <a href="?view=today">Today</a>
-    <a href="?view=wines">Wines</a>
+    <button data-nav-view="today" data-nav-id="today">Today</button>
+    <button data-nav-view="wines" data-nav-id="wines">Wines</button>
+    <button data-nav-id="scan">Scan</button> <!-- action button: NO target → must be skipped -->
   </div>
 
   <!-- Secondary sub-tabs (always present) -->
@@ -33,9 +35,9 @@
     <a href="?view=drinksoon">Drink Soon</a>
   </div>
 
-  <!-- A body link NOT in any nav container (footer) -->
-  <footer>
-    <a href="?view=wines">Browse the cellar</a>
-  </footer>
+  <!-- A target-bearing button OUTSIDE any declared nav container -->
+  <main>
+    <button data-route="promo">Promo</button>
+  </main>
 </body>
 </html>

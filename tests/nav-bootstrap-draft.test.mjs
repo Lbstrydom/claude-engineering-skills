@@ -7,36 +7,48 @@ import { draftContractFromLive } from '../scripts/lib/nav/bootstrap-draft.mjs';
 import { bootstrapContract, contractExists } from '../scripts/lib/nav/contract.mjs';
 import { NavContractSchema } from '../scripts/lib/nav/schema.mjs';
 
-function ev(target, sel, role, tag) {
-  return { target, navIsh: sel ? { selector: sel, role: role || null, tag: tag || 'DIV' } : null };
+// v1.2: each occurrence carries containerCandidates [{selector,sticky}]. cands is
+// a list of selectors (sticky=false) or [selector, sticky] tuples.
+function ev(target, ...cands) {
+  return { target, containerCandidates: cands.map((c) => (typeof c === 'string' ? { selector: c, sticky: false } : { selector: c[0], sticky: !!c[1] })) };
 }
 
-describe('draftContractFromLive precedence (R2-M3, non-overlapping)', () => {
-  it('classifies primary/secondary by selector words', () => {
+describe('draftContractFromLive (v1.2 container grouping, ≥2 targets)', () => {
+  it('classifies primary/secondary by selector words (each container ≥2 targets)', () => {
     const d = draftContractFromLive([
-      ev('today', '#primary-nav'),
-      ev('grid', '.sub-tabs-row'),
-      ev('wines', '#primary-nav'),
+      ev('today', '#primary-nav'), ev('wines', '#primary-nav'),
+      ev('grid', '.sub-tabs-row'), ev('drinksoon', '.sub-tabs-row'),
     ]);
     assert.deepEqual(d.navLayers.primary, ['#primary-nav']);
     assert.deepEqual(d.navLayers.secondary, ['.sub-tabs-row']);
-    assert.deepEqual(d.observedTargets, ['grid', 'today', 'wines']);
+    assert.deepEqual(d.observedTargets, ['drinksoon', 'grid', 'today', 'wines']);
   });
 
-  it('promotes the single most-prominent <nav> to primary when no primary word matches', () => {
+  it('a sticky/fixed container → primary even with no primary word', () => {
     const d = draftContractFromLive([
-      ev('a', '.toolbar', null, 'DIV'),
-      ev('b', '.app-menu', 'navigation', 'NAV'),
+      ev('a', ['.bar', true]), ev('b', ['.bar', true]),  // sticky
+      ev('c', '.toolbar'), ev('d', '.toolbar'),
     ]);
-    // the <nav> wins primary; the other nav-ish → secondary
-    assert.deepEqual(d.navLayers.primary, ['.app-menu']);
+    assert.ok(d.navLayers.primary.includes('.bar'));
     assert.ok(d.navLayers.secondary.includes('.toolbar'));
   });
 
-  it('routes sub-tabs to secondary even when seen first', () => {
-    const d = draftContractFromLive([ev('x', '.sub-tabs-row'), ev('y', '#primary-nav')]);
-    assert.ok(d.navLayers.secondary.includes('.sub-tabs-row'));
-    assert.ok(d.navLayers.primary.includes('#primary-nav'));
+  it('no signal → earliest-document-order container → primary (R2-M3, not <nav> preference)', () => {
+    const d = draftContractFromLive([
+      ev('a', '.toolbar'), ev('b', '.toolbar'),       // seen first
+      ev('c', '.app-menu'), ev('d', '.app-menu'),
+    ]);
+    assert.deepEqual(d.navLayers.primary, ['.toolbar']);
+    assert.ok(d.navLayers.secondary.includes('.app-menu'));
+  });
+
+  it('drops single-target containers (never a single-button selector as a layer)', () => {
+    const d = draftContractFromLive([
+      ev('today', '#primary-nav'), ev('wines', '#primary-nav'),
+      ev('lonely', '#tab-kitchen'),  // 1 target → dropped
+    ]);
+    assert.deepEqual(d.navLayers.primary, ['#primary-nav']);
+    assert.equal([...d.navLayers.primary, ...d.navLayers.secondary].includes('#tab-kitchen'), false);
   });
 
   it('drops <dynamic> targets from observedTargets', () => {
@@ -47,7 +59,10 @@ describe('draftContractFromLive precedence (R2-M3, non-overlapping)', () => {
 
 describe('bootstrapContract with a live draft', () => {
   it('uses the drafted navLayers and validates against the schema', () => {
-    const draft = draftContractFromLive([ev('today', '#primary-nav'), ev('grid', '.sub-tabs-row')]);
+    const draft = draftContractFromLive([
+      ev('today', '#primary-nav'), ev('wines', '#primary-nav'),
+      ev('grid', '.sub-tabs-row'), ev('drinksoon', '.sub-tabs-row'),
+    ]);
     const { contract } = bootstrapContract({ destinations: [], draftNavLayers: draft.navLayers, observedTargets: draft.observedTargets });
     assert.deepEqual(contract.navLayers.primary, ['#primary-nav']);
     assert.ok(typeof contract._note === 'string'); // observedTargets side-artifact
