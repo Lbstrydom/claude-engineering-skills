@@ -175,11 +175,17 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
         ]);
         // Collect the current DOM into liveEvidence under `evState`. Reused by the
         // base per-viewport snapshot AND each activation-derived state (v1.3 #3).
-        const collectState = async (evState) => {
+        const collectState = async (evState, probe = true) => {
           // v1.4: visibility-aware presence probe — distinguishes a stalled
           // (visible-but-empty) declared container from a responsive hidden one.
-          try {
-            presenceByState[evState] = await page.evaluate((sels) => {
+          // ONLY the authoritative BASE per-viewport states feed capture-completeness
+          // (v1.5 fix): an activation re-goto cold-boot can leave a sibling container
+          // transiently visible-empty, which must NOT subtract confidence from a layer
+          // the base capture cleanly earned. Activation evidence is additive-only
+          // (its placements still count toward `captured`, just not the stall probe).
+          if (probe) {
+            try {
+              presenceByState[evState] = await page.evaluate((sels) => {
               const out = {};
               for (const s of sels) {
                 try {
@@ -190,8 +196,9 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
                 } catch { out[s] = 'absent'; }
               }
               return out;
-            }, declaredSelectors);
-          } catch { /* probe is best-effort */ }
+              }, declaredSelectors);
+            } catch { /* probe is best-effort */ }
+          }
           const shapes = await collectLiveNav(page, selLayers);
           const seen = new Set();
           for (const sh of shapes) {
@@ -240,7 +247,7 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
               consecutiveFails = 0;                     // click succeeded → reset (success regardless of new evidence)
               await page.waitForTimeout(ACTIVATE_MS);
               if (page.url() !== urlBefore) { stateWarnings.push(`activation ${evState}: navigated away — discarded`); continue; }
-              await collectState(evState);
+              await collectState(evState, false); // activation = additive placements only; no stall probe (v1.5)
               statesCollected.push(evState);
             } catch (err) {
               stateWarnings.push(`activation ${evState} failed: ${err.message}`);

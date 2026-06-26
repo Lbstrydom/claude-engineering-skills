@@ -1,5 +1,21 @@
 # Project Status Log
 
+## 2026-06-26 — `/nav-audit` v1.5: capture-completeness is base-state-only (activation must not subtract confidence)
+
+### Changes
+- Authenticated v1.4 re-eval found a real defect: the visibility/stall probe feeding `computeCaptureStatus` → `unverifiableLayers` was computed over **all** states including activation-derived ones. An activation re-`goto` cold-boot can leave a sibling secondary container (`#sub-tabs-cellar`) transiently *visible-but-empty* → classed as a stall → the whole `secondary` layer marked unverifiable → `runLiveTaxonomy` suppressed the redundancy finding the **base** capture cleanly earned. (Contradicted the code's own intent: "a failed activation … never marks anything unverified.")
+- **Fix** (`verify.mjs`): gate the presence probe to the authoritative **base per-viewport states only** — `collectState(evState, probe=false)` for activation states. Activation stays **additive** (its placements still count toward `captured`; it just can't feed the stall probe), so a layer the base capture earned is never poisoned by an activation cold-boot stall.
+- Regression fixture `activation-stall-sibling.html` + test: a visible-empty activation-revealed sibling no longer makes its layer unverifiable, and over-exposure (grid in both layers) fires.
+
+### Files Affected
+- `scripts/lib/nav/verify.mjs` — `collectState` probe gated to base states.
+- New: `tests/fixtures/nav-live/activation-stall-sibling.html` + a test in `nav-live-activation.test.mjs`.
+
+### Decisions Made
+- Proportionate rigor for a precisely-diagnosed one-change scoping fix: regression test + Gemini review (APPROVE, 0 findings); 151 nav tests pass.
+
+---
+
 ## 2026-06-26 — `/nav-audit` v1.4: capture honesty + activation adaptive-stop
 
 ### Changes

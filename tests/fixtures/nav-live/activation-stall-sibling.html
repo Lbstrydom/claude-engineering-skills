@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>nav-live activation-stall-sibling fixture</title>
+<style>#extra-tabs { display: none; } #extra-tabs[data-open] { display: block; min-height: 8px; }</style></head>
+<body>
+  <!-- Primary captures today + grid. -->
+  <nav id="primary-nav">
+    <button data-nav-view="today">Today</button>
+    <button data-nav-view="grid">Grid</button>
+  </nav>
+
+  <!-- Secondary container A captures grid + drinksoon (grid is in BOTH layers → over-exposure). -->
+  <div class="sub-tabs-row">
+    <a href="?view=grid">Grid</a>
+    <a href="?view=drinksoon">Drink Soon</a>
+  </div>
+
+  <!-- Secondary container B: a SIBLING that activation reveals VISIBLE but EMPTY
+       (simulates a cold-boot-stalled sibling). It must NOT make `secondary`
+       unverifiable — the base capture earned it via .sub-tabs-row (v1.5 fix). -->
+  <button class="hamburger" aria-controls="extra-tabs">More</button>
+  <nav id="extra-tabs" aria-label="More tabs"></nav>
+
+  <script>
+    document.querySelector('.hamburger').addEventListener('click', () => {
+      document.getElementById('extra-tabs').setAttribute('data-open', '');  // visible but still empty
+    });
+  </script>
+</body>
+</html>
