@@ -1,5 +1,31 @@
 # Project Status Log
 
+## 2026-06-26 — `/visual-audit` trust shakedown: 4 field passes on wine-cellar-app → converged
+
+### Changes
+- Validated v1 against a real app (wine-cellar-app) over four iterative `--verify` passes; fixed every trust gap the runs surfaced. The theme-parity + contrast tiers were trustworthy from pass 1 (found a real non-adapting-`#F0EBE4` dark-mode bug via two corroborating signals); the token + layout tiers needed guards, now down to defensible residuals only.
+- **Crash**: `resolveDevices()` re-resolved the preset objects `parseDevicesFlag` already returns → the `--device a,b` matrix path never worked. Fixed.
+- **Token FP avalanche (~1,300 P1)**: per-family empty-scale guard — a family with no declared tokens (typography-as-raw-px) degrades to report-only inferred-cluster, not gate-eligible `token_violation`. Plus: `--font-*` length tokens were misclassified as `spacing` (familyForVar name regex missed them) → fixed (354→94 font-size, all genuinely off-scale); unpainted-border / SVG-decorative / inherited-color guards.
+- **Overlay overlap**: the fixed/absolute overlay (`#auth-screen`) sits above the contracted `.auth-card` root, outside the captured subtree — extract now tags the surface with an ancestor-derived `surfaceLayer`; layout-physics suppresses cross-layer overlap (82→0, FPs proven by live geometry).
+- **Capture-honesty false-PASS (most important)**: a dead server (`statesCollected: []`) reported verified/0/exit-0 — now exits `2` UNVERIFIED. A dead server can no longer masquerade as a clean audit.
+- **Degenerate-box `content_clipping`** guard (collapsed 1px label ≠ text-overflow) + signifier-tier decorative skip. `finding-taxonomy.md` documents all guards + the accepted cross-layer-overlap limitation.
+
+### Files Affected
+- `scripts/lib/visual/{tokens,reconcile-tokens,theme-parity,layout-physics,signifiers,findings,extract}.mjs`, `scripts/visual-audit.mjs` (device fix + capture-honesty exit)
+- `tests/visual-{tokens,reconcile-tokens,theme-parity,layout-physics,signifiers}.test.mjs` (+12 regression tests; 84 visual / 3817 suite pass)
+- `skills/visual-audit/references/finding-taxonomy.md`; `.github/prompts/visual-audit.prompt.md` (Copilot shim)
+
+### Decisions Made
+- Governance held: every fix landed upstream + re-synced (4× `npm run sync`), never in wine-cellar-app's gitignored synced copy.
+- Cross-layer overlap suppression accepted as the right low-noise default (`sticky` stays in-flow so the real case still fires).
+- Commits: `6a37755`, `dd55d94`, `bdf8c45`, `806c497` — all pushed.
+
+### Next Steps
+- File the genuine `#F0EBE4` dark-mode contrast bug (2.13:1) as a wine-cellar-app issue.
+- Optional later: source-coherence resolving `var()` defs across all `globalStyleGlobs` (report-only, deferred).
+
+---
+
 ## 2026-06-26 — `/visual-audit` v1: the 4th UX lens (paint-level visual-contract auditor)
 
 ### Changes
