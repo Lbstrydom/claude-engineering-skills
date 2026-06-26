@@ -95,15 +95,19 @@ export function assembleLiveFindings({ perState, allowedSet, tokenIndex, contrac
     partials.push(...runThemeParity(nodesByTheme, contract));
   }
 
-  // Inferred clustering fallback (report-only) when no tokens declared.
-  if (allowedSet?.inferredMode) {
+  // Inferred-cluster fallback (report-only) for families with NO declared scale —
+  // whether the whole app is token-less (global inferredMode) or just a dimension
+  // the app keeps un-tokenized (e.g. typography as raw px). reconcile-tokens skips
+  // these for gating; here they get advisory outlier signal instead of nothing.
+  const tokenized = new Set(Object.entries(allowedSet?.families || {}).filter(([, v]) => Array.isArray(v) && v.length).map(([k]) => k));
+  const FAMILY_PROP = [['radius', 'border-top-left-radius'], ['spacing', 'padding-top'], ['fontSize', 'font-size'], ['lineHeight', 'line-height']];
+  const inferFamilies = FAMILY_PROP.filter(([fam]) => allowedSet?.inferredMode || !tokenized.has(fam));
+  if (inferFamilies.length) {
     const observed = [];
     for (const state of perState || []) {
       for (const node of state.nodes || []) {
         const c = node.computed || {};
-        if (c['border-top-left-radius']) observed.push({ family: 'radius', value: c['border-top-left-radius'] });
-        if (c['padding-top']) observed.push({ family: 'spacing', value: c['padding-top'] });
-        if (c['font-size']) observed.push({ family: 'fontSize', value: c['font-size'] });
+        for (const [fam, prop] of inferFamilies) if (c[prop]) observed.push({ family: fam, value: c[prop] });
       }
     }
     for (const outlier of inferClusters(observed)) {
@@ -111,7 +115,7 @@ export function assembleLiveFindings({ perState, allowedSet, tokenIndex, contrac
         class: 'token_violation',
         property: outlier.family,
         expected: 'dominant inferred cluster',
-        actual: `${outlier.value} (used by ${(outlier.share * 100).toFixed(0)}% — inferred outlier)`,
+        actual: `${outlier.value} (used by ${(outlier.share * 100).toFixed(0)}% — inferred outlier, no declared ${outlier.family} scale)`,
         evidence: [],
         reportOnly: true, // inferred → never gates (plan §2 decision 2)
         severity: 'info',

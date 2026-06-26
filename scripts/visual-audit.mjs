@@ -19,7 +19,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { writeOutput } from './lib/file-io.mjs';
-import { getPreset, parseDevicesFlag } from './lib/device-presets.mjs';
+import { parseDevicesFlag } from './lib/device-presets.mjs';
 import {
   VISUAL_TOOL_VERSION, computeContractDigest, computeConfigDigest,
 } from './lib/visual/schema.mjs';
@@ -155,11 +155,14 @@ function parseArgs(argv) {
 }
 
 function resolveDevices(spec) {
-  const names = parseDevicesFlag(spec) || spec.split(',').map((s) => s.trim()).filter(Boolean);
-  return names.map((n) => {
-    const p = getPreset(n);
-    return { name: p.name, viewport: p.viewport, deviceScaleFactor: p.deviceScaleFactor, isMobile: p.isMobile, hasTouch: p.hasTouch, userAgent: p.userAgent };
-  });
+  // parseDevicesFlag already resolves each name to a full preset OBJECT (via
+  // getPreset) and dedupes — do NOT re-resolve here (that passed an object back to
+  // getPreset → "Unknown device preset [object Object]"; the matrix path was broken).
+  const presets = parseDevicesFlag(spec);
+  return presets.map((p) => ({
+    name: p.name, viewport: p.viewport, deviceScaleFactor: p.deviceScaleFactor,
+    isMobile: p.isMobile, hasTouch: p.hasTouch, userAgent: p.userAgent,
+  }));
 }
 
 function emit(args, jsonOut, humanOut) {

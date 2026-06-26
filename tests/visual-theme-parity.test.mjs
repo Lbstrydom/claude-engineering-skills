@@ -41,6 +41,24 @@ test('hardcoded literal color identical across themes → theme_unmapped_token',
   assert.equal(out.filter((f) => f.class === 'theme_unmapped_token').length, 1);
 });
 
+test('inherited color on a non-text node is NOT re-reported (shakedown noise #4)', () => {
+  // a wrapper div with no text of its own carries inherited color identical across
+  // themes — only the text-bearing node should be flagged, not every ancestor.
+  const out = runThemeParity({
+    light: [n('light', 'wrap', { color: '#222222' }, { hasText: false })],
+    dark: [n('dark', 'wrap', { color: '#222222' }, { hasText: false })],
+  }, contract);
+  assert.equal(out.filter((f) => f.class === 'theme_unmapped_token').length, 0);
+});
+
+test('SVG-internal decorative node is skipped for theme parity', () => {
+  const out = runThemeParity({
+    light: [n('light', 'u', { color: '#222222' }, { tag: 'use', hasText: false })],
+    dark: [n('dark', 'u', { color: '#222222' }, { tag: 'use', hasText: false })],
+  }, contract);
+  assert.equal(out.length, 0);
+});
+
 test('tokened color identical across themes is a deliberate theme-agnostic token (no finding)', () => {
   const out = runThemeParity({
     light: [n('light', 't', { color: '#222222' }, { matched: { color: { usesToken: true, varName: '--ink' } } })],

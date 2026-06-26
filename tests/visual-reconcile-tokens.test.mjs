@@ -46,3 +46,26 @@ test('display:none nodes are skipped', () => {
   const out = runReconcileTokens([node({ displayed: false, computed: { color: '#010203' } })], tokenIndex, allowedSet, contract);
   assert.equal(out.length, 0);
 });
+
+test('empty-scale guard: a family with no declared tokens is NOT flagged (shakedown noise #1)', () => {
+  // fontSize is audited but the allowed-set has no fontSize family → skip (don't
+  // emit a gate-eligible violation for a dimension the app keeps as raw px).
+  const c2 = { propertyPolicy: { tokenAudited: ['colors', 'radius', 'fontSize'] } };
+  const out = runReconcileTokens([node({ computed: { 'font-size': '13px' } })], tokenIndex, allowedSet, c2);
+  assert.equal(out.length, 0);
+});
+
+test('unpainted border (border-style:none / width 0) is not reconciled', () => {
+  const colorsOnly = { inferredMode: false, families: { colors: [{ value: '51,102,255' }] } };
+  const idx = buildTokenIndex(colorsOnly.families);
+  const c2 = { propertyPolicy: { tokenAudited: ['colors'] } };
+  const out = runReconcileTokens([node({ computed: { 'border-top-color': 'rgb(1,2,3)', 'border-top-style': 'none', 'border-top-width': '0px' } })], idx, colorsOnly, c2);
+  assert.equal(out.length, 0);
+  const painted = runReconcileTokens([node({ computed: { 'border-top-color': 'rgb(1,2,3)', 'border-top-style': 'solid', 'border-top-width': '1px' } })], idx, colorsOnly, c2);
+  assert.equal(painted.length, 1, 'a painted off-scale border IS flagged');
+});
+
+test('SVG-internal decorative nodes (use/path) are skipped', () => {
+  const out = runReconcileTokens([node({ tag: 'use', computed: { color: '#010203', 'font-size': '13px' } })], tokenIndex, allowedSet, contract);
+  assert.equal(out.length, 0);
+});

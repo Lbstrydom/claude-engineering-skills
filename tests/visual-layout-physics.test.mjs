@@ -32,6 +32,12 @@ test('parent/child overlap is NOT flagged (containment); sibling overlap IS (G3)
   assert.ok(siblings.some((f) => f.class === 'unexpected_overlap'), 'overlapping siblings flagged');
 });
 
+test('out-of-flow overlay (position:fixed/absolute) does not flag overlap (shakedown noise #3)', () => {
+  const page = node({ nodeKey: 'p', auditInstanceId: 'p', parentInstanceId: null, rect: { x: 0, y: 0, width: 200, height: 200 }, scroll: {}, computed: { position: 'static' } });
+  const modal = node({ nodeKey: 'm', auditInstanceId: 'm', parentInstanceId: null, rect: { x: 20, y: 20, width: 160, height: 160 }, scroll: {}, computed: { position: 'fixed' } });
+  assert.equal(runLayoutPhysics([page, modal], {}, {}).filter((f) => f.class === 'unexpected_overlap').length, 0);
+});
+
 test('overlapAllowed nodes are exempt from overlap', () => {
   const a = node({ nodeKey: 'x', auditInstanceId: 'x', parentInstanceId: null, rect: { x: 0, y: 0, width: 60, height: 60 }, scroll: {} });
   const b = node({ nodeKey: 'y', auditInstanceId: 'y', parentInstanceId: null, overlapAllowed: true, rect: { x: 40, y: 40, width: 60, height: 60 }, scroll: {} });

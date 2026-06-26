@@ -28,7 +28,8 @@ import { resolveProvenance } from './provenance-resolver.mjs';
 /** Computed properties collected per node (union of what the four tiers read). */
 export const COLLECTED_PROPS = [
   'color', 'background-color', 'background-image',
-  'border-top-color', 'border-top-left-radius', 'border-top-width',
+  'border-top-color', 'border-top-left-radius', 'border-top-width', 'border-top-style',
+  'position', 'z-index',
   'font-size', 'line-height', 'font-weight', 'box-shadow',
   'padding-top', 'padding-right', 'padding-bottom', 'padding-left',
   'margin-top', 'margin-right', 'margin-bottom', 'margin-left',

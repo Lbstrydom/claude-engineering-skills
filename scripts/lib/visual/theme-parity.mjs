@@ -20,6 +20,7 @@ import { resolveEffectiveBackground } from './effective-background.mjs';
 import { textContrast } from './contrast.mjs';
 
 const MAY_DIFFER_COLOR_PROPS = ['color', 'background-color', 'border-top-color'];
+const DECORATIVE_TAGS = new Set(['use', 'path', 'g', 'defs', 'symbol', 'stop', 'lineargradient', 'radialgradient', 'clippath', 'mask', 'marker', 'pattern']);
 
 /**
  * @param {Record<string, object[]>} nodesByTheme - themeName → evidence nodes (one device)
@@ -54,7 +55,13 @@ export function runThemeParity(nodesByTheme, contract) {
     }
 
     // MAY-DIFFER-IF-TOKENED: a literal color identical across themes can't remap.
+    if (DECORATIVE_TAGS.has(a.tag)) continue; // SVG-internal nodes don't carry meaningful paint
     for (const prop of MAY_DIFFER_COLOR_PROPS) {
+      // `color` inherits — reporting it on every descendant re-counts one frozen
+      // literal N times (shakedown noise #4). Only flag `color` on text-bearing
+      // nodes (the node that actually paints the glyphs).
+      if (prop === 'color' && a.hasText === false) continue;
+      if (prop === 'border-top-color' && !borderPaintedTop(a.computed)) continue;
       const av = normalizeColor((a.computed || {})[prop]);
       const bv = normalizeColor((b.computed || {})[prop]);
       if (av == null || bv == null) continue;
@@ -96,6 +103,13 @@ function indexByKey(nodes) {
   const m = new Map();
   for (const n of nodes || []) if (n?.nodeKey) m.set(n.nodeKey, n);
   return m;
+}
+
+/** Don't reconcile an invisible top border (color computes even at width 0). */
+function borderPaintedTop(computed = {}) {
+  const style = String(computed['border-top-style'] || 'none').trim();
+  const w = parseFloat(computed['border-top-width']);
+  return style !== 'none' && style !== 'hidden' && Number.isFinite(w) && w > 0;
 }
 
 /** Expand padding/margin shorthand policy entries into the longhands we measure. */

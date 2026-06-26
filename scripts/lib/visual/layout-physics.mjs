@@ -89,6 +89,10 @@ function detectOverlaps(nodes) {
         const bId = other.auditInstanceId;
         if (ev.n.overlapAllowed || other.overlapAllowed) continue;
         if (isAncestor(aId, bId) || isAncestor(bId, aId)) continue; // containment, not overlap
+        // Out-of-flow / layered nodes (a fixed modal/overlay, an absolute dropdown)
+        // intentionally cover in-flow content — not an unexpected overlap (shakedown
+        // noise #3). Only flag when BOTH are in normal flow.
+        if (isOutOfFlow(ev.n) || isOutOfFlow(other)) continue;
         const pairKey = [String(aId), String(bId)].sort().join('::');
         if (seenPair.has(pairKey)) continue;
         seenPair.add(pairKey);
@@ -102,6 +106,13 @@ function detectOverlaps(nodes) {
 
 function rectsIntersect(a, b) {
   return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
+}
+
+/** A node taken out of normal flow (fixed/absolute/sticky) layers over content by
+ *  design — its overlaps are intentional. */
+function isOutOfFlow(node) {
+  const pos = String((node.computed || {}).position || 'static').trim();
+  return pos === 'fixed' || pos === 'absolute' || pos === 'sticky';
 }
 
 function mk(_tag, cls, node, property, expected, actual) {
