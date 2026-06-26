@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { writeVerifyResult, readVerifyResult } from '../scripts/lib/nav/verify-store.mjs';
-import { computeContractDigest } from '../scripts/lib/nav/schema.mjs';
+import { computeContractDigest, NAV_TOOL_VERSION } from '../scripts/lib/nav/schema.mjs';
 import { collectNav } from '../scripts/lib/dashboard/collect-nav.mjs';
 import { writeObservedEnvelope, assembleEnvelope } from '../scripts/lib/nav/envelope.mjs';
 
@@ -20,8 +20,9 @@ const digest = computeContractDigest(contract);
 
 function result(over = {}) {
   return {
-    version: 1, url: 'https://app.test/', generatedAt: '2026-06-25T10:00:00+02:00',
-    contractDigest: digest, statesRequested: ['mobile', 'desktop'], statesCollected: ['mobile', 'desktop'],
+    version: 2, url: 'https://app.test/', generatedAt: '2026-06-25T10:00:00+02:00',
+    contractDigest: digest, toolVersion: NAV_TOOL_VERSION,
+    statesRequested: ['mobile', 'desktop'], statesCollected: ['mobile', 'desktop'],
     liveAttribution: { wines: { placements: [{ container: '#primary-nav', layer: 'primary', state: 'mobile', role: null }], layers: ['primary'], states: ['mobile'] } },
     ...over,
   };
@@ -43,6 +44,20 @@ describe('verify-store write/read', () => {
     const { result: r, rejectedReason } = readVerifyResult(dir, 'a'.repeat(64));
     assert.equal(r, null);
     assert.match(rejectedReason, /stale/);
+  });
+  it('rejects as stale when toolVersion mismatches (debt fix 3)', () => {
+    writeVerifyResult(dir, result({ toolVersion: NAV_TOOL_VERSION + 99 }));
+    const { result: r, rejectedReason } = readVerifyResult(dir, digest);
+    assert.equal(r, null);
+    assert.match(rejectedReason, /tool version/);
+  });
+  it('rejects a legacy un-versioned result as stale (debt fix 3)', () => {
+    // A v1-shaped result with no toolVersion still PARSES (optional) but reads stale.
+    const legacy = result(); delete legacy.toolVersion; legacy.version = 1;
+    writeVerifyResult(dir, legacy);
+    const { result: r, rejectedReason } = readVerifyResult(dir, digest);
+    assert.equal(r, null);
+    assert.match(rejectedReason, /tool version/);
   });
   it('returns null (no reason) when absent', () => {
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-vs2-'));

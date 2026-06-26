@@ -9,7 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { collectNav } from '../scripts/lib/dashboard/collect-nav.mjs';
 import { writeObservedEnvelope, assembleEnvelope } from '../scripts/lib/nav/envelope.mjs';
-import { computeContractDigest } from '../scripts/lib/nav/schema.mjs';
+import { computeContractDigest, NAV_TOOL_VERSION } from '../scripts/lib/nav/schema.mjs';
+import { writeVerifyResult } from '../scripts/lib/nav/verify-store.mjs';
 
 let dir;
 before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-dash-')); });
@@ -30,6 +31,31 @@ describe('collectNav degradation (section-contract)', () => {
     }));
     const r = collectNav(dir);
     assert.equal(r.navAudit.status.status, 'missing-optional');
+  });
+
+  it('LIVE-ONLY: surfaces live scorecard + liveFindings from a fresh verify result when the observed envelope is absent (debt fix 2)', () => {
+    const live = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-dash-lo-'));
+    const contract = {
+      version: 1, navLayers: { primary: ['#primary-nav'], secondary: ['.sub'] },
+      personas: [{ id: 'p', intents: [{ id: 'browse', destination: 'wines', approvedAnchors: ['#primary-nav'], requiredInLayer: 'primary', frequency: 'high', source: 'declared' }] }],
+    };
+    fs.writeFileSync(path.join(live, 'nav-contract.json'), JSON.stringify(contract));
+    // No observed envelope written — only a fresh verify result.
+    writeVerifyResult(live, {
+      version: 2, url: 'https://app.test/', generatedAt: '2026-06-25T10:00:00+02:00',
+      contractDigest: computeContractDigest(contract), toolVersion: NAV_TOOL_VERSION,
+      statesRequested: ['mobile'], statesCollected: ['mobile'],
+      liveAttribution: { wines: { placements: [{ container: '#primary-nav', layer: 'primary', state: 'mobile', role: null }], layers: ['primary'], states: ['mobile'] } },
+      liveFindings: [{ class: 'competing-models', severity: 'P2', destination: 'primary|secondary', evidence: ['x'], confidence: 'high', gateEligible: false, verdict: 'two nav systems', source: 'live' }],
+    });
+    const r = collectNav(live);
+    assert.equal(r.navAudit.status.status, 'ok');
+    assert.equal(r.navAudit.verifyMeta.live, true);
+    assert.equal(r.navAudit.verifyMeta.staticStale, true);
+    assert.equal(r.navAudit.liveFindings.length, 1);
+    assert.ok(r.navAudit.scorecard.length >= 1, 'live scorecard rows surfaced without a static model');
+    assert.deepEqual(r.navAudit.drift, [], 'no static drift in live-only mode');
+    fs.rmSync(live, { recursive: true, force: true });
   });
 });
 

@@ -36,6 +36,30 @@ export function collectNav(root) {
   const expectedDigest = computeConfigDigest({ contractDigest: computeContractDigest(contract) });
   const env = readEnvelope(root, expectedDigest);
   if (!env.envelope) {
+    // Live evidence is live-DOM-derived (liveAttribution/liveFindings) — it must
+    // NOT be hidden by an absent/stale static observed envelope (debt fix 2).
+    // When a fresh verify result exists, surface a LIVE-ONLY view.
+    const verify = readVerifyResult(root, computeContractDigest(contract));
+    if (verify.result) {
+      const r = verify.result;
+      // Empty model is intentional: in live mode personaScorecard builds rows from
+      // contract.personas intents and its model.destinations.get(...) lookup
+      // tolerates undefined (findings.mjs:232 `d ? [...d.anchors] : []`), then
+      // mergeScorecard replaces status from liveAttribution. No static graph needed.
+      const EMPTY_MODEL = { destinations: new Map() };
+      const scorecard = personaScorecard(EMPTY_MODEL, contract, {
+        liveAttribution: r.liveAttribution,
+        statesRequested: r.statesRequested,
+        statesCollected: r.statesCollected,
+      }).rows;
+      return wrap({
+        contract, scorecard, drift: [], liveFindings: r.liveFindings ?? [],
+        verifyMeta: { live: true, url: r.url, generatedAt: r.generatedAt, states: r.statesCollected, staticStale: true },
+        // Surface WHY the static graph is unavailable (absent/stale/malformed) so a
+        // corrupt observed envelope isn't masked by the live-only fallback.
+        status: { status: 'ok', detail: `live-only — static graph unavailable (${env.reason || 'absent'}); run /nav-audit to refresh drift` },
+      });
+    }
     return wrap({
       contract,
       status: { status: 'missing-optional', detail: env.reason || `no ${OBSERVED_FILE} — run /nav-audit` },
@@ -56,6 +80,9 @@ export function collectNav(root) {
   const verifyMeta = live
     ? { live: true, url: live.url, generatedAt: live.generatedAt, states: live.statesCollected }
     : { live: false, reason: verify.rejectedReason };
+  // Live findings (v1.3 #4) — surfaced from the persisted verify result when present
+  // (a v2 envelope); a v1 envelope / no live run → []. Additive, degrades empty.
+  const liveFindings = live?.liveFindings ?? [];
 
   // Nav Drift = ADVISORY divergences (orphans, etc.), aged (plan §3, Gemini-1-H).
   // Aging is cloud-sourced; with no history here, new divergences age to 0 (the
@@ -73,7 +100,7 @@ export function collectNav(root) {
     class: finding.class, destination: finding.destination, severity: finding.severity, verdict: finding.verdict, ageDays,
   }));
 
-  return wrap({ contract, scorecard, drift, verifyMeta, status: { status: 'ok', detail: '' } });
+  return wrap({ contract, scorecard, drift, verifyMeta, liveFindings, status: { status: 'ok', detail: '' } });
 }
 
 function readEnvelope(root, expectedConfigDigest) {
@@ -92,6 +119,6 @@ function readEnvelope(root, expectedConfigDigest) {
   return { envelope: parsed.data, reason: null };
 }
 
-function wrap({ scorecard = [], drift = [], status, verifyMeta = { live: false } }) {
-  return { navAudit: { scorecard, drift, status, verifyMeta } };
+function wrap({ scorecard = [], drift = [], status, verifyMeta = { live: false }, liveFindings = [] }) {
+  return { navAudit: { scorecard, drift, status, verifyMeta, liveFindings } };
 }

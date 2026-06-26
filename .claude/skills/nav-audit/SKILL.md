@@ -14,8 +14,9 @@ description: |
     /nav-audit --scope full            — analyse the whole nav graph, not just the changed surface
     /nav-audit --bootstrap             — emit a review-queue nav-contract.json skeleton (first run)
     /nav-audit --gate                  — exit non-zero on a declared-intent regression on the changed surface
-    /nav-audit --verify <url>          — live-verify: multi-state DOM layer attribution → scorecard pass/misplaced/missing
+    /nav-audit --verify <url>          — live-verify: multi-state DOM layer attribution → scorecard pass/misplaced/missing + LIVE FINDINGS
     /nav-audit --verify <url> --breakpoints mobile,desktop --storage-state auth.json   — states to capture (default mobile,desktop) + auth
+    /nav-audit --verify <url> --no-activate   — skip the collapsed-menu activation pass (faster; single-state capture only)
     /nav-audit --bootstrap --from-url <url>   — draft nav-contract.json navLayers from the live app (refuses to clobber; --force to replace)
 ---
 
@@ -33,7 +34,15 @@ page-first, nav-audit is system-first.**
 2. **live-verified** (`/nav-audit --verify <url>`) — drives the live app across
    viewports and **authoritatively attributes each destination to its nav layer**,
    resolving the scorecard to `pass` / `misplaced` / `missing`. This is the
-   trustworthy mode for dynamic/server-rendered nav.
+   trustworthy mode for dynamic/server-rendered nav. It ALSO runs the
+   layer-attribution finding classes (competing-models, over-exposure/redundancy,
+   sequencing) over the **live** evidence and emits them as **Live findings**
+   (`source:'live'`) — so the system-level findings fire on data-driven apps the
+   static taxonomy can't model (v1.3 #4). Findings are state-scoped: a destination
+   in `primary@mobile` and `secondary@desktop` is responsive duplication, NOT
+   over-exposure. To surface destinations hidden behind collapsed menus, a bounded
+   **activation pass** opens hamburgers / collapsed sub-tab rows and re-snapshots
+   (single-level, navigation-guarded, ≤8 per viewport; disable with `--no-activate`).
 3. **contract-backed live** (a committed `nav-contract.json` + `--verify`) — the
    full IA audit: per-persona offered-vs-needed verdicts grounded in live DOM
    evidence. `--bootstrap --from-url <url>` drafts the contract's `navLayers` from

@@ -37,18 +37,18 @@ export function runTaxonomy(model, { contract = null, routeMeta = new Map(), bas
   const hasPrimaryLayer = Object.values(contract?.navLayers ?? {}).some((a) => Array.isArray(a) && a.length)
     && Object.keys(contract?.navLayers ?? {}).includes('primary');
 
+  // Shared layer-data + context for the layer-attribution-dependent classes
+  // (1 redundancy, 7 competing-models, 8 sequencing). The SAME helpers run over
+  // live evidence in runLiveTaxonomy (plan v1.3 #4) — definitions live once (#1).
+  const staticLayerData = {
+    layerSets: layerDestinationSets(model),
+    layerOfAnchor: model.layerOfAnchor,
+    destAnchors: new Map([...dests.values()].map((d) => [d.id, d.anchors])),
+  };
+  const staticCtx = { contract, confidenceFor: (id) => confidenceOf(dests.get(id)) };
+
   // 1 — redundancy / over-exposure
-  for (const d of dests.values()) {
-    const prominentAnchors = [...d.anchors].filter((a) => PROMINENT_LAYERS.has(model.layerOfAnchor.get(a)));
-    if (prominentAnchors.length >= 2) {
-      const justified = isHighFrequencyIntent(contract, d.id);
-      findings.push(mk(justified ? 'P3' : 'P2', 'redundancy', d.id,
-        [`reachable from ${prominentAnchors.length} prominent anchors: ${prominentAnchors.join(', ')}`],
-        confidenceOf(d), false,
-        justified ? 'offered redundantly but justified by declared high-frequency intent'
-                  : 'offered from multiple prime anchors — burns nav real estate'));
-    }
-  }
+  findings.push(...redundancyFindings(staticLayerData, staticCtx));
 
   // 2 — coverage gap (declared intent not in its required layer) — GATE-ELIGIBLE,
   // but ONLY when anchor attribution is functional (else it's all FP — feedback #1/#5).
@@ -151,30 +151,10 @@ export function runTaxonomy(model, { contract = null, routeMeta = new Map(), bas
   }
 
   // 7 — competing nav models (≥2 prominent layers partitioning destinations disjointly)
-  const layerSets = layerDestinationSets(model);
-  const prominent = [...layerSets.entries()].filter(([l]) => PROMINENT_LAYERS.has(l));
-  if (prominent.length >= 2) {
-    const [[la, sa], [lb, sb]] = prominent;
-    const overlap = [...sa].filter((x) => sb.has(x));
-    if (sa.size >= 2 && sb.size >= 2 && overlap.length === 0) {
-      findings.push(mk('P2', 'competing-models', `${la}|${lb}`,
-        [`layers '${la}' and '${lb}' group destinations disjointly`], 'medium', false,
-        'two nav systems organise the app differently — unreconciled'));
-    }
-  }
+  findings.push(...competingModelsFindings(staticLayerData));
 
   // 8 — sequencing/prominence (high-freq intent only via low-prominence affordance)
-  for (const intent of declaredIntents(contract)) {
-    if (intent.frequency !== 'high') continue;
-    const d = dests.get(intent.destination);
-    if (!d) continue;
-    const hasProminent = [...d.anchors].some((a) => PROMINENT_LAYERS.has(model.layerOfAnchor.get(a)));
-    if (!hasProminent) {
-      findings.push(mk('P2', 'sequencing', intent.destination,
-        [`high-frequency intent '${intent.id}' reachable only via low-prominence affordances`], 'medium', false,
-        'most-needed destination is not most-prominent (Hick)'));
-    }
-  }
+  findings.push(...sequencingFindings(staticLayerData, staticCtx));
 
   // 9 — state/onboarding overlap (≥2 onboarding affordances to same destination)
   const onboardingByDest = new Map();
@@ -287,4 +267,119 @@ function layerDestinationSets(model) {
     map.get(e.layer).add(e.destination);
   }
   return map;
+}
+
+// ── Layer-attribution-dependent classes, parameterised by `layerData` so the
+//    SAME definitions run over static (model) OR live (per-state) evidence.
+//    `layerData = { layerSets:Map<layer,Set<dest>>, layerOfAnchor:Map<anchor,layer>,
+//    destAnchors:Map<dest,Set<anchor>> }`; `ctx = { contract, confidenceFor(destId) }`.
+
+function redundancyFindings({ destAnchors, layerOfAnchor }, { contract, confidenceFor }) {
+  const out = [];
+  for (const [destId, anchors] of destAnchors) {
+    const prominentAnchors = [...anchors].filter((a) => PROMINENT_LAYERS.has(layerOfAnchor.get(a)));
+    if (prominentAnchors.length >= 2) {
+      const justified = isHighFrequencyIntent(contract, destId);
+      out.push(mk(justified ? 'P3' : 'P2', 'redundancy', destId,
+        [`reachable from ${prominentAnchors.length} prominent anchors: ${prominentAnchors.join(', ')}`],
+        confidenceFor(destId), false,
+        justified ? 'offered redundantly but justified by declared high-frequency intent'
+                  : 'offered from multiple prime anchors — burns nav real estate'));
+    }
+  }
+  return out;
+}
+
+function competingModelsFindings({ layerSets }) {
+  const out = [];
+  const prominent = [...layerSets.entries()].filter(([l]) => PROMINENT_LAYERS.has(l));
+  if (prominent.length >= 2) {
+    const [[la, sa], [lb, sb]] = prominent;
+    const overlap = [...sa].filter((x) => sb.has(x));
+    if (sa.size >= 2 && sb.size >= 2 && overlap.length === 0) {
+      out.push(mk('P2', 'competing-models', `${la}|${lb}`,
+        [`layers '${la}' and '${lb}' group destinations disjointly`], 'medium', false,
+        'two nav systems organise the app differently — unreconciled'));
+    }
+  }
+  return out;
+}
+
+function sequencingFindings({ destAnchors, layerOfAnchor }, { contract }) {
+  const out = [];
+  for (const intent of declaredIntents(contract)) {
+    if (intent.frequency !== 'high') continue;
+    const anchors = destAnchors.get(intent.destination);
+    if (!anchors) continue;
+    const hasProminent = [...anchors].some((a) => PROMINENT_LAYERS.has(layerOfAnchor.get(a)));
+    if (!hasProminent) {
+      out.push(mk('P2', 'sequencing', intent.destination,
+        [`high-frequency intent '${intent.id}' reachable only via low-prominence affordances`], 'medium', false,
+        'most-needed destination is not most-prominent (Hick)'));
+    }
+  }
+  return out;
+}
+
+/**
+ * Build `layerData` for ONE captured state from the live attribution map (plan
+ * v1.3 #4). State-scoped — NEVER union across states (responsive duplication is
+ * not over-exposure). Pure.
+ * @param {Object<string,{placements:Array<{container,layer,state}>}>} liveAttribution
+ * @param {{state: string}} opts
+ */
+export function liveLayerSets(liveAttribution, { state }) {
+  const layerSets = new Map();
+  const layerOfAnchor = new Map();
+  const destAnchors = new Map();
+  for (const [destId, attr] of Object.entries(liveAttribution || {})) {
+    const placements = (attr?.placements || []).filter((p) => p.state === state);
+    if (!placements.length) continue;
+    const anchors = new Set();
+    for (const p of placements) {
+      if (p.layer) {
+        if (!layerSets.has(p.layer)) layerSets.set(p.layer, new Set());
+        layerSets.get(p.layer).add(destId);
+      }
+      if (p.container) {
+        anchors.add(p.container);
+        if (p.layer) layerOfAnchor.set(p.container, p.layer);
+      }
+    }
+    destAnchors.set(destId, anchors);
+  }
+  return { layerSets, layerOfAnchor, destAnchors };
+}
+
+/**
+ * Run the layer-attribution-dependent classes over LIVE evidence, per captured
+ * state, deduped by (class, destination). Tags each finding `source:'live'`
+ * (plan v1.3 #4). The static-graph classes stay static-only.
+ * @param {object} liveAttribution
+ * @param {object|null} contract
+ * @param {{destinations?: Map, states?: string[]}} opts
+ */
+export function runLiveTaxonomy(liveAttribution, contract, { destinations = new Map(), states = [] } = {}) {
+  void destinations; // metadata fallback only; live layerData is authoritative
+  const stateList = states.length
+    ? states
+    : [...new Set(Object.values(liveAttribution || {}).flatMap((a) => (a?.placements || []).map((p) => p.state)))].filter(Boolean);
+  const ctx = { contract, confidenceFor: () => 'high' }; // observed live → high confidence
+  const seen = new Set();
+  const findings = [];
+  for (const state of stateList) {
+    const layerData = liveLayerSets(liveAttribution, { state });
+    const batch = [
+      ...redundancyFindings(layerData, ctx),
+      ...competingModelsFindings(layerData),
+      ...sequencingFindings(layerData, ctx),
+    ];
+    for (const f of batch) {
+      const key = `${f.class}|${f.destination}`; // destination encodes the layer pair for competing-models
+      if (seen.has(key)) continue;
+      seen.add(key);
+      findings.push({ ...f, source: 'live' });
+    }
+  }
+  return findings;
 }

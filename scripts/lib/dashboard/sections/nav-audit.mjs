@@ -20,7 +20,7 @@ export default function sectionNavAudit({ src, navAudit }, ui) {
   if (src.status === 'missing-optional') {
     return ui.emptyPanel(null, src.detail || 'Nav-audit unavailable — run node scripts/nav-audit.mjs --bootstrap then /nav-audit.');
   }
-  if (!n.scorecard.length && !n.drift.length) {
+  if (!n.scorecard.length && !n.drift.length && !(n.liveFindings || []).length) {
     return ui.emptyPanel(null, 'No declared persona intents or divergences yet.');
   }
 
@@ -62,7 +62,21 @@ export default function sectionNavAudit({ src, navAudit }, ui) {
             + `<td>${ui.escapeHtml(d.verdict || '')}</td></tr>`;
         }).join('')
       + `</tbody></table></div>`
-    : '<p class="summary">No drift — observed matches intent.</p>';
+    : (vm.staticStale
+        // Live-only: drift was NOT evaluated (no fresh static graph) — don't claim "no drift".
+        ? '<p class="summary">Nav drift not evaluated — static graph stale/absent; run /nav-audit to refresh.</p>'
+        : '<p class="summary">No drift — observed matches intent.</p>');
 
-  return scorecard + drift;
+  // Live findings (v1.3 #4) — layer-classes over live DOM evidence. Only shown
+  // when a --verify run produced them; degrades to nothing otherwise.
+  const lf = n.liveFindings || [];
+  const liveFindings = lf.length
+    ? `<h4>Live findings (from live DOM evidence)</h4><div class="table-wrap"><table>`
+      + `<thead><tr><th>Class</th><th>Destination</th><th>Severity</th><th>Verdict</th></tr></thead><tbody>`
+      + lf.map((f) => `<tr><td>${ui.escapeHtml(f.class)}</td><td><code>${ui.escapeHtml(f.destination)}</code></td>`
+          + `<td>${ui.escapeHtml(f.severity)}</td><td>${ui.escapeHtml(f.verdict || '')}</td></tr>`).join('')
+      + `</tbody></table></div>`
+    : '';
+
+  return scorecard + drift + liveFindings;
 }

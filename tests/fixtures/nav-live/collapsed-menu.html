@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>nav-live collapsed-menu fixture</title>
+<style>
+  /* The drawer is collapsed (display:none) until the hamburger toggles it —
+     so its destinations are hidden-skipped until ACTIVATED (v1.3 #3). */
+  #drawer { display: none; }
+  #drawer[data-open] { display: block; }
+</style>
+</head>
+<body>
+  <!-- Always-visible primary nav -->
+  <nav id="primary-nav"><button data-nav-view="today">Today</button></nav>
+
+  <!-- Hamburger toggle: a nav-ish [aria-expanded][aria-controls] trigger -->
+  <button id="burger" class="hamburger" aria-expanded="false" aria-controls="drawer">Menu</button>
+
+  <!-- Collapsed drawer: wines/cellar live here, hidden until the burger opens it -->
+  <nav id="drawer" aria-label="More">
+    <button data-nav-view="wines">Wines</button>
+    <button data-nav-view="cellar">Cellar</button>
+  </nav>
+
+  <!-- A hamburger-looking control that NAVIGATES on click — must be discarded
+       by the navigation guard (page.url() changes), not recorded as a state. -->
+  <a id="navtrigger" class="hamburger" href="#/elsewhere">Other</a>
+
+  <script>
+    document.getElementById('burger').addEventListener('click', () => {
+      const d = document.getElementById('drawer');
+      const b = document.getElementById('burger');
+      if (d.hasAttribute('data-open')) { d.removeAttribute('data-open'); b.setAttribute('aria-expanded', 'false'); }
+      else { d.setAttribute('data-open', ''); b.setAttribute('aria-expanded', 'true'); }
+    });
+  </script>
+</body>
+</html>

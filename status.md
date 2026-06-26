@@ -1,5 +1,29 @@
 # Project Status Log
 
+## 2026-06-26 — `/nav-audit` v1.3: live-evidence findings + multi-state capture + digest/decouple debt
+
+### Changes
+- **v1.3 #4 (live findings)** — `runLiveTaxonomy` runs the layer-attribution finding classes (competing-models, over-exposure/redundancy, sequencing) over **live** `--verify` evidence, so they finally fire on data-driven apps the static taxonomy can't model. The three classes were refactored into shared helpers parameterised by `layerData` (static path behaviour-preserved). State-scoped (a destination in `primary@mobile` + `secondary@desktop` is responsive duplication, NOT competing-models). Emitted on the CLI ("Live findings") + persisted (v2 envelope, `NavFindingSchema`) + dashboard tab.
+- **v1.3 #3 (multi-state capture)** — bounded, nav-ish-gated, navigation-guarded activation pass opens hamburgers/collapsed sub-tabs and re-snapshots so destinations behind closed menus are captured, not mislabeled "missing". `--no-activate` opt-out. `collapsed-menu.html` fixture + 3 tests.
+- **#5 (bootstrap ranking)** — folded into the persona-clickpath plan's Cluster B (deferred — plan approved, not yet implemented).
+- **Debt fix** (surfaced during the v1.3 audits) — `computeContractDigest` now includes `exclude`; the dashboard `collectNav` surfaces live evidence (scorecard + liveFindings) from a fresh verify result independently of the static observed envelope (live-only branch); the verify-result is bound to `NAV_TOOL_VERSION`. Plus a recurring footgun fix: a present-but-malformed `nav-contract.json` now ERRORS in `--verify`/static (bootstrap regenerates).
+
+### Files Affected
+- `scripts/lib/nav/findings.mjs` — `liveLayerSets`/`runLiveTaxonomy` + shared layer-class helpers.
+- `scripts/lib/nav/verify.mjs` — activation pass (`discoverExpandTriggers`, bounded loop), `activate` option.
+- `scripts/lib/nav/{schema,verify-store,render}.mjs`, `scripts/nav-audit.mjs`, `scripts/lib/dashboard/{collect-nav,sections/nav-audit}.mjs` — emit/persist/render + digest/decouple/toolVersion debt.
+- New tests: `nav-live-findings`, `nav-live-activation`, `nav-contract-digest` + `collapsed-menu.html`; modified `nav-dashboard`, `nav-verify-store`.
+
+### Decisions Made
+- Plans: `nav-audit-v1.3-live-findings.md` (Approved→implemented), `nav-audit-debt-digest-decouple.md` (Complete), `persona-clickpath-nav-seeding.md` (Approved, not yet implemented). All GPT 3-round + Gemini-gated.
+- Deferred during v1.3 with named independence, then fixed in the debt cycle: the 3 digest/dashboard-gating issues.
+
+### Next Steps
+- Implement the persona-clickpath plan (click-path capture → nav-audit reachability seeding + #5 ranking).
+- Authenticated wine-cellar `--verify` re-run to confirm live findings (competing-models/over-exposure) fire on the real app.
+
+---
+
 ## 2026-06-26 — `/nav-audit` v1.2 follow-up: settle-race fix (authenticated wine-cellar finding)
 
 ### Changes

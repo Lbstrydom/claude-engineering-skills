@@ -113,8 +113,23 @@ export const NavObservedSchema = z.object({
  * missing verdicts, not just the static scorecard. Tied to `contractDigest` so a
  * contract edit invalidates a stale live result (mirrors the observed envelope).
  */
+/** Canonical Zod shape of a `mk()` finding (findings.mjs) — `destination` and
+ *  `verdict`, with the optional v1.3 `source` tag for live-evidence findings. */
+export const NavFindingSchema = z.object({
+  class: z.string(),
+  severity: z.enum(['P0', 'P1', 'P2', 'P3']), // SEV_ORDER (renderer) assumes these
+  destination: z.string(),
+  evidence: z.array(z.string()).default([]),
+  confidence: z.enum(CONFIDENCE),
+  gateEligible: z.boolean().default(false),
+  verdict: z.string(),
+  source: z.enum(['live']).optional(),
+});
+
 export const NavVerifyResultSchema = z.object({
-  version: z.literal(1),
+  // v1 (no liveFindings) and v2 (with) both accepted — the optional-with-default
+  // field IS the back-compat; the version is a telemetry stamp, not a read gate.
+  version: z.union([z.literal(1), z.literal(2)]),
   url: z.string().min(1),
   generatedAt: z.iso.datetime({ offset: true }),
   contractDigest: z.string().regex(/^[0-9a-f]{64}$/),
@@ -128,6 +143,11 @@ export const NavVerifyResultSchema = z.object({
     layers: z.array(z.string()).default([]),
     states: z.array(z.string()).default([]),
   })).default({}),
+  liveFindings: z.array(NavFindingSchema).default([]),
+  // Binds the persisted live result to the nav tool/taxonomy semantics (debt fix 3).
+  // Optional so a legacy (un-versioned) envelope still PARSES — readVerifyResult
+  // then treats a missing/mismatched toolVersion as stale.
+  toolVersion: z.number().int().optional(),
 });
 
 /**
@@ -141,6 +161,9 @@ export function computeContractDigest(contract) {
   const c = contract && typeof contract === 'object' ? contract : {};
   const canonical = JSON.stringify({
     appRoots: Array.isArray(c.appRoots) ? [...c.appRoots].sort() : [],
+    // `exclude` drives source extraction (readSources any-match) → it MUST be part
+    // of the freshness digest; set-semantics, so sorting is canonical (debt fix 1).
+    exclude: Array.isArray(c.exclude) ? [...c.exclude].sort() : [],
     navLayers: sortRecordOfArrays(c.navLayers),
     personas: (Array.isArray(c.personas) ? c.personas : [])
       .map((p) => ({

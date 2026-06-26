@@ -18,11 +18,11 @@ import { readSources, extractEdges } from './lib/nav/extract.mjs';
 import { readContract, parseNavMeta, bootstrapContract, writeContract, contractExists } from './lib/nav/contract.mjs';
 import { draftContractFromLive } from './lib/nav/bootstrap-draft.mjs';
 import { buildModel } from './lib/nav/model.mjs';
-import { runTaxonomy, personaScorecard } from './lib/nav/findings.mjs';
+import { runTaxonomy, runLiveTaxonomy, personaScorecard } from './lib/nav/findings.mjs';
 import { partitionFindings, scopeToChanged, divergenceKey } from './lib/nav/drift.mjs';
-import { renderFindings, renderTable, renderMermaid, renderScorecard } from './lib/nav/render.mjs';
+import { renderFindings, renderLiveFindings, renderTable, renderMermaid, renderScorecard } from './lib/nav/render.mjs';
 import { assembleEnvelope, writeObservedEnvelope } from './lib/nav/envelope.mjs';
-import { computeContractDigest } from './lib/nav/schema.mjs';
+import { computeContractDigest, NAV_TOOL_VERSION } from './lib/nav/schema.mjs';
 import { runVerify } from './lib/nav/verify.mjs';
 import { writeVerifyResult } from './lib/nav/verify-store.mjs';
 
@@ -45,7 +45,19 @@ async function main() {
   }
 
   // Read the contract early so its appRoots/exclude drive extraction.
-  const { contract: earlyContract } = readContract(root);
+  const { contract: earlyContract, present: earlyPresent, error: earlyError } = readContract(root);
+  // A MALFORMED contract (present but unparseable) would otherwise be silently
+  // treated as "no contract", producing a misleading contract-less scorecard.
+  // Bootstrap can regenerate it (warn + proceed); every other mode FAILS so a
+  // typo in the committed contract can't downgrade the run to exploratory.
+  if (earlyPresent && earlyError && !earlyContract) {
+    if (args.bootstrap) {
+      process.stderr.write(`[nav-audit] ⚠ nav-contract.json present but invalid — ${earlyError}; bootstrap will draft a fresh one.\n`);
+    } else {
+      process.stderr.write(`[nav-audit] ✗ nav-contract.json is present but invalid — ${earlyError}. Fix it, or delete it for exploratory mode, then re-run.\n`);
+      process.exit(2);
+    }
+  }
   const appRoots = earlyContract?.appRoots ?? [];
 
   const { sources } = readSources(root, sourceFiles, { exclude: earlyContract?.exclude ?? [] });
@@ -90,6 +102,7 @@ async function main() {
     const report = await runVerify({
       url: args.verify, model, contract: earlyContract,
       breakpoints: args.breakpoints, storageState: args.storageState,
+      activate: !args.noActivate,
     });
     // runVerify is a library fn — the CLI owns the exit code (plan §4a).
     if (!report.ok) {
@@ -105,6 +118,12 @@ async function main() {
       statesRequested: report.statesRequested,
       statesCollected: report.statesCollected,
     });
+    // Run the layer-attribution-dependent finding classes over LIVE evidence
+    // (v1.3 #4) — competing-models / over-exposure / sequencing finally fire on
+    // data-driven apps the static taxonomy can't model. source:'live' tagged.
+    const liveFindings = runLiveTaxonomy(report.liveAttribution, earlyContract, {
+      destinations: model.destinations, states: report.statesCollected,
+    });
     if (args.storageState) process.stderr.write('[nav-audit] authenticated run (--storage-state) — live labels may include account text (redacted on persist).\n');
     // Persist the live result (gitignored, Category-A) so the dashboard can show
     // the authoritative live verdicts. Only when a contract is present (the digest
@@ -113,14 +132,16 @@ async function main() {
     if (earlyContract) {
       try {
         writeVerifyResult(root, {
-          version: 1, url: args.verify, generatedAt: new Date().toISOString(),
+          version: 2, url: args.verify, generatedAt: new Date().toISOString(),
           contractDigest: computeContractDigest(earlyContract),
+          toolVersion: NAV_TOOL_VERSION,
           statesRequested: report.statesRequested, statesCollected: report.statesCollected,
           liveAttribution: report.liveAttribution,
+          liveFindings,
         });
       } catch (err) { process.stderr.write(`[nav-audit] verify-result persist skipped: ${err.message}\n`); }
     }
-    const out = { ...report, scorecard };
+    const out = { ...report, scorecard, liveFindings };
     if (args.format === 'json') {
       writeOutput(out, args.out, `[nav-audit] verify (${report.statesCollected.join('+')}): ${report.confirmed.length} confirmed, ${report.staticOnly.length} static-only, ${report.runtimeOnly.length} runtime-only`);
     } else {
@@ -132,6 +153,7 @@ async function main() {
         `△ Static-only (not in live nav): ${report.staticOnly.join(', ') || '—'}`,
         `● Runtime-only (live, not static): ${report.runtimeOnly.join(', ') || '—'}`,
         ...(report.stateWarnings?.length ? ['', `⚠ ${report.stateWarnings.join(' · ')}`] : []),
+        ...(liveFindings.length ? [renderLiveFindings(liveFindings)] : []),
       ];
       if (args.out) writeOutput(out, args.out, lines.join('\n')); else process.stdout.write(lines.join('\n') + '\n');
     }
@@ -236,7 +258,7 @@ function collectRouteMeta(sources, destinations) {
 
 function parseArgs(argv) {
   const a = { scope: 'diff', format: 'human', gate: false, bootstrap: false, verify: null, out: null, root: null,
-    breakpoints: ['mobile', 'desktop'], storageState: null, fromUrl: null, force: false };
+    breakpoints: ['mobile', 'desktop'], storageState: null, fromUrl: null, force: false, noActivate: false };
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--scope') a.scope = argv[++i];
@@ -250,6 +272,7 @@ function parseArgs(argv) {
     else if (t === '--storage-state') a.storageState = argv[++i];
     else if (t === '--from-url') a.fromUrl = argv[++i];
     else if (t === '--force') a.force = true;
+    else if (t === '--no-activate') a.noActivate = true; // skip the collapsed-menu activation pass (#3)
   }
   return a;
 }

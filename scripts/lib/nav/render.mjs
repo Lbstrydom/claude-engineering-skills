@@ -59,6 +59,23 @@ export function renderFindings(findings) {
   return lines.join('\n');
 }
 
+/**
+ * Live findings (v1.3 #4) — the layer-classes run over live DOM evidence,
+ * rendered as a distinct section so the operator sees they're app-grounded
+ * (source:'live'), not static-graph-derived. Empty → '' (no section).
+ */
+export function renderLiveFindings(findings) {
+  if (!findings || !findings.length) return '';
+  const sorted = [...findings].sort((a, b) => (SEV_ORDER[a.severity] - SEV_ORDER[b.severity]) || a.class.localeCompare(b.class));
+  const lines = ['', `LIVE FINDINGS (${findings.length}) — from live DOM evidence`, '─'.repeat(48)];
+  for (const f of sorted) {
+    lines.push(`  [${f.severity}] ${f.class} — ${f.destination}`);
+    lines.push(`     ${f.verdict}`);
+    if (f.evidence?.length) lines.push(`     evidence: ${f.evidence[0]}`);
+  }
+  return lines.join('\n');
+}
+
 /** Destination table: id · in-degree · affordance types · anchors · layers. */
 export function renderTable(model) {
   const rows = [...model.destinations.values()].sort((a, b) => b.inDegree - a.inDegree);

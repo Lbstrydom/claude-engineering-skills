@@ -114,7 +114,10 @@ export function selectorLayers(contract) {
  *   Auth-gated SPAs mount their nav at ~2–5s, so 1500 was too short.
  * @returns {Promise<object>}
  */
-export async function runVerify({ url, model, contract, breakpoints = ['mobile', 'desktop'], storageState = null, timeoutMs = 30000, hydrateMs = 6000 }) {
+const ACTIVATION_CAP = 8;   // max collapsible-nav activations per viewport (#3)
+const ACTIVATE_MS = 1500;   // settle budget after an activation click
+
+export async function runVerify({ url, model, contract, breakpoints = ['mobile', 'desktop'], storageState = null, timeoutMs = 30000, hydrateMs = 6000, activate = true }) {
   const selLayers = selectorLayers(contract);
   const declaredSelectors = selLayers.map((s) => s.selector);
   const statesRequested = breakpoints.slice();
@@ -155,7 +158,7 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
         // genuinely-never-populating case — fast apps still exit in <1s. Per-
         // selector try/catch (R1-M); on timeout the never-resolving `.catch` lets
         // the waitForTimeout win (consolidated-3).
-        await Promise.race([
+        const settle = () => Promise.race([
           page.waitForTimeout(hydrateMs),
           ...(declaredSelectors.length ? [page.waitForFunction(
             (sels) => {
@@ -168,30 +171,58 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
             { timeout: hydrateMs },
           ).catch(() => new Promise(() => {}))] : []),
         ]);
-        const shapes = await collectLiveNav(page, selLayers);
-        const seen = new Set();
-        for (const sh of shapes) {
-          const raw = extractTarget(sh);          // pure gate (plan §4a)
-          if (!raw) continue;                     // no resolvable nav target → skip
-          const target = normalizeLiveTarget(raw, url);
-          if (!target) continue;
-          const container = resolveContainer(sh.matches, contract);
-          // Dedupe by (target, container, state) — a real <a> also caught by the
-          // container scan isn't double-counted (plan §4a).
-          const key = `${target}|${container?.selector ?? ''}|${stateName}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          liveEvidence.push({
-            target,
-            label: sh.label,
-            container: container?.selector ?? null,
-            layer: container?.layer ?? null,
-            state: stateName,
-            role: sh.role ?? null,
-            containerCandidates: sh.containerCandidates ?? [], // for bootstrap drafting
-          });
-        }
+        // Collect the current DOM into liveEvidence under `evState`. Reused by the
+        // base per-viewport snapshot AND each activation-derived state (v1.3 #3).
+        const collectState = async (evState) => {
+          const shapes = await collectLiveNav(page, selLayers);
+          const seen = new Set();
+          for (const sh of shapes) {
+            const raw = extractTarget(sh);          // pure gate (plan §4a)
+            if (!raw) continue;
+            const target = normalizeLiveTarget(raw, url);
+            if (!target) continue;
+            const container = resolveContainer(sh.matches, contract);
+            const key = `${target}|${container?.selector ?? ''}|${evState}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            liveEvidence.push({
+              target, label: sh.label,
+              container: container?.selector ?? null, layer: container?.layer ?? null,
+              state: evState, role: sh.role ?? null,
+              containerCandidates: sh.containerCandidates ?? [],
+            });
+          }
+        };
+        await settle();
+        await collectState(stateName);
         statesCollected.push(stateName);
+
+        // Bounded activation pass (v1.3 #3): open collapsible nav (hamburger /
+        // collapsed sub-tab parents) so destinations behind a closed menu are
+        // captured instead of read as "missing". Single-level, navigation-guarded,
+        // best-effort additive — a failed activation contributes no evidence and
+        // never marks anything `unverified`.
+        if (activate) {
+          let triggers = [];
+          try { triggers = await discoverExpandTriggers(page, declaredSelectors); } catch { triggers = []; }
+          for (let i = 0; i < Math.min(triggers.length, ACTIVATION_CAP); i++) {
+            const evState = `${stateName}+a${i}`;
+            try {
+              await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs }); // isolate each
+              await settle();
+              const handle = await page.$(triggers[i].selector).catch(() => null);
+              if (!handle) { stateWarnings.push(`activation ${evState}: trigger no longer present`); continue; }
+              const urlBefore = page.url();
+              await handle.click({ timeout: 1000 });
+              await page.waitForTimeout(ACTIVATE_MS);
+              if (page.url() !== urlBefore) { stateWarnings.push(`activation ${evState}: navigated away — discarded`); continue; }
+              await collectState(evState);
+              statesCollected.push(evState);
+            } catch (err) {
+              stateWarnings.push(`activation ${evState} failed: ${err.message}`);
+            }
+          }
+        }
       } catch (err) {
         stateWarnings.push(`state ${stateName} failed: ${err.message}`);
       } finally {
@@ -322,6 +353,64 @@ async function collectLiveNav(page, selLayers) {
     });
     return out;
   }, { sl: selLayers, CANDIDATES });
+}
+
+/**
+ * Discover collapsible-nav activation triggers (v1.3 #3), in document order, each
+ * with a STABLE selector (survives re-goto). Closed, nav-ish-gated set: an
+ * `[aria-expanded="false"]` or `[aria-controls]` toggle in a nav-ish context, OR
+ * a hamburger affordance. Single-level (base-state triggers only).
+ * @param {import('playwright').Page} page
+ * @param {string[]} declaredSelectors
+ */
+async function discoverExpandTriggers(page, declaredSelectors) {
+  return page.evaluate((decl) => {
+    const re = /nav|tabs?|menu|sidebar|drawer|hamburger|primary|bottom-?nav|navbar|tabbar|sub-?tabs?/i;
+    const matchesDecl = (el) => decl.some((s) => { try { return el.matches(s); } catch { return false; } });
+    // Is an element nav-ish? <nav>/[role=navigation], or id/class/aria-label match
+    // (Gemini-union-H/M: also count the semantic tag/role + aria-label, not only id/class).
+    const elNavish = (el) => el.tagName === 'NAV'
+      || el.getAttribute?.('role') === 'navigation'
+      || re.test(el.id || '')
+      || re.test(el.getAttribute?.('class') || '')
+      || re.test(el.getAttribute?.('aria-label') || '');
+    const navish = (el) => {
+      const ctrlId = el.getAttribute('aria-controls');
+      if (ctrlId) { const t = document.getElementById(ctrlId); if (t && (elNavish(t) || matchesDecl(t))) return true; }
+      let cur = el;
+      while (cur && cur.nodeType === 1) { if (elNavish(cur)) return true; cur = cur.parentElement; }
+      return false;
+    };
+    const esc = (v) => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v);
+    const pathOf = (el) => {
+      // Stable structural selector (no live handle) — used only when there's no id.
+      const parts = [];
+      let cur = el;
+      while (cur && cur.nodeType === 1 && cur.tagName !== 'BODY' && parts.length < 6) {
+        let seg = cur.tagName.toLowerCase();
+        const sibs = [...(cur.parentElement?.children || [])].filter((c) => c.tagName === cur.tagName);
+        if (sibs.length > 1) seg += `:nth-of-type(${sibs.indexOf(cur) + 1})`;
+        parts.unshift(seg);
+        cur = cur.parentElement;
+      }
+      return parts.join(' > ');
+    };
+    const out = [];
+    const seen = new Set();
+    const cands = document.querySelectorAll('[aria-expanded="false"], button[aria-controls], [role="button"][aria-controls], [aria-label*="menu" i], .hamburger, [class*="hamburger" i]');
+    for (const el of cands) {
+      // aria-expanded / aria-controls candidates must be nav-ish (exclude FAQ accordions);
+      // the hamburger-affordance ones are nav by definition.
+      const needsNavCheck = el.matches('[aria-expanded="false"], [aria-controls]');
+      if (needsNavCheck && !navish(el)) continue;
+      const selector = el.id ? `#${esc(el.id)}`
+        : (el.getAttribute('aria-controls') ? `[aria-controls="${el.getAttribute('aria-controls')}"]` : pathOf(el));
+      if (!selector || seen.has(selector)) continue;
+      seen.add(selector);
+      out.push({ selector });
+    }
+    return out;
+  }, declaredSelectors);
 }
 
 // ── Pure target extraction (plan §4a) — exported for deterministic test ──────
