@@ -24,6 +24,7 @@ import sectionCli from './sections/cli.mjs';
 import sectionFlows from './sections/flows.mjs';
 import sectionArchitecture from './sections/architecture.mjs';
 import sectionNavAudit from './sections/nav-audit.mjs';
+import sectionVisualAudit from './sections/visual-audit.mjs';
 import sectionPlans from './sections/plans.mjs';
 import sectionAuditRuns from './sections/audit-runs.mjs';
 import sectionRequirements from './sections/requirements.mjs';
@@ -51,6 +52,7 @@ const SLICERS = {
   flows:        (d) => ({ src: d.sources.flows || { status: 'ok', detail: '' }, flows: d.flows }),
   architecture: (d) => ({ src: d.sources.architecture || { status: 'ok', detail: '' }, architecture: d.architecture }),
   navAudit:     (d) => ({ src: d.sources.navAudit || { status: 'missing-optional', detail: '' }, navAudit: d.navAudit || { scorecard: [], drift: [] } }),
+  visualAudit:  (d) => ({ src: d.sources.visualAudit || { status: 'missing-optional', detail: '' }, visualAudit: d.visualAudit || { scorecard: [], findings: [], diagnostics: [] } }),
   purpose:      (d) => ({ src: d.sources.purposes || { status: 'ok', detail: '' }, purposes: d.purposes || { status: 'missing-optional', detail: '', ledgerPresent: false, nodes: [], hygiene: { unmappedDomains: [], unattachedRequirements: [], skippedRequirements: 0, unknownDomains: [], domainsMissingArchitecture: [] } } }),
   plans:        (d) => ({ src: d.sources.plans || { status: 'ok', detail: '' }, plans: d.plans }),
   auditRuns:    (d) => ({ src: d.sources.auditRuns || { status: 'ok', detail: '' }, auditRuns: d.auditRuns }),
@@ -74,6 +76,7 @@ const REGISTRY = {
     { id: 'flows',        title: 'Process Flows',  build: sectionFlows,        slice: SLICERS.flows },
     { id: 'architecture', title: 'Architecture',   build: sectionArchitecture, slice: SLICERS.architecture },
     { id: 'navAudit',     title: 'Nav Audit',      build: sectionNavAudit,     slice: SLICERS.navAudit },
+    { id: 'visualAudit',  title: 'Visual Audit',   build: sectionVisualAudit,  slice: SLICERS.visualAudit },
     { id: 'purpose',      title: 'Purpose',        build: sectionPurpose,      slice: SLICERS.purpose },
     { id: 'plans',        title: 'Plans',          build: sectionPlans,        slice: SLICERS.plans },
   ],

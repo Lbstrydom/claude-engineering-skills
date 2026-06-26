@@ -15,6 +15,7 @@ import { sha } from '../cli-io.mjs';
 import { loadAllSkills } from '../../skills-help.mjs';
 import { collectCli } from './collect-cli.mjs';
 import { collectNav } from './collect-nav.mjs';
+import { collectVisual } from './collect-visual.mjs';
 import { FlowManifestSchema } from './schema.mjs';
 import {
   OBSERVED_FILE,
@@ -436,6 +437,16 @@ export function collectReference(opts = {}) {
   }
   sources.navAudit = navAudit.status;
 
+  // Visual-audit section (REGISTRY.reference) — Contracted-Surface Scorecard +
+  // Visual Findings. Same degradation contract as collectNav.
+  let visualAudit = { scorecard: [], findings: [], diagnostics: [], status: { status: 'missing-optional', detail: '' } };
+  try {
+    visualAudit = collectVisual(root).visualAudit;
+  } catch (err) {
+    visualAudit = { scorecard: [], findings: [], diagnostics: [], status: { status: 'unexpected-error', detail: `collectVisual failed: ${err.message}` } };
+  }
+  sources.visualAudit = visualAudit.status;
+
   // Purpose tab — join curated taxonomy + flows + architecture domains +
   // requirements ledger. Deterministic; sources.purposes mirrors its status.
   const ledger = readRequirementsLedger(root);
@@ -476,12 +487,13 @@ export function collectReference(opts = {}) {
     cli,
     purposes,
     navAudit,
+    visualAudit,
   };
   // sourceHash over content (everything but provenance) — committed-page
   // determinism (no timestamp; plan §8 / M3). `purposes` is a pure function of
   // committed files, so folding it in keeps the page byte-reproducible.
   data.provenance.sourceHash = sha(JSON.stringify({
-    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources, purposes, navAudit,
+    skills, plans, architecture: data.architecture, flows: data.flows, cli, sources, purposes, navAudit, visualAudit,
   }), 8);
   return data;
 }

@@ -83,6 +83,12 @@ scripts/lib/consumer-repos.local.json
 .audit-loop/nav-drift-ledger.json
 .audit-loop/nav-verify-result.json
 
+# /visual-audit observed allowed-set + live verify-result + local drift cache —
+# regenerated each run (Category-A: volatile provenance), never committed.
+.audit-loop/visual-observed.json
+.audit-loop/visual-verify-result.json
+.audit-loop/visual-drift-ledger.json
+
 # Repo-identity reconcile intermediate — operator-curated, one-time, applied
 # then spent (the merge it proposes lands in the DB, not the repo). Like the
 # requirements-layer candidates/gaps intermediates: kept locally, never committed.

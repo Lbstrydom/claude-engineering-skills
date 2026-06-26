@@ -122,6 +122,9 @@ const CORE_ENTRY = [
   // findings, drift, render, verify, approot, …) automatically. `playwright` is a
   // runtime dynamic import (external pkg), so the static walker stops there.
   'scripts/nav-audit.mjs',
+  // /visual-audit CLI — closure walker pulls lib/visual/** + the playwright
+  // dynamic import in extract.mjs (external pkg, walker stops there).
+  'scripts/visual-audit.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.

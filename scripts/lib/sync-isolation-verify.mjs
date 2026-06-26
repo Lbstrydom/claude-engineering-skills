@@ -52,6 +52,7 @@ const CLI_SMOKE_SET = [
   'reconcile-repo-identity.mjs',
   'ux-lock-run.mjs', // WS2 deterministic /ux-lock runner
   'nav-audit.mjs',   // /nav-audit CLI orchestrator
+  'visual-audit.mjs',// /visual-audit CLI orchestrator
 ];
 
 const LIB_IMPORT_SET = [

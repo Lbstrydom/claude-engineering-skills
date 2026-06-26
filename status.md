@@ -1,5 +1,32 @@
 # Project Status Log
 
+## 2026-06-26 — `/visual-audit` v1: the 4th UX lens (paint-level visual-contract auditor)
+
+### Changes
+- New **visual-audit** skill — math-first, deterministic visual/paint inspection complementing persona-test (journey), click-test (page), nav-audit (system). Verify-primary (paint can't be asserted without rendering): static run = token extraction + source-coherence lint (no paint findings); `--verify <url>` runs four tiers.
+- **Tier 1** declared-token reconciliation (value-on-scale OR cascade-resolved token provenance); inferred-cluster fallback is report-only. **Tier 2** theme parity (must-match in-flow geometry only for both-rendered nodes; may-differ-if-tokened colors; `theme_unmapped_token`; contrast over in-browser-resolved opaque backdrop). **Tier 3** layout physics (overflow/clip/overlap with ancestor-descendant exclusion/image distortion). **Tier 4** signifier matrix via CDP `forcePseudoState` after freezing transitions (missing-focus/no-hover-delta/disabled-not-signified).
+- Two-artifact split: committed `visual-contract.json`; gitignored `.audit-loop/visual-{observed,verify-result,drift-ledger}.json`. CI gate drift-only via canonical `ChangedScopeResolver` (surface sourceGlobs / changed token source / contract edit / globalStyleGlobs cascade). Dashboard "Visual Audit" tab.
+- Built autonomously via `/cycle` across 3 clusters. 73 dedicated tests + `extract.mjs` validated LIVE against a real Chromium fixture (forcePseudoState produced an effective hover delta). Full suite 3806 pass / 0 fail. GPT union audit H:0 (CI-skip guard + VLM-egress redaction fixed); Gemini consolidated gate APPROVE.
+- AGENTS.md: added a **skill naming-convention** note (two families — `audit-*` adjudication loop vs `-test`/`-audit` UX-lens suffix-by-mechanism) explaining why nav-audit/visual-audit and click-test/persona-test names are intentional, not inconsistent.
+
+### Files Affected
+- `scripts/visual-audit.mjs` (orchestrator) + `scripts/lib/visual/*.mjs` (17 modules: schema, contract, tokens, node-key, contrast, effective-background, provenance-resolver, reconcile-tokens, theme-parity, layout-physics, signifiers, source-coherence, findings, extract, store, changed-scope, drift, render, explain)
+- `scripts/lib/dashboard/collect-visual.mjs` + `sections/visual-audit.mjs` (+ wired into `collect-reference.mjs`, `render.mjs`)
+- `skills/visual-audit/` (SKILL.md + 4 references + example) → regenerated `.claude/skills/visual-audit/`
+- Sync wiring: `sync-to-repos.mjs` (CORE_ENTRY), `sync-isolation-verify.mjs` (CLI_SMOKE_SET), `copilot-prompts.mjs`; `.gitignore`; `tests/visual-*.test.mjs` (13 files)
+
+### Decisions Made
+- Verify-primary (not static-primary like nav-audit) — honest about paint needing render; static run emits no paint findings + says so.
+- Scope firewall in SKILL.md verbatim: "assert only what's true of a computed style without knowing what the page is FOR" — signifiers in, affordance judgments out (persona-test's).
+- Per-cluster fix-gate satisfied by unit tests; substantive code review deferred to the consolidated union audit (partial-cluster audits yield only future-file-absence findings since untracked content is invisible to the git-diff payload).
+- Kept `nav-audit`/`click-test` names (documented the two-family convention rather than renaming to `audit-nav`/`audit-click`).
+
+### Next Steps
+- Author a real `visual-contract.json` for wine-cellar-app and run `--verify` against the live deploy (the planned zero-false-positive shakedown).
+- Deferred-with-intent (plan §6): icon optical alignment, loading/skeleton states, motion, RTL/i18n, print, region pixel baselines, live `--actuate`, cloud cross-run aging table.
+
+---
+
 ## 2026-06-26 — `/nav-audit` v1.5: capture-completeness is base-state-only (activation must not subtract confidence)
 
 ### Changes

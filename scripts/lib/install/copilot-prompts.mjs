@@ -54,6 +54,11 @@ export const SKILL_ENTRY_SCRIPTS = Object.freeze({
     cli: 'node scripts/nav-audit.mjs --scope diff',
     summary: 'Static navigation / IA audit — the system-level lens; offered-vs-needed, drift-only CI gate.',
   },
+  'visual-audit': {
+    script: 'visual-audit.mjs',
+    cli: 'node scripts/visual-audit.mjs --verify ${input:url}',
+    summary: 'Math-first visual/paint audit — the paint-level lens; token/theme/layout/signifier tiers, drift-only CI gate.',
+  },
   'explain': {
     script: 'explain.mjs',
     cli: 'node scripts/explain.mjs ${input:target}',
