@@ -8,7 +8,7 @@
  * @module scripts/lib/store/security
  */
 
-import { many, one, updateWhere, upsert } from '../db/query.mjs';
+import { many, one, updateWhere, upsert, pgArray } from '../db/query.mjs';
 import { incidentNeighbourhood as rpcIncidentNeighbourhood } from '../db/rpc.mjs';
 import { isCloudEnabled } from './repo.mjs';
 
@@ -47,7 +47,7 @@ export async function recordSecurityIncidents(repoId, incidents) {
       repo_id: repoId,
       incident_id: i.incident_id,
       description: i.description,
-      affected_paths: i.affected_paths,
+      affected_paths: pgArray(i.affected_paths),   // genuine text[] — not jsonb
       mitigation_ref: i.mitigation_ref,
       mitigation_kind: i.mitigation_kind,
       lessons_learned: i.lessons_learned,

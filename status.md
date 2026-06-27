@@ -1,5 +1,34 @@
 # Project Status Log
 
+## 2026-06-27 — Root fix: jsonb-safe write seam in the db layer + persistence code-audit pass
+
+### Changes
+Hardens the persistence layer against the jsonb-array corruption class (found + repaired
+earlier today) so it cannot recur — chosen over a standalone `/store-audit` skill after a
+`/brainstorm --with-gemini` (both models: this is a deterministic contract, don't put an LLM
+in the pass/fail path). Two-part fix:
+- **Seam** ([`scripts/lib/db/query.mjs`](scripts/lib/db/query.mjs) `serializeWriteParam`):
+  the INSERT/UPSERT/UPDATE-SET builders now auto-JSON-serialize any plain array bound to a
+  column — so a jsonb writer **cannot** reintroduce the raw-array→`{}`/`22P02` bug. Genuine
+  Postgres `text[]` columns opt out with the new **`pgArray()`** marker (wrapped the 3 builder
+  sites: `repo.focus_areas`, `security.affected_paths`, `runs-findings.map_reduce_passes`).
+  WHERE predicates are deliberately NOT serialized. Reverted the 9 call-site `JSON.stringify`
+  workarounds from the earlier commit — the seam is now the single source of truth.
+- **Code-audit pass** ([`prompt-seeds.mjs`](scripts/lib/prompt-seeds.mjs) backend rubric):
+  flags the classes a seam can't fix — **silent DB-error swallow** (a write that catches and
+  returns a success-shaped null/`{}`/`false`), **unverified write success** (RLS policy / 0-row
+  UPDATE completing without error yet mutating nothing — Gemini's catch), and the serialization
+  shape mismatch — all as HIGH.
+
+### Verification
+- Live round-trip proves the seam serializes a **raw** array correctly (probe written via the
+  reverted persona path, read back as a jsonb array, cleaned up). New seam test
+  ([`store-jsonb-array-serialization.test.mjs`](tests/store-jsonb-array-serialization.test.mjs),
+  11 cases) + text[]-writer source guard. Full suite 3846 pass / 0 fail. AGENTS.md records the
+  seam as a load-bearing invariant.
+
+---
+
 ## 2026-06-27 — Fix: jsonb-array write corruption from the supabase-js→pg migration (M3)
 
 ### Changes

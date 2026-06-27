@@ -21,7 +21,7 @@
  */
 
 import { getPool } from '../db/client.mjs';
-import { one, insertReturning, updateWhere, many } from '../db/query.mjs';
+import { one, insertReturning, updateWhere, many, pgArray } from '../db/query.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 
 // ── Lifecycle helpers ──────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ export async function resolveRepoForStore({ cwd, profile } = {}) {
   const profileCols = profile ? {
     stack:          profile.stack,
     file_breakdown: profile.fileBreakdown,
-    focus_areas:    profile.focusAreas,
+    focus_areas:    pgArray(profile.focusAreas),   // genuine text[] — not jsonb
     fingerprint:    profile.repoFingerprint,
   } : {};
   try {

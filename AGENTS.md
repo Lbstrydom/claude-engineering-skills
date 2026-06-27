@@ -601,6 +601,20 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
 - **Never use the dashboard as the routine migration path** — it reintroduces the
   silent-drift the ledger exists to eliminate; make the source migration idempotent
   and retry `--migrate` instead.
+- **jsonb-safe write seam (load-bearing — do NOT hand-`JSON.stringify` jsonb columns).**
+  The db-layer write builders ([`scripts/lib/db/query.mjs`](scripts/lib/db/query.mjs)
+  `serializeWriteParam`) auto-JSON-serialize a plain array bound to ANY column on the
+  INSERT/UPSERT/UPDATE-SET path — because node-postgres binds a raw JS array as a
+  Postgres ARRAY literal, which a `jsonb` column rejects (`22P02`, non-empty) or
+  silently stores as `{}` (empty). This was the M3 supabase-js→pg regression
+  (PostgREST used to JSON-serialize bodies implicitly). So: **pass jsonb values raw**
+  (the seam handles it); a genuine Postgres array column (`text[]`/`int[]`) opts OUT
+  with **`pgArray(value)`** so its array stays a literal. WHERE predicates are NOT
+  serialized (array equality stays raw). A jsonb writer that forgets is safe; a
+  `text[]` writer that forgets `pgArray()` fails LOUDLY. Guard:
+  [`tests/store-jsonb-array-serialization.test.mjs`](tests/store-jsonb-array-serialization.test.mjs);
+  the `/audit-code` backend pass also flags raw-array-to-jsonb + silent DB-write
+  error-swallow + unverified-write-success (RLS/0-row) as HIGH.
 
 → **Design** (the no-adapter `pg`-direct decision, schema scope, privilege model, file
 plan): [`docs/completed/postgres-parity.md`](docs/completed/postgres-parity.md) +

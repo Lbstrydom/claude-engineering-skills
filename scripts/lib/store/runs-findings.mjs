@@ -22,7 +22,7 @@
  * @module scripts/lib/store/runs-findings
  */
 
-import { many, one, insertReturning, updateWhere, deleteWhere, withTx } from '../db/query.mjs';
+import { many, one, insertReturning, updateWhere, deleteWhere, withTx, pgArray } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 
@@ -212,7 +212,7 @@ export async function recordRunComplete(runId, stats) {
   if (stats.diffLinesChanged != null) update.diff_lines_changed = stats.diffLinesChanged;
   if (stats.diffFilesChanged != null) update.diff_files_changed = stats.diffFilesChanged;
   if (stats.sessionCacheHit != null) update.session_cache_hit = stats.sessionCacheHit;
-  if (stats.mapReducePasses != null) update.map_reduce_passes = stats.mapReducePasses;
+  if (stats.mapReducePasses != null) update.map_reduce_passes = pgArray(stats.mapReducePasses); // genuine text[]
   if (stats.r2SkipReason != null) update.r2_skip_reason = stats.r2SkipReason;
   if (stats.cacheInputTokens != null) update.cache_input_tokens = stats.cacheInputTokens;
   if (stats.cacheCachedTokens != null) update.cache_cached_tokens = stats.cacheCachedTokens;

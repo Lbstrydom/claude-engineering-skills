@@ -23,6 +23,48 @@
 import { _txStore, getActiveTxClient, getPool } from './client.mjs';
 import { normalizePostgresError } from './errors.mjs';
 
+// ── jsonb-safe value binding (the seam fix) ────────────────────────────────
+//
+// node-postgres serializes a JS ARRAY parameter as a Postgres ARRAY literal
+// (`{…}`), NOT as JSON. Bound to a `jsonb` column that breaks: a non-empty array
+// → `22P02 invalid input syntax for type json`, an empty `[]` silently lands as
+// `{}`. This was the postgres-parity M3 (supabase-js→pg) regression that silently
+// corrupted jsonb-array columns for weeks. Plain OBJECTS are unaffected (node-pg
+// JSON-serializes them already).
+//
+// Root fix at the seam so a caller CANNOT reintroduce the bug: every write-side
+// value (INSERT/UPSERT/UPDATE SET — NOT WHERE predicates) passes through
+// `serializeWriteParam`, which JSON-serializes a plain array by default (jsonb is
+// the overwhelmingly common case). The rare genuine Postgres array column
+// (`text[]`/`int[]`) opts OUT with `pgArray(value)`, which keeps the raw array so
+// node-pg builds the array literal. A jsonb writer that forgets does the right
+// thing automatically; a text[] writer that forgets fails LOUDLY (a json string
+// can't cast to text[]) rather than silently corrupting.
+
+const PG_ARRAY = Symbol('pgArray');
+
+/**
+ * Mark a value as a genuine Postgres ARRAY (`text[]`/`int[]`/…) so the write-side
+ * binder passes it raw to node-postgres (which builds the array literal) instead
+ * of JSON-serializing it for jsonb. Use ONLY for real array-typed columns.
+ * `undefined` stays `undefined` so the column still drops to its DB default.
+ * @template T
+ * @param {T} value
+ * @returns {T | {value: T}}
+ */
+export function pgArray(value) {
+  if (value === undefined) return undefined;
+  return { [PG_ARRAY]: true, value };
+}
+
+/** Serialize a write-side bind value: unwrap `pgArray()` to a raw array; JSON-
+ *  serialize a plain array (jsonb-safe); pass everything else through unchanged. */
+function serializeWriteParam(v) {
+  if (v !== null && typeof v === 'object' && v[PG_ARRAY]) return v.value;
+  if (Array.isArray(v)) return JSON.stringify(v);
+  return v;
+}
+
 // ── Identifier quoting ─────────────────────────────────────────────────────
 
 /**
@@ -158,7 +200,7 @@ function buildInsert(table, row, { returning } = {}) {
   }
   const cols = entries.map(([k]) => quoteIdent(k));
   const placeholders = entries.map((_, i) => `$${i + 1}`);
-  const params = entries.map(([, v]) => v);
+  const params = entries.map(([, v]) => serializeWriteParam(v));
   let sql = `INSERT INTO ${quoteIdent(table)} (${cols.join(', ')}) VALUES (${placeholders.join(', ')})`;
   if (returning !== undefined) sql += ` RETURNING ${normalizeReturning(returning)}`;
   return { sql, params };
@@ -226,7 +268,7 @@ function buildUpsert(table, rows, { onConflict, update, returning } = {}) {
   const params = [];
   const valueGroups = rows.map((row) => {
     const placeholders = keys.map((k) => {
-      params.push(row[k]);
+      params.push(serializeWriteParam(row[k]));
       return `$${params.length}`;
     });
     return `(${placeholders.join(', ')})`;
@@ -313,7 +355,7 @@ function buildUpdate(table, patch, where, { returning } = {}) {
 
   const params = [];
   const setClauses = patchEntries.map(([k, v]) => {
-    params.push(v);
+    params.push(serializeWriteParam(v));
     return `${quoteIdent(k)} = $${params.length}`;
   });
   const flat = flattenWhere(table, 'buildUpdate', where, params.length);

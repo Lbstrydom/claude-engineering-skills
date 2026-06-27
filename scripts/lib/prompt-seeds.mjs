@@ -22,6 +22,14 @@ Be ruthlessly honest about finding REAL issues that will cause bugs or technical
 const PASS_BACKEND_RUBRIC = `Check: SOLID (all 5), DRY, async/await correctness, error handling, input validation,
 transaction safety, cellar_id scoping on ALL queries, auth middleware, N+1 queries,
 hardcoded values, dead code, single source of truth.
+PERSISTENCE CONTRACT (DB writes — silent failures here are HIGH, they masquerade as success):
+- Silent error-swallow: a write that catches a DB error and returns a SUCCESS-SHAPED value
+  (null / {} / [] / false / {id:null}) without re-throwing, logging, or an {ok:false} signal —
+  the caller believes it persisted. Flag it.
+- Unverified write success: treating a write as succeeded without checking rows-affected — a
+  Postgres RLS policy (or a 0-row UPDATE) can complete WITHOUT error yet mutate nothing.
+- Serialization shape: a raw JS array bound to a jsonb column (must be JSON-serialized — a raw
+  array binds as a Postgres array literal), or a JSON string bound to a genuine text[] column.
 Do NOT check frontend files or wiring — other passes handle that.
 Every recommendation must be a PROPER sustainable solution, not a band-aid.
 

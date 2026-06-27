@@ -28,10 +28,8 @@ export async function upsertDebtEntries(repoId, entries) {
     category: e.category,
     section: e.section,
     detail_snapshot: e.detailSnapshot,
-    // jsonb ARRAY columns — JSON-serialize for the `pg` driver (a raw JS array binds
-    // as a Postgres array literal → 22P02 / silent `{}`). M3 supabase-js→pg regression.
-    affected_files: JSON.stringify(e.affectedFiles ?? []),
-    affected_principles: JSON.stringify(e.affectedPrinciples ?? []),
+    affected_files: e.affectedFiles ?? [],          // jsonb — serialized by the db-layer seam
+    affected_principles: e.affectedPrinciples ?? [],
     pass: e.pass,
     sonar_type: e.classification?.sonarType ?? null,
     effort: e.classification?.effort ?? null,
@@ -47,7 +45,7 @@ export async function upsertDebtEntries(repoId, entries) {
     approved_at: e.approvedAt ?? null,
     policy_ref: e.policyRef ?? null,
     owner: e.owner ?? null,
-    content_aliases: JSON.stringify(e.contentAliases || []), // jsonb array — stringify (M3 regression)
+    content_aliases: e.contentAliases || [], // jsonb — serialized by the db-layer seam
     sensitive: e.sensitive ?? false,
     updated_at: new Date().toISOString(),
   }));

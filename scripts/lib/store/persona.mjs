@@ -242,12 +242,7 @@ export async function recordPersonaSession(session) {
       p2_count: session.p2Count || 0,
       p3_count: session.p3Count || 0,
       avg_confidence: session.avgConfidence ?? null,
-      // jsonb columns MUST be JSON-serialized for the `pg` driver: a raw JS array
-      // binds as a Postgres ARRAY literal → `22P02 invalid input syntax for type
-      // json` for non-empty content (and an empty `[]` silently lands as `{}`). The
-      // supabase-js→pg migration (postgres-parity M3) dropped PostgREST's implicit
-      // JSON serialization; restore it at the call site (matches store/security.mjs).
-      findings: JSON.stringify(session.findings || []),
+      findings: session.findings || [],   // jsonb — serialized by the db-layer seam (serializeWriteParam)
       report_md: session.reportMd || null,
       debrief_md: session.debriefMd || null,
       commit_sha: session.commitSha || null,
@@ -265,7 +260,7 @@ export async function recordPersonaSession(session) {
     // never writes `[]` over a real path. Sanitized/redacted/capped server-side.
     if (session.clickPath !== undefined) {
       clickPathMeta = buildSanitizedClickPath(session.clickPath);
-      row.click_path = JSON.stringify(clickPathMeta.steps);   // jsonb — stringify (see findings above)
+      row.click_path = clickPathMeta.steps;   // jsonb — serialized by the db-layer seam
     }
     const rows = await upsert('persona_test_sessions', [row],
       { onConflict: 'session_id', update: 'all', returning: ['id'] });
