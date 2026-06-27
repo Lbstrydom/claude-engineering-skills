@@ -432,6 +432,18 @@ visual-audit shakedown; the survey below records sibling status):
   (`navResponseStatus` surfaces non-2xx), and `visual-audit` (exit 2). Worth a glance
   in `ux-lock` if its capture path grows.*
 
+**Audit your success paths, not just your failure paths.** The two classes above
+are instances of a broader rule: every branch that can emit *pass / clean / 0
+findings / green* is where to be adversarial, because a wrong "pass" is **invisible**
+— nothing alarms (the "looks-protected-but-isn't" class). For any gate / check /
+validation, ask *"can this return green without having actually checked anything?"*
+and guard each such path (degrade to non-zero / `unverified`, never silent-clean).
+The visual-audit `--gate` alone yielded four — static-mode-gate, dead-server,
+all-surfaces-stalled, `--scope full` no-op — none caught by static review; each was
+found by treating a green exit as guilty until proven to have checked something.
+Worked detail lives in the skill, not here: `skills/visual-audit/references/ci-gate-and-verify.md`
+(*Gate honesty*).
+
 No new DB/schema for any of this — it's a process convention + `tests/` regression
 guards + this checklist. Queryable persistence of "was this field-tested" is data
 nobody reads back (the over-engineering cliff).
