@@ -4,6 +4,14 @@
 > Claude in VS Code, GitHub Copilot, Cursor, Windsurf, Codex CLI, Gemini CLI.
 > Claude users — see [CLAUDE.md](./CLAUDE.md) for Claude Code-specific
 > addenda; everything below is shared.
+>
+> **This file holds load-bearing invariants, not dossiers — it's loaded every
+> session, so size is a cost.** Subsystem-grade operational detail (connection
+> recipes, env tables, migration mechanics) belongs in `docs/` with a short
+> *what-it-is / when-you-need-it / pointer* stub here, mirroring the skill
+> `SKILL.md ≤3K + references/` progressive-disclosure pattern. Same "avoid the
+> messy middle" discipline as the generated-artifact policy below, applied to this
+> file itself.
 
 <!-- arch-map-discoverability:start -->
 > **Architecture map**: [`docs/architecture-map.md`](docs/architecture-map.md)
