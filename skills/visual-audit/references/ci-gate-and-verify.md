@@ -22,8 +22,10 @@ contract. A gate-eligible finding blocks iff:
   impact, not authorship").
 
 No merge-base (`changedPaths == null`) → **empty** (never false-block). `--scope full`
-sets `changedPaths == null` for analysis but, with `--gate`, treats every surface as
-in-scope by passing the full surface set.
+under `--gate` passes an explicit **`allSurfaces`** sentinel — distinct from
+`changedPaths == null` — so it gates **every** gate-eligible finding on a declared
+surface (then the baseline ratchet filters it). The two were once conflated, which
+made `--gate --scope full` silently evaluate nothing; they are now separate.
 
 ## Novelty baseline (the accepted-findings ratchet)
 

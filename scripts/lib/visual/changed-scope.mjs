@@ -44,9 +44,17 @@ function familyOfFinding(finding) {
  * @returns {object[]} the subset that should actually block
  */
 export function resolveChangedScope({
-  changedPaths, contractChanged = false, changedTokenFamilies = [],
+  changedPaths, allSurfaces = false, contractChanged = false, changedTokenFamilies = [],
   surfaces = [], globalStyleGlobs = [], findings = [],
 }) {
+  const surfaceById = new Map(surfaces.map((s) => [s.id, s]));
+
+  // `--scope full`: gate the WHOLE contracted surface — every gate-eligible finding
+  // attributed to a declared surface blocks (then the baseline ratchet filters it).
+  // This is DISTINCT from `changedPaths == null` (no merge-base), which must stay a
+  // no-op; conflating the two made `--gate --scope full` silently evaluate nothing.
+  if (allSurfaces) return findings.filter((f) => f.surfaceId != null && surfaceById.has(f.surfaceId));
+
   if (changedPaths == null) return []; // no merge-base → never false-block
   const changed = changedPaths instanceof Set ? changedPaths : new Set(changedPaths);
   const changedArr = [...changed];
@@ -54,7 +62,6 @@ export function resolveChangedScope({
   // Rule (d): any global-style edit → all surfaces eligible.
   const globalHit = globalStyleGlobs.some((g) => changedArr.some((p) => globMatch(g, p)));
 
-  const surfaceById = new Map(surfaces.map((s) => [s.id, s]));
   const changedFamilies = new Set(changedTokenFamilies);
 
   return findings.filter((f) => {

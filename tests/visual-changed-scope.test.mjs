@@ -16,6 +16,17 @@ test('null changedPaths → empty (never false-block)', () => {
   assert.deepEqual(resolveChangedScope({ changedPaths: null, surfaces, findings: [finding('pricing')] }), []);
 });
 
+test('allSurfaces (--scope full) gates the WHOLE surface — non-empty findings → non-empty blockers', () => {
+  // The silent-green bug: null was overloaded for both "no merge-base" and "audit all".
+  const out = resolveChangedScope({ allSurfaces: true, changedPaths: null, surfaces, findings: [finding('pricing'), finding('home')] });
+  assert.equal(out.length, 2, '--scope full must gate every finding on a contracted surface');
+  // a finding on an UNKNOWN surface is still excluded (defensive)
+  const unknown = resolveChangedScope({ allSurfaces: true, changedPaths: null, surfaces, findings: [finding('ghost')] });
+  assert.deepEqual(unknown, []);
+  // null WITHOUT allSurfaces stays a no-op (genuine no-merge-base case)
+  assert.deepEqual(resolveChangedScope({ allSurfaces: false, changedPaths: null, surfaces, findings: [finding('pricing')] }), []);
+});
+
 test('rule (a): surface sourceGlob ∩ changed → eligible', () => {
   const out = resolveChangedScope({ changedPaths: ['src/pricing/Card.tsx'], surfaces, findings: [finding('pricing'), finding('home')] });
   assert.equal(out.length, 1);

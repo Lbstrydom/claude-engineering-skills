@@ -109,11 +109,16 @@ async function main() {
   // Gate scope (only meaningful with --gate).
   let gateBlockers = 0;
   if (args.gate) {
-    const changedPaths = args.scope === 'full' ? null : gitChangedFiles(root);
+    const isFull = args.scope === 'full';
+    // `--scope full` gates the WHOLE contracted surface (allSurfaces sentinel), NOT
+    // changedPaths=null — null means "no merge-base, never block" and would silently
+    // pass the whole-surface gate (gate-scope-full no-op fix).
+    const changedPaths = isFull ? null : gitChangedFiles(root);
     const contractChanged = changedPaths ? [...changedPaths].some((p) => p.endsWith('visual-contract.json')) : false;
     const changedTokenFamilies = tokenSourceFamiliesChanged(contract, changedPaths);
     let blockers = scopeToChanged(gateEligible, {
-      changedPaths: changedPaths ? [...changedPaths] : (args.scope === 'full' ? null : changedPaths),
+      allSurfaces: isFull,
+      changedPaths: changedPaths ? [...changedPaths] : null,
       contractChanged,
       changedTokenFamilies,
       surfaces: contract.surfaces || [],

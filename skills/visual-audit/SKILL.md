@@ -75,7 +75,7 @@ second flag `--allow-external-screenshot`.
 | Flag | Purpose |
 |---|---|
 | `--bootstrap [--from-url <url>] [--force]` | emit a review-queue `visual-contract.json` |
-| `--scope diff\|full` | gate scope (default `diff`; `full` audits the whole surface) |
+| `--scope diff\|full` | gate scope (default `diff` = changed contracted surface; `full` = whole contracted surface). Under `--gate`: `diff` blocks on findings whose surface's files changed; `full` blocks on every gate-eligible finding on a declared surface (both then filtered by the baseline) |
 | `--verify <url>` | live computed-style reconcile + the four tiers |
 | `--device <csv>` | device presets, default `desktop,mobile` (`desktop\|desktop-large\|tablet\|mobile\|mobile-small`) |
 | `--theme <csv>` | subset of contract themes to capture (default all) |
