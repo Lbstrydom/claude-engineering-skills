@@ -793,6 +793,15 @@ shifts from 40/30/30 (procedural/substantive/deliberation) to
 Never hand-write curl POSTs in a SKILL.md for these tables — the CLI handles
 auth, graceful no-op, git-derived commit_sha, and error normalisation.
 
+**Skill recommender (à-la-carte "what's next" advisor).** `cross-skill.mjs
+recommend-skills` + the pure [`scripts/lib/skill-recommender.mjs`](scripts/lib/skill-recommender.mjs)
+suggest the FEW additional lenses that fit a change, so a user who ran ONE skill
+doesn't have to remember the chain (distinct from `/cycle`'s full-auto path).
+Deterministic (no LLM); signal hierarchy audit-findings → plan `applicable_lenses`
+→ tight file globs; **nudge-not-gate**, **cap 2**, **silent when nothing fits**,
+env-aware (browser lenses need a live URL), never re-suggests the just-ran or
+already-covered lens. `/audit-code` Step 6.6 prints the card at convergence.
+
 ## R2+ Audit Mode (Phase 1)
 
 When `--round >= 2`, the audit script enables three-layer defence against finding churn:

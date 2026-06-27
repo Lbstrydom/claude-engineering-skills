@@ -97,6 +97,8 @@ import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mj
 import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
 import { detectRepoStack, detectPythonEnvironmentManager } from './lib/repo-stack.mjs';
 import { StackProfileSchema, ReachabilityEvidenceRequestSchema, ReachabilityEvidenceResponseSchema } from './lib/schemas.mjs';
+import { recommendSkills, renderRecommendationCard } from './lib/skill-recommender.mjs';
+import { closePool } from './lib/db/client.mjs';
 import { z } from 'zod';
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
@@ -814,6 +816,66 @@ async function cmdGetReachabilityEvidence() {
   emit(validated.data);
 }
 
+/**
+ * À-la-carte "what's worth running next" advisor (skill-recommender.mjs). Gathers
+ * the signals — changed files (git, or `--changed`), live-URL env, audit findings
+ * (`--findings <file>`, highest signal), plan lenses (`--plan-lenses`), and the
+ * idempotent ux-lock signal (`unlocked_fixes` view) — and emits the ranked, capped,
+ * possibly-empty recommendation set + a human card. Deterministic, nudge-not-gate,
+ * silent when nothing fits.
+ */
+async function cmdRecommendSkills() {
+  const csv = (s) => (s ? s.split(',').map((x) => x.trim()).filter(Boolean) : []);
+  const changedFiles = argOption('changed') ? csv(argOption('changed')) : gitChangedFiles();
+  const hasLiveUrl = Boolean(process.env.PERSONA_TEST_APP_URL);
+  const justRan = argOption('just-ran') || null;
+  const max = Number.isFinite(Number(argOption('max'))) && argOption('max') ? Number(argOption('max')) : 2;
+  const planLenses = csv(argOption('plan-lenses'));
+
+  // Audit findings (tier-1 signal) from a `--findings <file>` (the `/audit-code` --out).
+  let auditFindings = [];
+  const findingsFile = argOption('findings');
+  if (findingsFile) {
+    try {
+      const raw = JSON.parse(readFileSync(findingsFile, 'utf8'));
+      auditFindings = Array.isArray(raw) ? raw
+        : (Array.isArray(raw.findings) ? raw.findings
+          : (Array.isArray(raw.allFindings) ? raw.allFindings : []));
+    } catch (e) { process.stderr.write(`  [recommend] could not read --findings ${findingsFile}: ${e.message}\n`); }
+  }
+
+  // Idempotent ux-lock signal: a HIGH/P0 fix without a /ux-lock spec. Graceful when
+  // cloud is off (no signal, not an error).
+  let unlockedHighFix = false;
+  try {
+    await initLearningStore();
+    const ref = await resolveRepoForStore({}).catch(() => null);
+    if (ref?.repoRowId) {
+      const rows = await getUnlockedFixes(ref.repoRowId);
+      unlockedHighFix = Array.isArray(rows) && rows.length > 0;
+    }
+  } catch { /* cloud off / store error → no ux-lock signal, proceed */ }
+
+  const recommendations = recommendSkills({ changedFiles, hasLiveUrl, auditFindings, planLenses, unlockedHighFix, justRan, max });
+  const card = renderRecommendationCard(recommendations);
+  // Release the pg pool so this one-shot CLI exits promptly — the shared pool's
+  // 30s idle timeout would otherwise linger, and /audit-code calls this at its exit.
+  try { await closePool(); } catch { /* never block the recommendation on teardown */ }
+  if (argOption('format') === 'human') { process.stdout.write(card); return; }
+  emit({ ok: true, hasLiveUrl, recommendations, card });
+}
+
+/** Changed files vs HEAD (tracked) + untracked. Empty on any git failure. */
+function gitChangedFiles() {
+  const run = (cmd) => {
+    try {
+      return execSync(cmd, { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' })
+        .split('\n').map((s) => s.trim()).filter(Boolean);
+    } catch { return []; }
+  };
+  return [...new Set([...run('git diff --name-only HEAD'), ...run('git ls-files --others --exclude-standard')])];
+}
+
 // /persona-test Phase 0d pre-test enrichment: recent HIGH/MEDIUM audit
 // findings for a repo, so the persona explores known-fragile flows with
 // sharper Reflect judgement. Replaces the dead PostgREST curl (M4 removed
@@ -1427,6 +1489,7 @@ const commands = {
   'record-persona-session': cmdRecordPersonaSession,
   'get-persona-sessions-by-repo': cmdGetPersonaSessionsByRepo,
   'get-reachability-evidence': cmdGetReachabilityEvidence,
+  'recommend-skills': cmdRecommendSkills,
   'get-persona-sessions-by-url': cmdGetPersonaSessionsByUrl,
   'get-recent-findings': cmdGetRecentFindings,
   'whoami': cmdWhoami,

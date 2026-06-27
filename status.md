@@ -1,5 +1,27 @@
 # Project Status Log
 
+## 2026-06-27 — Skill recommender: à-la-carte "what's worth running next" advisor
+
+Built after a `/brainstorm --with-gemini` (both models converged hard: deterministic, cap-tiny,
+silent-when-empty, no hooks, idempotency-mandatory). So a user who ran ONE skill gets a nudge
+toward the few additional lenses that fit THIS change, without committing to the full `/cycle`.
+- **`scripts/lib/skill-recommender.mjs`** (pure, no LLM) — signal hierarchy: audit **findings**
+  (highest, code-grounded) → plan `applicable_lenses` → tight positive-evidence file globs
+  (structural lenses only; the fuzzy click/persona lenses never fire on paths alone — the
+  banner-blindness guard). Ranked by leverage (unguarded HIGH fix → visual → nav → click →
+  persona), **capped at 2**, **silent when nothing fits**, env-aware (browser lenses dropped
+  without a live URL), never re-suggests the just-ran skill or one already covered for the commit.
+- **`cross-skill.mjs recommend-skills`** — gathers git changes + env + `--findings <audit.json>`
+  + the idempotent `unlocked_fixes` ux-lock signal → emits the card + JSON. Releases the pg pool
+  so the one-shot CLI exits in ~0.6s (the shared pool's 30s idle-linger otherwise hangs every DB CLI).
+- **`/audit-code` Step 6.6** prints the card at convergence (advisory, nudge-not-gate; browser
+  lenses framed as post-deploy / re-surfaced at `/ship`).
+
+11 recommender tests (incl. the false-positive guard that caught `api/route.mjs` matching the nav
+glob). Full suite 3857 pass / 0 fail.
+
+---
+
 ## 2026-06-27 — Field-test triage: persona click-path → nav-audit seeding (wine-cellar-app)
 
 Acted on a field report from a real walk of cellar.creathyst.com. Triage of 6 findings:

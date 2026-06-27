@@ -410,6 +410,26 @@ Telemetry dashboard: file://<abs-path>/dashboard/telemetry.html
 
 `telemetry.html` is gitignored — never staged, never committed.
 
+### Step 6.6 — Recommended next (à-la-carte advisor)
+
+So the user doesn't have to remember the whole chain, suggest the FEW additional
+lenses that fit THIS change. Pass the final-round audit result (the `--out` JSON —
+its findings are the highest-signal input) so recommendations are grounded in what
+the audit actually found:
+
+```bash
+node scripts/cross-skill.mjs recommend-skills \
+  --findings /tmp/$SID-r<final>-result.json --just-ran audit-code --format human
+```
+
+Print the card verbatim if non-empty; **if it's empty, say nothing** (a backend-only
+change has no extra lenses — silence is correct, not a failure). It's an advisory
+**nudge, never a gate** — the user chooses. The browser lenses (persona/click/nav/visual)
+run against the **deployed** app, so at audit time they're "worth running after you
+deploy"; `/ship` surfaces them again when the app is live. Ranked by leverage
+(unguarded HIGH fix → theme → nav → semantic-DOM → journey), capped at 2, and it
+never re-suggests a lens already covered for this commit.
+
 ---
 
 ## Step 7 — Gemini Independent Review (MANDATORY)
