@@ -46,6 +46,14 @@
       "domain": "nav-audit"
     },
     {
+      "pattern": "scripts/lib/visual/**",
+      "domain": "visual-audit"
+    },
+    {
+      "pattern": "scripts/visual-audit.mjs",
+      "domain": "visual-audit"
+    },
+    {
       "pattern": "scripts/symbol-index/**",
       "domain": "arch-memory"
     },
@@ -285,6 +293,9 @@
     ],
     "nav-audit": [
       "shared-lib"
+    ],
+    "visual-audit": [
+      "shared-lib"
     ]
   },
   "_comment_purposes": "Outcome/purpose taxonomy + domain->purpose edges for the dashboard Purpose tab (docs/completed/dashboard-purpose-view.md). purposes: curated outcome nodes (7); kind=skill-chain when backed by flows.json node ids, else curated. domainPurposes: manual domain->purpose edges; a domain may serve several purposes (rendered with an 'also serves N' badge). Unmapped domains + domains absent from the architecture map surface as hygiene warnings in the tab.",
@@ -308,6 +319,7 @@
     "ux-lock": ["verify-live-ux"],
     "persona-test": ["verify-live-ux"],
     "nav-audit": ["verify-live-ux"],
+    "visual-audit": ["verify-live-ux"],
     "learning-store": ["learn-from-outcomes"],
     "memory-health": ["learn-from-outcomes"],
     "stores": ["preserve-trust-safety", "learn-from-outcomes"],
