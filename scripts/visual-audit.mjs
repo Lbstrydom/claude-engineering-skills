@@ -28,7 +28,7 @@ import { extractAllowedSet } from './lib/visual/tokens.mjs';
 import { runSourceCoherence } from './lib/visual/source-coherence.mjs';
 import { runExtract } from './lib/visual/extract.mjs';
 import { assembleLiveFindings } from './lib/visual/findings.mjs';
-import { partitionFindings, scopeToChanged, divergenceKey } from './lib/visual/drift.mjs';
+import { partitionFindings, scopeToChanged, divergenceKey, assessCaptureIntegrity } from './lib/visual/drift.mjs';
 import { writeObservedEnvelope, writeVerifyResult, readBaseline, writeBaseline } from './lib/visual/store.mjs';
 import { renderHuman, buildJson, buildScorecard } from './lib/visual/render.mjs';
 
@@ -77,6 +77,14 @@ async function main() {
 
   // ── Static mode (no --verify) ──
   if (!args.verify) {
+    // --gate / --update-baseline are paint-finding operations; static mode emits NO
+    // paint findings, so honoring them would silently pass the gate / write an empty
+    // baseline (looks-protected-but-isn't). Refuse rather than exit 0.
+    if (args.gate || args.updateBaseline) {
+      const flag = args.gate ? '--gate' : '--update-baseline';
+      process.stderr.write(`  [visual-audit] ${flag} requires --verify <url>: static mode emits no paint findings, so ${flag} would ${args.gate ? 'pass without checking any paint' : 'write an empty baseline'}.\n`);
+      process.exit(2);
+    }
     const out = buildJson({ staticMode: true, url: null, findings: [], diagnostics, scorecard: [], unverifiableSurfaces: [], statesCollected: [], warnings: tokenWarnings, gateBlockers: 0 });
     emit(args, out, renderHuman({ staticMode: true, diagnostics }));
     process.exit(0);
@@ -99,9 +107,19 @@ async function main() {
   const findings = assembleLiveFindings({ perState: ext.perState, allowedSet, tokenIndex, contract });
   const { gateEligible } = partitionFindings(findings);
 
+  // Capture integrity: a page can load yet every contracted surface stall (empty/
+  // unverifiable) → zero findings → gate/baseline would treat "nothing checked" as
+  // "nothing wrong" (dead-server honesty at surface granularity).
+  const integrity = assessCaptureIntegrity((contract.surfaces || []).map((s) => s.id), ext.unverifiableSurfaces);
+
   // --update-baseline: snapshot ALL current gate-eligible findings as accepted, so a
   // noisy app can adopt a blocking gate that then fires only on NEW regressions.
   if (args.updateBaseline) {
+    if (integrity.degraded) {
+      process.stderr.write(`  [visual-audit] refusing --update-baseline: all ${integrity.total} contracted surface(s) are unverifiable (capture stall/empty) — snapshotting a degraded capture would record an empty/wrong baseline. Fix capture first.\n`);
+      process.exit(2);
+    }
+    if (integrity.partial) process.stderr.write(`  [visual-audit] --update-baseline: ${integrity.total - integrity.verifiedCount} surface(s) unverifiable — baseline omits them (they'll block until re-captured).\n`);
     const n = writeBaseline(root, gateEligible.map(divergenceKey), gitHeadDate(root) || '');
     process.stderr.write(`  [visual-audit] baseline updated: ${n} accepted gate-eligible finding(s) → ${BASELINE_FILE}\n`);
   }
@@ -109,11 +127,20 @@ async function main() {
   // Gate scope (only meaningful with --gate).
   let gateBlockers = 0;
   if (args.gate) {
+    if (integrity.noSurfaces) process.stderr.write('  [visual-audit] --gate: the contract declares no surfaces — the gate checks nothing.\n');
+    if (integrity.degraded) {
+      process.stderr.write(`  [visual-audit] --gate: all ${integrity.total} contracted surface(s) unverifiable — the gate cannot vouch for anything. UNVERIFIED, not a clean pass.\n`);
+      process.exit(2);
+    }
+    if (integrity.partial) process.stderr.write(`  [visual-audit] --gate: ${integrity.total - integrity.verifiedCount} surface(s) unverifiable — gate covers only the ${integrity.verifiedCount} verified surface(s).\n`);
     const isFull = args.scope === 'full';
     // `--scope full` gates the WHOLE contracted surface (allSurfaces sentinel), NOT
     // changedPaths=null — null means "no merge-base, never block" and would silently
     // pass the whole-surface gate (gate-scope-full no-op fix).
     const changedPaths = isFull ? null : gitChangedFiles(root);
+    if (!isFull && changedPaths == null) {
+      process.stderr.write('  [visual-audit] --gate --scope diff: no merge-base (shallow checkout / detached HEAD?) — the gate evaluated NOTHING. Use --scope full or a full-history checkout to gate.\n');
+    }
     const contractChanged = changedPaths ? [...changedPaths].some((p) => p.endsWith('visual-contract.json')) : false;
     const changedTokenFamilies = tokenSourceFamiliesChanged(contract, changedPaths);
     let blockers = scopeToChanged(gateEligible, {

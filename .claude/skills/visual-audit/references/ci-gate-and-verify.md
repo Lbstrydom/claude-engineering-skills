@@ -55,6 +55,23 @@ is **not** in the baseline.
 - `nodeBudget`/`interactiveBudget` exceeded → `unverified_due_to_budget` warning (no
   silent truncation).
 
+### Gate honesty — a green gate must mean something was checked
+
+The gate refuses to report a clean pass when it didn't actually evaluate anything
+(the "looks-protected-but-isn't" class). Hard guards:
+
+- **Static `--gate` / `--update-baseline`** (no `--verify`) → **exit 2**. Static mode
+  emits no paint findings, so gating would pass without checking and a baseline would
+  be empty.
+- **All contracted surfaces unverifiable** (page loaded but every surface stalled/
+  empty) under `--gate` → **exit 2** (UNVERIFIED). `--update-baseline` on the same
+  refuses to write (won't snapshot a degraded capture).
+- **Some surfaces unverifiable** (partial) → loud warning; the gate covers only the
+  verified surfaces (never silent).
+- **No merge-base** under `--gate --scope diff` (shallow checkout / detached HEAD) →
+  loud warning that the gate evaluated nothing; use `--scope full` or a full checkout.
+- **Zero states captured** (dead server) → exit 2 (above).
+
 ## Determinism
 
 Transitions/animations are frozen (`* { transition:none!important; animation:none!important }`

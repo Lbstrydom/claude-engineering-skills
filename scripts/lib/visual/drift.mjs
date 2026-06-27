@@ -50,6 +50,29 @@ export function ageDivergences(findings, { firstSeenLookup, headCommitDate }) {
   });
 }
 
+/**
+ * Assess whether a verify run is gate-authoritative: a page can load (states
+ * captured) yet every contracted surface stall (visible-but-empty / selector never
+ * matched) → zero findings → a gate would pass having checked nothing. This is the
+ * dead-server capture-honesty failure at surface granularity. Pure; the orchestrator
+ * acts on it (degraded → exit 2; partial → warn).
+ * @param {string[]} declaredSurfaceIds - contract.surfaces[].id
+ * @param {string[]} unverifiableSurfaceIds - ext.unverifiableSurfaces
+ * @returns {{total:number, verifiedCount:number, noSurfaces:boolean, degraded:boolean, partial:boolean}}
+ */
+export function assessCaptureIntegrity(declaredSurfaceIds = [], unverifiableSurfaceIds = []) {
+  const unver = new Set(unverifiableSurfaceIds || []);
+  const total = (declaredSurfaceIds || []).length;
+  const verifiedCount = (declaredSurfaceIds || []).filter((id) => !unver.has(id)).length;
+  return {
+    total,
+    verifiedCount,
+    noSurfaces: total === 0,
+    degraded: total > 0 && verifiedCount === 0,         // page loaded but every surface stalled
+    partial: total > 0 && verifiedCount > 0 && verifiedCount < total,
+  };
+}
+
 /** Build a firstSeenLookup from cloud run-history rows ({driftKeys, capturedAt}). */
 export function firstSeenFromHistory(historyRows) {
   const earliest = new Map();

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { partitionFindings, scopeToChanged, ageDivergences, divergenceKey, firstSeenFromHistory } from '../scripts/lib/visual/drift.mjs';
+import { partitionFindings, scopeToChanged, ageDivergences, divergenceKey, firstSeenFromHistory, assessCaptureIntegrity } from '../scripts/lib/visual/drift.mjs';
 import { readBaseline, writeBaseline } from '../scripts/lib/visual/store.mjs';
 
 test('partitionFindings splits by gateEligible', () => {
@@ -50,6 +50,22 @@ test('baseline ratchet: absent → null; round-trips; novelty filter blocks only
   const blockers = [preexisting, fresh].filter((b) => !baseline.has(divergenceKey(b)));
   assert.deepEqual(blockers, [fresh], 'only the NEW finding survives the baseline filter');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('assessCaptureIntegrity flags degraded (all stalled) vs partial vs clean (silent-green guard)', () => {
+  // all three surfaces stalled → degraded (gate must not pass green)
+  const all = assessCaptureIntegrity(['a', 'b', 'c'], ['a', 'b', 'c']);
+  assert.ok(all.degraded && !all.partial, 'every surface unverifiable → degraded');
+  assert.equal(all.verifiedCount, 0);
+  // one stalled → partial (warn, gate covers the rest)
+  const some = assessCaptureIntegrity(['a', 'b', 'c'], ['b']);
+  assert.ok(some.partial && !some.degraded, 'some unverifiable → partial');
+  assert.equal(some.verifiedCount, 2);
+  // none stalled → clean
+  const clean = assessCaptureIntegrity(['a', 'b'], []);
+  assert.ok(!clean.degraded && !clean.partial);
+  // no surfaces declared → noSurfaces (gate checks nothing)
+  assert.ok(assessCaptureIntegrity([], []).noSurfaces);
 });
 
 test('firstSeenFromHistory ignores invalid timestamps and keeps the earliest', () => {
