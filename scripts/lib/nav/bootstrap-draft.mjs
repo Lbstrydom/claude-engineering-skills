@@ -19,6 +19,29 @@ const PRIMARY_RE = /primary|bottom-?nav|main-?nav|navbar|tabbar/i;
 // can still be primary when it's the ONLY nav (mobile-only hamburger).
 const DISCLOSURE_RE = /hamburger|drawer|burger|menu-?toggle|off-?canvas/i;
 
+/**
+ * Choose the capture-honesty warning for a `--bootstrap --from-url` draft (field-test
+ * #3/#4). An EMPTY visible nav-ish container is the precise auth-gated fingerprint —
+ * warn specifically, and do so REGARDLESS of `--storage-state` (an expired/invalid
+ * auth.json yields the same empty shell, which the bare `!storageState` check misses).
+ * Otherwise, if no auth state was supplied at all, warn generically. Else stay silent.
+ * @param {{emptyNavShells?: string[], hasStorageState?: boolean}} args
+ * @returns {string|null} the warning body (caller prefixes/streams it), or null
+ */
+export function buildDraftCaptureWarning({ emptyNavShells = [], hasStorageState = false } = {}) {
+  if (Array.isArray(emptyNavShells) && emptyNavShells.length) {
+    return `nav container(s) rendered EMPTY (0 items): ${emptyNavShells.join(', ')} — likely auth-gated or not-yet-engaged, `
+      + `so the primary nav layer may be mis-detected. Re-run authenticated with `
+      + `--storage-state <auth.json> (refresh the token if one was already passed).`;
+  }
+  if (!hasStorageState) {
+    return `drafted WITHOUT --storage-state: if this app is auth-gated, its primary nav `
+      + `may not have rendered, so the drafted navLayers can be wrong (review before committing). `
+      + `Re-run \`--bootstrap --from-url <url> --storage-state <auth.json> --force\` authenticated.`;
+  }
+  return null;
+}
+
 /** Prominence sort: sticky/fixed first, then more distinct targets, then earliest
  *  document order. The always-visible bar with the most links wins. */
 function byProminence(a, b) {

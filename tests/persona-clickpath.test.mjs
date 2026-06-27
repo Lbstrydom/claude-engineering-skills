@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { ClickPathStepSchema } from '../scripts/lib/schemas.mjs';
 import { sanitizeStepUrl, buildSanitizedClickPath, unnestReachabilityRows } from '../scripts/lib/store/persona.mjs';
 import { mapPersonasToIntents, slugifyDestination } from '../scripts/lib/nav/persona-seed.mjs';
-import { draftContractFromLive } from '../scripts/lib/nav/bootstrap-draft.mjs';
+import { draftContractFromLive, buildDraftCaptureWarning } from '../scripts/lib/nav/bootstrap-draft.mjs';
 import { bootstrapContract } from '../scripts/lib/nav/contract.mjs';
 
 // ── ClickPathStepSchema (security: closed enum + .strict) ──
@@ -141,4 +141,21 @@ test('draftContractFromLive: an all-secondary bar promoted to primary is not als
   const { primary, secondary } = draftContractFromLive(ev).navLayers;
   assert.deepEqual(primary, ['.breadcrumb-row']);
   assert.ok(!secondary.includes('.breadcrumb-row'), 'promoted bar must not appear in both layers');
+});
+
+// ── buildDraftCaptureWarning — capture-honesty warning selection (field-test #3/#4) ──
+test('buildDraftCaptureWarning: empty nav shell warns specifically, even WITH storage-state (expired-token hole)', () => {
+  const w = buildDraftCaptureWarning({ emptyNavShells: ['#primary-nav'], hasStorageState: true });
+  assert.match(w, /#primary-nav/);
+  assert.match(w, /EMPTY/);
+  assert.match(w, /storage-state/);
+});
+
+test('buildDraftCaptureWarning: no shell + no storage-state → generic warning', () => {
+  const w = buildDraftCaptureWarning({ emptyNavShells: [], hasStorageState: false });
+  assert.match(w, /WITHOUT --storage-state/);
+});
+
+test('buildDraftCaptureWarning: no shell + storage-state present → silent (null)', () => {
+  assert.equal(buildDraftCaptureWarning({ emptyNavShells: [], hasStorageState: true }), null);
 });

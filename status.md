@@ -1,5 +1,24 @@
 # Project Status Log
 
+## 2026-06-27 — nav-audit: empty-nav-shell capture-honesty (field-test #3 hardening)
+
+The field test confirmed #3 (live-draft picked `.tabs` over `#primary-nav`) is a CAPTURE
+gap, not a ranking gap: logged-out, `#primary-nav` is a 0-child empty shell, so it never
+reaches the drafter and `primary` falls back to `.tabs`. The shipped `unauthenticatedDraft`
+warning mitigates it — but it keyed on `!--storage-state`, so an EXPIRED/invalid `auth.json`
+yielded the same empty shell + wrong primary with NO warning. Closed that hole:
+- `verify.mjs` `detectNavShells()` — flags VISIBLE nav-ish containers empty in every captured
+  state (the precise auth-gated fingerprint; `display:none` is a legit variant, not a shell).
+  Surfaced as `report.emptyNavShells`.
+- `bootstrap-draft.mjs` `buildDraftCaptureWarning()` (pure, unit-tested) — specific warning on
+  an empty shell (fires even WITH `--storage-state`); generic warning when no auth state; silent
+  otherwise. Wired into `/nav-audit --bootstrap` + `emptyNavShells` added to the payload.
+No ranking change (the ranker handles `#primary-nav` correctly once captured). Full suite
+3860 pass / 0 fail. Browser detection verifiable via the field repro (unauth → warning fires
+with `#primary-nav`; auth → silent).
+
+---
+
 ## 2026-06-27 — db pool: allowExitOnIdle so one-shot CLIs exit promptly
 
 Systemic fix for the ~30s exit-linger on every cross-skill DB command (surfaced while

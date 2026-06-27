@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { writeOutput } from './lib/file-io.mjs';
 import { readSources, extractEdges } from './lib/nav/extract.mjs';
 import { readContract, parseNavMeta, bootstrapContract, writeContract, contractExists } from './lib/nav/contract.mjs';
-import { draftContractFromLive } from './lib/nav/bootstrap-draft.mjs';
+import { draftContractFromLive, buildDraftCaptureWarning } from './lib/nav/bootstrap-draft.mjs';
 import { buildModel } from './lib/nav/model.mjs';
 import { runTaxonomy, runLiveTaxonomy, personaScorecard } from './lib/nav/findings.mjs';
 import { partitionFindings, scopeToChanged, divergenceKey } from './lib/nav/drift.mjs';
@@ -76,6 +76,7 @@ async function main() {
     // Optional: draft navLayers + observedTargets from the LIVE app.
     let draftNavLayers = null;
     let observedTargets = null;
+    let emptyNavShells = [];
     const bootUrl = args.fromUrl || args.verify;
     if (bootUrl) {
       const model = buildModel(edges, { contract: null, sources, destinations });
@@ -87,17 +88,15 @@ async function main() {
       const draft = draftContractFromLive(report.liveEvidence);
       draftNavLayers = draft.navLayers;
       observedTargets = draft.observedTargets;
-      // Capture-honesty (field-test #4): an auth-gated app renders its primary nav
-      // only AFTER login, so a draft from an unauthenticated shell silently mis-picks
-      // the primary layer. We can't know the app is gated, so warn whenever no auth
-      // state was supplied — the draft is a HYPOTHESIS to review, never trusted.
-      if (!args.storageState) {
-        process.stderr.write(
-          '[nav-audit] ⚠ drafted WITHOUT --storage-state: if this app is auth-gated, its primary nav\n' +
-          '            may not have rendered, so the drafted navLayers can be wrong (review before committing).\n' +
-          '            Re-run `--bootstrap --from-url <url> --storage-state <auth.json> --force` authenticated.\n'
-        );
-      }
+      // Capture-honesty (field-test #3/#4): an auth-gated app renders its primary nav
+      // only AFTER login, so a draft from an unauthenticated/empty shell silently
+      // mis-picks the primary layer. An EMPTY visible nav container is the precise
+      // fingerprint → specific warning (fires even WITH --storage-state, catching an
+      // expired token); otherwise a generic "no auth state" warning. Draft is always a
+      // HYPOTHESIS to review, never trusted.
+      emptyNavShells = report.emptyNavShells || [];
+      const warn = buildDraftCaptureWarning({ emptyNavShells, hasStorageState: Boolean(args.storageState) });
+      if (warn) process.stderr.write(`[nav-audit] ⚠ ${warn}\n`);
     }
     // Seed personaIntents from REAL reachability evidence (the path personas walked
     // in /persona-test) when PERSONA_TEST_REPO_NAME is set. Any failure (cloud off,
@@ -105,7 +104,7 @@ async function main() {
     const personaIntents = seedPersonaIntents(process.env.PERSONA_TEST_REPO_NAME, bootUrl);
     const { contract, inferredUtility } = bootstrapContract({ destinations: destinations.map((d) => d.id), personaIntents, draftNavLayers, observedTargets });
     const written = writeContract(root, contract);
-    const payload = { ok: true, mode: 'bootstrap', written, inferredUtility, adapters, draftedFrom: bootUrl || null, navLayers: contract.navLayers, personaIntents: personaIntents.length, unauthenticatedDraft: Boolean(bootUrl && !args.storageState) };
+    const payload = { ok: true, mode: 'bootstrap', written, inferredUtility, adapters, draftedFrom: bootUrl || null, navLayers: contract.navLayers, personaIntents: personaIntents.length, unauthenticatedDraft: Boolean(bootUrl && !args.storageState), emptyNavShells };
     const layerNote = draftNavLayers ? ` · drafted navLayers from ${bootUrl} (primary: ${draftNavLayers.primary.join(',') || '—'}; secondary: ${draftNavLayers.secondary.join(',') || '—'})` : '';
     writeOutput(payload, args.out, `[nav-audit] bootstrap → ${written}${layerNote}`);
     process.exit(0);

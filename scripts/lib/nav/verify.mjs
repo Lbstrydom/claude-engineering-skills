@@ -126,6 +126,10 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
   const liveEvidence = [];     // one row per occurrence
   const stateWarnings = [];
   const presenceByState = {};  // v1.4: per-state visibility-aware declared-selector presence
+  // Empty-nav-shell fingerprint (field-test #3): a VISIBLE nav-ish container with 0
+  // candidate children in EVERY state it appeared = the auth-gated empty shell that
+  // makes the bootstrap drafter mis-pick `primary`. selector → everPopulated.
+  const navShellSeen = new Map();
 
   let chromium;
   try { ({ chromium } = await import('playwright')); }
@@ -217,6 +221,14 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
               containerCandidates: sh.containerCandidates ?? [],
             });
           }
+          // Accumulate the empty-nav-shell fingerprint across states (best-effort).
+          try {
+            for (const s of await detectNavShells(page)) {
+              const rec = navShellSeen.get(s.selector) || { everPopulated: false };
+              if (!s.empty) rec.everPopulated = true;
+              navShellSeen.set(s.selector, rec);
+            }
+          } catch { /* detection is advisory — never fail the capture */ }
         };
         await settle();
         await collectState(stateName);
@@ -301,6 +313,9 @@ export async function runVerify({ url, model, contract, breakpoints = ['mobile',
     liveAttribution,
     unverifiableLayers,
     captureStatus,
+    // Visible nav-ish containers that were EMPTY in every captured state (never
+    // populated) — the auth-gated / not-yet-engaged empty-shell fingerprint.
+    emptyNavShells: [...navShellSeen.entries()].filter(([, r]) => !r.everPopulated).map(([s]) => s),
   };
 }
 
@@ -409,6 +424,40 @@ async function collectLiveNav(page, selLayers) {
  * @param {import('playwright').Page} page
  * @param {string[]} declaredSelectors
  */
+/**
+ * Detect VISIBLE nav-ish containers and whether each is EMPTY (0 candidate children).
+ * An empty-but-visible nav container is the auth-gated / not-yet-engaged fingerprint
+ * (field-test #3: `<nav id="primary-nav">` renders as a 0-child shell pre-auth, so it
+ * never reaches the drafter and `primary` falls back to the wrong bar). A `display:none`
+ * container is a legitimate responsive variant — NOT a shell (capture-honesty doctrine).
+ * @param {import('playwright').Page} page
+ * @returns {Promise<Array<{selector:string, empty:boolean}>>}
+ */
+async function detectNavShells(page) {
+  return page.evaluate(() => {
+    const CANDIDATES = 'a[href],area[href],button,[role=button],[onclick],[tabindex],[data-view],[data-nav-view],[data-target],[data-nav],[data-tab],[data-route],[data-page]';
+    const re = /nav|tabs?|menu|sidebar|drawer|hamburger|primary|bottom-?nav|navbar|tabbar|sub-?tabs?/i;
+    const elNavish = (el) => el.tagName === 'NAV' || el.getAttribute?.('role') === 'navigation'
+      || re.test(el.id || '') || re.test(el.getAttribute?.('class') || '') || re.test(el.getAttribute?.('aria-label') || '');
+    const esc = (v) => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v);
+    const visible = (el) => {
+      try { const s = getComputedStyle(el); if (s.display === 'none' || s.visibility === 'hidden') return false; const b = el.getBoundingClientRect(); return b.width > 0 || b.height > 0; } catch { return true; }
+    };
+    const out = [];
+    const seen = new Set();
+    // Scan elements that COULD be nav-ish (have a tag/id/class/aria-label/role), filter to nav-ish.
+    for (const el of document.querySelectorAll('nav,[role=navigation],[id],[class],[aria-label]')) {
+      if (!elNavish(el) || !visible(el)) continue;
+      const selector = el.id ? `#${esc(el.id)}`
+        : (el.getAttribute('class') ? `.${esc(el.getAttribute('class').split(/\s+/).find(Boolean) || '')}` : el.tagName.toLowerCase());
+      if (!selector || selector === '.' || seen.has(selector)) continue;
+      seen.add(selector);
+      out.push({ selector, empty: !el.querySelector(CANDIDATES) });
+    }
+    return out;
+  });
+}
+
 async function discoverExpandTriggers(page, declaredSelectors) {
   return page.evaluate((decl) => {
     const re = /nav|tabs?|menu|sidebar|drawer|hamburger|primary|bottom-?nav|navbar|tabbar|sub-?tabs?/i;
