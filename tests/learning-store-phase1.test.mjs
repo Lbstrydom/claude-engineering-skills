@@ -1,11 +1,15 @@
 /**
  * Integration tests for the Phase 1 learning-store write functions.
  *
- * These tests gate on Supabase env vars; without `SUPABASE_AUDIT_URL`
- * they emit a single placeholder pass and skip.  Without
- * `SUPABASE_AUDIT_SERVICE_ROLE_KEY` they similarly skip the
- * service-role-only write tests but still exercise the graceful-fail
- * path (no crash, return shape `{ ok: false, error }`).
+ * The graceful-degradation cases assert that a write returns `{ ok: false }`
+ * (never crashes) WHEN THE CLOUD STORE IS OFF. They gate on the ACTUAL cloud
+ * state via `isCloudEnabled()` — NOT the legacy `SUPABASE_AUDIT_*` vars, which
+ * were sunset in M4 (the store now resolves `AUDIT_DB_URL` from process env /
+ * local `.env` / `~/.audit-loop.env`). The old guard made these tests flaky:
+ * with `AUDIT_DB_URL` reachable the writes SUCCEED (`ok:true`), so the
+ * `ok:false` assertion failed intermittently on cloud reachability. Now they
+ * deterministically SKIP when the cloud is configured (the no-cloud path is moot)
+ * and run only when it's genuinely off.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,17 +20,14 @@ import {
   recordDiffComplexity,
   recordConvergenceState,
   recordFindingResolution,
+  isCloudEnabled,
 } from '../scripts/learning-store.mjs';
-
-const HAS_SERVICE_ROLE = !!(
-  process.env.SUPABASE_AUDIT_URL && process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY
-);
 
 // ── No-env path: graceful fallback (does not throw) ───────────────────────
 
 describe('learning-store / Phase 1 graceful degradation (no service-role)', () => {
   it('insertLearningDecision returns { ok: false, error } when service-role missing', async () => {
-    if (HAS_SERVICE_ROLE) return; // skip when service-role is configured
+    if (await isCloudEnabled()) return; // cloud configured → the no-cloud graceful path is moot
     const r = await insertLearningDecision({
       decisionKey: 'test:no-service-role',
       decisionType: 'pass_selection',
@@ -42,7 +43,7 @@ describe('learning-store / Phase 1 graceful degradation (no service-role)', () =
   });
 
   it('backfillLearningOutcome returns { ok: false, error } when service-role missing', async () => {
-    if (HAS_SERVICE_ROLE) return;
+    if (await isCloudEnabled()) return;
     const r = await backfillLearningOutcome({
       decisionKey: 'pass_selection:test-1',
       outcome: { totalFindings: 0 },
@@ -52,25 +53,25 @@ describe('learning-store / Phase 1 graceful degradation (no service-role)', () =
   });
 
   it('recordDiffComplexity returns { ok: false } when service-role missing', async () => {
-    if (HAS_SERVICE_ROLE) return;
+    if (await isCloudEnabled()) return;
     const r = await recordDiffComplexity('00000000-0000-0000-0000-000000000000', { fileCount: 0 });
     assert.equal(r.ok, false);
   });
 
   it('recordConvergenceState returns { ok: false } when service-role missing', async () => {
-    if (HAS_SERVICE_ROLE) return;
+    if (await isCloudEnabled()) return;
     const r = await recordConvergenceState('00000000-0000-0000-0000-000000000000', { round_converged_after: 1 });
     assert.equal(r.ok, false);
   });
 
   it('recordFindingResolution returns { ok: false } when service-role missing', async () => {
-    if (HAS_SERVICE_ROLE) return;
+    if (await isCloudEnabled()) return;
     const r = await recordFindingResolution('00000000-0000-0000-0000-000000000000', { user_action: 'deferred' });
     assert.equal(r.ok, false);
   });
 
-  it('placeholder when service-role IS configured', () => {
-    if (!HAS_SERVICE_ROLE) return;
+  it('placeholder when cloud IS configured', async () => {
+    if (!await isCloudEnabled()) return;
     // Real integration tests require a clean test schema and would touch
     // production tables — keep them out of the default unit-test run.
     // Run via `npm test -- --test-name-pattern="phase1 integration"` once
@@ -123,7 +124,7 @@ describe('learning-store / Phase 1 per-repo filter contract (H1 fix)', () => {
 
 describe('learning-store / Phase 1 decision_key shape', () => {
   it('insertLearningDecision passes decision_key through untouched', async () => {
-    if (HAS_SERVICE_ROLE) return; // exercising the no-write-client path
+    if (await isCloudEnabled()) return; // exercising the no-cloud graceful path
     const r = await insertLearningDecision({
       decisionKey: 'audit-bound:pass_selection:r0:s0',
       decisionType: 'pass_selection',

@@ -1,5 +1,17 @@
 # Project Status Log
 
+## 2026-06-27 — Fix flaky learning-store-phase1 test (stale legacy-env guard)
+
+The graceful-degradation tests gated on `HAS_SERVICE_ROLE` (the legacy `SUPABASE_AUDIT_*`
+vars, sunset in M4) but the store now resolves `AUDIT_DB_URL` (process env / local `.env` /
+`~/.audit-loop.env`). So when the cloud was reachable the writes SUCCEEDED (`ok:true`) and the
+`ok:false` assertion failed intermittently on DB reachability — the flake that tripped the
+pre-push hook. Re-guarded all 7 cases on the ACTUAL cloud state (`isCloudEnabled()`): they now
+deterministically SKIP when cloud is configured (the no-cloud path is moot) and run only when it's
+genuinely off. Stable across repeated runs; full suite 3860 pass / 0 fail.
+
+---
+
 ## 2026-06-27 — nav-audit: empty-nav-shell capture-honesty (field-test #3 hardening)
 
 The field test confirmed #3 (live-draft picked `.tabs` over `#primary-nav`) is a CAPTURE
