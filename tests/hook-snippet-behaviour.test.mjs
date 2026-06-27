@@ -24,17 +24,19 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(__filename, '..', '..');
-const AGENTS_MD = path.join(REPO_ROOT, 'AGENTS.md');
+// The operator-paste snippet was moved out of AGENTS.md (kept lean) into the
+// Postgres operations runbook; the test follows the content to its new home.
+const SNIPPET_DOC = path.join(REPO_ROOT, 'docs', 'postgres-parity-runbook.md');
 
 /**
- * Pull the snippet body out of AGENTS.md. Matches the first ```bash
+ * Pull the snippet body out of the runbook. Matches the first ```bash
  * fenced block that contains the marker comment.
  */
 function extractSnippet() {
-  const src = fs.readFileSync(AGENTS_MD, 'utf-8');
+  const src = fs.readFileSync(SNIPPET_DOC, 'utf-8');
   const marker = '# managed-by: migration-drift-detector';
   const idx = src.indexOf(marker);
-  if (idx < 0) throw new Error(`marker not found in AGENTS.md: ${marker}`);
+  if (idx < 0) throw new Error(`marker not found in ${SNIPPET_DOC}: ${marker}`);
   // Walk backwards to find the opening fence.
   const openFence = src.lastIndexOf('```bash', idx);
   const closeFence = src.indexOf('```', idx);

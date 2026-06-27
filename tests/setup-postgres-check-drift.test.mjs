@@ -399,17 +399,19 @@ describe('production wiring — behavioural contracts', () => {
     assert.match(wf, /--check-drift/);
   });
 
-  it('AGENTS.md documents the operator self-service snippet with the contract markers', () => {
-    const agents = fs.readFileSync(path.join(REPO_ROOT, 'AGENTS.md'), 'utf-8');
+  it('the runbook documents the operator self-service snippet with the contract markers', () => {
+    // Snippet moved from AGENTS.md to the Postgres operations runbook (AGENTS.md
+    // kept lean); the contract assertions follow it there.
+    const doc = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'postgres-parity-runbook.md'), 'utf-8');
     // Behavioural assertions about the snippet's CONTRACT, not the exact
     // formatting. The hook-snippet-behaviour test verifies the snippet
     // actually works under bash; this is the lighter "is it present?" gate.
-    assert.match(agents, /managed-by: migration-drift-detector/, 'snippet marker must be present so the bash test can extract it');
-    assert.match(agents, /DRIFT_EXIT=0[\s\S]+?\|\| DRIFT_EXIT=\$\?/, 'set -e-safe capture pattern required');
+    assert.match(doc, /managed-by: migration-drift-detector/, 'snippet marker must be present so the bash test can extract it');
+    assert.match(doc, /DRIFT_EXIT=0[\s\S]+?\|\| DRIFT_EXIT=\$\?/, 'set -e-safe capture pattern required');
     // The four exit-code branches are required for the case-statement contract.
     for (const branch of ['0)', '1)', '3)', '*)']) {
-      assert.ok(agents.includes(`    ${branch}`) || agents.includes(`   ${branch}`),
-        `expected case branch '${branch}' in AGENTS.md snippet`);
+      assert.ok(doc.includes(`    ${branch}`) || doc.includes(`   ${branch}`),
+        `expected case branch '${branch}' in the runbook snippet`);
     }
   });
 });
