@@ -122,6 +122,65 @@ for the annotated list. Notes:
   deprecation notice; canonical wins). `AUDIT_STORE=postgres` without a DSN
   fails fast.
 
+## Runtime details & operations
+
+(Stubbed from AGENTS.md — operational depth lives here, not in the always-loaded
+context.)
+
+**Seams** (mirror `anthropic-client.mjs`): [`scripts/lib/openai-client.mjs`](../scripts/lib/openai-client.mjs)
+`createOpenAIClient({purpose})` returns an Azure-v1 or public `OpenAI` client by env
+presence; [`scripts/lib/embed-text.mjs`](../scripts/lib/embed-text.mjs) `embedText()`
+routes embeddings the same way. The GPT auditor swaps `responses.parse()` →
+chat-completions + `zodResponseFormat` **only** on a positive Responses-unsupported
+signal ([`openai-responses-capability.mjs`](../scripts/lib/openai-responses-capability.mjs)
+— a generic 404 stays fatal, per "never retry 404"). `azureConfig` lives in
+[config.mjs](../scripts/lib/config.mjs) (`buildAzureConfig`, fail-fast + redacted).
+
+**Role swaps**: GPT auditor → Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`,
+deployment `AZURE_OPENAI_GPT_DEPLOYMENT`); final reviewer → **Opus on Foundry**
+(`AZURE_AI_ENDPOINT`, deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT`) replacing Gemini;
+embeddings → Azure `text-embedding-3-small` (`dimensions: 768`).
+
+**Vector-space safety**: embeddings are only comparable within one provider's space.
+Adopting Azure on a Gemini-built index is **refused** (provenance guard in
+`neighbourhood-query.mjs`); rebuild once with `npm run arch:refresh` +
+`npm run security:refresh`.
+
+**Foundry Claude API shape** (verified live 2026-06-05): Foundry serves Claude as the
+**native Anthropic API** at `…/anthropic/v1/messages` with `Authorization: Bearer`, so
+`AZURE_CLAUDE_API_SHAPE` defaults to `anthropic` (the `openai` value is for a rare
+OpenAI-shaped Foundry deployment). Both Anthropic-shaped paths (public Opus + Foundry
+Claude) **stream** — `max_tokens` (32000) exceeds the SDK's non-streaming ceiling, so a
+plain `messages.create()` throws "Streaming is required…". Deployments: `claude-opus-4-7`
+(reviewer — 100K TPM, holds a full audit transcript; the older `claude-opus-4-6` at
+10K TPM 429s unrecoverably on big audits), `claude-sonnet-4-6` (summaries). GPT auditor
+deployment falls back to a concrete `OPENAI_AUDIT_MODEL` (`gpt-5.5`; the prior
+`gpt-5.3-chat` is 10K TPM, retires 2026-06-29) when `AZURE_OPENAI_GPT_DEPLOYMENT` unset.
+
+**Arch-index summaries route to Sonnet** via Foundry (`summarise.mjs` /
+`summarise-domains.mjs` → `createAnthropicClient({baseURL})`, deployment
+`AZURE_FOUNDRY_SUMMARY_DEPLOYMENT`, default `claude-sonnet-4-6`). `claude-haiku-4-5`
+exists on Foundry but summaries stay on Sonnet: Haiku here is 10K TPM / 10 RPM vs
+Sonnet's 200K / 200, and `arch:refresh` is a hundreds-of-calls batch where Azure
+deployment quota — not per-token cost — is the binding constraint.
+
+**Postgres**: still just a DSN. `node scripts/setup-postgres.mjs --ensure-local` is a
+**guided** preflight — detects `psql`, prints the `winget`/`choco`/`apt`/`brew`
+command if missing (never auto-installs), then chains `--migrate`.
+
+**Rate limits**: fresh Azure deployments often ship tiny default quotas; the
+`gd-ai-dev-aif` workhorses sit at **100K TPM / 100 RPM** (`gpt-5.5`, `claude-opus-4-7`),
+`claude-sonnet-4-6` at 200K/200, `text-embedding-3-small` at 100K/600. `npm run
+azure:limits` probes each deployment's live TPM/RPM + reset window. Management (opt-in,
+no-op on the public path): a global in-flight concurrency cap
+([`scripts/lib/azure-throttle.mjs`](../scripts/lib/azure-throttle.mjs),
+`AZURE_MAX_CONCURRENCY`, default 4 — TPM-bound on large GPT passes; raise toward 6–8 for
+RPM-bound batch work) paces the burst sources (the embedder's 25-wide `Promise.all`,
+parallel audit passes); the SDK clients run with `maxRetries` (`AZURE_MAX_RETRIES`,
+default 6) honouring `Retry-After` / `x-ratelimit-reset-*`. A single call larger than
+the per-minute TPM can't be fixed client-side — raise the deployment quota in the
+Foundry portal. RPM is as binding as TPM for batched work (embeddings/summaries).
+
 ## Disabling / rollback
 
 Unset `AZURE_OPENAI_ENDPOINT`. Every seam reverts to its public construction —

@@ -864,81 +864,28 @@ audit trail: [`docs/completed/azure-work-profile.md`](docs/completed/azure-work-
 | Embeddings | Gemini `gemini-embedding-001` | Azure `text-embedding-3-small` (`dimensions: 768`) |
 
 **Seam (mirrors `anthropic-client.mjs`)**: [`scripts/lib/openai-client.mjs`](scripts/lib/openai-client.mjs)
-`createOpenAIClient({purpose})` returns an Azure-v1 or public `OpenAI` client by
-env presence; [`scripts/lib/embed-text.mjs`](scripts/lib/embed-text.mjs)
-`embedText()` routes embeddings the same way. The GPT auditor swaps
-`responses.parse()` → chat-completions + `zodResponseFormat` **only** on a
-positive Responses-unsupported signal ([`openai-responses-capability.mjs`](scripts/lib/openai-responses-capability.mjs)
-— a generic 404 stays fatal, per the "never retry 404" rule). `azureConfig` lives
-in [config.mjs](scripts/lib/config.mjs) (`buildAzureConfig`, fail-fast + redacted).
+`createOpenAIClient({purpose})` + [`embed-text.mjs`](scripts/lib/embed-text.mjs)
+`embedText()` route to Azure-v1 or public by env presence; `azureConfig` in
+[config.mjs](scripts/lib/config.mjs). Wire deployment comes from the
+`AZURE_*_DEPLOYMENT` vars while `OPENAI_AUDIT_MODEL` / `CLAUDE_FINAL_REVIEW_MODEL`
+stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
+`MODEL_CATALOG_REFRESH` auto-skips under Azure.
 
-**Deployment names vs sentinels**: `OPENAI_AUDIT_MODEL` /
-`CLAUDE_FINAL_REVIEW_MODEL` stay logical sentinels (logging/pricing); the wire
-deployment comes from the `AZURE_*_DEPLOYMENT` vars — this dodges the
-`gpt-5.3 → latest-gpt` remap footgun. `MODEL_CATALOG_REFRESH` auto-skips under
-Azure.
+**Load-bearing gotchas** (the operational depth is in the guide):
+- **Vector-space safety**: adopting Azure on a Gemini-built index is **refused**
+  (provenance guard in `neighbourhood-query.mjs`); rebuild once with
+  `npm run arch:refresh` + `npm run security:refresh`.
+- **Final-reviewer precedence** (top wins): `--provider` → `FINAL_REVIEW_PROVIDER`
+  → Gemini (if `GEMINI_API_KEY`) → Azure `azure-claude` (only when the profile is
+  active) → public Opus. A stray `AZURE_OPENAI_ENDPOINT` no longer silently hijacks
+  the reviewer; persist with `gemini-review.mjs set-provider azure-claude`.
+- **Arch-index summaries stay on Sonnet** (not Haiku) under Azure — deployment quota,
+  not per-token cost, is the binding constraint on the `arch:refresh` batch.
 
-**Vector-space safety**: embeddings are only comparable within one provider's
-space. Adopting Azure on a Gemini-built index is **refused** (provenance guard
-in `neighbourhood-query.mjs`); rebuild once with `npm run arch:refresh` +
-`npm run security:refresh`.
-
-**Final-reviewer precedence** (top wins): `--provider` flag → `FINAL_REVIEW_PROVIDER`
-persistent setting → **Gemini** (when `GEMINI_API_KEY` present) → Azure
-(`azure-claude`, only when the profile is active) → public Claude Opus. The
-per-repo default stack is **GPT auditor + Gemini reviewer**; a *configured*
-Azure profile no longer silently hijacks the reviewer (a stray
-`AZURE_OPENAI_ENDPOINT` in the environment used to reroute a private-repo review
-to Foundry Opus). To make a repo use Azure permanently, persist the setting:
-`node scripts/gemini-review.mjs set-provider azure-claude` (writes
-`FINAL_REVIEW_PROVIDER=azure-claude` to the repo `.env`; `set-provider default`
-reverts). The two Anthropic-shaped paths (public Opus + Foundry Claude) **stream**
-the response — `max_tokens` (32000) exceeds the SDK's non-streaming ceiling, so a
-plain `messages.create()` throws "Streaming is required…". **Verified live**
-(2026-06-05): Foundry serves
-Claude as the **native Anthropic API** at `…/anthropic/v1/messages` with
-`Authorization: Bearer` — so `AZURE_CLAUDE_API_SHAPE` defaults to `anthropic`
-(the `openai` value is for a rare OpenAI-shaped Foundry deployment). Deployments:
-`claude-opus-4-7` (reviewer — 100K TPM, large enough to hold a full audit
-transcript in one call; the older `claude-opus-4-6` at 10K TPM can 429
-unrecoverably on big audits), `claude-sonnet-4-6` (summaries). GPT auditor
-deployment falls back to a concrete `OPENAI_AUDIT_MODEL` (`gpt-5.5`; the prior
-`gpt-5.3-chat` is 10K TPM and retires 2026-06-29) when
-`AZURE_OPENAI_GPT_DEPLOYMENT` is unset.
-
-**Arch-index summaries on Azure** route to **Sonnet** via Foundry
-(`summarise.mjs` / `summarise-domains.mjs` → `createAnthropicClient({baseURL})`,
-deployment `AZURE_FOUNDRY_SUMMARY_DEPLOYMENT`, default `claude-sonnet-4-6`).
-`claude-haiku-4-5` now *exists* on Foundry, but summaries deliberately stay on
-Sonnet: Haiku here is 10K TPM / 10 RPM vs Sonnet's 200K / 200, and `arch:refresh`
-is a hundreds-of-calls batch where Azure deployment quota — not per-token cost —
-is the binding constraint. (The original boundary was "Azure has no Haiku"; the
-availability changed, the decision shouldn't.)
-
-**Postgres**: still just a DSN (local now, AWS/Azure-managed later, no code
-change). `node scripts/setup-postgres.mjs --ensure-local` is a **guided**
-preflight — detects `psql`, prints the `winget`/`choco`/`apt`/`brew` command if
-missing (never auto-installs), then chains `--migrate`. Legacy
-`AUDIT_POSTGRES_URL` / `AUDIT_POSTGRES_SSL_MODE` are accepted as back-compat
-aliases (one-time notice; canonical wins). `AUDIT_STORE=postgres` without a DSN
-fails fast.
-
-**Rate limits**: fresh Azure deployments often ship with tiny default quotas, but
-the `gd-ai-dev-aif` workhorses now sit at **100K TPM / 100 RPM** (`gpt-5.5`
-auditor, `claude-opus-4-7` reviewer), with `claude-sonnet-4-6` at 200K/200 and
-`text-embedding-3-small` at 100K/600. `npm run azure:limits` probes each
-deployment and prints its live TPM/RPM + reset window. Management (all opt-in,
-no-op on the public path): a global in-flight concurrency cap ([`scripts/lib/azure-throttle.mjs`](scripts/lib/azure-throttle.mjs),
-`AZURE_MAX_CONCURRENCY`, default 4 — TPM-bound on the large GPT passes; raise
-toward 6–8 for RPM-bound batch work) paces the burst sources (the embedder's
-25-wide `Promise.all`, parallel audit passes), and the OpenAI/Anthropic SDK
-clients run with `maxRetries` (`AZURE_MAX_RETRIES`, default 6) so 429s are
-absorbed honouring Azure's `Retry-After` / `x-ratelimit-reset-*` headers. A
-single call larger than the per-minute TPM can't be fixed client-side — raise
-the deployment quota in the Foundry portal. RPM is as binding as TPM for batched
-work (embeddings/summaries), so raise both.
-
-Template: [`defaults/work-profile.env.example`](defaults/work-profile.env.example).
+→ **Setup, env-var reference, provider-precedence detail, Foundry-Anthropic API shape,
+deployment quotas, rate-limits + throttling, rollback**: [`docs/azure-work-profile.md`](docs/azure-work-profile.md)
+(guide) + [`docs/completed/azure-work-profile.md`](docs/completed/azure-work-profile.md)
+(plan/audit). Template: [`defaults/work-profile.env.example`](defaults/work-profile.env.example).
 
 ## Cross-Skill Data Loop
 
