@@ -1,5 +1,38 @@
 # Project Status Log
 
+## 2026-06-27 — Fix: jsonb-array write corruption from the supabase-js→pg migration (M3)
+
+### Changes
+- **Root cause**: the postgres-parity M3 migration (`d1ee5cc`, 2026-05-21) replaced
+  supabase-js/PostgREST (which implicitly JSON-serialized request bodies) with the
+  `pg` driver, which does **not**. A jsonb **array** column bound as a raw JS array
+  binds as a Postgres array literal → `22P02 invalid input syntax for type json` for
+  non-empty content (write silently caught → `sessionId:null`), and an empty `[]`
+  lands as jsonb `{}`. Object-jsonb columns are unaffected (node-postgres auto-serializes objects).
+- **Discovered while** field-testing the new `click_path` capture — a live write→read
+  round-trip failed, then a DB-wide scan found the same signature on `plans.focus_areas`
+  (84/211 rows `{}`), `plans.principles_cited` (84/211), and `persona_test_sessions.findings` (1).
+- **Fix**: `JSON.stringify` at every array-jsonb call site (matches `store/security.mjs`):
+  9 columns across `store/persona.mjs` (findings, click_path), `store/plans-ship.mjs`
+  (principles_cited, focus_areas, dom_contract_types, block_reasons), `store/debt.mjs`
+  (affected_files, affected_principles, content_aliases).
+- **Repair migration** `20260627130000_repair_jsonb_array_corruption.sql` — resets the
+  `{}`-corrupted rows back to `[]` (idempotent; only touches object-typed array columns).
+  **Not auto-applied to the shared DB** — run `setup-postgres.mjs --migrate` deliberately.
+- **Regression guard** `tests/store-jsonb-array-serialization.test.mjs` — source scan
+  asserting every array-jsonb column writer uses `JSON.stringify`.
+
+### Impact
+- Persona-test session recording (with non-empty findings) and plan registration (with
+  non-empty focus_areas/principles_cited) have been **silently failing or storing `{}`
+  since 2026-05-21**. This fix restores them and unblocks the new `click_path` capture.
+
+### Verification
+- Live write→sanitize→read→reachability-evidence round-trip passes (probe, cleaned up);
+  full suite 3838 pass / 0 fail.
+
+---
+
 ## 2026-06-27 — Persona click-path capture → nav-audit reachability seeding (built via `/cycle`)
 
 ### Changes

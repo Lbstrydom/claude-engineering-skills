@@ -28,8 +28,13 @@ export async function upsertPlan(repoId, plan) {
       path: plan.path,
       skill: plan.skill,
       status: plan.status || 'draft',
-      principles_cited: plan.principlesCited || [],
-      focus_areas: plan.focusAreas || [],
+      // jsonb ARRAY columns MUST be JSON-serialized for the `pg` driver — a raw JS
+      // array binds as a Postgres array literal → `22P02 invalid input syntax for
+      // type json` (non-empty) or silently stores `{}` (empty). Regression from the
+      // supabase-js→pg migration (postgres-parity M3), which lost PostgREST's
+      // implicit JSON serialization. See store/security.mjs for the same convention.
+      principles_cited: JSON.stringify(plan.principlesCited || []),
+      focus_areas: JSON.stringify(plan.focusAreas || []),
       commit_sha: plan.commitSha || null,
       checksum: plan.checksum || null,
       updated_at: new Date().toISOString(),
@@ -113,7 +118,7 @@ export async function recordRegressionSpec(repoId, spec) {
     description: spec.description,
     commit_sha: spec.commitSha || null,
     assertion_count: spec.assertionCount || 0,
-    dom_contract_types: spec.domContractTypes || [],
+    dom_contract_types: JSON.stringify(spec.domContractTypes || []), // jsonb array — stringify (M3 regression)
     source_kind: spec.sourceKind,
     source_finding_id: spec.sourceFindingId || null,
     source_finding_type: spec.sourceFindingType || null,
@@ -413,7 +418,7 @@ export async function recordShipEvent(repoId, event) {
       commit_sha: event.commitSha || null,
       branch: event.branch || null,
       outcome: event.outcome,
-      block_reasons: event.blockReasons || [],
+      block_reasons: JSON.stringify(event.blockReasons || []), // jsonb array — stringify (M3 regression)
       open_p0_count: event.openP0Count || 0,
       open_p1_count: event.openP1Count || 0,
       missing_spec_count: event.missingSpecCount || 0,
