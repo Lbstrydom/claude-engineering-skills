@@ -475,62 +475,25 @@ through `resolveModel()`.
 | `latest-flash`      | `gemini-flash-latest`                       |
 | `latest-flash-lite` | `gemini-flash-lite-latest`                  |
 
-**Resolution order** in `resolveModel(modelId)`:
-1. Apply `DEPRECATED_REMAP` — stale concrete IDs (`gpt-5.2`, `gemini-3-flash`,
-   `claude-opus-3`, …) are rewritten to a sentinel with a one-time warning.
-2. If the result is a sentinel, merge live catalog ∪ `STATIC_POOL`, then pick
-   the newest entry matching the tier. Google's `gemini-{tier}-latest` alias
-   is authoritative (short-circuits version heuristics).
-3. If result is concrete, return as-is.
+**Resolution** (`resolveModel`): stale concrete IDs → `DEPRECATED_REMAP` → sentinel
+(one-time warning); a sentinel picks the newest tier match from live-catalog ∪
+`STATIC_POOL` (Google's `gemini-{tier}-latest` alias is authoritative); concrete IDs
+pass through. The heavy LLM entry points (audit / brainstorm / gemini-review) call
+`refreshModelCatalog()` + re-resolve, so new provider models are picked up
+automatically — no manual `STATIC_POOL` edit needed. `MODEL_CATALOG_REFRESH=skip`
+opts out (air-gapped CI); silent fallback to the static pool on network failure.
+Self-check: `node scripts/lib/model-resolver.mjs resolve | catalog`.
 
-**Live catalog (always-on for audit/brainstorm/gemini-review)**: the three
-heavy LLM entry points — `scripts/openai-audit.mjs`, `scripts/brainstorm-round.mjs`,
-`scripts/gemini-review.mjs` — call `await refreshModelCatalog()` at the top
-of their `main()`. The audit + gemini scripts then RE-RESOLVE the sentinel
-against the freshly-populated live catalog and reassign their `MODEL` (and
-`CLAUDE_OPUS_MODEL`) `let` bindings, so providers' newest models are picked
-up automatically — no manual `STATIC_POOL` updates required when a new
-GPT/Claude/Gemini ships.
-
-The startup log surfaces an upgrade when it fires:
-
-```
-  [model-resolver] upgraded MODEL gpt-5.5 → gpt-5.6 (live catalog newer than STATIC_POOL)
-```
-
-Operators can disable this with `MODEL_CATALOG_REFRESH=skip` (air-gapped
-CI / scarce API quota); resolution then stays at the module-load static-pool
-value. Silent on network failure — falls back to static pool cleanly.
-
-Other scripts (utility CLIs that don't make heavy LLM calls) skip the
-refresh to keep their startup latency low. They use the static-pool value
-which lags but never breaks.
-
-CLI self-check:
-
-```bash
-node scripts/lib/model-resolver.mjs resolve             # show current resolution
-node scripts/lib/model-resolver.mjs catalog             # live catalog delta vs static
-```
-
-**Anti-patterns to avoid:**
+**Anti-patterns (load-bearing):**
 - Do NOT pin concrete model IDs in new code — use a sentinel (`latest-*`).
-- Do NOT drop `-preview` suffixes from Gemini 3 IDs without verifying via
-  `curl https://generativelanguage.googleapis.com/v1beta/models?key=$KEY`.
-  The bare `gemini-3-flash` / `gemini-3.1-pro` have never shipped — Google
-  returns 404.
-- Do NOT retry 404. It's a client error (model not found). `classifyLlmError`
-  treats any 4xx (except 429) as non-retryable.
-- When you catch and rewrap an LLM error, surface `err.status` and the real
-  provider message. Don't collapse to `"API error ${status}"` — the provider's
-  `error.message` is what tells you which model wasn't found.
+- Do NOT drop `-preview` from Gemini 3 IDs unverified — bare `gemini-3-flash` /
+  `gemini-3.1-pro` never shipped (Google 404s). Verify via the `…/v1beta/models` list.
+- Do NOT retry 404 — `classifyLlmError` treats any 4xx (except 429) as non-retryable.
+- When rewrapping an LLM error, surface `err.status` + the real provider
+  `error.message` — don't collapse to `"API error ${status}"` (it names the bad model).
 
-**Refreshing the static pool** (rarely needed since the live-catalog
-refresh handles new releases automatically): only update `STATIC_POOL`
-when supporting an air-gapped scenario or when a new MAJOR version's ID
-shape isn't recognised by the resolver's family-detection heuristics.
-Edit `STATIC_POOL` + `DEPRECATED_REMAP` in `scripts/lib/model-resolver.mjs`
-and run `node scripts/lib/model-resolver.mjs resolve` to verify.
+→ Resolution-order detail, live-catalog mechanics, startup-log example, static-pool
+maintenance: [`docs/model-resolution.md`](docs/model-resolution.md).
 
 ## Memory-Health Gate
 
