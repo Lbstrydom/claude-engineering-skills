@@ -98,7 +98,6 @@ import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
 import { detectRepoStack, detectPythonEnvironmentManager } from './lib/repo-stack.mjs';
 import { StackProfileSchema, ReachabilityEvidenceRequestSchema, ReachabilityEvidenceResponseSchema } from './lib/schemas.mjs';
 import { recommendSkills, renderRecommendationCard } from './lib/skill-recommender.mjs';
-import { closePool } from './lib/db/client.mjs';
 import { z } from 'zod';
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
@@ -858,9 +857,8 @@ async function cmdRecommendSkills() {
 
   const recommendations = recommendSkills({ changedFiles, hasLiveUrl, auditFindings, planLenses, unlockedHighFix, justRan, max });
   const card = renderRecommendationCard(recommendations);
-  // Release the pg pool so this one-shot CLI exits promptly — the shared pool's
-  // 30s idle timeout would otherwise linger, and /audit-code calls this at its exit.
-  try { await closePool(); } catch { /* never block the recommendation on teardown */ }
+  // The pool now exits-on-idle (db/client.mjs allowExitOnIdle), so this one-shot
+  // CLI ends promptly without an explicit teardown.
   if (argOption('format') === 'human') { process.stdout.write(card); return; }
   emit({ ok: true, hasLiveUrl, recommendations, card });
 }

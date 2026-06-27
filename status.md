@@ -1,5 +1,18 @@
 # Project Status Log
 
+## 2026-06-27 — db pool: allowExitOnIdle so one-shot CLIs exit promptly
+
+Systemic fix for the ~30s exit-linger on every cross-skill DB command (surfaced while
+building the recommender). The shared `pg.Pool` had `idleTimeoutMillis: 30000` with no
+`allowExitOnIdle`, so the pool kept the event loop alive for the full timeout after a
+command's queries finished. Added `allowExitOnIdle: true` (`scripts/lib/db/client.mjs`) —
+safe under our CLI-per-invocation model (no long-lived server; the test runner keeps its
+own loop alive so suites never end early). `recommend-skills` 30s→0.7s, `get-reachability-evidence`
+(called by `/nav-audit --bootstrap`) 30s→0.35s. Removed the now-redundant scoped `closePool`
+from `recommend-skills` (the seam fix supersedes the band-aid). Full suite 3857 pass / 0 fail.
+
+---
+
 ## 2026-06-27 — Skill recommender: à-la-carte "what's worth running next" advisor
 
 Built after a `/brainstorm --with-gemini` (both models converged hard: deterministic, cap-tiny,

@@ -256,6 +256,13 @@ export function buildPoolConfig(url, pgTypes) {
     options: '-c search_path=public',
     max: maxConns, // validated above (positive integer 1–MAX_POOL_SIZE)
     idleTimeoutMillis: 30000,
+    // Let the process exit once all pooled connections are idle, instead of the
+    // pool keeping the event loop alive for the full idleTimeoutMillis. We run
+    // CLI-per-invocation (AGENTS.md "Accepted Technical Debt" — no long-lived
+    // server), so a one-shot command (`recommend-skills`, `get-reachability-evidence`,
+    // …) exits as soon as its queries finish instead of lingering ~30s. The test
+    // runner keeps its own loop alive, so this never ends a suite early.
+    allowExitOnIdle: true,
     connectionTimeoutMillis: 10000,
     ssl: sslMode === 'disable' ? false : { rejectUnauthorized: sslMode !== 'no-verify' },
     types: customTypes,
