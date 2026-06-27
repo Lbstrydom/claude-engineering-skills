@@ -1,5 +1,32 @@
 # Project Status Log
 
+## 2026-06-27 — Field-test triage: persona click-path → nav-audit seeding (wine-cellar-app)
+
+Acted on a field report from a real walk of cellar.creathyst.com. Triage of 6 findings:
+- **#1 jsonb-array write blocker — ALREADY FIXED** by today's earlier db-seam commit (the
+  field test predated it; confirmed `serializeWriteParam` is synced into wine-cellar-app).
+- **#2 `setup-postgres --migrate` ENOENT on consumer layout — FIXED.** `REPO_ROOT` was
+  `path.resolve(__dirname,'..')`, which under the synced `scripts/.claude-skills/` layout
+  resolved to `<repo>/scripts` (missing `.audit-loop/migrations`). Now uses
+  `findRepoRootFromScript()` (correct in both layouts) + script-relative `compat-bootstrap.sql`;
+  added a `--selfcheck-relocation` handler and registered the script in `CLI_SMOKE_SET`.
+- **#3 live-draft picked the wrong primary nav layer — NOT blind-fixed.** Static analysis shows
+  the nav-ish regex DOES match `primary` and the ranking would pick `#primary-nav` IF captured,
+  so this is most likely a capture failure (the bottom bar absent from an auth-walled DOM), not a
+  ranking bug. Per the visual-audit "don't fix a live-DOM bug you can't reproduce" rule, this needs
+  a `--verify` repro against the live app — recommended as a focused follow-up.
+- **#4 no warning when drafting from an unauthenticated DOM — FIXED.** `--bootstrap --from-url`
+  without `--storage-state` now warns (stderr + `unauthenticatedDraft` payload flag + SKILL note).
+- **#5 SKILL.md raw-curl write path — STALE/non-issue.** The synced SKILL already routes through
+  `cross-skill.mjs record-persona-session` with `clickPath`; the curl blocks were replaced long ago.
+- **#6 redaction sentinel inconsistency (`%3Aparam` vs `:param`) — FIXED.** Normalized to `:param`.
+
+Net: the sanitize→read→seed core was validated as correct by the field test; the two upstream
+blockers are resolved (jsonb write earlier today, migrate-path now), and the nav-layer heuristic
+needs live repro before touching. Full suite 3846 pass / 0 fail.
+
+---
+
 ## 2026-06-27 — Root fix: jsonb-safe write seam in the db layer + persistence code-audit pass
 
 ### Changes

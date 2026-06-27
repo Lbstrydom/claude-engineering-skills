@@ -53,6 +53,7 @@ const CLI_SMOKE_SET = [
   'ux-lock-run.mjs', // WS2 deterministic /ux-lock runner
   'nav-audit.mjs',   // /nav-audit CLI orchestrator
   'visual-audit.mjs',// /visual-audit CLI orchestrator
+  'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
 ];
 
 const LIB_IMPORT_SET = [

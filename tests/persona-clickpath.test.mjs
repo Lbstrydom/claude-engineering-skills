@@ -46,17 +46,17 @@ test('sanitizeStepUrl strips origin, collapses tokens, redacts secret query, kee
   assert.equal(sanitizeStepUrl('https://x/reset/SECRETtoken123'), '/reset/:param');                  // auth keyword
   assert.equal(sanitizeStepUrl('https://x/reset-password/abc'), '/reset-password/:param');            // compound slug
   assert.equal(sanitizeStepUrl('https://x/users/jane%40example.com'), '/users/:param');               // encoded email
-  assert.match(sanitizeStepUrl('https://x/login?code=123456&otp=999&view=cellar'), /code=%3Aparam.*otp=%3Aparam.*view=cellar/); // short tokens redacted, routing kept
+  assert.match(sanitizeStepUrl('https://x/login?code=123456&otp=999&view=cellar'), /code=:param.*otp=:param.*view=cellar/); // short tokens redacted, routing kept
   assert.equal(sanitizeStepUrl('https://x/#/wines/42'), '/#/wines/42');                                // hash-route preserved; short id is not a secret
   assert.equal(sanitizeStepUrl('https://x/#/wines/a1b2c3d4-e5f6-7890-abcd-ef1234567890'), '/#/wines/:param'); // uuid in hash route collapsed
-  assert.match(sanitizeStepUrl('https://x/cb#access_token=SECRET&state=ok'), /access_token=%3Aparam/); // OAuth hash redacted
+  assert.match(sanitizeStepUrl('https://x/cb#access_token=SECRET&state=ok'), /access_token=:param/); // OAuth hash redacted
   assert.equal(sanitizeStepUrl('mailto:a@b.com'), '');                                                 // non-http → empty
 });
 
 test('sanitizeStepUrl: a hash ROUTE with its own query is not mangled as an OAuth token bag (Gemini HIGH)', () => {
   // `#/wines?view=today` starts with `/` → it is a SPA route, not `#token=…`.
   assert.equal(sanitizeStepUrl('https://x/#/wines?view=today'), '/#/wines?view=today');
-  assert.equal(sanitizeStepUrl('https://x/#/wines/42?code=123456'), '/#/wines/42?code=%3Aparam'); // route path kept, secret query redacted
+  assert.equal(sanitizeStepUrl('https://x/#/wines/42?code=123456'), '/#/wines/42?code=:param'); // route path kept, secret query redacted
 });
 
 test('sanitizeStepUrl: parsed-protocol guard drops control-char-obfuscated schemes (Gemini LOW)', () => {

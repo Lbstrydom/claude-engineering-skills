@@ -87,6 +87,17 @@ async function main() {
       const draft = draftContractFromLive(report.liveEvidence);
       draftNavLayers = draft.navLayers;
       observedTargets = draft.observedTargets;
+      // Capture-honesty (field-test #4): an auth-gated app renders its primary nav
+      // only AFTER login, so a draft from an unauthenticated shell silently mis-picks
+      // the primary layer. We can't know the app is gated, so warn whenever no auth
+      // state was supplied — the draft is a HYPOTHESIS to review, never trusted.
+      if (!args.storageState) {
+        process.stderr.write(
+          '[nav-audit] ⚠ drafted WITHOUT --storage-state: if this app is auth-gated, its primary nav\n' +
+          '            may not have rendered, so the drafted navLayers can be wrong (review before committing).\n' +
+          '            Re-run `--bootstrap --from-url <url> --storage-state <auth.json> --force` authenticated.\n'
+        );
+      }
     }
     // Seed personaIntents from REAL reachability evidence (the path personas walked
     // in /persona-test) when PERSONA_TEST_REPO_NAME is set. Any failure (cloud off,
@@ -94,7 +105,7 @@ async function main() {
     const personaIntents = seedPersonaIntents(process.env.PERSONA_TEST_REPO_NAME, bootUrl);
     const { contract, inferredUtility } = bootstrapContract({ destinations: destinations.map((d) => d.id), personaIntents, draftNavLayers, observedTargets });
     const written = writeContract(root, contract);
-    const payload = { ok: true, mode: 'bootstrap', written, inferredUtility, adapters, draftedFrom: bootUrl || null, navLayers: contract.navLayers, personaIntents: personaIntents.length };
+    const payload = { ok: true, mode: 'bootstrap', written, inferredUtility, adapters, draftedFrom: bootUrl || null, navLayers: contract.navLayers, personaIntents: personaIntents.length, unauthenticatedDraft: Boolean(bootUrl && !args.storageState) };
     const layerNote = draftNavLayers ? ` · drafted navLayers from ${bootUrl} (primary: ${draftNavLayers.primary.join(',') || '—'}; secondary: ${draftNavLayers.secondary.join(',') || '—'})` : '';
     writeOutput(payload, args.out, `[nav-audit] bootstrap → ${written}${layerNote}`);
     process.exit(0);

@@ -116,7 +116,12 @@ export function sanitizeStepUrl(rawUrl) {
       hash = `#${collapsePath(frag.split('/'))}`;
     }
   }
-  return redactSecrets(`${path}${q ? `?${q}` : ''}${hash}`).text;
+  // Uniform redaction sentinel: URLSearchParams percent-encodes the `:` in a
+  // redacted query/hash value (`%3Aparam`), while path segments stay `:param`.
+  // Normalize so BOTH read `:param` (field-test #6 — nav-audit's normalizer then
+  // sees one sentinel). Only our own sentinel is rewritten; a kept routing value's
+  // literal `:` encodes as `%3A<other>` and is untouched.
+  return redactSecrets(`${path}${q ? `?${q}` : ''}${hash}`).text.replace(/%3Aparam/gi, ':param');
 }
 
 /**

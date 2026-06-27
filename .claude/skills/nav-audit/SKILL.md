@@ -92,6 +92,10 @@ reached URL to a destination, and emits intents with `source:"persona-test-evide
 any reader failure (cloud off, no evidence) just seeds nothing and bootstrap proceeds.
 The `--from-url` `navLayers` drafter prefers a sticky multi-target **bar** over a
 hamburger/drawer **toggle** for `primary` (a role-less JS-built bottom bar still wins).
+**Auth-gated apps: pass `--storage-state <auth.json>`.** An app whose primary nav renders
+only after login will draft from the logged-out shell and mis-pick `primary`; without an
+auth state the run warns (`unauthenticatedDraft`) and you should re-run authenticated. The
+drafted `navLayers` is always a hypothesis to review before committing, never trusted.
 
 ### Phase 1 — Extract the nav surface (automatic)
 `node scripts/nav-audit.mjs [--scope diff|full]` detects nav affordances by

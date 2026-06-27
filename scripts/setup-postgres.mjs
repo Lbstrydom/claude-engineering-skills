@@ -32,10 +32,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { findRepoRootFromScript } from './lib/assert-repo-root.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const REPO_ROOT = path.resolve(__dirname, '..');
+// Resolve the CONSUMER repo root regardless of layout — source `scripts/` OR the
+// synced `scripts/.claude-skills/`. `path.resolve(__dirname, '..')` is WRONG under
+// the isolated layout (it lands on `scripts/`, so `--migrate` failed with ENOENT
+// `scripts/.audit-loop/migrations` in consumers). findRepoRootFromScript walks up to
+// the `scripts` ancestor and returns the dir above it — correct in both layouts
+// (matches how cross-skill.mjs / nav-audit.mjs resolve paths).
+const REPO_ROOT = findRepoRootFromScript(import.meta.url) || path.resolve(__dirname, '..');
 
 // Audit-loop migrations live at `supabase/migrations/` in the canonical
 // claude-engineering-skills source repo, and at `.audit-loop/migrations/`
@@ -49,7 +56,9 @@ const MIGRATIONS_DIR_LEGACY = path.join(REPO_ROOT, 'supabase', 'migrations');
 const MIGRATIONS_DIR = fs.existsSync(MIGRATIONS_DIR_PRIVATE)
   ? MIGRATIONS_DIR_PRIVATE
   : MIGRATIONS_DIR_LEGACY;
-const BOOTSTRAP_SQL = path.join(REPO_ROOT, 'scripts', 'lib', 'db', 'compat-bootstrap.sql');
+// compat-bootstrap.sql is synced ALONGSIDE this script (lib/db/ sits next to it in
+// both layouts), so resolve it script-relative, not repo-relative.
+const BOOTSTRAP_SQL = path.join(__dirname, 'lib', 'db', 'compat-bootstrap.sql');
 const EXPECTED_SCHEMA_PATH = path.join(REPO_ROOT, 'tests', 'fixtures', 'expected-schema.json');
 
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
@@ -702,6 +711,9 @@ async function runEnsureLocal() {
 }
 
 async function main() {
+  // CLI smoke contract — proves imports + layout-aware path resolution survive
+  // relocation into a consumer's scripts/.claude-skills/ (AGENTS.md CLI_SMOKE_SET).
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   const args = parseArgs(process.argv.slice(2));
 
   // --ensure-local runs BEFORE getPool() (the whole point is to detect a
