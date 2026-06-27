@@ -825,25 +825,19 @@ final review, to empirically test whether a second final gate is worth keeping.
   active Azure profile** — Claude/Fable/Mythos aren't on Foundry (load-bearing
   guard). The shadow **never gates the build** — its verdict is logged to the
   `--out` `_shadow` block but never touches `gemini_verdict`.
-- **Attribution + persistence** (needs `--run-id`, wired by `/audit-code`):
-  each finding gets `audit_findings.source_model` (resolved concrete id) +
-  `bucket ∈ {both, primary-only, shadow-only}` (the diff of the two reviewers by
-  semantic hash). `audit_runs` records `final_review_model`,
-  `final_review_shadow_model`, and shadow token/latency cost. Persistence is an
-  **idempotent replace** (delete+insert in one tx, keyed by `run_id`), so reruns
-  don't double-count. Primary persistence is **decoupled** from the shadow — a
-  skipped/failed shadow never suppresses primary telemetry.
-- **Measure**: `node scripts/cross-skill.mjs final-review-stats --repo <name>`
-  → per-`source_model` × `bucket` × `severity` DISTINCT-fingerprint counts + the
-  shadow-only **spot-check queue** + aggregate shadow token/latency cost.
-  Adjudicate a shadow-only finding (human, sidesteps self-eval bias):
-  `final-review-adjudicate --run-id <id> --fingerprint <hash> --action <accepted|dismissed>`.
-- **Pre-registered stopping rule** (decided before data collection): collect
-  `N ≥ 20` runs for a fixed (primary, shadow) concrete-model pair. **KEEP** the
-  shadow iff human-accepted shadow-only HIGH/MEDIUM findings occur at **≥ 1 per
-  5 runs** AND token+time cost is within tolerance. **DROP** if shadow-only
-  findings are predominantly dismissed or LOW/polish ("a second gate always
-  catches something" ≠ effectiveness). Inconclusive → extend once to `N ≥ 40`.
+- **Measure** (operator how-to): `node scripts/cross-skill.mjs final-review-stats
+  --repo <name>` → per-`source_model` × `bucket` × `severity` DISTINCT-fingerprint
+  counts + the shadow-only spot-check queue + shadow token/latency cost. Adjudicate
+  a shadow-only finding (human, sidesteps self-eval bias): `final-review-adjudicate
+  --run-id <id> --fingerprint <hash> --action <accepted|dismissed>`.
+- **Pre-registered stopping rule** (load-bearing — decided before data collection):
+  collect `N ≥ 20` runs per fixed (primary, shadow) model pair; **KEEP** iff
+  human-accepted shadow-only HIGH/MEDIUM ≥ 1 per 5 runs AND cost in tolerance;
+  **DROP** if shadow-only is predominantly dismissed/LOW. Don't conflate "always
+  catches something" with effectiveness.
+
+→ Attribution schema (`source_model`, `bucket`, idempotent-replace persistence) +
+the full stopping-rule rationale: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
 
 ## Azure AI Foundry Work Profile
 
