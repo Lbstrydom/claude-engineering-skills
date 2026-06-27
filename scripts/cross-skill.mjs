@@ -53,6 +53,7 @@ import {
   getPersonaSessionsByRepo,
   getPersonaSessionsByUrl,
   getRecentFindingsByRepo,
+  getReachabilityEvidence,
   isPersonaCloudEnabled,
   // Architectural memory (Phase A)
   upsertRepoByUuid,
@@ -95,7 +96,7 @@ import { emit } from './lib/cli-io.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mjs';
 import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
 import { detectRepoStack, detectPythonEnvironmentManager } from './lib/repo-stack.mjs';
-import { StackProfileSchema } from './lib/schemas.mjs';
+import { StackProfileSchema, ReachabilityEvidenceRequestSchema, ReachabilityEvidenceResponseSchema } from './lib/schemas.mjs';
 import { z } from 'zod';
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
@@ -692,6 +693,11 @@ const RecordPersonaSessionRequestSchema = z.object({
   repoName: z.string().optional(),
   repoId: z.string().optional(),
   personaId: z.string().optional(),
+  // LENIENT at the request boundary (Gemini1-H2/Gemini2-M2): a malformed or
+  // over-length clickPath entry must NOT fail the whole session record. The cap
+  // (40), per-entry ClickPathStepSchema validation + drop-invalid, and the
+  // sanitize/redact controls all live in recordPersonaSession (store/persona.mjs).
+  clickPath: z.array(z.unknown()).optional(),
 });
 
 async function cmdRecordPersonaSession() {
@@ -765,6 +771,47 @@ async function cmdGetPersonaSessionsByRepo() {
 
   const rows = await getPersonaSessionsByRepo(parsed.data);
   emit({ ok: true, cloud: true, rows });
+}
+
+/**
+ * get-reachability-evidence — per-persona reached destinations for /nav-audit
+ * --bootstrap seeding. Cloud-off / reader-error both degrade to `{personas:[]}`
+ * (the store already swallows DB errors), so --bootstrap never aborts (R1-M5/R2-H2).
+ */
+async function cmdGetReachabilityEvidence() {
+  const repoFlag = argOption('repo');
+  const limitFlag = argOption('limit');
+  const sinceDaysFlag = argOption('since-days');
+
+  const p = repoFlag
+    ? {
+        repoName: repoFlag,
+        ...(limitFlag ? { limit: Number(limitFlag) } : {}),
+        ...(sinceDaysFlag ? { sinceDays: Number(sinceDaysFlag) } : {}),
+      }
+    : parsePayload();
+
+  const parsed = ReachabilityEvidenceRequestSchema.safeParse(p);
+  if (!parsed.success) {
+    return emitError('BAD_INPUT', '--repo <name> required (optional: --limit <n> per-persona, --since-days <d>)', { issues: parsed.error.issues });
+  }
+
+  const cloud = await isPersonaCloudEnabled();
+  if (!cloud) return emit({ ok: true, cloud: false, personas: [] });
+
+  const { personas } = await getReachabilityEvidence({
+    repoName: parsed.data.repoName,
+    ...(parsed.data.limit ? { perPersona: parsed.data.limit } : {}),
+    ...(parsed.data.sinceDays ? { sinceDays: parsed.data.sinceDays } : {}),
+  });
+  // Guarantee the structural contract before emission (R2-M2) — a reader drift
+  // never ships a malformed payload to the nav-audit consumer; degrade to empty.
+  const validated = ReachabilityEvidenceResponseSchema.safeParse({ ok: true, cloud: true, personas });
+  if (!validated.success) {
+    process.stderr.write('[cross-skill] reachability response failed its schema — emitting empty\n');
+    return emit({ ok: true, cloud: true, personas: [] });
+  }
+  emit(validated.data);
 }
 
 // /persona-test Phase 0d pre-test enrichment: recent HIGH/MEDIUM audit
@@ -1379,6 +1426,7 @@ const commands = {
   'add-persona': cmdAddPersona,
   'record-persona-session': cmdRecordPersonaSession,
   'get-persona-sessions-by-repo': cmdGetPersonaSessionsByRepo,
+  'get-reachability-evidence': cmdGetReachabilityEvidence,
   'get-persona-sessions-by-url': cmdGetPersonaSessionsByUrl,
   'get-recent-findings': cmdGetRecentFindings,
   'whoami': cmdWhoami,

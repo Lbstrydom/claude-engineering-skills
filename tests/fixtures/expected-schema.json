@@ -2214,6 +2214,13 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 22
+        },
+        {
+          "column_name": "click_path",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": "'[]'::jsonb",
+          "ordinal_position": 23
         }
       ]
     },
@@ -6008,6 +6015,12 @@
     },
     {
       "table_name": "persona_test_sessions",
+      "constraint_name": "persona_click_path_is_array",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((jsonb_typeof(click_path) = 'array'::text))"
+    },
+    {
+      "table_name": "persona_test_sessions",
       "constraint_name": "persona_test_sessions_session_id_key",
       "constraint_type": "UNIQUE",
       "definition": "UNIQUE (session_id)"
@@ -6781,6 +6794,11 @@
       "tablename": "persona_test_sessions",
       "indexname": "idx_persona_sessions_repo_id",
       "indexdef": "CREATE INDEX idx_persona_sessions_repo_id ON public.persona_test_sessions USING btree (repo_id)"
+    },
+    {
+      "tablename": "persona_test_sessions",
+      "indexname": "persona_test_sessions_repo_name_created_idx",
+      "indexdef": "CREATE INDEX persona_test_sessions_repo_name_created_idx ON public.persona_test_sessions USING btree (repo_name, created_at DESC) WHERE (repo_name IS NOT NULL)"
     },
     {
       "tablename": "persona_test_sessions",

@@ -1,5 +1,43 @@
 # Project Status Log
 
+## 2026-06-27 — Persona click-path capture → nav-audit reachability seeding (built via `/cycle`)
+
+### Changes
+- Closed the persona-test ↔ nav-audit loop: `/persona-test` now captures the
+  **sanitized click-path** each persona walked; `/nav-audit --bootstrap` seeds
+  `personaIntents` from that real reachability evidence (`source:persona-test-evidence`)
+  instead of only the static registry.
+- **Cluster A** (capture + storage + reader): `click_path jsonb` column + partial
+  index migration; `ClickPathStepSchema` (closed enum, `.strict`); a defense-in-depth
+  `sanitizeStepUrl` (scheme-drop → percent-decode → path-token + compound-auth collapse
+  → query/hash redact-by-default with routing allowlist → secret-key + OAuth-hash
+  redaction → `redactSecrets` backstop); `getReachabilityEvidence` reader; cross-skill
+  `get-reachability-evidence` command (response-schema validated).
+- **Cluster B** (nav consumption): `NavIntentSchema.source` += `persona-test-evidence`;
+  `bootstrapContract` persona-evidence seeding; `draftContractFromLive` ranking fix
+  (sticky bar > hamburger for `primary`); pure mapping extracted to `lib/nav/persona-seed.mjs`.
+
+### Files Affected
+- `supabase/migrations/20260627120000_persona_click_path.sql`, `tests/fixtures/expected-schema.json`
+- `scripts/lib/schemas.mjs`, `scripts/lib/store/persona.mjs`, `scripts/cross-skill.mjs`
+- `scripts/lib/nav/{schema,contract,bootstrap-draft,persona-seed}.mjs`, `scripts/nav-audit.mjs`
+- `skills/{persona-test,nav-audit}/SKILL.md` (+ regenerated `.claude/skills/**`)
+- `tests/persona-clickpath.test.mjs` (14 cases), `tests/learning-store-exports.test.mjs` (export-surface pin +4)
+
+### Decisions Made
+- URLs are **redact-by-default**: query/hash values are stripped unless on a short
+  non-secret `ROUTING_KEYS` allowlist — a leaked OAuth/OTP/email never reaches the cloud ledger.
+- Unnormalizable URLs are **dropped**, never seeded — a bad URL can't create a phantom destination.
+- Deferred only the false-positive "migration not in audit unit" (the auditor can't
+  ingest `.sql`; the file exists + is idempotent) and the invalid "action carries PII"
+  (action is a closed enum). All genuine GPT + Gemini findings fixed.
+
+### Verification
+- Full suite 3835 pass / 0 fail; `skills:check` IN SYNC. Consolidated Gemini gate:
+  R1 CONCERNS (3 fixed) → R2 **APPROVE** (1 LOW fixed).
+
+---
+
 ## 2026-06-26 — `/visual-audit` trust shakedown: 4 field passes on wine-cellar-app → converged
 
 ### Changes

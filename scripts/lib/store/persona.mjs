@@ -16,6 +16,140 @@
 
 import { many, one, insertReturning, upsert, updateWhere } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
+import { ClickPathStepSchema } from '../schemas.mjs';
+import { redactSecrets } from '../secret-patterns.mjs';
+
+/** Max stored click-path steps (R2-M1) — truncate, never reject the session. */
+const CLICK_PATH_CAP = 40;
+
+/**
+ * Does a URL/path segment or query value look like a secret/token/PII that must
+ * never be stored (R1-H3/H4, R2-H1)? uuid · long hex/base64 · JWT · email · long
+ * digit run. Conservative: when in doubt, collapse to `:param`.
+ * @param {string} s
+ * @returns {boolean}
+ */
+function looksSecret(s) {
+  if (typeof s !== 'string' || s.length === 0) return false;
+  // Percent-decode first so encoded secrets (`jane%40example.com`, `%2F`) can't
+  // bypass the shape checks (audit HIGH — safe-decode).
+  try { s = decodeURIComponent(s); } catch { /* malformed % — check raw */ }
+  if (s.includes('@')) return true;                                  // email
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)) return true; // uuid
+  if (/^[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\./.test(s)) return true; // JWT-ish
+  if (/^[0-9a-f]{16,}$/i.test(s)) return true;                       // long hex
+  if (/^[A-Za-z0-9+/_-]{24,}={0,2}$/.test(s) && /[0-9]/.test(s) && /[A-Za-z]/.test(s)) return true; // base64-ish token
+  if (/^\d{12,}$/.test(s)) return true;                              // long digit run (ids/cards)
+  return false;
+}
+
+/**
+ * Sanitize a step URL for storage (R1-H3/H4, R2-H1): strip origin (host can be a
+ * private staging URL), collapse token-shaped path segments + hash-route segments
+ * to `:param`, redact token-shaped query VALUES while keeping routing keys/values
+ * (so nav-audit can still recover `?view=cellar`), then a final secret-redactor
+ * backstop. Pure. Returns a relative path+query+hash, or '' on unparseable input.
+ * @param {string} rawUrl
+ * @returns {string}
+ */
+// Substring (not exact) so compound auth slugs collapse too: `/reset-password/<tok>`,
+// `/magic-link/<tok>`, `/password-reset/<tok>` → the following segment is a secret
+// whatever its shape (audit HIGH). Over-collapsing a legit `/password-settings/x`
+// segment to `:param` is the safe direction — nav-audit drops unnormalizable seeds.
+const AUTH_KEYWORD = /(reset|verify|confirm|activate|invite|magic|password|recover|otp|token|oauth|callback|unsubscribe)/i;
+// Query/fragment values are REDACTED BY DEFAULT (a short `?code=123456` / `?otp=` /
+// `?phone=` is still a secret — value-shape heuristics miss them). Only an allowlist
+// of routing keys with a short, non-secret value is preserved, so nav-audit can
+// still recover `?view=cellar` but tokens never reach the cloud ledger.
+const ROUTING_KEYS = new Set(['view', 'tab', 'page', 'panel', 'mode', 'section', 'route', 'screen', 'step', 'filter', 'sort', 'category', 'cat']);
+
+/** Redact a `k=v&…` param string: secret-shaped KEYS → `:param`; values kept only
+ *  for short non-secret routing keys, else `:param`. Used for both query + OAuth
+ *  hash fragments (`#access_token=…`). */
+function redactParams(paramStr) {
+  const out = new URLSearchParams();
+  for (const [k, v] of new URLSearchParams(paramStr)) {
+    const safeKey = looksSecret(k) ? ':param' : k;
+    const keepValue = ROUTING_KEYS.has(k.toLowerCase()) && v.length <= 32 && !looksSecret(v);
+    out.append(safeKey, keepValue ? v : ':param');
+  }
+  return out.toString();
+}
+
+/** Collapse path segments: a segment that LOOKS secret OR follows an auth-route
+ *  keyword (`/reset/<token>` → `/reset/:param`) becomes `:param`. */
+function collapsePath(segments) {
+  return segments.map((seg, i) => (
+    looksSecret(seg) || (i > 0 && AUTH_KEYWORD.test(segments[i - 1]) && seg.length > 0) ? ':param' : seg
+  )).join('/');
+}
+
+export function sanitizeStepUrl(rawUrl) {
+  if (typeof rawUrl !== 'string' || !rawUrl) return '';
+  // Non-navigable schemes aren't reached destinations (mirrors normalizeLiveTarget) —
+  // and a `javascript:`/`data:` URL is junk/risk in the ledger. Drop them.
+  if (/^(mailto:|tel:|javascript:|data:|blob:|file:)/i.test(rawUrl.trim())) return '';
+  let u;
+  try { u = new URL(rawUrl, 'http://x'); } catch { return ''; }
+  // Authoritative scheme guard: `new URL` normalizes away embedded tab/newline
+  // obfuscation (`java\nscript:` → `javascript:`) the raw regex above can't see,
+  // so re-check the PARSED protocol (audit LOW). Relative URLs inherit http:.
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return '';
+  const path = collapsePath(u.pathname.split('/'));
+  const q = redactParams(u.search);
+  // Hash disambiguation (audit HIGH): a fragment STARTING with `/` is a SPA
+  // hash-route path (`#/users/:id`, possibly with its own `?query`) — collapse the
+  // path + sanitize the query separately. A fragment with NO leading slash but
+  // carrying `=` is an OAuth/implicit-flow token bag (`#access_token=…&id_token=…`)
+  // → redact wholesale. Otherwise treat it as a bare route path.
+  let hash = '';
+  if (u.hash) {
+    const frag = u.hash.slice(1);
+    if (frag.startsWith('/')) {
+      const qIdx = frag.indexOf('?');
+      const fp = qIdx >= 0 ? frag.slice(0, qIdx) : frag;
+      const fq = qIdx >= 0 ? redactParams(frag.slice(qIdx + 1)) : '';
+      hash = `#${collapsePath(fp.split('/'))}${fq ? `?${fq}` : ''}`;
+    } else if (frag.includes('=')) {
+      hash = `#${redactParams(frag)}`;
+    } else {
+      hash = `#${collapsePath(frag.split('/'))}`;
+    }
+  }
+  return redactSecrets(`${path}${q ? `?${q}` : ''}${hash}`).text;
+}
+
+/**
+ * Build the stored click_path from a raw posted array (R1-H3/H4, R2-M1/M5, R3-H1):
+ * per-entry validate against the STRICT ClickPathStepSchema (an injected
+ * `value`/`input` key → drop), sanitize the url, redact targetText, cap to 40.
+ * @param {unknown} raw
+ * @returns {{steps: Array<{step?:number, action:string, url:string, targetText:string|null}>, dropped:number, truncated:boolean}}
+ */
+export function buildSanitizedClickPath(raw) {
+  if (!Array.isArray(raw)) return { steps: [], dropped: 0, truncated: false };
+  const steps = [];
+  let dropped = 0;
+  let truncated = false;
+  for (const entry of raw) {
+    if (steps.length >= CLICK_PATH_CAP) { truncated = true; break; } // truncate, don't reject (R2-M1)
+    const parsed = ClickPathStepSchema.safeParse(entry);
+    if (!parsed.success) { dropped += 1; continue; }     // drop-invalid (incl. .strict `value` key)
+    const s = parsed.data;
+    steps.push({
+      ...(s.step !== undefined ? { step: s.step } : {}),
+      action: s.action,
+      url: sanitizeStepUrl(s.url),
+      targetText: s.targetText != null ? redactSecrets(String(s.targetText)).text : null,
+    });
+  }
+  // Surface drops/truncation (audit MED — never lose evidence silently): both via
+  // stderr AND the structured counts the caller returns through the CLI result.
+  if (dropped || truncated) {
+    process.stderr.write(`  [persona] clickPath: stored ${steps.length}, dropped ${dropped} invalid/injected${truncated ? `, truncated at ${CLICK_PATH_CAP}` : ''}\n`);
+  }
+  return { steps, dropped, truncated };
+}
 
 /**
  * True when cloud mode is on. Under the legacy path this checked a
@@ -93,8 +227,9 @@ export async function recordPersonaSession(session) {
     return { sessionId: null, existed: false, statsUpdated: false };
   }
   let sessionId = null;
+  let clickPathMeta = null;
   try {
-    const rows = await upsert('persona_test_sessions', [{
+    const row = {
       session_id: session.sessionId,
       persona: session.persona,
       url: session.url,
@@ -118,7 +253,17 @@ export async function recordPersonaSession(session) {
       // regardless of the bare-vs-owner/repo display name. Falls back to null.
       repo_id: session.repoId || null,
       persona_id: session.personaId || null,
-    }], { onConflict: 'session_id', update: 'all', returning: ['id'] });
+    };
+    // Preserve-on-omit (R3-M1): include click_path in the upsert SET only when the
+    // caller provided it (`update:'all'` updates just the row's keys). An omitted
+    // clickPath on a re-posted session_id leaves existing evidence untouched —
+    // never writes `[]` over a real path. Sanitized/redacted/capped server-side.
+    if (session.clickPath !== undefined) {
+      clickPathMeta = buildSanitizedClickPath(session.clickPath);
+      row.click_path = clickPathMeta.steps;
+    }
+    const rows = await upsert('persona_test_sessions', [row],
+      { onConflict: 'session_id', update: 'all', returning: ['id'] });
     sessionId = rows[0]?.id || null;
   } catch (err) {
     process.stderr.write(`  [persona] recordPersonaSession failed: ${err.message}\n`);
@@ -145,7 +290,14 @@ export async function recordPersonaSession(session) {
     }
   }
 
-  return { sessionId, existed: false, statsUpdated };
+  return {
+    sessionId,
+    existed: false,
+    statsUpdated,
+    // Structured click-path outcome so callers see partial sanitization, not just
+    // a stderr line (audit MED). Absent when no clickPath was provided.
+    ...(clickPathMeta ? { clickPathStored: clickPathMeta.steps.length, clickPathDropped: clickPathMeta.dropped, clickPathTruncated: clickPathMeta.truncated } : {}),
+  };
 }
 
 /**
@@ -180,6 +332,79 @@ export async function getPersonaSessionsByRepo({ repoName, limit = 5, p0Only = f
     process.stderr.write(`  [persona] getPersonaSessionsByRepo failed: ${err.message}\n`);
     return [];
   }
+}
+
+/**
+ * Per-persona reachability evidence for /nav-audit --bootstrap seeding. Bounded by
+ * a time window (sinceDays) AND a per-persona cap (so a chatty persona can't starve
+ * others — R3-M4/Gemini2-M1) via `row_number() PARTITION BY persona`, plus an
+ * overall ceiling. Unnests each session's click_path to per-persona reached URLs
+ * (deduped by url; sessions count; most-recent non-null clickedText + lastSeen).
+ * nav-audit normalizes url→destination — the reader stays nav-agnostic. Graceful
+ * `{personas:[]}` on cloud-off / DB error (R2-H2 — never throws into --bootstrap).
+ * @param {{repoName:string, perPersona?:number, sinceDays?:number}} args
+ * @returns {Promise<{personas: Array<{persona:string, reached:Array<{url:string,clickedText:string|null,sessions:number,lastSeen:string|null}>}>}>}
+ */
+export async function getReachabilityEvidence({ repoName, perPersona = 10, sinceDays = 90 } = {}) {
+  if (!repoName || !await isCloudEnabled()) return { personas: [] };
+  const cap = Math.max(1, Math.min(perPersona, 50));
+  const days = Math.max(1, Math.min(sinceDays, 365));
+  let rows;
+  try {
+    rows = await many(
+      `WITH ranked AS (
+         SELECT persona, click_path, created_at,
+                row_number() OVER (PARTITION BY persona ORDER BY created_at DESC) AS rn
+           FROM persona_test_sessions
+          WHERE repo_name = $1
+            AND jsonb_array_length(click_path) > 0
+            AND created_at >= now() - ($2 * interval '1 day')
+       )
+       SELECT persona, click_path, created_at
+         FROM ranked
+        WHERE rn <= $3
+        ORDER BY persona, created_at DESC
+        LIMIT 500`,
+      [repoName, days, cap]
+    );
+  } catch (err) {
+    process.stderr.write(`  [persona] getReachabilityEvidence failed: ${err.message}\n`);
+    return { personas: [] };
+  }
+
+  return { personas: unnestReachabilityRows(rows) };
+}
+
+/**
+ * Pure unnest of reachability rows → per-persona reached destinations. Rows MUST be
+ * pre-sorted created_at DESC so the FIRST session reaching a url is the most recent
+ * (its clickedText/lastSeen win). Deduped by url within a persona; `sessions` counts
+ * distinct sessions reaching that url. Exported for fixture testing (no DB).
+ * @param {Array<{persona:string, click_path:Array, created_at:string}>} rows
+ * @returns {Array<{persona:string, reached:Array<{url:string,clickedText:string|null,sessions:number,lastSeen:string|null}>}>}
+ */
+export function unnestReachabilityRows(rows) {
+  const byPersona = new Map();
+  for (const r of rows || []) {
+    const path = Array.isArray(r.click_path) ? r.click_path : [];
+    const urlsInSession = new Map(); // url → most-recent-in-this-session clickedText
+    for (const step of path) {
+      const url = step && typeof step.url === 'string' ? step.url : null;
+      if (!url) continue;
+      const ct = step.targetText ?? null;
+      if (!urlsInSession.has(url) || ct != null) urlsInSession.set(url, ct ?? urlsInSession.get(url) ?? null);
+    }
+    const pm = byPersona.get(r.persona) || new Map();
+    byPersona.set(r.persona, pm);
+    for (const [url, ct] of urlsInSession) {
+      const e = pm.get(url) || { url, clickedText: null, sessions: 0, lastSeen: null };
+      e.sessions += 1;
+      if (e.lastSeen == null) { e.lastSeen = r.created_at; if (ct != null) e.clickedText = ct; }
+      else if (e.clickedText == null && ct != null) e.clickedText = ct;
+      pm.set(url, e);
+    }
+  }
+  return [...byPersona.entries()].map(([persona, pm]) => ({ persona, reached: [...pm.values()] }));
 }
 
 /**

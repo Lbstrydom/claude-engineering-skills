@@ -1,7 +1,7 @@
 # Plan: Persona Click-Path Capture → nav-audit Reachability Seeding
 
 - **Date**: 2026-06-26
-- **Status**: Approved (GPT 3-round + Gemini 2-round — see §12)
+- **Status**: Complete (2026-06-27 — built via `/cycle` autonomous, both clusters; consolidated Gemini gate APPROVE round 2). See Implementation Log.
 - **Author**: Claude + Louis
 - **Scope**: backend (DB migration + store + CLI + skill-prompt capture; no UI)
 
@@ -164,3 +164,43 @@ graph TD
 
 ### Post-approval addendum (2026-06-26)
 Folded the **#5 bootstrap container-ranking** fix into Cluster B (same `--bootstrap` seam as the persona-evidence seeding) per user direction — adds `scripts/lib/nav/bootstrap-draft.mjs` to Phase 4 + a ranking test. This is a small, additive ranking-heuristic change on already-touched files; it is covered by Cluster B's `/audit-code` gate during `/cycle` implementation rather than a fresh plan-audit round (the plan-level design — seeding contract, security, store — is unchanged). Live findings #4 + multi-state capture #3 are a separate plan: `docs/completed/nav-audit-v1.3-live-findings.md`.
+
+## Implementation Log
+
+### 2026-06-27 — built via `/cycle code` (autonomous, both clusters)
+
+**Cluster A — capture + sanitized storage + reachability reader** (3 GPT audit
+rounds, converged-by-impact):
+- `supabase/migrations/20260627120000_persona_click_path.sql` — `click_path jsonb`
+  (CHECK is-array) + `(repo_name, created_at DESC)` partial index; `expected-schema.json` updated.
+- `ClickPathStepSchema` (closed `action` enum, `.strict`, `targetText ≤ 80`) +
+  `ReachabilityEvidence{Request,Response}Schema` in `schemas.mjs`.
+- `store/persona.mjs` — `sanitizeStepUrl` (defense-in-depth: scheme-drop →
+  percent-decode → path-token + compound-auth-keyword collapse → query/hash
+  redact-by-default with `ROUTING_KEYS` allowlist → secret-key + OAuth-hash
+  redaction → `redactSecrets` backstop), `buildSanitizedClickPath`
+  (per-entry `.strict` validate + drop-invalid + cap 40 + `{steps,dropped,truncated}`),
+  preserve-on-omit write, `getReachabilityEvidence` + pure `unnestReachabilityRows`.
+- `cross-skill.mjs` — `get-reachability-evidence` command (R2-M2 response-schema
+  validated before emit); `RecordPersonaSessionRequestSchema` `clickPath` extension.
+- `persona-test` SKILL — Phase 6 clickPath capture (never typed values).
+
+**Cluster B — nav-audit consumption** (fix-gate: final → consolidated gate):
+- `NavIntentSchema.source` += `persona-test-evidence`; `bootstrapContract` seeds
+  `personaIntents` honoring `seed.source`, `requiredInLayer:null` for the human.
+- `draftContractFromLive` ranking fix (#5): a sticky multi-target **bar** outranks
+  a hamburger/drawer **disclosure** for `primary`; mobile-only hamburger still primary.
+- `nav-audit --bootstrap` seeds from `get-reachability-evidence` (any failure → no
+  seeds, bootstrap proceeds); pure mapping extracted to `lib/nav/persona-seed.mjs`
+  (`mapPersonasToIntents`/`slugifyDestination`) for testability (nav-audit `main()` is unguarded).
+
+**Deviations**: clickedText label dropped from the seeded intent (`NavIntentSchema`
+is `.strict()`, no label field — the slug intentId suffices); `lib/nav/persona-seed.mjs`
+is a new module beyond the declared `nav-audit.mjs` edit, added solely for unit-testability.
+
+**Verification**: `tests/persona-clickpath.test.mjs` (14 cases); full suite 3835 pass / 0 fail;
+`skills:check` IN SYNC. Consolidated Gemini gate: R1 CONCERNS (3 fixed — hash-route-vs-OAuth
+mangling HIGH, primary/secondary dup MED, scheme-bypass LOW) → R2 APPROVE (1 LOW fixed:
+response-schema validation). All genuine GPT findings fixed; deferred only the false-positive
+"migration not in audit unit" (auditor can't ingest `.sql`; file exists + idempotent) and the
+invalid "action carries PII" (action is a closed enum).

@@ -754,6 +754,7 @@ between the 6 skills. Every skill writes to a shared learning store via
 |--------|-------|--------|
 | `commit_sha`, `branch`, `plan_id` | `audit_runs` | `openai-audit.mjs` in `runMultiPassCodeAudit` |
 | `commit_sha`, `deployment_id` | `persona_test_sessions` | `/persona-test` Phase 6 |
+| `click_path` (sanitized jsonb) | `persona_test_sessions` | `/persona-test` Phase 6 → `get-reachability-evidence` → `/nav-audit --bootstrap` seeds `personaIntents` (`source:persona-test-evidence`). URLs are origin-stripped + secret/PII-redacted by `sanitizeStepUrl` before storage. |
 
 ### Views
 

@@ -13,6 +13,17 @@
 // drawer can be the primary nav on mobile; let the prominence rule decide.
 const SECONDARY_RE = /sub-?tabs?|secondary|breadcrumb/i;
 const PRIMARY_RE = /primary|bottom-?nav|main-?nav|navbar|tabbar/i;
+// A disclosure (hamburger/drawer/off-canvas menu) is a TOGGLE, not the
+// always-visible bar — it loses to a sticky/fixed multi-target bar for `primary`
+// (#5: a role-less JS-built sticky bottom bar must outrank a hamburger toggle), but
+// can still be primary when it's the ONLY nav (mobile-only hamburger).
+const DISCLOSURE_RE = /hamburger|drawer|burger|menu-?toggle|off-?canvas/i;
+
+/** Prominence sort: sticky/fixed first, then more distinct targets, then earliest
+ *  document order. The always-visible bar with the most links wins. */
+function byProminence(a, b) {
+  return (Number(b.sticky) - Number(a.sticky)) || (b.targets.size - a.targets.size) || (a.order - b.order);
+}
 
 /**
  * Draft a navLayers contract from live evidence (plan §4a prominence). Groups
@@ -44,23 +55,50 @@ export function draftContractFromLive(liveEvidence) {
   }
   // Keep only containers holding ≥2 distinct nav targets (drop single-button selectors).
   const multi = [...containers.values()].filter((c) => c.targets.size >= 2).sort((a, b) => a.order - b.order);
+  // Bars (always-visible nav) vs disclosures (hamburger/drawer toggles). A bar
+  // outranks a disclosure for `primary` (#5).
+  const bars = multi.filter((c) => !DISCLOSURE_RE.test(c.selector));
+  const disclosures = multi.filter((c) => DISCLOSURE_RE.test(c.selector));
 
   const primary = [];
   const secondary = [];
   const undecided = [];
-  for (const c of multi) {
+  for (const c of bars) {
     if (c.sticky || PRIMARY_RE.test(c.selector)) primary.push(c.selector);
     else if (SECONDARY_RE.test(c.selector)) secondary.push(c.selector);
     else undecided.push(c);
   }
-  // Most-prominent remaining (earliest document order) → primary; rest → secondary.
-  if (primary.length === 0 && undecided.length) primary.push(undecided.shift().selector);
+  // No explicit primary bar → promote the MOST PROMINENT bar (sticky beats
+  // non-sticky, then most targets, then earliest order) — so a role-less sticky
+  // bottom bar becomes primary over a hamburger (#5).
+  if (primary.length === 0) {
+    const pool = (undecided.length ? undecided : bars).slice().sort(byProminence);
+    const best = pool[0];
+    if (best) {
+      primary.push(best.selector);
+      const i = undecided.indexOf(best);
+      if (i >= 0) undecided.splice(i, 1);
+    }
+  }
   for (const c of undecided) secondary.push(c.selector);
+  // Disclosures → secondary, UNLESS there is no bar-primary at all (mobile-only
+  // hamburger nav) — then the most-prominent disclosure becomes primary.
+  if (primary.length === 0 && disclosures.length) {
+    const best = disclosures.slice().sort(byProminence)[0];
+    primary.push(best.selector);
+    for (const c of disclosures) if (c.selector !== best.selector) secondary.push(c.selector);
+  } else {
+    for (const c of disclosures) secondary.push(c.selector);
+  }
 
+  // A bar promoted from `bars` (the all-secondary fallback) may already sit in
+  // `secondary` — a container must never appear in BOTH layers (audit MED), so
+  // primary wins and secondary excludes it.
+  const primaryFinal = dedupe(primary);
   return {
     navLayers: {
-      primary: dedupe(primary),
-      secondary: dedupe(secondary),
+      primary: primaryFinal,
+      secondary: dedupe(secondary).filter((s) => !primaryFinal.includes(s)),
     },
     observedTargets: [...observed].filter((t) => t && t !== '<dynamic>').sort(),
   };

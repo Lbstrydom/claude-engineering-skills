@@ -13,6 +13,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { writeOutput } from './lib/file-io.mjs';
 import { readSources, extractEdges } from './lib/nav/extract.mjs';
 import { readContract, parseNavMeta, bootstrapContract, writeContract, contractExists } from './lib/nav/contract.mjs';
@@ -24,6 +25,7 @@ import { renderFindings, renderLiveFindings, renderTable, renderMermaid, renderS
 import { assembleEnvelope, writeObservedEnvelope } from './lib/nav/envelope.mjs';
 import { computeContractDigest, NAV_VERIFY_TOOL_VERSION } from './lib/nav/schema.mjs';
 import { runVerify } from './lib/nav/verify.mjs';
+import { mapPersonasToIntents } from './lib/nav/persona-seed.mjs';
 import { writeVerifyResult } from './lib/nav/verify-store.mjs';
 
 async function main() {
@@ -86,9 +88,13 @@ async function main() {
       draftNavLayers = draft.navLayers;
       observedTargets = draft.observedTargets;
     }
-    const { contract, inferredUtility } = bootstrapContract({ destinations: destinations.map((d) => d.id), draftNavLayers, observedTargets });
+    // Seed personaIntents from REAL reachability evidence (the path personas walked
+    // in /persona-test) when PERSONA_TEST_REPO_NAME is set. Any failure (cloud off,
+    // reader error, no evidence) → no seeds, and bootstrap proceeds normally (R2-H2).
+    const personaIntents = seedPersonaIntents(process.env.PERSONA_TEST_REPO_NAME, bootUrl);
+    const { contract, inferredUtility } = bootstrapContract({ destinations: destinations.map((d) => d.id), personaIntents, draftNavLayers, observedTargets });
     const written = writeContract(root, contract);
-    const payload = { ok: true, mode: 'bootstrap', written, inferredUtility, adapters, draftedFrom: bootUrl || null, navLayers: contract.navLayers };
+    const payload = { ok: true, mode: 'bootstrap', written, inferredUtility, adapters, draftedFrom: bootUrl || null, navLayers: contract.navLayers, personaIntents: personaIntents.length };
     const layerNote = draftNavLayers ? ` · drafted navLayers from ${bootUrl} (primary: ${draftNavLayers.primary.join(',') || '—'}; secondary: ${draftNavLayers.secondary.join(',') || '—'})` : '';
     writeOutput(payload, args.out, `[nav-audit] bootstrap → ${written}${layerNote}`);
     process.exit(0);
@@ -309,6 +315,30 @@ function gitHeadSha(root) {
 }
 function gitHeadDate(root) {
   try { return execFileSync('git', ['-C', root, 'show', '-s', '--format=%cI', 'HEAD'], { encoding: 'utf-8' }).trim(); } catch { return null; }
+}
+
+/**
+ * Fetch persona reachability evidence via the cross-skill CLI boundary (the contract
+ * between persona-test and nav-audit), then map it to personaIntents (pure mapping
+ * in lib/nav/persona-seed.mjs). ANY failure (no env, cloud off, reader error, no
+ * evidence) → `[]`, and bootstrap proceeds normally (R2-H2).
+ * @param {string|undefined} repoName  PERSONA_TEST_REPO_NAME
+ * @param {string|null} bootUrl  the live URL (origin for normalization)
+ * @returns {Array<{personaId:string, intentId:string, destination:string, label:string|null, source:string}>}
+ */
+function seedPersonaIntents(repoName, bootUrl) {
+  if (!repoName) return [];
+  let personas;
+  try {
+    const csPath = fileURLToPath(new URL('./cross-skill.mjs', import.meta.url));
+    const out = execFileSync(process.execPath, [csPath, 'get-reachability-evidence', '--repo', repoName],
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const json = JSON.parse(out.trim().split('\n').filter(Boolean).pop() || '{}');
+    personas = Array.isArray(json.personas) ? json.personas : [];
+  } catch {
+    return []; // reader unavailable → seed nothing, never abort --bootstrap
+  }
+  return mapPersonasToIntents(personas, bootUrl);
 }
 
 main().catch((err) => { process.stderr.write(`[nav-audit] fatal: ${err.stack || err.message}\n`); process.exit(2); });

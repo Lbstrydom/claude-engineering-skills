@@ -84,12 +84,17 @@ const EXPECTED_EXPORTS = [
   'recordShipEvent',
   'updatePlanStatus',
   'upsertPlan',
-  // persona (5 — isPersonaCloudEnabled lives in Lifecycle)
+  // persona (9 — isPersonaCloudEnabled lives in Lifecycle)
   'getPersonaSessionsByRepo',
   'getPersonaSessionsByUrl',
   'listPersonasForApp',
   'recordPersonaSession',
   'upsertPersona',
+  // persona-clickpath → nav reachability seeding (reader + pure sanitize/unnest helpers)
+  'getReachabilityEvidence',
+  'sanitizeStepUrl',
+  'buildSanitizedClickPath',
+  'unnestReachabilityRows',
   // persona-test-candidates (3 — Phase 3 WS-PIPE1, aggregation table for
   // consistency-mode canary findings; lifecycle distinct from
   // persona_test_sessions so kept as a separate domain module)
@@ -218,6 +223,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 125);
+    assert.equal(EXPECTED_EXPORTS.length, 129);
   });
 });

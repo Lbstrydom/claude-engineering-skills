@@ -210,9 +210,9 @@ export function bootstrapContract({ destinations = [], personaIntents = [], appR
       id: seed.intentId,
       destination: seed.destination,
       approvedAnchors: [],
-      requiredInLayer: null,
+      requiredInLayer: null,                              // left for the human reviewer
       frequency: 'normal',
-      source: 'inferred',
+      source: seed.source || 'inferred',                 // persona-evidence vs inferred
     });
   }
   const contract = {

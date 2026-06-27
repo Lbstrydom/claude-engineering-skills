@@ -625,3 +625,41 @@ export const OrphanIntroducedFindingSchema = z.object({
   testCallers: z.array(z.string()).default([]),
   rationale: z.string(),
 });
+
+// ── persona-clickpath → nav reachability seeding (plan: docs/completed/persona-clickpath-nav-seeding.md) ──
+
+/**
+ * One step of the path a persona walked. `.strict()` is a SECURITY control
+ * (R2-M5/R3-H1): an injected `value`/`input` key (a typed credential/PII) is a
+ * validation ERROR, used by the store's per-entry drop-invalid — typed input
+ * values are never stored. `url` is sanitized + `targetText` redacted server-side
+ * before write (in recordPersonaSession), so this only shapes the structure.
+ */
+export const ClickPathStepSchema = z.object({
+  step: z.number().int().nonnegative().optional(),
+  action: z.enum(['click', 'navigate', 'type', 'fill', 'select', 'hover', 'scroll', 'press', 'submit', 'wait']),
+  url: z.string().min(1),
+  targetText: z.string().max(80).nullable().optional(),
+}).strict();
+
+/** Request for the `get-reachability-evidence` cross-skill command. */
+export const ReachabilityEvidenceRequestSchema = z.object({
+  repoName: z.string().min(1),
+  limit: z.number().int().positive().max(100).optional(),   // per-persona cap
+  sinceDays: z.number().int().positive().optional(),
+});
+
+/** Response contract: per-persona reached URLs (nav-audit normalizes URL→destination). */
+export const ReachabilityEvidenceResponseSchema = z.object({
+  ok: z.boolean(),
+  cloud: z.boolean(),
+  personas: z.array(z.object({
+    persona: z.string(),
+    reached: z.array(z.object({
+      url: z.string(),
+      clickedText: z.string().nullable().optional(),
+      sessions: z.number().int().nonnegative(),
+      lastSeen: z.string().nullable().optional(),
+    })),
+  })).default([]),
+});

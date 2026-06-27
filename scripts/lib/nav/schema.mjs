@@ -67,7 +67,10 @@ export const NavIntentSchema = z.object({
   approvedAnchors: z.array(z.string().min(1)).default([]),
   requiredInLayer: z.string().nullable().default(null),
   frequency: z.enum(['normal', 'high']).default('normal'),
-  source: z.enum(['declared', 'inferred']).default('declared'),
+  // 'persona-test-evidence' = seeded by /nav-audit --bootstrap from real persona
+  // reachability (click_path), a higher authority than 'inferred' but still
+  // human-reviewable (R1-H1 — without this a seeded contract fails its own schema).
+  source: z.enum(['declared', 'inferred', 'persona-test-evidence']).default('declared'),
 }).strict();
 
 export const NavPersonaSchema = z.object({

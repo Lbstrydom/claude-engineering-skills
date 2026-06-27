@@ -83,6 +83,16 @@ inferred entry marked `source:inferred` (lower CI authority until a human
 confirms). **Never a trusted baseline** — review it, fill in real persona
 intents + approved anchors, commit it.
 
+**Persona-reachability seeding (when `PERSONA_TEST_REPO_NAME` is set).** Bootstrap
+also seeds `personaIntents` from the REAL path each persona walked in `/persona-test`
+(the `click_path` evidence): it calls `get-reachability-evidence`, normalizes each
+reached URL to a destination, and emits intents with `source:"persona-test-evidence"`
+(a higher authority than `inferred`, still human-reviewable — confirm + set
+`requiredInLayer`). A URL that doesn't normalize is dropped (no false destination);
+any reader failure (cloud off, no evidence) just seeds nothing and bootstrap proceeds.
+The `--from-url` `navLayers` drafter prefers a sticky multi-target **bar** over a
+hamburger/drawer **toggle** for `primary` (a role-less JS-built bottom bar still wins).
+
 ### Phase 1 — Extract the nav surface (automatic)
 `node scripts/nav-audit.mjs [--scope diff|full]` detects nav affordances by
 **behaviour, not framework** — `<a href>`/`<Link to>`/`<NavLink>`/Next

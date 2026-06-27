@@ -540,9 +540,33 @@ node scripts/cross-skill.mjs record-persona-session --json '{
   "commitSha": "<auto-detected if omitted>",
   "deploymentId": "<optional>",
   "repoName": "<repo_name or null>",
-  "personaId": "<persona_id or null>"
+  "personaId": "<persona_id or null>",
+  "clickPath": <JSON array — the path you walked; see "Building clickPath" below>
 }'
 ```
+
+### Building `clickPath` (reachability evidence for `/nav-audit`)
+
+Across the Plan → **Act** → Reflect loop, accumulate **one entry per Act step** that
+*moved or activated something* (click / navigate / open / submit) — this is the
+path the persona actually reached, which `/nav-audit --bootstrap` seeds its contract
+from. Each entry:
+
+```json
+{ "step": <1-based step number>,
+  "action": "click|navigate|type|fill|select|hover|scroll|press|submit|wait",
+  "url": "<the page URL AFTER the step settled>",
+  "targetText": "<visible label of the control you acted on, ≤80 chars, or null>" }
+```
+
+- **NEVER include typed input values.** `targetText` is the control's *visible
+  label* (e.g. "Add bottle", "Cellar"), never what you typed. The store rejects any
+  entry carrying a `value`/`input` key and sanitizes the URL + redacts `targetText`
+  server-side — but don't send secrets in the first place.
+- Omit the field entirely (don't send `[]`) if you didn't track a path — re-posting
+  a session with `clickPath` omitted preserves any path already recorded.
+- The store caps the stored path at 40 steps and drops malformed entries; you don't
+  need to pre-trim, but keep it to the meaningful navigation steps.
 
 Response `{"ok": true, "cloud": ..., "sessionId": "<uuid>", "existed": bool, "statsUpdated": bool}`.
 **Capture `sessionId`** for Phase 6b. If `statsUpdated: false`, log a stderr
