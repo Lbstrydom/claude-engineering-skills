@@ -1,7 +1,7 @@
 # Plan: Shadow Final-Review Reviewer (A/B test final-gate effectiveness)
 
 - **Date**: 2026-06-10
-- **Status**: Approved
+- **Status**: Complete (verified built; status corrected from Approved during archive triage 2026-06-27)
 - **Author**: Claude + Louis
 - **Scope**: backend
 

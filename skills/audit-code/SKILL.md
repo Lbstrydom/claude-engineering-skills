@@ -435,7 +435,7 @@ Gemini. `REJECT` → present to user.
 (e.g. `claude-opus`) to run a second blind reviewer in parallel with the
 primary — it never gates the build, attributes findings per `source_model`, and
 persists the diff for `final-review-stats`. No-op when unset or under an Azure
-profile. See `docs/plans/final-review-shadow-reviewer.md`.
+profile. See `docs/completed/final-review-shadow-reviewer.md`.
 
 Full transcript-building, verdict routing, Step 7.1 deliberation protocol,
 and category-error handling: `references/gemini-gate.md`.

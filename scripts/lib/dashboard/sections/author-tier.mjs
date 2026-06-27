@@ -4,7 +4,7 @@
  * Shows the heuristic's suggested tier vs convergence, the declared author-model
  * ladders (the cross-model-bias partition key), and the diversity gate the
  * deferred routing phase waits on. Signature: `default({src, authorTier}, ui) → string`.
- * Plan: docs/plans/model-tier-observation.md.
+ * Plan: docs/completed/model-tier-observation.md.
  *
  * @module scripts/lib/dashboard/sections/author-tier
  */

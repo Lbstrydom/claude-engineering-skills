@@ -174,7 +174,7 @@ export function parseOpenAIModel(id) {
 // ── Logical-tier abstraction (provider-agnostic) ─────────────────────────────
 // Provider-neutral tiers so routing/observation logic is written ONCE, in
 // logical space, and bound to concrete models per active provider. See
-// docs/plans/model-tier-observation.md.
+// docs/completed/model-tier-observation.md.
 
 export const LOGICAL_TIERS = Object.freeze(['economy', 'standard', 'frontier']);
 

@@ -840,7 +840,7 @@ function formatReviewResult(result, usage, latencyMs, provider) {
 
 // ── Shadow Final Review (observation-only A/B) ──────────────────────────────
 //
-// Plan: docs/plans/final-review-shadow-reviewer.md. An opt-in SECOND reviewer
+// Plan: docs/completed/final-review-shadow-reviewer.md. An opt-in SECOND reviewer
 // that runs BLIND on the same transcript as the primary (never sees the
 // primary's output), is attributed per source_model, and NEVER gates the
 // build. Guarded so that with FINAL_REVIEW_SHADOW unset the shadow path is not

@@ -2826,7 +2826,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   // skill reads `_cloudRunId` from the audit --out JSON and forwards it to
   // gemini-review.mjs as `--run-id`, which keys the final-review (+ shadow A/B)
   // per-finding cloud persistence to this run. Absent when cloud is off →
-  // gemini-review runs local-only (docs/plans/final-review-shadow-reviewer.md).
+  // gemini-review runs local-only (docs/completed/final-review-shadow-reviewer.md).
   if (cloudRunId) mergedResult._cloudRunId = cloudRunId;
 
   // Phase C: surface tool-pre-pass capability state
@@ -2871,7 +2871,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     } catch { /* validation failure — best-effort telemetry */ }
   }
 
-  // model-tier-observation (docs/plans/model-tier-observation.md) — author_tier
+  // model-tier-observation (docs/completed/model-tier-observation.md) — author_tier
   // telemetry.  Observation-ONLY: records aggregates-only scope signals × the
   // heuristic suggested tier × the (optional) declared author tier + ladder
   // partition key × this round's converged outcome.  NOTHING reads these to

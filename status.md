@@ -181,7 +181,7 @@
   `scripts/nav-audit.mjs`, `scripts/lib/dashboard/{collect-nav,sections/nav-audit}.mjs`
 - Tests: `tests/nav-{live-attribution,bootstrap-draft,live-collector,verify-store}.test.mjs`
   + `tests/fixtures/nav-live/sample.html` (deterministic file:// collector test)
-- `skills/nav-audit/**` (3 modes reframe), `docs/plans/nav-audit-v1.1-live-attribution.md`
+- `skills/nav-audit/**` (3 modes reframe), `docs/completed/nav-audit-v1.1-live-attribution.md`
 
 ### Decisions Made
 - Pure/browser split held: attribution + bootstrap-draft are 100% unit-tested
@@ -223,7 +223,7 @@
   contract, schema, envelope, drift, render, normalize, approot, verify, ast-lite)
 - `scripts/nav-audit.mjs` (CLI), `scripts/lib/dashboard/{collect-nav,sections/nav-audit}.mjs`
 - `skills/nav-audit/**` + `.claude/skills/nav-audit/**` (regenerated)
-- `tests/nav-*.test.mjs` (7 files), `docs/plans/nav-audit-skill.md`
+- `tests/nav-*.test.mjs` (7 files), `docs/completed/nav-audit-skill.md`
 - Modified: `cross-skill.mjs`, `dashboard/{collect-reference,render}.mjs`,
   `copilot-prompts.mjs`, `sync-isolation-verify.mjs`, `.cli-catalog.json`,
   `domain-map.json`, `.gitignore`, `package.json` (`@babel/parser`)
@@ -341,7 +341,7 @@
 ## 2026-06-15 — Model-tier observation (provider-agnostic, observation-only) — `/cycle code --autonomous`
 
 ### Changes
-- Shipped `docs/plans/model-tier-observation.md` (Clusters A+B) — **instrument before
+- Shipped `docs/completed/model-tier-observation.md` (Clusters A+B) — **instrument before
   routing**: capture, per audit round, aggregates-only scope signals × a heuristic
   suggested tier × the (optional) declared author tier + a cross-model-bias **ladder
   partition key** × this round's converged outcome. **Nothing routes on it** — a future

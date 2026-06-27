@@ -542,7 +542,7 @@ quality-positive, not just a token saving.
 4. `fix-gate: yes` → cluster must reach `/audit-code` convergence (`HIGH == 0 && MEDIUM <= 2 && quickFix == 0`) before the next builds on it; `final` → last cluster, gated by the consolidated Gemini pass; `none` → no blocking gate.
 5. Trailing `- **Final gate**:` line (**required**) — declares the mandatory consolidated Gemini review over the union diff.
 6. **Partition invariant**: every §7b *implementation* phase appears in exactly one cluster (none omitted/duplicated); close-out work is outside the phase set and is not clustered.
-7. **Optional** `author-tier: economy|standard|frontier` sub-bullet — an **advisory, observation-only** hint of the model tier this cluster's work likely warrants (you MAY derive it from the same scope signals the model-tier observer uses: floor paths → frontier, mechanical-only → economy). `/cycle` **records** it for actual-vs-suggested analysis but **does NOT change which model runs** — there is no router yet (see `docs/plans/model-tier-observation.md`). Omit it unless it adds signal; it never gates anything.
+7. **Optional** `author-tier: economy|standard|frontier` sub-bullet — an **advisory, observation-only** hint of the model tier this cluster's work likely warrants (you MAY derive it from the same scope signals the model-tier observer uses: floor paths → frontier, mechanical-only → economy). `/cycle` **records** it for actual-vs-suggested analysis but **does NOT change which model runs** — there is no router yet (see `docs/completed/model-tier-observation.md`). Omit it unless it adds signal; it never gates anything.
 
 **Authoring**: group coupled phases (cite the seam in `Coupling:`); keep
 independent phases splittable; place `fix-gate: yes` before any cluster

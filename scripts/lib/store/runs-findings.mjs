@@ -364,7 +364,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
 
 /**
  * Idempotent replace-persistence for the final review's findings (plan
- * docs/plans/final-review-shadow-reviewer.md). A retry or manual rerun with
+ * docs/completed/final-review-shadow-reviewer.md). A retry or manual rerun with
  * the same runId must NOT double-count, so this DELETEs the prior final-review
  * rows for the run and re-INSERTs — all inside ONE transaction so the
  * delete+insert is atomic (Gemini G1: recordFindings alone would grab its own

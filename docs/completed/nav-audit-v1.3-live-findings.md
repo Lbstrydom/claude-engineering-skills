@@ -1,7 +1,7 @@
 # Plan: nav-audit v1.3 — Live-Evidence Findings + Multi-State Capture
 
 - **Date**: 2026-06-26
-- **Status**: Approved (GPT 3-round + Gemini 2-round — see §12)
+- **Status**: Complete (verified built; status corrected from Approved during archive triage 2026-06-27. GPT 3-round + Gemini 2-round — see §12)
 - **Author**: Claude + Louis
 - **Scope**: backend (nav-audit lib: findings taxonomy + live verify capture; no UI)
 

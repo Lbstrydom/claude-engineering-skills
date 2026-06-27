@@ -1,6 +1,6 @@
 /**
  * @fileoverview Zod contracts for the /visual-audit skill — single source of
- * truth for the artifact shapes (plan docs/plans/visual-audit-skill.md §2a/§2b):
+ * truth for the artifact shapes (plan docs/completed/visual-audit-skill.md §2a/§2b):
  *
  *   1. VisualContract   — the committed `visual-contract.json` (product intent:
  *                          contracted surfaces, token sources, themes, gate scope)

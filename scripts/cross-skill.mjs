@@ -78,7 +78,7 @@ import {
   upsertPersonaTestCandidate,
   listPersonaTestCandidates,
   markPersonaTestCandidateProposed,
-  // Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md)
+  // Shadow final-review A/B (docs/completed/final-review-shadow-reviewer.md)
   getFinalReviewStats,
   adjudicateFinalReviewFinding,
   // Determinism follow-ups WS1 — deterministic outcome finalize
@@ -508,7 +508,7 @@ async function cmdAuditEffectiveness() {
   emit({ ok: true, cloud: true, row });
 }
 
-// ── Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md) ──────
+// ── Shadow final-review A/B (docs/completed/final-review-shadow-reviewer.md) ──────
 
 async function cmdFinalReviewStats() {
   await initLearningStore();

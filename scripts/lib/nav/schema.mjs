@@ -1,6 +1,6 @@
 /**
  * @fileoverview Zod contracts for the /nav-audit skill — single source of
- * truth for the three artifact shapes (plan docs/plans/nav-audit-skill.md §4a):
+ * truth for the three artifact shapes (plan docs/completed/nav-audit-skill.md §4a):
  *
  *   1. NavEdge          — one extracted navigation affordance (entry→destination)
  *   2. NavContract      — the committed `nav-contract.json` (personas→intents→anchors)

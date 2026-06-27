@@ -1,7 +1,7 @@
 /**
  * @fileoverview Author-tier OBSERVATION builder (observation-only — no routing).
  *
- * Per docs/plans/model-tier-observation.md. Produces a `recordDecision` payload
+ * Per docs/completed/model-tier-observation.md. Produces a `recordDecision` payload
  * that captures, per audit run: aggregates-only scope signals × the heuristic
  * suggested logical tier × the (hinted) declared author tier + ladder partition
  * key × the audit-difficulty outcome (rounds, converged). It NEVER changes

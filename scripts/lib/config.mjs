@@ -79,7 +79,7 @@ export const claudeConfig = Object.freeze({
 // ── Shadow Final-Review Config (A/B test — observation-only) ─────────────────
 //
 // Opt-in second reviewer that runs blind-parallel with the primary final
-// review (plan: docs/plans/final-review-shadow-reviewer.md). Deliberately
+// review (plan: docs/completed/final-review-shadow-reviewer.md). Deliberately
 // PERMISSIVE — raw strings, NO allow-list validation, NO resolveModel() here,
 // NO injected default model. An unknown/garbage provider must never throw at
 // import (it would break the MANDATORY audit path for an OPTIONAL feature);

@@ -1,7 +1,7 @@
 # Plan: Provider-Agnostic Model-Tier — Observation + Abstraction (instrument before routing)
 
 - **Date**: 2026-06-15
-- **Status**: Approved
+- **Status**: Complete (verified built; status corrected from Approved during archive triage 2026-06-27)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib`, `audit-orchestration`
