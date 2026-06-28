@@ -50,16 +50,23 @@ const safeFiles = (a) => (Array.isArray(a) ? a.filter((p) => classifyPath(p) !==
 const SeenNamesSchema = z.array(z.string().min(1));
 
 /**
- * Idempotent upsert of one friction row (keyed on repo_id + memory_name).
- * Pass the row with raw JS values; the seam handles serialization.
- * @returns {Promise<{upserted: number}>}
+ * Build the exact DB-write payload for one friction row — validate (store
+ * boundary) → redact every egressing field → `pgArray`-wrap the genuine `text[]`
+ * cols → pass `mitigation_refs` as a raw jsonb array. Extracted as a PURE,
+ * exported function (no cloud/DB) so the jsonb-vs-`pgArray` M3 serialization class
+ * is regression-tested against the REAL code path instead of a hand-rebuilt copy
+ * that could silently drift (audit M16). `now` is injectable for deterministic tests.
+ *
+ * @param {string} repoId
+ * @param {object} row - raw mirror row (memory-paths buildRow shape)
+ * @param {{now?: string}} [opts]
+ * @returns {object} the upsert payload (jsonb raw, text[] via pgArray)
  */
-export async function upsertFrictionRow(repoId, row) {
-  if (!await isCloudEnabled()) return { upserted: 0 };
-  if (!repoId) throw new TypeError('upsertFrictionRow: repoId is required');
+export function buildFrictionUpsertPayload(repoId, row, { now } = {}) {
+  if (!repoId) throw new TypeError('buildFrictionUpsertPayload: repoId is required');
   const v = FrictionRowSchema.parse(row);   // validate at the store boundary (cost enum, arrays, required)
   // Redact secret SHAPES on every field that reaches the DB (the egress boundary — can't be bypassed).
-  const payload = {
+  return {
     repo_id: repoId,
     memory_name: v.memory_name,
     source_hash: v.source_hash,
@@ -74,15 +81,25 @@ export async function upsertFrictionRow(repoId, row) {
     trgm_text: redact(v.trgm_text),
     signature_text: redact(v.signature_text),
     mitigation_refs: v.mitigation_refs.map((m) => ({ ...m, ref: redact(m.ref) })), // jsonb — RAW
-    last_seen_at: new Date().toISOString(),
+    last_seen_at: now ?? new Date().toISOString(),
   };
+}
+
+/**
+ * Idempotent upsert of one friction row (keyed on repo_id + memory_name).
+ * Pass the row with raw JS values; the seam handles serialization.
+ * @returns {Promise<{upserted: number}>}
+ */
+export async function upsertFrictionRow(repoId, row) {
+  if (!await isCloudEnabled()) return { upserted: 0 };
+  const payload = buildFrictionUpsertPayload(repoId, row);   // throws on missing repoId (cloud-on path)
   const { rowCount } = await upsert('memory_friction', [payload], {
     onConflict: ['repo_id', 'memory_name'],
     update: 'all',
   });
   // Unverified-write guard (RLS / 0-row silent failure — AGENTS.md store invariant).
   if (!rowCount || rowCount < 1) {
-    throw new Error(`upsertFrictionRow: wrote 0 rows for ${v.memory_name} (RLS or constraint?) — write unverified`);
+    throw new Error(`upsertFrictionRow: wrote 0 rows for ${payload.memory_name} (RLS or constraint?) — write unverified`);
   }
   return { upserted: rowCount };
 }

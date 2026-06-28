@@ -11,31 +11,44 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { _builders, pgArray } from '../scripts/lib/db/query.mjs';
-import { reconcileTombstones } from '../scripts/lib/store/friction.mjs';
+import { _builders } from '../scripts/lib/db/query.mjs';
+import { reconcileTombstones, buildFrictionUpsertPayload } from '../scripts/lib/store/friction.mjs';
 import { appendInjected, readRecent, breadcrumbPath } from '../scripts/lib/friction/breadcrumb.mjs';
 
 const { buildUpsert } = _builders;
 
-// ── M3 jsonb/pgArray seam for memory_friction ────────────────────────────────
-test('memory_friction upsert: mitigation_refs (jsonb) → JSON string; text[] cols stay raw via pgArray', () => {
-  // payload shaped exactly as store/friction.upsertFrictionRow builds it.
-  const payload = {
-    repo_id: 'r1', memory_name: 'm', source_hash: 'h', active: true,
-    title: 't', body_excerpt: 'b',
-    scope_tags: pgArray(['false-green']),
-    files: pgArray([]),
-    symbols: pgArray(['fn']),
+// ── M3 jsonb/pgArray seam for memory_friction (REAL code path — audit M16) ────
+// Drives the actual `buildFrictionUpsertPayload` (not a hand-rebuilt copy), so a
+// drift in the real redact/pgArray/jsonb assembly fails this test.
+test('buildFrictionUpsertPayload → buildUpsert: jsonb raw, text[] via pgArray, secrets redacted', () => {
+  const payload = buildFrictionUpsertPayload('r1', {
+    memory_name: 'm', source_hash: 'h',
+    title: 'leak sk-abc1234567890ABCDEFGHIJKLMNOPQRSTUV here',   // secret → must be redacted
+    body_excerpt: 'b',
+    scope_tags: ['false-green'],
+    files: ['.env', 'scripts/ok.mjs'],                            // .env → must be dropped
+    symbols: ['fn'],
     cost: 'M', fingerprint: 'f', trgm_text: 'x', signature_text: 'y',
     mitigation_refs: [{ kind: 'commit', ref: 'abc' }],
-    last_seen_at: '2026-06-28T00:00:00.000Z',
-  };
+  }, { now: '2026-06-28T00:00:00.000Z' });
+
+  // redaction happened on the REAL path
+  assert.ok(!payload.title.includes('sk-abc1234567890ABCDEFGHIJKLMNOPQRSTUV'));
+  assert.match(payload.title, /REDACTED/);
+  // sensitive file dropped (pgArray-wrapped → .value holds the raw array)
+  assert.deepEqual(payload.files.value, ['scripts/ok.mjs']);
+
   const { params } = buildUpsert('memory_friction', [payload], { onConflict: ['repo_id', 'memory_name'], update: 'all' });
   // mitigation_refs is a plain array → JSON-serialized (jsonb-safe)
   assert.ok(params.includes('[{"kind":"commit","ref":"abc"}]'));
   // scope_tags / symbols wrapped in pgArray → stay raw JS arrays (genuine text[])
   assert.ok(params.some((p) => Array.isArray(p) && p[0] === 'false-green'));
   assert.ok(params.some((p) => Array.isArray(p) && p[0] === 'fn'));
+});
+
+test('buildFrictionUpsertPayload requires repoId + validates the row (store boundary)', () => {
+  assert.throws(() => buildFrictionUpsertPayload(null, {}), /repoId is required/);
+  assert.throws(() => buildFrictionUpsertPayload('r1', { memory_name: 'm' }), /./);  // schema rejects incomplete row
 });
 
 // ── reconcileTombstones: C5 safety (pure, pre-cloud guards) ───────────────────
