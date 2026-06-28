@@ -1,7 +1,7 @@
 # Plan: Friction-Feedback Loop (recurrence-aware quality signal)
 
 - **Date**: 2026-06-28
-- **Status**: Approved (GPT 3-round + Gemini 3-round; genuine correctness defects fixed each round, remaining SQL/IR granularity deferred to `/audit-code` — see §8b)
+- **Status**: Complete (built Clusters A–C 2026-06-28; `/audit-code` R1 found 8 genuine in-scope bugs — all fixed; consolidated Gemini gate APPROVE after rebutting one false-positive with live-DB evidence; full empirical verify against the live DB passed: add→mirror→digest→inject→link + secret-refusal + tombstone-reactivation; 3925 tests pass / 0 fail. Plan-audit history below.)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI + hook + migration + memory-health — no UI)
 

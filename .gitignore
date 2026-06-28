@@ -40,6 +40,7 @@ scripts/lib/consumer-repos.local.json
 .audit/learning-outbox/
 .audit/learning-failed-writes.jsonl
 .audit/friction-log.jsonl
+.audit/friction-injected.jsonl
 .audit/quickfix-pattern-stats.json
 .audit/quickfix-hits.drained-offset
 

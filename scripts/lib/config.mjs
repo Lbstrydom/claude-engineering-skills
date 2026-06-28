@@ -170,7 +170,7 @@ export const cycleConfig = Object.freeze({
 
 // ── Friction-feedback loop (GREEN ≠ REALIZED sibling) ────────────────────────
 // Recurrence × cost ranking thresholds + the protected-scope gate set + the
-// breadcrumb TTL. Plan: docs/plans/friction-feedback-loop.md.
+// breadcrumb TTL. Plan: docs/completed/friction-feedback-loop.md.
 export const frictionConfig = Object.freeze({
   // Recurrence alarm: a cluster recurring >= recurrenceAlarmCount and older than
   // recurrenceAlarmAgeDays with no mitigation is the graveyard alarm.
@@ -185,6 +185,15 @@ export const frictionConfig = Object.freeze({
     (process.env.FRICTION_PROTECTED_SCOPES || 'secret-egress,consumer-sync,false-green')
       .split(',').map((s) => s.trim()).filter(Boolean),
   ),
+  // Injection match threshold for pg_trgm word_similarity(signature, prompt).
+  // EMPIRICALLY tuned (friction-feedback-loop empirical verify, 2026-06-28):
+  // a genuinely-relevant prompt scored ~0.38 vs ~0.03 for an unrelated one — a
+  // ~10× separation — so the plan's 0.6 default would NEVER fire on real titles.
+  // 0.3 catches strong matches and rejects noise; lower it for more recall.
+  injectionWordSim: (() => {
+    const v = Number.parseFloat(process.env.FRICTION_INJECTION_WORD_SIM);
+    return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.3;
+  })(),
   // Single rolling breadcrumb prune horizon.
   breadcrumbTtlDays: safeInt(process.env.FRICTION_BREADCRUMB_TTL_DAYS, 7),
   // Max body chars mirrored into body_excerpt / trgm_text.

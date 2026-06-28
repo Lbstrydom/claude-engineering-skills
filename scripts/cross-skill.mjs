@@ -129,6 +129,24 @@ function argOption(name) {
   return rest[idx + 1] || null;
 }
 
+/** Comma-split a single `--name a,b,c` flag into a trimmed list. */
+function argList(name) {
+  const v = argOption(name);
+  return v ? v.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+/** Collect EVERY occurrence of a repeatable `--name v` flag. */
+function argAll(name) {
+  const out = [];
+  for (let i = 0; i < rest.length; i++) {
+    if (rest[i] === `--${name}` && rest[i + 1] != null) out.push(rest[i + 1]);
+  }
+  return out;
+}
+
+/** Presence of a boolean `--flag`. */
+function hasFlag(name) { return rest.includes(`--${name}`); }
+
 /**
  * Emit a structured error + exit. Default exit code is 2 (BAD_INPUT /
  * validation failure) per the cross-skill CLI contract. Exceptions use
@@ -1049,6 +1067,73 @@ async function cmdGetIncidentNeighbourhood() {
   }
 }
 
+// ── Friction-feedback loop (plan: friction-feedback-loop.md) ────────────────
+// `quality` sub-dispatches to add/mirror/digest/link/session-review; the
+// implementations live in lib/friction/commands.mjs (thin-dispatcher discipline,
+// R1-MED). Every command returns the C8 shape; ok:false = argv/contract error.
+
+async function cmdQuality() {
+  const sub = rest[0];
+  if (!sub || sub.startsWith('--')) {
+    return emitError('BAD_INPUT', 'usage: quality <add|mirror|digest|link|session-review> [flags]');
+  }
+  await initLearningStore();
+  const m = await import('./lib/friction/commands.mjs');
+  let payload = {};
+  try { payload = parsePayload(); } catch { payload = {}; }
+  let result;
+  switch (sub) {
+    case 'add':
+      result = await m.frictionAdd({
+        title: payload.title ?? argOption('title'),
+        scopeTags: payload.scopeTags ?? [...argList('scope-tags'), ...argAll('scope-tag')],
+        cost: payload.cost ?? argOption('cost') ?? undefined,
+        name: payload.name ?? argOption('name') ?? undefined,
+        files: payload.files ?? [...argList('files'), ...argAll('file')],
+        symbols: payload.symbols ?? [...argList('symbols'), ...argAll('symbol')],
+        body: payload.body ?? argOption('body') ?? undefined,
+      });
+      break;
+    case 'mirror':
+      result = await m.frictionMirror({});
+      break;
+    case 'digest':
+      result = await m.frictionDigest({
+        repoScoped: hasFlag('repo-scoped') || payload.repoScoped === true,
+        windowDays: payload.windowDays ?? (argOption('window-days') ? Number(argOption('window-days')) : undefined),
+        minSimilarity: payload.minSimilarity ?? (argOption('min-similarity') ? Number(argOption('min-similarity')) : undefined),
+      });
+      break;
+    case 'link':
+      result = await m.frictionLink({
+        memory: payload.memory ?? argOption('memory'),
+        kind: payload.kind ?? argOption('kind'),
+        ref: payload.ref ?? argOption('ref'),
+      });
+      break;
+    case 'session-review':
+      result = await m.frictionSessionReview({
+        windowHours: payload.windowHours ?? (argOption('window-hours') ? Number(argOption('window-hours')) : undefined),
+      });
+      break;
+    default:
+      return emitError('BAD_INPUT', `unknown quality subcommand: ${sub}`);
+  }
+  emit(result);
+  if (result && result.ok === false) process.exit(2);
+}
+
+async function cmdGetFrictionNeighbourhood() {
+  const p = parsePayload();
+  await initLearningStore();
+  const { frictionNeighbourhood } = await import('./lib/friction/commands.mjs');
+  const result = await frictionNeighbourhood({
+    prompt: p.prompt ?? p.intentDescription ?? argOption('prompt') ?? '',
+    k: p.k ?? (argOption('k') ? Number(argOption('k')) : undefined),
+  });
+  emit(result);
+}
+
 async function cmdComputeTargetDomains() {
   const p = parsePayload();
   if (!p.targetPaths || !Array.isArray(p.targetPaths)) {
@@ -1538,6 +1623,9 @@ const commands = {
   'learning-replay':                  cmdLearningReplay,
   // Friction log (plan: friction-log-and-digest-v1.md)
   'friction-log':                     cmdFrictionLog,
+  // Friction-feedback loop (plan: friction-feedback-loop.md)
+  'quality':                          cmdQuality,
+  'get-friction-neighbourhood':       cmdGetFrictionNeighbourhood,
 };
 
 async function main() {

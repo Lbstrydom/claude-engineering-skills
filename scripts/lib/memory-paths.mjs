@@ -1,6 +1,6 @@
 /**
  * @fileoverview The harness-memory path resolver + friction-frontmatter parser — the single
- * source for the path coupling (plan docs/plans/friction-feedback-loop.md, C1/C4). Reads the
+ * source for the path coupling (plan docs/completed/friction-feedback-loop.md, C1/C4). Reads the
  * harness auto-memory (`~/.claude/projects/<slug>/memory/`); never writes here (capture is
  * `quality add`). Pure parse — redaction happens at the egress boundaries (store DB-write +
  * commands breadcrumb/output), not here, so the parser stays a deterministic function of bytes.

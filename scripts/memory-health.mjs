@@ -67,6 +67,92 @@ async function callRpc() {
   return data;
 }
 
+/**
+ * Friction-recurrence section (plan: friction-feedback-loop.md C7, Cluster C).
+ * Cross-repo recurrence among OPEN friction, ranked recurrence × cost. WARN by
+ * default; HARD-FAIL (exit 1) only when a cluster is BOTH `protected` (a scope_tag
+ * in frictionConfig.protectedScopeTags) AND alarming (recurrence + age past the
+ * thresholds). Additive + graceful: if the migration/RPC isn't present, the
+ * section degrades to "unavailable" and never crashes the health gate.
+ *
+ * @returns {Promise<{available: boolean, reason?: string, clusters?: Array, hardFail?: boolean}>}
+ */
+async function collectFrictionSection() {
+  if (!process.env.AUDIT_DB_URL) return { available: false, reason: 'cloud-off' };
+  try {
+    const [{ getFrictionRecurrence }, { frictionConfig }] = await Promise.all([
+      import('./lib/store/friction.mjs'),
+      import('./lib/config.mjs'),
+    ]);
+    const res = await getFrictionRecurrence({ repoIdFilter: null, windowDays: WINDOW_DAYS });
+    const raw = (res && Array.isArray(res.clusters)) ? res.clusters : [];
+    // Mirrors commands.annotateCluster — kept inline so the weekly gate doesn't
+    // pull the full friction command graph (file-lock/yaml/breadcrumb).
+    const clusters = raw.map((c) => {
+      const tags = Array.isArray(c.scope_tags) ? c.scope_tags : [];
+      const isProtected = tags.some((t) => frictionConfig.protectedScopeTags.includes(t));
+      const weight = frictionConfig.costWeight[c.max_cost] ?? frictionConfig.costWeight.M;
+      const alarm = (c.recurrence_count || 0) >= frictionConfig.recurrenceAlarmCount
+        && (c.oldest_age_days || 0) > frictionConfig.recurrenceAlarmAgeDays;
+      return { ...c, protected: isProtected, rank: (c.recurrence_count || 0) * weight, alarm };
+    }).sort((a, b) => (b.protected - a.protected) || (b.alarm - a.alarm) || (b.rank - a.rank));
+    const hardFail = clusters.some((c) => c.protected && c.alarm);
+    return { available: true, clusters, hardFail };
+  } catch (err) {
+    // H8 (false-green honesty): distinguish EXPECTED unavailability (migration
+    // not applied → undefined_function/table) from an UNEXPECTED subsystem error.
+    // The former is a silent skip; the latter must NOT read as benign "unavailable"
+    // — it surfaces loudly and fails the gate so a broken subsystem can't pass green.
+    const code = err && err.code;
+    const expected = code === '42883' || code === '42P01';   // undefined_function / undefined_table
+    return { available: false, errored: !expected, reason: err.message, pgCode: code || null };
+  }
+}
+
+function renderFrictionSection(friction) {
+  const lines = [];
+  lines.push('## Friction recurrence');
+  lines.push('');
+  if (!friction.available) {
+    if (friction.errored) {
+      // H8: a broken subsystem must read as a problem, not a benign skip.
+      lines.push(`> ⚠️ **Friction-recurrence check ERRORED** (not skipped): ${friction.reason}` +
+        `${friction.pgCode ? ` [${friction.pgCode}]` : ''}. The recurrence signal is UNKNOWN this run — treat as a failure, not green.`);
+      lines.push('');
+      return lines;
+    }
+    const why = friction.reason === 'cloud-off'
+      ? 'cloud store not configured'
+      : `unavailable (${friction.reason} — is the memory_friction migration applied?)`;
+    lines.push(`> Friction-recurrence check skipped (expected): ${why}.`);
+    lines.push('');
+    return lines;
+  }
+  const clusters = friction.clusters || [];
+  if (clusters.length === 0) {
+    lines.push('> No recurring open friction across repos in the window. Healthy.');
+    lines.push('');
+    return lines;
+  }
+  lines.push('Recurring **open** friction (unmitigated papercuts seen ≥2×), ranked recurrence × cost. ' +
+    'A `protected`-scope cluster that alarms HARD-FAILS this gate; everything else is advisory (WARN).');
+  lines.push('');
+  lines.push('| Rank | Recurrence | Cost | Age (d) | Protected | State | Title |');
+  lines.push('|---|---|---|---|---|---|---|');
+  for (const c of clusters.slice(0, 15)) {
+    const state = (c.protected && c.alarm) ? 'HARD-FAIL' : (c.alarm ? 'WARN' : 'watch');
+    const title = String(c.title || c.cluster_key || '').slice(0, 80).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    lines.push(`| ${c.rank} | ${c.recurrence_count}× | ${c.max_cost} | ${c.oldest_age_days} | ${c.protected ? 'yes' : '—'} | ${state} | ${title} |`);
+  }
+  lines.push('');
+  if (friction.hardFail) {
+    lines.push('> **HARD-FAIL**: a protected-scope friction is recurring and unmitigated. ' +
+      'Mitigate it (then `quality link` the fix) or the gate stays red.');
+    lines.push('');
+  }
+  return lines;
+}
+
 function evaluateTriggers(metrics) {
   const { total_findings_in_window, fuzzy_reraise, cluster_density, recurrence } = metrics;
 
@@ -108,7 +194,7 @@ function pct(n) {
   return `${(Number(n) * 100).toFixed(1)}%`;
 }
 
-function renderMarkdown(metrics, evaluation) {
+function renderMarkdown(metrics, evaluation, friction = { available: false, reason: 'not-run' }) {
   const { status, firedCount, insufficient, triggers } = evaluation;
   const lines = [];
 
@@ -176,6 +262,8 @@ function renderMarkdown(metrics, evaluation) {
   }
   lines.push('');
 
+  for (const l of renderFrictionSection(friction)) lines.push(l);
+
   lines.push('## Decision rule');
   lines.push('');
   lines.push('- All green for 4 consecutive weeks → shape has academic merit only, no action.');
@@ -206,12 +294,13 @@ async function main() {
   }
 
   const evaluation = evaluateTriggers(metrics);
+  const friction = await collectFrictionSection();
 
   if (args.json) {
-    process.stdout.write(JSON.stringify({ metrics, evaluation }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ metrics, evaluation, friction }, null, 2) + '\n');
   }
 
-  const md = renderMarkdown(metrics, evaluation);
+  const md = renderMarkdown(metrics, evaluation, friction);
   if (args.out) {
     atomicWrite(args.out, md);
     process.stderr.write(`memory-health: wrote ${args.out}\n`);
@@ -220,15 +309,20 @@ async function main() {
   }
 
   // One-line summary on stderr regardless — useful for CI log scanning
+  const frictionSummary = friction.available
+    ? `friction=${(friction.clusters || []).length}cl${friction.hardFail ? '/HARD-FAIL' : ''}`
+    : `friction=${friction.errored ? 'ERROR' : (friction.reason || 'n/a')}`;
   process.stderr.write(
     `memory-health: status=${evaluation.status} triggers=${evaluation.firedCount}/3 ` +
     `fuzzy=${(evaluation.triggers.fuzzy_reraise.actual * 100).toFixed(1)}% ` +
     `cluster=${evaluation.triggers.cluster_density.actual} ` +
-    `recurrence=${(evaluation.triggers.recurrence.actual * 100).toFixed(1)}%\n`
+    `recurrence=${(evaluation.triggers.recurrence.actual * 100).toFixed(1)}% ${frictionSummary}\n`
   );
 
-  // Exit code: 0 green or insufficient data; 1 if any trigger fired
-  process.exit(evaluation.firedCount > 0 ? 1 : 0);
+  // Exit code: 0 green or insufficient data; 1 if any trigger fired, a protected
+  // friction cluster hard-fails (plan C7), OR the friction subsystem ERRORED
+  // unexpectedly (H8 — a broken check must not read green).
+  process.exit((evaluation.firedCount > 0 || friction.hardFail || friction.errored) ? 1 : 0);
 }
 
 main().catch(err => {

@@ -1,6 +1,6 @@
 -- ============================================================================
 -- memory_friction — recurrence-aware friction-feedback mirror.
--- Plan: docs/plans/friction-feedback-loop.md (Cluster A).
+-- Plan: docs/completed/friction-feedback-loop.md (Cluster A).
 --
 -- A THIN, queryable mirror of `type: friction` harness-memory files. The memory
 -- file is the source of truth; this table exists ONLY for the one thing flat
@@ -116,7 +116,11 @@ BEGIN
            1 + COUNT(DISTINCT peer_name) AS recurrence_count,
            ARRAY_AGG(DISTINCT peer_repo) AS repos_seen,
            MAX(CASE cost WHEN 'L' THEN 3 WHEN 'M' THEN 2 ELSE 1 END) AS cost_rank,
-           (ARRAY_AGG(DISTINCT scope_tags))[1] AS scope_tags,
+           -- scope_tags is the anchor's array (constant per anchor_id group).
+           -- MIN(text[]) returns it; (array_agg(text[]))[1] would build a 2-D
+           -- array whose single-subscript access is NULL — silently defeating
+           -- the `protected` gate (verified against the live DB).
+           MIN(scope_tags) AS scope_tags,
            EXTRACT(DAY FROM now() - MIN(created_at))::int AS oldest_age_days,
            ARRAY_AGG(DISTINCT peer_name) AS sample_names
     FROM pairs
@@ -153,7 +157,7 @@ CREATE OR REPLACE FUNCTION friction_neighbourhood(
   p_repo_id UUID,
   p_prompt TEXT,
   k INT DEFAULT 2,
-  min_word_sim NUMERIC DEFAULT 0.6
+  min_word_sim NUMERIC DEFAULT 0.3   -- empirically: real titles ~0.38 relevant vs ~0.03 unrelated; 0.6 never fires
 )
 RETURNS JSONB
 LANGUAGE plpgsql

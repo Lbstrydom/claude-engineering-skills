@@ -1,6 +1,6 @@
 /**
  * @fileoverview Store seam for the friction-feedback mirror (`memory_friction`).
- * Plan: docs/plans/friction-feedback-loop.md (Cluster A). The memory file is the
+ * Plan: docs/completed/friction-feedback-loop.md (Cluster A). The memory file is the
  * source of truth; these are the DB-mirror writes/reads. All graceful-cloud-off
  * (no-op when AUDIT_DB_URL is unset), exactly like the other store modules.
  *
@@ -41,7 +41,9 @@ const FrictionRowSchema = z.object({
   mitigation_refs: z.array(MitigationRefSchema).default([]),
 }).strip();
 
-const redact = (s) => (typeof s === 'string' ? redactSecrets(s) : s);
+// secret-patterns.redactSecrets returns { text, redacted } — take `.text` (the
+// repo-wide convention; sanitizer.mjs's same-named fn would corrupt prose).
+const redact = (s) => (typeof s === 'string' ? redactSecrets(s).text : s);
 const redactArr = (a) => (Array.isArray(a) ? a.map(redact) : []);
 /** Drop any file path that classifies as sensitive (defense-in-depth; the parser is the primary gate). */
 const safeFiles = (a) => (Array.isArray(a) ? a.filter((p) => classifyPath(p) !== 'sensitive') : []);
@@ -83,6 +85,28 @@ export async function upsertFrictionRow(repoId, row) {
     throw new Error(`upsertFrictionRow: wrote 0 rows for ${v.memory_name} (RLS or constraint?) — write unverified`);
   }
   return { upserted: rowCount };
+}
+
+/**
+ * Current `(memory_name → source_hash)` map for this repo's ACTIVE rows. Lets the
+ * mirror skip an upsert when the file bytes are unchanged (C5 `unchanged` count).
+ * **ACTIVE-only is load-bearing (H10):** an inactive (tombstoned) row must NOT
+ * count as "unchanged" — otherwise a tombstoned-then-restored note (same bytes)
+ * would be skipped and never reactivated. Excluding inactive rows forces the
+ * unchanged-check to miss → the row is re-upserted → `active` flips back to true.
+ * Returns an empty map when cloud is off or the repo has no active rows.
+ * @returns {Promise<Map<string,string>>}
+ */
+export async function listFrictionSourceHashes(repoId) {
+  if (!repoId) throw new TypeError('listFrictionSourceHashes: repoId is required');
+  if (!await isCloudEnabled()) return new Map();
+  const res = await query(
+    'SELECT memory_name, source_hash FROM memory_friction WHERE repo_id = $1 AND active = true',
+    [repoId],
+  );
+  const map = new Map();
+  for (const r of res.rows ?? []) map.set(r.memory_name, r.source_hash);
+  return map;
 }
 
 /**

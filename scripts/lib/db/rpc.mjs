@@ -321,7 +321,10 @@ export async function frictionNeighbourhood({ repoId, prompt, k, minWordSim } = 
   if (!repoId) throw new TypeError('frictionNeighbourhood: repoId is required');
   const row = await one(
     'SELECT friction_neighbourhood($1::uuid, $2::text, $3::integer, $4::numeric) AS result',
-    [repoId, prompt ?? '', k ?? 2, minWordSim ?? 0.6],
+    // Default 0.3 (not 0.6) — empirically, real titles top out ~0.38 for a
+    // relevant prompt vs ~0.03 unrelated; 0.6 never fires. Callers override via
+    // frictionConfig.injectionWordSim (commands.frictionNeighbourhood).
+    [repoId, prompt ?? '', k ?? 2, minWordSim ?? 0.3],
   );
   return Array.isArray(row?.result) ? row.result : [];
 }

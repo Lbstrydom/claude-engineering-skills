@@ -176,7 +176,10 @@ else
   RESULT="$(node "$CROSS_SKILL" get-neighbourhood --json "$PAYLOAD" 2>/dev/null || true)"
 fi
 
-[[ -z "$RESULT" ]] && exit 0
+# M5: do NOT exit when the arch lookup is empty — the friction query below must
+# run independently (an empty/failed arch result must not silently kill friction
+# injection). Gate only the arch FORMATTING on a non-empty result; always fall
+# through to the friction query.
 
 # ── Format the consultation as additional context ──────────────────────────
 #
@@ -184,6 +187,7 @@ fi
 # this as part of the user prompt context. Keep the framing neutral so it
 # doesn't override the user's actual ask — it's a HINT.
 
+if [[ -n "$RESULT" ]]; then
 node -e '
   let s = "";
   process.stdin.on("data", d => s += d);
@@ -223,5 +227,59 @@ node -e '
     process.stdout.write(out.join("\n") + "\n");
   });
 ' <<< "$RESULT"
+fi
+
+# ── 3rd query: friction-feedback (plan: friction-feedback-loop.md C9) ────────
+#
+# Trigram-match the prompt against this repo's OPEN friction notes. Cheap (no
+# embed — pg_trgm word_similarity), repo-scoped, top-2. The command appends the
+# injection breadcrumb itself (.audit/friction-injected.jsonl) so /ship +
+# `quality session-review` can offer closure later. Never blocks the prompt.
+
+FRICTION_PAYLOAD="$(printf '%s' "$PROMPT_FOR_QUERY" | node -e '
+  let s = "";
+  process.stdin.on("data", d => s += d);
+  process.stdin.on("end", () => {
+    process.stdout.write(JSON.stringify({ prompt: s, k: 2 }));
+  });
+' 2>/dev/null)"
+
+if [[ -n "$FRICTION_PAYLOAD" ]]; then
+  FRICTION_RESULT=""
+  if command -v timeout >/dev/null 2>&1; then
+    FRICTION_RESULT="$(timeout 8 node "$CROSS_SKILL" get-friction-neighbourhood --json "$FRICTION_PAYLOAD" 2>/dev/null || true)"
+  else
+    FRICTION_RESULT="$(node "$CROSS_SKILL" get-friction-neighbourhood --json "$FRICTION_PAYLOAD" 2>/dev/null || true)"
+  fi
+
+  if [[ -n "$FRICTION_RESULT" ]]; then
+    node -e '
+      let s = "";
+      process.stdin.on("data", d => s += d);
+      process.stdin.on("end", () => {
+        let r;
+        try { r = JSON.parse(s); } catch { return; }
+        if (!r || r.ok === false) return;
+        const records = r.records || [];
+        if (r.cloud === false || records.length === 0) return;   // silent when nothing relevant
+        const out = [];
+        out.push("\n---");
+        out.push("**Relevant prior friction** (recurring papercuts in THIS repo matching your intent)");
+        out.push("");
+        out.push("| Cost | Note | Title |");
+        out.push("| --- | --- | --- |");
+        for (const x of records.slice(0, 2)) {
+          const cost = String(x.cost || "M").replace(/\|/g, "\\|");
+          const name = String(x.memory_name || "").replace(/\|/g, "\\|");
+          const title = String(x.title || "").slice(0, 120).replace(/\|/g, "\\|").replace(/\n/g, " ");
+          out.push("| " + cost + " | `" + name + "` | " + title + " |");
+        }
+        out.push("");
+        out.push("_You hit these before. Avoid re-living them; if this work resolves one, `/ship` will offer to link the fix._");
+        process.stdout.write(out.join("\n") + "\n");
+      });
+    ' <<< "$FRICTION_RESULT"
+  fi
+fi
 
 exit 0
