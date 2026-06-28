@@ -80,6 +80,50 @@ describe('assertRepoRoot — guards cwd', () => {
     }
   });
 
+  it('AUDIT_ALLOW_FOREIGN_CWD=1 bypasses the cwd check (legitimate cross-repo invocation)', () => {
+    const io = fakeIo();
+    const repoRoot = path.resolve('.');
+    const scriptUrl = pathToFileURL(
+      path.join(repoRoot, 'scripts', 'fake-entry.mjs'),
+    ).href;
+
+    const origCwd = process.cwd();
+    process.chdir(path.dirname(repoRoot));     // wrong cwd — would normally exit(1)
+    try {
+      const result = assertRepoRoot(scriptUrl, {
+        stderr: io.stderr,
+        exit: io.exit,
+        env: { AUDIT_ALLOW_FOREIGN_CWD: '1' },
+      });
+      assert.deepEqual(io.exits, []);          // did NOT exit
+      assert.deepEqual(io.writes, []);         // did NOT warn
+      assert.equal(result.root, repoRoot);     // still reports the inferred root
+    } finally {
+      process.chdir(origCwd);
+    }
+  });
+
+  it('a falsy AUDIT_ALLOW_FOREIGN_CWD still enforces the cwd check', () => {
+    const io = fakeIo();
+    const repoRoot = path.resolve('.');
+    const scriptUrl = pathToFileURL(
+      path.join(repoRoot, 'scripts', 'fake-entry.mjs'),
+    ).href;
+
+    const origCwd = process.cwd();
+    process.chdir(path.dirname(repoRoot));
+    try {
+      assertRepoRoot(scriptUrl, {
+        stderr: io.stderr,
+        exit: io.exit,
+        env: { AUDIT_ALLOW_FOREIGN_CWD: '0' },
+      });
+      assert.deepEqual(io.exits, [1]);
+    } finally {
+      process.chdir(origCwd);
+    }
+  });
+
   it('no-ops when script is not under a `scripts/` directory', () => {
     const io = fakeIo();
     const scriptUrl = pathToFileURL(path.resolve('install.mjs')).href;
