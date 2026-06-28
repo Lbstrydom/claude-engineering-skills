@@ -47,7 +47,7 @@ Optional flags:
 - `--no-uxlock` — skip /ux-lock (use when no UI changes shipped)
 - `--no-ship` — stop after audit; don't commit or push
 - `--max-rounds N` — pass through to /audit-plan and /audit-code
-- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster (see "Clustered execution"). Without it, `/cycle` pauses for the human at Step 3 exactly as today — the autonomous behaviour is never silent.
+- `--autonomous` (alias `--implement`) — **opt-in**: autonomously implement + audit each §11 cluster (see "Clustered execution"). On a plan with **no §11 block** it runs the **degenerate single-cluster** path (the whole plan as one unit — Step 3) rather than silently pausing. Without the flag, `/cycle` pauses for the human at Step 3 exactly as today — the autonomous behaviour is never silent either way.
 - `--cluster <ID>` — implement/audit a single declared cluster (human resume path).
 - `--baseline-ref <sha>` — audit baseline for a resume where no `clusterStartRef` was captured (work already committed).
 - `--authorize-stale-reaudit` — resume a halted autonomous run by re-processing exactly the `stale` clusters.
@@ -113,11 +113,34 @@ GPT + Gemini final gate. Max 3 rounds; rigor-pressure stop.
 
 ## Step 3 — Implementation gate (branches on mode)
 
-- **No §11 block** (either mode) → **today's behaviour, unchanged**: `/cycle`
-  **pauses here** for the human to implement (or resume later via
+**Decision table (one source of truth — the bullets below elaborate).** The gate is a
+pure function of three inputs: the parsed mode, whether the plan carries a §11 block
+(`hasClustering`), and the `--autonomous` flag. `SKIP_PLAN` / `SKIP_TO_CODE` mean the
+human already implemented, so the gate is bypassed entirely (go straight to Step 4 audit).
+
+| Mode | `hasClustering` | `--autonomous` | Action |
+|---|---|---|---|
+| FULL / SKIP_PLAN (plan generated/audited, not yet implemented) | no | no | **Pause** for the human (card below) |
+| FULL / SKIP_PLAN | no | **yes** | **Degenerate single-cluster autonomous** (whole plan as one unit) |
+| FULL / SKIP_PLAN | yes | no | **Pause** + print cluster guidance; resume `--cluster <ID>` |
+| FULL / SKIP_PLAN | yes | **yes** | **Step 3C** clustered autonomous loop |
+| SKIP_TO_CODE (already implemented) | any | any | **No gate** — go to Step 4 audit (per-cluster if `--cluster`, else union diff) |
+
+- **No §11 block + default (no `--autonomous`)** → **today's behaviour, unchanged**:
+  `/cycle` **pauses here** for the human to implement (or resume later via
   `/cycle code <plan>`). Output the "paused at implementation gate" card
   below. Skipped automatically in SKIP_PLAN / SKIP_TO_CODE modes (the human
   already implemented).
+- **No §11 block + `--autonomous`** → **degenerate single-cluster autonomous path**
+  (do NOT silently fall back to the pause — that contradicts the explicit
+  `--autonomous`). A plan below the §7b Gate-1 / §11 threshold is small + cohesive by
+  construction, so treat its **entire** implementation as ONE implicit cluster and run
+  the Step 3C loop over it: implement → `/audit-code` over the **union diff** →
+  fix-gate to convergence → the **mandatory** consolidated Gemini gate (Step 3C.2) →
+  close-out → ship. Print one line up front so it's never silent:
+  `plan below the §11 threshold — implementing inline as a single unit (no clustering).`
+  The same within-cluster auto-fix authorization applies; a fix needing files outside
+  the plan's declared `§7`/`§7b` scope still **stops** for confirmation.
 - **§11 block + default (no `--autonomous`)** → still pauses, but prints the
   cluster plan as implementation guidance and instructs the operator to
   **implement only the next cluster**, then resume with `/cycle code <plan>

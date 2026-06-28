@@ -101,6 +101,6 @@ export function writeOutput(data, outPath, summaryLine) {
 // ── Barrel Re-exports (backward compat) ─────────────────────────────────────
 // All 19+ importers of file-io.mjs continue working unchanged.
 
-export { isSensitiveFile, isAuditInfraFile, readFilesAsContext, classifyFiles, safeReadFile, AUDIT_INFRA_BASENAMES, MAX_FILE_SIZE } from './audit-scope.mjs';
+export { isSensitiveFile, isAuditInfraFile, readFilesAsContext, classifyFiles, safeReadFile, auditSubjectFileGuard, AUDIT_INFRA_BASENAMES, MAX_FILE_SIZE } from './audit-scope.mjs';
 export { parseDiffFile, readFilesAsAnnotatedContext, getCommentStyle } from './diff-annotation.mjs';
 export { extractPlanPaths } from './plan-paths.mjs';

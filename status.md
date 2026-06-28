@@ -1,5 +1,24 @@
 # Project Status Log
 
+## 2026-06-28 — Tier-1 tooling fixes (wine-cellar-app session feedback)
+
+Three cross-repo-general tooling fixes (the unambiguous tier; the "green ≠ realized" theme
+is a separate Tier-2 brainstorm). Audited via `/audit-code` (GPT R1 H:2/M:5 → R3 PASS;
+Gemini R1 CONCERNS → R2 APPROVE).
+- **A1 (HIGH)** — `/audit-code` no longer emits a confident verdict over code it never read.
+  `auditSubjectFileGuard` (pure, `audit-scope.mjs`) refuses when 0 subject files reach the
+  prompt; a content probe also catches files-resolve-but-empty-context; an explicit but
+  unreadable `--diff` **fails fast** (the `base..HEAD` range-misuse) instead of warn-and-proceed.
+  4 unit tests + 2 CLI integration tests (the guard fires pre-GPT, so no API call).
+- **A2 (MED)** — `/cycle --autonomous` on a sub-§11 plan runs a **degenerate single-cluster**
+  path instead of silently pausing; Step 3 gains a decision table (mode × hasClustering × --autonomous).
+- **A3 (LOW)** — `writeLedgerEntry` echoes the resolved absolute path on success; a Windows/git-bash
+  `/tmp` caveat + "--diff is a FILE" note in the R2 reference.
+
+Full suite 3867 pass / 0 fail; skills IN SYNC.
+
+---
+
 ## 2026-06-28 — nav-audit: skip breakpoint-hidden activation triggers (confirmation-run residual)
 
 The wine-cellar-app confirmation run verified both prior fixes end-to-end (activation tab-storm

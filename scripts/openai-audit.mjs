@@ -34,7 +34,7 @@ import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySch
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
   writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles,
-  isAuditInfraFile
+  isAuditInfraFile, auditSubjectFileGuard
 } from './lib/file-io.mjs';
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
@@ -1520,7 +1520,20 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       const lines = diffContent.split('\n');
       diffLinesChanged = lines.filter(l => (l.startsWith('+') || l.startsWith('-')) && !l.startsWith('+++') && !l.startsWith('---')).length;
       diffFilesChanged = (diffContent.match(/^diff --git/mg) || []).length || changedFiles.length;
-    } catch { /* diff file unreadable — skip */ }
+    } catch (err) {
+      // --diff was EXPLICITLY passed but is unreadable. Don't warn-and-proceed (Gemini
+      // gate): silently degrading a targeted R2+ audit to no-annotation — or, for the
+      // `base..HEAD` range-misuse, auditing the wrong scope — is the quasi-silent
+      // failure A1 exists to kill. The user signalled intent by passing --diff; fail
+      // fast so they fix the invocation (a unified-diff FILE, not a git range).
+      const looksLikeRange = /\.\.|^[0-9a-f]{7,40}$/i.test(String(diffFile));
+      throw new Error(
+        `--diff "${diffFile}" is not a readable file (${err.code || err.message}). ` +
+        (looksLikeRange
+          ? `It looks like a git RANGE — --diff expects a unified-diff FILE: \`git diff base..HEAD > d.patch\` then \`--diff d.patch --changed <files>\`.`
+          : `Pass a readable unified-diff file, or omit --diff.`)
+      );
+    }
   }
   if (diffFilesChanged == null && changedFiles.length > 0) diffFilesChanged = changedFiles.length;
 
@@ -1982,6 +1995,32 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   const effectiveServices = fileFilter ? scopedBackendServices : backendServices;
   const effectiveBackend = fileFilter ? scopedBackend : backend;
   const effectiveFrontend = fileFilter ? scopedFrontend : frontend;
+
+  // ── A1 guard: "audit your success paths" applied to the auditor ITSELF ──
+  // Refuse to emit a verdict when 0 implementation files would reach the prompt
+  // (hollow-but-confident result). Pure predicate lives in audit-scope.mjs.
+  {
+    const subjectFiles = new Set([
+      ...effectiveBackend, ...effectiveFrontend,
+      ...(splitBackend ? [...effectiveRoutes, ...effectiveServices] : []),
+    ]);
+    // (1) File-set check — scope resolved to no subject files.
+    const guardMsg = auditSubjectFileGuard({
+      scopeMode, subjectFileCount: subjectFiles.size, hasFileFilter: Boolean(fileFilter),
+      foundCount: found.length, referencedCount: allPaths.size,
+    });
+    if (guardMsg) throw new Error(guardMsg);
+    // (2) Content check (audit R1 HIGH) — files can RESOLVE yet assemble to EMPTY
+    // context (all unreadable / sensitive-filtered / oversized), which the count
+    // check can't see. Probe the actual assembled code block (cheap head-only read);
+    // an empty block = the same hollow-verdict hazard, so refuse it too.
+    if (scopeMode !== 'full' && subjectFiles.size > 0) {
+      const probe = readFilesAsContext([...subjectFiles], { maxPerFile: 200, maxTotal: 4000 });
+      if (!probe || !probe.trim()) {
+        throw new Error(`audit aborted — ${subjectFiles.size} file(s) resolved but assembled to EMPTY implementation context (unreadable / sensitive-filtered / oversized); refusing to emit a verdict over an empty prompt.`);
+      }
+    }
+  }
 
   if (shouldRunPass('backend')) {
     if (splitBackend) {

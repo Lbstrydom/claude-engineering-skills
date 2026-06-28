@@ -63,6 +63,14 @@ node scripts/openai-audit.mjs code <plan-file> \
   2>/tmp/$SID-r2-stderr.log
 ```
 
+> **Windows / git-bash temp-path caveat (A3).** A `/tmp/...` path in an argv is
+> MSYS-rewritten to `%LOCALAPPDATA%\Temp\...`, but a *literal* `/tmp/...` inside a
+> separate `node -e` resolves to `C:\tmp\...` — so reconstructing the path in a
+> follow-up command can miss the file. **Read the file back from the resolved
+> absolute path the scripts echo** (`[out] Results written to <abs>` /
+> `[ledger] wrote N entries → <abs>`), not from a re-typed `/tmp/...` literal.
+> `--diff` expects a unified-diff **FILE** (not a git range), paired with `--changed`.
+
 ## CLI flag contract
 
 | Flag | Source | Purpose |

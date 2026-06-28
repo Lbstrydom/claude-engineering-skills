@@ -164,3 +164,28 @@ export function classifyFiles(filePaths) {
 
   return { backend, frontend, shared };
 }
+
+/**
+ * A1 guard — "audit your success paths" applied to the auditor ITSELF. Returns a
+ * refusal message when a code audit would read ZERO implementation (subject) files,
+ * else null. A scoped audit whose scope matched none of the plan's files — or a plan
+ * whose referenced paths don't exist on disk — would otherwise run all passes over an
+ * empty "All Implementation Files" block and emit a CONFIDENT-but-HOLLOW verdict
+ * (worse than no auditor: it looks authoritative). `full` scope reads the repo broadly
+ * and is exempt. `shared` files are context, not the subject, so they don't count.
+ *
+ * @param {object} a
+ * @param {string|null} a.scopeMode - 'diff' | 'plan' | 'full' | null
+ * @param {number} a.subjectFileCount - count of backend+frontend(+routes/services) files that will be read
+ * @param {boolean} a.hasFileFilter - whether a --changed/diff scope is active
+ * @param {number} [a.foundCount] - plan-referenced files that exist on disk
+ * @param {number} [a.referencedCount] - total paths referenced by the plan
+ * @returns {string|null} refusal message, or null when the audit may proceed
+ */
+export function auditSubjectFileGuard({ scopeMode, subjectFileCount, hasFileFilter, foundCount = 0, referencedCount = 0 }) {
+  if (scopeMode === 'full' || subjectFileCount > 0) return null;
+  const hint = hasFileFilter
+    ? `the scope matched none of the plan's ${foundCount} referenced file(s) on disk. Pass \`--changed <files>\` explicitly (with \`--diff <patch>\`), or \`--scope=plan|full\`.`
+    : `the plan referenced no implementation files that exist on disk (0 of ${referencedCount} resolved). Check the plan's file paths, or pass \`--changed <files>\`.`;
+  return `audit aborted — 0 implementation files reached the prompt; refusing to emit a verdict over code that was never read. ${hint}`;
+}

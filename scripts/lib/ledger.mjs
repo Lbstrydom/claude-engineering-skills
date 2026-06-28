@@ -87,6 +87,10 @@ export function writeLedgerEntry(ledgerPath, entry) {
   // Atomic write — temp file + rename for crash safety
   try {
     atomicWriteFileSync(absPath, JSON.stringify(ledger, null, 2));
+    // Echo the RESOLVED absolute path (A3) — on Windows git-bash a `/tmp/...` argv is
+    // MSYS-rewritten to %LOCALAPPDATA%\Temp, so the literal path the caller typed is
+    // NOT where the file lands; the resolved path is the one to read back.
+    process.stderr.write(`  [ledger] wrote ${ledger.entries.length} entr${ledger.entries.length === 1 ? 'y' : 'ies'} → ${absPath}\n`);
   } catch (err) {
     process.stderr.write(`  [ledger] Failed to write ${absPath}: ${err.message}\n`);
   }
