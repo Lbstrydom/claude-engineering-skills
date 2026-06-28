@@ -458,6 +458,35 @@ bootstrap on every push; that's noise).
 
 ---
 
+## Step 6.6 — Friction closure (after successful push, advisory)
+
+Completes the friction-feedback loop (plan: `docs/completed/friction-feedback-loop.md`
+C10). The `UserPromptSubmit` hook injects `> Relevant prior friction` callouts and
+records a breadcrumb; this step surfaces notes that the just-pushed commit may have
+resolved, so a recurring papercut gets marked closed instead of recurring forever.
+
+If push succeeded, list pending injected-but-unlinked friction:
+
+```bash
+node scripts/cross-skill.mjs quality session-review
+```
+
+For each pending note, emit a single passive line with the ready link command
+(NOT an interactive prompt — `/ship` is `disable-model-invocation: true`, same as
+the Step 6.5 security hint):
+
+```
+⚠ Prior friction you were warned about: "<title>" (<memory_name>).
+  If this commit fixed it: node scripts/cross-skill.mjs quality link \
+    --memory <memory_name> --kind commit --ref <HEAD sha>
+```
+
+Cloud-off, no breadcrumb, or no pending notes → **no-op (silent)** — never noise.
+`quality link` is idempotent + local-first; the user decides whether to run it.
+Advisory; never blocks the ship.
+
+---
+
 ## Step 7 — Emit Ship Event (always)
 
 After commit + push completes (or is blocked), record the outcome:

@@ -25,13 +25,28 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const WINDOW_DAYS = Number(process.env.MEMORY_HEALTH_WINDOW_DAYS ?? 30);
+// Parse a numeric env var, falling back to the default on absent/garbage. A bare
+// `Number("abc")` → NaN, and every threshold comparison against NaN is false → no
+// trigger ever fires → a silent FALSE-GREEN (the class this whole gate exists to
+// avoid). Warn loudly when an explicit value is unparseable so it's never silent.
+function numEnv(name, fallback) {
+  const raw = process.env[name];
+  if (raw == null || raw === '') return fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) {
+    process.stderr.write(`memory-health: WARNING — ${name}="${raw}" is not a finite number; using ${fallback}\n`);
+    return fallback;
+  }
+  return n;
+}
+
+const WINDOW_DAYS = numEnv('MEMORY_HEALTH_WINDOW_DAYS', 30);
 
 const THRESHOLDS = {
-  fuzzyReraiseRate: Number(process.env.MEMORY_HEALTH_FUZZY_RATE ?? 0.15),
-  clusterMedianPairs: Number(process.env.MEMORY_HEALTH_CLUSTER_MEDIAN ?? 5),
-  recurrenceRate: Number(process.env.MEMORY_HEALTH_RECURRENCE_RATE ?? 0.10),
-  minFindingsForSignal: Number(process.env.MEMORY_HEALTH_MIN_FINDINGS ?? 50)
+  fuzzyReraiseRate: numEnv('MEMORY_HEALTH_FUZZY_RATE', 0.15),
+  clusterMedianPairs: numEnv('MEMORY_HEALTH_CLUSTER_MEDIAN', 5),
+  recurrenceRate: numEnv('MEMORY_HEALTH_RECURRENCE_RATE', 0.10),
+  minFindingsForSignal: numEnv('MEMORY_HEALTH_MIN_FINDINGS', 50)
 };
 
 function parseArgs(argv) {
