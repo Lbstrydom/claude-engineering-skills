@@ -90,7 +90,11 @@ if [ -z "$AUDIT_LOOP_DIR" ] || [ ! -f "$AUDIT_SCRIPT" ]; then
 fi
 
 echo "[prepush-hook] auditing $PLAN_FILE via $AUDIT_LOOP_DIR (--scope diff)..." >&2
-node "$AUDIT_SCRIPT" code "$PLAN_FILE" --scope diff > /tmp/prepush-audit-$$.json 2>&1
+# AUDIT_ALLOW_FOREIGN_CWD=1: this runs the SOURCE repo's openai-audit.mjs against
+# THIS (consumer) repo's cwd on purpose — the audit reads its diff from cwd, so
+# the script-repo != cwd is correct here. Without it, assertRepoRoot would exit 1
+# every push and the audit would never actually run.
+AUDIT_ALLOW_FOREIGN_CWD=1 node "$AUDIT_SCRIPT" code "$PLAN_FILE" --scope diff > /tmp/prepush-audit-$$.json 2>&1
 EXIT=$?
 
 if [ "$EXIT" != "0" ]; then

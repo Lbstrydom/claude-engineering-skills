@@ -54,12 +54,23 @@ function findExpectedRoot(scriptPath) {
 export function assertRepoRoot(importMetaUrl, opts = {}) {
   const stderr = opts.stderr || process.stderr;
   const exit = opts.exit || ((code) => process.exit(code));
+  const env = opts.env || process.env;
 
   const scriptPath = fileURLToPath(importMetaUrl);
   const expectedRoot = findExpectedRoot(scriptPath);
   if (!expectedRoot) return { root: '', cwd: process.cwd() };
 
   const cwd = path.resolve(process.cwd());
+
+  // Escape hatch for LEGITIMATE cross-repo invocation. The consumer's pre-push
+  // hook deliberately runs the SOURCE repo's openai-audit.mjs against the
+  // CONSUMER's cwd — the audit reads its diff/files from process.cwd(), so
+  // cwd !== the script's own repo is correct there, not a mistake. The guard
+  // exists only to catch an accidental cd-into-a-subdirectory; a caller that
+  // sets AUDIT_ALLOW_FOREIGN_CWD=1 is explicitly opting out of the cwd check.
+  // (env is overridable via opts.env for tests.)
+  if (env.AUDIT_ALLOW_FOREIGN_CWD === '1') return { root: expectedRoot, cwd };
+
   if (cwd === expectedRoot) return { root: expectedRoot, cwd };
 
   const rel = path.relative(expectedRoot, scriptPath).replaceAll(path.sep, '/');
