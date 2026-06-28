@@ -362,28 +362,17 @@ until a follow-up PR; the candidates remain in the queue).
 
 ## Step 6 — Stage, Commit, Push
 
-### 6.0 Regenerate sync manifest (claude-engineering-skills only)
+### 6.0 Sync manifest — no action (source repo)
 
-If this is the source repo (`package.json.name === "claude-engineering-skills"`)
-AND any file under `scripts/`, `scripts/lib/`, or other CORE_SCRIPTS-tracked
-paths has changed, regenerate the sync manifest before staging:
+The source repo's `scripts/.sync-manifest.json` is **gitignored** (it's
+regenerated on every `npm run sync`, which the pre-push hook runs, and carries
+volatile provenance — a timestamp + HEAD sha — so committing it is pure churn;
+Category A per the generated-artifact policy). **Do not `git add` it.** The
+pre-push sync regenerates it on disk for readers; it is never committed here.
 
-```bash
-node scripts/sync-to-repos.mjs --target wine    # any --target works; manifest writes first
-```
-
-The first line of sync output will read `manifest  scripts/.sync-manifest.json @ <sha>`.
-The manifest captures SHA-256 hashes of every CORE_SCRIPTS file at the
-current commit. Consumer repos fetch it on `/audit-code` startup to detect
-staleness vs upstream.
-
-Then stage it alongside your other changes (Step 6.1):
-
-```bash
-git add scripts/.sync-manifest.json
-```
-
-Skip this step in consumer repos — the manifest is read-only there.
+Consumers are unaffected: they track their **own** manifest (synced + eol-pinned
+via `.gitattributes`; the isolation verifier needs it). The source `.gitignore`
+entry is source-only and does not propagate to the consumer managed block.
 
 ### 6.1 Stage
 
@@ -394,7 +383,8 @@ git add <list of changed source files>
 git add status.md
 git add CLAUDE.md AGENTS.md    # only if modified
 git add docs/plans/<plan>.md   # only if plan was updated
-git add scripts/.sync-manifest.json   # source repo only, after Step 6.0
+# NOTE: do NOT `git add scripts/.sync-manifest.json` in the source repo — it's
+# gitignored here (Category A; regenerated every sync). Consumers track their own.
 git add dashboard/index.html   # source repo only, after Step 0.5d, ONLY if that build exited 0
 ```
 

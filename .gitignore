@@ -95,6 +95,15 @@ scripts/lib/consumer-repos.local.json
 # requirements-layer candidates/gaps intermediates: kept locally, never committed.
 .audit-loop/repo-alias-map.json
 
+# SOURCE-repo sync manifest — regenerated on every `npm run sync` (which the
+# pre-push hook runs), carrying volatile provenance (generatedAt timestamp +
+# HEAD sha) → Category A per the generated-artifact policy: committing it is pure
+# churn (dirty again on the next push). The file still exists on disk for readers;
+# it's just untracked HERE. CONSUMERS still track their own copy (the isolation
+# verifier needs it; synced + eol-pinned via .gitattributes) — this ignore is
+# source-only and does NOT propagate to the consumer managed .gitignore block.
+scripts/.sync-manifest.json
+
 # .env backups from rearrangement scripts (may contain secrets).
 .env.bak.*
 
