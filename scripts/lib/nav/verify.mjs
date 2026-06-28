@@ -14,11 +14,9 @@
  *
  * @module scripts/lib/nav/verify
  */
-import { normalizeDestination } from './normalize.mjs';
+import { normalizeDestination, VIEW_PARAMS } from './normalize.mjs';
 import { getPreset } from '../device-presets.mjs';
 import { resolveContainer, attributeLive, computeCaptureStatus } from './live-attribution.mjs';
-
-const VIEW_PARAMS = ['view', 'tab', 'page', 'screen'];
 
 /**
  * Normalize a live href/target to the canonical id space the static model uses.
@@ -498,6 +496,13 @@ async function discoverExpandTriggers(page, declaredSelectors) {
       // the hamburger-affordance ones are nav by definition.
       const needsNavCheck = el.matches('[aria-expanded="false"], [aria-controls]');
       if (needsNavCheck && !navish(el)) continue;
+      // A `role=tab` / `aria-selected` control is a NAVIGATION tab — it switches a
+      // view (e.g. `aria-controls=view-*` → switchView), NOT a collapsible-menu
+      // disclosure. Clicking it navigates/re-renders, which the activation pass would
+      // mis-read as "navigated away" or (on detach mid-click) a fail → a false
+      // "app likely degraded" on a HEALTHY tabbed SPA (field-test #1). Exclude it —
+      // a genuine disclosure uses `aria-expanded`, which is unaffected.
+      if (el.getAttribute('role') === 'tab' || el.hasAttribute('aria-selected')) continue;
       const selector = el.id ? `#${esc(el.id)}`
         : (el.getAttribute('aria-controls') ? `[aria-controls="${el.getAttribute('aria-controls')}"]` : pathOf(el));
       if (!selector || seen.has(selector)) continue;

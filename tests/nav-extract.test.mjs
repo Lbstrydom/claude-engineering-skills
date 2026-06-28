@@ -16,6 +16,17 @@ describe('normalizeDestination', () => {
   it('strips query/hash and trailing slash', () => {
     assert.equal(normalizeDestination('/wines/?sort=year#top').ids[0], '/wines');
   });
+  it('extracts the SPA view-routing param to match the live normalizer (field-test #2)', () => {
+    // `?view=X` (and tab/page/screen) IS the destination — must NOT collapse to `/`,
+    // else `?view=settings` links are false "surprising-mappings" and all views pile
+    // into "static-only" vs live.
+    assert.equal(normalizeDestination('/?view=settings').ids[0], 'settings');
+    assert.equal(normalizeDestination('/?view=today').ids[0], 'today');
+    assert.equal(normalizeDestination('/wines?view=grid').ids[0], 'grid'); // view param wins over path (mirrors live)
+    assert.equal(normalizeDestination('/?tab=pairing').ids[0], 'pairing');
+    // a NON-view query param is still stripped (sort is not a routing key)
+    assert.equal(normalizeDestination('/wines?sort=year').ids[0], '/wines');
+  });
   it('removes Next route groups', () => {
     assert.equal(normalizeDestination('/(marketing)/about').ids[0], '/about');
   });

@@ -11,6 +11,15 @@
  */
 
 /**
+ * SPA query-param view-routing keys (`?view=today` → `today`). Shared with the LIVE
+ * normalizer (verify.mjs `normalizeLiveTarget`) so static and live agree — a mismatch
+ * makes `?view=X` links normalize to `/` statically but `X` live, producing a false
+ * "surprising-mapping" and dumping every view into "static-only" (field-test #2).
+ * @type {readonly string[]}
+ */
+export const VIEW_PARAMS = ['view', 'tab', 'page', 'screen'];
+
+/**
  * @param {string} raw - a route/path string or a view symbol
  * @returns {{ids: string[], confidence: 'high'|'medium'|'low'}}
  *   ids: 1 id normally; 2 when an optional segment yields with/without variants.
@@ -31,6 +40,18 @@ export function normalizeDestination(raw) {
 
   let p = raw.trim();
   let confidence = 'high';
+
+  // SPA query-param view routing (`/?view=settings` → `settings`) — extract BEFORE the
+  // query is stripped, matching the live normalizer so static==live (field-test #2).
+  // The view slug IS the destination; the path (usually `/`) is incidental.
+  const qIndex = p.indexOf('?');
+  if (qIndex >= 0) {
+    const params = new URLSearchParams(p.slice(qIndex + 1).split('#')[0]);
+    for (const vp of VIEW_PARAMS) {
+      const v = params.get(vp);
+      if (v) return { ids: [v.trim()], confidence: 'high' };
+    }
+  }
 
   // Detect an optional dynamic segment BEFORE stripping query (its trailing `?`
   // otherwise looks like a query delimiter): React `:id?` or Next `[[id]]`.

@@ -1,5 +1,30 @@
 # Project Status Log
 
+## 2026-06-28 — nav-audit upstream fixes from the wine-cellar-app live shakedown
+
+The first full live end-to-end nav-audit run validated the lens: the empty-shell honesty
+(field-test #3 fix) detected the visible-but-empty `#primary-nav`, degraded the affected
+personas to *unverified* (not falsely "missing"), and FORCED the right diagnosis — a real
+cold-boot mount race in the app (`mountPrimaryNav` fired last; hoisted → bar populates ~500ms).
+That app fix shipped to prod (wine-cellar `53792560`) and re-verified. Three tooling items came
+back upstream:
+- **#1 activation-pass nav-click storm — FIXED.** `discoverExpandTriggers` selected `role=tab`
+  `aria-controls` sub-tabs that *navigate* (switchView), so the pass clicked them → "navigated
+  away"/detach → a false "app likely degraded" on a HEALTHY tabbed SPA. Now excludes
+  `role=tab` / `aria-selected` (a genuine disclosure uses `aria-expanded`, unaffected).
+- **#2 static↔live normalizer asymmetry — FIXED.** The static `normalizeDestination` stripped
+  `?view=settings` → `/` while live `normalizeLiveTarget` kept `→ settings`, producing false
+  "surprising-mapping" findings and dumping every view into "static-only." Static now extracts
+  the SPA view-routing param (shared `VIEW_PARAMS`, single source of truth across normalize/verify).
+- **#3 empty-shell wait-and-recapture — DECLINED (deliberate).** A longer wait before degrading
+  would MASK slow-mount pathologies — exactly the 8s mount race this shakedown found. The honest
+  *unverified* (after the existing 1.5s settle) is a feature that surfaced a real perf bug; a
+  generous re-capture would have hidden it. Capture-honesty over false-green.
+
+#1 verified by the field repro (`--no-activate` == with-activate); #2 unit-tested. Full suite 3861/0.
+
+---
+
 ## 2026-06-27 — Fix flaky learning-store-phase1 test (stale legacy-env guard)
 
 The graceful-degradation tests gated on `HAS_SERVICE_ROLE` (the legacy `SUPABASE_AUDIT_*`
