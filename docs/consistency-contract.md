@@ -46,7 +46,7 @@ For elements inside a collection (a list/grid item), use `[]` array
 notation — the scope binding (below) fills in the index:
 
 ```html
-<li data-engine-scope="wines-grid" data-engine-key="wine-uuid-abc123"
+<li data-engine-scope="wines-grid" data-engine-key="abc123"
     data-engine-claim="wines[].vintage">
 ```
 
@@ -160,11 +160,11 @@ key from each response entry.
                      keyField: "id" }]                                  -->
 
 <ul>
-  <li data-engine-scope="wines-grid" data-engine-key="wine-uuid-abc123">
+  <li data-engine-scope="wines-grid" data-engine-key="abc123">
     <span data-engine-claim="wines[].vintage" data-engine-value="2020"
           data-freshness="current">2020</span>
   </li>
-  <li data-engine-scope="wines-grid" data-engine-key="wine-uuid-def456">
+  <li data-engine-scope="wines-grid" data-engine-key="def456">
     <span data-engine-claim="wines[].vintage" data-engine-value="2021"
           data-freshness="current">2021</span>
   </li>

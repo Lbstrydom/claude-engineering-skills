@@ -41,8 +41,12 @@ so orchestrators can see which tools ran.
 ## Round 2+ invocation
 
 ```bash
-# Generate diff from fixes
-git diff HEAD~1 -- . > /tmp/$SID-diff.patch
+# Generate diff from fixes (use the dirty-aware BASE from SKILL Step 5 — HEAD when the tree
+# is dirty, HEAD~1 when clean — not a hardcoded HEAD~1).
+git diff "$BASE" -- . > /tmp/$SID-diff.patch
+# Include UNTRACKED new files (git diff omits them) so a brand-new file still gets [CHANGED] markers.
+git ls-files --others --exclude-standard -z \
+  | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> /tmp/$SID-diff.patch 2>/dev/null || true
 
 # Build changed + files lists from Step 4 fix list
 CHANGED="scripts/shared.mjs,scripts/openai-audit.mjs"

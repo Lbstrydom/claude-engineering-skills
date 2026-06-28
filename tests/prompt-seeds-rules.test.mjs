@@ -1,6 +1,6 @@
 /**
  * @fileoverview Tier-2 invariant test for the GREEN ≠ REALIZED Cluster B runtime-truth audit
- * rules (plan: docs/plans/green-not-realized.md, Phase 5). NOT a grep of the source — it asserts
+ * rules (plan: docs/completed/green-not-realized.md, Phase 5). NOT a grep of the source — it asserts
  * the rule text survives into the BUILT pass prompt (`PASS_PROMPTS.frontend`, the exact string
  * `openai-audit.mjs` bootstraps into the registry and injects). A prose drift that drops the
  * checkable-artifact demand would let the derived-state-parity rule silently degrade to "consider

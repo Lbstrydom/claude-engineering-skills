@@ -125,6 +125,11 @@ tool pre-pass rules: `references/r2-plus-mode.md`.
 # unaudited across a commit boundary.
 BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)
 git diff "$BASE" -- . > /tmp/$SID-diff.patch
+# Include UNTRACKED new files — `git diff` omits them, so without this a brand-new file
+# reaches the auditor with NO [CHANGED] annotation (it's still read in full via --files, but
+# loses the diff focus markers). Append each as a /dev/null→file "new file" diff.
+git ls-files --others --exclude-standard -z \
+  | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> /tmp/$SID-diff.patch 2>/dev/null || true
 node scripts/openai-audit.mjs code <plan-file> \
   --round 2 \
   --ledger /tmp/$SID-ledger.json \
@@ -352,7 +357,7 @@ After fixes, re-audit using R2+ mode (back to Step 2):
 
 1. Collect files modified during Step 4 → `--changed`
 2. Compute scope: changed + importers → `--files`
-3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff "$BASE" -- . > /tmp/$SID-diff.patch`
+3. Generate diff (dirty-aware base, matching R1 — untracked counts): `BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1); git diff "$BASE" -- . > /tmp/$SID-diff.patch` — then append UNTRACKED new files (`git diff` omits them): `git ls-files --others --exclude-standard -z | xargs -0 -r -I{} git diff --no-index --no-color -- /dev/null "{}" >> /tmp/$SID-diff.patch 2>/dev/null || true`
 4. Build `--passes` from file types
 5. Run R2+ audit with `--round <N> --ledger --diff --changed --files`
 
