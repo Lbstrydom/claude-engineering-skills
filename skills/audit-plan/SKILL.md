@@ -149,6 +149,16 @@ spot-check that the cited path plausibly supports it; a design built on a
 mis-described existing contract is HIGH regardless of trace presence. Trivial
 single-file plans are exempt (a bare `Code Trace: <file>` is fine).
 
+**Test-premise lint (#6 — GREEN ≠ REALIZED).** A plan assertion of the form
+"tests already cover X" / "the default path resolves Y" / "this is already
+exercised" is a **build-time spike**, NOT evidence, unless an **executed
+command + its result** is attached (e.g. `npm test -- foo` → `12 passing`).
+Flag the bare claim — it reads as green but nothing was run; the gap surfaces
+only when the code audit runs the command for real. Likewise a **discovery-freeze
+sub-step** that NAMES a source/feed/field must also **prove its semantics match
+the contract** (units, scope, filter, freshness) — "name the field → prove the
+field means what the design assumes." Naming a source is not proving it.
+
 ### Execution-clustering rubric (when the plan has a §11 block)
 
 The whole plan file is already in the GPT/Gemini context, so no new

@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-06-28 — GREEN≠REALIZED Clusters B + C (autonomous /cycle)
+
+### Changes
+- Cluster B: runtime-truth audit rules — derived-state-parity + freeze-semantics in the frontend pass rubric (executable layer + invariant test), test-premise lint in audit-plan, cross-surface honesty clause in audit-code, parity-probe doc in the consistency contract.
+- Cluster C: deploy-topology honesty — resolvePreviewGate seam (lib/cycle/topology.mjs) + preview-gate CLI + /cycle Step 5.0; previewGateMode config (invalid value warns, never silently disables).
+- Consolidated Gemini gate over the B+C union: APPROVE. green-not-realized plan now Complete (all 3 clusters).
+
+### Files Affected
+- scripts/lib/cycle/topology.mjs, scripts/cross-skill.mjs (preview-gate), scripts/lib/config.mjs (cycleConfig) — new/modified
+- scripts/lib/prompt-seeds.mjs, skills/{audit-plan,audit-code,cycle}/SKILL.md, docs/consistency-contract.md
+- defaults/efficacy-lints.config.example.json, tests/cycle-topology.test.mjs, tests/prompt-seeds-rules.test.mjs (new)
+
+### Next Steps
+- green-not-realized fully shipped. Opt-in per repo via efficacy-lints.config.json + PREVIEW_GATE_MODE.
+
+---
+
 ## 2026-06-28 — GREEN≠REALIZED Cluster A: deterministic efficacy lints
 
 ### Changes

@@ -8,6 +8,7 @@
 import { safeInt } from './file-io.mjs';
 import { resolveModel, isSentinel } from './model-resolver.mjs';
 import { loadSharedEnv } from './load-shared-env.mjs';
+import { PREVIEW_GATE_MODES } from './cycle/topology.mjs';
 
 // ── Environment layering (worktree-safe) ────────────────────────────────────
 // All env loading now lives in ONE place: load-shared-env.mjs. It layers the
@@ -148,6 +149,23 @@ export const assessmentConfig = Object.freeze({
   windowSize: safeInt(process.env.META_ASSESS_WINDOW, 50),
   model: resolveModel(process.env.META_ASSESS_MODEL || 'latest-flash'),
   fallbackGptModel: resolveModel(process.env.META_ASSESS_GPT_FALLBACK || 'latest-gpt-mini'),
+});
+
+// ── /cycle deploy-topology Config (GREEN ≠ REALIZED #7) ──────────────────────
+// Declares whether /cycle's persona-test can gate before merge. Repo property, not
+// a secret — validated against the three honest states; unknown → not_applicable
+// (the safe silent default, opt-in). Consumed via resolvePreviewGate (topology.mjs).
+const _rawPreviewGateMode = process.env.PREVIEW_GATE_MODE;
+if (_rawPreviewGateMode && !PREVIEW_GATE_MODES.includes(_rawPreviewGateMode)) {
+  // A PRESENT-but-invalid value must NOT silently disable the gate (the green≠realized trap):
+  // surface it so a typo'd PREVIEW_GATE_MODE doesn't read as "protected" while the gate is OFF.
+  process.stderr.write(
+    `[config] PREVIEW_GATE_MODE='${_rawPreviewGateMode}' is not a valid mode ` +
+    `(${PREVIEW_GATE_MODES.join('|')}); treating as not_applicable — the /cycle preview gate is OFF.\n`,
+  );
+}
+export const cycleConfig = Object.freeze({
+  previewGateMode: PREVIEW_GATE_MODES.includes(_rawPreviewGateMode) ? _rawPreviewGateMode : 'not_applicable',
 });
 
 // ── Learning System v2 Config ─────────────────────────────────────────────

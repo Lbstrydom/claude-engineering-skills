@@ -88,7 +88,10 @@ export function loadEfficacyConfig(root) {
   if (user === null || typeof user !== 'object' || Array.isArray(user)) {
     throw new Error(`efficacy-lints.config.json must be a JSON object (got ${user === null ? 'null' : Array.isArray(user) ? 'array' : typeof user})`);
   }
-  const merged = { ...user, modelMinTokens: { ...DEFAULT_CONFIG.modelMinTokens, ...(user.modelMinTokens || {}) } };
+  // `_`-prefixed keys are JSON "comments" (e.g. the `_note` in the example template) — drop them
+  // before the .strict() schema (which otherwise rejects them, breaking copy-the-example).
+  const cleaned = Object.fromEntries(Object.entries(user).filter(([k]) => !k.startsWith('_')));
+  const merged = { ...cleaned, modelMinTokens: { ...DEFAULT_CONFIG.modelMinTokens, ...(cleaned.modelMinTokens || {}) } };
   const parsed = EfficacyLintsConfigSchema.safeParse(merged);
   if (!parsed.success) throw new Error(`efficacy-lints.config.json invalid: ${parsed.error.issues[0]?.path?.join('.')} — ${parsed.error.issues[0]?.message}`);
   return parsed.data;

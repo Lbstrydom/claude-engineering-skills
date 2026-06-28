@@ -98,6 +98,45 @@ no claim when the surface knows it has no value).
 
 ---
 
+## Parity-probe — "value A must equal surface B's source" (reuse, not a new tool)
+
+The most common GREEN ≠ REALIZED bug is **two surfaces that must show the same
+number disagreeing at runtime** ("0 to move" on one screen, "30 to move" on
+another) — and a static code audit on either file alone cannot catch it (it
+shipped a real P0 past `/audit-code` + the Gemini gate). You do **not** need a
+new parity tool: the `data-engine-claim` contract above already IS the parity
+probe. To pin a cross-surface agreement:
+
+1. Give **both** surfaces the SAME `data-engine-claim` field — both map (via
+   `surfaces.json`) to the SAME `jsonPath` in the network truth.
+
+   **Failure mechanism (the actual assertion).** On every captured step the runner
+   reads each surface's rendered `data-engine-value`, resolves its `surfaces.json`
+   `jsonPath` against the step's network response (the source of truth), and emits a
+   `value-mismatch` contradiction when they differ (or `stale-projection` when the DOM
+   lags a newer response) — at the surface's `severityFloor` (default P1). Because BOTH
+   surfaces resolve the SAME `jsonPath`, any step that renders them with different
+   values fails one of the two comparisons → the run is non-clean and the witness
+   snapshot names both surfaces. **Ownership**: the surface author owns declaring the
+   field + floor; the runner owns the comparison — there is no "make them agree" code
+   to write, the declaration IS the assertion.
+2. If the two values come from genuinely different responses but must match,
+   declare both surfaces and author a canary whose journey **visits both** (the
+   check only fires on steps where a surface is on-screen); leave
+   `expectedContradictions: []` so ANY divergence fails the run. A surface that is
+   never visited is never checked — coverage is the canary author's responsibility.
+
+This is why `/audit-code`'s `derived-state-parity` finding nudges the author to
+**declare the value as a `data-engine-claim` surface** rather than asserting in
+prose that the two "stay in sync": the declaration is the checkable artifact;
+the prose is green-but-not-realized. Run it with:
+
+```bash
+node scripts/persona-consistency-run.mjs --canary <name> --url <deployed-url>
+```
+
+---
+
 ## Collection scope attributes (for lists, grids, tables)
 
 When a surface lives inside a collection of repeated entities, two extra

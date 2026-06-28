@@ -251,12 +251,30 @@ Detect whether persona-test is applicable:
 - Skip if `--no-persona` flag passed
 - Skip if no `PERSONA_TEST_APP_URL` env var (no deployed instance)
 
+### Step 5.0 — Deploy-topology gate (GREEN ≠ REALIZED #7)
+
+Before driving the browser, resolve whether persona-test can actually GATE here —
+**call the seam, don't re-decide in prose** (the decision is a tested function):
+
+```bash
+node scripts/cross-skill.mjs preview-gate --format human
+```
+
+Act on the directive:
+- **`[HALT]`** (`previewGateMode: pre_merge_required`) — a preview env exists and MUST gate.
+  Run persona-test against the **preview `--url`** and **halt before merge/ship** until it passes;
+  do not let Step 7 ship on a failed/again-skipped persona run.
+- **`[WARN]`** (`post_merge_warning` — deploy-from-main / no preview) — surface the warning
+  prominently: persona-test here is **POST-HOC and cannot prevent prod exposure**; its P0/P1
+  findings are fast-follow, NOT a gate. Proceed, but say so in the Step 8 summary.
+- **`[OK]`** (`not_applicable`, default) — silent; proceed normally.
+
 Invoke `/persona-test <persona> <url>` — drives a browser as a registered
 persona, collects P0–P3 findings.
 
 **On verdict**:
 - 0 P0 findings → proceed to Step 6
-- ≥1 P0 finding → present to user, recommend fix before ship; offer to feed findings back into a new `/audit-code` round
+- ≥1 P0 finding → present to user, recommend fix before ship; offer to feed findings back into a new `/audit-code` round (under `[HALT]`, a P0 **blocks** ship until fixed)
 
 ---
 

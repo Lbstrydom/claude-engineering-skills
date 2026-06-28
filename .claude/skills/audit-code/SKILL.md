@@ -430,6 +430,20 @@ deploy"; `/ship` surfaces them again when the app is live. Ranked by leverage
 (unguarded HIGH fix → theme → nav → semantic-DOM → journey), capped at 2, and it
 never re-suggests a lens already covered for this commit.
 
+### Step 6.7 — Cross-surface honesty clause (GREEN ≠ REALIZED)
+
+A clean static audit is **necessary but not sufficient** for cross-surface agreement.
+When the change introduces a user-visible DYNAMIC value (a count / status / total /
+eligibility) that DUPLICATES or re-derives a value another surface shows, a green
+verdict on the changed file does **not** prove the two will agree at runtime — this
+class shipped a P0 past both `/audit-code` and the Gemini gate. If the frontend pass
+raised a `derived-state-parity` finding (or you can see this pattern), do not close it
+on "looks correct"; require one of the three checkable artifacts (shared SSoT / parity
+assertion / a declared `data-engine-claim` surface) and **nudge the author to declare
+the value as a `data-engine-claim` surface** so persona-test `--mode consistency`
+verifies it at runtime. Affordance/intent judgements stay out of scope — this is only
+the "two surfaces must show the same number" check.
+
 ---
 
 ## Step 7 — Gemini Independent Review (MANDATORY)

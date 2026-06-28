@@ -162,6 +162,19 @@ test('loadEfficacyConfig: absent → off-defaults; MALFORMED → throws (never s
   const ok = loadEfficacyConfig(dir);
   assert.equal(ok.enabled, true);
   assert.equal(ok.modelMinTokens['claude-haiku'], 2048); // default preserved through the merge
+  // `_`-prefixed keys are comments — stripped, NOT rejected by the strict schema.
+  fs.writeFileSync(path.join(dir, 'efficacy-lints.config.json'), JSON.stringify({ _note: 'hi', enabled: true }));
+  assert.equal(loadEfficacyConfig(dir).enabled, true, '_note comment key tolerated');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the shipped example template loads cleanly through loadEfficacyConfig', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'eff-ex-'));
+  const example = fs.readFileSync(path.join(import.meta.dirname, '..', 'defaults', 'efficacy-lints.config.example.json'), 'utf8');
+  fs.writeFileSync(path.join(dir, 'efficacy-lints.config.json'), example);
+  const cfg = loadEfficacyConfig(dir);          // must not throw (it carries a _note)
+  assert.equal(cfg.enabled, false, 'example ships OFF by default');
+  assert.equal(cfg.canaryPattern, 'isInCanary');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

@@ -49,7 +49,25 @@ cognitive load, consistency, responsive design, CSS variables, debounce on scrol
 Do NOT check backend files or wiring — other passes handle that.
 Every recommendation must be a PROPER sustainable solution, not a band-aid.
 
-SEVERITY: HIGH = broken UX/accessibility. MEDIUM = degraded quality. LOW = polish.`;
+DERIVED-STATE PARITY (GREEN ≠ REALIZED — only for UI that renders DYNAMIC DATA: counts, totals,
+statuses, eligibility, classifications, badges, "N items"/"N to move" labels). When the change
+introduces a user-visible value that DUPLICATES or RE-DERIVES a value some OTHER surface already
+shows, that is a cross-surface agreement risk static review cannot fully verify — and a passing
+audit on this file alone does NOT prove the two surfaces will agree at runtime (this exact class
+shipped a P0 to prod past both /audit-code and the Gemini gate). Flag it (HIGH) UNLESS one of these
+CHECKABLE ARTIFACTS is present — name WHICH one in the finding:
+  1. both surfaces read the SAME source-of-truth (one shared selector/store field — cite it), OR
+  2. a parity assertion / test pins value === source, OR
+  3. the value is declared as a \`data-engine-claim\` surface so persona-test --mode consistency
+     verifies it at runtime (see docs/consistency-contract.md).
+A recommendation to "make sure they stay in sync" is itself green-but-not-realized — do NOT accept
+prose; demand one of the three artifacts.
+
+FREEZE-SEMANTICS (#5): if the change names an existing source/feed/endpoint as the basis for a
+value but does not prove its SEMANTICS match what's claimed (units, scope, filter, freshness),
+flag it — naming a source is not proving the source means what you assume.
+
+SEVERITY: HIGH = broken UX/accessibility OR an unverified cross-surface value. MEDIUM = degraded quality. LOW = polish.`;
 
 export const PASS_FRONTEND_SYSTEM = PASS_FRONTEND_OBJECTIVE_R1 + '\n\n' + PASS_FRONTEND_RUBRIC;
 export { PASS_FRONTEND_RUBRIC };

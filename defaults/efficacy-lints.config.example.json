@@ -1,0 +1,12 @@
+{
+  "_note": "Copy to your repo ROOT as efficacy-lints.config.json to opt into the deterministic efficacy lints (GREEN != REALIZED Cluster A). ABSENT or enabled:false = OFF (the lint is a silent no-op). A malformed/invalid file FAILS LOUD rather than silently disabling. Run via: npm run efficacy:check (advisory; chained into npm run check).",
+  "enabled": false,
+  "gate": false,
+  "modelHint": "latest-opus",
+  "promptSourceGlobs": ["src/**/*.js", "src/**/*.ts"],
+  "canaryPattern": "isInCanary",
+  "canaryTestPattern": "setCanary",
+  "canarySourceGlobs": ["src/**"],
+  "canaryTestGlobs": ["tests/**", "test/**"],
+  "modelMinTokens": { "claude-opus": 1024, "claude-sonnet": 1024, "claude-haiku": 2048 }
+}

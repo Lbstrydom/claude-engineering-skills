@@ -98,6 +98,8 @@ import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
 import { detectRepoStack, detectPythonEnvironmentManager } from './lib/repo-stack.mjs';
 import { StackProfileSchema, ReachabilityEvidenceRequestSchema, ReachabilityEvidenceResponseSchema } from './lib/schemas.mjs';
 import { recommendSkills, renderRecommendationCard } from './lib/skill-recommender.mjs';
+import { resolvePreviewGate } from './lib/cycle/topology.mjs';
+import { cycleConfig } from './lib/config.mjs';
 import { z } from 'zod';
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
@@ -863,6 +865,21 @@ async function cmdRecommendSkills() {
   emit({ ok: true, hasLiveUrl, recommendations, card });
 }
 
+/**
+ * preview-gate — resolve the deploy-topology gate for /cycle Step 5 from `PREVIEW_GATE_MODE`
+ * (config SSoT). The executable seam the cycle SKILL CALLS (never re-implements the decision in
+ * prose). Prints {mode, action, message}; `--format human` prints a one-line directive.
+ */
+async function cmdPreviewGate() {
+  const gate = resolvePreviewGate(cycleConfig);
+  if (argOption('format') === 'human') {
+    const tag = gate.action === 'halt' ? 'HALT' : gate.action === 'warn' ? 'WARN' : 'OK';
+    process.stdout.write(gate.message ? `[${tag}] ${gate.message}\n` : `[OK] preview gate not_applicable — no action.\n`);
+    return;
+  }
+  emit({ ok: true, ...gate });
+}
+
 /** Changed files vs HEAD (tracked) + untracked. Empty on any git failure. */
 function gitChangedFiles() {
   const run = (cmd) => {
@@ -1488,6 +1505,7 @@ const commands = {
   'get-persona-sessions-by-repo': cmdGetPersonaSessionsByRepo,
   'get-reachability-evidence': cmdGetReachabilityEvidence,
   'recommend-skills': cmdRecommendSkills,
+  'preview-gate': cmdPreviewGate,
   'get-persona-sessions-by-url': cmdGetPersonaSessionsByUrl,
   'get-recent-findings': cmdGetRecentFindings,
   'whoami': cmdWhoami,

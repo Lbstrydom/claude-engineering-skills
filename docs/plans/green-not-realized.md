@@ -1,7 +1,7 @@
 # Plan: Closing the "GREEN ≠ REALIZED" gap
 
 - **Date**: 2026-06-28
-- **Status**: In Progress — **Cluster A SHIPPED** (efficacy-lints.mjs + CLI + `efficacy:check`, AST detection, Gemini APPROVE 2026-06-28). Clusters B (runtime-truth audit rules) + C (topology config) outstanding. (Plan: Approved — GPT 3-round + Gemini 3-round; see §7c.)
+- **Status**: **Complete** — all three clusters shipped (2026-06-28). A: efficacy-lints (AST, Gemini APPROVE). B: runtime-truth audit rules (derived-state-parity + freeze-semantics + test-premise + parity-probe doc). C: topology honesty (`resolvePreviewGate` + `preview-gate` CLI + `/cycle` Step 5.0). Consolidated Gemini gate over the B+C union: **APPROVE**. (Plan: Approved — GPT 3-round + Gemini 3-round; see §7c.)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI tooling + skill rubrics + config — no UI)
 
@@ -195,14 +195,17 @@ New structure on the table: one lint module + a config block + rubric additions 
     (`{status, findings: EfficacyFinding[], coverage, skipped}`); pure I/O-bounded, no LLM, no network.
   - `extractCacheBreakpoints` (§2a) + the `EfficacyFinding` Zod schema live here (or a sibling
     `efficacy-lints-schema.mjs` if findings.mjs reuse needs it); stable IDs via `semanticId()`.
-- **`scripts/lib/config.mjs`** (modify) — add the validated **`EfficacyLintsConfig`** block (§2a Zod
-  schema: `enabled`, `gate`, `promptSourceGlobs`, `canarySourceGlobs`, `canaryTestGlobs`, `canaryPattern`, `canaryTestPattern`, `modelMinTokens`)
-  and a top-level `previewGateMode` boolean (default `false`). All reads centralized here (config SSoT).
-- **`scripts/lib/cycle/topology.mjs`** (create) — `resolvePreviewGate(config)` (§2a) — the pure,
-  unit-tested decision seam `/cycle` calls; returns `{mode, action, message}`.
-- **`scripts/phase7-check.mjs`** (modify) — invoke `runEfficacyLints`; print the resolved per-rule
-  `status` + `coverage`; **advisory by default** (exit 0). Under `gate:true`, exit 1 on `findings` or
-  `unverified` (fail-closed — matches §2a); advisory mode leaves `unverified` a non-blocking yellow.
+- **`EfficacyLintsConfig`** (§2a Zod schema: `enabled`, `gate`, `promptSourceGlobs`, `canarySourceGlobs`,
+  `canaryTestGlobs`, `canaryPattern`, `canaryTestPattern`, `modelMinTokens`). **SHIPPED in
+  `efficacy-lints.mjs`** as `loadEfficacyConfig` over a committed `efficacy-lints.config.json` (NOT
+  `config.mjs` — env-only). `previewGateMode` (default `not_applicable`) ships with **Cluster C** in
+  `config.mjs`, since `resolvePreviewGate` (Phase 7) is its only consumer.
+- **`scripts/lib/cycle/topology.mjs`** (create — **Cluster C**) — `resolvePreviewGate(config)` (§2a) — the
+  pure, unit-tested decision seam `/cycle` calls; returns `{mode, action, message}`.
+- **Pre-push wiring** — invoke `runEfficacyLints`; print the resolved per-rule `status` + `coverage`;
+  **advisory by default** (exit 0). Under `gate:true`, exit 1 on `findings` or `unverified` (fail-closed —
+  matches §2a). **SHIPPED-AS** `scripts/efficacy-lints-check.mjs` + `npm run efficacy:check` (chained into
+  `check`), NOT `phase7-check.mjs` (the ML-readiness check is a different file).
 - **`scripts/lib/prompt-seeds.mjs`** (modify) — (a) **derived-state-parity** rule in the FRONTEND pass
   rubric, fire-walled to UI files rendering *dynamic data* (counts/statuses/eligibility/classification),
   REJECT unless same-SSoT or a parity artifact; (b) **freeze-semantics** upgrade note usable by audit-plan.
@@ -222,8 +225,14 @@ New structure on the table: one lint module + a config block + rubric additions 
 ### 7b. Implementation Phases
 
 - **Phase 1 — efficacy-lints core**: the three recognizers + `runEfficacyLints`. Files: `scripts/lib/efficacy-lints.mjs` (create).
-- **Phase 2 — config block**: `EfficacyLintsConfig` (Zod) + `previewGateMode` enum. Files: `scripts/lib/config.mjs` (modify).
-- **Phase 3 — wiring**: invoke the lints in the pre-push check (advisory; status + coverage). Files: `scripts/phase7-check.mjs` (modify).
+- **Phase 2 — config block**: `EfficacyLintsConfig` (Zod). **SHIPPED-AS**: a committed-config-FILE
+  loader (`loadEfficacyConfig` reading `efficacy-lints.config.json`) inside `efficacy-lints.mjs`, NOT
+  `config.mjs` — `config.mjs` is env-var-only, and globs/tables are the two-artifact committed-config
+  pattern (like nav-/visual-contract.json). `previewGateMode` stays with Cluster C (its only consumer,
+  `resolvePreviewGate`, is Phase 7). Files: `scripts/lib/efficacy-lints.mjs`.
+- **Phase 3 — wiring**: invoke the lints in the pre-push check (advisory; status + coverage). **SHIPPED-AS**:
+  a dedicated CLI `scripts/efficacy-lints-check.mjs` + `npm run efficacy:check` chained into `check`, NOT
+  `phase7-check.mjs` (which is the ML-readiness check, not the pre-push gate). Files: `scripts/efficacy-lints-check.mjs` (create), `package.json` (modify).
 - **Phase 4 — lint tests**: recognizers + degrade-to-yellow + `unverified`≠`clean` + config-driven. Files: `tests/efficacy-lints.test.mjs` (create).
 - **Phase 5 — runtime-truth audit rules**: derived-state-parity + freeze-semantics + test-premise (+ the artifact-to-command workflow). Files: `scripts/lib/prompt-seeds.mjs` (modify), `skills/audit-plan/SKILL.md` (modify), `skills/audit-code/SKILL.md` (modify).
 - **Phase 6 — parity-probe doc (reuse)**: `data-engine-claim` parity pattern + runnable consistency command. Files: `docs/consistency-contract.md` (modify).
@@ -326,3 +335,20 @@ better than another plan round can. Deliberately deferred to implementation (NOT
 - **Verified**: 15 unit tests; empirical run on this repo (30 files, AST path, 0 false positives, clean).
 - **Deferred to later clusters**: B = runtime-truth audit rules (Phases 5–6); C = topology config
   (`resolvePreviewGate`, Phase 7).
+
+### 2026-06-28 — Clusters B + C shipped (autonomous /cycle)
+- **Cluster B (runtime-truth audit rules)**: `prompt-seeds.mjs` FRONTEND rubric gains a
+  **derived-state-parity** rule (REJECT a duplicated dynamic value unless a shared-SSoT / parity
+  assertion / `data-engine-claim` surface artifact is named) + a **freeze-semantics** rule; both in
+  the executable prompt layer with an invariant test (`prompt-seeds-rules.test.mjs`). `audit-plan`
+  SKILL: **test-premise lint** (#6) + freeze sub-step. `audit-code` SKILL: Step 6.7 cross-surface
+  honesty clause. `consistency-contract.md`: a **parity-probe** section documenting the
+  `data-engine-claim` reuse with the concrete `value-mismatch`/`stale-projection` failure mechanism.
+- **Cluster C (topology honesty)**: `scripts/lib/cycle/topology.mjs` `resolvePreviewGate(config)`
+  (pure 3-state seam, 7 tests); `config.mjs` `cycleConfig.previewGateMode` (env, validated — a
+  present-but-invalid value WARNS, never silently disables); `cross-skill.mjs` `preview-gate` CLI;
+  `/cycle` SKILL Step 5.0 CALLS it (halt/warn/none). Off by default (`not_applicable`).
+- **Audit**: consolidated GPT pass H:4 → fixed 2 genuine (invalid-`previewGateMode` warning; an
+  off-by-default `defaults/efficacy-lints.config.example.json` template + `_note`-comment tolerance).
+  Deferred (pre-existing, independent of B/C): the audit-code R2+ untracked-in-diff collection + a
+  pre-existing consistency example-ID nit. **Consolidated Gemini gate over the B+C union: APPROVE.**
