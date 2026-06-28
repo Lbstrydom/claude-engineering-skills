@@ -297,6 +297,35 @@ export async function publishRefreshRun({
   return row?.result ?? null;
 }
 
+// ── friction_recurrence + friction_neighbourhood (memory_friction) ──────────
+
+/**
+ * Cross-repo (repoIdFilter null) or per-repo recurrence clusters among OPEN friction.
+ * @param {{repoIdFilter?: string|null, windowDays?: number, minSimilarity?: number, maxAnchors?: number}} args
+ * @returns {Promise<{generated_at, window_days, repo_scoped, clusters: Array}|null>}
+ */
+export async function frictionRecurrence({ repoIdFilter = null, windowDays, minSimilarity, maxAnchors } = {}) {
+  const row = await one(
+    'SELECT friction_recurrence($1::uuid, $2::integer, $3::numeric, $4::integer) AS result',
+    [repoIdFilter, windowDays ?? 30, minSimilarity ?? 0.5, maxAnchors ?? 500],
+  );
+  return row?.result ?? null;
+}
+
+/**
+ * Hook injection: top-k OPEN friction whose short signature matches the prompt (word_similarity).
+ * @param {{repoId: string, prompt: string, k?: number, minWordSim?: number}} args
+ * @returns {Promise<Array<{memory_name, title, cost, scope_tags, score}>>}
+ */
+export async function frictionNeighbourhood({ repoId, prompt, k, minWordSim } = {}) {
+  if (!repoId) throw new TypeError('frictionNeighbourhood: repoId is required');
+  const row = await one(
+    'SELECT friction_neighbourhood($1::uuid, $2::text, $3::integer, $4::numeric) AS result',
+    [repoId, prompt ?? '', k ?? 2, minWordSim ?? 0.6],
+  );
+  return Array.isArray(row?.result) ? row.result : [];
+}
+
 // ── Test seam ──────────────────────────────────────────────────────────────
 
 export const _internals = Object.freeze({

@@ -56,6 +56,12 @@ const EXPECTED_EXPORTS = [
   'readDebtEventsCloud',
   'removeDebtEntryCloud',
   'upsertDebtEntries',
+  // friction (5)
+  'appendMitigationRef',
+  'getFrictionNeighbourhood',
+  'getFrictionRecurrence',
+  'reconcileTombstones',
+  'upsertFrictionRow',
   // bandit-fp (9)
   'getFalsePositivePatterns',
   'getPassEffectiveness',
@@ -223,6 +229,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 129);
+    assert.equal(EXPECTED_EXPORTS.length, 134);
   });
 });

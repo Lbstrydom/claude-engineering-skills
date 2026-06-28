@@ -168,6 +168,29 @@ export const cycleConfig = Object.freeze({
   previewGateMode: PREVIEW_GATE_MODES.includes(_rawPreviewGateMode) ? _rawPreviewGateMode : 'not_applicable',
 });
 
+// ── Friction-feedback loop (GREEN ≠ REALIZED sibling) ────────────────────────
+// Recurrence × cost ranking thresholds + the protected-scope gate set + the
+// breadcrumb TTL. Plan: docs/plans/friction-feedback-loop.md.
+export const frictionConfig = Object.freeze({
+  // Recurrence alarm: a cluster recurring >= recurrenceAlarmCount and older than
+  // recurrenceAlarmAgeDays with no mitigation is the graveyard alarm.
+  recurrenceWindowDays: safeInt(process.env.FRICTION_WINDOW_DAYS, 30),
+  recurrenceAlarmCount: safeInt(process.env.FRICTION_ALARM_COUNT, 3),
+  recurrenceAlarmAgeDays: safeInt(process.env.FRICTION_ALARM_AGE_DAYS, 14),
+  // cost → numeric weight for `recurrence × cost` ranking.
+  costWeight: Object.freeze({ S: 1, M: 2, L: 3 }),
+  // Recurring-unmitigated friction in these scope_tags HARD-FAILS memory-health
+  // (the only non-advisory path). Everything else WARNs.
+  protectedScopeTags: Object.freeze(
+    (process.env.FRICTION_PROTECTED_SCOPES || 'secret-egress,consumer-sync,false-green')
+      .split(',').map((s) => s.trim()).filter(Boolean),
+  ),
+  // Single rolling breadcrumb prune horizon.
+  breadcrumbTtlDays: safeInt(process.env.FRICTION_BREADCRUMB_TTL_DAYS, 7),
+  // Max body chars mirrored into body_excerpt / trgm_text.
+  bodyExcerptMaxChars: safeInt(process.env.FRICTION_BODY_EXCERPT_CHARS, 2000),
+});
+
 // ── Learning System v2 Config ─────────────────────────────────────────────
 
 export const learningConfig = Object.freeze({
