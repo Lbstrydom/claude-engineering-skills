@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-06-28 — Friction-feedback loop: brainstorm → plan → audit-plan (Approved)
+
+### Changes
+- /brainstorm --with-gemini (Claude+GPT-5.5+Gemini-pro, debate round) on a recurrence-aware quality/friction-feedback loop; synthesised the converged design.
+- Wrote docs/plans/friction-feedback-loop.md and audited it: GPT 3-round (R1 H:6→R2 H:3→R3 H:6, rigor-pressure stop) + Gemini 3-round (each round caught genuine SQL/IR correctness defects — pg_trgm length-mismatch, MAX(cost)-on-text inversion, asymmetric recurrence window, no-session-id hook envelope). Status: Approved.
+
+### Files Affected
+- docs/plans/friction-feedback-loop.md (new, Approved) — type:friction memory + memory_friction mirror table + quality CLI + 3rd hook query + memory-health recurrence + /ship closure.
+
+### Decisions Made
+- No parallel capture system: reuse harness memory for capture, the UserPromptSubmit hook for injection, memory-health+pg_trgm for recurrence, /ship for closure-linking. Priority = recurrence × cost; closure is artifact-linked (no status workflow).
+
+### Next Steps
+- Build via /cycle --autonomous (§11 clusters A: data layer · B: capture+inject · C: review+close).
+
+---
+
 ## 2026-06-28 — GREEN≠REALIZED Clusters B + C (autonomous /cycle)
 
 ### Changes
