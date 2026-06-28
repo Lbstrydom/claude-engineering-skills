@@ -78,13 +78,20 @@ const FRAGMENT_SUFFIX = '.persona-test.json';
  * Directories whose contents are NEVER walked for fragments. `.persona-test/`
  * itself is excluded because the merged output lives there — picking it up
  * as a fragment would be circular. `.claude-skills/` is excluded so the synced
- * tooling tree never contributes fragments.
+ * tooling tree never contributes fragments. `worktrees` is excluded because a
+ * spawned-agent worktree (`.claude/worktrees/<session>/`) is a FULL checkout of
+ * the repo — its colocated `*.persona-test.json` fragments are duplicates of the
+ * main tree's, and walking them produces phantom surface-id collisions that abort
+ * the pre-push hook + the `personaTestManifestBuildable` contract for any commit
+ * made while a worktree exists (e.g. `/cycle` + a concurrent spawned task).
+ * Matched by basename, so it also covers any other `worktrees/` root.
  */
 const SKIP_DIRS = new Set([
   'node_modules',
   '.git',
   '.persona-test',
   '.claude-skills',
+  'worktrees',
   'logs',
   'tmp',
   '.brainstorm',
@@ -302,6 +309,10 @@ function renderManifest(manifest) {
  * synthetic fragments without touching the filesystem.
  */
 export { mergeFragments, canonicalLocator, renderManifest };
+
+/** Test seam — `findFragments` + `SKIP_DIRS` so the walk-exclusion (e.g. the
+ *  `.claude/worktrees/` phantom-collision guard) is unit-coverable. */
+export const _internals = Object.freeze({ findFragments, SKIP_DIRS });
 
 /**
  * Programmatic entry — used by the consumer's contract test.

@@ -124,7 +124,7 @@ human already implemented, so the gate is bypassed entirely (go straight to Step
 | FULL / SKIP_PLAN | no | **yes** | **Degenerate single-cluster autonomous** (whole plan as one unit) |
 | FULL / SKIP_PLAN | yes | no | **Pause** + print cluster guidance; resume `--cluster <ID>` |
 | FULL / SKIP_PLAN | yes | **yes** | **Step 3C** clustered autonomous loop |
-| SKIP_TO_CODE (already implemented) | any | any | **No gate** — go to Step 4 audit (per-cluster if `--cluster`, else union diff) |
+| SKIP_TO_CODE (already implemented) | any | any | **Empty-diff guard first** (below); then **no gate** — go to Step 4 audit (per-cluster if `--cluster`, else union diff) |
 
 - **No §11 block + default (no `--autonomous`)** → **today's behaviour, unchanged**:
   `/cycle` **pauses here** for the human to implement (or resume later via
@@ -152,6 +152,22 @@ human already implemented, so the gate is bypassed entirely (go straight to Step
 - **§11 block + `--autonomous`** → enter **Step 3C** (the implement-and-audit
   cluster loop). This is the explicit authorization that relaxes the
   "never auto-fix" hard rule, scoped to within-cluster fixes.
+- **SKIP_TO_CODE empty-implementation guard (do this BEFORE auditing).**
+  `code` assumes the human already implemented — but an *approved-but-unimplemented*
+  plan (e.g. resumed straight after `/audit-plan`, zero commits since) yields an
+  **empty implementation diff**, and auditing nothing returns a misleading green.
+  So before Step 4, compute the diff base (the plan's commit, or `--baseline-ref`,
+  else the dirty-aware base `/audit-code` uses) and check it's non-empty:
+  ```bash
+  BASE=$([ -n "$(git status --porcelain)" ] && echo HEAD || echo HEAD~1)   # or the plan commit / --baseline-ref
+  [ -z "$(git diff "$BASE" --name-only)$(git ls-files --others --exclude-standard)" ] && echo EMPTY
+  ```
+  If empty → **do NOT audit a no-op.** Tell the operator the plan looks
+  unimplemented and offer the fork: re-run with **`--autonomous`** (let `/cycle`
+  implement it) or implement manually then re-run `code`. This mirrors the Step 3C
+  rule "never default `--diff` to HEAD — empty diff = silent skip" (line ~191),
+  extended to the human `code` path. (The AUTO-mode "any new code since the plan
+  commit" detection gates this too.)
 
 ```
 ═══════════════════════════════════════
@@ -190,6 +206,7 @@ For each remaining cluster in declared order:
    - **Optional author-tier observation**: if the cluster carries an advisory `author-tier:` hint (§11 grammar), you MAY export `AUDIT_AUTHOR_TIER_HINT=<concrete model id or logical tier>` before invoking `/audit-code` so the audit's observation-only recorder captures actual-vs-suggested tier. This **does NOT change which model runs** — it is pure telemetry (`docs/completed/model-tier-observation.md`). Prefer a concrete model id (e.g. `claude-sonnet-4-6`) so the ladder partition key populates.
 3. **Audit envelope**: capture `clusterStartRef` (`vcs.gitCommitSha`) when implementation begins; invoke `/audit-code --scope=diff` with `--changed`=the derived scope and a `clusterStartRef..WORKTREE` `--diff`. Reconcile changed-files: a changed file belonging to **no** cluster's derived scope is an out-of-scope edit → **fail closed** (stop, summarize, ask to amend or take the union fallback). On a resume with no recorded `clusterStartRef`, require `--baseline-ref <sha>` or fall back to union-diff — **never** default `--diff` to HEAD (empty diff = silent skip). Round policy is `/audit-code`'s own cap — no new policy here.
 4. **Fix-gate**: `fix-gate: yes` → reach `/audit-code` convergence (`HIGH==0 && MEDIUM<=2 && quickFix==0`) before the next cluster; `none` skips; `final` defers to the consolidated gate. Within-cluster fixing is authorized; a fix needing files **outside** the cluster's scope → **stop** for confirmation (mark any touched `gate-clear` cluster `stale`). Persistent non-convergence → hand back with a summary.
+   - **Convergence test scope — run the BROADEST suite, not unit-only (load-bearing for destructive clusters).** When "iterate to green" runs the project's tests at the cluster boundary, use the widest command the repo defines (`test:all` / `test:integration` / `test:e2e` — fall back to plain `test` / the full `node --test`), **never `test:unit` alone**. Unit isolation structurally *cannot* catch the failure modes a delete/refactor cluster introduces: a stale `vi.mock`/`jest.mock` of a now-deleted module path only errors when something actually resolves it (i.e. in integration), and cross-module integration breaks are invisible to per-module unit suites. A cluster is "green" only when the integration tier passes; a `test:unit`-only green on a destructive cluster is a false-green and does **not** clear the fix-gate.
 4.5. **Finalize outcomes (deterministic capture — WS1)**: once the cluster's audit has converged AND its findings are triaged (the adjudication ledger carries terminal `accepted`/`dismissed`/`severity_adjusted` outcomes), call **once** per converged audit:
    ```bash
    node scripts/cross-skill.mjs finalize-outcomes \
@@ -225,7 +242,11 @@ rebuttal. Invocation: build the
 transcript the way `/audit-code` does (`changed_files`=union file set,
 accumulated per-cluster findings as the `rounds[]` trail), then
 `node scripts/gemini-review.mjs review <target> <transcript.json> --out …` —
-reuse `/audit-code`'s transcript path, no new gate machinery. Generated
+reuse `/audit-code`'s transcript path, no new gate machinery. **Concrete transcript
+shape + the no-`GEMINI_API_KEY` degradation ladder (Opus fallback → independent
+adversarial agent over the union diff → only-then skip) are in
+`audit-code/references/gemini-gate.md`** — when no provider key is present, run the
+independent-agent substitute rather than skipping the mandatory gate. Generated
 `.claude/skills/**` copies are byte-verified by `skills:check`, not
 re-reviewed. Then continue to Step 5.
 

@@ -94,9 +94,16 @@ node "$AUDIT_SCRIPT" code "$PLAN_FILE" --scope diff > /tmp/prepush-audit-$$.json
 EXIT=$?
 
 if [ "$EXIT" != "0" ]; then
-  echo "[prepush-hook] audit script returned $EXIT — proceeding anyway (set AUDIT_PREPUSH_BLOCK=1 to gate)" >&2
-  [ "$AUDIT_PREPUSH_BLOCK" = "1" ] && exit "$EXIT"
+  # Surface WHY (signal vs noise) — a non-zero audit exit is usually a config/env
+  # issue (e.g. OPENAI_API_KEY absent in the push environment) rather than real
+  # findings, and a blind "proceeding anyway" hides which it is. Print the tail of
+  # the captured output so the operator can tell.
+  echo "[prepush-hook] audit exited $EXIT (non-blocking) — reason (last lines of output):" >&2
+  tail -n 6 /tmp/prepush-audit-$$.json >&2 2>/dev/null || true
+  echo "[prepush-hook] ↑ config/key error → noise (fix env or ignore); real findings → address, or set AUDIT_PREPUSH_BLOCK=1 to gate." >&2
+  if [ "$AUDIT_PREPUSH_BLOCK" = "1" ]; then rm -f /tmp/prepush-audit-$$.json; exit "$EXIT"; fi
 fi
+rm -f /tmp/prepush-audit-$$.json
 
 # ── Surfaces-manifest drift (persona-test consistency mode) ─────────────────
 # When the synced builder + a .persona-test/ dir are present, verify the

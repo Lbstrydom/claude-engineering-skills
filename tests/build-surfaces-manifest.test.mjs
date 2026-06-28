@@ -11,10 +11,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import path from 'node:path';
 import {
   mergeFragments,
   canonicalLocator,
   renderManifest,
+  _internals,
 } from '../scripts/build-surfaces-manifest.mjs';
 
 // Regression guard (root cause of a wine-cellar vitest failure, 2026-06): this
@@ -29,6 +32,27 @@ describe('build-surfaces-manifest.mjs — import portability', () => {
       fileURLToPath(new URL('../scripts/build-surfaces-manifest.mjs', import.meta.url)), 'utf-8');
     assert.ok(!src.startsWith('#!'),
       'build-surfaces-manifest.mjs must not start with a shebang — it breaks `import()` under vitest/esbuild module runners');
+  });
+});
+
+describe('findFragments — walk exclusions', () => {
+  it('does NOT walk worktrees/ (phantom-collision guard for .claude/worktrees)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'frag-walk-'));
+    const frag = '{"surfaces":[{"id":"x"}]}';
+    // a real fragment in the main tree
+    fs.mkdirSync(path.join(root, 'public', 'js'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'public', 'js', 'a.persona-test.json'), frag);
+    // the SAME fragment duplicated inside a spawned-agent worktree checkout
+    fs.mkdirSync(path.join(root, '.claude', 'worktrees', 'sess1', 'public', 'js'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.claude', 'worktrees', 'sess1', 'public', 'js', 'a.persona-test.json'), frag);
+
+    const found = _internals.findFragments(root);
+    assert.equal(found.length, 1, 'only the main-tree fragment should be found');
+    assert.ok(!found.some((p) => p.includes('worktrees')), 'worktree fragments must be excluded');
+  });
+
+  it('SKIP_DIRS includes worktrees', () => {
+    assert.ok(_internals.SKIP_DIRS.has('worktrees'));
   });
 });
 

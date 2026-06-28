@@ -9,9 +9,18 @@ Gemini 3.1 Pro as an independent third reviewer. This step is MANDATORY —
 Gemini provides cross-model perspective that catches blind spots in the
 Claude-GPT deliberation.
 
-If `GEMINI_API_KEY` is not set, run Claude Opus fallback (`ANTHROPIC_API_KEY`).
-Only skip Step 7 entirely when neither key is available. When skipped,
-output `FINAL_GATE_SKIPPED` and do not claim full final-gate validation.
+**Provider / no-key degradation ladder (don't just skip):**
+1. `GEMINI_API_KEY` set → Gemini (preferred).
+2. else `ANTHROPIC_API_KEY` set → `gemini-review.mjs` auto-falls-back to Claude Opus (no flag needed).
+3. **else neither key** → do NOT silently skip. Run an **independent adversarial
+   review agent** over the union diff as the gate: spawn a fresh agent (Task/Agent)
+   with the plan + the diff + the accumulated findings and the instruction *"act as
+   an independent final reviewer — find what the author and GPT missed; default to
+   skepticism."* Record its verdict in the same `APPROVE`/`CONCERNS`/`REJECT` shape
+   and run the same closed loop. This preserves the cross-perspective gate when no
+   provider key is available (it is the documented substitute, not a bypass).
+4. **only** when neither a key nor an independent agent is available → output
+   `FINAL_GATE_SKIPPED` and do not claim full final-gate validation.
 
 ## Build the transcript
 
@@ -24,6 +33,35 @@ Assemble `/tmp/$SID-transcript.json` with the full audit trail:
 - All rounds: GPT findings, Claude positions, GPT rulings, fixes applied
 - Final state: remaining findings, dismissed findings
 - Suppression data: kept / suppressed / reopened counts per round
+
+### Standalone / consolidated transcript shape (concrete contract)
+
+`runFinalReview()` parses the transcript as JSON; the only structurally-load-bearing
+fields are **`code_files`** (paths it reads from the working tree and inlines as
+"Code Files") and **`changed_files`** (the scope filter). Everything else is dumped
+verbatim into the prompt under "Audit Transcript", so a hand-assembled object works
+for a consolidated `/cycle` gate or any standalone call. Minimum viable shape:
+
+```json
+{
+  "audit_mode": "code",
+  "changed_files": ["src/a.mjs", "src/b.mjs"],
+  "code_files":    ["src/a.mjs", "src/b.mjs"],
+  "summary": "One-paragraph what-shipped + how findings were resolved.",
+  "rounds": [
+    { "round": 1, "findings": [ {"id":"H1","severity":"HIGH","file":"src/a.mjs","detail":"…"} ] }
+  ],
+  "claude_resolutions": ["H1 FIXED: …", "M2 DEFER (independent): …"]
+}
+```
+
+To assemble from per-cluster `/audit-code` outputs: union the clusters'
+`--changed` file sets into `changed_files`/`code_files`, and concatenate each
+cluster's `--out` `findings` into the `rounds[]` trail (one entry per cluster or
+round). `code_files` is re-read from disk on every call, so it always reflects the
+post-fix tree — no manual content inlining. A `claude_resolutions` array (how each
+finding was fixed/deferred/dismissed) is non-structural but materially improves the
+review.
 
 ## Run the review
 
