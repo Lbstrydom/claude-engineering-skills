@@ -503,6 +503,11 @@ async function discoverExpandTriggers(page, declaredSelectors) {
       // "app likely degraded" on a HEALTHY tabbed SPA (field-test #1). Exclude it —
       // a genuine disclosure uses `aria-expanded`, which is unaffected.
       if (el.getAttribute('role') === 'tab' || el.hasAttribute('aria-selected')) continue;
+      // Skip breakpoint-hidden triggers (e.g. a desktop-hidden mobile hamburger): you
+      // can't click a `display:none`/0-size element, so it only costs a click-timeout
+      // and a noise warning per state (field-test residual — trigger discovery wasn't
+      // visibility-pre-filtered). A real toggle is itself visible even when its menu is closed.
+      try { const s = getComputedStyle(el); const b = el.getBoundingClientRect(); if (s.display === 'none' || s.visibility === 'hidden' || (b.width === 0 && b.height === 0)) continue; } catch { /* keep on error */ }
       const selector = el.id ? `#${esc(el.id)}`
         : (el.getAttribute('aria-controls') ? `[aria-controls="${el.getAttribute('aria-controls')}"]` : pathOf(el));
       if (!selector || seen.has(selector)) continue;

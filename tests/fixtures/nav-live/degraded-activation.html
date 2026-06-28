@@ -1,7 +1,12 @@
 <!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>nav-live degraded-activation fixture</title>
-<style>.hamburger { display: none; }</style></head>
+<!-- VISIBLE but unclickable (`pointer-events:none`) — simulates a real degraded /
+     cold-init-stalled app whose triggers render yet can't be interacted with. NOT
+     `display:none`: a hidden element is now correctly filtered out as a non-trigger
+     (it only costs a click-timeout, it's not a real activation target), so it would
+     no longer exercise the adaptive early-stop. -->
+<style>.hamburger { pointer-events: none; }</style></head>
 <body>
   <!-- Captured secondary nav (base capture succeeds). -->
   <div class="sub-tabs-row">
@@ -9,8 +14,8 @@
     <a href="?view=drinksoon">Drink Soon</a>
   </div>
 
-  <!-- Four hamburger triggers that are display:none → unactionable → click() times
-       out (throws). The adaptive early-stop must abort after 3 consecutive throws. -->
+  <!-- Four VISIBLE-but-unactionable hamburger triggers (pointer-events:none) → click()
+       times out (throws). The adaptive early-stop must abort after 3 consecutive throws. -->
   <button class="hamburger" aria-controls="m1">Menu 1</button>
   <button class="hamburger" aria-controls="m2">Menu 2</button>
   <button class="hamburger" aria-controls="m3">Menu 3</button>

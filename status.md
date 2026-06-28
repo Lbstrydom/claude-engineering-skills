@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-06-28 — nav-audit: skip breakpoint-hidden activation triggers (confirmation-run residual)
+
+The wine-cellar-app confirmation run verified both prior fixes end-to-end (activation tab-storm
+gone, no over-exclusion — the real `#mobile-menu-btn` hamburger still fires; `?view=` views flip
+to Confirmed). One residual flagged twice: `discoverExpandTriggers` selected breakpoint-HIDDEN
+triggers (a desktop-hidden mobile hamburger), so the pass burned a 1000ms click-timeout + a noise
+warning each on "element is not visible." Fixed — the trigger scan now pre-filters to VISIBLE
+elements (a real toggle is itself visible even when its menu is closed). Updated the
+`degraded-activation.html` fixture to simulate degradation via `pointer-events:none` (VISIBLE but
+unclickable) instead of `display:none` — the latter is now correctly a non-trigger, so it no longer
+exercised the adaptive early-stop. Full suite 3861/0.
+
+---
+
 ## 2026-06-28 — nav-audit upstream fixes from the wine-cellar-app live shakedown
 
 The first full live end-to-end nav-audit run validated the lens: the empty-shell honesty
