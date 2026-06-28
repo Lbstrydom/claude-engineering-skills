@@ -1,7 +1,7 @@
 # Plan: Closing the "GREEN ≠ REALIZED" gap
 
 - **Date**: 2026-06-28
-- **Status**: Approved (GPT 3-round + Gemini 3-round; genuine defects fixed, residual build-detail deferred — see §7c)
+- **Status**: In Progress — **Cluster A SHIPPED** (efficacy-lints.mjs + CLI + `efficacy:check`, AST detection, Gemini APPROVE 2026-06-28). Clusters B (runtime-truth audit rules) + C (topology config) outstanding. (Plan: Approved — GPT 3-round + Gemini 3-round; see §7c.)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI tooling + skill rubrics + config — no UI)
 
@@ -308,3 +308,21 @@ better than another plan round can. Deliberately deferred to implementation (NOT
 > ships **advisory + off-by-default** (`efficacyLints.enabled:false`, `previewGateMode:not_applicable`), so a
 > repo opts in per-config; rollback = flip the config or revert the additive prompt lines (no migration,
 > no data).
+
+## Implementation Log
+
+### 2026-06-28 — Cluster A (deterministic efficacy lints) shipped
+- **Built**: `scripts/lib/efficacy-lints.mjs` (3 recognizers — cache-inertness, cache-instability,
+  canary-no-test — + `loadEfficacyConfig` + `runEfficacyLints`), `scripts/efficacy-lints-check.mjs`
+  (CLI), `npm run efficacy:check` chained into `check` (advisory; silent no-op until a repo commits
+  an `efficacy-lints.config.json` with `enabled:true`).
+- **Detection**: plan-mandated `@babel/parser` AST for JS/TS (reuses `nav/ast.mjs`); language-aware
+  strip+regex fallback for non-JS / parse-failure. Detection ≠ measurement (token estimate on
+  ORIGINAL bytes). Per-rule status with the `scannedFiles:0` (unverified) vs `applicableSites:0`
+  (clean) split; degrade-to-yellow on unknown model / malformed config (fails loud, never silent-off).
+- **Audit**: GPT R1 H:4 → R2 H:2 (in-scope HIGHs fixed: malformed-config-fail-loud, sensitive-path
+  SSoT, Zod validation, deterministic order). Gemini R1 CONCERNS (sync gap + null-config) → R2 REJECT
+  (plan-mandated AST not implemented) → **R3 APPROVE** after the AST rewrite + `semanticId` ids.
+- **Verified**: 15 unit tests; empirical run on this repo (30 files, AST path, 0 false positives, clean).
+- **Deferred to later clusters**: B = runtime-truth audit rules (Phases 5–6); C = topology config
+  (`resolvePreviewGate`, Phase 7).

@@ -54,6 +54,7 @@ const CLI_SMOKE_SET = [
   'nav-audit.mjs',   // /nav-audit CLI orchestrator
   'visual-audit.mjs',// /visual-audit CLI orchestrator
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
+  'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
 ];
 
 const LIB_IMPORT_SET = [

@@ -125,6 +125,9 @@ const CORE_ENTRY = [
   // /visual-audit CLI — closure walker pulls lib/visual/** + the playwright
   // dynamic import in extract.mjs (external pkg, walker stops there).
   'scripts/visual-audit.mjs',
+  // GREEN≠REALIZED Cluster A efficacy-lints CLI — closure walker pulls lib/efficacy-lints.mjs
+  // + its model-resolver / glob-match / sensitive-paths closure. Lock-step with sync-inventory.mjs.
+  'scripts/efficacy-lints-check.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.

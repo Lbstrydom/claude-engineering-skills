@@ -1,5 +1,21 @@
 # Project Status Log
 
+## 2026-06-28 — GREEN≠REALIZED Cluster A: deterministic efficacy lints
+
+### Changes
+- Built efficacy-lints.mjs (cache-inertness / cache-instability / canary-no-test recognizers) with @babel/parser AST detection + language-aware regex fallback, a CLI, and `npm run efficacy:check` (advisory, off by default).
+- Audit: GPT converged; Gemini final gate APPROVE on round 3 (after implementing the plan-mandated AST path).
+
+### Files Affected
+- scripts/lib/efficacy-lints.mjs, scripts/efficacy-lints-check.mjs (new)
+- scripts/lib/sync-inventory.mjs, scripts/sync-to-repos.mjs, scripts/lib/sync-isolation-verify.mjs (sync the new CLI to consumers)
+- tests/efficacy-lints.test.mjs (15 tests), package.json, scripts/.cli-catalog.json
+
+### Next Steps
+- Clusters B (runtime-truth audit rules) + C (topology config) of docs/plans/green-not-realized.md.
+
+---
+
 ## 2026-06-28 — Tier-1 tooling fixes (wine-cellar-app session feedback)
 
 Three cross-repo-general tooling fixes (the unambiguous tier; the "green ≠ realized" theme

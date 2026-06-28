@@ -55,6 +55,9 @@ const CORE_ENTRY = [
   // /nav-audit CLI entry — walker pulls in scripts/lib/nav/** closure.
   // Authoritative list is sync-to-repos.mjs; keep in lock-step.
   'scripts/nav-audit.mjs',
+  // GREEN≠REALIZED Cluster A efficacy-lints CLI — walker pulls in lib/efficacy-lints.mjs +
+  // its model-resolver / glob-match / sensitive-paths closure. Keep in lock-step with sync-to-repos.mjs.
+  'scripts/efficacy-lints-check.mjs',
 ];
 
 // CORE_NON_IMPORTABLE lists modules that are documented runtime injection

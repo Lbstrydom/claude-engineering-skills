@@ -333,6 +333,10 @@
     "nav:audit": {
       "description": "Static navigation / IA audit — system-level nav-graph lens; offered-vs-needed, drift-only CI gate.",
       "category": "audit"
+    },
+    "efficacy:check": {
+      "description": "Run the deterministic efficacy lints (cache-inertness, cache-instability, canary-no-test) — the GREEN≠REALIZED Cluster A check. Off by default; opt in via a committed efficacy-lints.config.json. Advisory in `npm run check` unless gate:true.",
+      "category": "audit"
     }
   }
 }
