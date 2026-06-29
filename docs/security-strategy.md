@@ -23,10 +23,23 @@ _(no threat model recorded yet — run `/security-strategy bootstrap`)_
 
 ## Incidents
 
-<!-- Each incident is a markdown block bounded by HTML comment markers.
+<!-- Each incident is a markdown block bounded by these EXACT HTML comment
+markers (parse-strategy.mjs only recognises this form):
+
+  <!~~ incident:start id="INC-002" ~~>
+  ### Title
+  **Description**: ...
+  **Affected paths**: a, b
+  **Mitigation**: manual
+  **Lessons learned**: ...
+  <!~~ incident:end ~~>
+
+(replace ~~ with -- ; shown escaped so this comment doesn't self-close.)
 Keep them in chronological order, oldest first.
 
-Required fields: id (in the start marker) + Description.
+Required: the `incident:start`/`incident:end` markers + every field label
+MUST end with a colon (`**Description**:`) — a colon-less `**Description**`
+parses as missing. Required fields: id (start marker) + Description.
 Optional fields: Affected paths, Mitigation, Lessons learned.
 
 Mitigation forms recognised by parse-strategy.mjs:
@@ -37,12 +50,10 @@ Mitigation forms recognised by parse-strategy.mjs:
   - manual                          → human-only verification
 -->
 
-_(no incidents recorded yet — run `/security-strategy add-incident` after the next post-mortem)_
-
-<!-- incident-id: INC-001 -->
+<!-- incident:start id="INC-001" -->
 ### Symlink-bypass of sensitive-path classifier
 
-**Description**
+**Description**:
 
 The lexical sensitive-path classifier (`scripts/lib/sensitive-paths.mjs::classifyPath`)
 matched on the visible string `repo/notes.txt`. A symlink whose target
@@ -68,7 +79,7 @@ is preserved for callers that don't yet pass `repoRoot`.
 Mitigation form: `manual` (regression-locked by
 `tests/sensitive-paths-canonical.test.mjs`).
 
-**Lessons learned**
+**Lessons learned**:
 
 - Path classification on lexical strings is necessary but not sufficient
   when the filesystem can rewrite a name to a different target. Anywhere
@@ -81,4 +92,6 @@ Mitigation form: `manual` (regression-locked by
   gap.
 - Fail-closed on resolution errors: a missing or unresolvable target is
   treated as sensitive. Never "I couldn't classify it so I'll allow it."
+
+<!-- incident:end -->
 
