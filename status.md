@@ -1,5 +1,21 @@
 # Project Status Log
 
+## 2026-06-29 — Code-audit + ship deterministic outcome capture (6cf88fc follow-up)
+
+### Changes
+- Ran a 5-round standalone `/audit-code` over the committed-but-unpushed deterministic-outcome-capture feature (6cf88fc). Converged R5 **PASS (H:0 M:0 L:0)**; final **Gemini APPROVE** (coherence *Strong*, 0 new / 0 wrongly-dismissed / 0 over-engineering). Fixed 8 genuine in-scope findings; deferred 2 (H2 `resolveRepoId` fail-open, M4 cross-skill god-module) as pre-existing/independent debt; dismissed the rest as plan-ratified or false-positive.
+- **Empirical pre-ship verify (live Supabase `uahjjdelnnpfmaqjrwoz`)**: a real multi-round standalone audit labelled rounds 1..N-1 with **no manual step** — run `6a68fa7c` went `labeled` false→true, 7 accepted / 5 dismissed, 12/12 `audit_findings.adjudication_outcome` populated, 12 `finding_adjudication_events`. Re-running the finalize did **not** double-grow `.audit/outcomes.jsonl` (marker-guarded, `skippedLocal:true`); cloud re-labelled idempotently.
+- Key audit fixes: stable-sid idempotency for the cloud-off manual CLI (`parseResultPath` → `{sid,round}`); `--round`/`result.round`/filename reconciliation that fails closed on conflict; strict `--round` validation; `loadAuditInputs` contract consolidation; compact `_outcomeCapture` (scalars only, never the enriched payload); `resolveAuditArtifacts` delegates to the single `parseResultPath`.
+- Plan marked **Complete** and archived to `docs/completed/`.
+
+### Files Affected
+- `scripts/lib/finalize-outcomes.mjs` — `parseResultPath` ({sid,round}); `resolveAuditArtifacts` delegates to it + filename-round guard.
+- `scripts/write-code-outcomes.mjs` — shared `loadAuditInputs`; round-source reconciliation (fail-closed); strict `--round`; derived sid; compact stdout.
+- `scripts/openai-audit.mjs` — orchestrator stamps a compact `_outcomeCapture`.
+- `tests/finalize-outcomes.test.mjs` — `parseResultPath` + round-mismatch guard tests.
+
+---
+
 ## 2026-06-29 — Fix arch:refresh sibling-spawn relocation bug (consumer-only)
 
 ### Changes

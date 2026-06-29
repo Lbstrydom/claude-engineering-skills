@@ -29,9 +29,7 @@
  * @module scripts/write-code-outcomes
  */
 import 'dotenv/config'; // load .env for standalone CLI use (matches sibling CLIs)
-import fs from 'node:fs';
-import path from 'node:path';
-import { finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
+import { finalizeRoundOutcomes, loadAuditInputs, parseResultPath } from './lib/finalize-outcomes.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -45,18 +43,21 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--result') args.result = argv[++i];
     else if (argv[i] === '--ledger') args.ledger = argv[++i];
-    else if (argv[i] === '--round') args.round = Number.parseInt(argv[++i], 10);
+    else if (argv[i] === '--round') {
+      // An explicitly-supplied round must validate exactly (a positive integer)
+      // or abort — never coerce ("2abc"→2) or silently drop ("abc"). `Number`
+      // (not `parseInt`) rejects trailing-garbage; the round-source reconciler
+      // in main() then treats this as one authoritative source.
+      const raw = argv[++i];
+      const n = Number(raw);
+      if (!Number.isInteger(n) || n < 1) {
+        console.error(`--round must be a positive integer (got ${JSON.stringify(raw)})`);
+        process.exit(1);
+      }
+      args.round = n;
+    }
   }
   return args;
-}
-
-function readJsonOrDie(label, p) {
-  try {
-    return JSON.parse(fs.readFileSync(path.resolve(p), 'utf-8'));
-  } catch (err) {
-    console.error(`Failed to read ${label} file (${p}): ${err.message}`);
-    process.exit(1);
-  }
 }
 
 async function main() {
@@ -66,22 +67,50 @@ async function main() {
     process.exit(1);
   }
 
-  const result = readJsonOrDie('result', args.result);
-  if (!result || typeof result !== 'object' || !Array.isArray(result.findings)) {
-    console.error('result file must be an object with a "findings" array');
-    process.exit(1);
-  }
-
-  // Ledger is { version, entries: [...] }; tolerate a bare array too.
-  const ledgerRaw = readJsonOrDie('ledger', args.ledger);
-  const ledger = Array.isArray(ledgerRaw) ? { entries: ledgerRaw } : ledgerRaw;
-  if (!ledger || !Array.isArray(ledger.entries)) {
-    console.error('ledger file must have an "entries" array');
+  // Load + shape-validate via the single shared contract (loadAuditInputs) —
+  // same permissive schema the orchestrator + /cycle use; no duplicate parser.
+  let result, ledger;
+  try {
+    ({ result, ledger } = loadAuditInputs({ resultPath: args.result, ledgerPath: args.ledger }));
+  } catch (err) {
+    console.error(`Failed to load audit inputs (result=${args.result}, ledger=${args.ledger}): ${err.message}`);
     process.exit(1);
   }
 
   const runId = result._cloudRunId || null;
-  const round = Number.isInteger(args.round) ? args.round : (result.round || 1);
+  // The filename is the authoritative source for BOTH the session id and the
+  // round; derive them together so the idempotency key (`${sid|runId}:${round}`)
+  // and the persisted round can't silently disagree with the artifact.
+  const { sid, round: filenameRound } = parseResultPath(args.result);
+  // Reconcile every declared round source (CLI flag, result payload, filename).
+  // Require all explicitly-present integer sources to agree; fail closed on a
+  // conflict so an artifact is never persisted under the wrong round.
+  const declaredRounds = [...new Set(
+    [args.round, result.round, filenameRound].filter(v => Number.isInteger(v) && v >= 1),
+  )];
+  if (declaredRounds.length > 1) {
+    console.error(
+      `Round conflict among --round / result.round / filename (${declaredRounds.join(' vs ')}); `
+      + 'refusing to persist outcomes under an ambiguous round.',
+    );
+    process.exit(1);
+  }
+  let round = declaredRounds[0];
+  if (round === undefined) {
+    process.stderr.write('  [write-code-outcomes] WARN: no round in --round/result.round/filename; defaulting to 1\n');
+    round = 1;
+  }
+  // `sid` (from the filename) gives the cloud-off / no-run-id idempotency key a
+  // stable component; warn when neither it nor a cloud run id is available.
+  if (!sid && !runId) {
+    // Neither a cloud run id nor a convention-derived sid → the local append
+    // can't be marker-guarded (idempotency degrades to unguarded). Fail loud,
+    // not silent (mirrors the plan's resolver no-match WARN).
+    process.stderr.write(
+      `  [write-code-outcomes] WARN: could not derive a session id from ${args.result} `
+      + `(expected …-r<N>-result.json) and no _cloudRunId present; local idempotency guard disabled for this run\n`,
+    );
+  }
 
   await initLearningStore().catch(() => { /* cloud optional */ });
   // isCloudEnabled() is async — without await, `cloud` is a (truthy) Promise and
@@ -95,14 +124,17 @@ async function main() {
     : null;
 
   // Delegate to the single shared finalize (same logic as the orchestrator + /cycle).
-  const status = await finalizeRoundOutcomes({ result, ledger, round, store, sid: null });
+  const status = await finalizeRoundOutcomes({ result, ledger, round, store, sid });
 
   const cloudState = !cloud ? 'off' : runId ? (status.cloudOk ? 'ok' : 'failed') : 'no-run-id';
   process.stderr.write(
     `  [write-code-outcomes] round ${round}: ${status.labelled}/${status.total} `
     + `findings labelled · cloud=${cloudState}${status.skippedLocal ? ' · local skipped' : ''}\n`,
   );
-  process.stdout.write(`${JSON.stringify({ ok: true, runId, cloud, cloudState, ...status })}\n`);
+  // Compact stdout — keep the operation status scalars; never emit the full
+  // `enriched` payload (status/payload separation, M8).
+  const { enriched: _enriched, ...compact } = status;
+  process.stdout.write(`${JSON.stringify({ ok: true, runId, cloud, cloudState, ...compact })}\n`);
 }
 
 main().catch((err) => { console.error(err.message); process.exit(1); });

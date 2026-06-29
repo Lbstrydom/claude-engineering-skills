@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   resolveAuditArtifacts,
+  parseResultPath,
   loadAuditInputs,
   finalizeRoundOutcomes,
 } from '../scripts/lib/finalize-outcomes.mjs';
@@ -64,6 +65,23 @@ describe('resolveAuditArtifacts (pure naming SSoT)', () => {
   });
   it('non-matching stem → null (orchestrator no-op)', () => {
     assert.equal(resolveAuditArtifacts({ outPath: '/tmp/whatever.json', round: 2 }).priorResultPath, null);
+  });
+  it('filename round disagreeing with the round arg → null (drift no-op)', () => {
+    // --out says r3 but the caller passed round=5 → artifact identity drifted.
+    assert.equal(resolveAuditArtifacts({ outPath: '/tmp/sid-9-r3-result.json', round: 5 }).priorResultPath, null);
+  });
+});
+
+describe('parseResultPath (sid + round, round-independent)', () => {
+  it('extracts sid AND round for a result path', () => {
+    assert.deepEqual(
+      parseResultPath('/tmp/audit-code-42-r2-result.json'),
+      { sid: 'audit-code-42', round: 2 },
+    );
+  });
+  it('nulls for a non-matching path', () => {
+    assert.deepEqual(parseResultPath('/tmp/whatever.json'), { sid: null, round: null });
+    assert.deepEqual(parseResultPath(null), { sid: null, round: null });
   });
 });
 

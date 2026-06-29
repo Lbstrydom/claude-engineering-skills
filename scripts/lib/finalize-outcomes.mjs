@@ -27,23 +27,45 @@ import { markRunFindingsNeedsTriage } from './store/runs-findings.mjs';
 const ResultSchema = z.object({ findings: z.array(z.any()) }).passthrough();
 const LedgerSchema = z.object({ entries: z.array(z.any()) }).passthrough();
 
+// Canonical `…-r<N>-result.json` filename pattern — the single regex for the
+// naming convention, reused by both helpers below (no second parser elsewhere).
+const RESULT_PATH_RE = /^(.*)-r(\d+)-result\.json$/;
+
+/**
+ * Parse a code-audit `--out`/`--result` path into its identity components
+ * `{ sid, round }` via the single canonical regex — the authoritative source
+ * for BOTH the session id and the round a result file belongs to. Used by the
+ * manual CLI to derive a stable idempotency identity (and to reconcile the
+ * round against `--round`/`result.round`). Non-matching path → `{null, null}`.
+ *
+ * @param {string|null} outPath
+ * @returns {{ sid: string|null, round: number|null }}
+ */
+export function parseResultPath(outPath) {
+  if (!outPath) return { sid: null, round: null };
+  const m = path.basename(outPath).match(RESULT_PATH_RE);
+  if (!m) return { sid: null, round: null };
+  return { sid: m[1], round: Number.parseInt(m[2], 10) };
+}
+
 /**
  * Map a code-audit `--out` path to its prior-round result + the session id.
  * The SINGLE source of truth for the `…-r<N>-result.json` naming convention
  * (cited verbatim in skills/audit-code/SKILL.md). Fail-soft: a non-matching
- * stem or round < 2 yields `priorResultPath: null` (orchestrator → loud WARN).
+ * stem, round < 2, or a filename whose embedded round disagrees with the
+ * `round` argument all yield `priorResultPath: null` (orchestrator → loud WARN).
  *
  * @param {{ outPath?: string|null, round?: number }} args
  * @returns {{ priorResultPath: string|null, sid: string|null, priorRound: number|null }}
  */
 export function resolveAuditArtifacts({ outPath, round } = {}) {
-  if (!outPath || !Number.isInteger(round) || round < 2) {
-    return { priorResultPath: null, sid: null, priorRound: null };
-  }
-  const base = path.basename(outPath);
-  const m = base.match(/^(.*)-r(\d+)-result\.json$/);
-  if (!m) return { priorResultPath: null, sid: null, priorRound: null };
-  const sid = m[1];
+  const NONE = { priorResultPath: null, sid: null, priorRound: null };
+  if (!outPath || !Number.isInteger(round) || round < 2) return NONE;
+  // Delegate to the single path parser (one regex, one parse). A non-matching
+  // stem, or a filename round disagreeing with the round argument (drifted
+  // artifact identity vs runtime params), is a loud no-op upstream.
+  const { sid, round: fileRound } = parseResultPath(outPath);
+  if (!sid || fileRound !== round) return NONE;
   const priorRound = round - 1;
   const priorResultPath = path.join(path.dirname(outPath), `${sid}-r${priorRound}-result.json`);
   return { priorResultPath, sid, priorRound };

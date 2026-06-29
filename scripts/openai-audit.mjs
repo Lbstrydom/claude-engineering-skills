@@ -1532,7 +1532,13 @@ async function finalizePriorRoundOutcomes({ outFile, round, ledgerFile }) {
     let capture;
     try {
       const status = await finalizeRoundOutcomes({ result, ledger, round: priorRound, store, sid });
-      capture = { status: 'captured', ...status };
+      // Stamp a COMPACT status (scalars only) — never spread `status.enriched`
+      // (the full findings payload) into the artifact; it's caller-only.
+      capture = {
+        status: 'captured', round: status.round, labelled: status.labelled,
+        total: status.total, cloudOk: status.cloudOk,
+        skippedLocal: status.skippedLocal, needsTriage: status.needsTriage,
+      };
       process.stderr.write(`  [finalize] round ${priorRound}: ${status.labelled}/${status.total} labelled `
         + `(cloud: ${status.cloudOk ? 'yes' : 'no'}${status.skippedLocal ? ', local skipped' : ''})\n`);
     } catch (err) {
