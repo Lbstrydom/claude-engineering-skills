@@ -1,5 +1,30 @@
 # Project Status Log
 
+## 2026-06-29 — Complete anthropic-client migration + flip CLAUDE_BACKEND=cli
+
+### Changes
+- Flipped `CLAUDE_BACKEND=cli` in the local (gitignored) `.env` — the 2026-06-15 pool split has passed, so the cli backend now draws the dedicated Agent SDK credit. Verified with `npm run anthropic:ping` (backend=cli, "pong").
+- Finished the anthropic-client backend-routing migration: every Claude call site now goes through `createAnthropicClient()`. Migrated the last 5 sites in `evolve-prompts.mjs`, `refine-prompts.mjs`, and `gemini-review.mjs` (shadow client, ping, Opus final-review fallback). The AGENTS.md "pending" list was stale — `summarise{,‑domains}.mjs` were already done.
+- Added `isClaudeAvailable()` to `anthropic-client.mjs` so gated call sites (evolve/refine) don't silently skip Claude under the cli backend (which needs no API key) — the bug a naive `new Anthropic()` swap would have left.
+- Corrected the AGENTS.md claude-trace note: claude-trace canNOT meter the scripted cli backend (its stdout banners corrupt the `claude -p --output-format json` parse; one HTML+browser per spawned process). The cli backend self-reports `cost_usd`/`usage` per call — that's the authoritative scripted-job signal. claude-trace remains for interactive sessions; installed globally.
+- Ran `arch:refresh` (incremental, cli backend, 582/583 symbols) + `arch:render` → regenerated `docs/architecture-map.md`. Synced tooling to consumers (Updated 12 / Errors 0).
+
+### Files Affected
+- `scripts/lib/anthropic-client.mjs` — new `isClaudeAvailable()` export.
+- `scripts/evolve-prompts.mjs`, `scripts/refine-prompts.mjs`, `scripts/gemini-review.mjs` — `new Anthropic()` → `createAnthropicClient()`; gates use `isClaudeAvailable()`.
+- `tests/anthropic-client-migration.test.mjs` (new) — grep guard against bare `new Anthropic()` + `isClaudeAvailable()` behavior.
+- `AGENTS.md` — fully-migrated note, backend-aware gate guidance, corrected claude-trace/cost-telemetry section.
+- `docs/architecture-map.md` — regenerated.
+
+### Decisions Made
+- claude-trace is the wrong tool for the scripted cli backend; rely on the backend's own per-call `cost_usd` instead. No new cost-aggregation tooling (nobody reads it back — over-engineering cliff).
+- `isClaudeAvailable()` lives in the factory (single source of truth for backend availability), not duplicated at call sites.
+
+### Next Steps
+- Optional: flip wine-cellar-app to `CLAUDE_BACKEND=cli` (its own `.env`) + run its `arch:refresh` — synced tooling already updated.
+
+---
+
 ## 2026-06-28 — Friction-feedback loop: brainstorm → plan → audit-plan (Approved)
 
 ### Changes

@@ -902,8 +902,7 @@ async function buildShadowClient(canonicalProvider) {
   if (canonicalProvider === 'gemini') {
     return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return createAnthropicClient();
 }
 
 /**
@@ -1082,8 +1081,7 @@ async function runPingGemini() {
 
 async function runPingClaude() {
   try {
-    const { default: Anthropic } = await import('@anthropic-ai/sdk');
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const anthropic = await createAnthropicClient();
     const response = await anthropic.messages.create({
       model: CLAUDE_OPUS_MODEL,
       max_tokens: 32,
@@ -1275,9 +1273,8 @@ async function buildClient(provider) {
     }
     return createOpenAIClient({ purpose: 'foundry-claude' });
   }
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
   process.stderr.write(`  [final-review] GEMINI_API_KEY missing; using Claude Opus fallback (${CLAUDE_OPUS_MODEL}).\n`);
-  return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return createAnthropicClient();
 }
 
 function isJsonTruncationError(err) {

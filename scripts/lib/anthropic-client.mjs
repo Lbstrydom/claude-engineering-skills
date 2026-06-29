@@ -133,6 +133,25 @@ export function resolveBackend() {
 }
 
 /**
+ * Is a Claude client usable right now without throwing at construction?
+ *
+ * The cli backend authenticates via the `claude` CLI (subscription / Agent SDK
+ * credit) and needs NO `ANTHROPIC_API_KEY`; the sdk backend requires the key
+ * (createAnthropicClient throws without it). Call sites that previously gated
+ * on `process.env.ANTHROPIC_API_KEY` to decide whether to attempt a Claude call
+ * MUST use this instead — otherwise the cli backend is silently skipped even
+ * though it's fully available.
+ *
+ * Surfaces an invalid `CLAUDE_BACKEND` (resolveBackend throws) on purpose: a
+ * billing-affecting typo should fail loud, consistent with createAnthropicClient.
+ *
+ * @returns {boolean}
+ */
+export function isClaudeAvailable() {
+  return resolveBackend() === 'cli' || Boolean(process.env.ANTHROPIC_API_KEY);
+}
+
+/**
  * Create or retrieve a cached Anthropic-shaped client.
  *
  * **Egress redaction** — by default, `redactSecrets` from

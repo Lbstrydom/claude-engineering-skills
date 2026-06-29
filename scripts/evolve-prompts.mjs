@@ -27,6 +27,7 @@ import {
 } from './lib/prompt-registry.mjs';
 import { AppendOnlyStore, MutexFileStore } from './lib/file-store.mjs';
 import { createLearningAdapter } from './lib/llm-wrappers.mjs';
+import { createAnthropicClient, isClaudeAvailable } from './lib/anthropic-client.mjs';
 import { zodToGeminiSchema } from './lib/schemas.mjs';
 import { PASS_NAMES, GLOBAL_CONTEXT_BUCKET, learningConfig } from './lib/config.mjs';
 
@@ -389,9 +390,8 @@ async function main() {
       const { GoogleGenAI } = await import('@google/genai');
       providers.gemini = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     }
-    if (process.env.ANTHROPIC_API_KEY) {
-      const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      providers.anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    if (isClaudeAvailable()) {
+      providers.anthropic = await createAnthropicClient();
     }
 
     const adapter = createLearningAdapter(providers);

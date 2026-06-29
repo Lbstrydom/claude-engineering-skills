@@ -638,19 +638,27 @@ call sites:
 | `sdk` (default) | `@anthropic-ai/sdk` direct API | `ANTHROPIC_API_KEY` token meter | Today; CI without `claude` CLI installed |
 | `cli` | `claude -p --output-format json` subprocess | **Before 2026-06-15**: your interactive Max 20x subscription (same pool as IDE sessions). **From 2026-06-15**: dedicated Max 20x Agent SDK $200/mo credit. | After credit redemption opens; reduces API spend on high-volume scripts |
 
-> ⚠️ **DO NOT flip `CLAUDE_BACKEND=cli` before 2026-06-15.** Until that date,
-> every `claude -p` invocation eats from the same subscription pool as your
-> interactive Claude Code sessions, so automated scripts would cannibalise
-> the IDE budget. From June 15 the pools split and the cli backend draws
-> from the dedicated credit. Default stays `sdk` for safety.
+> **Status (2026-06-29): flipped to `cli` locally.** The 2026-06-15 pool split
+> has passed, so the cli backend now draws from the dedicated Agent SDK credit
+> (not the interactive IDE pool). `CLAUDE_BACKEND=cli` lives in the gitignored
+> `.env` (per-machine; the committed default stays `sdk` for CI without the
+> `claude` CLI). Consumers opt in via their own `.env`.
 >
-> **Operational prerequisite — install [`claude-trace`](https://github.com/badlogic/claude-trace) BEFORE flipping the flag.**
-> The $200 credit is non-rolling and overage requires manually-enabled
-> billing. Without per-call token + cost telemetry you can rack up
-> overage charges from things like `npm run arch:refresh` (hundreds of
-> Haiku calls) without realising. claude-trace is free, runs locally,
-> and gives you the baseline to know whether the credit is generous or
-> tight for your usage pattern.
+> **Cost telemetry — what actually works (corrected 2026-06-29).** The cli
+> backend self-reports `cost_usd` + token `usage` per call (parsed from
+> `claude -p --output-format json` by `normaliseCliOutput`) — that is the
+> authoritative per-call signal for scripted jobs like `npm run arch:refresh`
+> (12 batched `claude -p` calls on its incremental path). **`claude-trace`
+> canNOT meter the scripted cli backend**: its interceptor writes log banners to
+> *stdout*, which corrupts the JSON envelope the backend parses, and it emits one
+> JSONL+HTML (and a browser-open attempt) per spawned process — useless across a
+> batch. Injecting it via `NODE_OPTIONS=--require <loader>` also breaks `npm`
+> itself (the loader expects to wrap the `claude` entry, not arbitrary node
+> processes). `claude-trace` is still the right tool for your **interactive**
+> Claude Code sessions (the shared-pool concern it was installed for); it is
+> installed globally and on PATH. The $200 credit is non-rolling and overage
+> requires manually-enabled billing, so watch the backend's own `cost_usd` on
+> high-volume runs.
 
 **Migration**: call sites use the factory instead of `new Anthropic({apiKey})`:
 
@@ -665,17 +673,19 @@ the body of every call site stays identical. The factory caches a single
 client per `(backend, apiKey, claudeBin)` key for the process lifetime —
 matches the "reuse client created in main()" rule below.
 
-**Already migrated**: [scripts/lib/context.mjs](scripts/lib/context.mjs)
-(brief generation), [scripts/lib/neighbourhood-query.mjs](scripts/lib/neighbourhood-query.mjs)
-(security-memory consultation), [scripts/lib/llm-wrappers.mjs](scripts/lib/llm-wrappers.mjs)
-(shared `callClaude`).
+**Fully migrated** (2026-06-29): every Claude call site now goes through
+`createAnthropicClient()` — `lib/context.mjs`, `lib/neighbourhood-query.mjs`,
+`lib/llm-wrappers.mjs`, `symbol-index/summarise{,‑domains}.mjs`,
+`refine-prompts.mjs`, `evolve-prompts.mjs`, and `gemini-review.mjs` (shadow
+client, ping, Opus final-review fallback). No bare `new Anthropic()` remains
+outside the factory itself (regression-guarded by a `grep` in
+[tests/anthropic-client-migration.test.mjs](tests/anthropic-client-migration.test.mjs)).
 
-**Pending migration** (still call `new Anthropic()` directly — drop-in swap
-when revisited): [scripts/symbol-index/summarise.mjs](scripts/symbol-index/summarise.mjs),
-[scripts/symbol-index/summarise-domains.mjs](scripts/symbol-index/summarise-domains.mjs),
-[scripts/refine-prompts.mjs](scripts/refine-prompts.mjs),
-[scripts/evolve-prompts.mjs](scripts/evolve-prompts.mjs),
-[scripts/gemini-review.mjs](scripts/gemini-review.mjs) (Opus fallback paths).
+**Backend-aware availability gate**: call sites that conditionally attempt a
+Claude call use `isClaudeAvailable()` (exported from `anthropic-client.mjs`),
+**not** `process.env.ANTHROPIC_API_KEY` — the cli backend authenticates via the
+`claude` CLI and needs no key, so a raw env check would silently skip a fully-
+available cli backend.
 
 **Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through
 whichever backend the env resolves to.

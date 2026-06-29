@@ -13,6 +13,7 @@ import { reservoirSample } from './lib/rng.mjs';
 import { PASS_NAMES, learningConfig, briefConfig } from './lib/config.mjs';
 import { refreshModelCatalog } from './lib/model-resolver.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { createAnthropicClient, isClaudeAvailable } from './lib/anthropic-client.mjs';
 
 const MIN_EXAMPLES_THRESHOLD = learningConfig.minExamplesThreshold;
 
@@ -146,10 +147,9 @@ async function suggestRefinements(passName, outcomesPath) {
 
   let suggestion = null;
 
-  if (process.env.ANTHROPIC_API_KEY) {
+  if (isClaudeAvailable()) {
     try {
-      const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      const anthropic = await createAnthropicClient();
       const response = await anthropic.messages.create({
         model: briefConfig.claudeModel,
         max_tokens: 2000,
