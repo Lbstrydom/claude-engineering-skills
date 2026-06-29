@@ -73,6 +73,32 @@ export function assessCaptureIntegrity(declaredSurfaceIds = [], unverifiableSurf
   };
 }
 
+/**
+ * The reason a `--gate` run could not evaluate anything (→ UNVERIFIED, exit 2),
+ * or `null` when the gate genuinely evaluated its scope. Single source of the
+ * gate-honesty contract: a blocking gate that checked NOTHING must never report
+ * a clean exit-0 pass — the same dead-server-honesty principle the degraded
+ * branch already enforces, extended to its philosophically-identical siblings:
+ *   - no surfaces declared        → the gate checks nothing
+ *   - every surface unverifiable  → the gate cannot vouch for anything
+ *   - `--scope diff` w/ no merge-base → the gate has no changed-set to evaluate
+ * `--scope full` never needs a merge-base, so an unresolved one there is fine.
+ * @param {{ integrity: {noSurfaces:boolean, degraded:boolean, total:number}, isFull:boolean, changedPathsResolved:boolean }} a
+ * @returns {string|null}
+ */
+export function gateUnverifiedReason({ integrity, isFull, changedPathsResolved }) {
+  if (integrity.noSurfaces) {
+    return 'the contract declares no surfaces — the gate checks nothing; add surfaces to visual-contract.json or drop --gate';
+  }
+  if (integrity.degraded) {
+    return `all ${integrity.total} contracted surface(s) unverifiable (capture stall/empty) — the gate cannot vouch for anything; fix capture first`;
+  }
+  if (!isFull && !changedPathsResolved) {
+    return 'no merge-base (shallow checkout / detached HEAD?) — the gate has no changed-set to evaluate; use --scope full or a full-history checkout';
+  }
+  return null;
+}
+
 /** Build a firstSeenLookup from cloud run-history rows ({driftKeys, capturedAt}). */
 export function firstSeenFromHistory(historyRows) {
   const earliest = new Map();

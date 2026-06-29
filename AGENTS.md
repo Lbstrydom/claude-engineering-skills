@@ -450,8 +450,12 @@ findings / green* is where to be adversarial, because a wrong "pass" is **invisi
 — nothing alarms (the "looks-protected-but-isn't" class). For any gate / check /
 validation, ask *"can this return green without having actually checked anything?"*
 and guard each such path (degrade to non-zero / `unverified`, never silent-clean).
-The visual-audit `--gate` alone yielded four — static-mode-gate, dead-server,
-all-surfaces-stalled, `--scope full` no-op — none caught by static review; each was
+The visual-audit `--gate` alone yielded six — static-mode-gate, dead-server,
+all-surfaces-stalled, `--scope full` no-op, **no-surfaces-gate**, and
+**no-merge-base-gate** (the last two: a `--gate` over an empty contract, or
+`--scope diff` with no resolvable merge-base, used to *warn-then-exit-0* — the
+honesty principle was applied to capture but not to scope resolution; both now
+exit 2) — none caught by static review; each was
 found by treating a green exit as guilty until proven to have checked something.
 Worked detail lives in the skill, not here: `skills/visual-audit/references/ci-gate-and-verify.md`
 (*Gate honesty*).

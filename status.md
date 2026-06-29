@@ -1,5 +1,21 @@
 # Project Status Log
 
+## 2026-06-29 — Fix: visual-audit --gate false-greens when it evaluates nothing
+
+### Changes
+- Fixed a silent false-green in `scripts/visual-audit.mjs --gate` (upstream report from a consumer): under `--verify --gate`, a **no-surfaces contract** and a **`--scope diff` with no resolvable merge-base** each *warned then exited 0* (= PASS) — a blocking gate reporting green while having checked NOTHING. This contradicted the file's own dead-server-honesty convention, where the philosophically-identical `integrity.degraded` branch already exits 2. The honesty principle had been applied to capture but not to scope resolution.
+- Both cases now **exit 2 (UNVERIFIED)**, mirroring the degraded branch. Centralized the three "gate evaluated nothing" cases (no-surfaces / all-unverifiable / no-merge-base) into one pure tested helper `gateUnverifiedReason()` so the contract can't silently regress at the exit seam again.
+- The reference doc had itself documented "no merge-base → loud warning" (encoding the bug); corrected to exit-2. Consumers that wired `--gate` without a `git fetch origin main` merge-base dance were getting a silent false-green; this is the upstream root fix (their CI-YAML workaround becomes belt-and-suspenders).
+
+### Files Affected
+- `scripts/lib/visual/drift.mjs` — new pure `gateUnverifiedReason({integrity, isFull, changedPathsResolved})` helper.
+- `scripts/visual-audit.mjs` — gate block routes no-surfaces / no-merge-base / degraded through the helper → exit 2.
+- `tests/visual-drift.test.mjs` — regression test asserting the three unverified cases return a reason (exit 2) and the can-evaluate cases return null.
+- `skills/visual-audit/references/ci-gate-and-verify.md` (+ regenerated `.claude/` copy) — Gate-honesty list corrected + no-surfaces bullet added.
+- `AGENTS.md` — durable-lesson count four → six (added no-surfaces-gate, no-merge-base-gate).
+
+---
+
 ## 2026-06-29 — Code-audit + ship deterministic outcome capture (6cf88fc follow-up)
 
 ### Changes

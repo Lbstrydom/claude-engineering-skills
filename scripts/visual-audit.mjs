@@ -28,7 +28,7 @@ import { extractAllowedSet } from './lib/visual/tokens.mjs';
 import { runSourceCoherence } from './lib/visual/source-coherence.mjs';
 import { runExtract } from './lib/visual/extract.mjs';
 import { assembleLiveFindings } from './lib/visual/findings.mjs';
-import { partitionFindings, scopeToChanged, divergenceKey, assessCaptureIntegrity } from './lib/visual/drift.mjs';
+import { partitionFindings, scopeToChanged, divergenceKey, assessCaptureIntegrity, gateUnverifiedReason } from './lib/visual/drift.mjs';
 import { writeObservedEnvelope, writeVerifyResult, readBaseline, writeBaseline } from './lib/visual/store.mjs';
 import { renderHuman, buildJson, buildScorecard } from './lib/visual/render.mjs';
 
@@ -127,20 +127,23 @@ async function main() {
   // Gate scope (only meaningful with --gate).
   let gateBlockers = 0;
   if (args.gate) {
-    if (integrity.noSurfaces) process.stderr.write('  [visual-audit] --gate: the contract declares no surfaces — the gate checks nothing.\n');
-    if (integrity.degraded) {
-      process.stderr.write(`  [visual-audit] --gate: all ${integrity.total} contracted surface(s) unverifiable — the gate cannot vouch for anything. UNVERIFIED, not a clean pass.\n`);
-      process.exit(2);
-    }
-    if (integrity.partial) process.stderr.write(`  [visual-audit] --gate: ${integrity.total - integrity.verifiedCount} surface(s) unverifiable — gate covers only the ${integrity.verifiedCount} verified surface(s).\n`);
     const isFull = args.scope === 'full';
     // `--scope full` gates the WHOLE contracted surface (allSurfaces sentinel), NOT
     // changedPaths=null — null means "no merge-base, never block" and would silently
     // pass the whole-surface gate (gate-scope-full no-op fix).
     const changedPaths = isFull ? null : gitChangedFiles(root);
-    if (!isFull && changedPaths == null) {
-      process.stderr.write('  [visual-audit] --gate --scope diff: no merge-base (shallow checkout / detached HEAD?) — the gate evaluated NOTHING. Use --scope full or a full-history checkout to gate.\n');
+    // Gate honesty: a blocking gate that could not evaluate anything (no surfaces,
+    // all surfaces unverifiable, or no merge-base in --scope diff) is UNVERIFIED →
+    // exit 2, never a clean exit-0 pass. Mirrors the dead-server convention the
+    // degraded branch already enforced; the no-surfaces / no-merge-base siblings
+    // used to only WARN and fall through (silent false-green). Single source: the
+    // pure gateUnverifiedReason helper (tested in tests/visual-drift.test.mjs).
+    const unverified = gateUnverifiedReason({ integrity, isFull, changedPathsResolved: isFull || changedPaths != null });
+    if (unverified) {
+      process.stderr.write(`  [visual-audit] --gate: ${unverified}. UNVERIFIED, not a clean pass (exit 2).\n`);
+      process.exit(2);
     }
+    if (integrity.partial) process.stderr.write(`  [visual-audit] --gate: ${integrity.total - integrity.verifiedCount} surface(s) unverifiable — gate covers only the ${integrity.verifiedCount} verified surface(s).\n`);
     const contractChanged = changedPaths ? [...changedPaths].some((p) => p.endsWith('visual-contract.json')) : false;
     const changedTokenFamilies = tokenSourceFamiliesChanged(contract, changedPaths);
     let blockers = scopeToChanged(gateEligible, {

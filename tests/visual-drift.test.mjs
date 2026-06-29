@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import fs from 'node:fs';
 import path from 'node:path';
-import { partitionFindings, scopeToChanged, ageDivergences, divergenceKey, firstSeenFromHistory, assessCaptureIntegrity } from '../scripts/lib/visual/drift.mjs';
+import { partitionFindings, scopeToChanged, ageDivergences, divergenceKey, firstSeenFromHistory, assessCaptureIntegrity, gateUnverifiedReason } from '../scripts/lib/visual/drift.mjs';
 import { readBaseline, writeBaseline } from '../scripts/lib/visual/store.mjs';
 
 test('partitionFindings splits by gateEligible', () => {
@@ -66,6 +66,26 @@ test('assessCaptureIntegrity flags degraded (all stalled) vs partial vs clean (s
   assert.ok(!clean.degraded && !clean.partial);
   // no surfaces declared → noSurfaces (gate checks nothing)
   assert.ok(assessCaptureIntegrity([], []).noSurfaces);
+});
+
+test('gateUnverifiedReason: a --gate that evaluated NOTHING is UNVERIFIED, never a clean pass', () => {
+  const clean   = { noSurfaces: false, degraded: false, total: 2, verifiedCount: 2 };
+  const none    = { noSurfaces: true,  degraded: false, total: 0, verifiedCount: 0 };
+  const stalled = { noSurfaces: false, degraded: true,  total: 3, verifiedCount: 0 };
+
+  // no surfaces declared → unverified regardless of scope (the gate checks nothing)
+  assert.ok(gateUnverifiedReason({ integrity: none, isFull: false, changedPathsResolved: true }));
+  assert.ok(gateUnverifiedReason({ integrity: none, isFull: true,  changedPathsResolved: true }));
+  // every surface unverifiable → unverified (parity with the degraded branch)
+  assert.ok(gateUnverifiedReason({ integrity: stalled, isFull: false, changedPathsResolved: true }));
+  // --scope diff with no merge-base → unverified (the reported silent false-green)
+  assert.ok(gateUnverifiedReason({ integrity: clean, isFull: false, changedPathsResolved: false }));
+
+  // CAN evaluate (→ null, so the gate proceeds to its real 0/1 verdict):
+  // --scope full never needs a merge-base
+  assert.equal(gateUnverifiedReason({ integrity: clean, isFull: true,  changedPathsResolved: false }), null);
+  // --scope diff WITH a merge-base + verified surfaces
+  assert.equal(gateUnverifiedReason({ integrity: clean, isFull: false, changedPathsResolved: true }), null);
 });
 
 test('firstSeenFromHistory ignores invalid timestamps and keeps the earliest', () => {

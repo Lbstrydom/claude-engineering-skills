@@ -21,7 +21,10 @@ contract. A gate-eligible finding blocks iff:
   component edit cascades into surfaces it doesn't textually live in ("scope by
   impact, not authorship").
 
-No merge-base (`changedPaths == null`) → **empty** (never false-block). `--scope full`
+No merge-base (`changedPaths == null`) → `scopeToChanged` returns **empty** (never
+false-*block*). But under `--gate --scope diff` the orchestrator never reaches that
+path: a no-merge-base run is UNVERIFIED → **exit 2** (see *Gate honesty* below), not a
+silent exit-0 pass. `--scope full`
 under `--gate` passes an explicit **`allSurfaces`** sentinel — distinct from
 `changedPaths == null` — so it gates **every** gate-eligible finding on a declared
 surface (then the baseline ratchet filters it). The two were once conflated, which
@@ -63,14 +66,23 @@ The gate refuses to report a clean pass when it didn't actually evaluate anythin
 - **Static `--gate` / `--update-baseline`** (no `--verify`) → **exit 2**. Static mode
   emits no paint findings, so gating would pass without checking and a baseline would
   be empty.
+- **No surfaces declared** in the contract under `--gate` → **exit 2** (UNVERIFIED).
+  A gate over an empty contract checks nothing; add surfaces or drop `--gate`.
 - **All contracted surfaces unverifiable** (page loaded but every surface stalled/
   empty) under `--gate` → **exit 2** (UNVERIFIED). `--update-baseline` on the same
   refuses to write (won't snapshot a degraded capture).
 - **Some surfaces unverifiable** (partial) → loud warning; the gate covers only the
   verified surfaces (never silent).
 - **No merge-base** under `--gate --scope diff` (shallow checkout / detached HEAD) →
-  loud warning that the gate evaluated nothing; use `--scope full` or a full checkout.
+  **exit 2** (UNVERIFIED): the gate has no changed-set to evaluate, so it cannot
+  report a clean pass; use `--scope full` or a full-history checkout. (Previously a
+  warn-then-exit-0 — the silent false-green this guard closes.)
 - **Zero states captured** (dead server) → exit 2 (above).
+
+> The no-surfaces / no-merge-base / all-unverifiable cases share one pure decision
+> point — `gateUnverifiedReason()` in `scripts/lib/visual/drift.mjs` (tested in
+> `tests/visual-drift.test.mjs`) — so the "a green gate evaluated something" contract
+> can't silently regress at the exit seam again.
 
 ## Determinism
 
