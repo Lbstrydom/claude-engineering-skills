@@ -42,6 +42,14 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--root') args.root = argv[++i];
     else if (a === '--files') args.files = argv[++i].split(',').filter(Boolean);
+    // --files-from <path>: read a newline-delimited manifest of files. Used by
+    // refresh.mjs for incremental runs so a large touched-file list never hits
+    // the OS argv length limit (Windows ENAMETOOLONG at ~1600+ files). Newline-
+    // delimited (not comma) so any filename is safe. Takes precedence over --files.
+    else if (a === '--files-from') {
+      const manifestPath = argv[++i];
+      args.files = fs.readFileSync(manifestPath, 'utf-8').split('\n').map(s => s.trim()).filter(Boolean);
+    }
     else if (a === '--mode') args.mode = argv[++i];
     else if (a === '--since-commit') args.sinceCommit = argv[++i];
     else if (a === '--include-delegates') args.includeDelegates = true;

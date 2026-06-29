@@ -26,6 +26,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
 import * as vcs from '../lib/vcs.mjs';
 import { runJsonLinesAsyncStrict, SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
 import { filterDiffFiles, formatSkipLog } from '../lib/sensitive-paths.mjs';
@@ -261,15 +262,30 @@ async function main() {
 
       // 6. Run extract → summarise → embed pipeline
       const extractArgs = ['scripts/symbol-index/extract.mjs', '--root', repoRoot, '--mode', mode];
+      // Hand the touched-file list to extract via a temp manifest (--files-from)
+      // rather than a `--files <comma-joined>` argv. A large incremental
+      // changeset (1600+ files on Windows) overflows the OS command-line limit
+      // → `spawn ENAMETOOLONG`. The manifest is newline-delimited (safe for any
+      // filename) and removed in the finally below.
+      let filesManifest = null;
       if (restrictFiles && restrictFiles.length > 0) {
-        extractArgs.push('--files', restrictFiles.join(','));
+        filesManifest = path.join(os.tmpdir(), `arch-refresh-files-${process.pid}-${Date.now()}.txt`);
+        fs.writeFileSync(filesManifest, restrictFiles.join('\n') + '\n', 'utf-8');
+        extractArgs.push('--files-from', filesManifest);
       }
       if (args.includeDelegates) {
         extractArgs.push('--include-delegates');
         logOk('WARNING: --include-delegates is a debug/visibility flag. Index will include thin-facade duplicates; do NOT publish this snapshot as a normal baseline. Re-run without the flag for standard operations.');
       }
       logOk(`extracting symbols...`);
-      const extracted = await runJsonLinesAsyncStrict('node', extractArgs, { stage: 'extract' });
+      let extracted;
+      try {
+        extracted = await runJsonLinesAsyncStrict('node', extractArgs, { stage: 'extract' });
+      } finally {
+        if (filesManifest) {
+          try { fs.unlinkSync(filesManifest); } catch { /* best-effort cleanup */ }
+        }
+      }
       const symbolsRaw = extracted.filter(r => r.type === 'symbol');
       const violations = extracted.filter(r => r.type === 'violation');
       const importEdges = extracted.filter(r => r.type === 'import');

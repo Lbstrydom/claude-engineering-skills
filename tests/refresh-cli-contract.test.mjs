@@ -189,6 +189,48 @@ describe('refresh.mjs wiring (source inspection)', () => {
     assert.match(src, /vcs\.gitCommitSha\(/);
     assert.match(src, /\.ok\s*\?/, 'expected `.ok ? … : null`-style structured handling');
   });
+
+  it('hands the touched-file list to extract via --files-from manifest, not a giant argv', () => {
+    // Regression: a large incremental changeset (1600+ files on Windows) used
+    // to overflow the OS command line via `--files <comma-joined>` → spawn
+    // ENAMETOOLONG. The list must now go through a temp manifest file.
+    assert.match(src, /--files-from/, 'extract must be invoked with --files-from');
+    assert.doesNotMatch(src, /extractArgs\.push\('--files',/,
+      'refresh.mjs must not pass the file list as a --files argv (ENAMETOOLONG risk)');
+    assert.match(src, /unlinkSync\(filesManifest\)/, 'manifest must be cleaned up');
+  });
+});
+
+// ── Functional: extract.mjs --files-from manifest handoff ────────────────
+
+describe('extract.mjs --files-from (ENAMETOOLONG fix)', () => {
+  const EXTRACT_SRC = path.join(REPO_ROOT, 'scripts/symbol-index/extract.mjs');
+
+  it('reads the file list from a newline-delimited manifest and extracts only those files', () => {
+    const dir = mkdtemp();
+    try {
+      fs.mkdirSync(path.join(dir, 'src'));
+      fs.writeFileSync(path.join(dir, 'src', 'alpha.ts'), 'export function alphaFn() { return 1; }\n');
+      fs.writeFileSync(path.join(dir, 'src', 'beta.ts'), 'export function betaFn() { return 2; }\n');
+      // Manifest lists only alpha.ts — beta.ts must NOT be extracted.
+      const manifest = path.join(dir, 'files.txt');
+      fs.writeFileSync(manifest, 'src/alpha.ts\n');
+
+      const res = spawnSync('node', [
+        EXTRACT_SRC, '--root', dir, '--mode', 'incremental', '--files-from', manifest,
+      ], { encoding: 'utf-8' });
+
+      assert.equal(res.status, 0, `extract exited ${res.status}: ${res.stderr}`);
+      const symbols = res.stdout.split('\n').filter(Boolean)
+        .map(l => { try { return JSON.parse(l); } catch { return null; } })
+        .filter(r => r && r.type === 'symbol');
+      const names = symbols.map(s => s.symbolName);
+      assert.ok(names.includes('alphaFn'), `expected alphaFn; got ${JSON.stringify(names)}`);
+      assert.ok(!names.includes('betaFn'), 'betaFn was not in the manifest — must not be extracted');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 // NOTE: end-to-end subprocess invocations of refresh.mjs are gated by

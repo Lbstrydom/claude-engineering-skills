@@ -1,5 +1,18 @@
 # Project Status Log
 
+## 2026-06-29 — Fix arch:refresh ENAMETOOLONG on large incremental changesets
+
+### Changes
+- Fixed `spawn ENAMETOOLONG` in `arch:refresh`: the incremental extract passed the touched-file list as a `--files <comma-joined>` argv, which overflows the OS command-line limit on large changesets (wine-cellar-app: 1658 files since a stale baseline, on Windows). Now `refresh.mjs` writes the list to a temp newline-delimited manifest and passes `--files-from <path>`; `extract.mjs` reads it. Manifest is cleaned up in a `finally`.
+- Found while flipping wine-cellar-app to `CLAUDE_BACKEND=cli` — the failure was pre-LLM (extract phase), unrelated to the backend; a latent cross-consumer Windows bug.
+
+### Files Affected
+- `scripts/symbol-index/extract.mjs` — new `--files-from <manifest>` arg (newline-delimited; takes precedence over `--files`).
+- `scripts/symbol-index/refresh.mjs` — temp-manifest handoff + cleanup; `os` import.
+- `tests/refresh-cli-contract.test.mjs` — source-inspection guard (no `--files` argv) + functional `--files-from` extraction test.
+
+---
+
 ## 2026-06-29 — Complete anthropic-client migration + flip CLAUDE_BACKEND=cli
 
 ### Changes
