@@ -1,5 +1,17 @@
 # Project Status Log
 
+## 2026-06-29 — Fix arch:refresh sibling-spawn relocation bug (consumer-only)
+
+### Changes
+- Fixed a silent consumer-only break unmasked by the ENAMETOOLONG fix: `refresh.mjs` spawned its pipeline scripts via cwd-relative paths (`scripts/symbol-index/{extract,summarise,embed}.mjs`), which only exist in the source repo. In a consumer the tooling lives under `scripts/.claude-skills/symbol-index/`, so the spawn was `MODULE_NOT_FOUND` — wine-cellar-app's `arch:refresh` had been dead since the isolation migration (ENAMETOOLONG was masking it). Now resolved via `import.meta.dirname` (refresh + pipeline scripts are always siblings → correct in both layouts).
+- Added a regression guard (`relocation-guard` missed it — it's a `runJsonLinesAsyncStrict` wrapper, not a bare `spawn`).
+
+### Files Affected
+- `scripts/symbol-index/refresh.mjs` — `sibling()` helper via `import.meta.dirname`; extract/summarise/embed spawns use it.
+- `tests/refresh-cli-contract.test.mjs` — source-inspection guard against cwd-relative sibling spawns.
+
+---
+
 ## 2026-06-29 — Fix arch:refresh ENAMETOOLONG on large incremental changesets
 
 ### Changes

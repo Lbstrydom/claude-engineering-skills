@@ -60,6 +60,14 @@ import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules } from '../lib/symbol-index/domain-tagger.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 
+// Resolve sibling pipeline scripts (extract/summarise/embed) relative to THIS
+// file, not the cwd. The cwd-relative form ('scripts/symbol-index/extract.mjs')
+// only exists in the source repo; in a consumer the tooling lives under
+// scripts/.claude-skills/symbol-index/, so a cwd-relative spawn was a silent
+// MODULE_NOT_FOUND there. refresh.mjs and its pipeline scripts are always
+// siblings, so import.meta.dirname is correct in both layouts.
+const sibling = (name) => path.join(import.meta.dirname, name);
+
 function parseArgs(argv) {
   const args = { full: false, sinceCommit: null, force: false, includeDelegates: false };
   for (let i = 2; i < argv.length; i++) {
@@ -261,7 +269,7 @@ async function main() {
       //     never landed.
 
       // 6. Run extract → summarise → embed pipeline
-      const extractArgs = ['scripts/symbol-index/extract.mjs', '--root', repoRoot, '--mode', mode];
+      const extractArgs = [sibling('extract.mjs'), '--root', repoRoot, '--mode', mode];
       // Hand the touched-file list to extract via a temp manifest (--files-from)
       // rather than a `--files <comma-joined>` argv. A large incremental
       // changeset (1600+ files on Windows) overflows the OS command-line limit
@@ -293,7 +301,7 @@ async function main() {
 
       // 7. Summarise (only non-redacted)
       logOk(`summarising...`);
-      const summarised = await runJsonLinesAsyncStrict('node', ['scripts/symbol-index/summarise.mjs'], {
+      const summarised = await runJsonLinesAsyncStrict('node', [sibling('summarise.mjs')], {
         input: symbolsRaw.map(r => JSON.stringify(r)).join('\n') + '\n',
         stage: 'summarise',
       });
@@ -301,7 +309,7 @@ async function main() {
 
       // 8. Embed
       logOk(`embedding (model=${concreteEmbedModel})...`);
-      const embedded = await runJsonLinesAsyncStrict('node', ['scripts/symbol-index/embed.mjs'], {
+      const embedded = await runJsonLinesAsyncStrict('node', [sibling('embed.mjs')], {
         input: summarisedSymbols.map(r => JSON.stringify(r)).join('\n') + '\n',
         env: { ARCH_INDEX_EMBED_CONCRETE: concreteEmbedModel },
         stage: 'embed',

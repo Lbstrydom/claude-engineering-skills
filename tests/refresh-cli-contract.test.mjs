@@ -190,6 +190,19 @@ describe('refresh.mjs wiring (source inspection)', () => {
     assert.match(src, /\.ok\s*\?/, 'expected `.ok ? … : null`-style structured handling');
   });
 
+  it('resolves sibling pipeline scripts via import.meta.dirname, not a cwd-relative path', () => {
+    // Regression: spawning `node scripts/symbol-index/extract.mjs` (cwd-relative)
+    // is MODULE_NOT_FOUND in a consumer, where the tooling lives under
+    // scripts/.claude-skills/symbol-index/. Siblings must resolve off this file.
+    // (relocation-guard.test.mjs misses this — it's a runJsonLines wrapper, not
+    // a bare spawn().)
+    assert.match(src, /import\.meta\.dirname/, 'must resolve siblings off import.meta.dirname');
+    // Match the array-spawn form `['scripts/symbol-index/extract.mjs'` (the bug),
+    // not prose mentioning the path — so the explanatory comment doesn't trip it.
+    assert.doesNotMatch(src, /\[\s*['"]scripts\/symbol-index\/(extract|summarise|embed)\.mjs['"]/,
+      'no cwd-relative sibling spawn path (breaks silently in consumers)');
+  });
+
   it('hands the touched-file list to extract via --files-from manifest, not a giant argv', () => {
     // Regression: a large incremental changeset (1600+ files on Windows) used
     // to overflow the OS command line via `--files <comma-joined>` → spawn
