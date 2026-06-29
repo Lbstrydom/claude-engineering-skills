@@ -72,7 +72,8 @@ import { executeTools, normalizeToolResults, formatLintSummary } from './lib/lin
 import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from './lib/debt-memory.mjs';
-import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
+import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
+import { resolveAuditArtifacts, loadAuditInputs, finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from './lib/learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from './lib/learning/author-tier-observation.mjs';
 import { loadDomainRules as _loadDomainRules, computeTargetDomains as _computeTargetDomains } from './lib/symbol-index/domain-tagger.mjs';
@@ -1504,12 +1505,58 @@ function deriveFindingsFromReport(report) {
   return findings;
 }
 
+/**
+ * Deterministic outcome capture (orchestrator-only). At the start of an R2+
+ * code-audit invocation — the one the agent already makes for R2+ suppression —
+ * finalize the PRIOR round's triage outcomes from the ledger the agent just
+ * wrote. Best-effort: any failure logs and the round-N audit proceeds unchanged
+ * (never worse than today's skipped manual step). Captures rounds 1..N-1; the
+ * final converged round uses /cycle or the manual write-code-outcomes.mjs.
+ * Plan: docs/plans/deterministic-outcome-capture.md
+ */
+async function finalizePriorRoundOutcomes({ outFile, round, ledgerFile }) {
+  if (!(round >= 2 && ledgerFile && outFile)) return;
+  try {
+    const { priorResultPath, sid, priorRound } = resolveAuditArtifacts({ outPath: outFile, round });
+    if (!priorResultPath) {
+      process.stderr.write(`  [finalize] WARN: could not resolve prior-round result from --out (${outFile}); skipping capture\n`);
+      return;
+    }
+    if (!fs.existsSync(priorResultPath)) {
+      process.stderr.write(`  [finalize] prior-round result not found (${priorResultPath}); skipping\n`);
+      return;
+    }
+    const { result, ledger } = loadAuditInputs({ resultPath: priorResultPath, ledgerPath: ledgerFile });
+    const cloud = await isCloudEnabled();
+    const store = cloud ? { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta } : null;
+    let capture;
+    try {
+      const status = await finalizeRoundOutcomes({ result, ledger, round: priorRound, store, sid });
+      capture = { status: 'captured', ...status };
+      process.stderr.write(`  [finalize] round ${priorRound}: ${status.labelled}/${status.total} labelled `
+        + `(cloud: ${status.cloudOk ? 'yes' : 'no'}${status.skippedLocal ? ', local skipped' : ''})\n`);
+    } catch (err) {
+      capture = { status: 'failed', round: priorRound, reason: err.message };
+      process.stderr.write(`  [finalize] WARN: finalize round ${priorRound} failed: ${err.message}\n`);
+    }
+    // Stamp machine-readable capture status onto the prior result artifact (M5).
+    try { result._outcomeCapture = capture; fs.writeFileSync(priorResultPath, JSON.stringify(result), 'utf-8'); }
+    catch { /* best-effort annotation */ }
+  } catch (err) {
+    process.stderr.write(`  [finalize] WARN: prior-round capture failed: ${err.message}\n`);
+  }
+}
+
 async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext = '', { passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null, changedFiles = [], repoProfile = null, bandit = null, fpTracker = null, noLedger = false, noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false, debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null, sessionCacheHit = null, scopeMode = null, planFile = null, runId = null } = {}) {
   const totalStart = Date.now();
   _runSeedUsed = false; // reset run-scoped cache-seed flag (CLI = one run/process)
 
   // Initialize pass result cache — survives merge crashes
   initResultCache(outFile);
+
+  // Deterministic outcome capture: finalize the prior round's outcomes before
+  // running round N's audit (best-effort, never blocks). See the helper above.
+  await finalizePriorRoundOutcomes({ outFile, round, ledgerFile });
 
   // Count diff lines for metadata (lines starting with + or - but not +++ / ---)
   let diffLinesChanged = null;

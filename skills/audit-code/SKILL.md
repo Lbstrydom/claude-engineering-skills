@@ -280,8 +280,20 @@ Full writer invocation example + status field semantics: `references/ledger-form
 
 ## Step 3.5b — Record Triage Outcomes (closes the adaptive-learning loop)
 
-**MANDATORY after the ledger is written each round.** Persist the round's
-accepted/dismissed outcomes so the adaptive-learning loop has ground truth:
+**Automatic for rounds 1..N-1 — no manual step.** When you invoke
+`openai-audit.mjs` for the next round (N ≥ 2), it finalizes the **prior** round's
+accepted/dismissed outcomes from the ledger you just wrote, before running round N.
+This relies on the `…-r<N>-result.json` `--out` naming convention (which this
+skill already uses) and is best-effort — a failure logs and the audit proceeds.
+It bridges the ledger → `finding_adjudication_events` + `audit_pass_stats` +
+`audit_findings` + `audit_runs.labeled` (cloud) and `.audit/outcomes.jsonl` (local
+bandit reward), idempotently. So the bandit / FP-learning / prompt evolution get
+their ground-truth training signal without you remembering to run anything.
+
+**Manual fallback — run ONLY when there is no "next round" to carry the capture:**
+the **final converged round** of a standalone audit, a **1-round** audit, or
+**non-Claude-Code / cloud-off CI** where the orchestrator path didn't fire. (Inside
+`/cycle`, finalization is fully covered — skip this.)
 
 ```bash
 node scripts/write-code-outcomes.mjs \
@@ -290,14 +302,10 @@ node scripts/write-code-outcomes.mjs \
   --round <N>
 ```
 
-This bridges the adjudication ledger → `outcome-sync` → `finding_adjudication_events`
-+ `audit_pass_stats` (accepted/dismissed) + `audit_findings` + `audit_runs.labeled`
-(cloud) and `.audit/outcomes.jsonl` (local bandit reward). Without it those
-columns stay 0 and the bandit / FP-learning / prompt evolution get **no
-training signal** — the audit works but never improves.
-
-Best-effort: a cloud failure logs and falls back to local-only; it never
-blocks the audit. Run it once per round, after Step 3.5.
+Both the automatic path and this CLI delegate to the same shared
+`finalizeRoundOutcomes`, so they are idempotent — running the manual step after an
+automatic capture re-labels (cloud) and skips the local append (marker-guarded),
+never double-counting.
 
 ---
 
@@ -319,7 +327,7 @@ and status card format: `references/debt-capture.md`.
 1. Send rebuttal (if rebut HIGH/MEDIUM findings from triage)
 2. Wait for rebuttal response
 3. Write adjudication ledger (Step 3.5)
-4. Record triage outcomes — `write-code-outcomes.mjs` (Step 3.5b)
+4. Record triage outcomes — automatic next-round (Step 3.5b); manual CLI only for the final/1-round case
 5. Capture deferrable debt (Step 3.6)
 6. Fix ALL findings together (Step 4)
 7. Run tests

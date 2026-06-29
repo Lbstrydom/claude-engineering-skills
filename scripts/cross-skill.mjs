@@ -87,9 +87,8 @@ import {
   updatePassStatsPostDeliberation,
   updateRunMeta,
   auditRunExists,
-  markRunFindingsNeedsTriage,
 } from './learning-store.mjs';
-import { recordTriageOutcomes } from './lib/outcome-sync.mjs';
+import { finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import { semanticId } from './lib/findings.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
 import { emit } from './lib/cli-io.mjs';
@@ -605,14 +604,13 @@ async function cmdFinalizeOutcomes() {
   await initLearningStore().catch(() => { /* cloud optional */ });
   const cloud = await isCloudEnabled();
 
-  // §R2-H2: cloud off → local-only no-op. Still write .audit/outcomes.jsonl for
-  // the bandit reward (recordTriageOutcomes(null,…) degrades to local-only).
+  // §R2-H2: cloud off → local-only no-op. Delegate to the shared finalize with
+  // store=null so it degrades to the local `.audit/outcomes.jsonl` write.
   if (!cloud) {
-    const { enriched } = await recordTriageOutcomes(null, null, result.findings, ledger, { round });
-    const labelled = enriched.filter(f => f.adjudicationOutcome !== 'pending').length;
+    const status = await finalizeRoundOutcomes({ result, ledger, round, store: null, sid: null });
     return emit({
       ok: true, cloud: false, runId: null, round,
-      labelled, total: result.findings.length, needsTriage: 0,
+      labelled: status.labelled, total: status.total, needsTriage: 0,
       hint: 'AUDIT_DB_URL unset — local-only capture; run npm run setup:cloud to enable cloud finalize',
     });
   }
@@ -623,19 +621,16 @@ async function cmdFinalizeOutcomes() {
       `run_id ${runId} not found in audit_runs (cloud is configured) — was --run-id threaded correctly?`);
   }
 
+  // Delegate to the single shared finalize (same logic as the orchestrator +
+  // write-code-outcomes). Inject the explicit --run-id as the cloud key.
   const store = { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta };
-  const { enriched, passCounts, cloudOk } = await recordTriageOutcomes(
-    store, runId, result.findings, ledger, { round },
+  const status = await finalizeRoundOutcomes(
+    { result: { ...result, _cloudRunId: runId }, ledger, round, store, sid: runId },
   );
-
-  // Reconciliation (§R2-H3): findings the ledger never adjudicated remain
-  // `pending` — flag them needs_triage (non-destructive) + surface, so a
-  // truncated ledger can never silently dark-drop a finding.
+  const { enriched, cloudOk, needsTriage } = status;
   const pending = enriched.filter(f => f.adjudicationOutcome === 'pending');
-  const pendingFps = pending.map(f => f._hash || semanticId(f)).filter(Boolean);
-  const { updated: needsTriage } = await markRunFindingsNeedsTriage(runId, pendingFps);
 
-  const labelled = enriched.filter(f => f.adjudicationOutcome !== 'pending').length;
+  const labelled = status.labelled;
   process.stderr.write(
     `  [finalize-outcomes] run ${runId}: ${labelled}/${result.findings.length} labelled · `
     + `${needsTriage} needs_triage · cloud=${cloudOk ? 'ok' : 'failed'}\n`,

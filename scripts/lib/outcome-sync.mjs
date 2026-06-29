@@ -14,10 +14,74 @@
  * @module scripts/lib/outcome-sync
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { semanticId } from './findings.mjs';
 import { batchAppendOutcomes } from './findings-outcomes.mjs';
 import { generateTopicId } from './ledger.mjs';
 import { rewardWeights } from './config.mjs';
+import { withFileLock } from './brainstorm/file-lock.mjs';
+import { atomicWriteFileSync } from './file-io.mjs';
+
+const OUTCOMES_PATH = '.audit/outcomes.jsonl';
+const FINALIZED_MARKER = '.audit/.outcomes-finalized';
+
+/** Read the finalized-key set (tolerant of a missing/corrupt marker). */
+function readFinalizedKeys() {
+  try {
+    const arr = JSON.parse(fs.readFileSync(path.resolve(FINALIZED_MARKER), 'utf-8'));
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch { return new Set(); }
+}
+
+/**
+ * Append a round's local bandit-reward outcomes to `.audit/outcomes.jsonl`
+ * exactly once per `key`. The check→append→mark critical section runs under
+ * `withFileLock` so two concurrent same-repo audit sessions can't double-count.
+ * When `key` is null (legacy callers), the marker guard is skipped — identical
+ * to the pre-refactor append behaviour.
+ *
+ * @param {object[]} enriched - findings already enriched with adjudicationOutcome
+ * @param {{ key?: string|null, round?: number }} opts
+ * @returns {Promise<{ appended: number, skipped: boolean }>}
+ */
+export async function writeLocalOutcomesOnce(enriched, { key = null, round = 1 } = {}) {
+  const records = enriched
+    .filter(f => f.adjudicationOutcome !== 'pending')
+    .map(f => ({
+      findingId: f.id,
+      semanticHash: f._hash || semanticId(f),
+      pass: f._pass,
+      severity: f.severity,
+      category: f.category,
+      section: f.section,
+      primaryFile: f._primaryFile || f.section,
+      accepted: f.adjudicationOutcome === 'accepted',
+      adjudicationOutcome: f.adjudicationOutcome,
+      reward: computeOutcomeReward(f),
+      round,
+    }));
+  if (records.length === 0) return { appended: 0, skipped: false };
+
+  // No key → legacy unguarded append (back-compat).
+  if (!key) {
+    batchAppendOutcomes(OUTCOMES_PATH, records);
+    return { appended: records.length, skipped: false };
+  }
+
+  let appended = 0;
+  let skipped = false;
+  await withFileLock(path.resolve(`${FINALIZED_MARKER}.lock`), {}, () => {
+    const done = readFinalizedKeys();
+    if (done.has(key)) { skipped = true; return; }
+    batchAppendOutcomes(OUTCOMES_PATH, records);
+    appended = records.length;
+    done.add(key);
+    try { atomicWriteFileSync(path.resolve(FINALIZED_MARKER), JSON.stringify([...done])); }
+    catch (err) { process.stderr.write(`  [outcome-sync] WARN: marker write failed: ${err.message}\n`); }
+  });
+  return { appended, skipped };
+}
 
 /**
  * Enrich findings with adjudication outcomes from the ledger.
@@ -151,29 +215,17 @@ export async function recordTriageOutcomes(store, runId, findings, ledger, opts 
     }
   }
 
-  // Local outcomes — batch write for atomicity
-  const outcomeRecords = enriched
-    .filter(f => f.adjudicationOutcome !== 'pending')
-    .map(f => ({
-      findingId: f.id,
-      semanticHash: f._hash || semanticId(f),
-      pass: f._pass,
-      severity: f.severity,
-      category: f.category,
-      section: f.section,
-      primaryFile: f._primaryFile || f.section,
-      accepted: f.adjudicationOutcome === 'accepted',
-      adjudicationOutcome: f.adjudicationOutcome,
-      reward: computeOutcomeReward(f),
-      round,
-    }));
-
-  if (outcomeRecords.length > 0) {
-    batchAppendOutcomes('.audit/outcomes.jsonl', outcomeRecords);
-    process.stderr.write(`  [outcome-sync] ${outcomeRecords.length} outcomes recorded (cloud: ${cloudOk ? 'yes' : 'no'})\n`);
+  // Local outcomes — idempotent (marker-guarded) when an idempotencyKey is
+  // supplied (orchestrator/finalize path); unguarded append otherwise (legacy).
+  const { appended, skipped } = await writeLocalOutcomesOnce(enriched, {
+    key: opts.idempotencyKey ?? null,
+    round,
+  });
+  if (appended > 0) {
+    process.stderr.write(`  [outcome-sync] ${appended} outcomes recorded (cloud: ${cloudOk ? 'yes' : 'no'})\n`);
   }
 
-  return { enriched, passCounts, cloudOk };
+  return { enriched, passCounts, cloudOk, localAppended: appended, localSkipped: skipped };
 }
 
 /**

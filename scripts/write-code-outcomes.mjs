@@ -31,7 +31,7 @@
 import 'dotenv/config'; // load .env for standalone CLI use (matches sibling CLIs)
 import fs from 'node:fs';
 import path from 'node:path';
-import { recordTriageOutcomes } from './lib/outcome-sync.mjs';
+import { finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -87,27 +87,22 @@ async function main() {
   // isCloudEnabled() is async — without await, `cloud` is a (truthy) Promise and
   // the store is built even when the cloud is off (Cluster B / Gemini follow-up).
   const cloud = await isCloudEnabled();
-  // outcome-sync writes the cloud branch only when both `store` and `runId`
-  // are present; pass null when cloud is off so it cleanly degrades to the
-  // local `.audit/outcomes.jsonl` write.
+  // finalizeRoundOutcomes writes the cloud branch only when both `store` and the
+  // result's `_cloudRunId` are present; pass null when cloud is off so it cleanly
+  // degrades to the local `.audit/outcomes.jsonl` write.
   const store = cloud
     ? { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta }
     : null;
 
-  const { enriched, passCounts, cloudOk } = await recordTriageOutcomes(
-    store, runId, result.findings, ledger, { round },
-  );
+  // Delegate to the single shared finalize (same logic as the orchestrator + /cycle).
+  const status = await finalizeRoundOutcomes({ result, ledger, round, store, sid: null });
 
-  const labelled = enriched.filter((f) => f.adjudicationOutcome !== 'pending').length;
-  const cloudState = !cloud ? 'off' : runId ? (cloudOk ? 'ok' : 'failed') : 'no-run-id';
+  const cloudState = !cloud ? 'off' : runId ? (status.cloudOk ? 'ok' : 'failed') : 'no-run-id';
   process.stderr.write(
-    `  [write-code-outcomes] round ${round}: ${labelled}/${result.findings.length} `
-    + `findings labelled · cloud=${cloudState}\n`,
+    `  [write-code-outcomes] round ${round}: ${status.labelled}/${status.total} `
+    + `findings labelled · cloud=${cloudState}${status.skippedLocal ? ' · local skipped' : ''}\n`,
   );
-  process.stdout.write(`${JSON.stringify({
-    ok: true, round, runId, labelled, total: result.findings.length,
-    cloud, cloudOk, passCounts,
-  })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, runId, cloud, cloudState, ...status })}\n`);
 }
 
 main().catch((err) => { console.error(err.message); process.exit(1); });
