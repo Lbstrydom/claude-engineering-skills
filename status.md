@@ -1,5 +1,14 @@
 # Project Status Log
 
+## 2026-06-30 — Deps: @anthropic-ai/sdk 0.88→0.107 (clears last advisory)
+
+### Changes
+- Bumped `@anthropic-ai/sdk` ^0.88.0→^0.107.0 (pre-1.0, ~19 minors). Our usage is the stable core surface only (`new Anthropic(opts)` + `.messages.create({model,max_tokens,system,messages})` + `stream:true`), wrapped by the anthropic-client factory — unaffected. **npm audit now: 0 vulnerabilities** (cleared the moderate Filesystem-Memory-Tool advisory, a feature we do not use).
+- Verified: full suite 3957/0; anthropic-client targeted suite 46/0; a no-network sdk-backend construction smoke confirms the client still exposes `.messages.create`.
+
+### Files Affected
+- `package.json` / `package-lock.json` — @anthropic-ai/sdk 0.107.0.
+
 ## 2026-06-30 — Deps: openai 6.45 + zod 4.4.3 (within-major LLM-SDK bumps)
 
 ### Changes
