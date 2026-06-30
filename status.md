@@ -1,5 +1,13 @@
 # Project Status Log
 
+## 2026-06-30 — Deps: dependency-cruiser 17→18 (major, devDep)
+
+### Changes
+- Bumped `dependency-cruiser` ^17.3.10→^18.0.0 (major). Dev-only tool, consumed programmatically via `cruise()` in the arch-intent js-ts adapter + the audit diff-scope resolver. arch-intent suite 25/0, diff-scope 11/0, full suite 3957/0 — the `cruise()` API surface we use is unchanged.
+
+### Files Affected
+- `package.json` / `package-lock.json` — dependency-cruiser 18.0.0.
+
 ## 2026-06-30 — Deps: @anthropic-ai/sdk 0.88→0.107 (clears last advisory)
 
 ### Changes
