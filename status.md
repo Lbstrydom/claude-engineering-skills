@@ -1,5 +1,15 @@
 # Project Status Log
 
+## 2026-06-30 — Deps: security audit fix + in-range minor updates (safe tier)
+
+### Changes
+- `npm audit fix` (non-breaking, lockfile-only) — cleared 3 of 4 advisories incl. **both highs**: `ws` 8.20.0→8.21.0 (mem disclosure + DoS), `protobufjs` 7.5.6→7.6.4 (DoS/property-shadow), `brace-expansion`→5.0.7 (DoS). All transitive (playwright/genai). Remaining: 1 moderate in `@anthropic-ai/sdk` (Filesystem Memory Tool feature we do not use) — deferred to the SDK bump.
+- `npm update` (in-range minors): `@google/genai` 1.50.1→1.52.0, `dependency-cruiser` 17.3.10→17.4.3, `pg`→8.22, `playwright`→1.61.1, `yaml`→2.9.0. package.json ranges untouched (lockfile-only); full suite 3957/0.
+- Held for separate, tested bumps: openai 6.45 + zod 4.4.3 (pinned-exact), @anthropic-ai/sdk 0.107, @google/genai 2.x + dependency-cruiser 18 (majors).
+
+### Files Affected
+- `package-lock.json` — transitive security + in-range minor bumps (no package.json change).
+
 ## 2026-06-30 — Sync: gitignore audit runtime outputs + self-heal already-tracked
 
 ### Changes
