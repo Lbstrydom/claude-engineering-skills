@@ -10,6 +10,40 @@ import {
   rankNeighbourhood,
   recommendationFromSimilarity,
 } from '../scripts/lib/symbol-index.mjs';
+import { runWithConcurrency } from '../scripts/symbol-index/summarise-domains.mjs';
+
+describe('runWithConcurrency (domain-summary worker pool)', () => {
+  it('processes every item exactly once', async () => {
+    const seen = [];
+    await runWithConcurrency([1, 2, 3, 4, 5], 2, async (n) => { seen.push(n); });
+    assert.deepEqual(seen.sort((a, b) => a - b), [1, 2, 3, 4, 5]);
+  });
+
+  it('never exceeds the concurrency limit in flight', async () => {
+    let inFlight = 0; let peak = 0;
+    const item = () => async () => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+    };
+    const items = Array.from({ length: 12 }, item);
+    await runWithConcurrency(items, 3, (fn) => fn());
+    assert.ok(peak <= 3, `peak in-flight ${peak} must be <= 3`);
+    assert.ok(peak >= 2, `peak ${peak} should actually use the pool`);
+  });
+
+  it('empty input is a no-op (no workers spawned)', async () => {
+    let calls = 0;
+    await runWithConcurrency([], 4, async () => { calls++; });
+    assert.equal(calls, 0);
+  });
+
+  it('a limit larger than the item count still processes all', async () => {
+    const seen = [];
+    await runWithConcurrency(['a', 'b'], 10, async (x) => { seen.push(x); });
+    assert.deepEqual(seen.sort(), ['a', 'b']);
+  });
+});
 
 describe('normaliseSignature', () => {
   it('collapses whitespace', () => {

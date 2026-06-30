@@ -110,11 +110,16 @@ function validateSummary(text) {
  * Library API — invoked from render-mermaid.mjs in-process.
  * @returns {Promise<{summaries: Map<string,{summary:string,source:'cache'|'fresh'}>, errors: Array<{domain:string,code:string,message:string}>, stats: {total:number,cacheHits:number,fresh:number,failed:number}}>}
  */
-export async function summariseDomains({ repoId, refreshId, model }) {
+export async function summariseDomains({ repoId, refreshId, model, concurrency } = {}) {
   const summaries = new Map();
   const errors = [];
   const stats = { total: 0, cacheHits: 0, fresh: 0, failed: 0 };
   const concreteModel = resolveModel(model || 'latest-haiku');
+  // Bounded concurrency for the fresh-summary LLM calls. Default 4; env-tunable.
+  // Azure callers are additionally rate-limited inside callHaiku (azureThrottle).
+  const limit = Number.isInteger(concurrency) && concurrency > 0
+    ? concurrency
+    : Math.max(1, Number.parseInt(process.env.ARCH_SUMMARISE_CONCURRENCY || '4', 10) || 4);
   const cache = await getDomainSummaries(repoId);
 
   // Page through all symbols in the snapshot grouped by domain
@@ -135,6 +140,10 @@ export async function summariseDomains({ repoId, refreshId, model }) {
   }
   stats.total = grouped.size;
 
+  // Pass 1 — resolve cache hits instantly (no LLM); collect domains that need a
+  // fresh call. Separating the passes lets us bound-concurrently run only the
+  // expensive ones and emit a meaningful "to generate" count up front.
+  const pending = [];
   for (const [domain, symbols] of grouped) {
     const compositionHash = computeCompositionHash(symbols);
     const symbolCount = symbols.length;
@@ -144,12 +153,25 @@ export async function summariseDomains({ repoId, refreshId, model }) {
       stats.cacheHits++;
       continue;
     }
-    // Fresh call — best-effort; per-domain failures don't block others.
-    // Audit-code R1-H5: scrub the assembled prompt through redactSecrets
-    // before egress. Symbol metadata (name + purpose + path) is normally
-    // safe but redaction is defense-in-depth — same gate the brainstorm
-    // helper applies before any external API call.
+    pending.push({ domain, symbols, compositionHash, symbolCount });
+  }
+
+  if (pending.length === 0) {
+    process.stderr.write(`  [summarise-domains] ${stats.total} domains: all ${stats.cacheHits} cached — nothing to generate\n`);
+    return { summaries, errors, stats };
+  }
+  // Heartbeat: a fresh run is N serial-ish LLM calls (esp. slow on the cli
+  // backend), and used to be SILENT until the loop finished → looked hung.
+  process.stderr.write(`  [summarise-domains] ${stats.total} domains: ${stats.cacheHits} cached, ${pending.length} to generate (model=${concreteModel}, concurrency=${limit})\n`);
+
+  // Pass 2 — generate fresh summaries with bounded concurrency + per-domain
+  // progress. Best-effort: a per-domain failure never blocks the others (each
+  // task fully catches its own errors, so the worker pool never rejects).
+  let done = 0;
+  const generateOne = async ({ domain, symbols, compositionHash, symbolCount }) => {
     try {
+      // Audit-code R1-H5: scrub the assembled prompt through redactSecrets
+      // before egress (defense-in-depth — same gate brainstorm applies).
       const rawPrompt = PROMPT_TEMPLATE(domain, symbols);
       const redaction = redactSecrets(rawPrompt);
       if (redaction.redacted.length > 0) {
@@ -160,7 +182,7 @@ export async function summariseDomains({ repoId, refreshId, model }) {
       if (!v.ok) {
         errors.push({ domain, code: 'malformed', message: v.reason });
         stats.failed++;
-        continue;
+        return;
       }
       await upsertDomainSummary({
         repoId, domainTag: domain,
@@ -174,9 +196,36 @@ export async function summariseDomains({ repoId, refreshId, model }) {
     } catch (err) {
       errors.push({ domain, code: err.code || 'EXCEPTION', message: err.message });
       stats.failed++;
+    } finally {
+      done++;
+      process.stderr.write(`  [summarise-domains] ${done}/${pending.length} ${domain}\n`);
     }
-  }
+  };
+
+  await runWithConcurrency(pending, limit, generateOne);
   return { summaries, errors, stats };
+}
+
+/**
+ * Run `fn` over `items` with at most `limit` in flight at once. Dependency-free
+ * worker-pool (no p-limit). Single-threaded JS → the shared accumulators the
+ * callback mutates are race-free. If `fn` rejects, the rejection propagates
+ * (callers that must not abort should catch inside `fn`).
+ * @template T
+ * @param {T[]} items
+ * @param {number} limit
+ * @param {(item: T) => Promise<void>} fn
+ */
+export async function runWithConcurrency(items, limit, fn) {
+  const queue = [...items];
+  const n = Math.max(1, Math.min(limit, queue.length));
+  const worker = async () => {
+    while (queue.length) {
+      const item = queue.shift();
+      await fn(item);
+    }
+  };
+  await Promise.all(Array.from({ length: n }, worker));
 }
 
 // CLI thin wrapper

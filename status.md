@@ -1,5 +1,17 @@
 # Project Status Log
 
+## 2026-06-30 — arch:summarise-domains: progress heartbeat + bounded concurrency
+
+### Changes
+- Fixed the "arch:render looks hung" papercut: `summariseDomains()` generated per-domain summaries in a SILENT serial loop (no output until it finished), so a cache-busted run on the slow cli backend (~52 domains × up to 60s each) appeared frozen for many minutes.
+- Now: (1) a per-domain **progress heartbeat** — an upfront `N domains: C cached, F to generate (model=…, concurrency=K)` line + a `done/total <domain>` line as each completes (and a clean `all C cached — nothing to generate` fast-path); (2) **bounded concurrency** (default 4, `ARCH_SUMMARISE_CONCURRENCY` env-tunable) over the fresh LLM calls via a dependency-free worker pool `runWithConcurrency`. Cache hits resolve instantly in a first pass; only fresh domains hit the pool. Best-effort semantics preserved (per-domain failures never abort the pool). Azure callers stay rate-limited by the existing azureThrottle inside callHaiku.
+- Verified: `runWithConcurrency` unit tests (bound respected / all-processed / empty / limit>count); live `arch:render` hit the all-cached fast-path and printed correctly; regenerated docs/architecture-map.md.
+
+### Files Affected
+- `scripts/symbol-index/summarise-domains.mjs` — two-pass (cache-classify → concurrent generate), progress lines, `runWithConcurrency` (exported).
+- `tests/symbol-index.test.mjs` — runWithConcurrency tests.
+- `docs/architecture-map.md` — regenerated.
+
 ## 2026-06-30 — Deps: @google/genai 1.52→2.10 (major) — empirically verified
 
 ### Changes
