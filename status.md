@@ -1,5 +1,14 @@
 # Project Status Log
 
+## 2026-06-30 — Deps: @google/genai 1.52→2.10 (major) — empirically verified
+
+### Changes
+- Bumped `@google/genai` ^1.50.1→^2.10.0 (major). The v2 API surface we use is unchanged: `new GoogleGenAI()`, `ai.models.generateContent`/`generateContentStream` (with `config.responseMimeType`/`responseSchema`), `ai.models.embedContent` (with `config.outputDimensionality`).
+- **Empirical pre-ship verify (live API, per doctrine — mocked tests can't prove a v2 SDK works):** (1) full suite 3957/0 + no-network construction smoke of all three methods; (2) REAL Gemini gate call `audit:gemini-ping` → "✓ gemini-pro-latest: Gemini ready"; (3) REAL `embedContent` via embedText(dim:768) → 768-dim, all-finite vector from `gemini-embedding-001`. Same embedding model + dimension as v1 → existing vector space stays compatible, **no re-index needed**. The embed-text.mjs dim-guard would have failed loud on any change.
+
+### Files Affected
+- `package.json` / `package-lock.json` — @google/genai 2.10.0.
+
 ## 2026-06-30 — Deps: dependency-cruiser 17→18 (major, devDep)
 
 ### Changes
