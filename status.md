@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-06-30 — Sync: gitignore audit runtime outputs + self-heal already-tracked
+
+### Changes
+- Fixed a perpetual-churn bug in consumers (reported from wine-cellar-app): the managed `.gitignore` block synced into consumers omitted our audit/nav/visual runtime outputs, so `.audit/cache-metrics.jsonl`, `.audit-loop/*-observed.json`, `*-verify-result.json`, `*-drift-ledger.json` churned as modified/untracked-nag after any audit or `--verify` run. Added them to `AUDIT_RUNTIME_IGNORES` in the managed block — self-healing on next sync for all consumers.
+- Corrected two errors in the original diagnosis before acting: (1) the live consumer mechanism is the **managed block in `sync-to-repos.mjs`** (rewritten every sync), not `install/gitignore.mjs` (one-time install-only append sync never refreshes); (2) `logs/*-audit.json` is **not our artifact** (nothing in our tooling writes it) — upstream-ignoring it would sweep a consumer's own file, so it's deliberately excluded.
+- Since a `.gitignore` rule never untracks an already-committed file, added a scoped self-heal: after writing the block, sync `git rm --cached`'s any tracked file matching the runtime patterns (`scripts/lib/sync-untrack.mjs`). Faithful gitignore-glob semantics (`*` never crosses `/`) so `.audit-loop/migrations/*.sql` and consumer files are never swept; idempotent; dry-run previews it. Verified via `npm run sync:dry`: wine-cellar's tracked `.audit/cache-metrics.jsonl` correctly flagged "would untrack 1".
+
+### Files Affected
+- `scripts/lib/sync-untrack.mjs` (new) — `untrackNewlyIgnored` + `gitignoreToRegExp`.
+- `scripts/sync-to-repos.mjs` — `AUDIT_RUNTIME_IGNORES` added to the managed block + post-write untrack reconcile.
+- `tests/sync-untrack.test.mjs` (new) — real temp-git-repo tests (untrack, idempotency, glob boundary, dry-run, migrations/consumer-file safety).
+- `AGENTS.md` — sync section documents the runtime-output ignores + self-heal.
+
+
 ## 2026-06-29 — Fix: visual-audit --gate false-greens when it evaluates nothing
 
 ### Changes

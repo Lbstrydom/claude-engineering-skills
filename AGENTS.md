@@ -233,6 +233,15 @@ collisions.
 | Per-consumer manifest (`scripts/.sync-manifest.json`) | same path; layout=`isolated` | Yes |
 | Migrations (`supabase/migrations/*.sql` in source) | `.audit-loop/migrations/*.sql` | Yes |
 
+The managed `.gitignore` block also covers our **runtime outputs** (`AUDIT_RUNTIME_IGNORES`
+in `sync-to-repos.mjs`: `.audit/cache-metrics.jsonl`, `.audit-loop/*-{observed,verify-result,drift-ledger}.json`)
+so audit / `--verify` runs don't churn in consumers. Because a `.gitignore` rule
+never untracks an already-committed file, sync ALSO self-heals: after writing the
+block it `git rm --cached`'s any tracked file matching those patterns ([`scripts/lib/sync-untrack.mjs`](scripts/lib/sync-untrack.mjs),
+faithful gitignore-glob semantics so `*` never crosses `/` → a consumer's own files
+and `.audit-loop/migrations/*.sql` are never swept; the consumer commits the
+resulting index change). Idempotent; dry-run previews it.
+
 ### Key modules
 
 - [`scripts/lib/sync-path-map.mjs`](scripts/lib/sync-path-map.mjs) — bidirectional path mapper (`sourceRelToDestRel`/`destRelToSourceRel`), single source of truth for the layout.

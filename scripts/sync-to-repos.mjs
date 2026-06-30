@@ -28,7 +28,22 @@ import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
 import { rewriteCommandSurface, buildOwnedSourceTails } from './lib/sync-rewriter.mjs';
 import { injectUpstreamBanner } from './lib/sync-banner.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
+import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+
+// Audit-loop / nav-audit / visual-audit runtime outputs — Category-A derived
+// state that must never be committed. These were missing from the managed
+// gitignore block, so consumers running audits / `--verify` saw them churn as
+// perpetually-modified (or untracked-nag). Precise (our `.audit/` filename +
+// our `.audit-loop/` filename shapes) so a consumer's OWN files are never
+// swept, and `.audit-loop/migrations/*.sql` (tracked in consumers) is not
+// matched. This list is also the allow-list for the post-sync untrack step.
+const AUDIT_RUNTIME_IGNORES = [
+  '.audit/cache-metrics.jsonl',       // openai-audit.mjs cache hit-rate log
+  '.audit-loop/*-observed.json',      // domain-deps / nav-graph / visual observed envelopes
+  '.audit-loop/*-verify-result.json', // nav-audit / visual-audit --verify results
+  '.audit-loop/*-drift-ledger.json',  // nav / visual local drift caches
+];
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
@@ -580,6 +595,7 @@ async function main() {
         '.skills-fit-check.json',
         'logs/mcp-*.log',
         'logs/mcp-*.log.gz',
+        ...AUDIT_RUNTIME_IGNORES,
       ],
     );
     if (giPreview.action === 'abort') {
@@ -869,6 +885,24 @@ async function main() {
       } catch (err) {
         console.log(`  ${R}.gitignore write failed${X}: ${err.message?.slice(0, 120)}`);
       }
+    }
+
+    // ── Self-heal: untrack files now covered by a managed runtime-output
+    // pattern. A .gitignore rule never untracks an already-committed file, so a
+    // runtime output committed before its pattern existed would churn forever.
+    // Scoped STRICTLY to AUDIT_RUNTIME_IGNORES — all OUR Category-A artifacts —
+    // and each candidate is re-confirmed via `git check-ignore`, so a
+    // consumer's own file can never be swept. Idempotent + best-effort (a git
+    // failure must never abort the sync). Honoured in dry-run (logs only).
+    try {
+      const untracked = untrackNewlyIgnored(repo.path, AUDIT_RUNTIME_IGNORES, { dryRun: DRY_RUN });
+      if (untracked.length) {
+        const verb = DRY_RUN ? 'would untrack' : 'untracked';
+        console.log(`  ${Y}↳ ${verb} ${untracked.length} now-ignored runtime file(s)${X} ${D}(git rm --cached; commit in the consumer to finish):${X}`);
+        for (const f of untracked.slice(0, 8)) console.log(`    ${D}${f}${X}`);
+      }
+    } catch (err) {
+      console.log(`  ${Y}↳ untrack-newly-ignored skipped${X}: ${err.message?.slice(0, 100)}`);
     }
 
     // ── Last step: delete the in-progress journal (sync complete) ──────────
