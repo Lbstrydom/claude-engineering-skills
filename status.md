@@ -1,5 +1,14 @@
 # Project Status Log
 
+## 2026-06-30 — Deps: openai 6.45 + zod 4.4.3 (within-major LLM-SDK bumps)
+
+### Changes
+- Bumped the pinned-exact LLM-SDK deps within their current major: `openai` 6.34.0→6.45.0, `zod` 4.3.6→4.4.3. Both stay on the documented major line (Zod 4 API, openai responses.parse()/zodTextFormat()), so no contract change. Full suite 3957/0 (covers schemas/zodToGeminiSchema + openai-client construction).
+
+### Files Affected
+- `package.json` — openai + zod exact pins bumped.
+- `package-lock.json` — resolved.
+
 ## 2026-06-30 — Deps: security audit fix + in-range minor updates (safe tier)
 
 ### Changes
