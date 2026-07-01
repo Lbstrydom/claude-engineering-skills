@@ -63,6 +63,8 @@ export const FINDING_CLASSES = /** @type {const} */ ([
   'token_unreferenced',        // source-coherence: defined-but-unused (report-only)
   'token_undefined_reference', // source-coherence: contract cites an undefined token (report-only)
   'token_duplicate_definition',// source-coherence: same token defined twice (report-only)
+  'interactive_color_unset',   // theme-safety static lint: interactive selector styles the box but not `color` (report-only)
+  'unadapted_text_color',      // theme-safety runtime: UA-default text color on an author-styled form control (report-only)
 ]);
 
 /** Classes that CAN block CI (still subject to changed-surface scoping). Inferred

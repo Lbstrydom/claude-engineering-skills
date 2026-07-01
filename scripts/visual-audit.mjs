@@ -26,6 +26,8 @@ import {
 import { readContract, writeContract, bootstrapContract, contractExists } from './lib/visual/contract.mjs';
 import { extractAllowedSet } from './lib/visual/tokens.mjs';
 import { runSourceCoherence } from './lib/visual/source-coherence.mjs';
+import { lintInteractiveColor } from './lib/visual/interactive-color-lint.mjs';
+import { assessColorCoverage } from './lib/visual/unadapted-color.mjs';
 import { runExtract } from './lib/visual/extract.mjs';
 import { assembleLiveFindings } from './lib/visual/findings.mjs';
 import { partitionFindings, scopeToChanged, divergenceKey, assessCaptureIntegrity, gateUnverifiedReason } from './lib/visual/drift.mjs';
@@ -61,6 +63,9 @@ async function main() {
   const { allowedSet, tokenIndex, warnings: tokenWarnings } = await extractAllowedSet(root, contract);
   const usageCorpus = readUsageCorpus(root, contract);
   const diagnostics = runSourceCoherence({ tokenIndex, usageCorpus, duplicateWarnings: tokenWarnings });
+  // Theme-safety PIECE 1a — deterministic, browser-free ADVISORY lint over the
+  // contracted style sources ("styled the box, forgot the text"). Report-only.
+  const themeSafetyFindings = lintInteractiveColor(readStyleSources(root, contract));
 
   const envelope = {
     version: VISUAL_TOOL_VERSION,
@@ -85,8 +90,10 @@ async function main() {
       process.stderr.write(`  [visual-audit] ${flag} requires --verify <url>: static mode emits no paint findings, so ${flag} would ${args.gate ? 'pass without checking any paint' : 'write an empty baseline'}.\n`);
       process.exit(2);
     }
-    const out = buildJson({ staticMode: true, url: null, findings: [], diagnostics, scorecard: [], unverifiableSurfaces: [], statesCollected: [], warnings: tokenWarnings, gateBlockers: 0 });
-    emit(args, out, renderHuman({ staticMode: true, diagnostics }));
+    // Static mode now emits the deterministic ADVISORY theme-safety lint (still no
+    // paint findings, so the --gate refusal above is unchanged — plan decision 7).
+    const out = buildJson({ staticMode: true, url: null, findings: themeSafetyFindings, diagnostics, scorecard: [], unverifiableSurfaces: [], statesCollected: [], warnings: tokenWarnings, gateBlockers: 0 });
+    emit(args, out, renderHuman({ staticMode: true, diagnostics, findings: themeSafetyFindings }));
     process.exit(0);
   }
 
@@ -104,7 +111,23 @@ async function main() {
     process.exit(2);
   }
 
-  const findings = assembleLiveFindings({ perState: ext.perState, allowedSet, tokenIndex, contract });
+  const liveFindings = assembleLiveFindings({ perState: ext.perState, allowedSet, tokenIndex, contract });
+  // The static theme-safety lint is advisory in BOTH modes — include it here too.
+  const findings = [...liveFindings, ...themeSafetyFindings];
+  // Theme-safety PIECE 2 coverage honesty (plan decision 6): if form controls exist
+  // but NONE yielded provenance evidence (CDP declarations), the unadapted-color check
+  // saw nothing — surface it as a warning rather than a silent clean.
+  // Decision 6 is realized as a per-CHECK `unverified` warning (not a whole-surface
+  // flip) — a color-coverage miss must not mask the surface's valid token/contrast/
+  // layout tiers. Non-silent: pushed to the output warnings AND stderr.
+  for (const state of ext.perState) {
+    const cov = assessColorCoverage(state.nodes || []);
+    if (cov.eligible > 0 && cov.withEvidence === 0) {
+      const msg = `theme-safety: ${cov.eligible} form control(s) in ${state.device}/${state.theme} had no provenance evidence — unadapted-color check UNVERIFIED for that state (not a clean pass)`;
+      (ext.warnings ||= []).push(msg);
+      process.stderr.write(`  [visual-audit] ${msg}\n`);
+    }
+  }
   const { gateEligible } = partitionFindings(findings);
 
   // Capture integrity: a page can load yet every contracted surface stall (empty/
@@ -237,6 +260,23 @@ function readUsageCorpus(root, contract) {
     try { corpus += readFileSync(path.resolve(root, ts.path), 'utf-8'); } catch { /* skip */ }
   }
   return corpus;
+}
+
+/** Per-file style-source records for the theme-safety static lint (file attribution).
+ *  Reads tokenSources + globalStyleGlobs' declared paths; unreadable files are skipped. */
+function readStyleSources(root, contract) {
+  const out = [];
+  const seen = new Set();
+  const paths = [
+    ...(contract.tokenSources || []).map((ts) => ts.path),
+    ...(contract.globalStyleGlobs || []),
+  ].filter((p) => typeof p === 'string' && !/[*?[\]{}]/.test(p)); // literal paths only (globs skipped in v1)
+  for (const p of paths) {
+    if (seen.has(p)) continue;
+    seen.add(p);
+    try { out.push({ path: p, content: readFileSync(path.resolve(root, p), 'utf-8') }); } catch { /* skip unreadable */ }
+  }
+  return out;
 }
 
 function tokenSourceFamiliesChanged(contract, changedPaths) {

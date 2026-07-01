@@ -642,7 +642,9 @@ async function cmdFinalizeOutcomes() {
       id: f.id, fingerprint: f._hash || semanticId(f),
       severity: f.severity, section: f.section,
     })),
-    passCounts,
+    // NOTE: passCounts was dropped when cmdFinalizeOutcomes was refactored onto the
+    // shared finalizeRoundOutcomes (which doesn't return it) — referencing it here
+    // ReferenceError'd. The per-pass counts live in audit_pass_stats; not needed in this echo.
   });
 }
 

@@ -11,6 +11,7 @@ import { runReconcileTokens } from './reconcile-tokens.mjs';
 import { runThemeParity, runContrast } from './theme-parity.mjs';
 import { runLayoutPhysics } from './layout-physics.mjs';
 import { runSignifiers } from './signifiers.mjs';
+import { runUnadaptedColor } from './unadapted-color.mjs';
 import { inferClusters } from './tokens.mjs';
 
 /** Default severity per finding class. */
@@ -30,6 +31,8 @@ export const SEVERITY_BY_CLASS = {
   token_unreferenced: 'info',
   token_undefined_reference: 'info',
   token_duplicate_definition: 'info',
+  interactive_color_unset: 'info', // advisory static lint (matches source-coherence convention)
+  unadapted_text_color: 'P2',      // advisory runtime
 };
 
 /**
@@ -82,6 +85,7 @@ export function assembleLiveFindings({ perState, allowedSet, tokenIndex, contrac
     partials.push(...runContrast(nodes, contract));
     partials.push(...runLayoutPhysics(nodes, contract, { viewportWidth: state.viewportWidth }));
     partials.push(...runSignifiers(nodes));
+    partials.push(...runUnadaptedColor(nodes)); // theme-safety PIECE 2 (advisory, single-render)
   }
 
   // Theme parity: group states by device, pair themes.

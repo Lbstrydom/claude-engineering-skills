@@ -279,7 +279,11 @@ async function collectState(page, { surfaces, props, timeoutMs }) {
           displayed: cs.display !== 'none' && cs.visibility !== 'hidden' && rect.width >= 0,
           tag: el.tagName.toLowerCase(),
           role: el.getAttribute('role') || null,
+          inputType: el.tagName === 'INPUT' ? (el.getAttribute('type') || 'text').toLowerCase() : null,
           hasText: !!(el.textContent && el.textContent.trim()) && el.children.length === 0,
+          // theme-safety: color-dependent content signal for the finding snippet
+          // (form controls paint value/placeholder/option text even when empty).
+          textSnippet: String(el.value || el.placeholder || (el.selectedOptions && el.selectedOptions[0] && el.selectedOptions[0].text) || el.textContent || '').trim().slice(0, 60),
           rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
           scroll: { scrollWidth: el.scrollWidth, clientWidth: el.clientWidth },
           computed,
@@ -361,18 +365,33 @@ async function readComputed(page, instanceId) {
 /** Flatten CDP matched rules into RawDeclaration[] for provenance-resolver. */
 async function collectDeclarations(cdp, nodeId) {
   try {
-    const { matchedCSSRules = [] } = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
+    const { matchedCSSRules = [], inlineStyle } = await cdp.send('CSS.getMatchedStylesForNode', { nodeId });
     const decls = [];
     matchedCSSRules.forEach((entry, order) => {
       const rule = entry.rule;
+      const origin = normalizeCdpOrigin(rule?.origin);
+      if (origin === null) return; // `inspector` origin → ignore (never present headless)
       const spec = entry.matchingSelectors?.length ? selectorSpecificity(rule?.selectorList?.selectors, entry.matchingSelectors) : [0, 0, 0];
       for (const d of rule?.style?.cssProperties || []) {
         if (!d.name || d.value == null) continue;
-        decls.push({ property: d.name.toLowerCase(), value: d.value, important: !!d.important, specificity: spec, sourceOrder: order, layerOrder: 0 });
+        decls.push({ property: d.name.toLowerCase(), value: d.value, important: !!d.important, specificity: spec, sourceOrder: order, layerOrder: 0, origin });
       }
     });
+    // Inline style is author-origin and wins source-order ties (appended last).
+    for (const d of inlineStyle?.cssProperties || []) {
+      if (!d.name || d.value == null) continue;
+      decls.push({ property: d.name.toLowerCase(), value: d.value, important: !!d.important, specificity: [1, 0, 0], sourceOrder: matchedCSSRules.length + 1, layerOrder: 0, origin: 'author' });
+    }
     return decls;
   } catch { return []; }
+}
+
+/** CDP `CSS.RuleMatch.origin` → our normalized origin (theme-safety plan decision 9):
+ *  user-agent → user-agent; regular/injected(+inline) → author; inspector → ignore. */
+function normalizeCdpOrigin(o) {
+  if (o === 'user-agent') return 'user-agent';
+  if (o === 'inspector') return null;
+  return 'author'; // regular | injected | undefined
 }
 
 /** Rough specificity from the matched selector text (a/b/c counts). */

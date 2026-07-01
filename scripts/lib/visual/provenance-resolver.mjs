@@ -25,6 +25,9 @@ const SHORTHAND_EXPANSIONS = {
   margin: ['margin-top', 'margin-right', 'margin-bottom', 'margin-left'],
   padding: ['padding-top', 'padding-right', 'padding-bottom', 'padding-left'],
   'border-width': ['border-top-width', 'border-right-width', 'border-bottom-width', 'border-left-width'],
+  // theme-safety: the `background` shorthand can set background-color — so an
+  // author `background: #fff` is a candidate for the background-color winner.
+  background: ['background-color'],
 };
 
 /**
@@ -48,7 +51,7 @@ export function resolveProvenance(declarations, property) {
   if (!candidates.length) return null;
   const winner = candidates.slice().sort(cascadeCompare)[0];
   const varName = extractVar(winner.value);
-  return { winningValue: winner.value.trim(), usesToken: varName != null, varName };
+  return { winningValue: winner.value.trim(), usesToken: varName != null, varName, origin: winner.origin ?? null };
 }
 
 /**
@@ -59,6 +62,20 @@ export function resolveProvenance(declarations, property) {
  */
 export function declarationUsesToken(declarations, property) {
   return resolveProvenance(declarations, property)?.usesToken === true;
+}
+
+/**
+ * The CDP-normalized origin (`author` | `user-agent` | null) of the winning
+ * declaration for `property`. `null` when no declaration sets it (→ the computed
+ * value comes from inheritance or the UA on an inheriting element). Used by the
+ * theme-safety runtime check: a `color` winner of origin `user-agent` (or null on
+ * a form control, which the UA styles directly) = "author set no color."
+ * @param {RawDeclaration[]} declarations
+ * @param {string} property
+ * @returns {'author'|'user-agent'|null}
+ */
+export function resolveWinningOrigin(declarations, property) {
+  return resolveProvenance(declarations, property)?.origin ?? null;
 }
 
 /** All declarations that set `property` (directly or via an audited shorthand). */

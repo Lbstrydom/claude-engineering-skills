@@ -38,6 +38,12 @@ export function renderHuman({ staticMode, url = null, findings = [], diagnostics
     L.push('', `Source-coherence diagnostics (report-only): ${diagnostics.length}`);
     for (const d of diagnostics.slice(0, 20)) L.push(`  • [${d.class}] ${d.detail}`);
     if (diagnostics.length > 20) L.push(`  …and ${diagnostics.length - 20} more`);
+    // Theme-safety static lint (advisory; deterministic, no browser).
+    if (findings.length) {
+      L.push('', `Theme-safety lint (advisory, report-only): ${findings.length}`);
+      for (const f of findings.slice(0, 20)) L.push(`  • [${f.class}] ${f.actual || f.expected || ''} ${(f.evidence || [])[0] ? `(${f.evidence[0]})` : ''}`);
+      if (findings.length > 20) L.push(`  …and ${findings.length - 20} more`);
+    }
     return L.join('\n');
   }
 

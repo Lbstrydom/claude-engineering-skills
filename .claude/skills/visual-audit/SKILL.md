@@ -105,6 +105,18 @@ Exit codes: `0` clean/advisory · `1` gate-blocking divergence (`--gate`) · `2`
 `token_unreferenced` / `token_undefined_reference` / `token_duplicate_definition` coherence
 diagnostics are **report-only**. Full rules: `references/finding-taxonomy.md`.
 
+**Theme-safety (v1, advisory) — "color that didn't adapt to dark mode".** Two **report-only**
+classes catch a form control whose text color was left to the UA default (`ButtonText`≈black:
+fine on light, black-on-dark in dark). `interactive_color_unset` = the **static** lint
+(no browser): a form-control selector (`button`/`select`/`input`/`textarea`/`.btn*`) sets
+`background`/`border` but not `color`; runs in every static run (the `--gate` refusal is
+UNCHANGED — these are advisory, not paint). `unadapted_text_color` = the **`--verify`
+single-render** check: the winning `color` declaration's CDP origin is `user-agent` while an
+author sets a visible box color (background/border). Origin-based (survives the `background`
+shorthand + inherited/companion author color); v1 scope = native form controls only. Neither
+gates in v1 — gate-promotion, the two-theme parity-delta, full-DOM, and modal `activate`-reach
+are v1.1/v2 (`docs/plans/visual-audit-theme-safety-v1.md`).
+
 ## Reference files
 
 | File | Summary | Read when |

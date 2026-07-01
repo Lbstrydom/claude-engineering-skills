@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-07-01 — Build theme-safety v1 (/cycle code --autonomous) + fix finalize-outcomes regression
+
+### Changes
+- Implemented visual-audit theme-safety v1 (plan Complete): catches "a color that didn't adapt to dark mode". Two ADVISORY (report-only, never-gate) producers — PIECE 1a static lint (form-control selector styles the box but not `color`) + PIECE 2 runtime origin-based check (winning `color` CDP origin = user-agent on an author-styled form control). Origin threaded CDP→extract→provenance-resolver; `background` shorthand expansion; non-text input types + value-aware box detection excluded.
+- /audit-code 2 rounds → converged (fixed: coverage silent-clean guard, value-aware static box, non-text input types, border-shorthand token parsing, shared scope SSoT, CLI integration test; ruled advisory limits). Gemini gate: coherence Strong, 0 over-engineering.
+- Fixed a real regression surfaced by the cycle: `cross-skill.mjs cmdFinalizeOutcomes` referenced a removed `passCounts` (ReferenceError since the deterministic-outcome-capture refactor). finalize-outcomes now works (13/13 labelled, verified live).
+
+### Files Affected
+- `scripts/lib/visual/`: unadapted-color.mjs + interactive-color-lint.mjs + theme-safety-scope.mjs (new); provenance-resolver.mjs, extract.mjs, findings.mjs, schema.mjs, render.mjs (modified).
+- `scripts/visual-audit.mjs` — static lint output + verify coverage warning.
+- `scripts/cross-skill.mjs` — passCounts regression fix.
+- `tests/visual-{unadapted-color,interactive-color-lint,theme-safety-cli}.test.mjs` (new).
+- `skills/visual-audit/SKILL.md` (+ regenerated copy).
+
 ## 2026-07-01 — Plans: theme-safety v1 + model-A/B/C experiment harness (brainstorm → plan → audit-plan)
 
 ### Changes

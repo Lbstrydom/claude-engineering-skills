@@ -1,7 +1,7 @@
 # Plan: visual-audit "theme-safety" v1 — catch "color that didn't adapt"
 
 - **Date**: 2026-07-01
-- **Status**: Approved (v1 — GPT 3 rounds + Gemini coherence Strong, 0 over-engineering; 3 impl-completeness items folded in)
+- **Status**: Complete — implemented + shipped 2026-07-01 (via /cycle code --autonomous)
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI tooling / skill extension — `js-ts`, `node --test`)
 - **Target domain(s)**: `visual-audit` (single domain; no cross-domain, no untagged paths — `compute-target-domains` ruleCount=52)
@@ -177,7 +177,9 @@ graph LR
    (`0 < withEvidence < eligible`) → a per-surface **coverage warning** naming the skipped
    node count (the covered nodes' findings still stand, but the gap is surfaced, never
    silent). A per-node "skip on missing declarations" must never aggregate into "checked,
-   found nothing" — at either granularity.
+   found nothing" — at either granularity. **Realized (impl note, Gemini gate)** as a
+   per-CHECK `unverified` warning (output warnings + stderr), NOT a whole-surface scorecard
+   flip — a color-coverage miss must not mask the surface's valid token/contrast/layout tiers.
 
 7. **Static-mode gate refusal is UNCHANGED** (the load-bearing simplification — addresses
    R1-H1 + R2-H1). Because PIECE 1a is advisory in v1 (decision 5), the `visual-audit.mjs:80-88`
@@ -312,3 +314,12 @@ graph LR
   controls, and the static lint flags the source rule. The specific *modal* instance is a
   documented v1 limitation until `activate` lands. Green unit suite alone is insufficient
   (browser-render assertion).
+
+
+## Implementation Log
+
+### 2026-07-01
+- Completed: PIECE 1a static lint (interactive-color-lint.mjs) + PIECE 2 runtime origin-based check (unadapted-color.mjs) + shared scope (theme-safety-scope.mjs); provenance-resolver origin/background-shorthand; extract origin/inline/inputType; wired into visual-audit static + verify with per-check unverified coverage warning. Both advisory (report-only), never gate.
+- Audit: /audit-code 2 rounds (fixed coverage silent-clean, value-aware static, non-text input types, border-shorthand parsing, DRY scope, CLI integration test; ruled advisory limits: cross-stylesheet suppression, border-top proxy). Gemini gate: coherence Strong, 0 over-engineering.
+- Also fixed a regression found by the cycle: cross-skill.mjs cmdFinalizeOutcomes referenced a removed `passCounts` (ReferenceError) — the deterministic-outcome-capture CLI now works (13/13 labelled verified live).
+- Deviations: findUnadaptedColors split into runUnadaptedColor + assessColorCoverage (cleaner two call sites). Decision 6 realized as a per-check unverified warning, not a whole-surface flip (avoids masking other tiers).
