@@ -87,7 +87,14 @@ import {
   updatePassStatsPostDeliberation,
   updateRunMeta,
   auditRunExists,
+  // Model-A/B/C experiment harness (Cluster C)
+  getModelAbAdjudicationQueue,
+  applyModelAbAdjudication,
+  getModelAbEffectiveness,
+  cumulativeSpendEur,
 } from './learning-store.mjs';
+import { evaluateDecision, DECISION_CONSTANTS } from './lib/model-ab-decision.mjs';
+import { auditShadowConfig } from './lib/config.mjs';
 import { finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import { semanticId } from './lib/findings.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
@@ -554,6 +561,77 @@ async function cmdFinalReviewAdjudicate() {
   }
   const res = await adjudicateFinalReviewFinding(runId, fingerprint, action);
   emit(res);
+}
+
+// ── Model-A/B/C experiment harness (Cluster C) ──────────────────────────────
+
+/**
+ * Blinded human adjudication queue + writeback (plan decision 5a, mirrors
+ * final-review-adjudicate). With no --action → PRESENTS the blinded queue
+ * (source_model hidden; likely-equivalents adjacent). With --action →
+ * writes the outcome (`accepted|dismissed|duplicate|not-actionable`);
+ * `duplicate` needs --canonical <fingerprint>.
+ */
+async function cmdModelAbAdjudicate() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
+  const action = argOption('action');
+  if (!action) {
+    // Present the blinded queue.
+    const runId = argOption('run-id');
+    const limit = Number(argOption('limit')) || 50;
+    const q = await getModelAbAdjudicationQueue({ runId, limit });
+    return emit({ ok: true, cloud: q.cloud, blinded: true, count: q.items.length, queue: q.items });
+  }
+  const validActions = new Set(['accepted', 'dismissed', 'duplicate', 'not-actionable']);
+  if (!validActions.has(action)) {
+    return emitError('BAD_INPUT', `--action must be one of ${[...validActions].join('|')}, got '${action}'`);
+  }
+  const runId = argOption('run-id');
+  const fingerprint = argOption('fingerprint');
+  if (!runId || !fingerprint) return emitError('BAD_INPUT', '--run-id and --fingerprint are required with --action');
+  const canonicalFingerprint = argOption('canonical');
+  if (action === 'duplicate' && !canonicalFingerprint) {
+    return emitError('BAD_INPUT', "--action duplicate requires --canonical <fingerprint>");
+  }
+  try {
+    const res = await applyModelAbAdjudication({ runId, fingerprint, action, canonicalFingerprint, actor: argOption('actor') });
+    emit({ ok: true, ...res });
+  } catch (err) {
+    emitError('EXCEPTION', err.message);
+  }
+}
+
+/** Per (arm × stage × source_model) scorer rows + cumulative spend vs budget. */
+async function cmdModelAbStats() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, rows: [] });
+  const runId = argOption('run-id');
+  const eff = await getModelAbEffectiveness({ runId });
+  const spentEur = await cumulativeSpendEur({ activeTtlMs: auditShadowConfig.reservationTtlMs });
+  emit({
+    ok: true, cloud: eff.cloud, rows: eff.rows,
+    budget: { spentEur, capEur: auditShadowConfig.budgetEur },
+  });
+}
+
+/** Evaluate the pinned decision rule per cell → DECIDE/CONTINUE + cumulative spend. */
+async function cmdModelAbDecision() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
+  const runId = argOption('run-id');
+  const eff = await getModelAbEffectiveness({ runId });
+  const decision = evaluateDecision(eff.rows, DECISION_CONSTANTS);
+  const spentEur = await cumulativeSpendEur({ activeTtlMs: auditShadowConfig.reservationTtlMs });
+  const capEur = auditShadowConfig.budgetEur;
+  emit({
+    ok: true, cloud: eff.cloud,
+    constants: decision.constants,
+    baseline: decision.baseline,
+    cells: decision.cells,
+    summary: decision.summary,
+    budget: { spentEur, capEur, exhausted: capEur != null && spentEur != null && spentEur >= capEur },
+  });
 }
 
 /**
@@ -1580,6 +1658,10 @@ const commands = {
   'final-review-stats': cmdFinalReviewStats,
   'final-review-adjudicate': cmdFinalReviewAdjudicate,
   'finalize-outcomes': cmdFinalizeOutcomes,
+  // Model-A/B/C experiment harness (Cluster C)
+  'model-ab-adjudicate': cmdModelAbAdjudicate,
+  'model-ab-stats': cmdModelAbStats,
+  'model-ab-decision': cmdModelAbDecision,
   'detect-stack': cmdDetectStack,
   'list-personas': cmdListPersonas,
   'add-persona': cmdAddPersona,
