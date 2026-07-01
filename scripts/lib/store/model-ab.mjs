@@ -67,14 +67,20 @@ const REQUIRED_SCHEMA = Object.freeze([
   ['audit_findings', 'bucket'],
   ['audit_findings', 'adjudication_outcome'],
   ['audit_findings', 'user_action'],
+  // v2 hybrid attribution + quality input (migration 20260701140000)
+  ['audit_findings', 'arm'],
+  ['audit_findings', 'is_quick_fix'],
   // pass stats — per-arm-execution cost/conformance
   ['audit_pass_stats', 'source_model'],
   ['audit_pass_stats', 'stage'],
   ['audit_pass_stats', 'structured_output_ok'],
   ['audit_pass_stats', 'cost_usd'],
   ['audit_pass_stats', 'usage_unmeterable'],
-  // runs — arm-set snapshot
+  ['audit_pass_stats', 'arm'],           // v2 per-arm cost attribution
+  // runs — arm-set snapshot + v2 assignment grain
   ['audit_runs', 'arm_set_version'],
+  ['audit_runs', 'assignment_id'],
+  ['audit_runs', 'stage_type'],
   // arm config + equivalence + spend ledger (specific load-bearing columns)
   ['audit_arms', 'stages'],
   ['finding_equivalence', 'canonical_finding_id'],
@@ -82,8 +88,10 @@ const REQUIRED_SCHEMA = Object.freeze([
   ['model_ab_spend_ledger', 'reserved_eur'],
   ['model_ab_spend_ledger', 'status'],
   ['model_ab_spend_ledger', 'reserved_at'],
-  // the scorer view
+  // the scorer views (aggregate + v2 finding-grain + cost frontier)
   ['model_ab_effectiveness', null],
+  ['model_ab_finding_scores', null],
+  ['model_ab_arm_cost', null],
 ]);
 
 /**
@@ -104,17 +112,18 @@ export async function modelAbSchemaReady() {
 // ── Arm-set seeding (code stays the source of truth) ─────────────────────────
 
 /**
- * Upsert the canonical arm-set into audit_arms. NOTE (audit R1 H6/M2): the
- * scorer view derives arm membership from the finding `stage` (a CASE
- * expression), NOT from this table — so audit_arms is INFORMATIONAL in v1
- * (versioning / snapshot / human reference), and a row-seed failure does NOT
- * undermine the "no spend without persistence" invariant (that is guaranteed by
- * `modelAbSchemaReady`, which already verified the TABLE exists). Returns a
- * status so the caller can surface partial failures without treating them as
- * fatal.
+ * Upsert the canonical arm-set into audit_arms. NOTE: the scorer views derive
+ * arm membership via the hybrid `model_ab_attribute_arms(stage, arm)` SQL
+ * function (v2 — explicit arm for arm-specific stages, else stage-derived), NOT
+ * from this table — so audit_arms is INFORMATIONAL (versioning / snapshot /
+ * human reference), and a row-seed failure does NOT undermine the "no spend
+ * without persistence" invariant (guaranteed by `modelAbSchemaReady`, which
+ * verified the TABLE exists). Defaults to arm-set version 2 (the v2 compositions,
+ * mirroring CANONICAL_ARMS). Returns a status so the caller can surface partial
+ * failures without treating them as fatal.
  * @returns {Promise<{ok:boolean, failed:string[]}>}
  */
-export async function ensureArmSet(version = 1) {
+export async function ensureArmSet(version = 2) {
   if (!await isCloudEnabled()) return { ok: true, failed: [] };
   const failed = [];
   for (const arm of CANONICAL_ARMS) {
@@ -146,10 +155,15 @@ export async function ensureArmSet(version = 1) {
 // so the cumulative cap can't be overshot beyond one in-flight reservation.
 const SPEND_LOCK_KEY = 'model_ab_spend';
 
-/** SQL fragment: sum of committed (reconciled) actuals + still-active (non-expired) reservations. */
+/** SQL fragment: sum of committed (reconciled) actuals + still-active (non-expired) reservations.
+ * Belt-and-suspenders on the SAFETY-critical spend cap (audit R3 a43db413): a
+ * reconciled row ALWAYS has a non-null actual_eur via reconcileSpend's CASE, but
+ * a NULL there would make SUM SKIP it → UNDER-count spend → allow over-budget.
+ * COALESCE to reserved_eur so an (impossible-in-code) null reconciliation still
+ * charges the reservation, never €0 — fail-closed toward the ceiling. */
 function activeSpendSql(ttlParamIdx) {
   return `COALESCE(SUM(CASE
-            WHEN status = 'reconciled' THEN actual_eur
+            WHEN status = 'reconciled' THEN COALESCE(actual_eur, reserved_eur)
             WHEN status = 'reserved' AND reserved_at > now() - ($${ttlParamIdx} * interval '1 millisecond') THEN reserved_eur
             ELSE 0 END), 0)`;
 }
@@ -168,6 +182,13 @@ export async function reserveSpend({ runId = null, armId = null, stage = null, r
   // read as "unlimited" — the whole point is a hard € ceiling. The caller
   // (audit-shadow) validates budget upstream; this is the reusable-seam backstop.
   if (!Number.isFinite(capEur)) throw new Error(`reserveSpend: capEur must be a finite number (the spend ceiling), got ${capEur}`);
+  // Validate the TTL window at the boundary (audit R1 abb590b6/43be2c13): it is
+  // interpolated into the active-spend SQL (`$ttl * interval '1 millisecond'`), so
+  // a non-finite/negative/zero value would corrupt the budget-window accounting.
+  // Fail-closed like capEur (before the cloud check → validated even off-cloud).
+  if (!Number.isFinite(activeTtlMs) || activeTtlMs <= 0) {
+    throw new Error(`reserveSpend: activeTtlMs must be a finite positive duration in ms, got ${activeTtlMs}`);
+  }
   if (!await isCloudEnabled()) return { ok: true, ledgerId: null, cloud: false };
   if (!(reservedEur >= 0)) throw new Error(`reserveSpend: reservedEur must be ≥ 0, got ${reservedEur}`);
   return withTx(async (client) => {
@@ -374,7 +395,7 @@ export async function getModelAbAdjudicationQueue({ runId = null, limit = 50 } =
   }
 }
 
-/** Read the scorer view rows for a run (or all runs). Cluster-C CLI consumer. */
+/** Read the aggregate scorer view rows for a run (or all runs). CLI consumer. */
 export async function getModelAbEffectiveness({ runId = null } = {}) {
   if (!await isCloudEnabled()) return { cloud: false, rows: [] };
   try {
@@ -384,6 +405,42 @@ export async function getModelAbEffectiveness({ runId = null } = {}) {
     return { cloud: true, rows };
   } catch (err) {
     process.stderr.write(`  [model-ab] getModelAbEffectiveness failed: ${err.message}\n`);
+    return { cloud: true, rows: [] };
+  }
+}
+
+/**
+ * Read the v2 FINDING-grain scorer input (one row per finding × attributed arm)
+ * — the raw input the two-level decision rule folds into (assignment × canonical
+ * cluster) units. Optionally scoped to a run. Cloud-off → graceful empty.
+ */
+export async function getModelAbFindingScores({ runId = null } = {}) {
+  if (!await isCloudEnabled()) return { cloud: false, rows: [] };
+  try {
+    const rows = runId
+      ? await many('SELECT * FROM model_ab_finding_scores WHERE run_id = $1', [runId])
+      : await many('SELECT * FROM model_ab_finding_scores');
+    return { cloud: true, rows };
+  } catch (err) {
+    process.stderr.write(`  [model-ab] getModelAbFindingScores failed: ${err.message}\n`);
+    return { cloud: true, rows: [] };
+  }
+}
+
+/**
+ * Read the v2 per-(assignment × arm) STANDALONE cost + conformance rows (the
+ * cost-frontier + conformance-gate input). Optionally scoped to an assignment.
+ * Cloud-off → graceful empty.
+ */
+export async function getModelAbArmCost({ assignmentId = null } = {}) {
+  if (!await isCloudEnabled()) return { cloud: false, rows: [] };
+  try {
+    const rows = assignmentId
+      ? await many('SELECT * FROM model_ab_arm_cost WHERE assignment_id = $1', [assignmentId])
+      : await many('SELECT * FROM model_ab_arm_cost');
+    return { cloud: true, rows };
+  } catch (err) {
+    process.stderr.write(`  [model-ab] getModelAbArmCost failed: ${err.message}\n`);
     return { cloud: true, rows: [] };
   }
 }

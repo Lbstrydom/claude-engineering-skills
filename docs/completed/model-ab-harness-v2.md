@@ -1,7 +1,7 @@
 # Plan: Model-A/B/C auditor harness — v2 (composition arms + outcome-based scoring)
 
 - **Date**: 2026-07-01
-- **Status**: Approved — audit-plan complete (GPT R1–R3 H:7→4→4 plateau; Gemini R1 4 design fixes → R2 CONCERNS = implementation-completeness only, stopped at 2-round cap). Ready to build via `/cycle code --autonomous`. See §3–§7 for the audit trail.
+- **Status**: Complete — built 2026-07-01 via `/cycle code --autonomous` (2 clusters). Audit-plan: GPT R1–R3 H:7→4→4 plateau; Gemini R1 4 design fixes → R2 CONCERNS (completeness) stopped at cap. Code-audit: Cluster A GPT R1–R3 (H:12→7→11 rigor-pressure plateau, genuine v2 bugs fixed each round); consolidated Gemini gate R1 CONCERNS (1 empirically-refuted Zod-4 category error) → R2 APPROVE. Full suite 4120 tests green. See §3–§7 for the plan audit trail + Implementation Log below.
 - **Author**: Claude + Louis
 - **Scope**: backend (`js-ts` + postgres; `node --test`) — a **delta** on the shipped v1 (`docs/completed/model-ab-experiment-harness.md`)
 - **Origin**: operator review of v1 + independent GPT-5.5 + Gemini-pro critique. v1 built the machinery (shadow, spend ledger, scorer view, adjudication queue, decision rule) and the mandatory consolidated Gemini gate caught 5 budget-safety bugs. v2 corrects the **arm compositions**, the **scoring model**, and the **scientific-validity controls** — most of the v1 plumbing is reused unchanged.
@@ -247,3 +247,22 @@ Gemini R2 = `CONCERNS`, 4 findings (3 MED, 1 LOW) — but **all implementation-c
 
 - The scoring constants (§4 R2-M3 formula: severity weights, quick-fix discount, regression penalty, α, λ, precision floor) are **calibrated on the calibration set, then FROZEN before the prospective run** (§3 H3) — *not* tuned on the prospective data. The values in §3/§4 are the starting point for that calibration.
 - Whether the calibration set (D10) is built now or after the first prospective batch (the only genuinely-open sequencing choice; the constants themselves are calibrate-then-freeze, not open-ended).
+
+---
+
+## Implementation Log
+
+### 2026-07-01 — built via `/cycle code --autonomous` (2 clusters)
+
+- **Completed**: all of §7b Phases 1–4.
+  - **Phase 1** — `CANONICAL_ARMS` re-pointed to the v2 compositions; `attributeStageToArms` rewritten to the hybrid fail-closed model (`SHARED_STAGES`/`ARM_SPECIFIC_STAGES`/`ARM_IDS`); `latest-oss-reasoner`→`deepseek/deepseek-v4-pro` (pool head; -flash env-only, never auto-selected); `OSS_PRICING` + `deepseek-v4-{pro,flash}`; `ossStructuredCall` forwards OpenRouter `reasoning:{effort}` + echoes `requestedReasoningEffort`; `config.PASS_REASONING` added as the parity SSoT.
+  - **Phase 2** — migration `20260701140000_model_ab_v2.sql` (assignment grain on `audit_runs`; `audit_findings.arm`+`is_quick_fix` + fail-closed CHECKs NOT VALID; `audit_pass_stats.arm` + widened unique grain; `model_ab_attribute_arms` SQL function; `model_ab_effectiveness` hybrid CREATE OR REPLACE; new `model_ab_finding_scores` + `model_ab_arm_cost` views). `store/model-ab.mjs` (REQUIRED_SCHEMA, `ensureArmSet(2)`, activeTtlMs validation, spend-cap COALESCE hardening, `getModelAbFindingScores`/`getModelAbArmCost`); `store/runs-findings.mjs` (arm/is_quick_fix + assignment-grain writes). `model-ab-decision.mjs` fully rewritten (two-level gate→rank, canonical clusters, recall, €-frontier, calibrate-then-freeze `DECISION_CONSTANTS`). `cross-skill.mjs` stats/decision re-pointed.
+  - **Phase 3** — `audit-shadow.mjs` v2 DAG (independent gen units, arm-order seeded shuffle, per-arm gemini with deduped upstream, `_arm` stamping, assignment grain, reasoning parity forwarding).
+  - **Phase 4** — `docs/model-ab-experiment.md` rewritten for v2.
+- **Deviations from plan**:
+  - Migration timestamp `20260701140000` (plan wrote `<ts>`).
+  - Added `is_quick_fix` as a persisted `audit_findings` column (the plan's quality tier reads it, but v1 only had it on the finding object) — a trailing-column add, consistent with H4.
+  - Added `audit_pass_stats.arm` (not spelled out in §7) — required so per-arm B-gemini vs C-gemini cost splits (D7/M1); the v1 unique grain was widened to include it.
+  - `assignment_id` is left to the view's `COALESCE(assignment_id, commit_sha, run_id)` for the default (attempt 1, default variant) case rather than a composite — commit_sha is the natural assignment key; setting a composite would have required editing the out-of-cluster `openai-audit.mjs` call site.
+  - Zero-finding assignments are counted by unioning cost/pass-stats rows into `distinctCodeUnits` (cost rows exist even for zero-finding runs) — a cleaner fix than the documented v2.1 deferral.
+- **Remaining (operator)**: calibrate the frozen constants on a known-bug set, then run the prospective burn-in (`AUDIT_MODEL_SHADOW=B,C` + budget). v2.1 (plan/audit-plan hooks) + v3 (live auto-router) still deferred.

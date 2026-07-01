@@ -91,6 +91,8 @@ import {
   getModelAbAdjudicationQueue,
   applyModelAbAdjudication,
   getModelAbEffectiveness,
+  getModelAbFindingScores,
+  getModelAbArmCost,
   cumulativeSpendEur,
 } from './learning-store.mjs';
 import { evaluateDecision, DECISION_CONSTANTS } from './lib/model-ab-decision.mjs';
@@ -602,34 +604,47 @@ async function cmdModelAbAdjudicate() {
   }
 }
 
-/** Per (arm × stage × source_model) scorer rows + cumulative spend vs budget. */
+/** Aggregate scorer rows + the cost–quality FRONTIER + cumulative spend vs budget (D7). */
 async function cmdModelAbStats() {
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, rows: [] });
   const runId = argOption('run-id');
   const eff = await getModelAbEffectiveness({ runId });
+  const findings = await getModelAbFindingScores({ runId });
+  const costs = await getModelAbArmCost({});
+  // Reuse the decision evaluator purely for its per-arm frontier + recall
+  // (the efficiency headlines: €/accepted-weighted, €/accepted-HIGH).
+  const decision = evaluateDecision(findings.rows, costs.rows, DECISION_CONSTANTS);
   const spentEur = await cumulativeSpendEur({ activeTtlMs: auditShadowConfig.reservationTtlMs });
   emit({
     ok: true, cloud: eff.cloud, rows: eff.rows,
+    frontier: decision.arms,          // per-arm score/recall/€-frontier
+    status: decision.status,
+    distinctAssignments: decision.distinctAssignments,
     budget: { spentEur, capEur: auditShadowConfig.budgetEur },
   });
 }
 
-/** Evaluate the pinned decision rule per cell → DECIDE/CONTINUE + cumulative spend. */
+/** Two-level decision: quality GATE → weighted-quality RANK + recall + frontier (D5–D8). */
 async function cmdModelAbDecision() {
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
   const runId = argOption('run-id');
-  const eff = await getModelAbEffectiveness({ runId });
-  const decision = evaluateDecision(eff.rows, DECISION_CONSTANTS);
+  const findings = await getModelAbFindingScores({ runId });
+  const costs = await getModelAbArmCost({});
+  const decision = evaluateDecision(findings.rows, costs.rows, DECISION_CONSTANTS);
   const spentEur = await cumulativeSpendEur({ activeTtlMs: auditShadowConfig.reservationTtlMs });
   const capEur = auditShadowConfig.budgetEur;
   emit({
-    ok: true, cloud: eff.cloud,
+    ok: true, cloud: findings.cloud,
     constants: decision.constants,
-    baseline: decision.baseline,
-    cells: decision.cells,
-    summary: decision.summary,
+    status: decision.status,
+    reason: decision.reason,
+    baselineArm: decision.baselineArm,
+    distinctAssignments: decision.distinctAssignments,
+    totalAcceptedClusters: decision.totalAcceptedClusters,
+    arms: decision.arms,
+    ranking: decision.ranking,
     budget: { spentEur, capEur, exhausted: capEur != null && spentEur != null && spentEur >= capEur },
   });
 }

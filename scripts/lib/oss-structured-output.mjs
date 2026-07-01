@@ -133,13 +133,21 @@ function describeProviderError(err) {
  * @param {number} [opts.timeoutMs=300000]
  * @param {number} [opts.maxRetries=2]  - retries for RETRYABLE categories only
  * @param {string} [opts.passName]
+ * @param {'low'|'medium'|'high'|null} [opts.reasoningEffort]  - REASONING PARITY
+ *   (plan D4a): OpenRouter's unified `reasoning:{effort}` param, normalized
+ *   across providers → DeepSeek V4's native reasoning mode. Set to the SAME
+ *   per-pass effort tier the production GPT pipeline uses, so the experiment
+ *   measures model quality, not reasoning-effort. Omit → provider default (and
+ *   `requestedReasoningEffort:null` records that the knob was not set).
  * @returns {Promise<{result:object|null, usage:object, latencyMs:number,
- *   conformant:boolean, failed:boolean, error:string|null, mode:'json_schema'|'tool'|null}>}
+ *   conformant:boolean, failed:boolean, error:string|null, mode:'json_schema'|'tool'|null,
+ *   requestedReasoningEffort:string|null}>}
  */
 export async function ossStructuredCall(client, opts) {
   const {
     model, system, userPrompt, schema, schemaName,
     maxTokens = 16000, timeoutMs = 300000, maxRetries = 2, passName = 'oss',
+    reasoningEffort = null,
   } = opts;
 
   if (!model) throw new Error('[oss-structured-output] opts.model (resolved id) is required');
@@ -167,6 +175,7 @@ export async function ossStructuredCall(client, opts) {
     return {
       result: null, usage: { ...EMPTY_USAGE }, latencyMs: Date.now() - startMs,
       conformant: false, failed: true, error: `schema derivation failed: ${err.message}`, mode: null,
+      requestedReasoningEffort: reasoningEffort,
     };
   }
 
@@ -182,6 +191,10 @@ export async function ossStructuredCall(client, opts) {
         messages,
         max_tokens: maxTokens,
       };
+      // Reasoning parity (plan D4a) — OpenRouter's unified reasoning param maps
+      // to DeepSeek V4's native reasoning mode. Set only when an effort tier was
+      // requested so a provider that ignores it stays at its own default.
+      if (reasoningEffort) params.reasoning = { effort: reasoningEffort };
       if (mode === 'json_schema') {
         params.response_format = {
           type: 'json_schema',
@@ -206,14 +219,14 @@ export async function ossStructuredCall(client, opts) {
       const { text, truncated } = extractRawJson(completion, mode);
       if (truncated) {
         // Truncated output is a conformance MISS, not a crash (silent-clean guard).
-        return { result: null, usage, latencyMs, conformant: false, failed: false, error: 'output truncated (max_tokens)', mode };
+        return { result: null, usage, latencyMs, conformant: false, failed: false, error: 'output truncated (max_tokens)', mode, requestedReasoningEffort: reasoningEffort };
       }
 
       let parsedJson;
       try {
         parsedJson = JSON.parse(text);
       } catch {
-        return { result: null, usage, latencyMs, conformant: false, failed: false, error: 'reply was not valid JSON', mode };
+        return { result: null, usage, latencyMs, conformant: false, failed: false, error: 'reply was not valid JSON', mode, requestedReasoningEffort: reasoningEffort };
       }
 
       const validated = schema.safeParse(parsedJson);
@@ -221,10 +234,10 @@ export async function ossStructuredCall(client, opts) {
         return {
           result: null, usage, latencyMs, conformant: false, failed: false,
           error: `schema validation failed: ${validated.error.issues.slice(0, 3).map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`,
-          mode,
+          mode, requestedReasoningEffort: reasoningEffort,
         };
       }
-      return { result: validated.data, usage, latencyMs, conformant: true, failed: false, error: null, mode };
+      return { result: validated.data, usage, latencyMs, conformant: true, failed: false, error: null, mode, requestedReasoningEffort: reasoningEffort };
     } catch (err) {
       clearTimeout(timer);
       lastErr = err;
@@ -257,6 +270,7 @@ export async function ossStructuredCall(client, opts) {
       return {
         result: null, usage: { ...EMPTY_USAGE, latency_ms: latencyMs }, latencyMs,
         conformant: false, failed: true, error: describeProviderError(err), mode,
+        requestedReasoningEffort: reasoningEffort,
       };
     }
   }
@@ -265,5 +279,6 @@ export async function ossStructuredCall(client, opts) {
   return {
     result: null, usage: { ...EMPTY_USAGE, latency_ms: latencyMs }, latencyMs,
     conformant: false, failed: true, error: describeProviderError(lastErr), mode,
+    requestedReasoningEffort: reasoningEffort,
   };
 }

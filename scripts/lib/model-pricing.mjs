@@ -43,6 +43,11 @@ export const OSS_PRICING = Object.freeze({
   'deepseek/deepseek-r1':              { input: 0.40, output: 2.00 },
   'moonshotai/kimi-k2-thinking':       { input: 0.55, output: 2.20 },
   'qwen/qwen3-235b-a22b-thinking':     { input: 0.20, output: 0.80 },
+  // v2 model-A/B/C harness OSS reasoner (docs/plans/model-ab-harness-v2.md D4).
+  // Verified on OpenRouter 2026-07-01. -pro is the FIXED burn-in model (its pool
+  // head); -flash is priced only so a manual OSS_REASONER_MODEL swap stays metered.
+  'deepseek/deepseek-v4-pro':          { input: 0.435, output: 0.87 },
+  'deepseek/deepseek-v4-flash':        { input: 0.098, output: 0.196 },
 });
 
 /** Coarse fixed USD→EUR rate for the burn-in spend cap (safety ceiling, not accounting). */

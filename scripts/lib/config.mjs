@@ -149,6 +149,22 @@ export const UNKNOWN_FILE_EXT = 'unknown';
 /** Canonical list of audit pass names. */
 export const PASS_NAMES = Object.freeze(['structure', 'wiring', 'backend', 'frontend', 'sustainability', 'gemini-review']);
 
+/**
+ * Per-pass reasoning-effort tier the PRODUCTION GPT pipeline runs (openai-audit.mjs:
+ * structure/wiring=low ∥, backend/frontend=high ∥, sustainability=medium). SSoT
+ * for the model-A/B/C reasoning-PARITY control (plan D4a): the generation shadow
+ * feeds this effort to BOTH the OSS adapter (OpenRouter `reasoning:{effort}`) and
+ * the independent GPT round, so the experiment measures model quality — not a
+ * reasoning-effort confound. A pass absent here → the caller's own default.
+ */
+export const PASS_REASONING = Object.freeze({
+  structure: 'low',
+  wiring: 'low',
+  backend: 'high',
+  frontend: 'high',
+  sustainability: 'medium',
+});
+
 /** Normalized language enum for bandit context bucketing. */
 export const LANGUAGES = Object.freeze(['js', 'ts', 'py', 'go', 'java', 'rust', 'mixed', 'other']);
 

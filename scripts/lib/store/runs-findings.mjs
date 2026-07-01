@@ -268,6 +268,33 @@ export async function updateRunMeta(runId, meta) {
       && await columnExists('audit_runs', 'final_review_shadow_latency_ms', many, isCloudEnabled)) {
     update.final_review_shadow_latency_ms = meta.finalReviewShadowLatencyMs;
   }
+  // Model-A/B/C v2 assignment grain (migration 20260701140000). Set by the
+  // generation shadow when the experiment runs; columnExists-guarded so a
+  // pre-migration store degrades cleanly (omit the absent column).
+  if (meta.assignmentId != null
+      && await columnExists('audit_runs', 'assignment_id', many, isCloudEnabled)) {
+    update.assignment_id = meta.assignmentId;
+  }
+  if (meta.stageType != null
+      && await columnExists('audit_runs', 'stage_type', many, isCloudEnabled)) {
+    update.stage_type = meta.stageType;
+  }
+  if (meta.phase != null
+      && await columnExists('audit_runs', 'phase', many, isCloudEnabled)) {
+    update.phase = meta.phase;
+  }
+  if (meta.promptVariant != null
+      && await columnExists('audit_runs', 'prompt_variant', many, isCloudEnabled)) {
+    update.prompt_variant = meta.promptVariant;
+  }
+  if (meta.attempt != null
+      && await columnExists('audit_runs', 'attempt', many, isCloudEnabled)) {
+    update.attempt = meta.attempt;
+  }
+  if (meta.armOrderSeed != null
+      && await columnExists('audit_runs', 'arm_order_seed', many, isCloudEnabled)) {
+    update.arm_order_seed = meta.armOrderSeed;
+  }
   if (Object.keys(update).length === 0) return;
   if (!await isCloudEnabled()) return;
   try {
@@ -315,6 +342,12 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // PRODUCING stage (oss-gen|gpt-round|gemini). Null for normal/baseline findings
   // — the correct value (baseline provenance = stage NULL in the scorer view).
   const hasStage = await columnExists('audit_findings', 'stage', many, isCloudEnabled);
+  // Model-A/B/C v2 (migration 20260701140000): the explicit `arm` tag on
+  // arm-specific stages (gemini|gpt-round) + the `is_quick_fix` quality input.
+  // Both null/absent for normal findings — probe-guarded so an un-migrated store
+  // is byte-identical.
+  const hasArm = await columnExists('audit_findings', 'arm', many, isCloudEnabled);
+  const hasIsQuickFix = await columnExists('audit_findings', 'is_quick_fix', many, isCloudEnabled);
   const rows = findings.map((f) => {
     const base = {
       run_id: runId,
@@ -342,6 +375,11 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // persisting drift.
     if (hasBucket) base.bucket = normaliseBucket(f._bucket);
     if (hasStage) base.stage = f._stage ?? null;
+    // v2 hybrid attribution: `arm` is stamped by the shadow ONLY on arm-specific
+    // stages (gemini/gpt-round); null for shared/production findings (the view
+    // derives those). is_quick_fix comes straight off the finding object.
+    if (hasArm) base.arm = f._arm ?? null;
+    if (hasIsQuickFix) base.is_quick_fix = f.is_quick_fix ?? null;
     return base;
   });
   if (rows.length === 0) return;
@@ -598,6 +636,9 @@ export async function recordPassStats(runId, passName, stats, round) {
   if (stats.structuredOutputOk !== undefined && await columnExists('audit_pass_stats', 'structured_output_ok', many, isCloudEnabled)) armCols.structured_output_ok = stats.structuredOutputOk;
   if (stats.costUsd !== undefined && await columnExists('audit_pass_stats', 'cost_usd', many, isCloudEnabled)) armCols.cost_usd = stats.costUsd;
   if (stats.usageUnmeterable !== undefined && await columnExists('audit_pass_stats', 'usage_unmeterable', many, isCloudEnabled)) armCols.usage_unmeterable = stats.usageUnmeterable;
+  // v2 (migration 20260701140000): the explicit arm for per-arm cost attribution
+  // (B-gemini vs C-gemini share stage='gemini' + model, so cost splits by arm).
+  if (stats.arm !== undefined && await columnExists('audit_pass_stats', 'arm', many, isCloudEnabled)) armCols.arm = stats.arm;
   try {
     await insertReturning('audit_pass_stats', {
       run_id: runId,

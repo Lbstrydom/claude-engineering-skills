@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import {
   CANONICAL_ARMS, ArmSchema, parseArm, stagesForArm, executionPlan, resolveArms, STAGES,
-  attributeStageToArms, SHADOW_STAGES, BASELINE_STAGES,
+  attributeStageToArms, SHADOW_STAGES, BASELINE_STAGES, SHARED_STAGES, ARM_SPECIFIC_STAGES, ARM_IDS,
 } from '../scripts/lib/audit-arms.mjs';
 import { resolveModel, isSentinel, pickOssModel, OSS_POOL } from '../scripts/lib/model-resolver.mjs';
 import { costFromUsage, costForBudget, priceFor, isPriced, toEur, EUR_PER_USD, FALLBACK_PRICE_USD, OSS_PRICING } from '../scripts/lib/model-pricing.mjs';
@@ -23,39 +23,44 @@ describe('audit-arms — canonical arms', () => {
     assert.deepEqual(CANONICAL_ARMS.map((a) => a.id), ['A', 'B', 'C']);
   });
 
-  it('A is the production baseline; B/C are OSS-generation, non-baseline', () => {
+  it('A is the production baseline; B/C are OSS-generation, non-baseline (v2 compositions)', () => {
     const [A, B, C] = CANONICAL_ARMS;
     assert.equal(A.isBaseline, true);
     assert.equal(A.generation.provider, 'openai');
     assert.equal(B.isBaseline, false);
     assert.equal(B.generation.provider, 'oss');
     assert.equal(C.generation.provider, 'oss');
-    // B and C SHARE the same generation config (compute-sharing invariant).
+    // B and C SHARE the same OSS generation config (compute-sharing invariant).
     assert.deepEqual(B.generation, C.generation);
-    // C = B + Gemini gate.
-    assert.equal(B.geminiGate, false);
+    // v2: ALL three arms end in a Gemini review; B additionally runs the GPT
+    // round, C does NOT (A-vs-C = drop GPT entirely?; B-vs-C = does the GPT
+    // round earn its keep?).
+    assert.equal(A.geminiGate, true);
+    assert.equal(B.geminiGate, true);
     assert.equal(C.geminiGate, true);
+    assert.equal(A.gptRound, false);
     assert.equal(B.gptRound, true);
-    assert.equal(C.gptRound, true);
+    assert.equal(C.gptRound, false);
   });
 
   it('stagesForArm derives the produced-finding stages (view membership must agree)', () => {
     const [A, B, C] = CANONICAL_ARMS;
     assert.deepEqual(stagesForArm(A), ['gpt-gen', 'gemini']);
-    assert.deepEqual(stagesForArm(B), ['oss-gen', 'gpt-round']);
-    assert.deepEqual(stagesForArm(C), ['oss-gen', 'gpt-round', 'gemini']);
-    for (const s of [...stagesForArm(A), ...stagesForArm(C)]) assert.ok(STAGES.includes(s));
+    assert.deepEqual(stagesForArm(B), ['oss-gen', 'gpt-round', 'gemini']);
+    assert.deepEqual(stagesForArm(C), ['oss-gen', 'gemini']);
+    for (const s of [...stagesForArm(A), ...stagesForArm(B), ...stagesForArm(C)]) assert.ok(STAGES.includes(s));
   });
 
-  it('executionPlan honours compute-sharing across B+C (oss-gen + gpt-round once; gemini for C)', () => {
+  it('executionPlan honours compute-sharing across B+C (oss-gen once; gpt-round B-only; gemini per-arm)', () => {
     const [, B, C] = CANONICAL_ARMS;
     const plan = executionPlan([B, C]);
     assert.equal(plan.wantsOssGen, true);
-    assert.equal(plan.wantsGptRound, true);
-    assert.equal(plan.wantsGemini, true);   // C wants it
-    assert.equal(plan.wantsGptGen, false);  // no non-baseline openai-gen arm
-    // B alone → no Gemini.
-    assert.equal(executionPlan([B]).wantsGemini, false);
+    assert.equal(plan.wantsGptRound, true);  // B wants it
+    assert.equal(plan.wantsGemini, true);    // both want it
+    assert.equal(plan.wantsGptGen, false);   // no non-baseline openai-gen arm
+    // C alone → oss-gen + its own gemini, no GPT round.
+    assert.equal(executionPlan([C]).wantsGptRound, false);
+    assert.equal(executionPlan([C]).wantsGemini, true);
   });
 });
 
@@ -93,30 +98,46 @@ describe('audit-arms — parseArm validation', () => {
   });
 });
 
-describe('audit-arms — attributeStageToArms (provenance disambiguates shared gemini — R1 H3/H6)', () => {
-  it('baseline gemini → A only; shadow gemini → C only', () => {
-    assert.deepEqual(attributeStageToArms('gemini', { provenance: 'baseline' }), ['A']);
-    assert.deepEqual(attributeStageToArms('gemini', { provenance: 'shadow' }), ['C']);
+describe('audit-arms — attributeStageToArms (v2 HYBRID, fail-closed — H1/§4 R2-H1)', () => {
+  it('SHARED stages derive from stage: oss-gen → [B,C], gpt-gen → [A] (arm tag ignored)', () => {
+    assert.deepEqual(attributeStageToArms('oss-gen'), ['B', 'C']);
+    assert.deepEqual(attributeStageToArms('gpt-gen'), ['A']);
   });
-  it('shadow oss-gen / gpt-round → both B and C (compute-sharing)', () => {
-    assert.deepEqual(attributeStageToArms('oss-gen', { provenance: 'shadow' }), ['B', 'C']);
-    assert.deepEqual(attributeStageToArms('gpt-round', { provenance: 'shadow' }), ['B', 'C']);
+  it('ARM-SPECIFIC gemini → the explicit arm only (A, B, or C are all valid)', () => {
+    assert.deepEqual(attributeStageToArms('gemini', { arm: 'A' }), ['A']);
+    assert.deepEqual(attributeStageToArms('gemini', { arm: 'B' }), ['B']);
+    assert.deepEqual(attributeStageToArms('gemini', { arm: 'C' }), ['C']);
   });
-  it('baseline gpt-gen → A; shadow gpt-gen → nobody (baseline-only stage)', () => {
-    assert.deepEqual(attributeStageToArms('gpt-gen', { provenance: 'baseline' }), ['A']);
-    assert.deepEqual(attributeStageToArms('gpt-gen', { provenance: 'shadow' }), []);
+  it('ARM-SPECIFIC gpt-round → B only (the diversity probe; C has no GPT round)', () => {
+    assert.deepEqual(attributeStageToArms('gpt-round', { arm: 'B' }), ['B']);
+    // arm=A/C for gpt-round is a mis-tag — those arms do not declare it.
+    assert.throws(() => attributeStageToArms('gpt-round', { arm: 'A' }), /does not declare/);
+    assert.throws(() => attributeStageToArms('gpt-round', { arm: 'C' }), /does not declare/);
   });
-  it('no double-attribution: a gemini row belongs to exactly one arm per provenance', () => {
-    const b = attributeStageToArms('gemini', { provenance: 'baseline' });
-    const s = attributeStageToArms('gemini', { provenance: 'shadow' });
-    assert.equal(b.length, 1);
-    assert.equal(s.length, 1);
-    assert.notDeepEqual(b, s);
+  it('fails CLOSED: an arm-specific stage with a NULL arm is a DATA ERROR (never derived)', () => {
+    assert.throws(() => attributeStageToArms('gemini'), /requires an explicit arm/);
+    assert.throws(() => attributeStageToArms('gemini', {}), /requires an explicit arm/);
+    assert.throws(() => attributeStageToArms('gpt-round'), /requires an explicit arm/);
   });
-  it('fails CLOSED on invalid input — omitted/typo provenance or unknown stage throws (R3 H5)', () => {
-    assert.throws(() => attributeStageToArms('gemini'), /provenance/);
-    assert.throws(() => attributeStageToArms('gemini', { provenance: 'typo' }), /provenance/);
-    assert.throws(() => attributeStageToArms('nonsense-stage', { provenance: 'shadow' }), /unknown stage/);
+  it('fails CLOSED on unknown stage or out-of-domain arm', () => {
+    assert.throws(() => attributeStageToArms('nonsense-stage'), /unknown stage/);
+    assert.throws(() => attributeStageToArms('gemini', { arm: 'Z' }), /not in A\|B\|C/);
+  });
+  it('fails CLOSED: a SHARED stage with a non-null arm is rejected (conflicting metadata)', () => {
+    assert.throws(() => attributeStageToArms('oss-gen', { arm: 'B' }), /must have a null arm/);
+    assert.throws(() => attributeStageToArms('gpt-gen', { arm: 'A' }), /must have a null arm/);
+  });
+  it('no double-attribution: a per-arm gemini row belongs to exactly one arm', () => {
+    for (const id of ['A', 'B', 'C']) {
+      const arms = attributeStageToArms('gemini', { arm: id });
+      assert.equal(arms.length, 1);
+      assert.equal(arms[0], id);
+    }
+  });
+  it('SHARED_STAGES ∪ ARM_SPECIFIC_STAGES partition STAGES exactly (no gap/overlap)', () => {
+    assert.deepEqual([...SHARED_STAGES, ...ARM_SPECIFIC_STAGES].sort(), [...STAGES].sort());
+    for (const s of SHARED_STAGES) assert.ok(!ARM_SPECIFIC_STAGES.includes(s), `${s} must be in exactly one class`);
+    assert.deepEqual([...ARM_IDS], ['A', 'B', 'C']);
   });
   it('SHADOW_STAGES / BASELINE_STAGES agree with stagesForArm over CANONICAL_ARMS (R5 M2)', () => {
     const shadowFromArms = new Set(CANONICAL_ARMS.filter((a) => !a.isBaseline).flatMap(stagesForArm));
@@ -124,16 +145,15 @@ describe('audit-arms — attributeStageToArms (provenance disambiguates shared g
     assert.deepEqual([...shadowFromArms].sort(), [...SHADOW_STAGES].sort());
     assert.deepEqual([...baselineFromArms].sort(), [...BASELINE_STAGES].sort());
   });
-  it('membership is DERIVED from CANONICAL_ARMS — no drift vs stagesForArm (R4 M3/M6)', () => {
-    // For every arm and every stage it declares, the attribution helper (under
-    // the matching provenance) must include that arm — one source of truth.
+  it('membership is DERIVED from CANONICAL_ARMS — no drift vs stagesForArm', () => {
+    // For every arm and every stage it declares, the attribution helper must
+    // include that arm. Shared stages derive; arm-specific stages take the tag.
     for (const arm of CANONICAL_ARMS) {
-      const provenance = arm.isBaseline ? 'baseline' : 'shadow';
       for (const stage of stagesForArm(arm)) {
-        assert.ok(
-          attributeStageToArms(stage, { provenance }).includes(arm.id),
-          `arm ${arm.id} declares stage ${stage} but attribution (${provenance}) omits it`,
-        );
+        const got = SHARED_STAGES.includes(stage)
+          ? attributeStageToArms(stage)
+          : attributeStageToArms(stage, { arm: arm.id });
+        assert.ok(got.includes(arm.id), `arm ${arm.id} declares stage ${stage} but attribution omits it`);
       }
     }
   });

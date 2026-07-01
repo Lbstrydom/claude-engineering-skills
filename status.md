@@ -1,5 +1,18 @@
 # Project Status Log
 
+## 2026-07-01 — Model-A/B/C auditor harness **v2** (composition arms + outcome scoring) — /cycle code --autonomous, 2 clusters
+
+### Changes
+Built the v2 redesign (delta on the shipped-inert v1) end-to-end via the autonomous clustered loop. v2 re-shapes the arms into audit-pipeline COMPOSITIONS (Claude the constant coder+adjudicator, not an auditor arm) and replaces the ratio scorer with a two-level outcome-based rule. **Still INERT** until the operator opts in — building spent nothing on OpenRouter (only GPT+Gemini audit cost).
+- **Cluster A (Phases 1–2)** — re-pointed `CANONICAL_ARMS` (A=GPT+Gemini, B=OSS+GPT-round+Gemini, C=OSS+Gemini); **hybrid FAIL-CLOSED attribution** (`attributeStageToArms` + SQL mirror `model_ab_attribute_arms` + DB CHECK NOT VALID + `__INVALID__` sentinel): shared oss-gen/gpt-gen derive from stage, arm-specific gpt-round/gemini require an explicit `arm`; `latest-oss-reasoner`→`deepseek/deepseek-v4-pro` (fixed; -flash never auto-selected); OSS `reasoning:{effort}` parity via `PASS_REASONING`; single `OPENROUTER_API_KEY`. Migration `20260701140000` (applied, no drift): assignment grain on `audit_runs`, `audit_findings.arm`+`is_quick_fix`, `audit_pass_stats.arm`, views `model_ab_finding_scores` + `model_ab_arm_cost`. Rewrote `model-ab-decision.mjs` → two-level (quality GATE: conformance+precision floors, egress structural-upstream; RANK: weighted-quality over (assignment × within-assignment canonical cluster) + severity weights + quality tiers×quick-fix0.4 + α unique + λ FP + regPen; recall + €-frontier reported alongside, never divided in). GPT R1–R3 (H:12→7→11 rigor-pressure plateau; genuine in-scope v2 bugs fixed each round; remaining HIGH all pre-existing/independent infra or design-per-plan).
+- **Cluster B (Phases 3–4)** — rewrote the generation shadow to the v2 DAG (independent oss-gen shared in-memory + gpt-round[B] + PER-ARM gemini: B reviews oss+gptRound deduped union, C reviews oss), arm-order randomization with a recorded seed, `_arm` stamping on arm-specific findings/pass-stats, assignment-grain via `updateRunMeta`; + the v2 runbook.
+- **Consolidated Gemini gate** (mandatory, A∪B union) — R1 `CONCERNS` (1 finding: `z.toJSONSchema` "missing" — an empirically-refuted Zod-4 category error; verified live `typeof z.toJSONSchema === 'function'` in zod 4.4.3) → challenged with evidence → R2 **APPROVE**. Full suite 4120 tests / 4100 pass / 0 fail.
+
+### Files Affected
+- New: `supabase/migrations/20260701140000_model_ab_v2.sql`.
+- Modified: `scripts/lib/{audit-arms,model-resolver,model-pricing,oss-structured-output,config,model-ab-decision,audit-shadow}.mjs`, `scripts/lib/store/{model-ab,runs-findings}.mjs`, `scripts/cross-skill.mjs`, `docs/model-ab-experiment.md` (v2 runbook), tests `{audit-arms,model-ab-decision,audit-shadow,learning-store-exports}.test.mjs`.
+- Next (operator): calibrate constants on a known-bug set → freeze → `AUDIT_MODEL_SHADOW=B,C` + `AUDIT_MODEL_SHADOW_BUDGET_EUR` for the prospective burn-in.
+
 ## 2026-07-01 — Theme-safety v1 empirical confirm + v2 plan (audit-converged) + ledger guard fix
 
 ### Changes

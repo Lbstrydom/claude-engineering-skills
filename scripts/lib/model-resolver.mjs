@@ -69,7 +69,15 @@ export const OSS_POOL = Object.freeze({
   ]),
   // Reasoning-tuned open weights — the "reasoner" auditor arm (full reasoning
   // ON; reasoning-ablation is a KNOWN-dead end — never reintroduced).
+  // v2 (docs/plans/model-ab-harness-v2.md D4): HEAD = deepseek/deepseek-v4-pro —
+  // the reasoning-quality tier (VERIFIED live on OpenRouter 2026-07-01, 1M ctx,
+  // ~$0.435/$0.87 per 1M). Pro is FIXED for the burn-in ("see what good quality
+  // buys"). deepseek/deepseek-v4-flash (the cheap tier) is DELIBERATELY NOT in
+  // the pool — it is a MANUAL operator swap only (via OSS_REASONER_MODEL env),
+  // never auto-selected, so the "top-quality OSS vs frontier proprietary"
+  // comparison is never silently degraded. GLM-5.2 stays a rotation candidate.
   reasoner: Object.freeze([
+    'deepseek/deepseek-v4-pro',
     'deepseek/deepseek-r1',
     'moonshotai/kimi-k2-thinking',
     'qwen/qwen3-235b-a22b-thinking',

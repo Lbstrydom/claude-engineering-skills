@@ -1,26 +1,35 @@
 /**
- * @fileoverview Arm-config model for the model-A/B/C auditor experiment.
+ * @fileoverview Arm-config model for the model-A/B/C auditor experiment (v2).
  *
- * Plan: docs/plans/model-ab-experiment-harness.md (decision 2 — "arms are DATA,
- * not code; models are SENTINELS, not concrete IDs"). An arm is a config row
- * describing an auditor configuration to compare; the 3 canonical arms A/B/C
- * are data here. This module is PURE — no env side effects beyond reading the
- * env object passed to `resolveArms`, no LLM/network/FS. It defines the shape,
- * validates it (Zod), derives the produced-finding STAGES per arm (the scorer
- * view's arm-membership derivation must agree with this), and parses
- * `AUDIT_MODEL_SHADOW` into the selected observation-only arm set.
+ * Plan: docs/plans/model-ab-harness-v2.md (D1 — arms are audit-pipeline
+ * COMPOSITIONS; Claude is the constant coder + adjudicator, NOT an auditor arm).
+ * An arm is a config row describing an audit + review STACK to compare; the 3
+ * canonical arms A/B/C are data here. This module is PURE — no env side effects
+ * beyond reading the env object passed to `resolveArms`, no LLM/network/FS. It
+ * defines the shape, validates it (Zod), derives the produced-finding STAGES per
+ * arm (the scorer view's arm-membership derivation must agree with this), and
+ * parses `AUDIT_MODEL_SHADOW` into the selected observation-only arm set.
  *
- * Stages a finding can be produced by (attribution — plan decision 10):
+ * v2 arm compositions (D1):
+ *   A = GPT audit → Gemini review              (production control)
+ *   B = OSS audit → 1 GPT round → Gemini review (does the GPT round earn its keep? — vs C)
+ *   C = OSS audit → Gemini review              (can OSS+Gemini replace GPT+Gemini? — vs A)
+ *
+ * Stages a finding can be produced by:
  *   - `gpt-gen`   : a GPT 5-pass generation round (the production baseline, arm A)
- *   - `oss-gen`   : an OSS 5-pass generation round (arms B/C, shared compute)
- *   - `gpt-round` : one INDEPENDENT GPT 5-pass round injected as the final round (B/C)
- *   - `gemini`    : the Gemini final gate (A and C)
+ *   - `oss-gen`   : an OSS 5-pass generation round (arms B/C, SHARED compute)
+ *   - `gpt-round` : one INDEPENDENT GPT 5-pass round (B only — the diversity probe)
+ *   - `gemini`    : a per-arm Gemini review (A, B, and C each run their OWN)
  *
- * Arm membership is DERIVED from stages, never stored per finding:
- *   A = {gpt-gen, gemini}   B = {oss-gen, gpt-round}   C = B ∪ {gemini}
- * B and C share the same oss-gen + gpt-round execution (C only ADDS gemini) —
- * this is why a produced finding is stored once and the view expands it to the
- * arms whose config includes its stage (no B/C double-count).
+ * v2 HYBRID attribution, fail-CLOSED (plan H1 / §4 R2-H1) — the v1 "arm derived
+ * from stage×provenance" rule BREAKS because `gemini` now runs THREE times on
+ * DIFFERENT inputs (A reviews gpt-gen; B reviews oss-gen+gpt-round; C reviews
+ * oss-gen), so a `gemini` finding is arm-SPECIFIC, not shared. Two classes:
+ *   - SHARED stages (`oss-gen` → {B,C}; `gpt-gen` → {A}) — one execution serves
+ *     its arm set; stored ONCE, membership DERIVED from stage. No `arm` tag.
+ *   - ARM-SPECIFIC stages (`gpt-round`, `gemini`) — carry an EXPLICIT `arm` tag
+ *     on the finding. A null `arm` on these is a DATA ERROR (throw — never
+ *     silently derive), mirroring the v1 fail-closed guard.
  *
  * @module scripts/lib/audit-arms
  */
@@ -31,13 +40,19 @@ import { isSentinel, SENTINEL_TO_TIER } from './model-resolver.mjs';
 // ── Stage taxonomy (SSoT — the store, view, and shadow all reference these) ──
 export const STAGES = Object.freeze(['gpt-gen', 'oss-gen', 'gpt-round', 'gemini']);
 
-// Stages a SHADOW execution can produce (arms B/C). The baseline arm A's
-// findings come from the PRODUCTION pipeline (a separate provenance), NOT the
-// shadow — this split is what disambiguates the `gemini` stage, which both A
-// and C nominally include (audit R1 H3/H6): a `gemini` row from the baseline
-// belongs to A only; a `gemini` row from the shadow belongs to C only. See
-// attributeStageToArms — the view MUST attribute via (stage × provenance),
-// never stage alone.
+// Attribution class split (plan H1) — the hybrid rule's SSoT.
+//   SHARED       : one execution serves ≥1 arm; membership DERIVED from stage.
+//   ARM_SPECIFIC : each execution belongs to ONE arm; requires an explicit `arm`
+//                  tag (null ⇒ hard error, fail-closed — §4 R2-H1).
+export const SHARED_STAGES = Object.freeze(['gpt-gen', 'oss-gen']);
+export const ARM_SPECIFIC_STAGES = Object.freeze(['gpt-round', 'gemini']);
+
+// Valid arm ids (the CHECK domain mirrored in the migration).
+export const ARM_IDS = Object.freeze(['A', 'B', 'C']);
+
+// Stages a SHADOW execution can produce (arms B/C): oss-gen (shared), gpt-round
+// (B only), gemini (B + C, arm-specific). The baseline arm A runs in the
+// PRODUCTION pipeline (gpt-gen + its own gemini), never the shadow.
 export const SHADOW_STAGES = Object.freeze(['oss-gen', 'gpt-round', 'gemini']);
 export const BASELINE_STAGES = Object.freeze(['gpt-gen', 'gemini']);
 
@@ -99,7 +114,7 @@ export const ArmSchema = z.object({
 export const CANONICAL_ARMS = Object.freeze([
   Object.freeze({
     id: 'A',
-    label: 'GPT ×5 + Gemini gate (production control)',
+    label: 'GPT audit → Gemini review (production control)',
     generation: Object.freeze({ modelSentinel: 'latest-gpt', provider: 'openai' }),
     gptRound: false,
     geminiGate: true,
@@ -107,17 +122,17 @@ export const CANONICAL_ARMS = Object.freeze([
   }),
   Object.freeze({
     id: 'B',
-    label: 'OSS ×5 + 1 independent GPT round (no Gemini)',
-    generation: Object.freeze({ modelSentinel: 'latest-oss-coder', provider: 'oss', role: 'coder' }),
+    label: 'OSS audit → 1 GPT round → Gemini review (does the GPT round earn its keep?)',
+    generation: Object.freeze({ modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }),
     gptRound: true,
-    geminiGate: false,
+    geminiGate: true,
     isBaseline: false,
   }),
   Object.freeze({
     id: 'C',
-    label: 'OSS ×5 + 1 GPT round + Gemini gate (reuses B)',
-    generation: Object.freeze({ modelSentinel: 'latest-oss-coder', provider: 'oss', role: 'coder' }),
-    gptRound: true,
+    label: 'OSS audit → Gemini review (can OSS+Gemini replace GPT+Gemini?)',
+    generation: Object.freeze({ modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }),
+    gptRound: false,
     geminiGate: true,
     isBaseline: false,
   }),
@@ -155,40 +170,56 @@ export function stagesForArm(arm) {
 }
 
 /**
- * Attribute a produced finding to the arm id(s) it belongs to, using BOTH the
- * producing stage AND its provenance (baseline pipeline vs shadow) — never
- * stage alone (audit R1 H3/H6). This is the canonical rule the scorer view
- * derives arm membership from:
- *   - provenance 'baseline' : gpt-gen/gemini → ['A']       (production A only)
- *   - provenance 'shadow'   : oss-gen/gpt-round → ['B','C'], gemini → ['C']
- * So a `gemini` row is A when produced by the baseline final review and C when
- * produced by the shadow's arm-C gate — the shared stage name is disambiguated
- * by where the row came from, so no finding is double-attributed.
+ * Attribute a produced finding to the arm id(s) it belongs to (v2 HYBRID rule —
+ * plan H1 / §4 R2-H1). This is the canonical rule the scorer view mirrors:
+ *   - SHARED stage (`oss-gen` → ['B','C']; `gpt-gen` → ['A']) — one execution
+ *     serves its whole arm set; membership DERIVED from CANONICAL_ARMS (single
+ *     source, no hardcoded A/B/C lists to drift). The `arm` tag MUST be null for
+ *     shared stages; a non-null arm is conflicting metadata and is REJECTED
+ *     (fail-closed), not silently ignored.
+ *   - ARM-SPECIFIC stage (`gpt-round`, `gemini`) — each execution belongs to ONE
+ *     arm, so an explicit `arm` tag is REQUIRED; it returns `[arm]`.
  *
- * Fail-CLOSED (audit R3 H5): an unknown `stage` or `provenance` (omitted, typo,
- * or an impossible pair) THROWS rather than silently returning `[]` — a mis-call
- * that dropped a finding from every arm would be silent attribution loss (the
- * exact class the store must never hit). A VALID stage that legitimately maps to
- * no arm for that provenance (e.g. shadow `gpt-gen`) still returns `[]`.
+ * Fail-CLOSED (§4 R2-H1 — the load-bearing invariant): a null/absent `arm` on an
+ * arm-specific stage is a DATA ERROR and THROWS — it must NEVER be silently
+ * derived (that would mis-attribute B's gemini to C, or drop it entirely). An
+ * unknown `stage`, an out-of-domain `arm`, or an `arm` that does not actually
+ * declare the stage all THROW too — silent attribution loss is the exact class
+ * the store must never hit.
  *
  * @param {string} stage
- * @param {{provenance:'baseline'|'shadow'}} opts
+ * @param {{arm?:string|null}} [opts] — explicit arm tag (required for arm-specific stages)
  * @returns {string[]} arm ids
  */
-export function attributeStageToArms(stage, { provenance } = {}) {
-  if (provenance !== 'baseline' && provenance !== 'shadow') {
-    throw new Error(`attributeStageToArms: provenance must be 'baseline' | 'shadow', got ${JSON.stringify(provenance)}`);
-  }
+export function attributeStageToArms(stage, { arm = null } = {}) {
   if (!STAGES.includes(stage)) {
     throw new Error(`attributeStageToArms: unknown stage ${JSON.stringify(stage)}; valid: ${STAGES.join(', ')}`);
   }
-  // DERIVE membership from CANONICAL_ARMS (single source — audit R4 M3/M6): an
-  // arm owns this stage iff its baseline-ness matches the provenance AND the
-  // stage is in its stagesForArm(). No hardcoded A/B/C lists to drift.
-  const wantBaseline = provenance === 'baseline';
-  return CANONICAL_ARMS
-    .filter((arm) => arm.isBaseline === wantBaseline && stagesForArm(arm).includes(stage))
-    .map((arm) => arm.id);
+  if (ARM_SPECIFIC_STAGES.includes(stage)) {
+    // Fail-CLOSED: an arm-specific stage MUST carry an explicit arm; never derive.
+    if (arm == null) {
+      throw new Error(`attributeStageToArms: arm-specific stage ${JSON.stringify(stage)} requires an explicit arm (null is a DATA ERROR — never derived, plan §4 R2-H1)`);
+    }
+    if (!ARM_IDS.includes(arm)) {
+      throw new Error(`attributeStageToArms: arm ${JSON.stringify(arm)} not in ${ARM_IDS.join('|')}`);
+    }
+    // Sanity: the named arm must actually declare this stage (catches a mis-tag
+    // like arm='A' on gpt-round, which only B runs).
+    const owner = CANONICAL_ARMS.find((a) => a.id === arm);
+    if (!owner || !stagesForArm(owner).includes(stage)) {
+      throw new Error(`attributeStageToArms: arm ${arm} does not declare stage ${stage}`);
+    }
+    return [arm];
+  }
+  // SHARED stage — membership is DERIVED from CANONICAL_ARMS (an arm owns this
+  // stage iff its stagesForArm() includes it). Fail-CLOSED on a stray arm tag
+  // (audit R1 388a236e): a shared stage MUST carry a null arm; a non-null arm is
+  // conflicting attribution metadata (e.g. tagging oss-gen 'B' would silently
+  // drop C), so reject it rather than ignore it.
+  if (arm != null) {
+    throw new Error(`attributeStageToArms: shared stage ${JSON.stringify(stage)} must have a null arm (got ${JSON.stringify(arm)}) — its membership is derived, not tagged`);
+  }
+  return CANONICAL_ARMS.filter((a) => stagesForArm(a).includes(stage)).map((a) => a.id);
 }
 
 /**
