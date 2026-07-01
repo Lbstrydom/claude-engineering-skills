@@ -3673,6 +3673,60 @@ async function main() {
       }
     }
 
+    // ── Model-A/B/C generation shadow for the PLAN audit (v2.1, observation-only) ──
+    // Records the arm A/B/C comparison at stage_type='audit-plan' so the scorer can
+    // compare model performance ACROSS skills (D9). Fully GATED on
+    // resolveArms(...).enabled — with the experiment off, a normal plan audit is
+    // byte-identical (no run row, no shadow). Best-effort; an egress refusal
+    // surfaces loudly. Mirrors the code-path shadow block, with stageType='audit-plan'.
+    if (mode === 'plan' && Array.isArray(result.findings)) {
+      try {
+        const { resolveArms } = await import('./lib/audit-arms.mjs');
+        const armSet = resolveArms(process.env);
+        if (armSet.enabled && await isCloudEnabled() && repoProfile) {
+          const repoRef = await resolveRepoForStore({ profile: repoProfile }).catch(() => null);
+          const planRepoId = repoRef?.repoRowId ?? null;
+          if (planRepoId) {
+            let commitSha = null, branch = null;
+            try {
+              const { execFileSync } = await import('node:child_process');
+              commitSha = execFileSync('git', ['rev-parse', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+              branch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+            } catch { /* not a git repo */ }
+            const planShadowRunId = await recordRunStart(planRepoId, planFile || 'ad-hoc', 'plan', { commitSha, branch }).catch(() => null);
+            if (planShadowRunId) {
+              // Persist arm A's (production plan-audit) findings with stage=null so
+              // the scorer view attributes them to A — the baseline the B/C arms
+              // are compared against for this assignment.
+              for (const f of result.findings) populateFindingMetadata(f, 'plan');
+              await recordFindings(planShadowRunId, result.findings, 'plan-baseline', round).catch(() => {});
+
+              const { runGenerationShadow } = await import('./lib/audit-shadow.mjs');
+              const shadowSummary = await runGenerationShadow({
+                redactedContext: planContent,          // the plan IS the audited subject
+                arms: armSet.arms,
+                baseline: { findings: result.findings },
+                runId: planShadowRunId,
+                planContent: '',
+                round,
+                stageType: 'audit-plan',
+              });
+              result._modelAbShadow = shadowSummary;
+              result._cloudRunId = planShadowRunId;
+              process.stderr.write(
+                `  [shadow] model-A/B PLAN-audit shadow: ${shadowSummary.state}`
+                + (shadowSummary.findingCount != null ? ` (${shadowSummary.findingCount} findings, ${shadowSummary.shadowOnly} shadow-only, stages: ${(shadowSummary.stages || []).join('+')})` : '')
+                + '\n',
+              );
+            }
+          }
+        }
+      } catch (err) {
+        if (err && typeof err.message === 'string' && err.message.includes('[egress-gate]')) throw err;
+        process.stderr.write(`  [shadow] model-A/B PLAN shadow failed (non-gating): ${err.message}\n`);
+      }
+    }
+
     // Update bandit arms + FP tracker from rebuttal resolutions (v2: per-pass + revision IDs)
     if (mode === 'rebuttal' && result.resolutions?.length) {
       const repoFP = repoProfile?.repoFingerprint || null;

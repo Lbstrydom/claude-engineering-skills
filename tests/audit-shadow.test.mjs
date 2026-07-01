@@ -150,6 +150,30 @@ describe('runGenerationShadow — v2 execution DAG & attribution', () => {
   });
 });
 
+describe('runGenerationShadow — stage_type=audit-plan (v2.1 cross-skill)', () => {
+  it('runs ONE plan pass per gen unit (not the 5 code passes) + per-arm gemini', async () => {
+    const { deps, calls } = harness();
+    const r = await runGenerationShadow({ ...BASE, arms: ARMS_BC, deps, stageType: 'audit-plan' });
+    assert.equal(r.state, 'ran');
+    assert.equal(calls.model.filter((c) => c.stage === 'oss-gen').length, 1, 'plan mode = 1 oss pass');
+    assert.equal(calls.model.filter((c) => c.stage === 'gpt-round').length, 1, 'plan mode = 1 gpt-round pass');
+    assert.equal(calls.gemini.length, 2, 'per-arm gemini still runs (B + C)');
+    // The gen units emit a single "plan" pass.
+    assert.ok(calls.model.every((c) => c.passName === 'plan'));
+  });
+  it('records stage_type=audit-plan on the run (so the scorer compares across skills)', async () => {
+    const { deps, calls } = harness();
+    await runGenerationShadow({ ...BASE, arms: ARMS_BC, deps, stageType: 'audit-plan' });
+    assert.equal(calls.meta[0].stageType, 'audit-plan');
+  });
+  it('audit-code (default) still runs the full 5-pass set — no regression', async () => {
+    const { deps, calls } = harness();
+    await runGenerationShadow({ ...BASE, arms: ARMS_B, deps });
+    assert.equal(calls.model.filter((c) => c.stage === 'oss-gen').length, SHADOW_PASSES.length);
+    assert.equal(calls.meta[0].stageType, 'audit-code');
+  });
+});
+
 describe('runGenerationShadow — spend cap & reconcile', () => {
   it('reserves + reconciles every gen pass AND each per-arm gemini', async () => {
     const { deps, calls } = harness();

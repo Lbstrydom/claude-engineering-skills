@@ -36,7 +36,7 @@ import { semanticId } from './findings.mjs';
 import { resolveModel } from './model-resolver.mjs';
 import { costForBudget, toEur } from './model-pricing.mjs';
 import { executionPlan } from './audit-arms.mjs';
-import { auditShadowConfig, PASS_REASONING } from './config.mjs';
+import { auditShadowConfig, PASS_REASONING, openaiConfig } from './config.mjs';
 import { assertEgressSafe } from './sensitive-egress-gate.mjs';
 import {
   modelAbSchemaReady, ensureArmSet, reserveSpend, reconcileSpend, releaseSpend, releaseOrphanedReservations,
@@ -118,6 +118,45 @@ function buildPassUserPrompt(passName, planContent, redactedContext) {
   ].filter(Boolean).join('\n\n');
 }
 
+/** System prompt for the shadow's PLAN-audit arms (stage_type='audit-plan'). */
+const PLAN_SHADOW_SYSTEM =
+  'You are an elite software-architecture auditor reviewing a PLAN before implementation. '
+  + 'Find gaps: unhandled states, contract holes, missing error/edge paths, scope/rigor issues, '
+  + 'security/persistence/concurrency risks, and duplicated or contradictory design. Return findings per the schema.';
+
+/** Build the plan-audit user prompt (the subject IS the plan document). */
+function buildPlanAuditUserPrompt(planContent) {
+  return `## Task\nAudit the PLAN below BEFORE implementation. Return findings per the schema.\n\n## Plan\n${planContent}`;
+}
+
+/**
+ * Per-`stage_type` job spec (plan D9 / v2.1): which passes an arm runs, and the
+ * per-pass system prompt / user prompt / reasoning tier. `audit-code` is the
+ * built path (5 code passes, byte-identical to before); `audit-plan` runs ONE
+ * plan-audit pass per arm over the plan document. The DAG, attribution,
+ * spend-cap, per-arm gemini, and persistence are stage-type-agnostic — only the
+ * pass set + prompts differ, so the A/B/C comparison is directly comparable
+ * across skills (only `stage_type` distinguishes the rows).
+ */
+function stageConfigFor(stageType) {
+  if (stageType === 'audit-plan') {
+    return {
+      passes: ['plan'],
+      systemFor: () => PLAN_SHADOW_SYSTEM,
+      // In plan mode the audited SUBJECT (redactedContext) is the plan itself.
+      userFor: (_passName, planContent, subject) => buildPlanAuditUserPrompt(subject || planContent),
+      reasoningFor: () => openaiConfig.reasoning,   // match the production plan-audit tier
+    };
+  }
+  // Default: audit-code (the built path).
+  return {
+    passes: SHADOW_PASSES,
+    systemFor: (passName) => PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`,
+    userFor: (passName, planContent, subject) => buildPassUserPrompt(passName, planContent, subject),
+    reasoningFor: (passName) => PASS_REASONING[passName] ?? null,
+  };
+}
+
 /**
  * Race a promise against a timeout; on timeout reject with a tagged error.
  * NOTE (audit R1 M8): this bounds the ORCHESTRATION, not the underlying request
@@ -141,12 +180,13 @@ function withTimeout(promise, ms, label) {
  * spend per pass and collecting findings + per-pass stats. Stops early if the
  * spend cap refuses a reservation (the rest of the stage is skipped, logged).
  */
-async function runStage({ stage, provider, model, redactedContext, planContent, runId, budget, deps }) {
+async function runStage({ stage, provider, model, redactedContext, planContent, runId, budget, deps, cfg }) {
   const findings = [];
   const passStats = [];
-  for (const passName of SHADOW_PASSES) {
-    const system = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
-    const userPrompt = buildPassUserPrompt(passName, planContent, redactedContext);
+  const stageCfg = cfg || stageConfigFor('audit-code');
+  for (const passName of stageCfg.passes) {
+    const system = stageCfg.systemFor(passName);
+    const userPrompt = stageCfg.userFor(passName, planContent, redactedContext);
 
     // Defence-in-depth egress scan (audit R1 H3/M6): the redact-once upstream
     // producer is the structural guarantee, but scanning the assembled payload
@@ -176,9 +216,10 @@ async function runStage({ stage, provider, model, redactedContext, planContent, 
     }
 
     // Reasoning PARITY (D4a): feed the SAME per-pass effort tier the production
-    // GPT pipeline uses (config.PASS_REASONING) to BOTH the OSS adapter and the
-    // GPT round, so the experiment measures model quality, not effort.
-    const reasoningEffort = PASS_REASONING[passName] ?? null;
+    // pipeline uses (config.PASS_REASONING for code passes; the production
+    // plan-audit reasoning tier for the plan pass) to BOTH the OSS adapter and
+    // the GPT round, so the experiment measures model quality, not effort.
+    const reasoningEffort = stageCfg.reasoningFor(passName);
     let call;
     try {
       call = await deps.callModel({ provider, model, system, userPrompt, passName, stage, reasoningEffort });
@@ -326,6 +367,7 @@ async function persist(runId, findings, passStats, round, deps) {
 export async function runGenerationShadow({
   redactedContext, arms, baseline = null, runId = null, planContent = '', round = 1,
   capEur = auditShadowConfig.budgetEur,
+  stageType = 'audit-code',
   phase = (process.env.AUDIT_MODEL_SHADOW_PHASE || 'prospective'),
   promptVariant = (process.env.AUDIT_MODEL_SHADOW_PROMPT_VARIANT || 'default'),
   attempt = Number.parseInt(process.env.AUDIT_MODEL_SHADOW_ATTEMPT || '1', 10) || 1,
@@ -364,10 +406,15 @@ export async function runGenerationShadow({
   // run so the exact independent-unit ordering is replayable.
   const armOrderSeed = Number.isFinite(seed) ? (seed >>> 0) : (Math.floor(Math.random() * 0xffffffff) >>> 0);
 
-  // Stamp the assignment grain on the run (H5 / §4 R2-M2). assignment_id is left
-  // for the view's COALESCE(assignment_id, commit_sha, run_id) — commit_sha is
-  // the natural assignment key for the default (attempt 1, default variant) case.
-  await d.updateRunMeta(runId, { stageType: 'audit-code', phase, promptVariant, attempt, armOrderSeed });
+  // Stamp the assignment grain on the run (H5 / §4 R2-M2). `stageType` records
+  // WHICH skill this run belongs to (audit-code | audit-plan) so the scorer can
+  // compare A/B/C across skills (D9). assignment_id is left for the view's
+  // COALESCE(assignment_id, commit_sha, run_id) — commit_sha is the natural
+  // assignment key for the default (attempt 1, default variant) case.
+  await d.updateRunMeta(runId, { stageType, phase, promptVariant, attempt, armOrderSeed });
+
+  // Per-stage-type job spec (pass set + prompts). Byte-identical for audit-code.
+  const cfg = stageConfigFor(stageType);
 
   // Resolve the shared generation models from the arm configs (B and C share).
   const ossArm = arms.find((a) => a.generation.provider === 'oss');
@@ -395,7 +442,7 @@ export async function runGenerationShadow({
   for (const job of genJobs) {
     try {
       const res = await withTimeout(
-        runStage({ stage: job.stage, provider: job.provider, model: job.model, redactedContext, planContent, runId, budget, deps: d }),
+        runStage({ stage: job.stage, provider: job.provider, model: job.model, redactedContext, planContent, runId, budget, deps: d, cfg }),
         auditShadowConfig.perArmTimeoutMs, `stage:${job.stage}`,
       );
       // Stamp the explicit arm on ARM-SPECIFIC-stage findings (gpt-round → B).
@@ -554,11 +601,11 @@ async function callGeminiDefault({ collectedFindings, redactedContext, planConte
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const priorList = (collectedFindings || []).slice(0, 40).map((f) => `- [${f.severity}] ${f.category}: ${f.detail?.slice(0, 160)}`).join('\n');
   const prompt = [
-    'You are the final-gate reviewer. Below are findings already raised by an OSS+GPT audit.',
+    'You are the final-gate reviewer. Below are findings already raised by a prior audit.',
     'Emit ONLY NET-NEW findings the prior audit MISSED (do not restate). Return per the schema.',
     planContent ? `## Plan\n${planContent}` : '',
     `## Prior findings\n${priorList || '(none)'}`,
-    `## Code (redacted)\n${redactedContext}`,
+    `## Subject under audit (code or plan)\n${redactedContext}`,
   ].filter(Boolean).join('\n\n');
   const start = Date.now();
   const resp = await ai.models.generateContent({
