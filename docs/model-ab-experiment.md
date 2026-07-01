@@ -236,10 +236,24 @@ can't collectively overshoot beyond one in-flight estimate), reconciled to actua
 after; a reconciled row with a (impossible-in-code) null actual falls back to the
 reservation, never €0 (fail-closed toward the ceiling).
 
-## Out of scope (v2.1 / v3)
+## Comparing across skills (audit-plan vs audit-code — v2.1, built)
 
-- **v2.1** — plan + audit-plan `stage_type` hooks (v2 populates `audit-code` only;
-  the schema is ready — `stage_type` CHECK already allows `plan`/`audit-plan`).
+The shadow runs in BOTH the code-audit and plan-audit paths, tagging each run's
+`stage_type` so the A/B/C comparison is broken down per skill. Enable the shadow
+(same env) and run either skill:
+
+- **audit-code** — `/audit-code` (or `openai-audit.mjs code …`) → `stage_type='audit-code'`.
+- **audit-plan** — `/audit-plan` (or `openai-audit.mjs plan <plan.md>`) → `stage_type='audit-plan'`
+  (one plan-audit pass per arm over the plan document + per-arm Gemini; the plan
+  path is byte-identical when the shadow is off).
+
+Every scorer view/query carries `stage_type`, so `model-ab-decision` /
+`model-ab-stats` naturally partition by skill — run the burn-in across both to
+see whether arm performance differs by skill. `plan`-generation (writing a plan)
+is NOT an auditor task and is intentionally not shadowed.
+
+## Out of scope (v3)
+
 - **v3** — the live auto-router (reading the scorer's ranking to select the
   production auditor per stage). `audit-shadow.mjs` is the single choke point where
   it plugs in.
