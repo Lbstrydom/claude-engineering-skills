@@ -408,7 +408,18 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
     return '';
   }
 
-  const entries = (ledger.entries || []).filter(e => e.pass === passName);
+  const scoped = (Array.isArray(ledger.entries) ? ledger.entries : []).filter(e => e && e.pass === passName);
+  if (scoped.length === 0) return '';
+
+  // Defensive: an entry missing `topicId` (its identity) can't be rendered
+  // (`.slice` below) or referenced, so skip it rather than throw and take down
+  // the whole R2 audit. Mirrors the file-level graceful-degradation above —
+  // this function must never crash the caller on a malformed/partial ledger.
+  const entries = scoped.filter(e => typeof e.topicId === 'string' && e.topicId.length > 0);
+  const skipped = scoped.length - entries.length;
+  if (skipped > 0) {
+    process.stderr.write(`  [rulings] skipped ${skipped} malformed ledger entr${skipped === 1 ? 'y' : 'ies'} (missing topicId)\n`);
+  }
   if (entries.length === 0) return '';
 
   // Group by outcome
@@ -424,10 +435,15 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
     ''
   ];
 
+  // Optional-field guards: an entry can be well-formed enough to render (has
+  // topicId) yet omit rationale/scope; `.slice`/`.join` on those must not throw.
+  const files = (e) => (Array.isArray(e.affectedFiles) ? e.affectedFiles : []).join(', ');
+  const cat = (e) => e.category ?? '(uncategorized)';
+
   if (dismissed.length > 0) {
     lines.push('### DISMISSED');
     for (const d of dismissed.slice(0, 8)) {
-      lines.push(`- [${d.topicId.slice(0,6)}] "${d.category}" — YOU ruled DISMISSED R${d.resolvedRound}. Reason: ${d.rulingRationale.slice(0, 100)}. Scope: ${d.affectedFiles.join(', ')}`);
+      lines.push(`- [${d.topicId.slice(0,6)}] "${cat(d)}" — YOU ruled DISMISSED R${d.resolvedRound ?? '?'}. Reason: ${(d.rulingRationale ?? '').slice(0, 100)}. Scope: ${files(d)}`);
     }
     if (dismissed.length > 8) lines.push(`  ... and ${dismissed.length - 8} more dismissed items`);
     lines.push('');
@@ -436,7 +452,7 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
   if (adjusted.length > 0) {
     lines.push('### SEVERITY ADJUSTED (do not re-escalate)');
     for (const a of adjusted.slice(0, 5)) {
-      lines.push(`- [${a.topicId.slice(0,6)}] "${a.category}" — ${a.originalSeverity}→${a.severity} R${a.resolvedRound}. Scope: ${a.affectedFiles.join(', ')}`);
+      lines.push(`- [${a.topicId.slice(0,6)}] "${cat(a)}" — ${a.originalSeverity ?? '?'}→${a.severity ?? '?'} R${a.resolvedRound ?? '?'}. Scope: ${files(a)}`);
     }
     lines.push('');
   }
@@ -444,7 +460,7 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
   if (fixed.length > 0) {
     lines.push('### FIXED (do not re-raise)');
     for (const f of fixed.slice(0, 5)) {
-      lines.push(`- [${f.topicId.slice(0,6)}] "${f.category}" — FIXED R${f.resolvedRound}. Scope: ${f.affectedFiles.join(', ')}`);
+      lines.push(`- [${f.topicId.slice(0,6)}] "${cat(f)}" — FIXED R${f.resolvedRound ?? '?'}. Scope: ${files(f)}`);
     }
     lines.push('');
   }
