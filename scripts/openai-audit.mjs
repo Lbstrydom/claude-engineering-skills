@@ -2049,14 +2049,21 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   const effectiveBackend = fileFilter ? scopedBackend : backend;
   const effectiveFrontend = fileFilter ? scopedFrontend : frontend;
 
+  // The audited subject-file set — hoisted to function scope so BOTH the A1
+  // guard below AND the model-A/B generation shadow (far below) can read it. It
+  // was previously block-scoped inside the guard, so the shadow's
+  // `buildRedactedAuditContext([...subjectFiles])` referenced an undefined
+  // binding (a ReferenceError that only surfaced once the shadow was enabled —
+  // caught by the first live calibration run, model-ab-harness-v2).
+  const subjectFiles = new Set([
+    ...effectiveBackend, ...effectiveFrontend,
+    ...(splitBackend ? [...effectiveRoutes, ...effectiveServices] : []),
+  ]);
+
   // ── A1 guard: "audit your success paths" applied to the auditor ITSELF ──
   // Refuse to emit a verdict when 0 implementation files would reach the prompt
   // (hollow-but-confident result). Pure predicate lives in audit-scope.mjs.
   {
-    const subjectFiles = new Set([
-      ...effectiveBackend, ...effectiveFrontend,
-      ...(splitBackend ? [...effectiveRoutes, ...effectiveServices] : []),
-    ]);
     // (1) File-set check — scope resolved to no subject files.
     const guardMsg = auditSubjectFileGuard({
       scopeMode, subjectFileCount: subjectFiles.size, hasFileFilter: Boolean(fileFilter),
