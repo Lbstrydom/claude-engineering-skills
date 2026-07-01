@@ -113,6 +113,54 @@ export function redactSecrets(payload) {
 }
 
 /**
+ * Scan an outgoing provider payload (already-assembled prompt/messages text)
+ * for secret patterns. Model-A/B/C harness Phase 2 (Security §): the OSS arm
+ * sends our source to a NEW external provider (OpenRouter), so the egress gate
+ * MUST be provable on that exact client path. This is the read-only detector;
+ * `assertEgressSafe` is the enforcing wrapper.
+ *
+ * Fail-closed: a scanner error is treated as "unsafe" (matched), never "clean".
+ *
+ * @param {string|object} payload
+ * @returns {{ safe: boolean, patterns: string[] }}
+ */
+export function scanEgressPayload(payload) {
+  const text = typeof payload === 'string' ? payload : (() => {
+    try { return JSON.stringify(payload ?? ''); } catch { return String(payload); }
+  })();
+  try {
+    const r = scanForSecrets(text);
+    return { safe: !(r && r.matched), patterns: (r && r.patterns) || [] };
+  } catch {
+    // Fail-closed — a scanner failure must not read as "clean".
+    return { safe: false, patterns: ['scan-error'] };
+  }
+}
+
+/**
+ * Enforcing egress guard: THROW (refuse to send) if a secret pattern is present
+ * in the payload. Called at the OSS adapter boundary as defence-in-depth on top
+ * of redact-once upstream (decision 11) — a detected secret means the upstream
+ * redaction FAILED and the fix belongs there, so we refuse rather than silently
+ * scrub-and-send to a new provider.
+ *
+ * @param {string|object} payload
+ * @param {{label?: string}} [opts]
+ * @returns {true}
+ */
+export function assertEgressSafe(payload, { label = 'oss-arm' } = {}) {
+  const { safe, patterns } = scanEgressPayload(payload);
+  if (!safe) {
+    throw new Error(
+      `[egress-gate] refusing to send ${label} payload to an external provider — ` +
+      `secret pattern(s) detected: ${patterns.join(', ')}. This indicates a redact-once ` +
+      `upstream failure; redact the payload before it reaches the provider (do NOT bypass this gate).`,
+    );
+  }
+  return true;
+}
+
+/**
  * Decide what to do with a candidate symbol body before it's sent to a
  * provider (LLM summary or embedding).
  *

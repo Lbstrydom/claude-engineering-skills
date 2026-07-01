@@ -98,6 +98,26 @@ export async function createOpenAIClient(options = {}) {
   const cfg = options.azure || azureConfig;
   const { default: OpenAI } = await import('openai');
 
+  // ── OSS provider path (model-A/B/C harness) ──────────────────────────────
+  // Explicit `{baseURL, apiKey, headers?}` override for an OpenAI-compatible
+  // OSS router (OpenRouter). INDEPENDENT of the Azure/public branches below —
+  // it is entered ONLY when `options.oss` is passed, so with no OSS arm the
+  // public/Azure construction is byte-identical to today (the opt-in invariant,
+  // regression-tested). The caller (audit-shadow) sources baseURL/apiKey from
+  // `auditShadowConfig`; the OSS payload's egress safety is enforced UPSTREAM
+  // (redact-once) + at the adapter's pre-send guard, exactly like the GPT path.
+  if (options.oss) {
+    const { baseURL, apiKey, headers } = options.oss;
+    if (!baseURL) throw new Error('[openai-client] oss path requires options.oss.baseURL');
+    if (!apiKey) throw new Error('[openai-client] oss path requires options.oss.apiKey (e.g. OPENROUTER_API_KEY)');
+    const normBase = trimTrailingSlash(baseURL);
+    const cacheKey = `oss:${normBase}:${keyDigest(apiKey)}`;
+    if (!options.fresh && _clientCache.has(cacheKey)) return _clientCache.get(cacheKey);
+    const client = new OpenAI({ baseURL: normBase, apiKey, defaultHeaders: headers || undefined });
+    _clientCache.set(cacheKey, client);
+    return client;
+  }
+
   // Cache key from EFFECTIVE values (never the key material in plaintext beyond
   // the in-process map — and we never log it).
   let cacheKey;

@@ -1,0 +1,175 @@
+/**
+ * @fileoverview Versioned model-pricing table + usage→cost derivation.
+ *
+ * Plan: docs/plans/model-ab-experiment-harness.md (decision R1-M3). The
+ * model-A/B/C burn-in must compare arms on COST as well as quality, and the
+ * spend ledger enforces a hard EUR ceiling — both need a single, auditable
+ * price source that covers the GPT/Gemini/Claude families AND the OpenRouter
+ * OSS models the harness introduces.
+ *
+ * Design:
+ *   - The family-keyed table in config.mjs (`modelPricing`) stays the SSoT for
+ *     the closed-catalog providers (GPT/Claude/Gemini) — this module layers the
+ *     OSS ids on top rather than forking a second table (#5 SSoT).
+ *   - Capture universal token **usage** always; **derive** cost. A model whose
+ *     price is unknown yields a **null** cost (logged by the caller, never 0 —
+ *     plan decision 8 / R1-M3), so an unpriced arm is excluded from the cost
+ *     ratio rather than silently mis-scored as free.
+ *   - Currency: prices are USD / 1M tokens. `toEur()` applies a coarse FIXED
+ *     rate — the €ceiling is a safety cap, not accounting, so a fixed rate is
+ *     structurally honest here (avoids a live-FX dependency the requirement
+ *     doesn't need).
+ *
+ * @module scripts/lib/model-pricing
+ */
+
+import { modelPricing as familyPricing } from './config.mjs';
+import { pricingKey } from './model-resolver.mjs';
+
+/**
+ * OSS (OpenRouter open-weight) prices, keyed by the FULL OpenRouter id — these
+ * ids do not parse into a family key, so `pricingKey()` returns them verbatim
+ * and the lookup lands here. Prices are USD / 1M tokens and APPROXIMATE (2026-07
+ * ballpark; OpenRouter routes to multiple upstream providers whose prices drift).
+ * The null-cost policy covers anything unlisted — an unlisted id is not an
+ * error, just an unpriced run excluded from the cost ratio. Keep these roughly
+ * current when refreshing the OSS_POOL heads in model-resolver.mjs.
+ * @type {Readonly<Record<string,{input:number,output:number}>>}
+ */
+export const OSS_PRICING = Object.freeze({
+  'qwen/qwen3-coder':                  { input: 0.20, output: 0.80 },
+  'deepseek/deepseek-chat-v3.1':       { input: 0.20, output: 0.80 },
+  'z-ai/glm-4.6':                      { input: 0.40, output: 1.75 },
+  'deepseek/deepseek-r1':              { input: 0.40, output: 2.00 },
+  'moonshotai/kimi-k2-thinking':       { input: 0.55, output: 2.20 },
+  'qwen/qwen3-235b-a22b-thinking':     { input: 0.20, output: 0.80 },
+});
+
+/** Coarse fixed USD→EUR rate for the burn-in spend cap (safety ceiling, not accounting). */
+export const EUR_PER_USD = 0.92;
+
+/** Effective-date stamp for the price table — bump when refreshing OSS_PRICING (audit R1 L4). */
+export const PRICING_VERSION = '2026-07-01';
+
+/**
+ * Conservative fallback price (USD/1M) for an UNPRICED model, used ONLY by the
+ * spend-cap path (never the analytics cost ratio). Set at/above the priciest
+ * known model so an unknown-price arm can never UNDER-count against the hard €
+ * ceiling (audit R1 H7 — "can't meter it → over-estimate, never treat as free").
+ */
+export const FALLBACK_PRICE_USD = Object.freeze({ input: 15, output: 75 });
+
+// Self-enforcing invariant (audit R4 M5 / R5 M3): the budget fallback MUST
+// dominate every known price — OSS *and* the family table — else an unpriced
+// model could be UNDER-estimated against the hard € ceiling. Fail-fast at
+// import if any pricing edit breaks it.
+for (const [id, px] of [...Object.entries(OSS_PRICING), ...Object.entries(familyPricing)]) {
+  if (px.input > FALLBACK_PRICE_USD.input || px.output > FALLBACK_PRICE_USD.output) {
+    throw new Error(`[model-pricing] FALLBACK_PRICE_USD {${FALLBACK_PRICE_USD.input}/${FALLBACK_PRICE_USD.output}} must be ≥ price["${id}"] {${px.input}/${px.output}} — raise the fallback to keep the spend-cap over-estimate honest.`);
+  }
+}
+
+/** A trustworthy meterable token count: a finite, non-negative number (mirrors the adapter). */
+function isValidCount(v) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0;
+}
+
+/**
+ * Clamp a raw token count to a finite, non-negative integer (audit R1 H4).
+ * Exported so the OSS adapter's usage normalizer shares ONE clamp (audit R2 M3)
+ * — no second `?? 0` path that could pass through negative/garbage tokens.
+ */
+export function sanitizeTokens(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.floor(n);
+}
+
+/**
+ * Look up the {input, output} per-1M-token price for a resolved model id.
+ * Tries the OSS table (full id) first, then the family-keyed config table via
+ * `pricingKey()`, then a bare-id lookup. Returns null when the model is unpriced.
+ * @param {string} modelId - resolved concrete model id (NOT a sentinel)
+ * @returns {{input:number, output:number}|null}
+ */
+export function priceFor(modelId) {
+  if (!modelId || typeof modelId !== 'string') return null;
+  if (Object.hasOwn(OSS_PRICING, modelId)) return OSS_PRICING[modelId];
+  const key = pricingKey(modelId);
+  return familyPricing[key] || familyPricing[modelId] || null;
+}
+
+/** True iff the model has a known price (i.e. the cost ratio may include it). */
+export function isPriced(modelId) {
+  return priceFor(modelId) !== null;
+}
+
+/**
+ * Derive USD cost from a token-usage object. Accepts either the audit-loop's
+ * usage shape ({input_tokens, output_tokens, ...}) or an OpenAI-style
+ * ({prompt_tokens, completion_tokens}). Reasoning tokens are already counted
+ * in output_tokens by the providers, so they are NOT double-charged here.
+ *
+ * @param {object|null} usage
+ * @param {string} modelId - resolved concrete model id
+ * @returns {{ totalUsd: number|null, inputUsd: number|null, outputUsd: number|null,
+ *            priced: boolean, inputTokens: number, outputTokens: number }}
+ */
+export function costFromUsage(usage, modelId) {
+  // Sanitize FIRST (audit R1 H4): non-finite / negative / NaN token counts →
+  // 0, floored to integers — otherwise a garbage `usage` yields a negative or
+  // Infinity cost while still reporting priced:true.
+  const inputTokens = sanitizeTokens(usage?.input_tokens ?? usage?.prompt_tokens);
+  const outputTokens = sanitizeTokens(usage?.output_tokens ?? usage?.completion_tokens);
+  const px = priceFor(modelId);
+  if (!px) {
+    // Null-cost policy (plan decision 8): unknown price → null, NEVER 0.
+    return { totalUsd: null, inputUsd: null, outputUsd: null, priced: false, inputTokens, outputTokens };
+  }
+  const inputUsd = (inputTokens * px.input) / 1_000_000;
+  const outputUsd = (outputTokens * px.output) / 1_000_000;
+  return {
+    totalUsd: inputUsd + outputUsd,
+    inputUsd,
+    outputUsd,
+    priced: true,
+    inputTokens,
+    outputTokens,
+  };
+}
+
+/**
+ * Cost for the SPEND-CAP path — never null (audit R1 H7). An unknown price
+ * falls back to FALLBACK_PRICE_USD (a conservative OVER-estimate) so the hard €
+ * ceiling can never be silently overshot by an unmetered arm. `estimated:true`
+ * flags the fallback so the ledger/CLI can surface it. Distinct from
+ * `costFromUsage` (analytics), which stays null-honest and excludes unpriced
+ * runs from the cost RATIO.
+ *
+ * @param {object|null} usage
+ * @param {string} modelId
+ * @returns {{ totalUsd:number, estimated:boolean, inputTokens:number, outputTokens:number }}
+ */
+export function costForBudget(usage, modelId) {
+  const rawIn = usage?.input_tokens ?? usage?.prompt_tokens;
+  const rawOut = usage?.output_tokens ?? usage?.completion_tokens;
+  // `unmeterable` (audit R5 H4): usage absent OR either field absent/invalid.
+  // When true, `totalUsd` is NOT authoritative (it can only reflect the 0s that
+  // absent counts sanitize to) — the reserve-then-reconcile ledger MUST keep
+  // its pre-flight reservation instead of reconciling down to this figure, so
+  // an unmetered call can never zero the burn against the € ceiling.
+  const unmeterable = !usage || !isValidCount(rawIn) || !isValidCount(rawOut);
+  const inputTokens = sanitizeTokens(rawIn);
+  const outputTokens = sanitizeTokens(rawOut);
+  const px = priceFor(modelId);
+  const estimated = !px;
+  const rate = px || FALLBACK_PRICE_USD;
+  const totalUsd = (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000;
+  return { totalUsd, estimated, unmeterable, inputTokens, outputTokens };
+}
+
+/** Convert a USD amount to EUR via the fixed burn-in rate. null passes through. */
+export function toEur(usd) {
+  return (usd == null || !Number.isFinite(usd)) ? null : usd * EUR_PER_USD;
+}

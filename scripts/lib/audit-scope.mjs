@@ -9,6 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath } from './sensitive-paths.mjs';
+import { scanEgressPayload } from './sensitive-egress-gate.mjs';
 // normalizePath not used directly here but re-exported via file-io.mjs barrel
 
 // ── Sensitive File Filtering ────────────────────────────────────────────────
@@ -135,6 +136,26 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
   if (omitted > 0) total += `\n... [${omitted} file(s) omitted — context budget reached]\n`;
   if (sensitive > 0) total += `\n... [${sensitive} sensitive file(s) excluded (.env, secrets, keys)]\n`;
   return total;
+}
+
+// ── Redact-once context producer (model-A/B/C harness — decision 11) ────────
+//
+// THE single upstream step that produces the context the generation shadow
+// consumes. Sensitive FILES are already excluded by readFilesAsContext
+// (isSensitiveFile), so no arm ever re-reads a raw path — the shadow's
+// signature takes this output, never file paths, making egress bypass
+// structurally impossible. A final secret-pattern SCAN over the assembled text
+// (an in-allowlist file may still hardcode a key) reports whether the context
+// is egress-safe; the caller/adapter enforces via assertEgressSafe. Redaction
+// happens ONCE here and the same object is shared by baseline + all arms.
+//
+// @param {string[]} filePaths
+// @param {object} [opts] - forwarded to readFilesAsContext (maxPerFile, maxTotal)
+// @returns {{ context: string, fileCount: number, egressSafe: boolean, egressPatterns: string[] }}
+export function buildRedactedAuditContext(filePaths, opts = {}) {
+  const context = readFilesAsContext(filePaths || [], opts);
+  const { safe, patterns } = scanEgressPayload(context);
+  return { context, fileCount: (filePaths || []).length, egressSafe: safe, egressPatterns: patterns };
 }
 
 // ── File Classification ─────────────────────────────────────────────────────

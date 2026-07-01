@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  STATIC_POOL, DEPRECATED_REMAP, SENTINEL_TO_TIER,
+  STATIC_POOL, DEPRECATED_REMAP, SENTINEL_TO_TIER, OSS_POOL,
   isSentinel, parseClaudeModel, parseGeminiModel, parseOpenAIModel,
   pickNewestClaude, pickNewestGemini, pickNewestOpenAI,
   deprecatedRemap, resolveModel, setCatalog, _resetCatalogCache,
@@ -309,6 +309,16 @@ describe('STATIC_POOL / DEPRECATED_REMAP integrity', () => {
     for (const sentinel of Object.keys(SENTINEL_TO_TIER)) {
       const resolved = resolveModel(sentinel, { silent: true });
       const spec = SENTINEL_TO_TIER[sentinel];
+      // OSS sentinels use a role-partitioned pool (no versioned STATIC_POOL
+      // array) — the equivalent no-phantom-id guarantee is OSS_POOL[role].
+      if (spec.provider === 'oss') {
+        assert.equal(
+          OSS_POOL[spec.role].includes(resolved),
+          true,
+          `"${sentinel}" resolved to "${resolved}" which is not in OSS_POOL.${spec.role}`
+        );
+        continue;
+      }
       assert.equal(
         STATIC_POOL[spec.provider].includes(resolved),
         true,

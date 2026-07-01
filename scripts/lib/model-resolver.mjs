@@ -49,6 +49,38 @@ export const STATIC_POOL = Object.freeze({
   ]),
 });
 
+// ── OSS pool (model-A/B/C harness — OpenRouter-hosted open-weight auditors) ──
+// Role-partitioned rather than version-parsed: OSS ids are provider-namespaced
+// (`vendor/model`) with no uniform version grammar, so "newest" == list head.
+// MAINTAINER CONTRACT: keep the PREFERRED model at index 0 of each role — the
+// `latest-oss-coder` / `latest-oss-reasoner` sentinels resolve to it. These are
+// SENTINELS (plan decision 2): arm config never pins a concrete OSS id; refresh
+// the head here (or override per-run via env, see resolveModel's OSS branch) as
+// OpenRouter ships newer open-weight models. Every id below must (a) exist on
+// OpenRouter and (b) support `response_format: json_schema` OR tool-calling —
+// the OSS structured-output adapter (oss-structured-output.mjs) needs one of
+// them, and conformance is a HARD pre-filter (plan decision 6).
+export const OSS_POOL = Object.freeze({
+  // Instruction/coder-tuned open weights — the "coder" auditor arm.
+  coder: Object.freeze([
+    'qwen/qwen3-coder',
+    'deepseek/deepseek-chat-v3.1',
+    'z-ai/glm-4.6',
+  ]),
+  // Reasoning-tuned open weights — the "reasoner" auditor arm (full reasoning
+  // ON; reasoning-ablation is a KNOWN-dead end — never reintroduced).
+  reasoner: Object.freeze([
+    'deepseek/deepseek-r1',
+    'moonshotai/kimi-k2-thinking',
+    'qwen/qwen3-235b-a22b-thinking',
+  ]),
+});
+
+// Per-role env override so a burn-in operator can pin a concrete OpenRouter id
+// (or a comma-list whose head wins) WITHOUT editing source — e.g.
+// `OSS_CODER_MODEL=qwen/qwen3-coder`. Unset → the static OSS_POOL head.
+const OSS_ROLE_ENV = Object.freeze({ coder: 'OSS_CODER_MODEL', reasoner: 'OSS_REASONER_MODEL' });
+
 // ── Deprecated remap ────────────────────────────────────────────────────────
 // When a user's .env has a stale concrete ID, remap to a sentinel and warn.
 // Prevents 404s when providers retire models.
@@ -92,6 +124,12 @@ export const SENTINEL_TO_TIER = Object.freeze({
   'latest-pro':         { provider: 'google',    tier: 'pro'     },
   'latest-flash':       { provider: 'google',    tier: 'flash'   },
   'latest-flash-lite':  { provider: 'google',    tier: 'flash-lite' },
+  // OSS auditor sentinels (model-A/B/C harness). `role` selects the OSS_POOL
+  // partition; there is no logical economy/standard/frontier tier for OSS
+  // (tierForModel/describeModel return 'unknown'/null — acceptable, they are
+  // never partitioned by the author-tier observation).
+  'latest-oss-coder':    { provider: 'oss', role: 'coder'    },
+  'latest-oss-reasoner': { provider: 'oss', role: 'reasoner' },
 });
 
 export function isSentinel(modelId) {
@@ -299,6 +337,24 @@ export function pickNewestGemini(pool, tier) {
   return parsed[0].original;
 }
 
+/**
+ * Resolve an OSS role ('coder'|'reasoner') to a concrete OpenRouter model id.
+ * Env override (`OSS_CODER_MODEL` / `OSS_REASONER_MODEL`, comma-list head wins)
+ * takes precedence over the static OSS_POOL head. Returns null for an unknown
+ * role or an exhausted pool (never throws — resolveModel decides the error).
+ * @param {'coder'|'reasoner'} role
+ * @returns {string|null}
+ */
+export function pickOssModel(role) {
+  const envVar = OSS_ROLE_ENV[role];
+  if (envVar) {
+    const override = (process.env[envVar] || '').split(',').map((s) => s.trim()).filter(Boolean)[0];
+    if (override) return override;
+  }
+  const pool = OSS_POOL[role];
+  return (pool && pool.length > 0) ? pool[0] : null;
+}
+
 export function pickNewestClaude(pool, tier) {
   if (!pool || pool.length === 0) return null;
   const parsed = pool.map(parseClaudeModel).filter(p => p && p.tier === tier);
@@ -501,6 +557,16 @@ export function resolveModel(modelId, opts = {}) {
   if (!isSentinel(afterRemap)) return afterRemap;
 
   const spec = SENTINEL_TO_TIER[afterRemap.toLowerCase()];
+
+  // OSS sentinels resolve from the role-partitioned OSS_POOL (no provider
+  // catalog / version parser). Env override wins (comma-list head), else the
+  // static pool head. Throws only if the pool is somehow empty (misconfig).
+  if (spec.provider === 'oss') {
+    const picked = pickOssModel(spec.role);
+    if (picked) return picked;
+    throw new Error(`resolveModel: cannot resolve OSS sentinel "${afterRemap}" — OSS_POOL.${spec.role} is empty`);
+  }
+
   const pool = mergedPool(spec.provider);
 
   let picked = null;

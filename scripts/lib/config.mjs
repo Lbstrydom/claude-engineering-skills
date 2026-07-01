@@ -94,6 +94,31 @@ export const shadowReviewConfig = Object.freeze({
   model: (process.env.FINAL_REVIEW_SHADOW_MODEL || '').trim() || null,
 });
 
+// ── Model-A/B/C generation-shadow Config (observation-only burn-in) ──────────
+//
+// Plan: docs/plans/model-ab-experiment-harness.md. Generalizes the final-review
+// shadow above to the GENERATION passes. Same permissiveness discipline: RAW
+// strings, NO arm validation here (unknown arm ids are a `resolveArms(env)`
+// caller-time error, NOT an import-time throw — an OPTIONAL experiment must
+// never break the MANDATORY audit path at import). `arms` unset → the harness
+// is inert and byte-identical to today (the load-bearing opt-in invariant).
+//
+// `budgetEur` is null when unset — the shadow layer REFUSES to spend without a
+// declared ceiling (no unbounded burn). The OpenRouter binding lives here so
+// the OSS client seam reads one config, not scattered process.env.
+export const auditShadowConfig = Object.freeze({
+  arms: (process.env.AUDIT_MODEL_SHADOW || '').trim() || null,
+  budgetEur: (() => {
+    const v = Number.parseFloat(process.env.AUDIT_MODEL_SHADOW_BUDGET_EUR);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  })(),
+  openrouterApiKey: (process.env.OPENROUTER_API_KEY || '').trim() || null,
+  openrouterBaseUrl: (process.env.OPENROUTER_BASE_URL || '').trim() || 'https://openrouter.ai/api/v1',
+  // Bounded per-arm await before the CLI exits (decision 12 — a hung OSS
+  // provider can't stall the process; the rest is marked `unverified`).
+  perArmTimeoutMs: safeInt(process.env.AUDIT_MODEL_SHADOW_ARM_TIMEOUT_MS, 600000),
+});
+
 // ── Brief Generation Config ─────────────────────────────────────────────────
 
 export const briefConfig = Object.freeze({
