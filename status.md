@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-07-01 — Build model-A/B/C experiment harness (/cycle code --autonomous, 3 clusters)
+
+### Changes
+Built the funded (~€200–400) observation-only auditor A/B/C harness end-to-end via the autonomous clustered loop — generalizes the final-review shadow to the audit GENERATION passes so auditor-model configs are chosen from real human-adjudication data. Four commits to main (`6518bff`, `c7f7f12`, `6232b6f`, `f0d83b9`).
+- **Cluster A** — arm config (sentinels-only, provenance-aware attribution), OSS sentinels + role pool, versioned pricing (`costFromUsage`/`costForBudget`), Chat-Completions structured-output adapter + conformance, OSS client path, egress gate (redact-once + full-payload assert + release-on-abort). GPT R1–R5 (H:7→0).
+- **Cluster B** — `runGenerationShadow` (redact-once, reserve-then-reconcile € cap, schema preflight hard-refusal, compute-shared arms, per-stage timeout, conformance denominator) + spend-ledger/adjudication store + migration (stage col, `audit_arms`, `finding_equivalence`, `model_ab_spend_ledger`, arm-derived `model_ab_effectiveness` view) + persistence. Migration applied + DB-verified. GPT R1–R5.
+- **Cluster C** — blinded adjudication queue (union-find dedup) + scorer CLIs (`model-ab-adjudicate`/`-stats`/`-decision`) + pure pre-registered decision-rule evaluator + runbook. GPT R1 (H:0).
+- **Consolidated Gemini gate** (mandatory, union diff) — 6 rounds, REJECT→CONCERNS_REMAINING (0 new). Caught **5 genuine budget-safety/correctness bugs the per-cluster GPT audits missed** (budget-leak-on-failure, weak distinct-assignment gate, €0-phantom on unmeterable usage, dead baseline map, strict `isValidCount`); one HIGH challenged as a verified Zod-4 category error.
+
+### Files Affected
+- New: `scripts/lib/{audit-arms,model-pricing,oss-structured-output,audit-shadow,model-ab-decision}.mjs`, `scripts/lib/store/model-ab.mjs`, migrations `20260701120000_model_ab.sql` + `20260701130000_model_ab_assignment.sql`, `docs/model-ab-experiment.md`, 4 test files.
+- Modified: `scripts/lib/{model-resolver,config,openai-client,audit-scope,sensitive-egress-gate,store/runs-findings}.mjs`, `scripts/{openai-audit,cross-skill,learning-store}.mjs`.
+- **Operator to run the burn-in**: set `OPENROUTER_API_KEY` + credits, `AUDIT_MODEL_SHADOW_BUDGET_EUR`, then `AUDIT_MODEL_SHADOW=B,C`. Building spent nothing; only enabling spends.
+
 ## 2026-07-01 — Build theme-safety v1 (/cycle code --autonomous) + fix finalize-outcomes regression
 
 ### Changes

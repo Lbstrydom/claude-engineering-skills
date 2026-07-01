@@ -1,7 +1,7 @@
 # Plan: Model A/B/C effectiveness experiment harness (auditor-model selection from real data)
 
 - **Date**: 2026-07-01
-- **Status**: Approved (GPT 3 rounds H:6->4->4 plateau; Gemini coherence Strong, 0 over-engineering; 3 crash-safety items folded)
+- **Status**: Complete (built + audited 2026-07-01; see Implementation Log)
 - **Author**: Claude + Louis
 - **Scope**: backend (`js-ts` + postgres; `node --test`)
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`, `stores`
@@ -346,3 +346,49 @@ This harness sends **our own source code** (audit payloads) to a **new external 
   audit + ship path is unchanged, (f) a sensitive path in the OSS payload was redacted, (g) the spend
   cap aborts a pass when the budget would be exceeded. Green unit suite alone is insufficient (asserts
   on live DB writes + live egress + OSS API shape).
+
+---
+
+## Implementation Log
+
+### 2026-07-01
+Built via `/cycle code --autonomous` over the §11 clusters (all committed to main).
+
+- **Cluster A** (`6518bff`) — Phases 1–2, safety-gated. `audit-arms.mjs` (arm
+  config, sentinels-only, provenance-aware attribution), OSS sentinels +
+  role-partitioned pool in `model-resolver.mjs`, `model-pricing.mjs` (versioned
+  table + `costFromUsage`/`costForBudget`), `oss-structured-output.mjs`
+  (Chat-Completions json_schema adapter + conformance), `openai-client.mjs` OSS
+  path, `config.mjs` `auditShadowConfig`, egress gate (`scanEgressPayload`/
+  `assertEgressSafe` + redact-once producer). Audited GPT R1–R5 (H:7→0 in-scope).
+- **Cluster B** (`c7f7f12`) — Phases 3–4. `audit-shadow.mjs` (`runGenerationShadow`
+  — redact-once input, reserve-then-reconcile € cap, schema preflight, compute-
+  shared arms, per-stage timeout, conformance denominator), `store/model-ab.mjs`
+  (spend ledger + preflight + adjudication union-find state machine), migration
+  `20260701120000` (stage col, `audit_arms`, `finding_equivalence`,
+  `model_ab_spend_ledger`, arm-derived `model_ab_effectiveness` view), persistence
+  wiring. Migration applied + DB-verified. Audited GPT R1–R5 (H:8→1 residual =
+  redundant preflight-column rigor).
+- **Cluster C** (`6232b6f`) — Phases 5–6, fix-gate final. `model-ab-decision.mjs`
+  (pure pre-registered evaluator), `cross-skill.mjs` `model-ab-adjudicate` (blinded
+  queue) / `model-ab-stats` / `model-ab-decision`, runbook `docs/model-ab-experiment.md`.
+  Audited GPT R1 (H:0).
+- **Consolidated Gemini gate** (`f0d83b9`) — 6 rounds over the A∪B∪C union diff,
+  REJECT→CONCERNS_REMAINING (0 new findings). Caught **5 genuine budget-safety /
+  correctness defects the per-cluster GPT audits missed**: G1 budget-leak on failed
+  call (release, don't keep), G2 distinct-assignment gate (migration `20260701130000`
+  adds `commit_sha`), G3 `costForBudget` honors `usageMissing`, G4 dead-baseline
+  removal, G5 strict `isValidCount`. One HIGH challenged as a verified Zod-4
+  category error (`z.toJSONSchema` exists + is used at `schemas.mjs:142`).
+
+**Deviations**: adapter returns `{result, …}` not `{parsed, …}` (repo
+`{result, usage, latencyMs}` convention). `audit_arms` table is informational in
+v1 (the view derives arm membership from the `stage` CASE, not the table). Cost
+RATIO degrades to `excluded` in v1 (arm A's cost isn't in the model_ab pass-cost
+path); the hard € budget is protected independently by the spend ledger — the
+cost-ratio gate activates once A's cost is wired (v2).
+
+**Remaining (operator)**: to run the burn-in, set `OPENROUTER_API_KEY` + add
+credits, set `AUDIT_MODEL_SHADOW_BUDGET_EUR`, then `AUDIT_MODEL_SHADOW=B,C`.
+Building the harness spent nothing; only enabling the shadow spends. v2 auto-router
+(act-on-winner) remains Out of Scope until the data decides.
