@@ -1,5 +1,34 @@
 # Project Status Log
 
+## 2026-07-01 — Theme-safety v1 empirical confirm + v2 plan (audit-converged) + ledger guard fix
+
+### Changes
+- **Empirically confirmed the theme-safety v1 origin signal** on ground truth (the missing pre-ship
+  layer). Ran the real `visual-audit.mjs --verify` (real Chromium + CDP `getMatchedStylesForNode`
+  origin resolution + real production CSS) against a faithful render of the pre-fix `.mpc-add-btn`
+  bug: `unadapted_text_color` fired on exactly that control in both themes (`source:'live'`), stayed
+  silent on the fixed render, and both were distinguishable from a capture miss. The target bug is
+  already fixed+deployed (wine-cellar PR #89 = prod HEAD), and `extract.mjs` has no modal-activation
+  pass, so a literal prod `--verify` couldn't serve as ground truth — hence the faithful-render harness.
+- **Regression-locked the confirmed fix** (wine-cellar-app, separate commit): a ~free deterministic
+  source-contract test asserting `.mpc-add-btn` keeps an author-set theme-adapting `color` — the
+  doctrine's permanent regression guard for a surface v1 can't reach live. Red-green proven.
+- **Theme-safety v2 plan** — full-DOM sweep + two-theme contrast **parity-delta** as one coupled unit
+  (parity-delta earns its keep only at full-DOM scope; the absolute `contrast_failure` already covers
+  contracted surfaces). `/audit-plan` converged: GPT R1 (H:3) → R2 (H:2, consistency) → stop; Gemini
+  R1 caught 2 genuine design defects (depth-8 `nodeKey` collision → join on un-truncated `livePath`;
+  in-place `scope` mutation → cloning normalizer), R2 (cap) 2 impl nits folded in. Coherence "Strong".
+- **Fixed a latent audit-loop crash**: `buildRulingsBlock` threw on any ledger entry missing `topicId`
+  (unguarded `.slice`/`.join`) — a single malformed/partial entry would take down an entire plan-audit
+  R2 round. Now skips-and-warns on missing identity + guards optional fields; happy path byte-unchanged.
+
+### Files Affected
+- New: `docs/plans/visual-audit-theme-safety-v2.md` (Approved), `tests/rulings-block-guard.test.mjs`.
+- Modified: `scripts/lib/ledger.mjs` (`buildRulingsBlock` defensive guards).
+- Separate repo (wine-cellar-app): `tests/unit/contracts/mpcAddBtnThemeColor.test.js` (new).
+- Next: implement v2 via `/cycle code docs/plans/visual-audit-theme-safety-v2.md` (Clusters A→B→C) +
+  the mandatory `--verify --full-dom` empirical run.
+
 ## 2026-07-01 — Build model-A/B/C experiment harness (/cycle code --autonomous, 3 clusters)
 
 ### Changes
