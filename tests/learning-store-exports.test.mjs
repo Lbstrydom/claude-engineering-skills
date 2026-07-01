@@ -183,6 +183,18 @@ const EXPECTED_EXPORTS = [
   'getRefreshRun',
   'listPrunableRefreshRuns',
   'listRollbacksForRepo',
+
+  // model-ab (10 — model-A/B/C experiment harness store, Cluster B)
+  'modelAbSchemaReady',
+  'ensureArmSet',
+  'reserveSpend',
+  'reconcileSpend',
+  'releaseSpend',
+  'releaseOrphanedReservations',
+  'cumulativeSpendEur',
+  'applyModelAbAdjudication',
+  'getModelAbAdjudicationQueue',
+  'getModelAbEffectiveness',
 ].sort();
 
 // Internal client accessors that must NOT escape (plan §2 / R3/M2).
@@ -231,6 +243,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 136);
+    assert.equal(EXPECTED_EXPORTS.length, 146);
   });
 });

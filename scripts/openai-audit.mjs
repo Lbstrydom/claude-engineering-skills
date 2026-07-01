@@ -2914,6 +2914,40 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     }
   }
 
+  // ── Model-A/B/C generation shadow (observation-only; awaited, NEVER gates) ──
+  // Dynamic imports so the shadow (+ its OSS deps) load ONLY when arms are
+  // configured — with AUDIT_MODEL_SHADOW unset this block is inert and the audit
+  // is byte-identical to today (the opt-in invariant). The redacted context is
+  // built ONCE here (decision 11) and handed to the shadow — arms never see raw
+  // paths. Best-effort: a shadow failure never touches A's verdict/ship path,
+  // EXCEPT an egress-gate refusal, which must surface loudly.
+  try {
+    const { resolveArms } = await import('./lib/audit-arms.mjs');
+    const armSet = resolveArms(process.env);
+    if (armSet.enabled) {
+      const { runGenerationShadow } = await import('./lib/audit-shadow.mjs');
+      const { buildRedactedAuditContext } = await import('./lib/audit-scope.mjs');
+      const redacted = buildRedactedAuditContext([...subjectFiles]);
+      const shadowSummary = await runGenerationShadow({
+        redactedContext: redacted.context,
+        arms: armSet.arms,
+        baseline: mergedResult,
+        runId: cloudRunId,
+        planContent,
+        round,
+      });
+      mergedResult._modelAbShadow = shadowSummary;
+      process.stderr.write(
+        `  [shadow] model-A/B generation shadow: ${shadowSummary.state}`
+        + (shadowSummary.findingCount != null ? ` (${shadowSummary.findingCount} findings, ${shadowSummary.shadowOnly} shadow-only, stages: ${(shadowSummary.stages || []).join('+')})` : '')
+        + '\n',
+      );
+    }
+  } catch (err) {
+    if (err && typeof err.message === 'string' && err.message.includes('[egress-gate]')) throw err;
+    process.stderr.write(`  [shadow] model-A/B shadow failed (non-gating): ${err.message}\n`);
+  }
+
   // Attach cloud run ID to result for orchestrator reference. The /audit-code
   // skill reads `_cloudRunId` from the audit --out JSON and forwards it to
   // gemini-review.mjs as `--run-id`, which keys the final-review (+ shadow A/B)

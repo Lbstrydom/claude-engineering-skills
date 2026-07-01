@@ -52,6 +52,7 @@ export * from './lib/store/bandit-fp.mjs';
 export * from './lib/store/debt.mjs';
 export * from './lib/store/friction.mjs';
 export * from './lib/store/learning-decisions.mjs';
+export * from './lib/store/model-ab.mjs';
 export * from './lib/store/persona.mjs';
 // Phase 3 WS-PIPE1 — persona-test candidate aggregation table.
 // Kept as a separate domain from persona.mjs because the lifecycle

@@ -117,6 +117,13 @@ export const auditShadowConfig = Object.freeze({
   // Bounded per-arm await before the CLI exits (decision 12 — a hung OSS
   // provider can't stall the process; the rest is marked `unverified`).
   perArmTimeoutMs: safeInt(process.env.AUDIT_MODEL_SHADOW_ARM_TIMEOUT_MS, 600000),
+  // Reservation TTL — orphaned reservations older than this are released on
+  // startup (crash-safety) and excluded from the active-cap sum.
+  reservationTtlMs: safeInt(process.env.AUDIT_MODEL_SHADOW_RESERVATION_TTL_MS, 30 * 60 * 1000),
+  // Per-pass max output tokens (the reservation estimates at THIS cap so it
+  // never under-reserves) + per-call provider timeout.
+  passMaxTokens: safeInt(process.env.AUDIT_MODEL_SHADOW_PASS_MAX_TOKENS, 8000),
+  callTimeoutMs: safeInt(process.env.AUDIT_MODEL_SHADOW_CALL_TIMEOUT_MS, 300000),
 });
 
 // ── Brief Generation Config ─────────────────────────────────────────────────

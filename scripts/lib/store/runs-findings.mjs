@@ -311,6 +311,10 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
   // only when present so the path degrades cleanly on an un-migrated store.
   const hasSourceModel = await columnExists('audit_findings', 'source_model', many, isCloudEnabled);
   const hasBucket = await columnExists('audit_findings', 'bucket', many, isCloudEnabled);
+  // Model-A/B/C generation-shadow attribution (migration 20260701120000): the
+  // PRODUCING stage (oss-gen|gpt-round|gemini). Null for normal/baseline findings
+  // — the correct value (baseline provenance = stage NULL in the scorer view).
+  const hasStage = await columnExists('audit_findings', 'stage', many, isCloudEnabled);
   const rows = findings.map((f) => {
     const base = {
       run_id: runId,
@@ -337,6 +341,7 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
     // An unexpected value is coerced to null + logged rather than silently
     // persisting drift.
     if (hasBucket) base.bucket = normaliseBucket(f._bucket);
+    if (hasStage) base.stage = f._stage ?? null;
     return base;
   });
   if (rows.length === 0) return;
@@ -584,6 +589,15 @@ export async function getFinalReviewStats(repoName, { queueLimit = 50 } = {}) {
 export async function recordPassStats(runId, passName, stats, round) {
   if (!runId || !await isCloudEnabled()) return;
   const hasRound = await detectPassStatsRoundColumn();
+  // Model-A/B/C per-arm-execution columns (migration 20260701120000): written
+  // only when present AND the caller supplied them, so the normal audit path is
+  // byte-identical on an un-migrated store or when not shadowing.
+  const armCols = {};
+  if (stats.sourceModel !== undefined && await columnExists('audit_pass_stats', 'source_model', many, isCloudEnabled)) armCols.source_model = stats.sourceModel;
+  if (stats.stage !== undefined && await columnExists('audit_pass_stats', 'stage', many, isCloudEnabled)) armCols.stage = stats.stage;
+  if (stats.structuredOutputOk !== undefined && await columnExists('audit_pass_stats', 'structured_output_ok', many, isCloudEnabled)) armCols.structured_output_ok = stats.structuredOutputOk;
+  if (stats.costUsd !== undefined && await columnExists('audit_pass_stats', 'cost_usd', many, isCloudEnabled)) armCols.cost_usd = stats.costUsd;
+  if (stats.usageUnmeterable !== undefined && await columnExists('audit_pass_stats', 'usage_unmeterable', many, isCloudEnabled)) armCols.usage_unmeterable = stats.usageUnmeterable;
   try {
     await insertReturning('audit_pass_stats', {
       run_id: runId,
@@ -598,6 +612,7 @@ export async function recordPassStats(runId, passName, stats, round) {
       reasoning_effort: stats.reasoning,
       prompt_variant_id: stats.promptVariantId,
       ...(hasRound && Number.isInteger(round) ? { round } : {}),
+      ...armCols,
     });
   } catch (err) {
     process.stderr.write(`  [learning] recordPassStats failed: ${err.message}\n`);
