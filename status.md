@@ -1,5 +1,17 @@
 # Project Status Log
 
+## 2026-07-01 — Plans: theme-safety v1 + model-A/B/C experiment harness (brainstorm → plan → audit-plan)
+
+### Changes
+- **Brainstorm → plan → audit-plan** for two features, both Approved (GPT 3 rounds + mandatory Gemini gate, coherence Strong, 0 over-engineering each):
+  - `docs/plans/visual-audit-theme-safety-v1.md` — catch "color that didn't adapt to dark mode" (a real wine-cellar bug: bare button, UA-default text color). v1 = two ADVISORY producers in visual-audit: static interactive-color lint + an origin-based single-render runtime check (winning color origin=user-agent + author-styled box). Scoped to native form controls; two-theme parity-delta + full-DOM + modal activate deferred to v1.1/v2.
+  - `docs/plans/model-ab-experiment-harness.md` — funded (~€200-400) A/B/C model-effectiveness experiment. Generalizes FINAL_REVIEW_SHADOW to the generation passes; A=GPT+Gemini baseline / B=OSS+1 independent GPT round / C=B+Gemini. Scorer = human adjudication_outcome ledger (anti-circularity, not Gemini-survival); OSS via Chat-Completions adapter; redact-once egress; blinded human adjudication queue; reserve-then-reconcile spend ledger enforcing the euro cap; derived arm-membership (no double-count).
+  - `docs/plans/theme-parity-contrast-delta.md` — the multi-LLM brainstorm note behind the theme-safety plan.
+- Ran a full `arch:refresh` + progress-heartbeat/concurrency feature for domain summaries earlier this session; deps bumped to latest (0 vulnerabilities); visual-audit gate-honesty fix + sync auto-untrack shipped.
+
+### Files Affected
+- `docs/plans/visual-audit-theme-safety-v1.md`, `docs/plans/model-ab-experiment-harness.md`, `docs/plans/theme-parity-contrast-delta.md` (new plan docs).
+
 ## 2026-06-30 — arch:summarise-domains: progress heartbeat + bounded concurrency
 
 ### Changes
