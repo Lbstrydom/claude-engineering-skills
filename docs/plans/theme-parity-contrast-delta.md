@@ -1,14 +1,32 @@
 # Proposal: Theme-parity contrast **delta** — catch "color that didn't adapt to dark mode"
 
-- **Status**: Draft (feedback note, carried over from a wine-cellar-app session 2026-07-01)
+- **Status**: **Superseded** (historical brainstorm note — not a live to-do). The smallest
+  grounded slice was planned, built, and shipped as
+  [`docs/completed/visual-audit-theme-safety-v1.md`](../completed/visual-audit-theme-safety-v1.md)
+  (2026-07-01, via `/cycle code --autonomous`). The remainder is tracked as v1.1/v2 there,
+  not here. Kept as the origin record; do **not** treat as pending work.
 - **Origin**: A real wine-cellar-app bug — a bare `<button>`/`<select>` inside a modal
   (`.mpc-add-btn` etc.) with no author `color` fell back to the UA default
   (`ButtonText` ≈ black), fine on light, black-on-dark in dark mode. It fell into
   the **gap between two skills** and neither caught it.
 - **Scope**: `click-test` + `visual-audit` (UX-lens skills), plus a cheap static CSS lint.
 
-> Not yet audited/approved — this is the written-up problem statement + approach for
-> `/audit-plan` or a `/brainstorm` to pressure-test before it becomes a real plan.
+> **What actually shipped vs what this note proposed** (this note is a *pre-decision*
+> snapshot; the brainstorm that followed revised it):
+> - ✅ **Shipped in v1** (home = **`visual-audit`**, NOT `click-test` — the brainstorm
+>   rejected `click-test` as home because it would re-implement visual-audit's capture
+>   honesty): §4's static "styles the box but not `color`" lint (PIECE 1a,
+>   `interactive-color-lint.mjs`) + §3's "UA/system `color` on an author-styled box"
+>   sub-check, realized origin-based & single-render (PIECE 2, `unadapted-color.mjs`).
+>   Both **advisory / report-only**.
+> - ⏳ **v1.1**: reach elements inside opened modals (declared `surfaces[].activate`);
+>   `var(--token)`-undefined-in-one-theme lint (`token_undefined_in_theme`).
+> - ⏳ **v2**: the **two-theme contrast parity-delta** (this note's headline idea) + the
+>   **full-DOM** non-contracted sweep — build only after the v1 gets one real `--verify`
+>   run confirming the origin signal fires on the live bug (empirical-before-expand).
+> - ⚠ **Superseded recommendation**: §5's "Primary — put the delta in `click-test`" was
+>   *not* adopted; §5's home question was resolved to `visual-audit` (see §6 open questions,
+>   which the brainstorm answered).
 
 ---
 
