@@ -17,6 +17,14 @@
  * PURE — no I/O. The CLI (cross-skill.mjs model-ab-decision) reads the scorer
  * view, folds rows into cells via `aggregateCells`, and calls `evaluateDecision`.
  *
+ * v1 cost-ratio limitation (documented): arm A's cost is NOT in the model_ab
+ * pass-cost path (A's baseline findings have stage NULL; the view's pass_cost
+ * only sums stage-tagged rows), so `baseCost` is typically null → the cost ratio
+ * degrades to `excluded` (not gating), per the R3-M1 null-cost rule. The hard €
+ * BUDGET is still protected independently by the reserve-then-reconcile spend
+ * ledger; the per-arm cost RATIO becomes an active gate once A's cost is wired
+ * into the model_ab path (a v2 follow-up).
+ *
  * @module scripts/lib/model-ab-decision
  */
 
@@ -99,7 +107,7 @@ export function evaluateCell(cell, baseline, constants = DECISION_CONSTANTS) {
  * aggregated across runs. Baseline (arm 'A') rows become the comparison base.
  *
  * @param {Array<object>} viewRows - rows from model_ab_effectiveness
- * @returns {{ cells: object[], baselineByStage: Map<string,object> }}
+ * @returns {{ cells: object[] }}
  */
 export function aggregateCells(viewRows) {
   const byKey = new Map(); // `${arm}::${stage}` → agg
@@ -108,12 +116,17 @@ export function aggregateCells(viewRows) {
     if (!byKey.has(key)) {
       byKey.set(key, {
         arm: r.arm, stage: r.stage ?? null,
-        runIds: new Set(), acceptedUniques: 0, dismissedUniques: 0, pendingUniques: 0,
+        runIds: new Set(), assignments: new Set(), acceptedUniques: 0, dismissedUniques: 0, pendingUniques: 0,
         costUsd: 0, costKnown: false, conformNum: 0, conformDen: 0,
       });
     }
     const a = byKey.get(key);
     if (r.run_id) a.runIds.add(r.run_id);
+    // DISTINCT assignments = distinct commit_sha (the code under audit), NOT
+    // run_ids (consolidated Gemini gate R2): 2 repeated runs of the SAME
+    // assignment must NOT satisfy MIN_ASSIGNMENTS. Falls back to run_id only
+    // when commit_sha is absent (pre-assignment-key rows).
+    a.assignments.add(r.commit_sha ?? r.run_id ?? null);
     a.acceptedUniques += Number(r.accepted_uniques) || 0;
     a.dismissedUniques += Number(r.dismissed_uniques) || 0;
     a.pendingUniques += Number(r.pending_uniques) || 0;
@@ -123,18 +136,19 @@ export function aggregateCells(viewRows) {
     }
   }
   const cells = [];
-  const baselineByStage = new Map();
   for (const a of byKey.values()) {
-    const cell = {
-      arm: a.arm, stage: a.stage, runs: a.runIds.size, distinctAssignments: a.runIds.size,
+    cells.push({
+      arm: a.arm, stage: a.stage, runs: a.runIds.size,
+      distinctAssignments: a.assignments.size,   // distinct commit_sha, not run_id (Gemini R2)
       acceptedUniques: a.acceptedUniques, dismissedUniques: a.dismissedUniques, pendingUniques: a.pendingUniques,
       costUsd: a.costKnown ? a.costUsd : null,
       conformanceRate: a.conformDen > 0 ? a.conformNum / a.conformDen : null,
-    };
-    if (a.arm === 'A') baselineByStage.set('A-overall', cell);
-    cells.push(cell);
+    });
   }
-  return { cells, baselineByStage };
+  // The baseline is aggregated across ALL of arm A's stages in evaluateDecision
+  // (via reduce) — NOT here (consolidated Gemini gate R4: a per-stage
+  // `baselineByStage` map that only kept the last A stage was dead + misleading).
+  return { cells };
 }
 
 /**

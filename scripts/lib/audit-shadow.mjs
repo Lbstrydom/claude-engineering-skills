@@ -153,13 +153,23 @@ async function runStage({ stage, provider, model, redactedContext, planContent, 
       call = { result: null, conformant: false, failed: true, usage: { usageMissing: true }, error: msg };
     }
 
-    // Reconcile the reservation to actual (keep the reservation if unmeterable).
+    // Settle the reservation. A FAILED call (a thrown provider exception OR an
+    // adapter-degraded `failed:true` — e.g. HTTP 500/429/timeout) produced NO
+    // billable result → RELEASE the reservation, freeing the budget (consolidated
+    // Gemini gate G1 — a provider outage/429 storm must NOT drain the € cap with
+    // phantom max-cost charges). `reconcile-unmeterable` (which KEEPS the
+    // pre-flight estimate) is reserved for a SUCCESSFUL response merely missing
+    // its usage block — the call happened and may have cost, so keep conservatively.
     const actual = costForBudget(call.usage, model);
-    await deps.reconcileSpend({
-      ledgerId: reservation.ledgerId,
-      actualEur: toEur(actual.totalUsd) ?? 0,
-      unmeterable: actual.unmeterable,
-    });
+    if (call.failed) {
+      await deps.releaseSpend({ ledgerId: reservation.ledgerId });
+    } else {
+      await deps.reconcileSpend({
+        ledgerId: reservation.ledgerId,
+        actualEur: toEur(actual.totalUsd) ?? 0,
+        unmeterable: actual.unmeterable,
+      });
+    }
 
     const passFindings = call.result?.findings || [];
     for (const f of passFindings) {

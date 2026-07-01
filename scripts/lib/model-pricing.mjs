@@ -69,10 +69,11 @@ for (const [id, px] of [...Object.entries(OSS_PRICING), ...Object.entries(family
   }
 }
 
-/** A trustworthy meterable token count: a finite, non-negative number (mirrors the adapter). */
+/** A trustworthy meterable token count: an actual finite non-negative NUMBER.
+ * Strict `typeof` (consolidated Gemini gate R5): `Number(null|false|''|[])` all
+ * coerce to 0, so a `Number()`-based check would accept junk as a valid 0-count. */
 function isValidCount(v) {
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 
 /**
@@ -154,12 +155,17 @@ export function costFromUsage(usage, modelId) {
 export function costForBudget(usage, modelId) {
   const rawIn = usage?.input_tokens ?? usage?.prompt_tokens;
   const rawOut = usage?.output_tokens ?? usage?.completion_tokens;
-  // `unmeterable` (audit R5 H4): usage absent OR either field absent/invalid.
+  // Honor the adapter's EXPLICIT `usageMissing` flag FIRST (consolidated Gemini
+  // gate R3): normaliseUsage sanitizes missing usage to 0 — a VALID count — so
+  // re-deriving from token validity alone would read a successful-but-unmeterable
+  // call as a real €0 (defeating the reserve-then-reconcile ceiling). The flag is
+  // authoritative when present.
+  // `unmeterable` (audit R5 H4): flag set OR usage absent OR either field absent/invalid.
   // When true, `totalUsd` is NOT authoritative (it can only reflect the 0s that
   // absent counts sanitize to) — the reserve-then-reconcile ledger MUST keep
   // its pre-flight reservation instead of reconciling down to this figure, so
   // an unmetered call can never zero the burn against the € ceiling.
-  const unmeterable = !usage || !isValidCount(rawIn) || !isValidCount(rawOut);
+  const unmeterable = !usage || usage.usageMissing === true || !isValidCount(rawIn) || !isValidCount(rawOut);
   const inputTokens = sanitizeTokens(rawIn);
   const outputTokens = sanitizeTokens(rawOut);
   const px = priceFor(modelId);

@@ -87,16 +87,27 @@ describe('aggregateCells + evaluateDecision — folds view rows across runs', ()
     // Arm A baseline (two runs)
     { run_id: 'r1', arm: 'A', stage: null, accepted_uniques: 50, dismissed_uniques: 10, pending_uniques: 0, cost_usd: 5, conformant_passes: null, pass_executions: null },
     { run_id: 'r2', arm: 'A', stage: null, accepted_uniques: 50, dismissed_uniques: 10, pending_uniques: 0, cost_usd: 5, conformant_passes: null, pass_executions: null },
-    // Arm B oss-gen (two runs)
-    { run_id: 'r1', arm: 'B', stage: 'oss-gen', accepted_uniques: 45, dismissed_uniques: 10, pending_uniques: 0, cost_usd: 2, conformant_passes: 5, pass_executions: 5 },
-    { run_id: 'r2', arm: 'B', stage: 'oss-gen', accepted_uniques: 45, dismissed_uniques: 10, pending_uniques: 0, cost_usd: 2, conformant_passes: 5, pass_executions: 5 },
+    // Arm B oss-gen (two runs, two DISTINCT assignments/commits)
+    { run_id: 'r1', commit_sha: 'aaa', arm: 'B', stage: 'oss-gen', accepted_uniques: 45, dismissed_uniques: 10, pending_uniques: 0, cost_usd: 2, conformant_passes: 5, pass_executions: 5 },
+    { run_id: 'r2', commit_sha: 'bbb', arm: 'B', stage: 'oss-gen', accepted_uniques: 45, dismissed_uniques: 10, pending_uniques: 0, cost_usd: 2, conformant_passes: 5, pass_executions: 5 },
   ];
   it('aggregates run counts + sums across runs', () => {
     const { cells } = aggregateCells(rows);
     const b = cells.find((c) => c.arm === 'B');
     assert.equal(b.runs, 2);
+    assert.equal(b.distinctAssignments, 2);
     assert.equal(b.acceptedUniques, 90);
     assert.equal(b.conformanceRate, 1); // 10/10
+  });
+  it('distinctAssignments counts DISTINCT commit_sha, not run_id (Gemini R2)', () => {
+    // Two runs of the SAME commit → 1 distinct assignment (not 2).
+    const sameCommit = [
+      { run_id: 'r1', commit_sha: 'aaa', arm: 'B', stage: 'oss-gen', accepted_uniques: 1, dismissed_uniques: 0, pending_uniques: 0 },
+      { run_id: 'r2', commit_sha: 'aaa', arm: 'B', stage: 'oss-gen', accepted_uniques: 1, dismissed_uniques: 0, pending_uniques: 0 },
+    ];
+    const b = aggregateCells(sameCommit).cells.find((c) => c.arm === 'B');
+    assert.equal(b.runs, 2);
+    assert.equal(b.distinctAssignments, 1, 'same commit twice = 1 assignment');
   });
   it('evaluateDecision compares non-A cells to aggregated baseline A', () => {
     const res = evaluateDecision(rows);

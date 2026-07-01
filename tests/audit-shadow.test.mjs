@@ -122,12 +122,21 @@ describe('runGenerationShadow — spend cap & reconcile', () => {
     // Only 2 model calls admitted before the cap refused the 3rd.
     assert.equal(calls.model.length, 2);
   });
-  it('propagates usageMissing/unmeterable into reconcile', async () => {
+  it('a FAILED call RELEASES the reservation, never reconcile-keeps it (Gemini G1 — budget-leak fix)', async () => {
     const { deps, calls } = harness({
-      callModel: async () => ({ result: { findings: [] }, conformant: false, failed: true, usage: { usageMissing: true } }),
+      callModel: async () => ({ result: { findings: [] }, conformant: false, failed: true, usage: { input_tokens: 0, output_tokens: 0, usageMissing: true } }),
     });
     await runGenerationShadow({ ...BASE, arms: ARMS_B, deps });
-    assert.ok(calls.reconcile.every((r) => r.unmeterable === true), 'missing usage → reconcile unmeterable');
+    assert.ok(calls.release.length > 0, 'failed calls free the reservation');
+    assert.equal(calls.reconcile.length, 0, 'a 429/500 storm must NOT keep max-cost reservations');
+  });
+  it('a SUCCESSFUL call missing its usage block reconciles as unmeterable (conservative keep)', async () => {
+    const { deps, calls } = harness({
+      callModel: async () => ({ result: { findings: [] }, conformant: true, failed: false, usage: { input_tokens: 0, output_tokens: 0, usageMissing: true } }),
+    });
+    await runGenerationShadow({ ...BASE, arms: ARMS_B, deps });
+    assert.ok(calls.reconcile.length > 0 && calls.reconcile.every((r) => r.unmeterable === true), 'successful-but-unmeterable → keep');
+    assert.equal(calls.release.length, 0);
   });
 });
 

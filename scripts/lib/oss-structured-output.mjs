@@ -50,10 +50,10 @@ const EMPTY_USAGE = Object.freeze({ input_tokens: 0, cached_tokens: 0, output_to
  * pre-flight estimate / conservative fallback instead, so an unmetered call
  * can never silently zero the burn against the hard € ceiling.
  */
-/** A trustworthy meterable token count: a finite, non-negative number. */
+/** A trustworthy meterable token count: an actual finite non-negative NUMBER.
+ * Strict `typeof` (Gemini gate R5): `Number(null|false|''|[])` coerce to 0. */
 function isValidCount(v) {
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 
 function normaliseUsage(u, latencyMs) {

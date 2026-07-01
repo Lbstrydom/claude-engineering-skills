@@ -248,4 +248,10 @@ describe('model-pricing — usage→cost with null-cost policy', () => {
     assert.equal(costForBudget({ input_tokens: -1, output_tokens: 2 }, 'qwen/qwen3-coder').unmeterable, true); // invalid
     assert.equal(costForBudget({ input_tokens: 10, output_tokens: 20 }, 'qwen/qwen3-coder').unmeterable, false);
   });
+  it('costForBudget HONORS the explicit usageMissing flag even with sanitized 0 tokens (Gemini R3)', () => {
+    // The adapter's REAL output for a missing usage block: tokens clamped to 0
+    // (valid numbers) BUT usageMissing:true. The flag must win → unmeterable.
+    const r = costForBudget({ input_tokens: 0, output_tokens: 0, usageMissing: true }, 'qwen/qwen3-coder');
+    assert.equal(r.unmeterable, true, 'a successful-but-unmeterable call must not read as a real €0');
+  });
 });
