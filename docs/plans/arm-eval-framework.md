@@ -104,17 +104,31 @@ Rubric is DATA (per experiment) so dimensions can be tuned during calibration th
 | `scripts/lib/arm-eval/producers/plan.mjs` | create | Headless plan generation per author (shared plan seed) + runs the applicable cross-checks. |
 | `scripts/lib/arm-eval/producers/brainstorm.mjs` | create | Per-arm two-model brainstorm combination → synthesized take. |
 | `scripts/lib/arm-eval/decision.mjs` | create | Leaderboard + gate (self-consistency + human-agreement floor) → OSS-vs-baseline verdict, pure. |
-| `supabase/migrations/<ts>_arm_eval.sql` | create | `arm_eval_judgments` + `arm_eval_leaderboard` + `audit_runs.author_model`/`task_id`. |
-| `scripts/lib/store/arm-eval.mjs` | create | Persist judgments + spot-check writeback; leaderboard reader. |
+| `supabase/migrations/20260701160000_arm_eval.sql` | create | The full §10.1 lifecycle: `arm_eval_sessions`/`_runs`/`_outputs`/`_judgments`/`_human_rankings`/`_crosschecks` + `arm_eval_leaderboard` view + `audit_runs.author_model`/`task_id`/`arm_eval_run_id` (nullable) + nullable `model_ab_spend_ledger.arm_eval_run_id`. RLS + repo_id per §10.1/§10.8. |
+| `scripts/lib/store/arm-eval.mjs` | create | Persist sessions/runs/outputs/judgments/crosschecks + blinded human-ranking writeback; leaderboard reader. |
+| `scripts/lib/arm-eval/plan-seed.mjs` | create | Shared plan-generation seed (factored from `/plan-*`) so the producer + interactive skill don't drift. |
 | `scripts/cross-skill.mjs` | modify | `arm-eval-run` (produce+judge a task), `arm-eval-adjudicate` (blinded human spot-check), `arm-eval-stats`/`-decision`. |
 | `docs/arm-eval.md` | create | Runbook: the three experiments, the judge controls, the two-phase burn-in, the spot-check protocol. |
 | `tests/*` | create | experiments/validator, judge orchestration (deps-injected — blinding, order-randomization, double-pass), decision/leaderboard. |
 
-## 7. Execution Clustering
+### 7b. Implementation Phases
 
-- **Cluster A** — judge engine + experiments/rubric config + schema + decision/leaderboard — fix-gate: yes (the self-preference guard, spend cap, and judge-blinding are integrity-critical; converge first).
-- **Cluster B** — the two producers (plan, brainstorm) + cross-skill CLIs + runbook — fix-gate: final.
-- **Final gate**: mandatory consolidated Gemini review over A ∪ B.
+1. **Arm-configs + rubric + self-preference validator** (D1/D2, §10.2). Files: `scripts/lib/arm-eval/experiments.mjs` (create), `tests/arm-eval-experiments.test.mjs` (create).
+2. **Judge engine + intent-context pack** (D2/D8, §2, §10.3–§10.4). Files: `scripts/lib/arm-eval/judge.mjs` (create), `scripts/lib/arm-eval/intent-context.mjs` (create), `tests/arm-eval-judge.test.mjs` (create).
+3. **Schema + store** (D6, §5, §10.1). Files: `supabase/migrations/20260701160000_arm_eval.sql` (create), `scripts/lib/store/arm-eval.mjs` (create), `tests/arm-eval-store.test.mjs` (create).
+4. **Decision + leaderboard** (D2/D3, §10.3, §10.5). Files: `scripts/lib/arm-eval/decision.mjs` (create), `tests/arm-eval-decision.test.mjs` (create).
+5. **Producers + cross-checks** (D3/D4/D8, §10.2, §10.5, §10.9). Files: `scripts/lib/arm-eval/cross-checks.mjs` (create), `scripts/lib/arm-eval/producers/plan.mjs` (create), `scripts/lib/arm-eval/producers/brainstorm.mjs` (create), `scripts/lib/arm-eval/plan-seed.mjs` (create), `tests/arm-eval-producers.test.mjs` (create).
+6. **Cross-skill CLIs** (§6). Files: `scripts/cross-skill.mjs` (modify).
+7. **Runbook** (D10). Files: `docs/arm-eval.md` (create).
+8. **Close-out** (not a cluster phase): `npm test` + `node scripts/setup-postgres.mjs --migrate`/`--check-drift`.
+
+## 11. Execution Clustering
+
+- **Cluster A** — Phases 1–4 — fix-gate: yes
+  - Coupling: the arm-config + rubric + **self-preference validator** (Phase 1) define the arms/rubric the judge (Phase 2) consumes; the judge's blinded/order-randomized/double-pass output grain + the intent-context pack are the exact rows the schema (Phase 3) persists and the decision/leaderboard (Phase 4) scores — one seam (the judge output shape, the persisted grain, and the decision's gate inputs MUST match). INTEGRITY-critical (self-preference guard + judge blinding + spend cap + egress governance live here) → must converge before the producers that actually spend are wired.
+- **Cluster B** — Phases 5–7 — fix-gate: final
+  - Coupling: the producers + cross-checks (Phase 5) generate the per-(session × arm) outputs the Cluster-A judge/schema/decision consume; their egress + persistence + arm-eval-run linkage must match the Cluster-A contract. The CLIs (Phase 6) orchestrate produce→judge→adjudicate→decide; the runbook (Phase 7) documents the two-phase burn-in + spot-check the CLIs implement. Last cluster; gated by the consolidated Gemini pass.
+- **Final gate**: mandatory consolidated Gemini review over the union diff of A ∪ B.
 
 ## 8. Acceptance criteria
 
