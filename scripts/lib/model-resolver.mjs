@@ -69,15 +69,18 @@ export const OSS_POOL = Object.freeze({
   ]),
   // Reasoning-tuned open weights — the "reasoner" auditor arm (full reasoning
   // ON; reasoning-ablation is a KNOWN-dead end — never reintroduced).
-  // v2 (docs/plans/model-ab-harness-v2.md D4): HEAD = deepseek/deepseek-v4-pro —
-  // the reasoning-quality tier (VERIFIED live on OpenRouter 2026-07-01, 1M ctx,
-  // ~$0.435/$0.87 per 1M). Pro is FIXED for the burn-in ("see what good quality
-  // buys"). deepseek/deepseek-v4-flash (the cheap tier) is DELIBERATELY NOT in
-  // the pool — it is a MANUAL operator swap only (via OSS_REASONER_MODEL env),
-  // never auto-selected, so the "top-quality OSS vs frontier proprietary"
-  // comparison is never silently degraded. GLM-5.2 stays a rotation candidate.
+  // HEAD = z-ai/glm-5.2 (docs/plans/arm-eval-framework.md D0): the strongest
+  // open-weight model on BOTH the Artificial-Analysis Intelligence Index (51.1)
+  // and SWE-bench Pro (62.1%) as of 2026-07-01, and still ~5-10x cheaper than the
+  // GPT baseline ($0.93/$3.00 vs $5/$30 per 1M). deepseek/deepseek-v4-pro
+  // (cheapest, ~$0.43/$0.87 — best €-frontier if it ties) and qwen/qwen3.7-max
+  // follow as cost/quality ROTATION candidates; the burn-in decides the winner on
+  // OUR tasks, so this head is just the evidence-based default. Every id must
+  // exist on OpenRouter (verified live) + support structured output.
   reasoner: Object.freeze([
+    'z-ai/glm-5.2',
     'deepseek/deepseek-v4-pro',
+    'qwen/qwen3.7-max',
     'deepseek/deepseek-r1',
     'moonshotai/kimi-k2-thinking',
     'qwen/qwen3-235b-a22b-thinking',
