@@ -146,9 +146,11 @@ sibling `duplicate` with `--canonical` + the root's fingerprint (the how-to is a
 the top of the worksheet; items are sorted so likely-duplicates sit adjacent).
 
 ```powershell
-# 1. Render the review worksheet (default out: .audit/model-ab-adjudication-worksheet.md)
+# 1. Render the review worksheet (default: worksheet is written on every plain listing;
+# out: docs/arm-eval/worksheets/model-ab-adjudication-worksheet.md — gitignored, regenerable.
+# Raw queue JSON for scripts: add --json. Prune old working files: npm run audit:clean)
 $runId = "93580799-977d-4fef-9465-fbe4be47213c"   # from model-ab-stats / the queue listing
-node scripts/cross-skill.mjs model-ab-adjudicate --run-id $runId --worksheet
+node scripts/cross-skill.mjs model-ab-adjudicate --run-id $runId
 
 # 2. Paste the per-finding commands from the worksheet. They look like:
 node scripts/cross-skill.mjs model-ab-adjudicate --run-id $runId --fingerprint e476d966 --action accepted

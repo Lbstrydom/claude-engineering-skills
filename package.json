@@ -89,7 +89,9 @@
     "parity:check-refs:strict": "node scripts/postgres-parity/check-non-core-references.mjs --strict",
     "parity:check-coupling": "node scripts/postgres-parity/check-non-core-references.mjs --schema-coupling --strict",
     "parity:expected-schema": "node scripts/postgres-parity/generate-expected-schema.mjs",
-    "parity:record-fixtures": "node scripts/postgres-parity/record-golden-fixtures.mjs"
+    "parity:record-fixtures": "node scripts/postgres-parity/record-golden-fixtures.mjs",
+    "audit:clean": "node scripts/audit-clean.mjs",
+    "audit:clean:apply": "node scripts/audit-clean.mjs --apply"
   },
   "keywords": [
     "claude",

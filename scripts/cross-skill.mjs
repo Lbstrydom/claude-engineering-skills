@@ -550,7 +550,7 @@ async function cmdFinalReviewStats() {
   // the FIRST raw-JSON adjudication failure — see lib/adjudication-worksheet.mjs).
   if (process.argv.includes('--worksheet') && res.ok) {
     const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
-    const { writeFileSync, mkdirSync } = await import('node:fs');
+    const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
     const pending = (res.shadowOnlyQueue || []).filter((f) => !f.user_action);
     const md = renderAdjudicationWorksheet({
       title: `Final-review shadow-only spot-check — repo ${repoName}`,
@@ -565,8 +565,9 @@ async function cmdFinalReviewStats() {
       commandFor: (it, a) => `node scripts/cross-skill.mjs final-review-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a}`,
       generatedAt: new Date().toISOString(),
     });
-    const out = argOption('out') || '.audit/final-review-adjudication-worksheet.md';
-    mkdirSync('.audit', { recursive: true });
+    const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
+    const out = argOption('out') || `${dir}/final-review-adjudication-worksheet.md`;
+    mkdirSync(dir, { recursive: true });
     writeFileSync(out, md);
     process.stderr.write(`  [final-review-stats] worksheet: ${pending.length} pending finding(s) → ${out}\n`);
     return emit({ ok: true, cloud: res.cloud, count: pending.length, worksheet: out });
@@ -608,11 +609,13 @@ async function cmdModelAbAdjudicate() {
     const runId = argOption('run-id');
     const limit = Number(argOption('limit')) || 50;
     const q = await getModelAbAdjudicationQueue({ runId, limit });
-    // --worksheet: human-grade markdown with paste-ready commands (the JSON
-    // dump failed the operator twice — see lib/adjudication-worksheet.mjs).
-    if (process.argv.includes('--worksheet')) {
+    // Adjudication is a HUMAN activity by design (the scorer's anti-circularity),
+    // so the human surface is the DEFAULT: the listing writes the paste-ready
+    // markdown worksheet. `--json` is the escape hatch for scripts. (The raw-JSON
+    // default failed the operator twice — see lib/adjudication-worksheet.mjs.)
+    if (!process.argv.includes('--json')) {
       const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
-      const { writeFileSync, mkdirSync } = await import('node:fs');
+      const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
       const md = renderAdjudicationWorksheet({
         title: `Model-A/B/C blinded adjudication${runId ? ` — run ${runId.slice(0, 8)}…` : ''}`,
         introLines: [
@@ -628,10 +631,13 @@ async function cmdModelAbAdjudicate() {
         commandFor: (it, a) => `node scripts/cross-skill.mjs model-ab-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a}`,
         generatedAt: new Date().toISOString(),
       });
-      const out = argOption('out') || '.audit/model-ab-adjudication-worksheet.md';
-      mkdirSync('.audit', { recursive: true });
+      // Discoverable home next to the arm-eval session archives (gitignored —
+      // Category-A volatile state); .audit/ fallback for repos without docs/arm-eval.
+      const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
+      const out = argOption('out') || `${dir}/model-ab-adjudication-worksheet.md`;
+      mkdirSync(dir, { recursive: true });
       writeFileSync(out, md);
-      process.stderr.write(`  [model-ab-adjudicate] worksheet: ${q.items.length} pending finding(s) → ${out}\n`);
+      process.stderr.write(`  [model-ab-adjudicate] worksheet: ${q.items.length} pending finding(s) → ${out}\n  (raw queue JSON: add --json)\n`);
       return emit({ ok: true, cloud: q.cloud, blinded: true, count: q.items.length, worksheet: out });
     }
     return emit({ ok: true, cloud: q.cloud, blinded: true, count: q.items.length, queue: q.items });

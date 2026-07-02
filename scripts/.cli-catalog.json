@@ -337,6 +337,14 @@
     "efficacy:check": {
       "description": "Run the deterministic efficacy lints (cache-inertness, cache-instability, canary-no-test) — the GREEN≠REALIZED Cluster A check. Off by default; opt in via a committed efficacy-lints.config.json. Advisory in `npm run check` unless gate:true.",
       "category": "audit"
+    },
+    "audit:clean": {
+      "description": "Age-gated, allowlist-only pruning of transient .audit/ + worksheet working files (dry-run).",
+      "category": "diagnostic"
+    },
+    "audit:clean:apply": {
+      "description": "audit:clean with deletion applied (transient files older than 14d; keep-list guarded).",
+      "category": "diagnostic"
     }
   }
 }

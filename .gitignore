@@ -57,6 +57,23 @@ scripts/lib/consumer-repos.local.json
 .audit/*-meta-assessment.md
 .audit/*-ledger.json
 .audit/gemini-result.json
+# Runtime state + per-cycle working files that had drifted out of this list
+# (they made `git status` show a noisy `?? .audit/`). Prune the transient ones
+# with `npm run audit:clean`.
+.audit/cache-metrics.jsonl
+.audit/cycle-cluster-state.json
+.audit/.outcomes-finalized
+.audit/last-audit-run.json
+.audit/spot-check/
+.audit/*.patch
+.audit/*.log
+.audit/burnin*
+.audit/cluster*
+.audit/*worksheet*.md
+
+# Human adjudication worksheets — regenerated on every queue listing
+# (Category-A volatile state; discoverable next to the session archives)
+docs/arm-eval/worksheets/
 
 # Install receipt + transaction journal (per-machine state)
 # .tmp.<pid>.<timestamp>.<rand> suffix is the in-flight write-then-rename
