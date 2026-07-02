@@ -19,7 +19,7 @@ Implement graceful degradation when GEMINI_API_KEY is absent in the final-review
 
 ### Arm GPT
 
-- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Models: `{"models":["latest-gpt"],"resolved":"gpt-5.5","backfillNote":"backfilled 2026-07-02: sentinel resolved against live catalog same-day as all runs"}`
 - Conformant: true
 - Output hash: `c8cd24bbd9073871`
 

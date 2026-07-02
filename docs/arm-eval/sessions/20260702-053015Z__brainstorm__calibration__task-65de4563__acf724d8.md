@@ -19,7 +19,7 @@ How should we structure a cache-invalidation strategy for the architecture map s
 
 ### Arm D
 
-- Models: `{"models":["latest-gpt","latest-pro"],"resolved":["latest-gpt","latest-pro"]}`
+- Models: `{"models":["latest-gpt","latest-pro"],"resolved":["gpt-5.5","gemini-pro-latest"],"backfillNote":"backfilled 2026-07-02: sentinel resolved against live catalog same-day as all runs"}`
 - Conformant: true
 - Output hash: `f44db905d3da9e6d`
 
@@ -914,7 +914,7 @@ That gives you a map that stays fresh, avoids full rebuilds in normal operation,
 
 ### Arm E
 
-- Models: `{"models":["z-ai/glm-5.2","latest-pro"],"resolved":["z-ai/glm-5.2","latest-pro"]}`
+- Models: `{"models":["z-ai/glm-5.2","latest-pro"],"resolved":["z-ai/glm-5.2","gemini-pro-latest"],"backfillNote":"backfilled 2026-07-02: sentinel resolved against live catalog same-day as all runs"}`
 - Conformant: true
 - Output hash: `1d222bdc2cf9f8a7`
 
@@ -984,7 +984,7 @@ Then implement **tiered volatility**: separate static topology generation from l
 
 ### Arm F
 
-- Models: `{"models":["z-ai/glm-5.2","latest-gpt"],"resolved":["z-ai/glm-5.2","latest-gpt"]}`
+- Models: `{"models":["z-ai/glm-5.2","latest-gpt"],"resolved":["z-ai/glm-5.2","gpt-5.5"],"backfillNote":"backfilled 2026-07-02: sentinel resolved against live catalog same-day as all runs"}`
 - Conformant: true
 - Output hash: `4fde3a0b7f6dfc35`
 

@@ -63,7 +63,9 @@ export async function produceBrainstorm({ topic, arm, deps = {} }) {
     output: conformant ? text : (text || null),
     outputHash: text ? hashText(text) : null,
     conformant,
-    resolvedModels: [m1, m2],
+    // CONCRETE ids the transport resolved + sent (reproducibility field) —
+    // sentinel fallback only if the transport didn't report.
+    resolvedModels: [takes[0]?.resolved || m1, takes[1]?.resolved || m2],
     usage: [takes[0]?.usage, takes[1]?.usage, synth?.usage],
     error: conformant ? null : 'synthesized take empty/too short',
   };

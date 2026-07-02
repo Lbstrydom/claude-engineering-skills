@@ -19,7 +19,7 @@ Implement a --since date filter on the adjudication ledger reader
 
 ### Arm GPT
 
-- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Models: `{"models":["latest-gpt"],"resolved":"gpt-5.5","backfillNote":"backfilled 2026-07-02: sentinel resolved against live catalog same-day as all runs"}`
 - Conformant: true
 - Output hash: `46a28a61b0531d4e`
 

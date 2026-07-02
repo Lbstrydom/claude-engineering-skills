@@ -50,7 +50,10 @@ export async function producePlan({ task, arm, contextPack = null, deps = {} }) 
     output: conformant ? text : text || null,
     outputHash: text ? hashText(text) : null,
     conformant,
-    resolvedModel: model,
+    // The CONCRETE id the transport resolved + sent (e.g. `gpt-5.5`, not the
+    // `latest-gpt` sentinel) — the archive's reproducibility field. Falls back
+    // to the arm's declared id only if the transport didn't report.
+    resolvedModel: call?.resolved || model,
     usage: call?.usage ?? null,
     error: conformant ? null : (text ? 'plan missing machine-readable intent block / too short' : 'empty output'),
     seedVersion: PLAN_SEED_VERSION,

@@ -19,7 +19,7 @@ Add a --max-output-tokens flag to arm-eval-run that caps each arm's generation l
 
 ### Arm GPT
 
-- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Models: `{"models":["latest-gpt"],"resolved":"gpt-5.5","backfillNote":"backfilled 2026-07-02: sentinel resolved against live catalog same-day as all runs"}`
 - Conformant: true
 - Output hash: `ac53f5984ba8db8f`
 

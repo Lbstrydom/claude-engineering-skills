@@ -19,7 +19,7 @@ Add a CSV export subcommand to cross-skill for the arm-eval leaderboard
 
 ### Arm GPT
 
-- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Models: `{"models":["latest-gpt"],"resolved":"gpt-5.5","backfillNote":"backfilled 2026-07-02: sentinel resolved against live catalog same-day as all runs"}`
 - Conformant: true
 - Output hash: `54d135bae5c3f409`
 

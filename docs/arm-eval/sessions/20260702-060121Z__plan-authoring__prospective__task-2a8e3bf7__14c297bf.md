@@ -19,7 +19,7 @@ Design a schema migration to add a soft-delete column to audit_findings with a p
 
 ### Arm GPT
 
-- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Models: `{"models":["latest-gpt"],"resolved":"gpt-5.5","backfillNote":"backfilled 2026-07-02: sentinel resolved against live catalog same-day as all runs"}`
 - Conformant: true
 - Output hash: `f18384b020d47065`
 

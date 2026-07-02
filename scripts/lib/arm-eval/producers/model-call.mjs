@@ -29,17 +29,17 @@ export async function callModelFreeText({ model, system, userPrompt, maxTokens =
     const { auditShadowConfig } = await import('../../config.mjs');
     const client = await createOpenAIClient({ oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey } });
     const resp = await client.chat.completions.create({ model: resolved, messages: [{ role: 'system', content: system }, { role: 'user', content: userPrompt }], max_tokens: maxTokens });
-    return { text: resp?.choices?.[0]?.message?.content ?? '', usage: { input_tokens: resp.usage?.prompt_tokens ?? 0, output_tokens: resp.usage?.completion_tokens ?? 0, latency_ms: Date.now() - start } };
+    return { text: resp?.choices?.[0]?.message?.content ?? '', resolved, usage: { input_tokens: resp.usage?.prompt_tokens ?? 0, output_tokens: resp.usage?.completion_tokens ?? 0, latency_ms: Date.now() - start } };
   }
   if (provider === 'gemini') {                         // Gemini via @google/genai
     const { GoogleGenAI } = await import('@google/genai');
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
     const resp = await ai.models.generateContent({ model: resolved, contents: `${system}\n\n${userPrompt}`, config: { maxOutputTokens: maxTokens } });
-    return { text: resp?.text ?? '', usage: { input_tokens: resp.usageMetadata?.promptTokenCount ?? 0, output_tokens: resp.usageMetadata?.candidatesTokenCount ?? 0, latency_ms: Date.now() - start } };
+    return { text: resp?.text ?? '', resolved, usage: { input_tokens: resp.usageMetadata?.promptTokenCount ?? 0, output_tokens: resp.usageMetadata?.candidatesTokenCount ?? 0, latency_ms: Date.now() - start } };
   }
   const { createOpenAIClient } = await import('../../openai-client.mjs');   // GPT via Responses
   const client = await createOpenAIClient({ purpose: 'gpt' });
   const resp = await client.responses.create({ model: resolved, input: [{ role: 'system', content: system }, { role: 'user', content: userPrompt }], max_output_tokens: maxTokens });
   const text = resp?.output_text ?? (resp?.output || []).map((o) => (o?.content || []).map((c) => c.text || '').join('')).join('');
-  return { text, usage: { input_tokens: resp.usage?.input_tokens ?? 0, output_tokens: resp.usage?.output_tokens ?? 0, latency_ms: Date.now() - start } };
+  return { text, resolved, usage: { input_tokens: resp.usage?.input_tokens ?? 0, output_tokens: resp.usage?.output_tokens ?? 0, latency_ms: Date.now() - start } };
 }
