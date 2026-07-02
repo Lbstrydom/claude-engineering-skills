@@ -1,5 +1,5 @@
 ---
-summary: The 15 finding classes — severity, gate-eligibility, guards that prevent false positives.
+summary: The 18 finding classes — severity, gate-eligibility, guards that prevent false positives.
 ---
 
 # Finding taxonomy
@@ -26,6 +26,9 @@ expected, actual, evidence, gateEligible, source}`. Severity defaults live in
 | `token_unreferenced` | info | ✗ | source-coherence (static, report-only) |
 | `token_undefined_reference` | info | ✗ | source-coherence (static, report-only) |
 | `token_duplicate_definition` | info | ✗ | source-coherence (static, report-only) |
+| `interactive_color_unset` | info | ✗ | theme-safety v1 static lint — only a form-control selector that styles the box (`background`/`border`) with NO `color`; value-aware box detection; report-only |
+| `unadapted_text_color` | P2 | ✗ | theme-safety v1 runtime — fires only when the winning `color`'s CDP **origin is `user-agent`** on an author-styled visible box (origin-based: any author color anywhere wins → silent); native form controls only; coverage loss → `unverified`, never clean |
+| `contrast_parity_delta` | P2 | ✗ | theme-safety v2 (`--verify --full-dom` only) — text contrast passes in ONE theme and fails in the other (XOR; both-fail = decorative → silent); joined across themes by un-truncated `livePath` within `scope:'fullDom'` nodes only; requires exactly 2 contract themes, both backdrops resolved, `hasText === true`; ambiguous/zero joins + empty sweep + partial capture matrix → `unverified`, never a silent clean |
 
 **Inferred-cluster outliers** reuse the `token_violation` class but are always
 `reportOnly: true` (never gate). The static run emits only the three

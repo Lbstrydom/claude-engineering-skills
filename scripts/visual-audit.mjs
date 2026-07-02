@@ -21,7 +21,7 @@ import path from 'node:path';
 import { writeOutput } from './lib/file-io.mjs';
 import { parseDevicesFlag } from './lib/device-presets.mjs';
 import {
-  VISUAL_TOOL_VERSION, computeContractDigest, computeConfigDigest, BASELINE_FILE,
+  VISUAL_TOOL_VERSION, VISUAL_VERIFY_TOOL_VERSION, computeContractDigest, computeConfigDigest, BASELINE_FILE,
 } from './lib/visual/schema.mjs';
 import { readContract, writeContract, bootstrapContract, contractExists } from './lib/visual/contract.mjs';
 import { extractAllowedSet } from './lib/visual/tokens.mjs';
@@ -273,7 +273,7 @@ async function main() {
   const statesCollected = ext.perState.map((s) => `${s.device}/${s.theme}`);
   const scorecard = buildScorecard(contract.surfaces, findings, ext.unverifiableSurfaces);
   const verifyResult = {
-    version: 1,
+    version: VISUAL_VERIFY_TOOL_VERSION, // the constant, never a literal — a version bump must not desync writer vs schema (found live by the v2 empirical run)
     url: args.verify,
     generatedAt: gitHeadDate(root) || new Date(0).toISOString().replace('Z', '+00:00'),
     contractDigest,

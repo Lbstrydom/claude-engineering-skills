@@ -78,6 +78,51 @@ The gate refuses to report a clean pass when it didn't actually evaluate anythin
   report a clean pass; use `--scope full` or a full-history checkout. (Previously a
   warn-then-exit-0 — the silent false-green this guard closes.)
 - **Zero states captured** (dead server) → exit 2 (above).
+- **Partial capture matrix** (a device×theme cell failed — e.g. the dark capture
+  timed out while light succeeded) → each missing cell is a structured
+  `missingStates` entry + a per-cell warning in the verify result; the theme-pair
+  tiers for that device degrade to the captured subset (warned, never silent).
+  **Under `--gate` → exit 2** — a blocking gate must not claim a matrix it didn't
+  capture.
+- **Theme-apply integrity**: a `class`/`attribute` theme whose apply target matches
+  nothing is surfaced as a warning (the state's parity evidence is suspect) — a
+  silently-unflipped theme would fabricate parity evidence.
+- **`--themes` with an unknown name** → **exit 2** (the contract theme list is the
+  single source of truth; a silent drop would capture a different matrix than
+  requested).
+
+### Theme-safety v2 — `--full-dom` (opt-in, advisory, default-off)
+
+`--verify <url> --full-dom [--full-dom-node-budget <n>]` adds the **full-DOM contrast
+parity-delta sweep** (`contrast_parity_delta`, report-only — see
+`finding-taxonomy.md`). Design invariants:
+
+- **Verify-only**: `--full-dom` without `--verify` → **exit 2** (a silent no-op would
+  read as "full-DOM ran, found nothing").
+- **Node isolation (never gates)**: full-DOM nodes carry `scope:'fullDom'` and are
+  consumed ONLY by the parity-delta producer; every gate-eligible producer sees
+  `scope:'contracted'` nodes only. The two sets are disjoint by construction, so the
+  sweep can never gate, and the absolute `contrast_failure` stays contracted-only.
+- **Default-off = no behaviour change**: with the flag off, zero `fullDom` nodes are
+  captured, the delta is inert, and raw capture output is byte-unchanged (the `scope`
+  tag is stamped by a **cloning** assembly normalizer, never onto raw capture).
+- **Bounded traversal**: an incremental `TreeWalker` (not `querySelectorAll('*')`),
+  pruning already-captured contracted subtrees whole (`FILTER_REJECT` on a
+  page-mutation-free `WeakSet`); the budget bounds **emitted text candidates**
+  (default 4000; visit ceiling 25×) so empty wrappers don't consume it; clipping sets
+  `captureStats.truncated` + a warning. Known limit: `TreeWalker` does not pierce
+  shadow roots.
+- **Coverage honesty** (all machine-readable in the verify result): requested sweep
+  that emitted nothing despite candidates → `unverified(fulldom_capture_empty)`;
+  contract must declare exactly 2 distinct themes → else
+  `unverified(unsupported_theme_count)`; all joins ambiguous →
+  `unverified(all_candidates_ambiguous)`; candidates on both sides but zero
+  cross-theme `livePath` joins (structural divergence between themes) →
+  `unverified(no_joinable_candidates)`. Never a silent clean.
+- **Gate-promotion trigger** (named, not yet done): after one real field run
+  confirms an acceptable FP rate AND the empty-capture degrade is proven live,
+  promotion is a one-line `GATE_ELIGIBLE_CLASSES` add (drift-only scoping applies
+  automatically).
 
 > The no-surfaces / no-merge-base / all-unverifiable cases share one pure decision
 > point — `gateUnverifiedReason()` in `scripts/lib/visual/drift.mjs` (tested in

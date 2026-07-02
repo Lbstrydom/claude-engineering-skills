@@ -78,7 +78,8 @@ second flag `--allow-external-screenshot`.
 | `--scope diff\|full` | gate scope (default `diff` = changed contracted surface; `full` = whole contracted surface). Under `--gate`: `diff` blocks on findings whose surface's files changed; `full` blocks on every gate-eligible finding on a declared surface (both then filtered by the baseline) |
 | `--verify <url>` | live computed-style reconcile + the four tiers |
 | `--device <csv>` | device presets, default `desktop,mobile` (`desktop\|desktop-large\|tablet\|mobile\|mobile-small`) |
-| `--theme <csv>` | subset of contract themes to capture (default all) |
+| `--theme <csv>` | subset of contract themes to capture (default all; unknown name → exit 2, never a silent drop) |
+| `--full-dom [--full-dom-node-budget <n>]` | theme-safety v2: opt-in full-DOM contrast parity-delta sweep (verify-only — without `--verify` → exit 2; advisory, never gates; budget default 4000 emitted text candidates) |
 | `--storage-state <file>` | Playwright storageState for auth |
 | `--gate` | drift-only CI exit (non-zero on a changed-surface gate-blocker NOT in the baseline) |
 | `--update-baseline` | snapshot today's gate-eligible findings into `visual-audit-baseline.json` (committed) so `--gate` then blocks only on NEW findings |
@@ -101,28 +102,39 @@ Exit codes: `0` clean/advisory · `1` gate-blocking divergence (`--gate`) · `2`
 `token_violation`, `theme_geometry_drift`, `theme_unmapped_token`, `contrast_failure`,
 `layout_overflow`, `content_clipping`, `unexpected_overlap`, `image_distortion`,
 `missing_visible_focus`, `disabled_not_signified` are **gate-eligible**.
-`state_has_no_visual_delta`, `component_inconsistency`, inferred-cluster outliers, and the
-`token_unreferenced` / `token_undefined_reference` / `token_duplicate_definition` coherence
-diagnostics are **report-only**. Full rules: `references/finding-taxonomy.md`.
+`state_has_no_visual_delta`, `component_inconsistency`, `contrast_parity_delta`,
+inferred-cluster outliers, and the `token_unreferenced` / `token_undefined_reference` /
+`token_duplicate_definition` coherence diagnostics are **report-only**. Full rules:
+`references/finding-taxonomy.md`.
 
-**Theme-safety (v1, advisory) — "color that didn't adapt to dark mode".** Two **report-only**
-classes catch a form control whose text color was left to the UA default (`ButtonText`≈black:
-fine on light, black-on-dark in dark). `interactive_color_unset` = the **static** lint
-(no browser): a form-control selector (`button`/`select`/`input`/`textarea`/`.btn*`) sets
-`background`/`border` but not `color`; runs in every static run (the `--gate` refusal is
-UNCHANGED — these are advisory, not paint). `unadapted_text_color` = the **`--verify`
-single-render** check: the winning `color` declaration's CDP origin is `user-agent` while an
-author sets a visible box color (background/border). Origin-based (survives the `background`
-shorthand + inherited/companion author color); v1 scope = native form controls only. Neither
-gates in v1 — gate-promotion, the two-theme parity-delta, full-DOM, and modal `activate`-reach
-are v1.1/v2 (`docs/plans/visual-audit-theme-safety-v1.md`).
+**Theme-safety (v1 + v2, advisory) — "color that didn't adapt to dark mode".** Three
+**report-only** classes. `interactive_color_unset` = the **static** lint (no browser): a
+form-control selector (`button`/`select`/`input`/`textarea`/`.btn*`) sets `background`/`border`
+but not `color`; runs in every static run (the `--gate` refusal is UNCHANGED — these are
+advisory, not paint). `unadapted_text_color` = the **`--verify` single-render** check: the
+winning `color` declaration's CDP origin is `user-agent` while an author sets a visible box
+color (background/border). Origin-based (survives the `background` shorthand +
+inherited/companion author color); scope = native form controls only. `contrast_parity_delta`
+= the **v2 `--verify --full-dom`** check: a text node whose contrast **passes in one theme and
+fails in the other** (the XOR fingerprint of a non-adapting color — decorative low-contrast
+fails in *both* themes, so no delta). **Scope-disjoint by construction**: the gate-eligible
+absolute `contrast_failure` sees contracted-surface nodes ONLY; the parity-delta sees the
+full-DOM sweep's `scope:'fullDom'` nodes ONLY — never consolidate them, the split IS the
+design (the delta is what keeps a full-page sweep low-noise where absolute contrast would
+drown). Full-DOM joins across themes use the un-truncated `livePath` (the depth-8 `nodeKey`
+collides on repeated deep structures); capture honesty degrades to `unverified` on empty
+sweep / all-ambiguous joins / zero cross-theme joins / partial device×theme matrix — never a
+silent clean. Known capture limits: `TreeWalker` does not pierce shadow roots; the budget
+bounds *emitted text candidates* (default 4000, `truncated` stat on clip). NOTHING here gates —
+gate-promotion of all three classes and modal `activate`-reach remain v1.1
+(`docs/plans/visual-audit-theme-safety-v1.md`; v2: `visual-audit-theme-safety-v2.md`).
 
 ## Reference files
 
 | File | Summary | Read when |
 |---|---|---|
 | `references/token-extraction-and-adapters.md` | Token-source adapters (Tailwind/CSS-vars/JSON), allowed-set normalization, inferred-cluster fallback. | Adding/​debugging a token source, or a value reconciles wrong. |
-| `references/finding-taxonomy.md` | The 15 finding classes — severity, gate-eligibility, guards that prevent false positives. | Triaging a finding, or deciding if a check is in-scope. |
+| `references/finding-taxonomy.md` | The 18 finding classes — severity, gate-eligibility, guards that prevent false positives. | Triaging a finding, or deciding if a check is in-scope. |
 | `references/contract-and-bootstrap.md` | `visual-contract.json` schema + `--bootstrap` recipe, `data-visual-id` opt-in, theme-apply protocol. | Authoring/​editing the contract, or theme capture misbehaves. |
 | `references/ci-gate-and-verify.md` | Drift-only changed-surface gate, the `ChangedScopeResolver` rules, capture-honesty, exit codes. | Wiring CI, or a finding gates/​doesn't-gate unexpectedly. |
 | `examples/example-report.md` | A sample human + JSON visual-audit report for reference. | Want to see the output shape before running. |
