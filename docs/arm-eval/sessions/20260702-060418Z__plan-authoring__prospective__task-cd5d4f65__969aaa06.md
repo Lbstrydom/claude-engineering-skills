@@ -9,84 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T06:04:18.103Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Add a CSV export subcommand to cross-skill for the arm-eval leaderboard
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
 
-## Plan — Add CSV Export Subcommand to `cross-skill` for Arm‑Eval Leaderboard
-
-### Overview
-Add a `csv` subcommand to `scripts/cross-skill.mjs` that exports the arm‑eval leaderboard as a CSV file.  
-The export re‑uses the existing leaderboard data retrieval already available to the cross‑skill bridge (e.g., from the learning‑store domain), formats rows with proper escaping, and writes the file using the atomic‑write utility from shared‑lib to meet persistence safety requirements.  
-No new production files are created; the change is localised to `scripts/cross-skill.mjs`.
-
-### Design Decisions (with rationale)
-
-1. **Subcommand, not standalone script**  
-   Logically belongs to the cross‑skill evaluation tool; avoids fragmentation and follows the existing CLI pattern where subcommands like `eval`, `compare`, etc. are already dispatched inside `cross-skill.mjs`.
-
-2. **CSV format chosen over JSON/TSV**  
-   CSV is the most universally consumable format for external analysis (spreadsheets, BI tools). The leaderboard is tabular, so CSV fits naturally.
-
-3. **No external CSV library**  
-   The repository avoids heavy dependencies for simple output tasks. A small helper that escapes commas, quotes, and line breaks is sufficient and keeps the dependency footprint zero.
-
-4. **Output file via `--output` flag; safe default**  
-   The user may specify `--output path/to/out.csv`. If omitted, a timestamped file (e.g. `arm-eval-leaderboard-20260701T120000.csv`) is written to the current working directory.  
-   This respects user intent while preventing accidental overwrite (unless `--force` is given) and avoids writing to arbitrary system paths through path‑traversal checks.
-
-5. **Atomic write**  
-   Uses `atomicWrite` from shared‑lib (already available per the symbol index) to write the file fully or not at all, satisfying `REQ-persistence-6623d196`.
-
-6. **Data source**  
-   Assumes the leaderboard is obtainable from the learning‑store domain through a function like `getArmEvalLeaderboard()` already in use by other cross‑skill subcommands. If such a function does not yet exist, a thin adapter that reads the raw eval records and ranks them will be created **inside** `cross-skill.mjs` (not in shared‑lib) to keep the export logic self‑contained. The plan does **not** add new database queries or change the storage schema.
-
-7. **Single leaderboard, single file**  
-   Only the arm‑eval leaderboard is exported. Multi‑leaderboard support is left for a future enhancement. This keeps the scope right‑sized: the smallest solution that truly solves the problem.
-
-### File‑level Plan
-
-**Modify** `scripts/cross-skill.mjs`  
-- Add a new function `csvExport(args)` that:
-  1. Parses `--output` and `--force` from `args`.
-  2. Validates the output path (resolved absolute path must stay inside the working directory or a safe user‑specified location; reject paths containing `..` sequences that escape the expected root).
-  3. Fetches the leaderboard data (via the existing `getArmEvalLeaderboard()` or similar).
-  4. Builds a CSV string: first row header (columns: rank, model, version, score, … – derived from the actual leaderboard schema), then one row per entry with proper CSV escaping (commas, double‑quotes, newlines).
-  5. Writes the string to the target path using `atomicWrite` (imported from `scripts/lib/shared-lib/fs-utils.mjs` or equivalent).
-  6. Prints success message to stderr with the file path.
-- Register the subcommand in the already‑existing dispatch table (e.g., `subcommands.csv = csvExport`).
-- Export `csvExport` for testability (the file already exports several functions).
-
-No new files are created – the entire feature lives in a single, testable function within the existing domain boundary.
-
-### Risks
-- **Missing leaderboard function** – if a dedicated aggregation function does not exist, the implementation will compute the leaderboard on‑the‑fly. This may require an extra data load but is deterministic and testable.
-- **Large leaderboard** – arm‑eval likely contains a moderate number of entries; CSV generation is O(n) and well within Node’s capabilities. If the leaderboard grows very large, streaming could be introduced later.
-- **CSV injection** – if any field originates from user‑supplied data, the escaping rules (RFC 4180) prevent formula injection in spreadsheet applications. The plan includes prefixing fields that start with `=`, `+`, `-`, `@` with a tab character (or single quote) as an extra safeguard.
-- **File permission errors** – handled gracefully by printing a clear error message and returning a non‑zero exit code.
-- **Path traversal** – rejected by the path validation step, preventing writes outside the intended directory.
-
-## Target Paths
-- `scripts/cross-skill.mjs` — modify to add `csvExport` function, register subcommand, and export the function.
-
-## Section 9 — Acceptance Criteria
-1. Running `node scripts/cross-skill.mjs csv` without `--output` creates a CSV file named `arm-eval-leaderboard-<timestamp>.csv` in the current working directory.
-2. The generated CSV contains a header row and one row per leaderboard entry, with columns matching the arm‑eval leaderboard schema (exact columns to be confirmed during implementation, but at minimum: rank, model name, primary metric).
-3. Fields containing commas, double‑quotes, or newline characters are correctly escaped according to RFC 4180.
-4. Running with `--output path/to/file.csv` writes the CSV to the specified path; the path is validated to prevent directory traversal (e.g., `../outside.csv` is rejected with an error message and non‑zero exit code).
-5. If the output file already exists, the command fails with a distinct error message unless `--force` is supplied.
-6. The write operation is atomic: no partial or truncated CSV files are left on disk if the process crashes mid‑write.
-7. When the leaderboard data is unavailable (e.g., empty or broken store), the command exits with an appropriate error message and non‑zero status – it never outputs a file with only a header.
-8. The subcommand can be tested in isolation: the exported `csvExport` function accepts a mock `args` object and returns a promise that resolves when the file is written (or rejects on error), allowing unit tests without touching the real filesystem.
-9. Existing subcommands (`eval`, `compare`, …) continue to work without any change in behaviour (regression test via existing integration tests).
-
-### output-2
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `54d135bae5c3f409`
 
 # Implementation Plan: CSV Export Subcommand for `cross-skill` arm-eval Leaderboard
 
@@ -387,7 +322,84 @@ Prefer using existing test helpers and temporary-directory patterns already pres
 
 10. Automated tests cover CSV header order, escaping, formula mitigation, empty leaderboard behavior, and CLI dispatch for the new subcommand.
 
-### output-3
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `f4c4b67abee64b60`
+
+## Plan — Add CSV Export Subcommand to `cross-skill` for Arm‑Eval Leaderboard
+
+### Overview
+Add a `csv` subcommand to `scripts/cross-skill.mjs` that exports the arm‑eval leaderboard as a CSV file.  
+The export re‑uses the existing leaderboard data retrieval already available to the cross‑skill bridge (e.g., from the learning‑store domain), formats rows with proper escaping, and writes the file using the atomic‑write utility from shared‑lib to meet persistence safety requirements.  
+No new production files are created; the change is localised to `scripts/cross-skill.mjs`.
+
+### Design Decisions (with rationale)
+
+1. **Subcommand, not standalone script**  
+   Logically belongs to the cross‑skill evaluation tool; avoids fragmentation and follows the existing CLI pattern where subcommands like `eval`, `compare`, etc. are already dispatched inside `cross-skill.mjs`.
+
+2. **CSV format chosen over JSON/TSV**  
+   CSV is the most universally consumable format for external analysis (spreadsheets, BI tools). The leaderboard is tabular, so CSV fits naturally.
+
+3. **No external CSV library**  
+   The repository avoids heavy dependencies for simple output tasks. A small helper that escapes commas, quotes, and line breaks is sufficient and keeps the dependency footprint zero.
+
+4. **Output file via `--output` flag; safe default**  
+   The user may specify `--output path/to/out.csv`. If omitted, a timestamped file (e.g. `arm-eval-leaderboard-20260701T120000.csv`) is written to the current working directory.  
+   This respects user intent while preventing accidental overwrite (unless `--force` is given) and avoids writing to arbitrary system paths through path‑traversal checks.
+
+5. **Atomic write**  
+   Uses `atomicWrite` from shared‑lib (already available per the symbol index) to write the file fully or not at all, satisfying `REQ-persistence-6623d196`.
+
+6. **Data source**  
+   Assumes the leaderboard is obtainable from the learning‑store domain through a function like `getArmEvalLeaderboard()` already in use by other cross‑skill subcommands. If such a function does not yet exist, a thin adapter that reads the raw eval records and ranks them will be created **inside** `cross-skill.mjs` (not in shared‑lib) to keep the export logic self‑contained. The plan does **not** add new database queries or change the storage schema.
+
+7. **Single leaderboard, single file**  
+   Only the arm‑eval leaderboard is exported. Multi‑leaderboard support is left for a future enhancement. This keeps the scope right‑sized: the smallest solution that truly solves the problem.
+
+### File‑level Plan
+
+**Modify** `scripts/cross-skill.mjs`  
+- Add a new function `csvExport(args)` that:
+  1. Parses `--output` and `--force` from `args`.
+  2. Validates the output path (resolved absolute path must stay inside the working directory or a safe user‑specified location; reject paths containing `..` sequences that escape the expected root).
+  3. Fetches the leaderboard data (via the existing `getArmEvalLeaderboard()` or similar).
+  4. Builds a CSV string: first row header (columns: rank, model, version, score, … – derived from the actual leaderboard schema), then one row per entry with proper CSV escaping (commas, double‑quotes, newlines).
+  5. Writes the string to the target path using `atomicWrite` (imported from `scripts/lib/shared-lib/fs-utils.mjs` or equivalent).
+  6. Prints success message to stderr with the file path.
+- Register the subcommand in the already‑existing dispatch table (e.g., `subcommands.csv = csvExport`).
+- Export `csvExport` for testability (the file already exports several functions).
+
+No new files are created – the entire feature lives in a single, testable function within the existing domain boundary.
+
+### Risks
+- **Missing leaderboard function** – if a dedicated aggregation function does not exist, the implementation will compute the leaderboard on‑the‑fly. This may require an extra data load but is deterministic and testable.
+- **Large leaderboard** – arm‑eval likely contains a moderate number of entries; CSV generation is O(n) and well within Node’s capabilities. If the leaderboard grows very large, streaming could be introduced later.
+- **CSV injection** – if any field originates from user‑supplied data, the escaping rules (RFC 4180) prevent formula injection in spreadsheet applications. The plan includes prefixing fields that start with `=`, `+`, `-`, `@` with a tab character (or single quote) as an extra safeguard.
+- **File permission errors** – handled gracefully by printing a clear error message and returning a non‑zero exit code.
+- **Path traversal** – rejected by the path validation step, preventing writes outside the intended directory.
+
+## Target Paths
+- `scripts/cross-skill.mjs` — modify to add `csvExport` function, register subcommand, and export the function.
+
+## Section 9 — Acceptance Criteria
+1. Running `node scripts/cross-skill.mjs csv` without `--output` creates a CSV file named `arm-eval-leaderboard-<timestamp>.csv` in the current working directory.
+2. The generated CSV contains a header row and one row per leaderboard entry, with columns matching the arm‑eval leaderboard schema (exact columns to be confirmed during implementation, but at minimum: rank, model name, primary metric).
+3. Fields containing commas, double‑quotes, or newline characters are correctly escaped according to RFC 4180.
+4. Running with `--output path/to/file.csv` writes the CSV to the specified path; the path is validated to prevent directory traversal (e.g., `../outside.csv` is rejected with an error message and non‑zero exit code).
+5. If the output file already exists, the command fails with a distinct error message unless `--force` is supplied.
+6. The write operation is atomic: no partial or truncated CSV files are left on disk if the process crashes mid‑write.
+7. When the leaderboard data is unavailable (e.g., empty or broken store), the command exits with an appropriate error message and non‑zero status – it never outputs a file with only a header.
+8. The subcommand can be tested in isolation: the exported `csvExport` function accepts a mock `args` object and returns a promise that resolves when the file is written (or rejects on error), allowing unit tests without touching the real filesystem.
+9. Existing subcommands (`eval`, `compare`, …) continue to work without any change in behaviour (regression test via existing integration tests).
+
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `ee1681faebe7e09d`
 
 # Plan: CSV Export Subcommand for arm-eval Leaderboard
 
@@ -460,4 +472,19 @@ Add a `export-csv` subcommand to `scripts/cross-skill.mjs` that reads the arm-ev
 8. `--limit N` truncates output to the top N rows (respecting existing sort order) and is validated as a non-negative integer.
 9. `rowsToCsv` is a pure function with no I/O side effects, covered by unit tests including edge cases (null values, Unicode, empty strings).
 10. No new third-party dependencies are introduced; all CSV logic is implemented in-repo.
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":3,"right_sizing":4,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-2 | GPT | `{"reuse":4,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+| 1 | output-3 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":4,"completeness":5,"right_sizing":5,"risk_handling":4,"implementability":4,"repo_intent_fidelity":5,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 2 | output-1 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":3,"right_sizing":4,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":4}` |
+| 2 | output-2 | GPT | `{"reuse":4,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+| 2 | output-3 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":4,"completeness":5,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+
+## Human ranking (best → worst)
+
+- output-3 > output-2 > output-1 — review-mode (2026-07-02T08:04:53.440Z)
 

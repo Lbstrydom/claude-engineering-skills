@@ -9,68 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T06:11:39.345Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Add on-disk caching of the resolved model catalog with a TTL to cut startup latency
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
 
-## Overview
-
-**Problem:** At startup, the CLI tool resolves the model catalog (list of available models) by calling an external API. This call is the dominant source of startup latency and is repeated on every invocation.  
-**Solution:** Add an on‑disk cache with a configurable TTL for the resolved model catalog. The cache is a single JSON file, written atomically, that stores the API response and a timestamp. The resolver checks the cache first; if it is present and fresh, it returns the cached data instantly. On cache miss or expiry, it fetches from the API, updates the cache, and returns the result. This reduces startup latency without changing the contract of the rest of the system.
-
-The implementation respects the existing architecture: the caching logic lives in the `stores` domain (`scripts/lib/store/`) and is consumed by the `audit-orchestration` domain (which currently fetches the model catalog). The cache module is reusable, but the plan is scoped to the model catalog only.
-
-## Design Decisions
-
-| Decision | Rationale |
-|----------|-----------|
-| **On‑disk JSON file cache** | Simplest persistent store that works across processes. No extra dependencies. Aligns with the existing `stores` domain that already manages file‑based stores. |
-| **Atomic writes (temp file + rename)** | Prevents corruption if the process crashes mid‑write. Satisfies invariant `REQ‑persistence‑d8f9613d` (safe persistence). |
-| **TTL via a configurable environment variable** | Allows operators to tune freshness. Default 1 hour balances latency reduction with the risk of stale data. |
-| **New module `scripts/lib/store/cache.mjs`** | Places the cache in the `stores` domain, which has no external dependencies beyond `shared‑lib`. Clean separation; the audit code just imports and uses it. |
-| **Modify the existing model‑catalog resolver** in `scripts/openai-audit.mjs` (or the file that currently fetches the list) | Directly wraps the existing fetch call with the cache. No new abstractions in the audit domain; minimal blast radius. |
-| **No library bloat** | Node’s built‑in `fs`, `path`, and `crypto` (for checksum if needed) suffice. We avoid frameworks like `node‑cache` that would over‑engineer a simple disk cache. |
-| **Graceful fallback on corrupt cache** | If the cache file exists but is unparseable, the module treats it as a miss and fetches fresh data. The system remains operational. |
-
-## File‑level plan
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `scripts/lib/store/cache.mjs` | **Create** | Exports a function `createCache({ cacheDir, ttlSeconds, buildKey })` that returns `{ get, set }`. The `get` function checks for a fresh, valid cache file; `set` writes a new cache file atomically using a temporary file and rename. Uses `fs` and `path` from `shared‑lib`. |
-| `scripts/openai-audit.mjs` (or the file currently resolving the model catalog) | **Modify** | Imports the new cache module. In the place where the model list is fetched, wraps the API call with a cache‑aware `getModelCatalog()` that calls `cache.get(key)` and upon miss fetches, calls `cache.set(key, data)`, and returns the data. The key is a constant string (e.g., `"model-catalog"`). The cache directory is derived from `PROJECT_ROOT/.cache/model-catalog` (or a similar project‑local path). The TTL is read from `process.env.MODEL_CATALOG_CACHE_TTL_SECONDS ?? 3600`. |
-| `tests/unit/lib/store/cache.test.mjs` | **Create** | Unit tests for the cache module using a mock file system (`memfs` or `tmp‑dir`) and a fake clock. Covers: cache hit (instant return), cache miss (fetch + write), expired cache (refresh), corrupt file (ignored + fresh fetch), and atomic write success. |
-
-## Risks
-
-- **Stale data** – If the model catalog changes while the cache is valid, users may see the old list for up to the TTL. Mitigation: TTL is short enough for typical usage; users can clear the cache manually or set `MODEL_CATALOG_CACHE_TTL_SECONDS=0` to disable.
-- **Disk permission issues** – The cache directory may be unwritable. The module must log a warning and fall back to no‑cache (direct fetch) without failing the whole operation.
-- **Cache file growth** – A single JSON file is tiny; no risk of unbounded growth.
-- **Concurrent writes** – Two processes refreshing simultaneously could race. Because the write is atomic and the cache check is read‑only, the worst case is a redundant API call; the file will eventually contain the latest data. No locking required.
-
-## Target Paths
-
-- `scripts/lib/store/cache.mjs`
-- `scripts/openai-audit.mjs`
-- `tests/unit/lib/store/cache.test.mjs`
-
-## Section 9 — Acceptance Criteria
-
-1. On first invocation the model catalog is fetched from the API, stored in a JSON file under `PROJECT_ROOT/.cache/model-catalog/`, and returned.
-2. A second invocation within the default TTL (1 hour) returns the cached data without making an API call, and the startup latency is measurably reduced.
-3. After the TTL expires, the next invocation triggers a fresh API call and updates the cache file atomically.
-4. The cache file is written using a temporary file + rename to prevent partial writes; no process can read a partially‑written file.
-5. If the cache file is missing or unreadable, the system falls back to a direct API call and writes a new cache (the user never sees an error from the cache layer).
-6. The cache TTL is configurable via the environment variable `MODEL_CATALOG_CACHE_TTL_SECONDS` (integer seconds).
-7. The existing model‑catalog contract (the shape of the returned data) is unchanged; all consumers receive the same data regardless of whether it came from cache or fresh API.
-8. A unit test suite verifies cache hit, miss, expiry, corrupt‑file recovery, and atomic‑write behavior using a controlled file system and clock.
-
-### output-2
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `9f68719062514819`
 
 # Implementation Plan — On-Disk TTL Cache for Resolved Model Catalog
 
@@ -560,7 +511,68 @@ If there is no existing debug logger, omit logging or use comments/test assertio
 11. Unit tests cover fresh hit, stale miss, disabled cache, malformed cache, schema mismatch, fingerprint mismatch, read failure, write failure, and return-shape preservation.
 12. Existing model catalog callers do not require changes to benefit from caching.
 
-### output-3
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `45d750824f654516`
+
+## Overview
+
+**Problem:** At startup, the CLI tool resolves the model catalog (list of available models) by calling an external API. This call is the dominant source of startup latency and is repeated on every invocation.  
+**Solution:** Add an on‑disk cache with a configurable TTL for the resolved model catalog. The cache is a single JSON file, written atomically, that stores the API response and a timestamp. The resolver checks the cache first; if it is present and fresh, it returns the cached data instantly. On cache miss or expiry, it fetches from the API, updates the cache, and returns the result. This reduces startup latency without changing the contract of the rest of the system.
+
+The implementation respects the existing architecture: the caching logic lives in the `stores` domain (`scripts/lib/store/`) and is consumed by the `audit-orchestration` domain (which currently fetches the model catalog). The cache module is reusable, but the plan is scoped to the model catalog only.
+
+## Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **On‑disk JSON file cache** | Simplest persistent store that works across processes. No extra dependencies. Aligns with the existing `stores` domain that already manages file‑based stores. |
+| **Atomic writes (temp file + rename)** | Prevents corruption if the process crashes mid‑write. Satisfies invariant `REQ‑persistence‑d8f9613d` (safe persistence). |
+| **TTL via a configurable environment variable** | Allows operators to tune freshness. Default 1 hour balances latency reduction with the risk of stale data. |
+| **New module `scripts/lib/store/cache.mjs`** | Places the cache in the `stores` domain, which has no external dependencies beyond `shared‑lib`. Clean separation; the audit code just imports and uses it. |
+| **Modify the existing model‑catalog resolver** in `scripts/openai-audit.mjs` (or the file that currently fetches the list) | Directly wraps the existing fetch call with the cache. No new abstractions in the audit domain; minimal blast radius. |
+| **No library bloat** | Node’s built‑in `fs`, `path`, and `crypto` (for checksum if needed) suffice. We avoid frameworks like `node‑cache` that would over‑engineer a simple disk cache. |
+| **Graceful fallback on corrupt cache** | If the cache file exists but is unparseable, the module treats it as a miss and fetches fresh data. The system remains operational. |
+
+## File‑level plan
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `scripts/lib/store/cache.mjs` | **Create** | Exports a function `createCache({ cacheDir, ttlSeconds, buildKey })` that returns `{ get, set }`. The `get` function checks for a fresh, valid cache file; `set` writes a new cache file atomically using a temporary file and rename. Uses `fs` and `path` from `shared‑lib`. |
+| `scripts/openai-audit.mjs` (or the file currently resolving the model catalog) | **Modify** | Imports the new cache module. In the place where the model list is fetched, wraps the API call with a cache‑aware `getModelCatalog()` that calls `cache.get(key)` and upon miss fetches, calls `cache.set(key, data)`, and returns the data. The key is a constant string (e.g., `"model-catalog"`). The cache directory is derived from `PROJECT_ROOT/.cache/model-catalog` (or a similar project‑local path). The TTL is read from `process.env.MODEL_CATALOG_CACHE_TTL_SECONDS ?? 3600`. |
+| `tests/unit/lib/store/cache.test.mjs` | **Create** | Unit tests for the cache module using a mock file system (`memfs` or `tmp‑dir`) and a fake clock. Covers: cache hit (instant return), cache miss (fetch + write), expired cache (refresh), corrupt file (ignored + fresh fetch), and atomic write success. |
+
+## Risks
+
+- **Stale data** – If the model catalog changes while the cache is valid, users may see the old list for up to the TTL. Mitigation: TTL is short enough for typical usage; users can clear the cache manually or set `MODEL_CATALOG_CACHE_TTL_SECONDS=0` to disable.
+- **Disk permission issues** – The cache directory may be unwritable. The module must log a warning and fall back to no‑cache (direct fetch) without failing the whole operation.
+- **Cache file growth** – A single JSON file is tiny; no risk of unbounded growth.
+- **Concurrent writes** – Two processes refreshing simultaneously could race. Because the write is atomic and the cache check is read‑only, the worst case is a redundant API call; the file will eventually contain the latest data. No locking required.
+
+## Target Paths
+
+- `scripts/lib/store/cache.mjs`
+- `scripts/openai-audit.mjs`
+- `tests/unit/lib/store/cache.test.mjs`
+
+## Section 9 — Acceptance Criteria
+
+1. On first invocation the model catalog is fetched from the API, stored in a JSON file under `PROJECT_ROOT/.cache/model-catalog/`, and returned.
+2. A second invocation within the default TTL (1 hour) returns the cached data without making an API call, and the startup latency is measurably reduced.
+3. After the TTL expires, the next invocation triggers a fresh API call and updates the cache file atomically.
+4. The cache file is written using a temporary file + rename to prevent partial writes; no process can read a partially‑written file.
+5. If the cache file is missing or unreadable, the system falls back to a direct API call and writes a new cache (the user never sees an error from the cache layer).
+6. The cache TTL is configurable via the environment variable `MODEL_CATALOG_CACHE_TTL_SECONDS` (integer seconds).
+7. The existing model‑catalog contract (the shape of the returned data) is unchanged; all consumers receive the same data regardless of whether it came from cache or fresh API.
+8. A unit test suite verifies cache hit, miss, expiry, corrupt‑file recovery, and atomic‑write behavior using a controlled file system and clock.
+
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `7c03da5687e5cf88`
 
 # Implementation Plan: On-Disk Caching of Resolved Model Catalog with TTL
 
@@ -630,4 +642,19 @@ Startup latency is dominated by resolving the model catalog (discovery + metadat
 8. The cache file is written atomically (temp file + rename); no partial/corrupt file is ever observable at the final path.
 9. The TTL is configurable via the `MODEL_CATALOG_CACHE_TTL_MS` environment variable and defaults to `3600000` (1 hour).
 10. All new and modified code paths are covered by unit and/or integration tests, including the cache-hit, cache-miss, cache-expired, cache-corrupt, and write-failure scenarios.
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | OSS-DS | `{"reuse":2,"clarity":4,"correctness":3,"completeness":2,"right_sizing":4,"risk_handling":2,"implementability":3,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-2 | GPT | `{"reuse":4,"clarity":4,"correctness":5,"completeness":5,"right_sizing":3,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 1 | output-3 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":4,"completeness":4,"right_sizing":5,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+| 2 | output-1 | OSS-DS | `{"reuse":2,"clarity":4,"correctness":3,"completeness":3,"right_sizing":4,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-2 | GPT | `{"reuse":4,"clarity":4,"correctness":5,"completeness":5,"right_sizing":3,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 2 | output-3 | OSS-GLM | `{"reuse":3,"clarity":5,"correctness":4,"completeness":4,"right_sizing":5,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+
+## Human ranking (best → worst)
+
+- output-2 > output-3 > output-1 — review-mode (2026-07-02T08:04:54.378Z)
 

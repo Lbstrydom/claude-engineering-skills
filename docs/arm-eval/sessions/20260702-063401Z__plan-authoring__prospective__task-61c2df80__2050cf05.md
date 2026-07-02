@@ -9,108 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T06:34:01.137Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Add a concurrency cap to the parallel audit passes to bound peak memory on large diffs
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
 
-# Implementation Plan: Concurrency Cap for Parallel Audit Passes
-
-## Overview
-
-The audit pipeline currently fans out multiple audit passes in parallel (via `Promise.all` or equivalent) with no bound on in-flight work. On large diffs this produces unbounded concurrent allocations — each pass holds its diff slice, prompt context, and LLM response buffer simultaneously — causing peak-memory spikes that can exceed container limits.
-
-The fix introduces a minimal concurrency limiter (semaphore pattern) into the audit orchestration layer, wrapping the existing parallel dispatch so that at most `N` passes execute concurrently. The cap is configurable with a safe default derived from typical pass memory footprint, preserving existing ordering and result-collection semantics.
-
-## Design Decisions
-
-1. **Reuse a shared-lib concurrency primitive if one exists; otherwise add a local one.** The `shared-lib` domain (683 symbols) is the natural home for a generic `pLimit`/semaphore helper. If `scripts/lib/**` already exports a concurrency limiter, we reuse it rather than introducing a new abstraction. This keeps the solution right-sized — no new dependency, no over-generalised scheduler.
-
-2. **Semaphore over queue/chunk partitioning.** A counting semaphore (`acquire()`/`release()` or an async `pLimit`-style wrapper) is the smallest change that preserves the current "dispatch all, collect in order" contract. Chunking the array into fixed batches would alter error-propagation timing (a failing batch would block later batches) and is a larger behavioural change than needed.
-
-3. **Result ordering preserved.** The limiter wraps each pass's invocation, not its result mapping. `Promise.all` over the wrapped promises still returns results in input order — the cap only controls how many are *executing* at once, not completion order.
-
-4. **Configurable cap with safe default.** The cap is sourced from (in priority order): an explicit options field → an environment variable (`AUDIT_CONCURRENCY`) → a compiled default (e.g. `4`). The default should be conservative — high enough to keep latency low for typical diffs, low enough that a 200-file diff doesn't allocate 200 simultaneous pass contexts. We validate the value is a positive integer and clamp to `[1, 64]`.
-
-5. **No persistence changes.** The cap is a runtime execution concern, not a stored configuration. It does not touch the findings store, learning store, or any JSON state file. This satisfies the invariant that audit results are deterministic regardless of execution concurrency.
-
-6. **Error semantics unchanged.** If a pass rejects, the overall `Promise.all` still rejects with the first rejection (existing behaviour). The semaphore correctly releases on both success and failure via `finally`.
-
-## Target Paths
-
-- `scripts/lib/audit/parallel-runner.mjs` — modify (or the file that currently dispatches parallel audit passes; adjust to actual filename)
-- `scripts/lib/concurrency.mjs` — create (only if no existing shared-lib concurrency limiter is found; otherwise modify the existing file)
-- `tests/audit-concurrency.test.mjs` — create
-
-> **Note:** The exact dispatch file name within `scripts/lib/audit/**` must be confirmed at implementation time by grepping for `Promise.all` in the audit domain. The plan targets whichever file contains the parallel fan-out. If multiple files fan out independently, all are modified to accept the cap via a shared option.
-
-## File-Level Plan
-
-### 1. `scripts/lib/concurrency.mjs` (create — conditional)
-
-**Purpose:** A minimal `pLimit(concurrency)` factory returning an async wrapper that gates calls through a counting semaphore.
-
-- Exports `pLimit(maxConcurrency)` → returns `async (fn) => ...` that waits for a free slot, runs `fn()`, and releases in `finally`.
-- Exports `resolveConcurrency(explicit, envVar, defaultValue)` → normalises and clamps the cap source.
-- Pure JS, no I/O, no side effects — fully unit-testable.
-- Only created if a grep of `scripts/lib/**` for `pLimit|semaphore|concurrency` returns no existing implementation. If one exists, we add `resolveConcurrency` there if missing and reuse `pLimit`.
-
-### 2. `scripts/lib/audit/parallel-runner.mjs` (modify)
-
-**Purpose:** The file that currently dispatches audit passes in parallel.
-
-- Import `pLimit` and `resolveConcurrency` from the shared-lib concurrency module.
-- Add `concurrency` to the function's options parameter (typed as positive integer, optional).
-- Replace the bare `Promise.all(passes.map(p => runPass(p)))` pattern with:
-  ```
-  const limit = pLimit(resolveConcurrency(options.concurrency, 'AUDIT_CONCURRENCY', DEFAULT_AUDIT_CONCURRENCY))
-  Promise.all(passes.map(p => limit(() => runPass(p))))
-  ```
-- Define `DEFAULT_AUDIT_CONCURRENCY = 4` as a module constant.
-- Ensure `runPass` rejections propagate unchanged (the `finally` in the limiter guarantees slot release).
-- Log the effective concurrency at debug level (if a logger is already wired).
-
-### 3. `tests/audit-concurrency.test.mjs` (create)
-
-**Purpose:** Verify the cap bounds concurrent execution without altering results.
-
-- **Test 1 — Concurrency respected:** Spawn `N` fake passes that record their start/end timestamps. Set cap to `K < N`. Assert no more than `K` are ever in-flight simultaneously.
-- **Test 2 — Result ordering preserved:** Returns results in input order even when passes resolve out of order.
-- **Test 3 — Error propagation:** If one pass rejects, the overall promise rejects and all slots are released (subsequent invocations still succeed).
-- **Test 4 — Config resolution:** `resolveConcurrency` honours explicit option > env var > default, clamps invalid values (0, negative, non-integer) to the default.
-- **Test 5 — Default applies:** When no concurrency option is passed and no env var is set, passes still execute (cap = default).
-
-## Risks
-
-1. **Wrong dispatch file identified.** The architecture map shows 122 symbols in `audit-orchestration` across multiple files. If the parallel fan-out lives in a different file than `parallel-runner.mjs` (e.g., inside `scripts/openai-audit.mjs` or `scripts/cycle.mjs`), the modification target shifts. Mitigation: grep for `Promise.all` and `\.map(` in the audit domain at implementation start.
-
-2. **Multiple independent fan-out sites.** If several entry points (`openai-audit.mjs`, `gemini-review.mjs`, `cycle.mjs`) each dispatch passes independently, we must apply the cap to all of them or route through a single shared dispatch function. Mitigation: extract a shared `runPassesParallel(passes, options)` helper if duplication exists, then apply the cap once.
-
-3. **Deadlock from nested acquire.** If `runPass` internally calls another function gated by the same semaphore instance, a deadlock occurs. Mitigation: the semaphore is created fresh per dispatch call (not module-level singleton), so nesting across different invocations is impossible. Within a single dispatch, `runPass` must not re-enter the limiter — confirm by inspection.
-
-4. **Throughput regression on small diffs.** A conservative default (4) could slow down audits that previously ran 20 passes in parallel. Mitigation: the default is a balance, and users can override via `AUDIT_CONCURRENCY`. Benchmarking on a representative diff should confirm latency impact is acceptable (< 2× at default for < 50 passes).
-
-5. **Env var in test environments.** If `AUDIT_CONCURRENCY` is set in CI, tests asserting default behaviour could be flaky. Mitigation: tests that check the default explicitly clear the env var in their setup.
-
-## Section 9 — Acceptance Criteria
-
-1. No more than `concurrency` audit passes execute simultaneously, verifiable by instrumenting pass start/end times and checking the maximum observed in-flight count equals the configured cap.
-2. When `concurrency` is not specified and `AUDIT_CONCURRENCY` is unset, passes execute with the default cap (a positive integer ≤ 16) and all passes complete successfully.
-3. Setting `AUDIT_CONCURRENCY=1` forces fully sequential execution with no behavioural change in the audit results (identical findings output for the same input diff).
-4. If any audit pass rejects, the overall dispatch rejects with the same error as before the change, and all semaphore slots are released (a subsequent dispatch call completes normally).
-5. Results are returned in input order regardless of completion order or concurrency level.
-6. Invalid concurrency values (0, negative, non-numeric, non-integer) fall back to the default without throwing.
-7. No new dependencies are added; the concurrency limiter is implemented in pure JavaScript using `Promise`.
-8. No persistence files (findings store, learning store, any JSON state) are modified by this change.
-9. All existing audit-orchestration tests pass without modification.
-10. New unit tests in `tests/audit-concurrency.test.mjs` pass and cover: concurrency bound enforcement, ordering preservation, error propagation, config resolution priority, and default fallback.
-
-### output-2
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `7436190d6db86464`
 
 # Implementation Plan — Concurrency Cap for Parallel Audit Passes
 
@@ -419,7 +330,11 @@ Confirm that reports remain semantically unchanged except for timing/order-indep
 11. New tests cover concurrency limiting, ordering, invalid configuration, empty input, and worker failure behavior.
 12. Existing audit-related tests continue to pass.
 
-### output-3
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `5d0bfe723fa5df64`
 
 ## Overview
 
@@ -507,4 +422,116 @@ The smallest viable solution: introduce a `runWithConcurrencyLimit(fn, items, li
 - **Opaque fast-fail behavior:** If the `AbortController` approach is used to cancel inflight promises on first failure, any in-progress LLM calls may still consume resources until the HTTP request is aborted. Mitigation: use `AbortSignal` only for timeouts/long-poll; for short-running HTTP calls, simply allow inflight promises to settle naturally after the rejection is propagated (still safe, since results are discarded).
 - **Shared mutable state in per-file passes:** If existing passes share mutable state (e.g., a findings accumulator), bounding concurrency could change interleaving and expose race conditions. Mitigation: review audit pass code for shared mutable state before merging; concurrency has always been parallel, so any existing race is a pre-existing bug.
 - **`AUDIT_CONCURRENCY` name collision:** Unlikely but possible if another tool in the CI environment uses the same name. Mitigation: document the variable clearly in the skill’s README; the name is sufficiently specific.
+
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `3b492b6f10b4e3d2`
+
+# Implementation Plan: Concurrency Cap for Parallel Audit Passes
+
+## Overview
+
+The audit pipeline currently fans out multiple audit passes in parallel (via `Promise.all` or equivalent) with no bound on in-flight work. On large diffs this produces unbounded concurrent allocations — each pass holds its diff slice, prompt context, and LLM response buffer simultaneously — causing peak-memory spikes that can exceed container limits.
+
+The fix introduces a minimal concurrency limiter (semaphore pattern) into the audit orchestration layer, wrapping the existing parallel dispatch so that at most `N` passes execute concurrently. The cap is configurable with a safe default derived from typical pass memory footprint, preserving existing ordering and result-collection semantics.
+
+## Design Decisions
+
+1. **Reuse a shared-lib concurrency primitive if one exists; otherwise add a local one.** The `shared-lib` domain (683 symbols) is the natural home for a generic `pLimit`/semaphore helper. If `scripts/lib/**` already exports a concurrency limiter, we reuse it rather than introducing a new abstraction. This keeps the solution right-sized — no new dependency, no over-generalised scheduler.
+
+2. **Semaphore over queue/chunk partitioning.** A counting semaphore (`acquire()`/`release()` or an async `pLimit`-style wrapper) is the smallest change that preserves the current "dispatch all, collect in order" contract. Chunking the array into fixed batches would alter error-propagation timing (a failing batch would block later batches) and is a larger behavioural change than needed.
+
+3. **Result ordering preserved.** The limiter wraps each pass's invocation, not its result mapping. `Promise.all` over the wrapped promises still returns results in input order — the cap only controls how many are *executing* at once, not completion order.
+
+4. **Configurable cap with safe default.** The cap is sourced from (in priority order): an explicit options field → an environment variable (`AUDIT_CONCURRENCY`) → a compiled default (e.g. `4`). The default should be conservative — high enough to keep latency low for typical diffs, low enough that a 200-file diff doesn't allocate 200 simultaneous pass contexts. We validate the value is a positive integer and clamp to `[1, 64]`.
+
+5. **No persistence changes.** The cap is a runtime execution concern, not a stored configuration. It does not touch the findings store, learning store, or any JSON state file. This satisfies the invariant that audit results are deterministic regardless of execution concurrency.
+
+6. **Error semantics unchanged.** If a pass rejects, the overall `Promise.all` still rejects with the first rejection (existing behaviour). The semaphore correctly releases on both success and failure via `finally`.
+
+## Target Paths
+
+- `scripts/lib/audit/parallel-runner.mjs` — modify (or the file that currently dispatches parallel audit passes; adjust to actual filename)
+- `scripts/lib/concurrency.mjs` — create (only if no existing shared-lib concurrency limiter is found; otherwise modify the existing file)
+- `tests/audit-concurrency.test.mjs` — create
+
+> **Note:** The exact dispatch file name within `scripts/lib/audit/**` must be confirmed at implementation time by grepping for `Promise.all` in the audit domain. The plan targets whichever file contains the parallel fan-out. If multiple files fan out independently, all are modified to accept the cap via a shared option.
+
+## File-Level Plan
+
+### 1. `scripts/lib/concurrency.mjs` (create — conditional)
+
+**Purpose:** A minimal `pLimit(concurrency)` factory returning an async wrapper that gates calls through a counting semaphore.
+
+- Exports `pLimit(maxConcurrency)` → returns `async (fn) => ...` that waits for a free slot, runs `fn()`, and releases in `finally`.
+- Exports `resolveConcurrency(explicit, envVar, defaultValue)` → normalises and clamps the cap source.
+- Pure JS, no I/O, no side effects — fully unit-testable.
+- Only created if a grep of `scripts/lib/**` for `pLimit|semaphore|concurrency` returns no existing implementation. If one exists, we add `resolveConcurrency` there if missing and reuse `pLimit`.
+
+### 2. `scripts/lib/audit/parallel-runner.mjs` (modify)
+
+**Purpose:** The file that currently dispatches audit passes in parallel.
+
+- Import `pLimit` and `resolveConcurrency` from the shared-lib concurrency module.
+- Add `concurrency` to the function's options parameter (typed as positive integer, optional).
+- Replace the bare `Promise.all(passes.map(p => runPass(p)))` pattern with:
+  ```
+  const limit = pLimit(resolveConcurrency(options.concurrency, 'AUDIT_CONCURRENCY', DEFAULT_AUDIT_CONCURRENCY))
+  Promise.all(passes.map(p => limit(() => runPass(p))))
+  ```
+- Define `DEFAULT_AUDIT_CONCURRENCY = 4` as a module constant.
+- Ensure `runPass` rejections propagate unchanged (the `finally` in the limiter guarantees slot release).
+- Log the effective concurrency at debug level (if a logger is already wired).
+
+### 3. `tests/audit-concurrency.test.mjs` (create)
+
+**Purpose:** Verify the cap bounds concurrent execution without altering results.
+
+- **Test 1 — Concurrency respected:** Spawn `N` fake passes that record their start/end timestamps. Set cap to `K < N`. Assert no more than `K` are ever in-flight simultaneously.
+- **Test 2 — Result ordering preserved:** Returns results in input order even when passes resolve out of order.
+- **Test 3 — Error propagation:** If one pass rejects, the overall promise rejects and all slots are released (subsequent invocations still succeed).
+- **Test 4 — Config resolution:** `resolveConcurrency` honours explicit option > env var > default, clamps invalid values (0, negative, non-integer) to the default.
+- **Test 5 — Default applies:** When no concurrency option is passed and no env var is set, passes still execute (cap = default).
+
+## Risks
+
+1. **Wrong dispatch file identified.** The architecture map shows 122 symbols in `audit-orchestration` across multiple files. If the parallel fan-out lives in a different file than `parallel-runner.mjs` (e.g., inside `scripts/openai-audit.mjs` or `scripts/cycle.mjs`), the modification target shifts. Mitigation: grep for `Promise.all` and `\.map(` in the audit domain at implementation start.
+
+2. **Multiple independent fan-out sites.** If several entry points (`openai-audit.mjs`, `gemini-review.mjs`, `cycle.mjs`) each dispatch passes independently, we must apply the cap to all of them or route through a single shared dispatch function. Mitigation: extract a shared `runPassesParallel(passes, options)` helper if duplication exists, then apply the cap once.
+
+3. **Deadlock from nested acquire.** If `runPass` internally calls another function gated by the same semaphore instance, a deadlock occurs. Mitigation: the semaphore is created fresh per dispatch call (not module-level singleton), so nesting across different invocations is impossible. Within a single dispatch, `runPass` must not re-enter the limiter — confirm by inspection.
+
+4. **Throughput regression on small diffs.** A conservative default (4) could slow down audits that previously ran 20 passes in parallel. Mitigation: the default is a balance, and users can override via `AUDIT_CONCURRENCY`. Benchmarking on a representative diff should confirm latency impact is acceptable (< 2× at default for < 50 passes).
+
+5. **Env var in test environments.** If `AUDIT_CONCURRENCY` is set in CI, tests asserting default behaviour could be flaky. Mitigation: tests that check the default explicitly clear the env var in their setup.
+
+## Section 9 — Acceptance Criteria
+
+1. No more than `concurrency` audit passes execute simultaneously, verifiable by instrumenting pass start/end times and checking the maximum observed in-flight count equals the configured cap.
+2. When `concurrency` is not specified and `AUDIT_CONCURRENCY` is unset, passes execute with the default cap (a positive integer ≤ 16) and all passes complete successfully.
+3. Setting `AUDIT_CONCURRENCY=1` forces fully sequential execution with no behavioural change in the audit results (identical findings output for the same input diff).
+4. If any audit pass rejects, the overall dispatch rejects with the same error as before the change, and all semaphore slots are released (a subsequent dispatch call completes normally).
+5. Results are returned in input order regardless of completion order or concurrency level.
+6. Invalid concurrency values (0, negative, non-numeric, non-integer) fall back to the default without throwing.
+7. No new dependencies are added; the concurrency limiter is implemented in pure JavaScript using `Promise`.
+8. No persistence files (findings store, learning store, any JSON state) are modified by this change.
+9. All existing audit-orchestration tests pass without modification.
+10. New unit tests in `tests/audit-concurrency.test.mjs` pass and cover: concurrency bound enforcement, ordering preservation, error propagation, config resolution priority, and default fallback.
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | OSS-GLM | `{"reuse":4,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+| 1 | output-2 | GPT | `{"reuse":3,"clarity":4,"correctness":4,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 1 | output-3 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":3,"right_sizing":4,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-1 | OSS-GLM | `{"reuse":5,"clarity":4,"correctness":4,"completeness":4,"right_sizing":5,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 2 | output-2 | GPT | `{"reuse":3,"clarity":4,"correctness":4,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 2 | output-3 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":3,"right_sizing":4,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+
+## Human ranking (best → worst)
+
+- output-2 > output-1 > output-3 — review-mode (2026-07-02T08:04:56.311Z)
 

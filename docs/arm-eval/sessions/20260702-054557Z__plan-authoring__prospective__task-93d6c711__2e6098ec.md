@@ -9,227 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T05:45:57.114Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Add a per-repo rate limiter to the architectural-memory embedding calls to avoid quota bursts
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
 
-# Implementation Plan: Per-Repo Rate Limiter for Architectural-Memory Embedding Calls
-
-## Overview
-
-Add a token-bucket rate limiter that wraps architectural-memory embedding API calls, keyed per repository, to prevent quota bursts. The limiter persists its state to disk so that repeated CLI invocations for the same repo share a single bucket. The design is intentionally minimal: one new utility module in shared-lib, one integration point at the embedding call site, and one test file. No external dependencies are introduced.
-
-## Design Decisions
-
-### 1. Token bucket algorithm
-**Rationale**: Token bucket allows small bursts (up to capacity) while enforcing a steady average rate. It is simpler than sliding-window or leaky-bucket for this use case, and naturally handles the bursty pattern of batch embedding generation—process many symbols, then idle. The refill rate maps directly to the embedding API's requests-per-minute quota.
-
-### 2. Per-repo keying with separate state files
-**Rationale**: Each repository gets its own bucket so that processing repo A does not consume repo B's quota. Using one state file per repo (`<stateDir>/<hash(repoKey)>.json`) avoids cross-repo file contention and keeps individual state files tiny. The repo key is provided by the caller (the embedding module), derived from the target repo path or identifier already available in that module's context.
-
-### 3. File-based state persistence with atomic writes
-**Rationale**: The tool runs as short-lived CLI processes. Without persistence, each invocation starts with a full bucket, defeating rate limiting across runs. State is saved on every token consumption using an atomic write (temp file + `fs.rename`) to prevent corruption from partial writes. This satisfies the codebase's persistence invariants (REQ-persistence-6623d196, REQ-persistence-d8f9613d) and follows the same `atomicWrite` pattern already used in `scripts/symbol-index/drift.mjs`.
-
-### 4. In-process serialization via promise chain
-**Rationale**: Node.js is single-threaded but async. Multiple concurrent `acquire()` calls could read stale token counts between the read and the write. Serializing via a promise chain ensures each acquire observes the state left by the previous one. This is simpler than a mutex library and sufficient for single-process use.
-
-### 5. Environment-variable configuration with safe defaults
-**Rationale**: Rate and burst parameters vary by API tier and deployment. Defaults (50 req/min, burst 5) are conservative enough for typical embedding APIs. Override via `ARCH_MEM_EMBEDDING_RPM` and `ARCH_MEM_EMBEDDING_BURST` env vars. No config file is needed—keeps the footprint minimal and consistent with how other scripts in this repo handle configuration.
-
-### 6. Fail-open on state-file errors, fail-wait on rate exhaustion
-**Rationale**: If the state file is corrupt or unwritable, the limiter starts with a full bucket and continues in-memory (fail-open). This avoids blocking the workflow due to I/O issues. When rate is exhausted, the limiter waits (sleeps) until a token refills rather than rejecting the call—embedding calls are not optional, so rejection would halt the pipeline. The wait _is_ the rate-limiting mechanism.
-
-### 7. Injectable clock and sleep for testability
-**Rationale**: Time-dependent logic is hard to test with real timers. The factory accepts `now()` and `sleep()` functions, defaulting to `Date.now()` and `timers/promises` `setTimeout`. Tests inject fast-forwarding mocks to verify rate enforcement without real delays.
-
-### 8. No external dependencies
-**Rationale**: The rate limiter uses only Node.js built-ins (`fs`, `path`, `crypto`, `timers/promises`). Adding a rate-limiting library (e.g., `bottleneck`, `p-limit`) would be over-engineering for a token bucket that is ~60 lines of logic.
-
-### 9. Domain placement: shared-lib
-**Rationale**: The rate limiter is a general utility, not specific to arch-memory. Placing it in `scripts/lib/rate-limiter.mjs` (shared-lib domain) allows any domain to use it—shared-lib is a permitted dependency for arch-memory, stores, and most other domains per the `allowedDeps` map. No layering violation is introduced.
-
-### 10. Module-level singleton cache
-**Rationale**: If the embedding module is called from multiple code paths in the same process, they should share the same bucket per repo. A `Map`-based cache keyed by `repoKey:stateDir` ensures a single limiter instance per repo per process. This avoids accidental parallel buckets for the same repo.
-
-## File-Level Plan
-
-### 1. `scripts/lib/rate-limiter.mjs` — CREATE
-**Domain**: shared-lib (path rule: `scripts/lib/**`)
-
-**Purpose**: Token bucket rate limiter with per-repo keying, file persistence, and injectable time functions.
-
-**Exports**:
-- `createRateLimiter(options)` → `{ acquire, getState }`
-  - `options.repoKey` (string, required): repository identifier
-  - `options.stateDir` (string, required): directory for state files
-  - `options.rate` (number, optional): tokens per second; default from `ARCH_MEM_EMBEDDING_RPM` env or `50/60`
-  - `options.burst` (number, optional): max tokens; default from `ARCH_MEM_EMBEDDING_BURST` env or `5`
-  - `options.now` (function, optional): returns current time in ms; default `Date.now`
-  - `options.sleep` (function, optional): `(ms) => Promise<void>`; default from `timers/promises`
-- `getRateLimiter(options)` → same return, cached by `repoKey:stateDir` (singleton factory)
-
-**Internal logic**:
-- State file path: `path.join(stateDir, crypto.createHash('sha1').update(repoKey).digest('hex').slice(0, 16) + '.json')`
-- `_loadState()`: read file; on missing/corrupt, return `{ tokens: burst, lastRefill: now() }` + warn
-- `_saveState(state)`: write JSON to temp file in same dir, then `fs.rename` (atomic on same filesystem)
-- `_refill(state)`: `state.tokens = min(burst, state.tokens + (now() - state.lastRefill) / 1000 * rate); state.lastRefill = now()`
-- `acquire()`: chained promise → refill → if `tokens >= 1` consume + persist + return → else `await sleep((1 - tokens) / rate * 1000)` → retry
-
-**Error handling**:
-- Corrupt state file: `console.warn`, start full bucket
-- State dir missing: attempt `fs.mkdir(stateDir, { recursive: true })`; if that fails, continue in-memory + warn
-- Write failure: warn, continue in-memory
-- Invalid rate/burst (≤ 0, NaN): clamp to minimums (`rate ≥ 0.01`, `burst ≥ 1`)
-
-### 2. `scripts/lib/store/embeddings.mjs` — MODIFY (assumed path; see Risk 5)
-**Domain**: stores (path rule: `scripts/lib/store/**`)
-
-**Purpose**: Integration point—wrap each embedding API call with `await limiter.acquire()`.
-
-**Changes**:
-- Import `getRateLimiter` from `../rate-limiter.mjs`
-- Before the existing embedding API call (the `fetch`/SDK invocation), add:
-  ```js
-  const limiter = getRateLimiter({ repoKey, stateDir });
-  await limiter.acquire();
-  ```
-- `repoKey`: derived from the repo path or identifier already available in the module's context (the module already knows which repo it's processing)
-- `stateDir`: use the existing state directory pattern used by other store modules (e.g., alongside other `.json` state files). If no canonical state dir exists, default to `path.join(repoRoot, '.arch-state', 'rate-limits')`
-- No changes to the embedding API call itself, its error handling, or its return value—the limiter is a pre-call gate only
-
-**Note**: If the actual embedding call site is in a different file (e.g., `scripts/lib/symbol-index/embeddings.mjs` in the arch-memory domain, or a shared client in `scripts/lib/`), the same 3-line integration pattern applies. The rate-limiter module is domain-agnostic.
-
-### 3. `tests/rate-limiter.test.mjs` — CREATE
-**Domain**: tests (path rule: `tests/**`)
-
-**Purpose**: Unit tests covering token bucket logic, persistence, per-repo isolation, concurrency, and failure modes.
-
-**Test cases** (using Node's built-in `node:test` + `node:assert/strict`, consistent with the repo's test conventions):
-1. **Token consumption**: create limiter with `burst: 3`; call `acquire()` once; `getState().tokens` equals 2
-2. **Burst exhaustion + refill**: with fake clock, acquire `burst` tokens instantly; next `acquire()` triggers sleep; advance fake clock past refill window; acquire succeeds
-3. **Rate enforcement timing**: with `rate: 1` (1/sec) and `burst: 1`, two rapid acquires require ≥ 1000 ms between them (verified via fake sleep capture)
-4. **Per-repo isolation**: two limiters, different `repoKey`, same `stateDir`; consuming all tokens in one does not affect the other
-5. **Cross-instance persistence**: limiter A acquires 2 of 5 tokens; create limiter B with same `repoKey` + `stateDir`; `getState().tokens` equals 3
-6. **Corrupt state recovery**: write invalid JSON to state file path; create limiter; `getState().tokens` equals `burst`; a warning is emitted
-7. **Missing state file**: no file exists; limiter starts with full bucket; no error thrown
-8. **Unwritable state dir**: `stateDir` set to a read-only path (or mock `fs.rename` to throw); `acquire()` still returns; warning emitted; in-memory state is used
-9. **Concurrent acquire serialization**: fire 5 concurrent `acquire()` calls with `burst: 3`; first 3 resolve immediately, remaining 2 wait for refill (verified via fake sleep)
-10. **Env var override**: set `ARCH_MEM_EMBEDDING_RPM=120` and `ARCH_MEM_EMBEDDING_BURST=10`; create limiter without explicit options; `getState().tokens` equals 10; rate equals 2/sec
-11. **Singleton cache**: `getRateLimiter` called twice with same `repoKey` + `stateDir` returns the same instance (reference equality)
-
-## Risks
-
-### 1. Cross-process race condition on state file
-**Risk**: Two processes processing the same repo simultaneously could read the same token count, both consume, and last-write-wins loses one consumption—allowing a small burst past the limit.
-**Mitigation**: In practice, this tool processes one repo per invocation. If parallel processing is added later, file locking (`fs.open` with `O_EXCL` lock file or `proper-lockfile`) can be layered in. The current design documents this limitation in a code comment. The impact is bounded: at most one extra call per concurrent process, which is within typical API quota headroom.
-
-### 2. Incorrect rate configuration
-**Risk**: Setting the rate too high defeats the limiter; too low stalls the pipeline.
-**Mitigation**: Conservative defaults (50/min, burst 5). Document that the rate should be set to ~80% of the API's actual per-minute quota to leave headroom for other callers. The env var override is intentionally explicit so misconfiguration is visible.
-
-### 3. State file accumulation
-**Risk**: State files accumulate for repos no longer being processed.
-**Mitigation**: State files are ~80 bytes each. A cleanup step (remove files whose `lastRefill` is older than `burst / rate` seconds, meaning the bucket is already full) can be added as a follow-up. Out of scope for this change—flagged in a `TODO` comment.
-
-### 4. Clock skew
-**Risk**: System clock changes (NTP sync, manual adjustment) could cause incorrect refill calculations.
-**Mitigation**: `Date.now()` is used for v1 simplicity. A backward clock jump would at most allow `burst` extra calls (the bucket is capped at `burst`). This is an edge case, not a common failure mode. If it becomes an issue, switch to `process.hrtime.bigint()` for monotonic timing.
-
-### 5. Integration point uncertainty
-**Risk**: The exact embedding call site (`scripts/lib/store/embeddings.mjs`) is inferred from the domain map, not confirmed against the full symbol table (which was truncated).
-**Mitigation**: The rate limiter module is designed to be integration-agnostic—a 3-line change at any call site. If the actual call site is elsewhere (e.g., in arch-memory's `scripts/lib/symbol-index/` or a shared API client in `scripts/lib/`), the same pattern applies. The implementer should grep for `fetch`/`openai`/`embed` in `scripts/lib/store/` and `scripts/lib/symbol-index/` to confirm the exact file before modifying.
-
-### 6. State file path collision
-**Risk**: SHA-1 hash truncation (16 hex chars) could theoretically collide for different repo keys.
-**Mitigation**: 16 hex chars = 64 bits of entropy. Birthday collision probability reaches 50% only at ~2^32 repos. Not a realistic concern for this tool's scale.
-
-## Target Paths
-- `scripts/lib/rate-limiter.mjs` (create)
-- `scripts/lib/store/embeddings.mjs` (modify)
-- `tests/rate-limiter.test.mjs` (create)
-
-## Section 9 — Acceptance Criteria
-1. `createRateLimiter({ repoKey, stateDir, burst: 3 })` returns an object with `acquire` (async function) and `getState` (sync function) properties
-2. After calling `acquire()` once on a fresh limiter with `burst: 3`, `getState().tokens` returns a value equal to or less than 2 (allowing for elapsed-time refill)
-3. With a fake clock that does not advance, calling `acquire()` `burst` times resolves immediately, and the next `acquire()` call invokes the injected `sleep` function with a positive ms argument
-4. Two limiter instances created with different `repoKey` values but the same `stateDir` maintain independent token counts—consuming all tokens in one does not reduce the other's `getState().tokens`
-5. A new limiter instance created with the same `repoKey` and `stateDir` as a prior instance (in the same process or a new one) sees the persisted token count (within 1 token, allowing for refill elapsed time)
-6. Writing invalid JSON to the state file path before creating a limiter causes the limiter to initialize with a full bucket (`getState().tokens === burst`) and emit a warning, without throwing
-7. When the state directory is unwritable (mock `fs.rename` to throw), `acquire()` still resolves successfully and a warning is emitted; subsequent `getState()` reflects in-memory token consumption
-8. Five concurrent `acquire()` calls on a limiter with `burst: 3` result in exactly 3 immediate resolutions and 2 delayed resolutions that wait for the injected `sleep`—total tokens consumed never exceeds `burst + floor(elapsed_seconds * rate)`
-9. Setting `ARCH_MEM_EMBEDDING_RPM=120` and `ARCH_MEM_EMBEDDING_BURST=10` before creating a limiter (without explicit rate/burst options) results in `getState().tokens === 10` and a refill rate of 2 tokens/second
-10. `getRateLimiter` called twice with identical `repoKey` and `stateDir` returns the same object reference (singleton cache works)
-11. The embedding call module invokes `await limiter.acquire()` before each embedding API request (verifiable by code
-
-### output-2
-
-## Overview
-Embedding API calls for architectural memory (e.g., in `scripts/openai-audit.mjs`) can trigger quota bursts when multiple repositories compete for a shared API key. We introduce a lightweight, per-repo rate limiter that shapes traffic on a per-instance basis. The limiter is a promise‑based sliding‑window throttler that ensures no more than `maxCallsPerMinute` calls proceed per repo. It is placed around the single embedding call site and reused via a factory keyed by repo slug. No persistence is needed; state lives only for the script’s lifetime.
-
-## Design Decisions
-
-1. **Limiter algorithm** – Sliding window (record timestamps, `wait` promise resolved after `maxCallsPerMinute` / 60 average interval).  
-   *Rationale*: simple, no burst edge cases; avoids a full token-bucket implementation while still preventing short‑burst spikes.
-
-2. **Per‑repo keying** – The limiter factory accepts a `repoSlug` (derived from the repository root or configured identifier). Each repo gets its own instance.  
-   *Rationale*: isolates rate tracking so one repo’s burst doesn’t starve another.
-
-3. **Promise‑based integration** – `await rateLimiter.wait()` inserted before the API call.  
-   *Rationale*: works naturally with the current async/await calling code; does not change control flow or error handling.
-
-4. **Configuration** – Limits are loaded from environment variables (`ARCH_EMBED_MAX_PER_MIN`, default 50) with an optional override per repo via a small config object.  
-   *Rationale*: avoids hard‑coding yet remains trivially configurable without a persistent store.
-
-5. **Location in shared‑lib** – File `scripts/lib/rate-limiter.mjs` + unit test `tests/rate-limiter.test.mjs`. Allowed dependency: shared‑lib → shared‑lib ok.  
-   *Rationale*: the limiter is a general utility; placing it in shared‑lib keeps it available for any future embedding call without layering violations.
-
-## File‑Level Plan
-
-### Create
-
-| File | Purpose |
-|---|---|
-| `scripts/lib/rate-limiter.mjs` | Exports `createRateLimiter(repoSlug, opts?)` returning an object with `wait(): Promise<void>`. Keeps in‑memory call timestamps. Provides optional `getStats()` for observability. |
-| `tests/rate-limiter.test.mjs` | Vitest unit tests: verifies correct delay of sequential calls, respects concurrency limit, resets state per repo slug, works under burst scenarios. |
-
-### Modify
-
-| File | Change |
-|---|---|
-| `scripts/openai-audit.mjs` (or whichever file currently makes the embedding API call) | Import `createRateLimiter`, extract a `repoSlug` from the execution context (e.g., derived from the repository path), call `const embedLimiter = createRateLimiter(repoSlug)` once at the top level, and insert `await embedLimiter.wait()` immediately before the embedding HTTP request. |
-
-*Note*: The exact embedding call site will be confirmed in the target source; the plan assumes `scripts/openai-audit.mjs` as the most likely candidate. If the call lives elsewhere, the change follows the same pattern.
-
-## Risks
-
-- **Global API limit still trackable by the provider** – The per‑repo limiter only prevents bursts at the repo level. If many repos run concurrently, the sum of per‑repo limits may still exceed the global API plan quota. Mitigation: expose `maxPerMinGlobal` as an environment variable and coordinate externally (or later add a global token bucket).  
-- **In‑memory state lost on crash** – A crash when a promise is waiting leaves the limiter empty; restart picks up fresh, no data loss.  
-- **Configuration drift** – If environment variables are forgotten, the default (50/min) may be too high or too low. Mitigation: document the env vars in `scripts/lib/rate-limiter.mjs` comments and in the main README.  
-- **Test framework dependency** – Adding a test file assumes Vitest is the project’s test runner; if a different framework is used, the test file must be adapted (minor risk).
-
-## Target Paths
-- `scripts/lib/rate-limiter.mjs`
-- `scripts/openai-audit.mjs`
-- `tests/rate-limiter.test.mjs`
-
-## Section 9 — Acceptance Criteria
-1. A new module `scripts/lib/rate-limiter.mjs` exists and exports `createRateLimiter`.
-2. Calling `createRateLimiter('repo-a')` returns an object with a `wait` method.
-3. When `wait()` is called more than `maxPerMin` times within one minute for the same repo, later calls are delayed such that the effective rate stays ≤ `maxPerMin` per minute.
-4. Two different repo slugs receive independent rate limits.
-5. The embedding API call in the architectural‑memory pipeline (identified file) is preceded by `await rateLimiter.wait()`.
-6. The embedding call still works as before when rate is unconstrained (no artificial failures introduced).
-7. The limiter implements a configurable default (`50` per minute) that can be overridden via environment variable `ARCH_EMBED_MAX_PER_MIN`.
-8. A unit test file `tests/rate-limiter.test.mjs` verifies the throttling behaviour and independence of repos.
-9. No layering violations: `scripts/lib/rate-limiter.mjs` is in the `shared‑lib` domain and may only depend on other `shared‑lib` utilities.
-
-### output-3
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `d0478a9fa2528592`
 
 ## Overview
 
@@ -492,4 +284,239 @@ Plan:
 8. Tests do not perform real embedding API/network calls and do not require real API keys.
 9. Unit tests cover same-repo throttling, different-repo independence, FIFO behavior, failure propagation, and config parsing.
 10. The implementation introduces no new persistent files and logs no embedding input text, provider responses, or secrets.
+
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `022c6af1b25ec881`
+
+## Overview
+Embedding API calls for architectural memory (e.g., in `scripts/openai-audit.mjs`) can trigger quota bursts when multiple repositories compete for a shared API key. We introduce a lightweight, per-repo rate limiter that shapes traffic on a per-instance basis. The limiter is a promise‑based sliding‑window throttler that ensures no more than `maxCallsPerMinute` calls proceed per repo. It is placed around the single embedding call site and reused via a factory keyed by repo slug. No persistence is needed; state lives only for the script’s lifetime.
+
+## Design Decisions
+
+1. **Limiter algorithm** – Sliding window (record timestamps, `wait` promise resolved after `maxCallsPerMinute` / 60 average interval).  
+   *Rationale*: simple, no burst edge cases; avoids a full token-bucket implementation while still preventing short‑burst spikes.
+
+2. **Per‑repo keying** – The limiter factory accepts a `repoSlug` (derived from the repository root or configured identifier). Each repo gets its own instance.  
+   *Rationale*: isolates rate tracking so one repo’s burst doesn’t starve another.
+
+3. **Promise‑based integration** – `await rateLimiter.wait()` inserted before the API call.  
+   *Rationale*: works naturally with the current async/await calling code; does not change control flow or error handling.
+
+4. **Configuration** – Limits are loaded from environment variables (`ARCH_EMBED_MAX_PER_MIN`, default 50) with an optional override per repo via a small config object.  
+   *Rationale*: avoids hard‑coding yet remains trivially configurable without a persistent store.
+
+5. **Location in shared‑lib** – File `scripts/lib/rate-limiter.mjs` + unit test `tests/rate-limiter.test.mjs`. Allowed dependency: shared‑lib → shared‑lib ok.  
+   *Rationale*: the limiter is a general utility; placing it in shared‑lib keeps it available for any future embedding call without layering violations.
+
+## File‑Level Plan
+
+### Create
+
+| File | Purpose |
+|---|---|
+| `scripts/lib/rate-limiter.mjs` | Exports `createRateLimiter(repoSlug, opts?)` returning an object with `wait(): Promise<void>`. Keeps in‑memory call timestamps. Provides optional `getStats()` for observability. |
+| `tests/rate-limiter.test.mjs` | Vitest unit tests: verifies correct delay of sequential calls, respects concurrency limit, resets state per repo slug, works under burst scenarios. |
+
+### Modify
+
+| File | Change |
+|---|---|
+| `scripts/openai-audit.mjs` (or whichever file currently makes the embedding API call) | Import `createRateLimiter`, extract a `repoSlug` from the execution context (e.g., derived from the repository path), call `const embedLimiter = createRateLimiter(repoSlug)` once at the top level, and insert `await embedLimiter.wait()` immediately before the embedding HTTP request. |
+
+*Note*: The exact embedding call site will be confirmed in the target source; the plan assumes `scripts/openai-audit.mjs` as the most likely candidate. If the call lives elsewhere, the change follows the same pattern.
+
+## Risks
+
+- **Global API limit still trackable by the provider** – The per‑repo limiter only prevents bursts at the repo level. If many repos run concurrently, the sum of per‑repo limits may still exceed the global API plan quota. Mitigation: expose `maxPerMinGlobal` as an environment variable and coordinate externally (or later add a global token bucket).  
+- **In‑memory state lost on crash** – A crash when a promise is waiting leaves the limiter empty; restart picks up fresh, no data loss.  
+- **Configuration drift** – If environment variables are forgotten, the default (50/min) may be too high or too low. Mitigation: document the env vars in `scripts/lib/rate-limiter.mjs` comments and in the main README.  
+- **Test framework dependency** – Adding a test file assumes Vitest is the project’s test runner; if a different framework is used, the test file must be adapted (minor risk).
+
+## Target Paths
+- `scripts/lib/rate-limiter.mjs`
+- `scripts/openai-audit.mjs`
+- `tests/rate-limiter.test.mjs`
+
+## Section 9 — Acceptance Criteria
+1. A new module `scripts/lib/rate-limiter.mjs` exists and exports `createRateLimiter`.
+2. Calling `createRateLimiter('repo-a')` returns an object with a `wait` method.
+3. When `wait()` is called more than `maxPerMin` times within one minute for the same repo, later calls are delayed such that the effective rate stays ≤ `maxPerMin` per minute.
+4. Two different repo slugs receive independent rate limits.
+5. The embedding API call in the architectural‑memory pipeline (identified file) is preceded by `await rateLimiter.wait()`.
+6. The embedding call still works as before when rate is unconstrained (no artificial failures introduced).
+7. The limiter implements a configurable default (`50` per minute) that can be overridden via environment variable `ARCH_EMBED_MAX_PER_MIN`.
+8. A unit test file `tests/rate-limiter.test.mjs` verifies the throttling behaviour and independence of repos.
+9. No layering violations: `scripts/lib/rate-limiter.mjs` is in the `shared‑lib` domain and may only depend on other `shared‑lib` utilities.
+
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `23abf5a5b902d4f2`
+
+# Implementation Plan: Per-Repo Rate Limiter for Architectural-Memory Embedding Calls
+
+## Overview
+
+Add a token-bucket rate limiter that wraps architectural-memory embedding API calls, keyed per repository, to prevent quota bursts. The limiter persists its state to disk so that repeated CLI invocations for the same repo share a single bucket. The design is intentionally minimal: one new utility module in shared-lib, one integration point at the embedding call site, and one test file. No external dependencies are introduced.
+
+## Design Decisions
+
+### 1. Token bucket algorithm
+**Rationale**: Token bucket allows small bursts (up to capacity) while enforcing a steady average rate. It is simpler than sliding-window or leaky-bucket for this use case, and naturally handles the bursty pattern of batch embedding generation—process many symbols, then idle. The refill rate maps directly to the embedding API's requests-per-minute quota.
+
+### 2. Per-repo keying with separate state files
+**Rationale**: Each repository gets its own bucket so that processing repo A does not consume repo B's quota. Using one state file per repo (`<stateDir>/<hash(repoKey)>.json`) avoids cross-repo file contention and keeps individual state files tiny. The repo key is provided by the caller (the embedding module), derived from the target repo path or identifier already available in that module's context.
+
+### 3. File-based state persistence with atomic writes
+**Rationale**: The tool runs as short-lived CLI processes. Without persistence, each invocation starts with a full bucket, defeating rate limiting across runs. State is saved on every token consumption using an atomic write (temp file + `fs.rename`) to prevent corruption from partial writes. This satisfies the codebase's persistence invariants (REQ-persistence-6623d196, REQ-persistence-d8f9613d) and follows the same `atomicWrite` pattern already used in `scripts/symbol-index/drift.mjs`.
+
+### 4. In-process serialization via promise chain
+**Rationale**: Node.js is single-threaded but async. Multiple concurrent `acquire()` calls could read stale token counts between the read and the write. Serializing via a promise chain ensures each acquire observes the state left by the previous one. This is simpler than a mutex library and sufficient for single-process use.
+
+### 5. Environment-variable configuration with safe defaults
+**Rationale**: Rate and burst parameters vary by API tier and deployment. Defaults (50 req/min, burst 5) are conservative enough for typical embedding APIs. Override via `ARCH_MEM_EMBEDDING_RPM` and `ARCH_MEM_EMBEDDING_BURST` env vars. No config file is needed—keeps the footprint minimal and consistent with how other scripts in this repo handle configuration.
+
+### 6. Fail-open on state-file errors, fail-wait on rate exhaustion
+**Rationale**: If the state file is corrupt or unwritable, the limiter starts with a full bucket and continues in-memory (fail-open). This avoids blocking the workflow due to I/O issues. When rate is exhausted, the limiter waits (sleeps) until a token refills rather than rejecting the call—embedding calls are not optional, so rejection would halt the pipeline. The wait _is_ the rate-limiting mechanism.
+
+### 7. Injectable clock and sleep for testability
+**Rationale**: Time-dependent logic is hard to test with real timers. The factory accepts `now()` and `sleep()` functions, defaulting to `Date.now()` and `timers/promises` `setTimeout`. Tests inject fast-forwarding mocks to verify rate enforcement without real delays.
+
+### 8. No external dependencies
+**Rationale**: The rate limiter uses only Node.js built-ins (`fs`, `path`, `crypto`, `timers/promises`). Adding a rate-limiting library (e.g., `bottleneck`, `p-limit`) would be over-engineering for a token bucket that is ~60 lines of logic.
+
+### 9. Domain placement: shared-lib
+**Rationale**: The rate limiter is a general utility, not specific to arch-memory. Placing it in `scripts/lib/rate-limiter.mjs` (shared-lib domain) allows any domain to use it—shared-lib is a permitted dependency for arch-memory, stores, and most other domains per the `allowedDeps` map. No layering violation is introduced.
+
+### 10. Module-level singleton cache
+**Rationale**: If the embedding module is called from multiple code paths in the same process, they should share the same bucket per repo. A `Map`-based cache keyed by `repoKey:stateDir` ensures a single limiter instance per repo per process. This avoids accidental parallel buckets for the same repo.
+
+## File-Level Plan
+
+### 1. `scripts/lib/rate-limiter.mjs` — CREATE
+**Domain**: shared-lib (path rule: `scripts/lib/**`)
+
+**Purpose**: Token bucket rate limiter with per-repo keying, file persistence, and injectable time functions.
+
+**Exports**:
+- `createRateLimiter(options)` → `{ acquire, getState }`
+  - `options.repoKey` (string, required): repository identifier
+  - `options.stateDir` (string, required): directory for state files
+  - `options.rate` (number, optional): tokens per second; default from `ARCH_MEM_EMBEDDING_RPM` env or `50/60`
+  - `options.burst` (number, optional): max tokens; default from `ARCH_MEM_EMBEDDING_BURST` env or `5`
+  - `options.now` (function, optional): returns current time in ms; default `Date.now`
+  - `options.sleep` (function, optional): `(ms) => Promise<void>`; default from `timers/promises`
+- `getRateLimiter(options)` → same return, cached by `repoKey:stateDir` (singleton factory)
+
+**Internal logic**:
+- State file path: `path.join(stateDir, crypto.createHash('sha1').update(repoKey).digest('hex').slice(0, 16) + '.json')`
+- `_loadState()`: read file; on missing/corrupt, return `{ tokens: burst, lastRefill: now() }` + warn
+- `_saveState(state)`: write JSON to temp file in same dir, then `fs.rename` (atomic on same filesystem)
+- `_refill(state)`: `state.tokens = min(burst, state.tokens + (now() - state.lastRefill) / 1000 * rate); state.lastRefill = now()`
+- `acquire()`: chained promise → refill → if `tokens >= 1` consume + persist + return → else `await sleep((1 - tokens) / rate * 1000)` → retry
+
+**Error handling**:
+- Corrupt state file: `console.warn`, start full bucket
+- State dir missing: attempt `fs.mkdir(stateDir, { recursive: true })`; if that fails, continue in-memory + warn
+- Write failure: warn, continue in-memory
+- Invalid rate/burst (≤ 0, NaN): clamp to minimums (`rate ≥ 0.01`, `burst ≥ 1`)
+
+### 2. `scripts/lib/store/embeddings.mjs` — MODIFY (assumed path; see Risk 5)
+**Domain**: stores (path rule: `scripts/lib/store/**`)
+
+**Purpose**: Integration point—wrap each embedding API call with `await limiter.acquire()`.
+
+**Changes**:
+- Import `getRateLimiter` from `../rate-limiter.mjs`
+- Before the existing embedding API call (the `fetch`/SDK invocation), add:
+  ```js
+  const limiter = getRateLimiter({ repoKey, stateDir });
+  await limiter.acquire();
+  ```
+- `repoKey`: derived from the repo path or identifier already available in the module's context (the module already knows which repo it's processing)
+- `stateDir`: use the existing state directory pattern used by other store modules (e.g., alongside other `.json` state files). If no canonical state dir exists, default to `path.join(repoRoot, '.arch-state', 'rate-limits')`
+- No changes to the embedding API call itself, its error handling, or its return value—the limiter is a pre-call gate only
+
+**Note**: If the actual embedding call site is in a different file (e.g., `scripts/lib/symbol-index/embeddings.mjs` in the arch-memory domain, or a shared client in `scripts/lib/`), the same 3-line integration pattern applies. The rate-limiter module is domain-agnostic.
+
+### 3. `tests/rate-limiter.test.mjs` — CREATE
+**Domain**: tests (path rule: `tests/**`)
+
+**Purpose**: Unit tests covering token bucket logic, persistence, per-repo isolation, concurrency, and failure modes.
+
+**Test cases** (using Node's built-in `node:test` + `node:assert/strict`, consistent with the repo's test conventions):
+1. **Token consumption**: create limiter with `burst: 3`; call `acquire()` once; `getState().tokens` equals 2
+2. **Burst exhaustion + refill**: with fake clock, acquire `burst` tokens instantly; next `acquire()` triggers sleep; advance fake clock past refill window; acquire succeeds
+3. **Rate enforcement timing**: with `rate: 1` (1/sec) and `burst: 1`, two rapid acquires require ≥ 1000 ms between them (verified via fake sleep capture)
+4. **Per-repo isolation**: two limiters, different `repoKey`, same `stateDir`; consuming all tokens in one does not affect the other
+5. **Cross-instance persistence**: limiter A acquires 2 of 5 tokens; create limiter B with same `repoKey` + `stateDir`; `getState().tokens` equals 3
+6. **Corrupt state recovery**: write invalid JSON to state file path; create limiter; `getState().tokens` equals `burst`; a warning is emitted
+7. **Missing state file**: no file exists; limiter starts with full bucket; no error thrown
+8. **Unwritable state dir**: `stateDir` set to a read-only path (or mock `fs.rename` to throw); `acquire()` still returns; warning emitted; in-memory state is used
+9. **Concurrent acquire serialization**: fire 5 concurrent `acquire()` calls with `burst: 3`; first 3 resolve immediately, remaining 2 wait for refill (verified via fake sleep)
+10. **Env var override**: set `ARCH_MEM_EMBEDDING_RPM=120` and `ARCH_MEM_EMBEDDING_BURST=10`; create limiter without explicit options; `getState().tokens` equals 10; rate equals 2/sec
+11. **Singleton cache**: `getRateLimiter` called twice with same `repoKey` + `stateDir` returns the same instance (reference equality)
+
+## Risks
+
+### 1. Cross-process race condition on state file
+**Risk**: Two processes processing the same repo simultaneously could read the same token count, both consume, and last-write-wins loses one consumption—allowing a small burst past the limit.
+**Mitigation**: In practice, this tool processes one repo per invocation. If parallel processing is added later, file locking (`fs.open` with `O_EXCL` lock file or `proper-lockfile`) can be layered in. The current design documents this limitation in a code comment. The impact is bounded: at most one extra call per concurrent process, which is within typical API quota headroom.
+
+### 2. Incorrect rate configuration
+**Risk**: Setting the rate too high defeats the limiter; too low stalls the pipeline.
+**Mitigation**: Conservative defaults (50/min, burst 5). Document that the rate should be set to ~80% of the API's actual per-minute quota to leave headroom for other callers. The env var override is intentionally explicit so misconfiguration is visible.
+
+### 3. State file accumulation
+**Risk**: State files accumulate for repos no longer being processed.
+**Mitigation**: State files are ~80 bytes each. A cleanup step (remove files whose `lastRefill` is older than `burst / rate` seconds, meaning the bucket is already full) can be added as a follow-up. Out of scope for this change—flagged in a `TODO` comment.
+
+### 4. Clock skew
+**Risk**: System clock changes (NTP sync, manual adjustment) could cause incorrect refill calculations.
+**Mitigation**: `Date.now()` is used for v1 simplicity. A backward clock jump would at most allow `burst` extra calls (the bucket is capped at `burst`). This is an edge case, not a common failure mode. If it becomes an issue, switch to `process.hrtime.bigint()` for monotonic timing.
+
+### 5. Integration point uncertainty
+**Risk**: The exact embedding call site (`scripts/lib/store/embeddings.mjs`) is inferred from the domain map, not confirmed against the full symbol table (which was truncated).
+**Mitigation**: The rate limiter module is designed to be integration-agnostic—a 3-line change at any call site. If the actual call site is elsewhere (e.g., in arch-memory's `scripts/lib/symbol-index/` or a shared API client in `scripts/lib/`), the same pattern applies. The implementer should grep for `fetch`/`openai`/`embed` in `scripts/lib/store/` and `scripts/lib/symbol-index/` to confirm the exact file before modifying.
+
+### 6. State file path collision
+**Risk**: SHA-1 hash truncation (16 hex chars) could theoretically collide for different repo keys.
+**Mitigation**: 16 hex chars = 64 bits of entropy. Birthday collision probability reaches 50% only at ~2^32 repos. Not a realistic concern for this tool's scale.
+
+## Target Paths
+- `scripts/lib/rate-limiter.mjs` (create)
+- `scripts/lib/store/embeddings.mjs` (modify)
+- `tests/rate-limiter.test.mjs` (create)
+
+## Section 9 — Acceptance Criteria
+1. `createRateLimiter({ repoKey, stateDir, burst: 3 })` returns an object with `acquire` (async function) and `getState` (sync function) properties
+2. After calling `acquire()` once on a fresh limiter with `burst: 3`, `getState().tokens` returns a value equal to or less than 2 (allowing for elapsed-time refill)
+3. With a fake clock that does not advance, calling `acquire()` `burst` times resolves immediately, and the next `acquire()` call invokes the injected `sleep` function with a positive ms argument
+4. Two limiter instances created with different `repoKey` values but the same `stateDir` maintain independent token counts—consuming all tokens in one does not reduce the other's `getState().tokens`
+5. A new limiter instance created with the same `repoKey` and `stateDir` as a prior instance (in the same process or a new one) sees the persisted token count (within 1 token, allowing for refill elapsed time)
+6. Writing invalid JSON to the state file path before creating a limiter causes the limiter to initialize with a full bucket (`getState().tokens === burst`) and emit a warning, without throwing
+7. When the state directory is unwritable (mock `fs.rename` to throw), `acquire()` still resolves successfully and a warning is emitted; subsequent `getState()` reflects in-memory token consumption
+8. Five concurrent `acquire()` calls on a limiter with `burst: 3` result in exactly 3 immediate resolutions and 2 delayed resolutions that wait for the injected `sleep`—total tokens consumed never exceeds `burst + floor(elapsed_seconds * rate)`
+9. Setting `ARCH_MEM_EMBEDDING_RPM=120` and `ARCH_MEM_EMBEDDING_BURST=10` before creating a limiter (without explicit rate/burst options) results in `getState().tokens === 10` and a refill rate of 2 tokens/second
+10. `getRateLimiter` called twice with identical `repoKey` and `stateDir` returns the same object reference (singleton cache works)
+11. The embedding call module invokes `await limiter.acquire()` before each embedding API request (verifiable by code
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | OSS-GLM | `{"reuse":3,"clarity":4,"correctness":4,"completeness":5,"right_sizing":3,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 1 | output-2 | OSS-DS | `{"reuse":2,"clarity":4,"correctness":3,"completeness":2,"right_sizing":4,"risk_handling":2,"implementability":3,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-3 | GPT | `{"reuse":3,"clarity":5,"correctness":4,"completeness":4,"right_sizing":5,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+| 2 | output-1 | OSS-GLM | `{"reuse":3,"clarity":4,"correctness":4,"completeness":5,"right_sizing":3,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 2 | output-2 | OSS-DS | `{"reuse":2,"clarity":3,"correctness":3,"completeness":2,"right_sizing":4,"risk_handling":2,"implementability":2,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-3 | GPT | `{"reuse":4,"clarity":5,"correctness":4,"completeness":4,"right_sizing":5,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+
+## Human ranking (best → worst)
+
+- output-3 > output-1 > output-2 — review-mode (2026-07-02T08:04:52.505Z)
 

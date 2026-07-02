@@ -9,227 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T06:07:46.017Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Build a health-check command that verifies AUDIT_DB_URL connectivity and reports pool stats
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
 
-# Implementation Plan: AUDIT_DB_URL Health-Check Command
-
-## Overview
-
-Add a focused CLI command (`scripts/audit-db-health.mjs`) that verifies connectivity to the database identified by `AUDIT_DB_URL` and reports connection-pool statistics. The command reuses the existing audit-orchestration DB helpers where available, performs a lightweight `SELECT 1` probe, queries the `pg` pool for live stats, prints a structured report to stdout, and exits non-zero on failure so it can be wired into CI or cron.
-
----
-
-## Design Decisions
-
-1. **Placement in `audit-orchestration` domain.** The glob rule `scripts/audit-*.mjs → audit-orchestration` already captures audit-related entry points. Naming the file `audit-db-health.mjs` keeps it within that domain and avoids the `check-*.mjs` → `install` rule that would misclassify it.
-
-2. **Reuse existing pool/client factory.** If `scripts/lib/audit/` or `scripts/lib/store/` already exports a pool factory keyed on `AUDIT_DB_URL`, the health check imports it rather than constructing a second `pg.Pool`. A second pool would mask real connection-count issues and double the max-connection budget. If no such factory exists, the script creates a short-lived `pg.Pool` with conservative defaults (`max: 2`, `connectionTimeoutMillis: 5000`) and closes it before exit.
-
-3. **Probe strategy: `SELECT 1` + pool stats.** `SELECT 1` is the cheapest round-trip that exercises authentication, TLS negotiation, and query execution. Pool stats (`totalCount`, `idleCount`, `waitingCount`) are read directly from the `pg.Pool` instance. We also issue `SELECT count(*) FROM pg_stat_activity WHERE state = 'active'` when the user is a superuser/owner, but degrade gracefully (ignore permission errors) since not all deployments grant `pg_stat_activity` access.
-
-4. **Structured output, machine-parseable.** Default output is human-readable text. A `--json` flag emits a JSON object on stdout for programmatic consumption. Exit code 0 = healthy, 1 = connectivity failure, 2 = configuration error (missing/invalid `AUDIT_DB_URL`).
-
-5. **No secrets in output.** The connection string is never printed; only host and database name are surfaced (parsed from the URL). This satisfies `[REQ-security-b0b533cc]` / `[REQ-security-d55680e9]` style invariants around secret redaction.
-
-6. **Timeout-bounded.** Both the connection probe and the pool-stats query are bounded by `connectionTimeoutMillis` (5 s) and a `Promise.race` watchdog (10 s) so the command never hangs in CI.
-
-7. **Right-sized scope.** This is a read-only diagnostic — no migrations, no writes, no schema introspection beyond the optional `pg_stat_activity` count. Over-engineering (full DB dashboard, latency histograms, multi-target probes) is deliberately rejected.
-
----
-
-## File-Level Plan
-
-### New files
-
-| File | Create | Purpose |
-|---|---|---|
-| `scripts/audit-db-health.mjs` | Create | CLI entry point. Parses `--json` flag, loads `AUDIT_DB_URL` from env, delegates to the health-check lib, prints results, sets exit code. |
-| `scripts/lib/audit/db-health.mjs` | Create | Pure function module: `checkAuditDbHealth(url, options)` → returns `{ ok, latencyMs, pool: { total, idle, waiting }, activeSessions, error }`. No I/O side-effects beyond the DB probe; no `console.log` (caller handles output). |
-| `tests/audit-db-health.test.mjs` | Create | Unit tests for `checkAuditDbHealth`: mock `pg.Pool`, assert exit-code logic, assert redaction of secrets, assert timeout behaviour, assert `--json` output shape. |
-
-### Modified files
-
-| File | Modify | Purpose |
-|---|---|---|
-| `package.json` | Modify | Add `"audit-db-health"` to the `scripts` section (e.g. `"audit-db-health": "node scripts/audit-db-health.mjs"`) and add test entry if a test runner script convention exists. |
-
----
-
-## Detailed Design
-
-### `scripts/lib/audit/db-health.mjs`
-
-**Exported function:**
-
-```
-checkAuditDbHealth(connectionString, { timeoutMs = 5000, poolMax = 2 } = {}) → Promise<HealthResult>
-```
-
-**HealthResult contract:**
-
-```typescript
-{
-  ok: boolean,
-  latencyMs: number | null,
-  pool: { total: number, idle: number, waiting: number } | null,
-  activeSessions: number | null,   // null if permission denied
-  host: string,                     // safe-to-print host
-  database: string,                 // safe-to-print db name
-  error: string | null,
-  timedOut: boolean
-}
-```
-
-**Internal flow:**
-
-1. Validate `connectionString` is a parseable URL; throw a typed `ConfigError` if missing/malformed.
-2. Extract `host` and `database` from the URL for safe reporting.
-3. Construct (or reuse) `pg.Pool` with `max: poolMax`, `connectionTimeoutMillis: timeoutMs`.
-4. `Promise.race` between `pool.query('SELECT 1')` and a `timeoutMs` watchdog.
-5. On success, read `pool.totalCount`, `pool.idleCount`, `pool.waitingCount`.
-6. Attempt `pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE state = 'active'")`; catch permission errors and set `activeSessions = null`.
-7. `await pool.end()` — always, in a `finally`.
-8. Return `HealthResult`.
-
-### `scripts/audit-db-health.mjs`
-
-**Flow:**
-
-1. `parseArgs(process.argv.slice(2))` → `{ json: boolean }`.
-2. Read `process.env.AUDIT_DB_URL`. If absent → print error, `process.exit(2)`.
-3. `await checkAuditDbHealth(url, { timeoutMs: 5000 })`.
-4. If `--json`: `console.log(JSON.stringify(result, null, 2))`.
-5. Else: human-readable multi-line report.
-6. `process.exit(result.ok ? 0 : 1)`.
-
-### `tests/audit-db-health.test.mjs`
-
-- **happy path:** mock `pg.Pool` to return `{ rows: [{ '?column?': 1 }] }`, assert `ok === true`, `latencyMs >= 0`, pool stats present.
-- **connection failure:** mock `pool.query` to reject with a connection error, assert `ok === false`, `error` is set, exit code 1.
-- **timeout:** mock `pool.query` to hang, assert `timedOut === true`, `ok === false`.
-- **missing env:** assert exit code 2 when `AUDIT_DB_URL` is unset.
-- **secret redaction:** assert output never contains password or full connection string.
-- **`pg_stat_activity` permission denial:** mock rejection with `permission denied`, assert `activeSessions === null`, `ok` still true.
-
----
-
-## Failure Modes
-
-| Failure | Detection | Behaviour |
-|---|---|---|
-| `AUDIT_DB_URL` unset | Env check before any I/O | Exit 2, clear message |
-| `AUDIT_DB_URL` malformed | `new URL()` throws | Exit 2, message includes parse error |
-| Network unreachable / DB down | `pool.query` rejects | Exit 1, `error` contains safe message |
-| Auth failure | `pool.query` rejects with auth error | Exit 1, password never surfaced |
-| Query hangs | `Promise.race` watchdog fires | Exit 1, `timedOut: true` |
-| `pg_stat_activity` denied | Query rejects with permission error | `activeSessions: null`, overall health unaffected |
-| `pg` not installed | Import throws | Caught at top-level, exit 2 with install hint |
-
----
-
-## Security & Persistence Safety
-
-- **Read-only:** No `INSERT`/`UPDATE`/`DELETE`/`DDL` issued. The only queries are `SELECT 1` and a `SELECT count(*)` from a system view.
-- **No persistence:** Nothing is written to disk, no state files, no DB rows modified.
-- **Secret redaction:** Connection string is parsed via `URL` API; only `host` and `pathname` (database name) are surfaced. Password component is never logged, even in `--json` mode.
-- **Pool cleanup:** `pool.end()` is guaranteed in a `finally` block to avoid leaking connections.
-- **Minimal privileges:** The command works with a read-only DB role; superuser is only needed for `pg_stat_activity` and degrades gracefully.
-
----
-
-## Risks
-
-1. **Existing pool factory mismatch.** If `scripts/lib/audit/` already has a shared `pg.Pool` singleton, importing it here means the health check shares that pool's stats (which is desirable) but also its lifecycle (the script must not call `pool.end()` on a shared pool). *Mitigation:* detect whether the factory returns a singleton vs. a disposable instance; only call `end()` on pools the script created.
-
-2. **`pg` dependency availability.** If `pg` is not a direct dependency (only transitive via another package), a future dedupe could break the import. *Mitigation:* verify `pg` is a direct dependency in `package.json`; if not, add it.
-
-3. **Postgres-specific assumptions.** `pg_stat_activity` is Postgres-specific. If `AUDIT_DB_URL` ever points to a non-Postgres engine, the active-sessions query will fail. *Mitigation:* degrade gracefully (already planned); consider detecting engine from URL scheme in a future iteration if needed.
-
-4. **Pool stats accuracy.** `pg.Pool`'s `totalCount`/`idleCount`/`waitingCount` reflect only this process's pool, not server-side totals. The report should label them as "client-side pool stats" to avoid confusion with server-side `max_connections`.
-
----
-
-## Target Paths
-
-- `scripts/audit-db-health.mjs` (create)
-- `scripts/lib/audit/db-health.mjs` (create)
-- `tests/audit-db-health.test.mjs` (create)
-- `package.json` (modify — add script entry)
-
-## Section 9 — Acceptance Criteria
-
-1. Running `node scripts/audit-db-health.mjs` with a valid `AUDIT_DB_URL` env var exits with code 0 and prints a report containing connection status, latency, and pool stats (`total`, `idle`, `waiting`).
-2. Running the command with `AUDIT_DB_URL` unset exits with code 2 and prints a clear configuration error message.
-3. Running the command with an unreachable/invalid `AUDIT_DB_URL` exits with code 1 and prints an error message that does **not** contain the password or full connection string.
-4. The `--json` flag produces valid, parseable JSON on stdout matching the `HealthResult` contract (`ok`, `latencyMs`, `pool`, `activeSessions`, `host`, `database`, `error`, `timedOut`).
-5. A query that hangs beyond the timeout threshold (5 s default) results in exit code 1 with `timedOut: true` in the output.
-6. If `pg_stat_activity` access is denied, `activeSessions` is `null` and the overall health result is still `ok: true` (connectivity passed).
-7. The command issues no writes (no `INSERT`/`UPDATE`/`DELETE`/`DDL`) — verifiable by query log inspection during a test run.
-8. All `pg.Pool` instances created by the command are closed via `pool.end()` before the process exits, verifiable by asserting zero open handles in the test suite.
-9. Unit tests in `tests/audit-db-health.test.mjs` cover: happy path, connection failure, timeout, missing env, secret redaction, and `pg_stat_activity` permission denial — all passing.
-10. The file `scripts/audit-db-health.mjs` is classified under the `audit-orchestration` domain by the existing `domain-map.json` glob rules (no new domain-map entry required).
-
-### output-2
-
-## Overview
-Build a standalone CLI health-check command (`scripts/audit-health.mjs`) that validates connectivity to the database referenced by `AUDIT_DB_URL` and reports the connection pool statistics of the temporary pool it creates. The command is designed for operational monitoring (e.g., Kubernetes readiness probes, CI smoke tests). It uses the existing database utility from `shared-lib` to create a pool, runs a lightweight query, and outputs human-readable or JSON stats. The script is placed in a new architectural domain `audit-health` to avoid polluting `audit-orchestration` and to follow the existing pattern of isolated health-check domains (e.g., `memory-health`).
-
-## Design Decisions
-
-1. **Standalone temporary pool**  
-   The command creates its own ephemeral pool (max 1 connection) rather than tapping into the long-lived pool of the audit orchestration. This avoids coupling to the application’s lifecycle, keeps the health check self-contained, and eliminates the risk of disturbing production connections. The pool stats reported are the statistics of this temporary pool, which is sufficient to prove that the environment variable is valid and that the database accepts connections.
-
-2. **Reuse existing `shared-lib` database utility**  
-   The script imports `getPool` (or `createPool`) from `scripts/lib/db.mjs` – the existing module that is already responsible for creating pools for audit and other subsystems. This avoids duplicating connection logic, respects the single source of truth, and keeps the health check aligned with how the application itself connects.
-
-3. **Output format**  
-   Default output is human-readable text, suitable for manual inspection. A `--json` flag switches to a JSON document with keys `status`, `poolStats`, and an optional `error`. This makes the command consumable by both humans and automation.
-
-4. **Exit codes**  
-   Exit 0 on success, 1 on any failure (missing env var, connection error, query error). This is the standard contract for health-check probes.
-
-5. **New domain `audit-health`**  
-   The domain map is updated to include a rule `"scripts/audit-health.mjs" → "audit-health"` and an `allowedDeps` entry granting `audit-health` access to `shared-lib`. This follows the precedent set by `memory-health` and keeps the architectural boundaries clean.
-
-6. **No persistence nor mutation**  
-   The command only reads `AUDIT_DB_URL`, creates a transient pool, runs a read-only query, and then closes the pool. It does not store any state, satisfying all active safety and persistence invariants.
-
-## File-Level Plan
-
-| File | Action | Purpose |
-|------|--------|---------|
-| `scripts/audit-health.mjs` | **Create** | The main CLI script. It parses arguments (`--json`), reads `AUDIT_DB_URL`, imports `getPool` from `scripts/lib/db.mjs`, creates a pool, runs `SELECT 1`, harvests `pool.totalCount`, `pool.idleCount`, `pool.waitingCount`, `pool.options.max`, and formats output. On error it prints the error message and exits 1. |
-| `domain-map.json` | **Modify** | Add `"audit-health"` to `allowedDeps` with `["shared-lib"]`. Insert a rule `{"pattern": "scripts/audit-health.mjs", "domain": "audit-health"}` early in the `rules` array (before the catch-all `"scripts/audit-*.mjs"` pattern) to correctly classify the new file. |
-| `scripts/lib/db.mjs` | **No change** (assumed existing) | The existing shared database utility, expected to export a function like `getPool` or `createPool`. If absent, the plan adapts to create a minimal wrapper in the same file, but the architecture map strongly suggests it already exists. |
-
-## Risks
-
-- **Missing `AUDIT_DB_URL`**: The script will exit with code 1 and a clear message. This is an expected operational failure.
-- **Database unreachable**: Connection timeout or refusal will be captured by the pool creation or query, producing a non-zero exit and a descriptive error.
-- **Pool stat accuracy**: The temporary pool has at most 1 connection; `totalCount` and `idleCount` will reflect that. This is acceptable for a connectivity check; if the requirement evolves to report the application’s true pool state, the health check would need to import the long-lived pool, which introduces coupling and startup dependency.
-- **Domain map conflict**: The new rule `scripts/audit-health.mjs` must be placed before `scripts/audit-*.mjs` in the rules array (first-match wins). Failure to do so would classify the script under `audit-orchestration`, violating the intended domain boundary. The plan explicitly includes this ordering step.
-
-## Target Paths
-- `scripts/audit-health.mjs`
-- `domain-map.json`
-
-## Section 9 — Acceptance Criteria
-1. Running `node scripts/audit-health.mjs` with a valid `AUDIT_DB_URL` prints a human-readable summary including “Status: OK” and pool stats (total, idle, waiting, max) and exits with code 0.
-2. Running with `--json` outputs a JSON object with keys `status`, `poolStats`, and `error` (null on success), and exits with code 0.
-3. When `AUDIT_DB_URL` is unset or empty, the script prints a clear error message and exits with code 1.
-4. When the database is unreachable or the query fails, the script prints the error details, exits with code 1, and in JSON mode includes the error message in the `error` field.
-5. The script creates a temporary pool that does not remain open after the command finishes (no leaked connections).
-6. The domain map correctly classifies `scripts/audit-health.mjs` under `audit-health` and allows it to depend on `shared-lib`.
-
-### output-3
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `148aa8d1316cdeae`
 
 # Implementation Plan — AUDIT_DB_URL Health Check Command
 
@@ -648,4 +440,239 @@ Avoid requiring a live database in unit tests. If an integration test is desired
 14. `npm run audit:db:health` invokes the health-check command.
 15. Unit tests cover success, missing config, invalid config, query failure, timeout, pool cleanup, JSON output, and secret redaction.
 16. Default tests do not require a live database connection.
+
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `53350604fd02716f`
+
+## Overview
+Build a standalone CLI health-check command (`scripts/audit-health.mjs`) that validates connectivity to the database referenced by `AUDIT_DB_URL` and reports the connection pool statistics of the temporary pool it creates. The command is designed for operational monitoring (e.g., Kubernetes readiness probes, CI smoke tests). It uses the existing database utility from `shared-lib` to create a pool, runs a lightweight query, and outputs human-readable or JSON stats. The script is placed in a new architectural domain `audit-health` to avoid polluting `audit-orchestration` and to follow the existing pattern of isolated health-check domains (e.g., `memory-health`).
+
+## Design Decisions
+
+1. **Standalone temporary pool**  
+   The command creates its own ephemeral pool (max 1 connection) rather than tapping into the long-lived pool of the audit orchestration. This avoids coupling to the application’s lifecycle, keeps the health check self-contained, and eliminates the risk of disturbing production connections. The pool stats reported are the statistics of this temporary pool, which is sufficient to prove that the environment variable is valid and that the database accepts connections.
+
+2. **Reuse existing `shared-lib` database utility**  
+   The script imports `getPool` (or `createPool`) from `scripts/lib/db.mjs` – the existing module that is already responsible for creating pools for audit and other subsystems. This avoids duplicating connection logic, respects the single source of truth, and keeps the health check aligned with how the application itself connects.
+
+3. **Output format**  
+   Default output is human-readable text, suitable for manual inspection. A `--json` flag switches to a JSON document with keys `status`, `poolStats`, and an optional `error`. This makes the command consumable by both humans and automation.
+
+4. **Exit codes**  
+   Exit 0 on success, 1 on any failure (missing env var, connection error, query error). This is the standard contract for health-check probes.
+
+5. **New domain `audit-health`**  
+   The domain map is updated to include a rule `"scripts/audit-health.mjs" → "audit-health"` and an `allowedDeps` entry granting `audit-health` access to `shared-lib`. This follows the precedent set by `memory-health` and keeps the architectural boundaries clean.
+
+6. **No persistence nor mutation**  
+   The command only reads `AUDIT_DB_URL`, creates a transient pool, runs a read-only query, and then closes the pool. It does not store any state, satisfying all active safety and persistence invariants.
+
+## File-Level Plan
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `scripts/audit-health.mjs` | **Create** | The main CLI script. It parses arguments (`--json`), reads `AUDIT_DB_URL`, imports `getPool` from `scripts/lib/db.mjs`, creates a pool, runs `SELECT 1`, harvests `pool.totalCount`, `pool.idleCount`, `pool.waitingCount`, `pool.options.max`, and formats output. On error it prints the error message and exits 1. |
+| `domain-map.json` | **Modify** | Add `"audit-health"` to `allowedDeps` with `["shared-lib"]`. Insert a rule `{"pattern": "scripts/audit-health.mjs", "domain": "audit-health"}` early in the `rules` array (before the catch-all `"scripts/audit-*.mjs"` pattern) to correctly classify the new file. |
+| `scripts/lib/db.mjs` | **No change** (assumed existing) | The existing shared database utility, expected to export a function like `getPool` or `createPool`. If absent, the plan adapts to create a minimal wrapper in the same file, but the architecture map strongly suggests it already exists. |
+
+## Risks
+
+- **Missing `AUDIT_DB_URL`**: The script will exit with code 1 and a clear message. This is an expected operational failure.
+- **Database unreachable**: Connection timeout or refusal will be captured by the pool creation or query, producing a non-zero exit and a descriptive error.
+- **Pool stat accuracy**: The temporary pool has at most 1 connection; `totalCount` and `idleCount` will reflect that. This is acceptable for a connectivity check; if the requirement evolves to report the application’s true pool state, the health check would need to import the long-lived pool, which introduces coupling and startup dependency.
+- **Domain map conflict**: The new rule `scripts/audit-health.mjs` must be placed before `scripts/audit-*.mjs` in the rules array (first-match wins). Failure to do so would classify the script under `audit-orchestration`, violating the intended domain boundary. The plan explicitly includes this ordering step.
+
+## Target Paths
+- `scripts/audit-health.mjs`
+- `domain-map.json`
+
+## Section 9 — Acceptance Criteria
+1. Running `node scripts/audit-health.mjs` with a valid `AUDIT_DB_URL` prints a human-readable summary including “Status: OK” and pool stats (total, idle, waiting, max) and exits with code 0.
+2. Running with `--json` outputs a JSON object with keys `status`, `poolStats`, and `error` (null on success), and exits with code 0.
+3. When `AUDIT_DB_URL` is unset or empty, the script prints a clear error message and exits with code 1.
+4. When the database is unreachable or the query fails, the script prints the error details, exits with code 1, and in JSON mode includes the error message in the `error` field.
+5. The script creates a temporary pool that does not remain open after the command finishes (no leaked connections).
+6. The domain map correctly classifies `scripts/audit-health.mjs` under `audit-health` and allows it to depend on `shared-lib`.
+
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `3262286da4c9fd03`
+
+# Implementation Plan: AUDIT_DB_URL Health-Check Command
+
+## Overview
+
+Add a focused CLI command (`scripts/audit-db-health.mjs`) that verifies connectivity to the database identified by `AUDIT_DB_URL` and reports connection-pool statistics. The command reuses the existing audit-orchestration DB helpers where available, performs a lightweight `SELECT 1` probe, queries the `pg` pool for live stats, prints a structured report to stdout, and exits non-zero on failure so it can be wired into CI or cron.
+
+---
+
+## Design Decisions
+
+1. **Placement in `audit-orchestration` domain.** The glob rule `scripts/audit-*.mjs → audit-orchestration` already captures audit-related entry points. Naming the file `audit-db-health.mjs` keeps it within that domain and avoids the `check-*.mjs` → `install` rule that would misclassify it.
+
+2. **Reuse existing pool/client factory.** If `scripts/lib/audit/` or `scripts/lib/store/` already exports a pool factory keyed on `AUDIT_DB_URL`, the health check imports it rather than constructing a second `pg.Pool`. A second pool would mask real connection-count issues and double the max-connection budget. If no such factory exists, the script creates a short-lived `pg.Pool` with conservative defaults (`max: 2`, `connectionTimeoutMillis: 5000`) and closes it before exit.
+
+3. **Probe strategy: `SELECT 1` + pool stats.** `SELECT 1` is the cheapest round-trip that exercises authentication, TLS negotiation, and query execution. Pool stats (`totalCount`, `idleCount`, `waitingCount`) are read directly from the `pg.Pool` instance. We also issue `SELECT count(*) FROM pg_stat_activity WHERE state = 'active'` when the user is a superuser/owner, but degrade gracefully (ignore permission errors) since not all deployments grant `pg_stat_activity` access.
+
+4. **Structured output, machine-parseable.** Default output is human-readable text. A `--json` flag emits a JSON object on stdout for programmatic consumption. Exit code 0 = healthy, 1 = connectivity failure, 2 = configuration error (missing/invalid `AUDIT_DB_URL`).
+
+5. **No secrets in output.** The connection string is never printed; only host and database name are surfaced (parsed from the URL). This satisfies `[REQ-security-b0b533cc]` / `[REQ-security-d55680e9]` style invariants around secret redaction.
+
+6. **Timeout-bounded.** Both the connection probe and the pool-stats query are bounded by `connectionTimeoutMillis` (5 s) and a `Promise.race` watchdog (10 s) so the command never hangs in CI.
+
+7. **Right-sized scope.** This is a read-only diagnostic — no migrations, no writes, no schema introspection beyond the optional `pg_stat_activity` count. Over-engineering (full DB dashboard, latency histograms, multi-target probes) is deliberately rejected.
+
+---
+
+## File-Level Plan
+
+### New files
+
+| File | Create | Purpose |
+|---|---|---|
+| `scripts/audit-db-health.mjs` | Create | CLI entry point. Parses `--json` flag, loads `AUDIT_DB_URL` from env, delegates to the health-check lib, prints results, sets exit code. |
+| `scripts/lib/audit/db-health.mjs` | Create | Pure function module: `checkAuditDbHealth(url, options)` → returns `{ ok, latencyMs, pool: { total, idle, waiting }, activeSessions, error }`. No I/O side-effects beyond the DB probe; no `console.log` (caller handles output). |
+| `tests/audit-db-health.test.mjs` | Create | Unit tests for `checkAuditDbHealth`: mock `pg.Pool`, assert exit-code logic, assert redaction of secrets, assert timeout behaviour, assert `--json` output shape. |
+
+### Modified files
+
+| File | Modify | Purpose |
+|---|---|---|
+| `package.json` | Modify | Add `"audit-db-health"` to the `scripts` section (e.g. `"audit-db-health": "node scripts/audit-db-health.mjs"`) and add test entry if a test runner script convention exists. |
+
+---
+
+## Detailed Design
+
+### `scripts/lib/audit/db-health.mjs`
+
+**Exported function:**
+
+```
+checkAuditDbHealth(connectionString, { timeoutMs = 5000, poolMax = 2 } = {}) → Promise<HealthResult>
+```
+
+**HealthResult contract:**
+
+```typescript
+{
+  ok: boolean,
+  latencyMs: number | null,
+  pool: { total: number, idle: number, waiting: number } | null,
+  activeSessions: number | null,   // null if permission denied
+  host: string,                     // safe-to-print host
+  database: string,                 // safe-to-print db name
+  error: string | null,
+  timedOut: boolean
+}
+```
+
+**Internal flow:**
+
+1. Validate `connectionString` is a parseable URL; throw a typed `ConfigError` if missing/malformed.
+2. Extract `host` and `database` from the URL for safe reporting.
+3. Construct (or reuse) `pg.Pool` with `max: poolMax`, `connectionTimeoutMillis: timeoutMs`.
+4. `Promise.race` between `pool.query('SELECT 1')` and a `timeoutMs` watchdog.
+5. On success, read `pool.totalCount`, `pool.idleCount`, `pool.waitingCount`.
+6. Attempt `pool.query("SELECT count(*)::int AS n FROM pg_stat_activity WHERE state = 'active'")`; catch permission errors and set `activeSessions = null`.
+7. `await pool.end()` — always, in a `finally`.
+8. Return `HealthResult`.
+
+### `scripts/audit-db-health.mjs`
+
+**Flow:**
+
+1. `parseArgs(process.argv.slice(2))` → `{ json: boolean }`.
+2. Read `process.env.AUDIT_DB_URL`. If absent → print error, `process.exit(2)`.
+3. `await checkAuditDbHealth(url, { timeoutMs: 5000 })`.
+4. If `--json`: `console.log(JSON.stringify(result, null, 2))`.
+5. Else: human-readable multi-line report.
+6. `process.exit(result.ok ? 0 : 1)`.
+
+### `tests/audit-db-health.test.mjs`
+
+- **happy path:** mock `pg.Pool` to return `{ rows: [{ '?column?': 1 }] }`, assert `ok === true`, `latencyMs >= 0`, pool stats present.
+- **connection failure:** mock `pool.query` to reject with a connection error, assert `ok === false`, `error` is set, exit code 1.
+- **timeout:** mock `pool.query` to hang, assert `timedOut === true`, `ok === false`.
+- **missing env:** assert exit code 2 when `AUDIT_DB_URL` is unset.
+- **secret redaction:** assert output never contains password or full connection string.
+- **`pg_stat_activity` permission denial:** mock rejection with `permission denied`, assert `activeSessions === null`, `ok` still true.
+
+---
+
+## Failure Modes
+
+| Failure | Detection | Behaviour |
+|---|---|---|
+| `AUDIT_DB_URL` unset | Env check before any I/O | Exit 2, clear message |
+| `AUDIT_DB_URL` malformed | `new URL()` throws | Exit 2, message includes parse error |
+| Network unreachable / DB down | `pool.query` rejects | Exit 1, `error` contains safe message |
+| Auth failure | `pool.query` rejects with auth error | Exit 1, password never surfaced |
+| Query hangs | `Promise.race` watchdog fires | Exit 1, `timedOut: true` |
+| `pg_stat_activity` denied | Query rejects with permission error | `activeSessions: null`, overall health unaffected |
+| `pg` not installed | Import throws | Caught at top-level, exit 2 with install hint |
+
+---
+
+## Security & Persistence Safety
+
+- **Read-only:** No `INSERT`/`UPDATE`/`DELETE`/`DDL` issued. The only queries are `SELECT 1` and a `SELECT count(*)` from a system view.
+- **No persistence:** Nothing is written to disk, no state files, no DB rows modified.
+- **Secret redaction:** Connection string is parsed via `URL` API; only `host` and `pathname` (database name) are surfaced. Password component is never logged, even in `--json` mode.
+- **Pool cleanup:** `pool.end()` is guaranteed in a `finally` block to avoid leaking connections.
+- **Minimal privileges:** The command works with a read-only DB role; superuser is only needed for `pg_stat_activity` and degrades gracefully.
+
+---
+
+## Risks
+
+1. **Existing pool factory mismatch.** If `scripts/lib/audit/` already has a shared `pg.Pool` singleton, importing it here means the health check shares that pool's stats (which is desirable) but also its lifecycle (the script must not call `pool.end()` on a shared pool). *Mitigation:* detect whether the factory returns a singleton vs. a disposable instance; only call `end()` on pools the script created.
+
+2. **`pg` dependency availability.** If `pg` is not a direct dependency (only transitive via another package), a future dedupe could break the import. *Mitigation:* verify `pg` is a direct dependency in `package.json`; if not, add it.
+
+3. **Postgres-specific assumptions.** `pg_stat_activity` is Postgres-specific. If `AUDIT_DB_URL` ever points to a non-Postgres engine, the active-sessions query will fail. *Mitigation:* degrade gracefully (already planned); consider detecting engine from URL scheme in a future iteration if needed.
+
+4. **Pool stats accuracy.** `pg.Pool`'s `totalCount`/`idleCount`/`waitingCount` reflect only this process's pool, not server-side totals. The report should label them as "client-side pool stats" to avoid confusion with server-side `max_connections`.
+
+---
+
+## Target Paths
+
+- `scripts/audit-db-health.mjs` (create)
+- `scripts/lib/audit/db-health.mjs` (create)
+- `tests/audit-db-health.test.mjs` (create)
+- `package.json` (modify — add script entry)
+
+## Section 9 — Acceptance Criteria
+
+1. Running `node scripts/audit-db-health.mjs` with a valid `AUDIT_DB_URL` env var exits with code 0 and prints a report containing connection status, latency, and pool stats (`total`, `idle`, `waiting`).
+2. Running the command with `AUDIT_DB_URL` unset exits with code 2 and prints a clear configuration error message.
+3. Running the command with an unreachable/invalid `AUDIT_DB_URL` exits with code 1 and prints an error message that does **not** contain the password or full connection string.
+4. The `--json` flag produces valid, parseable JSON on stdout matching the `HealthResult` contract (`ok`, `latencyMs`, `pool`, `activeSessions`, `host`, `database`, `error`, `timedOut`).
+5. A query that hangs beyond the timeout threshold (5 s default) results in exit code 1 with `timedOut: true` in the output.
+6. If `pg_stat_activity` access is denied, `activeSessions` is `null` and the overall health result is still `ok: true` (connectivity passed).
+7. The command issues no writes (no `INSERT`/`UPDATE`/`DELETE`/`DDL`) — verifiable by query log inspection during a test run.
+8. All `pg.Pool` instances created by the command are closed via `pool.end()` before the process exits, verifiable by asserting zero open handles in the test suite.
+9. Unit tests in `tests/audit-db-health.test.mjs` cover: happy path, connection failure, timeout, missing env, secret redaction, and `pg_stat_activity` permission denial — all passing.
+10. The file `scripts/audit-db-health.mjs` is classified under the `audit-orchestration` domain by the existing `domain-map.json` glob rules (no new domain-map entry required).
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":5,"completeness":5,"right_sizing":5,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 1 | output-2 | OSS-DS | `{"reuse":4,"clarity":4,"correctness":3,"completeness":3,"right_sizing":4,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-3 | GPT | `{"reuse":5,"clarity":5,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 2 | output-1 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":5,"completeness":5,"right_sizing":5,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 2 | output-2 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":3,"right_sizing":4,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-3 | GPT | `{"reuse":5,"clarity":5,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+
+## Human ranking (best → worst)
+
+- output-3 > output-1 > output-2 — review-mode (2026-07-02T08:04:53.917Z)
 

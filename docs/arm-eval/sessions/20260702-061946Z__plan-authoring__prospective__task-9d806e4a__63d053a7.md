@@ -9,15 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T06:19:46.995Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Add structured logging with correlation IDs across the multi-pass audit pipeline
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
+
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `637eeb184eac0d88`
 
 ## Overview
 
@@ -468,7 +472,11 @@ Plan test cases:
 
 15. The implementation respects domain boundaries: audit orchestration imports shared logging utilities, while shared logging utilities do not import audit-specific modules.
 
-### output-2
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `ef57d0707f4cca74`
 
 ## Overview
 
@@ -563,7 +571,11 @@ The codebase avoids unnecessary dependencies; a 30‑line utility is self‑cont
 7. Existing pipeline behaviour (exit codes, file outputs, API calls, findings processing) is unchanged.
 8. The new `structured-logger.mjs` module can be unit‑tested by providing a stream and asserting the JSON output.
 
-### output-3
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `7ac5fe61d23640b3`
 
 # Implementation Plan — Structured Logging with Correlation IDs for the Audit Pipeline
 
@@ -667,4 +679,19 @@ The solution is deliberately scoped: one new logging module, one new correlation
 8. `node --test tests/log/correlation.test.mjs` and `node --test tests/log/structured-logger.test.mjs` pass with zero failures.
 9. No new runtime dependencies are added to `package.json` (only Node.js built-ins: `async_hooks`, `crypto` for random ID generation).
 10. A grep for `console.log` and `console.error` in `scripts/lib/audit/**`, `scripts/audit-*.mjs`, `scripts/cycle.mjs`, `scripts/openai-audit.mjs`, and `scripts/gemini-review.mjs` returns zero results (all replaced by structured logger calls).
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | GPT | `{"reuse":4,"clarity":4,"correctness":5,"completeness":5,"right_sizing":3,"risk_handling":5,"implementability":4,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 1 | output-2 | OSS-DS | `{"reuse":2,"clarity":4,"correctness":3,"completeness":2,"right_sizing":4,"risk_handling":2,"implementability":3,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-3 | OSS-GLM | `{"reuse":3,"clarity":5,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 2 | output-1 | GPT | `{"reuse":4,"clarity":4,"correctness":5,"completeness":5,"right_sizing":3,"risk_handling":5,"implementability":4,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 2 | output-2 | OSS-DS | `{"reuse":2,"clarity":4,"correctness":3,"completeness":2,"right_sizing":4,"risk_handling":2,"implementability":3,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-3 | OSS-GLM | `{"reuse":3,"clarity":5,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+
+## Human ranking (best → worst)
+
+- output-1 > output-3 > output-2 — review-mode (2026-07-02T08:04:55.343Z)
 

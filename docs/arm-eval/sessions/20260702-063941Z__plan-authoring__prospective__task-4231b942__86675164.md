@@ -9,105 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T06:39:41.945Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Implement graceful degradation when GEMINI_API_KEY is absent in the final-review path
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
 
-## Plan: Graceful degradation when `GEMINI_API_KEY` is absent in the final-review path
-
-### Overview
-The final review step in the audit pipeline relies on the Google Gemini API. Currently, when the `GEMINI_API_KEY` environment variable is missing the process fails with an unhandled error, breaking the entire pipeline. This plan adds a pre‑flight check at the entry point of the Gemini review so the system degrades gracefully: the review is skipped, a clear warning is emitted, and the overall orchestration continues without failure.
-
-### Design Decisions
-
-1. **Check location** – At the very beginning of the `main` function (or the exported function that drives the review) in `scripts/gemini-review.mjs`. This catches the missing key before any API client is instantiated, avoids code duplication, and protects all callers transparently.
-   - **Rationale**: The script is the single documented entry point for Gemini‑based review; placing the guard here gives the largest blast radius with the smallest change.
-
-2. **Degradation behaviour** – When the key is absent, the function prints a warning to stderr and either exits with code 0 (if it is a CLI script) or returns a `{ skipped: true, reason: 'missing-api-key' }` object (if it is used as a library).
-   - **Rationale**: Skipping is the correct, minimal behaviour – the final review is an enhancement, not a hard dependency. Exiting with code 0 prevents CI/CD failures; returning a sentinel allows programmatic callers to react.
-
-3. **No fallback provider** – We intentionally do **not** wire up a local model or an alternative API. That would increase maintenance surface and is out of scope.
-   - **Rationale**: Right‑sizing: the only true function of the problem is “don’t crash”. Anything beyond a skip is over‑engineering.
-
-4. **Logging** – Use `console.warn` (or the project’s shared logger if already imported) so the message is visible on stderr.
-   - **Rationale**: Reuses existing patterns; no new dependency.
-
-5. **Error resilience** – If the key exists but is invalid, the original error path (thrown by the Gemini client) remains untouched. We only guard against the *absent* key.
-   - **Rationale**: Keep the change minimal and orthogonal.
-
-6. **Testability** – A new unit test will simulate the missing‑key and present‑key (mocked) scenarios, verifying both the warning message and the exit/return contract.
-
-### File‑Level Plan
-
-#### 1. **Modify** `scripts/gemini-review.mjs`
-- **Purpose**: Core script that performs the Gemini‑based final review.
-- **Current state**: Likely instantiates a Gemini client at module load or at the start of `main` and assumes `process.env.GEMINI_API_KEY` is set.
-- **Change**:
-  - Open the file and locate the `main` function (or the function that is exported and called externally, e.g. `runGeminiReview`).
-  - At the very top, insert:
-    ```js
-    if (!process.env.GEMINI_API_KEY) {
-      console.warn(‘GEMINI_API_KEY not set. Skipping Gemini final review.’);
-      if (/* this is a CLI entry-point */) {
-        proess.exitCode = 0;
-        return;
-      }
-      return { skipped: true, reason: ‘missing-api-key’ };
-    }
-    ```
-  - If a global Gemini client is instantiated at module load, move that code inside a lazy initializer so it never runs when the key is missing.
-  - Adjust any existing callers (if the function is imported elsewhere) to handle the new skip result.
-
-#### 2. **Modify** `scripts/cycle.mjs` (if it orchestrates the final review)
-- **Purpose**: Audit cycle orchestrator that may invoke the Gemini review step as part of a larger pipeline.
-- **Current state**: May `import { runGeminiReview }` from `gemini-review.mjs` or spawn the script as a child process.
-- **Change**:
-  - Inspect how the review is invoked.
-  - If it is a direct function call, add a check on the returned object: `if (result.skipped) { console.log(‘Final review skipped (missing GEMINI_API_KEY).’); }` and continue.
-  - If it is a child process, no change is needed—exit code 0 already signals success.
-  - This ensures the cycle completes normally even when the key is absent.
-
-#### 3. **Create** `tests/gemini-review-graceful.test.mjs` (new)
-- **Purpose**: Validate the new degradation behaviour in isolation.
-- **Change**:
-  - Write two test cases:
-    1. `GEMINI_API_KEY` not set → call the function; assert that a warning is written to stderr and the function returns a skip object (or the process exits with 0).
-    2. `GEMINI_API_KEY` set (with a mock client) → assert the function proceeds normally and the warning is **not** printed.
-  - Use the project’s existing test runner (e.g., `node:test` or `vitest`), following patterns seen in `tests/` directory.
-  - If a previous test file for `gemini-review.mjs` exists, update it to supply a fake key so it doesn’t break.
-
-#### 4. **Modify** (if it exists) `scripts/lib/audit/gemini-client.mjs`
-- **Purpose**: Shared Gemini client used by multiple audit steps.
-- **Change**: If this module eagerly initialses a client, wrap the construction in a function that checks `process.env.GEMINI_API_KEY` and throws a descriptive `MissingAPIKey` error (or returns a disabled client stub). This is a secondary, defensive guard; the primary guard in the entry‑point script remains sufficient. Only touch this file if a grep confirms its existence and it is in the same call path.
-
-### Risks
-- **Silent skip in CI** – If the warning isn’t captured in CI logs, teams may not realise the review is missing. *Mitigation*: use `console.warn` and a prominent `⚠️` prefix; document the behaviour in the project README or runbook.
-- **Downstream consumers** – If a later pipeline step expects a review artifact, the skip could cause a secondary failure. *Mitigation*: ensure `cycle.mjs` (and any other orchestrator) explicitly handles the skip status; we’ll test the full cycle with the key missing.
-- **Existing test breakage** – Tests that mock the Gemini client may not supply a key and now fail on the new guard. *Mitigation*: Update those tests to set `process.env.GEMINI_API_KEY` to a dummy value or mock the check.
-- **Over‑modification** – Adding a fallback would increase complexity and maintenance. *Mitigation*: the design explicitly rejects fallbacks; we will stay disciplined during implementation.
-
-## Target Paths
-- `scripts/gemini-review.mjs`
-- `scripts/cycle.mjs`
-- `tests/gemini-review-graceful.test.mjs` (new)
-- `scripts/lib/audit/gemini-client.mjs` (only if present and in the call chain)
-
-## Section 9 — Acceptance Criteria
-1. When the `GEMINI_API_KEY` environment variable is **not set**, the `main` (or equivalent) function of `scripts/gemini-review.mjs` emits a warning to stderr that contains the string `"GEMINI_API_KEY not set"` and either exits with code 0 or returns an object with `skipped: true`.
-2. When the key is absent, the audit cycle (run via `scripts/cycle.mjs` or its equivalent) completes without error; the final review step is skipped and a log message appears.
-3. When the key is **set** (and a valid client is available, mocked in tests), the review function proceeds normally and produces its expected output.
-4. A dedicated unit test exists that exercises both the missing-key and present-key scenarios and can be executed independently.
-5. All existing tests that previously assumed a present key continue to pass after being updated with a mock key or an overridden check.
-6. The change introduces no new dependencies, does not alter the allowed dependency graph, and respects the existing layering (audit-orchestration → shared-lib, etc.).
-7. No other Gemini‑calling code path is left unprotected; a grep for `GEMINI_API_KEY` across the codebase confirms all references are covered by the same guard pattern.
-
-### output-2
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `c8cd24bbd9073871`
 
 ## Overview
 
@@ -400,7 +314,105 @@ Test hygiene:
 
 10. No new external dependencies are introduced.
 
-### output-3
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `df498ee54b1ed159`
+
+## Plan: Graceful degradation when `GEMINI_API_KEY` is absent in the final-review path
+
+### Overview
+The final review step in the audit pipeline relies on the Google Gemini API. Currently, when the `GEMINI_API_KEY` environment variable is missing the process fails with an unhandled error, breaking the entire pipeline. This plan adds a pre‑flight check at the entry point of the Gemini review so the system degrades gracefully: the review is skipped, a clear warning is emitted, and the overall orchestration continues without failure.
+
+### Design Decisions
+
+1. **Check location** – At the very beginning of the `main` function (or the exported function that drives the review) in `scripts/gemini-review.mjs`. This catches the missing key before any API client is instantiated, avoids code duplication, and protects all callers transparently.
+   - **Rationale**: The script is the single documented entry point for Gemini‑based review; placing the guard here gives the largest blast radius with the smallest change.
+
+2. **Degradation behaviour** – When the key is absent, the function prints a warning to stderr and either exits with code 0 (if it is a CLI script) or returns a `{ skipped: true, reason: 'missing-api-key' }` object (if it is used as a library).
+   - **Rationale**: Skipping is the correct, minimal behaviour – the final review is an enhancement, not a hard dependency. Exiting with code 0 prevents CI/CD failures; returning a sentinel allows programmatic callers to react.
+
+3. **No fallback provider** – We intentionally do **not** wire up a local model or an alternative API. That would increase maintenance surface and is out of scope.
+   - **Rationale**: Right‑sizing: the only true function of the problem is “don’t crash”. Anything beyond a skip is over‑engineering.
+
+4. **Logging** – Use `console.warn` (or the project’s shared logger if already imported) so the message is visible on stderr.
+   - **Rationale**: Reuses existing patterns; no new dependency.
+
+5. **Error resilience** – If the key exists but is invalid, the original error path (thrown by the Gemini client) remains untouched. We only guard against the *absent* key.
+   - **Rationale**: Keep the change minimal and orthogonal.
+
+6. **Testability** – A new unit test will simulate the missing‑key and present‑key (mocked) scenarios, verifying both the warning message and the exit/return contract.
+
+### File‑Level Plan
+
+#### 1. **Modify** `scripts/gemini-review.mjs`
+- **Purpose**: Core script that performs the Gemini‑based final review.
+- **Current state**: Likely instantiates a Gemini client at module load or at the start of `main` and assumes `process.env.GEMINI_API_KEY` is set.
+- **Change**:
+  - Open the file and locate the `main` function (or the function that is exported and called externally, e.g. `runGeminiReview`).
+  - At the very top, insert:
+    ```js
+    if (!process.env.GEMINI_API_KEY) {
+      console.warn(‘GEMINI_API_KEY not set. Skipping Gemini final review.’);
+      if (/* this is a CLI entry-point */) {
+        proess.exitCode = 0;
+        return;
+      }
+      return { skipped: true, reason: ‘missing-api-key’ };
+    }
+    ```
+  - If a global Gemini client is instantiated at module load, move that code inside a lazy initializer so it never runs when the key is missing.
+  - Adjust any existing callers (if the function is imported elsewhere) to handle the new skip result.
+
+#### 2. **Modify** `scripts/cycle.mjs` (if it orchestrates the final review)
+- **Purpose**: Audit cycle orchestrator that may invoke the Gemini review step as part of a larger pipeline.
+- **Current state**: May `import { runGeminiReview }` from `gemini-review.mjs` or spawn the script as a child process.
+- **Change**:
+  - Inspect how the review is invoked.
+  - If it is a direct function call, add a check on the returned object: `if (result.skipped) { console.log(‘Final review skipped (missing GEMINI_API_KEY).’); }` and continue.
+  - If it is a child process, no change is needed—exit code 0 already signals success.
+  - This ensures the cycle completes normally even when the key is absent.
+
+#### 3. **Create** `tests/gemini-review-graceful.test.mjs` (new)
+- **Purpose**: Validate the new degradation behaviour in isolation.
+- **Change**:
+  - Write two test cases:
+    1. `GEMINI_API_KEY` not set → call the function; assert that a warning is written to stderr and the function returns a skip object (or the process exits with 0).
+    2. `GEMINI_API_KEY` set (with a mock client) → assert the function proceeds normally and the warning is **not** printed.
+  - Use the project’s existing test runner (e.g., `node:test` or `vitest`), following patterns seen in `tests/` directory.
+  - If a previous test file for `gemini-review.mjs` exists, update it to supply a fake key so it doesn’t break.
+
+#### 4. **Modify** (if it exists) `scripts/lib/audit/gemini-client.mjs`
+- **Purpose**: Shared Gemini client used by multiple audit steps.
+- **Change**: If this module eagerly initialses a client, wrap the construction in a function that checks `process.env.GEMINI_API_KEY` and throws a descriptive `MissingAPIKey` error (or returns a disabled client stub). This is a secondary, defensive guard; the primary guard in the entry‑point script remains sufficient. Only touch this file if a grep confirms its existence and it is in the same call path.
+
+### Risks
+- **Silent skip in CI** – If the warning isn’t captured in CI logs, teams may not realise the review is missing. *Mitigation*: use `console.warn` and a prominent `⚠️` prefix; document the behaviour in the project README or runbook.
+- **Downstream consumers** – If a later pipeline step expects a review artifact, the skip could cause a secondary failure. *Mitigation*: ensure `cycle.mjs` (and any other orchestrator) explicitly handles the skip status; we’ll test the full cycle with the key missing.
+- **Existing test breakage** – Tests that mock the Gemini client may not supply a key and now fail on the new guard. *Mitigation*: Update those tests to set `process.env.GEMINI_API_KEY` to a dummy value or mock the check.
+- **Over‑modification** – Adding a fallback would increase complexity and maintenance. *Mitigation*: the design explicitly rejects fallbacks; we will stay disciplined during implementation.
+
+## Target Paths
+- `scripts/gemini-review.mjs`
+- `scripts/cycle.mjs`
+- `tests/gemini-review-graceful.test.mjs` (new)
+- `scripts/lib/audit/gemini-client.mjs` (only if present and in the call chain)
+
+## Section 9 — Acceptance Criteria
+1. When the `GEMINI_API_KEY` environment variable is **not set**, the `main` (or equivalent) function of `scripts/gemini-review.mjs` emits a warning to stderr that contains the string `"GEMINI_API_KEY not set"` and either exits with code 0 or returns an object with `skipped: true`.
+2. When the key is absent, the audit cycle (run via `scripts/cycle.mjs` or its equivalent) completes without error; the final review step is skipped and a log message appears.
+3. When the key is **set** (and a valid client is available, mocked in tests), the review function proceeds normally and produces its expected output.
+4. A dedicated unit test exists that exercises both the missing-key and present-key scenarios and can be executed independently.
+5. All existing tests that previously assumed a present key continue to pass after being updated with a mock key or an overridden check.
+6. The change introduces no new dependencies, does not alter the allowed dependency graph, and respects the existing layering (audit-orchestration → shared-lib, etc.).
+7. No other Gemini‑calling code path is left unprotected; a grep for `GEMINI_API_KEY` across the codebase confirms all references are covered by the same guard pattern.
+
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `6ff9ed54b30c77c4`
 
 # Implementation Plan — Graceful Degradation for Missing `GEMINI_API_KEY` in Final-Review Path
 
@@ -473,4 +485,19 @@ The scope is deliberately narrow: we do **not** add a fallback LLM provider, ret
 8. Running `node scripts/gemini-review.mjs` with a valid `GEMINI_API_KEY` (mocked SDK) proceeds to the normal review path and produces output with `"degraded"` absent or `false`.
 9. `resolveGeminiConfig` is a pure function with no I/O side effects (does not read files, does not mutate `process.env`).
 10. All new and modified files pass the existing lint and domain-classification checks without introducing layering violations.
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | OSS-DS | `{"reuse":2,"clarity":3,"correctness":3,"completeness":3,"right_sizing":4,"risk_handling":3,"implementability":2,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-2 | GPT | `{"reuse":4,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":4}` |
+| 1 | output-3 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 2 | output-1 | OSS-DS | `{"reuse":2,"clarity":3,"correctness":3,"completeness":3,"right_sizing":3,"risk_handling":3,"implementability":2,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-2 | GPT | `{"reuse":4,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":4}` |
+| 2 | output-3 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+
+## Human ranking (best → worst)
+
+- output-3 > output-2 > output-1 — review-mode (2026-07-02T08:04:56.775Z)
 

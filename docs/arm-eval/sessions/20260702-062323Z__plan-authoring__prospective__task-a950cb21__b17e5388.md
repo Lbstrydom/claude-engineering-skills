@@ -9,201 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T06:23:23.280Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Design a backfill job that recomputes semantic finding IDs for legacy audit_findings rows
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
 
-## 1. Overview
-
-This plan specifies a backfill job that recomputes semantic finding IDs for legacy `audit_findings` rows whose `id` does not match the current semantic-ID algorithm (or is null/non-conformant). The job is a one-off, idempotent, batched migration tool: pure computation is separated from persistence, every batch is transactional, collisions are detected (not silently merged), and a `--dry-run` mode produces a full report without mutating data. The job honors the repository's existing domain boundaries (`findings`, `stores`, `scripts`, `audit-orchestration`) and reuses any existing semantic-ID symbol rather than duplicating it.
-
-The job is intentionally a focused maintenance script — not a framework. It does one thing: recompute and reconcile semantic IDs safely, with audit-grade observability.
-
-## 2. Problem statement
-
-Legacy `audit_findings` rows predate the current semantic-ID contract (deterministic hash of normalized finding content). As a result:
-- Legacy IDs are not reproducible from content, so the same finding emitted in different runs can have different IDs (deduplication fails).
-- Cross-run correlation and `learning-store` aggregation keyed on finding ID are unreliable for legacy data.
-- Some rows may have `NULL`/placeholder IDs.
-
-The backfill must converge every legacy row to `id = computeSemanticFindingId(row)` without losing referential integrity, without silent deduplication, and without blocking the live audit pipeline longer than a configurable batch window.
-
-## 3. Design decisions (with rationale)
-
-**D1. Pure function as the single source of truth.** The semantic-ID algorithm lives in one symbol, `computeSemanticFindingId(finding)`, in the `findings` domain. Both the live audit pipeline and this backfill import it. Rationale: prevents the classic drift where the backfill uses a slightly different normalization than production, re-creating the very bug it fixes. Honors [REQ-correctness-a8781f0f].
-
-**D2. Right-sizing: script + orchestrator + repo, no framework.** Three responsibilities, three modules: CLI entry (`scripts/`), orchestrator (`findings` domain, pure-ish — takes an injected repo), and persistence (`stores` domain). Rationale: matches the existing domain map (`scripts → findings, stores`; `audit-orchestration → findings`). No new abstractions (no "migration runner" base class), no band-aid inline SQL.
-
-**D3. Idempotency is the primary contract.** A row is a candidate iff `computeSemanticFindingId(row) !== row.id` (or `row.id IS NULL`). The second run produces zero updates. Rationale: makes retries safe and turns "did it work?" into a checkable invariant. Honors [REQ-persistence-6623d196].
-
-**D4. Dry-run first, always.** Default mode is `--dry-run`; mutation requires `--apply`. Dry-run still computes new IDs, runs collision detection, and writes the same report — it just skips the `UPDATE`. Rationale: operational safety; operators must see the diff before committing. Honors [REQ-safety-582db962].
-
-**D5. Collision detection halts, never merges.** If two distinct legacy rows map to the same new semantic ID, the script aborts the batch (transaction rolls back) and emits both row PKs + their normalized content. Deduplication is a human decision. Rationale: silent merging of audit findings would destroy evidence and violate [REQ-correctness-b751155f]. Collisions are also the symptom of a broken normalization — surfacing them is more valuable than hiding them.
-
-**D6. Referential-integrity gate before any write.** Before applying, the script introspects FKs that reference `audit_findings.id`. For each, it requires either `ON UPDATE CASCADE` or it includes that dependent table in the same-batch explicit `UPDATE … WHERE finding_id = $old`. If neither is possible (a dependent in another schema the script can't enumerate), it refuses with exit code ≠ 0. Rationale: changing a PK without cascading orphans dependents. Honors [REQ-persistence-d8f9613d] and [REQ-correctness-5ec9f123].
-
-**D7. Cursor-paginated batches, per-batch transactions, advisory lock.** Rows are streamed by PK cursor (not `LIMIT/OFFSET` — avoids skip/dup under concurrent writes). Each batch is one transaction. A Postgres advisory lock (`pg_try_advisory_lock`) prevents two backfill instances from running concurrently. Rationale: bounded memory, resumable, race-free. `--limit` and `--resume-after-pk` enable staged rollout. Honors [REQ-persistence-6623d196].
-
-**D8. Audit log as an append-only report.** Every applied change is written to a report file (JSONL): `{row_pk, old_id, new_id, normalized_content_hash, batch, ts}`. The report is the source of truth for rollback and post-mortem. Rationale: no in-place destructive update is unobserved. Honors [REQ-security-b6cfe447].
-
-**D9. No string-interpolated SQL.** Every query is parameterized; identifiers (table/column names) come from a constant allow-list, never from args. Rationale: [REQ-security-b0b533cc], [REQ-security-d55680e9].
-
-**D10. Post-run validation invariants.** After `--apply`, the script re-reads and asserts: (a) total row count unchanged (no insert/delete); (b) zero rows still have a non-matching ID; (c) every dependent table's FK references resolve. Failure of any assertion is a hard error with the report path. Rationale: the migration's correctness is checked, not assumed.
-
-## 4. File-level plan
-
-| # | Path | Action | Purpose |
-|---|------|--------|---------|
-| 1 | `scripts/lib/findings-semantic-id.mjs` | CREATE (or EXTRACT if an inline implementation exists in the audit pipeline) | Pure `computeSemanticFindingId(finding)` + `normalizeFindingContent(finding)` + `isSemanticId(s)` predicate. Deterministic, no I/O. Exports the canonical contract. |
-| 2 | `scripts/lib/findings-backfill.mjs` | CREATE | `runBackfill({ repo, computeId, options })` orchestrator: cursor pagination, candidate detection, collision detection (within batch and against already-migrated IDs in this run), per-batch transaction delegation to repo, report writer, post-run validation. Domain: `findings` (depends on `stores` via injected repo, no direct import). |
-| 3 | `scripts/lib/store/audit-findings-repo.mjs` | CREATE (or MODIFY if a `scripts/lib/store/audit-findings*.mjs` already exists) | `stores` domain. Parameterized SQL only. Methods: `streamLegacyCandidates({ resumeAfterPk, limit })` (async iterator), `introspectReferencingFks()`, `updateIdBatch(updates, { dependentTables })` (single transaction), `rowCount()`, `assertNoOrphans()`, `tryAdvisoryLock(key)`, `releaseAdvisoryLock(key)`. |
-| 4 | `scripts/backfill-finding-ids.mjs` | CREATE | `scripts` domain CLI. Parses args (`--dry-run` default, `--apply`, `--batch-size`, `--limit`, `--resume-after-pk`, `--report-path`, `--source-filter`), wires repo + orchestrator, sets exit codes, prints human-readable summary. |
-| 5 | `scripts/lib/audit/<existing-finding-emission>.mjs` | MODIFY | Replaces any inline semantic-ID computation with `import { computeSemanticFindingId } from '../findings-semantic-id.mjs'`. If the pipeline already imports a shared symbol, this is a no-op confirm. (Exact path to be confirmed against repo during implementation; the change is mechanical.) |
-| 6 | `tests/findings-semantic-id.test.mjs` | CREATE | Pure-function tests: determinism, normalization idempotence, stability across content reordering, format/length invariants, `NULL`/empty-field handling, distinct-content → distinct-ID property (no collision in a generated corpus of 10k findings). |
-| 7 | `tests/backfill-finding-ids.test.mjs` | CREATE | Orchestrator tests with an in-memory mock repo: dry-run mutates nothing; idempotency (second run = 0 updates); collision halts and rolls back batch; FK gate refuses when a non-cascaded dependent exists; advisory-lock contention path; report contains every applied row; post-run validation flags a forced orphan. |
-
-## 5. Failure modes (explicit)
-
-- **F1. FK without CASCADE and not in dependent allow-list** → `--apply` refuses (exit 3); `--dry-run` still runs and reports the blocker.
-- **F2. Collision (two legacy rows → same new ID)** → batch rolls back, script aborts (exit 4), both rows printed. Does not proceed to next batch.
-- **F3. NULL/empty content field** → candidate is skipped and logged to report with `reason: "unhashable_content"`; does not abort the run.
-- **F4. Connection drop mid-batch** → transaction rolls back; advisory lock released in `finally`; resume via `--resume-after-pk` (the last successfully committed PK is the durable cursor — written to the report and stdout).
-- **F5. Concurrent live audit writing a new finding during backfill** → advisory lock prevents two backfills; a live writer inserting a row whose computed ID already exists is handled by the live pipeline's own uniqueness constraint, not the backfill. The backfill only touches rows whose `id` already mismatches `computeSemanticFindingId`.
-- **F6. Algorithm change after partial backfill** → idempotency invariant means a re-run with the new algorithm simply re-migrates the now-mismatched rows; the audit log records both transitions.
-- **F7. Post-run validation failure** → exit 5, full report path printed, no further batches started.
-- **F8. Misuse: `--apply` without prior `--dry-run`** → allowed but the CLI prints a confirmation banner and requires `--confirm-apply` to proceed; prevents accidental destructive runs.
-
-## 6. Security & persistence safety
-
-- All SQL parameterized; identifier allow-list is a module constant.
-- Advisory lock keyed on a stable int derived from `"audit_findings.id.backfill"`.
-- Per-batch transactions; `--batch-size` default 200 (right-sized for an audit table, not a telemetry firehose).
-- No `TRUNCATE`, no `DELETE`, no schema DDL anywhere in the job.
-- Report file written with `0o600`; path defaults to `./reports/backfill-finding-ids-<iso8601>.jsonl`.
-- No secrets in args; DB connection comes from the existing store's config (single source).
-- The job never reads or writes the `learning-store` directly; downstream convergence happens naturally once IDs are stable. Honors [REQ-security-b0b533cc], [REQ-security-d55680e9], [REQ-persistence-d8f9613d].
-
-## 7. Testability strategy
-
-- `computeSemanticFindingId` is pure → property-based tests (determinism, injectivity on a generated corpus, normalization idempotence).
-- `runBackfill` takes an injected `repo` interface (async methods) → all failure modes (F1–F8) are reproducible with an in-memory mock, no DB required.
-- The CLI is a thin wrapper; tested via a smoke test that shells out with `--dry-run --limit 1` against a fixture DB (skipped in CI if no DB available).
-- Collision and FK-gate behavior are the two highest-value tests; both must be red-green before merge.
-
-## 8. Risks
-
-- **R1. Hidden FK references in another schema** the introspection can't see → mitigated by the explicit dependent allow-list + refusal to run when `assertNoOrphans` fails post-apply. Residual: requires DBA sign-off on the allow-list.
-- **R2. The legacy semantic-ID format may have multiple historical variants**, so "mismatch" must be defined as "not equal to current `computeSemanticFindingId(row)`," not "doesn't match a regex." Risk: re-running after an algorithm bump re-migrates everything. Mitigated by idempotency + audit log.
-- **R3. Large legacy table** → cursor pagination bounds memory, but a single advisory lock held for the whole run could block other maintenance jobs. Mitigated by `--limit` staged runs and short per-batch transactions; advisory lock is held across batches by design (a backfill is a critical section).
-- **R4. Truncation length of the hash** — if the existing column has a length constraint, truncation must be deterministic and consistent with the live pipeline. Mitigated by D1 (single source of truth) and a unit test asserting the live-format invariant.
-- **R5. Existing inline semantic-ID logic in the audit pipeline differs from the extracted symbol** → extracting it changes live behavior. Mitigated by a golden-file test of `computeSemanticFindingId` against known inputs from both the legacy and current pipelines before the MODIFY in file #5 lands.
-- **R6. Operator runs `--apply` on the wrong environment** → mitigated by `--confirm-apply` banner showing env/row-count; not a substitute for access controls.
-
-## Target Paths
-
-- `scripts/lib/findings-semantic-id.mjs` — CREATE (or EXTRACT)
-- `scripts/lib/findings-backfill.mjs` — CREATE
-- `scripts/lib/store/audit-findings-repo.mjs` — CREATE (or MODIFY if existing)
-- `scripts/backfill-finding-ids.mjs` — CREATE
-- `scripts/lib/audit/<existing-finding-emission>.mjs` — MODIFY (path confirmed at implementation time)
-- `tests/findings-semantic-id.test.mjs` — CREATE
-- `tests/backfill-finding-ids.test.mjs` — CREATE
-
-## Section 9 — Acceptance Criteria
-
-1. `computeSemanticFindingId` is a pure, deterministic function: for any fixed input it returns the same output across processes, and the function performs no I/O (unit-testable in isolation).
-2. The live audit pipeline and the backfill both import `computeSemanticFindingId` from `scripts/lib/findings-semantic-id.mjs` (single source of truth — verified by grep/import graph).
-3. Running `node scripts/backfill-finding-ids.mjs` with no flags (or `--dry-run`) exits 0, mutates zero rows, and writes a report listing every candidate row with `{old_id, new_id, normalized_content_hash}`.
-4. The CLI refuses to mutate without `--apply --confirm-apply`; missing either exits non-zero before any SQL is issued.
-5. The script acquires a Postgres advisory lock before processing; a second concurrent invocation exits non-zero with a clear "backfill already running" message and mutates nothing.
-6. Each batch is committed in a single transaction; simulating a failure mid-batch (mock repo throws) leaves the batch uncommitted and the durable cursor (`--resume-after-pk`) at the last committed PK.
-7. When two distinct legacy rows compute to the same new ID, the run aborts with non-zero exit, the batch is rolled back, and both rows (PK + normalized content hash) are printed and written to the report.
-8. The FK introspection gate refuses `--apply` (exit 3) when a table references `audit_findings.id` without `ON UPDATE CASCADE` and is not in the explicit dependent allow-list; `--dry-run` still completes and surfaces the blocker.
-9. After `--apply`, the post-run validation asserts: (a) total `audit_findings` row count is unchanged from pre-run; (b) zero rows satisfy `id != computeSemanticFindingId(row)` and zero rows have `NULL` id; (c) `assertNoOrphans` passes on every dependent table. Any failure exits non-zero (exit 5).
-10. Re-running `--apply` immediately after a successful `--apply` produces zero updates (idempotency invariant) and exits 0.
-11. Every query in the repo module is parameterized; a CI grep finds no SQL string concatenation of user-controlled values; identifier names only appear from a module-level constant allow-list.
-12. `--limit N` processes exactly N candidate rows and exits 0; `--resume-after-pk P` continues strictly after PK `P` (no row skipped, no row duplicated).
-13. The unit-test suite for `computeSemanticFindingId` proves injectivity on a generated corpus of ≥10,000 distinct normalized findings (no two distinct inputs share an ID).
-14. The orchestrator test suite exercises failure modes F1–F8 with an in-memory mock repo and asserts the documented exit code and side-effect (or absence) for each.
-15. The audit-log report file is created with mode `0o600`, is append-only during the run, and contains one JSONL record per applied row including `{row_pk, old_id, new_id, normalized_content_hash, batch, ts}`.
-
-### output-2
-
-## Overview
-
-This plan defines a one-shot backfill script that recomputes the `semantic_finding_id` field for every row in the `audit_findings` table whose value was produced by an older (legacy) algorithm. The new algorithm is already implemented in the `findings` domain as `computeSemanticFindingId`; the backfill reads rows in batches, recomputes the ID using the current function, and writes back only rows whose ID differs from the stored value. The script respects existing invariants around persistence safety (atomic writes, dry-run, idempotency) and security (environment-variable–based database connection, no hard-coded secrets).
-
-## Design Decisions
-
-1. **Batch processing with tamper-evident cursor**  
-   The script processes rows in batches of 250, ordered by `id` (primary key). Each batch persists a checkpoint `(last_processed_id, batch_count)` to a side-table or file so that interrupted runs can resume without re-scanning the entire table. The cursor is updated only after a batch commits successfully.
-
-2. **Dry-run mode and idempotency**  
-   By default the script runs in `--dry-run` mode: it computes the new ID, compares to the stored value, logs the diff, but performs no writes. A `--commit` flag enables writes. Because the operation is equality-based (`SET semantic_finding_id = new_id WHERE id = $1 AND semantic_finding_id <> new_id`), re-running after a partial commit is safe — already-migrated rows are skipped.
-
-3. **Single responsibility: backfill only**  
-   The script does NOT modify the `computeSemanticFindingId` function, the schema, or any production read/write path. It lives in `scripts/` as a standalone job, importable but not invoked by the main audit loop.
-
-4. **Reuse existing symbols and layers**  
-   - `computeSemanticFindingId` from `scripts/lib/findings.mjs` (domain: `findings`)  
-   - Database connection helper `getDbPool` from `scripts/lib/db.mjs` (domain: `shared-lib`)  
-   - Logger from `shared-lib` (if available; otherwise minimal `console` with structured JSON)  
-   - Respects the domain map: the script can depend on `findings`, `shared-lib`, and `scripts` (no cross-domain violation).
-
-5. **Acceptance testing via contract**  
-   The script will be designed so its core logic (ID diff and batch loop) can be tested with an injected database adapter. A companion unit test file verifies the mapping, dry-run logging, and resume behavior.
-
-6. **Minimal deployment surface**  
-   No new npm package, no new infra. The script is a single `.mjs` file run manually or via a cron-like scheduler. It reads the same `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` environment variables used by the rest of the system.
-
-## File-Level Plan
-
-### Create
-
-- **`scripts/backfill-semantic-finding-ids.mjs`**  
-  Purpose: Backfill entry point. Parses CLI flags (`--dry-run` / `--commit`, `--batch-size`), imports `computeSemanticFindingId` and `getDbPool`, runs the batch loop with checkpointing, logs summary statistics.
-
-- **`tests/backfill-semantic-finding-ids.test.mjs`**  
-  Purpose: Unit + integration tests. Mocks database adapter to verify:
-  - Dry-run does not mutate rows.
-  - Changed rows are updated in commit mode.
-  - Unchanged rows are skipped.
-  - Checkpoint resume after simulated crash.
-  - Batch-size boundary conditions.
-
-### Modify
-
-None (no existing files changed).
-
-## Section 9 — Acceptance Criteria
-
-1. Running `node scripts/backfill-semantic-finding-ids.mjs --dry-run` scans all `audit_findings` rows, computes the new semantic finding ID for each, and logs every row where the new ID differs from the stored ID, without modifying the database.
-2. Running with `--commit` updates only rows where `semantic_finding_id` differs from the recomputed value; rows already matching are left untouched.
-3. Processing is batched (default 250 rows per batch) and resumes from the last committed primary key after an interrupted run, without re-processing earlier rows.
-4. The script exits with a non-zero code and a clear error message if the database connection fails or required environment variables are missing.
-5. A summary is printed at exit containing: total rows scanned, rows updated, rows skipped, batches executed, and elapsed time.
-6. The implementation imports `computeSemanticFindingId` from the `findings` domain and `getDbPool` from `shared-lib`; no logic is duplicated.
-7. Unit tests in `tests/backfill-semantic-finding-ids.test.mjs` cover dry-run non-mutation, commit mutation, skip of identical rows, resume after interruption, and an edge case of an empty table.
-
-## Target Paths
-
-- `scripts/backfill-semantic-finding-ids.mjs`
-- `tests/backfill-semantic-finding-ids.test.mjs`
-
-## Risks
-
-- **Legacy algorithm mismatch**: If the current `computeSemanticFindingId` produces an ID that is already present but the legacy algorithm is unknown, some rows may be left with the legacy ID. Risk is accepted; the backfill clearly distinguishes rows that diverge.
-- **Long-running transaction**: Each batch commits inside its own transaction. A very large table may take a long time but will not block writes. Mitigation: batch size is configurable.
-- **Concurrent writes**: If another process inserts rows with legacy IDs during the backfill, those rows will be missed. Mitigation: the script documents that it should be run during a maintenance window or after the backfill is repeated.
-- **Checkpoint storage**: A simple file-based checkpoint (`/tmp/backfill_sem_id_checkpoint.json`) is used. On stateless container restarts the checkpoint may be lost, causing a full rescan. Acceptable for an infrequent one-shot job.
-
-### output-3
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `50a7bcd2bfe54841`
 
 # Implementation Plan — Backfill Semantic Finding IDs for Legacy `audit_findings`
 
@@ -588,4 +406,213 @@ Fields that must not be used unless already part of the canonical implementation
 10. CLI tests verify dry-run behavior, apply behavior, batching/limit behavior, invalid-row behavior, and stale compare-and-swap handling with a mocked DB adapter.
 11. No database schema migration is introduced for this task unless implementation proves the semantic ID column does not already exist, in which case the task must stop for explicit schema review.
 12. The implementation respects the existing domain boundaries: pure semantic/backfill logic remains in findings/shared code, while DB orchestration remains in the top-level `scripts/` entry point.
+
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `99197061361cc585`
+
+## Overview
+
+This plan defines a one-shot backfill script that recomputes the `semantic_finding_id` field for every row in the `audit_findings` table whose value was produced by an older (legacy) algorithm. The new algorithm is already implemented in the `findings` domain as `computeSemanticFindingId`; the backfill reads rows in batches, recomputes the ID using the current function, and writes back only rows whose ID differs from the stored value. The script respects existing invariants around persistence safety (atomic writes, dry-run, idempotency) and security (environment-variable–based database connection, no hard-coded secrets).
+
+## Design Decisions
+
+1. **Batch processing with tamper-evident cursor**  
+   The script processes rows in batches of 250, ordered by `id` (primary key). Each batch persists a checkpoint `(last_processed_id, batch_count)` to a side-table or file so that interrupted runs can resume without re-scanning the entire table. The cursor is updated only after a batch commits successfully.
+
+2. **Dry-run mode and idempotency**  
+   By default the script runs in `--dry-run` mode: it computes the new ID, compares to the stored value, logs the diff, but performs no writes. A `--commit` flag enables writes. Because the operation is equality-based (`SET semantic_finding_id = new_id WHERE id = $1 AND semantic_finding_id <> new_id`), re-running after a partial commit is safe — already-migrated rows are skipped.
+
+3. **Single responsibility: backfill only**  
+   The script does NOT modify the `computeSemanticFindingId` function, the schema, or any production read/write path. It lives in `scripts/` as a standalone job, importable but not invoked by the main audit loop.
+
+4. **Reuse existing symbols and layers**  
+   - `computeSemanticFindingId` from `scripts/lib/findings.mjs` (domain: `findings`)  
+   - Database connection helper `getDbPool` from `scripts/lib/db.mjs` (domain: `shared-lib`)  
+   - Logger from `shared-lib` (if available; otherwise minimal `console` with structured JSON)  
+   - Respects the domain map: the script can depend on `findings`, `shared-lib`, and `scripts` (no cross-domain violation).
+
+5. **Acceptance testing via contract**  
+   The script will be designed so its core logic (ID diff and batch loop) can be tested with an injected database adapter. A companion unit test file verifies the mapping, dry-run logging, and resume behavior.
+
+6. **Minimal deployment surface**  
+   No new npm package, no new infra. The script is a single `.mjs` file run manually or via a cron-like scheduler. It reads the same `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` environment variables used by the rest of the system.
+
+## File-Level Plan
+
+### Create
+
+- **`scripts/backfill-semantic-finding-ids.mjs`**  
+  Purpose: Backfill entry point. Parses CLI flags (`--dry-run` / `--commit`, `--batch-size`), imports `computeSemanticFindingId` and `getDbPool`, runs the batch loop with checkpointing, logs summary statistics.
+
+- **`tests/backfill-semantic-finding-ids.test.mjs`**  
+  Purpose: Unit + integration tests. Mocks database adapter to verify:
+  - Dry-run does not mutate rows.
+  - Changed rows are updated in commit mode.
+  - Unchanged rows are skipped.
+  - Checkpoint resume after simulated crash.
+  - Batch-size boundary conditions.
+
+### Modify
+
+None (no existing files changed).
+
+## Section 9 — Acceptance Criteria
+
+1. Running `node scripts/backfill-semantic-finding-ids.mjs --dry-run` scans all `audit_findings` rows, computes the new semantic finding ID for each, and logs every row where the new ID differs from the stored ID, without modifying the database.
+2. Running with `--commit` updates only rows where `semantic_finding_id` differs from the recomputed value; rows already matching are left untouched.
+3. Processing is batched (default 250 rows per batch) and resumes from the last committed primary key after an interrupted run, without re-processing earlier rows.
+4. The script exits with a non-zero code and a clear error message if the database connection fails or required environment variables are missing.
+5. A summary is printed at exit containing: total rows scanned, rows updated, rows skipped, batches executed, and elapsed time.
+6. The implementation imports `computeSemanticFindingId` from the `findings` domain and `getDbPool` from `shared-lib`; no logic is duplicated.
+7. Unit tests in `tests/backfill-semantic-finding-ids.test.mjs` cover dry-run non-mutation, commit mutation, skip of identical rows, resume after interruption, and an edge case of an empty table.
+
+## Target Paths
+
+- `scripts/backfill-semantic-finding-ids.mjs`
+- `tests/backfill-semantic-finding-ids.test.mjs`
+
+## Risks
+
+- **Legacy algorithm mismatch**: If the current `computeSemanticFindingId` produces an ID that is already present but the legacy algorithm is unknown, some rows may be left with the legacy ID. Risk is accepted; the backfill clearly distinguishes rows that diverge.
+- **Long-running transaction**: Each batch commits inside its own transaction. A very large table may take a long time but will not block writes. Mitigation: batch size is configurable.
+- **Concurrent writes**: If another process inserts rows with legacy IDs during the backfill, those rows will be missed. Mitigation: the script documents that it should be run during a maintenance window or after the backfill is repeated.
+- **Checkpoint storage**: A simple file-based checkpoint (`/tmp/backfill_sem_id_checkpoint.json`) is used. On stateless container restarts the checkpoint may be lost, causing a full rescan. Acceptable for an infrequent one-shot job.
+
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `231a9f77715b5f13`
+
+## 1. Overview
+
+This plan specifies a backfill job that recomputes semantic finding IDs for legacy `audit_findings` rows whose `id` does not match the current semantic-ID algorithm (or is null/non-conformant). The job is a one-off, idempotent, batched migration tool: pure computation is separated from persistence, every batch is transactional, collisions are detected (not silently merged), and a `--dry-run` mode produces a full report without mutating data. The job honors the repository's existing domain boundaries (`findings`, `stores`, `scripts`, `audit-orchestration`) and reuses any existing semantic-ID symbol rather than duplicating it.
+
+The job is intentionally a focused maintenance script — not a framework. It does one thing: recompute and reconcile semantic IDs safely, with audit-grade observability.
+
+## 2. Problem statement
+
+Legacy `audit_findings` rows predate the current semantic-ID contract (deterministic hash of normalized finding content). As a result:
+- Legacy IDs are not reproducible from content, so the same finding emitted in different runs can have different IDs (deduplication fails).
+- Cross-run correlation and `learning-store` aggregation keyed on finding ID are unreliable for legacy data.
+- Some rows may have `NULL`/placeholder IDs.
+
+The backfill must converge every legacy row to `id = computeSemanticFindingId(row)` without losing referential integrity, without silent deduplication, and without blocking the live audit pipeline longer than a configurable batch window.
+
+## 3. Design decisions (with rationale)
+
+**D1. Pure function as the single source of truth.** The semantic-ID algorithm lives in one symbol, `computeSemanticFindingId(finding)`, in the `findings` domain. Both the live audit pipeline and this backfill import it. Rationale: prevents the classic drift where the backfill uses a slightly different normalization than production, re-creating the very bug it fixes. Honors [REQ-correctness-a8781f0f].
+
+**D2. Right-sizing: script + orchestrator + repo, no framework.** Three responsibilities, three modules: CLI entry (`scripts/`), orchestrator (`findings` domain, pure-ish — takes an injected repo), and persistence (`stores` domain). Rationale: matches the existing domain map (`scripts → findings, stores`; `audit-orchestration → findings`). No new abstractions (no "migration runner" base class), no band-aid inline SQL.
+
+**D3. Idempotency is the primary contract.** A row is a candidate iff `computeSemanticFindingId(row) !== row.id` (or `row.id IS NULL`). The second run produces zero updates. Rationale: makes retries safe and turns "did it work?" into a checkable invariant. Honors [REQ-persistence-6623d196].
+
+**D4. Dry-run first, always.** Default mode is `--dry-run`; mutation requires `--apply`. Dry-run still computes new IDs, runs collision detection, and writes the same report — it just skips the `UPDATE`. Rationale: operational safety; operators must see the diff before committing. Honors [REQ-safety-582db962].
+
+**D5. Collision detection halts, never merges.** If two distinct legacy rows map to the same new semantic ID, the script aborts the batch (transaction rolls back) and emits both row PKs + their normalized content. Deduplication is a human decision. Rationale: silent merging of audit findings would destroy evidence and violate [REQ-correctness-b751155f]. Collisions are also the symptom of a broken normalization — surfacing them is more valuable than hiding them.
+
+**D6. Referential-integrity gate before any write.** Before applying, the script introspects FKs that reference `audit_findings.id`. For each, it requires either `ON UPDATE CASCADE` or it includes that dependent table in the same-batch explicit `UPDATE … WHERE finding_id = $old`. If neither is possible (a dependent in another schema the script can't enumerate), it refuses with exit code ≠ 0. Rationale: changing a PK without cascading orphans dependents. Honors [REQ-persistence-d8f9613d] and [REQ-correctness-5ec9f123].
+
+**D7. Cursor-paginated batches, per-batch transactions, advisory lock.** Rows are streamed by PK cursor (not `LIMIT/OFFSET` — avoids skip/dup under concurrent writes). Each batch is one transaction. A Postgres advisory lock (`pg_try_advisory_lock`) prevents two backfill instances from running concurrently. Rationale: bounded memory, resumable, race-free. `--limit` and `--resume-after-pk` enable staged rollout. Honors [REQ-persistence-6623d196].
+
+**D8. Audit log as an append-only report.** Every applied change is written to a report file (JSONL): `{row_pk, old_id, new_id, normalized_content_hash, batch, ts}`. The report is the source of truth for rollback and post-mortem. Rationale: no in-place destructive update is unobserved. Honors [REQ-security-b6cfe447].
+
+**D9. No string-interpolated SQL.** Every query is parameterized; identifiers (table/column names) come from a constant allow-list, never from args. Rationale: [REQ-security-b0b533cc], [REQ-security-d55680e9].
+
+**D10. Post-run validation invariants.** After `--apply`, the script re-reads and asserts: (a) total row count unchanged (no insert/delete); (b) zero rows still have a non-matching ID; (c) every dependent table's FK references resolve. Failure of any assertion is a hard error with the report path. Rationale: the migration's correctness is checked, not assumed.
+
+## 4. File-level plan
+
+| # | Path | Action | Purpose |
+|---|------|--------|---------|
+| 1 | `scripts/lib/findings-semantic-id.mjs` | CREATE (or EXTRACT if an inline implementation exists in the audit pipeline) | Pure `computeSemanticFindingId(finding)` + `normalizeFindingContent(finding)` + `isSemanticId(s)` predicate. Deterministic, no I/O. Exports the canonical contract. |
+| 2 | `scripts/lib/findings-backfill.mjs` | CREATE | `runBackfill({ repo, computeId, options })` orchestrator: cursor pagination, candidate detection, collision detection (within batch and against already-migrated IDs in this run), per-batch transaction delegation to repo, report writer, post-run validation. Domain: `findings` (depends on `stores` via injected repo, no direct import). |
+| 3 | `scripts/lib/store/audit-findings-repo.mjs` | CREATE (or MODIFY if a `scripts/lib/store/audit-findings*.mjs` already exists) | `stores` domain. Parameterized SQL only. Methods: `streamLegacyCandidates({ resumeAfterPk, limit })` (async iterator), `introspectReferencingFks()`, `updateIdBatch(updates, { dependentTables })` (single transaction), `rowCount()`, `assertNoOrphans()`, `tryAdvisoryLock(key)`, `releaseAdvisoryLock(key)`. |
+| 4 | `scripts/backfill-finding-ids.mjs` | CREATE | `scripts` domain CLI. Parses args (`--dry-run` default, `--apply`, `--batch-size`, `--limit`, `--resume-after-pk`, `--report-path`, `--source-filter`), wires repo + orchestrator, sets exit codes, prints human-readable summary. |
+| 5 | `scripts/lib/audit/<existing-finding-emission>.mjs` | MODIFY | Replaces any inline semantic-ID computation with `import { computeSemanticFindingId } from '../findings-semantic-id.mjs'`. If the pipeline already imports a shared symbol, this is a no-op confirm. (Exact path to be confirmed against repo during implementation; the change is mechanical.) |
+| 6 | `tests/findings-semantic-id.test.mjs` | CREATE | Pure-function tests: determinism, normalization idempotence, stability across content reordering, format/length invariants, `NULL`/empty-field handling, distinct-content → distinct-ID property (no collision in a generated corpus of 10k findings). |
+| 7 | `tests/backfill-finding-ids.test.mjs` | CREATE | Orchestrator tests with an in-memory mock repo: dry-run mutates nothing; idempotency (second run = 0 updates); collision halts and rolls back batch; FK gate refuses when a non-cascaded dependent exists; advisory-lock contention path; report contains every applied row; post-run validation flags a forced orphan. |
+
+## 5. Failure modes (explicit)
+
+- **F1. FK without CASCADE and not in dependent allow-list** → `--apply` refuses (exit 3); `--dry-run` still runs and reports the blocker.
+- **F2. Collision (two legacy rows → same new ID)** → batch rolls back, script aborts (exit 4), both rows printed. Does not proceed to next batch.
+- **F3. NULL/empty content field** → candidate is skipped and logged to report with `reason: "unhashable_content"`; does not abort the run.
+- **F4. Connection drop mid-batch** → transaction rolls back; advisory lock released in `finally`; resume via `--resume-after-pk` (the last successfully committed PK is the durable cursor — written to the report and stdout).
+- **F5. Concurrent live audit writing a new finding during backfill** → advisory lock prevents two backfills; a live writer inserting a row whose computed ID already exists is handled by the live pipeline's own uniqueness constraint, not the backfill. The backfill only touches rows whose `id` already mismatches `computeSemanticFindingId`.
+- **F6. Algorithm change after partial backfill** → idempotency invariant means a re-run with the new algorithm simply re-migrates the now-mismatched rows; the audit log records both transitions.
+- **F7. Post-run validation failure** → exit 5, full report path printed, no further batches started.
+- **F8. Misuse: `--apply` without prior `--dry-run`** → allowed but the CLI prints a confirmation banner and requires `--confirm-apply` to proceed; prevents accidental destructive runs.
+
+## 6. Security & persistence safety
+
+- All SQL parameterized; identifier allow-list is a module constant.
+- Advisory lock keyed on a stable int derived from `"audit_findings.id.backfill"`.
+- Per-batch transactions; `--batch-size` default 200 (right-sized for an audit table, not a telemetry firehose).
+- No `TRUNCATE`, no `DELETE`, no schema DDL anywhere in the job.
+- Report file written with `0o600`; path defaults to `./reports/backfill-finding-ids-<iso8601>.jsonl`.
+- No secrets in args; DB connection comes from the existing store's config (single source).
+- The job never reads or writes the `learning-store` directly; downstream convergence happens naturally once IDs are stable. Honors [REQ-security-b0b533cc], [REQ-security-d55680e9], [REQ-persistence-d8f9613d].
+
+## 7. Testability strategy
+
+- `computeSemanticFindingId` is pure → property-based tests (determinism, injectivity on a generated corpus, normalization idempotence).
+- `runBackfill` takes an injected `repo` interface (async methods) → all failure modes (F1–F8) are reproducible with an in-memory mock, no DB required.
+- The CLI is a thin wrapper; tested via a smoke test that shells out with `--dry-run --limit 1` against a fixture DB (skipped in CI if no DB available).
+- Collision and FK-gate behavior are the two highest-value tests; both must be red-green before merge.
+
+## 8. Risks
+
+- **R1. Hidden FK references in another schema** the introspection can't see → mitigated by the explicit dependent allow-list + refusal to run when `assertNoOrphans` fails post-apply. Residual: requires DBA sign-off on the allow-list.
+- **R2. The legacy semantic-ID format may have multiple historical variants**, so "mismatch" must be defined as "not equal to current `computeSemanticFindingId(row)`," not "doesn't match a regex." Risk: re-running after an algorithm bump re-migrates everything. Mitigated by idempotency + audit log.
+- **R3. Large legacy table** → cursor pagination bounds memory, but a single advisory lock held for the whole run could block other maintenance jobs. Mitigated by `--limit` staged runs and short per-batch transactions; advisory lock is held across batches by design (a backfill is a critical section).
+- **R4. Truncation length of the hash** — if the existing column has a length constraint, truncation must be deterministic and consistent with the live pipeline. Mitigated by D1 (single source of truth) and a unit test asserting the live-format invariant.
+- **R5. Existing inline semantic-ID logic in the audit pipeline differs from the extracted symbol** → extracting it changes live behavior. Mitigated by a golden-file test of `computeSemanticFindingId` against known inputs from both the legacy and current pipelines before the MODIFY in file #5 lands.
+- **R6. Operator runs `--apply` on the wrong environment** → mitigated by `--confirm-apply` banner showing env/row-count; not a substitute for access controls.
+
+## Target Paths
+
+- `scripts/lib/findings-semantic-id.mjs` — CREATE (or EXTRACT)
+- `scripts/lib/findings-backfill.mjs` — CREATE
+- `scripts/lib/store/audit-findings-repo.mjs` — CREATE (or MODIFY if existing)
+- `scripts/backfill-finding-ids.mjs` — CREATE
+- `scripts/lib/audit/<existing-finding-emission>.mjs` — MODIFY (path confirmed at implementation time)
+- `tests/findings-semantic-id.test.mjs` — CREATE
+- `tests/backfill-finding-ids.test.mjs` — CREATE
+
+## Section 9 — Acceptance Criteria
+
+1. `computeSemanticFindingId` is a pure, deterministic function: for any fixed input it returns the same output across processes, and the function performs no I/O (unit-testable in isolation).
+2. The live audit pipeline and the backfill both import `computeSemanticFindingId` from `scripts/lib/findings-semantic-id.mjs` (single source of truth — verified by grep/import graph).
+3. Running `node scripts/backfill-finding-ids.mjs` with no flags (or `--dry-run`) exits 0, mutates zero rows, and writes a report listing every candidate row with `{old_id, new_id, normalized_content_hash}`.
+4. The CLI refuses to mutate without `--apply --confirm-apply`; missing either exits non-zero before any SQL is issued.
+5. The script acquires a Postgres advisory lock before processing; a second concurrent invocation exits non-zero with a clear "backfill already running" message and mutates nothing.
+6. Each batch is committed in a single transaction; simulating a failure mid-batch (mock repo throws) leaves the batch uncommitted and the durable cursor (`--resume-after-pk`) at the last committed PK.
+7. When two distinct legacy rows compute to the same new ID, the run aborts with non-zero exit, the batch is rolled back, and both rows (PK + normalized content hash) are printed and written to the report.
+8. The FK introspection gate refuses `--apply` (exit 3) when a table references `audit_findings.id` without `ON UPDATE CASCADE` and is not in the explicit dependent allow-list; `--dry-run` still completes and surfaces the blocker.
+9. After `--apply`, the post-run validation asserts: (a) total `audit_findings` row count is unchanged from pre-run; (b) zero rows satisfy `id != computeSemanticFindingId(row)` and zero rows have `NULL` id; (c) `assertNoOrphans` passes on every dependent table. Any failure exits non-zero (exit 5).
+10. Re-running `--apply` immediately after a successful `--apply` produces zero updates (idempotency invariant) and exits 0.
+11. Every query in the repo module is parameterized; a CI grep finds no SQL string concatenation of user-controlled values; identifier names only appear from a module-level constant allow-list.
+12. `--limit N` processes exactly N candidate rows and exits 0; `--resume-after-pk P` continues strictly after PK `P` (no row skipped, no row duplicated).
+13. The unit-test suite for `computeSemanticFindingId` proves injectivity on a generated corpus of ≥10,000 distinct normalized findings (no two distinct inputs share an ID).
+14. The orchestrator test suite exercises failure modes F1–F8 with an in-memory mock repo and asserts the documented exit code and side-effect (or absence) for each.
+15. The audit-log report file is created with mode `0o600`, is append-only during the run, and contains one JSONL record per applied row including `{row_pk, old_id, new_id, normalized_content_hash, batch, ts}`.
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | OSS-GLM | `{"reuse":5,"clarity":5,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 1 | output-2 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":2,"right_sizing":4,"risk_handling":2,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-3 | GPT | `{"reuse":5,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+| 2 | output-1 | OSS-GLM | `{"reuse":5,"clarity":5,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 2 | output-2 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":2,"right_sizing":4,"risk_handling":2,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-3 | GPT | `{"reuse":5,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+
+## Human ranking (best → worst)
+
+- output-1 > output-3 > output-2 — review-mode (2026-07-02T08:04:55.821Z)
 

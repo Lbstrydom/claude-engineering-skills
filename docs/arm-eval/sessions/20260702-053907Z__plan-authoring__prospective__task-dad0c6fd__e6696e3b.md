@@ -9,15 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T05:39:07.569Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Add a --dry-run flag to setup-postgres that prints pending migrations without applying them
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
+
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `527d291580e74fe3`
 
 # Implementation Plan — Add `--dry-run` to `setup-postgres`
 
@@ -374,7 +378,11 @@ If the current script does not expose helpers, add minimal named exports guarded
 9. Automated tests verify that dry-run prints pending migrations and that the migration apply path is not called.
 10. Automated tests verify that normal non-dry-run execution still calls the migration apply path for pending migrations.
 
-### output-2
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `be62c7b719fc9b83`
 
 ## Overview
 
@@ -473,7 +481,11 @@ The change is minimal: a single flag addition to the existing entrypoint, levera
 6. The `--dry-run` flag works correctly even when other flags (e.g., connection strings, environment variables) are passed.
 7. A unit test confirms the exit code and output for the three scenarios (no pending, pending, verbose pending).
 
-### output-3
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `cf81d6d0f2b46abf`
 
 # Implementation Plan: `--dry-run` flag for `setup-postgres`
 
@@ -651,4 +663,19 @@ These are test-only fixtures, never applied to a real database.
 8. `computePendingMigrations` accepts an injected database client, enabling unit tests without a real Postgres instance.
 9. A test file at `tests/setup-postgres.dry-run.test.mjs` exists and covers: (a) pending migrations printed with no writes, (b) all pending when tracking table missing, (c) none pending when all applied, (d) dry-run precedence over `--force`, (e) missing migrations directory exits 1, (f) exit code 0 when pending migrations exist.
 10. The change introduces no new cross-domain dependency violations per the architecture map (the `scripts` domain importing from `stores` is already allowed).
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | GPT | `{"reuse":3,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":5,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":4}` |
+| 1 | output-2 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":3,"right_sizing":3,"risk_handling":2,"implementability":3,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-3 | OSS-GLM | `{"reuse":5,"clarity":5,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 2 | output-1 | GPT | `{"reuse":4,"clarity":4,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":3,"acceptance_criteria_quality":5}` |
+| 2 | output-2 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":3,"completeness":3,"right_sizing":3,"risk_handling":3,"implementability":3,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-3 | OSS-GLM | `{"reuse":5,"clarity":5,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+
+## Human ranking (best → worst)
+
+- output-3 > output-1 > output-2 — review-mode (2026-07-02T08:04:51.483Z)
 

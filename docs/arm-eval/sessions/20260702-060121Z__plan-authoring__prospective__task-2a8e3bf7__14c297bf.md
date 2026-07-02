@@ -9,77 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T06:01:21.539Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Design a schema migration to add a soft-delete column to audit_findings with a partial index
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
 
-# Plan: Soft-delete column on `audit_findings` with partial index
-
-## Overview
-
-Add a `deleted_at` timestamp column to the `audit_findings` table in the Supabase database, defaulting to `NULL` for live rows. Implement a partial index on `deleted_at` for rows where `deleted_at IS NULL` to accelerate non‑deleted lookups. Update the findings data‑access module (`scripts/lib/findings.mjs`) to automatically exclude soft‑deleted rows from all standard queries and provide a dedicated soft‑delete function. The change is backward‑compatible: existing code that does not write to `deleted_at` will continue to see only live rows.
-
-## Design decisions
-
-- **Column type**: `TIMESTAMP WITH TIME ZONE` (nullable). A timestamp records *when* the deletion occurred, which is more useful for audit trails than a bare boolean. `NULL` means “not deleted”.
-- **Partial index definition**: `CREATE INDEX idx_audit_findings_live ON audit_findings (deleted_at) WHERE deleted_at IS NULL;`. The index is small (only rows that are not deleted) and gives fast access to the most common query pattern.
-- **Default filtering**: The findings module (`scripts/lib/findings.mjs`) will always add `AND deleted_at IS NULL` to every `SELECT` query unless an explicit `includeDeleted` option is passed. This preserves the invariant that “deleted” means invisible to normal operations.
-- **Soft‑delete function**: A new exported function `softDeleteFinding(id)` sets `deleted_at = NOW()` on the row. No hard delete is exposed in the API.
-- **No new dependencies**: The change stays within the `findings` domain, which is allowed to depend on `shared-lib` for database utilities. No architectural rules are violated.
-- **Migration file**: Placed in `supabase/migrations/` with a timestamp‑based name, following the existing convention.
-
-## File‑level plan
-
-### Create
-- `supabase/migrations/20260630_add_soft_delete_to_audit_findings.sql`  
-  *Purpose*: SQL migration that adds the `deleted_at` column, creates the partial index, and sets a default of `NULL` for existing rows (the column is nullable, so no data migration is needed). Includes a comment explaining the purpose.
-
-### Modify
-- `scripts/lib/findings.mjs`  
-  *Purpose*: Central data‑access module for `audit_findings`. Changes:
-  - Add a `SELECT` helper that always appends `WHERE deleted_at IS NULL` to the base query, unless an `options.includeDeleted` flag is truthy.
-  - Update `getFindings`, `getFindingById`, and any other query functions to use the helper.
-  - Export `async softDeleteFinding(id)` that runs `UPDATE audit_findings SET deleted_at = NOW() WHERE id = $1`.
-  - If a `findings` schema type definition exists (e.g., in `shared-lib`), add the `deleted_at` field there as optional.
-
-- `tests/findings.test.mjs` (or equivalent test file)  
-  *Purpose*: Add test cases to verify:
-  - Creating a finding and fetching it excludes the `deleted_at` column from the result (or returns it as `null`).
-  - After soft‑deleting a finding, standard queries no longer return it.
-  - Using `includeDeleted: true` returns the soft‑deleted row.
-  - The partial index is used by the query planner (e.g., via `EXPLAIN`).
-
-## Risks
-
-- **Existing queries outside the findings module**: If other modules (e.g., `audit-orchestration`) directly query `audit_findings` without using the findings module, they will see soft‑deleted rows until they are updated to filter them out. The mitigation is to audit all direct SQL references to `audit_findings` and add the filter. The allowed dependency graph (audit‑orchestration → findings) encourages using the module, reducing this risk.
-- **Data migration**: No backfill needed because the column is nullable. Existing rows remain `NULL` (live).
-- **Index size**: The partial index is small and only grows when rows are deleted; it is a read‑optimised B‑tree, unlikely to impact write performance.
-- **Migration ordering**: The migration must be applied before the new code references the column. In a CI/CD pipeline, migrations run first; this is a standard Supabase workflow.
-
-## Target Paths
-- `supabase/migrations/20260630_add_soft_delete_to_audit_findings.sql`
-- `scripts/lib/findings.mjs`
-- `tests/findings.test.mjs`
-
-## Section 9 — Acceptance Criteria
-1. The migration SQL runs successfully against a development database without errors.
-2. The `audit_findings` table has a nullable `deleted_at` column of type `TIMESTAMP WITH TIME ZONE`.
-3. A partial index named `idx_audit_findings_live` exists on `deleted_at` with the condition `WHERE deleted_at IS NULL`.
-4. All existing rows have `deleted_at = NULL` after migration.
-5. The `scripts/lib/findings.mjs` module exports `softDeleteFinding(id)` that sets `deleted_at` to the current timestamp for the given row.
-6. Calling `getFindings` or `getFindingById` after a soft delete does not return the soft‑deleted row (unless `includeDeleted` is true).
-7. Passing `includeDeleted: true` to `getFindings` or `getFindingById` returns the soft‑deleted row.
-8. The module’s existing public API remains unchanged (no breaking signature changes for existing callers).
-9. The test file contains at least one passing test for each of the above behaviours.
-10. The query planner uses the partial index when querying for non‑deleted rows (verified via `EXPLAIN`).
-
-### output-2
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `f18384b020d47065`
 
 # Implementation Plan — Add Soft-Delete Column to `audit_findings` with Partial Index
 
@@ -297,7 +239,77 @@ Handling:
 11. The migration does not add application-layer filtering, RLS changes, or view changes outside the schema migration scope.
 12. Re-running the migration statements manually in a development database does not fail due solely to the column or index already existing.
 
-### output-3
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `17f0f83c8f4e5836`
+
+# Plan: Soft-delete column on `audit_findings` with partial index
+
+## Overview
+
+Add a `deleted_at` timestamp column to the `audit_findings` table in the Supabase database, defaulting to `NULL` for live rows. Implement a partial index on `deleted_at` for rows where `deleted_at IS NULL` to accelerate non‑deleted lookups. Update the findings data‑access module (`scripts/lib/findings.mjs`) to automatically exclude soft‑deleted rows from all standard queries and provide a dedicated soft‑delete function. The change is backward‑compatible: existing code that does not write to `deleted_at` will continue to see only live rows.
+
+## Design decisions
+
+- **Column type**: `TIMESTAMP WITH TIME ZONE` (nullable). A timestamp records *when* the deletion occurred, which is more useful for audit trails than a bare boolean. `NULL` means “not deleted”.
+- **Partial index definition**: `CREATE INDEX idx_audit_findings_live ON audit_findings (deleted_at) WHERE deleted_at IS NULL;`. The index is small (only rows that are not deleted) and gives fast access to the most common query pattern.
+- **Default filtering**: The findings module (`scripts/lib/findings.mjs`) will always add `AND deleted_at IS NULL` to every `SELECT` query unless an explicit `includeDeleted` option is passed. This preserves the invariant that “deleted” means invisible to normal operations.
+- **Soft‑delete function**: A new exported function `softDeleteFinding(id)` sets `deleted_at = NOW()` on the row. No hard delete is exposed in the API.
+- **No new dependencies**: The change stays within the `findings` domain, which is allowed to depend on `shared-lib` for database utilities. No architectural rules are violated.
+- **Migration file**: Placed in `supabase/migrations/` with a timestamp‑based name, following the existing convention.
+
+## File‑level plan
+
+### Create
+- `supabase/migrations/20260630_add_soft_delete_to_audit_findings.sql`  
+  *Purpose*: SQL migration that adds the `deleted_at` column, creates the partial index, and sets a default of `NULL` for existing rows (the column is nullable, so no data migration is needed). Includes a comment explaining the purpose.
+
+### Modify
+- `scripts/lib/findings.mjs`  
+  *Purpose*: Central data‑access module for `audit_findings`. Changes:
+  - Add a `SELECT` helper that always appends `WHERE deleted_at IS NULL` to the base query, unless an `options.includeDeleted` flag is truthy.
+  - Update `getFindings`, `getFindingById`, and any other query functions to use the helper.
+  - Export `async softDeleteFinding(id)` that runs `UPDATE audit_findings SET deleted_at = NOW() WHERE id = $1`.
+  - If a `findings` schema type definition exists (e.g., in `shared-lib`), add the `deleted_at` field there as optional.
+
+- `tests/findings.test.mjs` (or equivalent test file)  
+  *Purpose*: Add test cases to verify:
+  - Creating a finding and fetching it excludes the `deleted_at` column from the result (or returns it as `null`).
+  - After soft‑deleting a finding, standard queries no longer return it.
+  - Using `includeDeleted: true` returns the soft‑deleted row.
+  - The partial index is used by the query planner (e.g., via `EXPLAIN`).
+
+## Risks
+
+- **Existing queries outside the findings module**: If other modules (e.g., `audit-orchestration`) directly query `audit_findings` without using the findings module, they will see soft‑deleted rows until they are updated to filter them out. The mitigation is to audit all direct SQL references to `audit_findings` and add the filter. The allowed dependency graph (audit‑orchestration → findings) encourages using the module, reducing this risk.
+- **Data migration**: No backfill needed because the column is nullable. Existing rows remain `NULL` (live).
+- **Index size**: The partial index is small and only grows when rows are deleted; it is a read‑optimised B‑tree, unlikely to impact write performance.
+- **Migration ordering**: The migration must be applied before the new code references the column. In a CI/CD pipeline, migrations run first; this is a standard Supabase workflow.
+
+## Target Paths
+- `supabase/migrations/20260630_add_soft_delete_to_audit_findings.sql`
+- `scripts/lib/findings.mjs`
+- `tests/findings.test.mjs`
+
+## Section 9 — Acceptance Criteria
+1. The migration SQL runs successfully against a development database without errors.
+2. The `audit_findings` table has a nullable `deleted_at` column of type `TIMESTAMP WITH TIME ZONE`.
+3. A partial index named `idx_audit_findings_live` exists on `deleted_at` with the condition `WHERE deleted_at IS NULL`.
+4. All existing rows have `deleted_at = NULL` after migration.
+5. The `scripts/lib/findings.mjs` module exports `softDeleteFinding(id)` that sets `deleted_at` to the current timestamp for the given row.
+6. Calling `getFindings` or `getFindingById` after a soft delete does not return the soft‑deleted row (unless `includeDeleted` is true).
+7. Passing `includeDeleted: true` to `getFindings` or `getFindingById` returns the soft‑deleted row.
+8. The module’s existing public API remains unchanged (no breaking signature changes for existing callers).
+9. The test file contains at least one passing test for each of the above behaviours.
+10. The query planner uses the partial index when querying for non‑deleted rows (verified via `EXPLAIN`).
+
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `f7d42eb1bce93023`
 
 ## Overview
 
@@ -395,4 +407,19 @@ The test uses the repo's existing test harness against a disposable Postgres/Sup
 8. A row inserted with `deleted_at = now()` is excluded by a query filtering `deleted_at IS NULL`; a row with `deleted_at = NULL` is included.
 9. The test file `tests/stores/audit-findings-soft-delete.test.mjs` passes against a migrated database instance.
 10. No existing RLS policy on `audit_findings` is altered by this migration (diff of `pg_policies` before/after is empty for the table).
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | OSS-DS | `{"reuse":2,"clarity":4,"correctness":3,"completeness":3,"right_sizing":3,"risk_handling":3,"implementability":3,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-2 | GPT | `{"reuse":3,"clarity":4,"correctness":4,"completeness":4,"right_sizing":5,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+| 1 | output-3 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":5,"acceptance_criteria_quality":5}` |
+| 2 | output-1 | OSS-DS | `{"reuse":2,"clarity":4,"correctness":3,"completeness":3,"right_sizing":3,"risk_handling":3,"implementability":3,"repo_intent_fidelity":2,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-2 | GPT | `{"reuse":3,"clarity":4,"correctness":4,"completeness":4,"right_sizing":5,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":4}` |
+| 2 | output-3 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":5,"repo_intent_fidelity":5,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+
+## Human ranking (best → worst)
+
+- output-3 > output-2 > output-1 — review-mode (2026-07-02T08:04:52.972Z)
 

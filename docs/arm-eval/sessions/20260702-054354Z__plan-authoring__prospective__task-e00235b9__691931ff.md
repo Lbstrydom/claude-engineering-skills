@@ -9,15 +9,19 @@
 | Config / rubric version | 1 / 1 |
 | Created (UTC) | 2026-07-02T05:43:54.027Z |
 | Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
-| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+| Archive mode | FULL (attribution + judgments) |
 
 ## Task
 
 Implement a retry-with-backoff wrapper for transient OpenRouter 5xx errors in the OSS model path
 
-## Outputs (blinded — rank via `arm-eval-adjudicate`)
+## Arms + outputs
 
-### output-1
+### Arm GPT
+
+- Models: `{"models":["latest-gpt"],"resolved":"latest-gpt"}`
+- Conformant: true
+- Output hash: `283f8a12ea843be1`
 
 # Implementation Plan — Retry with Backoff for Transient OpenRouter 5xx Errors in OSS Model Path
 
@@ -306,7 +310,11 @@ Planned tests:
 11. Public OSS model call signatures remain unchanged unless the repository already supports internal dependency injection patterns.
 12. The change is localized to the OSS/OpenRouter model path and does not alter retry behavior for unrelated providers.
 
-### output-2
+### Arm OSS-DS
+
+- Models: `{"models":["deepseek/deepseek-v4-pro"],"resolved":"deepseek/deepseek-v4-pro"}`
+- Conformant: true
+- Output hash: `231594a26c690872`
 
 ## Overview
 
@@ -391,7 +399,11 @@ Implement a retry-with-exponential-backoff wrapper for HTTP requests that encoun
 7. Existing OpenRouter OSS model call sites use the retry-enabled wrapper without changing their call signatures.
 8. Unit tests exist for the retry logic covering: success path, 5xx retry and eventual success, 5xx exhaustion, non-5xx no-retry, and delay calculation bounds.
 
-### output-3
+### Arm OSS-GLM
+
+- Models: `{"models":["z-ai/glm-5.2"],"resolved":"z-ai/glm-5.2"}`
+- Conformant: true
+- Output hash: `6c5e5b84a945bc69`
 
 # Implementation Plan — Retry-with-Backoff Wrapper for OpenRouter 5xx Transient Errors
 
@@ -466,4 +478,19 @@ Introduce a focused, dependency-light retry wrapper that wraps OpenRouter HTTP c
 11. Each retry attempt emits a log line containing attempt number and computed delay (verifiable via captured console output in tests).
 12. All unit tests in `tests/openrouter-retry.test.mjs` pass with `node --test`.
 13. No new layering violations are introduced: `scripts/lib/openrouter-retry.mjs` is tagged `shared-lib` and imports only from within `shared-lib` or Node built-ins.
+
+## Judge scores (blinded at judge time; unblinded here post-ranking)
+
+| Pass | Label | Arm | Scores |
+|---|---|---|---|
+| 1 | output-1 | GPT | `{"reuse":4,"clarity":4,"correctness":5,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":3,"acceptance_criteria_quality":5}` |
+| 1 | output-2 | OSS-DS | `{"reuse":3,"clarity":4,"correctness":4,"completeness":3,"right_sizing":3,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 1 | output-3 | OSS-GLM | `{"reuse":4,"clarity":5,"correctness":5,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":5,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+| 2 | output-1 | GPT | `{"reuse":4,"clarity":4,"correctness":4,"completeness":5,"right_sizing":4,"risk_handling":5,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":3,"acceptance_criteria_quality":5}` |
+| 2 | output-2 | OSS-DS | `{"reuse":2,"clarity":4,"correctness":3,"completeness":3,"right_sizing":3,"risk_handling":3,"implementability":3,"repo_intent_fidelity":3,"architectural_coherence":3,"acceptance_criteria_quality":3}` |
+| 2 | output-3 | OSS-GLM | `{"reuse":3,"clarity":5,"correctness":4,"completeness":4,"right_sizing":4,"risk_handling":4,"implementability":4,"repo_intent_fidelity":4,"architectural_coherence":4,"acceptance_criteria_quality":5}` |
+
+## Human ranking (best → worst)
+
+- output-1 > output-3 > output-2 — review-mode (2026-07-02T08:04:52.032Z)
 
