@@ -592,6 +592,24 @@ node scripts/cross-skill.mjs upsert-plan --json '{
 
 Update status as implementation progresses.
 
+### Phase 7.5 — Arm-eval capture (toggle-gated, silent no-op when off)
+
+After persisting, fire the capture hook — it reads the per-repo
+`arm-eval-toggle` state and does NOTHING when the toggle is off (safe to run
+unconditionally; never blocks the plan):
+
+```bash
+node scripts/cross-skill.mjs arm-eval-maybe-capture \
+  --experiment plan-authoring --task "<the user's original task description>"
+```
+
+When the operator has toggled the experiment on (`arm-eval-toggle on`), this
+runs one blinded A/B/C arm-eval session for the same task in the background of
+the workflow — the plan YOU just wrote is unaffected (the capture generates its
+own arm outputs; nothing replaces your plan). `captured:false` +
+`reason:'toggle-off'` → say nothing. On `captured:true`, mention in one line
+that an arm-eval session was recorded.
+
 ---
 
 ## Reminders

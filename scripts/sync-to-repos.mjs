@@ -43,6 +43,7 @@ const AUDIT_RUNTIME_IGNORES = [
   '.audit-loop/*-observed.json',      // domain-deps / nav-graph / visual observed envelopes
   '.audit-loop/*-verify-result.json', // nav-audit / visual-audit --verify results
   '.audit-loop/*-drift-ledger.json',  // nav / visual local drift caches
+  '.audit-loop/arm-eval-toggle.json', // per-repo experiment toggle (operator state, timestamped)
 ];
 
 const DRY_RUN = process.argv.includes('--dry-run');
@@ -147,6 +148,16 @@ const CORE_ENTRY = [
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.
   'scripts/lib/redact.mjs',
+  // Arm-eval framework — reached only via dynamic imports in cross-skill.mjs
+  // (arm-eval-run/-decision/-stats/-adjudicate/-toggle/-maybe-capture) and
+  // openai-audit.mjs (toggle-aware shadow activation), so the walker cannot
+  // follow. Declaring run.mjs + decision.mjs + toggle.mjs + the store lets the
+  // walker pull the static closure (experiments, judge, intent-context,
+  // cross-checks, plan-seed, producers/*) automatically.
+  'scripts/lib/arm-eval/run.mjs',
+  'scripts/lib/arm-eval/decision.mjs',
+  'scripts/lib/arm-eval/toggle.mjs',
+  'scripts/lib/store/arm-eval.mjs',
   // Documented injection point — consumers wire their preferred provider
   // adapter at runtime; no static caller in this repo so the walker
   // doesn't pull it in. Ship explicitly.

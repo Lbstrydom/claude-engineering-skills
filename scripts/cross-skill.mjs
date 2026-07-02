@@ -635,13 +635,18 @@ async function cmdArmEvalRun() {
   const experimentType = argOption('experiment');
   const task = argOption('task');
   if (!experimentType || !task) return emitError('BAD_INPUT', '--experiment <plan-authoring|brainstorm> --task "<text>" required');
-  const budgetCapEur = Number.parseFloat(argOption('budget-eur'));
+  const budgetFlag = Number.parseFloat(argOption('budget-eur'));
   const repoId = argOption('repo-id') || null;
   const phase = argOption('phase') || 'prospective';
   const seed = argOption('seed') ? Number.parseInt(argOption('seed'), 10) : null;
   try {
+    // --budget-eur omitted → config default (€300, ARM_EVAL_BUDGET_EUR to
+    // override). The library seam still refuses null — the CLI is where the
+    // operator-facing default lives.
+    const { armEvalConfig } = await import('./lib/config.mjs');
+    const budgetCapEur = Number.isFinite(budgetFlag) && budgetFlag > 0 ? budgetFlag : armEvalConfig.budgetEur;
     const { runArmEvalSession } = await import('./lib/arm-eval/run.mjs');
-    const r = await runArmEvalSession({ experimentType, task, repoId, phase, seed, budgetCapEur: Number.isFinite(budgetCapEur) ? budgetCapEur : null });
+    const r = await runArmEvalSession({ experimentType, task, repoId, phase, seed, budgetCapEur });
     emit({ ok: r.state === 'ran', ...r });
   } catch (err) { emitError('EXCEPTION', err.message); }
 }
@@ -697,6 +702,72 @@ async function cmdArmEvalAdjudicate() {
     const q = await store.getBlindedSessionOutputs(sessionId);
     emit({ ok: true, cloud: q.cloud, blinded: true, outputs: q.outputs });
   } catch (err) { emitError('EXCEPTION', err.message); }
+}
+
+/**
+ * One-command experiment toggle: `arm-eval-toggle on|off|status [--budget-eur N]`.
+ * `on` → shadow arms B,C activate for /audit-code + /audit-plan, and /plan +
+ * /brainstorm start capturing arm-eval sessions. `off` → everything inert.
+ * Explicit AUDIT_MODEL_SHADOW env always wins over the toggle (kill switch).
+ */
+async function cmdArmEvalToggle() {
+  const sub = rest.find((a) => !a.startsWith('--')) || 'status';
+  const { readToggle, writeToggle, resolveShadowArmsWithToggle } = await import('./lib/arm-eval/toggle.mjs');
+  if (sub === 'on' || sub === 'off') {
+    const budgetFlag = Number.parseFloat(argOption('budget-eur'));
+    const { armEvalConfig } = await import('./lib/config.mjs');
+    const budgetEur = Number.isFinite(budgetFlag) && budgetFlag > 0 ? budgetFlag : armEvalConfig.budgetEur;
+    const state = writeToggle({ enabled: sub === 'on', budgetEur: sub === 'on' ? budgetEur : null });
+    const arms = resolveShadowArmsWithToggle();
+    return emit({
+      ok: true, toggle: state,
+      activates: sub === 'on' ? {
+        auditShadowArms: arms.enabled ? arms.requested : [],
+        planCapture: 'plan-authoring', brainstormCapture: 'brainstorm',
+        budgetEur,
+      } : null,
+      note: sub === 'on'
+        ? 'Shadow arms + plan/brainstorm capture ACTIVE for this repo. Turn off: arm-eval-toggle off'
+        : 'All experiment capture INERT for this repo.',
+    });
+  }
+  if (sub !== 'status') return emitError('BAD_INPUT', 'usage: arm-eval-toggle on|off|status [--budget-eur N]');
+  const t = readToggle();
+  const arms = resolveShadowArmsWithToggle();
+  emit({ ok: true, toggle: t, shadowArms: { enabled: arms.enabled, requested: arms.requested, source: arms.source } });
+}
+
+/**
+ * Conditional capture hook for /plan and /brainstorm (toggle-gated, silent
+ * no-op when off — safe to call unconditionally from the skills). When the
+ * toggle is on, runs ONE arm-eval session for the given experiment + task
+ * under the toggle's budget.
+ */
+async function cmdArmEvalMaybeCapture() {
+  const { readToggle } = await import('./lib/arm-eval/toggle.mjs');
+  const t = readToggle();
+  if (!t.enabled) return emit({ ok: true, captured: false, reason: 'toggle-off' });
+  const experimentType = argOption('experiment');
+  const task = argOption('task');
+  if (!experimentType || !task) return emitError('BAD_INPUT', '--experiment <plan-authoring|brainstorm> --task "<text>" required');
+  await initLearningStore();
+  const { armEvalConfig } = await import('./lib/config.mjs');
+  const budgetCapEur = t.budgetEur ?? armEvalConfig.budgetEur;
+  const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+  try {
+    const { runArmEvalSession } = await import('./lib/arm-eval/run.mjs');
+    const r = await runArmEvalSession({ experimentType, task, repoId, phase: 'prospective', seed: null, budgetCapEur });
+    emit({ ok: r.state === 'ran', captured: r.state === 'ran', ...r });
+  } catch (err) { emitError('EXCEPTION', err.message); }
+}
+
+/** Best-effort repo UUID for capture attribution; null when unresolvable. */
+async function resolveRepoIdentityQuiet() {
+  try {
+    const { resolveRepoIdentity } = await import('./lib/repo-identity.mjs');
+    const r = await resolveRepoIdentity();
+    return r?.repoUuid || null;
+  } catch { return null; }
 }
 
 /** Two-level decision: quality GATE → weighted-quality RANK + recall + frontier (D5–D8). */
@@ -1756,6 +1827,8 @@ const commands = {
   'arm-eval-decision': cmdArmEvalDecision,
   'arm-eval-stats': cmdArmEvalStats,
   'arm-eval-adjudicate': cmdArmEvalAdjudicate,
+  'arm-eval-toggle': cmdArmEvalToggle,
+  'arm-eval-maybe-capture': cmdArmEvalMaybeCapture,
   'detect-stack': cmdDetectStack,
   'list-personas': cmdListPersonas,
   'add-persona': cmdAddPersona,

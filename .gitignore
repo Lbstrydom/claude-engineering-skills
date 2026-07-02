@@ -95,6 +95,10 @@ scripts/lib/consumer-repos.local.json
 # requirements-layer candidates/gaps intermediates: kept locally, never committed.
 .audit-loop/repo-alias-map.json
 
+# Per-repo experiment toggle (arm-eval-toggle on|off) — local operator state
+# with a timestamp; never committed (Category A).
+.audit-loop/arm-eval-toggle.json
+
 # SOURCE-repo sync manifest — regenerated on every `npm run sync` (which the
 # pre-push hook runs), carrying volatile provenance (generatedAt timestamp +
 # HEAD sha) → Category A per the generated-artifact policy: committing it is pure

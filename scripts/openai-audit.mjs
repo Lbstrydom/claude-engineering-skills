@@ -2929,8 +2929,10 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
   // paths. Best-effort: a shadow failure never touches A's verdict/ship path,
   // EXCEPT an egress-gate refusal, which must surface loudly.
   try {
-    const { resolveArms } = await import('./lib/audit-arms.mjs');
-    const armSet = resolveArms(process.env);
+    // Toggle-aware: explicit AUDIT_MODEL_SHADOW env wins; else the per-repo
+    // arm-eval-toggle file activates B,C; else inert (byte-identical path).
+    const { resolveShadowArmsWithToggle } = await import('./lib/arm-eval/toggle.mjs');
+    const armSet = resolveShadowArmsWithToggle(process.env);
     if (armSet.enabled) {
       const { runGenerationShadow } = await import('./lib/audit-shadow.mjs');
       const { buildRedactedAuditContext } = await import('./lib/audit-scope.mjs');
@@ -3681,8 +3683,9 @@ async function main() {
     // surfaces loudly. Mirrors the code-path shadow block, with stageType='audit-plan'.
     if (mode === 'plan' && Array.isArray(result.findings)) {
       try {
-        const { resolveArms } = await import('./lib/audit-arms.mjs');
-        const armSet = resolveArms(process.env);
+        // Toggle-aware (mirrors the code-path shadow block above).
+        const { resolveShadowArmsWithToggle } = await import('./lib/arm-eval/toggle.mjs');
+        const armSet = resolveShadowArmsWithToggle(process.env);
         if (armSet.enabled && await isCloudEnabled() && repoProfile) {
           const repoRef = await resolveRepoForStore({ profile: repoProfile }).catch(() => null);
           const planRepoId = repoRef?.repoRowId ?? null;

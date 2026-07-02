@@ -103,14 +103,19 @@ export const shadowReviewConfig = Object.freeze({
 // never break the MANDATORY audit path at import). `arms` unset → the harness
 // is inert and byte-identical to today (the load-bearing opt-in invariant).
 //
-// `budgetEur` is null when unset — the shadow layer REFUSES to spend without a
-// declared ceiling (no unbounded burn). The OpenRouter binding lives here so
+// `budgetEur` defaults to €300 when the env var is unset (operator decision
+// 2026-07-02) — the OPT-IN remains `arms` (unset → fully inert); the default
+// only bounds spend once the experiment is explicitly enabled. The shadow
+// layer still hard-refuses a null/absent ceiling at the library seam (no
+// unbounded burn) — this default is a ceiling, not a blank check. Override
+// with AUDIT_MODEL_SHADOW_BUDGET_EUR. The OpenRouter binding lives here so
 // the OSS client seam reads one config, not scattered process.env.
+export const DEFAULT_SPEND_BUDGET_EUR = 300;
 export const auditShadowConfig = Object.freeze({
   arms: (process.env.AUDIT_MODEL_SHADOW || '').trim() || null,
   budgetEur: (() => {
     const v = Number.parseFloat(process.env.AUDIT_MODEL_SHADOW_BUDGET_EUR);
-    return Number.isFinite(v) && v > 0 ? v : null;
+    return Number.isFinite(v) && v > 0 ? v : DEFAULT_SPEND_BUDGET_EUR;
   })(),
   openrouterApiKey: (process.env.OPENROUTER_API_KEY || '').trim() || null,
   openrouterBaseUrl: (process.env.OPENROUTER_BASE_URL || '').trim() || 'https://openrouter.ai/api/v1',
@@ -124,6 +129,18 @@ export const auditShadowConfig = Object.freeze({
   // never under-reserves) + per-call provider timeout.
   passMaxTokens: safeInt(process.env.AUDIT_MODEL_SHADOW_PASS_MAX_TOKENS, 8000),
   callTimeoutMs: safeInt(process.env.AUDIT_MODEL_SHADOW_CALL_TIMEOUT_MS, 300000),
+});
+
+// ── Arm-Eval Config ─────────────────────────────────────────────────────────
+// Default budget for `arm-eval-run` sessions when `--budget-eur` is omitted.
+// The run module (lib/arm-eval/run.mjs) still refuses a null budget at the
+// library seam — the CLI supplies this default so the operator doesn't have
+// to repeat the flag per session. Override with ARM_EVAL_BUDGET_EUR.
+export const armEvalConfig = Object.freeze({
+  budgetEur: (() => {
+    const v = Number.parseFloat(process.env.ARM_EVAL_BUDGET_EUR);
+    return Number.isFinite(v) && v > 0 ? v : DEFAULT_SPEND_BUDGET_EUR;
+  })(),
 });
 
 // ── Brief Generation Config ─────────────────────────────────────────────────

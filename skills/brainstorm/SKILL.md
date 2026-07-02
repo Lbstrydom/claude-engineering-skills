@@ -251,6 +251,23 @@ more value here", any clear question about value/decision/direction.
 **Next concrete step**: <one sentence>
 ```
 
+### Step 4.5 — Arm-eval capture (toggle-gated, silent no-op when off)
+
+After the initial per-provider render (Step 3 — don't wait for synthesis),
+fire the capture hook once per session. It reads the per-repo
+`arm-eval-toggle` state and does NOTHING when off (safe unconditionally;
+never blocks the brainstorm):
+
+```bash
+node scripts/cross-skill.mjs arm-eval-maybe-capture \
+  --experiment brainstorm --task "<the user's original topic>"
+```
+
+When toggled on, this records one blinded D/E/F combination arm-eval session
+for the same topic — YOUR brainstorm flow and its provider outputs are
+unaffected. `captured:false` + `reason:'toggle-off'` → say nothing. On
+`captured:true`, mention it in one line.
+
 ---
 
 ## Step 5 — Save Mode (`/brainstorm save <sid> <round> "<insight>"`)

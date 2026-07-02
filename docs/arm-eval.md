@@ -47,8 +47,34 @@ experiment's variable). **A Claude-family arm is a hard error.**
 2. **Provider keys** — `OPENAI_API_KEY` (GPT), `GEMINI_API_KEY` (Gemini),
    `OPENROUTER_API_KEY` (OSS: GLM/DeepSeek/Qwen), `ANTHROPIC_API_KEY` or the CLI
    backend (Claude judge).
-3. **Budget** — every run REQUIRES `--budget-eur <n>` (no unbounded burn). All OSS
+3. **Budget** — every run carries a spend ceiling: `--budget-eur <n>`, else
+   `ARM_EVAL_BUDGET_EUR`, else the **€300 default** (`DEFAULT_SPEND_BUDGET_EUR`
+   in config.mjs; operator decision 2026-07-02). The library seam still refuses
+   a null budget — the default is a ceiling, not unbounded burn. All OSS
    candidates are ≪ the GPT baseline (cost gate holds).
+
+## One-command toggle (collection window)
+
+To put a repo's **audit + plan + brainstorm** functions into A/B/C collection
+with one command (and back out when you have enough data):
+
+```bash
+node scripts/cross-skill.mjs arm-eval-toggle on [--budget-eur N]   # default €300
+node scripts/cross-skill.mjs arm-eval-toggle status                # state + what's active
+node scripts/cross-skill.mjs arm-eval-toggle off                   # everything inert again
+```
+
+While ON (state file: gitignored `.audit-loop/arm-eval-toggle.json`):
+- **/audit-code + /audit-plan** run the B,C shadow arms (observation-only; the
+  production A verdict is untouched). Explicit `AUDIT_MODEL_SHADOW` env always
+  WINS over the toggle — it stays the kill switch / custom-arm override.
+- **/plan** fires one `plan-authoring` arm-eval session per invocation
+  (via `arm-eval-maybe-capture`; your plan output is unchanged).
+- **/brainstorm** fires one `brainstorm` (D/E/F) session per topic.
+
+While OFF, every surface is inert and byte-identical to the pre-toggle path;
+`arm-eval-maybe-capture` is a silent no-op (safe for skills to call
+unconditionally). Fail-closed: a missing/malformed toggle file = OFF.
 
 ## Two-phase burn-in
 
