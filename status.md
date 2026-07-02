@@ -1,5 +1,39 @@
 # Project Status Log
 
+## 2026-07-02 — Theme-safety v2 built + shipped (/cycle code autonomous, 3 clusters) + arm-eval retrieval confirmed
+
+### Changes
+- **Built theme-safety v2** (plan → Complete, archived): the full-DOM contrast **parity-delta**
+  (`contrast_parity_delta`, advisory) — flags a text node whose contrast passes in one theme and
+  fails in the other, joined across themes by un-truncated `livePath` within `scope:'fullDom'`
+  nodes only. Scope-disjoint producers resolve the redundancy tension: gate-eligible absolute
+  checks see contracted nodes only; the delta sees the sweep only; default-off = byte-identical.
+- **Clustered autonomous execution**: Cluster A (detector+wiring, `7cb7a3c`, 4 GPT rounds → PASS —
+  fixed 2 pre-existing v1 contracted-join weaknesses en route), Cluster B (bounded TreeWalker
+  capture + CLI honesty, `294f17c`, 2 rounds → PASS), Cluster C (docs; taxonomy honesty-corrected
+  15→**18** — two v1 classes were prose-only). Consolidated Gemini gate: **APPROVE R1, 0 new,
+  coherence Strong**.
+- **Empirical pre-ship run** (the doctrine): delta FIRED on ground truth (10.57:1 light vs 1.53:1
+  dark on a hardcoded color, real wine-cellar theme CSS), silent on adapting elements, dead-server
+  exit 2 — and caught a live verify-result **version desync** (writer hardcoded `1` vs bumped
+  schema literal `2`) that no audit round saw. Fixed at the constant.
+- **Arm-eval A/B/C retrieval confirmed working** (user fixed the store issues): stats (A:708 runs /
+  B:2 / C:2, 100% OSS conformance), decision CLI (`collecting`, 1/12 assignments, €0.20/€300),
+  blinded queue (42 findings pending human adjudication). Two queue findings against v2 folded in.
+- Shadow arms disabled for this cycle's audit rounds only (`AUDIT_MODEL_SHADOW=,`) — anchored
+  verdict + surprise-spend rule; repo toggle untouched.
+
+### Files Affected
+- `scripts/lib/visual/`: theme-parity.mjs (producer + 4 assessors), findings.mjs (cloning
+  normalizer + fencing), schema.mjs (class, uniqueness refines, verify-version 2), extract.mjs
+  (TreeWalker sweep, WeakSet dedup, missingStates, applyTheme tri-state).
+- `scripts/visual-audit.mjs` — `--full-dom`/budget flags, `--themes` validation, honesty wiring,
+  version-constant fix.
+- `tests/visual-parity-delta.test.mjs` (new, 34), `tests/visual-theme-safety-cli.test.mjs` (+4).
+- `skills/visual-audit/` SKILL.md + 2 references (+ regenerated copies).
+- Next: gate-promotion after field FP data; modal `activate`-reach (v1.1); adjudicate the arm-eval
+  blinded queue to unlock the A/B/C ranking.
+
 ## 2026-07-02 — Unified arm-evaluation framework (blinded Claude-judge) — /cycle code --autonomous, 2 clusters
 
 ### Changes

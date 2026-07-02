@@ -1,7 +1,7 @@
 # Plan: visual-audit Theme-safety v2 — two-theme contrast parity-delta + full-DOM sweep
 
 - **Date**: 2026-07-01
-- **Status**: Approved (audit-plan converged — see Audit Trail)
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Stack**: js-ts · **Target domain**: `visual-audit` (single; no cross-domain work)
@@ -114,7 +114,7 @@ graph LR
   PD --> COV["assessParityCoverage<br/>→ unverified on total loss"]
 ```
 
-**Key design decisions (principles cited from `references/engineering-principles.md`)**:
+**Key design decisions (principles cited from `skills/plan/references/engineering-principles.md`)**:
 
 1. **Scope-disjoint producers — `scope` is the single discriminant (#2 Modularity, #15 Error
    Handling, #11 Testability; resolves R2-H1 + R2-M1)**. Every node carries a discriminated
@@ -413,3 +413,30 @@ flag + coverage-loss surfacing + banner. Files: `scripts/lib/visual/extract.mjs`
     the consolidated Gemini pass over the union diff.
   - author-tier: economy
 - **Final gate**: mandatory consolidated Gemini review over the union diff of Clusters A–C.
+
+## Implementation Log
+
+### 2026-07-02 — Built via /cycle code --autonomous (3 clusters), shipped
+- **Cluster A** (detector + wiring, commit `7cb7a3c`): 4 GPT rounds → PASS. Both R1 HIGHs were
+  pre-existing v1 contracted-join weaknesses (nodeKey-collision cross-match, fail-open theme
+  pairing) — fixed alongside the new producer. R2/R3 pushed the honesty doctrine to
+  machine-readability: `assessParityKeyAmbiguity`, `assessThemePairResolution` (the single
+  pair-resolution rule, consumed by `runThemeParity`), contract identity uniqueness (schema
+  refine), `VISUAL_VERIFY_TOOL_VERSION` 1→2. Post-convergence: arm-eval blinded-queue finding
+  `93d107d7` folded (`no_joinable_candidates` degrade).
+- **Cluster B** (full-DOM capture + CLI, commit `294f17c`): 2 rounds → PASS. R1 HIGHs fixed:
+  structured `missingStates` accounting (+ `--gate` exit 2 on a partial matrix), loud `--themes`
+  validation, uniform `applyTheme` tri-state verification. Budget bounds EMITTED text candidates
+  (arm-eval `ffc02eec`); parity coverage gated on `--full-dom` (arm-eval `1c388890`).
+- **Cluster C** (docs, commit `7578057`): SKILL.md v2 section (scope-disjoint invariant named);
+  taxonomy honesty-corrected **15→18** (the two v1 classes were prose-only — deviation from the
+  plan's literal "16", the table was undercounting); ci-gate `--full-dom` reference.
+- **Empirical verify (mandatory)**: real Chromium against a fixture on real wine-cellar theme
+  CSS. `contrast_parity_delta` FIRED on the hardcoded-color element (`10.57:1 light vs 1.53:1
+  dark`), silent on adapting ones; dead server → exit 2; `--full-dom` sans `--verify` → exit 2.
+  Found live + fixed: verify-result writer hardcoded `version: 1` vs the bumped schema literal
+  (now uses the constant).
+- **Consolidated Gemini gate**: APPROVE (R1, 0 new, 0 wrongly dismissed, coherence "Strong").
+- **Deviations**: coverage assessors are CLI-wired (the `assessColorCoverage` seam) rather than
+  threaded through `assembleLiveFindings` §7(d) — the existing pattern, one warnings channel.
+  Taxonomy count 18 not 16 (see above). Gate-promotion + modal reach remain deferred (§8).
