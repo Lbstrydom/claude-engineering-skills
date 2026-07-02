@@ -716,10 +716,16 @@ final review, to empirically test whether a second final gate is worth keeping.
   guard). The shadow **never gates the build** — its verdict is logged to the
   `--out` `_shadow` block but never touches `gemini_verdict`.
 - **Measure** (operator how-to): `node scripts/cross-skill.mjs final-review-stats
-  --repo <name>` → per-`source_model` × `bucket` × `severity` DISTINCT-fingerprint
-  counts + the shadow-only spot-check queue + shadow token/latency cost. Adjudicate
-  a shadow-only finding (human, sidesteps self-eval bias): `final-review-adjudicate
-  --run-id <id> --fingerprint <hash> --action <accepted|dismissed>`.
+  --repo REPO_NAME` → per-`source_model` × `bucket` × `severity` DISTINCT-fingerprint
+  counts + the shadow-only spot-check queue + shadow token/latency cost. **Human
+  adjudication is worksheet-first**: add `--worksheet` to render the pending queue as
+  markdown with paste-ready `final-review-adjudicate` commands (real ids baked in;
+  actions `accepted|dismissed`). Same surface as `model-ab-adjudicate --worksheet`;
+  shared renderer [`scripts/lib/adjudication-worksheet.mjs`](scripts/lib/adjudication-worksheet.mjs).
+  **Doc convention (recurrence guard)**: operator CLI examples use real values or
+  PowerShell variables, never `<angle-bracket>` placeholders — PowerShell reserves
+  `<`, so a placeholder command can't even be pasted, and a raw-JSON queue is not a
+  human review surface.
 - **Pre-registered stopping rule** (load-bearing — decided before data collection):
   collect `N ≥ 20` runs per fixed (primary, shadow) model pair; **KEEP** iff
   human-accepted shadow-only HIGH/MEDIUM ≥ 1 per 5 runs AND cost in tolerance;

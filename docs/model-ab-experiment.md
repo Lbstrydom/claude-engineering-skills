@@ -138,17 +138,27 @@ job** (the `duplicate` action → `finding_equivalence`, collapsed to a union-fi
 root). The scorer is the **human ledger ONLY** (never model/Gemini-survival —
 anti-circular).
 
-```bash
-# 1. Present the blinded queue (source_model hidden; likely-equivalents adjacent)
-node scripts/cross-skill.mjs model-ab-adjudicate --run-id <id> --limit 50
+**Worksheet-first (the human path).** `--worksheet` renders the queue as readable
+markdown with one **paste-ready** command per finding (real run-id + fingerprint
+baked in — nothing to substitute). Read a block, edit the action word if you
+disagree, paste the command. Duplicates: rule the root normally, then rule each
+sibling `duplicate` with `--canonical` + the root's fingerprint (the how-to is at
+the top of the worksheet; items are sorted so likely-duplicates sit adjacent).
 
-# 2. Label a finding
-node scripts/cross-skill.mjs model-ab-adjudicate --run-id <id> --fingerprint <hash> --action accepted
-node scripts/cross-skill.mjs model-ab-adjudicate --run-id <id> --fingerprint <hash> --action dismissed
-node scripts/cross-skill.mjs model-ab-adjudicate --run-id <id> --fingerprint <hash> --action not-actionable
-# duplicate → point at the canonical (writes finding_equivalence, union-find root)
-node scripts/cross-skill.mjs model-ab-adjudicate --run-id <id> --fingerprint <dup> --action duplicate --canonical <root-hash>
+```powershell
+# 1. Render the review worksheet (default out: .audit/model-ab-adjudication-worksheet.md)
+$runId = "93580799-977d-4fef-9465-fbe4be47213c"   # from model-ab-stats / the queue listing
+node scripts/cross-skill.mjs model-ab-adjudicate --run-id $runId --worksheet
+
+# 2. Paste the per-finding commands from the worksheet. They look like:
+node scripts/cross-skill.mjs model-ab-adjudicate --run-id $runId --fingerprint e476d966 --action accepted
+# actions: accepted | dismissed | not-actionable | duplicate (duplicate additionally
+# takes --canonical plus the root finding's fingerprint)
 ```
+
+Raw JSON queue (scripts/automation): omit `--worksheet`. Doc convention: examples
+in this repo use real values or PowerShell variables — **never `<angle-bracket>`
+placeholders** (PowerShell reserves `<`, and a placeholder command can't be pasted).
 
 ## The two-level decision rule (pinned — calibrate-then-freeze)
 

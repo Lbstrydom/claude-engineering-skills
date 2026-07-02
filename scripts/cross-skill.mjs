@@ -546,6 +546,31 @@ async function cmdFinalReviewStats() {
   if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required');
   const limitFlag = argOption('queue-limit');
   const res = await getFinalReviewStats(repoName, limitFlag ? { queueLimit: Number(limitFlag) } : {});
+  // --worksheet: same human-grade surface as model-ab-adjudicate (this queue was
+  // the FIRST raw-JSON adjudication failure — see lib/adjudication-worksheet.mjs).
+  if (process.argv.includes('--worksheet') && res.ok) {
+    const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
+    const { writeFileSync, mkdirSync } = await import('node:fs');
+    const pending = (res.shadowOnlyQueue || []).filter((f) => !f.user_action);
+    const md = renderAdjudicationWorksheet({
+      title: `Final-review shadow-only spot-check — repo ${repoName}`,
+      introLines: [
+        'Findings the SHADOW final reviewer raised that the primary did not. Accepting one is evidence the second gate earns its keep (pre-registered stopping rule in AGENTS.md).',
+      ],
+      items: pending.map((f) => ({
+        runId: f.run_id, fingerprint: f.finding_fingerprint, severity: f.severity,
+        category: f.category, file: f.primary_file, detail: f.detail_snapshot,
+      })),
+      actions: ['accepted', 'dismissed'],
+      commandFor: (it, a) => `node scripts/cross-skill.mjs final-review-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a}`,
+      generatedAt: new Date().toISOString(),
+    });
+    const out = argOption('out') || '.audit/final-review-adjudication-worksheet.md';
+    mkdirSync('.audit', { recursive: true });
+    writeFileSync(out, md);
+    process.stderr.write(`  [final-review-stats] worksheet: ${pending.length} pending finding(s) → ${out}\n`);
+    return emit({ ok: true, cloud: res.cloud, count: pending.length, worksheet: out });
+  }
   emit(res);
 }
 
@@ -583,6 +608,32 @@ async function cmdModelAbAdjudicate() {
     const runId = argOption('run-id');
     const limit = Number(argOption('limit')) || 50;
     const q = await getModelAbAdjudicationQueue({ runId, limit });
+    // --worksheet: human-grade markdown with paste-ready commands (the JSON
+    // dump failed the operator twice — see lib/adjudication-worksheet.mjs).
+    if (process.argv.includes('--worksheet')) {
+      const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
+      const { writeFileSync, mkdirSync } = await import('node:fs');
+      const md = renderAdjudicationWorksheet({
+        title: `Model-A/B/C blinded adjudication${runId ? ` — run ${runId.slice(0, 8)}…` : ''}`,
+        introLines: [
+          'Blinded: arm identity is hidden; the `stage` tag (oss-gen/gpt-round/gemini) is a pipeline stage, not an arm.',
+          'Your rulings are the scorer\'s ONLY ground truth (anti-circularity) — no model pre-judged these.',
+        ],
+        items: q.items.map((f) => ({
+          runId: f.run_id, fingerprint: f.finding_fingerprint, severity: f.severity,
+          stage: f.stage, category: f.category, file: f.primary_file, detail: f.detail_snapshot,
+        })),
+        actions: ['accepted', 'dismissed', 'not-actionable', 'duplicate'],
+        duplicateHowTo: { action: 'duplicate', canonicalHint: '--canonical ROOT_FINGERPRINT' },
+        commandFor: (it, a) => `node scripts/cross-skill.mjs model-ab-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a}`,
+        generatedAt: new Date().toISOString(),
+      });
+      const out = argOption('out') || '.audit/model-ab-adjudication-worksheet.md';
+      mkdirSync('.audit', { recursive: true });
+      writeFileSync(out, md);
+      process.stderr.write(`  [model-ab-adjudicate] worksheet: ${q.items.length} pending finding(s) → ${out}\n`);
+      return emit({ ok: true, cloud: q.cloud, blinded: true, count: q.items.length, worksheet: out });
+    }
     return emit({ ok: true, cloud: q.cloud, blinded: true, count: q.items.length, queue: q.items });
   }
   const validActions = new Set(['accepted', 'dismissed', 'duplicate', 'not-actionable']);
