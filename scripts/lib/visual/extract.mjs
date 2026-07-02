@@ -55,12 +55,21 @@ const ANIM_FREEZE_INIT = `(()=>{const inject=()=>{const s=document.createElement
  * @param {string[]} [args.themeNames] - subset of contract.themes to capture (default all)
  * @param {string} [args.storageState]
  * @param {number} [args.timeoutMs]
- * @returns {Promise<{ok:boolean, code?:string, reason?:string, perState?:object[], unverifiableSurfaces?:string[], warnings?:string[]}>}
+ * @param {boolean} [args.fullDom] - theme-safety v2: also capture the full-DOM
+ *   text-candidate sweep (`scope:'fullDom'` nodes + per-state captureStats) for
+ *   the contrast parity-delta. Default off → capture is byte-identical to v1.
+ * @param {number} [args.fullDomNodeBudget] - early-stop bound on EMITTED full-DOM
+ *   text candidates (visit ceiling = 25×); clipping sets `captureStats.truncated`.
+ * @returns {Promise<{ok:boolean, code?:string, reason?:string, perState?:object[], unverifiableSurfaces?:string[], warnings?:string[], missingStates?:Array<{device:string,theme:string,reason:string}>, expectedStates?:number}>}
  */
-export async function runExtract({ url, contract, devices, themeNames = null, storageState = null, timeoutMs = 30000 }) {
+export async function runExtract({ url, contract, devices, themeNames = null, storageState = null, timeoutMs = 30000, fullDom = false, fullDomNodeBudget = 4000 }) {
   let chromium;
   try { ({ chromium } = await import('playwright')); }
-  catch { return { ok: false, code: 'NO_CHROMIUM', reason: 'playwright not installed — run `npx playwright install chromium`' }; }
+  catch (err) {
+    // Keep the friendly code but preserve the real cause (B-R2: a corrupted
+    // install / ESM resolution failure must be distinguishable from "not installed").
+    return { ok: false, code: 'NO_CHROMIUM', reason: `playwright unavailable — run \`npx playwright install chromium\` (cause: ${(err && err.message) ? err.message : String(err)})` };
+  }
 
   const themes = (contract.themes || []).filter((t) => !themeNames || themeNames.includes(t.name));
   const effThemes = themes.length ? themes : [{ name: 'default', apply: { mode: 'class', target: 'html', value: '' } }];
@@ -70,6 +79,11 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
   const perState = [];
   const unverifiable = new Set();
   const warnings = [];
+  // Structured expected-vs-actual state accounting (audit B-R1-H1): a device×theme
+  // cell that failed to capture must be a MACHINE-READABLE loss, not just a
+  // warning string — the theme-pair tiers silently shrink to whatever captured,
+  // and a partial matrix must never be indistinguishable from a complete one.
+  const missingStates = [];
   try {
     browser = await chromium.launch({ headless: true });
   } catch (err) {
@@ -99,13 +113,19 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
         const page = await context.newPage();
         try {
           await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
-          await applyTheme(page, theme.apply);
+          const themeApplied = await applyTheme(page, theme.apply);
+          // Theme-apply integrity (audit B-R1-H3): a bad selector must not become a
+          // silent no-op — a not-actually-flipped theme fabricates parity evidence.
+          if (themeApplied === false) {
+            warnings.push(`${stateLabel}: theme apply target matched nothing — theme "${theme.name}" may not have been applied; parity evidence for this state is suspect`);
+          }
 
-          const { nodes, capturedSurfaces } = await collectState(page, { surfaces, props: COLLECTED_PROPS, timeoutMs });
+          const { nodes, capturedSurfaces, fullDomStats } = await collectState(page, { surfaces, props: COLLECTED_PROPS, timeoutMs, fullDom, fullDomNodeBudget });
           // Capture honesty: a declared surface that never produced content is unverifiable.
           for (const s of surfaces) if (!capturedSurfaces.has(s.id)) unverifiable.add(s.id);
 
-          // CDP forcePseudoState per interactive node (bounded).
+          // CDP forcePseudoState per interactive node (bounded). fullDom nodes carry
+          // interactive:false/focusable:false so they never enter this pass.
           await capturePseudoStates(context, page, nodes, surfaces);
 
           // Finalize: compute stable node keys + provenance in Node context.
@@ -116,9 +136,16 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
             nodeKey: stableNodeKey(n.descriptor),
             matched: resolveMatched(n.declarations),
           }));
-          perState.push({ device: device.name, theme: theme.name, viewportWidth: device.viewport.width, nodes: evidence });
+          perState.push({
+            device: device.name, theme: theme.name, viewportWidth: device.viewport.width, nodes: evidence,
+            // Per-state capture stats for the parity-delta's scope-aware coverage
+            // (theme-safety v2 decision 4): present only when --full-dom ran.
+            ...(fullDomStats ? { captureStats: { ...fullDomStats, device: device.name, theme: theme.name } } : {}),
+          });
         } catch (err) {
-          warnings.push(`${stateLabel}: ${err.message}`);
+          const reason = (err && err.message) ? err.message : String(err);
+          warnings.push(`${stateLabel}: ${reason}`);
+          missingStates.push({ device: device.name, theme: theme.name, reason });
         } finally {
           await context.close().catch(() => {});
         }
@@ -128,16 +155,34 @@ export async function runExtract({ url, contract, devices, themeNames = null, st
     await browser.close().catch(() => {});
   }
 
-  return { ok: true, perState, unverifiableSurfaces: [...unverifiable], warnings };
+  return { ok: true, perState, unverifiableSurfaces: [...unverifiable], warnings, missingStates, expectedStates: devices.length * effThemes.length };
 }
 
-/** Apply a theme via the discriminated apply protocol (media handled at context). */
+/**
+ * Apply a theme via the discriminated apply protocol (media handled at context).
+ * Uniform verification contract (audit B-R1-H3): returns `true` when the mutation
+ * verifiably landed, `false` when the apply target matched NOTHING (a silent
+ * no-op would fabricate parity evidence), `null` when the mode is not verifiable
+ * at the mutation point (media = context-level; localStorage = app-interpreted).
+ * @returns {Promise<boolean|null>}
+ */
 async function applyTheme(page, apply) {
+  let applied = null;
   if (!apply || apply.mode === 'media') { /* media set on context */ }
   else if (apply.mode === 'class' && apply.value) {
-    await page.evaluate(({ target, value }) => { document.querySelector(target)?.classList.add(value); }, apply);
+    applied = await page.evaluate(({ target, value }) => {
+      const el = document.querySelector(target);
+      if (!el) return false;
+      el.classList.add(value);
+      return true;
+    }, apply);
   } else if (apply.mode === 'attribute') {
-    await page.evaluate(({ target, attribute, value }) => { document.querySelector(target)?.setAttribute(attribute, value); }, apply);
+    applied = await page.evaluate(({ target, attribute, value }) => {
+      const el = document.querySelector(target);
+      if (!el) return false;
+      el.setAttribute(attribute, value);
+      return true;
+    }, apply);
   } else if (apply.mode === 'localStorage') {
     await page.reload({ waitUntil: 'domcontentloaded' }); // ensure app picks up the pre-seeded value
   }
@@ -162,13 +207,14 @@ async function applyTheme(page, apply) {
     if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch { /* ignore */ } }
     void document.body.offsetWidth; // force synchronous style/layout recalc
   }, FREEZE_CSS);
+  return applied;
 }
 
 /**
  * Batched in-browser collection: tag audited nodes, gather computed styles, rects,
  * scroll metrics, structural descriptors, and the background-stack ancestor walk.
  */
-async function collectState(page, { surfaces, props, timeoutMs }) {
+async function collectState(page, { surfaces, props, timeoutMs, fullDom = false, fullDomNodeBudget = 4000 }) {
   // Wait for content presence per surface (not just container mount — G2-1).
   for (const s of surfaces) {
     await page.waitForFunction(
@@ -178,11 +224,16 @@ async function collectState(page, { surfaces, props, timeoutMs }) {
     ).catch(() => { /* unverifiable surface — handled by capturedSurfaces */ });
   }
 
-  const raw = await page.evaluate(({ surfaces, props }) => {
+  const raw = await page.evaluate(({ surfaces, props, fullDom, fullDomNodeBudget }) => {
     const UNRESOLVABLE = 'unresolvable';
     let instanceCounter = 0;
     const out = [];
     const captured = [];
+    // Theme-safety v2: every element the contracted loop captures is tracked in
+    // an in-closure WeakSet — the full-DOM walk dedups against it WITHOUT
+    // reading/writing any page attribute (plan decision 5: no page mutation
+    // beyond the pre-existing data-va-instance tagging).
+    const capturedEls = new WeakSet();
 
     const toRgbaNorm = (c) => {
       const m = String(c).match(/rgba?\(([^)]+)\)/);
@@ -267,6 +318,7 @@ async function collectState(page, { surfaces, props, timeoutMs }) {
         const rect = el.getBoundingClientRect();
         const id = `va-${++instanceCounter}`;
         el.setAttribute('data-va-instance', id);
+        capturedEls.add(el);
         const computed = {};
         for (const p of props) computed[p] = cs.getPropertyValue(p);
         const parentEl = el.parentElement;
@@ -306,13 +358,84 @@ async function collectState(page, { surfaces, props, timeoutMs }) {
         count++;
       }
     }
-    return { out, captured };
-  }, { surfaces, props });
+    // ── Theme-safety v2: opt-in full-DOM sweep (plan decisions 5 + 7) ──
+    // Bounded incremental TreeWalker — NOT querySelectorAll('*'), which would
+    // materialize the whole NodeList before any budget applies. acceptNode
+    // returns FILTER_REJECT for contracted-captured elements so an entire
+    // contracted subtree is pruned whole (Gemini-r2-M2). The budget bounds
+    // EMITTED text candidates, not raw visits — empty layout wrappers must not
+    // eat the budget before real content (arm-eval ffc02eec); a hard visited
+    // ceiling (budget × 25) still bounds pathological pages.
+    let fullDomStats = null;
+    if (fullDom) {
+      const stats = { fullDomRequested: true, visitedElements: 0, skippedAlreadyContracted: 0, displayedTextCandidatesAfterSkip: 0, emitted: 0, truncated: false };
+      const visitCeiling = fullDomNodeBudget * 25;
+      // Full documentElement-rooted chain: `livePath` (un-truncated join identity)
+      // and `descriptor.ancestorPath` (feeds stableNodeKey so finding dedup keys
+      // stay distinct across different elements — an empty path would collapse
+      // every same-tag fullDom finding into one).
+      const chainOf = (el) => {
+        const chain = [];
+        let cur = el;
+        while (cur && cur.nodeType === 1) {
+          let nth = 1;
+          let sib = cur;
+          while ((sib = sib.previousElementSibling)) if (sib.tagName === cur.tagName) nth++;
+          chain.unshift({ tag: cur.tagName.toLowerCase(), nthOfType: nth, role: (cur.getAttribute && cur.getAttribute('role')) || null });
+          cur = cur.parentElement;
+        }
+        return chain;
+      };
+      const livePathOf = (chain) => chain.map((s) => `${s.tag}${s.role ? `[${s.role.toLowerCase()}]` : ''}:${s.nthOfType}`).join('>');
+      const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_ELEMENT, {
+        acceptNode(el) {
+          stats.visitedElements++;
+          if (capturedEls.has(el)) { stats.skippedAlreadyContracted++; return NodeFilter.FILTER_REJECT; } // prune subtree whole
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      });
+      let el;
+      while ((el = walker.nextNode())) {
+        if (stats.emitted >= fullDomNodeBudget || stats.visitedElements >= visitCeiling) { stats.truncated = true; break; }
+        const cs = getComputedStyle(el);
+        if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+        const isLeafText = !!(el.textContent && el.textContent.trim()) && el.children.length === 0;
+        if (!isLeafText) continue; // the delta assesses text-bearing leaves only — don't spend budget on wrappers
+        stats.displayedTextCandidatesAfterSkip++;
+        const computed = {};
+        for (const p of props) computed[p] = cs.getPropertyValue(p);
+        const chain = chainOf(el);
+        out.push({
+          scope: 'fullDom', // stamped at SOURCE for fullDom nodes (contracted stay untagged — assembly normalizer defaults them)
+          surfaceId: null,
+          surfaceLayer: null,
+          livePath: livePathOf(chain),
+          tag: el.tagName.toLowerCase(),
+          role: el.getAttribute('role') || null,
+          displayed: true,
+          hasText: true,
+          textSnippet: String(el.textContent || '').trim().slice(0, 60),
+          computed,
+          backgroundStack: bgStack(el),
+          interactive: false, // never enters the CDP pseudo-state pass
+          focusable: false,
+          disabled: false,
+          isImage: false,
+          descriptor: { tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || null, dataVisualId: el.getAttribute('data-visual-id') || null, ancestorPath: chain },
+          declarations: [],
+        });
+        stats.emitted++;
+      }
+      fullDomStats = stats;
+    }
+
+    return { out, captured, fullDomStats };
+  }, { surfaces, props, fullDom, fullDomNodeBudget });
 
   const budgetHits = raw.out.filter((n) => n.__budgetExceeded);
   const nodes = raw.out.filter((n) => !n.__budgetExceeded);
   for (const b of budgetHits) nodes.push({ __warning: `surface ${b.__budgetExceeded}: nodeBudget exceeded — some nodes unverified_due_to_budget` });
-  return { nodes: nodes.filter((n) => !n.__warning), capturedSurfaces: new Set(raw.captured) };
+  return { nodes: nodes.filter((n) => !n.__warning), capturedSurfaces: new Set(raw.captured), fullDomStats: raw.fullDomStats };
 }
 
 /** CDP forcePseudoState protocol — read effective :hover/:focus/:disabled styles. */

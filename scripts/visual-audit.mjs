@@ -28,6 +28,7 @@ import { extractAllowedSet } from './lib/visual/tokens.mjs';
 import { runSourceCoherence } from './lib/visual/source-coherence.mjs';
 import { lintInteractiveColor } from './lib/visual/interactive-color-lint.mjs';
 import { assessColorCoverage } from './lib/visual/unadapted-color.mjs';
+import { assessParityCoverage, assessParityKeyAmbiguity, assessThemePairResolution } from './lib/visual/theme-parity.mjs';
 import { runExtract } from './lib/visual/extract.mjs';
 import { assembleLiveFindings } from './lib/visual/findings.mjs';
 import { partitionFindings, scopeToChanged, divergenceKey, assessCaptureIntegrity, gateUnverifiedReason } from './lib/visual/drift.mjs';
@@ -39,6 +40,13 @@ async function main() {
 
   const args = parseArgs(process.argv.slice(2));
   const root = args.root || process.cwd();
+
+  // Theme-safety v2 (plan decision 2): --full-dom is a verify-only capture flag.
+  // A silent no-op without --verify would read as "full-DOM ran, found nothing".
+  if (args.fullDom && !args.verify) {
+    process.stderr.write('  [visual-audit] --full-dom requires --verify <url>: the full-DOM parity-delta sweep is a live capture; without --verify it would silently not run.\n');
+    process.exit(2);
+  }
 
   // ── Bootstrap ──
   if (args.bootstrap) {
@@ -100,7 +108,19 @@ async function main() {
   // ── Verify mode ──
   const devices = resolveDevices(args.devices);
   const themeNames = args.themes ? args.themes.split(',').map((s) => s.trim()).filter(Boolean) : null;
-  const ext = await runExtract({ url: args.verify, contract, devices, themeNames, storageState: args.storageState, timeoutMs: args.timeoutMs });
+  // --themes validation (audit B-R1-H2): the contract theme list is the single
+  // source of truth. An unknown requested name must FAIL, not silently drop or
+  // fall back to the synthetic default theme (a typo would flip the whole run
+  // to a different capture matrix than the operator asked for).
+  if (themeNames) {
+    const declared = new Set((contract.themes || []).map((t) => t.name));
+    const unknown = themeNames.filter((n) => !declared.has(n));
+    if (unknown.length) {
+      process.stderr.write(`  [visual-audit] --themes: unknown theme name(s) [${unknown.join(', ')}] — contract declares [${[...declared].join(', ') || 'none'}]. Refusing (a silent drop would capture a different matrix than requested).\n`);
+      process.exit(2);
+    }
+  }
+  const ext = await runExtract({ url: args.verify, contract, devices, themeNames, storageState: args.storageState, timeoutMs: args.timeoutMs, fullDom: args.fullDom, fullDomNodeBudget: args.fullDomNodeBudget });
   if (!ext.ok) { process.stderr.write(`  [visual-audit] extract failed (${ext.code}): ${ext.reason}\n`); process.exit(2); }
   // Capture honesty: zero states captured (every device×theme navigation failed —
   // e.g. the server is down → ERR_CONNECTION_REFUSED) is NOT a clean pass. A dead
@@ -126,6 +146,62 @@ async function main() {
       const msg = `theme-safety: ${cov.eligible} form control(s) in ${state.device}/${state.theme} had no provenance evidence — unadapted-color check UNVERIFIED for that state (not a clean pass)`;
       (ext.warnings ||= []).push(msg);
       process.stderr.write(`  [visual-audit] ${msg}\n`);
+    }
+  }
+
+  // ── Theme-safety v2 honesty surfacing (audit R2-H1 / R3-H2 / R3-H3): the pure
+  // assessors' non-ok states land in the verify result's warnings — machine-
+  // readable, never just a log line, never a silent clean. Per-device, mirroring
+  // findings.mjs's grouping. The parity-delta coverage runs ONLY when --full-dom
+  // was requested (an unconditional check would falsely degrade contracted-only
+  // runs on 1/3+-theme apps — arm-eval 1c388890).
+  {
+    const warn = (msg) => { (ext.warnings ||= []).push(msg); process.stderr.write(`  [visual-audit] ${msg}\n`); };
+    // Partial capture matrix (audit B-R1-H1): a device×theme cell that failed to
+    // capture shrinks every theme-pair tier to whatever DID capture — surfaced
+    // per cell (machine-readable via ext.missingStates → warnings → verify
+    // result). Under --gate a partial matrix is UNVERIFIED coverage → exit 2
+    // below (a blocking gate must not claim a matrix it didn't capture).
+    for (const m of ext.missingStates || []) {
+      warn(`capture: ${m.device}/${m.theme} FAILED (${String(m.reason).slice(0, 120)}) — theme-pair tiers for ${m.device} are degraded to the captured subset (not a clean pass)`);
+    }
+    const byDevice = new Map();
+    for (const state of ext.perState) {
+      const m = byDevice.get(state.device) || { contracted: {}, fullDom: {}, stats: [] };
+      m.contracted[state.theme] = (state.nodes || []).filter((n) => (n.scope ?? 'contracted') === 'contracted');
+      m.fullDom[state.theme] = (state.nodes || []).filter((n) => n.scope === 'fullDom');
+      if (state.captureStats) m.stats.push(state.captureStats);
+      byDevice.set(state.device, m);
+    }
+    for (const [device, m] of byDevice) {
+      // Contracted parity tier: unassessable pair resolution + join ambiguity.
+      const res = assessThemePairResolution(m.contracted, contract);
+      if (res.status === 'contract_capture_mismatch') {
+        warn(`theme-parity: ${device}: contract declares themes [${res.declaredThemes.join(', ')}] but captured [${res.capturedThemes.join(', ')}] — theme parity UNVERIFIED for that device (capture/config mismatch, not a clean pass)`);
+      } else if (res.status === 'single_theme' && res.declaredThemes.length >= 2) {
+        // Two themes declared but only one captured for this device (a cell
+        // failed) — parity for this device compared nothing (B-R1-H1).
+        warn(`theme-parity: ${device}: only [${res.capturedThemes.join(', ')}] captured of declared [${res.declaredThemes.join(', ')}] — theme parity UNVERIFIED for that device (partial capture, not a clean pass)`);
+      }
+      const amb = assessParityKeyAmbiguity(m.contracted);
+      if (amb.ambiguousKeys > 0) {
+        warn(`theme-parity: ${device}: ${amb.ambiguousKeys} ambiguous node key(s) (${Object.entries(amb.byTheme).map(([t, n]) => `${t}:${n}`).join(', ')}) dropped from the parity join — those nodes are UNVERIFIED for parity`);
+      }
+      // Full-DOM parity-delta coverage (only when the sweep was requested).
+      if (args.fullDom) {
+        const cov = assessParityCoverage({ nodesByTheme: m.fullDom, contract, captureStatsByState: m.stats });
+        if (cov.status === 'unverified') {
+          warn(`parity-delta: ${device}: UNVERIFIED (${cov.reason}) — the full-DOM sweep assessed nothing for that device (not a clean pass)`);
+        }
+      }
+    }
+    for (const state of ext.perState) {
+      if (state.captureStats?.truncated) {
+        warn(`parity-delta: ${state.device}/${state.theme}: full-DOM sweep TRUNCATED at budget (${args.fullDomNodeBudget} emitted or visit ceiling) — coverage is partial, not exhaustive`);
+      }
+    }
+    if (args.fullDom) {
+      process.stderr.write('  [visual-audit] full-DOM contrast parity-delta ran (advisory — contrast_parity_delta findings never gate)\n');
     }
   }
   const { gateEligible } = partitionFindings(findings);
@@ -164,6 +240,13 @@ async function main() {
     const unverified = gateUnverifiedReason({ integrity, isFull, changedPathsResolved: isFull || changedPaths != null });
     if (unverified) {
       process.stderr.write(`  [visual-audit] --gate: ${unverified}. UNVERIFIED, not a clean pass (exit 2).\n`);
+      process.exit(2);
+    }
+    // Partial capture matrix under a BLOCKING gate (audit B-R1-H1): a gate that
+    // could not capture every requested device×theme cell cannot claim the
+    // theme-pair tiers it is gating — required-cell loss is exit 2, not a warn.
+    if ((ext.missingStates || []).length > 0) {
+      process.stderr.write(`  [visual-audit] --gate: ${ext.missingStates.length} device×theme cell(s) failed to capture (${ext.missingStates.map((m) => `${m.device}/${m.theme}`).join(', ')}) — gate coverage is partial. UNVERIFIED, not a clean pass (exit 2).\n`);
       process.exit(2);
     }
     if (integrity.partial) process.stderr.write(`  [visual-audit] --gate: ${integrity.total - integrity.verifiedCount} surface(s) unverifiable — gate covers only the ${integrity.verifiedCount} verified surface(s).\n`);
@@ -220,6 +303,8 @@ function parseArgs(argv) {
     fromUrl: get('--from-url'),
     force: argv.includes('--force'),
     verify: verifyIdx >= 0 ? argv[verifyIdx + 1] : null,
+    fullDom: argv.includes('--full-dom'),
+    fullDomNodeBudget: parseInt(get('--full-dom-node-budget') || '4000', 10),
     scope: get('--scope') || 'diff',
     gate: argv.includes('--gate'),
     updateBaseline: argv.includes('--update-baseline'),

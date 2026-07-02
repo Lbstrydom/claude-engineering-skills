@@ -59,3 +59,43 @@ describe('visual-audit theme-safety CLI', () => {
     assert.equal(r.status, 0, 'unreadable source → skipped, not a crash');
   });
 });
+
+describe('visual-audit theme-safety v2 CLI (--full-dom)', () => {
+  it('--full-dom without --verify → usage error, exit 2 (never a silent no-op)', () => {
+    fs.writeFileSync(path.join(dir, 'src/app.css'), 'button { color:#333; }');
+    const r = run(['--full-dom']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--full-dom requires --verify/);
+  });
+
+  it('--full-dom without --verify is rejected even alongside other static flags', () => {
+    fs.writeFileSync(path.join(dir, 'src/app.css'), 'button { color:#333; }');
+    const r = run(['--full-dom', '--scope', 'full']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--full-dom requires --verify/);
+  });
+
+  it('default-off: a static run without --full-dom is unchanged (exit 0, no full-DOM banner)', () => {
+    fs.writeFileSync(path.join(dir, 'src/app.css'), 'button { color:#333; }');
+    const r = run([]);
+    assert.equal(r.status, 0);
+    assert.doesNotMatch(r.stdout + r.stderr, /full-DOM|parity-delta/i, 'flag off → the v2 sweep leaves no trace');
+  });
+
+  it('--themes with a name the contract does not declare → exit 2, names both sides (B-R1-H2)', () => {
+    fs.writeFileSync(path.join(dir, 'src/app.css'), 'button { color:#333; }');
+    fs.writeFileSync(path.join(dir, 'visual-contract.json'), JSON.stringify({
+      version: 1, surfaces: [{ id: 'app', selector: 'body', sourceGlobs: ['src/**'] }],
+      tokenSources: [{ path: 'src/app.css', type: 'css-vars' }], globalStyleGlobs: [],
+      themes: [
+        { name: 'light', apply: { mode: 'attribute', target: 'html', attribute: 'data-theme', value: 'light', settleSelector: null } },
+        { name: 'dark', apply: { mode: 'attribute', target: 'html', attribute: 'data-theme', value: 'dark', settleSelector: null } },
+      ],
+    }));
+    // Unknown theme must be refused BEFORE any browser work (no server needed).
+    const r = run(['--verify', 'http://127.0.0.1:1', '--themes', 'light,drak']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /unknown theme name\(s\) \[drak\]/);
+    assert.match(r.stderr, /light, dark/);
+  });
+});
