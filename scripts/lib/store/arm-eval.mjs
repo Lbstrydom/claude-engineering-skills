@@ -49,16 +49,62 @@ export async function armEvalSchemaReady() {
 
 // ── Writers (graceful no-op when cloud off) ──────────────────────────────────
 
-export async function recordSession({ sessionId, repoId = null, experimentType, taskId, phase = null, configVersion = null, rubricVersion = null, seed = null }) {
+export async function recordSession({ sessionId, repoId = null, experimentType, taskId, taskText = null, phase = null, configVersion = null, rubricVersion = null, seed = null }) {
   if (!sessionId || !experimentType || !taskId) throw new Error('recordSession: sessionId + experimentType + taskId required');
   if (!await isCloudEnabled()) return { cloud: false };
   try {
     await insertReturning('arm_eval_sessions', {
       session_id: sessionId, repo_id: repoId, experiment_type: experimentType, task_id: taskId,
-      phase, config_version: configVersion, rubric_version: rubricVersion, seed,
+      task_text: taskText, phase, config_version: configVersion, rubric_version: rubricVersion, seed,
     }, { returning: ['session_id'] });
     return { cloud: true, ok: true };
   } catch (err) { process.stderr.write(`  [arm-eval] recordSession failed: ${err.message}\n`); return { cloud: true, ok: false }; }
+}
+
+/**
+ * Full session record for the committed archive export (docs/arm-eval/sessions/).
+ * Returns session meta + per-run arm/model/output + judgments (label + scores)
+ * + any human ranking. The EXPORTER decides what to include (blinding rule) —
+ * this reader returns everything.
+ */
+export async function getSessionExportData(sessionId) {
+  if (!sessionId) throw new Error('getSessionExportData: sessionId required');
+  if (!await isCloudEnabled()) return { cloud: false, session: null };
+  try {
+    const [session] = await many(
+      `SELECT session_id, repo_id, experiment_type, task_id, task_text, phase,
+              config_version, rubric_version, seed, created_at
+         FROM arm_eval_sessions WHERE session_id = $1`, [sessionId]);
+    if (!session) return { cloud: true, session: null };
+    const runs = await many(
+      `SELECT r.run_id, r.arm, r.resolved_model, o.output_hash, o.output_ref, o.producer_conformant
+         FROM arm_eval_runs r
+         LEFT JOIN arm_eval_outputs o ON o.run_id = r.run_id
+        WHERE r.session_id = $1 ORDER BY r.arm`, [sessionId]);
+    const judgments = await many(
+      `SELECT j.run_id, j.judge_pass, j.presentation_order, j.scores
+         FROM arm_eval_judgments j JOIN arm_eval_runs r ON r.run_id = j.run_id
+        WHERE r.session_id = $1 ORDER BY j.judge_pass, j.presentation_order`, [sessionId]);
+    const rankings = await many(
+      `SELECT ranked_labels, reviewer, created_at FROM arm_eval_human_rankings
+        WHERE session_id = $1 ORDER BY created_at DESC`, [sessionId]);
+    return { cloud: true, session, runs, judgments, rankings };
+  } catch (err) {
+    process.stderr.write(`  [arm-eval] getSessionExportData failed: ${err.message}\n`);
+    return { cloud: true, session: null, error: err.message };
+  }
+}
+
+/** All session ids for a repo (newest first) — drives `arm-eval-export --all`. */
+export async function listSessionIds({ repoId = null, allRepos = false } = {}) {
+  if (!await isCloudEnabled()) return { cloud: false, ids: [] };
+  if (!repoId && !allRepos) throw new Error('listSessionIds: repoId required (or allRepos:true)');
+  try {
+    const rows = allRepos
+      ? await many(`SELECT session_id FROM arm_eval_sessions ORDER BY created_at DESC`)
+      : await many(`SELECT session_id FROM arm_eval_sessions WHERE repo_id = $1 ORDER BY created_at DESC`, [repoId]);
+    return { cloud: true, ids: rows.map((r) => r.session_id) };
+  } catch (err) { return { cloud: true, ids: [], error: err.message }; }
 }
 
 export async function recordRun({ runId, sessionId, arm, resolvedModel = null, contextPackHash = null, budgetLeaseId = null }) {

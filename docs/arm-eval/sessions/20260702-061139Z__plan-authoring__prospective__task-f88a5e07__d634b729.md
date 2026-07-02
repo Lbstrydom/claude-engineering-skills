@@ -1,0 +1,633 @@
+# Arm-eval session d634b729-f212-48ea-a43b-739de0a35eb7
+
+| Field | Value |
+|---|---|
+| Experiment | plan-authoring |
+| Phase | prospective |
+| Task id | `task-f88a5e07` |
+| Seed (presentation-order RNG) | 16 |
+| Config / rubric version | 1 / 1 |
+| Created (UTC) | 2026-07-02T06:11:39.345Z |
+| Repo | 8548afbd-8d85-50de-baca-1bb158d696da |
+| Archive mode | BLINDED (prospective, human ranking pending — arm identity/models/scores withheld to protect the anchor) |
+
+## Task
+
+Add on-disk caching of the resolved model catalog with a TTL to cut startup latency
+
+## Outputs (blinded — rank via `arm-eval-adjudicate`)
+
+### output-1
+
+## Overview
+
+**Problem:** At startup, the CLI tool resolves the model catalog (list of available models) by calling an external API. This call is the dominant source of startup latency and is repeated on every invocation.  
+**Solution:** Add an on‑disk cache with a configurable TTL for the resolved model catalog. The cache is a single JSON file, written atomically, that stores the API response and a timestamp. The resolver checks the cache first; if it is present and fresh, it returns the cached data instantly. On cache miss or expiry, it fetches from the API, updates the cache, and returns the result. This reduces startup latency without changing the contract of the rest of the system.
+
+The implementation respects the existing architecture: the caching logic lives in the `stores` domain (`scripts/lib/store/`) and is consumed by the `audit-orchestration` domain (which currently fetches the model catalog). The cache module is reusable, but the plan is scoped to the model catalog only.
+
+## Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **On‑disk JSON file cache** | Simplest persistent store that works across processes. No extra dependencies. Aligns with the existing `stores` domain that already manages file‑based stores. |
+| **Atomic writes (temp file + rename)** | Prevents corruption if the process crashes mid‑write. Satisfies invariant `REQ‑persistence‑d8f9613d` (safe persistence). |
+| **TTL via a configurable environment variable** | Allows operators to tune freshness. Default 1 hour balances latency reduction with the risk of stale data. |
+| **New module `scripts/lib/store/cache.mjs`** | Places the cache in the `stores` domain, which has no external dependencies beyond `shared‑lib`. Clean separation; the audit code just imports and uses it. |
+| **Modify the existing model‑catalog resolver** in `scripts/openai-audit.mjs` (or the file that currently fetches the list) | Directly wraps the existing fetch call with the cache. No new abstractions in the audit domain; minimal blast radius. |
+| **No library bloat** | Node’s built‑in `fs`, `path`, and `crypto` (for checksum if needed) suffice. We avoid frameworks like `node‑cache` that would over‑engineer a simple disk cache. |
+| **Graceful fallback on corrupt cache** | If the cache file exists but is unparseable, the module treats it as a miss and fetches fresh data. The system remains operational. |
+
+## File‑level plan
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `scripts/lib/store/cache.mjs` | **Create** | Exports a function `createCache({ cacheDir, ttlSeconds, buildKey })` that returns `{ get, set }`. The `get` function checks for a fresh, valid cache file; `set` writes a new cache file atomically using a temporary file and rename. Uses `fs` and `path` from `shared‑lib`. |
+| `scripts/openai-audit.mjs` (or the file currently resolving the model catalog) | **Modify** | Imports the new cache module. In the place where the model list is fetched, wraps the API call with a cache‑aware `getModelCatalog()` that calls `cache.get(key)` and upon miss fetches, calls `cache.set(key, data)`, and returns the data. The key is a constant string (e.g., `"model-catalog"`). The cache directory is derived from `PROJECT_ROOT/.cache/model-catalog` (or a similar project‑local path). The TTL is read from `process.env.MODEL_CATALOG_CACHE_TTL_SECONDS ?? 3600`. |
+| `tests/unit/lib/store/cache.test.mjs` | **Create** | Unit tests for the cache module using a mock file system (`memfs` or `tmp‑dir`) and a fake clock. Covers: cache hit (instant return), cache miss (fetch + write), expired cache (refresh), corrupt file (ignored + fresh fetch), and atomic write success. |
+
+## Risks
+
+- **Stale data** – If the model catalog changes while the cache is valid, users may see the old list for up to the TTL. Mitigation: TTL is short enough for typical usage; users can clear the cache manually or set `MODEL_CATALOG_CACHE_TTL_SECONDS=0` to disable.
+- **Disk permission issues** – The cache directory may be unwritable. The module must log a warning and fall back to no‑cache (direct fetch) without failing the whole operation.
+- **Cache file growth** – A single JSON file is tiny; no risk of unbounded growth.
+- **Concurrent writes** – Two processes refreshing simultaneously could race. Because the write is atomic and the cache check is read‑only, the worst case is a redundant API call; the file will eventually contain the latest data. No locking required.
+
+## Target Paths
+
+- `scripts/lib/store/cache.mjs`
+- `scripts/openai-audit.mjs`
+- `tests/unit/lib/store/cache.test.mjs`
+
+## Section 9 — Acceptance Criteria
+
+1. On first invocation the model catalog is fetched from the API, stored in a JSON file under `PROJECT_ROOT/.cache/model-catalog/`, and returned.
+2. A second invocation within the default TTL (1 hour) returns the cached data without making an API call, and the startup latency is measurably reduced.
+3. After the TTL expires, the next invocation triggers a fresh API call and updates the cache file atomically.
+4. The cache file is written using a temporary file + rename to prevent partial writes; no process can read a partially‑written file.
+5. If the cache file is missing or unreadable, the system falls back to a direct API call and writes a new cache (the user never sees an error from the cache layer).
+6. The cache TTL is configurable via the environment variable `MODEL_CATALOG_CACHE_TTL_SECONDS` (integer seconds).
+7. The existing model‑catalog contract (the shape of the returned data) is unchanged; all consumers receive the same data regardless of whether it came from cache or fresh API.
+8. A unit test suite verifies cache hit, miss, expiry, corrupt‑file recovery, and atomic‑write behavior using a controlled file system and clock.
+
+### output-2
+
+# Implementation Plan — On-Disk TTL Cache for Resolved Model Catalog
+
+## 1. Overview
+
+Add a small, durable cache around the existing “resolved model catalog” path so startup can avoid repeating expensive catalog resolution while the cached result is still fresh.
+
+The implementation should preserve the existing resolved catalog contract: callers continue receiving the same catalog shape they receive today. Caching should be an implementation detail of the resolver, with opt-in test hooks/options but no broad architectural changes.
+
+Core behavior:
+
+1. On catalog resolution, attempt to read an on-disk cache.
+2. If the cache is valid, schema-compatible, fingerprint-compatible, and within TTL, return the cached resolved catalog.
+3. If the cache is missing, stale, malformed, or incompatible, resolve the catalog using the existing logic.
+4. After successful live resolution, write the resolved catalog to disk atomically.
+5. Cache read/write failures must not prevent startup; they should degrade to the existing live-resolution behavior.
+
+## Target Paths
+
+- `scripts/lib/model-catalog.mjs`
+- `scripts/lib/model-catalog-cache.mjs`
+- `tests/model-catalog-cache.test.mjs`
+
+## 2. Design Decisions
+
+### 2.1 Add a focused cache helper module
+
+Create `scripts/lib/model-catalog-cache.mjs` to isolate persistence details from the catalog resolver.
+
+Rationale:
+
+- Keeps `model-catalog.mjs` focused on catalog semantics.
+- Makes cache behavior independently testable.
+- Avoids scattering filesystem, TTL, schema validation, and atomic-write logic through the resolver.
+- Fits the existing `shared-lib` domain because model catalog resolution is shared infrastructure.
+
+The helper should expose small primitives, not a framework:
+
+- Resolve default cache path.
+- Parse TTL configuration.
+- Load and validate cache entry.
+- Write cache entry atomically.
+- Compute freshness.
+
+### 2.2 Preserve the existing public catalog contract
+
+The existing resolver should continue returning exactly the resolved catalog object currently returned.
+
+The cache envelope should exist only on disk:
+
+```json
+{
+  "schemaVersion": 1,
+  "writtenAtMs": 1710000000000,
+  "inputFingerprint": "string",
+  "catalog": {}
+}
+```
+
+Rationale:
+
+- Avoids leaking cache metadata into existing call sites.
+- Minimizes risk of downstream breakage.
+- Allows future cache format evolution through `schemaVersion`.
+
+### 2.3 Use a TTL based on read-time configuration
+
+Freshness should be computed as:
+
+```text
+nowMs - writtenAtMs <= effectiveTtlMs
+```
+
+Do not rely on a stored `expiresAtMs`.
+
+Rationale:
+
+- If a user lowers the TTL, existing cache entries should honor the new lower TTL.
+- If tests inject a short TTL, they do not need to rewrite cache files.
+- Avoids ambiguity around clock changes and stale stored expiry values.
+
+### 2.4 Default TTL should be conservative and configurable
+
+Use a default TTL appropriate for startup latency reduction without making model metadata indefinitely stale. Recommended default: `6 hours`.
+
+Configuration:
+
+- Environment variable: `CLAUDE_SKILLS_MODEL_CATALOG_CACHE_TTL_MS`
+- Value `0` disables cache reads and writes.
+- Invalid, negative, non-finite, or non-integer values fall back to the default.
+
+Rationale:
+
+- Avoids adding CLI/config surface unless the repository already has a config mechanism for this.
+- Gives tests and power users a simple override.
+- `0` is a conventional and useful escape hatch.
+
+If the repository already has a central environment/config helper, use that helper rather than duplicating parsing conventions.
+
+### 2.5 Use an input fingerprint to avoid stale cache after catalog source changes
+
+The resolver should provide an `inputFingerprint` to the cache layer.
+
+The fingerprint should include only stable inputs that affect the resolved catalog, for example:
+
+- Static model catalog file contents or mtimes, if the catalog is built from local files.
+- Resolver version/cache schema constant.
+- Any existing catalog-source version constant.
+- Relevant provider/source configuration that changes which catalog is resolved.
+
+Do not include secrets or raw API keys.
+
+Rationale:
+
+- TTL alone can serve stale data after a repository update or local catalog edit.
+- Fingerprinting prevents using a cache generated by a different resolver/catalog source.
+- Excluding secrets prevents sensitive material from being persisted.
+
+If the existing resolver already has a catalog version, manifest hash, or source hash, reuse it.
+
+### 2.6 Default cache location should be per-user, not inside the repository
+
+Use an existing project cache-path helper if one exists. If not, default to:
+
+```text
+${XDG_CACHE_HOME:-~/.cache}/claude-engineering-skills/model-catalog.json
+```
+
+Fallback if home/cache resolution fails:
+
+```text
+${os.tmpdir()}/claude-engineering-skills/model-catalog.json
+```
+
+Rationale:
+
+- Avoids dirtying working trees.
+- Survives multiple invocations.
+- Is scoped to the current user.
+- Avoids writing under project directories with unpredictable permissions.
+
+Allow tests to inject a cache path or cache directory so tests do not touch real user state.
+
+### 2.7 Atomic write with restricted permissions
+
+Writes should be safe:
+
+1. Ensure parent directory exists.
+2. Write to a same-directory temporary file.
+3. Use restrictive permissions where supported:
+   - directory: `0o700`
+   - file: `0o600`
+4. Rename temporary file over the final cache path.
+5. Best-effort cleanup temporary file on failure.
+
+Rationale:
+
+- Prevents partially-written JSON from being treated as valid.
+- Avoids broad read permissions for persisted data, even though the model catalog should not contain secrets.
+- Same-directory rename improves atomicity across filesystems.
+
+If the repository already has a shared atomic-write utility, reuse it. Otherwise keep the implementation local to `model-catalog-cache.mjs` to avoid broad dependency changes.
+
+### 2.8 Treat cache failures as non-fatal
+
+Failure modes and behavior:
+
+| Failure | Behavior |
+|---|---|
+| Cache file missing | Resolve live and write cache |
+| Cache JSON malformed | Ignore cache, resolve live, overwrite on success |
+| Cache schema mismatch | Ignore cache, resolve live, overwrite on success |
+| Cache fingerprint mismatch | Ignore cache, resolve live, overwrite on success |
+| Cache stale by TTL | Ignore cache, resolve live, overwrite on success |
+| Cache read permission error | Ignore cache, resolve live; optionally debug-log |
+| Cache write permission error | Return live catalog; optionally debug-log |
+| Atomic rename failure | Return live catalog; cleanup temp best-effort |
+| Live resolution failure and no valid fresh cache | Preserve existing failure behavior |
+
+Do not cache failed live resolutions.
+
+Rationale:
+
+- Startup should not become less reliable because persistence is unavailable.
+- Existing correctness/failure semantics are preserved when no valid fresh cache exists.
+
+### 2.9 No stale-on-error by default
+
+If the cache is expired and live resolution fails, do not silently return stale data by default.
+
+Rationale:
+
+- TTL should be meaningful.
+- Avoids surprising correctness drift.
+- Preserves existing live-resolution failure behavior.
+
+If the repository already has a pattern for “allow stale on failure”, implement it only as an explicit internal option for tests/future use, not as the default behavior.
+
+## 3. File-Level Plan
+
+### 3.1 `scripts/lib/model-catalog-cache.mjs` — create
+
+Purpose: encapsulate disk cache mechanics for the resolved model catalog.
+
+Implement the following responsibilities:
+
+#### Constants
+
+- `MODEL_CATALOG_CACHE_SCHEMA_VERSION = 1`
+- `DEFAULT_MODEL_CATALOG_CACHE_TTL_MS = 6 * 60 * 60 * 1000`
+- `MODEL_CATALOG_CACHE_ENV = 'CLAUDE_SKILLS_MODEL_CATALOG_CACHE_TTL_MS'`
+
+#### Public helper functions
+
+Suggested exports:
+
+- `getDefaultModelCatalogCachePath(options?)`
+  - Resolves the default per-user cache path.
+  - Accepts optional injected `env`, `homedir`, or `tmpdir` values for tests.
+
+- `getModelCatalogCacheTtlMs(options?)`
+  - Reads TTL from injected env or `process.env`.
+  - Returns default TTL when unset/invalid.
+  - Returns `0` when explicitly set to `0`.
+
+- `readResolvedModelCatalogCache(options)`
+  - Inputs:
+    - `cachePath`
+    - `ttlMs`
+    - `inputFingerprint`
+    - optional `nowMs`
+    - optional filesystem injection for tests if consistent with repository style.
+  - Returns:
+    - `{ hit: true, catalog }`
+    - `{ hit: false, reason }`
+  - Does not throw for expected persistence or validation failures.
+
+- `writeResolvedModelCatalogCache(options)`
+  - Inputs:
+    - `cachePath`
+    - `inputFingerprint`
+    - `catalog`
+    - optional `nowMs`
+  - Atomically writes the cache envelope.
+  - Returns success/failure status or silently no-ops on failure according to existing project logging conventions.
+  - Should not throw into the resolver except for programmer errors in tests.
+
+#### Validation rules
+
+Cache entry is valid only when:
+
+- Top-level value is an object.
+- `schemaVersion` equals the current cache schema version.
+- `writtenAtMs` is a finite non-negative number.
+- `inputFingerprint` exactly matches the requested fingerprint.
+- `catalog` is present and object-like.
+- `nowMs - writtenAtMs` is not greater than `ttlMs`.
+- `writtenAtMs` is not unreasonably far in the future.
+
+For future timestamps, choose a small tolerance, for example one minute. If the timestamp exceeds the tolerance, treat the cache as invalid.
+
+Rationale:
+
+- Avoids clock-skew edge cases creating indefinitely fresh caches.
+- Protects against corrupted or manually edited files.
+
+#### Security/persistence requirements
+
+- Do not persist environment variables, credentials, API keys, or provider tokens.
+- Ensure JSON serialization only includes the resolved catalog.
+- Write with restrictive permissions.
+- Do not follow user-controlled paths unless an explicit test/internal option supplies the path.
+- Avoid logging full catalog contents or path-sensitive secrets.
+
+### 3.2 `scripts/lib/model-catalog.mjs` — modify
+
+Purpose: integrate the cache into the existing resolved model catalog path.
+
+Steps:
+
+1. Identify the primary function that resolves the full model catalog at startup.
+   - Likely named similarly to `resolveModelCatalog`, `loadModelCatalog`, or `getResolvedModelCatalog`.
+   - Integrate caching at this top-level point, not inside low-level provider-specific parsing functions.
+
+2. Import cache helpers from `scripts/lib/model-catalog-cache.mjs`.
+
+3. Add optional parameters to the resolver only if compatible with existing style:
+   - `cachePath`
+   - `cacheTtlMs`
+   - `nowMs`
+   - `disableCache`
+   - possibly `inputFingerprint`
+
+   Existing callers should not need to change.
+
+4. Compute or reuse an input fingerprint before reading the cache.
+   - Prefer an existing model catalog source hash/version if available.
+   - Otherwise compute a deterministic fingerprint from non-secret catalog source metadata.
+   - Include cache schema/resolver version in the fingerprint material.
+
+5. Cache-read flow:
+
+   ```text
+   effectiveTtlMs = injected TTL ?? env/default TTL
+
+   if effectiveTtlMs > 0:
+       cache = readResolvedModelCatalogCache(...)
+       if cache.hit:
+           return cache.catalog
+
+   catalog = existing live resolution logic
+
+   if effectiveTtlMs > 0:
+       writeResolvedModelCatalogCache(...)
+
+   return catalog
+   ```
+
+6. Ensure the live-resolution logic remains exactly as it is today when:
+   - cache is disabled,
+   - cache is absent,
+   - cache is stale,
+   - cache is invalid,
+   - cache read fails.
+
+7. Do not mutate the resolved catalog object before caching unless the resolver already normalizes it.
+
+8. If the resolver currently logs timing or startup diagnostics, add low-noise debug-level messages only:
+   - cache hit,
+   - cache miss reason,
+   - cache write failure.
+
+   Avoid regular stdout changes that could break scripts/tests.
+
+### 3.3 `tests/model-catalog-cache.test.mjs` — create
+
+Purpose: verify cache correctness, TTL behavior, failure handling, and resolver integration.
+
+Use the repository’s existing test runner/style. Tests should use temporary directories and injected paths/env; they must not read or write the real user cache.
+
+Recommended test cases:
+
+1. **Fresh cache hit returns cached catalog**
+   - Write a valid cache entry.
+   - Read with matching fingerprint and TTL.
+   - Assert hit and catalog equality.
+
+2. **Stale cache is ignored**
+   - Write cache with old `writtenAtMs`.
+   - Read with short TTL.
+   - Assert miss reason indicates stale/expired.
+
+3. **TTL value `0` disables cache**
+   - Resolver should skip both read and write when TTL is zero.
+   - Assert live resolver path is called.
+
+4. **Malformed JSON is ignored**
+   - Write invalid JSON to cache path.
+   - Assert read returns miss, not throw.
+
+5. **Schema mismatch is ignored**
+   - Write cache with wrong `schemaVersion`.
+   - Assert miss.
+
+6. **Fingerprint mismatch is ignored**
+   - Write valid cache with different fingerprint.
+   - Assert miss.
+
+7. **Future timestamp beyond tolerance is ignored**
+   - Write cache with far-future `writtenAtMs`.
+   - Assert miss.
+
+8. **Successful live resolution writes cache**
+   - Invoke resolver with a fake/controlled live catalog source if the resolver supports injection.
+   - Assert cache file exists and contains the expected envelope.
+
+9. **Cache write failure does not fail catalog resolution**
+   - Use an unwritable path or injected failing fs helper.
+   - Assert resolver still returns live catalog.
+
+10. **Cache read failure does not fail catalog resolution**
+   - Use injected failing read or permission-denied scenario.
+   - Assert resolver still returns live catalog.
+
+11. **Existing resolved catalog shape is preserved**
+   - Assert resolver return value does not include cache envelope fields such as `schemaVersion`, `writtenAtMs`, or `inputFingerprint`.
+
+If direct resolver injection is difficult, keep most tests at the cache-helper level and add one integration test around the smallest accessible resolver seam.
+
+## 4. Data Contract
+
+### On-disk cache envelope
+
+Version 1:
+
+```json
+{
+  "schemaVersion": 1,
+  "writtenAtMs": 1710000000000,
+  "inputFingerprint": "sha256-or-existing-version-string",
+  "catalog": {
+    "...": "existing resolved model catalog shape"
+  }
+}
+```
+
+### In-memory return contract
+
+Unchanged:
+
+```js
+resolvedCatalog
+```
+
+No cache metadata should be returned to current callers.
+
+## 5. Observability
+
+Keep observability minimal.
+
+Acceptable debug-level events if the repository already supports debug logging:
+
+- `model-catalog-cache-hit`
+- `model-catalog-cache-miss`
+- `model-catalog-cache-write-failed`
+
+Do not add normal stdout/stderr output on cache hits. Startup scripts may rely on stable output.
+
+If there is no existing debug logger, omit logging or use comments/test assertions instead of introducing a new logging abstraction.
+
+## 6. Security Considerations
+
+- Never include provider credentials, API keys, auth headers, or raw environment variables in the cache envelope or fingerprint.
+- Use restrictive file permissions.
+- Avoid writing inside the repository by default.
+- Treat the cache as untrusted input:
+  - parse defensively,
+  - validate shape,
+  - ignore malformed content,
+  - do not execute or dynamically import from cache data.
+- Avoid logging full cache contents.
+
+## 7. Persistence Safety
+
+- Use atomic same-directory rename.
+- Best-effort cleanup temp files.
+- Do not truncate the existing cache until the new cache has been fully written.
+- Cache write failure must not affect live catalog resolution.
+- Cache read failure must not affect live catalog resolution.
+- Parent directory creation should be limited to the intended cache directory.
+
+## 8. Risks
+
+1. **Incorrect fingerprinting could serve stale catalog after local source changes**
+   - Mitigation: include existing catalog source version/hash where available; include resolver cache schema/version.
+
+2. **Cache could mask changes during development**
+   - Mitigation: TTL env var supports `0` to disable; fingerprint should include local source metadata.
+
+3. **Filesystem permission issues on shared or locked-down systems**
+   - Mitigation: treat read/write failures as non-fatal and fall back to live resolution.
+
+4. **Concurrent startups may write the cache at the same time**
+   - Mitigation: atomic temp-file rename; unique temp filenames; last writer wins with equivalent catalog data.
+
+5. **Tests could become flaky if they use wall-clock time**
+   - Mitigation: inject `nowMs` in cache helper and resolver integration tests.
+
+6. **Public resolver signature changes could break callers**
+   - Mitigation: only add optional parameters; keep existing positional arguments intact. Prefer an optional trailing options object if one already exists.
+
+7. **Output changes could break script consumers**
+   - Mitigation: no regular stdout/stderr changes for cache events.
+
+## Section 9 — Acceptance Criteria
+
+1. A valid fresh on-disk cache entry is used instead of performing live model catalog resolution.
+2. The resolver returns the same in-memory resolved catalog shape as before; cache envelope metadata is not exposed to callers.
+3. Cache entries older than the effective TTL are ignored and replaced after successful live resolution.
+4. Setting `CLAUDE_SKILLS_MODEL_CATALOG_CACHE_TTL_MS=0` disables cache reads and writes.
+5. Malformed, schema-incompatible, fingerprint-incompatible, or far-future cache entries are ignored without throwing.
+6. Cache read failures fall back to existing live model catalog resolution behavior.
+7. Cache write failures do not prevent returning a successfully resolved live catalog.
+8. Successful live catalog resolution writes a cache file atomically using restrictive permissions where supported.
+9. The cache path defaults to a per-user cache location outside the repository unless an explicit test/internal path is supplied.
+10. The cache does not persist secrets, API keys, auth headers, or raw provider environment values.
+11. Unit tests cover fresh hit, stale miss, disabled cache, malformed cache, schema mismatch, fingerprint mismatch, read failure, write failure, and return-shape preservation.
+12. Existing model catalog callers do not require changes to benefit from caching.
+
+### output-3
+
+# Implementation Plan: On-Disk Caching of Resolved Model Catalog with TTL
+
+## Overview
+
+Startup latency is dominated by resolving the model catalog (discovery + metadata fetch). This plan adds a thin on-disk cache layer in the `stores` domain that sits in front of the existing resolution logic. On startup, the system reads the cache; if it exists and is younger than the TTL, the catalog is served from disk. Otherwise, resolution runs as today and the result is persisted atomically. The design favors simplicity: a single JSON file, a versioned envelope, graceful fallback on corruption, and zero changes to the catalog's internal shape.
+
+## Design Decisions (with rationale)
+
+1. **Cache lives in the `stores` domain** — The `stores` domain already owns persistence (`scripts/lib/store/**`) and depends on `shared-lib`. Placing the cache here respects the dependency graph (`stores → shared-lib`) and avoids creating a new domain.
+
+2. **Single-file JSON cache with a versioned envelope** — The cache file is one JSON document:
+   ```json
+   {
+     "schemaVersion": 1,
+     "resolvedAt": "2026-06-30T10:20:03.195Z",
+     "ttlMs": 3600000,
+     "catalog": { /* the resolved model catalog object as-is */ }
+   }
+   ```
+   `schemaVersion` lets us invalidate on structural changes. `resolvedAt` + `ttlMs` compute expiry at read time (not a fixed `expiresAt`), which survives clock-edge cases better and is trivially testable with injected time.
+
+3. **TTL is configurable but has a sensible default** — Default 1 hour (`3600000` ms). Configurable via an env var (`MODEL_CATALOG_CACHE_TTL_MS`) and a function parameter so tests can inject short TTLs. Rationale: model catalogs change infrequently but we don't want stale entries lingering indefinitely.
+
+4. **Atomic writes via temp-file + rename** — Corruption during a crash mid-write would make every subsequent startup fall back to slow resolution. We write to `model-catalog.json.tmp` then `rename` to `model-catalog.json`. This reuses the same pattern already used by `atomicWrite` in `scripts/symbol-index/drift.mjs`. Since `stores` cannot depend on `arch-memory`, we implement a small local `atomicWriteJson` helper in the stores domain (≤15 lines) rather than introducing a cross-domain import.
+
+5. **Graceful degradation on cache failure** — If the cache file is missing, unreadable, corrupt JSON, has an incompatible `schemaVersion`, or is expired, the system silently falls back to live resolution. No exception propagates to the caller. A warning is logged via the existing shared-lib logger. This ensures the cache is purely an optimization — it can never make startup *worse*.
+
+6. **Cache file location follows existing conventions** — Stored alongside other store data. The path is resolved by a small function that defaults to a `.cache/model-catalog.json` relative to the project root (or the same data directory other store modules use) but is injectable for testing.
+
+7. **No background refresh / no staleness warnings to end users** — The catalog is either fresh-enough or re-resolved synchronously. Adding background refresh would introduce concurrency complexity disproportionate to the problem. If the TTL expires, the next startup pays the resolution cost once and re-populates the cache.
+
+8. **Cache key includes nothing beyond schemaVersion** — The model catalog is global to the repo, not per-user or per-environment. If it later becomes environment-specific, we extend `schemaVersion` and add a discriminator. Prematurely keying by environment would risk cache misses that defeat the purpose.
+
+## File-Level Plan
+
+| File | Action | Purpose |
+|---|---|---|
+| `scripts/lib/store/model-catalog-cache.mjs` | **Create** | New module exporting `readCatalogCache({ cachePath, ttlMs, now })` and `writeCatalogCache({ cachePath, catalog, ttlMs, now })`, plus `atomicWriteJson(path, obj)` helper. `readCatalogCache` returns `null` on miss/expire/corruption. `writeCatalogCache` writes the versioned envelope atomically. |
+| `scripts/lib/store/model-catalog.mjs` (or wherever the catalog is resolved — adjust to actual path) | **Modify** | Wrap the existing `resolveModelCatalog` function. Before calling the resolution logic, call `readCatalogCache`. On hit, return immediately. On miss, resolve as before, then call `writeCatalogCache` with the result. Wrap the write in a `try/catch` so a failed write never blocks the resolved catalog from being returned. |
+| `tests/model-catalog-cache.test.mjs` | **Create** | Unit tests: (a) fresh cache returns catalog, (b) expired cache returns `null`, (c) corrupt JSON returns `null`, (d) missing file returns `null`, (e) wrong `schemaVersion` returns `null`, (f) `writeCatalogCache` produces a readable file, (g) atomic write leaves no `.tmp` on success, (h) env var override for TTL. |
+| `tests/model-catalog.test.mjs` (if exists) | **Modify** | Add integration test: cold start resolves and writes cache; second call reads from cache without invoking resolution. Inject a fake resolution function to verify it is *not* called on cache hit. |
+
+## Risks
+
+- **Stale models after TTL expires but before next startup** — Accepted: the TTL is the contract. If faster staleness detection is needed later, a content-hash or external invalidation endpoint can be added without changing this design.
+- **Clock skew across machines** — Since `resolvedAt` and TTL are compared at read time, a machine with a drastically wrong clock could treat a valid cache as expired (re-resolves — safe) or a stale cache as fresh (accepts stale data — bounded by TTL). This is the same risk any TTL cache has; no mitigation needed at this scale.
+- **Concurrent writes from parallel processes** — Two processes starting simultaneously could both miss the cache, both resolve, and both write. The atomic rename ensures the file is never corrupt, but one resolution is wasted. Acceptable for a startup-time optimization. If it becomes a problem, a file-lock can be added later.
+- **Disk full / permission denied on write** — Caught and swallowed. The catalog is still returned in-memory to the caller; the next startup re-attempts the write.
+
+## Target Paths
+
+- `scripts/lib/store/model-catalog-cache.mjs`
+- `scripts/lib/store/model-catalog.mjs`
+- `tests/model-catalog-cache.test.mjs`
+- `tests/model-catalog.test.mjs`
+
+## Section 9 — Acceptance Criteria
+
+1. After a successful catalog resolution, a JSON file exists at the configured cache path containing `schemaVersion`, `resolvedAt`, `ttlMs`, and the full catalog object.
+2. On a second startup within the TTL window, the catalog is returned from the cache file and the resolution logic (network calls, discovery scans, etc.) is **not** invoked.
+3. On a startup after the TTL has expired, the cache file is ignored, live resolution runs, and the cache file is overwritten with the fresh result.
+4. If the cache file is missing, the system falls back to live resolution with no error thrown and no crash.
+5. If the cache file contains invalid JSON, the system falls back to live resolution and logs a warning.
+6. If the cache file has an incompatible `schemaVersion`, the system falls back to live resolution.
+7. A failed cache write (e.g., permission denied, disk full) does not prevent the resolved catalog from being returned to the caller.
+8. The cache file is written atomically (temp file + rename); no partial/corrupt file is ever observable at the final path.
+9. The TTL is configurable via the `MODEL_CATALOG_CACHE_TTL_MS` environment variable and defaults to `3600000` (1 hour).
+10. All new and modified code paths are covered by unit and/or integration tests, including the cache-hit, cache-miss, cache-expired, cache-corrupt, and write-failure scenarios.
+

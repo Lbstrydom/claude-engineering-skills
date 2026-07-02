@@ -697,10 +697,44 @@ async function cmdArmEvalAdjudicate() {
     if (ranked) {
       const rankedLabels = ranked.split(',').map((s) => s.trim()).filter(Boolean);
       const r = await store.recordHumanRanking({ sessionId, rankedLabels, reviewer: argOption('reviewer') || null });
-      return emit({ ok: true, ...r, recorded: rankedLabels });
+      // Ranking recorded → the committed archive upgrades blinded → full
+      // attribution (best-effort; the DB row is canonical).
+      let archived = null;
+      try {
+        const { exportSession } = await import('./lib/arm-eval/export.mjs');
+        const ex = await exportSession(sessionId);
+        archived = ex.written ? ex.file : null;
+      } catch { /* non-fatal */ }
+      return emit({ ok: true, ...r, recorded: rankedLabels, archived });
     }
     const q = await store.getBlindedSessionOutputs(sessionId);
     emit({ ok: true, cloud: q.cloud, blinded: true, outputs: q.outputs });
+  } catch (err) { emitError('EXCEPTION', err.message); }
+}
+
+/**
+ * (Re)generate the committed session archive under docs/arm-eval/sessions/.
+ * `--session-id <id>` for one session, `--all` (+ --repo-id / --all-repos) for
+ * every session. Blinding rule lives in lib/arm-eval/export.mjs — a
+ * prospective session without a human ranking exports BLINDED.
+ */
+async function cmdArmEvalExport() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
+  const { exportSession } = await import('./lib/arm-eval/export.mjs');
+  const store = await import('./lib/store/arm-eval.mjs');
+  const one = argOption('session-id');
+  try {
+    if (one) {
+      const r = await exportSession(one);
+      return emit({ ok: r.written, ...r });
+    }
+    if (!hasFlag('all')) return emitError('BAD_INPUT', '--session-id <id> or --all required');
+    const repoId = argOption('repo-id') || (await resolveRepoIdentityQuiet());
+    const { ids } = await store.listSessionIds({ repoId, allRepos: hasFlag('all-repos') });
+    const results = [];
+    for (const sid of ids) results.push(await exportSession(sid));
+    emit({ ok: true, exported: results.filter((r) => r.written).length, total: ids.length, files: results.filter((r) => r.written).map((r) => r.file) });
   } catch (err) { emitError('EXCEPTION', err.message); }
 }
 
@@ -1829,6 +1863,7 @@ const commands = {
   'arm-eval-adjudicate': cmdArmEvalAdjudicate,
   'arm-eval-toggle': cmdArmEvalToggle,
   'arm-eval-maybe-capture': cmdArmEvalMaybeCapture,
+  'arm-eval-export': cmdArmEvalExport,
   'detect-stack': cmdDetectStack,
   'list-personas': cmdListPersonas,
   'add-persona': cmdAddPersona,

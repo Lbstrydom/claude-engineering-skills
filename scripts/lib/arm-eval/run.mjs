@@ -21,6 +21,8 @@ import { runCrossChecks } from './cross-checks.mjs';
 import { producePlan } from './producers/plan.mjs';
 import { produceBrainstorm } from './producers/brainstorm.mjs';
 import { parsePlanIntent } from './plan-seed.mjs';
+import { exportSession } from './export.mjs';
+import { redactSecrets as shapeRedact } from '../secret-patterns.mjs';
 
 function defaultDeps() {
   return {
@@ -60,7 +62,9 @@ export async function runArmEvalSession({ experimentType, task, repoId = null, p
   // Repo-intent pack (plan experiment grounds the coherence/intent dims).
   const intent = experimentType === 'plan-authoring' ? d.buildIntentContext({ repoRoot: process.cwd() }) : { present: false, pack: null, intentScorable: false };
 
-  await store.recordSession({ sessionId, repoId, experimentType, taskId: hashTask(task), phase, configVersion: '1', rubricVersion: '1', seed: runSeed });
+  // task_text: verbatim prompt for the committed archive (shape-redacted at
+  // write; the egress gate in the producers covers the wire path separately).
+  await store.recordSession({ sessionId, repoId, experimentType, taskId: hashTask(task), taskText: shapeRedact(task).text, phase, configVersion: '1', rubricVersion: '1', seed: runSeed });
 
   // ── Produce each arm's output ──────────────────────────────────────────────
   const outputs = [];
@@ -105,7 +109,16 @@ export async function runArmEvalSession({ experimentType, task, repoId = null, p
     }
   }
 
-  return { state: 'ran', sessionId, arms: exp.arms.map((a) => a.id), judged, conformance, seed: runSeed };
+  // ── Committed archive export (auto-capture; best-effort, never fails the run) ─
+  let archived = null;
+  try {
+    const ex = await exportSession(sessionId, { store: d.store || undefined });
+    archived = ex.written ? ex.file : null;
+  } catch (err) {
+    process.stderr.write(`  [arm-eval] archive export failed (non-fatal): ${err.message}\n`);
+  }
+
+  return { state: 'ran', sessionId, arms: exp.arms.map((a) => a.id), judged, conformance, seed: runSeed, archived };
 }
 
 /** Stable task-id: a normalized content hash (whitespace/case) — the diversity unit. */

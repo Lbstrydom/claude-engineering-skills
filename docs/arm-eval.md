@@ -76,6 +76,17 @@ While OFF, every surface is inert and byte-identical to the pre-toggle path;
 `arm-eval-maybe-capture` is a silent no-op (safe for skills to call
 unconditionally). Fail-closed: a missing/malformed toggle file = OFF.
 
+## Committed session archive (scientific log)
+
+Every session auto-exports a timestamped markdown record to
+[`docs/arm-eval/sessions/`](arm-eval/sessions/README.md) —
+`<UTC>__<experiment>__<phase>__<taskId>__<sid8>.md` — so the experiment is
+auditable without DB access (the DB stays canonical). **Blinding-aware**: a
+prospective session exports BLINDED (labels only) until its human ranking is
+recorded, then `arm-eval-adjudicate --ranked` auto-upgrades the file to full
+attribution + judge scores. Calibration sessions export full immediately.
+Backfill/regenerate: `arm-eval-export --all` (or `--session-id <id>`).
+
 ## Two-phase burn-in
 
 1. **Calibration** (`--phase calibration`) — a small known set; calibrate then
