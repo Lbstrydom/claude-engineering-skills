@@ -8,7 +8,7 @@
  */
 import { GATE_ELIGIBLE_CLASSES } from './schema.mjs';
 import { runReconcileTokens } from './reconcile-tokens.mjs';
-import { runThemeParity, runContrast } from './theme-parity.mjs';
+import { runThemeParity, runContrast, runContrastParityDelta } from './theme-parity.mjs';
 import { runLayoutPhysics } from './layout-physics.mjs';
 import { runSignifiers } from './signifiers.mjs';
 import { runUnadaptedColor } from './unadapted-color.mjs';
@@ -33,6 +33,7 @@ export const SEVERITY_BY_CLASS = {
   token_duplicate_definition: 'info',
   interactive_color_unset: 'info', // advisory static lint (matches source-coherence convention)
   unadapted_text_color: 'P2',      // advisory runtime
+  contrast_parity_delta: 'P2',     // theme-safety v2: advisory full-DOM parity-delta
 };
 
 /**
@@ -79,8 +80,21 @@ export function finalizeFindings(partials, { source = 'live' } = {}) {
 export function assembleLiveFindings({ perState, allowedSet, tokenIndex, contract }) {
   const partials = [];
 
-  for (const state of perState || []) {
-    const nodes = state.nodes || [];
+  // Scope normalizer — CLONE, never mutate (theme-safety v2 §2a / Gemini-M1).
+  // `scope` is the single node-scope discriminant ('contracted' | 'fullDom');
+  // it is stamped HERE at assembly time, not in raw capture, and by cloning:
+  // the caller serializes `perState` to disk after assembly, so an in-place
+  // `??=` would change flag-off bytes and break default-off equivalence.
+  const states = (perState || []).map((s) => ({
+    ...s,
+    nodes: (s.nodes || []).map((n) => ({ ...n, scope: n.scope ?? 'contracted' })),
+  }));
+
+  for (const state of states) {
+    // Gate-eligible (and pre-v2 advisory) producers see CONTRACTED nodes only —
+    // a fullDom node must never reach them (scope-disjoint producers, v2
+    // decision 1): the full-DOM sweep can never gate or inject absolute noise.
+    const nodes = state.nodes.filter((n) => n.scope === 'contracted');
     partials.push(...runReconcileTokens(nodes, tokenIndex, allowedSet, contract));
     partials.push(...runContrast(nodes, contract));
     partials.push(...runLayoutPhysics(nodes, contract, { viewportWidth: state.viewportWidth }));
@@ -88,15 +102,25 @@ export function assembleLiveFindings({ perState, allowedSet, tokenIndex, contrac
     partials.push(...runUnadaptedColor(nodes)); // theme-safety PIECE 2 (advisory, single-render)
   }
 
-  // Theme parity: group states by device, pair themes.
+  // Theme parity: group states by device, pair themes (contracted only).
+  // The v2 parity-delta gets the disjoint fullDom subset per device.
   const byDevice = new Map();
-  for (const state of perState || []) {
+  const fullDomByDevice = new Map();
+  for (const state of states) {
     const m = byDevice.get(state.device) || {};
-    m[state.theme] = state.nodes || [];
+    m[state.theme] = state.nodes.filter((n) => n.scope === 'contracted');
     byDevice.set(state.device, m);
+    const f = fullDomByDevice.get(state.device) || {};
+    f[state.theme] = state.nodes.filter((n) => n.scope === 'fullDom');
+    fullDomByDevice.set(state.device, f);
   }
   for (const [, nodesByTheme] of byDevice) {
     partials.push(...runThemeParity(nodesByTheme, contract));
+  }
+  // Theme-safety v2 parity-delta (advisory) — fullDom nodes only. Inert when
+  // --full-dom is off (zero fullDom nodes → no joins → no findings).
+  for (const [, fullDomNodesByTheme] of fullDomByDevice) {
+    partials.push(...runContrastParityDelta(fullDomNodesByTheme, contract));
   }
 
   // Inferred-cluster fallback (report-only) for families with NO declared scale —
@@ -108,8 +132,9 @@ export function assembleLiveFindings({ perState, allowedSet, tokenIndex, contrac
   const inferFamilies = FAMILY_PROP.filter(([fam]) => allowedSet?.inferredMode || !tokenized.has(fam));
   if (inferFamilies.length) {
     const observed = [];
-    for (const state of perState || []) {
-      for (const node of state.nodes || []) {
+    for (const state of states) {
+      for (const node of state.nodes) {
+        if (node.scope !== 'contracted') continue; // fullDom nodes must not skew inferred clusters
         const c = node.computed || {};
         for (const [fam, prop] of inferFamilies) if (c[prop]) observed.push({ family: fam, value: c[prop] });
       }

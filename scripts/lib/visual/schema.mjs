@@ -26,8 +26,11 @@ import { z } from 'zod';
 export const VISUAL_TOOL_VERSION = 1;
 /** Live-RESULT tool-semantics version (decoupled from the observed-envelope schema
  *  version, mirroring nav's NAV_VERIFY_TOOL_VERSION). Bumped when live findings'
- *  semantics change so a stale persisted result is rejected. */
-export const VISUAL_VERIFY_TOOL_VERSION = 1;
+ *  semantics change so a stale persisted result is rejected.
+ *  v2: theme-safety v2 — `contrast_parity_delta` class + fail-closed theme-pair
+ *  resolution + parity key-ambiguity coverage (a v1 persisted result predates
+ *  these semantics). */
+export const VISUAL_VERIFY_TOOL_VERSION = 2;
 
 export const CONTRACT_FILE = 'visual-contract.json';
 // Committed accepted-findings ratchet (like a lint baseline): `--gate` blocks only
@@ -65,6 +68,7 @@ export const FINDING_CLASSES = /** @type {const} */ ([
   'token_duplicate_definition',// source-coherence: same token defined twice (report-only)
   'interactive_color_unset',   // theme-safety static lint: interactive selector styles the box but not `color` (report-only)
   'unadapted_text_color',      // theme-safety runtime: UA-default text color on an author-styled form control (report-only)
+  'contrast_parity_delta',     // theme-safety v2: contrast passes in one theme, fails in the other — full-DOM sweep only (report-only)
 ]);
 
 /** Classes that CAN block CI (still subject to changed-surface scoping). Inferred
@@ -165,7 +169,15 @@ export const VisualContractSchema = z.object({
     tokenAudited: [...TOKEN_FAMILIES],
     mustMatchGeometry: ['width', 'height', 'flex-basis', 'grid-template', 'padding', 'margin'],
   }),
-}).strict();
+}).strict()
+  // Identity uniqueness (audit R3-H1 — single source of truth): a duplicated
+  // theme name or surface id makes downstream pairing/scoping ambiguous. The
+  // producers carry quiet guards as backstops, but the CONTRACT is where a
+  // malformed identity must fail — loudly, at parse time.
+  .refine((c) => new Set(c.themes.map((t) => t.name)).size === c.themes.length,
+    { message: 'themes[].name must be unique' })
+  .refine((c) => new Set(c.surfaces.map((s) => s.id)).size === c.surfaces.length,
+    { message: 'surfaces[].id must be unique' });
 
 // ── Allowed-set + observed envelope (tool-generated, lenient) ────────────────
 
