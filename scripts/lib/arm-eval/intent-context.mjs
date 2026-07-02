@@ -72,8 +72,17 @@ export function buildIntentContext({ repoRoot = process.cwd(), maxChars = DEFAUL
       if (dm.allowedDeps) picked.allowedDeps = dm.allowedDeps;
       if (dm.rules) picked.rules = dm.rules;               // Gemini-R2 fix: classify NEW paths
       if (Object.keys(picked).length) {
+        // Bound the SIZE by trimming the rules array (keeps VALID JSON — Gemini
+        // gate fix: a blunt string cap on JSON.stringify would truncate
+        // mid-structure into malformed JSON). Note truncation explicitly.
+        const RULE_CAP = 60;
+        let note = '';
+        if (Array.isArray(picked.rules) && picked.rules.length > RULE_CAP) {
+          note = `\n(rules truncated: showing ${RULE_CAP} of ${picked.rules.length})`;
+          picked.rules = picked.rules.slice(0, RULE_CAP);
+        }
         sources.push('domain-map');
-        sections.push(`## Domain map — architectural intent (allowedDeps) + path rules\n\`\`\`json\n${cap(JSON.stringify(picked, null, 2), Math.floor(maxChars * 0.3))}\n\`\`\``);
+        sections.push(`## Domain map — architectural intent (allowedDeps) + path rules${note}\n\`\`\`json\n${JSON.stringify(picked, null, 2)}\n\`\`\``);
       }
     } catch { /* malformed domain-map → skip, not fatal */ }
   }

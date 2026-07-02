@@ -141,3 +141,74 @@ export async function getArmEvalLeaderboard({ experimentType = null, repoId = nu
     return { cloud: true, rows };
   } catch (err) { process.stderr.write(`  [arm-eval] getArmEvalLeaderboard failed: ${err.message}\n`); return { cloud: true, rows: [] }; }
 }
+
+/**
+ * Reconstruct the in-memory SESSION objects the decision module consumes, from
+ * the persisted arm_eval_* rows. Repo-scoped (or explicit allRepos). Returns
+ * `{ cloud, sessions:[{ taskId, judge:{conformant,labelToArm,dims,passes}, conformance,
+ * humanRanking }] }`. The label→arm map is rebuilt from each judgment's
+ * presentation_order (`output-N`) + its run's arm; human rankings are unblinded
+ * the same way (ranked_labels → arms).
+ */
+export async function getSessionsForDecision({ experimentType, repoId = null, allRepos = false, phase = 'prospective' } = {}) {
+  if (!experimentType) throw new Error('getSessionsForDecision: experimentType required');
+  if (!repoId && !allRepos) throw new Error('getSessionsForDecision: pass repoId or allRepos:true (never accidental cross-repo)');
+  if (!await isCloudEnabled()) return { cloud: false, sessions: [] };
+  try {
+    const params = [experimentType];
+    let where = 'experiment_type = $1';
+    if (phase) { params.push(phase); where += ` AND phase = $${params.length}`; }
+    if (repoId) { params.push(repoId); where += ` AND repo_id = $${params.length}`; }
+    const sessions = await many(`SELECT session_id, task_id FROM arm_eval_sessions WHERE ${where}`, params);
+    const out = [];
+    for (const s of sessions) {
+      const runs = await many('SELECT r.run_id, r.arm, o.producer_conformant FROM arm_eval_runs r LEFT JOIN arm_eval_outputs o ON o.run_id = r.run_id WHERE r.session_id = $1', [s.session_id]);
+      const runArm = Object.fromEntries(runs.map((r) => [r.run_id, r.arm]));
+      const conformance = {}; for (const r of runs) conformance[r.arm] = r.producer_conformant !== false;
+      const judg = await many('SELECT run_id, judge_pass, presentation_order, scores FROM arm_eval_judgments WHERE run_id = ANY($1::uuid[])', [runs.map((r) => r.run_id)]);
+      const labelToArm = {}; const passesMap = {};
+      for (const j of judg) {
+        const label = `output-${j.presentation_order}`;
+        labelToArm[label] = runArm[j.run_id];
+        (passesMap[j.judge_pass] ||= {})[label] = typeof j.scores === 'string' ? JSON.parse(j.scores) : j.scores;
+      }
+      const passes = Object.keys(passesMap).sort().map((k) => passesMap[k]);
+      const dims = passes.length ? Object.keys(Object.values(passes[0])[0] || {}) : [];
+      const hr = await many('SELECT ranked_labels FROM arm_eval_human_rankings WHERE session_id = $1 ORDER BY created_at DESC LIMIT 1', [s.session_id]);
+      let humanRanking = null;
+      if (hr[0]) {
+        const labels = typeof hr[0].ranked_labels === 'string' ? JSON.parse(hr[0].ranked_labels) : hr[0].ranked_labels;
+        humanRanking = (labels || []).map((l) => labelToArm[l]).filter(Boolean);
+        if (humanRanking.length < 2) humanRanking = null;
+      }
+      out.push({ taskId: s.task_id, judge: { conformant: passes.length >= 2, labelToArm, dims, passes }, conformance, humanRanking });
+    }
+    return { cloud: true, sessions: out };
+  } catch (err) { process.stderr.write(`  [arm-eval] getSessionsForDecision failed: ${err.message}\n`); return { cloud: true, sessions: [] }; }
+}
+
+/**
+ * BLINDED outputs for a session for human spot-check — opaque labels (`output-N`,
+ * from the judge presentation order) + the output TEXT, with the ARM HIDDEN. The
+ * reviewer ranks the labels; the label→arm map is never returned here (unblinded
+ * post-hoc from the seed in the decision path).
+ */
+export async function getBlindedSessionOutputs(sessionId) {
+  if (!sessionId) throw new Error('getBlindedSessionOutputs: sessionId required');
+  if (!await isCloudEnabled()) return { cloud: false, outputs: [] };
+  try {
+    // Presentation order lives on the judgments (assigned at judge time); join to
+    // the output text. DISTINCT so the two passes don't duplicate a label.
+    const rows = await many(
+      `SELECT DISTINCT j.presentation_order, o.output_ref
+         FROM arm_eval_judgments j
+         JOIN arm_eval_runs r ON r.run_id = j.run_id
+         JOIN arm_eval_outputs o ON o.run_id = r.run_id AND o.output_hash = j.output_hash
+        WHERE r.session_id = $1
+        ORDER BY j.presentation_order`,
+      [sessionId],
+    );
+    // arm deliberately NOT selected — the queue is BLINDED.
+    return { cloud: true, outputs: rows.map((r) => ({ label: `output-${r.presentation_order}`, text: r.output_ref })) };
+  } catch (err) { process.stderr.write(`  [arm-eval] getBlindedSessionOutputs failed: ${err.message}\n`); return { cloud: true, outputs: [] }; }
+}

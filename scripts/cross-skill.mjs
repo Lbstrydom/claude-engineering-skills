@@ -625,6 +625,80 @@ async function cmdModelAbStats() {
   });
 }
 
+// ── Unified arm-evaluation framework (plan-authoring + brainstorm) ───────────
+// Thin handlers over scripts/lib/arm-eval/* (orchestration lives there, not in
+// this facade). All graceful no-op when cloud is off.
+
+/** Run ONE arm-eval session (produce → judge → cross-check → persist). Spends. */
+async function cmdArmEvalRun() {
+  await initLearningStore();
+  const experimentType = argOption('experiment');
+  const task = argOption('task');
+  if (!experimentType || !task) return emitError('BAD_INPUT', '--experiment <plan-authoring|brainstorm> --task "<text>" required');
+  const budgetCapEur = Number.parseFloat(argOption('budget-eur'));
+  const repoId = argOption('repo-id') || null;
+  const phase = argOption('phase') || 'prospective';
+  const seed = argOption('seed') ? Number.parseInt(argOption('seed'), 10) : null;
+  try {
+    const { runArmEvalSession } = await import('./lib/arm-eval/run.mjs');
+    const r = await runArmEvalSession({ experimentType, task, repoId, phase, seed, budgetCapEur: Number.isFinite(budgetCapEur) ? budgetCapEur : null });
+    emit({ ok: r.state === 'ran', ...r });
+  } catch (err) { emitError('EXCEPTION', err.message); }
+}
+
+/** Two-level verdict for an experiment (gate → paired-delta rank + τ anchor + frontier). */
+async function cmdArmEvalDecision() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
+  const experimentType = argOption('experiment');
+  if (!experimentType) return emitError('BAD_INPUT', '--experiment required');
+  const repoId = argOption('repo-id') || null;
+  const allRepos = hasFlag('all-repos');
+  const phase = argOption('phase') || 'prospective';
+  try {
+    const { getSessionsForDecision } = await import('./lib/store/arm-eval.mjs');
+    const { evaluateArmEval } = await import('./lib/arm-eval/decision.mjs');
+    const { getExperiment } = await import('./lib/arm-eval/experiments.mjs');
+    const exp = getExperiment(experimentType);
+    const { sessions, cloud } = await getSessionsForDecision({ experimentType, repoId, allRepos, phase });
+    const decision = evaluateArmEval({ experimentType, baselineArm: exp.baselineArm, sessions });
+    emit({ ok: true, cloud, ...decision });
+  } catch (err) { emitError('EXCEPTION', err.message); }
+}
+
+/** Leaderboard aggregate rows (repo-scoped unless --all-repos). */
+async function cmdArmEvalStats() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false, rows: [] });
+  const experimentType = argOption('experiment') || null;
+  const repoId = argOption('repo-id') || null;
+  const allRepos = hasFlag('all-repos');
+  try {
+    const { getArmEvalLeaderboard } = await import('./lib/store/arm-eval.mjs');
+    const lb = await getArmEvalLeaderboard({ experimentType, repoId, allRepos });
+    emit({ ok: true, cloud: lb.cloud, rows: lb.rows });
+  } catch (err) { emitError('EXCEPTION', err.message); }
+}
+
+/** Blinded human spot-check: present a session's outputs (arm hidden), or record a ranking. */
+async function cmdArmEvalAdjudicate() {
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: false, cloud: false });
+  const sessionId = argOption('session-id');
+  if (!sessionId) return emitError('BAD_INPUT', '--session-id required');
+  const ranked = argOption('ranked');   // comma-separated labels best→worst
+  try {
+    const store = await import('./lib/store/arm-eval.mjs');
+    if (ranked) {
+      const rankedLabels = ranked.split(',').map((s) => s.trim()).filter(Boolean);
+      const r = await store.recordHumanRanking({ sessionId, rankedLabels, reviewer: argOption('reviewer') || null });
+      return emit({ ok: true, ...r, recorded: rankedLabels });
+    }
+    const q = await store.getBlindedSessionOutputs(sessionId);
+    emit({ ok: true, cloud: q.cloud, blinded: true, outputs: q.outputs });
+  } catch (err) { emitError('EXCEPTION', err.message); }
+}
+
 /** Two-level decision: quality GATE → weighted-quality RANK + recall + frontier (D5–D8). */
 async function cmdModelAbDecision() {
   await initLearningStore();
@@ -1677,6 +1751,11 @@ const commands = {
   'model-ab-adjudicate': cmdModelAbAdjudicate,
   'model-ab-stats': cmdModelAbStats,
   'model-ab-decision': cmdModelAbDecision,
+  // Unified arm-evaluation framework (plan-authoring + brainstorm)
+  'arm-eval-run': cmdArmEvalRun,
+  'arm-eval-decision': cmdArmEvalDecision,
+  'arm-eval-stats': cmdArmEvalStats,
+  'arm-eval-adjudicate': cmdArmEvalAdjudicate,
   'detect-stack': cmdDetectStack,
   'list-personas': cmdListPersonas,
   'add-persona': cmdAddPersona,

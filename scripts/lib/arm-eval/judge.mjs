@@ -131,6 +131,28 @@ export async function judgeSession({ experimentType, outputs, contextPack = null
   return { presentationOrder, labelToArm, dims, intentDims: scorable ? 'scored' : 'unscored', passes, conformant: true, error: null };
 }
 
+/** Extract the first BALANCED top-level JSON object from a model response
+ * (Gemini gate fix): a greedy `/\{[\s\S]*\}/` over-captures when prose with
+ * braces trails the JSON. Scans for the first `{` and its matching `}` (string-
+ * and escape-aware). Returns the substring or null. */
+export function extractJsonObject(text) {
+  if (typeof text !== 'string') return null;
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+    } else if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return text.slice(start, i + 1); }
+  }
+  return null; // unbalanced
+}
+
 /** Production judge: Claude via the Anthropic client, JSON-validated with the schema. */
 async function callJudgeDefault({ prompt, schema }) {
   const start = Date.now();
@@ -150,9 +172,9 @@ async function callJudgeDefault({ prompt, schema }) {
       messages: [{ role: 'user', content: prompt }],
     });
     const text = (resp?.content || []).map((b) => b.text || '').join('');
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return { conformant: false, result: null, error: 'judge returned no JSON', latencyMs: Date.now() - start };
-    const parsed = JSON.parse(jsonMatch[0]);
+    const jsonStr = extractJsonObject(text);
+    if (!jsonStr) return { conformant: false, result: null, error: 'judge returned no JSON', latencyMs: Date.now() - start };
+    const parsed = JSON.parse(jsonStr);
     const v = schema.safeParse(parsed);
     if (!v.success) return { conformant: false, result: null, error: `judge JSON invalid: ${v.error.issues.slice(0, 2).map((i) => i.message).join('; ')}`, latencyMs: Date.now() - start };
     return { conformant: true, result: v.data, error: null, latencyMs: Date.now() - start };

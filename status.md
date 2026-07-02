@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-07-02 — Unified arm-evaluation framework (blinded Claude-judge) — /cycle code --autonomous, 2 clusters
+
+### Changes
+Built the unified **blinded-Claude-judge, human-anchored** framework that asks one question across experiments — *can an OSS combination beat the proprietary baseline?* — generalizing the shipped auditor harness. Claude is the constant JUDGE (never an arm; self-preference guard). Plan: [docs/completed/arm-eval-framework.md]. Still INERT until enabled + budgeted.
+- **Cluster A (Phases 1–4)** — `scripts/lib/arm-eval/{experiments,judge,intent-context,decision}.mjs` + `store/arm-eval.mjs` + migration `20260701160000`. Blinded, order-randomized, DOUBLE-PASS rubric judge (self-consistency); repo-intent context pack (architecture-map + domain-map `allowedDeps`+`rules` + requirements → grounds the coherence/intent rubric dims, `unscored` when absent); full session-grain schema (sessions/runs/outputs/judgments/human_rankings/crosschecks + leaderboard view + RLS + `audit_runs.author_model/task_id/arm_eval_run_id` + nullable spend FK); two-level decision (conformance GATE — fail-closed, no survivorship bias → paired-delta rank vs baseline + Kendall-τ human anchor over ≥8 tasks + € frontier; self-consistency ABSOLUTE floor so a tie stays provable; verdict `-provisional`/`credible:false` when unanchored). Audit R1(H:8)→R2(H:6): 9 genuine bugs fixed.
+- **Cluster B (Phases 5–7)** — `scripts/lib/arm-eval/{plan-seed,cross-checks,run}.mjs` + `producers/{model-call,plan,brainstorm}.mjs` + 4 `cross-skill.mjs` CLIs (`arm-eval-run/decision/stats/adjudicate`) + `docs/arm-eval.md`. Headless plan + brainstorm producers (egress-gated, conformance-tracked, provider-correct routing OSS/Gemini/GPT); pluggable objective cross-checks (audit-proxy / arch-memory-reuse [informational] / requirements / security — fail-closed to `unavailable`); run orchestration (budget-refusal, preflight, produce→judge→cross-check→persist, blinded human queue).
+- **Consolidated Gemini gate** (mandatory, A∪B) — R1(2H/1M)→R2(2H/1M/1L)→**R3 APPROVE**. 7 genuine defects fixed across rounds (Gemini leg mis-routed to the OpenAI client → `providerFor` classifier + `@google/genai`; arch-memory-reuse false-penalization → informational; parseable requires BOTH blocks; backtick-path regex; greedy JSON extractor → balanced `extractJsonObject`; brainstorm one-empty-leg fail-closed; intent-pack JSON truncation). 62 arm-eval tests; full suite 4185/4165 pass/0 fail; migration applied, no drift.
+- **Also this session**: model-A/B/C harness **v2** (composition arms + outcome scoring) built+shipped+activation-verified; **v2.1** cross-skill stage_type (audit-plan shadow); OSS default flipped to **GLM-5.2** (evidence-based: leads Intelligence Index 51.1 + SWE-bench Pro 62.1%, cheaper than baseline).
+
+### Files Affected
+- New: `scripts/lib/arm-eval/**` (9 modules), `scripts/lib/store/arm-eval.mjs`, `supabase/migrations/20260701160000_arm_eval.sql`, `docs/arm-eval.md`, `tests/arm-eval-*.test.mjs` (6).
+- Modified: `scripts/cross-skill.mjs` (4 CLIs).
+- Next (operator): calibrate+freeze constants → two-phase burn-in (`arm-eval-run` ≥12 tasks) → blinded spot-check → `arm-eval-decision`.
+
 ## 2026-07-01 — Model-A/B/C auditor harness **v2** (composition arms + outcome scoring) — /cycle code --autonomous, 2 clusters
 
 ### Changes

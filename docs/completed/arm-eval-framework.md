@@ -1,7 +1,7 @@
 # Plan: Unified arm-evaluation framework (blinded Claude-judge, human-anchored)
 
 - **Date**: 2026-07-01
-- **Status**: Approved — audit-plan converged. GPT R1–R3 (H:6→5→6 plateau, all schema-precision/completeness → folded into §10). Gemini gate R1 (3 genuine: contracts) → R2 (3 genuine: survivorship bias, tie-unprovable self-consistency, 1:many join key) → R3 (0 HIGH; 2 MED/2 LOW methodology+completeness tail → STOP, verified by the code-audit at build time). Ready to build via `/cycle code --autonomous`.
+- **Status**: Complete — built 2026-07-02 via `/cycle code --autonomous` (2 clusters). Audit-plan converged (GPT R1–R3 plateau; Gemini R1→R2→R3, genuine defects fixed each round → 0 HIGH). Code build: Cluster A GPT R1(H:8)→R2(H:6), 9 genuine bugs fixed → converged; Cluster B (fix-gate final); consolidated Gemini gate R1(2H/1M)→R2(2H/1M/1L)→**R3 APPROVE**, 7 genuine defects fixed across rounds. 62 arm-eval tests; full suite 4185/4165 pass/0 fail; migration applied, no drift. See Implementation Log below.
 - **Author**: Claude + Louis
 - **Scope**: backend (`js-ts` + postgres; `node --test`). Generalises the shipped auditor harness (`docs/completed/model-ab-harness-v2.md`) into ONE evaluation framework that three experiments plug into.
 - **Origin**: operator insight — the auditor harness already uses Claude as a **blinded, human-verifiable judge** (it adjudicates GPT/OSS/Gemini findings; the human verifies/overrides). Extend that exact pattern to two more experiments (plan authoring, brainstorm) so all three test ONE principle under ONE rigorous method.
@@ -200,3 +200,15 @@ Migration declares PKs, FKs, unique + leaderboard indexes, RLS (deny-all + owner
 - **Confidence tiers differ, and we state it.** The auditor verdict rests on real *accepted bugs* (hard). Plan/brainstorm verdicts rest on Claude-judge + human spot-check (softer) — so the spot-check anchor is mandatory there, and the reported verdict carries its confidence tier. We do not present a rubric-only ranking as equivalent to the auditor's bug-grounded one.
 - **Measuring CLAUDE's own outputs is out of scope** — Claude can't judge itself; that needs a human or a different judge (a documented asymmetry). Hence Claude is judge-only, never an arm.
 - **v-next**: acting on the winner (auto-selecting the production model per task type); outcome-based scoring (implement the plan, measure success); a frontend-plan authoring axis.
+
+---
+
+## Implementation Log
+
+### 2026-07-02 — built via `/cycle code --autonomous` (2 clusters)
+
+- **Cluster A (Phases 1–4)**: `scripts/lib/arm-eval/{experiments,judge,intent-context,decision}.mjs` + `scripts/lib/store/arm-eval.mjs` + migration `20260701160000_arm_eval.sql`. Blinded order-randomized double-pass judge; repo-intent context pack; full session-grain schema (sessions/runs/outputs/judgments/human_rankings/crosschecks + leaderboard + RLS + audit_runs/spend linkage); two-level decision (conformance gate → paired-delta rank + Kendall-τ anchor + € frontier). Audit R1(H:8)→R2(H:6): 9 genuine bugs fixed (judge egress + label-permutation; decision baseline-conformance + fail-closed conformance + verdict-credibility gate; repo-scoped leaderboard; composite FK).
+- **Cluster B (Phases 5–7)**: `scripts/lib/arm-eval/{plan-seed,cross-checks,run}.mjs` + `producers/{model-call,plan,brainstorm}.mjs` + 4 `cross-skill.mjs` CLIs (`arm-eval-run/decision/stats/adjudicate`) + `docs/arm-eval.md` runbook. Consolidated Gemini gate R1→R2→**R3 APPROVE**: 7 genuine defects fixed (Gemini leg mis-routed to OpenAI client → `providerFor` classifier + `@google/genai` route; arch-memory-reuse false-penalization → informational; parseable requires BOTH blocks; backtick-path regex; greedy JSON extractor → balanced `extractJsonObject`; brainstorm one-empty-leg fail-closed; intent-pack JSON truncation).
+- **Deviations**: OSS candidates named concretely in the experiment config (the experiment's variable — not the production-auditor anti-pin rule); factored `arm-eval/run.mjs` + `producers/model-call.mjs` (not in §6) to keep cross-skill thin (its own audit flagged god-module) — within Cluster-B arm-eval scope.
+- **Remaining (operator)**: calibrate + freeze constants, then the two-phase burn-in (`arm-eval-run` across ≥12 tasks) + blinded spot-check → `arm-eval-decision`. v-next: auto-router + outcome-based scoring (both deferred).
+- **2 LOW advisory (R3, non-gating)**: `role:author` arm could carry >1 model (producer uses models[0]); `extractJsonObject` first-`{` could catch a stray prose brace (fails closed on parse). Captured; not fixed.

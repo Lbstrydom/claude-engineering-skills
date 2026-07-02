@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildIntentContext } from '../scripts/lib/arm-eval/intent-context.mjs';
-import { judgeSession, scorableDimensions, judgePassSchema } from '../scripts/lib/arm-eval/judge.mjs';
+import { judgeSession, scorableDimensions, judgePassSchema, extractJsonObject } from '../scripts/lib/arm-eval/judge.mjs';
 import { RUBRIC_INTENT_DIMS } from '../scripts/lib/arm-eval/experiments.mjs';
 
 // ── intent-context ────────────────────────────────────────────────────────────
@@ -97,6 +97,13 @@ describe('judge — blinding, order-randomization, double-pass', () => {
     const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge: async () => ({ conformant: false, result: null, error: 'bad json' }) } });
     assert.equal(r.conformant, false);
     assert.equal(r.passes.length, 0);
+  });
+  it('extractJsonObject grabs the balanced object, not greedy-to-last-brace (Gemini gate)', () => {
+    assert.equal(extractJsonObject('prose {"a":1} more prose { not json'), '{"a":1}');
+    assert.equal(extractJsonObject('{"a":{"b":2}} trailing {junk'), '{"a":{"b":2}}');
+    assert.equal(extractJsonObject('a "quoted } brace" then {"x":"y}"}'), '{"x":"y}"}'); // string-aware
+    assert.equal(extractJsonObject('no json here'), null);
+    assert.equal(extractJsonObject('{ unbalanced'), null);
   });
   it('scorableDimensions drops intent dims iff no pack', () => {
     assert.ok(scorableDimensions('plan-authoring', true).includes('architectural_coherence'));
