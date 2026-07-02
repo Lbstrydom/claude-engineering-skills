@@ -24,8 +24,33 @@
  */
 import { readdirSync, statSync, rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { sweepStaleOrphanPreimages } from './lib/audit/diff-scope-resolver.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+
+/** Orphaned preimage WORKTREES (os.tmpdir()/orphan-preimage-*) — left by a
+ *  hard-killed audit run; registered git worktrees, so they must go through
+ *  the worktree-aware sweep (a bare rm leaves dangling .git metadata, and a
+ *  stale copy poisons temp-dir sibling scans — it blocked a push once). Fixed
+ *  1h age gate (a LIVE preimage lives for seconds), independent of --age-days. */
+const PREIMAGE_MAX_AGE_MS = 60 * 60 * 1000;
+
+function listStalePreimages() {
+  const out = [];
+  let entries = [];
+  try { entries = readdirSync(os.tmpdir()); } catch { return out; }
+  for (const name of entries) {
+    if (!name.startsWith('orphan-preimage-')) continue;
+    const p = path.join(os.tmpdir(), name);
+    let st;
+    try { st = statSync(p); } catch { continue; }
+    if (!st.isDirectory()) continue;
+    if (Date.now() - st.mtimeMs < PREIMAGE_MAX_AGE_MS) continue;
+    out.push({ p, ageDays: Math.floor((Date.now() - st.mtimeMs) / 86400000) });
+  }
+  return out;
+}
 
 /** Transient patterns, scoped per directory. RegExp over the basename. */
 const TRANSIENT = [
@@ -85,7 +110,18 @@ function main() {
   const unique = candidates.filter((c) => !seen.has(c.p) && seen.add(c.p));
   const totalKb = Math.round(unique.reduce((s, c) => s + c.bytes, 0) / 1024);
 
-  if (unique.length === 0) {
+  // Orphaned preimage worktrees (worktree-aware sweep, fixed 1h gate).
+  const stalePreimages = listStalePreimages();
+  if (stalePreimages.length > 0) {
+    if (apply) {
+      const r = sweepStaleOrphanPreimages({ repoPath: process.cwd(), maxAgeMs: PREIMAGE_MAX_AGE_MS });
+      for (const p of r.swept) process.stdout.write(`  rm (worktree)  ${p}\n`);
+    } else {
+      for (const w of stalePreimages) process.stdout.write(`  would rm (worktree)  ${w.p}  (${w.ageDays}d)\n`);
+    }
+  }
+
+  if (unique.length === 0 && stalePreimages.length === 0) {
     process.stdout.write(`audit-clean: nothing transient older than ${ageDays}d — clean.\n`);
     return;
   }
@@ -93,7 +129,7 @@ function main() {
     process.stdout.write(`  ${apply ? 'rm' : 'would rm'}  ${c.p}  (${Math.round(c.bytes / 1024)}KB, ${c.ageDays}d)\n`);
     if (apply) { try { rmSync(c.p); } catch (err) { process.stderr.write(`  [audit-clean] failed: ${c.p}: ${err.message}\n`); } }
   }
-  process.stdout.write(`audit-clean: ${unique.length} file(s), ~${totalKb}KB ${apply ? 'deleted' : 'would be deleted'} (age > ${ageDays}d).${apply ? '' : ' Re-run with --apply to delete.'}\n`);
+  process.stdout.write(`audit-clean: ${unique.length} file(s) + ${stalePreimages.length} stale worktree(s), ~${totalKb}KB ${apply ? 'deleted' : 'would be deleted'} (files > ${ageDays}d, worktrees > 1h).${apply ? '' : ' Re-run with --apply to delete.'}\n`);
 }
 
 main();

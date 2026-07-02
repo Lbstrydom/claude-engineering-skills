@@ -169,6 +169,48 @@ function parseLsTreeZ(buf) {
  * @param {Array<{status: string, baseCallerPath: string|null}>} changedFiles
  * @returns {{tempRoot: string, materialisedPaths: string[]}|null}
  */
+/**
+ * Self-healing sweep for orphaned preimage worktrees. The normal path removes
+ * its worktree in a `finally`, but a hard kill mid-cruise (SIGTERM on an audit
+ * timeout, SIGKILL) leaves the `orphan-preimage-*` worktree behind LOCKED and
+ * registered — and because it contains a full repo copy (AGENTS.md/CLAUDE.md),
+ * a stale one poisons any sibling-scan that looks for repo sentinels in the
+ * temp dir (it blocked pushes via tests/shared-cloud-config.test.mjs once).
+ * Signal handlers can't help against SIGKILL, so the robust fix is this sweep
+ * on the NEXT run: remove any preimage dir older than `maxAgeMs` (default 1h —
+ * far beyond a live materialise-cruise-cleanup cycle, which is seconds), then
+ * `git worktree prune` to drop dangling metadata. Also called by
+ * `npm run audit:clean`.
+ *
+ * @param {{repoPath: string, tmpDir?: string, maxAgeMs?: number}} args
+ * @returns {{swept: string[], kept: number}}
+ */
+export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxAgeMs = 60 * 60 * 1000 }) {
+  const swept = [];
+  let kept = 0;
+  let entries = [];
+  try { entries = fs.readdirSync(tmpDir); } catch { return { swept, kept }; }
+  for (const name of entries) {
+    if (!name.startsWith('orphan-preimage-')) continue;
+    const p = path.join(tmpDir, name);
+    let st;
+    try { st = fs.statSync(p); } catch { continue; }
+    if (!st.isDirectory()) continue;
+    if (Date.now() - st.mtimeMs < maxAgeMs) { kept++; continue; } // possibly live — leave it
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', p], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch {
+      try { fs.rmSync(p, { recursive: true, force: true }); } catch { continue; } // still held → skip, next sweep retries
+    }
+    swept.push(p);
+  }
+  if (swept.length > 0) {
+    try { execFileSync('git', ['worktree', 'prune'], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* best-effort */ }
+    process.stderr.write(`  [orphan] swept ${swept.length} stale preimage worktree(s) from a previously killed run\n`);
+  }
+  return { swept, kept };
+}
+
 function materialisePreimages(repoPath, baseRef, changedFiles) {
   const eligible = changedFiles.filter(f =>
     ['M', 'D', 'R'].includes(f.status)
@@ -176,6 +218,10 @@ function materialisePreimages(repoPath, baseRef, changedFiles) {
     && SOURCE_EXTENSIONS.has(path.extname(f.baseCallerPath).toLowerCase())
   );
   if (eligible.length === 0) return null;
+
+  // Heal any casualties of a previously hard-killed run before creating a new
+  // worktree (the `finally` below can't run through SIGKILL).
+  try { sweepStaleOrphanPreimages({ repoPath }); } catch { /* never block the audit */ }
 
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'orphan-preimage-'));
   // Worktree expects the target directory NOT to exist or to be empty.
