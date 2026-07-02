@@ -138,10 +138,15 @@ describe('redactSecrets', () => {
   });
 
   test('redacts DSN password only, keeps scheme/user/host readable (AUDIT_DB_URL shape)', () => {
+    // The Atlas-shaped fixture is concatenated at runtime so GitHub's secret
+    // scanner doesn't see a continuous `mongodb+srv://user:pass@host` literal
+    // in source (it flagged the raw form as alert #3 — same convention as the
+    // sk-proj bait in redact.test.mjs). The credentials are fabricated.
+    const atlasDsn = ['mongodb+srv', '://app:', 't0ps3cret', '@cluster0.mongodb.net/prod'].join('');
     const cases = [
       ['postgresql://svc:Sup3rS3cret@db.pooler.supabase.com:5432/postgres', 'Sup3rS3cret', 'db.pooler.supabase.com'],
       ['postgres://u:pw123@localhost/db', 'pw123', 'localhost'],
-      ['mongodb+srv://app:t0ps3cret@cluster0.mongodb.net/prod', 't0ps3cret', 'cluster0.mongodb.net'],
+      [atlasDsn, 't0ps3cret', 'cluster0.mongodb.net'],
       ['redis://default:cachepass@redis.internal:6379', 'cachepass', 'redis.internal'],
     ];
     for (const [dsn, pw, host] of cases) {
