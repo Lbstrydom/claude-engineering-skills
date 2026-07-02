@@ -549,11 +549,19 @@ export const ArchIntentReportSchema = z.object({
 });
 
 /**
- * GPT response shape for the new architecture audit pass.
+ * GPT response shape for the architecture audit pass.
+ *
+ * findings MUST be ProducerFindingSchema (what LLMs emit), NOT FindingSchema/
+ * PersistedFindingSchema — the persisted shape carries the post-LLM
+ * `verification` attachment (`.optional()` without `.nullable()`), which the
+ * OpenAI structured-outputs API REJECTS ("all fields must be required"), so
+ * the pass failed on every audit and silently degraded to the deterministic
+ * fallback. Every other pass already uses ProducerFindingSchema; this was the
+ * one divergence. Contract-guarded by tests/schemas-openai-compat.test.mjs.
  */
 export const ArchIntentPassSchema = z.object({
   pass_name: z.literal('architecture').default('architecture'),
-  findings: z.array(FindingSchema).default([]),
+  findings: z.array(ProducerFindingSchema).default([]),
   summary: z.string().default(''),
 });
 
