@@ -78,6 +78,26 @@ describe('renderAdjudicationWorksheet — paste-ready invariants', () => {
     assert.doesNotMatch(without, /## Duplicates/);
   });
 
+  test('suggestions render advisory verdict + why, and pre-fill the command (incl. duplicate canonical)', () => {
+    const items = [
+      item({ fingerprint: 'aaaa1111', suggestion: { action: 'accepted', why: 'real planted bug: cap check ignores amount' } }),
+      item({ fingerprint: 'bbbb2222', suggestion: { action: 'duplicate', canonical: 'aaaa1111', why: 'same bug reworded' } }),
+      item({ fingerprint: 'cccc3333' }), // no suggestion → default action pre-filled
+    ];
+    const md = renderAdjudicationWorksheet({
+      ...BASE, items,
+      actions: ['accepted', 'dismissed', 'duplicate'],
+      commandFor: (it, a, canonical) => `node x.mjs --fingerprint ${it.fingerprint} --action ${a}${canonical ? ` --canonical ${canonical}` : ''}`,
+    });
+    assert.match(md, /\*\*Suggested: `accepted`\*\* — real planted bug/);
+    assert.match(md, /--fingerprint aaaa1111 --action accepted/);
+    assert.match(md, /\*\*Suggested: `duplicate` \(duplicate of `aaaa1111`\)\*\*/);
+    assert.match(md, /--fingerprint bbbb2222 --action duplicate --canonical aaaa1111/);
+    assert.match(md, /--fingerprint cccc3333 --action accepted/, 'unsuggested item keeps the default action');
+    assert.match(md, /2 with a suggested verdict/);
+    assert.match(md, /paste it to confirm, or edit the action word/);
+  });
+
   test('pure: no clock use — generatedAt only appears when the caller supplies it', () => {
     const md = renderAdjudicationWorksheet({ ...BASE, items: [item()] });
     assert.doesNotMatch(md, /Generated:/);

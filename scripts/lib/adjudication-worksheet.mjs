@@ -32,6 +32,10 @@
  * @property {string} [category]
  * @property {string} [file]       - primary file / section anchor
  * @property {string} [detail]     - snippet shown as the quoted summary
+ * @property {{action: string, why: string, canonical?: string|null}} [suggestion] -
+ *   an advisory pre-judgment (e.g. from the blinded Claude adjudicator). The
+ *   HUMAN confirms by pasting the pre-filled command, or overrides by editing
+ *   the action word — the suggestion never writes anything by itself.
  */
 
 /** One squashed-whitespace, length-capped line. */
@@ -46,9 +50,10 @@ function line(s, cap = 220) {
  * @param {string} args.title - worksheet H1
  * @param {string[]} [args.introLines] - context paragraphs (already-safe text)
  * @param {WorksheetItem[]} args.items
- * @param {(item: WorksheetItem, action: string) => string} args.commandFor -
- *   returns the FULL shell command for ruling `item` with `action`. Must embed
- *   real values (the renderer refuses placeholder-looking output).
+ * @param {(item: WorksheetItem, action: string, canonical?: string|null) => string} args.commandFor -
+ *   returns the FULL shell command for ruling `item` with `action` (and, for
+ *   duplicate rulings, the canonical root fingerprint). Must embed real values
+ *   (the renderer refuses placeholder-looking output).
  * @param {string[]} args.actions - valid actions, first one is pre-filled in
  *   the per-item block (the human edits the word to disagree)
  * @param {{action: string, canonicalHint: string}|null} [args.duplicateHowTo] -
@@ -86,14 +91,25 @@ export function renderAdjudicationWorksheet({ title, introLines = [], items, com
   const sorted = [...items].sort((a, b) =>
     (a.file ?? '').localeCompare(b.file ?? '') || (a.category ?? '').localeCompare(b.category ?? '') || (a.fingerprint ?? '').localeCompare(b.fingerprint ?? ''));
 
-  md.push(`## Pending findings (${sorted.length})`, '');
+  const suggested = sorted.filter((i) => i.suggestion).length;
+  md.push(`## Pending findings (${sorted.length}${suggested ? `, ${suggested} with a suggested verdict` : ''})`, '');
+  if (suggested) {
+    md.push(
+      'Suggested verdicts are ADVISORY (blinded adjudicator pre-judgment): the pre-filled command',
+      'below each finding carries the suggestion — **paste it to confirm, or edit the action word to',
+      'override**. Nothing is written until you run a command.',
+      '',
+    );
+  }
   const defaultAction = actions[0];
   for (const it of sorted) {
     const tags = [it.severity, it.stage].filter(Boolean).join('/');
     md.push(`### \`${it.fingerprint}\`${tags ? ` [${tags}]` : ''} ${line(it.category ?? '', 90)}`);
     if (it.file) md.push(`*${line(it.file, 120)}*`);
     md.push(`> ${line(it.detail, 300)}`, '');
-    const cmd = commandFor(it, defaultAction);
+    const s = it.suggestion;
+    if (s) md.push(`**Suggested: \`${s.action}\`${s.canonical ? ` (duplicate of \`${s.canonical}\`)` : ''}** — ${line(s.why, 300)}`, '');
+    const cmd = commandFor(it, s?.action ?? defaultAction, s?.canonical ?? null);
     if (/<[A-Za-z_-]+>/.test(cmd)) {
       // Fail loud at render time — a placeholder here defeats the module's entire purpose.
       throw new Error(`adjudication-worksheet: commandFor emitted a placeholder-looking command: ${cmd}`);

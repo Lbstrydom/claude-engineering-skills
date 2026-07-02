@@ -615,20 +615,32 @@ async function cmdModelAbAdjudicate() {
     // default failed the operator twice — see lib/adjudication-worksheet.mjs.)
     if (!process.argv.includes('--json')) {
       const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
-      const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
+      const { writeFileSync, mkdirSync, existsSync, readFileSync } = await import('node:fs');
+      // --suggestions <file>: advisory pre-judgments (blinded-adjudicator output),
+      // a JSON map { fingerprint: {action, why, canonical?} }. Rendered per item
+      // with the command pre-filled to the suggestion — the human confirms by
+      // pasting or overrides by editing; the file itself never writes rulings.
+      let suggestions = {};
+      const sugPath = argOption('suggestions');
+      if (sugPath) {
+        try { suggestions = JSON.parse(readFileSync(sugPath, 'utf8')); }
+        catch (err) { return emitError('BAD_INPUT', `--suggestions ${sugPath}: ${err.message}`); }
+      }
       const md = renderAdjudicationWorksheet({
         title: `Model-A/B/C blinded adjudication${runId ? ` — run ${runId.slice(0, 8)}…` : ''}`,
         introLines: [
           'Blinded: arm identity is hidden; the `stage` tag (oss-gen/gpt-round/gemini) is a pipeline stage, not an arm.',
-          'Your rulings are the scorer\'s ONLY ground truth (anti-circularity) — no model pre-judged these.',
+          'Your confirmed rulings are the scorer\'s ONLY ground truth (anti-circularity).',
+          ...(sugPath ? [`Suggested verdicts loaded from ${sugPath} — advisory only, you confirm or override each.`] : []),
         ],
         items: q.items.map((f) => ({
           runId: f.run_id, fingerprint: f.finding_fingerprint, severity: f.severity,
           stage: f.stage, category: f.category, file: f.primary_file, detail: f.detail_snapshot,
+          suggestion: suggestions[f.finding_fingerprint] || undefined,
         })),
         actions: ['accepted', 'dismissed', 'not-actionable', 'duplicate'],
         duplicateHowTo: { action: 'duplicate', canonicalHint: '--canonical ROOT_FINGERPRINT' },
-        commandFor: (it, a) => `node scripts/cross-skill.mjs model-ab-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a}`,
+        commandFor: (it, a, canonical) => `node scripts/cross-skill.mjs model-ab-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a}${canonical ? ` --canonical ${canonical}` : ''}`,
         generatedAt: new Date().toISOString(),
       });
       // Discoverable home next to the arm-eval session archives (gitignored —

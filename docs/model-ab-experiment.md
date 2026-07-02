@@ -148,7 +148,9 @@ the top of the worksheet; items are sorted so likely-duplicates sit adjacent).
 ```powershell
 # 1. Render the review worksheet (default: worksheet is written on every plain listing;
 # out: docs/arm-eval/worksheets/model-ab-adjudication-worksheet.md — gitignored, regenerable.
-# Raw queue JSON for scripts: add --json. Prune old working files: npm run audit:clean)
+# Raw queue JSON for scripts: add --json. Prune old working files: npm run audit:clean.
+# Optional --suggestions FILE.json ({fingerprint:{action,why,canonical?}}) renders advisory
+# verdicts from the blinded adjudicator — you confirm by pasting or override by editing)
 $runId = "93580799-977d-4fef-9465-fbe4be47213c"   # from model-ab-stats / the queue listing
 node scripts/cross-skill.mjs model-ab-adjudicate --run-id $runId
 
