@@ -154,9 +154,12 @@ export function isClaudeAvailable() {
 /**
  * Create or retrieve a cached Anthropic-shaped client.
  *
- * **Egress redaction** — by default, `redactSecrets` from
- * [scripts/lib/sanitizer.mjs](sanitizer.mjs) is applied to `system` strings
- * and every text content block before they leave the process. Pass
+ * **Egress redaction** — by default, the SHAPE-based `redactSecrets` from
+ * [scripts/lib/secret-patterns.mjs](secret-patterns.mjs) is applied to
+ * `system` strings and every text content block before they leave the
+ * process (real secret shapes only — provider keys, JWTs, PEM, DSN
+ * passwords; it does NOT blanket-redact long identifiers the way
+ * sanitizer.mjs does, which corrupted identifier-dense prompts). Pass
  * `redactor: null` to opt out, or a custom function `(s: string) => string`.
  * The default redactor is identity-cached (same Function reference per
  * factory load) so the client cache works correctly.
@@ -251,8 +254,20 @@ export async function createAnthropicClient(options = {}) {
 let _defaultRedactor = null;
 async function getDefaultRedactor() {
   if (_defaultRedactor === null) {
-    const { redactSecrets } = await import('./sanitizer.mjs');
-    _defaultRedactor = redactSecrets;
+    // SHAPE-based redactor (secret-patterns.mjs), NOT sanitizer.mjs. The old
+    // default blanket-redacted ANY 20+ char [A-Za-z0-9_-] token, which
+    // corrupted legitimate long identifiers in identifier-dense prompts —
+    // symbol names (arch-index summaries, neighbourhood queries), file paths
+    // and finding hashes (gemini-review's Opus/Azure final-review fallback),
+    // CSS tokens (visual explain), and the arm-eval judge's rubric dim names
+    // (a HARD schema failure, found on the first live calibration run —
+    // commit 19a9ded). The shape registry catches real secret shapes
+    // (provider keys, JWTs, PEM, DSN passwords, keyword-anchored tokens)
+    // without the blanket-length false positives. Upstream hard gates
+    // (sensitive-path filtering, assertEgressSafe) remain the primary
+    // defense; this layer is defense-in-depth on the outbound payload.
+    const { redactSecrets } = await import('./secret-patterns.mjs');
+    _defaultRedactor = (s) => (typeof s === 'string' ? redactSecrets(s).text : s);
   }
   return _defaultRedactor;
 }
@@ -711,4 +726,5 @@ export const _internals = {
   normaliseCliOutput,
   createCliAdapter,
   quoteWinArg,
+  getDefaultRedactor,
 };

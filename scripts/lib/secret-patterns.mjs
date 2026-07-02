@@ -44,6 +44,15 @@ export const SECRET_PATTERNS = Object.freeze([
   },
   // Private-key PEM blocks
   { name: 'pem-private-key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/g },
+  // Connection-string password (postgres/mysql/mongo/redis/amqp DSNs). This
+  // repo's own threat model names it: "the runtime DSN's password IS the
+  // secret" (AGENTS.md, AUDIT_DB_URL). Redacts ONLY the password segment so
+  // the host/db stay readable for operators.
+  {
+    name: 'dsn-password',
+    re: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqps?):\/\/[^:\s/@]+:([^@\s]+)@/gi,
+    captureGroup: 1,
+  },
 ]);
 
 /**

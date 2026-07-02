@@ -136,6 +136,33 @@ describe('redactSecrets', () => {
     assert.match(r.text, /\[REDACTED:pem-private-key\]/);
     assert.equal(r.text.includes('MIIEp'), false);
   });
+
+  test('redacts DSN password only, keeps scheme/user/host readable (AUDIT_DB_URL shape)', () => {
+    const cases = [
+      ['postgresql://svc:Sup3rS3cret@db.pooler.supabase.com:5432/postgres', 'Sup3rS3cret', 'db.pooler.supabase.com'],
+      ['postgres://u:pw123@localhost/db', 'pw123', 'localhost'],
+      ['mongodb+srv://app:t0ps3cret@cluster0.mongodb.net/prod', 't0ps3cret', 'cluster0.mongodb.net'],
+      ['redis://default:cachepass@redis.internal:6379', 'cachepass', 'redis.internal'],
+    ];
+    for (const [dsn, pw, host] of cases) {
+      const r = redactSecrets(`connect: ${dsn}`);
+      assert.ok(r.redacted.includes('dsn-password'), `dsn-password should match for ${dsn}`);
+      assert.equal(r.text.includes(`:${pw}@`), false, `password must be gone in ${r.text}`);
+      assert.ok(r.text.includes(host), `host must stay readable in ${r.text}`);
+    }
+  });
+
+  test('does NOT flag password-less URLs or plain prose with slashes', () => {
+    for (const s of [
+      'postgresql://db.pooler.supabase.com:5432/postgres',   // no credentials
+      'https://github.com/owner/repo',                        // not a DSN scheme
+      'see scripts/lib/anthropic-client.mjs for details',     // plain path
+    ]) {
+      const r = redactSecrets(s);
+      assert.deepEqual(r.redacted, [], `no pattern should fire for: ${s}`);
+      assert.equal(r.text, s);
+    }
+  });
 });
 
 describe('redactFields', () => {

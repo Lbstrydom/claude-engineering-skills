@@ -479,24 +479,35 @@ describe('default redactor and cache hygiene', () => {
     const b = await createAnthropicClient({ claudeBin: '/p', redactor: rB });
     assert.notEqual(a, b, 'custom redactors must each get their own client');
   });
-  it('default redactor is applied when redactor is not specified', async () => {
-    process.env.CLAUDE_BACKEND = 'cli';
-    _resetClientCache();
-    // Redactor pipe through `_internals.applyRedactor` via the sdk wrapper
-    // path is identity for the cli adapter; we exercise it via the SDK-wrap.
-    const fakeSdkClient = {
-      messages: {
-        create: async (params) => ({ _capturedParams: params }),
-      },
-    };
-    // Use the internal SDK redactor wrapper directly to verify behaviour.
+  it('default redactor redacts real secret SHAPES (keys, JWTs, DSN passwords)', async () => {
     const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
-    // No internals helper exposed for wrap; instead, verify that applyRedactor
-    // redacts a known secret pattern using the default (redactSecrets).
-    const { redactSecrets } = await import('../scripts/lib/sanitizer.mjs');
-    const redacted = redactSecrets('api_key=sk-ant-1234567890abcdefghij');
-    assert.ok(redacted.includes('[REDACTED]') || redacted.includes('[REDACTED_TOKEN]'),
-      `default redactor (redactSecrets) should redact api_key= patterns, got: ${redacted}`);
+    const redact = await _internals.getDefaultRedactor();
+    const key = 'sk-ant-' + 'a1b2c3d4e5'.repeat(3);
+    assert.ok(!redact(`auth with ${key} now`).includes(key), 'anthropic key shape must be redacted');
+    const dsn = 'postgresql://svc_user:Sup3rS3cret@db.pooler.supabase.com:5432/postgres';
+    const out = redact(`connect via ${dsn}`);
+    assert.ok(!out.includes('Sup3rS3cret'), `DSN password must be redacted, got: ${out}`);
+    assert.ok(out.includes('db.pooler.supabase.com'), 'DSN host stays readable');
+  });
+  it('default redactor preserves long legitimate identifiers (judge-corruption regression, 19a9ded)', async () => {
+    // The OLD default (sanitizer.mjs) blanket-redacted ANY 20+ char token —
+    // it corrupted rubric dim names (hard schema failure in the arm-eval
+    // judge), symbol names in arch-index summaries, and CSS tokens. The
+    // shape-based default must leave all of these intact.
+    const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
+    const redact = await _internals.getDefaultRedactor();
+    const identifiers = [
+      'architectural_coherence',           // arm-eval rubric dim (the live failure)
+      'acceptance_criteria_quality',
+      'runMultiPassCodeAudit',             // symbol name (arch-index summarise)
+      'scripts/lib/neighbourhood-query.mjs', // file path (final-review transcript)
+      '--color-background-primary',        // CSS token (visual explain)
+    ];
+    for (const id of identifiers) {
+      assert.equal(redact(id), id, `must not corrupt identifier "${id}"`);
+    }
+    // Non-string passthrough (sdk wrapper may hand through non-text blocks).
+    assert.equal(redact(undefined), undefined);
   });
   it('redactor=null bypasses redaction and gets its own cache entry', async () => {
     process.env.CLAUDE_BACKEND = 'cli';
