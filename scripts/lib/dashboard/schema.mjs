@@ -371,6 +371,23 @@ export const TelemetryDataSchema = z.object({
     diversityGateMet: z.boolean(),
     agreement: z.object({ agree: count, disagree: count, declaredUnknown: count }),
   }).optional(),
+  // Model-A/B/C experiment ("A/B/C Testing") — arm-eval accumulation state:
+  // per-arm labelled outcomes + conformance + spend vs budget + decision status.
+  // Experiment-wide (not repo-scoped). Optional so pre-feature snapshots validate.
+  modelAb: z.object({
+    cloud: z.boolean(),
+    status: z.string(),
+    reason: z.string(),
+    distinctAssignments: count,
+    minAssignments: count,
+    spentEur: z.number(),
+    capEur: z.number().nullable(),
+    pendingAdjudication: count,
+    arms: z.array(z.object({
+      arm: z.string(), rows: count, accepted: count, dismissed: count, pending: count,
+      acceptedHigh: count, costUsd: z.number(), conformant: count, passExecutions: count,
+    })),
+  }).optional(),
 });
 
 // ── Audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md) ──

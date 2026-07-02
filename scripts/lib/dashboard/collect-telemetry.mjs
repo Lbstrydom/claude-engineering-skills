@@ -20,6 +20,9 @@ import { getSecurityStats } from '../store/security.mjs';
 import { getPurposeHealth } from '../store/purpose-health.mjs';
 import { getAuthorTierStats } from '../store/learning-decisions.mjs';
 import { aggregateAuthorTier } from './author-tier-agg.mjs';
+import { getModelAbEffectiveness, getModelAbFindingScores, getModelAbArmCost, getModelAbAdjudicationQueue, cumulativeSpendEur } from '../store/model-ab.mjs';
+import { evaluateDecision, DECISION_CONSTANTS } from '../model-ab-decision.mjs';
+import { auditShadowConfig } from '../config.mjs';
 import { PurposeConfigSchema } from './schema.mjs';
 import { loadDomainRules, tagDomain } from '../symbol-index/domain-tagger.mjs';
 import { classifyPath } from '../sensitive-paths.mjs';
@@ -266,6 +269,57 @@ async function collectAuthorTier(root) {
     return { data: { cloud: true, ...aggregateAuthorTier(r.rows) }, status: { status: 'ok', detail: '' } };
   } catch (err) {
     return { data: emptyAuthorTier(), status: { status: 'unexpected-error', detail: redactSecrets(`author-tier query failed: ${err.message}`) } };
+  }
+}
+
+/** Empty model-A/B/C shape (schema-valid). */
+function emptyModelAb() {
+  return { cloud: false, status: 'off', reason: '', distinctAssignments: 0, minAssignments: DECISION_CONSTANTS.MIN_ASSIGNMENTS, spentEur: 0, capEur: null, pendingAdjudication: 0, arms: [] };
+}
+
+/**
+ * Collect the model-A/B/C experiment panel ("A/B/C Testing") — the arm-eval
+ * accumulation state: per-arm labelled outcomes, native conformance, spend vs
+ * budget, decision status, and the pending human-adjudication queue depth.
+ * EXPERIMENT-WIDE (not repo-scoped): assignments accumulate across every
+ * toggled-on repo by design. Read-only over the same store views the
+ * `model-ab-{stats,decision,adjudicate}` CLIs use. Graceful cloud-off.
+ */
+async function collectModelAb() {
+  try {
+    const eff = await getModelAbEffectiveness({});
+    if (!eff.cloud) return { data: emptyModelAb(), status: { status: 'missing-optional', detail: 'model-A/B/C telemetry needs the cloud store' } };
+    const [scores, costs, queue] = await Promise.all([
+      getModelAbFindingScores({}),
+      getModelAbArmCost({}),
+      getModelAbAdjudicationQueue({ limit: 500 }),
+    ]);
+    const decision = evaluateDecision(scores.rows, costs.rows, DECISION_CONSTANTS);
+    const spentEur = await cumulativeSpendEur({ activeTtlMs: auditShadowConfig.reservationTtlMs });
+    const byArm = new Map();
+    for (const r of eff.rows || []) {
+      const a = byArm.get(r.arm) || { arm: r.arm, rows: 0, accepted: 0, dismissed: 0, pending: 0, acceptedHigh: 0, costUsd: 0, conformant: 0, passExecutions: 0 };
+      const n = (v) => (v == null ? 0 : Number(v) || 0);
+      a.rows++;
+      a.accepted += n(r.accepted_uniques); a.dismissed += n(r.dismissed_uniques);
+      a.pending += n(r.pending_uniques); a.acceptedHigh += n(r.accepted_high);
+      a.costUsd += n(r.cost_usd); a.conformant += n(r.conformant_passes); a.passExecutions += n(r.pass_executions);
+      byArm.set(r.arm, a);
+    }
+    const data = {
+      cloud: true,
+      status: String(decision.status ?? 'unknown'),
+      reason: redactSecrets(String(decision.reason ?? '')),
+      distinctAssignments: Number(decision.distinctAssignments) || 0,
+      minAssignments: DECISION_CONSTANTS.MIN_ASSIGNMENTS,
+      spentEur: Number(spentEur) || 0,
+      capEur: auditShadowConfig.budgetEur == null ? null : Number(auditShadowConfig.budgetEur),
+      pendingAdjudication: (queue.items || []).length,
+      arms: [...byArm.values()].sort((a, b) => a.arm.localeCompare(b.arm)),
+    };
+    return { data, status: { status: 'ok', detail: '' } };
+  } catch (err) {
+    return { data: emptyModelAb(), status: { status: 'unexpected-error', detail: redactSecrets(`model-ab query failed: ${err.message}`) } };
   }
 }
 
@@ -532,7 +586,7 @@ export async function collectTelemetry(opts = {}) {
   // Scope the Audit Runs tab to this directory's canonical repo row when
   // resolvable; null → project-wide fallback (cloud off / never-audited repo).
   const auditRepoId = await canonicalRepoId(root);
-  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb] = await Promise.all([
     collectAuditRuns(auditRepoId),
     collectLearning(root),
     collectSecurity(root),
@@ -541,6 +595,7 @@ export async function collectTelemetry(opts = {}) {
     collectShipHealth(root),
     collectAuditEffectiveness(root),
     collectAuthorTier(root),
+    collectModelAb(),
   ]);
   const requirements = collectRequirements(root);
 
@@ -561,6 +616,7 @@ export async function collectTelemetry(opts = {}) {
       shipHealth: shipHealth.status,
       auditEffectiveness: auditEffectiveness.status,
       authorTier: authorTier.status,
+      modelAb: modelAb.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
@@ -571,6 +627,7 @@ export async function collectTelemetry(opts = {}) {
     shipHealth: shipHealth.data,
     auditEffectiveness: auditEffectiveness.data,
     authorTier: authorTier.data,
+    modelAb: modelAb.data,
   };
 }
 

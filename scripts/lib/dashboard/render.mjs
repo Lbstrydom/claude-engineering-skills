@@ -37,6 +37,7 @@ import sectionPurpose from './sections/purpose.mjs';
 import sectionPurposeHealth from './sections/purpose-health.mjs';
 import sectionAuditRunDetail from './sections/audit-run-detail.mjs';
 import sectionAuthorTier from './sections/author-tier.mjs';
+import sectionModelAb from './sections/model-ab.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -62,6 +63,7 @@ const SLICERS = {
   shipHealth:   (d) => ({ src: d.sources.shipHealth || { status: 'ok', detail: '' }, shipHealth: d.shipHealth || { cloud: false, byOutcome: [], recent: [] } }),
   auditEffectiveness:(d) => ({ src: d.sources.auditEffectiveness || { status: 'ok', detail: '' }, auditEffectiveness: d.auditEffectiveness || { cloud: false, confirmedHits: 0, auditMisses: 0, falsePositives: 0, severityUnderstated: 0, severityOverstated: 0, precision: null, recall: null } }),
   authorTier:   (d) => ({ src: d.sources.authorTier || { status: 'ok', detail: '' }, authorTier: d.authorTier || { cloud: false, total: 0, bySuggestedTier: [], ladders: [], distinctProviderLadders: 0, diversityGateMet: false, agreement: { agree: 0, disagree: 0, declaredUnknown: 0 } } }),
+  modelAb:      (d) => ({ src: d.sources.modelAb || { status: 'missing-optional', detail: '' }, modelAb: d.modelAb || { cloud: false, status: 'off', reason: '', distinctAssignments: 0, minAssignments: 12, spentEur: 0, capEur: null, pendingAdjudication: 0, arms: [] } }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
   purposeHealth:(d) => ({ src: d.sources.purposeHealth || { status: 'ok', detail: '' }, purposeHealth: d.purposeHealth || { asOf: '', windowDays: 30, repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null }, purposeBadges: [] } }),
   // audit-run uses a top-level `src` (discriminated collector status code), NOT
@@ -90,6 +92,7 @@ const REGISTRY = {
     { id: 'security',     title: 'Security',       build: sectionSecurity,     slice: SLICERS.security },
     { id: 'purposeHealth',title: 'Purpose Health', build: sectionPurposeHealth,slice: SLICERS.purposeHealth },
     { id: 'authorTier',   title: 'Author Tier',    build: sectionAuthorTier,   slice: SLICERS.authorTier },
+    { id: 'modelAb',      title: 'A/B/C Testing',  build: sectionModelAb,      slice: SLICERS.modelAb },
   ],
   // Single-section per-run detail page (docs/plans/dashboard-audit-run-viewer.md).
   'audit-run': [
