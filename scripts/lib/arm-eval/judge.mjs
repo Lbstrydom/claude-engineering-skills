@@ -70,17 +70,22 @@ export function judgePassSchema(labels, dims) {
     });
 }
 
-/** Build the blinded judge prompt (arm identity never appears). */
-export function buildJudgePrompt({ experimentType, blindOutputs, dims, contextPack }) {
+/** Build the blinded judge prompt (arm identity never appears).
+ * `corrective` (optional) is a schema-error string from a rejected prior pass —
+ * appended as a hard CRITICAL nudge so the retry supplies the missing scores
+ * (real Opus omits ~3 dims on a large prompt; a strict schema alone can't fix
+ * that — the retry can). It never fabricates: it demands the model complete. */
+export function buildJudgePrompt({ experimentType, blindOutputs, dims, contextPack, corrective = null }) {
   const rubricLines = dims.map((d) => `- ${d}`).join('\n');
   const outBlocks = blindOutputs.map((o) => `### ${o.label}\n${o.text}`).join('\n\n');
   return [
     `You are an impartial expert judge scoring ${blindOutputs.length} anonymized ${experimentType} outputs.`,
-    `Score EACH output on EVERY rubric dimension, integer 1–5 (5 = best). Judge only quality; ignore length/style/formatting as signals of identity. Do NOT guess which model produced which output.`,
+    `Score EACH output on EVERY one of the ${dims.length} rubric dimensions, integer 1–5 (5 = best). Judge only quality; ignore length/style/formatting as signals of identity. Do NOT guess which model produced which output.`,
     contextPack ? `## Repository intent (score architectural_coherence + repo_intent_fidelity against THIS)\n${contextPack}` : '',
-    `## Rubric dimensions\n${rubricLines}`,
+    `## Rubric dimensions (ALL ${dims.length} are REQUIRED for every output — omitting any one is an invalid response)\n${rubricLines}`,
     `## Outputs to score\n${outBlocks}`,
-    `Return JSON: { "scores": [ { "label": "<output-N>", "dims": { ${dims.map((d) => `"${d}": <1-5>`).join(', ')} } }, … ] } — one entry per output.`,
+    `Return JSON: { "scores": [ { "label": "<output-N>", "dims": { ${dims.map((d) => `"${d}": <1-5>`).join(', ')} } }, … ] } — one entry per output, with all ${dims.length} dimension keys present in each "dims".`,
+    corrective ? `## CRITICAL — your previous response was REJECTED\n${corrective}\nReturn the COMPLETE JSON object again with EVERY one of the ${dims.length} dimensions present for EVERY output. Do not omit any dimension.` : '',
   ].filter(Boolean).join('\n\n');
 }
 
@@ -119,7 +124,15 @@ export async function judgeSession({ experimentType, outputs, contextPack = null
 
   const passes = [];
   for (let pass = 1; pass <= 2; pass++) {
-    const res = await d.callJudge({ prompt, schema, labels, dims, pass });
+    let res = await d.callJudge({ prompt, schema, labels, dims, pass });
+    // One bounded corrective retry: real Opus intermittently omits a few rubric
+    // dims on a large prompt → a strict-schema reject. Feed the exact validation
+    // error back and demand the complete object (honest — never fabricates a
+    // score). A second failure is genuinely non-conformant → fail closed.
+    if (!res || !res.conformant || !res.result) {
+      const correctivePrompt = buildJudgePrompt({ experimentType, blindOutputs, dims, contextPack: scorable ? contextPack : null, corrective: res?.error || 'the prior JSON was incomplete or invalid' });
+      res = await d.callJudge({ prompt: correctivePrompt, schema, labels, dims, pass, retry: true });
+    }
     if (!res || !res.conformant || !res.result) {
       return { presentationOrder, labelToArm, dims, intentDims: scorable ? 'scored' : 'unscored', passes, conformant: false, error: res?.error || `judge pass ${pass} non-conformant` };
     }
@@ -153,6 +166,18 @@ export function extractJsonObject(text) {
   return null; // unbalanced
 }
 
+/** Shape-based egress redactor (secret-patterns.mjs) adapted to the anthropic
+ * client's `(s)=>s` contract. Cached (same Function ref) — but note a custom
+ * redactor bypasses the client's instance cache by design. Catches real secret
+ * SHAPES (key prefixes, JWTs, PEM) without the blanket-length false positives. */
+let _shapeRedactor = null;
+async function getShapeRedactor() {
+  if (_shapeRedactor) return _shapeRedactor;
+  const { redactSecrets: shapeRedact } = await import('../secret-patterns.mjs');
+  _shapeRedactor = (s) => (typeof s === 'string' ? shapeRedact(s).text : s);
+  return _shapeRedactor;
+}
+
 /** Production judge: Claude via the Anthropic client, JSON-validated with the schema. */
 async function callJudgeDefault({ prompt, schema }) {
   const start = Date.now();
@@ -164,11 +189,20 @@ async function callJudgeDefault({ prompt, schema }) {
     assertEgressSafe(prompt, { label: 'arm-eval:judge' });
     const { createAnthropicClient } = await import('../anthropic-client.mjs');
     const { resolveModel } = await import('../model-resolver.mjs');
-    const client = await createAnthropicClient();
+    // Use the SHAPE-based redactor, NOT the anthropic client's default blanket
+    // 20+-char-token redactor (sanitizer.mjs). The judge prompt is dense with
+    // legitimate long identifiers — the rubric dimension names that ARE the JSON
+    // keys (`architectural_coherence` etc.) and the repo-intent pack's symbol/
+    // file names. The blanket redactor rewrote those keys to `[REDACTED_TOKEN]`
+    // in the OUTBOUND prompt, so the model echoed a corrupted key → schema fail
+    // (found on the first live calibration run). `assertEgressSafe` above is the
+    // real secret gate (hard-throws); this shape redactor is defense-in-depth
+    // that won't corrupt identifiers.
+    const client = await createAnthropicClient({ redactor: await getShapeRedactor() });
     const resp = await client.messages.create({
       model: resolveModel('latest-opus', { silent: true }),
       max_tokens: 4000,
-      system: 'You are an impartial, calibrated judge. Return ONLY the requested JSON object — no prose.',
+      system: 'You are an impartial, calibrated judge. Return ONLY the requested JSON object — no prose. Every output MUST be scored on EVERY rubric dimension; never omit a dimension key.',
       messages: [{ role: 'user', content: prompt }],
     });
     const text = (resp?.content || []).map((b) => b.text || '').join('');

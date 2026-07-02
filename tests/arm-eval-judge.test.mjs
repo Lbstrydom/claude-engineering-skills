@@ -8,7 +8,9 @@ import assert from 'node:assert/strict';
 
 import { buildIntentContext } from '../scripts/lib/arm-eval/intent-context.mjs';
 import { judgeSession, scorableDimensions, judgePassSchema, extractJsonObject } from '../scripts/lib/arm-eval/judge.mjs';
-import { RUBRIC_INTENT_DIMS } from '../scripts/lib/arm-eval/experiments.mjs';
+import { RUBRIC_INTENT_DIMS, rubricFor } from '../scripts/lib/arm-eval/experiments.mjs';
+import { redactSecrets as shapeRedact } from '../scripts/lib/secret-patterns.mjs';
+import { redactSecrets as blanketRedact } from '../scripts/lib/sanitizer.mjs';
 
 // ── intent-context ────────────────────────────────────────────────────────────
 function fakeFs(files) {
@@ -97,6 +99,50 @@ describe('judge — blinding, order-randomization, double-pass', () => {
     const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge: async () => ({ conformant: false, result: null, error: 'bad json' }) } });
     assert.equal(r.conformant, false);
     assert.equal(r.passes.length, 0);
+  });
+  it('recovers via ONE corrective retry when the first pass omits a dim (live-run fix)', async () => {
+    // Real Opus dropped architectural_coherence/repo_intent_fidelity/acceptance_criteria_quality
+    // on the first live calibration run. The retry must feed the error back + recover.
+    const calls = [];
+    let attempt = 0;
+    const callJudge = async ({ prompt, schema, labels, dims, retry }) => {
+      attempt++;
+      calls.push({ retry: !!retry, corrective: /previous response was REJECTED/.test(prompt) });
+      if (attempt === 1) return { conformant: false, result: null, error: 'scores.0.dims.correctness: expected number, received undefined' };
+      const scores = labels.map((label) => ({ label, dims: Object.fromEntries(dims.map((d) => [d, 4])) }));
+      const v = schema.safeParse({ scores });
+      return { conformant: v.success, result: v.data };
+    };
+    const r = await judgeSession({ experimentType: 'plan-authoring', outputs: OUTPUTS, contextPack: 'INTENT', seed: 5, deps: { callJudge } });
+    assert.equal(r.conformant, true, 'recovers after the corrective retry');
+    assert.equal(r.passes.length, 2);
+    assert.equal(calls[1].retry, true, 'second call is flagged as a retry');
+    assert.equal(calls[1].corrective, true, 'retry prompt carries the CRITICAL corrective block with the prior error');
+  });
+  it('the judge redactor must NOT corrupt rubric dim names (live-run root cause)', () => {
+    // Root cause of the first live calibration failure: the anthropic client's
+    // DEFAULT redactor (sanitizer.mjs) blanket-redacts any 20+ char token, so it
+    // rewrote the long rubric dim NAMES — which are the JSON keys — to
+    // [REDACTED_TOKEN] in the OUTBOUND prompt; the model echoed the corrupted key
+    // → schema fail. The judge must use the SHAPE redactor (secret-patterns.mjs),
+    // which leaves identifiers intact. This test pins both halves so a future
+    // redactor swap can't silently reintroduce the corruption.
+    const dims = rubricFor('plan-authoring');
+    const longDims = dims.filter((d) => d.length >= 20);
+    assert.ok(longDims.includes('architectural_coherence'), 'sanity: a ≥20-char dim exists');
+    for (const d of dims) {
+      assert.equal(shapeRedact(d).text, d, `shape redactor must preserve dim name "${d}"`);
+    }
+    // …and prove the OLD default would have corrupted the long ones (the trap).
+    for (const d of longDims) {
+      assert.notEqual(blanketRedact(d), d, `blanket redactor corrupts "${d}" — why the override exists`);
+    }
+  });
+  it('bounds the retry to ONE — two failures in a pass fail closed (≤2 calls/pass)', async () => {
+    let n = 0;
+    const r = await judgeSession({ experimentType: 'brainstorm', outputs: OUTPUTS, contextPack: null, seed: 1, deps: { callJudge: async () => { n++; return { conformant: false, result: null, error: 'still bad' }; } } });
+    assert.equal(r.conformant, false);
+    assert.equal(n, 2, 'exactly one retry then stop (no unbounded loop)');
   });
   it('extractJsonObject grabs the balanced object, not greedy-to-last-brace (Gemini gate)', () => {
     assert.equal(extractJsonObject('prose {"a":1} more prose { not json'), '{"a":1}');
