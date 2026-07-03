@@ -96,7 +96,7 @@ that left the tables empty whenever a step was skipped or mis-parsed:
 ```bash
 node scripts/ux-lock-run.mjs spec \
   --spec tests/e2e/<new-spec>.spec.js \
-  --commit <sha> --run-context ux-lock \
+  --commit <sha> --run-context manual \
   --source-kind manual [--url <base-url>]
 ```
 
