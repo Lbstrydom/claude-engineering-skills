@@ -1,5 +1,23 @@
 # Project Status Log
 
+## 2026-07-03 — Fix: --depth shallow on reasoning models (per-depth reasoning_effort)
+
+### Changes
+- **Closed the known issue from the previous entry**: `/brainstorm --depth shallow` failed on
+  gpt-5.5 — thinking tokens count against `max_completion_tokens`, so the 500-token shallow cap
+  was consumed by reasoning → `finish_reason: length`, empty response. Fix: new
+  `DEPTH_REASONING_EFFORT` map in [depth-config.mjs](scripts/lib/brainstorm/depth-config.mjs)
+  (`shallow → 'low'`, standard/deep → `null` = model default, behaviour unchanged);
+  `resolveDepth()` returns it; threaded through round-1 + debate dispatch in
+  [brainstorm-round.mjs](scripts/brainstorm-round.mjs); [openai-adapter.mjs](scripts/lib/brainstorm/openai-adapter.mjs)
+  sends `reasoning_effort` when set and retries once WITHOUT it on a 400 (non-reasoning models
+  reject the param — an optional hint must not fail the leg). Explicit `--max-tokens` path keeps
+  `null` (no depth semantics to honour). callGemini ignores the extra field by destructuring.
+- **Live-verified** (the doctrine): real gpt-5.5 `--depth shallow` run → `state: success`,
+  45 output tokens, $0.0007 — the exact previously-failing shape. A `--max-tokens 1` probe
+  confirmed the empty-leg guard still blocks capture dispatch (successCount 0).
+- Tests: +2 in [brainstorm-depth.test.mjs](tests/brainstorm-depth.test.mjs) (91 brainstorm tests pass).
+
 ## 2026-07-03 — Fix: capture trigger round gate was 1-based vs 0-based ledger (field-found)
 
 ### Changes

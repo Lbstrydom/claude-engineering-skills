@@ -20,6 +20,21 @@ export const DEPTH_TOKENS = Object.freeze({
 });
 
 /**
+ * Per-depth OpenAI `reasoning_effort`. Reasoning models (gpt-5.x) count
+ * thinking tokens against `max_completion_tokens`, so at shallow's 500-token
+ * cap the model can burn the whole budget reasoning and return an EMPTY
+ * response with `finish_reason: length` (field-found on gpt-5.5,
+ * wine-cellar-app 2026-07-03). `low` leaves headroom for actual output at
+ * small caps. `null` = omit the param (model default) — standard/deep
+ * behaviour unchanged.
+ */
+export const DEPTH_REASONING_EFFORT = Object.freeze({
+  shallow: 'low',
+  standard: null,
+  deep: null,
+});
+
+/**
  * Architecture-intent keyword regex. The trigger words cover
  * architecture / schema / migration / refactor / design questions.
  *
@@ -54,7 +69,7 @@ export function autoPromoteDepth(topic) {
  *   - else 'standard'
  *
  * @param {{explicitDepth?: 'shallow'|'standard'|'deep'|null, topic?: string}} args
- * @returns {{depth: 'shallow'|'standard'|'deep', maxTokens: number, autoPromoted: boolean}}
+ * @returns {{depth: 'shallow'|'standard'|'deep', maxTokens: number, reasoningEffort: string|null, autoPromoted: boolean}}
  */
 export function resolveDepth(args = {}) {
   // Audit R1-H2: defensive null/undefined handling. Caller may pass null
@@ -70,11 +85,11 @@ export function resolveDepth(args = {}) {
     if (typeof explicitDepth !== 'string' || !Object.hasOwn(DEPTH_TOKENS, explicitDepth)) {
       throw new Error(`Unknown depth: ${JSON.stringify(explicitDepth)} (allowed: ${Object.keys(DEPTH_TOKENS).join(', ')})`);
     }
-    return { depth: explicitDepth, maxTokens: DEPTH_TOKENS[explicitDepth], autoPromoted: false };
+    return { depth: explicitDepth, maxTokens: DEPTH_TOKENS[explicitDepth], reasoningEffort: DEPTH_REASONING_EFFORT[explicitDepth], autoPromoted: false };
   }
   const promoted = autoPromoteDepth(topic);
   if (promoted) {
-    return { depth: promoted, maxTokens: DEPTH_TOKENS[promoted], autoPromoted: true };
+    return { depth: promoted, maxTokens: DEPTH_TOKENS[promoted], reasoningEffort: DEPTH_REASONING_EFFORT[promoted], autoPromoted: true };
   }
-  return { depth: 'standard', maxTokens: DEPTH_TOKENS.standard, autoPromoted: false };
+  return { depth: 'standard', maxTokens: DEPTH_TOKENS.standard, reasoningEffort: DEPTH_REASONING_EFFORT.standard, autoPromoted: false };
 }

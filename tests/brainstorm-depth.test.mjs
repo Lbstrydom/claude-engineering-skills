@@ -80,6 +80,18 @@ describe('resolveDepth — explicit + auto-promote precedence', () => {
     assert.equal(r.autoPromoted, false);
   });
 
+  it('shallow carries reasoningEffort "low" — reasoning models must not burn the 500-token cap thinking (field-found gpt-5.5)', () => {
+    const r = resolveDepth({ explicitDepth: 'shallow' });
+    assert.equal(r.reasoningEffort, 'low');
+  });
+
+  it('standard and deep leave reasoningEffort null (model default — behaviour unchanged)', () => {
+    assert.equal(resolveDepth({ explicitDepth: 'standard' }).reasoningEffort, null);
+    assert.equal(resolveDepth({ explicitDepth: 'deep' }).reasoningEffort, null);
+    assert.equal(resolveDepth({ topic: 'fix a typo' }).reasoningEffort, null);
+    assert.equal(resolveDepth({ topic: 'how should we structure this' }).reasoningEffort, null, 'auto-promoted deep also null');
+  });
+
   it('throws on unknown explicit depth', () => {
     assert.throws(() => resolveDepth({ explicitDepth: 'huge' }), /Unknown depth/);
   });

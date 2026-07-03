@@ -18,25 +18,42 @@ function client() {
  * @param {string} args.model    Resolved concrete model ID
  * @param {number} args.maxTokens Cap for output tokens
  * @param {number} args.timeoutMs Abort after this many ms (default 60000)
+ * @param {string|null} [args.reasoningEffort] Optional `reasoning_effort` for
+ *   reasoning models (depth-config maps shallow → 'low' so thinking tokens
+ *   don't consume the whole small `max_completion_tokens` budget). Omitted
+ *   when null. A model that rejects the param (400) is retried once without.
  * @returns {Promise<ProviderResult>}
  */
-export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000 }) {
+export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, reasoningEffort = null }) {
   const startMs = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
+  const payload = {
+    model,
+    messages: [
+      { role: 'system', content: BRAINSTORM_SYSTEM_PROMPT },
+      { role: 'user', content: topic },
+    ],
+    max_completion_tokens: maxTokens,
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+  };
+
   try {
-    const response = await client().chat.completions.create(
-      {
-        model,
-        messages: [
-          { role: 'system', content: BRAINSTORM_SYSTEM_PROMPT },
-          { role: 'user', content: topic },
-        ],
-        max_completion_tokens: maxTokens,
-      },
-      { signal: controller.signal },
-    );
+    let response;
+    try {
+      response = await client().chat.completions.create(payload, { signal: controller.signal });
+    } catch (err) {
+      // Non-reasoning models reject reasoning_effort with a 400 — retry once
+      // without it rather than failing the whole leg on an optional hint.
+      const msg = String(err?.message || '');
+      if (payload.reasoning_effort && (err?.status === 400) && /reasoning[_.]?effort|unsupported|unrecognized/i.test(msg)) {
+        const { reasoning_effort: _dropped, ...bare } = payload;
+        response = await client().chat.completions.create(bare, { signal: controller.signal });
+      } else {
+        throw err;
+      }
+    }
     clearTimeout(timer);
 
     const text = response.choices?.[0]?.message?.content ?? null;

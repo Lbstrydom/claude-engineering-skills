@@ -312,6 +312,7 @@ async function runBrainstormMode(args) {
 
   // Resolve maxTokens — explicit --max-tokens wins over --depth (with WARN)
   let maxTokens;
+  let reasoningEffort = null; // per-depth OpenAI hint (shallow → 'low'); null = model default
   if (args.explicitMaxTokens) {
     maxTokens = args.maxTokens;
     if (args.depth) {
@@ -320,6 +321,7 @@ async function runBrainstormMode(args) {
   } else {
     const dep = resolveDepth({ explicitDepth: args.depth, topic });
     maxTokens = dep.maxTokens;
+    reasoningEffort = dep.reasoningEffort ?? null;
     if (dep.autoPromoted) {
       process.stderr.write(`  [brainstorm] auto-promoted depth → ${dep.depth} (${maxTokens} tokens)\n`);
     }
@@ -412,7 +414,7 @@ async function runBrainstormMode(args) {
     provider: p,
     topic: composedTopic,
     systemPreface: composedSystemPreface,
-    args: { ...args, maxTokens },
+    args: { ...args, maxTokens, reasoningEffort },
     resolvedModels,
   }));
   const settled = await Promise.all(tasks);
@@ -423,7 +425,7 @@ async function runBrainstormMode(args) {
     debateResults = await runDebateRound({
       providers: args.models,
       round1: settled,
-      args: { ...args, maxTokens },
+      args: { ...args, maxTokens, reasoningEffort },
       resolvedModels,
       assembledContext,
       withContextText: assembledContext.withContextEffective,
@@ -607,7 +609,7 @@ async function dispatchDebateCall({ provider, reactingTo, systemPrompt, userMess
   // string today — we concatenate system+user for compatibility.
   const fn = provider === 'openai' ? callOpenAI : callGemini;
   const debateTopic = `${systemPrompt}\n\n---\n\n${userMessage}`;
-  const r1 = await fn({ topic: debateTopic, model, maxTokens: args.maxTokens, timeoutMs: args.timeoutMs });
+  const r1 = await fn({ topic: debateTopic, model, maxTokens: args.maxTokens, timeoutMs: args.timeoutMs, reasoningEffort: args.reasoningEffort ?? null });
   // r1 has the ProviderResultSchema shape; project the fields the DebateRoundSchema expects
   return {
     provider, reactingTo,
@@ -648,6 +650,8 @@ async function dispatchProvider({ provider, topic, systemPreface = '', args, res
     model,
     maxTokens: args.maxTokens,
     timeoutMs: args.timeoutMs,
+    // OpenAI-only depth hint; callGemini's destructuring ignores it.
+    reasoningEffort: args.reasoningEffort ?? null,
   });
 
   // For malformed responses, save raw payload to repo-local debug dir
