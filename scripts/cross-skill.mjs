@@ -240,6 +240,18 @@ async function cmdUpsertPlan() {
     commitSha: p.commitSha || currentCommitSha(),
     checksum: p.checksum,
   });
+  // Deterministic arm-eval capture (toggle-gated; detached) — fires when the
+  // plan skill includes the original task text in this upsert payload, so
+  // capture is part of PERSISTING the plan rather than a skippable trailing
+  // step. No-op when the per-repo toggle is off. The audit-time upsertPlan
+  // (openai-audit.mjs) carries no taskText, so only the plan-authoring flow
+  // triggers a capture.
+  if (p.taskText && String(p.taskText).trim()) {
+    try {
+      const { maybeFireArmEvalCaptureDetached } = await import('./lib/arm-eval/capture-trigger.mjs');
+      maybeFireArmEvalCaptureDetached({ experimentType: 'plan-authoring', task: p.taskText });
+    } catch { /* never block plan persistence on capture */ }
+  }
   emit({ ok: !!planId, cloud: true, planId });
 }
 

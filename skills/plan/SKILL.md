@@ -582,33 +582,30 @@ needed. Metadata header:
 
 Register in the cross-skill store so audit-loop + ux-lock can link:
 
+Include the user's ORIGINAL task description as `taskText` in the SAME payload
+— that is what arm-eval scores the arms on. Persisting the plan and dispatching
+the capture is then one atomic call (no separate, skippable step):
+
 ```bash
 node scripts/cross-skill.mjs upsert-plan --json '{
   "path": "docs/plans/<name>.md",
   "skill": "plan",
-  "status": "draft"
+  "status": "draft",
+  "taskText": "<the user's original task description>"
 }'
 ```
 
 Update status as implementation progresses.
 
-### Phase 7.5 — Arm-eval capture (toggle-gated, silent no-op when off)
+### Phase 7.5 — Arm-eval capture (AUTOMATIC — no action)
 
-After persisting, fire the capture hook — it reads the per-repo
-`arm-eval-toggle` state and does NOTHING when the toggle is off (safe to run
-unconditionally; never blocks the plan):
-
-```bash
-node scripts/cross-skill.mjs arm-eval-maybe-capture \
-  --experiment plan-authoring --task "<the user's original task description>"
-```
-
-When the operator has toggled the experiment on (`arm-eval-toggle on`), this
-runs one blinded A/B/C arm-eval session for the same task in the background of
-the workflow — the plan YOU just wrote is unaffected (the capture generates its
-own arm outputs; nothing replaces your plan). `captured:false` +
-`reason:'toggle-off'` → say nothing. On `captured:true`, mention in one line
-that an arm-eval session was recorded.
+Capture is now fired by `upsert-plan` itself: when the payload carries
+`taskText` and the per-repo `arm-eval-toggle` is on, it dispatches a detached,
+blinded A/B/C arm-eval session for that task in the background
+(`scripts/lib/arm-eval/capture-trigger.mjs`). You do NOT run a separate
+`arm-eval-maybe-capture` command — doing so would double-capture. Toggle off →
+byte-identical no-op. The plan YOU wrote is unaffected (the capture generates
+its own arm outputs; nothing replaces your plan).
 
 ---
 

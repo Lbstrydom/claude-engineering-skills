@@ -471,6 +471,18 @@ async function runBrainstormMode(args) {
     }
   }
 
+  // Deterministic arm-eval capture (toggle-gated; round-1 only; detached).
+  // Replaces the skippable skill Step 4.5 — capture now fires as a function of
+  // PERSISTING the brainstorm, not a trailing instruction the model can omit.
+  // No-op (byte-identical path) when the per-repo toggle is off.
+  if (successCount > 0 && envelope.round === 1) {
+    try {
+      const { maybeFireArmEvalCaptureDetached } = await import('./lib/arm-eval/capture-trigger.mjs');
+      const r = maybeFireArmEvalCaptureDetached({ experimentType: 'brainstorm', task: envelope.topic, round: envelope.round });
+      if (r.fired) process.stderr.write('  [brainstorm] arm-eval capture dispatched in background (toggle on)\n');
+    } catch { /* never block the brainstorm on capture */ }
+  }
+
   // Validate envelope
   const parsed = BrainstormEnvelopeWriteSchema.safeParse(envelope);
   if (!parsed.success) {

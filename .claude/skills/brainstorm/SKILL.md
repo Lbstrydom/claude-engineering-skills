@@ -251,22 +251,16 @@ more value here", any clear question about value/decision/direction.
 **Next concrete step**: <one sentence>
 ```
 
-### Step 4.5 — Arm-eval capture (toggle-gated, silent no-op when off)
+### Step 4.5 — Arm-eval capture (AUTOMATIC — no action)
 
-After the initial per-provider render (Step 3 — don't wait for synthesis),
-fire the capture hook once per session. It reads the per-repo
-`arm-eval-toggle` state and does NOTHING when off (safe unconditionally;
-never blocks the brainstorm):
-
-```bash
-node scripts/cross-skill.mjs arm-eval-maybe-capture \
-  --experiment brainstorm --task "<the user's original topic>"
-```
-
-When toggled on, this records one blinded D/E/F combination arm-eval session
-for the same topic — YOUR brainstorm flow and its provider outputs are
-unaffected. `captured:false` + `reason:'toggle-off'` → say nothing. On
-`captured:true`, mention it in one line.
+Capture is now fired by the round helper itself: after `brainstorm-round.mjs`
+appends the round-1 session it dispatches a detached, toggle-gated arm-eval
+capture (`scripts/lib/arm-eval/capture-trigger.mjs`). You do NOT run any
+`arm-eval-maybe-capture` command — doing so would double-capture. When the
+per-repo `arm-eval-toggle` is off it is a byte-identical no-op; when on, one
+blinded D/E/F session records for the same topic in the background, unaffecting
+YOUR brainstorm flow. If the helper printed `arm-eval capture dispatched`, you
+may mention it in one line; otherwise say nothing.
 
 ---
 

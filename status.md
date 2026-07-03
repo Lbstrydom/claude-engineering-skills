@@ -1,5 +1,27 @@
 # Project Status Log
 
+## 2026-07-03 — Deterministic arm-eval capture for /brainstorm + /plan
+
+### Changes
+- **Root cause**: arm-eval capture for brainstorm/plan was a *trailing skill step*
+  (`/brainstorm` Step 4.5, `/plan` Phase 7.5) — model-executed, "silent no-op when
+  off", so the model silently omitted it and toggled-on sessions recorded nothing
+  (the audit shadow, by contrast, is script-wired via `resolveShadowArmsWithToggle`
+  and always runs). Two wine-cellar-app brainstorms today captured nothing despite
+  the toggle being on.
+- **Fix — moved the trigger off the model into the persistence seam**
+  (parity with the audit shadow): new [`scripts/lib/arm-eval/capture-trigger.mjs`](scripts/lib/arm-eval/capture-trigger.mjs)
+  `maybeFireArmEvalCaptureDetached()` — toggle-gated, round-1-only, spawns a
+  **detached** `arm-eval-maybe-capture` (never blocks the interactive flow, never
+  throws). Wired into [`scripts/brainstorm-round.mjs`](scripts/brainstorm-round.mjs)
+  (after round-1 append) and [`cmdUpsertPlan`](scripts/cross-skill.mjs) (fires when
+  the plan skill passes `taskText`). Toggle off → byte-identical no-op. Skills'
+  manual steps removed (would double-capture); `taskText` folded into the plan
+  upsert payload. Test: [`tests/arm-eval-capture-trigger.test.mjs`](tests/arm-eval-capture-trigger.test.mjs).
+- **Retroactive**: captured today's 2 wine brainstorms (migration-prep, Sonnet-5→Fable
+  escalation) against arms D=GPT-5.5 / E=GLM-5.2 / F, blinded Claude-Opus judged.
+  (One junk `smoke` session from a mistimed test still needs removal.)
+
 ## 2026-07-03 — Sync ignores arm-eval consumer exports + wine-cellar audit rescue
 
 ### Changes
