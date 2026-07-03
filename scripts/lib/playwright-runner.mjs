@@ -28,6 +28,7 @@
  * @module scripts/lib/playwright-runner
  */
 import { spawnSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -115,9 +116,23 @@ export function runPlaywrightJson(opts) {
   const env = { ...process.env, PLAYWRIGHT_JSON_OUTPUT_NAME: reportFile };
   if (baseUrl) env.E2E_BASE_URL = baseUrl;
 
-  const args = ['playwright', 'test', ...specPaths, '--reporter=json'];
-  // npx on Windows needs the .cmd shim; resolve per-platform.
-  const bin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+  // Prefer the repo's installed Playwright CLI run by the CURRENT Node binary —
+  // no npx shim, no shell. Node >=22.19 EINVALs spawning .cmd files without
+  // shell:true (CVE-2024-27980 hardening), which broke the old
+  // 'npx.cmd' path on Windows; shell:true would reopen quoting pitfalls.
+  // Fall back to npx only when @playwright/test isn't resolvable from the repo
+  // (then PLAYWRIGHT_MISSING classification still applies as before).
+  let bin;
+  let args;
+  try {
+    const req = createRequire(path.join(repoRoot, 'package.json'));
+    const cliPath = req.resolve('@playwright/test/cli');
+    bin = process.execPath;
+    args = [cliPath, 'test', ...specPaths, '--reporter=json'];
+  } catch {
+    bin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+    args = ['playwright', 'test', ...specPaths, '--reporter=json'];
+  }
 
   let res;
   try {
