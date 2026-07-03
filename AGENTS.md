@@ -234,7 +234,10 @@ collisions.
 | Migrations (`supabase/migrations/*.sql` in source) | `.audit-loop/migrations/*.sql` | Yes |
 
 The managed `.gitignore` block also covers our **runtime outputs** (`AUDIT_RUNTIME_IGNORES`
-in `sync-to-repos.mjs`: `.audit/cache-metrics.jsonl`, `.audit-loop/*-{observed,verify-result,drift-ledger}.json`)
+in `sync-to-repos.mjs`: `.audit/cache-metrics.jsonl`, `.audit-loop/*-{observed,verify-result,drift-ledger}.json`,
+`.audit-loop/arm-eval-toggle.json`, and `docs/arm-eval/{sessions,worksheets}/*` — arm-eval
+exports are a *tracked* auditable record in THIS source repo but local-only runtime output in
+consumers, where the authoritative capture is the cloud `arm_eval_*` tables)
 so audit / `--verify` runs don't churn in consumers. Because a `.gitignore` rule
 never untracks an already-committed file, sync ALSO self-heals: after writing the
 block it `git rm --cached`'s any tracked file matching those patterns ([`scripts/lib/sync-untrack.mjs`](scripts/lib/sync-untrack.mjs),

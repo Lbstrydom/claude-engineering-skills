@@ -44,6 +44,14 @@ const AUDIT_RUNTIME_IGNORES = [
   '.audit-loop/*-verify-result.json', // nav-audit / visual-audit --verify results
   '.audit-loop/*-drift-ledger.json',  // nav / visual local drift caches
   '.audit-loop/arm-eval-toggle.json', // per-repo experiment toggle (operator state, timestamped)
+  // arm-eval session/worksheet exports. In THIS source repo docs/arm-eval/sessions/
+  // is a *tracked* auditable experiment record; in a CONSUMER these are just local
+  // runtime exports (the authoritative capture is the cloud arm_eval_* tables), so
+  // they must be ignored or they nag as untracked. Flat-file globs (files are
+  // timestamp-named directly under each dir) so git AND the untrack matcher — which
+  // supports single-segment `*` only, no trailing-`/` dir markers — both handle them.
+  'docs/arm-eval/sessions/*',
+  'docs/arm-eval/worksheets/*',
 ];
 
 const DRY_RUN = process.argv.includes('--dry-run');

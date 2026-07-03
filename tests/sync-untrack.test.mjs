@@ -96,6 +96,27 @@ describe('untrackNewlyIgnored', () => {
     assert.ok(gitignoreToRegExp('.audit/cache-metrics.jsonl').test('.audit/cache-metrics.jsonl'));
   });
 
+  it('untracks a committed arm-eval session export but spares the consumer’s own docs/', () => {
+    // In a consumer, docs/arm-eval/sessions/* are local runtime exports (cloud
+    // arm_eval_* is the authoritative capture); the pattern must untrack a
+    // previously-committed one without touching the consumer's own docs tree.
+    write('docs/arm-eval/sessions/20260702-163710Z__plan__prospective__t__h.md');
+    write('docs/arm-eval/worksheets/queue.md');
+    write('docs/architecture-map.md');     // consumer's own doc — must survive
+    write('docs/plans/feature.md');        // consumer's own doc — must survive
+    git('add -A'); git('commit -qm init'); // all tracked BEFORE the patterns exist
+
+    const pats = ['docs/arm-eval/sessions/*', 'docs/arm-eval/worksheets/*'];
+    const removed = untrackNewlyIgnored(repo, pats);
+    assert.deepEqual(
+      removed.sort(),
+      ['docs/arm-eval/sessions/20260702-163710Z__plan__prospective__t__h.md', 'docs/arm-eval/worksheets/queue.md'],
+    );
+    assert.ok(isTracked('docs/architecture-map.md'), 'consumer own doc untouched');
+    assert.ok(isTracked('docs/plans/feature.md'), 'consumer own plan untouched');
+    assert.ok(fs.existsSync(path.join(repo, 'docs/arm-eval/sessions/20260702-163710Z__plan__prospective__t__h.md')), 'working copy preserved');
+  });
+
   it('dryRun reports without modifying the index', () => {
     write('.audit/cache-metrics.jsonl');
     git('add -A'); git('commit -qm init');         // tracked before the pattern exists

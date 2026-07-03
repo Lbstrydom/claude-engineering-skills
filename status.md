@@ -1,5 +1,23 @@
 # Project Status Log
 
+## 2026-07-03 — Sync ignores arm-eval consumer exports + wine-cellar audit rescue
+
+### Changes
+- **`AUDIT_RUNTIME_IGNORES` now covers `docs/arm-eval/{sessions,worksheets}/*`**
+  ([`scripts/sync-to-repos.mjs`](scripts/sync-to-repos.mjs)). arm-eval session archives are a
+  *tracked* auditable record in THIS source repo but local-only runtime output in consumers
+  (authoritative capture is the cloud `arm_eval_*` tables) — they were nagging as untracked in
+  wine-cellar-app. Flat-file globs (not dir markers) so both git and the `sync-untrack.mjs`
+  matcher (single-segment `*` only) handle them. Regression test added in
+  [`tests/sync-untrack.test.mjs`](tests/sync-untrack.test.mjs). Deployed to wine-cellar-app +
+  ai-organiser; `git check-ignore` confirms the session file is now ignored.
+- **wine-cellar-app audit-capture rescue**: the 2026-07-02 `/cycle` run (5 audit_runs / 178
+  findings / arm-eval 16 sessions·90 judgments) had captured to cloud; the final cluster ledgers
+  lived only in temp scratchpad (GC-bound) → copied to `.audit/rescued-ledgers-20260702/`.
+  Reconciled one stale learning label: finding `49e4658f` was `dismissed`/`pending` in cloud but
+  `accepted`/`fixed` in the final round-2 ledger — replaced via the official `recordAdjudicationEvent`
+  seam (user-approved shared-store write).
+
 ## 2026-07-02 — Theme-safety v2 built + shipped (/cycle code autonomous, 3 clusters) + arm-eval retrieval confirmed
 
 ### Changes
