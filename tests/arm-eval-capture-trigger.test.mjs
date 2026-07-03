@@ -23,7 +23,7 @@ describe('maybeFireArmEvalCaptureDetached', () => {
   it('toggle OFF → no-op, never spawns (audit-shadow parity)', () => {
     const { spawnFn, calls } = makeSpawn();
     const r = maybeFireArmEvalCaptureDetached({
-      experimentType: 'brainstorm', task: 'a real topic', round: 1,
+      experimentType: 'brainstorm', task: 'a real topic', round: 0,
       spawnFn, readToggleFn: toggleOff,
     });
     assert.equal(r.fired, false);
@@ -31,10 +31,10 @@ describe('maybeFireArmEvalCaptureDetached', () => {
     assert.equal(calls.length, 0);
   });
 
-  it('toggle ON + round 1 → spawns detached with the right argv', () => {
+  it('toggle ON + first round (0 — appendSession is 0-based) → spawns detached with the right argv', () => {
     const { spawnFn, calls } = makeSpawn();
     const r = maybeFireArmEvalCaptureDetached({
-      experimentType: 'brainstorm', task: 'multi\nline "topic" text', round: 1,
+      experimentType: 'brainstorm', task: 'multi\nline "topic" text', round: 0,
       spawnFn, readToggleFn: toggleOn,
     });
     assert.equal(r.fired, true);
@@ -57,9 +57,9 @@ describe('maybeFireArmEvalCaptureDetached', () => {
     assert.equal(calls[0].args[3], 'plan-authoring');
   });
 
-  it('round 2+ → does NOT fire (captures a session once)', () => {
+  it('later rounds (1+, debate/continue) → do NOT fire (captures a session once)', () => {
     const { spawnFn, calls } = makeSpawn();
-    for (const round of [0, 2, 3]) {
+    for (const round of [1, 2, 3]) {
       const r = maybeFireArmEvalCaptureDetached({
         experimentType: 'brainstorm', task: 't', round, spawnFn, readToggleFn: toggleOn,
       });
@@ -81,7 +81,7 @@ describe('maybeFireArmEvalCaptureDetached', () => {
   it('never throws — a spawn failure is swallowed', () => {
     const throwingSpawn = () => { throw new Error('spawn boom'); };
     const r = maybeFireArmEvalCaptureDetached({
-      experimentType: 'brainstorm', task: 't', round: 1,
+      experimentType: 'brainstorm', task: 't', round: 0,
       spawnFn: throwingSpawn, readToggleFn: toggleOn,
     });
     assert.equal(r.fired, false);

@@ -39,8 +39,11 @@ const CROSS_SKILL_PATH = path.resolve(fileURLToPath(import.meta.url), '../../../
  * @param {object} opts
  * @param {'brainstorm'|'plan-authoring'} opts.experimentType
  * @param {string} opts.task — the task/topic text the arms are scored on
- * @param {number|null} [opts.round=null] — when provided, capture ONLY on round 1
- *   (skips debate/continue rounds of the same session so a session is captured once)
+ * @param {number|null} [opts.round=null] — when provided, capture ONLY on the
+ *   session's FIRST round, which the brainstorm session-store numbers **0**
+ *   (`appendSession`: empty ledger → round 0). Skips debate/continue rounds of
+ *   the same session so a session is captured once. Field-verified 2026-07-03:
+ *   the original `=== 1` gate meant a fresh brainstorm could NEVER fire.
  * @param {string} [opts.repoRoot=process.cwd()]
  * @param {Function} [opts.spawnFn=spawn] — injectable for tests
  * @param {Function} [opts.readToggleFn=readToggle] — injectable for tests
@@ -58,7 +61,7 @@ export function maybeFireArmEvalCaptureDetached({
     if (!experimentType || !task || !String(task).trim()) {
       return { fired: false, reason: 'missing-experiment-or-task' };
     }
-    if (round !== null && round !== 1) {
+    if (round !== null && round !== 0) {
       return { fired: false, reason: `round-${round}-not-first` };
     }
     const toggle = readToggleFn({ repoRoot });

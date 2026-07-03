@@ -471,11 +471,17 @@ async function runBrainstormMode(args) {
     }
   }
 
-  // Deterministic arm-eval capture (toggle-gated; round-1 only; detached).
+  // Deterministic arm-eval capture (toggle-gated; first-round only; detached).
   // Replaces the skippable skill Step 4.5 — capture now fires as a function of
   // PERSISTING the brainstorm, not a trailing instruction the model can omit.
   // No-op (byte-identical path) when the per-repo toggle is off.
-  if (successCount > 0 && envelope.round === 1) {
+  // NOTE: appendSession numbers a session's FIRST round 0 (session-store.mjs)
+  // — the ledger is 0-based. Gating on `=== 1` here meant a fresh brainstorm
+  // could never capture (field-found in wine-cellar-app, 2026-07-03). A failed
+  // append leaves round 0 via the catch above, but successCount === 0 guards
+  // the both-providers-failed case and appendSession only throws on lock/IO
+  // failure — acceptable to still capture then (the round DID run).
+  if (successCount > 0 && envelope.round === 0) {
     try {
       const { maybeFireArmEvalCaptureDetached } = await import('./lib/arm-eval/capture-trigger.mjs');
       const r = maybeFireArmEvalCaptureDetached({ experimentType: 'brainstorm', task: envelope.topic, round: envelope.round });

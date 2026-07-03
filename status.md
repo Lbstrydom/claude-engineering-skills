@@ -1,5 +1,27 @@
 # Project Status Log
 
+## 2026-07-03 — Fix: capture trigger round gate was 1-based vs 0-based ledger (field-found)
+
+### Changes
+- **Off-by-one killed every fresh-brainstorm capture**: `appendSession`
+  ([session-store.mjs:89-91](scripts/lib/brainstorm/session-store.mjs)) numbers a session's
+  FIRST round **0**, but the new trigger gated on `round === 1` — so the deterministic
+  capture shipped earlier today could never fire on a fresh brainstorm (only on a
+  `--continue-from` second round). Found by the wine-cellar-app verification protocol:
+  real brainstorm ran, no dispatch line, no new `arm_eval_sessions` row; stubbed-spawn
+  calls proved `round:0 → not fired, round:1 → fired`. Fixed both sides: dispatch site
+  ([brainstorm-round.mjs](scripts/brainstorm-round.mjs)) now gates `=== 0`,
+  [capture-trigger.mjs](scripts/lib/arm-eval/capture-trigger.mjs) treats 0 as first round;
+  tests updated to lock 0-based semantics (65 pass).
+- **Known issue (reported, not fixed)**: `/brainstorm --depth shallow` (500 tokens,
+  [depth-config.mjs](scripts/lib/brainstorm/depth-config.mjs)) fails on reasoning models —
+  gpt-5.5 burns the whole `max_completion_tokens` budget on reasoning →
+  `finish_reason: length`, empty response. Proper fix needs per-depth `reasoning_effort`
+  in [openai-adapter.mjs](scripts/lib/brainstorm/openai-adapter.mjs) without degrading
+  standard/deep; workaround: use standard depth.
+- Detached-spawn survival on Windows remains empirically unconfirmed (the round gate
+  blocked before any spawn happened) — re-run the wine verification protocol after sync.
+
 ## 2026-07-03 — Deterministic arm-eval capture for /brainstorm + /plan
 
 ### Changes
