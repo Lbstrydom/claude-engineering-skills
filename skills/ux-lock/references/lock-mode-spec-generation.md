@@ -5,8 +5,31 @@ summary: LOCK mode — full Playwright spec template + fix-type assertion map + 
 # LOCK Mode — Spec Generation
 
 LOCK mode pins a fix's public DOM contract so the fix doesn't silently
-regress. The generated spec asserts on semantic contracts (roles, aria-*,
-data-testid, axe violations), never on CSS classes or internal state.
+regress. The generated spec locates AND asserts via semantic contracts (roles,
+aria-*, data-testid, axe violations), never via CSS classes or internal state.
+
+## Selector policy (locating elements)
+
+Every locator in a generated spec follows the ladder — take the FIRST rung that
+works:
+
+1. `page.getByRole(role, { name })`
+2. `page.getByLabel(...)` / `page.getByPlaceholder(...)` (form controls)
+3. `page.getByText(...)` (static user-visible copy)
+4. `page.getByTestId(...)` (no accessible handle exists — add one via SKILL
+   Step 1.5 if needed)
+5. CSS `#id` / `.class` — last resort ONLY, with a mandatory justification marker
+   on the same line or the line above:
+
+   ```javascript
+   // selector-policy: structural — third-party widget renders no roles or testids
+   await expect(page.locator('#vendor-cal-root')).toBeVisible();
+   ```
+
+The run pipeline (`scripts/ux-lock-run.mjs`) lints every spec it runs for
+unmarked structural selectors (including inside local helper imports): warn by
+default, `--strict-selectors` fails the run. Never import app modules into the
+spec — see `references/scope-and-limitations.md`.
 
 ## Generated spec template
 
@@ -32,35 +55,35 @@ test.describe('<fix description>', () => {
   test('<primary assertion>', async ({ page }) => {
     await page.goto('/');
 
-    // Drive the component/feature directly
-    // ...
+    // Drive the feature the way a user would
+    await page.getByRole('button', { name: 'Add bottle' }).click();
 
     // Assert on public DOM contract
-    await expect(page.locator('...')).toBeVisible();
-    // or: await expect(page.locator('...')).toHaveAttribute('role', 'list');
-    // or: await expect(page.locator('...')).toHaveCount(n);
+    await expect(page.getByRole('dialog', { name: 'Add bottle' })).toBeVisible();
+    // or: await expect(page.getByTestId('cellar-grid')).toHaveAttribute('role', 'list');
+    // or: await expect(page.getByRole('list')).toHaveCount(n);
   });
 
   test('a11y — no WCAG violations', async ({ page }) => {
     await page.goto('/');
     // Set up the state that triggers the fix
     // ...
-    await expectNoA11yViolations(page, { include: '#relevant-container' });
+    await expectNoA11yViolations(page, { include: '[data-testid="relevant-container"]' });
   });
 });
 ```
 
 ## Fix-type → assertion map
 
-| Fix type | Assertions |
+| Fix type | Assertions (locate semantically per the ladder) |
 |---|---|
-| **Missing attribute** (role, aria-*) | `toHaveAttribute('role', 'list')` |
-| **Modal behaviour** | Element appears → action → element disappears |
-| **Data rendering** | Container has expected child count or text |
-| **Navigation** | Click → URL changes → content visible |
-| **Form validation** | Invalid state → button disabled; valid → enabled |
-| **Error handling** | Trigger error → error message visible → recovery works |
-| **Accessibility** | `expectNoA11yViolations` on the relevant container |
+| **Missing attribute** (role, aria-*) | `getByTestId(...)` → `toHaveAttribute('role', 'list')` |
+| **Modal behaviour** | `getByRole('dialog')` appears → action → disappears |
+| **Data rendering** | `getByRole('list')` / named container has expected child count or text |
+| **Navigation** | `getByRole('link', { name })` click → URL changes → content visible |
+| **Form validation** | `getByLabel(...)` invalid → `getByRole('button')` disabled; valid → enabled |
+| **Error handling** | Trigger error → `getByRole('alert')` visible → recovery works |
+| **Accessibility** | `expectNoA11yViolations` with a `[data-testid=…]` (or justified-structural) include |
 
 ## Naming convention
 
@@ -83,10 +106,15 @@ hand-parsing, no shell-quoting of free text:
 node scripts/ux-lock-run.mjs spec \
   --spec tests/e2e/<name>.spec.js \
   --commit <sha> --run-context ux-lock \
-  --source-kind audit-loop-fix    # or persona-test-p0 | persona-test-p1 | manual
+  --source-kind audit-loop-fix \  # or persona-test-p0 | persona-test-p1 | manual
+  --strict-selectors              # newly generated spec → lint FAILS (exit 6), not warns
   # [--specs <glob>]   run + group a suite by spec_path (one run row per file)
+  #                    (globs are Playwright-expanded — NOT combinable with
+  #                    --strict-selectors, which needs explicit paths to scan
+  #                    before anything executes; warn mode reconciles post-run)
   # [--url <base-url>] exported to the spec as E2E_BASE_URL
   # [--no-register]    record nothing (spec is unknown / throwaway)
+  # [--test-root <d>] [--alias prefix=dir]...  selector-policy scan inputs
 ```
 
 The runner derives the `description` from the spec filename and supplies the

@@ -236,3 +236,81 @@ describe('_internals', () => {
     assert.match(locatorCall({ kind: 'css', selector: '.x' }), /page\.locator\("\.x"\)/);
   });
 });
+
+// ── selector-policy markers (plan: docs/completed/ux-lock-selector-policy.md) ───
+
+describe('renderCandidateSpec — selector-policy markers', () => {
+  it('structural contradiction selector gets the fixed-reason marker on the locator line', () => {
+    const { body } = renderCandidateSpec(baseWitness(),
+      { ...baseContradiction(), selector: '#stock-count' }, baseJourney());
+    const line = body.split('\n').find(l => l.includes('const el = page.locator'));
+    assert.ok(line.includes(_internals.STRUCTURAL_MARKER), 'marker on the locator line');
+  });
+
+  it('semantic contradiction selector gets NO marker (no self-generated stale-marker noise)', () => {
+    const { body } = renderCandidateSpec(baseWitness(),
+      { ...baseContradiction(), selector: '[data-engine-claim="stock.count"]' }, baseJourney());
+    assert.ok(!body.includes('selector-policy: structural'), 'no marker anywhere');
+  });
+
+  it('structural css journey-step locator gets the marker; semantic kinds never do', () => {
+    const j = baseJourney({
+      journeySteps: [
+        { action: 'navigate', url: '/cellar' },
+        { action: 'click', locator: { kind: 'css', selector: '.legacy-btn' }, label: 'legacy' },
+        { action: 'click', locator: { kind: 'role', role: 'button', name: 'Add' }, label: 'semantic' },
+      ],
+      contradictionStepIndex: 2,
+    });
+    const { body } = renderCandidateSpec(baseWitness(),
+      { ...baseContradiction(), selector: '[data-engine-claim="x"]' }, j);
+    const lines = body.split('\n');
+    const legacy = lines.find(l => l.includes('.legacy-btn'));
+    const semantic = lines.find(l => l.includes('getByRole'));
+    assert.ok(legacy.includes(_internals.STRUCTURAL_MARKER));
+    assert.ok(!semantic.includes('selector-policy'));
+  });
+
+  it('id-kind locator is always structural; css-kind with a semantic attr string is not', () => {
+    assert.equal(_internals.locatorIsStructural({ kind: 'id', id: 'x' }), true);
+    assert.equal(_internals.locatorIsStructural({ kind: 'css', selector: '[data-testid="x"]' }), false);
+    assert.equal(_internals.locatorIsStructural({ kind: 'css', selector: '.grid' }), true);
+    assert.equal(_internals.locatorIsStructural({ kind: 'testid', id: 'x' }), false);
+  });
+
+  it('marker emission stays deterministic (byte-identical)', () => {
+    const c = { ...baseContradiction(), selector: '#same' };
+    const a = renderCandidateSpec(baseWitness(), c, baseJourney());
+    const b = renderCandidateSpec(baseWitness(), c, baseJourney());
+    assert.equal(a.body, b.body);
+  });
+});
+
+describe('renderCandidateSpec — comment-context sanitization (audit R1-H1/H5)', () => {
+  it('a newline in a step label cannot break out of the trailing comment', () => {
+    const j = baseJourney({
+      journeySteps: [
+        { action: 'navigate', url: '/x' },
+        { action: 'click', locator: { kind: 'role', role: 'button', name: 'Go' },
+          label: 'evil\nawait page.evaluate(() => fetch("http://x"))' },
+      ],
+      contradictionStepIndex: 1,
+    });
+    const { body } = renderCandidateSpec(baseWitness(),
+      { ...baseContradiction(), selector: '[data-engine-claim="x"]' }, j);
+    assert.ok(!body.includes('\nawait page.evaluate(() => fetch'), 'newline collapsed to a space');
+  });
+
+  it('a newline in surfaceId cannot reach an executable position', () => {
+    const { body } = renderCandidateSpec(baseWitness(),
+      { ...baseContradiction(), surfaceId: 'surf\nconsole.log(1)' }, baseJourney());
+    for (const line of body.split('\n')) {
+      if (!line.includes('console.log(1)')) continue;
+      // Legal appearances: inside a comment (commentSafe collapsed the newline)
+      // or inside a quoted string where js() escaped it to a literal \n.
+      const inComment = /^\s*\/\//.test(line);
+      const inEscapedString = line.includes('\\ncons');
+      assert.ok(inComment || inEscapedString, `executable-position leak: ${line}`);
+    }
+  });
+});

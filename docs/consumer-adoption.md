@@ -185,6 +185,20 @@ The sync is **idempotent**: re-running it against an already-current
 consumer produces no diff. The `.gitignore` managed block, the manifest
 hashes, and the skill `.md` rewrites all short-circuit when unchanged.
 
+### Selector-policy update (2026-07)
+
+`/ux-lock` now enforces a selector priority ladder on the specs it generates
+(`getByRole` → `getByLabel`/`getByPlaceholder` → `getByText` → `getByTestId` →
+justified-structural CSS with a `// selector-policy: structural — <reason>`
+marker), and `scripts/.claude-skills/ux-lock-run.mjs` lints every spec it runs
+(plus local-helper imports) for unmarked structural selectors and app-module
+imports. Re-sync to pick this up, and run `setup-postgres --migrate` for the
+`selector_policy_violations` telemetry columns.
+
+**Existing consumer specs are NOT rewritten by this change.** The lint defaults
+to warn, so legacy structural-selector suites keep running unchanged;
+`--strict-selectors` is opt-in per run (recommended for newly generated specs).
+
 ---
 
 ## Fresh-clone workflow

@@ -195,7 +195,7 @@ describe('mapCriteriaToItems — every expected criterion accounted for', () => 
 
 function runCli(args) {
   try {
-    const out = execFileSync('node', ['scripts/ux-lock-run.mjs', ...args], {
+    const out = execFileSync(process.execPath, ['scripts/ux-lock-run.mjs', ...args], {
       cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     });
     return { stdout: out, status: 0 };
@@ -228,5 +228,137 @@ describe('ux-lock-run CLI — arg validation', () => {
     const json = lastJson(stdout);
     assert.equal(json?.error?.code, 'BAD_INPUT');
     assert.notEqual(status, 0);
+  });
+});
+
+// ── selector-policy wiring (plan: docs/completed/ux-lock-selector-policy.md) ────
+
+import os from 'node:os';
+import { insertRunRowWithPolicyFallback } from '../scripts/lib/store/plans-ship.mjs';
+
+function runCliFull(args) {
+  try {
+    const out = execFileSync(process.execPath, ['scripts/ux-lock-run.mjs', ...args], {
+      cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return { stdout: out, stderr: '', status: 0 };
+  } catch (err) {
+    return { stdout: err.stdout || '', stderr: err.stderr || '', status: err.status ?? 1 };
+  }
+}
+
+function tmpSpec(content, name = 'fixture.spec.js') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uxlock-selpol-'));
+  const p = path.join(dir, name);
+  fs.writeFileSync(p, content);
+  return p;
+}
+
+describe('ux-lock-run CLI — selector-policy lint', () => {
+  it('--strict-selectors blocks pre-run on an unjustified structural selector (exit 6)', () => {
+    const spec = tmpSpec(`import { test, expect } from '@playwright/test';\ntest('x', async ({ page }) => { await page.locator('#add-btn').click(); });\n`);
+    const { stdout, stderr, status } = runCliFull(['spec', '--spec', spec, '--strict-selectors', '--no-register']);
+    assert.equal(status, 6);
+    const json = lastJson(stdout);
+    assert.equal(json?.error?.code, 'SELECTOR_POLICY_STRICT');
+    assert.match(stderr, /structural-selector/);
+  });
+
+  it('a justified structural selector passes strict pre-run (proceeds to Playwright)', () => {
+    const spec = tmpSpec([
+      `import { test, expect } from '@playwright/test';`,
+      `test('x', async ({ page }) => {`,
+      `  // selector-policy: structural — vendor widget renders no roles or testids`,
+      `  await page.locator('#vendor-root').click();`,
+      `});`,
+    ].join('\n'));
+    const { stdout, status } = runCliFull(['spec', '--spec', spec, '--strict-selectors', '--no-register']);
+    const json = lastJson(stdout);
+    // Scan passed — any failure now comes from the Playwright stage, not the lint.
+    assert.notEqual(json?.error?.code, 'SELECTOR_POLICY_STRICT');
+    assert.notEqual(status, 6);
+  });
+
+  it('default (warn) mode prints the SELECTOR POLICY block but does not exit 6', () => {
+    const spec = tmpSpec(`import { test } from '@playwright/test';\ntest('x', async ({ page }) => { await page.locator('.legacy').click(); });\n`);
+    const { stderr, status } = runCliFull(['spec', '--spec', spec, '--no-register']);
+    assert.match(stderr, /SELECTOR POLICY/);
+    assert.match(stderr, /structural-selector/);
+    assert.notEqual(status, 6);
+  });
+
+  it('unreadable --spec fails closed (exit 2, SELECTOR_SCAN_INCOMPLETE)', () => {
+    const { stdout, status } = runCliFull(['spec', '--spec', path.join(os.tmpdir(), 'uxlock-nope', 'missing.spec.js'), '--no-register']);
+    assert.equal(status, 2);
+    assert.equal(lastJson(stdout)?.error?.code, 'SELECTOR_SCAN_INCOMPLETE');
+  });
+
+  it('app-module-import in the spec is flagged (strict → exit 6)', () => {
+    const spec = tmpSpec(`import { app } from '../../src/app.js';\nimport { test } from '@playwright/test';\n`);
+    const { stdout, stderr, status } = runCliFull(['spec', '--spec', spec, '--strict-selectors', '--no-register']);
+    assert.equal(status, 6);
+    assert.equal(lastJson(stdout)?.error?.code, 'SELECTOR_POLICY_STRICT');
+    assert.match(stderr, /app-module-import/);
+  });
+});
+
+describe('insertRunRowWithPolicyFallback — 42703-only discrimination', () => {
+  const row = { spec_id: 's1', passed: true, selector_policy_violations: 3 };
+
+  it('42703 → retries ONCE without the column', async () => {
+    const calls = [];
+    const insertFn = async (table, r) => {
+      calls.push(r);
+      if ('selector_policy_violations' in r) {
+        throw Object.assign(new Error('column "selector_policy_violations" does not exist'), { code: '42703' });
+      }
+      return { id: 'row1' };
+    };
+    const out = await insertRunRowWithPolicyFallback('regression_spec_runs', { ...row }, undefined, insertFn);
+    assert.equal(out.id, 'row1');
+    assert.equal(calls.length, 2);
+    assert.ok(!('selector_policy_violations' in calls[1]));
+  });
+
+  it('any other error code propagates (no swallow, no retry)', async () => {
+    let calls = 0;
+    const insertFn = async () => { calls++; throw Object.assign(new Error('boom'), { code: '23505' }); };
+    await assert.rejects(
+      () => insertRunRowWithPolicyFallback('regression_spec_runs', { ...row }, undefined, insertFn),
+      /boom/,
+    );
+    assert.equal(calls, 1);
+  });
+
+  it('42703 on a row WITHOUT the column propagates (a real schema bug, not our fallback)', async () => {
+    const insertFn = async () => { throw Object.assign(new Error('other col'), { code: '42703' }); };
+    await assert.rejects(
+      () => insertRunRowWithPolicyFallback('regression_spec_runs', { spec_id: 's1', passed: true }, undefined, insertFn),
+      /other col/,
+    );
+  });
+});
+
+describe('ux-lock-run CLI — strict mode refuses unresolved aliases (audit R1-H6)', () => {
+  it('unmapped alias import under --strict-selectors → exit 6', () => {
+    const spec = tmpSpec(`import x from '~/shell/app.js';\nimport { test } from '@playwright/test';\n`);
+    const { stdout, status } = runCliFull(['spec', '--spec', spec, '--strict-selectors', '--no-register']);
+    assert.equal(status, 6);
+    assert.equal(lastJson(stdout)?.error?.code, 'SELECTOR_POLICY_UNRESOLVED_ALIAS');
+  });
+
+  it('warn mode keeps the unresolved alias as a non-fatal warning', () => {
+    const spec = tmpSpec(`import x from '~/shell/app.js';\nimport { test } from '@playwright/test';\n`);
+    const { stderr, status } = runCliFull(['spec', '--spec', spec, '--no-register']);
+    assert.match(stderr, /unresolved-alias-import/);
+    assert.notEqual(status, 6);
+  });
+});
+
+describe('ux-lock-run CLI — strict mode refuses unresolvable globs (audit R2-M4)', () => {
+  it('--strict-selectors + --specs glob → fail closed before any execution', () => {
+    const { stdout, status } = runCliFull(['spec', '--specs', 'tests/e2e/*.spec.js', '--strict-selectors', '--no-register']);
+    assert.equal(status, 2);
+    assert.equal(lastJson(stdout)?.error?.code, 'SELECTOR_STRICT_GLOB_UNRESOLVED');
   });
 });

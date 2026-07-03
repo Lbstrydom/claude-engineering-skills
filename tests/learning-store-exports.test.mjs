@@ -74,8 +74,9 @@ const EXPECTED_EXPORTS = [
   'syncFalsePositivePatterns',
   'syncPromptRevision',
   'upsertPromptVariant',
-  // plans-ship (16)
+  // plans-ship (17)
   'getUnlockedFixes',
+  'insertRunRowWithPolicyFallback', // selector-policy 42703 write seam (plan: ux-lock-selector-policy)
   'listConsistencyCandidates',
   'promoteRegressionSpec',
   'readAuditEffectiveness',
@@ -245,6 +246,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 148);
+    assert.equal(EXPECTED_EXPORTS.length, 149);
   });
 });

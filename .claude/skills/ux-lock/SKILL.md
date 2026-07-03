@@ -35,21 +35,40 @@ Read the first word of `$ARGUMENTS`:
 
 ---
 
-## DOM-contract rule (both modes)
+## DOM-contract rule (both modes) — covers LOCATION and assertion
 
-The spec must assert on **public DOM contracts**, not implementation details:
+The spec must **locate and assert** on public DOM contracts, not implementation
+details. Avoiding `toHaveClass()` while locating via `page.locator('#id')` still
+ships all the brittleness — the rule constrains both halves:
 
-| Good assertions (stable) | Bad assertions (brittle) |
+| Good (stable) | Bad (brittle) |
 |---|---|
+| `page.getByRole('button', { name: 'Add bottle' })` | `page.locator('#add-btn')` |
+| `page.getByTestId('cellar-grid')` | `page.locator('.grid-abc')` |
 | Element with `role="list"` exists | Element has class `wine-list-v3` |
 | Modal closes when action button clicked | Internal state variable changes |
 | Button is `aria-disabled` when form invalid | CSS opacity is 0.5 |
 | Navigation to `/cellar` shows grid | `document.querySelector('.grid-abc')` |
 
+**Selector priority ladder (location)** — take the FIRST rung that works:
+
+1. `page.getByRole(role, { name })` — first choice
+2. `page.getByLabel(...)` / `page.getByPlaceholder(...)` — form controls
+3. `page.getByText(...)` — static user-visible copy
+4. `page.getByTestId(...)` — when no accessible handle exists
+5. CSS `#id` / `.class` — **last resort only**, and it must carry a justification
+   marker on the same line or the line above:
+   `// selector-policy: structural — <why no semantic handle is possible>`
+   (the reason is mandatory; the run pipeline lints unmarked structural selectors
+   — warn by default, `--strict-selectors` fails the run)
+
 **Rules**:
-- Assert on semantic HTML (`role`, `aria-*`, `data-testid`) — never CSS classes
+- Locate via the ladder above; assert on semantic HTML (`role`, `aria-*`,
+  `data-testid`) — never CSS classes
 - Assert on user-visible behaviour (click → result) — never internal state
 - Assert on accessibility (axe-core) when the fix touched a11y
+- Never import the app's own modules into the spec process — drive the UI
+  (see `references/scope-and-limitations.md`)
 
 ---
 
@@ -78,6 +97,20 @@ ls tests/e2e/*.spec.*         # existing specs for naming convention
 If no Playwright setup exists, offer to bootstrap from the template.
 See `references/scope-and-limitations.md` for the bootstrap commands.
 
+### Step 1.5 — Ensure a semantic handle exists
+
+If the fixed surface exposes no role/label/testid the ladder can target, the lock
+task INCLUDES adding one to the app markup — the surface is already being touched
+at fix time. The hook itself has a ladder (accuracy over convenience):
+
+1. **Native semantic HTML / visible label** — when the element genuinely warrants
+   it (clickable `div` → `button`; unlabelled input gains a `<label>`). A real
+   accessibility improvement — verify with the spec's axe assertion.
+2. **`data-testid`** — the default otherwise. Genuinely behaviour-neutral.
+3. **`role` / `aria-label`** — ONLY when it accurately describes the element's
+   function. Wrong ARIA is worse for screen-reader users than none; never add it
+   purely to make a test targetable — that's what `data-testid` is for.
+
 ### Step 2 — Generate the spec
 
 Use the template + fix-type assertion map in
@@ -97,8 +130,12 @@ that left the tables empty whenever a step was skipped or mis-parsed:
 node scripts/ux-lock-run.mjs spec \
   --spec tests/e2e/<new-spec>.spec.js \
   --commit <sha> --run-context manual \
-  --source-kind manual [--url <base-url>]
+  --source-kind manual [--url <base-url>] --strict-selectors
 ```
+
+Pass `--strict-selectors` for newly generated specs (recommended — a spec you
+just authored has no excuse for unmarked structural selectors; the flag fails
+the run instead of warning). Omit it only when re-running legacy suites.
 
 - **Auto-registers** the spec (upsert by `repo_id` + `spec_path`, supplying the
   required `source_kind` + a derived `description`) and records this run's
@@ -173,8 +210,12 @@ old model-remembered run → parse → `record-plan-verify-run` →
 ```bash
 node scripts/ux-lock-run.mjs verify \
   --plan docs/plans/<plan>.md --spec tests/e2e/<verify-spec>.spec.js \
-  --plan-id <plan-uuid> --commit <sha> --url <base-url>
+  --plan-id <plan-uuid> --commit <sha> --url <base-url> --strict-selectors
 ```
+
+(`--strict-selectors`: verify specs are newly generated, so the selector-policy
+lint fails rather than warns on an unmarked structural selector. Note V3
+registers the SPEC row via cross-skill; this call owns only the RUN rows.)
 
 - **Every criterion is accounted for** (plan §2.3): a criterion with no matching
   test → `passed:false` ("no matching test result"); multiple results for one

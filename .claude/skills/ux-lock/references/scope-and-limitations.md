@@ -4,6 +4,29 @@ summary: Where /ux-lock works well, where it doesn't (Obsidian/Electron), and fa
 
 # Scope + Limitations
 
+## Do NOT import app modules into the spec
+
+A spec must drive the UI (`page.goto` + user actions). Importing the app's own
+source or deployed ES modules into the Playwright spec process is prohibited —
+it couples the spec to the bundle layout instead of the user contract, and the
+lock silently dies on any build/framework migration (observed in the wild: two
+consumer shell-mode specs imported deployed app modules directly and every
+assertion bypassed the UI).
+
+- **Approved**: drive the UI; import only test-local helpers (`./helpers/…`),
+  `@playwright/test`, and ordinary npm test deps.
+- **If unavoidable**: `page.evaluate` against the live page. Structural
+  `querySelector` calls inside it need the
+  `// selector-policy: structural — <reason>` marker like any other call site.
+- **Enforced**: the run pipeline's `app-module-import` lint class flags app-source
+  imports (static, dynamic `import()`, and `require`) in every spec it runs,
+  including transitively through local helpers — warn by default,
+  `--strict-selectors` fails the run.
+
+The "Mock HTML harness" approach below (rendering components in a standalone
+page) is different and fine — the page renders the component; the spec process
+imports nothing.
+
 ## Works for
 
 Web apps served via URL:

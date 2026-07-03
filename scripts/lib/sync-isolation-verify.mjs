@@ -66,6 +66,7 @@ const LIB_IMPORT_SET = [
   { rel: 'lib/nav/model.mjs', mustExport: ['buildModel'] },
   { rel: 'lib/nav/findings.mjs', mustExport: ['runTaxonomy'] },
   { rel: 'lib/nav/drift.mjs', mustExport: ['partitionFindings', 'ageDivergences'] },
+  { rel: 'lib/ux-lock/selector-policy.mjs', mustExport: ['scanSpecSource', 'classifySelector', 'resolveTestRoot'] },
 ];
 
 const CMD_SCAN_PATHS = [

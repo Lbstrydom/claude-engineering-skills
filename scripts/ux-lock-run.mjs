@@ -36,12 +36,20 @@ import {
   recordRegressionSpec, recordRegressionSpecRun,
   recordPlanVerificationRun, recordPlanVerificationItems,
 } from './learning-store.mjs';
+import {
+  scanSpecClosure, resolveTestRoot, readAliasMapFromTsconfig, readPlaywrightTestDirs,
+} from './lib/ux-lock/selector-policy.mjs';
 
 const [subcommand, ...rest] = process.argv.slice(2);
 
 function opt(name) {
   const i = rest.indexOf(`--${name}`);
   return i >= 0 ? (rest[i + 1] ?? null) : null;
+}
+function optAll(name) {
+  const out = [];
+  rest.forEach((a, i) => { if (a === `--${name}` && rest[i + 1] != null) out.push(rest[i + 1]); });
+  return out;
 }
 function flag(name) {
   return rest.includes(`--${name}`);
@@ -56,6 +64,97 @@ function fail(code, message, exitCode = 2) {
 async function resolveRepoId() {
   const ref = await resolveRepoForStore({}).catch(() => null);
   return ref?.repoRowId ?? null;
+}
+
+// ── selector-policy lint (plan: docs/completed/ux-lock-selector-policy.md) ──────
+
+/**
+ * Scan spec files (plus their local-helper import closure) for selector-policy
+ * violations. Fail-closed on unreadable files / unresolvable closure imports.
+ * Warn by default; `--strict-selectors` exits 6 on unjustified violations.
+ *
+ * Returns { counts: Map<absPath, number>, total, scannedFiles }.
+ * The tracker map is keyed by the SPEC file — closure violations attribute to
+ * the importing spec (per-spec-row attribution, Gemini-R3-G1).
+ */
+function scanSelectorPolicy(specFiles, {
+  repoRoot, strict, phase,
+  // Explicit inputs (audit R3-M7): callers pass CLI state in rather than the
+  // helper reaching into ambient opt()/optAll() — keeps the scan wrapper pure
+  // over its arguments.
+  testRootFlag = opt('test-root'),
+  aliasArgs = optAll('alias'),
+}) {
+  const aliasMap = buildAliasMap(repoRoot, aliasArgs);
+  const configTestDirs = readPlaywrightTestDirs(repoRoot);
+  const counts = new Map();
+  let total = 0;
+  let justifiedTotal = 0;
+  const allViolations = [];
+  const allStale = [];
+  const allAliases = [];
+  const failures = [];
+  let scannedFiles = 0;
+
+  for (const specFile of specFiles) {
+    const abs = path.resolve(repoRoot, specFile);
+    const testRoot = resolveTestRoot(abs, { flag: testRootFlag, configTestDirs, repoRoot });
+    const r = scanSpecClosure(abs, { testRoot, aliasMap });
+    scannedFiles += r.files.length;
+    counts.set(abs, r.violations.length);
+    total += r.violations.length;
+    justifiedTotal += r.justifiedCount;
+    allViolations.push(...r.violations);
+    allStale.push(...r.staleMarkers);
+    allAliases.push(...r.unresolvedAliases);
+    failures.push(...r.failures);
+  }
+
+  // Fail-closed: an unreadable spec or unresolvable closure import means the
+  // scan did NOT cover what Playwright will execute — never report clean.
+  if (failures.length > 0) {
+    for (const f of failures) process.stderr.write(`  [selector-policy] FAIL-CLOSED (${f.reason}): ${f.file}\n`);
+    fail('SELECTOR_SCAN_INCOMPLETE', `selector-policy scan could not cover ${failures.length} file(s) — see stderr`, 2);
+  }
+  if (scannedFiles === 0) {
+    fail('SELECTOR_SCAN_EMPTY', 'selector-policy scan resolved zero files — refusing to report "0 violations" for scanning nothing', 2);
+  }
+
+  if (allViolations.length || allStale.length || allAliases.length) {
+    process.stderr.write(`  ── SELECTOR POLICY (${phase}) ─ ${allViolations.length} unjustified violation(s), ${justifiedTotal} justified, ${allStale.length} stale marker(s) ──\n`);
+    for (const v of allViolations) {
+      process.stderr.write(`  [selector-policy] ${v.class} ${path.relative(repoRoot, v.file)}:${v.line}  ${v.snippet}\n`);
+    }
+    for (const s of allStale) {
+      process.stderr.write(`  [selector-policy] stale-marker ${path.relative(repoRoot, s.file)}:${s.line} — ${s.reason}\n`);
+    }
+    for (const a of allAliases) {
+      process.stderr.write(`  [selector-policy] unresolved-alias-import ${path.relative(repoRoot, a.file)}:${a.line} '${a.specifier}' — pass --alias ${a.specifier.split('/')[0]}/=<dir> to resolve (not counted)\n`);
+    }
+    process.stderr.write('  [selector-policy] ladder: getByRole > getByLabel/Placeholder > getByText > getByTestId > justified CSS (// selector-policy: structural — <reason>)\n');
+  }
+
+  if (strict && total > 0) {
+    fail('SELECTOR_POLICY_STRICT', `${total} unjustified selector-policy violation(s) with --strict-selectors`, 6);
+  }
+  // Strict = "prove the spec clean": an UNRESOLVED alias might be an app import
+  // the scan couldn't see, so strict mode refuses it (configure --alias or
+  // tsconfig paths). Warn mode keeps the non-counting warning — fail-closed
+  // there would break legitimate alias suites (plan Gemini-R1-G2 + audit R1-H6).
+  if (strict && allAliases.length > 0) {
+    fail('SELECTOR_POLICY_UNRESOLVED_ALIAS', `${allAliases.length} unresolved alias import(s) under --strict-selectors — configure --alias prefix=dir (or tsconfig paths) so the scan can prove them clean`, 6);
+  }
+  return { counts, total, scannedFiles };
+}
+
+function buildAliasMap(repoRoot, aliasArgs = optAll('alias')) {
+  const map = readAliasMapFromTsconfig(repoRoot) || {};
+  for (const kv of aliasArgs) {
+    const eq = kv.indexOf('=');
+    if (eq <= 0) { process.stderr.write(`  [selector-policy] ignoring malformed --alias '${kv}' (want prefix=dir)\n`); continue; }
+    map[kv.slice(0, eq)] = path.resolve(repoRoot, kv.slice(eq + 1));
+  }
+  return Object.keys(map).length ? map : null;
 }
 
 // ── spec subcommand (lock mode) ─────────────────────────────────────────────
@@ -81,6 +180,25 @@ async function cmdSpec() {
     return fail('BAD_INPUT', '--spec <path> (or --specs <glob>) is required');
   }
   const repoRoot = resolveRepoRoot();
+  const strictSelectors = flag('strict-selectors');
+
+  // Selector-policy pre-run scan on exact --spec paths (a --specs GLOB is
+  // expanded by Playwright, so glob-matched files are reconciled POST-run from
+  // the report's executed set — scanner coverage ≡ executed set either way).
+  // Under --strict-selectors a pre-run violation blocks before Playwright runs.
+  // Strict + glob is REFUSED (audit R2-M4 ruling): strict's contract is "no
+  // spec executes before enforcement", and the runner cannot pre-resolve
+  // Playwright's glob semantics faithfully — so it fails closed as unverified
+  // rather than letting a prohibited spec run first. Warn mode keeps the
+  // post-run reconcile as coverage telemetry.
+  if (strictSelectors && specsArg) {
+    return fail('SELECTOR_STRICT_GLOB_UNRESOLVED',
+      '--strict-selectors cannot pre-verify a --specs glob (Playwright owns its expansion) — pass explicit --spec path(s) under strict mode, or drop --strict-selectors for warn-mode telemetry', 2);
+  }
+  let policy = { counts: new Map(), total: 0 };
+  if (specArg) {
+    policy = scanSelectorPolicy([specArg], { repoRoot, strict: strictSelectors, phase: 'pre-run' });
+  }
   const result = runPlaywrightJson({ specPaths, baseUrl: url, cwd: repoRoot });
 
   if (result.status === RUN_STATUS.PLAYWRIGHT_MISSING) {
@@ -119,6 +237,22 @@ async function cmdSpec() {
   // A requested spec that produced no test results still gets a row (it ran).
   for (const sp of requested) if (!bySpec.has(sp)) bySpec.set(sp, []);
 
+  // Post-run selector-policy reconcile: scan any EXECUTED spec file the
+  // pre-run pass didn't cover (the --specs glob case). This keeps scanner
+  // coverage ≡ executed set by construction; under --strict-selectors a
+  // glob-discovered violation still fails the call (exit 6) after recording.
+  const unscanned = [...bySpec.keys()]
+    .map(sp => path.resolve(repoRoot, sp))
+    .filter(abs => !policy.counts.has(abs));
+  if (unscanned.length > 0) {
+    const post = scanSelectorPolicy(unscanned, { repoRoot, strict: false, phase: 'post-run' });
+    for (const [k, v] of post.counts) policy.counts.set(k, v);
+    policy.total += post.total;
+  }
+  if (bySpec.size === 0 && policy.counts.size === 0) {
+    return fail('SELECTOR_SCAN_EMPTY', 'no spec files were executed or scanned — refusing to report a clean run for nothing', 2);
+  }
+
   await initLearningStore().catch(() => {});
   const cloud = await isCloudEnabled();
   const repoId = cloud ? await resolveRepoId() : null;
@@ -147,6 +281,9 @@ async function cmdSpec() {
     if (specId) {
       await recordRegressionSpecRun(specId, {
         commitSha: commit, passed, durationMs, runContext,
+        // Per-spec attribution (this spec + its helper closure) — NEVER the
+        // run-global total, which would inflate an N-spec suite ×N in the DB.
+        selectorPolicyViolations: policy.counts.get(path.resolve(repoRoot, specPath)) ?? null,
       });
     }
   }
@@ -158,8 +295,14 @@ async function cmdSpec() {
   emit({
     ok: true, mode: 'spec', cloud, runContext,
     specs: specSummaries, orphans: [...new Set(orphans)],
+    selectorPolicyViolations: policy.total,
     recorded: cloud, hint: cloud ? undefined : 'AUDIT_DB_URL unset — ran specs, skipped recording',
   });
+  if (strictSelectors && policy.total > 0) {
+    // Glob-discovered (post-run) violations under --strict-selectors: the run
+    // + recording happened, but the call still fails loudly.
+    process.exit(6);
+  }
   process.exit(exitCodeForStatus(RUN_STATUS.OK, { testsPassed: allPassed }));
 }
 
@@ -183,6 +326,12 @@ async function cmdVerify() {
   }
 
   const repoRoot = resolveRepoRoot();
+  // Selector-policy scan (verify mode) — same ladder + lint as lock mode.
+  // Pre-run + strict blocks before Playwright runs; verify's exit-0 report
+  // contract is unchanged for criteria failures.
+  const policy = scanSelectorPolicy([specArg], {
+    repoRoot, strict: flag('strict-selectors'), phase: 'pre-run',
+  });
   const result = runPlaywrightJson({ specPaths: [specArg], baseUrl: url, cwd: repoRoot });
   if (result.status === RUN_STATUS.PLAYWRIGHT_MISSING) {
     emit({ ok: false, status: result.status, error: { code: 'PLAYWRIGHT_MISSING', message: 'Playwright not installed — run: npx playwright install chromium' } });
@@ -217,6 +366,8 @@ async function cmdVerify() {
         planId, commitSha: commit, url,
         totalCriteria: items.length, passedCount, failedCount, skippedCount,
         durationMs, runContext: 'ux-lock-verify',
+        // One row per run → the run total is the correct granularity here.
+        selectorPolicyViolations: policy.total,
       });
       if (runId) await recordPlanVerificationItems(runId, planId, items);
     } else {
@@ -227,6 +378,7 @@ async function cmdVerify() {
   emit({
     ok: true, mode: 'verify', cloud, runId,
     totalCriteria: items.length, passedCount, failedCount, skippedCount,
+    selectorPolicyViolations: policy.total,
     orphanTests: orphanTests.length,
     items: items.map(i => ({ hash: i.criterionHash, severity: i.severity, passed: i.passed, error: i.errorMessage })),
     hint: cloud ? undefined : 'AUDIT_DB_URL unset — ran spec, skipped recording',
@@ -246,7 +398,10 @@ async function main() {
   if (subcommand === 'verify') return cmdVerify();
   process.stderr.write('Usage: node scripts/ux-lock-run.mjs <spec|verify> [options]\n'
     + '  spec   --spec <path> [--specs <glob>] [--commit <sha>] [--url <u>] [--run-context <ctx>] [--source-kind <k>] [--no-register]\n'
-    + '  verify --plan <plan.md> --spec <verify-spec> [--plan-id <id>] [--commit <sha>] [--url <u>]\n');
+    + '  verify --plan <plan.md> --spec <verify-spec> [--plan-id <id>] [--commit <sha>] [--url <u>]\n'
+    + '  selector-policy options (both): [--strict-selectors] [--test-root <dir>] [--alias prefix=dir]...\n'
+    + '    lints spec + local-helper closure for unjustified structural selectors / app imports\n'
+    + '    (warn by default; strict → exit 6; scan failure → exit 2, never a silent clean)\n');
   process.exit(2);
 }
 

@@ -215,19 +215,45 @@ export async function promoteRegressionSpec(specId, args) {
   }
 }
 
+/**
+ * Insert a run row that may carry the optional `selector_policy_violations`
+ * column (migration 20260703200000). EXACTLY undefined_column (42703) on a row
+ * that carries the column → the consumer DB predates the migration: retry ONCE
+ * without the field so the run row itself isn't lost, with a single warning
+ * naming the pending migration. Any OTHER error propagates to the caller's
+ * existing handling — never a broader swallow (db-write-seam rule).
+ *
+ * `insertFn` is injectable for tests (defaults to the real insertReturning).
+ */
+export async function insertRunRowWithPolicyFallback(table, row, opts = undefined, insertFn = insertReturning) {
+  try {
+    return await insertFn(table, row, opts);
+  } catch (err) {
+    if (err?.code === '42703' && 'selector_policy_violations' in row) {
+      process.stderr.write(`  [learning] ${table}.selector_policy_violations missing — run setup-postgres --migrate; recording without it\n`);
+      const { selector_policy_violations: _dropped, ...rest } = row;
+      return await insertFn(table, rest, opts);
+    }
+    throw err;
+  }
+}
+
 /** Append a run outcome for a regression spec. */
 export async function recordRegressionSpecRun(specId, run) {
   if (!specId || !await isCloudEnabled()) return;
+  const row = {
+    spec_id: specId,
+    commit_sha: run.commitSha || null,
+    passed: !!run.passed,
+    captured_regression: !!run.capturedRegression,
+    duration_ms: run.durationMs || null,
+    error_message: run.errorMessage || null,
+    run_context: run.runContext || null,
+  };
+  // Optional selector-policy telemetry (plan: ux-lock-selector-policy).
+  if (run.selectorPolicyViolations != null) row.selector_policy_violations = run.selectorPolicyViolations;
   try {
-    await insertReturning('regression_spec_runs', {
-      spec_id: specId,
-      commit_sha: run.commitSha || null,
-      passed: !!run.passed,
-      captured_regression: !!run.capturedRegression,
-      duration_ms: run.durationMs || null,
-      error_message: run.errorMessage || null,
-      run_context: run.runContext || null,
-    });
+    await insertRunRowWithPolicyFallback('regression_spec_runs', row);
   } catch (err) {
     process.stderr.write(`  [learning] recordRegressionSpecRun failed: ${err.message}\n`);
   }
@@ -318,19 +344,22 @@ export async function readAuditEffectiveness(repoId) {
  */
 export async function recordPlanVerificationRun(run) {
   if (!run?.planId || !await isCloudEnabled()) return null;
+  const row = {
+    plan_id: run.planId,
+    spec_id: run.specId || null,
+    commit_sha: run.commitSha || null,
+    url: run.url || null,
+    total_criteria: run.totalCriteria || 0,
+    passed_count: run.passedCount || 0,
+    failed_count: run.failedCount || 0,
+    skipped_count: run.skippedCount || 0,
+    duration_ms: run.durationMs || null,
+    run_context: run.runContext || 'ux-lock-verify',
+  };
+  // Optional selector-policy telemetry (plan: ux-lock-selector-policy).
+  if (run.selectorPolicyViolations != null) row.selector_policy_violations = run.selectorPolicyViolations;
   try {
-    const out = await insertReturning('plan_verification_runs', {
-      plan_id: run.planId,
-      spec_id: run.specId || null,
-      commit_sha: run.commitSha || null,
-      url: run.url || null,
-      total_criteria: run.totalCriteria || 0,
-      passed_count: run.passedCount || 0,
-      failed_count: run.failedCount || 0,
-      skipped_count: run.skippedCount || 0,
-      duration_ms: run.durationMs || null,
-      run_context: run.runContext || 'ux-lock-verify',
-    }, { returning: ['id'] });
+    const out = await insertRunRowWithPolicyFallback('plan_verification_runs', row, { returning: ['id'] });
     return out?.id ?? null;
   } catch (err) {
     process.stderr.write(`  [learning] recordPlanVerificationRun failed: ${err.message}\n`);

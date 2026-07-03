@@ -23,6 +23,33 @@
  * @module scripts/lib/ux-lock/candidate-spec
  */
 
+import { classifySelector } from './selector-policy.mjs';
+
+/**
+ * Fixed-reason selector-policy marker for auto-generated structural locators.
+ * `classifySelector` (the single policy oracle — selector-policy.mjs) decides
+ * whether a raw witness selector is structural; a semantic selector (e.g.
+ * `[data-engine-claim="x"]`) gets NO marker, so the generator never
+ * manufactures its own stale-marker warnings.
+ */
+// The reason wording is deliberate (audit R1-M5 compromise): it states
+// generator PROVENANCE ("could not prove a hook"), not proof that no semantic
+// handle could be added — promotion should upgrade to a semantic handle when
+// the app surface is in scope.
+const STRUCTURAL_MARKER = '// selector-policy: structural — auto-generated from witness selector; replace with a semantic handle when promoting if the app surface is in scope';
+
+/**
+ * Sanitize free-text domain values (surface ids, labels, engine fields)
+ * before interpolating them into generated COMMENTS. A value carrying a
+ * newline would otherwise break out of comment context into executable
+ * spec code — and detach same-line selector-policy markers (audit R1-H1/H5).
+ * Executable positions already go through js(); this covers the comment/label
+ * positions that don't.
+ */
+function commentSafe(value) {
+  return String(value ?? '').replace(/[\r\n\u2028\u2029]+/g, ' ');
+}
+
 /**
  * @param {import('../persona-test/schemas.mjs').WitnessRecord}   witness
  * @param {import('../persona-test/schemas.mjs').Contradiction}   contradiction
@@ -96,7 +123,7 @@ function renderHeader(witness, contradiction, fpShort) {
   return [
     '// Auto-generated regression lock from persona-consistency-mode.',
     '// Plan: docs/plans/persona-test-consistency-mode.md.',
-    `// Surface: ${contradiction.surfaceId} · engineField: ${contradiction.engineField ?? '(n/a)'} · kind: ${contradiction.kind}`,
+    `// Surface: ${commentSafe(contradiction.surfaceId)} · engineField: ${commentSafe(contradiction.engineField ?? '(n/a)')} · kind: ${commentSafe(contradiction.kind)}`,
     `// Candidate fingerprint (short): ${fpShort}`,
     '//',
     '// DO NOT hand-edit selectors here — re-run /ship promotion to regenerate',
@@ -133,7 +160,7 @@ function renderTest(auth, steps, contradiction, routes) {
     bodyLines.push(
       `test.beforeEach(async ({ context }) => {`,
       `${indent}const token = process.env[${js(auth.tokenEnv)}];`,
-      `${indent}if (!token) throw new Error('${auth.tokenEnv} must be set for this spec');`,
+      `${indent}if (!token) throw new Error(${js(`${auth.tokenEnv} must be set for this spec`)});`,
       `${indent}await context.setExtraHTTPHeaders({ Authorization: \`Bearer \${token}\` });`,
       `});`,
     );
@@ -160,7 +187,7 @@ function renderTest(auth, steps, contradiction, routes) {
 
 function renderStepCalls(step, indent, ctx) {
   const lines = [];
-  const label = step.label ? ` // ${step.label}` : '';
+  const label = step.label ? ` // ${commentSafe(step.label)}` : '';
   switch (step.action) {
     case 'navigate': {
       // Resolves R1-H8: refuse to emit ROUTES[<key>] when no routes map is
@@ -209,10 +236,10 @@ function renderStepCalls(step, indent, ctx) {
         const waitExpr = renderWaitExpression(step.postWait);
         lines.push(`${indent}await Promise.all([`);
         lines.push(`${indent}  ${waitExpr},`);
-        lines.push(`${indent}  ${locatorCall(step.locator)}.click(),`);
+        lines.push(withMarker(`${indent}  ${locatorCall(step.locator)}.click(),`, step.locator));
         lines.push(`${indent}]);${label}`);
       } else {
-        lines.push(`${indent}await ${locatorCall(step.locator)}.click();${label}`);
+        lines.push(withMarker(`${indent}await ${locatorCall(step.locator)}.click();${label}`, step.locator));
         if (step.postWait) lines.push(...renderWait(step.postWait, indent));
       }
       break;
@@ -221,8 +248,8 @@ function renderStepCalls(step, indent, ctx) {
       if (!step.locator) {
         throw new Error(`renderCandidateSpec: fill step "${step.label || '(unnamed)'}" missing locator`);
       }
-      const blur = step.blurAfter === false ? '' : `\n${indent}await ${locatorCall(step.locator)}.blur();`;
-      lines.push(`${indent}await ${locatorCall(step.locator)}.fill(${js(step.value)});${blur}${label}`);
+      const blur = step.blurAfter === false ? '' : `\n${withMarker(`${indent}await ${locatorCall(step.locator)}.blur();`, step.locator)}`;
+      lines.push(`${withMarker(`${indent}await ${locatorCall(step.locator)}.fill(${js(step.value)});`, step.locator)}${blur}${label}`);
       break;
     }
     case 'wait': {
@@ -268,9 +295,9 @@ function renderWait(cond, indent) {
   if (!cond) return [];
   switch (cond.kind) {
     case 'visible':
-      return [`${indent}await ${locatorCall(cond.locator)}.waitFor({ state: 'visible', timeout: ${cond.timeoutMs} });`];
+      return [withMarker(`${indent}await ${locatorCall(cond.locator)}.waitFor({ state: 'visible', timeout: ${cond.timeoutMs} });`, cond.locator)];
     case 'hidden':
-      return [`${indent}await ${locatorCall(cond.locator)}.waitFor({ state: 'hidden',  timeout: ${cond.timeoutMs} });`];
+      return [withMarker(`${indent}await ${locatorCall(cond.locator)}.waitFor({ state: 'hidden',  timeout: ${cond.timeoutMs} });`, cond.locator)];
     case 'url':
       return [`${indent}await page.waitForURL(new RegExp(${js(cond.urlPattern)}), { timeout: ${cond.timeoutMs} });`];
     case 'network':
@@ -296,10 +323,17 @@ function renderAssertion(contradiction, indent) {
     );
   }
 
+  // The Contradiction schema carries only a raw selector STRING — no
+  // locator-kind reconstruction is attempted (plan: ux-lock-selector-policy,
+  // work item G). The shared classifySelector decides whether the emitted
+  // page.locator(sel) needs the fixed-reason structural marker; a semantic
+  // selector (e.g. `[data-engine-claim="x"]`) gets none, so promotion never
+  // self-generates stale-marker noise.
+  const locatorLine = `${indent}const el = page.locator(${js(sel)});`;
   const header = [
     '',
-    `${indent}// Lock the contract: ${contradiction.surfaceId}.${contradiction.engineField ?? '(n/a)'} (${contradiction.kind})`,
-    `${indent}const el = page.locator(${js(sel)});`,
+    `${indent}// Lock the contract: ${commentSafe(contradiction.surfaceId)}.${commentSafe(contradiction.engineField ?? '(n/a)')} (${commentSafe(contradiction.kind)})`,
+    classifySelector(sel) === 'structural' ? `${locatorLine} ${STRUCTURAL_MARKER}` : locatorLine,
     `${indent}await expect(el).toBeVisible();`,
   ];
 
@@ -408,6 +442,23 @@ function locatorCall(locator) {
   }
 }
 
+/**
+ * True when a journey-step locator resolves to a structural (id/css) handle
+ * per the shared policy oracle. Semantic kinds never need a marker; a css-kind
+ * selector may still be semantic (e.g. `[data-engine-claim="x"]`).
+ */
+function locatorIsStructural(locator) {
+  if (!locator) return false;
+  if (locator.kind === 'id') return true;
+  if (locator.kind === 'css') return classifySelector(locator.selector) === 'structural';
+  return false;
+}
+
+/** Append the fixed-reason selector-policy marker when the locator is structural. */
+function withMarker(line, locator) {
+  return locatorIsStructural(locator) ? `${line} ${STRUCTURAL_MARKER}` : line;
+}
+
 function js(value) {
   return JSON.stringify(value);
 }
@@ -422,5 +473,7 @@ export const _internals = Object.freeze({
   renderAssertion,
   renderWait,
   locatorCall,
+  locatorIsStructural,
+  STRUCTURAL_MARKER,
   slug,
 });

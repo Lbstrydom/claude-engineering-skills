@@ -1,5 +1,40 @@
 # Project Status Log
 
+## 2026-07-04 — Feat: /ux-lock selector policy — locate semantically, lint the drift
+
+### Changes
+- **Root cause (consumer evidence, wine-cellar-app)**: all 29 generated UX-lock specs
+  located structurally (`#id`/`.class`); the DOM-contract rule constrained ASSERTION
+  but not LOCATION, spec templates showed neutral `page.locator('...')` placeholders
+  (the a11y example even demonstrated a CSS id), and nothing linted generated specs.
+  Fixed the generator (flow), not the consumer's specs (stock — their migration plan).
+- **Policy** ([skills/ux-lock/SKILL.md](skills/ux-lock/SKILL.md) + 3 references):
+  selector priority ladder (`getByRole` → `getByLabel`/`getByPlaceholder` → `getByText`
+  → `getByTestId` → justified-structural CSS with mandatory-reason marker
+  `// selector-policy: structural — <reason>`); new Step 1.5 semantic-hook ladder
+  (native semantics → `data-testid` default → accurate ARIA only); shell-mode
+  prohibition (specs never import app source) documented AND enforced.
+- **Enforcement** (new [scripts/lib/ux-lock/selector-policy.mjs](scripts/lib/ux-lock/selector-policy.mjs),
+  wired into [ux-lock-run.mjs](scripts/ux-lock-run.mjs)): allowlist-semantics/deny-by-default
+  `classifySelector` (single policy oracle), comment+literal-masked multi-line scan with
+  template-`${}` expression visibility, relative-import closure scanning (helper evasion),
+  repoRoot-anchored `resolveTestRoot`, `app-module-import` class (static/dynamic/require;
+  bare npm deps allowed; alias map via `--alias`/tsconfig JSONC), fail-closed
+  empty/unreadable scans, warn-by-default + `--strict-selectors` (exit 6; refuses
+  `--specs` globs it can't pre-verify). Per-spec violation counts persist via migration
+  [20260703200000](supabase/migrations/20260703200000_selector_policy_violations.sql)
+  with a `42703`-only write fallback in [plans-ship.mjs](scripts/lib/store/plans-ship.mjs).
+- **Sibling generator**: [candidate-spec.mjs](scripts/lib/ux-lock/candidate-spec.mjs)
+  reuses `classifySelector` — structural emissions carry a provenance marker, semantic
+  ones none (no self-generated stale-marker noise); free text is comment-sanitized;
+  generated tokenEnv Error is `js()`-quoted.
+- **Process**: full `/cycle --autonomous` — plan audited (3 GPT rounds + 3 Gemini gate
+  rounds, 23 findings folded), implemented, code-audited (3 GPT rounds, 52 findings
+  adjudicated, 21 fixed with tests, 2 GPT compromises applied), **consolidated Gemini
+  gate: APPROVE (0 findings)**. Tests: +67 across three ux-lock suites; full suite 4336
+  green. Consumers: re-sync + `setup-postgres --migrate`; existing specs NOT rewritten
+  (lint warns by default). Plan: [docs/completed/ux-lock-selector-policy.md](docs/completed/ux-lock-selector-policy.md).
+
 ## 2026-07-03 — Fix: --depth shallow on reasoning models (per-depth reasoning_effort)
 
 ### Changes
