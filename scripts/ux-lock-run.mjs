@@ -65,7 +65,14 @@ async function cmdSpec() {
   const specsArg = opt('specs');
   const commit = opt('commit');
   const url = opt('url');
-  const runContext = opt('run-context') || 'ux-lock';
+  // Must satisfy the regression_spec_runs run_context CHECK constraint —
+  // an invalid value silently dropped the row ('ux-lock' was never allowed).
+  const RUN_CONTEXTS = new Set(['ship-gate', 'ci', 'manual', 'ux-lock-verify']);
+  const runContext = opt('run-context') || 'manual';
+  if (!RUN_CONTEXTS.has(runContext)) {
+    process.stderr.write(`  [ux-lock-run] invalid --run-context '${runContext}' — allowed: ${[...RUN_CONTEXTS].join(', ')}\n`);
+    process.exit(2);
+  }
   const sourceKind = opt('source-kind') || 'manual';
   const noRegister = flag('no-register');
 
@@ -99,8 +106,12 @@ async function cmdSpec() {
   const requested = specsArg
     ? new Set()
     : new Set([specArg].filter(Boolean).map(p => normalizeSpecPath(p, repoRoot)));
+  // Report file paths are relative to the report's rootDir (Playwright emits
+  // testDir-relative paths — bare basenames for a nested testDir), NOT the
+  // repo root; resolving against repoRoot orphaned every test on such repos.
+  const reportRootDir = result.report?.config?.rootDir || repoRoot;
   for (const t of tests) {
-    const sp = normalizeSpecPath(t.file, repoRoot);
+    const sp = normalizeSpecPath(path.resolve(reportRootDir, t.file), repoRoot);
     if (requested.size > 0 && !requested.has(sp)) { orphans.push(sp); continue; }
     if (!bySpec.has(sp)) bySpec.set(sp, []);
     bySpec.get(sp).push(t);
