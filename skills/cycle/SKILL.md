@@ -263,6 +263,12 @@ review. Max 6 rounds; quality threshold `HIGH==0 && MEDIUM<=2 && quickFix==0`.
 - `INCOMPLETE` (passes timed out) → present to user, offer: continue with partial / re-run with higher timeout / stop
 - Persistent HIGH findings after R6 → present to user with finding list, recommend fix-then-retry rather than ship
 
+> **Solo author-model control** fires automatically inside `/audit-code`
+> (its Step 6.5b — backgrounded, toggle-gated) when the `arm-eval` shadow is on.
+> `/cycle` delegates to `/audit-code`, so no separate action is needed here; if
+> you run the autonomous per-cluster path (Step 3C) that invokes `/audit-code`,
+> it inherits the same trigger.
+
 ---
 
 ## Step 5 — Persona Test (if scope ⊇ frontend, AND not --no-persona)

@@ -269,7 +269,7 @@ describe('createAnthropicClient (cli backend)', () => {
     assert.equal(resp._meta.cost_usd, 0.00042);
   });
 
-  it('passes --system-prompt, --model, --max-turns and pipes prompt via stdin', async () => {
+  it('passes --system-prompt, --model, --max-turns, --tools "" and pipes prompt via stdin', async () => {
     const dumpPath = path.join(tmpDir, 'cli-dump.json');
     const bin = writeFakeCliBinary({ dumpStdinTo: dumpPath });
     const client = await createAnthropicClient({ backend: 'cli', claudeBin: bin, fresh: true });
@@ -282,7 +282,7 @@ describe('createAnthropicClient (cli backend)', () => {
     const dump = JSON.parse(fs.readFileSync(dumpPath, 'utf-8'));
     assert.deepEqual(
       dump.argv,
-      ['-p', '--output-format', 'json', '--max-turns', '1',
+      ['-p', '--output-format', 'json', '--max-turns', '6', '--tools', '',
         '--system-prompt', 'be brief', '--model', 'claude-haiku-4-5'],
     );
     assert.equal(dump.stdin, 'ping');

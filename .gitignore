@@ -116,6 +116,11 @@ docs/arm-eval/worksheets/
 # with a timestamp; never committed (Category A).
 .audit-loop/arm-eval-toggle.json
 
+# Solo author-model control (scripts/solo-control-audit.mjs) — S findings, the
+# blind adjudication sheet, and its private unblind map. Derived from DB + git +
+# an LLM call (Category A); the private map must never be committed.
+.audit-loop/solo-control/
+
 # SOURCE-repo sync manifest — regenerated on every `npm run sync` (which the
 # pre-push hook runs), carrying volatile provenance (generatedAt timestamp +
 # HEAD sha) → Category A per the generated-artifact policy: committing it is pure

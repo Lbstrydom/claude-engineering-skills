@@ -385,7 +385,23 @@ function createCliAdapter(opts = {}) {
 
         // Prompt goes via stdin — avoids shell-escaping the user content
         // when `shell: true` is required (Windows .cmd / .bat resolution).
-        const args = ['-p', '--output-format', 'json', '--max-turns', '1'];
+        //
+        // `--tools ''` disables ALL tools. This backend's contract is a SINGLE-
+        // SHOT TEXT completion (assertOneShotTextMessages), so tool access
+        // contradicts it: given a large/complex prompt an agentic `claude -p`
+        // may choose `tool_use`, burn its `--max-turns` on the tool call, and
+        // exit `error_max_turns` WITHOUT ever emitting the answer. Every current
+        // caller (final review, summaries, prompt refinement, audits) wants a
+        // completion, not an agent — disabling tools makes the one-shot contract
+        // hold and is strictly safer for all of them.
+        //
+        // `--max-turns 6` (not 1): with tools OFF there is no agentic loop to
+        // bound, but a large-prompt completion empirically still needs >1
+        // internal turn — `--max-turns 1` made big audit prompts exit
+        // `error_max_turns` (num_turns 2) with no answer. 6 is comfortable
+        // headroom; the model still returns in a single visible turn, so this
+        // costs nothing extra in the normal case while fixing the false failure.
+        const args = ['-p', '--output-format', 'json', '--max-turns', '6', '--tools', ''];
         if (effectiveSystem) args.push('--system-prompt', effectiveSystem);
         if (model) args.push('--model', model);
 

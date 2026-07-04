@@ -49,6 +49,18 @@
       "description": "One-shot Anthropic API ping (verifies the configured backend — sdk or cli).",
       "category": "diagnostic"
     },
+    "solo-control:catchup": {
+      "description": "Run the solo author-model control (Sonnet-5 + Fable-5 clean cold-diff) over new shadow commits — the code-audit null-hypothesis baseline. Incremental; self-gates on the arm-eval toggle.",
+      "category": "audit"
+    },
+    "solo-control:merge": {
+      "description": "Build the source-blinded, shuffled adjudication sheet merging solo-control findings with the ledger's A/B/C arms.",
+      "category": "audit"
+    },
+    "solo-control:score": {
+      "description": "Unblind the labeled solo-control sheet and report each arm's recall-of-apparatus-accepted / solo-only / apparatus-only.",
+      "category": "audit"
+    },
     "azure:limits": {
       "description": "Probe each Azure deployment and print its live TPM/RPM rate limits + reset windows.",
       "category": "diagnostic"

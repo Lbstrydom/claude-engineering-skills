@@ -423,6 +423,35 @@ Telemetry dashboard: file://<abs-path>/dashboard/telemetry.html
 
 `telemetry.html` is gitignored — never staged, never committed.
 
+### Step 6.5b — Solo author-model control (background, toggle-gated)
+
+**Source-repo-gated** — run ONLY when `package.json.name === "claude-engineering-skills"`
+(skip silently in consumers). The solo control is a *centralized* research baseline:
+its blind human adjudication happens in one place, and a single source-repo run already
+sweeps sibling repos' shadow commits via `SOLO_CONTROL_REPO_ROOTS`. So it collects
+data for ALL local repos from here — it does not fragment across consumers.
+
+Standing policy: whenever the model-A/B/C shadow (`arm-eval`) toggle is ON, keep the
+**solo author-model baseline** current — clean Sonnet-5 + Fable-5 cold-diff over the
+same shadow commits. This is the null-hypothesis control the A/B/C arms lack (do the
+external auditor pipelines earn their keep vs a capable model reviewing the diff bare,
+and is the *cheap* model already good enough?). See `docs/solo-control-experiment.md`.
+
+Fire it **in the background, non-blocking** (it takes minutes; it must NEVER delay or
+gate the audit result):
+
+```bash
+node scripts/solo-control-audit.mjs run --model claude-sonnet-5 \
+  && node scripts/solo-control-audit.mjs run --model claude-fable-5   # run backgrounded
+```
+
+The script **self-gates on the toggle** (no-ops when the shadow is off) and is
+**incremental** (skips commits already covered), so this is safe to fire
+unconditionally after every source-repo audit; sibling-repo shadow commits are swept
+at the next source-repo run. Human blind adjudication is a separate offline step
+(`solo-control merge` → label → `score`) — never inline. Best-effort: a failure here
+is logged and ignored.
+
 ### Step 6.6 — Recommended next (à-la-carte advisor)
 
 So the user doesn't have to remember the whole chain, suggest the FEW additional

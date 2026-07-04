@@ -1,5 +1,43 @@
 # Project Status Log
 
+## 2026-07-04 — Feat: solo author-model control (Sonnet-5 + Fable-5) — the code-audit null hypothesis
+
+### Changes
+- **Why**: the model-A/B/C code-audit shadow compares three EXTERNAL auditor pipelines
+  (A=GPT→Gemini, B=OSS→GPT-round→Gemini, C=OSS→Gemini) against each other, but none
+  measured the counterfactual the whole apparatus is justified against — what a capable
+  model catches reviewing the same diff BARE. New arm S: clean cold-diff Sonnet-5
+  ("does an author-class model replace the apparatus?") + clean Fable-5 (the cost-frontier
+  floor: "is the CHEAP model bare already good enough?").
+- **Tool** (new [scripts/solo-control-audit.mjs](scripts/solo-control-audit.mjs)): offline,
+  NOT a 4th in-harness arm (keeps A/B/C uncontaminated). `run` audits each shadow commit
+  through the SAME 5 passes the arms run (`PASS_PROMPTS`) with the author model, no
+  downstream gate — egress-gated, sensitive-file-filtered, chunked (no truncation bias),
+  incremental (skips covered commits), self-gated on the arm-eval toggle, multi-repo sweep
+  via `SOLO_CONTROL_REPO_ROOTS`. `merge` builds a source-blinded, shuffled, uniform-detail
+  adjudication sheet (pulls A/B/C from the `model_ab_finding_scores` view so baseline arm A
+  is included) → `score` unblinds to per-arm recall-of-apparatus-accepted / solo-only /
+  apparatus-only. Human blind adjudication (no LLM judge — Claude-judging-Claude bias).
+- **anthropic-client fix** ([scripts/lib/anthropic-client.mjs](scripts/lib/anthropic-client.mjs)):
+  the cli backend ran `claude -p` as a full agent — a large prompt triggered `tool_use`,
+  burning its `--max-turns` and exiting `error_max_turns` without answering. Two-part fix:
+  (1) `--tools ""` — the backend already contracts a single-shot text completion
+  (`assertOneShotTextMessages`), so tools contradict it; (2) `--max-turns 1 → 6` — even
+  tools-off, a large audit prompt empirically needs >1 internal turn (1 made big prompts
+  exit error_max_turns / time out with no answer). Both are strictly safer for ALL cli
+  callers (final review, summaries, prompt refinement). Test updated; 42/42 pass.
+- **Standing policy** ([docs/solo-control-experiment.md](docs/solo-control-experiment.md)):
+  whenever the `arm-eval` shadow is on, `/audit-code` Step 6.5b fires both author models in
+  the BACKGROUND (source-repo-gated, non-blocking, toggle-self-gating, incremental); `/cycle`
+  inherits via its `/audit-code` delegation. `npm run solo-control:{catchup,merge,score}`.
+- **Origin**: `/brainstorm --with-gemini` (GPT-5.5 + Gemini-pro, 2 rounds) — converged on
+  cold-diff (not in-context), human blind union re-adjudication, parallel-frozen-diff as an
+  UPPER BOUND on external marginal value, Fable as a cost-frontier baseline (not author-variance).
+- **Synced** to consumers (anthropic-client fix lands everywhere; the solo trigger is
+  source-repo-gated). Heads-up: pre-existing uncommitted shadow-error-handling changes
+  (`classifyShadowFailure` in audit-shadow/openai-audit/audit-scope + test) were left
+  untouched — not part of this feature.
+
 ## 2026-07-04 — Feat: /ux-lock selector policy — locate semantically, lint the drift
 
 ### Changes
