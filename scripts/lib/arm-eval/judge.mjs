@@ -23,7 +23,7 @@
  */
 
 import { z } from 'zod';
-import { rubricFor, RUBRIC_INTENT_DIMS } from './experiments.mjs';
+import { rubricFor, RUBRIC_INTENT_DIMS, RUBRIC_GUIDANCE } from './experiments.mjs';
 
 // ── Deterministic seeded RNG (local — no cross-cluster import) ────────────────
 function mulberry32(seed) {
@@ -76,7 +76,10 @@ export function judgePassSchema(labels, dims) {
  * (real Opus omits ~3 dims on a large prompt; a strict schema alone can't fix
  * that — the retry can). It never fabricates: it demands the model complete. */
 export function buildJudgePrompt({ experimentType, blindOutputs, dims, contextPack, corrective = null }) {
-  const rubricLines = dims.map((d) => `- ${d}`).join('\n');
+  // Render `- <dim>: <guidance>` for dims with an explicit definition (sharpens
+  // an otherwise-ambiguous bare name — e.g. right_sizing → concision), else the
+  // bare `- <dim>`. Sparse by design so undefined dims keep prior scoring.
+  const rubricLines = dims.map((d) => (RUBRIC_GUIDANCE[d] ? `- ${d}: ${RUBRIC_GUIDANCE[d]}` : `- ${d}`)).join('\n');
   const outBlocks = blindOutputs.map((o) => `### ${o.label}\n${o.text}`).join('\n\n');
   return [
     `You are an impartial expert judge scoring ${blindOutputs.length} anonymized ${experimentType} outputs.`,

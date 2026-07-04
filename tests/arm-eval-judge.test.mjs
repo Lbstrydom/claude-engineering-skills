@@ -175,3 +175,35 @@ describe('judge — blinding, order-randomization, double-pass', () => {
     ] }).success, true);
   });
 });
+
+// right_sizing rubric guidance (2026-07-04 de-confound) ─────────────────────
+import { buildJudgePrompt, buildJudgePrompt as _bjp } from '../scripts/lib/arm-eval/judge.mjs';
+import { RUBRIC_GUIDANCE } from '../scripts/lib/arm-eval/experiments.mjs';
+
+describe('judge rubric — right_sizing gets an explicit concision definition', () => {
+  const promptFor = () => buildJudgePrompt({
+    experimentType: 'brainstorm',
+    blindOutputs: [{ label: 'output-1', text: 'x' }, { label: 'output-2', text: 'y' }],
+    dims: rubricFor('brainstorm'),
+    contextPack: null,
+  });
+
+  it('right_sizing is rendered WITH its concision guidance, not a bare name', () => {
+    const p = promptFor();
+    assert.match(p, /- right_sizing: Concision relative to the ideas conveyed/);
+    assert.match(p, /Length and structure are NOT thoroughness/);
+    // the guidance text is the single source of truth
+    assert.ok(p.includes(RUBRIC_GUIDANCE.right_sizing));
+  });
+
+  it('un-guided dims stay bare (sparse map — no re-baseline of working dims)', () => {
+    const p = promptFor();
+    assert.match(p, /- insight\n/);        // bare, no colon-definition
+    assert.ok(!/- insight: /.test(p));
+    assert.match(p, /- clarity\n/);
+  });
+
+  it('RUBRIC_GUIDANCE is deliberately sparse (only demonstrated mis-scorings)', () => {
+    assert.deepEqual(Object.keys(RUBRIC_GUIDANCE), ['right_sizing']);
+  });
+});

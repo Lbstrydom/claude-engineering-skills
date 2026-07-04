@@ -39,6 +39,29 @@ export const RUBRIC_EXT = Object.freeze({
   auditor: Object.freeze([]), // the auditor experiment scores via finding adjudication, not this rubric
 });
 
+/**
+ * Explicit judge-facing definitions for dimensions whose bare NAME is ambiguous
+ * enough to be scored on the judge's prior rather than the intended meaning.
+ * `buildJudgePrompt` renders `- <dim>: <guidance>` when an entry exists, else the
+ * bare `- <dim>`. Deliberately SPARSE — only dims with an observed mis-scoring get
+ * a definition, so the majority keep their existing (well-behaved) scoring and
+ * stay comparable with prior sessions.
+ *
+ * `right_sizing` (added 2026-07-04): the bare name was being read as
+ * "appropriately thorough / well-structured", which REWARDED verbose, heavily-
+ * formatted output (the GLM arms scored HIGHER on it than the plainer baseline —
+ * an inversion, since verbosity should hurt concision). The definition below
+ * re-anchors it to concision so length is no longer mistaken for quality.
+ */
+export const RUBRIC_GUIDANCE = Object.freeze({
+  right_sizing:
+    'Concision relative to the ideas conveyed. Reward saying it once, clearly; '
+    + 'penalize padding, filler, redundant restatement, and length or heavy '
+    + 'formatting that adds no information. Length and structure are NOT '
+    + 'thoroughness — an output that could be materially shorter without losing '
+    + 'substance scores LOWER here, however polished it looks.',
+});
+
 /** Full ordered dimension list for an experiment (core + its extension). */
 export function rubricFor(experimentType) {
   const ext = RUBRIC_EXT[experimentType];
