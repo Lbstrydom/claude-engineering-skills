@@ -129,8 +129,14 @@ function* walkDir(absDir) {
   while (stack.length) {
     const cur = stack.pop();
     let entries;
+    // Fail CLOSED: an unreadable command-bearing directory must abort the
+    // walk, not be silently skipped — otherwise the relocation/command-surface
+    // gates that consume this walk would pass while never having scanned the
+    // directory (a false clean; the green-path-honesty rule).
     try { entries = fs.readdirSync(cur, { withFileTypes: true }); }
-    catch { continue; }
+    catch (err) {
+      throw new Error(`walkDir: cannot read directory ${cur} — verification aborted rather than silently skipping it (${err.message})`);
+    }
     for (const e of entries) {
       const abs = path.join(cur, e.name);
       if (e.isDirectory()) stack.push(abs);
@@ -235,7 +241,8 @@ function gate2B(consumerRoot, manifest) {
     // The manifest cannot record its own final hash: writing the self-entry
     // mutates the file, which changes the hash (chicken-and-egg). Skip it —
     // gate 2B verifies the files the manifest governs, not the manifest body.
-    if (destRel === 'scripts/.sync-manifest.json') continue;
+    // Use the layout constant so this never drifts from the actual manifest path.
+    if (destRel === LAYOUT_CONSTANTS.MANIFEST_PATH) continue;
     const abs = path.join(consumerRoot, destRel);
     if (!fs.existsSync(abs)) { missing.push(destRel); continue; }
     let actual;
@@ -259,7 +266,11 @@ function gate3(consumerRoot, manifest) {
   const stale = [];
   for (const abs of files) {
     let content;
-    try { content = fs.readFileSync(abs, 'utf-8'); } catch { continue; }
+    // Fail CLOSED: an unreadable command-bearing file must abort the gate, not
+    // be silently skipped — else a stale synced path hiding in it passes the
+    // isolation check unverified (same fail-open class as the old walkDir).
+    try { content = fs.readFileSync(abs, 'utf-8'); }
+    catch (err) { throw new Error(`gate3: cannot read command-bearing file ${abs} — failing closed rather than skipping it unverified (${err.message})`); }
     let m;
     COMMAND_REGEX.lastIndex = 0;
     while ((m = COMMAND_REGEX.exec(content)) !== null) {
@@ -353,7 +364,10 @@ function gate5(consumerRoot, manifest) {
     const abs = path.join(consumerRoot, k);
     if (!fs.existsSync(abs)) continue;
     let content;
-    try { content = fs.readFileSync(abs, 'utf-8'); } catch { continue; }
+    // Fail CLOSED (same rationale as gate3): a present-but-unreadable file
+    // must not be silently skipped from the npm-ref reconciliation.
+    try { content = fs.readFileSync(abs, 'utf-8'); }
+    catch (err) { throw new Error(`npm-ref scan: cannot read ${abs} — failing closed (${err.message})`); }
     for (const r of enumerateNpmRunRefs(content)) allRefs.add(r);
   }
 

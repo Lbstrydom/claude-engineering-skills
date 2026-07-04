@@ -362,3 +362,46 @@ describe('ux-lock-run CLI — strict mode refuses unresolvable globs (audit R2-M
     assert.equal(lastJson(stdout)?.error?.code, 'SELECTOR_STRICT_GLOB_UNRESOLVED');
   });
 });
+
+// ── mapCriteriaToItems: skipped vs failed (store-hardening #7) ──────────────
+
+describe('mapCriteriaToItems — skipped is distinct from failed', () => {
+  const crit = (hash, severity = 'P1') => ({ hash, severity, category: 'x', description: hash });
+
+  it('a criterion whose only test was skipped → skipped:true, passed:false', () => {
+    const { items } = mapCriteriaToItems([crit('h1')],
+      [{ criterionHash: 'h1', status: 'skipped', durationMs: 0, errorMessage: null, title: 't' }]);
+    assert.equal(items[0].skipped, true);
+    assert.equal(items[0].passed, false);
+  });
+
+  it('a genuinely failed criterion is NOT skipped', () => {
+    const { items } = mapCriteriaToItems([crit('h1')],
+      [{ criterionHash: 'h1', status: 'failed', durationMs: 5, errorMessage: 'boom', title: 't' }]);
+    assert.equal(items[0].skipped, false);
+    assert.equal(items[0].passed, false);
+  });
+
+  it('a criterion with NO matching test is a coverage gap, not skipped', () => {
+    const { items } = mapCriteriaToItems([crit('h1')], []);
+    assert.equal(items[0].skipped, false);
+    assert.equal(items[0].passed, false);
+    assert.equal(items[0].errorMessage, 'no matching test result');
+  });
+
+  it('mixed skipped + failed matches → not skipped (a real failure dominates)', () => {
+    const { items } = mapCriteriaToItems([crit('h1')], [
+      { criterionHash: 'h1', status: 'skipped', durationMs: 0, errorMessage: null, title: 'a' },
+      { criterionHash: 'h1', status: 'failed', durationMs: 3, errorMessage: 'x', title: 'b' },
+    ]);
+    assert.equal(items[0].skipped, false);
+    assert.equal(items[0].passed, false);
+  });
+
+  it('a passed criterion is neither skipped nor failed', () => {
+    const { items } = mapCriteriaToItems([crit('h1')],
+      [{ criterionHash: 'h1', status: 'passed', durationMs: 2, errorMessage: null, title: 't' }]);
+    assert.equal(items[0].skipped, false);
+    assert.equal(items[0].passed, true);
+  });
+});

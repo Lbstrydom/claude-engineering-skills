@@ -190,6 +190,42 @@ describe('buildUpsert', () => {
     assert.match(sql, /DO UPDATE SET "b" = EXCLUDED\."b", "c" = EXCLUDED\."c"/);
   });
 
+  // conflictWhere — partial-index arbiter predicate (ux-lock-selector-policy §7 #2)
+  it('appends a WHERE predicate to the conflict target for a partial index', () => {
+    const { sql } = buildUpsert('t', [{ a: 1, b: 2 }], {
+      onConflict: ['a', 'b'],
+      conflictWhere: "b IS NOT NULL AND a IS NOT NULL",
+      update: 'all',
+    });
+    assert.match(sql, /ON CONFLICT \("a", "b"\) WHERE b IS NOT NULL AND a IS NOT NULL DO UPDATE SET/);
+  });
+
+  it('conflictWhere works with DO NOTHING too', () => {
+    const { sql } = buildUpsert('t', [{ a: 1 }], { onConflict: 'a', conflictWhere: 'a > 0' });
+    assert.match(sql, /ON CONFLICT \("a"\) WHERE a > 0 DO NOTHING/);
+  });
+
+  it('rejects conflictWhere without an onConflict target', () => {
+    assert.throws(
+      () => buildUpsert('t', [{ a: 1 }], { conflictWhere: 'a > 0' }),
+      /conflictWhere requires a column-list onConflict/,
+    );
+  });
+
+  it('rejects conflictWhere on an ON CONSTRAINT target', () => {
+    assert.throws(
+      () => buildUpsert('t', [{ a: 1 }], { onConflict: 'ON CONSTRAINT foo', conflictWhere: 'a > 0', update: 'all' }),
+      /illegal with an ON CONSTRAINT target/,
+    );
+  });
+
+  it('rejects an empty conflictWhere string', () => {
+    assert.throws(
+      () => buildUpsert('t', [{ a: 1 }], { onConflict: 'a', conflictWhere: '  ' }),
+      /conflictWhere must be a non-empty string/,
+    );
+  });
+
   it('refuses non-uniform row shapes', () => {
     assert.throws(
       () => buildUpsert('t', [{ a: 1, b: 2 }, { a: 1 }], { onConflict: 'a' }),

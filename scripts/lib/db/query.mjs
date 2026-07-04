@@ -215,15 +215,25 @@ function buildInsert(table, row, { returning } = {}) {
  *  - `'all'`           → `DO UPDATE SET <every column> = EXCLUDED.<column>`
  *  - `string[]`        → `DO UPDATE SET <listed columns> = EXCLUDED.<column>`
  *
+ * `conflictWhere`: an OPTIONAL raw predicate string appended as
+ * `ON CONFLICT (<cols>) WHERE <predicate>` — required to target a PARTIAL
+ * unique index (Postgres matches the arbiter index by inference, and a
+ * partial index is only inferable when the statement carries a WHERE matching
+ * its predicate). **Trusted literal only** — like `quoteIdent`'d identifiers,
+ * this is never user input; it is a hardcoded predicate mirroring a known
+ * index definition. Only legal with a column-list `onConflict` (not with
+ * `ON CONSTRAINT`, which names its own arbiter).
+ *
  * @param {string} table
  * @param {Array<Record<string, unknown>>} rows
  * @param {{
  *   onConflict?: string | string[],
+ *   conflictWhere?: string,
  *   update?: 'all' | string[] | 'ignore' | null | false,
  *   returning?: true | '*' | string | string[]
  * }} [opts]
  */
-function buildUpsert(table, rows, { onConflict, update, returning } = {}) {
+function buildUpsert(table, rows, { onConflict, conflictWhere, update, returning } = {}) {
   if (!Array.isArray(rows) || rows.length === 0) {
     throw new Error(`buildUpsert(${table}): rows must be a non-empty array`);
   }
@@ -274,9 +284,26 @@ function buildUpsert(table, rows, { onConflict, update, returning } = {}) {
     return `(${placeholders.join(', ')})`;
   });
 
+  // Partial-index conflict predicate. Only valid with a column-list target;
+  // an `ON CONSTRAINT` arbiter already fixes the index, so a WHERE there is a
+  // contradiction we reject rather than emit invalid SQL.
+  let conflictPredicate = '';
+  if (conflictWhere !== undefined) {
+    if (typeof conflictWhere !== 'string' || conflictWhere.trim() === '') {
+      throw new TypeError(`buildUpsert(${table}): conflictWhere must be a non-empty string`);
+    }
+    if (onConflict === undefined) {
+      throw new Error(`buildUpsert(${table}): conflictWhere requires a column-list onConflict`);
+    }
+    if (typeof onConflict === 'string' && /^ON\s+CONSTRAINT/i.test(onConflict.trim())) {
+      throw new Error(`buildUpsert(${table}): conflictWhere is illegal with an ON CONSTRAINT target`);
+    }
+    conflictPredicate = ` WHERE ${conflictWhere.trim()}`;
+  }
+
   let sql = `INSERT INTO ${quoteIdent(table)} (${cols.join(', ')}) VALUES ${valueGroups.join(', ')}`;
   if (onConflict !== undefined) {
-    const target = normalizeConflictTarget(onConflict);
+    const target = `${normalizeConflictTarget(onConflict)}${conflictPredicate}`;
     if (update == null || update === 'ignore' || update === false) {
       sql += ` ON CONFLICT ${target} DO NOTHING`;
     } else if (update === 'all') {

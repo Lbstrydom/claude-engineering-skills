@@ -22,6 +22,14 @@ import { isCloudEnabled } from './repo.mjs';
 export async function upsertPlan(repoId, plan) {
   if (!plan?.path || !plan?.skill) return null;
   if (!await isCloudEnabled()) return null;
+  if (!repoId) {
+    // Idempotence is claimed on (repo_id, path), a FULL unique index. A NULL
+    // repo_id is distinct from every other NULL in Postgres, so a null here
+    // INSERTs a duplicate plan row on every call instead of updating — same
+    // defect class as recordRegressionSpec's repoId guard. Refuse.
+    process.stderr.write('  [learning] upsertPlan: requires a resolved repoId (NULL would duplicate on the (repo_id, path) unique index)\n');
+    return null;
+  }
   try {
     const rows = await upsert('plans', [{
       repo_id: repoId || null,
@@ -41,16 +49,24 @@ export async function upsertPlan(repoId, plan) {
   }
 }
 
-/** Update a plan's status. */
+/** Update a plan's status. Returns { ok, rowCount }. */
 export async function updatePlanStatus(planId, status) {
-  if (!planId || !await isCloudEnabled()) return;
+  if (!planId || !await isCloudEnabled()) return { ok: false, rowCount: 0 };
   try {
-    await updateWhere('plans',
+    const { rowCount } = await updateWhere('plans',
       { status, updated_at: new Date().toISOString() },
       { id: planId }
     );
+    // A 0-row update means the planId matched nothing (stale id, or an RLS
+    // policy silently filtered the row) — surface it rather than reporting a
+    // phantom success the caller can't distinguish from a real write.
+    if (rowCount === 0) {
+      process.stderr.write(`  [learning] updatePlanStatus: no row updated for planId=${planId} (stale id or RLS)\n`);
+    }
+    return { ok: rowCount > 0, rowCount };
   } catch (err) {
     process.stderr.write(`  [learning] updatePlanStatus failed: ${err.message}\n`);
+    return { ok: false, rowCount: 0 };
   }
 }
 
@@ -81,9 +97,19 @@ export async function recordRegressionSpec(repoId, spec) {
       process.stderr.write('  [learning] recordRegressionSpec: candidate rows require resolved repoId (NULL would silently allow duplicates through the partial unique index)\n');
       return null;
     }
-  } else if (!spec.specPath) {
-    process.stderr.write('  [learning] recordRegressionSpec: spec_path is required for non-candidate source_kind\n');
-    return null;
+  } else {
+    if (!spec.specPath) {
+      process.stderr.write('  [learning] recordRegressionSpec: spec_path is required for non-candidate source_kind\n');
+      return null;
+    }
+    if (!repoId) {
+      // The (repo_id, spec_path) unique constraint is a FULL index; a NULL
+      // repo_id is distinct from every other NULL in Postgres, so the upsert
+      // would silently INSERT a duplicate on every re-run instead of updating.
+      // Mirror the candidate branch: refuse rather than accrue dupes.
+      process.stderr.write('  [learning] recordRegressionSpec: non-candidate rows require a resolved repoId (NULL would duplicate on the (repo_id, spec_path) unique index)\n');
+      return null;
+    }
   }
   if (!spec.description) return null;
 
@@ -125,9 +151,18 @@ export async function recordRegressionSpec(repoId, spec) {
     updated_at: new Date().toISOString(),
   };
   const onConflict = isCandidate ? ['repo_id', 'candidate_fingerprint'] : ['repo_id', 'spec_path'];
+  // The candidate arbiter is a PARTIAL unique index
+  // (idx_regression_specs_candidate_fingerprint, migration 20260520120000);
+  // Postgres can only infer it as the ON CONFLICT arbiter when the statement
+  // carries a WHERE matching the index predicate. Without this the upsert
+  // raises 42P10 on every candidate write. The (repo_id, spec_path) arbiter
+  // for non-candidate rows is a full constraint and needs no predicate.
+  const conflictWhere = isCandidate
+    ? "candidate_fingerprint IS NOT NULL AND source_kind = 'persona-consistency-candidate' AND repo_id IS NOT NULL"
+    : undefined;
   try {
     const rows = await upsert('regression_specs', [row], {
-      onConflict, update: 'all', returning: ['id'],
+      onConflict, conflictWhere, update: 'all', returning: ['id'],
     });
     return rows[0]?.id ?? null;
   } catch (err) {
@@ -382,13 +417,14 @@ export async function recordPlanVerificationItems(runId, planId, items) {
     setup_text: item.setupText || null,
     assert_text: item.assertText || null,
     passed: !!item.passed,
+    skipped: !!item.skipped,
     error_message: item.errorMessage || null,
     duration_ms: item.durationMs || null,
   }));
-  try {
-    const pool = await getPool();
-    if (!pool) return;
-    const cols = Object.keys(rows[0]);
+  const pool = await getPool();
+  if (!pool) return;
+  const insertItems = async (omitSkipped) => {
+    const cols = Object.keys(rows[0]).filter((c) => !(omitSkipped && c === 'skipped'));
     const params = [];
     const valueGroups = rows.map((row) => {
       const placeholders = cols.map((c) => {
@@ -402,7 +438,17 @@ export async function recordPlanVerificationItems(runId, planId, items) {
        VALUES ${valueGroups.join(', ')}`,
       params
     );
+  };
+  try {
+    await insertItems(false);
   } catch (err) {
+    // 42703-only: consumer DB predates the `skipped` column (migration
+    // 20260704…) — retry once without it so the per-criterion rows aren't lost.
+    if (err?.code === '42703' && 'skipped' in rows[0]) {
+      process.stderr.write('  [learning] plan_verification_items.skipped missing — run setup-postgres --migrate; recording without it\n');
+      try { await insertItems(true); return; }
+      catch (retryErr) { process.stderr.write(`  [learning] recordPlanVerificationItems failed: ${retryErr.message}\n`); return; }
+    }
     process.stderr.write(`  [learning] recordPlanVerificationItems failed: ${err.message}\n`);
   }
 }

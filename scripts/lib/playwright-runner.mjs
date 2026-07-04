@@ -42,6 +42,15 @@ export const RUN_STATUS = Object.freeze({
   REPORT_UNREADABLE:  'report-unreadable',   // ran but no parseable JSON report
 });
 
+/**
+ * Allowed `regression_spec_runs.run_context` values. Single source of truth for
+ * the runtime side of the DB CHECK constraint in
+ * `supabase/migrations/20260419120000_cross_skill_data_loop.sql` — SQL cannot
+ * import this, so the migration carries a comment pointing here; keep the two
+ * lists in lock-step when either changes.
+ */
+export const RUN_CONTEXTS = Object.freeze(['ship-gate', 'ci', 'manual', 'ux-lock-verify']);
+
 /** Map a RUN_STATUS to the CLI process exit code (closed contract). */
 export function exitCodeForStatus(status, { testsPassed } = {}) {
   switch (status) {
@@ -244,12 +253,19 @@ export function mapCriteriaToItems(criteria, tests) {
     if (seen.has(c.hash)) continue; // duplicate expected hash — recorded once
     seen.add(c.hash);
     const matches = byHash.get(c.hash) || [];
-    let passed, errorMessage, durationMs = 0;
+    let passed, errorMessage, durationMs = 0, skipped = false;
     if (matches.length === 0) {
+      // A criterion with no test at all is a coverage GAP, not a skip — it
+      // stays a failure (the runner's coverage guarantee).
       passed = false; errorMessage = 'no matching test result';
     } else {
       passed = matches.every(m => statusToPassed(m.status).passed);
       durationMs = matches.reduce((s, m) => s + (m.durationMs || 0), 0);
+      // A criterion is SKIPPED (author marked it unverifiable, e.g. no
+      // semantic handle) only when every matching test was Playwright-skipped
+      // — distinct from a real failure so the chronic-failure / failing-P0
+      // rollups don't miscount an intentional skip as a regression.
+      skipped = matches.every(m => m.status === 'skipped');
       const failing = matches.find(m => !statusToPassed(m.status).passed);
       errorMessage = failing ? (failing.errorMessage || statusToPassed(failing.status).note) : null;
     }
@@ -257,7 +273,7 @@ export function mapCriteriaToItems(criteria, tests) {
       criterionHash: c.hash, criterionIndex: i,
       severity: c.severity, category: c.category, description: c.description,
       setupText: c.setup || null, assertText: c.assertion || null,
-      passed, errorMessage, durationMs,
+      passed, skipped, errorMessage, durationMs,
     });
   }
   return { items, orphanTests };

@@ -27,7 +27,7 @@ import path from 'node:path';
 
 import {
   runPlaywrightJson, flattenReport, statusToPassed, normalizeSpecPath,
-  resolveRepoRoot, exitCodeForStatus, RUN_STATUS, mapCriteriaToItems,
+  resolveRepoRoot, exitCodeForStatus, RUN_STATUS, RUN_CONTEXTS, mapCriteriaToItems,
 } from './lib/playwright-runner.mjs';
 import { parseAcceptanceCriteria } from './lib/plan-criteria-parser.mjs';
 import { emit } from './lib/cli-io.mjs';
@@ -166,10 +166,10 @@ async function cmdSpec() {
   const url = opt('url');
   // Must satisfy the regression_spec_runs run_context CHECK constraint —
   // an invalid value silently dropped the row ('ux-lock' was never allowed).
-  const RUN_CONTEXTS = new Set(['ship-gate', 'ci', 'manual', 'ux-lock-verify']);
+  // RUN_CONTEXTS is the shared constant mirroring that DB CHECK.
   const runContext = opt('run-context') || 'manual';
-  if (!RUN_CONTEXTS.has(runContext)) {
-    process.stderr.write(`  [ux-lock-run] invalid --run-context '${runContext}' — allowed: ${[...RUN_CONTEXTS].join(', ')}\n`);
+  if (!RUN_CONTEXTS.includes(runContext)) {
+    process.stderr.write(`  [ux-lock-run] invalid --run-context '${runContext}' — allowed: ${RUN_CONTEXTS.join(', ')}\n`);
     process.exit(2);
   }
   const sourceKind = opt('source-kind') || 'manual';
