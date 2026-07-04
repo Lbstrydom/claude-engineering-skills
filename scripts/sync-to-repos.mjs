@@ -122,6 +122,13 @@ const CORE_ENTRY = [
   // for consumer repos to audit their Supabase project's exposure after a
   // migration. Same lib/db/ closure as setup-postgres.mjs.
   'scripts/check-rls.mjs',
+  // One-shot operator reconcile of fragmented audit_repos rows in the shared
+  // store. A standalone CLI nothing imports, but it carries --selfcheck-relocation
+  // AND is in the relocation guard's CLI_SMOKE_SET (which asserts consumer
+  // presence) — so it MUST ship, or gate 4 fails in every consumer. The walker
+  // pulls its lib/db/ closure automatically. (Was missing → both consumers
+  // failed the relocation smoke; declared here to restore consistency.)
+  'scripts/reconcile-repo-identity.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   // Persona-test consistency mode CLIs (docs/plans/persona-test-consistency-mode.md).
   // Both are user-invoked CLIs; the import-graph walker pulls in their
