@@ -138,7 +138,7 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
   return total;
 }
 
-// ── Redact-once context producer (model-A/B/C harness — decision 11) ────────
+// ── Egress-scoped context producer (model-A/B/C harness — decision 11) ──────
 //
 // THE single upstream step that produces the context the generation shadow
 // consumes. Sensitive FILES are already excluded by readFilesAsContext
@@ -146,8 +146,14 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
 // signature takes this output, never file paths, making egress bypass
 // structurally impossible. A final secret-pattern SCAN over the assembled text
 // (an in-allowlist file may still hardcode a key) reports whether the context
-// is egress-safe; the caller/adapter enforces via assertEgressSafe. Redaction
-// happens ONCE here and the same object is shared by baseline + all arms.
+// is egress-safe.
+//
+// NOTE despite the name: this does NOT redact an in-file secret-shaped match —
+// it only FLAGS it (egressSafe:false, egressPatterns:[...]). The caller/adapter
+// must refuse to send via assertEgressSafe rather than auto-scrub-and-send (see
+// sensitive-egress-gate.mjs: "refuse rather than silently scrub-and-send to a
+// new provider"). File-level exclusion happens ONCE here and the same object
+// is shared by baseline + all arms — that's the "redact-once" in decision 11.
 //
 // @param {string[]} filePaths
 // @param {object} [opts] - forwarded to readFilesAsContext (maxPerFile, maxTotal)

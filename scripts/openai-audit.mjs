@@ -2934,7 +2934,7 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
     const { resolveShadowArmsWithToggle } = await import('./lib/arm-eval/toggle.mjs');
     const armSet = resolveShadowArmsWithToggle(process.env);
     if (armSet.enabled) {
-      const { runGenerationShadow } = await import('./lib/audit-shadow.mjs');
+      const { runGenerationShadow, classifyShadowFailure } = await import('./lib/audit-shadow.mjs');
       const { buildRedactedAuditContext } = await import('./lib/audit-scope.mjs');
       const redacted = buildRedactedAuditContext([...subjectFiles]);
       const shadowSummary = await runGenerationShadow({
@@ -2953,8 +2953,15 @@ async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMo
       );
     }
   } catch (err) {
-    if (err && typeof err.message === 'string' && err.message.includes('[egress-gate]')) throw err;
-    process.stderr.write(`  [shadow] model-A/B shadow failed (non-gating): ${err.message}\n`);
+    // The shadow is opt-in/observation-only — NO failure here, including an
+    // egress-gate refusal, may propagate past this point. Doing so would abort
+    // the primary audit before its --out write, discarding an already-
+    // successful result over an unrelated side experiment (see
+    // classifyShadowFailure doc in lib/audit-shadow.mjs).
+    const { classifyShadowFailure } = await import('./lib/audit-shadow.mjs');
+    const { log, marker } = classifyShadowFailure(err);
+    process.stderr.write(`  [shadow] ${log}\n`);
+    if (marker) mergedResult._modelAbShadow = marker;
   }
 
   // Attach cloud run ID to result for orchestrator reference. The /audit-code
@@ -3725,8 +3732,13 @@ async function main() {
           }
         }
       } catch (err) {
-        if (err && typeof err.message === 'string' && err.message.includes('[egress-gate]')) throw err;
-        process.stderr.write(`  [shadow] model-A/B PLAN shadow failed (non-gating): ${err.message}\n`);
+        // See the code-audit shadow block above — no shadow failure, including
+        // an egress-gate refusal, may propagate past this point (would abort
+        // the primary plan-audit result before its --out write).
+        const { classifyShadowFailure } = await import('./lib/audit-shadow.mjs');
+        const { log, marker } = classifyShadowFailure(err);
+        process.stderr.write(`  [shadow] PLAN ${log}\n`);
+        if (marker) result._modelAbShadow = marker;
       }
     }
 

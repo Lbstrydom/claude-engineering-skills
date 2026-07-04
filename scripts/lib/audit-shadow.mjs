@@ -517,6 +517,29 @@ export async function runGenerationShadow({
   };
 }
 
+/**
+ * Classify an error thrown out of the shadow block for the CALLER
+ * (`runMultiPassCodeAudit` / plan-mode shadow in openai-audit.mjs). The shadow
+ * is opt-in and observation-only (module header: "the shadow NEVER affects A's
+ * verdict") — so no error surfacing here, including an intentionally-propagated
+ * egress-gate refusal (see `runGenerationShadow` doc above), may be RE-THROWN
+ * past this point. A rethrow would abort the primary audit before its `--out`
+ * write, destroying an already-successful result over an unrelated side
+ * experiment. Log loudly instead; an egress refusal gets a marker so it's
+ * visible in the persisted result.
+ *
+ * @param {Error} err
+ * @returns {{ log: string, marker: {state: string} | null }}
+ */
+export function classifyShadowFailure(err) {
+  const message = (err && typeof err.message === 'string') ? err.message : String(err);
+  const isEgressRefusal = message.includes('[egress-gate]');
+  return {
+    log: `model-A/B shadow ${isEgressRefusal ? 'REFUSED (egress-gate)' : 'failed'} (non-gating): ${message}`,
+    marker: isEgressRefusal ? { state: 'refused-egress' } : null,
+  };
+}
+
 // ── Default (production) deps ────────────────────────────────────────────────
 
 function defaultDeps() {

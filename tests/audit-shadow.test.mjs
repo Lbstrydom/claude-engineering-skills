@@ -8,7 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runGenerationShadow, SHADOW_PASSES, seededShuffle } from '../scripts/lib/audit-shadow.mjs';
+import { runGenerationShadow, SHADOW_PASSES, seededShuffle, classifyShadowFailure } from '../scripts/lib/audit-shadow.mjs';
 import { resolveArms } from '../scripts/lib/audit-arms.mjs';
 import { applyModelAbAdjudication, reserveSpend } from '../scripts/lib/store/model-ab.mjs';
 
@@ -251,6 +251,30 @@ describe('runGenerationShadow — best-effort & egress', () => {
     const gen = genStats(calls);
     assert.ok(gen.length > 0);
     assert.ok(gen.every((p) => p.stats.structuredOutputOk === false), 'failed gen passes are conformance misses');
+  });
+});
+
+describe('classifyShadowFailure — caller-side containment (the shadow NEVER gates)', () => {
+  // Companion to the "propagates" tests above: runGenerationShadow correctly
+  // THROWS on an egress-gate refusal (so the reservation is released, not
+  // reconciled), but the CALLER (openai-audit.mjs) must never let that — or
+  // any other shadow failure — escape past this classification and abort the
+  // primary audit's already-successful --out write.
+  it('an egress-gate error gets a refused-egress marker (caller must not rethrow)', () => {
+    const err = new Error('[egress-gate] refusing to send oss-arm payload — secret pattern(s) detected: dsn-password');
+    const r = classifyShadowFailure(err);
+    assert.deepEqual(r.marker, { state: 'refused-egress' });
+    assert.match(r.log, /REFUSED \(egress-gate\)/);
+  });
+  it('a non-egress shadow failure (e.g. provider timeout) has no marker but is still logged', () => {
+    const r = classifyShadowFailure(new Error('provider timeout'));
+    assert.equal(r.marker, null);
+    assert.match(r.log, /failed \(non-gating\)/);
+  });
+  it('handles a non-Error thrown value without crashing', () => {
+    const r = classifyShadowFailure('a raw string throw');
+    assert.equal(r.marker, null);
+    assert.match(r.log, /a raw string throw/);
   });
 });
 
