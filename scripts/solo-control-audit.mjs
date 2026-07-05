@@ -275,7 +275,7 @@ function parseJsonLoose(text) {
  * audit-shadow.mjs::runStage's per-pass prompt shape (system = PASS_PROMPTS[pass],
  * user = task + code), minus the reservation/cost machinery (offline, uncapped —
  * this is a bounded 20-call batch, not the live spend path). */
-async function runPass(client, model, passName, diff) {
+async function runPass(client, model, passName, diff, { temperature } = {}) {
   // system = the arm's pass prompt VERBATIM (fairness); JSON contract goes last in user.
   const system = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
   const user = [
@@ -287,10 +287,14 @@ async function runPass(client, model, passName, diff) {
   for (let attempt = 1; attempt <= 2; attempt++) {
     let resp;
     try {
-      resp = await client.messages.create({
+      const params = {
         model, max_tokens: 8000, system,
         messages: [{ role: 'user', content: attempt === 1 ? user : user + '\n\nYour previous reply was not valid JSON. Reply with ONLY the JSON object.' }],
-      }, { timeoutMs: 300000 }); // a 45k-char audit prompt runs ~60-90s via claude -p; 120s default is too tight
+      };
+      // temperature only meaningful on the SDK backend (cli `claude -p` ignores it);
+      // pinned non-zero for --repeats so the N samples are genuinely independent.
+      if (temperature != null) params.temperature = temperature;
+      resp = await client.messages.create(params, { timeoutMs: 300000 });
     } catch (err) {
       // A provider/backend failure on ONE pass must NOT crash the whole run —
       // degrade to a conformance miss (0 findings) and move on.
@@ -301,12 +305,12 @@ async function runPass(client, model, passName, diff) {
     const parsed = clampToSchema(parseJsonLoose(text));
     const check = ShadowPassSchema.safeParse(parsed);
     if (check.success) {
-      return { findings: check.data.findings, usage: resp.usage || null };
+      return { findings: check.data.findings, usage: resp.usage || null, rawText: text };
     }
     lastErr = check.error?.issues?.map((i) => i.message).join('; ') || 'unparseable';
   }
   log(`      ! pass ${passName} produced no conformant JSON (${lastErr}) — recorded 0 findings`);
-  return { findings: [], usage: null, conformanceMiss: true };
+  return { findings: [], usage: null, conformanceMiss: true, rawText: null };
 }
 
 // ── subcommands ──────────────────────────────────────────────────────────────
@@ -322,6 +326,12 @@ async function cmdRun() {
   const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10); // per-chunk cap (~11k tok); larger chunks slow claude -p past its timeout
   const commitsArg = argOption('commits');
   const force = hasFlag('force');
+  // xN arm (the confound-breaker). N sequential samples per pass×chunk. A non-zero
+  // temperature is MANDATORY (Gemini-R2-HIGH): at temp 0 the N samples are identical
+  // and collapse to x1. temperature only works on the SDK backend (cli claude -p
+  // can't set it), so --repeats>1 forces the sdk backend.
+  const repeats = Math.max(1, Number.parseInt(argOption('repeats', '1'), 10) || 1);
+  const temperature = repeats > 1 ? Number.parseFloat(argOption('temperature', '1.0')) : null;
 
   // SELF-GATE on the arm-eval/shadow toggle: the standing policy is "run the solo
   // control WHENEVER the shadow is on". So the audit skills fire `solo-control:
@@ -335,7 +345,8 @@ async function cmdRun() {
   const requested = commitsArg ? commitsArg.split(',').map((s) => s.trim()).filter(Boolean) : await discoverCommits();
   if (requested.length === 0) { log('No target commits found (no B/C audit-code shadow units yet).'); process.exit(0); }
 
-  const label = armLabelFor(model, argOption('label'));
+  const baseLabel = armLabelFor(model, argOption('label'));
+  const label = repeats > 1 ? `${baseLabel}-x${repeats}` : baseLabel;   // S-sonnet vs S-sonnet-x3
   const dest = sFindingsPath(label);
 
   // INCREMENTAL accumulation (standing-policy use): merge onto any prior file for
@@ -351,9 +362,18 @@ async function cmdRun() {
   out.armLabel = label;
 
   if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for ${label} — nothing to do (use --force to re-audit).`); process.exit(0); }
-  log(`Solo control — arm=${label} · model=${model} (${modelArg}), ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}, stage=${STAGE_TYPE}`);
-  const client = await createAnthropicClient();
-  let totalIn = 0, totalOut = 0;
+  const backend = repeats > 1 ? 'sdk' : undefined; // sdk needed for temperature control
+  log(`Solo control — arm=${label} · model=${model} (${modelArg}), ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}${repeats > 1 ? ` · repeats=${repeats} temp=${temperature} backend=sdk` : ''}, stage=${STAGE_TYPE}`);
+  let client;
+  try {
+    client = await createAnthropicClient(backend ? { backend } : {});
+  } catch (err) {
+    log(`FATAL: cannot create ${backend || 'default'} client${repeats > 1 ? ' (the xN arm needs ANTHROPIC_API_KEY for the SDK backend — cli claude -p cannot set temperature)' : ''}: ${err.message}`);
+    process.exit(2);
+  }
+  // Provenance (§12.5): pin what actually ran so the experiment is reproducible + fair.
+  out.provenance = { repeats, temperature, backend: backend || 'cli(default)', maxChars, resolvedModel: model };
+  let totalIn = 0, totalOut = 0, samplingVariedUnits = 0, samplingTotalUnits = 0;
 
   for (const sha of commits) {
     const short = sha.slice(0, 8);
@@ -375,8 +395,20 @@ async function cmdRun() {
     let commitFindings = 0;
     for (const passName of PASSES) {
       for (const chunk of chunks) {
-        const { findings, usage } = await runPass(client, model, passName, chunk);
-        if (usage) { totalIn += usage.input_tokens || 0; totalOut += usage.output_tokens || 0; }
+        // xN: N sequential samples per pass×chunk (never concurrent — Gemini-R1-MEDIUM,
+        // avoids 429s). Union their findings; detect sampling degeneracy.
+        const rawTexts = [];
+        const findings = [];
+        for (let rep = 0; rep < repeats; rep++) {
+          const r = await runPass(client, model, passName, chunk, { temperature });
+          if (r.usage) { totalIn += r.usage.input_tokens || 0; totalOut += r.usage.output_tokens || 0; }
+          if (r.rawText != null) rawTexts.push(r.rawText);
+          findings.push(...r.findings);
+        }
+        if (repeats > 1) {
+          samplingTotalUnits++;
+          if (new Set(rawTexts).size > 1) samplingVariedUnits++; // outputs actually varied
+        }
         for (const f of findings) {
           const file = f.section || (ext.files[0] || '');
           const h = dupHash(f.category, file, f.detail);
@@ -399,6 +431,20 @@ async function cmdRun() {
   // Accumulate token usage across incremental runs.
   const priorUsage = out.usage || { input_tokens: 0, output_tokens: 0 };
   out.usage = { input_tokens: (priorUsage.input_tokens || 0) + totalIn, output_tokens: (priorUsage.output_tokens || 0) + totalOut };
+
+  // Degeneracy guard (Gemini-R2-HIGH): if NO pass×chunk produced varied samples, the
+  // xN arm never actually iterated (temperature ineffective) — flag it so scoring
+  // treats it as x1, never as if it had iterated.
+  if (repeats > 1) {
+    out.samplingDegenerate = samplingTotalUnits > 0 && samplingVariedUnits === 0;
+    out.samplingVariedUnits = samplingVariedUnits;
+    out.samplingTotalUnits = samplingTotalUnits;
+    if (out.samplingDegenerate) {
+      log(`⚠ SAMPLING DEGENERATE: all ${samplingTotalUnits} pass×chunk unit(s) returned byte-identical repeats — the x${repeats} arm did NOT iterate (temperature ineffective). It is effectively x1; scoring must not credit iteration.`);
+    } else {
+      log(`sampling varied on ${samplingVariedUnits}/${samplingTotalUnits} unit(s).`);
+    }
+  }
   atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
   log(`\nWrote ${out.findings.length} total ${label} findings (${covered.size ? '+' + covered.size + ' prior commits' : 'fresh'}) → ${path.relative(process.cwd(), dest)}`);
   log(`Tokens this run: ${totalIn} in / ${totalOut} out. Next: run other author models, then \`merge\`.`);
@@ -456,124 +502,136 @@ async function cmdMerge() {
     }
   }
   const ext = await fetchExternalFindings(commits);
+  // Coverage preflight (§12.4 / R2-H1): a covered commit with NO apparatus (arm A)
+  // rows can't be compared — it would read as "solo won" against an empty apparatus.
+  // Refuse rather than dead-end; the operator runs /audit-code on the gap commits
+  // (the apparatus-input contract) to populate the view, then re-merges.
+  const apparatusCommits = new Set(ext.filter((e) => e.arm === 'A').map((e) => e.commit_sha));
+  const gaps = commits.filter((c) => !apparatusCommits.has(c));
+  if (gaps.length && !hasFlag('allow-apparatus-gaps')) {
+    log(`REFUSING: ${gaps.length}/${commits.length} commit(s) have NO apparatus (arm A) findings in the ledger — an empty apparatus arm would falsely read as "solo won":`);
+    for (const g of gaps.slice(0, 10)) log(`  ${g.slice(0, 12)} — run /audit-code on this commit first (apparatus-input contract), then re-merge.`);
+    log('Or pass --allow-apparatus-gaps to score only the covered commits (documented lower coverage).');
+    process.exit(4);
+  }
   for (const e of ext) {
     if (!inScope(e.severity)) continue;
     rows.push({ arm: e.arm, commit: e.commit_sha, severity: e.severity, category: e.category, file: e.primary_file, detail: (e.detail || '').slice(0, DETAIL_CAP), dup: dupHash(e.category, e.primary_file, e.detail), fingerprint: e.finding_fingerprint });
   }
 
+  // Cluster-PROPOSE pre-pass (offline aggregation aid): the LLM suggests duplicate
+  // groups (bias to over-split), the human overrides. Sensitive rows never sent;
+  // any failure → deterministic dupHash fallback. Proposals seed the `cluster` col.
+  const { proposeClusters } = await import('./lib/solo-control/cluster-propose.mjs');
+  let clusterOf = new Map();
+  let clusterMode = 'duphash';
+  try {
+    const client = await createAnthropicClient().catch(() => null);
+    const prop = await proposeClusters(rows.map((r) => ({ category: r.category, file: r.file, detail: r.detail })), { client });
+    clusterMode = prop.mode;
+    for (const [cid, idxs] of Object.entries(prop.clusters)) for (const i of idxs) clusterOf.set(i, cid);
+  } catch { /* fall through — cluster col defaults to dupHash below */ }
+
   // Assign blind ids, then shuffle deterministically (seededShuffle — replayable).
   rows.forEach((r, i) => { r._i = i; });
   const order = seededShuffle(rows.map((_, i) => i), seed);
-  const blind = order.map((origIdx, pos) => ({ blindId: `F${String(pos + 1).padStart(3, '0')}`, ...rows[origIdx] }));
+  const blind = order.map((origIdx, pos) => ({ blindId: `F${String(pos + 1).padStart(3, '0')}`, proposedCluster: clusterOf.get(origIdx) || rows[origIdx].dup, ...rows[origIdx] }));
 
-  // Public sheet — NO arm/fingerprint columns. Pre-fill `cluster` with the dup-hash
-  // HINT so verbatim dups share a value; the human RE-clusters semantically and
-  // fills `verdict` (accept|dismiss|uncertain).
-  const header = ['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'verdict', 'cluster'];
+  // Known-defect commits (if curated) — surfaced so the adjudicator knows which
+  // commits have a documented bug to look for (they fill `matches` with the KD id).
+  const kdPath = path.join('docs/experiments/audit-effectiveness/known-defects.json');
+  const knownDefects = fs.existsSync(kdPath) ? (JSON.parse(fs.readFileSync(kdPath, 'utf8')).defects || []) : [];
+
+  // Public sheet — NO arm/fingerprint columns. 4-LABEL proof protocol (§12.1/§12.2):
+  // `label` = proven|actionable|plausible|false; `proof` = file:line/repro for
+  // high-severity; `cluster` = the proposed group (human overrides — merge/split
+  // veto); `matches` = the known-defect id this finding proves, if any.
+  const header = ['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches'];
   const lines = [header.join(',')];
   for (const b of blind) {
-    lines.push([b.blindId, b.commit.slice(0, 8), b.severity, b.category, b.file, b.detail, '', b.dup].map(csvField).join(','));
+    lines.push([b.blindId, b.commit.slice(0, 8), b.severity, b.category, b.file, b.detail, '', '', b.proposedCluster, ''].map(csvField).join(','));
   }
   fs.mkdirSync(OUT_DIR, { recursive: true });
   atomicWriteFileSync(BLIND_CSV, lines.join('\n') + '\n');
 
-  // Private mapping (blindId → real arm + fingerprint) for `score`. Written
-  // separately so you can label the CSV without seeing the arm.
+  // Private mapping (blindId → real arm + severity/category for scoreArms) for `score`.
   const map = {};
-  for (const b of blind) map[b.blindId] = { arm: b.arm, commit: b.commit, fingerprint: b.fingerprint, dup: b.dup };
-  atomicWriteFileSync(BLIND_MAP, JSON.stringify({ seed, detailCap: DETAIL_CAP, commits, map }, null, 2));
+  for (const b of blind) map[b.blindId] = { arm: b.arm, commit: b.commit, severity: b.severity, category: b.category, fingerprint: b.fingerprint, dup: b.dup };
+  // Underpowered/degenerate solo arms → carried so scoring can mark them ineligible.
+  const armMeta = {};
+  for (const run of soloRuns) armMeta[run.armLabel || 'S'] = { samplingDegenerate: !!run.samplingDegenerate, repeats: run.provenance?.repeats ?? 1 };
+  atomicWriteFileSync(BLIND_MAP, JSON.stringify({ seed, detailCap: DETAIL_CAP, commits, clusterMode, knownDefects: knownDefects.map((d) => ({ id: d.id, buggyCommit: d.buggyCommit })), armMeta, map }, null, 2));
 
   const byArm = blind.reduce((a, b) => ((a[b.arm] = (a[b.arm] || 0) + 1), a), {});
-  log(`Blind sheet: ${blind.length} findings (${Object.entries(byArm).map(([k, v]) => `${k}:${v}`).join(' ')}) → ${path.relative(process.cwd(), BLIND_CSV)}`);
-  log('Label the `verdict` column (accept|dismiss|uncertain) and merge dupes in `cluster`.');
+  log(`Blind sheet: ${blind.length} findings (${Object.entries(byArm).map(([k, v]) => `${k}:${v}`).join(' ')}) · clustering=${clusterMode}${knownDefects.length ? ` · ${knownDefects.length} known-defect(s)` : ''} → ${path.relative(process.cwd(), BLIND_CSV)}`);
+  log('Label `label` (proven|actionable|plausible|false); add `proof` (file:line/repro) for high-severity; fix `cluster` (merge/split); set `matches` to a known-defect id where it applies.');
   log('Do NOT open .blind-map.json while labeling. Then: node scripts/solo-control-audit.mjs score');
 }
 
 async function cmdScore() {
   if (!fs.existsSync(BLIND_CSV) || !fs.existsSync(BLIND_MAP)) { log('Run `merge` and label the CSV first.'); process.exit(1); }
-  const { map, commits } = JSON.parse(fs.readFileSync(BLIND_MAP, 'utf8'));
+  const { map, commits, knownDefects = [], armMeta = {} } = JSON.parse(fs.readFileSync(BLIND_MAP, 'utf8'));
   const csv = fs.readFileSync(BLIND_CSV, 'utf8').split(/\r?\n/).filter(Boolean);
   const header = csv[0].split(',');
-  const iId = header.indexOf('blind_id'), iVerdict = header.indexOf('verdict'), iCluster = header.indexOf('cluster');
+  const col = (n) => header.indexOf(n);
+  const iId = col('blind_id'), iLabel = col('label'), iCluster = col('cluster'), iMatches = col('matches'), iProof = col('proof');
 
-  // Parse labeled rows (simple CSV; detail may be quoted — split on the fixed
-  // leading/trailing columns rather than naive comma-split of the whole line).
+  // Simple quoted-CSV parse.
   const parseRow = (line) => {
     const out = []; let cur = '', q = false;
-    for (const ch of line) {
-      if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch;
-    }
+    for (const ch of line) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; }
     out.push(cur); return out;
   };
 
-  const clusters = new Map(); // clusterKey → { arms:Set, verdict }
-  let unlabeled = 0;
+  const VALID = new Set(['proven', 'actionable', 'plausible', 'false']);
+  const scoringRows = [];
+  let unlabeled = 0, invalid = 0, dataRows = 0;
+  const highNeedingProof = [];
   for (let i = 1; i < csv.length; i++) {
     const cols = parseRow(csv[i]);
     const blindId = cols[iId];
-    const verdict = (cols[iVerdict] || '').trim().toLowerCase();
-    const clusterKey = (cols[iCluster] || blindId).trim() || blindId;
     const m = map[blindId];
     if (!m) continue;
-    if (!verdict) { unlabeled++; continue; }
-    if (!clusters.has(clusterKey)) clusters.set(clusterKey, { arms: new Set(), verdict: 'dismiss' });
-    const c = clusters.get(clusterKey);
-    c.arms.add(m.arm);
-    // Cluster is accepted if ANY member row is accepted; uncertain if any uncertain and none accept.
-    if (verdict === 'accept') c.verdict = 'accept';
-    else if (verdict === 'uncertain' && c.verdict !== 'accept') c.verdict = 'uncertain';
-  }
-  if (unlabeled > 0) log(`⚠ ${unlabeled} row(s) have no verdict — label them for a complete score.`);
-
-  const accepted = [...clusters.values()].filter((c) => c.verdict === 'accept');
-  const has = (c, arm) => c.arms.has(arm);
-  const hasExt = (c) => EXTERNAL_ARMS.some((a) => c.arms.has(a));
-
-  // Arms actually present in the labeled data → solo arms = anything not A/B/C
-  // (e.g. S-sonnet, S-fable). The apparatus = A/B/C.
-  const allArms = [...new Set(Object.values(map).map((m) => m.arm))].sort();
-  const soloArms = allArms.filter((a) => !EXTERNAL_ARMS.includes(a));
-
-  const acceptedByArm = {};
-  const uniqueByArm = {};
-  for (const arm of allArms) {
-    acceptedByArm[arm] = accepted.filter((c) => has(c, arm)).length;
-    uniqueByArm[arm] = accepted.filter((c) => c.arms.size === 1 && has(c, arm)).length;
+    dataRows++;
+    const label = (cols[iLabel] || '').trim().toLowerCase();
+    if (!label) { unlabeled++; continue; }
+    if (!VALID.has(label)) { invalid++; log(`  ⚠ ${blindId}: invalid label "${label}" (expected proven|actionable|plausible|false) — excluded`); continue; }
+    const humanCluster = (cols[iCluster] || m.dup || blindId).trim() || blindId;
+    const matches = iMatches >= 0 ? (cols[iMatches] || '').trim() || null : null;
+    if ((m.severity || '').toUpperCase() === 'HIGH' && (label === 'proven' || label === 'actionable') && !(iProof >= 0 && (cols[iProof] || '').trim())) {
+      highNeedingProof.push(blindId);
+    }
+    scoringRows.push({ arm: m.arm, commit: m.commit, severity: m.severity, category: m.category, label, humanCluster, matches });
   }
 
-  // Per-solo-arm vs the apparatus: recall of externally-accepted clusters, and how
-  // many accepted clusters that solo arm found ALONE (no apparatus arm).
-  const extAccepted = accepted.filter(hasExt);
-  const soloVsApparatus = {};
-  for (const sa of soloArms) {
-    const recallNum = extAccepted.filter((c) => has(c, sa)).length;
-    soloVsApparatus[sa] = {
-      recallOfApparatusAccepted: extAccepted.length ? +(recallNum / extAccepted.length).toFixed(3) : null,
-      recallFraction: `${recallNum}/${extAccepted.length}`,
-      soloOnlyAccepted: accepted.filter((c) => has(c, sa) && !hasExt(c)).length,
-    };
-  }
-  const apparatusOnlyAccepted = accepted.filter((c) => hasExt(c) && !soloArms.some((sa) => has(c, sa))).length;
+  const coverage = dataRows > 0 ? (dataRows - unlabeled) / dataRows : 0;
+  if (unlabeled > 0) log(`⚠ ${unlabeled}/${dataRows} row(s) unlabeled (coverage ${(coverage * 100).toFixed(0)}%).`);
+
+  const underpowered = Object.entries(armMeta).filter(([, v]) => v.samplingDegenerate).map(([k]) => k);
+  const { scoreArms } = await import('./lib/solo-control/scoring.mjs');
+  const result = scoreArms(scoringRows, { knownDefects, underpowered, apparatusArm: 'A' });
 
   const soloMeta = {};
   for (const f of listSFindings()) {
     const r = JSON.parse(fs.readFileSync(path.join(OUT_DIR, f), 'utf8'));
-    soloMeta[r.armLabel || 'S'] = { model: r.model, tokens: r.usage || null };
+    soloMeta[r.armLabel || 'S'] = { model: r.model, repeats: r.provenance?.repeats ?? 1, samplingDegenerate: !!r.samplingDegenerate };
   }
 
   const report = {
     commitsCovered: commits.length,
-    acceptedClusters: accepted.length,
-    acceptedByArm,
-    uniqueAcceptedByArm: uniqueByArm,
-    soloVsApparatus,
-    apparatusOnlyAccepted,
+    labelCoverage: +coverage.toFixed(2),
+    decisionStatus: coverage >= 0.9 && highNeedingProof.length === 0 ? 'final' : 'directional-only',
+    ...result,
     soloArmModels: soloMeta,
-    caveat: 'Parallel frozen-diff — apparatus-only accepted is an UPPER BOUND on external marginal value (in prod, a solo review would fix bugs before the apparatus saw the diff).',
+    notes: {
+      proofGap: highNeedingProof.length ? `${highNeedingProof.length} HIGH accepted finding(s) lack a proof cell → directional-only (§12.3 P4 gate)` : null,
+      invalidLabels: invalid || null,
+      caveat: 'Parallel frozen-diff — apparatus-unique value is an UPPER BOUND on external marginal value (in prod, a solo review would fix bugs before the apparatus saw the diff).',
+    },
   };
   process.stdout.write(JSON.stringify(report, null, 2) + '\n');
-  log('\nInterpretation: a solo arm with high recallOfApparatusAccepted + nonzero soloOnlyAccepted puts the apparatus on notice; '
-    + 'apparatusOnlyAccepted dominating → it earns its keep. Compare solo arms to each other (e.g. S-fable vs S-sonnet) for the cost-frontier call.');
+  log('\nInterpretation (§12.2): an eligible solo arm with `matchesApparatus:true` at lower cost puts the apparatus on notice; '
+    + 'ineligible (FP/noise ceiling) or under-recall on known defects → the apparatus earns its keep. Compare S-fable vs S-sonnet for the cost frontier.');
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
