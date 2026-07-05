@@ -1,5 +1,14 @@
 # Project Status Log
 
+## 2026-07-05 — Feat: audit-effectiveness experiment — Cluster A (free diagnostics) + audited plan
+
+### Changes
+- **Plan** ([docs/plans/audit-effectiveness-experiment.md](docs/plans/audit-effectiveness-experiment.md)) — a cost-ordered, phase-gated methodology to get *credible cheap traction* on "what's the cost-effective, high-quality code-audit setup" (apparatus vs single-shot vs iterated solo). Origin: `/brainstorm --with-gemini` + debate; audited GPT ×2 + Gemini ×2 (24 findings resolved). Biggest audit catches: the decision metric needed real formulas + a hard FP ceiling; known-defect commits have no apparatus rows so the apparatus must be *run* on them; and **the xN arm is invalid at temperature 0** (identical outputs collapse to x1 — pinned temp 1.0 + degeneracy guard).
+- **Cluster A — free analysis tools** (`/cycle code --autonomous`, fix-gate none, audited): **`scripts/ledger-decompose.mjs`** (Phase 1 — read-only "where does accepted value come from": accepted value by round/stage + gate marginal value; a free kill-criterion) and **`scripts/defect-harvest.mjs`** (Phase 2 — mine git commit→fix pairs into candidate known-buggy commits; pure-addition/omission defects flagged for human curation, never auto-attributed). Injectable `deps` for tests; egress/sensitive-path filtered; silent-green failure semantics.
+- **Phase 1 already produced real signal** (free): round-1 accepted-value share **48%** (iteration is NOT dead weight — rounds 2+ add 52%, contra the brainstorm prior) and Gemini-gate marginal value **8.3%** (weak as a net-new generator; suppression value unmeasured). → Phase 3 runs the full apparatus, not lean.
+- **Tests** (Tier-1, +9): harvester extraction (revert/Fixes-sha/skip-#issue/pure-addition/blame) + decomposition aggregation. Audit fixes applied: `process.exitCode` (not `process.exit` after stdout — flush truncation), null-round bucket, `Fixes:` trailer, markdown table, snapshot header. npm `audit-exp:{ledger,harvest}` + catalog entries.
+- **Next**: Clusters B (same-model-×3 arm + apparatus preflight) + C (proof-protocol scoring + cluster-propose) are code-only; the experiment then run-gates on human curation of `known-defects.json` + blind adjudication.
+
 ## 2026-07-04 — Feat: solo author-model control (Sonnet-5 + Fable-5) — the code-audit null hypothesis
 
 ### Changes

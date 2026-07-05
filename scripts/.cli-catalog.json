@@ -49,6 +49,14 @@
       "description": "One-shot Anthropic API ping (verifies the configured backend — sdk or cli).",
       "category": "diagnostic"
     },
+    "audit-exp:ledger": {
+      "description": "Phase 1 of the audit-effectiveness experiment — read-only ledger decomposition (accepted value by round/stage + gate marginal value); a free kill-criterion diagnostic.",
+      "category": "audit"
+    },
+    "audit-exp:harvest": {
+      "description": "Phase 2 of the audit-effectiveness experiment — mine git commit→fix pairs into candidate known-buggy commits (real ground truth) for human curation.",
+      "category": "audit"
+    },
     "solo-control:catchup": {
       "description": "Run the solo author-model control (Sonnet-5 + Fable-5 clean cold-diff) over new shadow commits — the code-audit null-hypothesis baseline. Incremental; self-gates on the arm-eval toggle.",
       "category": "audit"

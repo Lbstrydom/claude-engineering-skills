@@ -18,6 +18,8 @@
     "audit:gemini-ping": "node scripts/gemini-review.mjs ping",
     "final-review:set": "node scripts/gemini-review.mjs set-provider",
     "anthropic:ping": "node scripts/anthropic-ping.mjs",
+    "audit-exp:ledger": "node scripts/ledger-decompose.mjs --out docs/experiments/audit-effectiveness/phase1-ledger-decomposition.md",
+    "audit-exp:harvest": "node scripts/defect-harvest.mjs --apply",
     "solo-control:catchup": "node scripts/solo-control-audit.mjs run --model claude-sonnet-5 && node scripts/solo-control-audit.mjs run --model claude-fable-5",
     "solo-control:merge": "node scripts/solo-control-audit.mjs merge",
     "solo-control:score": "node scripts/solo-control-audit.mjs score",
