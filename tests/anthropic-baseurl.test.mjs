@@ -2,8 +2,9 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAnthropicClient, _resetClientCache } from '../scripts/lib/anthropic-client.mjs';
 
-// Use redactor:null so the factory returns the RAW Anthropic SDK client
-// (the redaction wrapper would hide `.baseURL`). sdk backend + explicit apiKey.
+// redactor:null opts out of redaction, but the factory now ALWAYS wraps the
+// SDK client (for the timeoutMs→timeout translation); the wrapper passes
+// `.baseURL`/`.authToken` through as getters. sdk backend + explicit apiKey.
 
 const BASE = { backend: 'sdk', apiKey: 'sk-test', redactor: null, fresh: true };
 

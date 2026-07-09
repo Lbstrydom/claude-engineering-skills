@@ -1,0 +1,165 @@
+{
+  "experiment": "solo-control-audit — code-audit pipeline vs. solo model review",
+  "date": "2026-07-09",
+  "audience_note": "Prepared for a university lecturer discussion, NOT for publication. wine-cellar-app must never be named — refer to it generically as 'a private commercial app.' ai-organiser and claude-engineering-skills may be named freely.",
+  "research_question": "Does a heavyweight multi-model AI code-audit pipeline (GPT-5.5 + Gemini, optionally an OSS model round) actually produce more trustworthy findings than a single capable model reviewing the same diff once, cold, with no pipeline?",
+  "method": {
+    "design": "Six 'arms' independently audited the SAME 14 real commits (seeded with known defects) across 3 private/personal repos. Every finding from every arm was pooled into one shuffled, source-stripped sheet (2,314 rows) and graded BLIND — the grader never knew which arm produced a given finding — against the actual code at that commit.",
+    "why_blind": "The production pipeline's own accept/dismiss labels were produced by that same pipeline, so grading a challenger against them would be circular. A blind, source-stripped re-grading is the only fair comparison.",
+    "why_two_judges": "A single LLM judge risks self-preference bias (e.g., a Claude judge favoring Claude-authored findings). Two independent judges from different model families (Claude Fable-5 and GPT-5.5) graded the SAME sheet completely independently, never seeing each other's labels.",
+    "commits": 14,
+    "commits_usable": 13,
+    "commits_excluded_reason": "1 commit's diff exceeded the size cap for every arm (a 6.3M-character mega-commit) — recorded as unscored-by-refusal, never silently dropped.",
+    "repos": ["claude-engineering-skills", "a private commercial app", "ai-organiser"],
+    "total_findings_graded": 2314,
+    "label_taxonomy": {
+      "proven": "1.0 — direct code evidence confirms the claim exactly, cited file:line.",
+      "actionable": "0.6 — real, worth-fixing issue, not a slam-dunk proof.",
+      "plausible": "0 — could be true, unverifiable from the diff alone.",
+      "false": "0 — factually contradicted by the code."
+    },
+    "severity_weights": { "LOW": 1, "MEDIUM": 3, "HIGH": 8 },
+    "eligibility_rule": "An arm is ELIGIBLE only if false-rate ≤ 33% AND (plausible+false)-rate ≤ 50%. Below either bar, the arm is disqualified regardless of how many real bugs it also found — the logic being that a reviewer who is wrong more than 1-in-3 times can't be trusted without independently re-checking everything, which defeats the point of automating review."
+  },
+  "arms": {
+    "A": {
+      "label": "Apparatus (production pipeline)",
+      "composition": "GPT-5.5 (5-pass audit) → Gemini review",
+      "role": "The real, expensive, currently-deployed audit pipeline this whole experiment is testing."
+    },
+    "B": {
+      "label": "OSS + GPT round",
+      "composition": "GLM-5.2 (5-pass, via OpenRouter) → 1 independent GPT-5.5 round → Gemini review",
+      "role": "Does adding a GPT round on top of a cheap OSS model earn its keep?"
+    },
+    "C": {
+      "label": "OSS only",
+      "composition": "GLM-5.2 (5-pass, shared compute with B) → Gemini review",
+      "role": "Can a cheap OSS model + review alone replace the GPT-based apparatus?"
+    },
+    "S-sonnet": {
+      "label": "Solo Sonnet-5",
+      "composition": "Claude Sonnet-5, cold diff, ONE pass, no pipeline, no review layer.",
+      "role": "The capability-ceiling null hypothesis — what does a strong author-class model catch reviewing bare?"
+    },
+    "S-fable": {
+      "label": "Solo Fable-5",
+      "composition": "Claude Fable-5, cold diff, ONE pass, no pipeline, no review layer.",
+      "role": "The cost-frontier floor — is the CHEAP model, run bare, already good enough?"
+    },
+    "S-sonnet-x3": {
+      "label": "Solo Sonnet-5 ×3",
+      "composition": "Claude Sonnet-5, same cold diff, 3 independent repeated passes, findings unioned.",
+      "role": "Does repeating the same model catch more, or just add noise?"
+    }
+  },
+  "results_by_judge": {
+    "claude_fable5_judge": {
+      "decision_status": "final",
+      "row_coverage": "2314/2314",
+      "arms": {
+        "A":           { "eligible": false, "value": 439.0, "precision": 0.385, "falseRate": 0.408, "noiseRate": 0.465, "kdRecall_corrected": "5/13 (0.385)" },
+        "B":           { "eligible": false, "value": 784.6, "precision": 0.385, "falseRate": 0.384, "noiseRate": 0.495, "kdRecall_corrected": "5/13 (0.385)" },
+        "C":           { "eligible": true,  "value": 444.2, "precision": 0.391, "falseRate": 0.318, "noiseRate": 0.494, "kdRecall_corrected": "3/13 (0.231)" },
+        "S-sonnet":    { "eligible": false, "value": 817.4, "precision": 0.428, "falseRate": 0.331, "noiseRate": 0.461, "kdRecall_corrected": "4/13 (0.308)" },
+        "S-fable":     { "eligible": true,  "value": 878.6, "precision": 0.437, "falseRate": 0.311, "noiseRate": 0.436, "kdRecall_corrected": "3/13 (0.231)" },
+        "S-sonnet-x3": { "eligible": false, "value": 492.4, "precision": 0.394, "falseRate": 0.433, "noiseRate": 0.480, "kdRecall_corrected": "2/13 (0.154)" }
+      }
+    },
+    "gpt55_judge": {
+      "decision_status": "directional-only",
+      "decision_status_reason": "1 HIGH accepted finding lacked a proof cell (P4 gate) — a procedural gap, not a substantive disagreement.",
+      "row_coverage": "2314/2314",
+      "arms": {
+        "A":           { "eligible": false, "value": 551.0, "precision": 0.397, "falseRate": 0.395, "noiseRate": 0.495, "kdRecall_corrected": "5/13 (0.385)" },
+        "B":           { "eligible": false, "value": 899.2, "precision": 0.385, "falseRate": 0.375, "noiseRate": 0.518, "kdRecall_corrected": "7/13 (0.538)" },
+        "C":           { "eligible": false, "value": 442.2, "precision": 0.358, "falseRate": 0.356, "noiseRate": 0.565, "kdRecall_corrected": "5/13 (0.385)", "note": "Raw score had 6/14 — one match was a bogus credit for the invalidated KD-013; corrected here to 5/13." },
+        "S-sonnet":    { "eligible": true,  "value": 1072.4, "precision": 0.434, "falseRate": 0.288, "noiseRate": 0.483, "kdRecall_corrected": "4/13 (0.308)" },
+        "S-fable":     { "eligible": true,  "value": 1098.6, "precision": 0.435, "falseRate": 0.258, "noiseRate": 0.483, "kdRecall_corrected": "3/13 (0.231)" },
+        "S-sonnet-x3": { "eligible": false, "value": 804.6, "precision": 0.384, "falseRate": 0.445, "noiseRate": 0.517, "kdRecall_corrected": "4/13 (0.308)" }
+      }
+    }
+  },
+  "judge_agreement": {
+    "rows_compared": 2314,
+    "exact_label_agreement": "1476/2314 (63.8%)",
+    "coarse_accept_reject_agreement": "2017/2314 (87.2%)",
+    "hard_disagreement_proven_vs_false": "18/2314 (0.8%)",
+    "eligibility_agreement": "Both judges agree on 4 of 6 arms (A, B, S-fable, S-sonnet-x3). Two arms flip depending on judge: C (eligible per Claude, ineligible per GPT — .318 vs .356, either side of the .33 ceiling) and S-sonnet (ineligible per Claude, eligible per GPT — .331 vs .288)."
+  },
+  "known_findings": [
+    "The production apparatus (A) fails its own trust bar in BOTH independent judges — 39-41% of its claims are flatly wrong when checked against the real code.",
+    "A single cheap model reviewing once (S-fable) is MORE trustworthy than the full multi-model pipeline — lower false-rate, higher value — in both judges.",
+    "But the apparatus still recovers more of the hard, seeded ground-truth bugs than the solo arms in most comparisons — this is a real precision/recall tradeoff, not a case for 'AI audits are useless.'",
+    "Repeating the SAME model 3× (S-sonnet-x3) made results WORSE, not better — the highest false-rate of all six arms in both judges (.433 / .445). Repetition amplified noise rather than deduplicating signal.",
+    "Two arms (C and S-sonnet) sit right on the eligibility threshold and flip between judges — an honest illustration of the measurement's noise floor, not a contradiction.",
+    "A cheap open-model composition (B: GLM-5.2 + a GPT round + Gemini review) shows the BEST known-defect recall of all six arms in the GPT judge (7/13) — better than the expensive production apparatus (5/13) — while still failing the trust bar on false-positive rate."
+  ],
+  "real_pricing_correction": {
+    "issue": "Fable-5 was initially assumed to be a cheap tier by name-pattern alone (like Haiku) — this was never checked against real pricing and was wrong.",
+    "verified_pricing_usd_per_million_tokens": {
+      "GLM-5.2 (OpenRouter)":  { "input": 0.90, "output": 3.08 },
+      "Claude Haiku 4.5":      { "input": 1,    "output": 5 },
+      "Claude Sonnet 5 (current intro pricing)": { "input": 2, "output": 10 },
+      "Claude Opus 4.8":       { "input": 5,    "output": 25 },
+      "Claude Fable 5":        { "input": 10,   "output": 50 }
+    },
+    "correction": "Fable-5 is the MOST expensive Claude model on Anthropic's pricing page — 5x Sonnet-5's price on both input and output, pricier than Opus (the flagship model). S-fable's quality edge over S-sonnet (a few points of false-rate) does not come close to justifying a 5x price difference. S-sonnet, not S-fable, is the real cost-effective pick among the solo arms."
+  },
+  "followup_targeted_test": {
+    "question": "Does 'Sonnet writes → fresh Sonnet audits cold → Gemini adds one more lens' actually add value over solo Sonnet, and is that value from genuine model diversity or just from a second independent pass?",
+    "why_this_test": "The main 6-arm study never directly tested a 'Sonnet + Gemini' composition — S-sonnet has no review layer at all, and arm C's audit layer is GLM, not Sonnet. This follow-up isolates that specific, untested composition cheaply by reusing S-sonnet's EXISTING findings as a free baseline and spending only on ONE Gemini 'find what the prior pass missed' call per commit — no regeneration, no re-grading of already-labeled rows.",
+    "scope": "All 13 usable commits (extended from an initial 5-commit spot-check once the direction looked stable). Single judge (GPT-5.5) for cost reasons — this is an exploratory follow-up, not run at the same two-judge rigor as the main result.",
+    "results": {
+      "S-sonnet alone":              { "totalRows": 456, "value": 1376, "precision": 0.455, "falseRate": 0.243, "kdRecall": "4/12 (KD-007, 008, 009, 011)" },
+      "Arm C — GLM+Gemini":          { "totalRows": 223, "value": 482.8, "precision": 0.356, "falseRate": 0.345, "kdRecall": "5/12 (KD-005, 006, 007, 008, 011)" },
+      "Gemini net-new only (added on top of Sonnet)": { "totalRows": 57, "value": 201, "precision": 0.661, "falseRate": 0.105, "kdRecall": "0/12" },
+      "Sonnet + Gemini combined":    { "totalRows": 513, "value": 1577, "precision": 0.474, "falseRate": 0.228, "kdRecall": "4/12 (unchanged from Sonnet alone)" }
+    },
+    "findings": [
+      "Gemini's net-new additions are high quality on their own (precision .661, false-rate .105 — both better than Sonnet's own numbers) — this is real additive value, not noise.",
+      "Adding Gemini measurably improves the combined package over Sonnet alone: value +14.6% (1376→1577), precision up (.455→.474), false-rate down (.243→.228).",
+      "Gemini added ZERO additional known-defect catches across all 57 net-new findings and all 12 valid seeded bugs — confirmed at full 13-commit scale, not a small-sample artifact. Its value is additive (finds different real things), not corrective (does not close Sonnet's specific gaps on the hardest bugs).",
+      "Arm C (GLM as the full audit layer, not just a supplementary pass) catches KD-005 and KD-006, which Sonnet+Gemini never does — at the cost of a materially worse false-rate (.345 vs .228). Sonnet+Gemini's 4 catches and GLM+Gemini's 5 catches are NOT a subset of each other; each has unique catches the other misses.",
+      "Net verdict: the 'Sonnet writes, Sonnet audits cold, Gemini adds a lens' hypothesis holds up — it's a real, cheap, additive improvement over solo Sonnet. It does not, on this evidence, close the gap on the very hardest seeded bugs — that remains a genuine, unresolved limitation, not a data-quantity problem.",
+      "Directly against Arm A (GPT-5.5 5-pass + Gemini review — the actual production apparatus), same GPT-5.5 judge: Sonnet+Gemini has less than half Arm A's false-rate (22.8% vs 39.5%) and higher precision (.474 vs .397) — it beats the pipeline it's proposed to replace on every trust metric. Arm A still recovers one more known-defect (5/13 vs 4/12) — the same precision/recall tradeoff seen throughout this report, not a reversal of it. Note: the two numbers use slightly different severity-scope choices (main-study Arm A uses the standard tiered scope; this follow-up used its own scope for cost reasons), so read the recall gap as directional, not a precisely matched-N comparison — the trust-metric gap is large enough not to hinge on this."
+    ]
+  },
+  "generator_isolation_test": {
+    "question": "Every Gemini result elsewhere in this experiment came from ONE constrained role: 'find what a prior pass missed.' GPT-5.5 always did the harder, open-ended job (5-pass cold audit). Is Gemini actually a better standalone auditor than GPT-5.5, or does it just look cleaner because it always gets the easier task?",
+    "why_this_test": "This is the missing apples-to-apples comparison: both models run the IDENTICAL from-scratch 5-pass audit task, no review layer for either, on the same 5 commits, blind-graded by the same judge.",
+    "scope": "5 of 13 usable commits (153adb52, b801528b, 9b08adbe, 58bba032, 8b61fa66). HIGH severity only. Single judge (GPT-5.5) — cost-minimal follow-up, not the two-judge rigor of the main result.",
+    "self_grading_caveat": "The GPT-5.5 judge graded its OWN GPT-alone findings (no second judge available for this follow-up). Self-preference bias, if present, would INFLATE GPT's score, not deflate it — so GPT-alone's poor result is not explained away by this bias; if anything it understates how bad GPT-alone's true false-rate might be under a neutral judge. Gemini-alone's findings were graded by a genuinely independent judge.",
+    "results": {
+      "GPT-5.5 alone":   { "totalRows": 54, "proven": 13, "actionable": 9,  "plausible": 4,  "false": 28, "falseRate": 0.519, "junkRate": 0.593, "precision": 0.341, "eligible": false, "kdRecall": "2/5 (KD-008, KD-011)" },
+      "Gemini alone":    { "totalRows": 68, "proven": 19, "actionable": 17, "plausible": 14, "false": 18, "falseRate": 0.265, "junkRate": 0.471, "precision": 0.429, "eligible": true,  "kdRecall": "1/5 (KD-008)" }
+    },
+    "findings": [
+      "Used exactly the way GPT-5.5 is normally used in this pipeline (cold, open-ended, no hints), Gemini comes out ahead on every trust metric: lower false-rate (26.5% vs 51.9%), lower junk-rate, higher precision, and it clears the eligibility bar GPT-alone misses.",
+      "GPT-alone's 51.9% false-rate is worse than every arm in the six-arm main study, including the noisiest one (S-sonnet-x3 at 43-45%) — despite the self-grading bias that should have worked in its favor.",
+      "This confirms the pipeline's noise (arm A: GPT-5.5 5-pass + Gemini review, 39-41% false-rate) traces back to the GPT generation layer specifically, not to Gemini being under-tested in an easier role.",
+      "GPT-alone's known-defect recall (2/5) nominally beats Gemini-alone's (1/5) on this small slice — not a strong signal at this sample size, but consistent with the main study's broader precision/recall tradeoff pattern (noisier arms sometimes catch more hard bugs)."
+    ]
+  },
+  "methodology_corrections_made": [
+    {
+      "issue": "Diff-chunking bug (root cause, fixed 2026-07-07/08)",
+      "detail": "The tool that split large diffs into model-sized chunks silently dropped the file header on continuation chunks, so a model reviewing a chunk in isolation sometimes reported a real, present file as 'deleted' or 'missing' — the largest single false-positive family in the original (pre-fix) run. Fixed in chunkDiff(); the ENTIRE dataset in this report is post-fix.",
+      "significance": "This was root-caused, fixed, and the full experiment re-run from scratch before any of these numbers were computed — not a caveat on old data."
+    },
+    {
+      "issue": "KD-013 ground-truth error (found during blind adjudication, 2026-07-09)",
+      "detail": "One of the 14 curated 'known defects' (KD-013) claimed a method call was invalid/non-existent. A blind grader working from the actual Obsidian API typings found the method IS real and documented (verified independently: obsidian.d.ts:6386, @since 1.5.7). KD-013 has been marked invalidated in the ground-truth file and excluded from all known-defect-recall denominators in this report (14 → 13).",
+      "significance": "The experiment's own blind-adjudication process caught an error in its own ground truth — a genuine self-correction, not a flaw to hide."
+    }
+  ],
+  "caveats": [
+    "N=14 commits (13 usable) is a pilot-scale sample, not a large-N study — treat findings as directional/credible-hypothesis, not statistically definitive.",
+    "Parallel frozen-diff design means the apparatus's UNIQUE marginal value is an upper bound: in real production use, a solo review would fix bugs BEFORE the expensive apparatus ever saw the diff, which this design doesn't model.",
+    "Known-defect recall denominators are small (13, or arguably 12 once a separate pre-existing structural exclusion is counted), so recall differences of 1-2 matched defects swing the percentage a lot — read recall as directional, not precise.",
+    "Both judges are still LLMs (a different failure mode than a fully independent human panel), though the cross-family agreement (87% coarse) is the strongest available mitigation without a third, human-only rating pass.",
+    "The Sonnet+Gemini follow-up test used only ONE judge (GPT-5.5), not the two-judge cross-validation the main 6-arm result had — it's a cheaper, exploratory follow-up, not run at the same rigor. Treat its findings as a strong directional signal, not a fully cross-validated result.",
+    "The generator-isolation test (GPT-5.5-alone vs Gemini-alone) is the smallest, least cross-validated slice in this report: 5 of 13 commits, 122 rows, one judge, and that judge graded its own GPT-authored findings for half the sheet. The self-grading bias direction favors GPT, which strengthens the conclusion that Gemini is cleaner — but this remains a directional result pending a second-judge pass, not a fully cross-validated one.",
+    "Gemini-alone (this follow-up) and solo Sonnet (the main result) are NOT directly compared at equal rigor — Gemini-alone is a 5-commit/1-judge slice, Sonnet is the 13-commit/2-judge main result. Their similar precision (~.43 both) is suggestive that the two models are comparable-quality standalone auditors, but this is not a claim the data cross-validates at the same strength as the GPT-vs-Gemini comparison, which WAS run on identical commits with identical scope."
+  ]
+}

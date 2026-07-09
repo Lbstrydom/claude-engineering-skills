@@ -37,16 +37,34 @@
  * artifact: a function of DB + git + an LLM call, not committed source).
  *
  * Usage:
- *   node scripts/solo-control-audit.mjs run   [--model <id>] [--label <S-x>] [--commits <sha,sha>] [--max-chars N]
- *   node scripts/solo-control-audit.mjs merge [--severity high[,medium,low]] [--seed N]
+ *   node scripts/solo-control-audit.mjs run   [--model <id>] [--label <S-x>] [--commits <sha,sha>] [--max-chars N] [--repeats N] [--sdk]
+ *   node scripts/solo-control-audit.mjs apparatus --commits <sha,sha> [--max-chars N]
+ *   node scripts/solo-control-audit.mjs apparatus-bc --commits <sha,sha> [--max-chars N] [--force]
+ *   node scripts/solo-control-audit.mjs merge [--severity high[,medium,low]] [--commits <sha,sha>]
+ *                                             [--kd-candidates] [--medium-sample N] [--seed N] [--allow-apparatus-gaps]
  *   node scripts/solo-control-audit.mjs score
+ *   node scripts/solo-control-audit.mjs judge-gpt [--csv <path>] [--out <name>] [--model <id>] [--batch-size N] [--max-diff-chars N]
  *   node scripts/solo-control-audit.mjs --selfcheck-relocation
  *
  * Multi-model: run `run` once per author model (e.g. --model claude-sonnet-5, then
  * --model claude-fable-5). Each writes S-findings-<label>.json (arm S-sonnet /
- * S-fable). `merge` unions ALL of them + the ledger's A/B/C into one blind sheet;
+ * S-fable). `merge` unions ALL of them + the apparatus (A) into one blind sheet;
  * `score` reports each solo arm vs the apparatus AND against each other (the cost-
- * frontier three-way: clean Sonnet vs the A/B/C apparatus vs clean Fable).
+ * frontier three-way: clean Sonnet vs the apparatus vs clean Fable).
+ *
+ * Severity tiers (merge, all additive/opt-in beyond the HIGH default — converged
+ * design from /brainstorm --with-gemini, 2026-07-06; HIGH-only alone was found
+ * structurally biased by both external models):
+ *   --severity high        (default) the auto-include tier — every cluster counted
+ *                           directly via scoreArms.
+ *   --kd-candidates         ADDS any-severity findings whose (commit,file) plausibly
+ *                           match a curated docs/experiments/.../known-defects.json
+ *                           rubric — recall-biased (path overlap only), protects the
+ *                           one metric with real ground truth from a severity cutoff.
+ *   --medium-sample <N>     ADDS a stratified, capped, seeded sample of N MEDIUM-only
+ *                           clusters (commit x multi-arm strata) — Horvitz-Thompson-
+ *                           weighted with a bootstrap 95% CI in `score`, not counted
+ *                           directly (it's a sample, not the full population).
  *
  * @module scripts/solo-control-audit
  */
@@ -57,6 +75,8 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+import { z } from 'zod';
 
 import { createAnthropicClient } from './lib/anthropic-client.mjs';
 import { resolveModel } from './lib/model-resolver.mjs';
@@ -189,19 +209,44 @@ function extractDiff(root, sha) {
 }
 
 /** Split a diff into ≤maxChars blocks at file (`diff --git`) boundaries so each
- * audit chunk is coherent; a single file larger than maxChars is hard-split. */
+ * audit chunk is coherent; a single file larger than maxChars is hard-split.
+ *
+ * A hard-split slice after the first loses the `diff --git a/x b/x` header —
+ * the audit pass sees ONLY a mid-file hunk fragment with no filename and no
+ * indication it's a partial view. An arm reading that fragment in isolation
+ * (e.g. a run of `-` lines whose matching `+` lines landed in the NEXT chunk)
+ * can misread it as a whole-file deletion — confirmed root cause of the
+ * split-misread-as-deletion / phantom-missing-file false-positive family in
+ * the 2026-07 solo-control run (docs/experiments/audit-effectiveness). Every
+ * slice after the first is prefixed with a synthetic marker line naming the
+ * file and stating this is a continuation, not a deletion. */
 function chunkDiff(diff, maxChars) {
   if (diff.length <= maxChars) return [diff];
   const perFile = diff.split(/(?=^diff --git )/m).filter(Boolean);
   const chunks = [];
   let cur = '';
   for (let part of perFile) {
-    while (part.length > maxChars) { chunks.push(part.slice(0, maxChars)); part = part.slice(maxChars); }
+    const headerMatch = part.match(/^diff --git a\/(.+?) b\/(.+?)\n/);
+    const fileLabel = headerMatch ? headerMatch[2] : null;
+    let sliceIndex = 0;
+    while (part.length > maxChars) {
+      const slice = part.slice(0, maxChars);
+      part = part.slice(maxChars);
+      sliceIndex += 1;
+      chunks.push(sliceIndex > 1 && fileLabel ? continuationMarker(fileLabel, sliceIndex) + slice : slice);
+    }
+    if (sliceIndex > 0 && fileLabel && part) part = continuationMarker(fileLabel, sliceIndex + 1) + part;
     if (cur.length + part.length > maxChars && cur) { chunks.push(cur); cur = ''; }
     cur += part;
   }
   if (cur) chunks.push(cur);
   return chunks;
+}
+
+/** Synthetic marker prepended to a hard-split diff continuation — see chunkDiff. */
+function continuationMarker(fileLabel, partNumber) {
+  return `# [diff continuation: ${fileLabel}, part ${partNumber} — earlier/later hunks of this SAME file `
+    + `are in a different audit chunk; this fragment alone is NOT evidence the file was deleted or is missing]\n`;
 }
 
 // ── Sonnet cold-diff pass ────────────────────────────────────────────────────
@@ -332,6 +377,12 @@ async function cmdRun() {
   // can't set it), so --repeats>1 forces the sdk backend.
   const repeats = Math.max(1, Number.parseInt(argOption('repeats', '1'), 10) || 1);
   const temperature = repeats > 1 ? Number.parseFloat(argOption('temperature', '1.0')) : null;
+  // Diff-size sanity cap: a mega-commit (repo-import / 2000-file initial release)
+  // would grind for hours across dozens of chunks. Skip + RECORD (state
+  // 'diff-too-large', listed in perCommit — never silently dropped) so scoring can
+  // report the defect as unscored-by-refusal rather than missed.
+  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const useSdk = hasFlag('sdk'); // force the fast SDK backend for x1 runs too (real API spend)
 
   // SELF-GATE on the arm-eval/shadow toggle: the standing policy is "run the solo
   // control WHENEVER the shadow is on". So the audit skills fire `solo-control:
@@ -362,7 +413,7 @@ async function cmdRun() {
   out.armLabel = label;
 
   if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for ${label} — nothing to do (use --force to re-audit).`); process.exit(0); }
-  const backend = repeats > 1 ? 'sdk' : undefined; // sdk needed for temperature control
+  const backend = (repeats > 1 || useSdk) ? 'sdk' : undefined; // sdk needed for temperature; opt-in via --sdk for speed
   log(`Solo control — arm=${label} · model=${model} (${modelArg}), ${commits.length} new commit(s)${covered.size ? ` (${covered.size} already covered)` : ''}${repeats > 1 ? ` · repeats=${repeats} temp=${temperature} backend=sdk` : ''}, stage=${STAGE_TYPE}`);
   let client;
   try {
@@ -386,6 +437,11 @@ async function cmdRun() {
       log(`  ${short}: diff extraction failed (${err.message}) — skipped`); out.perCommit.push({ sha, state: 'diff-error', error: err.message }); continue;
     }
     if (!ext.diff) { log(`  ${short}: no auditable (non-sensitive) files — skipped`); out.perCommit.push({ sha, state: 'no-clean-files', skippedSensitive: ext.skippedSensitive }); continue; }
+    if (ext.diff.length > maxDiffChars) {
+      log(`  ${short}: diff ${ext.diff.length} chars exceeds --max-diff-chars ${maxDiffChars} — RECORDED as diff-too-large (unscored-by-refusal, not missed)`);
+      out.perCommit.push({ sha, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
+      continue;
+    }
     const chunks = chunkDiff(ext.diff, maxChars);
     log(`  ${short}: ${path.basename(root)} · ${ext.files.length} file(s) · ${ext.diff.length} chars${chunks.length > 1 ? ` · ${chunks.length} chunks` : ''}${ext.skippedSensitive.length ? ` · ${ext.skippedSensitive.length} sensitive skipped` : ''}`);
 
@@ -393,6 +449,10 @@ async function cmdRun() {
     // chunks/passes counts once (light map-reduce — full coverage, no truncation bias).
     const seen = new Set();
     let commitFindings = 0;
+    const commitConformance = {}; // passName -> {attempts, misses} — surfaced in perCommit
+    // for post-hoc eval: a temperature-driven conformance miss degrades to 0
+    // findings for that repeat (never crashes), but a skewed miss rate on one pass
+    // should be visible in scoring, not silently absorbed as "the model found less".
     for (const passName of PASSES) {
       for (const chunk of chunks) {
         // xN: N sequential samples per pass×chunk (never concurrent — Gemini-R1-MEDIUM,
@@ -404,6 +464,9 @@ async function cmdRun() {
           if (r.usage) { totalIn += r.usage.input_tokens || 0; totalOut += r.usage.output_tokens || 0; }
           if (r.rawText != null) rawTexts.push(r.rawText);
           findings.push(...r.findings);
+          const cc = (commitConformance[passName] ||= { attempts: 0, misses: 0 });
+          cc.attempts++;
+          if (r.conformanceMiss) cc.misses++;
         }
         if (repeats > 1) {
           samplingTotalUnits++;
@@ -424,8 +487,10 @@ async function cmdRun() {
         }
       }
     }
-    log(`      → ${commitFindings} finding(s)`);
-    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: commitFindings, chunks: chunks.length, skippedSensitive: ext.skippedSensitive });
+    const misses = Object.values(commitConformance).reduce((a, c) => a + c.misses, 0);
+    const attempts = Object.values(commitConformance).reduce((a, c) => a + c.attempts, 0);
+    log(`      → ${commitFindings} finding(s)${misses ? ` (${misses}/${attempts} conformance misses — see perCommit.conformanceByPass)` : ''}`);
+    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: commitFindings, chunks: chunks.length, skippedSensitive: ext.skippedSensitive, conformanceByPass: commitConformance });
   }
 
   // Accumulate token usage across incremental runs.
@@ -445,9 +510,721 @@ async function cmdRun() {
       log(`sampling varied on ${samplingVariedUnits}/${samplingTotalUnits} unit(s).`);
     }
   }
+  // File-level conformance rollup by pass, across ALL commits (this run + prior
+  // incremental ones) — one place to read "was this arm's data thinner on pass X"
+  // rather than scanning every perCommit entry.
+  const rollup = {};
+  for (const pc of out.perCommit) {
+    if (!pc.conformanceByPass) continue;
+    for (const [passName, c] of Object.entries(pc.conformanceByPass)) {
+      const r = (rollup[passName] ||= { attempts: 0, misses: 0 });
+      r.attempts += c.attempts; r.misses += c.misses;
+    }
+  }
+  for (const r of Object.values(rollup)) r.missRate = r.attempts > 0 ? +(r.misses / r.attempts).toFixed(3) : 0;
+  out.conformanceByPass = rollup;
+  const worstPass = Object.entries(rollup).sort((a, b) => b[1].missRate - a[1].missRate)[0];
+  if (worstPass && worstPass[1].missRate > 0.15) {
+    log(`⚠ Conformance skew: '${worstPass[0]}' pass missed ${(worstPass[1].missRate * 100).toFixed(0)}% of attempts (${worstPass[1].misses}/${worstPass[1].attempts}) — that pass's recall for this arm should be read with this caveat.`);
+  }
+
   atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
   log(`\nWrote ${out.findings.length} total ${label} findings (${covered.size ? '+' + covered.size + ' prior commits' : 'fresh'}) → ${path.relative(process.cwd(), dest)}`);
   log(`Tokens this run: ${totalIn} in / ${totalOut} out. Next: run other author models, then \`merge\`.`);
+}
+
+// ── apparatus retro-run (arm A on historical known-defect commits) ───────────
+//
+// Git-mined known-defect commits have NO rows in the shadow view (they predate the
+// experiment), so `merge` would refuse. This subcommand runs the ARM-A COMPOSITION
+// (GPT 5-pass gen → Gemini net-new review) over the SAME extracted diffs the solo
+// arms audit (identical context = fairness) and writes S-findings-A.json — which
+// `merge` ingests through the same solo-file path (armLabel 'A').
+//
+// DELIBERATE plan deviation (documented): findings are NOT persisted to the
+// production audit_findings store. Injecting retro experiment runs into the live
+// ledger would contaminate the Phase-1 ledger-decomposition (every future
+// kill-criterion query would count synthetic re-runs). Local file keeps the
+// experiment out of production telemetry; the store stays production-only.
+
+/** One GPT audit pass over a chunk (mirrors audit-shadow callModelDefault's GPT
+ * path: Responses API + zodTextFormat over ShadowPassSchema, PASS_REASONING parity). */
+async function runGptPass(client, zodTextFormat, gptModel, passName, diff, reasoning) {
+  const system = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
+  const userPrompt = [
+    `## Task\nAudit the code CHANGE below for the "${passName}" concern. Return findings per the schema.`,
+    `## Diff\n${diff}`,
+  ].join('\n\n');
+  assertEgressSafe(userPrompt, { label: `apparatus:${passName}` });
+  const params = {
+    model: gptModel,
+    input: [{ role: 'system', content: system }, { role: 'user', content: userPrompt }],
+    text: { format: zodTextFormat(ShadowPassSchema, 'shadow_pass') },
+    max_output_tokens: 8000,
+  };
+  if (reasoning) params.reasoning = { effort: reasoning };
+  const resp = await client.responses.parse(params);
+  return { findings: resp.output_parsed?.findings || [], usage: resp.usage || null };
+}
+
+/** Gemini net-new review over the collected GPT findings (mirrors callGeminiDefault). */
+async function runGeminiReview(geminiModel, collected, diff) {
+  if (!process.env.GEMINI_API_KEY) return { findings: [], skipped: 'no-key' };
+  const { GoogleGenAI } = await import('@google/genai');
+  const { zodToGeminiSchema } = await import('./lib/schemas.mjs');
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const priorList = collected.slice(0, 40).map((f) => `- [${f.severity}] ${f.category}: ${(f.detail || '').slice(0, 160)}`).join('\n');
+  const prompt = [
+    'You are the final-gate reviewer. Below are findings already raised by a prior audit.',
+    'Emit ONLY NET-NEW findings the prior audit MISSED (do not restate). Return per the schema.',
+    `## Prior findings\n${priorList || '(none)'}`,
+    `## Subject under audit\n${diff}`,
+  ].join('\n\n');
+  assertEgressSafe(prompt, { label: 'apparatus:gemini' });
+  const resp = await ai.models.generateContent({
+    model: geminiModel, contents: prompt,
+    config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
+  });
+  let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
+  return { findings: parsed?.findings || [] };
+}
+
+/** Gemini as a FROM-SCRATCH generator — same open-ended "audit this diff" task
+ * and prompt shape as runGptPass/runOssPass (PASS_PROMPTS system + the diff,
+ * no prior findings to react to). Everywhere else in this experiment Gemini
+ * only ever did the easier "find what's missing from this list" job
+ * (runGeminiReview above) — this is the missing apples-to-apples comparison:
+ * is Gemini actually a better cold auditor than GPT, or does it only look
+ * clean because it always got the constrained review task? */
+async function runGeminiPass(geminiModel, passName, diff) {
+  if (!process.env.GEMINI_API_KEY) return { findings: [], skipped: 'no-key' };
+  const { GoogleGenAI } = await import('@google/genai');
+  const { zodToGeminiSchema } = await import('./lib/schemas.mjs');
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+  const system = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
+  const userPrompt = [
+    `## Task\nAudit the code below for the "${passName}" concern. Return findings per the schema.`,
+    `## Code (redacted)\n${diff}`,
+  ].join('\n\n');
+  const prompt = `${system}\n\n${userPrompt}`;
+  assertEgressSafe(prompt, { label: `gemini-solo:${passName}` });
+  const resp = await ai.models.generateContent({
+    model: geminiModel, contents: prompt,
+    config: { responseMimeType: 'application/json', responseSchema: zodToGeminiSchema(ShadowPassSchema) },
+  });
+  let parsed = null; try { parsed = JSON.parse(resp.text); } catch { /* conformance miss */ }
+  return { findings: parsed?.findings || [] };
+}
+
+/** Run the apparatus (arm A) retro over --commits. Incremental like cmdRun. */
+async function cmdApparatus() {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  const commitsArg = argOption('commits');
+  if (!commitsArg) { log('apparatus requires --commits <sha,sha,...> (the known-defect commits).'); process.exit(2); }
+  const requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
+  const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10);
+  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const force = hasFlag('force');
+
+  const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+  const { zodTextFormat } = await import('openai/helpers/zod');
+  const { PASS_REASONING } = await import('./lib/config.mjs');
+  try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
+  const gptModel = resolveModel('latest-gpt');
+  const geminiModel = resolveModel('latest-pro');
+  const client = await createOpenAIClient({ purpose: 'gpt' });
+
+  const dest = sFindingsPath('A');
+  const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
+  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
+  const commits = requested.filter((sha) => !covered.has(sha));
+  const out = prior && !force
+    ? { ...prior, generatedFor: [...new Set([...(prior.generatedFor || []), ...requested])] }
+    : { armLabel: 'A', model: `${gptModel}+${geminiModel}`, modelArg: 'apparatus(latest-gpt→latest-pro)', stageType: STAGE_TYPE, generatedFor: requested, findings: [], perCommit: [] };
+  out.armLabel = 'A';
+  out.provenance = { composition: 'gpt-5pass→gemini-review', gptModel, geminiModel, maxChars, retro: true, note: 'NOT persisted to audit_findings — experiment-local (keeps Phase-1 ledger clean)' };
+
+  if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for apparatus — nothing to do.`); process.exit(0); }
+  log(`Apparatus retro — arm=A · ${gptModel} 5-pass → ${geminiModel} review · ${commits.length} new commit(s)`);
+
+  for (const sha of commits) {
+    const short = sha.slice(0, 8);
+    const root = locateCommit(sha);
+    if (!root) { log(`  ${short}: NOT FOUND — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
+    let ext;
+    try { ext = extractDiff(root, sha); }
+    catch (err) {
+      if (String(err?.message).includes('[egress-gate]')) { log(`  ${short}: EGRESS REFUSAL — skipped`); out.perCommit.push({ sha, state: 'egress-refused' }); continue; }
+      log(`  ${short}: diff extraction failed (${err.message})`); out.perCommit.push({ sha, state: 'diff-error', error: err.message }); continue;
+    }
+    if (!ext.diff) { out.perCommit.push({ sha, state: 'no-clean-files' }); continue; }
+    if (ext.diff.length > maxDiffChars) {
+      log(`  ${short}: diff ${ext.diff.length} chars > cap — RECORDED diff-too-large`);
+      out.perCommit.push({ sha, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
+      continue;
+    }
+    const chunks = chunkDiff(ext.diff, maxChars);
+    log(`  ${short}: ${path.basename(root)} · ${ext.diff.length} chars · ${chunks.length} chunk(s)`);
+    const seen = new Set();
+    const collected = [];
+    let commitFindings = 0;
+    for (const passName of PASSES) {
+      for (const chunk of chunks) {
+        let r;
+        try { r = await runGptPass(client, zodTextFormat, gptModel, passName, chunk, PASS_REASONING[passName] ?? null); }
+        catch (err) { log(`      ! gpt ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`); continue; }
+        for (const f of r.findings) collected.push(f);
+      }
+    }
+    // Gemini net-new over the deduped union (per-arm gate, mirrors production).
+    let geminiFindings = [];
+    try { geminiFindings = (await runGeminiReview(geminiModel, collected, chunks[0] || '')).findings; }
+    catch (err) { log(`      ! gemini review failed: ${String(err?.message).slice(0, 120)}`); }
+    for (const f of [...collected, ...geminiFindings]) {
+      const file = f.section || (ext.files[0] || '');
+      const h = dupHash(f.category, file, f.detail);
+      if (seen.has(h)) continue;
+      seen.add(h);
+      out.findings.push({ commit: sha, repo: path.basename(root), model: out.model, pass: 'apparatus', severity: f.severity, category: f.category, section: file, detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix, _dup: h });
+      commitFindings++;
+    }
+    log(`      → ${commitFindings} finding(s)`);
+    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: commitFindings, chunks: chunks.length });
+    atomicWriteFileSync(dest, JSON.stringify(out, null, 2)); // checkpoint per commit
+  }
+  atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
+  log(`\nWrote ${out.findings.length} total arm-A findings → ${path.relative(process.cwd(), dest)}`);
+}
+
+// ── B/C retro (OSS-gen + optional GPT-round + per-arm Gemini) ────────────────
+//
+// Companion to `apparatus` (arm A retro) — generates LOCAL retro findings for
+// arms B and C over the SAME known-defect commits, using the EXACT B/C
+// composition the live model-A/B/C shadow harness runs (lib/audit-arms.mjs
+// CANONICAL_ARMS): oss-gen (currently GLM-5.2 via OpenRouter, SHARED compute
+// between B and C) → [B only] one independent GPT round → EACH arm's own
+// Gemini review (B reviews the deduped oss-gen+gpt-round union; C reviews
+// oss-gen alone). Same deliberate deviation as `apparatus`: local files only,
+// never persisted to audit_findings — keeps this retro study out of the live
+// ledger's bookkeeping (spend caps, per-arm cost accounting are all real-audit
+// concepts this offline comparison must not contaminate).
+
+/** Dedupe a finding list by (category, file, detail) — mirrors dupHash's key. */
+function dedupeFindings(list) {
+  const seen = new Set();
+  const out = [];
+  for (const f of list) {
+    const h = dupHash(f.category, f.section, f.detail);
+    if (seen.has(h)) continue;
+    seen.add(h);
+    out.push(f);
+  }
+  return out;
+}
+
+/** One OSS structured-output pass over a chunk (mirrors audit-shadow's
+ * callModelDefault OSS path — same schema, same prompt shape as the GPT pass). */
+async function runOssPass(client, ossModel, passName, diff, reasoning) {
+  const system = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
+  const userPrompt = [
+    `## Task\nAudit the code below for the "${passName}" concern. Return findings per the schema.`,
+    `## Code (redacted)\n${diff}`,
+  ].join('\n\n');
+  assertEgressSafe(userPrompt, { label: `bc-retro:oss:${passName}` });
+  const { ossStructuredCall } = await import('./lib/oss-structured-output.mjs');
+  const r = await ossStructuredCall(client, {
+    model: ossModel, system, userPrompt, schema: ShadowPassSchema, schemaName: 'shadow_pass',
+    reasoningEffort: reasoning, passName: `oss-${passName}`,
+  });
+  return { findings: r.result?.findings || [], usage: r.usage, conformant: r.conformant, failed: r.failed, error: r.error };
+}
+
+async function cmdApparatusBC() {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  const commitsArg = argOption('commits');
+  if (!commitsArg) { log('apparatus-bc requires --commits <sha,sha,...> (the known-defect commits).'); process.exit(2); }
+  const requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
+  const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10);
+  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const force = hasFlag('force');
+
+  const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+  const { zodTextFormat } = await import('openai/helpers/zod');
+  const { auditShadowConfig, PASS_REASONING } = await import('./lib/config.mjs');
+  try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
+  const ossModel = resolveModel('latest-oss-reasoner');
+  const gptModel = resolveModel('latest-gpt');
+  const geminiModel = resolveModel('latest-pro');
+  const gptClient = await createOpenAIClient({ purpose: 'gpt' });
+  const ossClient = await createOpenAIClient({ oss: { baseURL: auditShadowConfig.openrouterBaseUrl, apiKey: auditShadowConfig.openrouterApiKey } });
+
+  const destB = sFindingsPath('B');
+  const destC = sFindingsPath('C');
+  const priorB = fs.existsSync(destB) ? JSON.parse(fs.readFileSync(destB, 'utf8')) : null;
+  const priorC = fs.existsSync(destC) ? JSON.parse(fs.readFileSync(destC, 'utf8')) : null;
+  const covered = new Set(force || !priorB ? [] : priorB.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
+  const commits = requested.filter((sha) => !covered.has(sha));
+  const outB = (priorB && !force) ? { ...priorB, findings: [...priorB.findings], perCommit: [...priorB.perCommit] }
+    : { armLabel: 'B', model: 'oss(pending)+gpt-round+gemini', stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] };
+  const outC = (priorC && !force) ? { ...priorC, findings: [...priorC.findings], perCommit: [...priorC.perCommit] }
+    : { armLabel: 'C', model: 'oss(pending)+gemini', stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] };
+  outB.model = `oss(${ossModel})+gpt-round(${gptModel})+gemini(${geminiModel})`;
+  outC.model = `oss(${ossModel})+gemini(${geminiModel})`;
+  outB.generatedFor = [...new Set([...(outB.generatedFor || []), ...requested])];
+  outC.generatedFor = [...new Set([...(outC.generatedFor || []), ...requested])];
+
+  if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered for B/C — nothing to do (use --force to re-audit).`); process.exit(0); }
+  log(`Apparatus B/C retro — oss=${ossModel} (shared) · gpt-round=${gptModel} (B only) · gemini=${geminiModel} · ${commits.length} new commit(s)`);
+
+  for (const sha of commits) {
+    const short = sha.slice(0, 8);
+    const root = locateCommit(sha);
+    if (!root) { log(`  ${short}: NOT FOUND in any local repo root — skipped`); outB.perCommit.push({ sha, state: 'not-found' }); outC.perCommit.push({ sha, state: 'not-found' }); continue; }
+    let ext;
+    try { ext = extractDiff(root, sha); }
+    catch (err) {
+      const state = String(err?.message).includes('[egress-gate]') ? 'egress-refused' : 'diff-error';
+      log(`  ${short}: ${state} (${err.message}) — skipped`);
+      outB.perCommit.push({ sha, state }); outC.perCommit.push({ sha, state });
+      continue;
+    }
+    if (!ext.diff) { log(`  ${short}: no auditable (non-sensitive) files — skipped`); outB.perCommit.push({ sha, state: 'no-clean-files' }); outC.perCommit.push({ sha, state: 'no-clean-files' }); continue; }
+    if (ext.diff.length > maxDiffChars) {
+      log(`  ${short}: diff ${ext.diff.length} chars exceeds --max-diff-chars ${maxDiffChars} — RECORDED as diff-too-large`);
+      outB.perCommit.push({ sha, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
+      outC.perCommit.push({ sha, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
+      continue;
+    }
+    const chunks = chunkDiff(ext.diff, maxChars);
+    log(`  ${short}: ${path.basename(root)} · ${ext.diff.length} chars${chunks.length > 1 ? ` · ${chunks.length} chunks` : ''}`);
+
+    // Shared oss-gen — ONE execution serves both B and C (compute-sharing,
+    // matches the live harness's own DAG — decision 1/§ generation stages).
+    const ossFindings = [];
+    for (const passName of PASSES) {
+      for (const chunk of chunks) {
+        try {
+          const r = await runOssPass(ossClient, ossModel, passName, chunk, PASS_REASONING[passName] ?? null);
+          ossFindings.push(...r.findings);
+        } catch (err) {
+          if (String(err?.message).includes('[egress-gate]')) throw err;
+          log(`      ! oss ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`);
+        }
+      }
+    }
+
+    // B-only: one independent GPT round over the SAME chunks (the diversity probe).
+    const gptRoundFindings = [];
+    for (const passName of PASSES) {
+      for (const chunk of chunks) {
+        try {
+          const r = await runGptPass(gptClient, zodTextFormat, gptModel, passName, chunk, PASS_REASONING[passName] ?? null);
+          gptRoundFindings.push(...r.findings);
+        } catch (err) { log(`      ! gpt-round ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`); }
+      }
+    }
+
+    // Per-arm Gemini: B reviews oss+gpt-round union; C reviews oss-gen alone.
+    const bUpstream = dedupeFindings([...ossFindings, ...gptRoundFindings]);
+    const cUpstream = dedupeFindings(ossFindings);
+    let bGemini = [], cGemini = [];
+    try { bGemini = (await runGeminiReview(geminiModel, bUpstream, chunks[0] || '')).findings; }
+    catch (err) { log(`      ! gemini(B) failed: ${String(err?.message).slice(0, 120)}`); }
+    try { cGemini = (await runGeminiReview(geminiModel, cUpstream, chunks[0] || '')).findings; }
+    catch (err) { log(`      ! gemini(C) failed: ${String(err?.message).slice(0, 120)}`); }
+
+    const bAll = dedupeFindings([...ossFindings, ...gptRoundFindings, ...bGemini]);
+    const cAll = dedupeFindings([...ossFindings, ...cGemini]);
+    const toRow = (f, model) => ({
+      commit: sha, repo: path.basename(root), model, pass: 'apparatus-bc',
+      severity: f.severity, category: f.category, section: f.section || (ext.files[0] || ''),
+      detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix,
+      _dup: dupHash(f.category, f.section, f.detail),
+    });
+    for (const f of bAll) outB.findings.push(toRow(f, outB.model));
+    for (const f of cAll) outC.findings.push(toRow(f, outC.model));
+    log(`      → B: ${bAll.length} finding(s), C: ${cAll.length} finding(s)`);
+    outB.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: bAll.length, chunks: chunks.length });
+    outC.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: cAll.length, chunks: chunks.length });
+    atomicWriteFileSync(destB, JSON.stringify(outB, null, 2)); // checkpoint per commit
+    atomicWriteFileSync(destC, JSON.stringify(outC, null, 2));
+  }
+  atomicWriteFileSync(destB, JSON.stringify(outB, null, 2));
+  atomicWriteFileSync(destC, JSON.stringify(outC, null, 2));
+  log(`\nWrote ${outB.findings.length} total arm-B findings → ${path.relative(process.cwd(), destB)}`);
+  log(`Wrote ${outC.findings.length} total arm-C findings → ${path.relative(process.cwd(), destC)}`);
+}
+
+// ── Sonnet+Gemini retro (net-new only) — a targeted, cost-minimal follow-up ──
+//
+// Answers a specific question that arose from discussing the main result: is
+// "Sonnet writes/audits, Gemini reviews" (2 distinct models) meaningfully
+// different from "GLM audits, Gemini reviews" (arm C — also 2 distinct
+// models, but neither is the likely author model)? Deliberately CHEAP: reuses
+// the EXISTING S-sonnet findings as the baseline (zero regen cost) and only
+// spends on ONE Gemini net-new pass per commit — never regenerates Sonnet's
+// side. Writes ONLY Gemini's incremental additions (armLabel 'SG-gemini-only')
+// so the caller can combine them with S-sonnet's ALREADY-BLIND-GRADED rows
+// instead of re-grading everything from scratch.
+
+async function cmdSonnetGeminiRetro() {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  const commitsArg = argOption('commits');
+  if (!commitsArg) { log('sonnet-gemini-retro requires --commits <sha,sha,...>.'); process.exit(2); }
+  const requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
+  const force = hasFlag('force');
+
+  const sonnetPath = sFindingsPath('S-sonnet');
+  if (!fs.existsSync(sonnetPath)) { log('No S-findings-S-sonnet.json — run `run --model claude-sonnet-5` first.'); process.exit(1); }
+  const sonnetData = JSON.parse(fs.readFileSync(sonnetPath, 'utf8'));
+  const sonnetByCommit = new Map();
+  for (const f of sonnetData.findings) { if (!sonnetByCommit.has(f.commit)) sonnetByCommit.set(f.commit, []); sonnetByCommit.get(f.commit).push(f); }
+
+  try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
+  const geminiModel = resolveModel('latest-pro');
+
+  const dest = sFindingsPath('SG-gemini-only');
+  const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
+  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
+  const commits = requested.filter((sha) => !covered.has(sha));
+  const out = (prior && !force) ? { ...prior, findings: [...prior.findings], perCommit: [...prior.perCommit] }
+    : { armLabel: 'SG-gemini-only', model: `gemini(${geminiModel})-net-new-over-sonnet`, stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] };
+  out.model = `gemini(${geminiModel})-net-new-over-sonnet`;
+  out.generatedFor = [...new Set([...(out.generatedFor || []), ...requested])];
+
+  if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered — nothing to do (use --force to re-run).`); process.exit(0); }
+  log(`Sonnet+Gemini retro (net-new only) — baseline=S-sonnet (reused, no regen) · gemini=${geminiModel} · ${commits.length} commit(s)`);
+
+  for (const sha of commits) {
+    const short = sha.slice(0, 8);
+    const sonnetFindings = sonnetByCommit.get(sha) || [];
+    if (sonnetFindings.length === 0) { log(`  ${short}: no S-sonnet baseline on record — skipped`); out.perCommit.push({ sha, state: 'no-sonnet-baseline' }); continue; }
+    const root = locateCommit(sha);
+    if (!root) { log(`  ${short}: NOT FOUND in any repo root — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
+    let ext;
+    try { ext = extractDiff(root, sha); }
+    catch (err) {
+      const state = String(err?.message).includes('[egress-gate]') ? 'egress-refused' : 'diff-error';
+      log(`  ${short}: ${state} — skipped`); out.perCommit.push({ sha, state }); continue;
+    }
+    let geminiFindings = [];
+    try { geminiFindings = (await runGeminiReview(geminiModel, sonnetFindings, ext.diff)).findings; }
+    catch (err) { log(`      ! gemini failed: ${String(err?.message).slice(0, 120)}`); }
+    for (const f of geminiFindings) {
+      out.findings.push({
+        commit: sha, repo: path.basename(root), model: out.model, pass: 'gemini-net-new',
+        severity: f.severity, category: f.category, section: f.section || (ext.files[0] || ''),
+        detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix,
+      });
+    }
+    log(`  ${short}: sonnet baseline ${sonnetFindings.length} (reused) → gemini net-new ${geminiFindings.length}`);
+    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', sonnetBaseline: sonnetFindings.length, geminiNetNew: geminiFindings.length });
+    atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
+  }
+  atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
+  log(`\nWrote ${out.findings.length} total gemini-net-new finding(s) → ${path.relative(process.cwd(), dest)}`);
+  log('Combine with S-sonnet\'s EXISTING (already blind-graded) findings for these commits to get the full "SG" arm — do not re-grade the reused Sonnet rows.');
+}
+
+// ── Solo-pass retro (GPT alone / Gemini alone, no review layer) ──────────────
+//
+// The missing apples-to-apples test: arm A's saved data blends GPT's 5-pass
+// generation with Gemini's net-new review under ONE tag ('apparatus') — the
+// two can't be separated after the fact. And everywhere Gemini appears in
+// this experiment (arm A/B/C, the Sonnet+Gemini follow-up) it only ever did
+// the constrained "find what's missing" job, never the SAME open-ended
+// "audit this diff cold" task GPT/GLM/Sonnet all got. This runs BOTH models
+// through the identical from-scratch 5-pass task, no review step, so their
+// standalone generator quality is directly comparable for the first time.
+
+async function cmdSoloPassRetro() {
+  fs.mkdirSync(OUT_DIR, { recursive: true });
+  const commitsArg = argOption('commits');
+  const engine = argOption('engine');
+  if (!commitsArg || (engine !== 'gpt' && engine !== 'gemini')) {
+    log('solo-pass-retro requires --commits <sha,sha,...> and --engine gpt|gemini.'); process.exit(2);
+  }
+  const requested = commitsArg.split(',').map((s) => s.trim()).filter(Boolean);
+  const maxChars = Number.parseInt(argOption('max-chars', '45000'), 10);
+  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const force = hasFlag('force');
+
+  try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
+  const { PASS_REASONING } = await import('./lib/config.mjs');
+  let gptClient = null, zodTextFormat = null, model;
+  if (engine === 'gpt') {
+    const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+    ({ zodTextFormat } = await import('openai/helpers/zod'));
+    gptClient = await createOpenAIClient({ purpose: 'gpt' });
+    model = resolveModel('latest-gpt');
+  } else {
+    model = resolveModel('latest-pro');
+  }
+
+  const label = engine === 'gpt' ? 'GPT-alone' : 'Gemini-alone';
+  const dest = sFindingsPath(label);
+  const prior = fs.existsSync(dest) ? JSON.parse(fs.readFileSync(dest, 'utf8')) : null;
+  const covered = new Set(force || !prior ? [] : prior.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha));
+  const commits = requested.filter((sha) => !covered.has(sha));
+  const out = (prior && !force) ? { ...prior, findings: [...prior.findings], perCommit: [...prior.perCommit] }
+    : { armLabel: label, model, stageType: STAGE_TYPE, generatedFor: [], findings: [], perCommit: [] };
+  out.model = model;
+  out.generatedFor = [...new Set([...(out.generatedFor || []), ...requested])];
+
+  if (commits.length === 0) { log(`All ${requested.length} commit(s) already covered — nothing to do (use --force).`); process.exit(0); }
+  log(`Solo-pass retro (${label}, no review layer) — model=${model} · ${commits.length} commit(s)`);
+
+  for (const sha of commits) {
+    const short = sha.slice(0, 8);
+    const root = locateCommit(sha);
+    if (!root) { log(`  ${short}: NOT FOUND in any repo root — skipped`); out.perCommit.push({ sha, state: 'not-found' }); continue; }
+    let ext;
+    try { ext = extractDiff(root, sha); }
+    catch (err) {
+      const state = String(err?.message).includes('[egress-gate]') ? 'egress-refused' : 'diff-error';
+      log(`  ${short}: ${state} — skipped`); out.perCommit.push({ sha, state }); continue;
+    }
+    if (!ext.diff) { log(`  ${short}: no auditable (non-sensitive) files — skipped`); out.perCommit.push({ sha, state: 'no-clean-files' }); continue; }
+    if (ext.diff.length > maxDiffChars) {
+      log(`  ${short}: diff ${ext.diff.length} chars exceeds --max-diff-chars ${maxDiffChars} — RECORDED as diff-too-large`);
+      out.perCommit.push({ sha, repo: path.basename(root), state: 'diff-too-large', diffChars: ext.diff.length });
+      continue;
+    }
+    const chunks = chunkDiff(ext.diff, maxChars);
+    log(`  ${short}: ${path.basename(root)} · ${ext.diff.length} chars${chunks.length > 1 ? ` · ${chunks.length} chunks` : ''}`);
+
+    const collected = [];
+    for (const passName of PASSES) {
+      for (const chunk of chunks) {
+        try {
+          const r = engine === 'gpt'
+            ? await runGptPass(gptClient, zodTextFormat, model, passName, chunk, PASS_REASONING[passName] ?? null)
+            : await runGeminiPass(model, passName, chunk);
+          collected.push(...r.findings);
+        } catch (err) {
+          if (String(err?.message).includes('[egress-gate]')) throw err;
+          log(`      ! ${passName} failed: ${String(err?.message).slice(0, 120)} — 0 findings`);
+        }
+      }
+    }
+    for (const f of collected) {
+      out.findings.push({
+        commit: sha, repo: path.basename(root), model, pass: 'solo-generator',
+        severity: f.severity, category: f.category, section: f.section || (ext.files[0] || ''),
+        detail: f.detail, risk: f.risk, recommendation: f.recommendation, is_quick_fix: !!f.is_quick_fix,
+      });
+    }
+    log(`      → ${collected.length} finding(s)`);
+    out.perCommit.push({ sha, repo: path.basename(root), state: 'ran', findings: collected.length, chunks: chunks.length });
+    atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
+  }
+  atomicWriteFileSync(dest, JSON.stringify(out, null, 2));
+  log(`\nWrote ${out.findings.length} total ${label} finding(s) → ${path.relative(process.cwd(), dest)}`);
+}
+
+// ── GPT independent judge (blind adjudication, second rater) ─────────────────
+//
+// Companion to `apparatus` (which uses GPT to GENERATE findings) — this uses GPT
+// to GRADE the blind sheet, an independent second rater alongside the Claude-
+// subagent pass. Directly tests the "Claude-judging-Claude" bias concern
+// (docs/solo-control-experiment.md design point 2) by having a different model
+// family blind-grade the SAME rows. GPT has no live git access via the API, so
+// each commit's FULL diff (the same chunkDiff-fixed evidence the generation
+// passes saw, but sent WHOLE here — no re-chunking, so the judge never grades
+// against a lone fragment) is embedded directly in the prompt, batched per
+// commit (further split by row-count to avoid output truncation on large
+// commits).
+//
+// Reads the UNLABELED blind-adjudication.csv — must NEVER read .blind-map.json
+// (the unblind key; leaking it would invalidate the judge's independence).
+// Writes a SEPARATE file (default blind-adjudication-gpt.csv) — never touches
+// the Claude-judge sheet.
+
+const GradingSchema = z.object({
+  gradings: z.array(z.object({
+    blind_id: z.string(),
+    label: z.enum(['proven', 'actionable', 'plausible', 'false']),
+    proof: z.string().optional().default(''),
+    cluster: z.string().optional().default(''),
+    matches: z.string().optional().default(''),
+    pattern: z.string().optional().default(''),
+  })),
+});
+
+const JUDGE_SYSTEM = [
+  'You are a blind code-review adjudicator. You grade a list of findings against',
+  'the ACTUAL diff provided below. You do NOT know which of several AI reviewers',
+  'produced each finding — grade purely on whether the code supports the claim,',
+  'never on writing style or confidence.',
+  '',
+  'CRITICAL: if the diff below was assembled from multiple chunks, a fragment with',
+  'no visible `diff --git` header for a hunk is a CONTINUATION of a file shown',
+  'elsewhere in this SAME diff, not evidence the file was deleted or is absent.',
+  'Only grade a "file is missing/deleted" claim as proven/actionable if the file',
+  'genuinely does not appear ANYWHERE in the diff shown to you.',
+  '',
+  'Label taxonomy (severity weights LOW=1, MEDIUM=3, HIGH=8):',
+  '  proven     (factor 1.0) — direct code evidence confirms the claim exactly; cite file:line in `proof`.',
+  '  actionable (factor 0.6) — real, worth-fixing issue, but not a slam-dunk proof; some inference involved.',
+  '  plausible  (factor 0)   — could be true, unverifiable from the diff shown.',
+  '  false      (factor 0)   — factually wrong against the diff shown.',
+  '',
+  '`proof` is REQUIRED (file:line or a short repro) whenever severity=HIGH and label is proven or actionable;',
+  'otherwise leave it empty. If you cannot produce proof for a HIGH accept, grade it `plausible` instead.',
+  '`cluster` — a short tag you choose so that findings describing the SAME underlying defect within this',
+  'commit share one value (e.g. "c1", "c2"); reuse a tag across findings you judge to be the same defect.',
+  '`matches` — a KD-NNN id from the known-defects rubric below, ONLY if label is proven/actionable AND the',
+  'file is in that KD\'s file list AND the finding actually describes that KD\'s defect (not just same file).',
+  '`pattern` — optional short tag, ONLY if this finding shares a file/module or violated invariant with',
+  'another finding you are ALSO grading in this same batch; otherwise leave empty.',
+  '',
+  'Grade EVERY blind_id given. Return structured JSON per the schema — nothing else.',
+].join('\n');
+
+/** Quoted-CSV row parser (mirrors cmdScore's — kept local, no cross-fn coupling). */
+function parseCsvLine(line) {
+  const out = []; let cur = '', q = false;
+  for (const ch of line) { if (ch === '"') q = !q; else if (ch === ',' && !q) { out.push(cur); cur = ''; } else cur += ch; }
+  out.push(cur); return out;
+}
+
+function readBlindSheet(csvPath) {
+  const lines = fs.readFileSync(csvPath, 'utf8').split(/\r?\n/).filter(Boolean);
+  const header = lines[0].split(',');
+  const col = (n) => header.indexOf(n);
+  const iId = col('blind_id'), iCommit = col('commit'), iSev = col('severity'), iCat = col('category'), iFile = col('file'), iDetail = col('detail');
+  const rows = lines.slice(1).map((line) => {
+    const c = parseCsvLine(line);
+    return { blindId: c[iId], commit: c[iCommit], severity: c[iSev], category: c[iCat], file: c[iFile], detail: c[iDetail] };
+  });
+  return { header, rows };
+}
+
+/** One GPT grading call over a sub-batch of rows for ONE commit's full diff. */
+async function runGptJudgeBatch(client, zodTextFormat, gptModel, { shortSha, diff, kdBlock, rowsBatch, reasoning }) {
+  const rowsJson = JSON.stringify(rowsBatch.map((r) => ({ blind_id: r.blindId, severity: r.severity, category: r.category, file: r.file, detail: r.detail })), null, 2);
+  const userPrompt = [
+    `## Commit ${shortSha} — full diff`,
+    diff,
+    kdBlock ? `## Known-defect rubric for this commit\n${kdBlock}` : '## Known-defect rubric for this commit\n(none)',
+    `## Findings to grade (blind — ${rowsBatch.length} row(s))`,
+    rowsJson,
+  ].join('\n\n');
+  assertEgressSafe(userPrompt, { label: `judge-gpt:${shortSha}` });
+  const params = {
+    model: gptModel,
+    input: [{ role: 'system', content: JUDGE_SYSTEM }, { role: 'user', content: userPrompt }],
+    text: { format: zodTextFormat(GradingSchema, 'grading') },
+    max_output_tokens: 16000,
+  };
+  if (reasoning) params.reasoning = { effort: reasoning };
+  const resp = await client.responses.parse(params);
+  return { gradings: resp.output_parsed?.gradings || [], usage: resp.usage || null };
+}
+
+async function cmdJudgeGpt() {
+  const srcPath = argOption('csv') ? path.resolve(argOption('csv')) : BLIND_CSV;
+  const outPath = path.join(OUT_DIR, argOption('out', 'blind-adjudication-gpt.csv'));
+  const rowBatchSize = Number.parseInt(argOption('batch-size', '40'), 10);
+  const maxDiffChars = Number.parseInt(argOption('max-diff-chars', '600000'), 10);
+  const force = hasFlag('force');
+  if (!fs.existsSync(srcPath)) { log(`No blind sheet at ${path.relative(process.cwd(), srcPath)} — run merge first.`); process.exit(1); }
+
+  const { header, rows } = readBlindSheet(srcPath);
+  const iLabel = header.indexOf('label'), iProof = header.indexOf('proof'), iCluster = header.indexOf('cluster'), iMatches = header.indexOf('matches'), iPattern = header.indexOf('pattern');
+  const rawLines = fs.readFileSync(srcPath, 'utf8').split(/\r?\n/).filter(Boolean).slice(1);
+
+  // RESUME (crash/interruption safety — found live: a session restart killed
+  // this process mid-run and the ONLY-write-at-the-end version lost 12 fully-
+  // graded commits' worth of real spend). Seed gradingByBlindId from any prior
+  // partial output at outPath; every commit checkpoints as it finishes below,
+  // so a killed process never loses more than its in-flight commit.
+  const gradingByBlindId = new Map();
+  if (fs.existsSync(outPath) && !force) {
+    const priorLines = fs.readFileSync(outPath, 'utf8').split(/\r?\n/).filter(Boolean);
+    const priorHeader = priorLines[0].split(',');
+    const pId = priorHeader.indexOf('blind_id'), pLabel = priorHeader.indexOf('label'), pProof = priorHeader.indexOf('proof'), pCluster = priorHeader.indexOf('cluster'), pMatches = priorHeader.indexOf('matches'), pPattern = priorHeader.indexOf('pattern');
+    for (const line of priorLines.slice(1)) {
+      const c = parseCsvLine(line);
+      if (c[pLabel]) gradingByBlindId.set(c[pId], { blind_id: c[pId], label: c[pLabel], proof: c[pProof], cluster: c[pCluster], matches: c[pMatches], pattern: c[pPattern] });
+    }
+    if (gradingByBlindId.size) log(`Resuming — ${gradingByBlindId.size} row(s) already graded in ${path.relative(process.cwd(), outPath)} (use --force to re-grade everything)`);
+  }
+
+  const { createOpenAIClient } = await import('./lib/openai-client.mjs');
+  const { zodTextFormat } = await import('openai/helpers/zod');
+  try { const mr = await import('./lib/model-resolver.mjs'); await mr.refreshModelCatalog?.(); } catch { /* offline */ }
+  const gptModel = resolveModel(argOption('model', 'latest-gpt'));
+  const client = await createOpenAIClient({ purpose: 'gpt' });
+
+  const kdPath = path.join('docs/experiments/audit-effectiveness/known-defects.json');
+  const knownDefects = fs.existsSync(kdPath) ? (JSON.parse(fs.readFileSync(kdPath, 'utf8')).defects || []) : [];
+
+  const byCommit = new Map();
+  for (const r of rows) { if (!byCommit.has(r.commit)) byCommit.set(r.commit, []); byCommit.get(r.commit).push(r); }
+  log(`GPT judge — model=${gptModel} · ${rows.length} row(s) across ${byCommit.size} commit(s) → ${path.relative(process.cwd(), outPath)}`);
+
+  /** Write the current gradingByBlindId state to outPath — called after EVERY
+   * commit so a kill/restart never loses more than the in-flight commit. */
+  const writeCheckpoint = () => {
+    const lines = [header.join(',')];
+    let ungradedNow = 0;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const g = gradingByBlindId.get(r.blindId);
+      const cells = parseCsvLine(rawLines[i]);
+      if (g) {
+        cells[iLabel] = g.label || ''; cells[iProof] = g.proof || ''; cells[iCluster] = g.cluster || `${r.commit}:${r.blindId}`;
+        cells[iMatches] = g.matches || ''; cells[iPattern] = g.pattern || '';
+      } else ungradedNow++;
+      lines.push(cells.map(csvField).join(','));
+    }
+    atomicWriteFileSync(outPath, lines.join('\n') + '\n');
+    return ungradedNow;
+  };
+
+  const failedCommits = [];
+  for (const [shortSha, commitRows] of byCommit) {
+    if (!force && commitRows.every((r) => gradingByBlindId.has(r.blindId))) {
+      log(`  ${shortSha}: already graded (${commitRows.length} row(s)) — skipping (resume)`);
+      continue;
+    }
+    const root = locateCommit(shortSha);
+    if (!root) { log(`  ${shortSha}: NOT FOUND in any repo root — ${commitRows.length} row(s) left ungraded`); failedCommits.push(shortSha); continue; }
+    let ext;
+    try { ext = extractDiff(root, shortSha); }
+    catch (err) {
+      if (String(err?.message).includes('[egress-gate]')) log(`  ${shortSha}: EGRESS REFUSAL — ${commitRows.length} row(s) left ungraded`);
+      else log(`  ${shortSha}: diff extraction failed (${err.message}) — ${commitRows.length} row(s) left ungraded`);
+      failedCommits.push(shortSha); continue;
+    }
+    if (!ext.diff || ext.diff.length > maxDiffChars) {
+      log(`  ${shortSha}: diff ${ext.diff ? ext.diff.length : 0} chars unusable (empty or > --max-diff-chars ${maxDiffChars}) — ${commitRows.length} row(s) left ungraded`);
+      failedCommits.push(shortSha); continue;
+    }
+    const kdMatches = knownDefects.filter((d) => (d.buggyCommit || '').slice(0, 8) === shortSha || (d.fixCommit || '').slice(0, 8) === shortSha);
+    const kdBlock = kdMatches.map((d) => `- ${d.id} (${d.severity}) files=[${(d.files || []).join(', ')}]: ${d.expectedFindingRubric}`).join('\n');
+
+    let graded = 0;
+    for (let i = 0; i < commitRows.length; i += rowBatchSize) {
+      const rowsBatch = commitRows.slice(i, i + rowBatchSize);
+      try {
+        const { gradings } = await runGptJudgeBatch(client, zodTextFormat, gptModel, { shortSha, diff: ext.diff, kdBlock, rowsBatch, reasoning: 'high' });
+        for (const g of gradings) gradingByBlindId.set(g.blind_id, g);
+        graded += gradings.length;
+      } catch (err) {
+        log(`      ! judge batch failed for ${shortSha} rows ${i}-${i + rowsBatch.length}: ${String(err?.message).slice(0, 160)}`);
+      }
+    }
+    log(`  ${shortSha}: ${commitRows.length} row(s), ${ext.diff.length} diff chars, ${kdMatches.length} KD hint(s) → ${graded} graded`);
+    writeCheckpoint(); // persist after EVERY commit — the whole point of this fix
+  }
+
+  const ungraded = writeCheckpoint();
+  log(`\nWrote ${rows.length - ungraded}/${rows.length} graded row(s) → ${path.relative(process.cwd(), outPath)}`);
+  if (ungraded) log(`⚠ ${ungraded} row(s) ungraded (failed commits: ${failedCommits.join(', ') || 'none — batch call failures'}) — re-run this command (it will resume) or fill in by hand before scoring.`);
+  log('This is a SEPARATE sheet from the Claude-judge pass — do not overwrite blind-adjudication.csv with it.');
+  log(`To score it: copy over the canonical path then run score, e.g. cp ${path.relative(process.cwd(), outPath)} ${path.relative(process.cwd(), BLIND_CSV)} && node scripts/solo-control-audit.mjs score`);
 }
 
 /**
@@ -480,101 +1257,232 @@ async function cmdMerge() {
   const sFiles = listSFindings();
   if (sFiles.length === 0) { log('No S-findings-*.json — run `solo-control-audit.mjs run` (per author model) first.'); process.exit(1); }
   const soloRuns = sFiles.map((f) => JSON.parse(fs.readFileSync(path.join(OUT_DIR, f), 'utf8')));
-  // Union of covered commits across all solo runs (normally identical).
-  const commits = [...new Set(soloRuns.flatMap((r) => r.generatedFor))];
+  // Union of covered commits across all solo runs (normally identical). `--commits`
+  // narrows to an explicit subset — e.g. the curated known-defects.json commits,
+  // excluding older/unrelated backfill commits that accumulated in the same
+  // S-findings files (a real ~26% dilution found live: 447 unrelated rows / 207
+  // clusters with zero known-defect ground truth, pure adjudication overhead).
+  const commitsFilterArg = argOption('commits');
+  const allCommits = [...new Set(soloRuns.flatMap((r) => r.generatedFor))];
+  const commitsFilter = commitsFilterArg ? new Set(commitsFilterArg.split(',').map((s) => s.trim())) : null;
+  const commits = commitsFilter ? allCommits.filter((c) => [...commitsFilter].some((f) => c.startsWith(f) || f.startsWith(c))) : allCommits;
+  if (commitsFilter && commits.length !== commitsFilter.size) {
+    log(`⚠ --commits requested ${commitsFilter.size} commit(s), matched ${commits.length} in the solo-run data.`);
+  }
   const seed = Number.parseInt(argOption('seed', '20260704'), 10);
   // Severity scope — applied UNIFORMLY to S and A/B/C so it can't bias the
-  // comparison. Default HIGH only: the smallest sheet that answers the core ROI
-  // question ("does S catch the SERIOUS bugs the apparatus catches?") and guards
-  // against the adjudication-bloat failure mode. Broaden with
-  // `--severity high,medium` (or add `,low`) once the HIGH picture is in.
+  // comparison. Default HIGH only: the auto-include tier. Two ADDITIVE, opt-in
+  // tiers extend this without changing default behaviour (backward compatible —
+  // both default off):
+  //   --kd-candidates     any-severity findings whose (commit,file) plausibly
+  //                       match one of the curated known-defects.json rubrics.
+  //                       RECALL-BIASED (path-overlap only, no text/category
+  //                       matching) so a severity cutoff can't silently corrupt
+  //                       the one metric with real ground truth.
+  //   --medium-sample <N> a stratified, capped, seeded sample of N MEDIUM-only
+  //                       clusters (commit x multi-arm strata), Horvitz-Thompson-
+  //                       weightable in `score`.
+  // Converged design from /brainstorm --with-gemini (2026-07-06): HIGH-only was
+  // found structurally biased by both external models (the solo arms emit ~2.3x
+  // the apparatus's MEDIUM volume, so excluding MEDIUM hides exactly the tier
+  // where arm discipline differs most) — but full HIGH+MEDIUM was ~3.2x the
+  // adjudication volume (899 clusters short of ~1930). This is the middle design.
   const sevSet = new Set((argOption('severity', 'high').split(',').map((x) => x.trim().toUpperCase())));
   const inScope = (sev) => sevSet.has(String(sev || '').toUpperCase());
+  const wantKdCandidates = hasFlag('kd-candidates');
+  const mediumSampleTarget = Number.parseInt(argOption('medium-sample', '0'), 10) || 0;
+
+  // Known-defect commits (if curated) — needed now (not just for the `matches`
+  // column) because the kd-candidate tier match is computed here.
+  const kdPath = path.join('docs/experiments/audit-effectiveness/known-defects.json');
+  const knownDefects = fs.existsSync(kdPath) ? (JSON.parse(fs.readFileSync(kdPath, 'utf8')).defects || []) : [];
+  const { matchesKnownDefect, stratifiedMediumSample } = await import('./lib/solo-control/stratified-sample.mjs');
 
   // Uniform blind rows. `detail` is truncated to ONE length for every arm so
   // verbosity/style can't leak arm identity (brainstorm: finding-style mismatch).
   const DETAIL_CAP = 220;
-  const rows = [];
+  const commitsSet = new Set(commits);
+  const ext = await fetchExternalFindings(commits);
+  const extACommits = new Set(ext.filter((e) => e.arm === 'A').map((e) => e.commit_sha));
+
+  // Collect ALL severities (not just in-scope) so the kd-candidate + medium-pool
+  // tiers and the free LOW-volume stat all have the data they need; `tier` decides
+  // what actually reaches the sheet. Every row still gets a dupHash-derived `_i`-
+  // independent `dup` key (used as the cluster-column fallback + LOW-stat scoping).
+  const allRows = [];
+  const lowVolumeByArm = {};
   for (const run of soloRuns) {
+    const isLocalApparatus = (run.armLabel || '') === 'A';
+    const arm = run.armLabel || 'S';
     for (const f of run.findings) {
-      if (!inScope(f.severity)) continue;
-      rows.push({ arm: run.armLabel || 'S', commit: f.commit, severity: f.severity, category: f.category, file: f.section, detail: (f.detail || '').slice(0, DETAIL_CAP), dup: f._dup, fingerprint: null });
+      if (!commitsSet.has(f.commit)) continue;
+      if (isLocalApparatus && extACommits.has(f.commit)) continue; // double-count guard
+      if (String(f.severity || '').toUpperCase() === 'LOW') lowVolumeByArm[arm] = (lowVolumeByArm[arm] || 0) + 1;
+      allRows.push({ arm, commit: f.commit, severity: f.severity, category: f.category, file: f.section, detail: (f.detail || '').slice(0, DETAIL_CAP), dup: f._dup, fingerprint: null });
     }
   }
-  const ext = await fetchExternalFindings(commits);
+  for (const e of ext) {
+    if (!commitsSet.has(e.commit_sha)) continue;
+    if (String(e.severity || '').toUpperCase() === 'LOW') lowVolumeByArm[e.arm] = (lowVolumeByArm[e.arm] || 0) + 1;
+    allRows.push({ arm: e.arm, commit: e.commit_sha, severity: e.severity, category: e.category, file: e.primary_file, detail: (e.detail || '').slice(0, DETAIL_CAP), dup: dupHash(e.category, e.primary_file, e.detail), fingerprint: e.finding_fingerprint });
+  }
+
+  // kdHint is computed for EVERY row (independent of tier/--kd-candidates) — a
+  // HIGH (auto-tier) row that happens to be the ACTUAL known-defect match is the
+  // single most valuable hint on the whole sheet; it must not be reserved for the
+  // kd-candidate tier only. --kd-candidates instead controls whether a match on a
+  // row that ISN'T already auto-included ADDS it to the sheet as a new tier.
+  for (const r of allRows) r.kdHint = matchesKnownDefect(r, knownDefects);
+
+  // Tier each row: auto (in --severity scope) > kd-candidate (any severity, opt-in,
+  // recall-biased path match) > medium-pool (severity=MEDIUM, sampling candidate)
+  // > excluded (mostly LOW; never reaches the sheet, but already counted above).
+  for (const r of allRows) {
+    if (inScope(r.severity)) { r.tier = 'auto'; continue; }
+    if (wantKdCandidates && r.kdHint) { r.tier = 'kd-candidate'; continue; }
+    r.tier = String(r.severity || '').toUpperCase() === 'MEDIUM' ? 'medium-pool' : 'excluded';
+  }
+  const rows = allRows.filter((r) => r.tier !== 'excluded');
   // Coverage preflight (§12.4 / R2-H1): a covered commit with NO apparatus (arm A)
-  // rows can't be compared — it would read as "solo won" against an empty apparatus.
-  // Refuse rather than dead-end; the operator runs /audit-code on the gap commits
-  // (the apparatus-input contract) to populate the view, then re-merges.
-  const apparatusCommits = new Set(ext.filter((e) => e.arm === 'A').map((e) => e.commit_sha));
-  const gaps = commits.filter((c) => !apparatusCommits.has(c));
+  // findings can't be compared — it would read as "solo won" against an empty
+  // apparatus. Coverage can come from EITHER the ledger view (live shadow runs) OR
+  // the local retro file S-findings-A.json (the `apparatus` subcommand). Refuse on
+  // real gaps; the fix is `solo-control-audit.mjs apparatus --commits <gaps>`.
+  const viewACommits = extACommits;
+  const localA = soloRuns.find((r) => (r.armLabel || '') === 'A');
+  const localACommits = new Set(localA ? localA.perCommit.filter((c) => c.state === 'ran').map((c) => c.sha) : []);
+  const gaps = commits.filter((c) => !viewACommits.has(c) && !localACommits.has(c));
   if (gaps.length && !hasFlag('allow-apparatus-gaps')) {
-    log(`REFUSING: ${gaps.length}/${commits.length} commit(s) have NO apparatus (arm A) findings in the ledger — an empty apparatus arm would falsely read as "solo won":`);
-    for (const g of gaps.slice(0, 10)) log(`  ${g.slice(0, 12)} — run /audit-code on this commit first (apparatus-input contract), then re-merge.`);
+    log(`REFUSING: ${gaps.length}/${commits.length} commit(s) have NO apparatus (arm A) findings (ledger view OR local retro) — an empty apparatus arm would falsely read as "solo won":`);
+    for (const g of gaps.slice(0, 14)) log(`  ${g.slice(0, 12)} — run: node scripts/solo-control-audit.mjs apparatus --commits ${g.slice(0, 12)}`);
     log('Or pass --allow-apparatus-gaps to score only the covered commits (documented lower coverage).');
     process.exit(4);
   }
-  for (const e of ext) {
-    if (!inScope(e.severity)) continue;
-    rows.push({ arm: e.arm, commit: e.commit_sha, severity: e.severity, category: e.category, file: e.primary_file, detail: (e.detail || '').slice(0, DETAIL_CAP), dup: dupHash(e.category, e.primary_file, e.detail), fingerprint: e.finding_fingerprint });
-  }
-
   // Cluster-PROPOSE pre-pass (offline aggregation aid): the LLM suggests duplicate
   // groups (bias to over-split), the human overrides. Sensitive rows never sent;
   // any failure → deterministic dupHash fallback. Proposals seed the `cluster` col.
+  //
+  // BATCHED PER COMMIT — two independent reasons, not just one: (1) a finding in
+  // commit X can never be "the same underlying defect" as one in commit Y, so a
+  // global cross-commit cluster call is semantically meaningless; (2) it's also
+  // technically infeasible at scale — 1612 rows in one call blew both the input
+  // context and the ~4000-token output budget (a full index-partition of 1612 items
+  // doesn't fit), so every call silently degraded to the dupHash fallback. Batching
+  // by commit fixes both: each batch is small (a few hundred rows at most) AND the
+  // only grouping that could ever be correct.
   const { proposeClusters } = await import('./lib/solo-control/cluster-propose.mjs');
-  let clusterOf = new Map();
-  let clusterMode = 'duphash';
-  try {
-    const client = await createAnthropicClient().catch(() => null);
-    const prop = await proposeClusters(rows.map((r) => ({ category: r.category, file: r.file, detail: r.detail })), { client });
-    clusterMode = prop.mode;
-    for (const [cid, idxs] of Object.entries(prop.clusters)) for (const i of idxs) clusterOf.set(i, cid);
-  } catch { /* fall through — cluster col defaults to dupHash below */ }
+  const clusterOf = new Map();
+  const clusterModesUsed = new Set();
+  const client = await createAnthropicClient().catch(() => null);
+  const rowsByCommit = new Map();
+  rows.forEach((r, i) => {
+    if (!rowsByCommit.has(r.commit)) rowsByCommit.set(r.commit, []);
+    rowsByCommit.get(r.commit).push(i);
+  });
+  for (const [commitSha, idxs] of rowsByCommit) {
+    const batch = idxs.map((i) => ({ category: rows[i].category, file: rows[i].file, detail: rows[i].detail }));
+    let prop;
+    try { prop = await proposeClusters(batch, { client }); }
+    catch { prop = { clusters: {}, mode: 'duphash-degraded' }; }
+    clusterModesUsed.add(prop.mode);
+    for (const [cid, localIdxs] of Object.entries(prop.clusters)) {
+      const globalCid = `${commitSha.slice(0, 8)}:${cid}`;
+      for (const li of localIdxs) clusterOf.set(idxs[li], globalCid);
+    }
+  }
+  const clusterMode = clusterModesUsed.size === 1 ? [...clusterModesUsed][0] : [...clusterModesUsed].join('+');
 
-  // Assign blind ids, then shuffle deterministically (seededShuffle — replayable).
-  rows.forEach((r, i) => { r._i = i; });
-  const order = seededShuffle(rows.map((_, i) => i), seed);
-  const blind = order.map((origIdx, pos) => ({ blindId: `F${String(pos + 1).padStart(3, '0')}`, proposedCluster: clusterOf.get(origIdx) || rows[origIdx].dup, ...rows[origIdx] }));
+  // Cluster-level tier + sampling: a cluster reaches the sheet automatically if
+  // ANY member row is tier='auto' or 'kd-candidate'; a PURE medium-pool cluster
+  // (every member tier='medium-pool') is only a CANDIDATE — it's included iff the
+  // stratified sampler picks it. This is why clustering ran over the tier UNION
+  // above (not each tier separately): a HIGH row and a MEDIUM row describing the
+  // same underlying defect must land in one cluster so the medium-pool row rides
+  // in "for free" via auto-inclusion, rather than being independently sampled.
+  const clusterKeyOf = (i) => clusterOf.get(i) || `solo:${rows[i].dup}`;
+  const clusterRowIdxs = new Map(); // clusterKey -> [row idx,...]
+  rows.forEach((_, i) => {
+    const ck = clusterKeyOf(i);
+    if (!clusterRowIdxs.has(ck)) clusterRowIdxs.set(ck, []);
+    clusterRowIdxs.get(ck).push(i);
+  });
+  const autoIncludeClusters = new Set();
+  const mediumPoolClusters = []; // → stratifiedMediumSample input shape
+  for (const [ck, idxs] of clusterRowIdxs) {
+    const memberTiers = idxs.map((i) => rows[i].tier);
+    if (memberTiers.some((t) => t === 'auto' || t === 'kd-candidate')) { autoIncludeClusters.add(ck); continue; }
+    // Pure medium-pool cluster — a sampling candidate.
+    mediumPoolClusters.push({ clusterKey: ck, commit: rows[idxs[0]].commit, arms: new Set(idxs.map((i) => rows[i].arm)) });
+  }
+  const mediumSample = mediumSampleTarget > 0
+    ? stratifiedMediumSample(mediumPoolClusters, { targetSize: mediumSampleTarget, seed: seed + 1 })
+    : new Map();
+  const includedClusters = new Set([...autoIncludeClusters, ...mediumSample.keys()]);
+  const includedIdxs = [...clusterRowIdxs.entries()].filter(([ck]) => includedClusters.has(ck)).flatMap(([, idxs]) => idxs);
 
-  // Known-defect commits (if curated) — surfaced so the adjudicator knows which
-  // commits have a documented bug to look for (they fill `matches` with the KD id).
-  const kdPath = path.join('docs/experiments/audit-effectiveness/known-defects.json');
-  const knownDefects = fs.existsSync(kdPath) ? (JSON.parse(fs.readFileSync(kdPath, 'utf8')).defects || []) : [];
+  // Assign blind ids over the INCLUDED rows only, then shuffle deterministically
+  // (seededShuffle — replayable).
+  const order = seededShuffle(includedIdxs.slice(), seed);
+  const blind = order.map((origIdx, pos) => {
+    const ck = clusterKeyOf(origIdx);
+    const sampleInfo = mediumSample.get(ck);
+    return {
+      blindId: `F${String(pos + 1).padStart(3, '0')}`,
+      proposedCluster: ck,
+      inclusionProb: sampleInfo ? sampleInfo.inclusionProb : 1, // auto-include ⇒ certain (prob 1)
+      sheetTier: sampleInfo ? 'medium-sample' : rows[origIdx].tier,
+      ...rows[origIdx],
+    };
+  });
 
   // Public sheet — NO arm/fingerprint columns. 4-LABEL proof protocol (§12.1/§12.2):
   // `label` = proven|actionable|plausible|false; `proof` = file:line/repro for
   // high-severity; `cluster` = the proposed group (human overrides — merge/split
-  // veto); `matches` = the known-defect id this finding proves, if any.
-  const header = ['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches'];
+  // veto); `matches` = the known-defect id this finding proves, if any; `pattern` =
+  // OPTIONAL — fill only if you judge this cluster is part of a broader systemic
+  // issue (pre-declared criteria: same file/module OR same violated invariant as
+  // another labeled cluster — not free-form narrative). Give it a short shared tag
+  // (e.g. "reconcile-null-checks") so `score` can group by it later.
+  const header = ['blind_id', 'commit', 'severity', 'category', 'file', 'detail', 'label', 'proof', 'cluster', 'matches', 'pattern'];
   const lines = [header.join(',')];
   for (const b of blind) {
-    lines.push([b.blindId, b.commit.slice(0, 8), b.severity, b.category, b.file, b.detail, '', '', b.proposedCluster, ''].map(csvField).join(','));
+    lines.push([b.blindId, b.commit.slice(0, 8), b.severity, b.category, b.file, b.detail, '', '', b.proposedCluster, b.kdHint || '', ''].map(csvField).join(','));
   }
   fs.mkdirSync(OUT_DIR, { recursive: true });
   atomicWriteFileSync(BLIND_CSV, lines.join('\n') + '\n');
 
-  // Private mapping (blindId → real arm + severity/category for scoreArms) for `score`.
+  // Private mapping (blindId → real arm + severity/category for scoreArms, PLUS
+  // sheetTier + inclusionProb so `score` knows which rows are exhaustive
+  // (auto/kd-candidate — scoreArms) vs a weighted sample (medium-sample —
+  // scoreMediumSampleWeighted) for `score`.
   const map = {};
-  for (const b of blind) map[b.blindId] = { arm: b.arm, commit: b.commit, severity: b.severity, category: b.category, fingerprint: b.fingerprint, dup: b.dup };
+  for (const b of blind) map[b.blindId] = { arm: b.arm, commit: b.commit, severity: b.severity, category: b.category, fingerprint: b.fingerprint, dup: b.dup, sheetTier: b.sheetTier, inclusionProb: b.inclusionProb };
   // Underpowered/degenerate solo arms → carried so scoring can mark them ineligible.
   const armMeta = {};
   for (const run of soloRuns) armMeta[run.armLabel || 'S'] = { samplingDegenerate: !!run.samplingDegenerate, repeats: run.provenance?.repeats ?? 1 };
-  atomicWriteFileSync(BLIND_MAP, JSON.stringify({ seed, detailCap: DETAIL_CAP, commits, clusterMode, knownDefects: knownDefects.map((d) => ({ id: d.id, buggyCommit: d.buggyCommit })), armMeta, map }, null, 2));
+  atomicWriteFileSync(BLIND_MAP, JSON.stringify({
+    seed, detailCap: DETAIL_CAP, commits, clusterMode, armMeta, map,
+    knownDefects: knownDefects.map((d) => ({ id: d.id, buggyCommit: d.buggyCommit })),
+    lowVolumeByArm, // free descriptive stat — LOW-severity raw finding volume per arm, never graded
+    mediumSampleMeta: mediumSampleTarget > 0 ? { targetSize: mediumSampleTarget, poolSize: mediumPoolClusters.length, sampledSize: mediumSample.size } : null,
+  }, null, 2));
 
   const byArm = blind.reduce((a, b) => ((a[b.arm] = (a[b.arm] || 0) + 1), a), {});
-  log(`Blind sheet: ${blind.length} findings (${Object.entries(byArm).map(([k, v]) => `${k}:${v}`).join(' ')}) · clustering=${clusterMode}${knownDefects.length ? ` · ${knownDefects.length} known-defect(s)` : ''} → ${path.relative(process.cwd(), BLIND_CSV)}`);
-  log('Label `label` (proven|actionable|plausible|false); add `proof` (file:line/repro) for high-severity; fix `cluster` (merge/split); set `matches` to a known-defect id where it applies.');
+  const byTier = blind.reduce((a, b) => ((a[b.sheetTier] = (a[b.sheetTier] || 0) + 1), a), {});
+  log(`Blind sheet: ${blind.length} findings (${Object.entries(byArm).map(([k, v]) => `${k}:${v}`).join(' ')}) · tiers(${Object.entries(byTier).map(([k, v]) => `${k}:${v}`).join(' ')}) · clustering=${clusterMode}${knownDefects.length ? ` · ${knownDefects.length} known-defect(s)` : ''} → ${path.relative(process.cwd(), BLIND_CSV)}`);
+  if (mediumSampleTarget > 0) log(`  medium-sample: ${mediumSample.size}/${mediumSampleTarget} requested, drawn from a pool of ${mediumPoolClusters.length} pure-MEDIUM clusters.`);
+  log(`  LOW-volume per arm (free, unlabeled review-burden stat): ${JSON.stringify(lowVolumeByArm)}`);
+  log('Label `label` (proven|actionable|plausible|false); add `proof` (file:line/repro) for high-severity; fix `cluster` (merge/split); confirm/clear `matches` (pre-filled where a known-defect file+commit match was found); optionally set `pattern` for systemic-issue clusters.');
   log('Do NOT open .blind-map.json while labeling. Then: node scripts/solo-control-audit.mjs score');
 }
 
 async function cmdScore() {
   if (!fs.existsSync(BLIND_CSV) || !fs.existsSync(BLIND_MAP)) { log('Run `merge` and label the CSV first.'); process.exit(1); }
-  const { map, commits, knownDefects = [], armMeta = {} } = JSON.parse(fs.readFileSync(BLIND_MAP, 'utf8'));
+  const { map, commits, knownDefects = [], armMeta = {}, lowVolumeByArm = {}, mediumSampleMeta = null } = JSON.parse(fs.readFileSync(BLIND_MAP, 'utf8'));
   const csv = fs.readFileSync(BLIND_CSV, 'utf8').split(/\r?\n/).filter(Boolean);
   const header = csv[0].split(',');
   const col = (n) => header.indexOf(n);
-  const iId = col('blind_id'), iLabel = col('label'), iCluster = col('cluster'), iMatches = col('matches'), iProof = col('proof');
+  const iId = col('blind_id'), iLabel = col('label'), iCluster = col('cluster'), iMatches = col('matches'), iProof = col('proof'), iPattern = col('pattern');
 
   // Simple quoted-CSV parse.
   const parseRow = (line) => {
@@ -584,7 +1492,14 @@ async function cmdScore() {
   };
 
   const VALID = new Set(['proven', 'actionable', 'plausible', 'false']);
-  const scoringRows = [];
+  // Split by sheetTier: 'auto'/'kd-candidate' are EXHAUSTIVE (every cluster on the
+  // sheet is counted directly → scoreArms); 'medium-sample' is a STRATIFIED SAMPLE
+  // with a known inclusion probability → scoreMediumSampleWeighted (Horvitz-
+  // Thompson). Mixing them into one scoreArms call would silently treat sampled
+  // rows as if they were the whole population — wrong denominator, wrong precision.
+  const exhaustiveRows = [];
+  const sampleRows = [];
+  const patternGroups = new Map(); // pattern tag -> [{blindId, commit, arm}]
   let unlabeled = 0, invalid = 0, dataRows = 0;
   const highNeedingProof = [];
   for (let i = 1; i < csv.length; i++) {
@@ -598,18 +1513,33 @@ async function cmdScore() {
     if (!VALID.has(label)) { invalid++; log(`  ⚠ ${blindId}: invalid label "${label}" (expected proven|actionable|plausible|false) — excluded`); continue; }
     const humanCluster = (cols[iCluster] || m.dup || blindId).trim() || blindId;
     const matches = iMatches >= 0 ? (cols[iMatches] || '').trim() || null : null;
+    const pattern = iPattern >= 0 ? (cols[iPattern] || '').trim() || null : null;
+    if (pattern) { if (!patternGroups.has(pattern)) patternGroups.set(pattern, []); patternGroups.get(pattern).push({ blindId, commit: m.commit, arm: m.arm }); }
     if ((m.severity || '').toUpperCase() === 'HIGH' && (label === 'proven' || label === 'actionable') && !(iProof >= 0 && (cols[iProof] || '').trim())) {
       highNeedingProof.push(blindId);
     }
-    scoringRows.push({ arm: m.arm, commit: m.commit, severity: m.severity, category: m.category, label, humanCluster, matches });
+    if (m.sheetTier === 'medium-sample') {
+      sampleRows.push({ arm: m.arm, label, inclusionProb: m.inclusionProb ?? 1 });
+    } else {
+      exhaustiveRows.push({ arm: m.arm, commit: m.commit, severity: m.severity, category: m.category, label, humanCluster, matches });
+    }
   }
 
   const coverage = dataRows > 0 ? (dataRows - unlabeled) / dataRows : 0;
   if (unlabeled > 0) log(`⚠ ${unlabeled}/${dataRows} row(s) unlabeled (coverage ${(coverage * 100).toFixed(0)}%).`);
 
   const underpowered = Object.entries(armMeta).filter(([, v]) => v.samplingDegenerate).map(([k]) => k);
-  const { scoreArms } = await import('./lib/solo-control/scoring.mjs');
-  const result = scoreArms(scoringRows, { knownDefects, underpowered, apparatusArm: 'A' });
+  const { scoreArms, scoreMediumSampleWeighted } = await import('./lib/solo-control/scoring.mjs');
+  const result = scoreArms(exhaustiveRows, { knownDefects, underpowered, apparatusArm: 'A' });
+  const mediumEstimate = sampleRows.length > 0 ? scoreMediumSampleWeighted(sampleRows) : null;
+
+  // Pattern report: a pre-declared "part of a broader systemic issue" tag the
+  // adjudicator applied — reported as its OWN metric (systemic-issue detection),
+  // never folded into ordinary per-finding precision (brainstorm: avoid post-hoc
+  // stacking narratives — only pre-declared, human-applied tags count).
+  const patternReport = [...patternGroups.entries()].map(([tag, members]) => ({
+    tag, count: members.length, arms: [...new Set(members.map((x) => x.arm))], commits: [...new Set(members.map((x) => x.commit.slice(0, 8)))],
+  }));
 
   const soloMeta = {};
   for (const f of listSFindings()) {
@@ -622,6 +1552,9 @@ async function cmdScore() {
     labelCoverage: +coverage.toFixed(2),
     decisionStatus: coverage >= 0.9 && highNeedingProof.length === 0 ? 'final' : 'directional-only',
     ...result,
+    mediumSample: mediumSampleMeta ? { ...mediumSampleMeta, labeled: sampleRows.length, estimate: mediumEstimate } : null,
+    lowVolumeByArm,
+    systemicPatterns: patternReport.length ? patternReport : null,
     soloArmModels: soloMeta,
     notes: {
       proofGap: highNeedingProof.length ? `${highNeedingProof.length} HIGH accepted finding(s) lack a proof cell → directional-only (§12.3 P4 gate)` : null,
@@ -641,9 +1574,14 @@ async function main() {
   const cmd = process.argv[2];
   try {
     if (cmd === 'run') await cmdRun();
+    else if (cmd === 'apparatus') await cmdApparatus();
+    else if (cmd === 'apparatus-bc') await cmdApparatusBC();
+    else if (cmd === 'sonnet-gemini-retro') await cmdSonnetGeminiRetro();
+    else if (cmd === 'solo-pass-retro') await cmdSoloPassRetro();
     else if (cmd === 'merge') await cmdMerge();
     else if (cmd === 'score') await cmdScore();
-    else { log('Usage: solo-control-audit.mjs run|merge|score  (see file header)'); process.exit(2); }
+    else if (cmd === 'judge-gpt') await cmdJudgeGpt();
+    else { log('Usage: solo-control-audit.mjs run|apparatus|apparatus-bc|sonnet-gemini-retro|solo-pass-retro|merge|score|judge-gpt  (see file header)'); process.exit(2); }
   } catch (err) {
     log(`FATAL: ${err?.stack || err?.message || err}`);
     process.exit(1);
@@ -651,4 +1589,8 @@ async function main() {
   process.exit(0);
 }
 
-main();
+// Guarded so tests can `import` this module for `_internals` (pure helpers
+// like chunkDiff) without triggering a live CLI run + process.exit.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main();
+
+export const _internals = { chunkDiff, continuationMarker };

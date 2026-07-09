@@ -566,6 +566,47 @@ describe('applyRedactor structured system', () => {
   });
 });
 
+// ── wrapSdkClient: timeoutMs → timeout translation (real bug found live) ────
+//
+// The raw Anthropic SDK's per-call option is `timeout` (ms); every caller in
+// this repo uses the `timeoutMs` convention (brainstorm-round, openai-audit,
+// visual-audit, solo-control-audit, ...). Passing `{timeoutMs}` straight
+// through to the SDK is silently ignored → falls back to the SDK's own
+// 600000ms default regardless of what the caller asked for. Found while
+// investigating a long-running solo-control-audit --repeats run (SDK backend)
+// that appeared slower than its configured 300000ms timeout implied.
+describe('wrapSdkClient timeout translation', () => {
+  it('translates requestOptions.timeoutMs to the SDK-native `timeout` key', async () => {
+    const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
+    let capturedOpts = null;
+    const fakeRaw = { messages: { create: async (params, opts) => { capturedOpts = opts; return { content: [], usage: {} }; } } };
+    const client = _internals.wrapSdkClient(fakeRaw, null);
+    await client.messages.create({ model: 'x', messages: [] }, { timeoutMs: 300000 });
+    assert.equal(capturedOpts.timeout, 300000, 'timeout (SDK key) must be set');
+    assert.equal('timeoutMs' in capturedOpts, false, 'the non-SDK key must not leak through');
+  });
+
+  it('passes requestOptions through unchanged when timeoutMs is absent', async () => {
+    const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
+    let capturedOpts = null;
+    const fakeRaw = { messages: { create: async (params, opts) => { capturedOpts = opts; return { content: [], usage: {} }; } } };
+    const client = _internals.wrapSdkClient(fakeRaw, null);
+    await client.messages.create({ model: 'x', messages: [] }, { signal: 'abort-signal-stub' });
+    assert.equal(capturedOpts.signal, 'abort-signal-stub');
+    assert.equal('timeout' in capturedOpts, false);
+  });
+
+  it('still applies redaction when a redactor is provided (both concerns compose)', async () => {
+    const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
+    let capturedParams = null;
+    const fakeRaw = { messages: { create: async (params) => { capturedParams = params; return { content: [], usage: {} }; } } };
+    const redactor = (s) => (typeof s === 'string' ? s.replace(/SECRET/g, '[X]') : s);
+    const client = _internals.wrapSdkClient(fakeRaw, redactor);
+    await client.messages.create({ system: 'has SECRET inside', messages: [] }, { timeoutMs: 1000 });
+    assert.ok(!capturedParams.system.includes('SECRET'), 'redaction still applied');
+  });
+});
+
 // ── createAnthropicClient (sdk backend) — error path only ───────────────────
 
 describe('createAnthropicClient (sdk backend)', () => {

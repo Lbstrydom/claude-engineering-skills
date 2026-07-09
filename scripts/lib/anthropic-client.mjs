@@ -243,7 +243,7 @@ export async function createAnthropicClient(options = {}) {
       anthropicOpts = { apiKey: effectiveApiKey };
     }
     const rawClient = new Anthropic(anthropicOpts);
-    client = effectiveRedactor ? wrapSdkWithRedactor(rawClient, effectiveRedactor) : rawClient;
+    client = wrapSdkClient(rawClient, effectiveRedactor);
   }
 
   if (cacheable) _clientCache.set(cacheKey, client);
@@ -273,16 +273,35 @@ async function getDefaultRedactor() {
 }
 
 /**
- * Wrap a raw SDK client so every outbound `system` and text content block
- * is run through `redactor` before reaching the network. Returns a proxy
- * that exposes the same `.messages.create()` surface.
+ * Wrap a raw SDK client so (a) every outbound `system` and text content block is
+ * run through `redactor` before reaching the network (skipped when `redactor` is
+ * null — explicit opt-out) and (b) the repo-wide `{ timeoutMs }` requestOptions
+ * convention (used by every other caller — brainstorm-round, openai-audit,
+ * visual-audit, this file's own cli adapter) is honoured under the SDK backend too.
+ *
+ * The raw Anthropic SDK's per-call option is named `timeout` (ms), NOT `timeoutMs`
+ * — passing `{ timeoutMs }` straight through is silently IGNORED by the SDK, which
+ * then falls back to `Anthropic.DEFAULT_TIMEOUT` (600000ms / 10 min). A caller
+ * asking for a 300000ms (5 min) cap would unknowingly get double that. ALWAYS wrap
+ * (even with redactor:null) so this translation happens on every SDK-backend call,
+ * not just the redacted ones.
  */
-function wrapSdkWithRedactor(rawClient, redactor) {
+function wrapSdkClient(rawClient, redactor) {
   return {
+    // Diagnostic passthroughs — the resolved endpoint/auth stay inspectable
+    // (Azure-profile checks and tests read them) even though the raw client
+    // is otherwise hidden behind the wrapper.
+    get baseURL() { return rawClient.baseURL; },
+    get authToken() { return rawClient.authToken; },
     messages: {
       async create(params, requestOptions) {
-        const redacted = applyRedactor(params, redactor);
-        return rawClient.messages.create(redacted, requestOptions);
+        const body = redactor ? applyRedactor(params, redactor) : params;
+        let opts = requestOptions;
+        if (opts && opts.timeoutMs != null) {
+          const { timeoutMs, ...rest } = opts;
+          opts = { ...rest, timeout: timeoutMs };
+        }
+        return rawClient.messages.create(body, opts);
       },
     },
   };
@@ -743,4 +762,5 @@ export const _internals = {
   createCliAdapter,
   quoteWinArg,
   getDefaultRedactor,
+  wrapSdkClient,
 };

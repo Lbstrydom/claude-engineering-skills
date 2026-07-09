@@ -57,3 +57,57 @@ test('dupHashClusters groups exact dups together', () => {
   const g = Object.values(dupHashClusters(rows));
   assert.equal(g.length, 2);
 });
+
+// ── internal sub-batching (found live: a ~300-row single-commit batch silently
+// degraded to near-1:1 clusters — one LLM call cannot emit a full index-partition
+// of hundreds of items within its output budget) ────────────────────────────────
+
+test('a batch far larger than one call can handle still fully clusters via internal chunking', async () => {
+  // 120 rows (well over MAX_ROWS_PER_CALL=50) → must be split into >=3 chunks.
+  // Each chunk's mock groups [0,1] and leaves the rest singleton, so we can verify
+  // BOTH that every row is covered exactly once AND that real (non-singleton)
+  // grouping happened per chunk (proof clustering isn't silently degrading).
+  let calls = 0;
+  const spy = {
+    messages: {
+      create: async (params) => {
+        calls++;
+        const text = params.messages[0].content;
+        const n = Number(text.match(/Group these (\d+) findings/)[1]);
+        const clusters = [[0, 1], ...Array.from({ length: n - 2 }, (_, i) => [i + 2])];
+        return { content: [{ type: 'text', text: JSON.stringify({ clusters }) }] };
+      },
+    },
+  };
+  const rows = Array.from({ length: 120 }, (_, i) => ({ category: 'x', file: `f${i}.js`, detail: `finding ${i}` }));
+  const r = await proposeClusters(rows, { client: spy });
+  assert.equal(r.mode, 'llm');
+  assert.ok(calls >= 3, `expected >=3 chunked calls for 120 rows, got ${calls}`);
+  allIndicesCoveredOnce(r.clusters, 120);
+  // Each chunk merged its [0,1] pair → at least one real (size>1) cluster per chunk.
+  const multiClusters = Object.values(r.clusters).filter((idxs) => idxs.length > 1);
+  assert.ok(multiClusters.length >= calls, `expected >=${calls} multi-row clusters (one per chunk), got ${multiClusters.length}`);
+});
+
+test('mixed chunk outcomes report llm+duphash-degraded, not a misleading pure mode', async () => {
+  // First chunk (rows 0-49) succeeds via LLM; second chunk (50-99) returns garbage
+  // and must fall back — the OVERALL mode must reflect the mix, not silently
+  // report "llm" when part of the batch actually degraded.
+  let call = 0;
+  const spy = {
+    messages: {
+      create: async (params) => {
+        call++;
+        if (call === 1) {
+          const n = Number(params.messages[0].content.match(/Group these (\d+) findings/)[1]);
+          return { content: [{ type: 'text', text: JSON.stringify({ clusters: Array.from({ length: n }, (_, i) => [i]) }) }] };
+        }
+        return { content: [{ type: 'text', text: 'not json' }] };
+      },
+    },
+  };
+  const rows = Array.from({ length: 100 }, (_, i) => ({ category: 'x', file: `f${i}.js`, detail: `d${i}` }));
+  const r = await proposeClusters(rows, { client: spy });
+  assert.equal(r.mode, 'llm+duphash-degraded');
+  allIndicesCoveredOnce(r.clusters, 100);
+});

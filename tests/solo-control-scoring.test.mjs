@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scoreArms } from '../scripts/lib/solo-control/scoring.mjs';
+import { scoreArms, scoreMediumSampleWeighted } from '../scripts/lib/solo-control/scoring.mjs';
 
 test('collapse: xN repeated rows in one human_cluster count ONCE (R2-H2)', () => {
   const rows = [
@@ -70,4 +70,57 @@ test('matchesApparatus: eligible + value >= 0.9*apparatus + kd-recall >= apparat
   const s = scoreArms(rows, { knownDefects: [{ id: 'KD-1' }], apparatusArm: 'A' });
   assert.equal(s.arms['S'].matchesApparatus, true);  // equal value + equal recall
   assert.equal(s.arms['A'].matchesApparatus, null);  // the apparatus vs itself
+});
+
+// ── scoreMediumSampleWeighted (Horvitz-Thompson + bootstrap CI) ─────────────
+
+test('scoreMediumSampleWeighted: HT weighting corrects for oversampling one outcome', () => {
+  // arm X: 2 rows heavily OVERsampled (inclusionProb=1, both accepted) and
+  // 2 rows heavily UNDERsampled (inclusionProb=0.1, both NOT accepted). A naive
+  // unweighted average would read 50% accepted; HT weighting must pull the
+  // estimate toward the rarely-sampled (and therefore more-representative-of-
+  // the-unsampled-population) unaccepted rows.
+  const rows = [
+    { arm: 'X', label: 'proven', inclusionProb: 1 },
+    { arm: 'X', label: 'proven', inclusionProb: 1 },
+    { arm: 'X', label: 'false', inclusionProb: 0.1 },
+    { arm: 'X', label: 'false', inclusionProb: 0.1 },
+  ];
+  const r = scoreMediumSampleWeighted(rows, { bootstrapReps: 200 });
+  assert.ok(r.arms['X'].acceptedRateEstimate < 0.5, `expected < 0.5, got ${r.arms['X'].acceptedRateEstimate}`);
+});
+
+test('scoreMediumSampleWeighted: uniform inclusionProb reduces to a plain accepted rate', () => {
+  const rows = [
+    { arm: 'Y', label: 'proven', inclusionProb: 0.5 },
+    { arm: 'Y', label: 'actionable', inclusionProb: 0.5 },
+    { arm: 'Y', label: 'plausible', inclusionProb: 0.5 },
+    { arm: 'Y', label: 'false', inclusionProb: 0.5 },
+  ];
+  const r = scoreMediumSampleWeighted(rows, { bootstrapReps: 100 });
+  assert.equal(r.arms['Y'].acceptedRateEstimate, 0.5); // 2 of 4 accepted (proven+actionable)
+});
+
+test('scoreMediumSampleWeighted: CI widens with fewer samples', () => {
+  const few = [{ arm: 'Z', label: 'proven', inclusionProb: 0.5 }, { arm: 'Z', label: 'false', inclusionProb: 0.5 }];
+  const many = Array.from({ length: 40 }, (_, i) => ({ arm: 'Z', label: i % 2 === 0 ? 'proven' : 'false', inclusionProb: 0.5 }));
+  const rFew = scoreMediumSampleWeighted(few, { bootstrapReps: 500, seed: 1 });
+  const rMany = scoreMediumSampleWeighted(many, { bootstrapReps: 500, seed: 1 });
+  const widthFew = rFew.arms['Z'].ci95.hi - rFew.arms['Z'].ci95.lo;
+  const widthMany = rMany.arms['Z'].ci95.hi - rMany.arms['Z'].ci95.lo;
+  assert.ok(widthMany < widthFew, `more samples should tighten the CI (few=${widthFew}, many=${widthMany})`);
+});
+
+test('scoreMediumSampleWeighted: deterministic given the same seed', () => {
+  const rows = Array.from({ length: 20 }, (_, i) => ({ arm: 'W', label: i % 3 === 0 ? 'false' : 'proven', inclusionProb: 0.3 }));
+  const r1 = scoreMediumSampleWeighted(rows, { bootstrapReps: 300, seed: 9 });
+  const r2 = scoreMediumSampleWeighted(rows, { bootstrapReps: 300, seed: 9 });
+  assert.deepEqual(r1.arms['W'].ci95, r2.arms['W'].ci95);
+});
+
+test('scoreMediumSampleWeighted: an arm with no sampled rows returns null, not a crash', () => {
+  const rows = [{ arm: 'A', label: 'proven', inclusionProb: 1 }];
+  const r = scoreMediumSampleWeighted(rows, { bootstrapReps: 50 });
+  assert.equal(r.arms['A'].sampleN, 1);
+  assert.equal(Object.keys(r.arms).length, 1);
 });
