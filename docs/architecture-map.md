@@ -1,15 +1,15 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-10T16:46:27.512Z   commit: cb892c79e874   refresh_id: 8be5cb18-e8b9-4fe5-8cba-803f834e6268
+- Generated: 2026-07-10T20:22:46.008Z   commit: d5cca003607f   refresh_id: b52f257a-d084-492b-b6fb-bbf0bf75edb7
 - Drift score: 45 / threshold 20   status: `RED`
-- Domains: 24   Symbols: 2630   Layering violations: 0
+- Domains: 24   Symbols: 2633   Layering violations: 0
 
 ## Contents
 - [arch-memory](#arch-memory) — 52 symbols
 - [audit-orchestration](#audit-orchestration) — 186 symbols
 - [brainstorm](#brainstorm) — 66 symbols
-- [claude-hooks](#claude-hooks) — 11 symbols
+- [claude-hooks](#claude-hooks) — 14 symbols
 - [claudemd-management](#claudemd-management) — 30 symbols
 - [cross-skill-bridge](#cross-skill-bridge) — 68 symbols
 - [dashboard](#dashboard) — 110 symbols
@@ -511,7 +511,7 @@ _Domain has 66 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## claude-hooks
 
-> The `claude-hooks` domain implements Git hooks that intercept and validate file operations, particularly scanning for sensitive paths and suppression markers in code edits to enforce security policies before commits.
+> Quick-fix pattern detection via Claude Code hooks, flagging mechanical shortcuts (TODOs, magic numbers, hardcoded URLs, empty catch blocks) at edit time with per-line suppression and sensitive-path filtering.
 
 ```mermaid
 flowchart TB
@@ -533,14 +533,20 @@ subgraph dom_claude_hooks ["claude-hooks"]
   file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs__loadS
   sym_scripts_lib_quickfix_patterns_mjs_hasSup["hasSuppression"]:::symbol
   file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs_hasSup
+  sym_scripts_lib_quickfix_patterns_mjs_identi["identifierBoundaryFragment"]:::symbol
+  file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs_identi
   sym_scripts_lib_quickfix_patterns_mjs_isSens["isSensitivePath"]:::symbol
   file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs_isSens
+  sym_scripts_lib_quickfix_patterns_mjs_iterat["iterateRegexMatches"]:::symbol
+  file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs_iterat
   sym_scripts_lib_quickfix_patterns_mjs_loadSk["loadSkippedPatternSet"]:::symbol
   file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs_loadSk
   sym_scripts_lib_quickfix_patterns_mjs_matchP["matchPatterns"]:::symbol
   file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs_matchP
   sym_scripts_lib_quickfix_patterns_mjs_normal["normalisePath"]:::symbol
   file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs_normal
+  sym_scripts_lib_quickfix_patterns_mjs_toGlob["toGlobalRegex"]:::symbol
+  file_scripts_lib_quickfix_patterns_mjs --> sym_scripts_lib_quickfix_patterns_mjs_toGlob
 end
 classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
 classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
@@ -555,15 +561,18 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 |---|---|---|---|---|---|
 | [`leadingGrepTool`](../.claude/hooks/bash-grep-nudge.mjs#L24) | function | `.claude/hooks/bash-grep-nudge.mjs` | 24-28 | Extracts the leading grep-like command name (grep, rg, egrep, fgrep) from a shell command string. | _(internal)_ |
 | [`readStdin`](../.claude/hooks/bash-grep-nudge.mjs#L18) | function | `.claude/hooks/bash-grep-nudge.mjs` | 18-22 | Reads all stdin data into a buffer and returns it as a UTF-8 string. | _(internal)_ |
-| [`ensureDir`](../.claude/hooks/quickfix-scan.mjs#L38) | function | `.claude/hooks/quickfix-scan.mjs` | 38-41 | Creates a directory recursively, ignoring errors if it already exists. | _(internal)_ |
-| [`main`](../.claude/hooks/quickfix-scan.mjs#L43) | function | `.claude/hooks/quickfix-scan.mjs` | 43-158 | Main hook entry point that reads stdin JSON payload, extracts file edits/writes, validates paths, and initiates security scanning. | _(internal)_ |
-| [`readStdin`](../.claude/hooks/quickfix-scan.mjs#L32) | function | `.claude/hooks/quickfix-scan.mjs` | 32-36 | Reads all stdin chunks and concatenates them into a UTF-8 string. | _(internal)_ |
-| [`_loadStatsForTest`](../scripts/lib/quickfix-patterns.mjs#L338) | function | `scripts/lib/quickfix-patterns.mjs` | 338-343 | Loads and returns the raw stats JSON from the learning cache file for testing purposes. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
-| [`hasSuppression`](../scripts/lib/quickfix-patterns.mjs#L175) | function | `scripts/lib/quickfix-patterns.mjs` | 175-179 | Tests if a code line matches the file extension's suppression pattern (e.g., comments in JavaScript). | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
-| [`isSensitivePath`](../scripts/lib/quickfix-patterns.mjs#L163) | function | `scripts/lib/quickfix-patterns.mjs` | 163-165 | Checks if a file path is classified as sensitive (secrets, credentials, config). | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
-| [`loadSkippedPatternSet`](../scripts/lib/quickfix-patterns.mjs#L309) | function | `scripts/lib/quickfix-patterns.mjs` | 309-331 | Loads a set of quickfix pattern names that should be skipped based on low acceptance rates from a cache file. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
-| [`matchPatterns`](../scripts/lib/quickfix-patterns.mjs#L193) | function | `scripts/lib/quickfix-patterns.mjs` | 193-274 | <no body> | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
-| [`normalisePath`](../scripts/lib/quickfix-patterns.mjs#L150) | function | `scripts/lib/quickfix-patterns.mjs` | 150-152 | Normalizes a file path to a canonical form. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`ensureDir`](../.claude/hooks/quickfix-scan.mjs#L38) | function | `.claude/hooks/quickfix-scan.mjs` | 38-41 | Creates a directory recursively, silently ignoring EEXIST errors. | _(internal)_ |
+| [`main`](../.claude/hooks/quickfix-scan.mjs#L43) | function | `.claude/hooks/quickfix-scan.mjs` | 43-168 | Parses a tool-invocation payload, extracts file path and diff content, filters by extension and sensitivity, then canonicalizes the path for pattern scanning. | _(internal)_ |
+| [`readStdin`](../.claude/hooks/quickfix-scan.mjs#L32) | function | `.claude/hooks/quickfix-scan.mjs` | 32-36 | Reads stdin as a complete UTF-8 string via async iteration and buffering. | _(internal)_ |
+| [`_loadStatsForTest`](../scripts/lib/quickfix-patterns.mjs#L521) | function | `scripts/lib/quickfix-patterns.mjs` | 521-526 | Test helper that loads and parses pattern statistics from a cache file, returning null on any error. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`hasSuppression`](../scripts/lib/quickfix-patterns.mjs#L270) | function | `scripts/lib/quickfix-patterns.mjs` | 270-274 | Tests a line against the extension-specific suppression comment regex. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`identifierBoundaryFragment`](../scripts/lib/quickfix-patterns.mjs#L52) | function | `scripts/lib/quickfix-patterns.mjs` | 52-56 | Generates a regex fragment matching identifiers with word-boundary variations (camelCase, snake_case, space-separated). | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`isSensitivePath`](../scripts/lib/quickfix-patterns.mjs#L258) | function | `scripts/lib/quickfix-patterns.mjs` | 258-260 | Checks whether a file path is classified as sensitive and should skip scanning. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`iterateRegexMatches`](../scripts/lib/quickfix-patterns.mjs#L303) | function | `scripts/lib/quickfix-patterns.mjs` | 303-310 | Generator yielding successive regex matches with zero-length-match safety (advances lastIndex by 1 when match is empty). | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`loadSkippedPatternSet`](../scripts/lib/quickfix-patterns.mjs#L492) | function | `scripts/lib/quickfix-patterns.mjs` | 492-514 | Loads low-confidence patterns from the learning cache based on acceptance-rate thresholds and hit counts. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`matchPatterns`](../scripts/lib/quickfix-patterns.mjs#L336) | function | `scripts/lib/quickfix-patterns.mjs` | 336-457 | Scans diff text for quick-fix patterns while enforcing size caps, sensitive-path exclusion, and per-line suppression comments. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`normalisePath`](../scripts/lib/quickfix-patterns.mjs#L245) | function | `scripts/lib/quickfix-patterns.mjs` | 245-247 | Normalizes file paths to canonical (Windows-compatible, lowercase) form. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
+| [`toGlobalRegex`](../scripts/lib/quickfix-patterns.mjs#L288) | function | `scripts/lib/quickfix-patterns.mjs` | 288-291 | Ensures a regex has the global 'g' flag, adding it if absent. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-inventory.mjs` |
 
 ---
 

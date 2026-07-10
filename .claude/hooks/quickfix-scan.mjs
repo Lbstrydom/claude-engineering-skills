@@ -106,10 +106,20 @@ async function main() {
   // Empty Set when LEARNING_DISABLE=1, LEARNING_QUICKFIX=off, or cache absent.
   const skipPatterns = loadSkippedPatternSet({ cachePath: path.join(REPO_ROOT, '.audit', 'quickfix-pattern-stats.json') });
 
+  // Best-effort full-file read for `nearby`-bearing patterns (code-audit
+  // Gemini gate G1, round 2) — this is a PostToolUse hook, so the file is
+  // already on disk with the edit applied. An Edit call's diffText is just
+  // `new_string` (the isolated snippet), which usually lacks the 200 chars
+  // of surrounding context `nearby` needs (e.g. a `.transaction(` wrapper
+  // the edit itself didn't touch). Never fail the hook on a read error —
+  // matchPatterns falls back to the diffText-only window when absent.
+  let fullFileText;
+  try { fullFileText = fs.readFileSync(absoluteFilePath, 'utf-8'); } catch { /* fall back silently */ }
+
   // Pass canonicalized repo-relative path into matchPatterns too — the
   // langGuard checks file extensions which work with either form, but
   // using the canonical form keeps the contract clean.
-  const matches = matchPatterns(diffText, { filePath: repoRelative, skipPatterns });
+  const matches = matchPatterns(diffText, { filePath: repoRelative, skipPatterns, fullFileText });
   if (matches.length === 0) {
     process.exit(0);
   }
