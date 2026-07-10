@@ -127,11 +127,26 @@ describe('resolveSourceRepo', () => {
   // {type: 'resolved'|'invalid-override'|'none'|'ambiguous', ...}. Branches
   // are explicit at the call site; no more null-vs-object polymorphism.
   it('returns {type:"none"} when no candidate has the sentinel', () => {
-    const dir = mkdtemp();
+    // Root-caused intermittent flake: resolveSourceRepo's sibling-scan (step
+    // 4) reads dirname(cwd) — if `dir` sat directly under os.tmpdir() (as a
+    // bare mkdtemp() would), dirname(dir) IS os.tmpdir() itself, the SHARED
+    // system-wide temp root every process on the machine litters into. A
+    // concurrently-running fixture from a different test file (observed:
+    // orphan-preimage-sweep.test.mjs's own orphan-preimage-* temp dirs,
+    // which themselves satisfy isSourceRepo()) then gets picked up as a
+    // false "sibling" match, non-deterministically flipping the expected
+    // {type:'none'} to {type:'resolved', source:'sibling'}. Nesting one
+    // level deeper (matching the already-correct pattern in "finds sibling
+    // source repo" below) makes dirname(dir) a FRESH temp dir this test
+    // fully owns, so the sibling scan is genuinely hermetic — matching this
+    // file's own header claim ("No real filesystem outside mkdtemp").
+    const parent = mkdtemp();
+    const dir = path.join(parent, 'consumer-repo');
+    fs.mkdirSync(dir);
     try {
       const r = resolveSourceRepo({ cwd: dir });
       assert.deepEqual(r, { type: 'none' });
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(parent, { recursive: true, force: true }); }
   });
 
   it('accepts cwd if it has the sentinel file', () => {
