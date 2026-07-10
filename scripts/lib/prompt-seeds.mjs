@@ -159,3 +159,63 @@ export const PASS_PROMPTS = Object.freeze({
   sustainability: PASS_SUSTAINABILITY_SYSTEM,
   quickfix: PASS_QUICKFIX_SYSTEM,
 });
+
+// ── Evidence contract + positive obligations (tiered-recall pipeline V2) ────
+// Plan: docs/plans/tiered-recall-audit-pipeline.md Phases 1-2. Composed at the
+// V2 generator boundary via buildV2PassPrompt() — the legacy PASS_PROMPTS map
+// above stays byte-stable so the current production pipeline is unaffected
+// until the discovery portfolio (plan Phase 6) adopts V2.
+
+export const EVIDENCE_CONTRACT_BLOCK = `
+
+## Evidence contract (REQUIRED for every finding)
+Set \`evidenceType\` on each finding and back it with verifiable evidence:
+
+- **commission** (the cited code itself is wrong): populate \`anchor\` with the diff
+  file-pair (\`oldFile\`/\`newFile\` + \`fileStatus\`), the \`side\` you are citing
+  ('base' or 'head'), \`startLine\`-\`endLine\`, and \`quote\` — the EXACT text you are
+  indicting, copied verbatim from the diff. The quote is machine-verified against the
+  real diff content; a quote that does not match is discarded as fabricated.
+- **omission** (something REQUIRED is absent — a missing invalidation, lock, guard,
+  update): populate \`triggerAnchor\` with the changed code that CREATED the obligation
+  (same verbatim-quote rules — the trigger is machine-verified), and \`causalChain\`
+  stating: what changed → what obligation that created → where you looked for it →
+  why you conclude it is absent.
+
+Never fabricate a quote. If you cannot cite real changed code for a claim, do not
+raise the finding.`;
+
+export const POSITIVE_OBLIGATIONS_BLOCK = `
+
+## Positive obligations (check each one — these are empirically the author-model's
+## recurring blind spots; report violations as evidenceType='omission')
+- **Cache/version invalidation**: a persisted or cached data SHAPE changed (schema,
+  serialized structure, plan/snapshot format) → verify a version bump or invalidation
+  accompanies it. The shape-changing line is your triggerAnchor.
+- **Transaction/locking**: a multi-step write, check-then-insert, or read-modify-write
+  path changed → verify atomicity (transaction boundary, advisory lock, FOR UPDATE)
+  covers it, including retry/resume paths.
+- **Valid-zero || drops**: \`|| null\` / \`|| 0\` / \`|| ''\` defaults on fields where 0,
+  empty string, or false is a LEGITIMATE value → verify \`??\` or explicit checks are
+  used (but never suggest \`??\` where NaN must also be caught).
+- **Fail-open defaults**: a destructive or permission-gated path acquired a new
+  error/fallback branch → verify it fails CLOSED (deny/abort), not open.
+- **Replay/resume accounting**: a resumable/checkpointed operation changed → verify
+  counters and summaries account for BOTH the fresh path and the resumed path.`;
+
+/**
+ * Compose the V2 pass prompt for the tiered-pipeline discovery portfolio:
+ * base pass prompt + the evidence contract, plus the positive-obligations
+ * rubric on the passes where the named blind-spot classes live
+ * (backend + sustainability — plan Phase 2).
+ *
+ * @param {string} passName - key of PASS_PROMPTS
+ * @returns {string}
+ */
+export function buildV2PassPrompt(passName) {
+  const base = PASS_PROMPTS[passName] || `Audit the code for ${passName} issues.`;
+  const obligations = (passName === 'backend' || passName === 'sustainability')
+    ? POSITIVE_OBLIGATIONS_BLOCK
+    : '';
+  return base + EVIDENCE_CONTRACT_BLOCK + obligations;
+}

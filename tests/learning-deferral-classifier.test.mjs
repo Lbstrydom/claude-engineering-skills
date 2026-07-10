@@ -202,6 +202,31 @@ describe('deferral-classifier / SCM evidence priority', () => {
   });
 });
 
+describe('deferral-classifier / gate (d) pre-existing (tiered-recall pipeline Phase 3)', () => {
+  it('classifies pre-existing when preExistingCheck returns pre_existing_independent', () => {
+    const ctx = { scopeMode: 'diff', changedFiles: ['a.js'], preExistingCheck: () => 'pre_existing_independent' };
+    const finding = { category: 'style', primary_file: 'a.js' };
+    const r = classifyDeferralEvidence(finding, ctx);
+    assert.equal(r.class, 'pre-existing');
+    assert.equal(r.isDeterministic, true);
+  });
+  it('falls through to null when preExistingCheck returns unknown — never assumes independence', () => {
+    const ctx = { scopeMode: 'diff', changedFiles: ['a.js'], preExistingCheck: () => 'unknown' };
+    const finding = { category: 'style', primary_file: 'a.js' };
+    assert.equal(classifyDeferralEvidence(finding, ctx), null);
+  });
+  it('is a no-op when preExistingCheck is absent (matches pre-Phase-3 behavior)', () => {
+    const ctx = { scopeMode: 'diff', changedFiles: ['a.js'] };
+    const finding = { category: 'style', primary_file: 'a.js' };
+    assert.equal(classifyDeferralEvidence(finding, ctx), null);
+  });
+  it('still gates on class allowlist FIRST — a FORBIDDEN_CLASSES finding never reaches gate (d)', () => {
+    const ctx = { scopeMode: 'diff', changedFiles: ['a.js'], preExistingCheck: () => 'pre_existing_independent' };
+    const finding = { category: 'security', primary_file: 'a.js' };
+    assert.equal(classifyDeferralEvidence(finding, ctx), null);
+  });
+});
+
 describe('deferral-classifier / introspection helpers', () => {
   it('isAutoDeferrableClass / isForbiddenClass behave correctly', () => {
     assert.equal(isAutoDeferrableClass('style'), true);

@@ -111,7 +111,15 @@ export async function createOpenAIClient(options = {}) {
     if (!baseURL) throw new Error('[openai-client] oss path requires options.oss.baseURL');
     if (!apiKey) throw new Error('[openai-client] oss path requires options.oss.apiKey (e.g. OPENROUTER_API_KEY)');
     const normBase = trimTrailingSlash(baseURL);
-    const cacheKey = `oss:${normBase}:${keyDigest(apiKey)}`;
+    // Consolidated Gemini gate fix G3: the cache key previously omitted
+    // `headers`, so two calls with the same baseURL+apiKey but DIFFERENT
+    // routing/identity headers (e.g. OpenRouter's `HTTP-Referer`/`X-Title`)
+    // would incorrectly share a cached client and silently reuse the FIRST
+    // call's headers for every subsequent call. Headers are hashed via the
+    // same `keyDigest` helper used for the API key (stable key-order via
+    // sorted JSON.stringify — object key order isn't guaranteed otherwise).
+    const headerDigest = headers ? keyDigest(JSON.stringify(headers, Object.keys(headers).sort())) : 'no-headers';
+    const cacheKey = `oss:${normBase}:${keyDigest(apiKey)}:${headerDigest}`;
     if (!options.fresh && _clientCache.has(cacheKey)) return _clientCache.get(cacheKey);
     const client = new OpenAI({ baseURL: normBase, apiKey, defaultHeaders: headers || undefined });
     _clientCache.set(cacheKey, client);

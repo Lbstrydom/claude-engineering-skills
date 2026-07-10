@@ -16,12 +16,23 @@ import { isSensitiveFile, isAuditInfraFile } from './audit-scope.mjs';
 
 /**
  * Extract source file paths from a plan. Purely regex-driven.
+ *
  * @param {string} planContent
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowInfraFiles=false] - Skip the `isAuditInfraFile`
+ *   exclusion. That exclusion exists to stop the audit tool from treating its
+ *   OWN control-plane files (schemas.mjs, ledger.mjs, openai-audit.mjs, …) as
+ *   a feature's subject files during a NORMAL (consumer-code) audit — correct
+ *   for that case. A META-plan whose deliverable genuinely IS a change to the
+ *   audit tool's own infrastructure needs the opposite: those files must be
+ *   readable as the subject. Opt in explicitly (CLI: `--allow-infra-scope`);
+ *   default stays false so ordinary audits are unaffected.
  * @returns {{found: string[], missing: string[], allPaths: Set<string>}}
  */
-export function extractPlanPaths(planContent) {
+export function extractPlanPaths(planContent, { allowInfraFiles = false } = {}) {
   const paths = new Set();
   let match;
+  const infraExcluded = (p) => !allowInfraFiles && isAuditInfraFile(p);
 
   const EXT = 'js|mjs|ts|tsx|jsx|sql|css|html|json|md|py|rs|go|java|rb|sh';
 
@@ -29,13 +40,13 @@ export function extractPlanPaths(planContent) {
   const genericPathRegex = new RegExp(`(?:^|\\s|\\\`|\\()((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))`, 'gm');
   while ((match = genericPathRegex.exec(planContent)) !== null) {
     const p = match[1].replace(/^\.\//, '');
-    if (!p.startsWith('http') && !p.startsWith('node_modules') && !isAuditInfraFile(p)) paths.add(p);
+    if (!p.startsWith('http') && !p.startsWith('node_modules') && !infraExcluded(p)) paths.add(p);
   }
 
   const btRegex = new RegExp(`\\\`((?:\\.?[\\w.-]+\\/)+[\\w.-]+\\.(?:${EXT}))\\\``, 'gm');
   while ((match = btRegex.exec(planContent)) !== null) {
     const p = match[1].replace(/^\.\//, '');
-    if (!p.startsWith('http') && !p.startsWith('node_modules') && !isAuditInfraFile(p)) paths.add(p);
+    if (!p.startsWith('http') && !p.startsWith('node_modules') && !infraExcluded(p)) paths.add(p);
   }
 
   const fnRegex = new RegExp(`####\\s+\`([\\w./-]+\\.(?:${ALL_EXTENSIONS_PATTERN}))\``, 'gm');
@@ -43,7 +54,7 @@ export function extractPlanPaths(planContent) {
     const captured = match[1];
     if (captured.includes('/')) {
       const normalized = captured.replace(/^\.\//, '');
-      if (!normalized.startsWith('http') && !normalized.startsWith('node_modules') && !isAuditInfraFile(normalized)) paths.add(normalized);
+      if (!normalized.startsWith('http') && !normalized.startsWith('node_modules') && !infraExcluded(normalized)) paths.add(normalized);
       continue;
     }
     const filename = captured;
@@ -54,7 +65,7 @@ export function extractPlanPaths(planContent) {
     ];
     for (const dir of searchDirs) {
       const candidate = `${dir}/${filename}`;
-      if (fs.existsSync(path.resolve(candidate)) && !isAuditInfraFile(candidate)) { paths.add(candidate); break; }
+      if (fs.existsSync(path.resolve(candidate)) && !infraExcluded(candidate)) { paths.add(candidate); break; }
     }
   }
 
@@ -63,7 +74,7 @@ export function extractPlanPaths(planContent) {
   if (regexFoundCount < 5) {
     const keywords = _extractPlanKeywords(planContent);
     if (keywords.length > 0) {
-      const repoFiles = _scanRepoFiles();
+      const repoFiles = _scanRepoFiles({ allowInfraFiles });
       const beforeCount = paths.size;
       for (const file of repoFiles) {
         const basename = path.basename(file).toLowerCase().replace(/\.[^.]+$/, '').replaceAll(/[._-]/g, '');
@@ -142,7 +153,7 @@ function _extractPlanKeywords(planContent) {
   return [...keywords].filter(kw => !noise.has(kw) && kw.length >= 3);
 }
 
-function _scanRepoFiles() {
+function _scanRepoFiles({ allowInfraFiles = false } = {}) {
   const EXT_SET = new Set(['.js', '.mjs', '.ts', '.tsx', '.jsx', '.sql', '.css', '.html', '.json', '.py', '.rs', '.go', '.java', '.rb', '.sh', '.vue', '.svelte']);
   const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '__pycache__', '.tox', 'coverage', '.nyc_output', 'vendor', '.venv', 'venv', '.claude', '.github', 'docs']);
   const results = [];
@@ -160,7 +171,7 @@ function _scanRepoFiles() {
         const ext = path.extname(entry.name).toLowerCase();
         if (EXT_SET.has(ext) && !isSensitiveFile(entry.name)) {
           const rel = path.relative(process.cwd(), full).replaceAll(/\\/g, '/');
-          if (!isAuditInfraFile(rel)) results.push(rel);
+          if (allowInfraFiles || !isAuditInfraFile(rel)) results.push(rel);
         }
       }
     }

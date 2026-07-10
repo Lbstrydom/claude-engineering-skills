@@ -1,0 +1,280 @@
+/**
+ * @fileoverview Tier 3 test-first (this repo's non-negotiable sensitive-
+ * egress doctrine, AGENTS.md — same commit as the code) for Phase 8 of
+ * docs/plans/audit-orchestrator-hardening.md: `buildStageOneTriageInput`
+ * (scripts/lib/audit/stage1-triage.mjs) must never let a `.env`-path
+ * anchor, a bare sensitive filename embedded in prose, a configured-
+ * sensitive `section` path, or a symlink resolving into a sensitive path
+ * survive into the `StageOneTriageInputSchema` DTO unredacted.
+ *
+ * Symlink fixtures mirror the EXISTING pattern in
+ * tests/sensitive-paths-canonical.test.mjs exactly (mkdtemp + fs.symlinkSync,
+ * POSIX-only — Windows symlink creation needs admin/developer mode).
+ *
+ * Also covers Phase 9's static check: `buildStageOneTriageInput` must never
+ * reference `fullClaim`/`evidenceAlternatives` (the internal-only
+ * provenance field Phase 9 adds to `candidate-envelope.mjs`) — the DTO is
+ * built from `envelope.canonicalFinding` alone.
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { buildStageOneTriageInput } from '../scripts/lib/audit/stage1-triage.mjs';
+import { StageOneTriageInputSchema } from '../scripts/lib/schemas.mjs';
+
+const skipOnWin = process.platform === 'win32';
+
+function mkdtemp() {
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'stage1-dto-'));
+}
+
+const VALID_ANCHOR_BASE = {
+  diffPathId: 'dp1', fileStatus: 'modified', side: 'head',
+  startLine: 1, endLine: 1, headSha: 'WORKTREE',
+};
+
+describe('buildStageOneTriageInput — repoRoot contract', () => {
+  it('throws when opts.repoRoot is missing (no default, no process.cwd() fallback)', () => {
+    assert.throws(() => buildStageOneTriageInput({ category: 'c', detail: 'd', section: 's', severity: 'LOW' }, {}), /repoRoot is required/);
+    assert.throws(() => buildStageOneTriageInput({ category: 'c', detail: 'd', section: 's', severity: 'LOW' }, undefined), /repoRoot is required/);
+    assert.throws(() => buildStageOneTriageInput({ category: 'c', detail: 'd', section: 's', severity: 'LOW' }, { repoRoot: 123 }), /repoRoot is required/);
+  });
+});
+
+describe('buildStageOneTriageInput — output always schema-valid', () => {
+  // audit-orchestrator-hardening H9: an EMPTY finding ({}, missing
+  // severity/category/detail entirely) is no longer silently normalized —
+  // it's a signal of an upstream producer bug, not a "safe" input. Throws
+  // Error{code:'MALFORMED_FINDING'} so the caller escalates just this
+  // candidate rather than treating manufactured defaults as a real triage
+  // decision.
+  it('throws MALFORMED_FINDING for a completely empty finding, never manufactures defaults', () => {
+    const repoRoot = mkdtemp();
+    try {
+      assert.throws(
+        () => buildStageOneTriageInput({}, { repoRoot }),
+        (err) => err.code === 'MALFORMED_FINDING'
+      );
+      assert.throws(
+        () => buildStageOneTriageInput(null, { repoRoot }),
+        (err) => err.code === 'MALFORMED_FINDING'
+      );
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('produces a DTO that parses via StageOneTriageInputSchema for a minimal-but-present finding', () => {
+    const repoRoot = mkdtemp();
+    try {
+      // Has SOME identity (severity present) — a real, if sparse, finding,
+      // not an empty/absent one. Missing anchor/causalChain still degrade
+      // gracefully to null.
+      const dto = buildStageOneTriageInput({ severity: 'HIGH' }, { repoRoot });
+      assert.doesNotThrow(() => StageOneTriageInputSchema.parse(dto));
+      assert.equal(dto.severity, 'HIGH');
+      assert.equal(dto.evidenceStatus, 'missing');
+      assert.equal(dto.anchorQuote, null);
+      assert.equal(dto.causalChain, null);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('never carries a field outside its schema (only the documented DTO fields)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const dto = buildStageOneTriageInput({ category: 'c', detail: 'd', section: 's', severity: 'HIGH' }, { repoRoot });
+      assert.deepEqual(
+        Object.keys(dto).sort(),
+        ['anchorQuote', 'category', 'causalChain', 'detail', 'evidenceStatus', 'redacted', 'section', 'severity'].sort(),
+      );
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+describe('buildStageOneTriageInput — a .env-path anchor never survives unredacted', () => {
+  it('degrades anchorQuote to null when the commission anchor cites a .env file', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = {
+        category: 'Hardcoded secret', detail: 'A secret is hardcoded in the env file.', section: 'other-file.mjs:5',
+        severity: 'HIGH', evidenceType: 'commission',
+        anchor: { ...VALID_ANCHOR_BASE, oldFile: '.env', newFile: '.env', quote: 'SECRET_KEY=abc123xyz' },
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.anchorQuote, null, 'the .env-sourced quote must never reach the DTO');
+      assert.equal(dto.redacted, true);
+      assert.equal(dto.evidenceStatus, 'commission');
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('degrades anchorQuote to null when the omission trigger anchor cites a .env file', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = {
+        category: 'Missing validation', detail: 'A required check was never added.', section: 'other-file.mjs:9',
+        severity: 'MEDIUM', evidenceType: 'omission', causalChain: 'the .env config changed, triggering a validation obligation that was never met',
+        triggerAnchor: { ...VALID_ANCHOR_BASE, oldFile: '.env', newFile: '.env', quote: 'DB_PASSWORD=hunter2' },
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.anchorQuote, null, 'the .env-sourced trigger quote must never reach the DTO');
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+describe('buildStageOneTriageInput — a bare sensitive filename embedded in prose is redacted', () => {
+  it('redacts a bare "id_rsa" mention in detail (extension-less, slash-less — no shape pre-filter)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = {
+        category: 'Hardcoded key', detail: 'Hardcoded key found in id_rsa near the top of the file.', section: 'x.mjs:1',
+        severity: 'HIGH',
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('id_rsa'), false, 'the bare sensitive filename must not survive in prose');
+      assert.match(dto.detail, /\[REDACTED\]/);
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts a path-shaped mention (e.g. "secrets/db.yaml") inside category text', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = {
+        category: 'Reference to secrets/db.yaml found', detail: 'benign detail', section: 'x.mjs:1', severity: 'LOW',
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.category.includes('secrets/db.yaml'), false);
+      assert.match(dto.category, /\[REDACTED\]/);
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+describe('buildStageOneTriageInput — a configured-sensitive path in `section` is redacted', () => {
+  it('redacts section when its file portion matches a sensitive directory pattern', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'd', section: 'secrets/db.yaml:12', severity: 'MEDIUM' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.section, '[REDACTED]');
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('leaves an ordinary, non-sensitive, REAL (resolvable) section untouched', () => {
+    // resolveAndClassify fails closed on an unresolvable path (ENOENT) — by
+    // design (see sensitive-paths-canonical.test.mjs's own "resolutionFailed"
+    // coverage: "we cannot read what we cannot resolve"). So this fixture
+    // creates the actual file, matching the production reality that a
+    // finding's cited section is a real repo file.
+    const repoRoot = mkdtemp();
+    try {
+      fs.mkdirSync(path.join(repoRoot, 'src'));
+      fs.writeFileSync(path.join(repoRoot, 'src', 'index.ts'), '');
+      const finding = { category: 'c', detail: 'd', section: 'src/index.ts:42', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.section, 'src/index.ts:42');
+      assert.equal(dto.redacted, false);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('an unresolvable (nonexistent) section fails closed to sensitive, per resolveAndClassify\'s own documented contract', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'd', section: 'src/does-not-exist.ts:1', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.section, '[REDACTED]');
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+describe('buildStageOneTriageInput — symlink resolving into a sensitive path is redacted (WS-CANON)', () => {
+  it('redacts section when its lexically-innocent name resolves (via symlink) into secrets/ INSIDE the repo', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    try {
+      const secretsDir = path.join(repoRoot, 'secrets');
+      fs.mkdirSync(secretsDir);
+      const realTarget = path.join(secretsDir, 'db.yaml');
+      fs.writeFileSync(realTarget, '');
+      fs.symlinkSync(realTarget, path.join(repoRoot, 'innocent.ts'));
+
+      const finding = { category: 'c', detail: 'd', section: 'innocent.ts:3', severity: 'MEDIUM' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.section, '[REDACTED]', 'canonical target inside secrets/ must classify sensitive even though the visible name is innocent');
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts an evidence anchor whose file is a symlink escaping the repo root', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    const outside = mkdtemp();
+    try {
+      const target = path.join(outside, 'secret-target.txt');
+      fs.writeFileSync(target, 'pretend-secret');
+      fs.symlinkSync(target, path.join(repoRoot, 'notes.ts'));
+
+      const finding = {
+        category: 'c', detail: 'd', section: 'other.mjs:1', severity: 'HIGH', evidenceType: 'commission',
+        anchor: { ...VALID_ANCHOR_BASE, oldFile: 'notes.ts', newFile: 'notes.ts', quote: 'irrelevant quote text' },
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.anchorQuote, null, 'a symlink escaping the repo root must fail-closed to sensitive');
+      assert.equal(dto.redacted, true);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('buildStageOneTriageInput — secret-shaped content is redacted independently of path classification', () => {
+  it('redacts a hardcoded-secret-shaped anchorQuote even when its source file is NOT itself sensitive', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = {
+        category: 'Hardcoded credential', detail: 'benign detail text', section: 'src/config.mjs:10',
+        severity: 'HIGH', evidenceType: 'commission',
+        anchor: { ...VALID_ANCHOR_BASE, oldFile: 'src/config.mjs', newFile: 'src/config.mjs', quote: 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ' },
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      // The quote is secret-SHAPED (an OpenAI-style key), not path-shaped —
+      // this must be caught by redactSecrets, not the path-mention scanner.
+      assert.notEqual(dto.anchorQuote, 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ');
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+describe('buildStageOneTriageInput — closed enums pass through unredacted', () => {
+  it('never redacts severity or evidenceStatus', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = {
+        category: 'c', detail: 'd', section: 'x.mjs:1', severity: 'HIGH', evidenceType: 'commission',
+        anchor: { ...VALID_ANCHOR_BASE, oldFile: 'x.mjs', newFile: 'x.mjs', quote: 'benign quote' },
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.severity, 'HIGH');
+      assert.equal(dto.evidenceStatus, 'commission');
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// Phase 9 static check — buildStageOneTriageInput must never reference
+// fullClaim/evidenceAlternatives (the DTO is built from
+// envelope.canonicalFinding alone; Phase 9's provenance widening on
+// evidenceAlternatives must never leak into Phase 8's narrowing).
+// ═══════════════════════════════════════════════════════════════════════
+
+describe('Phase 9 — DTO boundary independence (static check)', () => {
+  it('stage1-triage.mjs never references fullClaim or evidenceAlternatives', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/stage1-triage.mjs'), 'utf-8');
+    assert.equal(src.includes('fullClaim'), false);
+    assert.equal(src.includes('evidenceAlternatives'), false);
+  });
+});

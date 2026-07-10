@@ -281,13 +281,53 @@ VERDICT CALIBRATION FOR PLAN AUDITS:
 - CONCERNS_REMAINING is appropriate when some findings are about plan soundness and others
   are disputed (e.g. one model expected code to exist, another correctly identified a plan gap).`;
 
+// ── Role addendum (Phase 12 — `--role adjudicator-only`) ───────────────────
+// Module-level, process-lifetime-scoped mutable toggle read by
+// `getReviewPrompt()` below. `runAdjudicatorOnlyReview` (defined further
+// down, alongside `runShadowReview`) sets this immediately before calling
+// `runReviewWithRetry`/`runFinalReview` and resets it in a `finally` —
+// `runFinalReview`'s OWN body is never touched (it already calls
+// `getReviewPrompt()` with no arguments; only what that call returns
+// changes). Default `null` → `getReviewPrompt()` is byte-identical to
+// today. Safe because this CLI never runs two reviews concurrently within
+// one process (the shadow reviewer runs sequentially AFTER the primary).
+
+let _roleAddendum = null;
+
+const ADJUDICATOR_ONLY_ADDENDUM = `
+
+## ADJUDICATOR-ONLY MODE (Stage 2 — tiered-recall audit pipeline)
+
+You are NOT reviewing a full Claude-GPT deliberation transcript here — you are
+re-verifying exactly ONE candidate from an automated tiered-recall audit
+pipeline's Stage 1 cheap-model triage, OR inspecting one "clean region" file
+no discovery-portfolio model flagged at all.
+
+YOUR JOB:
+1. If "Audit Transcript" contains one finding under \`rounds[0].findings\`:
+   decide whether it describes a genuine, real issue. If a prior automated
+   pass dismissed this exact finding and you believe that dismissal was
+   WRONG, populate \`wrongly_dismissed\` citing its \`id\` EXACTLY as given
+   (the \`original_finding_id\` field). If you agree it is correctly
+   dismissed, or it is a genuine still-open issue you have nothing new to
+   add about, leave \`wrongly_dismissed\` empty for it.
+2. If "Audit Transcript" contains ZERO findings under \`rounds[0].findings\`
+   (a "clean region" sample): this file was never flagged by any prior pass.
+   Inspect it fresh. Only populate \`new_findings\` if you find a genuine,
+   concrete, real defect — do not manufacture findings to appear thorough;
+   an empty \`new_findings\` is the expected, common outcome here.
+3. This is a single-item verification pass, not a full audit — keep
+   \`new_findings\` empty unless you are in the clean-region case above.`;
+
 /**
  * Get the active review prompt — from registry if a promoted variant exists,
- * otherwise falls back to the static REVIEW_SYSTEM constant.
+ * otherwise falls back to the static REVIEW_SYSTEM constant. Appends the
+ * role addendum (Phase 12) when `runAdjudicatorOnlyReview` has one active.
  * @returns {string}
  */
 function getReviewPrompt() {
-  return getActivePrompt('gemini-review') || REVIEW_SYSTEM;
+  const base = getActivePrompt('gemini-review') || REVIEW_SYSTEM;
+  return _roleAddendum ? `${base}\n${_roleAddendum}` : base;
 }
 
 // ── Gemini API Helper ──────────────────────────────────────────────────────────
@@ -462,8 +502,15 @@ async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, 
     process.stderr.write(`  [${passName}] Starting Claude ${useModel} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
   }
 
+  // pre-Phase-12-audit fix (audit-code round 1, hardening-implementation
+  // audit): the timeout timer was never cleared once the race resolved —
+  // a fast-resolving requestPromise still left a live setTimeout for the
+  // full TIMEOUT_MS (default well over a minute), keeping the process
+  // alive that long and adding real, observable delay to any test that
+  // exercises this fallback path. Captured + cleared in `finally` below.
+  let timeoutHandle;
   const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
+    timeoutHandle = setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
   });
 
   // Stream (see streamAnthropicMessage) — non-streaming create() throws on
@@ -520,6 +567,8 @@ async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, 
     const wrapped = new Error(msg);
     if (err.status) wrapped.status = err.status;
     throw wrapped;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 
@@ -543,8 +592,11 @@ async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, pa
     process.stderr.write(`  [${passName}] Starting Azure Foundry Claude ${model} (${shape} shape, timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
   }
   const sys = `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`;
+  // pre-Phase-12-audit fix (audit-code round 1, hardening-implementation
+  // audit) — same uncleared-timer fix as callClaudeOpus above.
+  let timeoutHandle;
   const timeoutPromise = new Promise((_, reject) => {
-    setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
+    timeoutHandle = setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
   });
 
   let makeRequest, extractText, extractUsage;
@@ -596,6 +648,8 @@ async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, pa
     const wrapped = new Error(msg);
     if (err.status) wrapped.status = err.status;
     throw wrapped;
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 
@@ -610,7 +664,7 @@ async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, pa
  * @param {string} projectContext
  * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
  */
-async function runFinalReview(provider, client, planContent, transcriptContent, projectContext, auditMode = 'code', modelOverride = null) {
+export async function runFinalReview(provider, client, planContent, transcriptContent, projectContext, auditMode = 'code', modelOverride = null) {
   // Parse transcript to extract code file paths for direct code inclusion
   let transcript;
   try {
@@ -1117,7 +1171,11 @@ function parseReviewArgs(args) {
   // this run (shadow A/B). Absent → local-only, today's behaviour unchanged.
   const runIdIdx = args.indexOf('--run-id');
   const runId = runIdIdx !== -1 && args[runIdIdx + 1] ? args[runIdIdx + 1] : null;
-  return { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId };
+  // --role <adjudicator-only> (Phase 12) — closed value set, validated in
+  // main(). Absent (null) → today's default behaviour, byte-identical.
+  const roleIdx = args.indexOf('--role');
+  const role = roleIdx !== -1 && args[roleIdx + 1] ? args[roleIdx + 1] : null;
+  return { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role };
 }
 
 /**
@@ -1283,7 +1341,7 @@ function isJsonTruncationError(err) {
     || err.message?.includes('parse');
 }
 
-async function runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null) {
+export async function runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null) {
   const MAX_ATTEMPTS = 2;
   let txContent = transcriptContent;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -1300,6 +1358,26 @@ async function runReviewWithRetry(provider, client, planContent, transcriptConte
     }
   }
   throw new Error('unreachable');
+}
+
+/**
+ * `--role adjudicator-only` (Phase 12) — a NEW sibling function that wraps
+ * `runReviewWithRetry`/`runFinalReview` from OUTSIDE, mirroring the
+ * already-shipped `runShadowReview`/`runShadowAndPersist` pattern above
+ * (lines ~913-1041): it injects a role-specific system-prompt addendum via
+ * the module-level `_roleAddendum` toggle `getReviewPrompt()` reads, without
+ * modifying `runFinalReview`'s own body at all. Used by the tiered-recall
+ * audit pipeline's Stage 2 adjudicator (`scripts/lib/audit/final-adjudication.mjs`)
+ * to re-verify one candidate/clean-region file per subprocess call.
+ * @returns {Promise<{result: object, usage: object, latencyMs: number, transcriptContent: string}>}
+ */
+export async function runAdjudicatorOnlyReview(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride = null) {
+  _roleAddendum = ADJUDICATOR_ONLY_ADDENDUM;
+  try {
+    return await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode, modelOverride);
+  } finally {
+    _roleAddendum = null;
+  }
 }
 
 async function applyDebtSuppression(result, transcriptContent) {
@@ -1339,7 +1417,7 @@ async function applyDebtSuppression(result, transcriptContent) {
   } catch { /* transcript not JSON or no _debtMemory — skip */ }
 }
 
-async function applyScopeFilter(result, transcriptContent) {
+export async function applyScopeFilter(result, transcriptContent) {
   try {
     const transcriptObj = JSON.parse(transcriptContent);
     const changedFiles = Array.isArray(transcriptObj.changed_files) ? transcriptObj.changed_files : [];
@@ -1396,7 +1474,7 @@ function emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile)
   console.log(formatReviewResult(result, usage, latencyMs, provider));
 }
 
-function recordNewFindings(result, fpTracker, repoFP, revId, modelId = 'gemini') {
+export function recordNewFindings(result, fpTracker, repoFP, revId, modelId = 'gemini') {
   if (!Array.isArray(result.new_findings)) return;
   for (const f of result.new_findings) {
     appendOutcome('.audit/outcomes.jsonl', {
@@ -1465,6 +1543,62 @@ function recordGeminiOutcomes(result, modelId = 'gemini') {
   }
 }
 
+/**
+ * Test-only, deterministic fixture path for `--provider fixture` (plan
+ * Phase 12, audit-plan fix M1 round 3) — rejected outside `NODE_ENV=test`
+ * (mirrors how `--role`'s own closed value set is validated). Skips ALL
+ * real provider client construction and network calls; writes a canned,
+ * schema-valid `GeminiFinalReviewSchema` result straight to `--out`. Reads
+ * `transcript.rounds[0].findings[0].id` + the test-only
+ * `transcript._fixtureVerdict` field so a caller (the subprocess-adapter
+ * test) can deterministically drive either verdict-mapping branch without
+ * a live model call — this is the SAME kind of test-gated determinism this
+ * repo already uses for provider stubbing elsewhere, just crossing a
+ * subprocess boundary instead of a function-call boundary.
+ */
+function runFixtureReview({ transcriptFile, outFile, jsonMode }) {
+  let transcript = {};
+  try {
+    transcript = JSON.parse(readFileOrDie(transcriptFile));
+  } catch { /* malformed/non-JSON transcript — fixture still returns a canned result */ }
+
+  const findingId = transcript?.rounds?.[0]?.findings?.[0]?.id ?? null;
+  const wantReversed = transcript?._fixtureVerdict === 'reversed' && !!findingId;
+  const wantMissed = transcript?._fixtureVerdict === 'missed_candidate';
+  const targetFile = Array.isArray(transcript?.changed_files) ? transcript.changed_files[0] : 'fixture.js';
+
+  const result = GeminiFinalReviewSchema.parse({
+    verdict: 'CONCERNS',
+    deliberation_quality: {
+      claude_bias_detected: false, gpt_false_positive_count: 0,
+      deliberation_was_fair: true, quality_summary: 'fixture canned result — no live model call made.',
+    },
+    new_findings: wantMissed ? [{
+      id: 'F1', severity: 'MEDIUM', category: 'Fixture', section: targetFile || 'fixture.js',
+      detail: 'fixture canned missed-candidate finding', risk: 'fixture risk',
+      recommendation: 'fixture recommendation', is_quick_fix: false, is_mechanical: false,
+      principle: 'fixture', classification: { sonarType: 'CODE_SMELL', effort: 'EASY', sourceKind: 'REVIEWER', sourceName: 'fixture' },
+    }] : [],
+    wrongly_dismissed: wantReversed ? [{
+      original_finding_id: findingId, reason_claude_was_wrong: 'fixture canned reversal', recommended_severity: 'MEDIUM',
+    }] : [],
+    over_engineering_flags: [],
+    architectural_coherence: 'Adequate',
+    overall_reasoning: 'fixture canned result — no live model call made (NODE_ENV=test, --provider fixture).',
+  });
+  addSemanticIds(result, 'gemini');
+  const data = { ...result, _model: 'fixture', _provider: 'fixture', _usage: { input_tokens: 0, output_tokens: 0, thinking_tokens: 0 } };
+  const summaryLine = `Verdict: ${result.verdict} | New: ${result.new_findings.length} | Wrongly dismissed: ${result.wrongly_dismissed.length} | fixture (no live call)`;
+  if (outFile) {
+    writeOutput(data, outFile, summaryLine);
+  } else if (jsonMode) {
+    console.log(JSON.stringify(data, null, 2));
+  } else {
+    console.log(formatReviewResult(result, { input_tokens: 0, output_tokens: 0, thinking_tokens: 0 }, 0, 'fixture'));
+  }
+  process.exit(0);
+}
+
 async function main() {
   assertRepoRoot(import.meta.url);
   await refreshCatalogAndWarn();
@@ -1474,9 +1608,9 @@ async function main() {
   if (mode === 'ping') return runPing();
   if (mode === 'set-provider') return runSetProvider(args[1]);
 
-  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId } = parseReviewArgs(args);
+  const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role } = parseReviewArgs(args);
   if (mode !== 'review' || !planFile || !transcriptFile) {
-    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic] [--mode plan|code] [--run-id <audit_runs.id>]');
+    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>]');
     console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|default>');
     console.error('       node scripts/gemini-review.mjs ping');
     process.exit(1);
@@ -1484,6 +1618,20 @@ async function main() {
   if (auditMode !== 'plan' && auditMode !== 'code') {
     console.error(`Error: --mode must be "plan" or "code", got "${auditMode}"`);
     process.exit(1);
+  }
+  if (role !== null && role !== 'adjudicator-only') {
+    console.error(`Error: --role must be "adjudicator-only", got "${role}"`);
+    process.exit(1);
+  }
+
+  // Test-only deterministic fixture path (Phase 12) — accepted ONLY under
+  // NODE_ENV=test, skips all real provider construction / network calls.
+  if (providerOverride === 'fixture') {
+    if (process.env.NODE_ENV !== 'test') {
+      console.error('Error: --provider fixture is test-only (requires NODE_ENV=test).');
+      process.exit(1);
+    }
+    return runFixtureReview({ transcriptFile, outFile, jsonMode });
   }
 
   // CLI --provider wins; else the persistent FINAL_REVIEW_PROVIDER setting; else auto-detect.
@@ -1495,7 +1643,11 @@ async function main() {
   const client = await buildClient(provider);
 
   try {
-    const r = await runReviewWithRetry(provider, client, planContent, transcriptContent, projectContext, auditMode);
+    // `--role adjudicator-only` routes through the sibling wrapper that
+    // injects the role-specific system-prompt addendum; default (no --role)
+    // is byte-identical to today (runReviewWithRetry, unchanged call).
+    const runReview = role === 'adjudicator-only' ? runAdjudicatorOnlyReview : runReviewWithRetry;
+    const r = await runReview(provider, client, planContent, transcriptContent, projectContext, auditMode);
     const { result, usage, latencyMs, transcriptContent: usedTranscript } = r;
     await applyDebtSuppression(result, usedTranscript);
     await applyScopeFilter(result, usedTranscript);

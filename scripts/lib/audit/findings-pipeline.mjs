@@ -36,8 +36,16 @@ export function findingFingerprint(f) {
     const file = normalizePath(f.file || '');
     let canonical;
     if (f.subKind === 'left-orphan') {
+      // Consolidated Gemini gate fix G4: `localeCompare` is host-locale-
+      // dependent (developer laptop vs CI runner can order the SAME array
+      // differently), which would fingerprint the identical finding
+      // differently across environments — a real risk for THIS diff's new
+      // `applyStage1MechanicalEarlyFilter`/`applyLedgerSuppression`
+      // exclusion logic (Cluster D), both of which key off `_fingerprint`
+      // and assume it is stable across machines. A plain ordinal
+      // comparison is deterministic everywhere.
       const callers = Array.isArray(f.allRemovedCallers)
-        ? [...f.allRemovedCallers].map(c => normalizePath(c)).sort((a, b) => a.localeCompare(b))
+        ? [...f.allRemovedCallers].map(c => normalizePath(c)).sort((a, b) => (a === b ? 0 : a < b ? -1 : 1))
         : [];
       canonical = `${f.kind}|${f.subKind}|${file}|${callers.join(',')}`;
     } else {
@@ -68,6 +76,12 @@ function applyLedgerSuppression(findings, ledger) {
 
   const dismissedFingerprints = new Set();
   for (const e of ledger.entries) {
+    // stage1-mechanical entries are deliberately EXCLUDED from this exact-match
+    // permanent-suppression path (tiered-recall pipeline Phase 8) — they route
+    // through `applyStage1MechanicalEarlyFilter` (a cost-saving fast path only)
+    // and the round-boundary `suppressReRaises` (the sole AUTHORITATIVE
+    // suppression/reopen mechanism for this source), never this one.
+    if (e.source === 'stage1-mechanical') continue;
     const isDismissed =
       e.adjudicationOutcome === 'dismissed' ||
       e.adjudicationOutcome === 'severity_adjusted-to-zero';
@@ -83,6 +97,80 @@ function applyLedgerSuppression(findings, ledger) {
       dropped.push({ ...f, suppressedBy: 'ledger' });
     } else {
       kept.push(f);
+    }
+  }
+  return { kept, dropped };
+}
+
+/**
+ * Cheap early filter for `stage1-mechanical` ledger entries (tiered-recall
+ * pipeline Phase 8, Gemini gate round-2 finding #G4) — a COST-SAVING FAST
+ * PATH ONLY, never a correctness path. Without this, a still-dismissed
+ * mechanical candidate would get re-verified by Stage 0/1 and potentially
+ * re-reviewed by the expensive Stage 2 Gemini adjudicator on every
+ * subsequent round until its file happens to be touched — an LLM-cost leak.
+ *
+ * A finding is dropped early ONLY when: (a) it matches a `stage1-mechanical`
+ * ledger entry by fingerprint/topicId, AND (b) that entry's file is NOT in
+ * the current round's `changedFiles`. On any doubt (no `changedFiles`
+ * supplied, ambiguous match) the candidate falls through to the normal
+ * pipeline — `suppressReRaises` remains the sole AUTHORITATIVE reopen
+ * mechanism; a false-negative here (failing to early-drop) only costs an
+ * extra verification pass, while a false-positive (wrongly early-dropping)
+ * would hide a genuine reopen, which this function must never risk.
+ *
+ * @param {Array<object>} findings - already-fingerprinted findings
+ * @param {object} ledger
+ * @param {string[]} changedFiles - this round's changed files (normalized by the caller
+ *   is NOT required — this function normalizes internally)
+ * @returns {{kept: object[], dropped: object[]}}
+ */
+function applyStage1MechanicalEarlyFilter(findings, ledger, changedFiles) {
+  if (!ledger || !Array.isArray(ledger.entries)) return { kept: findings, dropped: [] };
+  if (!Array.isArray(changedFiles)) return { kept: findings, dropped: [] }; // ambiguous — never drop without a changed-file set to check against
+
+  const changedSet = new Set(changedFiles.map(normalizePath));
+  const stage1MechanicalByKey = new Map();
+  for (const e of ledger.entries) {
+    if (e.source !== 'stage1-mechanical') continue;
+    // consolidated-gate fix (Gemini gate, round 1 — verified genuine: this
+    // function's own docstring below states "never a correctness path...
+    // a false-positive (wrongly early-dropping) would hide a genuine
+    // reopen, which this function must never risk" — but it never checked
+    // `remediationState`. A `stage1-mechanical` entry's `adjudicationOutcome`
+    // is schema-fixed to `'dismissed'` (Stage1MechanicalLedgerEntrySchema),
+    // but `remediationState` can become `'regressed'` (ledger.mjs's own
+    // documented state model: "stage2_reversed — Gemini overturned a
+    // stage1_mechanical_dismissed... entry") — meaning the dismissal was
+    // overturned and should no longer be silently suppressed. Skipping a
+    // regressed entry here means it falls through to `suppressReRaises`,
+    // the function's own stated sole AUTHORITATIVE reopen mechanism.
+    if (e.remediationState === 'regressed') continue;
+    if (e.fingerprint) stage1MechanicalByKey.set(e.fingerprint, e);
+    if (e.topicId) stage1MechanicalByKey.set(e.topicId, e);
+  }
+  if (stage1MechanicalByKey.size === 0) return { kept: findings, dropped: [] };
+
+  const kept = [];
+  const dropped = [];
+  for (const f of findings) {
+    const entry = stage1MechanicalByKey.get(f._fingerprint);
+    if (!entry) { kept.push(f); continue; }
+    // audit fix H3, round 2: check BOTH the ledger entry's (historical)
+    // affectedFiles AND the CURRENT finding's own file — the original
+    // version checked only the entry's stale affectedFiles, which could
+    // wrongly early-drop a same-fingerprint finding now reported against a
+    // newly-changed file the original dismissal never touched. Either
+    // signal indicating "this area was touched" is enough to keep it (the
+    // "never a correctness path" invariant means false-negatives here — an
+    // unnecessary keep — are always the safe direction).
+    const entryFiles = (entry.affectedFiles || []).map(normalizePath);
+    const findingFile = normalizePath(f.file || f._primaryFile || '');
+    const fileInChangedSet = entryFiles.some((ef) => changedSet.has(ef)) || (findingFile && changedSet.has(findingFile));
+    if (fileInChangedSet) {
+      kept.push(f); // possible reopen-on-touch — let suppressReRaises decide authoritatively
+    } else {
+      dropped.push({ ...f, suppressedBy: 'stage1-mechanical-early-filter' });
     }
   }
   return { kept, dropped };
@@ -131,15 +219,56 @@ function applyAcceptV1Suppression(findings, planContent) {
  * Steps:
  *   1. Normalise shape (path canonicalisation, defensive defaults).
  *   2. Fingerprint each finding (attached as `_fingerprint`).
- *   3. Ledger suppression (R2+ only).
+ *   3. Ledger suppression (R2+ only; excludes stage1-mechanical entries).
+ *   3.5. stage1-mechanical cheap early filter (cost-saving fast path only —
+ *        tiered-recall pipeline Phase 8; see `applyStage1MechanicalEarlyFilter`).
  *   4. accept-v1 marker suppression.
  *
  * @param {Array<object>} rawFindings
  * @param {object} ctx
  * @param {object} [ctx.ledger] - parsed adjudication ledger (R2+ only)
  * @param {string} [ctx.planContent] - plan markdown (for accept-v1)
+ * @param {string[]} [ctx.changedFiles] - this round's changed files, for the
+ *   stage1-mechanical early filter; omitted → that step is a no-op (never drops)
  * @returns {{ survivors: object[], suppressed: object[] }}
  */
+/**
+ * Compute the coarse-grained audit verdict from a findings array + an
+ * `incomplete` signal. Extracted (tiered-recall pipeline Phase 11, audit-plan
+ * fix — Gemini final gate round-1 G1) from `runMultiPassCodeAudit`'s original
+ * inline logic (`openai-audit.mjs` ~line 2748-2759 pre-extraction) so BOTH
+ * `runLegacyProductionAudit` and `runTieredAuditPipeline` share ONE verdict
+ * function instead of two independently-maintained copies that could drift.
+ *
+ * Legacy-path callers must pre-normalise `findings` so `.severity` already
+ * reflects any verification-gate override (`effSeverity` in the original
+ * code) — this function reads `f.severity` verbatim, it does not know about
+ * the verification-gate concept.
+ *
+ * NOTE — the legacy path's map-reduce partial-completion downgrade
+ * (`minMapCompletion < 0.66` unconditionally forcing `INCOMPLETE`, even over
+ * a SIGNIFICANT_ISSUES/NEEDS_FIXES verdict) is NOT folded in here — it is a
+ * legacy-orchestration-specific concept (map-reduce units) the tiered
+ * pipeline has no equivalent of, so `runLegacyProductionAudit` applies it as
+ * a post-step after calling this function, exactly as the original code did.
+ *
+ * @param {Array<{severity?: string}>} findings
+ * @param {{incomplete?: boolean}} [opts] - `incomplete` only downgrades a
+ *   PASS verdict (never a SIGNIFICANT_ISSUES/NEEDS_FIXES one) — matches the
+ *   original `if (verdict === 'PASS' && failedPasses.length > 0)` guard.
+ * @returns {'PASS'|'NEEDS_FIXES'|'SIGNIFICANT_ISSUES'|'INCOMPLETE'}
+ */
+export function computeAuditVerdict(findings, { incomplete = false } = {}) {
+  const list = Array.isArray(findings) ? findings : [];
+  const high = list.filter(f => f?.severity === 'HIGH').length;
+  const medium = list.filter(f => f?.severity === 'MEDIUM').length;
+  let verdict = 'PASS';
+  if (high > 0) verdict = 'SIGNIFICANT_ISSUES';
+  else if (medium > 2) verdict = 'NEEDS_FIXES';
+  if (verdict === 'PASS' && incomplete) verdict = 'INCOMPLETE';
+  return verdict;
+}
+
 export function processFindings(rawFindings, ctx = {}) {
   if (!Array.isArray(rawFindings) || rawFindings.length === 0) {
     return { survivors: [], suppressed: [] };
@@ -156,11 +285,14 @@ export function processFindings(rawFindings, ctx = {}) {
   // 3: ledger suppression
   const afterLedger = applyLedgerSuppression(normalised, ctx.ledger);
 
+  // 3.5: stage1-mechanical cheap early filter
+  const afterStage1Early = applyStage1MechanicalEarlyFilter(afterLedger.kept, ctx.ledger, ctx.changedFiles);
+
   // 4: accept-v1 suppression
-  const afterAcceptV1 = applyAcceptV1Suppression(afterLedger.kept, ctx.planContent);
+  const afterAcceptV1 = applyAcceptV1Suppression(afterStage1Early.kept, ctx.planContent);
 
   return {
     survivors: afterAcceptV1.kept,
-    suppressed: [...afterLedger.dropped, ...afterAcceptV1.dropped],
+    suppressed: [...afterLedger.dropped, ...afterStage1Early.dropped, ...afterAcceptV1.dropped],
   };
 }

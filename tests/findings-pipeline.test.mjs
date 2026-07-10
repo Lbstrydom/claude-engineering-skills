@@ -39,6 +39,22 @@ describe('findingFingerprint', () => {
     assert.equal(findingFingerprint(f1), findingFingerprint(f2));
   });
 
+  it('uses a locale-independent ordinal sort, not localeCompare (consolidated Gemini gate fix G4)', () => {
+    // Under a locale-aware collation, uppercase/lowercase pairs commonly
+    // interleave (e.g. 'a' < 'A' < 'b' < 'B' in many locales); under a plain
+    // ordinal comparison, ALL uppercase sorts before ALL lowercase (ASCII
+    // 'A'=65 < 'a'=97) — this differentiates the two algorithms. A
+    // locale-dependent sort would fingerprint the SAME finding differently
+    // depending on the host's default locale (dev laptop vs CI runner).
+    const f = orphanFinding({ allRemovedCallers: ['src/b.mjs', 'src/A.mjs', 'src/a.mjs', 'src/B.mjs'] });
+    // Compute the expected canonical string directly via the same ordinal
+    // comparator this fix applies, to assert the fingerprint reflects THAT
+    // specific order (['src/A.mjs','src/B.mjs','src/a.mjs','src/b.mjs']).
+    const expectedOrder = ['src/A.mjs', 'src/B.mjs', 'src/a.mjs', 'src/b.mjs'];
+    const reorderedInput = orphanFinding({ allRemovedCallers: [...expectedOrder] });
+    assert.equal(findingFingerprint(f), findingFingerprint(reorderedInput));
+  });
+
   it('born-orphan fingerprint over {kind, subKind, file} only (no remover noise)', () => {
     const f1 = { ...orphanFinding(), subKind: 'born-orphan', allRemovedCallers: [] };
     const f2 = { ...orphanFinding(), subKind: 'born-orphan', allRemovedCallers: ['ignored'] };
@@ -102,6 +118,62 @@ describe('processFindings — ledger suppression', () => {
   it('handles null ledger gracefully', () => {
     const r = processFindings([orphanFinding()], { ledger: null });
     assert.equal(r.survivors.length, 1);
+  });
+
+  it('does NOT drop a stage1-mechanical-sourced dismissal via THIS suppression path (Phase 8) — it must fall through to the early filter instead', () => {
+    const finding = orphanFinding();
+    const fp = findingFingerprint(finding);
+    const ledger = { entries: [{ fingerprint: fp, adjudicationOutcome: 'dismissed', source: 'stage1-mechanical', affectedFiles: ['some/other/file.js'] }] };
+    // No changedFiles supplied -> early filter is a no-op (ambiguous, never drops) -> survives
+    const r = processFindings([finding], { ledger });
+    assert.equal(r.survivors.length, 1);
+  });
+});
+
+describe('processFindings — stage1-mechanical cheap early filter (Phase 8)', () => {
+  it('drops a stage1-mechanical match whose file is NOT in changedFiles', () => {
+    const finding = orphanFinding();
+    const fp = findingFingerprint(finding);
+    const ledger = { entries: [{ fingerprint: fp, adjudicationOutcome: 'dismissed', source: 'stage1-mechanical', affectedFiles: ['src/foo.mjs'] }] };
+    const r = processFindings([finding], { ledger, changedFiles: ['src/unrelated.mjs'] });
+    assert.equal(r.survivors.length, 0);
+    assert.equal(r.suppressed[0].suppressedBy, 'stage1-mechanical-early-filter');
+  });
+
+  it('keeps (does NOT early-drop) a stage1-mechanical match whose file IS in changedFiles — a possible reopen', () => {
+    const finding = orphanFinding();
+    const fp = findingFingerprint(finding);
+    const ledger = { entries: [{ fingerprint: fp, adjudicationOutcome: 'dismissed', source: 'stage1-mechanical', affectedFiles: ['src/foo.mjs'] }] };
+    const r = processFindings([finding], { ledger, changedFiles: ['src/foo.mjs'] });
+    assert.equal(r.survivors.length, 1);
+  });
+
+  it('never drops anything when changedFiles is omitted (ambiguous -> no-op, per the "never a correctness path" invariant)', () => {
+    const finding = orphanFinding();
+    const fp = findingFingerprint(finding);
+    const ledger = { entries: [{ fingerprint: fp, adjudicationOutcome: 'dismissed', source: 'stage1-mechanical', affectedFiles: ['some/other/file.js'] }] };
+    const r = processFindings([finding], { ledger });
+    assert.equal(r.survivors.length, 1);
+  });
+
+  it('is a no-op for session-sourced ledger entries (only touches stage1-mechanical)', () => {
+    const finding = orphanFinding();
+    const fp = findingFingerprint(finding);
+    const ledger = { entries: [{ fingerprint: fp, adjudicationOutcome: 'accepted', source: 'session', affectedFiles: ['src/foo.mjs'] }] };
+    const r = processFindings([finding], { ledger, changedFiles: ['src/unrelated.mjs'] });
+    assert.equal(r.survivors.length, 1); // accepted, and not stage1-mechanical -> untouched by either suppression path
+  });
+
+  it('keeps (does not early-drop) when the CURRENT finding\'s own file is in changedFiles, even if the ledger entry\'s historical affectedFiles is not (audit fix H3, round 2)', () => {
+    // A generic (non-orphan) finding — its fingerprint hashes category|section|detail,
+    // NOT `file` directly, so `file` can genuinely diverge from what a stale ledger
+    // entry's `affectedFiles` records (e.g. the finding's `file` was normalized/
+    // corrected independently of `section`'s free text after the original dismissal).
+    const finding = { category: 'Dead Code', section: 'some symbol reference', detail: 'foo() is never called', file: 'src/relocated.mjs' };
+    const fp = findingFingerprint(finding);
+    const ledger = { entries: [{ fingerprint: fp, adjudicationOutcome: 'dismissed', source: 'stage1-mechanical', affectedFiles: ['src/foo.mjs'] }] };
+    const r = processFindings([finding], { ledger, changedFiles: ['src/relocated.mjs'] });
+    assert.equal(r.survivors.length, 1); // the finding's OWN file (src/relocated.mjs) is in changedFiles -> must not be silently dropped
   });
 });
 

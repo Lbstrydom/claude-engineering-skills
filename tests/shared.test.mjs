@@ -156,7 +156,10 @@ describe('FindingJsonSchema (derived)', () => {
     // — it's only required on ProducerFindingSchema.
     // `verification` is optional too — the finding-verification gate attaches
     // it post-hoc (docs/plans/adaptive-context-blast-radius.md, Phase 1).
-    const optional = new Set(['classification', 'verification']);
+    // Evidence-contract fields (tiered-recall pipeline, docs/plans/tiered-recall-audit-pipeline.md
+    // Phase 1) are optional on the canonical schema too — a V1 finding has none of them;
+    // required only at the ProducerFindingV2Schema producer boundary.
+    const optional = new Set(['classification', 'verification', 'evidenceType', 'anchor', 'triggerAnchor', 'causalChain']);
     const zodKeys = Object.keys(FindingSchema.shape).filter(k => !optional.has(k)).sort();
     assert.deepEqual([...FindingJsonSchema.required].sort(), zodKeys);
   });

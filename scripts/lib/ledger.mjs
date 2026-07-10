@@ -11,7 +11,7 @@ import path from 'node:path';
 import lockfile from 'proper-lockfile';
 
 import { normalizePath, atomicWriteFileSync } from './file-io.mjs';
-import { LedgerEntrySchema, BatchLedgerEntrySchema } from './schemas.mjs';
+import { LedgerEntrySchema, BatchLedgerEntrySchema, Stage1MechanicalLedgerEntrySchema } from './schemas.mjs';
 import { semanticId } from './findings.mjs';
 import { buildFileReferenceRegex } from './language-profiles.mjs';
 
@@ -40,18 +40,23 @@ export function generateTopicId(finding) {
 }
 
 /**
- * Upsert a ledger entry by topicId. Read-modify-write (not append).
- * @param {string} ledgerPath - Path to ledger JSON file
- * @param {object} entry - LedgerEntry-shaped object
+ * Shared upsert-by-topicId, read-modify-write, atomic-write mechanics for
+ * any single-entry ledger schema (session, stage1-mechanical, ...). Extracted
+ * (tiered-recall pipeline Phase 8) so `writeStage1MechanicalLedgerEntry`
+ * doesn't duplicate `writeLedgerEntry`'s read/upsert/write logic verbatim.
+ *
+ * @param {string} ledgerPath
+ * @param {object} entry
+ * @param {import('zod').ZodType} schema
+ * @param {string} logLabel - prefixes stderr diagnostics (e.g. '[ledger]')
  */
-export function writeLedgerEntry(ledgerPath, entry) {
+function writeSingleLedgerEntry(ledgerPath, entry, schema, logLabel) {
   const absPath = path.resolve(ledgerPath);
   let ledger = { version: 1, entries: [] };
 
-  // Validate entry against schema before writing
-  const validated = LedgerEntrySchema.safeParse(entry);
+  const validated = schema.safeParse(entry);
   if (!validated.success) {
-    process.stderr.write(`  [ledger] Entry validation failed: ${validated.error.message.slice(0, 200)}\n`);
+    process.stderr.write(`  ${logLabel} Entry validation failed: ${validated.error.message.slice(0, 200)}\n`);
     return; // Refuse to write invalid data
   }
   const validEntry = validated.data;
@@ -63,15 +68,15 @@ export function writeLedgerEntry(ledgerPath, entry) {
       // Structural check only — strict schema validation rejects batch entries with
       // adjudicationOutcome:'pending' (pre-adjudication state), causing false warnings.
       // We only need version + entries array to be present; individual entry shape is
-      // validated at write time by LedgerEntrySchema / BatchLedgerEntrySchema.
+      // validated at write time by the schema passed in.
       if (raw && typeof raw === 'object' && Array.isArray(raw.entries)) {
         ledger = raw;
       } else {
-        process.stderr.write(`  [ledger] WARNING: ${absPath} has invalid structure — backing up and starting fresh\n`);
+        process.stderr.write(`  ${logLabel} WARNING: ${absPath} has invalid structure — backing up and starting fresh\n`);
         fs.copyFileSync(absPath, `${absPath}.bak`);
       }
     } catch (err) {
-      process.stderr.write(`  [ledger] WARNING: ${absPath} corrupted — backing up and starting fresh: ${err.message}\n`);
+      process.stderr.write(`  ${logLabel} WARNING: ${absPath} corrupted — backing up and starting fresh: ${err.message}\n`);
       try { fs.copyFileSync(absPath, `${absPath}.bak`); } catch { /* ignore */ }
     }
   }
@@ -90,10 +95,33 @@ export function writeLedgerEntry(ledgerPath, entry) {
     // Echo the RESOLVED absolute path (A3) — on Windows git-bash a `/tmp/...` argv is
     // MSYS-rewritten to %LOCALAPPDATA%\Temp, so the literal path the caller typed is
     // NOT where the file lands; the resolved path is the one to read back.
-    process.stderr.write(`  [ledger] wrote ${ledger.entries.length} entr${ledger.entries.length === 1 ? 'y' : 'ies'} → ${absPath}\n`);
+    process.stderr.write(`  ${logLabel} wrote ${ledger.entries.length} entr${ledger.entries.length === 1 ? 'y' : 'ies'} → ${absPath}\n`);
   } catch (err) {
-    process.stderr.write(`  [ledger] Failed to write ${absPath}: ${err.message}\n`);
+    process.stderr.write(`  ${logLabel} Failed to write ${absPath}: ${err.message}\n`);
   }
+}
+
+/**
+ * Upsert a ledger entry by topicId. Read-modify-write (not append).
+ * @param {string} ledgerPath - Path to ledger JSON file
+ * @param {object} entry - LedgerEntry-shaped object
+ */
+export function writeLedgerEntry(ledgerPath, entry) {
+  writeSingleLedgerEntry(ledgerPath, entry, LedgerEntrySchema, '[ledger]');
+}
+
+/**
+ * Upsert a Stage 1 mechanical-dismissal entry (tiered-recall pipeline Phase 8)
+ * into the SAME ledger file session entries live in — `suppressReRaises`
+ * reads `source` per-entry to route stage1-mechanical entries through the
+ * fuzzy/reopen-on-touch path (like session) while excluding them from
+ * `overruleCountIndex`'s hard-suppress-at-3 count (see `suppressReRaises`).
+ *
+ * @param {string} ledgerPath
+ * @param {object} entry - Stage1MechanicalLedgerEntrySchema shape
+ */
+export function writeStage1MechanicalLedgerEntry(ledgerPath, entry) {
+  writeSingleLedgerEntry(ledgerPath, entry, Stage1MechanicalLedgerEntrySchema, '[ledger:stage1-mechanical]');
 }
 
 /**
@@ -267,17 +295,22 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
   // Threshold calibrated from real audit data — paraphrased re-raises score 0.3-0.6, new findings <0.2
   const threshold = parseFloat(process.env.SUPPRESS_SIMILARITY_THRESHOLD || '0.35');
 
-  // Source-aware filter (Phase D fix H2):
+  // Source-aware filter (Phase D fix H2; tiered-recall pipeline Phase 8 adds
+  // stage1-mechanical):
   //   session entries suppress when adjudicationOutcome='dismissed' or
   //     remediationState='fixed'|'verified' (existing R2+ behavior)
   //   debt entries (Phase D) suppress unless they're escalated — escalation
   //     naturally bypasses suppression for re-deliberation
+  //   stage1-mechanical entries (Phase 8) suppress the same way session does
+  //     (adjudicationOutcome is always 'dismissed' per Stage1MechanicalLedgerEntrySchema)
+  //     — they flow through the SAME fuzzy/reopen-on-touch path as session,
+  //     just excluded from overruleCountIndex below (see that comment)
   //   Entries without an explicit source default to session (backward compat
   //     for ledger files written before Phase D)
   const resolved = (ledger?.entries || []).filter(e => {
     const src = e.source || 'session';
     if (src === 'debt') return !e.escalated;
-    // session (default)
+    // session (default) and stage1-mechanical
     return e.adjudicationOutcome === 'dismissed' ||
            e.remediationState === 'fixed' ||
            e.remediationState === 'verified';
@@ -289,9 +322,17 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
   // Fix #4: Build ruling count index. When a (category + primaryFile) pair has been
   // ruled 'overrule' 3+ times across rounds, hard-suppress regardless of hash drift.
   // The semantic hash drifts with GPT rewording, but the category+file is stable.
+  //
+  // stage1-mechanical entries are deliberately EXCLUDED (tiered-recall pipeline
+  // Phase 8) — a mechanical dismissal reason (e.g. "the cited function doesn't
+  // exist") can become false later (the function gets added) in a way a
+  // human/GPT judgment overrule never does; counting it toward a PERMANENT
+  // hard-suppress would let a stale mechanical fact silently outlive the code
+  // state it was true about.
   const HARD_SUPPRESS_THRESHOLD = 3;
   const overruleCountIndex = new Map();
   for (const e of resolved) {
+    if (e.source === 'stage1-mechanical') continue;
     if (e.ruling === 'overrule' || e.adjudicationOutcome === 'dismissed') {
       const catFile = `${(e.category || '').toLowerCase().trim()}|${normalizePath(e.affectedFiles?.[0] || e.section || '')}`;
       overruleCountIndex.set(catFile, (overruleCountIndex.get(catFile) || 0) + 1);
@@ -537,4 +578,46 @@ export function computeImpactSet(changedFiles, allFiles) {
   }
 
   return [...impact].sort();
+}
+
+// ── Stage 2 Outcome Finalization (tiered-recall pipeline Phase 9) ──────────
+
+/**
+ * Compute the ledger updates a completed Stage 2 adjudication round implies
+ * (`final-adjudication.mjs::runFinalAdjudication`'s output). PURE — returns
+ * a plan of actions, does not perform I/O itself; the caller applies them
+ * via `writeStage1MechanicalLedgerEntry`/`writeLedgerEntry`.
+ *
+ * - `stage2_reversed` — Gemini overturned a `stage1_mechanical_dismissed`
+ *   entry: the underlying ledger fact was WRONG. The matching stage1-
+ *   mechanical entry's `remediationState` moves to `'regressed'` (an
+ *   existing lifecycle state — "we thought this was settled, it wasn't")
+ *   rather than being silently deleted, preserving the audit trail of what
+ *   was believed and when it was corrected.
+ * - `stage2_confirmed_dismissal` — Gemini agrees with the mechanical
+ *   dismissal: no ledger change needed, the entry already correctly reads
+ *   `dismissed`. Reported for telemetry/audit-trail completeness only.
+ * - `stage2_missed_candidate` — a NEW finding Gemini's clean-challenge
+ *   sample surfaced, not a dismissal reversal — this is NOT a ledger write
+ *   at all (the ledger records dismissals/debt, not active findings); it is
+ *   reported so the caller can route it into the normal human-queue path,
+ *   same as any other new finding.
+ *
+ * @param {{reversed: object[], confirmedDismissal: object[], verified: object[], missedCandidates: Array<{file: string, finding?: object}>}} adjudicationResult
+ * @returns {{ledgerUpdates: Array<{action: 'mark-regressed'|'confirm-dismissal', topicId: string|null}>, newCandidates: Array<{file: string, finding?: object}>}}
+ */
+export function finalizeLedgerOutcomes(adjudicationResult) {
+  const ledgerUpdates = [];
+
+  for (const envelope of adjudicationResult.reversed || []) {
+    ledgerUpdates.push({ action: 'mark-regressed', topicId: envelope.canonicalFinding?._stage1LedgerTopicId ?? null, fingerprint: envelope.fingerprint ?? null });
+  }
+  for (const envelope of adjudicationResult.confirmedDismissal || []) {
+    ledgerUpdates.push({ action: 'confirm-dismissal', topicId: envelope.canonicalFinding?._stage1LedgerTopicId ?? null, fingerprint: envelope.fingerprint ?? null });
+  }
+
+  return {
+    ledgerUpdates,
+    newCandidates: adjudicationResult.missedCandidates || [],
+  };
 }

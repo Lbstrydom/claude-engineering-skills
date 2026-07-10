@@ -34,6 +34,67 @@ function validatedEnum(envVar, validSet, fallback) {
   return val || fallback;
 }
 
+/**
+ * Deterministic, bounds-validated numeric env-var reader (audit-orchestrator-
+ * hardening Phase 7 — audit-plan fix M2/M3, Gemini gate fixes G1-G2).
+ *
+ * Order matters, each step closes a specific real bug found during this
+ * plan's own audit rounds:
+ *  1. `raw == null || raw === ''` → `fallback` IMMEDIATELY, before any
+ *     `.trim()` call (Gemini gate fix, round 4 of that gate — an unset env
+ *     var makes `process.env.X` literally `undefined`, and
+ *     `undefined.trim()` throws; every env var this reads is optional with
+ *     a documented default, so this is the common case, not an edge case).
+ *  2. Only once `raw` is confirmed non-nullish/non-empty is it `.trim()`'d
+ *     (Gemini gate fix G2, round 1 — env vars from shell/CI/.env files
+ *     routinely carry leading/trailing whitespace or a trailing newline).
+ *  3. The trimmed string is validated against a STRICT pattern before
+ *     parsing (audit-plan fix M2, round 3 — `parseInt('10abc')` /
+ *     `parseFloat('0.5%')` / `parseInt('1.5')` all silently accept a
+ *     malformed value's numeric PREFIX, never triggering the fallback/clamp
+ *     warning path). A pattern-rejected value is treated identically to a
+ *     non-finite parse below — never partially accepted.
+ *  4. Only a pattern-passing value reaches `parser(raw)`. `Number.isFinite`
+ *     is checked FIRST — this single check catches BOTH `NaN` and
+ *     `±Infinity` in one branch (audit-plan fix M3, round 2 — NaN has no
+ *     "nearest bound" and `Number.parseFloat('Infinity')` returns the
+ *     actual `Infinity` value, not `NaN`, so the two need one shared rule).
+ *     A non-finite parse (or a pattern-rejected raw value) uses `fallback`
+ *     (a DEFAULT, never a clamp — there is no nearest bound to an
+ *     unparseable value); a finite-but-out-of-range parse is CLAMPED to
+ *     `[min, max]`.
+ *
+ * One `process.stderr.write` warning fires on EITHER the defaulted or the
+ * clamped path, naming the env var, the raw string value, and the
+ * resulting value — consistent with this repo's existing config-warning
+ * style (e.g. the model-resolver's deprecation-remap warnings).
+ *
+ * @param {string|undefined} raw - `process.env[envVar]`
+ * @param {{fallback: number, min: number, max: number, parser: (s: string) => number, envVar?: string}} opts
+ * @returns {number}
+ */
+export function clampConfigNumber(raw, { fallback, min, max, parser, envVar = 'unknown' }) {
+  if (raw == null || raw === '') return fallback;
+  const trimmed = String(raw).trim();
+  if (trimmed === '') return fallback;
+  const pattern = parser === Number.parseInt ? /^-?\d+$/ : /^-?\d+(\.\d+)?$/;
+  if (!pattern.test(trimmed)) {
+    process.stderr.write(`  [config] WARNING: ${envVar}="${raw}" is not a valid number — using default ${fallback}\n`);
+    return fallback;
+  }
+  const parsed = parser(trimmed);
+  if (!Number.isFinite(parsed)) {
+    process.stderr.write(`  [config] WARNING: ${envVar}="${raw}" parsed to a non-finite value — using default ${fallback}\n`);
+    return fallback;
+  }
+  if (parsed < min || parsed > max) {
+    const clamped = Math.min(Math.max(parsed, min), max);
+    process.stderr.write(`  [config] WARNING: ${envVar}="${raw}" (${parsed}) out of range [${min}, ${max}] — clamped to ${clamped}\n`);
+    return clamped;
+  }
+  return parsed;
+}
+
 // ── Model resolution ────────────────────────────────────────────────────────
 // Defaults are sentinels (latest-gpt, latest-pro, …) so this config doesn't go
 // stale when new models ship. Users may override with concrete IDs via env.
@@ -348,6 +409,67 @@ export const predictiveConfig = Object.freeze({
   freshnessWindowDays: safeInt(process.env.PREDICTIVE_FRESHNESS_DAYS, 14),
   minLabeledRuns: safeInt(process.env.PREDICTIVE_MIN_LABELED_RUNS, 20),
   skipFpThreshold: Number.parseFloat(process.env.PREDICTIVE_SKIP_FP_THRESHOLD || '0.7'),
+});
+
+// ── Tiered-Recall Audit Pipeline Config (Cluster D, scoped — new modules only;
+// the chooser that would actually route production traffic to these modules
+// is NOT wired in this pass, per docs/plans/tiered-recall-audit-pipeline.md
+// §11 Cluster D scoping decision, 2026-07-10). `discoveryModel` is a raw
+// OpenRouter model id, NOT a model-resolver sentinel — model-resolver has no
+// GLM/OSS tier (see AGENTS.md "Model Resolution" table), so it is read
+// verbatim like `auditShadowConfig`'s OpenRouter model id, not wrapped in
+// `resolveModel()`. ──────────────────────────────────────────────────────────
+
+export const tieredAuditConfig = Object.freeze({
+  discoveryModel: process.env.AUDIT_DISCOVERY_MODEL || 'z-ai/glm-5.2',
+  // Phase 7 (audit-orchestrator-hardening): rate/probability fields clamped
+  // to [0, 1] via clampConfigNumber — a bare parseFloat previously accepted
+  // any NaN/Infinity/out-of-range value with no positivity check.
+  gptSentinelRate: clampConfigNumber(process.env.AUDIT_GPT_SENTINEL_RATE, {
+    fallback: 0.2, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_GPT_SENTINEL_RATE',
+  }),
+  gptExplorationRate: clampConfigNumber(process.env.AUDIT_GPT_EXPLORATION_RATE, {
+    fallback: 0.1, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_GPT_EXPLORATION_RATE',
+  }),
+  // A trigger threshold of 0 is degenerate-but-valid ("always trigger"), not
+  // an error — no upper clamp beyond safe-integer range.
+  gptDiffSizeTriggerChars: clampConfigNumber(process.env.AUDIT_GPT_DIFF_SIZE_TRIGGER_CHARS, {
+    fallback: 150000, min: 0, max: Number.MAX_SAFE_INTEGER, parser: Number.parseInt, envVar: 'AUDIT_GPT_DIFF_SIZE_TRIGGER_CHARS',
+  }),
+  stage1Model: process.env.AUDIT_STAGE1_MODEL ? resolveModel(process.env.AUDIT_STAGE1_MODEL) : null,
+  stage1MaxFalseDismissalHigh: clampConfigNumber(process.env.AUDIT_STAGE1_MAX_FALSE_DISMISSAL_HIGH, {
+    fallback: 0.05, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_STAGE1_MAX_FALSE_DISMISSAL_HIGH',
+  }),
+  stage1MaxFalseDismissalOverall: clampConfigNumber(process.env.AUDIT_STAGE1_MAX_FALSE_DISMISSAL_OVERALL, {
+    fallback: 0.10, min: 0, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_STAGE1_MAX_FALSE_DISMISSAL_OVERALL',
+  }),
+  // Phase 11 chooser flag — explicit opt-in, never silently flipping default
+  // behavior (§1.5 "every phase remains additive/env-var-gated"). Default
+  // false: `runMultiPassCodeAudit` routes to the unchanged
+  // `runLegacyProductionAudit` path until an operator explicitly opts in.
+  pipelineEnabled: process.env.AUDIT_TIERED_PIPELINE_ENABLED === 'true',
+  // Phase 9's FinalAdjudicationBudget.perCallTimeoutMs — actively enforced by
+  // Phase 12's subprocess adapter via `execFile`'s own `timeout` option (sends
+  // SIGTERM on expiry). Clamped strictly positive (a 0/negative timeout would
+  // be degenerate — every call would time out instantly).
+  adjudicationPerCallTimeoutMs: clampConfigNumber(process.env.AUDIT_ADJUDICATION_CALL_TIMEOUT_MS, {
+    fallback: 120000, min: 1, max: Number.MAX_SAFE_INTEGER, parser: Number.parseInt, envVar: 'AUDIT_ADJUDICATION_CALL_TIMEOUT_MS',
+  }),
+});
+
+// ── Audit Runtime Config (Phase 7 — audit-orchestrator-hardening) ──────────
+// Bounds-validated runtime knobs for the legacy production audit
+// orchestrator. `mapReduceConcurrency` was previously read via a bare
+// inline `safeInt(process.env.MAP_REDUCE_CONCURRENCY, 5)` INSIDE
+// legacy-production-audit.mjs — the one holdout env var outside this
+// repo's own "all env var reads live in config.mjs" convention (AGENTS.md).
+export const auditRuntimeConfig = Object.freeze({
+  // Below 1 would deadlock the map-phase's slot-acquire loop; above 20 has
+  // no precedent in this codebase's existing usage and risks provider
+  // rate-limit storms.
+  mapReduceConcurrency: clampConfigNumber(process.env.MAP_REDUCE_CONCURRENCY, {
+    fallback: 5, min: 1, max: 20, parser: Number.parseInt, envVar: 'MAP_REDUCE_CONCURRENCY',
+  }),
 });
 
 // ── Postgres / `db/` layer Config ──────────────────────────────────────────

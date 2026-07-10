@@ -84,17 +84,112 @@ export const FindingVerificationSchema = z.object({
   countsTowardVerdict: z.boolean(),
 });
 
+// ── Evidence Contract (V2) — tiered-recall pipeline ─────────────────────────
+// Plan: docs/plans/tiered-recall-audit-pipeline.md §2 + Phase 1.
+// A V2 finding carries verifiable evidence: a `commission` claim cites an
+// anchor block (content-verifiable quote + diff-pair identity); an `omission`
+// claim cites the TRIGGER that created the unmet obligation (itself a
+// commission-type fact, deterministically checkable) plus a free-text causal
+// chain. Findings without these fields are V1 (legacy) and normalize to
+// `evidenceStatus: 'missing'`. Defined BEFORE PersistedFindingSchema so the
+// canonical `FindingSchema` alias includes these fields directly (audit H4 —
+// a schema Zod consumers don't know about would silently strip them).
+
+/**
+ * EvidenceAnchorSchema — diff-pair-aware, content-verifiable anchor.
+ * `oldFile`/`newFile` (not one bare `file`) because renamed/copied/deleted
+ * files have different base-side and head-side paths; `side` selects which
+ * one the `quote` must match. `headSha` is 'WORKTREE' for uncommitted diffs.
+ * superRefine (audit M8) enforces the invariants a bare field-by-field schema
+ * can't: line ordering, and that `side` is consistent with `fileStatus` — an
+ * `added` file has no base-side content to cite; a `deleted` file has none
+ * on the head side.
+ */
+export const EvidenceAnchorSchema = z.object({
+  diffPathId: z.string().max(200).describe('Stable identity for this diff file-pair (from the diff-path map)'),
+  oldFile: z.string().max(300).nullable().optional().describe('Base-side path — present for modified/deleted/renamed/copied'),
+  newFile: z.string().max(300).nullable().optional().describe('Head-side path — present for modified/added/renamed/copied'),
+  fileStatus: z.enum(['modified', 'added', 'deleted', 'renamed', 'copied']),
+  side: z.enum(['base', 'head']).describe('Which side of the diff the quote cites'),
+  startLine: z.number().int().min(1),
+  endLine: z.number().int().min(1),
+  quote: z.string().min(1).max(1000).describe('The actual cited text — content-verified by Stage 0, not line-number-only'),
+  symbolName: z.string().max(200).nullable().optional(),
+  headSha: z.string().max(64).describe("Commit under audit; the literal 'WORKTREE' for uncommitted diffs"),
+}).superRefine((a, ctx) => {
+  if (a.startLine > a.endLine) {
+    ctx.addIssue({ code: 'custom', path: ['startLine'], message: 'startLine must be <= endLine' });
+  }
+  if (a.fileStatus === 'added' && a.side === 'base') {
+    ctx.addIssue({ code: 'custom', path: ['side'], message: "an 'added' file has no base-side content to cite" });
+  }
+  if (a.fileStatus === 'deleted' && a.side === 'head') {
+    ctx.addIssue({ code: 'custom', path: ['side'], message: "a 'deleted' file has no head-side content to cite" });
+  }
+  // Round-2b finding #H4 — oldFile/newFile PRESENCE by fileStatus, not just
+  // side-vs-content. Line-ordering + side checks above don't stop e.g. a
+  // 'renamed' anchor with BOTH paths null from validating.
+  if ((a.fileStatus === 'renamed' || a.fileStatus === 'copied') && (!a.oldFile || !a.newFile)) {
+    ctx.addIssue({ code: 'custom', path: ['oldFile'], message: `a '${a.fileStatus}' anchor requires both oldFile and newFile` });
+  }
+  if (a.fileStatus === 'added' && !a.newFile) {
+    ctx.addIssue({ code: 'custom', path: ['newFile'], message: "an 'added' anchor requires newFile" });
+  }
+  if (a.fileStatus === 'deleted' && !a.oldFile) {
+    ctx.addIssue({ code: 'custom', path: ['oldFile'], message: "a 'deleted' anchor requires oldFile" });
+  }
+  // Cluster B audit fix M4 (round 2): 'modified' means the path did NOT
+  // change — require BOTH paths present AND equal, not merely "at least
+  // one". A modified-file anchor with mismatched or missing paths is exactly
+  // the "impossible side/path combination" the finding named.
+  if (a.fileStatus === 'modified' && (!a.oldFile || !a.newFile || a.oldFile !== a.newFile)) {
+    ctx.addIssue({ code: 'custom', path: ['oldFile'], message: "a 'modified' anchor requires both oldFile and newFile present and equal" });
+  }
+});
+
+const EvidenceFieldsOptional = {
+  evidenceType: z.enum(['commission', 'omission']).optional(),
+  anchor: EvidenceAnchorSchema.nullable().optional().describe('commission only: the indicted code'),
+  triggerAnchor: EvidenceAnchorSchema.nullable().optional().describe('omission only: the trigger that created the unmet obligation'),
+  causalChain: z.string().max(800).nullable().optional().describe('omission only: changed → obligation created → what was searched → why absent'),
+};
+
+/**
+ * ProducerFindingV2Schema — what NEW (tiered-pipeline) generators emit.
+ * evidenceType is REQUIRED; the type-conditional evidence is enforced by
+ * superRefine (commission ⇒ anchor; omission ⇒ triggerAnchor + causalChain).
+ * Legacy generator call sites keep ProducerFindingSchema (V1) untouched.
+ */
+export const ProducerFindingV2Schema = z.object({
+  ...FindingBase,
+  classification: ClassificationSchema,
+  ...EvidenceFieldsOptional,
+  evidenceType: z.enum(['commission', 'omission']),
+}).superRefine((f, ctx) => {
+  if (f.evidenceType === 'commission' && !f.anchor) {
+    ctx.addIssue({ code: 'custom', path: ['anchor'], message: 'commission finding requires an anchor' });
+  }
+  if (f.evidenceType === 'omission') {
+    if (!f.triggerAnchor) ctx.addIssue({ code: 'custom', path: ['triggerAnchor'], message: 'omission finding requires a triggerAnchor' });
+    if (!f.causalChain) ctx.addIssue({ code: 'custom', path: ['causalChain'], message: 'omission finding requires a causalChain' });
+  }
+});
+
 /**
  * PersistedFindingSchema — what we read from storage. Classification is OPTIONAL/nullable.
  * Old findings written before Phase B have no classification; must still validate.
  * `verification` is attached only to findings the gate classified as
  * existence-claims; absent on all others (they count toward the verdict
- * normally).
+ * normally). Evidence fields (audit H4) are folded in DIRECTLY — not a
+ * parallel "V2" schema — so the ONE canonical `FindingSchema` every existing
+ * consumer already imports never silently strips V2 evidence on parse; V1
+ * findings validate unchanged since every evidence field is optional.
  */
 export const PersistedFindingSchema = z.object({
   ...FindingBase,
   classification: ClassificationSchema.nullable().optional(),
   verification: FindingVerificationSchema.optional(),
+  ...EvidenceFieldsOptional,
 });
 
 /**
@@ -102,6 +197,92 @@ export const PersistedFindingSchema = z.object({
  * persisted schema. Enforcement happens at producer boundaries via ProducerFindingSchema.
  */
 export const FindingSchema = PersistedFindingSchema;
+
+/**
+ * Alias retained for callers written against the "V2" name (e.g. this
+ * cluster's own tests) — same schema as `PersistedFindingSchema` now that
+ * evidence fields live there directly (audit H4 fix collapsed what was
+ * originally two parallel schemas into one).
+ */
+export const PersistedFindingV2Schema = PersistedFindingSchema;
+
+/**
+ * The single normalizer every downstream stage consumes (plan Phase 1 —
+ * round-1 finding #10). Pure + tolerant: malformed V2 (e.g. commission with
+ * no anchor, or an anchor failing EvidenceAnchorSchema's own invariants)
+ * degrades to 'missing' (V1 treatment) rather than throwing — enforcement of
+ * well-formedness happens at producer boundaries via ProducerFindingV2Schema,
+ * never at read time. Audit H5 fix: an anchor/triggerAnchor is validated via
+ * `EvidenceAnchorSchema.safeParse`, not merely truthy-checked — a malformed
+ * object (bad line ordering, wrong side for its fileStatus) must NOT read as
+ * valid evidence.
+ *
+ * @param {object} finding - raw finding (V1 or V2, producer- or persisted-shape)
+ * @returns {{evidenceStatus: 'missing'|'commission'|'omission', anchor: object|null, triggerAnchor: object|null, causalChain: string|null}}
+ */
+export function normalizeFindingEvidence(finding) {
+  const none = { evidenceStatus: 'missing', anchor: null, triggerAnchor: null, causalChain: null };
+  if (!finding || typeof finding !== 'object') return none;
+  if (finding.evidenceType === 'commission' && EvidenceAnchorSchema.safeParse(finding.anchor).success) {
+    return { evidenceStatus: 'commission', anchor: finding.anchor, triggerAnchor: null, causalChain: null };
+  }
+  if (finding.evidenceType === 'omission' && EvidenceAnchorSchema.safeParse(finding.triggerAnchor).success && finding.causalChain) {
+    return { evidenceStatus: 'omission', anchor: null, triggerAnchor: finding.triggerAnchor, causalChain: finding.causalChain };
+  }
+  return none;
+}
+
+// ── Audit Stage Decisions (tiered-recall pipeline) ──────────────────────────
+// Plan: docs/plans/tiered-recall-audit-pipeline.md Phase 3 (round-2 finding
+// #4). A typed, append-only decision log — replaces the original draft's
+// untyped `stageDecisions: {}` on AuditCandidateEnvelope. Every field that
+// was previously implied by prose (whether a dismissal has deterministic
+// disproof, whether it's ledger-eligible) is now a real, validated field.
+
+export const Stage0DecisionSchema = z.object({
+  stage: z.literal('stage0'),
+  outcome: z.enum(['verified', 'rejected', 'unverifiable']),
+  reasonCode: z.string().max(200),
+  evidenceRef: z.string().max(300),
+  createdAt: z.string(),
+});
+
+export const Stage1DecisionSchema = z.object({
+  stage: z.literal('stage1'),
+  outcome: z.enum(['mechanical_dismissed', 'escalated', 'confirmed_survivor']),
+  reasonCode: z.string().max(200),
+  hasDeterministicDisproof: z.boolean(),
+  createdAt: z.string(),
+});
+
+export const Stage2DecisionSchema = z.object({
+  stage: z.literal('stage2'),
+  // `pending_adjudication` added 2026-07-10 (tiered-recall pipeline Phase 11,
+  // audit-plan fix H1 round 3): the typed terminal state for a work item
+  // Phase 9's FinalAdjudicationBudget skips on per-call timeout / total-budget
+  // exhaustion — distinct from the four Gemini-produced verdicts above (no
+  // Gemini call happened at all). Retried next round via the existing R2+
+  // mechanism, never silently dropped or treated as `confirmed_dismissal`.
+  // `pending_security_review` added 2026-07-10 (Phase 12, audit-plan fix H2
+  // round 4): the typed terminal state for a candidate whose evidence is
+  // sensitive — the mandatory sensitive-egress gate refuses to build a
+  // transcript or spawn the reviewer subprocess at all, so this is NEVER a
+  // real Gemini verdict. Distinct from `pending_adjudication` (a transient
+  // budget-exhaustion skip that's simply retried) — this is a standing
+  // classification that needs a HUMAN decision, not a re-attempt. A
+  // sensitive-evidence item must NEVER be represented as `confirmed_dismissal`/
+  // `verified`/reviewed-and-clean (AGENTS.md "audit your success paths").
+  outcome: z.enum(['reversed', 'confirmed_dismissal', 'verified', 'missed_candidate', 'pending_adjudication', 'pending_security_review']),
+  reasonCode: z.string().max(200),
+  createdAt: z.string(),
+});
+
+/** Discriminated union on `stage` — Zod picks the right branch by that field. */
+export const AuditStageDecisionV1 = z.discriminatedUnion('stage', [
+  Stage0DecisionSchema,
+  Stage1DecisionSchema,
+  Stage2DecisionSchema,
+]);
 
 // ── Zod-to-Gemini Schema Conversion ─────────────────────────────────────────
 
@@ -155,6 +336,147 @@ export const WiringIssueSchema = z.object({
   backend_route: z.string().max(120),
   status: z.enum(['wired', 'broken', 'missing']),
   detail: z.string().max(300)
+});
+// ── Audit Run Context / Result (tiered-recall pipeline Phase 11) ───────────
+// Plan: docs/plans/tiered-recall-audit-pipeline.md Phase 11 (audit-plan fix
+// M1). The shared contract BOTH `runLegacyProductionAudit` and
+// `runTieredAuditPipeline` take as input / must satisfy as output, so
+// `openai-audit.mjs`'s chooser can treat either branch uniformly.
+
+/**
+ * `ctx` carries live, non-serialisable handles (an OpenAI SDK client, a
+ * PromptBandit instance, ...) alongside plain data — `z.any()`/`z.unknown()`
+ * marks the opaque fields deliberately (this schema documents the shape and
+ * is safe to `.safeParse()` defensively, but is not a strict "reject unknown
+ * runtime objects" gate the way a pure-data schema would be).
+ */
+export const AuditRunContextSchema = z.object({
+  planContent: z.string(),
+  projectContext: z.string().optional(),
+  historyContext: z.string().optional(),
+  passFilter: z.array(z.string()).nullable().optional(),
+  fileFilter: z.array(z.string()).nullable().optional(),
+  round: z.number().int().optional(),
+  ledgerFile: z.string().nullable().optional(),
+  diffFile: z.string().nullable().optional(),
+  changedFiles: z.array(z.string()).optional(),
+  repoProfile: z.unknown().nullable().optional(),
+  bandit: z.unknown().nullable().optional(),
+  fpTracker: z.unknown().nullable().optional(),
+  noLedger: z.boolean().optional(),
+  noTools: z.boolean().optional(),
+  strictLint: z.boolean().optional(),
+  noDebtLedger: z.boolean().optional(),
+  readOnlyDebt: z.boolean().optional(),
+  debtLedgerPath: z.string().optional(),
+  debtEventsPath: z.string().optional(),
+  escalateRecurring: z.number().nullable().optional(),
+  scopeMode: z.string().nullable().optional(),
+  planFile: z.string().nullable().optional(),
+  runId: z.string().nullable().optional(),
+  allowInfraScope: z.boolean().optional(),
+  // `generatorOutcomes` — initialised to `[]` by `buildAuditRunContext`;
+  // `discovery-portfolio.mjs::runDiscoveryPortfolio` mutates it in place so
+  // both orchestrators share one place generator/pass outcomes are recorded.
+  generatorOutcomes: z.array(z.object({
+    model: z.string(),
+    role: z.enum(['required', 'optional', 'exploratory']),
+    status: z.enum(['succeeded', 'failed', 'skipped']),
+  })).optional(),
+  // The four provider handles, constructed ONCE by `buildAuditRunContext` via
+  // the existing guarded factories, threaded through unchanged — no stage
+  // module constructs a provider SDK client itself.
+  providers: z.object({
+    openai: z.unknown().nullable().optional(),
+    anthropicClient: z.unknown().nullable().optional(),
+    ossCall: z.unknown().nullable().optional(),
+    geminiReviewCall: z.unknown().nullable().optional(),
+  }).optional(),
+  // Deviations from the plan's literal field-enumeration, needed by actual
+  // shipped code (audit-plan fix pattern — verified via direct inspection,
+  // not assumed from plan prose): `outFile` is read internally by the
+  // legacy loop for artifact-path resolution (pass-result recovery cache
+  // dir + R2+ prior-round-outcome finalisation), distinct from "write the
+  // FINAL result to disk" which stays a CLI-wrapper concern. `model` is the
+  // resolved GPT model id (mirrors `./llm-helpers.mjs`'s `MODEL`, threaded
+  // through ctx so orchestration-layer code doesn't reach for the mutable
+  // module-level binding directly). `sessionCacheHit` is genuinely read by
+  // the legacy loop's cloud-telemetry `recordRunComplete` call.
+  outFile: z.string().nullable().optional(),
+  model: z.string().nullable().optional(),
+  sessionCacheHit: z.unknown().nullable().optional(),
+});
+
+/**
+ * Shared output contract. Fields always present on both orchestrators are
+ * NOT `.optional()`; the historically-conditional fields (`_failed_passes`,
+ * `_executionMeta`, `_suppression`, ...) stay `.optional()`.
+ */
+export const AuditRunResultSchema = z.object({
+  verdict: z.enum(['PASS', 'NEEDS_FIXES', 'SIGNIFICANT_ISSUES', 'INCOMPLETE']),
+  files_planned: z.number().int(),
+  files_found: z.number().int(),
+  files_missing: z.number().int(),
+  code_files: z.array(z.string()),
+  findings: z.array(z.any()),
+  wiring_issues: z.array(WiringIssueSchema),
+  quick_fix_warnings: z.array(z.string()),
+  dead_code: z.array(z.string()),
+  overall_reasoning: z.string(),
+  _pass_timings: z.record(z.string(), z.any()),
+  _usage: z.record(z.string(), z.any()),
+  _cacheMetrics: z.record(z.string(), z.any()),
+  _toolCapability: z.record(z.string(), z.any()),
+  _sid: z.string(),
+  generatorOutcomes: z.array(z.object({
+    model: z.string(),
+    role: z.enum(['required', 'optional', 'exploratory']),
+    status: z.enum(['succeeded', 'failed', 'skipped']),
+  })),
+  runStatus: z.enum(['complete', 'incomplete', 'fallback_legacy']),
+  fallbackReason: z.string().optional(),
+  // Conditional / historically-optional fields:
+  _failed_passes: z.array(z.string()).optional(),
+  _executionMeta: z.record(z.string(), z.any()).optional(),
+  _suppression: z.record(z.string(), z.any()).optional(),
+  _debtMemory: z.record(z.string(), z.any()).optional(),
+  _ledgerRejectedCount: z.number().optional(),
+  _ledgerWriteError: z.string().optional(),
+  _linterOverlap: z.record(z.string(), z.any()).optional(),
+  _cloudRunId: z.string().optional(),
+  _modelAbShadow: z.record(z.string(), z.any()).optional(),
+  // Added 2026-07-10 (audit-plan fix H1, round 3) — how the Stage 2
+  // budget-exhaustion path (Phase 9's FinalAdjudicationBudget) surfaces on
+  // the run result the next round's R2+ mechanism reads.
+  _stage2BudgetExhausted: z.object({ count: z.number(), itemIds: z.array(z.string()) }).optional(),
+  pendingAdjudicationItems: z.array(z.string()).optional(),
+  // Added 2026-07-10 (Phase 12) — item IDs routed to the NEW
+  // `pendingSecurityReview` accumulator (final-adjudication.mjs), distinct
+  // from `pendingAdjudicationItems` above. Mirrors that field's shape.
+  pendingSecurityReviewItems: z.array(z.string()).optional(),
+});
+
+// ── Stage 1 Triager DTO (audit-orchestrator-hardening Phase 8) ─────────────
+// Minimized, egress-safe shape `adapters.triagerCall` receives — never the
+// full mutable `AuditCandidateEnvelope` (which nests the whole
+// canonicalFinding, evidenceAlternatives, stageDecisions). Schema ONLY —
+// the builder (`buildStageOneTriageInput`) deliberately lives in
+// `scripts/lib/audit/stage1-triage.mjs`, not here: this module is a pure
+// Zod-definitions file with no other module's side-effecting logic
+// imported into it anywhere in this codebase (confirmed via grep), and the
+// builder needs `resolveAndClassify`/`redactSecrets`/`normalizeFindingEvidence`
+// — importing those here would risk a circular import (`sensitive-paths.mjs`/
+// `redact.mjs` are lower-level utility modules `schemas.mjs` has no existing
+// dependency on).
+export const StageOneTriageInputSchema = z.object({
+  category: z.string().max(80),
+  detail: z.string().max(600),
+  section: z.string().max(120),
+  severity: z.enum(['HIGH', 'MEDIUM', 'LOW']),
+  evidenceStatus: z.enum(['missing', 'commission', 'omission']),
+  anchorQuote: z.string().max(1000).nullable(),
+  causalChain: z.string().max(800).nullable(),
+  redacted: z.boolean(),
 });
 
 // ── Ledger Core Fields (shared by session + debt ledgers — Phase D) ─────────
@@ -218,6 +540,26 @@ export const AdjudicationLedgerSchema = z.object({
   entries: z.array(LedgerEntrySchema),
   /** Arbitrary metadata preserved on round-trip (runsSinceDebtReview, sessionId, etc.) */
   meta: z.record(z.unknown()).optional(),
+});
+
+/**
+ * Stage 1's deterministic dismissals (tiered-recall audit pipeline Phase 8) —
+ * a `source` tag distinct from `session`/`debt` so they (a) flow through
+ * `suppressReRaises`'s fuzzy/reopen-on-touch path like session entries, and
+ * (b) are excluded from the hard-suppress-at-3 `overruleCountIndex`, since a
+ * mechanical dismissal reason (e.g. "the cited function doesn't exist") can
+ * become false later (the function gets added) in a way a human/GPT judgment
+ * overrule never does. Deliberately NOT a session-deliberation entry — no
+ * `ruling`/`rulingRationale` fields, since no GPT/human deliberation
+ * happened; `disproof` is the deterministic evidence Stage 1 cited instead.
+ */
+export const Stage1MechanicalLedgerEntrySchema = z.object({
+  ...LedgerCoreFields,
+  source: z.literal('stage1-mechanical'),
+  adjudicationOutcome: z.literal('dismissed'),
+  remediationState: z.enum(['pending', 'planned', 'fixed', 'verified', 'regressed']),
+  disproof: z.string().min(1),
+  resolvedRound: z.number(),
 });
 
 // ── Debt Ledger Schemas (Phase D) ───────────────────────────────────────────

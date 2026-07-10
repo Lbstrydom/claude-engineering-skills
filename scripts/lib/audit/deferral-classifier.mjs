@@ -150,6 +150,13 @@ function globMatch(glob, filePath) {
  *   Legacy flat-array form is still accepted for backwards compatibility but logs a
  *   one-time deprecation warning.
  * @param {string} [runContext.planContent]            - raw plan markdown (for accept-v1 markers)
+ * @param {(finding: object) => 'pre_existing_independent'|'unknown'} [runContext.preExistingCheck]
+ *   Deterministic evidence source for gate (d) below (tiered-recall pipeline,
+ *   docs/plans/tiered-recall-audit-pipeline.md Phase 3) — the two-check
+ *   (blame + impact-independence) result from `evidence-triage.mjs::tagPreExisting`.
+ *   Injected so this function stays pure/I-O-free; the caller (which HAS git/
+ *   diff access) supplies the check. Absent → gate (d) is skipped, matching
+ *   the pre-Phase-3 behavior (this class was advisory-only until now).
  * @returns {ClassifyResult|null}
  */
 export function classifyDeferralEvidence(finding, runContext) {
@@ -263,11 +270,26 @@ export function classifyDeferralEvidence(finding, runContext) {
     }
   }
 
-  // (d) pre-existing — requires git blame, which we treat as advisory only
-  // for v1.  The classifier returns null for findings that might be pre-
-  // existing but aren't otherwise classified; weekly review surfaces them.
-  // (Implementing git-blame check inline would couple the classifier to a
-  // git subprocess on the audit hot path; deferred to a v1.x enhancement.)
+  // (d) pre-existing — closes the gap this comment flagged as deferred
+  // (tiered-recall pipeline, Phase 3). `runContext.preExistingCheck` is the
+  // two-check (blame + impact-independence) result from
+  // `evidence-triage.mjs::tagPreExisting` — blame ALONE is never sufficient
+  // (round-1 finding #3: a pre-existing finding in a changed file can still
+  // be load-bearing; this repo's own invariant is scope-by-impact, not
+  // authorship). This function stays I/O-free: the check itself is injected,
+  // never performed here.
+  if (typeof runContext.preExistingCheck === 'function' && filePath) {
+    const tag = runContext.preExistingCheck(finding);
+    if (tag === 'pre_existing_independent') {
+      return {
+        class: 'pre-existing',
+        evidence: { type: 'pre-existing-two-check', file: filePath },
+        isDeterministic: true,
+      };
+    }
+    // tag === 'unknown' → deliberately falls through to `return null` below,
+    // NOT treated as pre-existing. Never silently assume independence.
+  }
 
   return null;
 }

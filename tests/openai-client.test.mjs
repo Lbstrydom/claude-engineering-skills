@@ -78,3 +78,33 @@ describe('azureBaseUrl helper', () => {
     assert.equal(_internals.azureBaseUrl('gpt', cfg), 'https://x.openai.azure.com/openai/v1');
   });
 });
+
+describe('createOpenAIClient — OSS path caching (consolidated Gemini gate fix G3)', () => {
+  beforeEach(() => _resetClientCache());
+
+  it('caches by baseURL+apiKey when no headers are supplied', async () => {
+    const a = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss' } });
+    const b = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss' } });
+    assert.equal(a, b);
+  });
+
+  it('does NOT share a cached client across DIFFERENT headers for the same baseURL+apiKey', async () => {
+    const a = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss', headers: { 'HTTP-Referer': 'app-a' } } });
+    const b = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss', headers: { 'HTTP-Referer': 'app-b' } } });
+    assert.notEqual(a, b);
+    assert.equal(a._options.defaultHeaders?.['HTTP-Referer'], 'app-a');
+    assert.equal(b._options.defaultHeaders?.['HTTP-Referer'], 'app-b');
+  });
+
+  it('caches by IDENTICAL headers regardless of key insertion order', async () => {
+    const a = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss', headers: { 'HTTP-Referer': 'app-a', 'X-Title': 'title' } } });
+    const b = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss', headers: { 'X-Title': 'title', 'HTTP-Referer': 'app-a' } } });
+    assert.equal(a, b);
+  });
+
+  it('a headers-present call and a no-headers call for the same baseURL+apiKey are cached separately', async () => {
+    const withHeaders = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss', headers: { 'HTTP-Referer': 'app-a' } } });
+    const noHeaders = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss' } });
+    assert.notEqual(withHeaders, noHeaders);
+  });
+});
