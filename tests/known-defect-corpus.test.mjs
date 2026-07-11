@@ -10,9 +10,16 @@ import { EgressGateError } from '../scripts/lib/model-eval/egress-path-scan.mjs'
 
 const REPO_ROOT = process.cwd();
 const REPO_NAME = path.basename(REPO_ROOT);
-const REAL_SHA = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 
-// Must match HEAD's REAL changed-file list (round-1 audit M10's new
+// A fixed, immutable, deliberately-tiny historical commit — NOT `git rev-parse
+// HEAD`. HEAD's diff size varies with whatever was last committed (a large
+// ship commit can exceed loadCorpusCase's own 200,000-char safety bound and
+// make this fixture fail through no fault of the loader itself); a pinned
+// single-file/single-line commit is stable forever regardless of future
+// commit sizes. (chore(skills): regenerate ux-lock skill copies — 786-byte diff.)
+const REAL_SHA = '61d99cc';
+
+// Must match REAL_SHA's REAL changed-file list (round-1 audit M10's new
 // declared-files-vs-diff cross-check would otherwise correctly reject this
 // fixture as stale corpus metadata).
 const REAL_CHANGED_FILES = execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', '--name-only', `${REAL_SHA}^`, REAL_SHA], { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
