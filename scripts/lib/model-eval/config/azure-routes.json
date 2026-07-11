@@ -1,0 +1,18 @@
+[
+  {
+    "profile": "foundry-gpt-audit-candidate",
+    "role": "auditor",
+    "deploymentEnvVar": "AZURE_MODEL_EVAL_AUDITOR_DEPLOYMENT",
+    "modelLineage": "openai:gpt",
+    "lineageStatus": "known",
+    "pricingModelSentinel": "latest-gpt"
+  },
+  {
+    "profile": "foundry-claude-adjudicator-candidate",
+    "role": "adjudicator",
+    "deploymentEnvVar": "AZURE_MODEL_EVAL_ADJUDICATOR_DEPLOYMENT",
+    "modelLineage": "anthropic:opus",
+    "lineageStatus": "known",
+    "pricingModelSentinel": "latest-opus"
+  }
+]

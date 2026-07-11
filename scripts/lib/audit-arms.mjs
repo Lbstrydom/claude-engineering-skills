@@ -36,6 +36,12 @@
 
 import { z } from 'zod';
 import { isSentinel, SENTINEL_TO_TIER } from './model-resolver.mjs';
+// Round-2 (Cluster B) audit M7 fix — imported from contracts.mjs (zod-only,
+// no env/FS side effects), NOT route-catalog.mjs (which transitively pulls
+// in config.mjs's azureConfig, a real purity violation of this file's own
+// "no env side effects" header claim — audit-shadow.mjs's live shadow
+// experiment relies on that guarantee).
+import { CandidateSpecSchema } from './model-eval/contracts.mjs';
 
 // ── Stage taxonomy (SSoT — the store, view, and shadow all reference these) ──
 export const STAGES = Object.freeze(['gpt-gen', 'oss-gen', 'gpt-round', 'gemini']);
@@ -57,16 +63,55 @@ export const SHADOW_STAGES = Object.freeze(['oss-gen', 'gpt-round', 'gemini']);
 export const BASELINE_STAGES = Object.freeze(['gpt-gen', 'gemini']);
 
 // ── Arm schema ───────────────────────────────────────────────────────────────
+//
+// model-swap-eval-harness Phase 3 (round-2 audit H2) — ArmGenerationSchema
+// evolved from a flat {modelSentinel, provider, role?} object to a
+// discriminated union, so a candidate arm resolved through
+// route-catalog.mjs (an Azure deployment, or any future non-sentinel
+// route) has its own well-typed member instead of being bolted onto the
+// sentinel-shaped enum. `kind:'sentinel'` and `kind:'oss-role'` keep
+// EXACTLY the field names/semantics the old flat shape had — every
+// existing reader of `arm.generation.provider`/`.modelSentinel` (e.g.
+// audit-shadow.mjs) keeps working unchanged for CANONICAL_ARMS A/B/C,
+// which never become `kind:'resolved-route'` in this plan (that kind is
+// the extension point for a FUTURE candidate-arm slot — Sustainability
+// Notes — not something this plan adds to CANONICAL_ARMS today).
 
-export const ArmGenerationSchema = z.object({
-  // A SENTINEL (latest-gpt / latest-oss-coder / …), never a concrete id — the
-  // resolver picks the newest match at run time (plan decision 2, load-bearing).
+// .strict() on every member (matching this repo's established route-catalog.mjs
+// pattern — CandidateSpecSchema/AzureRouteEntrySchema) — a stray/misspelled key
+// (e.g. a `role` field on a `kind:'sentinel'` arm) is REJECTED, not silently
+// stripped by z.object()'s default unknown-key-drop behavior.
+const SentinelGeneration = z.object({
+  kind: z.literal('sentinel'),
   modelSentinel: z.string().min(1).max(60),
-  provider: z.enum(['openai', 'oss']),
-  // OSS role selects the OSS_POOL partition; required for provider:'oss', absent
-  // otherwise (enforced by superRefine below).
-  role: z.enum(['coder', 'reasoner']).optional(),
-});
+  provider: z.literal('openai'),
+}).strict();
+
+// OssRoleGeneration keeps BOTH modelSentinel and role (Gemini round-3 audit
+// G2 field-completeness fix) — pickOssModel(role) is how role selects the
+// sentinel in the first place, but modelSentinel is what arm-generation.mjs
+// actually reads to resolve a client; dropping either breaks generation.
+const OssRoleGeneration = z.object({
+  kind: z.literal('oss-role'),
+  modelSentinel: z.string().min(1).max(60),
+  provider: z.literal('oss'),
+  role: z.enum(['coder', 'reasoner']),
+}).strict();
+
+// The Azure/candidate case — carries route-catalog.mjs's already-resolved
+// output directly (never smuggling a deployment id through the sentinel
+// field). `candidateSpec` is the ORIGINAL spec that was resolved, kept for
+// provenance; `resolvedModel`/`deploymentId` are route-catalog.mjs's output.
+const ResolvedRouteGeneration = z.object({
+  kind: z.literal('resolved-route'),
+  candidateSpec: CandidateSpecSchema,
+  resolvedModel: z.string().min(1),
+  deploymentId: z.string().nullable(),
+}).strict();
+
+export const ArmGenerationSchema = z.discriminatedUnion('kind', [
+  SentinelGeneration, OssRoleGeneration, ResolvedRouteGeneration,
+]);
 
 export const ArmSchema = z.object({
   id: z.string().regex(/^[A-Z][A-Za-z0-9_-]{0,15}$/, 'arm id must start uppercase, ≤16 chars'),
@@ -81,13 +126,20 @@ export const ArmSchema = z.object({
   // The production/control arm is run by the real audit pipeline, NOT the
   // observation-only shadow. It cannot be a shadow target.
   isBaseline: z.boolean().default(false),
-}).superRefine((arm, ctx) => {
-  if (arm.generation.provider === 'oss' && !arm.generation.role) {
-    ctx.addIssue({ code: 'custom', path: ['generation', 'role'], message: 'provider:"oss" requires a role (coder|reasoner)' });
-  }
-  if (arm.generation.provider === 'openai' && arm.generation.role) {
-    ctx.addIssue({ code: 'custom', path: ['generation', 'role'], message: 'provider:"openai" must not carry an OSS role' });
-  }
+}).strict() // Round-2 (Cluster B) audit M2 fix — the top-level object was
+  // not .strict() even though every generation union member is; a stale/
+  // misspelled top-level arm field (e.g. a typo of gptRound) was silently
+  // stripped instead of rejected, the same class of gap this file's own
+  // generation-union .strict() calls already close one level down.
+  .superRefine((arm, ctx) => {
+  // The sentinel/role/provider pairing constraints the old superRefine
+  // enforced by hand are now structural (the union member itself fixes
+  // provider to a literal and requires/forbids role) — only the
+  // sentinel-REGISTRY validity check still needs a runtime lookup, and only
+  // applies to the two sentinel-carrying kinds. `resolved-route` arms carry
+  // an already-resolved `resolvedModel` from route-catalog.mjs, not a
+  // sentinel — nothing to validate against the sentinel registry here.
+  if (arm.generation.kind === 'resolved-route') return;
   // modelSentinel MUST be a registered sentinel, never a concrete id (audit R4
   // M4 + plan decision 2 — the load-bearing "no pinned ids in arm code"
   // anti-pattern). A concrete OSS override lives in env (OSS_CODER_MODEL),
@@ -115,7 +167,7 @@ export const CANONICAL_ARMS = Object.freeze([
   Object.freeze({
     id: 'A',
     label: 'GPT audit → Gemini review (production control)',
-    generation: Object.freeze({ modelSentinel: 'latest-gpt', provider: 'openai' }),
+    generation: Object.freeze({ kind: 'sentinel', modelSentinel: 'latest-gpt', provider: 'openai' }),
     gptRound: false,
     geminiGate: true,
     isBaseline: true,
@@ -123,7 +175,7 @@ export const CANONICAL_ARMS = Object.freeze([
   Object.freeze({
     id: 'B',
     label: 'OSS audit → 1 GPT round → Gemini review (does the GPT round earn its keep?)',
-    generation: Object.freeze({ modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }),
+    generation: Object.freeze({ kind: 'oss-role', modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }),
     gptRound: true,
     geminiGate: true,
     isBaseline: false,
@@ -131,7 +183,7 @@ export const CANONICAL_ARMS = Object.freeze([
   Object.freeze({
     id: 'C',
     label: 'OSS audit → Gemini review (can OSS+Gemini replace GPT+Gemini?)',
-    generation: Object.freeze({ modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }),
+    generation: Object.freeze({ kind: 'oss-role', modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }),
     gptRound: false,
     geminiGate: true,
     isBaseline: false,
@@ -159,14 +211,51 @@ export function parseArm(raw) {
 /**
  * Derive the ordered set of stages an arm's config produces findings at.
  * The scorer view derives arm membership from the SAME rule (plan decision 10).
+ * Branches on `generation.kind` (model-swap-eval-harness Phase 3), not
+ * `generation.provider` — `resolved-route` arms carry no `provider` field.
+ * A `resolved-route` arm is treated as `gpt-gen`-shaped: like `sentinel`, it
+ * is driven through an OpenAI-SDK-shaped client (`createOpenAIClient`,
+ * arm-generation.mjs), unlike `oss-role`'s distinct OSS-pool call path —
+ * only `oss-role` is a genuinely different generation stage.
  * @param {z.infer<typeof ArmSchema>} arm
  * @returns {string[]}
  */
 export function stagesForArm(arm) {
-  const stages = [arm.generation.provider === 'oss' ? 'oss-gen' : 'gpt-gen'];
+  const stages = [arm.generation.kind === 'oss-role' ? 'oss-gen' : 'gpt-gen'];
   if (arm.gptRound) stages.push('gpt-round');
   if (arm.geminiGate) stages.push('gemini');
   return stages;
+}
+
+/**
+ * Construct a `kind:'resolved-route'` arm from route-catalog.mjs's
+ * `resolveCandidateRoute()` output — declarative only, no I/O. The
+ * extension seam for a model-eval candidate/baseline arm (model-swap-eval-
+ * harness Phase 3) — NOT wired into CANONICAL_ARMS by this plan (that
+ * stays the 3-row A/B/C shadow-experiment data; a model-eval arm is
+ * constructed on demand by arm-generation.mjs's callers, never persisted
+ * as a 4th canonical row). `id`/`label` default to model-eval-appropriate
+ * values rather than trying to fit CANONICAL_ARMS' single-uppercase-letter
+ * id convention (`ArmSchema.id`'s regex), since this arm never appears
+ * alongside A/B/C in the same scored set.
+ * @param {{candidateSpec: object, resolvedModel: string, deploymentId: string|null}} routeCatalogResult
+ * @param {{id?: string, label?: string}} [opts]
+ * @returns {z.infer<typeof ArmSchema>}
+ */
+export function buildCandidateArm(routeCatalogResult, { id = 'CAND', label } = {}) {
+  return ArmSchema.parse({
+    id,
+    label: label ?? `resolved-route candidate (${routeCatalogResult.resolvedModel})`,
+    generation: {
+      kind: 'resolved-route',
+      candidateSpec: routeCatalogResult.candidateSpec,
+      resolvedModel: routeCatalogResult.resolvedModel,
+      deploymentId: routeCatalogResult.deploymentId ?? null,
+    },
+    gptRound: false,
+    geminiGate: false,
+    isBaseline: false,
+  });
 }
 
 /**

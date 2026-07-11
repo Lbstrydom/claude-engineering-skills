@@ -168,4 +168,29 @@ describe('redactObject', () => {
     const keys = Object.keys(r.redacted);
     assert.deepEqual(keys, ['ordinary', 'another']);
   });
+
+  // ── Consolidated-gate Gemini G1 — key-redaction collision ────────────
+  // Two DISTINCT sensitive keys can redact to the IDENTICAL placeholder
+  // (redactSecrets' output is pattern-class-shaped, not key-content-unique)
+  // — a plain `out[safeKey] = ...` would silently drop the first field.
+
+  it('two distinct sensitive keys that redact to the SAME placeholder do not collide — both fields survive', () => {
+    const prefix = 'sk-' + 'proj-';
+    const key1 = prefix + 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+    const key2 = prefix + 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+    const r = redactObject({ [key1]: 'first-value', [key2]: 'second-value' });
+    const keys = Object.keys(r.redacted);
+    assert.equal(keys.length, 2, `expected 2 distinct keys, got ${JSON.stringify(keys)}`);
+    const values = keys.map((k) => r.redacted[k]).sort();
+    assert.deepEqual(values, ['first-value', 'second-value']);
+  });
+
+  it('a real (non-redacted) key equal to another key\'s redacted placeholder still disambiguates', () => {
+    const prefix = 'sk-' + 'proj-';
+    const secretKey = prefix + 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
+    const input = { '[REDACTED:openai-key]': 'literal-value', [secretKey]: 'secret-value' };
+    const r = redactObject(input);
+    const keys = Object.keys(r.redacted);
+    assert.equal(keys.length, 2, `expected 2 distinct keys, got ${JSON.stringify(keys)}`);
+  });
 });

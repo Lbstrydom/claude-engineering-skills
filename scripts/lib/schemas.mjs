@@ -297,7 +297,19 @@ const GEMINI_UNSUPPORTED_KEYS = new Set([
 ]);
 
 /**
+ * Object-schema keys whose *values* are maps of arbitrary user-defined names
+ * (Zod field names, $ref targets) rather than JSON Schema keywords. A field
+ * literally named "pattern" or "default" must survive filtering when it
+ * appears as a key of one of these maps — only actual JSON Schema keyword
+ * positions (siblings of "type", etc.) should be stripped.
+ */
+const JSON_SCHEMA_NAME_MAP_KEYS = new Set(['properties', '$defs', 'definitions']);
+
+/**
  * Strip Gemini-unsupported JSON Schema keys recursively.
+ * Shape-aware: does not strip keys inside a name-map (`properties`, `$defs`,
+ * `definitions`) since those keys are field/schema names, not JSON Schema
+ * keywords — a Zod field named "pattern" or "default" must not be dropped.
  * @param {*} obj - JSON Schema node
  * @returns {*} Cleaned node
  */
@@ -306,6 +318,14 @@ function stripJsonSchemaExtras(obj) {
   if (Array.isArray(obj)) return obj.map(stripJsonSchemaExtras);
   const cleaned = {};
   for (const [k, v] of Object.entries(obj)) {
+    if (JSON_SCHEMA_NAME_MAP_KEYS.has(k) && typeof v === 'object' && v !== null && !Array.isArray(v)) {
+      const nameMap = {};
+      for (const [name, subSchema] of Object.entries(v)) {
+        nameMap[name] = stripJsonSchemaExtras(subSchema);
+      }
+      cleaned[k] = nameMap;
+      continue;
+    }
     if (GEMINI_UNSUPPORTED_KEYS.has(k)) continue;
     cleaned[k] = stripJsonSchemaExtras(v);
   }

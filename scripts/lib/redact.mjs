@@ -113,10 +113,21 @@ export function redactObject(value, opts = {}) {
           // walks values only; without this loop, secrets embedded in
           // keys (`{"AKIA…": "v"}`) would survive untouched.
           const keyRedaction = redact(key);
-          const safeKey = keyRedaction.count > 0 ? keyRedaction.redacted : key;
+          let safeKey = keyRedaction.count > 0 ? keyRedaction.redacted : key;
           if (keyRedaction.count > 0) {
             count += keyRedaction.count;
             for (const p of keyRedaction.patternsHit) patterns.add(p);
+          }
+          // Consolidated-gate Gemini G1 fix — two DISTINCT sensitive keys can
+          // redact to the IDENTICAL placeholder text (redactSecrets' output
+          // is pattern-class-shaped, not key-content-unique), which would
+          // otherwise silently overwrite the first field's already-written
+          // value via plain `out[safeKey] = ...`. Disambiguate with a
+          // numeric suffix on collision — never silently drop a field.
+          if (safeKey in out) {
+            let suffix = 2;
+            while (`${safeKey}_${suffix}` in out) suffix++;
+            safeKey = `${safeKey}_${suffix}`;
           }
           out[safeKey] = walk(node[key], currentDepth + 1);
         }

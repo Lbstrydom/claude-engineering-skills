@@ -2,7 +2,10 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { _internals } from '../scripts/gemini-review.mjs';
 
-const { resolveShadow, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily } = _internals;
+const {
+  resolveShadow, diffFindingBuckets, dedupByHash, shadowModelMatchesFamily,
+  resolveModelEvalShadowOverride, mapRouteToShadowProvider,
+} = _internals;
 
 // A resolver stub so tests don't depend on the live model catalog.
 const stubResolve = (sentinel) => {
@@ -122,5 +125,35 @@ describe('diffFindingBuckets — three-way partition by semantic hash', () => {
   it('handles empty/missing results without throwing', () => {
     const d = diffFindingBuckets({}, {});
     assert.deepEqual(d.counts, { both: 0, primaryOnly: 0, shadowOnly: 0 });
+  });
+});
+
+// model-swap-eval-harness Phase 4 — adjudicator Tier A/B live-shadow override.
+describe('mapRouteToShadowProvider — pure route-to-provider mapping (Phase 4)', () => {
+  it('native-gemini transport maps to "gemini"', () => {
+    assert.equal(mapRouteToShadowProvider({ transport: 'native-gemini' }), 'gemini');
+  });
+
+  it('native-anthropic transport from an azure-resolved route maps to "azure-claude"', () => {
+    assert.equal(mapRouteToShadowProvider({ transport: 'native-anthropic', provider: 'azure' }), 'azure-claude');
+  });
+
+  it('native-anthropic transport from a public sentinel route maps to "claude-opus"', () => {
+    assert.equal(mapRouteToShadowProvider({ transport: 'native-anthropic', provider: 'anthropic' }), 'claude-opus');
+  });
+
+  it('openai-compatible transport has no live-shadow prompt path — returns null (Tier C only)', () => {
+    assert.equal(mapRouteToShadowProvider({ transport: 'openai-compatible', provider: 'openai' }), null);
+  });
+});
+
+describe('resolveModelEvalShadowOverride — discovery is unconditional, never requires FINAL_REVIEW_SHADOW (round-6 audit H4)', () => {
+  it('returns null gracefully when no adjudicator Tier A/B eval run is active for this repo (real DB call, no mocking)', async () => {
+    // This repo's cloud IS enabled in dev/CI here, and there is genuinely no
+    // active pending_shadow adjudicator run right now — exercises the REAL
+    // isCloudEnabled -> resolveRepoIdentity -> getActiveEvalRunId chain
+    // end-to-end without needing to fabricate DB state.
+    const result = await resolveModelEvalShadowOverride();
+    assert.equal(result, null);
   });
 });

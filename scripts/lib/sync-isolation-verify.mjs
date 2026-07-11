@@ -55,6 +55,8 @@ const CLI_SMOKE_SET = [
   'visual-audit.mjs',// /visual-audit CLI orchestrator
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
+  'model-eval-auditor.mjs', // model-swap-eval-harness Phase 3 auditor-role CLI
+  'model-eval-adjudicator.mjs', // model-swap-eval-harness Phase 4 adjudicator-role CLI
 ];
 
 const LIB_IMPORT_SET = [

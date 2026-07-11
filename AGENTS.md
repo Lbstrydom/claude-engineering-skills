@@ -738,6 +738,41 @@ final review, to empirically test whether a second final gate is worth keeping.
 → Attribution schema (`source_model`, `bucket`, idempotent-replace persistence) +
 the full stopping-rule rationale: [`docs/completed/final-review-shadow-reviewer.md`](docs/completed/final-review-shadow-reviewer.md).
 
+## Model Swap-In Evaluation Harness
+
+A standing, repeatable test suite (`scripts/lib/model-eval/`) for evaluating a
+candidate LLM release for the **auditor** role (currently GPT) or the
+**adjudicator** role (currently Gemini) — "is this new model worth switching
+to?" with the same rigor as the completed audit-effectiveness research.
+Reuses existing assets rather than rebuilding: the `known-defects.json`
+ground-truth corpus, a forked blinded cross-family judge protocol
+(`scripts/lib/model-eval/blind-judge.mjs` — a sibling of, not an extraction
+from, the live `solo-control-audit.mjs` experiment), the $/KD cost formula,
+`model-resolver.mjs`'s sentinel system, and the shadow-final-review A/B's
+pre-registered stopping rule.
+
+- **Auditor role**: `node scripts/model-eval-auditor.mjs --candidate <spec> --tier screen|promotion`
+  runs the candidate through `known-defects.json` via `structured-extractor.mjs`,
+  scores with `deterministic-scorer.mjs`, decides via `verdict.mjs`.
+- **Adjudicator role**: `node scripts/model-eval-adjudicator.mjs --candidate <spec> --tier screen|promotion`
+  — Tier C (always available) scores the candidate as a structured T/F extractor
+  against `getAdjudicatorGroundTruth()` (real, labeled `audit_findings` rows).
+  Tier A/B (only when `route-catalog.mjs` judges the candidate/baseline
+  genuinely independent model lineages) points `gemini-review.mjs`'s
+  `FINAL_REVIEW_SHADOW` mechanism at the candidate for `minLiveShadowRuns`
+  live runs (default 20) and finalizes via `finalize-shadow-eval.mjs`.
+- **Accepted false-negative direction**: a Tier-C-only run (e.g. a
+  restricted-catalog Azure repo) can never emit `verdict:'switch'` —
+  only `keep`/`inconclusive`/`manual_review_required`. Schema-enforced
+  (`ThresholdConfigSchema`/`verdict.mjs`), not a convention to remember.
+- Thresholds are versioned, conservative v0.1 bootstrap values
+  (`scripts/lib/model-eval/config/{auditor,adjudicator}-thresholds.json`) —
+  not yet empirically calibrated; a recalibration is a `version: 2` bump.
+
+→ Full design, prior-art trace, and the two-round mid-implementation
+redesign (Phase 2 forked rather than extracted from the live solo-control
+experiment): [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md).
+
 ## Azure AI Foundry Work Profile
 
 Run the **same** bundle in a corporate Azure environment (restricted models)

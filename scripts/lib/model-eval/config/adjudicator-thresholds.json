@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "role": "adjudicator",
+  "calibrationNote": "v0.1 bootstrap values, uncalibrated against any real run — recalibrate after 5 completed promotion-tier evaluations. v2 (round-6 audit M3): screen tier is oracle-mode-only (Tier C) so its field is named as an absolute floor, not a baseline-relative ratio. v3 (implementation H8): removed the redundant minLiveShadowRuns comparative-thresholds key — promotion.minSampleSize (below) is the single enforced floor, set to 20 to match the shadow-final-review A/B's own pre-registered N>=20 stopping rule this value was always meant to mirror.",
+  "screen": {
+    "minSampleSize": 10,
+    "thresholds": {
+      "oracle": {
+        "minF1": 0.95
+      }
+    }
+  },
+  "promotion": {
+    "minSampleSize": 20,
+    "thresholds": {
+      "comparative": {
+        "minF1VsBaseline": 0.98,
+        "maxFalseAcceptDeltaAbs": 0.05,
+        "switchIfCostImprovesByPct": 30
+      },
+      "allowUnpricedPromotion": false
+    }
+  }
+}

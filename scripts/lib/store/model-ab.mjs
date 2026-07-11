@@ -309,8 +309,12 @@ async function setFindingOutcome(runId, fingerprint, outcome, userAction) {
   // Returns rowCount so the caller can detect a 0-row no-op (audit R1 M5) — a
   // fingerprint that matched nothing is a silent adjudication failure. A
   // fingerprint shared across stages legitimately updates >1 row (same issue).
+  // decided_at = NOW() (model-swap-eval-harness Phase 4 migration
+  // 20260713110000) — this blinded-queue path is the PRIMARY way model-ab
+  // findings get adjudicated; without stamping it here, getAdjudicatorGroundTruth's
+  // sinceDecidedAt window would silently exclude nearly all real ground truth.
   const res = await query(
-    `UPDATE audit_findings SET adjudication_outcome = $3, user_action = $4
+    `UPDATE audit_findings SET adjudication_outcome = $3, user_action = $4, decided_at = NOW()
      WHERE run_id = $1 AND finding_fingerprint = $2`,
     [runId, fingerprint, outcome, userAction],
   );
@@ -441,6 +445,112 @@ export async function getModelAbArmCost({ assignmentId = null } = {}) {
     return { cloud: true, rows };
   } catch (err) {
     process.stderr.write(`  [model-ab] getModelAbArmCost failed: ${err.message}\n`);
+    return { cloud: true, rows: [] };
+  }
+}
+
+// ── Adjudicator ground truth (model-swap-eval-harness Phase 4) ─────────────
+//
+// Reads audit_findings JOIN audit_runs DIRECTLY — NOT the model_ab_finding_scores
+// VIEW the plan originally proposed indexing/querying. Verified directly: that
+// view is a plain CREATE OR REPLACE VIEW (not materialized, cannot carry an
+// index) and its own SELECT list doesn't even expose decided_at/finding_id/
+// repo_id. This queries the view's real underlying source instead, with the
+// SAME repo-scoping join runs-findings.mjs's getRecentFindingsByRepo/
+// getFinalReviewStats already establish (r.repo_id = $1).
+//
+// No ledger-file join — adjudication_outcome ('accepted'|'dismissed') is
+// already a persistent SQL column on audit_findings; ledger.mjs is ephemeral
+// per-session file-based scratch state, not a durable queryable corpus.
+
+const DEFAULT_GROUND_TRUTH_WINDOW_DAYS = 180;
+const GROUND_TRUTH_LIMIT_DEFAULT = 200;
+const GROUND_TRUTH_LIMIT_MAX = 1000;
+
+/**
+ * Versioned, deduplicated, windowed adjudicator ground truth. Dedup happens
+ * BEFORE pagination, at the SQL level (round-4 audit M4): DISTINCT ON
+ * (finding_fingerprint) picks the most-recently-decided row per fingerprint
+ * inside the CTE, THEN the outer query orders/paginates the already-deduped
+ * set — never a page containing fewer logical rows than requested, never an
+ * unstable result across duplicate fingerprints straddling a page boundary.
+ *
+ * `sinceDecidedAt` defaults to a 180-day window (an adjudicator's ground
+ * truth should reflect its RECENT accuracy, not stale multi-year history);
+ * pass `null` explicitly for the full unbounded history. Rows with a NULL
+ * decided_at (adjudicated before this column existed, or never re-decided
+ * since) are excluded unconditionally — they have no timestamp to prove
+ * recency, and an undated row silently entering "recent ground truth" would
+ * corrupt exactly the property this window exists to guarantee.
+ *
+ * `category`/`primaryFile`/`detailSnapshot` are included so a caller
+ * (model-eval-adjudicator.mjs, Phase 4) can build a real `findingText` for
+ * structured T/F extraction — the row alone (fingerprint/severity) isn't
+ * enough context for a candidate to classify against.
+ *
+ * @param {{repoId: string, limit?: number, cursor?: {decidedAt: string, findingId: string}|null, sinceDecidedAt?: string|null}} args
+ * @returns {Promise<{cloud: boolean, rows: Array<{repoId, runId, findingId, findingFingerprint, sourceModel, severity, category, primaryFile, detailSnapshot, humanLabel: 'true_positive'|'false_positive', adjudicationOutcome, decidedAt}>}>}
+ */
+export async function getAdjudicatorGroundTruth({ repoId, limit = GROUND_TRUTH_LIMIT_DEFAULT, cursor = null, sinceDecidedAt = 'default' } = {}) {
+  if (!repoId) throw new Error('getAdjudicatorGroundTruth: repoId is required');
+  if (!await isCloudEnabled()) return { cloud: false, rows: [] };
+  const boundedLimit = Math.min(Math.max(1, limit), GROUND_TRUTH_LIMIT_MAX);
+
+  // 'default' sentinel (not undefined) so an explicit null is distinguishable
+  // from "caller didn't pass this option at all" — both are legal, but only
+  // the former means "give me the full unbounded history."
+  const windowClause = [];
+  const params = [repoId];
+  if (sinceDecidedAt !== null) {
+    const since = sinceDecidedAt === 'default'
+      ? new Date(Date.now() - DEFAULT_GROUND_TRUTH_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+      : new Date(sinceDecidedAt);
+    params.push(since);
+    windowClause.push(`AND f.decided_at >= $${params.length}`);
+  }
+
+  const cursorClause = [];
+  if (cursor) {
+    params.push(cursor.decidedAt, cursor.findingId);
+    cursorClause.push(`AND (decided_at, finding_id) < ($${params.length - 1}, $${params.length})`);
+  }
+
+  params.push(boundedLimit);
+  const limitParamIdx = params.length;
+
+  try {
+    const rows = await many(
+      `WITH deduped AS (
+         SELECT DISTINCT ON (f.finding_fingerprint)
+           r.repo_id, f.run_id, f.id AS finding_id, f.finding_fingerprint,
+           f.source_model, f.severity, f.category, f.primary_file, f.detail_snapshot,
+           f.adjudication_outcome, f.decided_at
+         FROM audit_findings f
+         JOIN audit_runs r ON r.id = f.run_id
+         WHERE r.repo_id = $1
+           AND f.adjudication_outcome IN ('accepted', 'dismissed')
+           AND f.decided_at IS NOT NULL
+           ${windowClause.join(' ')}
+         ORDER BY f.finding_fingerprint, f.decided_at DESC, f.id
+       )
+       SELECT * FROM deduped
+       WHERE true ${cursorClause.join(' ')}
+       ORDER BY decided_at DESC, finding_id
+       LIMIT $${limitParamIdx}`,
+      params,
+    );
+    return {
+      cloud: true,
+      rows: rows.map((r) => ({
+        repoId: r.repo_id, runId: r.run_id, findingId: r.finding_id, findingFingerprint: r.finding_fingerprint,
+        sourceModel: r.source_model, severity: r.severity,
+        category: r.category, primaryFile: r.primary_file, detailSnapshot: r.detail_snapshot,
+        humanLabel: r.adjudication_outcome === 'accepted' ? 'true_positive' : 'false_positive',
+        adjudicationOutcome: r.adjudication_outcome, decidedAt: r.decided_at,
+      })),
+    };
+  } catch (err) {
+    process.stderr.write(`  [model-ab] getAdjudicatorGroundTruth failed: ${err.message}\n`);
     return { cloud: true, rows: [] };
   }
 }

@@ -42,6 +42,11 @@ import { PromptBandit } from './bandit.mjs';
 import { getActivePrompt, getActiveRevisionId, bootstrapFromConstants } from './lib/prompt-registry.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { resolveRepoIdentity } from './lib/repo-identity.mjs';
+import { isCloudEnabled } from './lib/store/repo.mjs';
+import { getActiveEvalRunId } from './lib/store/model-eval.mjs';
+import { resolveCandidateRoute } from './lib/model-eval/route-catalog.mjs';
+import { appendModelEvalShadowObservation } from './lib/model-eval/finalize-shadow-eval.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
 // This module keeps specialized callGemini/callClaudeOpus with thinkingConfig + abort controller
 // because the final review requires high-budget reasoning and precise timeout handling.
@@ -951,12 +956,91 @@ function resolveShadow({
   return { provider: spec.canonical, model, family: spec.family, state: 'ready' };
 }
 
-/** Build a provider-appropriate client for the shadow reviewer. */
+/**
+ * Build a provider-appropriate client for the shadow reviewer.
+ * `'azure-claude'` (model-swap-eval-harness Phase 4) mirrors buildClient's
+ * existing azure-claude branch exactly (below, the PRIMARY reviewer's
+ * client builder) — this was the actual "no-op under Azure" gap the plan's
+ * round-1 audit M3 fix closes: the shadow path never had ANY Azure support
+ * before this, unlike the primary reviewer path which already did.
+ */
 async function buildShadowClient(canonicalProvider) {
   if (canonicalProvider === 'gemini') {
     return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
+  if (canonicalProvider === 'azure-claude') {
+    if (azureConfig.claudeApiShape === 'anthropic') {
+      return createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl });
+    }
+    return createOpenAIClient({ purpose: 'foundry-claude' });
+  }
   return createAnthropicClient();
+}
+
+// ── Model-eval adjudicator Tier A/B override (model-swap-eval-harness
+// Phase 4) ───────────────────────────────────────────────────────────────
+//
+// Round-6 audit H4 fix (the plan's own self-correction): gating discovery
+// behind FINAL_REVIEW_SHADOW would defeat its own purpose — an operator
+// starts a Tier A/B eval today, but the /audit-code runs that need to
+// collect shadow observations happen days/weeks later, in ordinary
+// sessions where FINAL_REVIEW_SHADOW was never set (that env var is the
+// OPERATOR's manual shadow-reviewer choice, unrelated to whether an eval
+// run is active). So this resolves UNCONDITIONALLY whenever cloud is
+// configured — independent of FINAL_REVIEW_SHADOW — and its result
+// OVERRIDES (never requires) any FINAL_REVIEW_SHADOW setting. A null
+// result (the common case) falls through to today's ordinary
+// resolveShadow() behavior, byte-identical to pre-plan.
+//
+// Only maps to the THREE provider strings runFinalReview's prompt dispatch
+// already supports (gemini / claude-opus / azure-claude) — an
+// openai-compatible-transport adjudicator candidate (a GPT-family
+// candidateSpec) has no existing prompt-building branch in this file and
+// is deliberately NOT wired here; model-eval-adjudicator.mjs falls back to
+// Tier C for that transport rather than this file growing a fourth
+// provider dispatch branch for a case the plan's primary use case (an
+// Azure Claude candidate) doesn't need.
+/**
+ * Pure — maps a resolved route to one of the three provider strings
+ * runFinalReview's prompt dispatch supports, or null when the transport has
+ * no live-shadow prompt path yet. Extracted as its own function so the
+ * mapping logic is directly unit-testable without a live DB/active eval run.
+ */
+function mapRouteToShadowProvider(route) {
+  if (route.transport === 'native-gemini') return 'gemini';
+  if (route.transport === 'native-anthropic') return route.provider === 'azure' ? 'azure-claude' : 'claude-opus';
+  return null;
+}
+
+async function resolveModelEvalShadowOverride() {
+  if (!await isCloudEnabled()) return null;
+  let repoId;
+  try {
+    repoId = resolveRepoIdentity().repoUuid;
+  } catch {
+    return null; // not a git repo / no identity resolvable — never fatal
+  }
+  const active = await getActiveEvalRunId({ repoId, role: 'adjudicator' });
+  if (!active) return null;
+
+  let route;
+  try {
+    route = resolveCandidateRoute({ role: 'adjudicator', candidateSpec: active.candidateRef.candidateSpec });
+  } catch (err) {
+    process.stderr.write(`  [model-eval-shadow] active run ${active.runId}: candidate route failed to resolve — ${err.message}\n`);
+    return null;
+  }
+
+  const provider = mapRouteToShadowProvider(route);
+  if (!provider) {
+    process.stderr.write(`  [model-eval-shadow] active run ${active.runId}: transport "${route.transport}" has no live-shadow prompt path yet (Tier C only) — skipping override\n`);
+    return null;
+  }
+
+  return {
+    repoId, modelEvalRunId: active.runId,
+    shadow: { provider, model: route.deploymentId ?? route.resolvedModel, state: 'ready' },
+  };
 }
 
 /**
@@ -1035,9 +1119,15 @@ function shadowSkipBlock(shadow) {
  * @param {object} result          primary reviewer result (already id-stamped)
  * @param {string} primaryModel    primary reviewer's resolved concrete model id
  * @param {string|null} runId      audit_runs.id (null → local-only, no cloud)
+ * @param {{modelEvalOverride?: {repoId:string, modelEvalRunId:string, shadow:object}|null}} [opts]
  */
-async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }) {
-  const shadow = resolveShadow();
+async function runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent, projectContext, auditMode }, { modelEvalOverride = null } = {}) {
+  // modelEvalOverride (Phase 4) takes priority over the ordinary
+  // FINAL_REVIEW_SHADOW-derived resolution — resolveModelEvalShadowOverride()
+  // itself only returns non-null when an adjudicator Tier A/B eval run is
+  // actively collecting for THIS repo, so this never silently hijacks an
+  // operator's own FINAL_REVIEW_SHADOW choice when no eval is running.
+  const shadow = modelEvalOverride ? modelEvalOverride.shadow : resolveShadow();
   let diff = null;
 
   if (shadow.state !== 'ready') {
@@ -1092,6 +1182,29 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
       shadowLatencyMs: result._shadow.usage?.latency_ms ?? null,
     },
   });
+
+  // Phase 4 — append a model_eval_shadow_observations row when a Tier A/B
+  // eval run is actively collecting AND the shadow actually ran this time
+  // (a skip/error round contributes nothing to score against). findingRefs
+  // disambiguates the underlying audit_runs.id from THIS observation's own
+  // model_eval_run_id FK (round-6 audit H5) — finding_fingerprint alone is
+  // only unique WITHIN one audit run. idempotencyKey = the audit run's own
+  // id: runShadowAndPersist runs at most once per audit run, so a repeated
+  // write for the same run upserts rather than duplicating.
+  if (modelEvalOverride && ran) {
+    const findingRefs = [
+      ...primaryFindings.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review', bucket: f._bucket })),
+      ...shadowFindings.map((f) => ({ auditRunId: runId, findingFingerprint: f._hash, passName: 'final-review-shadow', bucket: f._bucket })),
+    ];
+    try {
+      await appendModelEvalShadowObservation({
+        repoId: modelEvalOverride.repoId, runId: modelEvalOverride.modelEvalRunId,
+        observation: { findingRefs }, idempotencyKey: runId,
+      });
+    } catch (err) {
+      process.stderr.write(`  [model-eval-shadow] appendModelEvalShadowObservation failed (non-fatal): ${err.message}\n`);
+    }
+  }
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
@@ -1659,7 +1772,11 @@ async function main() {
     // Shadow reviewer + cloud persistence — runs BEFORE emit so the --out
     // artifact carries the _shadow block (R1 M1). Observation-only; never
     // throws out (its own try/catch keeps the primary review unaffected).
-    await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode });
+    // Phase 4: resolved UNCONDITIONALLY (independent of FINAL_REVIEW_SHADOW,
+    // round-6 audit H4) — a non-null result overrides the ordinary shadow
+    // resolution for this invocation only when a Tier A/B eval is active.
+    const modelEvalOverride = await resolveModelEvalShadowOverride();
+    await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile);
     recordGeminiOutcomes(result, primaryModel);
   } catch (err) {
@@ -1676,6 +1793,10 @@ export const _internals = {
   dedupByHash,
   shadowModelMatchesFamily,
   SHADOW_PROVIDER_SPECS,
+  resolveModelEvalShadowOverride,
+  mapRouteToShadowProvider,
+  buildShadowClient,
+  runShadowAndPersist,
 };
 
 // Auto-run only when invoked directly (node scripts/gemini-review.mjs ...),

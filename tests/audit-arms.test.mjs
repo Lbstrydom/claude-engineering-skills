@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import {
   CANONICAL_ARMS, ArmSchema, parseArm, stagesForArm, executionPlan, resolveArms, STAGES,
   attributeStageToArms, SHADOW_STAGES, BASELINE_STAGES, SHARED_STAGES, ARM_SPECIFIC_STAGES, ARM_IDS,
+  buildCandidateArm,
 } from '../scripts/lib/audit-arms.mjs';
 import { resolveModel, isSentinel, pickOssModel, OSS_POOL } from '../scripts/lib/model-resolver.mjs';
 import { costFromUsage, costForBudget, priceFor, isPriced, toEur, EUR_PER_USD, FALLBACK_PRICE_USD, OSS_PRICING } from '../scripts/lib/model-pricing.mjs';
@@ -66,35 +67,77 @@ describe('audit-arms — canonical arms', () => {
 
 describe('audit-arms — parseArm validation', () => {
   it('rejects an OSS arm without a role', () => {
-    const r = parseArm({ id: 'X', label: 'x', generation: { modelSentinel: 'latest-oss-coder', provider: 'oss' }, gptRound: false, geminiGate: false });
+    const r = parseArm({ id: 'X', label: 'x', generation: { kind: 'oss-role', modelSentinel: 'latest-oss-coder', provider: 'oss' }, gptRound: false, geminiGate: false });
     assert.equal(r.ok, false);
     assert.match(r.error, /role/);
   });
-  it('rejects an openai arm carrying an OSS role', () => {
-    const r = parseArm({ id: 'X', label: 'x', generation: { modelSentinel: 'latest-gpt', provider: 'openai', role: 'coder' }, gptRound: false, geminiGate: false });
+  it('rejects an openai arm carrying an OSS role (model-swap-eval-harness Phase 3 — .strict() rejects the stray key)', () => {
+    const r = parseArm({ id: 'X', label: 'x', generation: { kind: 'sentinel', modelSentinel: 'latest-gpt', provider: 'openai', role: 'coder' }, gptRound: false, geminiGate: false });
     assert.equal(r.ok, false);
   });
   it('rejects a bad arm id', () => {
-    const r = parseArm({ id: 'lowercase-and-way-too-long', label: 'x', generation: { modelSentinel: 'latest-gpt', provider: 'openai' }, gptRound: false, geminiGate: false });
+    const r = parseArm({ id: 'lowercase-and-way-too-long', label: 'x', generation: { kind: 'sentinel', modelSentinel: 'latest-gpt', provider: 'openai' }, gptRound: false, geminiGate: false });
     assert.equal(r.ok, false);
   });
   it('rejects a provider/sentinel mismatch — oss arm with a GPT sentinel (audit R1 M4)', () => {
-    const r = parseArm({ id: 'X', label: 'x', generation: { modelSentinel: 'latest-gpt', provider: 'oss', role: 'coder' }, gptRound: false, geminiGate: false });
+    const r = parseArm({ id: 'X', label: 'x', generation: { kind: 'oss-role', modelSentinel: 'latest-gpt', provider: 'oss', role: 'coder' }, gptRound: false, geminiGate: false });
     assert.equal(r.ok, false);
     assert.match(r.error, /modelSentinel/);
   });
   it('rejects an openai arm with an OSS sentinel', () => {
-    const r = parseArm({ id: 'X', label: 'x', generation: { modelSentinel: 'latest-oss-coder', provider: 'openai' }, gptRound: false, geminiGate: false });
+    const r = parseArm({ id: 'X', label: 'x', generation: { kind: 'sentinel', modelSentinel: 'latest-oss-coder', provider: 'openai' }, gptRound: false, geminiGate: false });
     assert.equal(r.ok, false);
   });
   it('rejects a concrete id — arm configs must use SENTINELS (plan decision 2 / R4 M4)', () => {
-    const r = parseArm({ id: 'X', label: 'x', generation: { modelSentinel: 'qwen/qwen3-coder', provider: 'oss', role: 'coder' }, gptRound: false, geminiGate: false });
+    const r = parseArm({ id: 'X', label: 'x', generation: { kind: 'oss-role', modelSentinel: 'qwen/qwen3-coder', provider: 'oss', role: 'coder' }, gptRound: false, geminiGate: false });
     assert.equal(r.ok, false);
     assert.match(r.error, /SENTINEL/i);
   });
   it('accepts the OSS sentinel for an OSS arm', () => {
-    const r = parseArm({ id: 'X', label: 'x', generation: { modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }, gptRound: false, geminiGate: false });
+    const r = parseArm({ id: 'X', label: 'x', generation: { kind: 'oss-role', modelSentinel: 'latest-oss-reasoner', provider: 'oss', role: 'reasoner' }, gptRound: false, geminiGate: false });
     assert.equal(r.ok, true);
+  });
+});
+
+describe('audit-arms — model-swap-eval-harness Phase 3: discriminated union + buildCandidateArm', () => {
+  it('CANONICAL_ARMS A/B/C re-expressed under the union produce byte-identical stagesForArm/attributeStageToArms behavior', () => {
+    const [A, B, C] = CANONICAL_ARMS;
+    assert.deepEqual(stagesForArm(A), ['gpt-gen', 'gemini']);
+    assert.deepEqual(stagesForArm(B), ['oss-gen', 'gpt-round', 'gemini']);
+    assert.deepEqual(stagesForArm(C), ['oss-gen', 'gemini']);
+    assert.deepEqual(attributeStageToArms('gpt-gen'), ['A']);
+    assert.deepEqual(attributeStageToArms('oss-gen'), ['B', 'C']);
+    assert.deepEqual(attributeStageToArms('gpt-round', { arm: 'B' }), ['B']);
+  });
+
+  it('rejects a resolved-route arm missing candidateSpec (structural, not superRefine)', () => {
+    const r = parseArm({
+      id: 'X', label: 'x',
+      generation: { kind: 'resolved-route', resolvedModel: 'gpt-5.4', deploymentId: null },
+      gptRound: false, geminiGate: false,
+    });
+    assert.equal(r.ok, false);
+  });
+
+  it('buildCandidateArm constructs a valid resolved-route arm from a route-catalog.mjs-shaped result', () => {
+    const arm = buildCandidateArm({
+      candidateSpec: { kind: 'azure-deployment', profile: 'foundry-gpt-audit' },
+      resolvedModel: 'gpt-5.4',
+      deploymentId: 'audit-deployment',
+    });
+    assert.equal(arm.generation.kind, 'resolved-route');
+    assert.equal(arm.id, 'CAND');
+    assert.equal(arm.isBaseline, false);
+    assert.deepEqual(stagesForArm(arm), ['gpt-gen']); // resolved-route is gpt-gen-shaped, no gate/round by default
+  });
+
+  it('buildCandidateArm accepts caller-supplied id/label', () => {
+    const arm = buildCandidateArm(
+      { candidateSpec: { kind: 'sentinel', value: 'latest-opus' }, resolvedModel: 'claude-opus-4-8', deploymentId: null },
+      { id: 'BASE', label: 'baseline candidate' },
+    );
+    assert.equal(arm.id, 'BASE');
+    assert.equal(arm.label, 'baseline candidate');
   });
 });
 

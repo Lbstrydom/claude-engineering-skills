@@ -1083,7 +1083,10 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
         round: event.round,
       });
       await updateWhere('audit_findings',
-        { adjudication_outcome: event.adjudicationOutcome },
+        // decided_at (model-swap-eval-harness Phase 4 migration
+        // 20260713110000) — the only column recording WHEN a finding was
+        // adjudicated; created_at is when it was RAISED, not decided.
+        { adjudication_outcome: event.adjudicationOutcome, decided_at: new Date() },
         { id: finding.id }
       );
     });

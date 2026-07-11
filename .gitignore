@@ -71,6 +71,11 @@ scripts/lib/consumer-repos.local.json
 .audit/cluster*
 .audit/*worksheet*.md
 
+# model-swap-eval-harness (Phase 3) — intermediate run/corpus artifacts.
+# Category A: derived from external git history, no freshness check —
+# the persisted model_eval_runs row is the sole canonical result.
+.audit/tmp/model-eval/
+
 # Human adjudication worksheets — regenerated on every queue listing
 # (Category-A volatile state; discoverable next to the session archives)
 docs/arm-eval/worksheets/

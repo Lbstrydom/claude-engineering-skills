@@ -403,8 +403,19 @@ function printAuditResult(mergedResult, { outFile, jsonMode }) {
  * `runMultiPassCodeAudit`'s existing call-site signature (positional args)
  * so `main()` below needs no changes beyond what Phase 10 already added
  * (the `return mergedResult` contract — preserved here too).
+ *
+ * Exported (model-swap-eval-harness Phase 3) — previously reachable outside
+ * this module ONLY via the `AUDIT_EXPORTS_FOR_TESTS=1` test-export gate
+ * below, which the plan's `arm-generation.mjs::runAuditGenerationArm`
+ * bullet incorrectly assumed was already a real production import path (it
+ * verified the signature, not the export surface). Every dependency this
+ * function needs is an explicit parameter/opts field (openai client,
+ * planContent, projectContext, outFile, opts.model overrides the module's
+ * own `MODEL` global via the `{model: MODEL, ...opts}` spread order in
+ * `buildAuditRunContext`) — so exporting it for a second, legitimate
+ * production caller changes no behavior for the CLI's own `main()` path.
  */
-async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext = '', opts = {}) {
+export async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext = '', opts = {}) {
   const ctx = await buildAuditRunContext({
     openai, planContent, projectContext, historyContext, outFile, model: MODEL, ...opts,
   });

@@ -140,6 +140,32 @@ describe('zodToGeminiSchema', () => {
       'maxLength must be stripped — Gemini returns 400 INVALID_ARGUMENT');
     assert.equal(json.properties.name.type, 'string');
   });
+
+  it('a field NAMED after a stripped keyword (e.g. "pattern", "default") survives in properties AND required — regression for the blind-judge GradingSchema bug', () => {
+    // stripJsonSchemaExtras filters JSON-Schema-keyword positions (siblings
+    // of "type"), not property NAMES inside a `properties` map. A Zod field
+    // literally called "pattern" collides with the unsupported `pattern`
+    // regex-constraint keyword by name only — it must not be dropped.
+    const schema = z.object({
+      blind_id: z.string(),
+      pattern: z.string().optional().default(''),
+      default: z.string().optional().default(''),
+    });
+    const json = zodToGeminiSchema(schema);
+    assert.ok(json.properties.pattern, 'a field named "pattern" must survive in properties');
+    assert.equal(json.properties.pattern.type, 'string');
+    assert.ok(json.properties.default, 'a field named "default" must survive in properties');
+    assert.deepEqual(json.required, ['blind_id', 'pattern', 'default'],
+      'required must not list a property that properties dropped — Gemini rejects that mismatch (400 INVALID_ARGUMENT)');
+  });
+
+  it('still strips the real pattern/default JSON-Schema keywords when they appear in keyword position (not as a property name)', () => {
+    const schema = z.object({ code: z.string().regex(/^[A-Z]+$/).max(10) });
+    const json = zodToGeminiSchema(schema);
+    assert.equal(json.properties.code.pattern, undefined, 'regex pattern keyword must still be stripped');
+    assert.equal(json.properties.code.maxLength, undefined, 'maxLength keyword must still be stripped');
+    assert.equal(json.properties.code.type, 'string');
+  });
 });
 
 // ── FindingJsonSchema ───────────────────────────────────────────────────────

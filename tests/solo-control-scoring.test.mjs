@@ -1,6 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { scoreArms, scoreMediumSampleWeighted } from '../scripts/lib/solo-control/scoring.mjs';
+import { scoreArms, scoreMediumSampleWeighted, costPerKnownDefect, SEV_WEIGHTS } from '../scripts/lib/solo-control/scoring.mjs';
+import { DECISION_CONSTANTS } from '../scripts/lib/model-ab-decision.mjs';
+
+test('SEV_WEIGHTS is re-exported from model-ab-decision.mjs, not a local duplicate', () => {
+  assert.equal(SEV_WEIGHTS, DECISION_CONSTANTS.SEV_WEIGHTS);
+});
+
+test('costPerKnownDefect: divides cost total by knownDefectsMatched', () => {
+  const result = costPerKnownDefect({ knownDefectsMatched: 4 }, { totalUsd: 12, costStatus: 'available' });
+  assert.deepEqual(result, { usdPerKnownDefect: 3, costStatus: 'available' });
+});
+
+test('costPerKnownDefect: zero matched known defects is "undefined", never a divide-by-zero or fabricated $0', () => {
+  const result = costPerKnownDefect({ knownDefectsMatched: 0 }, { totalUsd: 12, costStatus: 'available' });
+  assert.deepEqual(result, { usdPerKnownDefect: null, costStatus: 'undefined' });
+});
+
+test('costPerKnownDefect: unpriced cost row propagates as unavailable, never a fabricated number', () => {
+  const result = costPerKnownDefect({ knownDefectsMatched: 2 }, { totalUsd: null, costStatus: 'unavailable' });
+  assert.deepEqual(result, { usdPerKnownDefect: null, costStatus: 'unavailable' });
+});
 
 test('collapse: xN repeated rows in one human_cluster count ONCE (R2-H2)', () => {
   const rows = [

@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "role": "auditor",
+  "calibrationNote": "v0.1 bootstrap values, uncalibrated against any real run — recalibrate after 5 completed promotion-tier evaluations. v2 (round-6 audit M3): thresholds split by mode so a field name never means different things in comparative vs oracle mode.",
+  "screen": {
+    "minSampleSize": 4,
+    "thresholds": {
+      "comparative": {
+        "minRecallRatioVsBaseline": 1.0,
+        "maxFalsePositiveRatioVsBaseline": 1.15
+      },
+      "oracle": {
+        "minRecall": 0.7,
+        "maxFalsePositiveRate": 0.2
+      }
+    }
+  },
+  "promotion": {
+    "minSampleSize": 8,
+    "thresholds": {
+      "comparative": {
+        "minRecallRatioVsBaseline": 1.0,
+        "maxFalsePositiveRatioVsBaseline": 1.15,
+        "switchIfCostPerKdImprovesByPct": 20,
+        "orSwitchIfQualityImprovesByPct": 10
+      },
+      "oracle": {
+        "minRecall": 0.7,
+        "maxFalsePositiveRate": 0.2
+      },
+      "allowUnpricedPromotion": false
+    }
+  }
+}
