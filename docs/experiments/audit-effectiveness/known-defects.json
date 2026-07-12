@@ -6,7 +6,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "45ec254b07248f863be5b932360d931bab9ccc1d",
       "fixCommit": "31912b552de485b4cf96f53a6b09461afc3c6fc0",
-      "files": ["scripts/reconcile-repo-identity.mjs"],
+      "files": [
+        "scripts/reconcile-repo-identity.mjs"
+      ],
       "evidenceHunk": "scripts/reconcile-repo-identity.mjs:L334-L340 (discoverRepoScopedUniqueKeys)",
       "defectDesc": "pg array_agg result assumed to always be a JS array — `r.cols.includes('repo_id')` crashes at apply time when the driver returns the `{a,b}` array-literal STRING form (depends on element-type parser).",
       "expectedFindingRubric": "flags that the pg array_agg / array column result is used as a JS array without normalizing the string-literal form (driver type-parser dependency) — a runtime TypeError path",
@@ -17,7 +19,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "153adb52c91c8c7b34b1222e4d7792e65a410bc1",
       "fixCommit": "aa5dd0beccbd0f4143fcfc4a80603a7bcbc52600",
-      "files": ["scripts/openai-audit.mjs"],
+      "files": [
+        "scripts/openai-audit.mjs"
+      ],
       "evidenceHunk": "scripts/openai-audit.mjs:~L1272 (linter-overlap writeback inside runMultiPassCodeAudit)",
       "defectDesc": "Writes `mergedResult._linterOverlap` ~280 lines BEFORE `mergedResult` is declared — a temporal-dead-zone ReferenceError that crashes the audit at runtime on that path.",
       "expectedFindingRubric": "flags use-before-declaration / TDZ of mergedResult (assignment to a variable declared later in the same function scope)",
@@ -28,7 +32,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "8eb223ba8353cf7ad9b090c62697e25beb7ceb69",
       "fixCommit": "d17ed6c1dfc54809ab7bae2abd3289157ba161b9",
-      "files": ["docs/security-strategy.md"],
+      "files": [
+        "docs/security-strategy.md"
+      ],
       "evidenceHunk": "docs/security-strategy.md (INC-001 incident block as introduced — `<!-- incident-id: INC-001 -->` marker form)",
       "defectDesc": "Incident block written with markers/field-labels that don't match what parse-strategy.mjs recognises (missing exact `incident:start id=` form / colon-terminated field labels) — so INC-001 SILENTLY never indexes into the security memory.",
       "expectedFindingRubric": "flags that the incident markup does not match the parser contract (parse-strategy.mjs) and will be silently skipped — a cross-file format/contract mismatch, silent data-loss class",
@@ -39,7 +45,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "b801528bfbbf8c02090e6c0af7126d656a16a0d8",
       "fixCommit": "99e3857a4b8c2000a08256793e4176daac3787a6",
-      "files": ["scripts/lib/anthropic-client.mjs"],
+      "files": [
+        "scripts/lib/anthropic-client.mjs"
+      ],
       "evidenceHunk": "scripts/lib/anthropic-client.mjs:~L253-L260 (getDefaultRedactor → sanitizer.mjs)",
       "defectDesc": "Default egress redactor wired to sanitizer.mjs, which blanket-redacts ANY 20+ char token — corrupting legitimate long identifiers (symbol names, file paths) in identifier-dense prompts, silently degrading every cli-backend call's content.",
       "expectedFindingRubric": "flags that the blanket 20+-char-token redaction will corrupt legitimate identifiers/paths in prompts (over-broad sanitization at the egress seam), not just secrets",
@@ -50,7 +58,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "105da2fbe58bd3b37f511437ae4d86cde46f2e14",
       "fixCommit": "19a9ded6220b45098f799ed3669c3fb90bce3c3b",
-      "files": ["scripts/lib/arm-eval/judge.mjs"],
+      "files": [
+        "scripts/lib/arm-eval/judge.mjs"
+      ],
       "evidenceHunk": "scripts/lib/arm-eval/judge.mjs:L72-L95 (buildJudgePrompt / judgePassSchema)",
       "defectDesc": "Judge pipeline had no tolerance for the model omitting rubric dimensions (and the egress redactor could corrupt dim names) — a strict schema rejects the pass with no corrective retry, so judgments fail on large prompts.",
       "expectedFindingRubric": "flags that a schema-rejected judge response has no retry/corrective path (or that redaction can alter rubric-dimension tokens before the schema check) — LLM-boundary robustness",
@@ -61,7 +71,11 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "d1ee5cc2e4c213979dda4e58ccfbb0e97947701b",
       "fixCommit": "33a3f5cc421ac85352b806e09192892aad44784b",
-      "files": ["scripts/lib/store/debt.mjs", "scripts/lib/store/persona.mjs", "scripts/lib/store/plans-ship.mjs"],
+      "files": [
+        "scripts/lib/store/debt.mjs",
+        "scripts/lib/store/persona.mjs",
+        "scripts/lib/store/plans-ship.mjs"
+      ],
       "evidenceHunk": "scripts/lib/store/debt.mjs:L30 + persona.mjs:L244 (raw JS arrays bound to jsonb columns)",
       "defectDesc": "Raw JS arrays bound to jsonb columns via the pg driver — binds as a Postgres ARRAY literal → 22P02 for non-empty content and a SILENT `{}` for empty (the supabase-js→pg migration dropped PostgREST's implicit JSON serialization).",
       "expectedFindingRubric": "flags raw array/object values bound to jsonb parameters without JSON.stringify under node-postgres (22P02 / silent-{} write corruption)",
@@ -72,7 +86,10 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "f705d275ad456681e51a7766fdb70b2c5910130e",
       "fixCommit": "b1c9ce42408145904b46a5a9d4912b04b712b36b",
-      "files": ["scripts/visual-audit.mjs", "scripts/lib/visual/changed-scope.mjs"],
+      "files": [
+        "scripts/visual-audit.mjs",
+        "scripts/lib/visual/changed-scope.mjs"
+      ],
       "evidenceHunk": "scripts/lib/visual/changed-scope.mjs + visual-audit.mjs gate path (--gate with --scope full)",
       "defectDesc": "`--gate --scope full` silently gated NOTHING — the gate only consumed diff-scoped findings, so a full-scope run exited green having checked nothing (silent-green / looks-protected-but-isn't).",
       "expectedFindingRubric": "flags that the gate path can exit 0 without having evaluated any findings under a scope mode (green-without-checking / silent no-op gate)",
@@ -83,7 +100,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "7ca21a3a86d45cc31fa0d50eb34db3e126df02ed",
       "fixCommit": "d557535fe56541a35b834596e71fcecccb9846d7",
-      "files": ["scripts/brainstorm-round.mjs"],
+      "files": [
+        "scripts/brainstorm-round.mjs"
+      ],
       "evidenceHunk": "scripts/brainstorm-round.mjs (arm-eval capture trigger — `envelope.round === 1` gate, as introduced)",
       "defectDesc": "Off-by-one: the deterministic arm-eval capture trigger gated on `envelope.round === 1` (\"first round only\"), but the session ledger's `appendSession` numbers a session's FIRST round 0, not 1 — so a fresh brainstorm session could NEVER fire capture (only a `--continue-from` second round, numbered 1, would). Field-found by the wine-cellar-app verification run: no dispatch log line, no new arm_eval_sessions row.",
       "expectedFindingRubric": "flags the mismatch between the trigger's 1-based round check and the ledger's 0-based round numbering (an off-by-one that silently disables the intended first-round-only behavior)",
@@ -94,7 +113,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "86dd669f3e773424d7dd37cd66482159dd140a88",
       "fixCommit": "af67b2c7076731e75e5df08b3b1223af68098cfe",
-      "files": ["scripts/openai-audit.mjs"],
+      "files": [
+        "scripts/openai-audit.mjs"
+      ],
       "evidenceHunk": "scripts/openai-audit.mjs (runMultiPassCodeAudit — `subjectFiles` declared inside the A1 guard block, as introduced)",
       "defectDesc": "`subjectFiles` was declared with `const` inside the block-scoped A1 subject-file guard (`{ const subjectFiles = ...; ... }`), but a later call site far below in the same function — the model-A/B generation shadow's `buildRedactedAuditContext([...subjectFiles])` — referenced the same identifier outside that block. Dormant (best-effort-contained, so the baseline audit was unaffected) until the shadow harness was first enabled, at which point it threw a ReferenceError on every invocation — a crash bug, matching KD-001/KD-002's severity class.",
       "expectedFindingRubric": "flags a block-scoped `const`/`let` binding referenced outside its enclosing block by a later call site in the same function (undefined-binding/ReferenceError crash risk that a happy-path test run would not exercise)",
@@ -105,7 +126,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "5cd1fc72d68835ed98375f6e0728c52e2efa6357",
       "fixCommit": "e8535f04974be92115ea66ac37c1295240ef121d",
-      "files": ["scripts/lib/nav/verify.mjs"],
+      "files": [
+        "scripts/lib/nav/verify.mjs"
+      ],
       "evidenceHunk": "scripts/lib/nav/verify.mjs (discoverExpandTriggers — no visibility pre-filter, as introduced)",
       "defectDesc": "`discoverExpandTriggers` selected activation triggers (e.g. a hamburger menu button) without filtering for visibility — a breakpoint-hidden trigger (`display:none` on desktop for a mobile-only hamburger) was still selected and clicked, wasting a 1000ms click-timeout plus an 'element is not visible' noise warning per state, since a `display:none`/0-size element can never actually be clicked.",
       "expectedFindingRubric": "flags that an element-discovery routine selects DOM elements for interaction without a visibility/actionability check first (wasted timeout + noise on an unclickable target)",
@@ -116,7 +139,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "2f57718324a134088828075fb67137c01b920637",
       "fixCommit": "4558c87fdb907acc7ce0ef3cf15a0ece2aada82c",
-      "files": ["scripts/lib/requirements/gap-challenge.mjs"],
+      "files": [
+        "scripts/lib/requirements/gap-challenge.mjs"
+      ],
       "evidenceHunk": "scripts/lib/requirements/gap-challenge.mjs (classifyGaps — maxTokens: 3000, as introduced)",
       "defectDesc": "The gap-challenge LLM call hardcoded a 3000-token output budget, sized against a 2-file smoke test. A real invariant-rich file set (a dozen modules) produces enough gap-assessment candidates to overflow that budget, yielding a length-truncated, unusable response — the caller had no signal that the response was cut off rather than complete.",
       "expectedFindingRubric": "flags a hardcoded LLM output-token budget sized against a small test fixture rather than realistic input volume, with no truncation-detection or budget-scaling for larger inputs",
@@ -127,7 +152,9 @@
       "repo": "claude-engineering-skills",
       "buggyCommit": "540cacf1c4b1fe4251756f3d0610d9cd83f301ab",
       "fixCommit": "a506ba9adcf293ac117cdd2addad39c20fd8e391",
-      "files": ["scripts/check-skill-updates.mjs"],
+      "files": [
+        "scripts/check-skill-updates.mjs"
+      ],
       "evidenceHunk": "scripts/check-skill-updates.mjs (managed-file path resolution — path.resolve(f.path) fallback, as introduced)",
       "defectDesc": "For managed-file paths not matching a special-cased prefix list (.github/, .agents/, .audit-loop/), the fallback resolved the path via `path.resolve(f.path)` — relative to the process's current working directory — instead of the repo root. Running the check from any directory other than the repo root silently resolved managed files to the wrong absolute paths.",
       "expectedFindingRubric": "flags a CWD-relative path fallback for what should be a repo-root-relative path resolution (invocation-directory-dependent bug, not caught by tests that always run from repo root)",
@@ -138,7 +165,9 @@
       "repo": "wine-cellar-app",
       "buggyCommit": "9b08adbe99b3edf41b6b2150f9b82b91941b21dc",
       "fixCommit": "e1706bae5de1c23512fdc4da79927a83a2541bce",
-      "files": ["extension/popup/popup.js"],
+      "files": [
+        "extension/popup/popup.js"
+      ],
       "evidenceHunk": "extension/popup/popup.js:L185-L195 (renderProductView ratings badges)",
       "defectDesc": "Rating badges rendered via innerHTML template interpolation of UNTRUSTED merchant-page data (r.source/r.score/r.range/r.scale) — a DOM-XSS vector in the extension popup.",
       "expectedFindingRubric": "flags innerHTML (or equivalent HTML interpolation) of untrusted/external data in the popup rendering — XSS; remediation is DOM nodes/textContent",
@@ -149,7 +178,9 @@
       "repo": "wine-cellar-app",
       "buggyCommit": "ff20d85e316b32ca3a231a79eb2cd9f40e968579",
       "fixCommit": "7ee9a25a16040da1b9bcb6bdc6f5e19624f76676",
-      "files": ["public/css/components.css"],
+      "files": [
+        "public/css/components.css"
+      ],
       "evidenceHunk": "public/css/components.css (.auth-tab.active — hardcoded `color: #fff` on var(--accent) background, as introduced)",
       "defectDesc": "Auth-tab active text hardcoded literal white (#fff) on the tokenised accent background. No dark theme existed yet at introduction; when the dark theme later made the accent a light gold, contrast fell to 2.57:1 (fails WCAG AA 4.5:1). Fix switched to a theme-aware --text-on-accent token.",
       "expectedFindingRubric": "flags the hardcoded literal text color on an accent/themed background instead of a theme-aware token — a theming/contrast risk (sub-AA observation not required, since no dark theme existed at the introducing commit)",
@@ -160,7 +191,10 @@
       "repo": "wine-cellar-app",
       "buggyCommit": "c3095af97eb701778bafec9d7cad5a815cfe805d",
       "fixCommit": "14c2149429e0deac004d6310faf9331d98ae1235",
-      "files": ["Dockerfile", "src/config/wineGeography.js"],
+      "files": [
+        "Dockerfile",
+        "src/config/wineGeography.js"
+      ],
       "evidenceHunk": "Dockerfile:~L43 (COPY list missing reference-data/) vs src/config/wineGeography.js synchronous JSON reads at module load",
       "defectDesc": "OMISSION: introduced a module that synchronously reads reference-data/*.json at load time WITHOUT adding the dir to the Docker image COPY list — the app boots fine locally (files on disk) but crashes at boot in prod. Pure-addition defect (fix adds a COPY line).",
       "expectedFindingRubric": "flags a new runtime file dependency (sync read at module load) not shipped in the deployment artifact/Dockerfile — an environment-parity boot-crash risk",
@@ -171,7 +205,9 @@
       "repo": "wine-cellar-app",
       "buggyCommit": "58bba0320e6d2fd6e9624e6b5681e7390d3f5cd3",
       "fixCommit": "f540f061e37ccc3c6a92a9808b4cfb5efe019f63",
-      "files": ["src/routes/ratings.js"],
+      "files": [
+        "src/routes/ratings.js"
+      ],
       "evidenceHunk": "src/routes/ratings.js (GET /api/ratings/logs handler as introduced — no admin guard, raw log lines + log path returned)",
       "defectDesc": "Diagnostics endpoint GET /logs had NO admin guard — any authenticated user could read raw, unredacted server log lines plus the filesystem path (info-leak; secrets in logs exposed).",
       "expectedFindingRubric": "flags the unguarded diagnostics/log endpoint (missing authorization tier) and/or returning raw unredacted logs + server paths to callers",
@@ -182,7 +218,9 @@
       "repo": "ai-organiser",
       "buggyCommit": "8b61fa66b8b18ab20c2d0d9d34a4825c090140cc",
       "fixCommit": "cb152f50b5e53dac952eadc83a03da93311f3280",
-      "files": ["src/services/vector/embeddingQueue.ts"],
+      "files": [
+        "src/services/vector/embeddingQueue.ts"
+      ],
       "evidenceHunk": "src/services/vector/embeddingQueue.ts (drainOnce null-service path)",
       "defectDesc": "Init race: on plugin load, a vault re-index can enqueue chunks BEFORE the async embedding service finishes initializing — drainOnce saw a null service and permanently dropped all pending chunks instead of waiting (data loss on every cold start with a large vault).",
       "expectedFindingRubric": "flags the race between queue consumption and async service initialization (null service treated as permanent failure → dropped work), needs bounded wait/retry",
@@ -193,7 +231,9 @@
       "repo": "ai-organiser",
       "buggyCommit": "573cbe186745f4f5b19a7ec24e6912a97f26f258",
       "fixCommit": "1478fa2e6faa6e63d10513149c2e2495a2d6f4e5",
-      "files": ["src/services/chat/conversationPersistenceService.ts"],
+      "files": [
+        "src/services/chat/conversationPersistenceService.ts"
+      ],
       "evidenceHunk": "src/services/chat/conversationPersistenceService.ts:L87 (rename path calling vault.getFileByPath)",
       "defectDesc": "Rename path calls `this.app.vault.getFileByPath(...)` — a method that does NOT exist on Obsidian's Vault API (the correct one is getAbstractFileByPath, used elsewhere in the same file) → guaranteed TypeError at runtime when renaming.",
       "expectedFindingRubric": "flags the call to a non-existent API method (getFileByPath vs getAbstractFileByPath) — inconsistent with the same file's other call sites; runtime TypeError",
@@ -206,11 +246,94 @@
       "repo": "ai-organiser",
       "buggyCommit": "d80afdf1a11b2a7d7564361c149da383544dae27",
       "fixCommit": "da0fe0832f7c307f6ab87a94e8e6687792653961",
-      "files": ["src/services/chat/conversationPersistenceService.ts"],
+      "files": [
+        "src/services/chat/conversationPersistenceService.ts"
+      ],
       "evidenceHunk": "src/services/chat/conversationPersistenceService.ts (doSave — no per-conversation serialization)",
       "defectDesc": "Autosave race: overlapping autosaves (streaming + action handlers both firing triggerAutosave) can both reach doSave before either populates currentFiles → 'File already exists' crash; saves need per-conversation single-flight serialization.",
       "expectedFindingRubric": "flags concurrent/re-entrant save invocations racing on file-create (check-then-create without serialization) — needs a per-key save chain/mutex",
       "severity": "HIGH"
+    },
+    {
+      "id": "KD-020",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "1823c7c81edfaa6624d29dd5de984031c4d20afe",
+      "fixCommit": "ac013eda4fe05953ad5bab1d5c8cbc98fb4f4cae",
+      "files": [
+        "scripts/install-skills.mjs"
+      ],
+      "evidenceHunk": "scripts/install-skills.mjs:L214-L219 (main — REQUIRED_DEPS/OPTIONAL_DEPS classification)",
+      "defectDesc": "The dependency auto-installer classifies @google/genai and @anthropic-ai/sdk as OPTIONAL_DEPS whose install failure is swallowed (\"audit will degrade gracefully\"), but the multi-model audit pipeline hard-imports both (Gemini auditor, Claude Opus fallback reviewer) — a consumer whose optional install fails gets a runtime import crash in the core audit flow, not graceful degradation.",
+      "expectedFindingRubric": "flags that dependencies the pipeline hard-requires at runtime (@google/genai and/or @anthropic-ai/sdk) are classified as optional with swallowed install failure — the required-vs-optional dependency classification does not match actual runtime imports",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "KD-021",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "fb8244f749b93c5b3ba1a62ecc30a23f02e85a5c",
+      "fixCommit": "dc64e319900375d5371361c024a2e3855f9cd78a",
+      "files": [
+        "scripts/symbol-index/refresh.mjs"
+      ],
+      "evidenceHunk": "scripts/symbol-index/refresh.mjs:L261-L310 (extract/summarise/embed spawn call sites — cwd-relative script paths)",
+      "defectDesc": "The extract→summarise→embed pipeline spawns its sibling scripts via cwd-relative string paths (scripts/symbol-index/extract.mjs etc.) that only exist in the source-repo layout; in a consumer repo the tooling is relocated under scripts/.claude-skills/, so every spawn is MODULE_NOT_FOUND and arch:refresh is silently dead in all consumers.",
+      "expectedFindingRubric": "flags that sibling pipeline scripts are spawned via cwd-relative path strings instead of resolving relative to the current module (import.meta.dirname / fileURLToPath), breaking when the tooling is relocated to the consumer layout or invoked from a different working directory",
+      "severity": "HIGH",
+      "defectClass": "consumer-relocation-path-resolution",
+      "provenanceNote": "The cwd-relative path SHAPE predates this commit; the WS-LIVE refactor re-presented the spawn call sites as added lines (blame introducer, not historical origin). Entry validity rests on diff-visibility + the documented relocation contract, not on original authorship."
+    },
+    {
+      "id": "KD-022",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "b6917174f1ce2a3bdb866b27680a89c7ee9c409f",
+      "fixCommit": "5a0f667e50223cad7b89fa337485922e9c687a80",
+      "files": [
+        "scripts/ux-lock-run.mjs"
+      ],
+      "evidenceHunk": "scripts/ux-lock-run.mjs (cmdSpec — report test-file paths resolved via normalizeSpecPath(t.file, repoRoot) instead of the report rootDir)",
+      "defectDesc": "Silent data loss in the new Playwright runner CLI: Playwright JSON report file paths are emitted relative to the report's rootDir (bare basenames for a nested testDir), but the spec matcher resolves them against the repo root — every reported test is dropped as an orphan and the requested spec silently records 0 tests / passed:false.",
+      "expectedFindingRubric": "flags that Playwright JSON report file paths are resolved against the wrong base directory (repo root instead of the report rootDir/testDir), so reported tests fail to match the requested spec and are silently orphaned / recorded as zero tests",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "KD-023",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "6498f99b61b8ddea88456e29dfc017bae9db81c3",
+      "fixCommit": "87738e8315fd54671e47ace4a3f10f459b1c56c8",
+      "files": [
+        "scripts/cache-hitrate-check.mjs"
+      ],
+      "evidenceHunk": "scripts/cache-hitrate-check.mjs:L28 (bare dotenv/config import) + L37-L45 (HAS_SUPABASE source selection with silent local fallback)",
+      "defectDesc": "The new cloud-aware source selection gates on credential env vars loaded via bare dotenv/config, which reads only the cwd .env — in this project the DB credentials normally live in the shared ~/.audit-loop.env, so any run outside the one directory with a local .env silently selects the stale per-machine local log and falsely reports INSUFFICIENT_DATA even when the DB holds ample runs (a wrong-green: the check reports a confident conclusion without having read the authoritative source).",
+      "expectedFindingRubric": "flags that the data-source auto-selection depends on env vars that may not be loaded in this invocation context (cwd-only .env loading vs the shared env file), causing a silent fallback to stale/empty local data that is indistinguishable from a genuine no-data state",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "KD-024",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "eecdbf98915811e63d0223fd2d7ef95173435ea2",
+      "fixCommit": "9d0ce472c5cd2d1c5e7efa5c26bfa1231274d23a",
+      "files": [
+        "scripts/lib/file-io.mjs"
+      ],
+      "evidenceHunk": "scripts/lib/file-io.mjs:L255-L390 (extractPlanPaths Phase 2 — _extractPlanKeywords/_scanRepoFiles fuzzy discovery, no exclusion of the audit tooling's own files)",
+      "defectDesc": "The new fuzzy file-discovery fallback (_scanRepoFiles + keyword matching) scans ALL repo files with no exclusion of the audit tooling's own synced scripts — in consumer repos (where these scripts are synced in) plan keywords fuzzily match the audit infrastructure itself, so the auditors flag issues in the audit tool instead of the project code under review.",
+      "expectedFindingRubric": "flags that the fuzzy repo-file scan has no exclusion/denylist for the audit tooling's own files (self-inclusion of infrastructure into audit scope), polluting audit context in consumer repos where the tooling is synced in",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "KD-026",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "be9545d6f9e854eef8d9dd5d808cd8afd1d52d73",
+      "fixCommit": "bc3c8f1b69cb4643d8e7e548484e31a41ec65e7c",
+      "files": [
+        "scripts/setup-postgres.mjs"
+      ],
+      "evidenceHunk": "scripts/setup-postgres.mjs:L37 (REPO_ROOT = path.resolve(__dirname, '..') — assumes the source-repo layout) + the repo-relative BOOTSTRAP_SQL path",
+      "defectDesc": "The new setup CLI resolves the repo root as path.resolve(__dirname, '..'), which is only correct in the source-repo layout (scripts/ one level below root); under the consumer synced layout (scripts/.claude-skills/) it lands on scripts/, so --migrate fails with ENOENT on the migrations dir in every consumer repo, and compat-bootstrap.sql is resolved repo-relative instead of script-relative.",
+      "expectedFindingRubric": "flags that repo-root/path resolution assumes the source layout (__dirname one level below root) and breaks under the documented consumer relocation layout (scripts/.claude-skills/) — path resolution must be layout-aware or script-relative",
+      "severity": "MEDIUM",
+      "defectClass": "consumer-relocation-path-resolution"
     }
   ]
 }

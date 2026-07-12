@@ -68,6 +68,7 @@ describe('classifyPath — sensitive positives', () => {
     'home/.ssh/id_ed25519', 'home/.ssh/id_ed25519.pub',
     'password.txt', 'token.json',
     'config/tokens/api.json',
+    'tokens.yaml', 'auth/tokens', 'service/token.txt',
   ];
   for (const p of cases) {
     it(`classifies ${p} as sensitive`, () => {
@@ -86,6 +87,11 @@ describe('classifyPath — sensitive negatives', () => {
     'src/tokenizer/utils.js',      // `tokens?` followed by `i`, not `[/.]`
     'src/password-strength/check.mjs', // `password` followed by `-`
     'lib/detokenize.mjs',          // no `^` or `/` before `token`
+    'lib/visual/tokens.mjs',       // design-token CODE module — carved out 2026-07-12
+    'src/design/tokens.ts',        // design-token code module
+    'styles/tokens.css',           // design-token stylesheet
+    'theme/tokens.scss',           // design-token stylesheet
+    'lib/visual/tokens.d.ts',      // declaration file for a tokens module
     'src/foo.ts', 'README.md', 'package.json',
     'docs/security-strategy.md',
   ];

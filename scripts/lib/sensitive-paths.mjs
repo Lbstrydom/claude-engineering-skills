@@ -42,6 +42,16 @@
  *    `password.txt`, `token.json` — DELIBERATELY EXPANDED (previously
  *    only matched by egress-gate; now all consumers see them).
  *
+ *  - `tokens?.<code-ext>` (tokens.mjs, tokens.ts, tokens.css, …) —
+ *    DELIBERATELY CARVED OUT (2026-07-12): design-token modules are a
+ *    standard frontend pattern (e.g. lib/visual/tokens.mjs) and were being
+ *    misclassified as credential files, which excluded them from the symbol
+ *    index and blocked diffs mentioning them at the egress gates. The
+ *    `tokens/` directory, bare `token(s)`, and data-file forms
+ *    (`tokens.json`, `tokens.yaml`, …) stay sensitive; a code file that
+ *    embeds a real token literal is still caught by the CONTENT scanner
+ *    (`containsSecrets`) at egress.
+ *
  * Every legacy `quickfix-patterns.mjs::SENSITIVE_PATH_PATTERNS` regex
  * has a covering fixture in `tests/sensitive-paths.test.mjs` (superset
  * gate). The gate is the safety net — if you add a legacy pattern that
@@ -84,7 +94,11 @@ export const SENSITIVE_PATTERNS = Object.freeze([
   /(^|\/)id_rsa.*$/,                                           // ssh keys + id_rsa.pub/.bak
   /(^|\/)id_ed25519.*$/,                                       // ed25519 ssh keys
   /(^|\/)password(?:[/.]|$)/i,                                 // password.txt + password/ dir; avoids `password-strength/`
-  /(^|\/)tokens?(?:[/.]|$)/i,                                  // token.json + tokens/ dir; avoids `tokenizer/`, `detokenize`
+  // token.json + tokens/ dir; avoids `tokenizer/`, `detokenize`, AND code/style
+  // modules (tokens.mjs, tokens.css — design-token files, not credentials).
+  // Auth tokens live in data files (json/yaml/txt/…); a code file that embeds
+  // a real token literal is still caught by the content scanner at egress.
+  /(^|\/)tokens?(?:\/|$|\.(?!([^/]*\.)?(?:m?[jt]sx?|c[jt]s|css|scss|less|sass|styl|vue|svelte)$))/i,
 ]);
 
 /**

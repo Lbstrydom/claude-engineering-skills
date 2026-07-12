@@ -786,18 +786,63 @@ pre-registered stopping rule.
   `extractStructured` mechanism as `screen` tier, not the full 5-pass
   `runAuditGenerationArm` path) — a Tier C promotion "verdict" carries the
   identical ceiling and is not a real comparative signal either.
-- **`promotion` tier's Tier A/B path is real generation, but blind-judging
-  (Gemini) can trip the sensitive-path egress gate on genuine findings**
-  (2026-07-12) — a finding's own prose ("a token/size cap... not enforced
-  globally") can read as a word/word-shaped path mention to
-  `findSensitivePathMentions`. Not fixed (the heuristic is deliberately
-  conservative, per standing decision); Tier A/B generation itself is
-  confirmed working end-to-end (both GLM and GPT-5.6-Terra produced
-  13-14 real HIGH findings on the same known-defect commit) — the open gap
-  is specifically the judge-payload gate for self-referential corpus
-  entries (this repo auditing its own token/budget-heavy code). Falling
-  back to `--judge`-omitted Tier C to "get a result" does NOT substitute —
-  see the ceiling note above.
+- **`promotion` tier's Tier A/B path is real generation; blind-judging
+  (Gemini) used to trip the sensitive-path egress gate on genuine findings
+  — fixed 2026-07-12.** A finding's own prose ("a token/size cap... not
+  enforced globally") read as a word/word-shaped path mention to
+  `findSensitivePathMentions` (`scripts/lib/model-eval/egress-path-scan.mjs`)
+  purely because English uses `/` for "or", not a directory separator, and
+  the first word ("token") happened to match `sensitive-paths.mjs`'s bare
+  `tokens?`/`password` keyword patterns (correct and intentionally broad for
+  REAL path classification, wrong applied to prose). Fix: a `looksLikeRealPath`
+  gate now requires actual path evidence — dotfile prefix, anchor (`./`, `~/`,
+  `/`), a real filename extension, 3+ path segments, or an explicit `.aws`/
+  `.ssh` mention — before trusting a bare-keyword match; unambiguous branches
+  (`.env*`, `id_rsa*`) always pass. Regression-guarded by
+  `tests/egress-path-scan.test.mjs`; validated against all 19 known-defect
+  descriptions + 1082 real grading-rationale text fields from the tiered-recall
+  corpus with zero false positives. Tier A/B generation itself was already
+  confirmed working end-to-end (both GLM and GPT-5.6-Terra produced 13-14 real
+  HIGH findings on the same known-defect commit) — the judge-payload gate was
+  the last blocker for a real GLM-vs-GPT-5.6 comparative verdict. Tier C
+  fallback still does NOT substitute for a Tier A/B result — see the ceiling
+  note above.
+- **A second, much bigger egress false-positive class was hiding behind the
+  first — fixed same day.** `findSensitivePathMentions` also runs on the RAW
+  DIFF in `known-defect-corpus.mjs::loadCorpusCase` (not just judge prose), and
+  its `.env`-branch match started mid-identifier: `process.env.GEMINI_API_KEY`
+  or `import.meta.env.X` (ordinary JS/TS property access, present in nearly
+  every commit that reads config) produced a token indistinguishable from a
+  real `.env.production`-style file mention. Fixed with a `(?<!\w)` negative
+  lookbehind before the leading dot — a genuine `.env` FILE mention is always
+  preceded by whitespace/quote/path-separator/start-of-string, never a bare
+  identifier character, so the lookbehind costs no real recall. Confirmed by
+  mechanically re-running the deterministic corpus gates (diff-size, egress,
+  path-mention — no LLM calls) over all 331 already-harvested-but-uncurated
+  `claude-engineering-skills` rows in
+  `docs/experiments/audit-effectiveness/known-defects.candidates.json`: clean
+  (gate-passing) candidates went 88 → 146 after this fix alone, comfortably
+  past the 2 more entries `promotion` tier needs (item 3 below). **The 6/8
+  corpus gap was never a candidate-supply problem — it was almost entirely
+  this gate.** The three residual gaps were closed the same day: (a) the
+  mention scan now flags only the `sensitive` category — `generatedNoise`
+  (lockfiles, `*.min.js`, `*.map`) is a body-egress category and a mere
+  lockfile path MENTION carries no secret, so diffs touching
+  `package-lock.json` alongside real code no longer block (body-egress call
+  sites keep the conflated `isPathSensitive`, correct there); (b) tokens
+  containing regex-source metachars (`(){}[]|*+?^$\`) are rejected — real
+  paths never contain them, so the security tooling's own pattern literals
+  (`/(^|\/)id_rsa.*$/i`) no longer self-trip (plain-string fixtures like
+  `'.ssh/id_rsa'` still trip, correctly — indistinguishable from a real
+  mention); (c) the shared classifier's `tokens?` pattern carves out
+  code/style extensions (`tokens.mjs`/`.ts`/`.css`/… are design-token
+  modules, not credentials) while `tokens/` dirs, bare `token(s)`, and data
+  files (`tokens.json`, `tokens.yaml`) stay sensitive — a code file embedding
+  a real token literal is still caught by the content scanner. One
+  strengthening attempt was tried and REVERTED same-day (trailing-punctuation
+  stripping made prose like "keys in .env)" flag, silently re-blocking two
+  valid corpus entries) — historical recall is the contract; don't re-add it.
+  All guarded in `tests/egress-path-scan.test.mjs` + `tests/sensitive-paths.test.mjs`.
 
 → Full design, prior-art trace, and the two-round mid-implementation
 redesign (Phase 2 forked rather than extracted from the live solo-control
