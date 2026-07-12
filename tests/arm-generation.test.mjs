@@ -10,6 +10,7 @@ import {
 import { EgressGateError } from '../scripts/lib/model-eval/egress-path-scan.mjs';
 import { resolveModel } from '../scripts/lib/model-resolver.mjs';
 import { CANONICAL_ARMS, buildCandidateArm } from '../scripts/lib/audit-arms.mjs';
+import { extractPlanPaths } from '../scripts/lib/plan-paths.mjs';
 
 const [ARM_A, , ARM_C] = CANONICAL_ARMS; // A = sentinel, C = oss-role
 
@@ -51,6 +52,44 @@ describe('arm-generation.mjs — resolveGenerationClient (pure, per-kind)', () =
     const route = { resolvedModel: 'gpt-5.4', deploymentId: null };
     const { model } = await _internals.resolveGenerationClient(generation, route);
     assert.equal(model, 'gpt-5.4');
+  });
+});
+
+describe('arm-generation.mjs — buildGenericPlanContent × real extractPlanPaths (round-15 empirical-verify regression)', () => {
+  // Deliberately exercises the REAL extractPlanPaths, not a mock — this is
+  // exactly the seam a fully-mocked _runMultiPassCodeAudit test suite could
+  // never catch (the bug was that runMultiPassCodeAudit does NOT read
+  // ctx.changedFiles for file discovery; it parses extractPlanPaths(planContent)
+  // instead). Found via the harness's first real dogfood run: a bare
+  // instructional plan string (no file paths) always resolved ZERO files,
+  // so every promotion-tier Tier A/B generation call unconditionally hit
+  // the "0 implementation files reached the prompt" guard and aborted.
+  test('the generated plan content resolves every input file via the real extractPlanPaths (allowInfraFiles:true)', () => {
+    const files = ['scripts/openai-audit.mjs', 'scripts/lib/ledger.mjs'];
+    const plan = _internals.buildGenericPlanContent(files);
+    const { found } = extractPlanPaths(plan, { allowInfraFiles: true });
+    for (const f of files) assert.ok(found.includes(f), `expected "${f}" in extractPlanPaths' found list, got ${JSON.stringify(found)}`);
+  });
+
+  test('without allowInfraFiles, a tool-infrastructure file is excluded — this is exactly why runAuditGenerationArm must pass allowInfraScope:true', () => {
+    const plan = _internals.buildGenericPlanContent(['scripts/openai-audit.mjs']);
+    const { found } = extractPlanPaths(plan, { allowInfraFiles: false });
+    assert.equal(found.length, 0);
+  });
+
+  test('an empty file list still produces valid plan content (no crash) — the corpus-loader guarantees non-empty, but this function must not assume it', () => {
+    const plan = _internals.buildGenericPlanContent([]);
+    assert.equal(typeof plan, 'string');
+    const { found } = extractPlanPaths(plan, { allowInfraFiles: true });
+    assert.equal(found.length, 0);
+  });
+
+  test('the instructional prose is byte-identical regardless of the file list — fairness invariant: two calls for the SAME KD case (candidate + baseline) get identical framing, only the file list may legitimately differ from case to case', () => {
+    const planA = _internals.buildGenericPlanContent(['a.mjs']);
+    const planB = _internals.buildGenericPlanContent(['b.mjs', 'c.mjs']);
+    const instructionsA = planA.split('\n\nFiles changed in this diff:\n')[0];
+    const instructionsB = planB.split('\n\nFiles changed in this diff:\n')[0];
+    assert.equal(instructionsA, instructionsB);
   });
 });
 
@@ -97,6 +136,11 @@ describe('arm-generation.mjs — runAuditGenerationArm', () => {
     assert.ok(!('repoProfile' in capturedOpts), 'repoProfile must never be set — omitting it is what prevents cloud pollution of audit_runs/audit_findings');
     assert.ok(path.isAbsolute(capturedOpts.diffFile));
     assert.equal(fs.readFileSync(capturedOpts.diffFile, 'utf8'), '--- fake diff ---');
+    // Round-15 empirical-verify regression: without allowInfraScope:true, a
+    // known-defect corpus case citing this tool's OWN control-plane files
+    // (e.g. openai-audit.mjs) would have those files silently excluded by
+    // extractPlanPaths's isAuditInfraFile filter.
+    assert.equal(capturedOpts.allowInfraScope, true);
 
     assert.deepEqual(result.findings, [{ id: 'f1' }]);
     assert.equal(result.usageEvent.usageStatus, 'captured');

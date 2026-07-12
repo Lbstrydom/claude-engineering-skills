@@ -781,7 +781,23 @@ pre-registered stopping rule.
   verdict needs either more surgical single-issue KD entries or a scoring
   redesign that credits "a real finding in the right file/region" — not yet
   built. Don't over-read a low screen-tier recall without checking the raw
-  per-case extraction output first.
+  per-case extraction output first. **This applies to `promotion` tier's
+  Tier C fallback too** (`scoreArmTierC` uses the SAME single-shot
+  `extractStructured` mechanism as `screen` tier, not the full 5-pass
+  `runAuditGenerationArm` path) — a Tier C promotion "verdict" carries the
+  identical ceiling and is not a real comparative signal either.
+- **`promotion` tier's Tier A/B path is real generation, but blind-judging
+  (Gemini) can trip the sensitive-path egress gate on genuine findings**
+  (2026-07-12) — a finding's own prose ("a token/size cap... not enforced
+  globally") can read as a word/word-shaped path mention to
+  `findSensitivePathMentions`. Not fixed (the heuristic is deliberately
+  conservative, per standing decision); Tier A/B generation itself is
+  confirmed working end-to-end (both GLM and GPT-5.6-Terra produced
+  13-14 real HIGH findings on the same known-defect commit) — the open gap
+  is specifically the judge-payload gate for self-referential corpus
+  entries (this repo auditing its own token/budget-heavy code). Falling
+  back to `--judge`-omitted Tier C to "get a result" does NOT substitute —
+  see the ceiling note above.
 
 → Full design, prior-art trace, and the two-round mid-implementation
 redesign (Phase 2 forked rather than extracted from the live solo-control

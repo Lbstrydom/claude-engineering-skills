@@ -37,13 +37,35 @@ export class UnsupportedGenerationTransport extends Error {
 // Generic, non-leaking framing — MUST NEVER be built from `hiddenGroundTruth`
 // (known-defect-corpus.mjs's defectDesc/expectedFindingRubric). The whole
 // point of the visible/hidden split is that the candidate model never sees
-// the answer; this string is deliberately the same for every KD case.
-const GENERIC_PLAN_CONTENT = [
+// the answer; this instructional prose is the SAME for every KD case, and
+// (load-bearing for fairness) identical between the candidate and baseline
+// arm for a given case, since both are built from the SAME auditInput.files.
+const GENERIC_PLAN_INSTRUCTIONS = [
   'Review the following code change for defects: correctness bugs, security',
   "issues, silent failure/data-loss modes, and violations of the project's",
   'own documented conventions (AGENTS.md/CLAUDE.md, if present). There is no',
   'separate design plan for this change — audit the diff itself.',
 ].join('\n');
+
+/**
+ * Round-15 empirical-verify fix — runMultiPassCodeAudit does NOT read
+ * `ctx.changedFiles` to decide which files to actually read into the
+ * prompt; it parses `extractPlanPaths(planContent)` for that (verified
+ * directly in legacy-production-audit.mjs). A bare, file-path-free
+ * instructional string (the pre-fix GENERIC_PLAN_CONTENT) always resolved
+ * ZERO real files — extractPlanPaths even fuzzy-matched the prose's own
+ * "AGENTS.md/CLAUDE.md" mention as one bogus unresolvable reference — so
+ * EVERY promotion-tier Tier A/B generation call unconditionally hit the A1
+ * "0 implementation files reached the prompt" guard and aborted. This path
+ * had never been exercised against the real runMultiPassCodeAudit before
+ * (existing tests inject `_runMultiPassCodeAudit`, a fake). Building the
+ * file list into the plan text is what makes extractPlanPaths find them.
+ * @param {string[]} files
+ */
+function buildGenericPlanContent(files) {
+  const fileList = (files || []).map((f) => `- ${f}`).join('\n');
+  return `${GENERIC_PLAN_INSTRUCTIONS}\n\nFiles changed in this diff:\n${fileList}`;
+}
 
 /**
  * Resolves the client + model string for a generation call, uniformly
@@ -160,7 +182,7 @@ export async function runAuditGenerationArm({
     }
     mergedResult = await _runMultiPassCodeAudit(
       client,
-      GENERIC_PLAN_CONTENT,
+      buildGenericPlanContent(auditInput.files),
       '', // projectContext — deliberately empty/uniform for both candidate and
           // baseline (a real per-repo AGENTS.md excerpt would be FAIR to add
           // later, but must be identical for both sides; empty is the safe,
@@ -183,6 +205,13 @@ export async function runAuditGenerationArm({
         runId,
         noLedger: true,      // no local adjudication ledger for a one-shot
         noDebtLedger: true,  // eval generation call — nothing to suppress
+        // Known-defect corpus cases are drawn from claude-engineering-skills'
+        // OWN history — many legitimately touch this tool's own control-plane
+        // files (openai-audit.mjs, ledger.mjs, ...), which extractPlanPaths
+        // otherwise excludes via isAuditInfraFile (correct for a NORMAL
+        // audit of someone else's code, wrong here where the tool's own
+        // source IS a valid, in-scope corpus subject).
+        allowInfraScope: true,
         // repoProfile is DELIBERATELY OMITTED (not just left at its default
         // by accident) — verified directly (legacy-production-audit.mjs):
         // the ENTIRE cloud audit_runs/audit_findings/learning-store write
@@ -225,4 +254,4 @@ export async function runAuditGenerationArm({
 // across scripts/lib/model-eval/*.mjs) — resolveGenerationClient only
 // constructs local SDK client objects (no network I/O until a real call is
 // made), so it's safe to exercise directly without mocking.
-export const _internals = { resolveGenerationClient, GENERIC_PLAN_CONTENT };
+export const _internals = { resolveGenerationClient, buildGenericPlanContent };

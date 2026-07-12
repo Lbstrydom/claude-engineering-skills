@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "defects": [
     {
       "id": "KD-001",
@@ -109,6 +109,28 @@
       "evidenceHunk": "scripts/lib/nav/verify.mjs (discoverExpandTriggers — no visibility pre-filter, as introduced)",
       "defectDesc": "`discoverExpandTriggers` selected activation triggers (e.g. a hamburger menu button) without filtering for visibility — a breakpoint-hidden trigger (`display:none` on desktop for a mobile-only hamburger) was still selected and clicked, wasting a 1000ms click-timeout plus an 'element is not visible' noise warning per state, since a `display:none`/0-size element can never actually be clicked.",
       "expectedFindingRubric": "flags that an element-discovery routine selects DOM elements for interaction without a visibility/actionability check first (wasted timeout + noise on an unclickable target)",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "KD-018",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "2f57718324a134088828075fb67137c01b920637",
+      "fixCommit": "4558c87fdb907acc7ce0ef3cf15a0ece2aada82c",
+      "files": ["scripts/lib/requirements/gap-challenge.mjs"],
+      "evidenceHunk": "scripts/lib/requirements/gap-challenge.mjs (classifyGaps — maxTokens: 3000, as introduced)",
+      "defectDesc": "The gap-challenge LLM call hardcoded a 3000-token output budget, sized against a 2-file smoke test. A real invariant-rich file set (a dozen modules) produces enough gap-assessment candidates to overflow that budget, yielding a length-truncated, unusable response — the caller had no signal that the response was cut off rather than complete.",
+      "expectedFindingRubric": "flags a hardcoded LLM output-token budget sized against a small test fixture rather than realistic input volume, with no truncation-detection or budget-scaling for larger inputs",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "KD-019",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "540cacf1c4b1fe4251756f3d0610d9cd83f301ab",
+      "fixCommit": "a506ba9adcf293ac117cdd2addad39c20fd8e391",
+      "files": ["scripts/check-skill-updates.mjs"],
+      "evidenceHunk": "scripts/check-skill-updates.mjs (managed-file path resolution — path.resolve(f.path) fallback, as introduced)",
+      "defectDesc": "For managed-file paths not matching a special-cased prefix list (.github/, .agents/, .audit-loop/), the fallback resolved the path via `path.resolve(f.path)` — relative to the process's current working directory — instead of the repo root. Running the check from any directory other than the repo root silently resolved managed files to the wrong absolute paths.",
+      "expectedFindingRubric": "flags a CWD-relative path fallback for what should be a repo-root-relative path resolution (invocation-directory-dependent bug, not caught by tests that always run from repo root)",
       "severity": "MEDIUM"
     },
     {
