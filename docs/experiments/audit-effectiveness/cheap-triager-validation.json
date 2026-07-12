@@ -1,0 +1,57 @@
+{
+  "datasetHash": "7c441b7615b625c69cf41583f7b3af51cd8a255e9f251b9a8c13e333b21692fb",
+  "candidateModel": "z-ai/glm-5.2",
+  "strata": [
+    {
+      "name": "contrarian",
+      "count": 789,
+      "falseDismissalRate": 0.033,
+      "ci95": [
+        0.0226,
+        0.0478
+      ]
+    },
+    {
+      "name": "random-tail",
+      "count": 100,
+      "falseDismissalRate": 0.01,
+      "ci95": [
+        0.0018,
+        0.0545
+      ]
+    },
+    {
+      "name": "known-defect",
+      "count": 48,
+      "falseDismissalRate": 0,
+      "ci95": [
+        0,
+        0.0741
+      ]
+    },
+    {
+      "name": "high-dismissal",
+      "count": 126,
+      "falseDismissalRate": 0,
+      "ci95": [
+        0,
+        0.0296
+      ]
+    },
+    {
+      "name": "omission-dismissal",
+      "count": 17,
+      "falseDismissalRate": 0,
+      "ci95": [
+        0,
+        0.1843
+      ]
+    }
+  ],
+  "thresholds": {
+    "highOrOmissionMaxFalseDismissalRate": 0.05,
+    "overallMaxFalseDismissalRate": 0.1
+  },
+  "passed": true,
+  "generatedAt": "2026-07-12T13:12:41.400Z"
+}

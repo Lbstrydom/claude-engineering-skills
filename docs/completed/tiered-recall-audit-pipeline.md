@@ -8,7 +8,12 @@
   `APPROVE` (round 2, after fixing 2 genuine bugs round 1 surfaced — a
   stage1-mechanical suppression not checking `remediationState==='regressed'`,
   and a Zod-validation-bypass in `cost-budget.mjs`'s event loaders). Shipped
-  2026-07-10.
+  2026-07-10. **Phase 5's validation session (the actual human-graded run —
+  distinct from the tooling, which shipped with the rest of Cluster C) ran
+  2026-07-12**: `docs/experiments/audit-effectiveness/cheap-triager-validation.json`
+  PASSED for `z-ai/glm-5.2` (both load-bearing strata at 0.0% false-dismissal;
+  see status.md 2026-07-12 for the full write-up and the omission-stratum
+  small-sample caveat). Phase 7 can now select GLM as the Stage-1 triager.
 - **Author**: Claude + Louis
 - **Scope**: backend
 

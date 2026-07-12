@@ -1,5 +1,17 @@
 # Project Status Log
 
+## 2026-07-12 — Feat: tiered-recall pipeline Phase 5 — cheap-triager validation session, PASSED
+
+### Changes
+- **Context**: `docs/completed/tiered-recall-audit-pipeline.md`'s Phase 5 (Cluster C) had a fully-built, tested pure library (`scripts/lib/solo-control/cheap-triager-validate.mjs`) but no CLI driver — the human-graded validation session that gates Phase 7's Stage-1 cheap-triager model choice had never actually run.
+- **Built `scripts/cheap-triager-validate.mjs`** (`worksheet` + `manifest` subcommands, split at the library's documented human-grading boundary) and ran the candidate (`z-ai/glm-5.2`) over the full 2,314-row blind-adjudication sheet — 2245/2314 candidate verdicts on the first pass, the remaining 32 worksheet-relevant failures closed with a targeted retry (100% coverage, no silent gaps).
+- **Key simplification found**: by the grading question's own definition ("was this finding falsely *dismissed*"), any row where the candidate said `valid` is unambiguously FALSE — not a judgment call. That cut the real human/LLM grading workload from the full 1080-row stratified worksheet down to 160 rows (the candidate's actual `dismissed` verdicts), auto-filling the other 920. Built `scripts/lib/solo-control/split-triager-worksheet.mjs` to produce 4 priority-ordered clean-chat batch files (load-bearing strata first) plus a quick-autofill reference for spot-checking.
+- **Graded by two independent LLM sessions in clean chats** — 160/160 perfect agreement (27 TRUE / 133 FALSE each, zero disagreements). Extended `parseGradesCsv` to accept an optional 3rd `reason` column (preserved in a new evidence artifact, `cheap-triager-validation-evidence.json`, never fed into the manifest's own boolean-only aggregation) so the two-grader rationale survives as a durable record.
+- **Result: PASSED.** Both load-bearing strata (the ones that actually gate pass/fail) came back at 0.0% false-dismissal: high-dismissal 126 rows [0%, 3.0% CI], omission-dismissal 17 rows [0%, 18.4% CI] — the wide CI on the small omission stratum is a genuine small-sample caveat, not a failure, and is stated as such rather than letting "PASSED" overstate the confidence. Secondary finding: of the 26 cases where the candidate disagreed with the original judges by dismissing something they'd called valid, all 26 were confirmed false dismissals on human review (100% of that specific disagreement direction) — the candidate was never wrong in the *opposite* disagreement direction (flagging something as valid that judges had dismissed), which structurally can't be a false dismissal.
+- **Unblocks**: Phase 7 (`stage1-triage.mjs`) can now read `docs/experiments/audit-effectiveness/cheap-triager-validation.json` (`datasetHash`-freshness-checked) to select GLM as the Stage-1 cheap triager instead of always falling back to GPT-5.5.
+- **Also this session**: briefly re-enabled the model-A/B/C shadow toggle, then reverted it after finding the 2026-07-09 research record that had deliberately concluded that experiment (1,891-cluster backlog recorded as never-to-adjudicate) — memory corrected so this isn't re-litigated. See `docs/research/experiment-2-arm-eval-and-model-ab.md`.
+- **Full suite**: 4948 passed, 0 failed, 20 pre-existing env-gated skips.
+
 ## 2026-07-12 — Fix: promotion-tier generation was completely non-functional — a 5th real bug from the same dogfood push
 
 ### Changes
