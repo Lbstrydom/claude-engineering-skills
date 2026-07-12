@@ -68,12 +68,12 @@ const nonBlankString = (maxLen) => {
   return maxLen ? s.max(maxLen) : s;
 };
 // Round-11 audit M3 fix — deterministic-scorer.mjs's fuzzy matcher runs a
-// full O(len×len) Levenshtein DP matrix per candidate/rubric pair; an
-// unbounded model-output description could drive disproportionate CPU/
-// memory cost. 2000 chars is generous for a one-paragraph defect
-// description (bounds worst case to 4M matrix cells, trivial) — bounding
-// at the SOURCE (extraction) is cheaper and more correct than adding a
-// length-cap escape hatch inside the scoring algorithm itself.
+// tokenize+set-overlap comparison (jaccardSimilarity, round-15) per
+// candidate/rubric pair; an unbounded model-output description could still
+// drive disproportionate CPU/memory cost. 2000 chars is generous for a
+// one-paragraph defect description — bounding at the SOURCE (extraction) is
+// cheaper and more correct than adding a length-cap escape hatch inside the
+// scoring algorithm itself.
 export const AuditorExtractionSchema = z.object({
   defectLocation: z.object({ file: nonBlankString(500), description: nonBlankString(2000) }),
 });

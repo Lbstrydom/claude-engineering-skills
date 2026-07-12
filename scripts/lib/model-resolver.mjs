@@ -22,6 +22,18 @@
  * @module scripts/lib/model-resolver
  */
 
+// Load .env when this module is the process entry point (its documented
+// CLI self-check: `node scripts/lib/model-resolver.mjs resolve|catalog`).
+// When imported as a library, the actual entry point (config.mjs's
+// loadSharedEnv, or another script's own `import 'dotenv/config'`) has
+// already populated process.env by the time refreshModelCatalog() reads
+// it — this import is a harmless idempotent no-op in that case. Without
+// it, a standalone CLI invocation reads undefined API keys, so
+// refreshModelCatalog() silently queues zero fetch tasks and falls back
+// to STATIC_POOL with no error at all — the self-check reports "no live
+// catalog" even when the keys and network are both fine.
+import 'dotenv/config';
+
 // ── Static fallback pool ────────────────────────────────────────────────────
 // IMPORTANT: only pin model IDs that exist in the provider's current catalog.
 // Do NOT pin IDs derived by stripping `-preview` suffix — Google returns 404
@@ -205,7 +217,12 @@ export function parseOpenAIModel(id) {
   // `o?` after the major handles the omni family shape (`gpt-4o`, `gpt-4o-mini`);
   // `pro` is an accepted variant (`gpt-5.5-pro`). Both were STATIC_POOL ids the
   // prior digit-only regex rejected (audit Cluster-A finding).
-  const m = /^(gpt|o)-?(\d+)o?(?:\.(\d+))?(?:-(mini|nano|turbo|pro|preview|[\d-]+))?$/.exec(id);
+  // `sol|terra|luna` — GPT-5.6's named three-tier family (2026-07-09 release):
+  // sol=premium flagship, terra=balanced/everyday, luna=cheapest/fastest —
+  // same tier shape as pro/plain/mini, just renamed. Without these the regex
+  // returns null for every gpt-5.6-* id (falls back to a stale STATIC_POOL
+  // pick with NO error surfaced — see model-resolver.mjs's dotenv-load fix).
+  const m = /^(gpt|o)-?(\d+)o?(?:\.(\d+))?(?:-(mini|nano|turbo|pro|preview|sol|terra|luna|[\d-]+))?$/.exec(id);
   if (!m) return null;
   const variant = m[4] || null;
   return {
@@ -214,7 +231,13 @@ export function parseOpenAIModel(id) {
     major: Number.parseInt(m[2], 10),
     minor: m[3] ? Number.parseInt(m[3], 10) : 0,
     variant,
-    isLite: /^(mini|nano)$/.test(variant || ''),
+    isLite: /^(mini|nano|luna)$/.test(variant || ''),
+    // Premium/flagship SKU at the same version as the plain/balanced SKU
+    // (pro, sol). TIER_MAP's own documented design: for OpenAI, latest-gpt's
+    // tier axis is reasoning effort, not model SKU — a premium SKU must be
+    // pinned explicitly, never silently auto-selected by the standard/
+    // frontier sentinel. See compareVersions' isPremium tiebreak.
+    isPremium: /^(pro|sol)$/.test(variant || ''),
     isPreview: /preview/.test(variant || ''),
     original: id,
   };
@@ -328,6 +351,10 @@ export function describeModel(modelId) {
 function compareVersions(a, b) {
   if (a.major !== b.major) return b.major - a.major;
   if ((a.minor ?? 0) !== (b.minor ?? 0)) return (b.minor ?? 0) - (a.minor ?? 0);
+  // Prefer the plain/balanced SKU over a premium one (pro/sol) at the same
+  // version — was an unintentional tie broken by API/pool list order before
+  // this field existed; now deterministic per the isPremium doc above.
+  if ((a.isPremium ?? false) !== (b.isPremium ?? false)) return a.isPremium ? 1 : -1;
   // Prefer GA over preview at same version
   if ((a.isPreview ?? false) !== (b.isPreview ?? false)) return a.isPreview ? 1 : -1;
   // Prefer undated (rolling alias) over dated snapshot at same version
@@ -376,13 +403,19 @@ export function pickNewestClaude(pool, tier) {
 
 /**
  * @param {string[]} pool
- * @param {null|'mini'|'nano'} variant - null excludes mini/nano; 'mini' selects mini only
+ * @param {null|'mini'|'nano'} variant - null excludes every lite SKU (mini/nano/
+ *   luna/…); 'mini' selects the newest LITE SKU regardless of its literal
+ *   suffix (mini/nano/luna all satisfy SENTINEL_TO_TIER's `latest-gpt-mini`
+ *   request) — an exact string match would go stale the moment a provider
+ *   renames its cheap tier (as GPT-5.6 did: mini → luna). Any other literal
+ *   variant string (e.g. 'pro') still requires an exact match.
  */
 export function pickNewestOpenAI(pool, variant = null) {
   if (!pool || pool.length === 0) return null;
   const parsed = pool.map(parseOpenAIModel).filter(p => {
     if (!p) return false;
     if (variant === null) return !p.isLite;
+    if (variant === 'mini') return p.isLite;
     return p.variant === variant;
   });
   if (parsed.length === 0) return null;
@@ -642,6 +675,12 @@ async function _cli() {
   const cmd = args[0];
 
   if (cmd === 'resolve') {
+    // Live entry points (openai-audit.mjs, brainstorm, gemini-review) refresh
+    // the catalog at their own startup before resolving. This standalone CLI
+    // is its own process with an empty CATALOG_CACHE — without refreshing
+    // here too, `resolve` always silently resolves from STATIC_POOL alone,
+    // misleadingly looking authoritative for its documented self-check role.
+    await refreshModelCatalog();
     const sentinels = args.length > 1
       ? args.slice(1)
       : Object.keys(SENTINEL_TO_TIER);

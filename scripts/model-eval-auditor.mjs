@@ -21,6 +21,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { refreshModelCatalog } from './lib/model-resolver.mjs';
 import {
   resolveCandidateRoute, resolveEvaluationTier, buildComparisonEvidenceFromRoutes,
   _internals as routeCatalogInternals,
@@ -303,6 +304,13 @@ async function main() {
 
   if (!candidateRaw) { console.error('Usage: model-eval-auditor.mjs --candidate <CandidateSpec-json> --tier screen|promotion [--judge <CandidateSpec-json>] [--out <file>]'); process.exit(1); }
   if (tier !== 'screen' && tier !== 'promotion') { console.error(`--tier must be "screen" or "promotion", got "${tier}"`); process.exit(1); }
+
+  // Round-15 empirical-verify fix — without this, a sentinel candidateSpec
+  // (e.g. {kind:'sentinel', value:'latest-gpt'}) always resolved from the
+  // stale STATIC_POOL (an empty CATALOG_CACHE in this process), silently
+  // testing an old model release regardless of what's actually current.
+  // Mirrors openai-audit.mjs / gemini-review.mjs's own startup call.
+  try { await refreshModelCatalog(); } catch { /* silent — falls back to static */ }
 
   try {
     const candidateSpec = parseJsonArg(candidateRaw, '--candidate');

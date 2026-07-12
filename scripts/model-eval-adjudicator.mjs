@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { refreshModelCatalog } from './lib/model-resolver.mjs';
 import { resolveCandidateRoute, buildComparisonEvidenceFromRoutes } from './lib/model-eval/route-catalog.mjs';
 import { extractStructured } from './lib/model-eval/structured-extractor.mjs';
 import { scoreBinaryClassification } from './lib/model-eval/deterministic-scorer.mjs';
@@ -97,6 +98,11 @@ async function main() {
 
   if (!candidateRaw) { console.error('Usage: model-eval-adjudicator.mjs --candidate <CandidateSpec-json> --tier screen|promotion [--baseline <CandidateSpec-json>] [--out <file>]'); process.exit(1); }
   if (tier !== 'screen' && tier !== 'promotion') { console.error(`--tier must be "screen" or "promotion", got "${tier}"`); process.exit(1); }
+
+  // Round-15 empirical-verify fix (found via model-eval-auditor.mjs's twin
+  // bug) — without this, a sentinel candidateSpec always resolved from the
+  // stale STATIC_POOL, silently testing an old model release.
+  try { await refreshModelCatalog(); } catch { /* silent — falls back to static */ }
 
   try {
     const candidateSpec = parseJsonArg(candidateRaw, '--candidate');

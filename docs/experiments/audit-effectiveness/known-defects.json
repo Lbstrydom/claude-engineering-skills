@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "defects": [
     {
       "id": "KD-001",
@@ -77,6 +77,39 @@
       "defectDesc": "`--gate --scope full` silently gated NOTHING — the gate only consumed diff-scoped findings, so a full-scope run exited green having checked nothing (silent-green / looks-protected-but-isn't).",
       "expectedFindingRubric": "flags that the gate path can exit 0 without having evaluated any findings under a scope mode (green-without-checking / silent no-op gate)",
       "severity": "HIGH"
+    },
+    {
+      "id": "KD-015",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "7ca21a3a86d45cc31fa0d50eb34db3e126df02ed",
+      "fixCommit": "d557535fe56541a35b834596e71fcecccb9846d7",
+      "files": ["scripts/brainstorm-round.mjs"],
+      "evidenceHunk": "scripts/brainstorm-round.mjs (arm-eval capture trigger — `envelope.round === 1` gate, as introduced)",
+      "defectDesc": "Off-by-one: the deterministic arm-eval capture trigger gated on `envelope.round === 1` (\"first round only\"), but the session ledger's `appendSession` numbers a session's FIRST round 0, not 1 — so a fresh brainstorm session could NEVER fire capture (only a `--continue-from` second round, numbered 1, would). Field-found by the wine-cellar-app verification run: no dispatch log line, no new arm_eval_sessions row.",
+      "expectedFindingRubric": "flags the mismatch between the trigger's 1-based round check and the ledger's 0-based round numbering (an off-by-one that silently disables the intended first-round-only behavior)",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "KD-016",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "86dd669f3e773424d7dd37cd66482159dd140a88",
+      "fixCommit": "af67b2c7076731e75e5df08b3b1223af68098cfe",
+      "files": ["scripts/openai-audit.mjs"],
+      "evidenceHunk": "scripts/openai-audit.mjs (runMultiPassCodeAudit — `subjectFiles` declared inside the A1 guard block, as introduced)",
+      "defectDesc": "`subjectFiles` was declared with `const` inside the block-scoped A1 subject-file guard (`{ const subjectFiles = ...; ... }`), but a later call site far below in the same function — the model-A/B generation shadow's `buildRedactedAuditContext([...subjectFiles])` — referenced the same identifier outside that block. Dormant (best-effort-contained, so the baseline audit was unaffected) until the shadow harness was first enabled, at which point it threw a ReferenceError on every invocation — a crash bug, matching KD-001/KD-002's severity class.",
+      "expectedFindingRubric": "flags a block-scoped `const`/`let` binding referenced outside its enclosing block by a later call site in the same function (undefined-binding/ReferenceError crash risk that a happy-path test run would not exercise)",
+      "severity": "HIGH"
+    },
+    {
+      "id": "KD-017",
+      "repo": "claude-engineering-skills",
+      "buggyCommit": "5cd1fc72d68835ed98375f6e0728c52e2efa6357",
+      "fixCommit": "e8535f04974be92115ea66ac37c1295240ef121d",
+      "files": ["scripts/lib/nav/verify.mjs"],
+      "evidenceHunk": "scripts/lib/nav/verify.mjs (discoverExpandTriggers — no visibility pre-filter, as introduced)",
+      "defectDesc": "`discoverExpandTriggers` selected activation triggers (e.g. a hamburger menu button) without filtering for visibility — a breakpoint-hidden trigger (`display:none` on desktop for a mobile-only hamburger) was still selected and clicked, wasting a 1000ms click-timeout plus an 'element is not visible' noise warning per state, since a `display:none`/0-size element can never actually be clicked.",
+      "expectedFindingRubric": "flags that an element-discovery routine selects DOM elements for interaction without a visibility/actionability check first (wasted timeout + noise on an unclickable target)",
+      "severity": "MEDIUM"
     },
     {
       "id": "KD-008",

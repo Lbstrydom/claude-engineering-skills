@@ -14,6 +14,14 @@ import { normalizePath, atomicWriteFileSync } from './file-io.mjs';
 import { LedgerEntrySchema, BatchLedgerEntrySchema, Stage1MechanicalLedgerEntrySchema } from './schemas.mjs';
 import { semanticId } from './findings.mjs';
 import { buildFileReferenceRegex } from './language-profiles.mjs';
+import { jaccardSimilarity } from './text-similarity.mjs';
+
+// Re-exported for backward compatibility — existing consumers import
+// jaccardSimilarity from here (and via shared.mjs's barrel). The
+// implementation itself moved to text-similarity.mjs (zero dependencies,
+// no transitive I/O) so deterministic-scorer.mjs could reuse it without
+// pulling in this file's shared-cloud-config env read at module-load time.
+export { jaccardSimilarity };
 
 // Factory — creates a fresh regex per call to avoid .lastIndex state bugs.
 // The global regex pattern is stateful; sharing one instance across calls
@@ -265,22 +273,7 @@ export function populateFindingMetadata(finding, passName) {
 }
 
 // ── Fuzzy Suppression ───────────────────────────────────────────────────────
-
-/**
- * Text similarity via token set overlap (Jaccard index).
- * @param {string} a - First text
- * @param {string} b - Second text
- * @returns {number} Similarity score 0-1
- */
-export function jaccardSimilarity(a, b) {
-  const tokenize = s => new Set((s || '').toLowerCase().replaceAll(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean));
-  const setA = tokenize(a);
-  const setB = tokenize(b);
-  if (setA.size === 0 && setB.size === 0) return 0;
-  const intersection = [...setA].filter(t => setB.has(t)).length;
-  const union = new Set([...setA, ...setB]).size;
-  return union === 0 ? 0 : intersection / union;
-}
+// jaccardSimilarity moved to text-similarity.mjs and is re-exported above.
 
 /**
  * Three-step suppression: narrow by pass+scope, fuzzy score, reopen check.

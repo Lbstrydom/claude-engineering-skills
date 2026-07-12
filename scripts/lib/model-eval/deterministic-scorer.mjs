@@ -7,6 +7,12 @@
  * @module scripts/lib/model-eval/deterministic-scorer
  */
 
+// text-similarity.mjs has zero dependencies (no fs, no env reads) — safe to
+// import here without breaking this file's own "no I/O" guarantee (unlike
+// importing jaccardSimilarity from ledger.mjs directly, which transitively
+// reads the shared cloud config env at module-load time).
+import { jaccardSimilarity } from '../text-similarity.mjs';
+
 /**
  * Adjudicator T/F extraction scoring — confusion matrix + derived metrics.
  * @param {Array<'true_positive'|'false_positive'>} candidatePredictions
@@ -53,9 +59,22 @@ export function scoreBinaryClassification(candidatePredictions, groundTruthLabel
 
 // Committed, versioned normalization+threshold algorithm — constants named
 // here, not implicit.
-export const FUZZY_CONFIG_V1 = Object.freeze({
-  version: 1,
-  levenshteinRatioThreshold: 0.6,
+//
+// V1 (Levenshtein ratio, threshold 0.6) is RETIRED — round-15 empirical-verify
+// finding: it compared two independently-worded English sentences (the
+// model's free-text description vs. the curator's deliberately generic
+// expectedFindingRubric) via character-edit-distance, which cannot recognize
+// a semantically-correct paraphrase. V2 uses jaccardSimilarity (token-set
+// overlap) instead, with a threshold recalibrated for that metric's value
+// range — empirically, real correct-vs-incorrect pairs cluster around
+// ~0.23-0.26 vs ~0.04-0.09, so 0.15 cleanly separates them with margin on
+// both sides (still a v0.1-style bootstrap calibration — recalibrate after
+// enough real promotion-tier runs accumulate, per auditor-thresholds.json's
+// own calibration discipline).
+export const FUZZY_CONFIG_V2 = Object.freeze({
+  version: 2,
+  similarityMetric: 'jaccard',
+  similarityThreshold: 0.15,
 });
 
 function normalize(s) {
@@ -66,34 +85,19 @@ function basename(filePath) {
   return String(filePath || '').split(/[\\/]/).pop();
 }
 
-function levenshtein(a, b) {
-  const m = a.length, n = b.length;
-  const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
-  for (let j = 0; j <= n; j++) dp[0][j] = j;
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1]
-        ? dp[i - 1][j - 1]
-        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n];
-}
-
-function levenshteinRatio(a, b) {
-  const maxLen = Math.max(a.length, b.length);
-  if (maxLen === 0) return 1;
-  return 1 - levenshtein(a, b) / maxLen;
-}
-
+// Bounding candidate/expected string length remains worthwhile even though
+// jaccardSimilarity's tokenize+set-overlap cost is O(n), not the old
+// O(len×len) Levenshtein DP matrix — an unbounded model-output description
+// is still an unnecessary cost/DoS surface at this boundary.
+//
 // Round-13 audit M2/M7 fix — round-11's M3 fix bounded the CANDIDATE side's
 // description length at the extraction schema (structured-extractor.mjs),
 // but the EXPECTED side (corpus rubric text, file lists) has no equivalent
 // cap anywhere yet (its schema is Cluster B's known-defect-corpus.mjs, not
 // built), and MAX_SCORING_ITEMS (round-12 M8) bounds item COUNT, not
 // per-item string length. Bound at the algorithm boundary itself so the
-// Levenshtein cost is capped regardless of which side (or future caller)
-// an oversized string comes from.
+// cost is capped regardless of which side (or future caller) an oversized
+// string comes from.
 const MAX_MATCH_STRING_LEN = 2000;
 
 function matchScore(candidate, expected, matchMode, fuzzyConfig) {
@@ -112,16 +116,18 @@ function matchScore(candidate, expected, matchMode, fuzzyConfig) {
   // preflight), never a truncated-and-compared one.
   if (normCandidate.length > MAX_MATCH_STRING_LEN || normExpected.length > MAX_MATCH_STRING_LEN) return null;
   // Round-9 audit H6 fix — normalize() reduces a missing/whitespace-only
-  // description to '', and levenshteinRatio('','')===1 (also true for exact
-  // mode's string equality), so an empty candidate capture against an empty
-  // expected rubric scored a "perfect" match — the exact "empty capture
-  // reads clean" anti-pattern this repo's doctrine repeatedly guards
-  // against. A vacuous comparison is a NON-match, not a perfect one.
+  // description to '', and an empty-vs-empty comparison scores as "perfect"
+  // under both exact (string equality) and fuzzy (jaccardSimilarity('','')
+  // would otherwise need a special case) matching, so an empty candidate
+  // capture against an empty expected rubric scored a "perfect" match — the
+  // exact "empty capture reads clean" anti-pattern this repo's doctrine
+  // repeatedly guards against. A vacuous comparison is a NON-match, not a
+  // perfect one.
   if (normCandidate.length === 0 || normExpected.length === 0) return null;
   const descScore = matchMode === 'exact'
     ? (normCandidate === normExpected ? 1 : 0)
-    : levenshteinRatio(normCandidate, normExpected);
-  const threshold = matchMode === 'exact' ? 1 : fuzzyConfig.levenshteinRatioThreshold;
+    : jaccardSimilarity(normCandidate, normExpected);
+  const threshold = matchMode === 'exact' ? 1 : fuzzyConfig.similarityThreshold;
   return descScore >= threshold ? descScore : null;
 }
 
@@ -136,12 +142,12 @@ function matchScore(candidate, expected, matchMode, fuzzyConfig) {
  * @param {Array<{files: string[], expectedFindingRubric: string}>} expectedRubrics
  * @param {{matchMode?: 'exact'|'fuzzy', fuzzyConfig?: object}} [opts]
  */
-export function scoreDefectLocalization(candidateOutputs, expectedRubrics, { matchMode = 'fuzzy', fuzzyConfig = FUZZY_CONFIG_V1 } = {}) {
+export function scoreDefectLocalization(candidateOutputs, expectedRubrics, { matchMode = 'fuzzy', fuzzyConfig = FUZZY_CONFIG_V2 } = {}) {
   // Round-9 audit M2 fix — matchMode/fuzzyConfig were trusted without
   // validation; matchScore()'s own check is `matchMode === 'exact' ? ... :
   // fuzzy`, so ANY unrecognized value (a typo like 'eaxct') silently fell
   // through to fuzzy — weakening an intended exact-match gate instead of
-  // failing loud. levenshteinRatioThreshold is likewise a bare number with
+  // failing loud. similarityThreshold is likewise a bare number with
   // no bounds check.
   if (matchMode !== 'exact' && matchMode !== 'fuzzy') {
     throw new Error(`scoreDefectLocalization: matchMode must be "exact" or "fuzzy", got "${matchMode}"`);
@@ -152,16 +158,16 @@ export function scoreDefectLocalization(candidateOutputs, expectedRubrics, { mat
   // no fuzzy settings, or an explicitly-empty fuzzyConfig, even though
   // nothing would have used it.
   if (matchMode === 'fuzzy') {
-    const threshold = fuzzyConfig?.levenshteinRatioThreshold;
+    const threshold = fuzzyConfig?.similarityThreshold;
     if (typeof threshold !== 'number' || !Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-      throw new Error(`scoreDefectLocalization: fuzzyConfig.levenshteinRatioThreshold must be a finite number in [0,1], got ${threshold}`);
+      throw new Error(`scoreDefectLocalization: fuzzyConfig.similarityThreshold must be a finite number in [0,1], got ${threshold}`);
     }
   }
   // Round-12 audit M8 fix — the round-11 M3 fix bounded per-STRING length at
   // the extraction schema (structured-extractor.mjs), but this exported
   // scorer is a reusable boundary in its own right and still accepted
   // unbounded ARRAY lengths; the O(candidates×rubrics) outer loop compounds
-  // with each pairing's Levenshtein cost. Cap at the algorithm's own
+  // with each pairing's matching cost. Cap at the algorithm's own
   // boundary too, not just the one source path that happens to call it today.
   const MAX_SCORING_ITEMS = 500;
   if (candidateOutputs.length > MAX_SCORING_ITEMS || expectedRubrics.length > MAX_SCORING_ITEMS) {
@@ -170,7 +176,7 @@ export function scoreDefectLocalization(candidateOutputs, expectedRubrics, { mat
   // Round-14 audit H5 fix — bounding EACH dimension independently still
   // allows the worst case: 500×500 = 250,000 pairs, and every pair that
   // shares a file (matchScore's fast pre-filter) runs a bounded-but-still-
-  // real Levenshtein. A pathological corpus where every entry shares one
+  // real matching cost. A pathological corpus where every entry shares one
   // file (all fileMatch checks pass) hits the full pair count. Bound the
   // TOTAL pair count directly, tighter than the product of two generous
   // per-dimension ceilings.

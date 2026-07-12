@@ -768,6 +768,20 @@ pre-registered stopping rule.
 - Thresholds are versioned, conservative v0.1 bootstrap values
   (`scripts/lib/model-eval/config/{auditor,adjudicator}-thresholds.json`) —
   not yet empirically calibrated; a recalibration is a `version: 2` bump.
+- **Screen-tier oracle matching has a real ceiling — a `verdict:'inconclusive'`
+  is not necessarily a model-quality signal (2026-07-12 first dogfood run).**
+  `known-defects.json` entries are drawn from real, organic multi-file/multi-
+  hunk commits; oracle-mode `scoreDefectLocalization` can only credit a match
+  against the ONE specific curated defect per entry, but a careful model
+  review of a real commit often finds OTHER genuine, describable issues in the
+  same diff instead (confirmed directly — both GLM and GPT-5.6 found real,
+  valid bugs in KD-005/015/017's diffs, just not the specific curated one).
+  Both models scoring `recall:0` on the same 4-case run reflects this
+  structural gap, not equal-and-bad model quality. A trustworthy comparative
+  verdict needs either more surgical single-issue KD entries or a scoring
+  redesign that credits "a real finding in the right file/region" — not yet
+  built. Don't over-read a low screen-tier recall without checking the raw
+  per-case extraction output first.
 
 → Full design, prior-art trace, and the two-round mid-implementation
 redesign (Phase 2 forked rather than extracted from the live solo-control

@@ -451,7 +451,35 @@ describe('deterministic-scorer.mjs', () => {
     const expected = [{ files: ['src/a.js'], expectedFindingRubric: 'x' }];
     const candidates = [{ file: 'src/a.js', description: 'x' }];
     assert.throws(() => scoreDefectLocalization(candidates, expected, { matchMode: 'eaxct' }), /matchMode must be/);
-    assert.throws(() => scoreDefectLocalization(candidates, expected, { fuzzyConfig: { levenshteinRatioThreshold: 1.5 } }), /levenshteinRatioThreshold/);
+    assert.throws(() => scoreDefectLocalization(candidates, expected, { fuzzyConfig: { similarityThreshold: 1.5 } }), /similarityThreshold/);
+  });
+
+  test('round-15 empirical-verify regression: a semantically-correct finding, worded DIFFERENTLY from the curator\'s expectedFindingRubric, now matches (the exact real-world failure that produced 0/4 recall on the harness\'s first live run)', () => {
+    const expected = [{
+      files: ['scripts/openai-audit.mjs'],
+      expectedFindingRubric: 'flags a block-scoped const/let binding referenced outside its enclosing block by a later call site in the same function (undefined-binding/ReferenceError crash risk that a happy-path test run would not exercise)',
+    }];
+    // A real model would never reproduce the rubric's exact wording — it
+    // describes the concrete code it saw, in its own words.
+    const candidates = [{
+      file: 'scripts/openai-audit.mjs',
+      description: 'subjectFiles is declared as a const inside the A1 guard block, but the model-A/B shadow code later in the same function references subjectFiles outside that block, which throws a ReferenceError since the binding is not in scope there',
+    }];
+    const r = scoreDefectLocalization(candidates, expected);
+    assert.equal(r.correct, 1);
+  });
+
+  test('round-15 regression: a genuinely WRONG finding (different file content, same file path) still does not match — the fix must not make matching too lenient', () => {
+    const expected = [{
+      files: ['scripts/openai-audit.mjs'],
+      expectedFindingRubric: 'flags a block-scoped const/let binding referenced outside its enclosing block by a later call site in the same function (undefined-binding/ReferenceError crash risk that a happy-path test run would not exercise)',
+    }];
+    const candidates = [{
+      file: 'scripts/openai-audit.mjs',
+      description: 'The A1 guard counts all effective backend/frontend files regardless of which passes are enabled via --passes, which can allow a hollow audit when a requested pass resolves to zero implementation files.',
+    }];
+    const r = scoreDefectLocalization(candidates, expected);
+    assert.equal(r.correct, 0);
   });
 
   test('an oversized candidateOutputs/expectedRubrics array is rejected at the algorithm boundary, not just the extraction-schema string length (round-12 M8 regression guard)', () => {

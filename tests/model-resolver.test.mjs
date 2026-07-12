@@ -115,6 +115,30 @@ describe('parseOpenAIModel', () => {
     assert.equal(p.family, 'o');
     assert.equal(p.major, 1);
   });
+
+  it('parses GPT-5.6\'s three-tier sol/terra/luna naming (regression — the prior regex returned null for all three)', () => {
+    const sol = parseOpenAIModel('gpt-5.6-sol');
+    assert.equal(sol.major, 5);
+    assert.equal(sol.minor, 6);
+    assert.equal(sol.variant, 'sol');
+    assert.equal(sol.isPremium, true);
+    assert.equal(sol.isLite, false);
+
+    const terra = parseOpenAIModel('gpt-5.6-terra');
+    assert.equal(terra.variant, 'terra');
+    assert.equal(terra.isPremium, false);
+    assert.equal(terra.isLite, false);
+
+    const luna = parseOpenAIModel('gpt-5.6-luna');
+    assert.equal(luna.variant, 'luna');
+    assert.equal(luna.isLite, true);
+    assert.equal(luna.isPremium, false);
+  });
+
+  it('flags gpt-*-pro as isPremium (the pre-existing premium-SKU shape)', () => {
+    const p = parseOpenAIModel('gpt-5.5-pro');
+    assert.equal(p.isPremium, true);
+  });
 });
 
 // ── Tier pickers ────────────────────────────────────────────────────────────
@@ -165,6 +189,26 @@ describe('pickNewestOpenAI', () => {
   it('selects mini when variant=mini', () => {
     const pool = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-4.1-mini'];
     assert.equal(pickNewestOpenAI(pool, 'mini'), 'gpt-5.4-mini');
+  });
+
+  it('prefers the plain/balanced SKU (terra) over the premium SKU (sol) at the same version — the standard sentinel is a reasoning-effort axis, not a model-SKU axis', () => {
+    const pool = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'];
+    assert.equal(pickNewestOpenAI(pool), 'gpt-5.6-terra');
+  });
+
+  it('still prefers a newer plain/balanced SKU over an older premium one (version beats SKU rank)', () => {
+    const pool = ['gpt-5.5-pro', 'gpt-5.6-terra'];
+    assert.equal(pickNewestOpenAI(pool), 'gpt-5.6-terra');
+  });
+
+  it('variant=mini matches ANY lite SKU by literal name, not just "mini" — regression for a renamed cheap tier (mini -> luna)', () => {
+    const pool = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'];
+    assert.equal(pickNewestOpenAI(pool, 'mini'), 'gpt-5.6-luna');
+  });
+
+  it('variant=mini still prefers the newer lite SKU across a generation boundary (luna over an older mini)', () => {
+    const pool = ['gpt-5.4-mini', 'gpt-5.6-luna'];
+    assert.equal(pickNewestOpenAI(pool, 'mini'), 'gpt-5.6-luna');
   });
 });
 
@@ -236,6 +280,12 @@ describe('resolveModel', () => {
     // Seed live catalog with a future model that doesn't exist in static pool
     setCatalog('anthropic', ['claude-opus-5-0', 'claude-sonnet-4-6']);
     assert.equal(resolveModel('latest-opus'), 'claude-opus-5-0');
+  });
+
+  it('end-to-end: latest-gpt resolves to the newest plain/balanced SKU (terra) and latest-gpt-mini to the newest lite SKU (luna) once GPT-5.6 is live — regression for the sol/terra/luna naming + mini-generalization fixes together', () => {
+    setCatalog('openai', ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4-mini']);
+    assert.equal(resolveModel('latest-gpt'), 'gpt-5.6-terra');
+    assert.equal(resolveModel('latest-gpt-mini'), 'gpt-5.6-luna');
   });
 
   it('merges live and static pools', () => {
