@@ -1,7 +1,7 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-12T14:44:57.941Z   commit: 7e3a383e5ede   refresh_id: 3a20efb8-86e2-446c-92bf-cfaa5a966190
+- Generated: 2026-07-13T04:06:45.941Z   commit: fe84b4e2c0b8   refresh_id: 15b22905-9087-45b8-b2c7-c59c69ab683f
 - Drift score: 52 / threshold 20   status: `RED`
 - Domains: 24   Symbols: 2752   Layering violations: 0
 
@@ -2100,7 +2100,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ## scripts
 
-> Executable core implementing the engineering-skills lifecycle: CLI entry points and focused libraries for planning, multi-LLM code audit (GPT + Gemini), cloud persistence (Supabase), Playwright-driven UX testing, and ship orchestration.
+> Orchestrates multi-LLM code and plan audit passes via focused library modules, integrating with Supabase for cross-skill learning and outcome tracking.
 
 ```mermaid
 flowchart TB
@@ -2250,17 +2250,17 @@ _Domain has 251 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`RunPreflightError`](../scripts/model-eval-adjudicator.mjs#L54) | class | `scripts/model-eval-adjudicator.mjs` | 54-56 | Error for preflight validation failures with a reason code. | _(internal)_ |
 | [`scoreAgainstGroundTruth`](../scripts/model-eval-adjudicator.mjs#L74) | function | `scripts/model-eval-adjudicator.mjs` | 74-84 | Scores candidate predictions against ground-truth labels via LLM extraction and binary classification metrics. | _(internal)_ |
 | [`toRawContext`](../scripts/model-eval-adjudicator.mjs#L69) | function | `scripts/model-eval-adjudicator.mjs` | 69-72 | Formats a defect row into a context object containing finding text and severity. | _(internal)_ |
-| [`argOption`](../scripts/model-eval-auditor.mjs#L108) | function | `scripts/model-eval-auditor.mjs` | 108-111 | Extracts a named CLI argument value with a default fallback. | _(internal)_ |
-| [`hasFlag`](../scripts/model-eval-auditor.mjs#L112) | function | `scripts/model-eval-auditor.mjs` | 112-112 | Checks if a flag is present in command-line arguments. | _(internal)_ |
-| [`main`](../scripts/model-eval-auditor.mjs#L286) | function | `scripts/model-eval-auditor.mjs` | 286-387 | CLI entry point for the auditor that orchestrates screening or promotion tier evaluation across stratified defect samples. | _(internal)_ |
-| [`mulberry32`](../scripts/model-eval-auditor.mjs#L56) | function | `scripts/model-eval-auditor.mjs` | 56-64 | Implements the Mulberry32 seeded pseudorandom number generator. | _(internal)_ |
-| [`parseJsonArg`](../scripts/model-eval-auditor.mjs#L114) | function | `scripts/model-eval-auditor.mjs` | 114-117 | Parses a JSON CLI argument with error reporting. | _(internal)_ |
-| [`RunPreflightError`](../scripts/model-eval-auditor.mjs#L46) | class | `scripts/model-eval-auditor.mjs` | 46-48 | Error for preflight validation failures with a reason code. | _(internal)_ |
-| [`runPromotionTier`](../scripts/model-eval-auditor.mjs#L156) | function | `scripts/model-eval-auditor.mjs` | 156-282 | Runs blinded comparative evaluation of candidate vs baseline auditors using a computed judge tier and metrics aggregation. | _(internal)_ |
-| [`runScreenTier`](../scripts/model-eval-auditor.mjs#L139) | function | `scripts/model-eval-auditor.mjs` | 139-152 | Runs oracle screening evaluation on a candidate, scoring against KD cases and emitting a verdict. | _(internal)_ |
-| [`scoreArmTierC`](../scripts/model-eval-auditor.mjs#L123) | function | `scripts/model-eval-auditor.mjs` | 123-135 | Evaluates a candidate auditor against defect-localization cases and computes precision/recall/F1. | _(internal)_ |
-| [`seedFromString`](../scripts/model-eval-auditor.mjs#L65) | function | `scripts/model-eval-auditor.mjs` | 65-67 | Generates a deterministic numeric seed from a string via SHA-256 hash. | _(internal)_ |
-| [`stratifiedSelectKDs`](../scripts/model-eval-auditor.mjs#L77) | function | `scripts/model-eval-auditor.mjs` | 77-104 | Selects k defects using stratified random sampling by severity with deterministic shuffling. | _(internal)_ |
+| [`argOption`](../scripts/model-eval-auditor.mjs#L110) | function | `scripts/model-eval-auditor.mjs` | 110-113 | Retrieves a named command-line option value or returns a default. | _(internal)_ |
+| [`hasFlag`](../scripts/model-eval-auditor.mjs#L114) | function | `scripts/model-eval-auditor.mjs` | 114-114 | Checks if a named boolean flag exists in command-line arguments. | _(internal)_ |
+| [`main`](../scripts/model-eval-auditor.mjs#L288) | function | `scripts/model-eval-auditor.mjs` | 288-404 | CLI entry point parsing arguments, loading corpus/thresholds, refreshing model catalog, and dispatching screen or promotion tier. | _(internal)_ |
+| [`mulberry32`](../scripts/model-eval-auditor.mjs#L58) | function | `scripts/model-eval-auditor.mjs` | 58-66 | Seeded pseudorandom number generator returning floats in [0,1). | _(internal)_ |
+| [`parseJsonArg`](../scripts/model-eval-auditor.mjs#L116) | function | `scripts/model-eval-auditor.mjs` | 116-119 | Parses JSON from a command-line argument, throwing on syntax error. | _(internal)_ |
+| [`RunPreflightError`](../scripts/model-eval-auditor.mjs#L48) | class | `scripts/model-eval-auditor.mjs` | 48-50 | Custom error class for preflight validation failures with a reason code. | _(internal)_ |
+| [`runPromotionTier`](../scripts/model-eval-auditor.mjs#L158) | function | `scripts/model-eval-auditor.mjs` | 158-284 | Runs comparative Tier A/B/C evaluation with generation + blind judging, serialized to avoid process.chdir() races. | _(internal)_ |
+| [`runScreenTier`](../scripts/model-eval-auditor.mjs#L141) | function | `scripts/model-eval-auditor.mjs` | 141-154 | Runs oracle-mode evaluation and computes screen-tier verdict on candidate model. | _(internal)_ |
+| [`scoreArmTierC`](../scripts/model-eval-auditor.mjs#L125) | function | `scripts/model-eval-auditor.mjs` | 125-137 | Scores a candidate model's defect-localization accuracy (recall, false-positive rate, F1) on test cases. | _(internal)_ |
+| [`seedFromString`](../scripts/model-eval-auditor.mjs#L67) | function | `scripts/model-eval-auditor.mjs` | 67-69 | Converts a string to a 32-bit numeric seed via SHA256 hash. | _(internal)_ |
+| [`stratifiedSelectKDs`](../scripts/model-eval-auditor.mjs#L79) | function | `scripts/model-eval-auditor.mjs` | 79-106 | Stratified random selection of defects by severity group with deterministic shuffling. | _(internal)_ |
 | [`checkReadiness`](../scripts/phase7-check.mjs#L13) | function | `scripts/phase7-check.mjs` | 13-63 | Measures progress toward Phase 7 readiness by counting unique audit runs from the outcomes log and comparing against a threshold. | _(internal)_ |
 | [`main`](../scripts/phase7-check.mjs#L65) | function | `scripts/phase7-check.mjs` | 65-68 | Checks if the current session has enough audit data to enable Phase 7 ML-based pass selection. | _(internal)_ |
 | [`formatHumanReport`](../scripts/postgres-parity/check-non-core-references.mjs#L166) | function | `scripts/postgres-parity/check-non-core-references.mjs` | 166-186 | Formats findings into a human-readable report with remediation guidance or an OK message. | _(internal)_ |
@@ -2880,9 +2880,9 @@ _Domain has 791 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`normalize`](../scripts/lib/model-eval/deterministic-scorer.mjs#L61) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 61-63 | Normalizes a string to lowercase with collapsed whitespace. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
 | [`scoreBinaryClassification`](../scripts/lib/model-eval/deterministic-scorer.mjs#L17) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 17-52 | Computes precision/recall/F1 metrics for binary ground-truth classification. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
 | [`scoreDefectLocalization`](../scripts/lib/model-eval/deterministic-scorer.mjs#L139) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 139-221 | Validates match mode and fuzzy config, applies string-length bounds, and scores candidates against rubric entries. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`EgressGateError`](../scripts/lib/model-eval/egress-path-scan.mjs#L22) | class | `scripts/lib/model-eval/egress-path-scan.mjs` | 22-24 | Custom error class for egress/boundary violations. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +2 more |
-| [`findSensitivePathMentions`](../scripts/lib/model-eval/egress-path-scan.mjs#L108) | function | `scripts/lib/model-eval/egress-path-scan.mjs` | 108-113 | Extracts and filters text for sensitive path mentions, returning only tokens that look like real paths and classify as sensitive. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +2 more |
-| [`looksLikeRealPath`](../scripts/lib/model-eval/egress-path-scan.mjs#L52) | function | `scripts/lib/model-eval/egress-path-scan.mjs` | 52-60 | Heuristically validates whether a token resembles a real file path (dotfiles, key-like names, path separators, extensions, escapes like .aws/.ssh). | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +2 more |
+| [`EgressGateError`](../scripts/lib/model-eval/egress-path-scan.mjs#L22) | class | `scripts/lib/model-eval/egress-path-scan.mjs` | 22-24 | Custom error class for egress/boundary violations. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
+| [`findSensitivePathMentions`](../scripts/lib/model-eval/egress-path-scan.mjs#L108) | function | `scripts/lib/model-eval/egress-path-scan.mjs` | 108-113 | Extracts and filters text for sensitive path mentions, returning only tokens that look like real paths and classify as sensitive. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
+| [`looksLikeRealPath`](../scripts/lib/model-eval/egress-path-scan.mjs#L52) | function | `scripts/lib/model-eval/egress-path-scan.mjs` | 52-60 | Heuristically validates whether a token resembles a real file path (dotfiles, key-like names, path separators, extensions, escapes like .aws/.ssh). | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
 | [`appendModelEvalShadowObservation`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L61) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 61-71 | Inserts or updates shadow observation for a model eval run in Supabase, idempotent by key. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
 | [`finalizeShadowEval`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L206) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 206-249 | Aggregates shadow observations and computes comparative metrics once sample-size threshold is met. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
 | [`getShadowObservationsForEvalRun`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L79) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 79-90 | Retrieves all shadow observations for a model eval run, ordered by creation time. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |

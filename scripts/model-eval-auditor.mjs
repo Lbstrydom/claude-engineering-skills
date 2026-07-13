@@ -30,6 +30,7 @@ import { extractStructured } from './lib/model-eval/structured-extractor.mjs';
 import { scoreDefectLocalization } from './lib/model-eval/deterministic-scorer.mjs';
 import { computeVerdict } from './lib/model-eval/verdict.mjs';
 import { loadCorpusCase, CorpusCaseUnavailable, CORPUS_LOADER_VERSION } from './lib/model-eval/known-defect-corpus.mjs';
+import { EgressGateError } from './lib/model-eval/egress-path-scan.mjs';
 import { runAuditGenerationArm } from './lib/model-eval/arm-generation.mjs';
 import { runBlindJudgeProtocol } from './lib/model-eval/blind-judge.mjs';
 import { assembleCostRows, buildUsageEvent } from './lib/model-eval/cost.mjs';
@@ -343,6 +344,14 @@ async function main() {
         cases.push({ visibleInput, hiddenGroundTruth, repoRoot: root });
       } catch (err) {
         if (err instanceof CorpusCaseUnavailable) unavailable.push({ kdId: kd.id, reason: err.reason, message: err.message });
+        // An egress-gate refusal (sensitive path mention / secret pattern in
+        // the KD's own diff) is a PERMANENT corpus-entry property, not a
+        // transient fault — classify it as a preflight unavailability (clean
+        // exit 2 naming the entry) instead of letting it escape as a fatal
+        // crash (exit 1, stack trace). The gate itself still refused; this
+        // only fixes how the refusal is reported. Dead entries should then
+        // be removed from known-defects.json so the sampler can't redraw them.
+        else if (err instanceof EgressGateError) unavailable.push({ kdId: kd.id, reason: 'egress_blocked', message: err.message });
         else throw err;
       }
     }

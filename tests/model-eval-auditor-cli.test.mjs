@@ -1,5 +1,8 @@
-import { test, describe } from 'node:test';
+import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { stratifiedSelectKDs } from '../scripts/model-eval-auditor.mjs';
@@ -66,5 +69,69 @@ describe('model-eval-auditor.mjs — CLI preflight', () => {
 
   test('an invalid --tier exits non-zero', () => {
     assert.throws(() => execFileSync('node', ['scripts/model-eval-auditor.mjs', '--candidate', '{"kind":"sentinel","value":"latest-gpt"}', '--tier', 'bogus'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
+  });
+
+  // 2026-07-13 field bug (found running a real cross-repo promotion-tier
+  // eval): a KD entry whose diff genuinely trips the egress gate (e.g. a
+  // committed .env fixture) escaped `main()`'s preflight loop as an
+  // EgressGateError — a different exception class than the CorpusCaseUnavailable
+  // the loop already handles — and surfaced as a bare stack-trace crash
+  // (exit 1) instead of a clean, named preflight report (exit 2). The gate
+  // itself was correct throughout; only the CLI's error classification was
+  // missing a branch.
+  describe('an egress-blocked KD entry is reported cleanly, not a stack-trace crash', () => {
+    let dir;
+    after(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
+
+    test('exits 2 (preflight) naming the KD id, not 1 (fatal)', () => {
+      dir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-egress-'));
+      const g = (args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      g(['init', '-q']);
+      g(['config', 'user.email', 'test@test.com']);
+      g(['config', 'user.name', 'test']);
+      fs.writeFileSync(path.join(dir, 'a.txt'), 'line1\n');
+      g(['add', '.']);
+      g(['commit', '-q', '-m', 'initial']);
+      fs.writeFileSync(path.join(dir, '.env'), 'SECRET=abc123\n');
+      g(['add', '.']);
+      g(['commit', '-q', '-m', 'add env']);
+      const sha = g(['rev-parse', 'HEAD']).trim();
+
+      const repoName = path.basename(dir);
+      const corpusPath = path.join(dir, 'known-defects.json');
+      fs.writeFileSync(corpusPath, JSON.stringify({
+        version: 1,
+        defects: [{
+          id: 'KD-TEST-EGRESS', repo: repoName, buggyCommit: sha, files: ['.env'],
+          defectDesc: 'x', expectedFindingRubric: 'y', severity: 'HIGH',
+        }],
+      }));
+      // minSampleSize:1 so the single fixture entry is the whole sample —
+      // isolates the egress-classification behavior under test from the
+      // separate 'corpus_too_small' preflight path.
+      const thresholdsPath = path.join(dir, 'thresholds.json');
+      const rawThresholds = JSON.parse(fs.readFileSync('scripts/lib/model-eval/config/auditor-thresholds.json', 'utf8'));
+      rawThresholds.screen.minSampleSize = 1;
+      fs.writeFileSync(thresholdsPath, JSON.stringify(rawThresholds));
+
+      let stderr = '', status = null;
+      try {
+        execFileSync('node', [
+          path.resolve('scripts/model-eval-auditor.mjs'),
+          '--candidate', '{"kind":"sentinel","value":"latest-gpt"}',
+          '--tier', 'screen',
+          '--corpus', corpusPath,
+          '--thresholds', thresholdsPath,
+          '--repo-roots', dir,
+        ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      } catch (err) {
+        stderr = err.stderr || '';
+        status = err.status;
+      }
+      assert.equal(status, 2, `expected preflight exit 2, got ${status}. stderr: ${stderr}`);
+      assert.match(stderr, /corpus_case_unavailable/);
+      assert.match(stderr, /KD-TEST-EGRESS/);
+      assert.doesNotMatch(stderr, /at loadCorpusCase/, 'must not leak a raw stack trace for a classified preflight condition');
+    });
   });
 });

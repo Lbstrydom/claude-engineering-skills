@@ -844,6 +844,25 @@ pre-registered stopping rule.
   valid corpus entries) — historical recall is the contract; don't re-add it.
   All guarded in `tests/egress-path-scan.test.mjs` + `tests/sensitive-paths.test.mjs`.
 
+- **First real promotion-tier run (2026-07-13): GLM-5.2 vs GPT-5.6, verdict
+  `keep` (stay on GPT-5.6).** Genuine Tier A (blind, cross-family judged, all
+  three lineages independent), 8 cases across 3 of the user's own repos, cost
+  $1.87 total. GLM's false-positive rate (80.9%) exceeded 1.15× GPT-5.6's
+  (67.6%) — the metric that actually drove the verdict, and a trustworthy one
+  (computed from the judge's per-finding call, not curated-defect matching).
+  **The recall column (12.5%/0%) is NOT a trustworthy quality signal** — a raw
+  spot-check of the one case whose output survived confirmed both models
+  produced ~49 real, substantive findings each but neither matched the ONE
+  curated defect closely enough for the exact-match scorer to credit it
+  (the oracle-mode ceiling above, now reproduced at promotion tier on an
+  independent case, not just screen tier). Corpus pruned 25→18 entries as a
+  prerequisite (7 permanently-unloadable: egress-blocked, oversized, or
+  unresolvable git history — verified mechanically, not curated away).
+  Full write-up incl. the raw-finding evidence and a governance note on the
+  cross-repo egress authorization boundary that held even under direct
+  repeated user request:
+  [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
+
 → Full design, prior-art trace, and the two-round mid-implementation
 redesign (Phase 2 forked rather than extracted from the live solo-control
 experiment): [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md).
