@@ -738,6 +738,44 @@ final review, to empirically test whether a second final gate is worth keeping.
 → Attribution schema (`source_model`, `bucket`, idempotent-replace persistence) +
 the full stopping-rule rationale: [`docs/completed/final-review-shadow-reviewer.md`](docs/completed/final-review-shadow-reviewer.md).
 
+## Tiered-Recall Audit Pipeline
+
+A discovery → Stage 0 (deterministic evidence triage) → Stage 1 (cheap-model
+triage) → Stage 2 (Gemini adjudicator + bounded clean-challenge) alternative
+to the always-on GPT 5-pass legacy audit. All 12 phases (Clusters A-F) are
+implemented and tested. `openai-audit.mjs`'s chooser
+(`tieredAuditConfig.pipelineEnabled`, env `AUDIT_TIERED_PIPELINE_ENABLED`)
+defaults **off** — production runs the legacy path today.
+
+- **Stage 1 triager model** resolves via `scripts/lib/audit/stage1-triager-
+  resolver.mjs`: an explicit `AUDIT_STAGE1_MODEL` operator pin wins if set;
+  else the validated `docs/experiments/audit-effectiveness/cheap-triager-
+  validation.json` manifest's `candidateModel` (GLM, passed 2026-07-12) is
+  used; else GPT-5.5 (the safe default), always with a loud, named fallback
+  reason — never a silent default.
+- **Close-out shadow validation** (`tieredAuditConfig.shadowEnabled`, env
+  `AUDIT_TIERED_SHADOW_ENABLED`, independent of `pipelineEnabled`): runs the
+  tiered pipeline as an observation-only comparison alongside the real
+  legacy run, concurrently (neither pipeline mutates `process.cwd()`, so no
+  chdir hazard forces serialization). **Deliberately NOT built as a 4th arm
+  on the model-A/B/C shadow infra** (`audit-shadow.mjs`/`arm-eval/
+  toggle.mjs`) despite the plan text suggesting reuse — that infra
+  substitutes a model into a per-pass GPT-5-pass loop (Thompson sampling,
+  spend caps), a different shape from `runTieredAuditPipeline`'s
+  self-contained whole-run function; forcing the fit would mean either new
+  code in an already-complex module for a one-time comparison, or dead
+  code once Phase 14 resolves. Logs to a local, gitignored
+  `.audit/tiered-shadow-log.jsonl` (Category A — bounded, temporary
+  decision-support data, no new Supabase schema). Summarize with
+  `npm run audit:tiered-shadow-report` before Phase 14's flip decision.
+- **Not yet started**: the actual shadow-validation window (10-15 real
+  commits) and Phase 14 (the production-flip decision gate) itself.
+
+→ Full plan, phase-by-phase spec, and audit trail (including the Cluster F
+status-narrative gap found and corrected 2026-07-13 — the doc's own
+audit trail had stopped short of recording Phase 12's completion):
+[`docs/completed/tiered-recall-audit-pipeline.md`](docs/completed/tiered-recall-audit-pipeline.md).
+
 ## Model Swap-In Evaluation Harness
 
 A standing, repeatable test suite (`scripts/lib/model-eval/`) for evaluating a

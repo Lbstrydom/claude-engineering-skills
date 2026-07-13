@@ -90,6 +90,7 @@ import {
   runLegacyProductionAudit, buildAuditRunContext,
 } from './lib/audit/legacy-production-audit.mjs';
 import { runTieredAuditPipeline } from './lib/audit/tiered-pipeline.mjs';
+import { runTieredShadowComparison } from './lib/audit/tiered-shadow-compare.mjs';
 
 /**
  * Print a one-line cost-estimate preflight to stderr so users see what
@@ -414,14 +415,34 @@ function printAuditResult(mergedResult, { outFile, jsonMode }) {
  * own `MODEL` global via the `{model: MODEL, ...opts}` spread order in
  * `buildAuditRunContext`) — so exporting it for a second, legitimate
  * production caller changes no behavior for the CLI's own `main()` path.
+ *
+ * **Close-out shadow validation** (`tieredAuditConfig.shadowEnabled`,
+ * independent of `pipelineEnabled`): when the real (legacy) path is what's
+ * gating, ALSO run the tiered pipeline as an observation-only comparison —
+ * concurrently, not sequentially after (neither pipeline mutates
+ * `process.cwd()`, so there's no chdir hazard forcing serialization; see
+ * `tiered-shadow-compare.mjs`'s header for the verified-safe reasoning).
+ * The shadow can never affect `mergedResult`; a shadow failure only ever
+ * reaches the log, never this function's return value or exit code.
  */
 export async function runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext = '', opts = {}) {
   const ctx = await buildAuditRunContext({
     openai, planContent, projectContext, historyContext, outFile, model: MODEL, ...opts,
   });
-  const mergedResult = tieredAuditConfig.pipelineEnabled
-    ? await runTieredAuditPipeline(ctx)
-    : await runLegacyProductionAudit(ctx);
+
+  if (tieredAuditConfig.pipelineEnabled) {
+    const mergedResult = await runTieredAuditPipeline(ctx);
+    printAuditResult(mergedResult, { outFile, jsonMode });
+    return mergedResult;
+  }
+
+  const legacyResultPromise = runLegacyProductionAudit(ctx);
+  const shadowTask = tieredAuditConfig.shadowEnabled
+    ? runTieredShadowComparison({ ctx, legacyResultPromise, runTieredAuditPipeline }).catch(() => {})
+    : null;
+
+  const mergedResult = await legacyResultPromise;
+  if (shadowTask) await shadowTask;
 
   printAuditResult(mergedResult, { outFile, jsonMode });
 

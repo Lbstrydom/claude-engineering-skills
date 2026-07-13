@@ -85,6 +85,14 @@
       "description": "Pre-flight check that Step 7 (Gemini final review) prerequisites are met.",
       "category": "diagnostic"
     },
+    "audit:tiered-shadow-report": {
+      "description": "Summarize the tiered-recall pipeline's shadow-validation log (Close-out) — cost/latency deltas, finding overlap, ahead of the Phase 14 production-flip decision.",
+      "category": "diagnostic"
+    },
+    "audit:tiered-shadow-report:json": {
+      "description": "Tiered-pipeline shadow-validation summary, JSON output (for CI).",
+      "category": "diagnostic"
+    },
     "cache:check": {
       "description": "Audit-loop cache hit-rate diagnostic.",
       "category": "diagnostic"

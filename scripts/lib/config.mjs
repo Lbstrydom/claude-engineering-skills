@@ -448,6 +448,12 @@ export const tieredAuditConfig = Object.freeze({
   // false: `runMultiPassCodeAudit` routes to the unchanged
   // `runLegacyProductionAudit` path until an operator explicitly opts in.
   pipelineEnabled: process.env.AUDIT_TIERED_PIPELINE_ENABLED === 'true',
+  // Close-out shadow validation (tiered-shadow-compare.mjs) — runs the
+  // tiered pipeline as an observation-only comparison alongside the real
+  // legacy run. Independent of `pipelineEnabled` (can shadow-validate WHILE
+  // still gating on legacy) and OFF by default. A temporary mechanism for
+  // the plan's "10-15 real commits" validation window, not a permanent flag.
+  shadowEnabled: process.env.AUDIT_TIERED_SHADOW_ENABLED === 'true',
   // Phase 9's FinalAdjudicationBudget.perCallTimeoutMs — actively enforced by
   // Phase 12's subprocess adapter via `execFile`'s own `timeout` option (sends
   // SIGTERM on expiry). Clamped strictly positive (a 0/negative timeout would

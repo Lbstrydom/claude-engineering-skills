@@ -76,6 +76,11 @@ scripts/lib/consumer-repos.local.json
 # the persisted model_eval_runs row is the sole canonical result.
 .audit/tmp/model-eval/
 
+# tiered-recall pipeline shadow-validation log (Close-out) — Category A,
+# non-deterministic runtime output from real production audit runs; a
+# temporary, bounded artifact for the Phase-14 decision, not a permanent record.
+.audit/tiered-shadow-log.jsonl
+
 # Human adjudication worksheets — regenerated on every queue listing
 # (Category-A volatile state; discoverable next to the session archives)
 docs/arm-eval/worksheets/

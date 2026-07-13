@@ -27,6 +27,8 @@
     "audit:refine": "node scripts/refine-prompts.mjs",
     "audit:bandit": "node scripts/bandit.mjs stats",
     "audit:phase7": "node scripts/phase7-check.mjs",
+    "audit:tiered-shadow-report": "node scripts/tiered-shadow-report.mjs",
+    "audit:tiered-shadow-report:json": "node scripts/tiered-shadow-report.mjs --json",
     "cache:check": "node scripts/cache-hitrate-check.mjs",
     "cache:check:json": "node scripts/cache-hitrate-check.mjs --json",
     "audit:check-deps": "node scripts/check-deps.mjs",

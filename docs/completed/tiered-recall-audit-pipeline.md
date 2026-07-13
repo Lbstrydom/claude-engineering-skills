@@ -665,7 +665,59 @@ partially addressed (Phase 2/8), verified as intentional/documented
 design (not bugs), or explicitly deferred as genuinely open-ended,
 bounded-by-design scope (see that plan's own Risk Register).
 
-- **Status (Phases 10-12)**: Cluster E implemented, fix-gate manually
+- **Status (Cluster E, Phases 10-11)**: implemented, fix-gate manually
   cleared per the structural non-convergence rationale above, its
-  pre-existing debt addressed via the dedicated hardening plan. Ready to
-  proceed to Cluster F (Phase 12).
+  pre-existing debt addressed via the dedicated hardening plan.
+
+#### Cluster F (Phase 12) — status correction (2026-07-13)
+
+This document's own narrative stopped at "ready to proceed to Cluster F"
+and was never updated after Cluster F actually landed — a documentation
+gap, not an implementation gap. Tracing the code directly (per this
+project's standing "docs/plans statuses go stale — verify against the
+code" rule) confirms Phase 12 is genuinely implemented, not merely
+planned:
+
+- `scripts/gemini-review.mjs` has `--role adjudicator-only` fully wired
+  (usage string, closed-value-set validation, the `runAdjudicatorOnlyReview`
+  subprocess-adapter wrapper) — 11 direct references in the file.
+- Covered by 22 passing tests across `tests/final-adjudication-subprocess-
+  adapter.test.mjs` and `tests/run-final-review-harness.test.mjs`.
+- Its **plan-level** review already happened as part of the SAME GPT/Gemini
+  rounds documented above, not a separate pass: Gemini round 4's **G3**
+  finding above is explicitly about Phase 12 (`perCallTimeoutMs` passed to
+  the subprocess invocation without active enforcement — fixed with
+  `execFile`'s `timeout` option), which only makes sense if Phase 12's
+  design was already part of the reviewed union diff. The plan's own
+  Execution Clustering section required a "Final gate (Clusters E-F):
+  mandatory consolidated Gemini review over the union diff of Clusters E+F"
+  — the rounds above satisfy that; there is no separate Cluster-F-only
+  gate to point to, and none was needed given the union-diff protocol.
+- What this document's implementation narrative never explicitly recorded
+  (an honest gap, not smoothed over): whether Cluster F's *code* went
+  through its own dedicated `/audit-code` pass the way Cluster E's
+  extraction did, or was implemented and verified as part of the same
+  delegated-agent pass alongside Cluster E without a separately-narrated
+  fix-gate story. The test coverage and live wiring are the evidence that
+  actually matters going forward; this paragraph exists so a future reader
+  doesn't have to re-discover the same gap from scratch.
+
+- **Status (Phases 10-12)**: all three implemented, tested, and reachable
+  from `openai-audit.mjs`'s chooser (`runTieredAuditPipeline` /
+  `runLegacyProductionAudit`). The chooser defaults `pipelineEnabled: false`
+  (`AUDIT_TIERED_PIPELINE_ENABLED` unset) — production still runs the
+  legacy path until an operator opts in, per the plan's own
+  additive/env-gated design. **Also wired 2026-07-13**: Stage 1's triager
+  model now reads Cluster C's validation manifest via
+  `stage1-triager-resolver.mjs` (falls back to GPT-5.5 when the manifest is
+  missing/failed, or when an operator pins `AUDIT_STAGE1_MODEL` explicitly)
+  — previously the manifest existed and had passed but nothing read it, so
+  Stage 1 silently ran GPT-5.5 unconditionally regardless of Phase 5's
+  result. **Remaining before production**: the Close-out shadow-validation
+  step (run the tiered pipeline as an observation-only comparison against
+  the legacy path on real commits) has not started — no wiring exists for
+  it yet, and it's a genuinely new mechanism to design (the plan's "reuse
+  the existing model-A/B/C shadow toggle" premise doesn't fit the tiered
+  pipeline's whole-run shape; see status.md for the open design question).
+  Phase 14 (the production-flip decision gate) is contingent on that
+  shadow validation completing.

@@ -1,13 +1,13 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-13T04:06:45.941Z   commit: fe84b4e2c0b8   refresh_id: 15b22905-9087-45b8-b2c7-c59c69ab683f
-- Drift score: 52 / threshold 20   status: `RED`
-- Domains: 24   Symbols: 2752   Layering violations: 0
+- Generated: 2026-07-13T04:48:32.644Z   commit: 67f339e24653   refresh_id: 1763ffa8-d8e2-4ecd-baed-1ec172bc1e8c
+- Drift score: 53 / threshold 20   status: `RED`
+- Domains: 24   Symbols: 2770   Layering violations: 0
 
 ## Contents
 - [arch-memory](#arch-memory) — 52 symbols
-- [audit-orchestration](#audit-orchestration) — 188 symbols
+- [audit-orchestration](#audit-orchestration) — 198 symbols
 - [brainstorm](#brainstorm) — 66 symbols
 - [claude-hooks](#claude-hooks) — 14 symbols
 - [claudemd-management](#claudemd-management) — 30 symbols
@@ -23,11 +23,11 @@
 - [persona-test](#persona-test) — 71 symbols
 - [plan](#plan) — 8 symbols
 - [root-scripts](#root-scripts) — 13 symbols
-- [scripts](#scripts) — 251 symbols
+- [scripts](#scripts) — 257 symbols
 - [shared-lib](#shared-lib) — 791 symbols
 - [stores](#stores) — 181 symbols
 - [tech-debt](#tech-debt) — 71 symbols
-- [tests](#tests) — 338 symbols
+- [tests](#tests) — 340 symbols
 - [ux-lock](#ux-lock) — 35 symbols
 - [visual-audit](#visual-audit) — 85 symbols
 
@@ -145,7 +145,7 @@ _Domain has 52 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## audit-orchestration
 
-> Orchestrates iterative code audits by spawning GPT passes and Gemini final review, detecting convergence via severity thresholds (no HIGH, ≤2 MEDIUM), and managing subprocess lifecycle, session IDs, and temporary files across rounds.
+> Orchestrates multi-round code audits by spawning GPT and Gemini review processes, parsing results, tracking convergence across rounds, and managing session state and temp files for the audit pipeline.
 
 ```mermaid
 flowchart TB
@@ -191,7 +191,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 188 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 198 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -374,17 +374,27 @@ _Domain has 188 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`resolveEvidenceAnchor`](../scripts/lib/audit/stage1-triage.mjs#L91) | function | `scripts/lib/audit/stage1-triage.mjs` | 91-95 | Extracts the relevant evidence anchor (citation or trigger) from an audit finding's evidence object. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`runStage1CheapTriage`](../scripts/lib/audit/stage1-triage.mjs#L340) | function | `scripts/lib/audit/stage1-triage.mjs` | 340-403 | Runs GPT-based cheap triage on audit candidates to filter out deterministic false positives before escalation. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`writeMechanicalDismissalToLedger`](../scripts/lib/audit/stage1-triage.mjs#L284) | function | `scripts/lib/audit/stage1-triage.mjs` | 284-307 | Records a mechanically-dismissed finding to the audit ledger for deduplication and R2+ suppression. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`defaultTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L88) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 88-106 | Makes a GPT call to Stage 1 triager with evidence context to attempt deterministic dismissal of a finding. | `scripts/openai-audit.mjs` |
-| [`runTieredAuditPipeline`](../scripts/lib/audit/tiered-pipeline.mjs#L121) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 121-388 | Orchestrates the three-stage tiered pipeline (discovery portfolio, Stage 1 triage, Stage 2 adjudication) for code audit. | `scripts/openai-audit.mjs` |
-| [`unwiredGeminiCall`](../scripts/lib/audit/tiered-pipeline.mjs#L109) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 109-115 | Throws an error indicating Gemini adjudication is not yet wired and Stage 2 cannot run. | `scripts/openai-audit.mjs` |
+| [`loadValidationManifest`](../scripts/lib/audit/stage1-triager-resolver.mjs#L75) | function | `scripts/lib/audit/stage1-triager-resolver.mjs` | 75-93 | Reads and validates the Stage 1 triager validation manifest JSON, returning success/failure with reason. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`resolveStage1TriagerModel`](../scripts/lib/audit/stage1-triager-resolver.mjs#L101) | function | `scripts/lib/audit/stage1-triager-resolver.mjs` | 101-113 | Resolves which Stage 1 triager model to use: operator override, validated manifest candidate, or fallback. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`buildStage1TriagerPrompt`](../scripts/lib/audit/tiered-pipeline.mjs#L86) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 86-97 | Constructs the system prompt and user question for Stage 1 triager, packaging evidence (commission/omission/missing) into a structured message to evaluate dismissibility. | `scripts/openai-audit.mjs` |
+| [`defaultTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L111) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 111-124 | Invokes GPT as the Stage 1 triager using the built prompt, with low reasoning effort and no retries. | `scripts/openai-audit.mjs` |
+| [`runTieredAuditPipeline`](../scripts/lib/audit/tiered-pipeline.mjs#L163) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 163-442 | Orchestrates the multi-stage tiered audit pipeline (Discovery, Stage 0/1/2), routing findings through deterministic triage and a Gemini adjudication gate. | `scripts/openai-audit.mjs` |
+| [`unwiredGeminiCall`](../scripts/lib/audit/tiered-pipeline.mjs#L151) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 151-157 | Placeholder that throws an error indicating Stage 2 Gemini adjudication is not yet wired. | `scripts/openai-audit.mjs` |
+| [`validatedTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L138) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 138-148 | Invokes a validated OSS model as Stage 1 triager as an alternative to GPT. | `scripts/openai-audit.mjs` |
+| [`appendShadowLog`](../scripts/lib/audit/tiered-shadow-compare.mjs#L171) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 171-178 | Appends a JSON record to the shadow-comparison log file, creating parent directories as needed. | `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`buildShadowCtx`](../scripts/lib/audit/tiered-shadow-compare.mjs#L73) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 73-85 | Clones an audit context for shadow comparison, stripping ledger and debt-persistence flags. | `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`compareAuditRunResults`](../scripts/lib/audit/tiered-shadow-compare.mjs#L111) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 111-129 | Compares legacy vs tiered audit findings by semantic ID overlap, cost, latency, and status. | `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`parseTotalSeconds`](../scripts/lib/audit/tiered-shadow-compare.mjs#L94) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 94-98 | Parses a timing string like "123.45s" to a float. | `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`runShadowTieredPipeline`](../scripts/lib/audit/tiered-shadow-compare.mjs#L141) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 141-161 | Runs the tiered pipeline with timeout protection, clearing the timer to prevent event-loop hangs. | `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`runTieredShadowComparison`](../scripts/lib/audit/tiered-shadow-compare.mjs#L191) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 191-212 | Orchestrates parallel legacy audit + shadow tiered pipeline, logging comparison results when both succeed. | `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
 | [`buildUsageEvent`](../scripts/lib/audit/usage-event.mjs#L58) | function | `scripts/lib/audit/usage-event.mjs` | 58-94 | Constructs a validated UsageEvent from LLM call metadata, computing cost and normalizing token counts. | `scripts/lib/audit/cost-budget.mjs` |
-| [`applyExclusions`](../scripts/openai-audit.mjs#L167) | function | `scripts/openai-audit.mjs` | 167-176 | Filters files using glob patterns and logs the exclusion count. | `scripts/lib/model-eval/arm-generation.mjs` |
-| [`loadExcludePatterns`](../scripts/openai-audit.mjs#L148) | function | `scripts/openai-audit.mjs` | 148-159 | Loads file exclusion patterns from CLI flags and .auditignore file. | `scripts/lib/model-eval/arm-generation.mjs` |
-| [`main`](../scripts/openai-audit.mjs#L457) | function | `scripts/openai-audit.mjs` | 457-1051 | Entry point for GPT audit CLI; handles model resolution, diff analysis, and audit execution. | `scripts/lib/model-eval/arm-generation.mjs` |
-| [`printAuditResult`](../scripts/openai-audit.mjs#L342) | function | `scripts/openai-audit.mjs` | 342-397 | Formats and displays the audit result in text, markdown, or JSON output. | `scripts/lib/model-eval/arm-generation.mjs` |
-| [`printCostPreflight`](../scripts/openai-audit.mjs#L104) | function | `scripts/openai-audit.mjs` | 104-122 | Estimates and logs the cost of the audit before execution begins. | `scripts/lib/model-eval/arm-generation.mjs` |
-| [`resolveDiffBase`](../scripts/openai-audit.mjs#L450) | function | `scripts/openai-audit.mjs` | 450-453 | Determines the git ref to diff against (HEAD or HEAD~1 depending on working tree state). | `scripts/lib/model-eval/arm-generation.mjs` |
-| [`runMultiPassCodeAudit`](../scripts/openai-audit.mjs#L418) | function | `scripts/openai-audit.mjs` | 418-429 | Orchestrates the multi-pass audit pipeline and prints results. | `scripts/lib/model-eval/arm-generation.mjs` |
+| [`applyExclusions`](../scripts/openai-audit.mjs#L168) | function | `scripts/openai-audit.mjs` | 168-177 | Filters a file list using micromatch patterns, logging excluded counts. | `scripts/lib/model-eval/arm-generation.mjs` |
+| [`loadExcludePatterns`](../scripts/openai-audit.mjs#L149) | function | `scripts/openai-audit.mjs` | 149-160 | Reads audit exclusion patterns from CLI flags and `.auditignore` file. | `scripts/lib/model-eval/arm-generation.mjs` |
+| [`main`](../scripts/openai-audit.mjs#L478) | function | `scripts/openai-audit.mjs` | 478-1072 | CLI entry point that refreshes model catalog, checks audit-tool staleness, parses args, and orchestrates the audit. | `scripts/lib/model-eval/arm-generation.mjs` |
+| [`printAuditResult`](../scripts/openai-audit.mjs#L343) | function | `scripts/openai-audit.mjs` | 343-398 | Formats and outputs audit findings (HIGH/MEDIUM/LOW counts, verdict, timings) to file, JSON, or markdown. | `scripts/lib/model-eval/arm-generation.mjs` |
+| [`printCostPreflight`](../scripts/openai-audit.mjs#L105) | function | `scripts/openai-audit.mjs` | 105-123 | Calculates and logs estimated cost for an audit pass given model pricing, token counts, and reasoning overhead. | `scripts/lib/model-eval/arm-generation.mjs` |
+| [`resolveDiffBase`](../scripts/openai-audit.mjs#L471) | function | `scripts/openai-audit.mjs` | 471-474 | Determines the git base commit for diffing (explicit, HEAD if dirty, or HEAD~1). | `scripts/lib/model-eval/arm-generation.mjs` |
+| [`runMultiPassCodeAudit`](../scripts/openai-audit.mjs#L428) | function | `scripts/openai-audit.mjs` | 428-450 | Dispatches to either the tiered pipeline or legacy 5-pass audit, optionally running shadow comparison in parallel. | `scripts/lib/model-eval/arm-generation.mjs` |
 
 ---
 
@@ -1308,7 +1318,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 | [`extractDimensions`](../scripts/lib/findings-tracker.mjs#L82) | function | `scripts/lib/findings-tracker.mjs` | 82-90 | Extracts and normalizes category, principle, severity, repo, and file extension dimensions from a finding. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
 | [`FalsePositiveTracker`](../scripts/lib/findings-tracker.mjs#L105) | class | `scripts/lib/findings-tracker.mjs` | 105-226 | <no body> | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
 | [`recordWithDecay`](../scripts/lib/findings-tracker.mjs#L59) | function | `scripts/lib/findings-tracker.mjs` | 59-75 | Records a new outcome (accepted/dismissed) and updates exponential moving average with decay applied. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
-| [`semanticId`](../scripts/lib/findings.mjs#L27) | function | `scripts/lib/findings.mjs` | 27-40 | Generates a short semantic hash of a finding based on linter rule/file or generic content. | `scripts/cross-skill.mjs`, `scripts/evolve-prompts.mjs`, `scripts/gemini-review.mjs`, +13 more |
+| [`semanticId`](../scripts/lib/findings.mjs#L27) | function | `scripts/lib/findings.mjs` | 27-40 | Generates a short semantic hash of a finding based on linter rule/file or generic content. | `scripts/cross-skill.mjs`, `scripts/evolve-prompts.mjs`, `scripts/gemini-review.mjs`, +14 more |
 
 ---
 
@@ -2100,7 +2110,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ## scripts
 
-> Orchestrates multi-LLM code and plan audit passes via focused library modules, integrating with Supabase for cross-skill learning and outcome tracking.
+> Exposes audit-loop and skill tooling as CLI scripts: multi-pass code audit (GPT + Gemini), plan generation/verification, browser-driven UX testing (four semantic lenses), and deployment orchestration.
 
 ```mermaid
 flowchart TB
@@ -2147,7 +2157,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 251 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 257 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -2389,6 +2399,12 @@ _Domain has 251 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`main`](../scripts/sync-shared-audit-refs.mjs#L114) | function | `scripts/sync-shared-audit-refs.mjs` | 114-163 | Synchronizes canonical audit reference files to skill directories, tracking sync status and reporting drift or changes. | _(internal)_ |
 | [`loginAsTestUser`](../scripts/templates/e2e-helpers/auth.js#L16) | function | `scripts/templates/e2e-helpers/auth.js` | 16-28 | Injects authentication token and cellar ID into browser localStorage for test login. | _(internal)_ |
 | [`expectNoA11yViolations`](../scripts/templates/e2e-helpers/axe.js#L18) | function | `scripts/templates/e2e-helpers/axe.js` | 18-40 | Runs axe-core accessibility audit and throws if WCAG violations are found. | _(internal)_ |
+| [`argOption`](../scripts/tiered-shadow-report.mjs#L19) | function | `scripts/tiered-shadow-report.mjs` | 19-22 | Parses a CLI flag value from `process.argv` with a default fallback. | _(internal)_ |
+| [`main`](../scripts/tiered-shadow-report.mjs#L70) | function | `scripts/tiered-shadow-report.mjs` | 70-101 | CLI entry point that reads shadow logs and prints or JSON-outputs summary statistics. | _(internal)_ |
+| [`mean`](../scripts/tiered-shadow-report.mjs#L31) | function | `scripts/tiered-shadow-report.mjs` | 31-33 | Computes the arithmetic mean of a numeric array. | _(internal)_ |
+| [`median`](../scripts/tiered-shadow-report.mjs#L24) | function | `scripts/tiered-shadow-report.mjs` | 24-29 | Computes the median of a numeric array. | _(internal)_ |
+| [`readRecords`](../scripts/tiered-shadow-report.mjs#L35) | function | `scripts/tiered-shadow-report.mjs` | 35-41 | Reads and parses shadow-log JSONL, skipping malformed lines with warnings. | _(internal)_ |
+| [`summarize`](../scripts/tiered-shadow-report.mjs#L43) | function | `scripts/tiered-shadow-report.mjs` | 43-68 | Aggregates shadow-log records into summary statistics (run counts, cost/latency deltas, finding overlap rates). | _(internal)_ |
 | [`buildAliasMap`](../scripts/ux-lock-run.mjs#L150) | function | `scripts/ux-lock-run.mjs` | 150-158 | Builds a TypeScript path alias map from tsconfig and CLI arguments. | _(internal)_ |
 | [`cmdSpec`](../scripts/ux-lock-run.mjs#L162) | function | `scripts/ux-lock-run.mjs` | 162-307 | Handles the 'spec' subcommand to run Playwright tests and register regression specs. | _(internal)_ |
 | [`cmdVerify`](../scripts/ux-lock-run.mjs#L311) | function | `scripts/ux-lock-run.mjs` | 311-391 | Handles the 'verify' subcommand to run Playwright specs against a plan's acceptance criteria. | _(internal)_ |
@@ -2581,10 +2597,10 @@ _Domain has 791 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`extractImportBlock`](../scripts/lib/code-analysis.mjs#L46) | function | `scripts/lib/code-analysis.mjs` | 46-57 | Extracts imports from source code up to the first function boundary. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs`, `scripts/shared.mjs` |
 | [`measureContextChars`](../scripts/lib/code-analysis.mjs#L272) | function | `scripts/lib/code-analysis.mjs` | 272-282 | Sums up character counts across files capped by a per-file maximum. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs`, `scripts/shared.mjs` |
 | [`splitAtFunctionBoundaries`](../scripts/lib/code-analysis.mjs#L66) | function | `scripts/lib/code-analysis.mjs` | 66-84 | Splits source code into chunks at function boundaries with line numbers. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs`, `scripts/shared.mjs` |
-| [`buildAzureConfig`](../scripts/lib/config.mjs#L513) | function | `scripts/lib/config.mjs` | 513-582 | Constructs Azure AI Foundry configuration from environment variables or returns inert snapshot. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +45 more |
-| [`clampConfigNumber`](../scripts/lib/config.mjs#L76) | function | `scripts/lib/config.mjs` | 76-96 | Parses a numeric environment variable with min/max bounds and warns on invalid input. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +45 more |
-| [`normalizeLanguage`](../scripts/lib/config.mjs#L253) | function | `scripts/lib/config.mjs` | 253-266 | Converts a language name to canonical lowercase code (js, ts, py, go, etc.). | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +45 more |
-| [`validatedEnum`](../scripts/lib/config.mjs#L28) | function | `scripts/lib/config.mjs` | 28-35 | Validates and returns an enum environment variable with warning on invalid input. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +45 more |
+| [`buildAzureConfig`](../scripts/lib/config.mjs#L519) | function | `scripts/lib/config.mjs` | 519-588 | Constructs Azure OpenAI/Foundry configuration when active; returns a frozen inert snapshot otherwise. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +45 more |
+| [`clampConfigNumber`](../scripts/lib/config.mjs#L76) | function | `scripts/lib/config.mjs` | 76-96 | Parses a numeric environment variable with bounds checking, clamping out-of-range values and emitting warnings. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +45 more |
+| [`normalizeLanguage`](../scripts/lib/config.mjs#L253) | function | `scripts/lib/config.mjs` | 253-266 | Normalizes a language identifier (e.g., `javascript` → `js`, `python3` → `py`) to a canonical form. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +45 more |
+| [`validatedEnum`](../scripts/lib/config.mjs#L28) | function | `scripts/lib/config.mjs` | 28-35 | Parses an environment variable as one of a predefined set, warning and falling back to default if invalid. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +45 more |
 | [`consumerAliases`](../scripts/lib/consumer-repos.mjs#L66) | function | `scripts/lib/consumer-repos.mjs` | 66-68 | Returns the list of all consumer repository aliases. | `scripts/install-prepush-hook.mjs`, `scripts/lib/sync-inventory.mjs`, `scripts/sync-refresh.mjs`, +1 more |
 | [`loadLocalRepos`](../scripts/lib/consumer-repos.mjs#L37) | function | `scripts/lib/consumer-repos.mjs` | 37-54 | Reads and validates a local consumer-repos.json file, filtering entries by required fields and resolving paths. | `scripts/install-prepush-hook.mjs`, `scripts/lib/sync-inventory.mjs`, `scripts/sync-refresh.mjs`, +1 more |
 | [`resolveTargets`](../scripts/lib/consumer-repos.mjs#L77) | function | `scripts/lib/consumer-repos.mjs` | 77-80 | Filters consumer repositories by name or alias, returning all repos if no target is specified. | `scripts/install-prepush-hook.mjs`, `scripts/lib/sync-inventory.mjs`, `scripts/sync-refresh.mjs`, +1 more |
@@ -3622,7 +3638,7 @@ _Domain has 71 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## tests
 
-> Node.js test suites validating audit-loop modules (schemas, ledger, findings, bandit, sensitive-path egress), multi-model review orchestration (GPT/Gemini), architecture analysis (intent parsing, embeddings), and consumer-repo sync/relocation contracts; includes test infrastructure (fixture builders, subprocess runners, filesystem mocking).
+> Node.js test runner (144 files) providing fixture builders and subprocess harnesses for validation. Covers two tiers: deterministic seams (schemas, sensitive-path egress, VCS error codes, sync relocation) and LLM boundaries (provider egress gates, ledger atomicity, model-resolve fallbacks).
 
 ```mermaid
 flowchart TB
@@ -3678,7 +3694,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 338 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 340 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -3988,6 +4004,8 @@ _Domain has 338 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`mkdtemp`](../tests/stage1-triage-dto.test.mjs#L29) | function | `tests/stage1-triage-dto.test.mjs` | 29-31 | Creates and returns path to a temporary directory. | _(internal)_ |
 | [`CLOCK`](../tests/stage1-triage.test.mjs#L13) | function | `tests/stage1-triage.test.mjs` | 13-13 | Returns fixed ISO timestamp string for deterministic test results. | _(internal)_ |
 | [`mkEnvelope`](../tests/stage1-triage.test.mjs#L23) | function | `tests/stage1-triage.test.mjs` | 23-25 | Constructs minimal envelope with canonical finding and empty stage decisions. | _(internal)_ |
+| [`fakeFs`](../tests/stage1-triager-resolver.test.mjs#L17) | function | `tests/stage1-triager-resolver.test.mjs` | 17-19 | Test mock that returns a fake filesystem object with a configured content string. | _(internal)_ |
+| [`throwingFs`](../tests/stage1-triager-resolver.test.mjs#L20) | function | `tests/stage1-triager-resolver.test.mjs` | 20-22 | Test mock that returns a fake filesystem object that throws a specified error on read. | _(internal)_ |
 | [`tmpRoot`](../tests/store-friction.test.mjs#L65) | function | `tests/store-friction.test.mjs` | 65-65 | Creates a temporary directory root for friction tests. | _(internal)_ |
 | [`mkScript`](../tests/subprocess.test.mjs#L22) | function | `tests/subprocess.test.mjs` | 22-26 | Creates a temporary .mjs file and returns its path. | _(internal)_ |
 | [`computeImportGraphPopulated`](../tests/symbol-file-imports.test.mjs#L21) | function | `tests/symbol-file-imports.test.mjs` | 21-23 | Returns true if the import graph should be fully populated based on mode and prior state. | _(internal)_ |

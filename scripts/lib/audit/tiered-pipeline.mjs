@@ -34,11 +34,16 @@
  * actually invoked with no `geminiReviewCall` wired — `runFinalAdjudication`'s
  * existing catch-and-escalate logic (already implemented, tested in Cluster
  * D) routes that to `unresolved`/`cleanRegionFailures`, never a fabricated
- * verdict. Stage 1's triager DOES have a real, working default (GPT-5.5 via
- * the existing `callGPT` primitive) — this is the plan's own documented safe
- * default for when Cluster C's validation manifest doesn't exist yet
- * (Phase 7: "falls back to GPT-5.5 as the Stage 1 triager ... with a loud
- * warning").
+ * verdict.
+ *
+ * **Stage 1 triager model resolution** (wired 2026-07-13, once Cluster C's
+ * validation manifest existed and passed): `resolveStage1TriagerModel`
+ * (`stage1-triager-resolver.mjs`) picks the manifest's validated
+ * `candidateModel` (GLM) when `tieredAuditConfig.stage1Model` (an explicit
+ * `AUDIT_STAGE1_MODEL` operator pin) is unset — falling back to GPT-5.5 via
+ * the existing `callGPT` primitive whenever the manifest is missing,
+ * malformed, or `passed:false`. Always a loud, named fallback reason
+ * (stderr), never a silent default.
  *
  * Plan: docs/plans/tiered-recall-audit-pipeline.md Phase 11.
  *
@@ -59,27 +64,45 @@ import { computeCostReport } from './cost-budget.mjs';
 import { callGPT } from './llm-helpers.mjs';
 import { tieredAuditConfig } from '../config.mjs';
 import { resolveModel } from '../model-resolver.mjs';
+import { resolveStage1TriagerModel } from './stage1-triager-resolver.mjs';
 
 const Stage1TriagerResponseSchema = z.object({
   dismissalAttempted: z.boolean(),
   disproof: z.string().max(500).nullable(),
 });
 
-/**
- * Default (production) Stage 1 triager adapter — GPT-5.5 via the existing
- * `callGPT` primitive, the plan's own documented safe default (Phase 7) for
- * when Cluster C's `cheap-triager-validation.json` manifest doesn't exist /
- * is stale. Any parse/API failure THROWS (never fabricates a dismissal) —
- * `runStage1CheapTriage` treats a throw as `stage1_escalated`, per §1.5.
+/** Shared prompt construction for the Stage 1 triager — used by BOTH the
+ * GPT-5.5 default adapter and the validated-manifest (GLM) adapter, so a
+ * model swap changes only which primitive answers the same question, never
+ * the question itself.
  *
  * audit-orchestrator-hardening Phase 8: receives the minimized, redacted
- * `StageOneTriageInputSchema` DTO `runStage1CheapTriage` now builds — never
- * the raw envelope. `dto.anchorQuote`/`dto.causalChain` are already
- * evidence-normalized + redacted by `buildStageOneTriageInput`, so this
- * adapter only needs to compose the prompt, not re-derive evidence itself
- * (the file/line/side detail the pre-Phase-8 version quoted from the raw
- * anchor object is no longer available here by design — the DTO
- * deliberately narrows to a flat quote string).
+ * `StageOneTriageInputSchema` DTO `runStage1CheapTriage` builds — never the
+ * raw envelope. `dto.anchorQuote`/`dto.causalChain` are already evidence-
+ * normalized + redacted by `buildStageOneTriageInput`.
+ * @param {import('../schemas.mjs').StageOneTriageInput} dto
+ * @returns {{system: string, userPrompt: string}}
+ */
+function buildStage1TriagerPrompt(dto) {
+  let evidenceBlock = 'Evidence: none available (evidenceStatus=missing) — cannot be dismissed without a concrete disproof; escalate rather than guess.';
+  if (dto.evidenceStatus === 'commission' && dto.anchorQuote) {
+    evidenceBlock = `Evidence (commission, content-verified by Stage 0):\nCited text:\n${dto.anchorQuote}`;
+  } else if (dto.evidenceStatus === 'omission') {
+    evidenceBlock = `Evidence (omission):\nCausal chain: ${dto.causalChain ?? '(unavailable)'}\n${dto.anchorQuote ? `Trigger text:\n${dto.anchorQuote}` : ''}`;
+  }
+  return {
+    system: 'You are a cheap Stage-1 triager for a code-audit candidate finding. Decide whether you can DETERMINISTICALLY disprove the finding using ONLY the evidence provided below (e.g. the cited quote does not match the claimed defect, the causal chain trigger does not actually create the claimed obligation). If the evidence is absent or insufficient to check the claim, do NOT attempt a dismissal — a plausible-sounding but ungrounded dismissal is worse than no dismissal.',
+    userPrompt: `Finding: ${dto.category ?? ''} — ${dto.detail ?? ''}\nSection: ${dto.section ?? ''}\nSeverity: ${dto.severity ?? ''}\n\n${evidenceBlock}`,
+  };
+}
+
+/**
+ * Default (production) Stage 1 triager adapter — GPT-5.5 via the existing
+ * `callGPT` primitive, the plan's own documented safe default for when
+ * Cluster C's `cheap-triager-validation.json` manifest doesn't exist, is
+ * malformed, or failed. Any parse/API failure THROWS (never fabricates a
+ * dismissal) — `runStage1CheapTriage` treats a throw as `stage1_escalated`,
+ * per §1.5.
  *
  * @param {import('../schemas.mjs').StageOneTriageInput} dto
  * @param {{openai: object}} providers
@@ -87,20 +110,39 @@ const Stage1TriagerResponseSchema = z.object({
  */
 async function defaultTriagerCall(dto, providers) {
   if (!providers?.openai) throw new Error('defaultTriagerCall: providers.openai is required');
-  let evidenceBlock = 'Evidence: none available (evidenceStatus=missing) — cannot be dismissed without a concrete disproof; escalate rather than guess.';
-  if (dto.evidenceStatus === 'commission' && dto.anchorQuote) {
-    evidenceBlock = `Evidence (commission, content-verified by Stage 0):\nCited text:\n${dto.anchorQuote}`;
-  } else if (dto.evidenceStatus === 'omission') {
-    evidenceBlock = `Evidence (omission):\nCausal chain: ${dto.causalChain ?? '(unavailable)'}\n${dto.anchorQuote ? `Trigger text:\n${dto.anchorQuote}` : ''}`;
-  }
+  const { system, userPrompt } = buildStage1TriagerPrompt(dto);
   const { result } = await callGPT(providers.openai, {
-    system: 'You are a cheap Stage-1 triager for a code-audit candidate finding. Decide whether you can DETERMINISTICALLY disprove the finding using ONLY the evidence provided below (e.g. the cited quote does not match the claimed defect, the causal chain trigger does not actually create the claimed obligation). If the evidence is absent or insufficient to check the claim, do NOT attempt a dismissal — a plausible-sounding but ungrounded dismissal is worse than no dismissal.',
-    messages: [{ role: 'user', content: `Finding: ${dto.category ?? ''} — ${dto.detail ?? ''}\nSection: ${dto.section ?? ''}\nSeverity: ${dto.severity ?? ''}\n\n${evidenceBlock}` }],
+    system,
+    messages: [{ role: 'user', content: userPrompt }],
     schema: Stage1TriagerResponseSchema,
     schemaName: 'stage1_triager_response',
     reasoning: 'low',
     passName: 'stage1-triager',
     maxRetries: 0,
+  });
+  return result;
+}
+
+/**
+ * Validated-manifest Stage 1 triager adapter — the model
+ * `resolveStage1TriagerModel` selected (typically GLM, per Cluster C's
+ * passed validation), via `providers.ossCall` (the same guarded primitive
+ * the discovery portfolio's `glmCall` already uses). Same contract as
+ * `defaultTriagerCall`: any failure THROWS, never fabricates a dismissal.
+ *
+ * @param {import('../schemas.mjs').StageOneTriageInput} dto
+ * @param {{ossCall: Function}} providers
+ * @param {string} model
+ * @returns {Promise<{dismissalAttempted: boolean, disproof: string|null}>}
+ */
+async function validatedTriagerCall(dto, providers, model) {
+  if (!providers?.ossCall) throw new Error('validatedTriagerCall: providers.ossCall is required');
+  const { system, userPrompt } = buildStage1TriagerPrompt(dto);
+  const { result } = await providers.ossCall({
+    model, system, userPrompt,
+    schema: Stage1TriagerResponseSchema,
+    schemaName: 'stage1_triager_response',
+    passName: 'stage1-triager',
   });
   return result;
 }
@@ -274,7 +316,19 @@ export async function runTieredAuditPipeline(ctx) {
 
   // ── Stage 1 — cheap-model triage ───────────────────────────────────────
   const stage1Start = Date.now();
-  const triagerCall = (envelope) => defaultTriagerCall(envelope, providers);
+  const stage1Resolution = resolveStage1TriagerModel({ configuredModel: tieredAuditConfig.stage1Model });
+  let triagerCall;
+  if (stage1Resolution.model && providers.ossCall) {
+    process.stderr.write(`  [tiered-pipeline] Stage 1 triager: ${stage1Resolution.model} (${stage1Resolution.source}${stage1Resolution.datasetHash ? `, datasetHash=${stage1Resolution.datasetHash.slice(0, 12)}…` : ''})\n`);
+    triagerCall = (envelope) => validatedTriagerCall(envelope, providers, stage1Resolution.model);
+  } else {
+    // A resolved model with no ossCall to reach it (e.g. OPENROUTER_API_KEY
+    // unset) is its own distinct, named fallback reason — never conflated
+    // with "no manifest/override at all".
+    const reason = stage1Resolution.model && !providers.ossCall ? 'oss_provider_unavailable' : (stage1Resolution.reason || 'no_override_or_manifest');
+    process.stderr.write(`  [tiered-pipeline] WARNING: Stage 1 triager falling back to GPT-5.5 (${reason})\n`);
+    triagerCall = (envelope) => defaultTriagerCall(envelope, providers);
+  }
   const triageResult = await runStage1CheapTriage(stage0Verified, { triagerCall }, {
     ledgerPath: ctx.ledgerFile,
     round: ctx.round,
