@@ -1,9 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { median, mean, summarize } from '../scripts/tiered-shadow-report.mjs';
+import { median, mean, summarize, argOption } from '../scripts/tiered-shadow-report.mjs';
 
 describe('median/mean', () => {
   test('median of odd/even-length arrays', () => {
@@ -88,6 +90,40 @@ describe('module import safety (2026-07-13 bug: main() fired unconditionally at 
   });
 });
 
+describe('argOption', () => {
+  const withArgv = (args, fn) => {
+    const saved = process.argv;
+    process.argv = ['node', 'script.mjs', ...args];
+    try { return fn(); } finally { process.argv = saved; }
+  };
+
+  test('a real value after the flag is returned', () => {
+    withArgv(['--repos', '/a/b,/c/d'], () => {
+      assert.equal(argOption('repos'), '/a/b,/c/d');
+    });
+  });
+
+  test('a following flag is NOT consumed as the value (Gemini gate 2026-07-13)', () => {
+    // Without the guard, `--repos --json` would swallow "--json" as the
+    // repos value — silently dropping the real --json flag too.
+    withArgv(['--repos', '--json'], () => {
+      assert.equal(argOption('repos'), null);
+    });
+  });
+
+  test('a missing trailing value (flag is the last argv) returns the default', () => {
+    withArgv(['--repos'], () => {
+      assert.equal(argOption('repos', 'fallback'), 'fallback');
+    });
+  });
+
+  test('flag absent entirely returns the default', () => {
+    withArgv(['--json'], () => {
+      assert.equal(argOption('repos', 'fallback'), 'fallback');
+    });
+  });
+});
+
 describe('CLI', () => {
   test('--selfcheck-relocation exits 0 and prints OK', () => {
     const out = execFileSync('node', ['scripts/tiered-shadow-report.mjs', '--selfcheck-relocation'], { encoding: 'utf8' });
@@ -98,5 +134,26 @@ describe('CLI', () => {
     const out = execFileSync('node', ['scripts/tiered-shadow-report.mjs', '--log', '/definitely/does/not/exist.jsonl', '--json'], { encoding: 'utf8' });
     const parsed = JSON.parse(out.trim().split('\n').pop());
     assert.equal(parsed.totalRuns, 0);
+  });
+
+  test('a null overlap/cost/latency mean renders as "—", never "0%" or "undefined" (Gemini gate 2026-07-13)', () => {
+    // A compared run where both pipelines found zero findings (nothing to
+    // overlap) and neither reported cost/latency — every mean in summarize()
+    // is null. `null * 100` coerces to 0 in JS, so this previously printed
+    // "0%" (misread as "tiered pipeline missed everything") and "undefined"
+    // (from `null?.toFixed()`) instead of an honest "no data" placeholder.
+    const tmpLog = path.join(os.tmpdir(), `tiered-shadow-null-mean-${process.pid}.jsonl`);
+    fs.writeFileSync(tmpLog, `${JSON.stringify({
+      legacyOk: true, shadowOk: true,
+      comparison: { legacyFindingCount: 0, onlyTieredCount: 0, overlapCount: 0, tieredRunStatus: 'complete' },
+    })}\n`);
+    try {
+      const out = execFileSync('node', ['scripts/tiered-shadow-report.mjs', '--log', tmpLog], { encoding: 'utf8' });
+      assert.doesNotMatch(out, /\b0%/, 'a null overlap-rate mean must never render as 0%');
+      assert.doesNotMatch(out, /undefined/, 'a null cost/latency mean must never render as the literal string "undefined"');
+      assert.match(out, /mean —/, 'a null mean should render as an explicit placeholder');
+    } finally {
+      fs.rmSync(tmpLog, { force: true });
+    }
   });
 });

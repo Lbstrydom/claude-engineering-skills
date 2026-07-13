@@ -21,73 +21,29 @@
  *
  * Plan: docs/completed/tiered-recall-audit-pipeline.md Close-out (shadow validation).
  */
-import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { SHADOW_LOG_PATH } from './lib/audit/tiered-shadow-compare.mjs';
 import { resolveRepoIdentity } from './lib/repo-identity.mjs';
 import { isCloudEnabled } from './lib/store/repo.mjs';
 import { getTieredShadowObservations } from './lib/store/tiered-shadow.mjs';
+import {
+  WINDOW_MIN, WINDOW_MAX, normalizeDbRow, median, mean, readRecords, summarize, windowProgress,
+} from './lib/audit/tiered-shadow-summary.mjs';
 
-/** DB row (snake_case) → the exact shape `summarize()` already expects
- * (camelCase, matching the local JSONL record shape) — one normalizer so
- * both sources feed the SAME aggregation logic, no duplicated math. */
-function normalizeDbRow(row) {
-  return {
-    legacyOk: row.legacy_ok, shadowOk: row.shadow_ok,
-    shadowError: row.shadow_error, comparison: row.comparison,
-    _repoId: row.repo_id,
-  };
-}
+// Re-exported for backward compatibility — tests and any external caller
+// importing these from this file (rather than the new lib module) keep
+// working unchanged. The lib module is the canonical source (2026-07-13).
+export { normalizeDbRow, median, mean, summarize };
 
-function argOption(name, dflt = null) {
+// Guards against swallowing a following flag as this option's value (e.g.
+// `--repos --json` — a missing value followed by a real flag) — without the
+// `startsWith('--')` check, `--json` would silently become the repos value
+// and the actual --json flag would vanish (Gemini final-review fix, 2026-07-13).
+// Exported for direct (I/O-free) unit testing.
+export function argOption(name, dflt = null) {
   const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 && i + 1 < process.argv.length ? process.argv[i + 1] : dflt;
-}
-
-export function median(nums) {
-  if (nums.length === 0) return null;
-  const sorted = [...nums].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}
-
-export function mean(nums) {
-  return nums.length === 0 ? null : nums.reduce((s, n) => s + n, 0) / nums.length;
-}
-
-function readRecords(logPath) {
-  if (!fs.existsSync(logPath)) return [];
-  return fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map((line, i) => {
-    try { return JSON.parse(line); }
-    catch { process.stderr.write(`  [tiered-shadow-report] skipping malformed line ${i + 1}\n`); return null; }
-  }).filter(Boolean);
-}
-
-export function summarize(records) {
-  const legacyFailures = records.filter((r) => !r.legacyOk).length;
-  const shadowFailures = records.filter((r) => r.legacyOk && !r.shadowOk).length;
-  const compared = records.filter((r) => r.comparison);
-  const costDeltas = compared.map((r) => (r.comparison.legacyCostUsd != null && r.comparison.tieredCostUsd != null) ? r.comparison.tieredCostUsd - r.comparison.legacyCostUsd : null).filter((v) => v != null);
-  const latencyDeltas = compared.map((r) => (r.comparison.legacyLatencySec != null && r.comparison.tieredLatencySec != null) ? r.comparison.tieredLatencySec - r.comparison.legacyLatencySec : null).filter((v) => v != null);
-  const overlapRates = compared.map((r) => {
-    const total = r.comparison.legacyFindingCount + r.comparison.onlyTieredCount;
-    return total > 0 ? r.comparison.overlapCount / total : null;
-  }).filter((v) => v != null);
-
-  return {
-    totalRuns: records.length,
-    legacyFailures,
-    shadowFailures,
-    comparedRuns: compared.length,
-    costDeltaUsd: { mean: mean(costDeltas), median: median(costDeltas) },
-    latencyDeltaSec: { mean: mean(latencyDeltas), median: median(latencyDeltas) },
-    findingOverlapRate: { mean: mean(overlapRates), median: median(overlapRates) },
-    tieredRunStatusCounts: compared.reduce((acc, r) => {
-      const s = r.comparison.tieredRunStatus || 'unknown';
-      acc[s] = (acc[s] || 0) + 1;
-      return acc;
-    }, {}),
-  };
+  const next = i >= 0 ? process.argv[i + 1] : undefined;
+  return next !== undefined && !next.startsWith('--') ? next : dflt;
 }
 
 async function main() {
@@ -103,17 +59,21 @@ async function main() {
   }
 
   if (await isCloudEnabled()) {
-    const repoIds = [];
+    // repoLabels is keyed by repoUuid, so it naturally dedupes — e.g.
+    // `--repos .` re-resolving process.cwd()'s own identity. repoCount
+    // (and the query's repoIds) derive from its keys rather than a raw
+    // push-per-input array, which would otherwise overcount a repeated
+    // path in the CLI's "across N repo(s)" summary (Gemini gate, round 3).
     const repoLabels = {};
     for (const p of [process.cwd(), ...reposArg]) {
       try {
         const { repoUuid, name } = resolveRepoIdentity(p);
-        repoIds.push(repoUuid);
         repoLabels[repoUuid] = name || p;
       } catch (err) {
         process.stderr.write(`  [tiered-shadow-report] WARNING: could not resolve repo identity for "${p}" (skipped): ${err.message}\n`);
       }
     }
+    const repoIds = Object.keys(repoLabels);
     if (repoIds.length > 0) {
       const result = await getTieredShadowObservations({ repoIds });
       if (!result.ok) {
@@ -121,7 +81,7 @@ async function main() {
         return reportLocal(SHADOW_LOG_PATH, jsonMode);
       }
       if (result.truncated) {
-        process.stderr.write(`  [tiered-shadow-report] WARNING: result hit the query limit — older rows may be excluded from this summary.\n`);
+        process.stderr.write(`  [tiered-shadow-report] WARNING: result hit the query limit — newer rows may be excluded from this summary.\n`);
       }
       return reportRows(result.rows.map(normalizeDbRow), jsonMode, { repoLabels, source: 'cloud', repoCount: repoIds.length, truncated: result.truncated });
     }
@@ -153,25 +113,47 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
     return 0;
   }
 
+  // NEWER rows are the ones a LIMIT can cut off here — the query orders
+  // ascending (oldest first) and truncates the tail, so a truncated result
+  // is missing the MOST RECENT observations, not the oldest ones.
   const scopeLine = source === 'cloud'
-    ? `Tiered-pipeline shadow validation — ${summary.totalRuns} run(s) across ${repoCount} repo(s) (cloud)${truncated ? ' [TRUNCATED — older rows may be missing]' : ''}: ${Object.values(repoLabels).join(', ')}`
+    ? `Tiered-pipeline shadow validation — ${summary.totalRuns} run(s) across ${repoCount} repo(s) (cloud)${truncated ? ' [TRUNCATED — newer rows may be missing]' : ''}: ${Object.values(repoLabels).join(', ')}`
     : `Tiered-pipeline shadow validation — ${summary.totalRuns} run(s) recorded (local, ${logPath})`;
   console.log(scopeLine);
   console.log(`  legacy failures:    ${summary.legacyFailures}`);
   console.log(`  shadow failures:    ${summary.shadowFailures}`);
   console.log(`  compared runs:      ${summary.comparedRuns}`);
   if (summary.comparedRuns > 0) {
-    console.log(`  cost delta (tiered - legacy, USD):    mean ${summary.costDeltaUsd.mean?.toFixed(3)}  median ${summary.costDeltaUsd.median?.toFixed(3)}`);
-    console.log(`  latency delta (tiered - legacy, sec): mean ${summary.latencyDeltaSec.mean?.toFixed(1)}  median ${summary.latencyDeltaSec.median?.toFixed(1)}`);
-    console.log(`  finding overlap rate:                 mean ${(summary.findingOverlapRate.mean * 100)?.toFixed(0)}%  median ${(summary.findingOverlapRate.median * 100)?.toFixed(0)}%`);
+    // `null` must render as "no data" (—), never as a formatted number: raw
+    // `null * 100` coerces to 0 in JS, so an EMPTY overlap-rate sample (e.g.
+    // every compared run found zero findings on either side) previously
+    // printed "0%" — indistinguishable from "the tiered pipeline found none
+    // of what legacy found," a false catastrophic-recall reading (Gemini
+    // gate finding, 2026-07-13). `?.toFixed()` on a null mean similarly
+    // printed the literal string "undefined".
+    const num = (v, digits) => (v == null ? '—' : v.toFixed(digits));
+    const pct = (v) => (v == null ? '—' : `${(v * 100).toFixed(0)}%`);
+    console.log(`  cost delta (tiered - legacy, USD):    mean ${num(summary.costDeltaUsd.mean, 3)}  median ${num(summary.costDeltaUsd.median, 3)}`);
+    console.log(`  latency delta (tiered - legacy, sec): mean ${num(summary.latencyDeltaSec.mean, 1)}  median ${num(summary.latencyDeltaSec.median, 1)}`);
+    console.log(`  finding overlap rate:                 mean ${pct(summary.findingOverlapRate.mean)}  median ${pct(summary.findingOverlapRate.median)}`);
     console.log(`  tiered runStatus breakdown: ${JSON.stringify(summary.tieredRunStatusCounts)}`);
   }
-  if (summary.totalRuns < 10) {
-    console.log(`\n  ${summary.totalRuns}/10-15 — keep collecting before treating this as a Phase-14 decision basis.`);
-  } else if (summary.totalRuns < 15) {
-    console.log(`\n  ${summary.totalRuns}/15 — within the plan's pre-registered window; a few more before the Phase-14 review.`);
+  // Gated on comparedRuns (decision-grade data points), NOT totalRuns — a
+  // run whose shadow attempt failed outright contributes no cost/latency/
+  // overlap information, so it can't count toward "ready to decide" even
+  // though it's a real, informative failure data point in its own right
+  // (surfaced above via shadowFailures). Fixed 2026-07-13 — this previously
+  // gated on totalRuns, so 15 failed shadow attempts could read as
+  // "window met" with zero real comparisons behind it.
+  const win = windowProgress(summary.comparedRuns);
+  const totalNote = summary.comparedRuns !== summary.totalRuns
+    ? ` (${summary.totalRuns} total attempts recorded)` : '';
+  if (!win.withinWindow) {
+    console.log(`\n  ${summary.comparedRuns}/${win.min}-${win.max} compared runs${totalNote} — keep collecting before treating this as a Phase-14 decision basis.`);
+  } else if (!win.met) {
+    console.log(`\n  ${summary.comparedRuns}/${win.max} compared runs${totalNote} — within the plan's pre-registered window; a few more before the Phase-14 review.`);
   } else {
-    console.log(`\n  ${summary.totalRuns} runs — the plan's pre-registered 10-15 window is met. Time for the Phase-14 production-flip review.`);
+    console.log(`\n  ${summary.comparedRuns} compared runs${totalNote} — the plan's pre-registered ${win.min}-${win.max} window is met. Time for the Phase-14 production-flip review.`);
   }
   return 0;
 }

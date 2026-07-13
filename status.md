@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-07-13 — Feat: dashboard UX restructure — category/workflow clusters, Start Here orientation, Tiered Shadow panel; found + fixed a real Phase-14 decision-gate accuracy bug
+
+### Changes
+- **Context**: user reviewed the live dashboard and asked for (1) a Tiered Shadow progress panel + standing-instructions mention, (2) a UX/gestalt/affordance review, (3) category AND workflow clusters for new-user orientation, (4) a persona-test against the dashboard.
+- **New Tiered Shadow telemetry tab**: cross-repo (cloud) Phase-14 window progress bar, cost/latency/overlap deltas, per-repo counts, plain-English explainer of what's being decided — reuses the report CLI's aggregation so the two surfaces can never disagree.
+- **Grouped tabstrips + plain-English subtitles**: both pages' flat 8-11-tab strips (no hierarchy, jargon labels) regrouped into labeled category clusters (Reference: Orientation/Understand the toolkit/Design & plans/UX quality lenses; Telemetry: Audit pipeline/Learning & invariants/Delivery & governance); every panel now opens with a one-sentence plain-English subtitle.
+- **New Start Here orientation tab**: what the dashboard is, both clusterings (by category AND by workflow — "I want to build a feature / check UI quality / know if audits are helping / understand the codebase / check security"), with working cross-tab links.
+- **Affordance/signifier consistency**: unified disclosure-triangle hover cue across all `<details>`, a status-dot legend, group labels as visual anchors.
+- **Live persona walk** (Playwright against the served dashboard, not simulated) found and fixed 4 real issues: discovered the tiered-shadow flag was actually still `false` in `~/.audit-loop.env` (the Phase-14 window has collected zero comparisons since the prior incident fix — flagged to the user; the auto-mode guardrail correctly blocked me from editing it myself), a `—s`/`$—` null-formatting bug, a wrong empty-state message, and a relocation-guard violation from a first-cut static import of a source-repo-only module (fixed with a package-name-gated dynamic import).
+- **Audited** (`/audit-code --scope diff`): GPT round 1, 17 findings. The real cluster (H3/M1/M2/M3/M5/M7) was a genuine Phase-14 decision-gate accuracy bug: window progress gated on every attempted shadow run instead of only genuine side-by-side comparisons, so a run of all-failed attempts could read as "decision-ready." Fixed by extracting the aggregation into a new shared lib module (`scripts/lib/audit/tiered-shadow-summary.mjs`) used by both the CLI and dashboard, which also resolved a DRY constant duplication, the dashboard importing a CLI script, and a duplicated JSONL parser in the same refactor. 1 dismissed (no attacker-controlled path), 8 deferred as pre-existing architecture-map drift — the third audit in a row surfacing that exact family.
+- **Gemini final review ran 3 rounds** (CONCERNS → CONCERNS → APPROVE), correctly extending past the normal 2-round cap under the genuine-bug exception: round 1 caught a `null * 100` JS-coercion bug printing a false "0%" (misread as "tiered pipeline caught nothing"); round 2 caught an `argOption` flag-swallowing bug and a genuine SQL ordering bug (`ORDER BY ASC LIMIT` kept the OLDEST rows on truncation, dropping the newest — the wrong direction for a production-readiness decision gate) and correctly rejected a false positive (claimed-unused import that was in fact used); round 3 approved with one cosmetic nit (repoIds dedup) fixed inline.
+- **Full suite**: 5039 passed, 0 failed, 20 pre-existing skips.
+- **Next**: the user needs to manually flip `AUDIT_TIERED_SHADOW_ENABLED=true` in `~/.audit-loop.env` — the Phase-14 window is not currently collecting.
+
 ## 2026-07-13 — Feat: audit-plan cloud-learning parity + requirements rubric; AGENTS.md sprawl cap enforced (first trim 1412→~1160)
 
 ### Changes

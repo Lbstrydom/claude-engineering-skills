@@ -674,7 +674,10 @@ defaults **off** — production runs the legacy path today.
   `getTieredShadowObservations` takes an explicit `repoIds` list only —
   never an ambient "all repos" scan. Progress check:
   `npm run audit:tiered-shadow-report` (cloud-first, `--repos <path,...>`
-  for siblings, `--log <path>` forces local-only). Deliberately NOT a 4th
+  for siblings, `--log <path>` forces local-only); the telemetry
+  dashboard's **Tiered Shadow** tab is the visual progress surface for the
+  Phase-14 window (same `summarize()` — they cannot disagree; the CLI stays
+  authoritative). Deliberately NOT a 4th
   arm on the model-A/B/C shadow infra — different execution shape (whole-run
   vs per-pass substitution); rationale in the plan doc.
 - **Execution eligibility is per-call, not env-global** (`allowTiered` —

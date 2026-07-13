@@ -77,9 +77,16 @@ const GetObservationsArgsSchema = z.object({
  * three distinct outcomes, none of which throws to the caller — the
  * report CLI needs to tell "no runs yet" apart from "couldn't check" so
  * it can fall back to the local log instead of reporting a false zero.
- * `truncated: true` signals the LIMIT was hit — the aggregate may be
- * missing more-recent rows (query orders ascending), so a caller should
- * treat the summary as a lower bound, not a complete count.
+ *
+ * `truncated: true` signals the LIMIT was hit. The query orders by
+ * `created_at DESC` (newest first) so a truncated result keeps the MOST
+ * RECENT observations and drops the oldest — the correct direction for a
+ * production-readiness decision gate, which needs current pipeline
+ * behavior, not stale data from the start of the window (Gemini final-
+ * review fix, 2026-07-13 — the query originally ordered ASC, which kept
+ * the OLDEST rows on truncation). Re-reversed to ascending before return
+ * so callers (summarize(), which is order-independent, and any future
+ * chronological consumer) see the conventional oldest-to-newest shape.
  *
  * @param {{repoIds: string[], sinceDays?: number, limit?: number}} rawArgs
  * @returns {Promise<{ok: boolean, cloud: boolean, rows: object[], truncated?: boolean, error?: string}>}
@@ -92,11 +99,11 @@ export async function getTieredShadowObservations(rawArgs) {
       `SELECT repo_id, run_id, legacy_ok, shadow_ok, shadow_error, shadow_latency_ms, comparison, created_at
          FROM tiered_shadow_observations
         WHERE repo_id = ANY($1) AND created_at >= now() - ($2 || ' days')::interval
-        ORDER BY created_at ASC
+        ORDER BY created_at DESC
         LIMIT $3`,
       [args.repoIds, String(args.sinceDays), args.limit],
     );
-    return { ok: true, cloud: true, rows, truncated: rows.length === args.limit };
+    return { ok: true, cloud: true, rows: rows.reverse(), truncated: rows.length === args.limit };
   } catch (err) {
     return { ok: false, cloud: true, rows: [], error: err.message };
   }

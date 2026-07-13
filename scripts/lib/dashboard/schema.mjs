@@ -388,6 +388,32 @@ export const TelemetryDataSchema = z.object({
       acceptedHigh: count, costUsd: z.number(), conformant: count, passExecutions: count,
     })),
   }).optional(),
+  // Tiered-recall Close-out shadow validation — Phase-14 window progress
+  // (docs/completed/tiered-recall-audit-pipeline.md). Aggregation reuses the
+  // report CLI's summarize(); the dashboard is a read surface, the CLI stays
+  // authoritative. Optional so pre-feature snapshots validate.
+  tieredShadow: z.object({
+    cloud: z.boolean(),
+    flagEnabled: z.boolean(),
+    totalRuns: count,
+    windowMin: count,
+    windowMax: count,
+    legacyFailures: count,
+    shadowFailures: count,
+    comparedRuns: count,
+    costDeltaUsd: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),
+    latencyDeltaSec: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),
+    findingOverlapRate: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),
+    tieredRunStatusCounts: z.record(z.string(), count),
+    perRepo: z.array(z.object({ label: z.string(), count })),
+    source: z.enum(['cloud', 'local', 'none']),
+    // A cloud read hit the query LIMIT — the aggregate may be missing
+    // recent rows. `windowMet` is computed server-side against comparedRuns
+    // (not totalRuns) so the render layer never has to re-derive the
+    // decision-gate threshold itself.
+    truncated: z.boolean().default(false),
+    windowMet: z.boolean().default(false),
+  }).optional(),
 });
 
 // ── Audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md) ──

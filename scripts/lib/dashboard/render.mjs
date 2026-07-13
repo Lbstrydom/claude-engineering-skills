@@ -38,6 +38,8 @@ import sectionPurposeHealth from './sections/purpose-health.mjs';
 import sectionAuditRunDetail from './sections/audit-run-detail.mjs';
 import sectionAuthorTier from './sections/author-tier.mjs';
 import sectionModelAb from './sections/model-ab.mjs';
+import sectionTieredShadow from './sections/tiered-shadow.mjs';
+import sectionStartHere from './sections/start-here.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -66,33 +68,63 @@ const SLICERS = {
   modelAb:      (d) => ({ src: d.sources.modelAb || { status: 'missing-optional', detail: '' }, modelAb: d.modelAb || { cloud: false, status: 'off', reason: '', distinctAssignments: 0, minAssignments: 12, spentEur: 0, capEur: null, pendingAdjudication: 0, arms: [] } }),
   security:     (d) => ({ src: d.sources.security || { status: 'ok', detail: '' }, security: d.security || { cloud: false, totalIncidents: 0, embedded: 0, byStatus: [], eventCounts: [], lastRefreshAt: null, recentEvents: [] } }),
   purposeHealth:(d) => ({ src: d.sources.purposeHealth || { status: 'ok', detail: '' }, purposeHealth: d.purposeHealth || { asOf: '', windowDays: 30, repoWide: { recentHighFindings: null, plansWithFailingCriteria: null, refusedSecrets: null }, purposeBadges: [] } }),
+  tieredShadow: (d) => ({ src: d.sources.tieredShadow || { status: 'missing-optional', detail: '' }, tieredShadow: d.tieredShadow || null }),
+  // Start Here is pure orientation prose — no collected data.
+  startHere:    () => ({}),
   // audit-run uses a top-level `src` (discriminated collector status code), NOT
   // the `sources` map — see AuditRunDataSchema (docs/plans/dashboard-audit-run-viewer.md).
   auditRunDetail:(d) => ({ src: d.src, auditRun: d.auditRun }),
 };
 
+// Every entry carries `group` (gestalt: the tabstrip renders labeled group
+// containers — proximity + common region for 9-11 peer tabs) and `desc` (a
+// plain-English one-liner a NEW user understands, rendered as the panel's
+// subtitle). Group labels must be identical for adjacent entries — the strip
+// builder clusters consecutive same-group entries.
 const REGISTRY = {
   reference: [
-    { id: 'skills',       title: 'Skills',         build: sectionSkills,       slice: SLICERS.skills },
-    { id: 'cli',          title: 'CLI',            build: sectionCli,          slice: SLICERS.cli },
-    { id: 'flows',        title: 'Process Flows',  build: sectionFlows,        slice: SLICERS.flows },
-    { id: 'architecture', title: 'Architecture',   build: sectionArchitecture, slice: SLICERS.architecture },
-    { id: 'navAudit',     title: 'Nav Audit',      build: sectionNavAudit,     slice: SLICERS.navAudit },
-    { id: 'visualAudit',  title: 'Visual Audit',   build: sectionVisualAudit,  slice: SLICERS.visualAudit },
-    { id: 'purpose',      title: 'Purpose',        build: sectionPurpose,      slice: SLICERS.purpose },
-    { id: 'plans',        title: 'Plans',          build: sectionPlans,        slice: SLICERS.plans },
+    { id: 'startHere',    title: 'Start Here',     group: 'Orientation', build: sectionStartHere, slice: SLICERS.startHere,
+      desc: 'New to this dashboard? What everything is, in plain English, and where to find it.' },
+    { id: 'skills',       title: 'Skills',         group: 'Understand the toolkit', build: sectionSkills,       slice: SLICERS.skills,
+      desc: 'Every skill (slash-command) in the bundle — what it does, when to reach for it, and how to invoke it.' },
+    { id: 'cli',          title: 'CLI',            group: 'Understand the toolkit', build: sectionCli,          slice: SLICERS.cli,
+      desc: 'Every operator command-line tool, grouped by job, with copy-pasteable usage.' },
+    { id: 'flows',        title: 'Process Flows',  group: 'Understand the toolkit', build: sectionFlows,        slice: SLICERS.flows,
+      desc: 'How the skills chain together into an end-to-end workflow: plan → audit → implement → verify → ship.' },
+    { id: 'architecture', title: 'Architecture',   group: 'Design & plans', build: sectionArchitecture, slice: SLICERS.architecture,
+      desc: 'The repo’s domain map — what code lives where, how big each area is, and what depends on what.' },
+    { id: 'purpose',      title: 'Purpose',        group: 'Design & plans', build: sectionPurpose,      slice: SLICERS.purpose,
+      desc: 'Why each subsystem exists — the product purposes, mapped to the domains and invariants that serve them.' },
+    { id: 'plans',        title: 'Plans',          group: 'Design & plans', build: sectionPlans,        slice: SLICERS.plans,
+      desc: 'Design documents: what’s actively being built (docs/plans/) and what’s done (docs/completed/).' },
+    { id: 'navAudit',     title: 'Nav Audit',      group: 'UX quality lenses', build: sectionNavAudit,     slice: SLICERS.navAudit,
+      desc: 'Navigation audit of a target app — can every kind of user actually reach the things they need?' },
+    { id: 'visualAudit',  title: 'Visual Audit',   group: 'UX quality lenses', build: sectionVisualAudit,  slice: SLICERS.visualAudit,
+      desc: 'Visual audit of a target app — does what the page paints match its declared design tokens and themes?' },
   ],
   telemetry: [
-    { id: 'audit',        title: 'Audit Runs',     build: sectionAuditRuns,    slice: SLICERS.auditRuns },
-    { id: 'requirements', title: 'Requirements',   build: sectionRequirements, slice: SLICERS.requirements },
-    { id: 'learning',     title: 'Learning',       build: sectionLearning,     slice: SLICERS.learning },
-    { id: 'promptVariants',title: 'Prompt Variants',build: sectionPromptVariants, slice: SLICERS.promptVariants },
-    { id: 'auditEffectiveness',title: 'Audit Effectiveness',build: sectionAuditEffectiveness, slice: SLICERS.auditEffectiveness },
-    { id: 'shipHealth',   title: 'Ship Health',    build: sectionShipHealth,   slice: SLICERS.shipHealth },
-    { id: 'security',     title: 'Security',       build: sectionSecurity,     slice: SLICERS.security },
-    { id: 'purposeHealth',title: 'Purpose Health', build: sectionPurposeHealth,slice: SLICERS.purposeHealth },
-    { id: 'authorTier',   title: 'Author Tier',    build: sectionAuthorTier,   slice: SLICERS.authorTier },
-    { id: 'modelAb',      title: 'A/B/C Testing',  build: sectionModelAb,      slice: SLICERS.modelAb },
+    { id: 'audit',        title: 'Audit Runs',     group: 'Audit pipeline', build: sectionAuditRuns,    slice: SLICERS.auditRuns,
+      desc: 'Recent code/plan audit runs and how many findings each analysis pass raised vs. what a human accepted.' },
+    { id: 'auditEffectiveness',title: 'Audit Effectiveness', group: 'Audit pipeline', build: sectionAuditEffectiveness, slice: SLICERS.auditEffectiveness,
+      desc: 'Is the audit worth it? Precision and recall of audit findings measured against real user-visible impact.' },
+    { id: 'promptVariants',title: 'Prompt Variants', group: 'Audit pipeline', build: sectionPromptVariants, slice: SLICERS.promptVariants,
+      desc: 'Which audit prompt wordings are winning — the bandit that learns from your accept/dismiss decisions.' },
+    { id: 'authorTier',   title: 'Author Tier',    group: 'Audit pipeline', build: sectionAuthorTier,   slice: SLICERS.authorTier,
+      desc: 'Observation only: which authoring-model tiers produce work that converges fastest through audits.' },
+    { id: 'modelAb',      title: 'A/B/C Testing',  group: 'Audit pipeline', build: sectionModelAb,      slice: SLICERS.modelAb,
+      desc: 'The concluded auditor-model experiment (A/B/C arms) — kept for its labelled-outcome record.' },
+    { id: 'tieredShadow', title: 'Tiered Shadow',  group: 'Audit pipeline', build: sectionTieredShadow, slice: SLICERS.tieredShadow,
+      desc: 'A cheaper audit pipeline is being trialled silently next to the current one — progress toward the go/no-go decision.' },
+    { id: 'learning',     title: 'Learning',       group: 'Learning & invariants', build: sectionLearning,     slice: SLICERS.learning,
+      desc: 'What the audit system is learning from your triage decisions — and what’s waiting for a human label.' },
+    { id: 'requirements', title: 'Requirements',   group: 'Learning & invariants', build: sectionRequirements, slice: SLICERS.requirements,
+      desc: 'The de-facto invariants your code already enforces — extracted into a ledger the audits check against.' },
+    { id: 'shipHealth',   title: 'Ship Health',    group: 'Delivery & governance', build: sectionShipHealth,   slice: SLICERS.shipHealth,
+      desc: 'Every /ship outcome — shipped, warned, blocked, overridden — and why.' },
+    { id: 'security',     title: 'Security',       group: 'Delivery & governance', build: sectionSecurity,     slice: SLICERS.security,
+      desc: 'Security incident memory and the secret-gate audit trail — what was indexed, what was refused or redacted.' },
+    { id: 'purposeHealth',title: 'Purpose Health', group: 'Delivery & governance', build: sectionPurposeHealth,slice: SLICERS.purposeHealth,
+      desc: 'A health badge per product purpose — recent HIGH findings or security events in the areas that serve it.' },
   ],
   // Single-section per-run detail page (docs/plans/dashboard-audit-run-viewer.md).
   'audit-run': [
@@ -157,8 +189,9 @@ export function renderDocument(data, kind, assets) {
   if (kind === 'telemetry') {
     // Must list EVERY telemetry section source — omitting one (e.g. security)
     // would show the page-level "nothing yet" placeholder while that section
-    // actually has data, hiding it entirely.
-    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier']
+    // actually has data, hiding it entirely. (modelAb + tieredShadow added
+    // 2026-07-13 — both had been omitted, the exact bug this comment warns of.)
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',
@@ -166,7 +199,28 @@ export function renderDocument(data, kind, assets) {
     }
   }
 
-  const tabs = sections.map((s, i) => tab(s.id, s.title, i === 0)).join('');
+  // Grouped tabstrip (gestalt: proximity + common region). Consecutive
+  // same-`group` entries render inside one labeled container; entries with
+  // no group (audit-run detail page) fall back to a flat strip. The strip
+  // stays ONE role="tablist" and tab order is unchanged, so dashboard.js's
+  // `[role="tab"]` query + arrow-key nav work exactly as before.
+  let tabs;
+  if (sections.some((s) => s.group)) {
+    const clusters = [];
+    sections.forEach((s, i) => {
+      const last = clusters[clusters.length - 1];
+      if (!last || last.label !== (s.group || '')) clusters.push({ label: s.group || '', items: [] });
+      clusters[clusters.length - 1].items.push({ s, first: i === 0 });
+    });
+    tabs = clusters.map((c) =>
+      `<div class="tabgroup">`
+      + (c.label ? `<span class="tabgroup-label" aria-hidden="true">${escapeHtml(c.label)}</span>` : '')
+      + c.items.map(({ s, first }) => tab(s.id, s.title, first)).join('')
+      + `</div>`).join('');
+  } else {
+    tabs = sections.map((s, i) => tab(s.id, s.title, i === 0)).join('');
+  }
+
   const panels = sections.map((s, i) => {
     let inner;
     try {
@@ -174,7 +228,12 @@ export function renderDocument(data, kind, assets) {
     } catch (err) {
       inner = warningPanel(s.id, { status: 'unexpected-error', detail: String(err && err.message || err) });
     }
-    return panel(s.id, i === 0, inner);
+    // Plain-English subtitle (signifier for new users) — group crumb + one
+    // sentence on what the tab shows and why you'd look at it.
+    const desc = s.desc
+      ? `<p class="panel-desc">${s.group ? `<span class="panel-crumb">${escapeHtml(s.group)}</span> · ` : ''}${escapeHtml(s.desc)}</p>`
+      : '';
+    return panel(s.id, i === 0, desc + inner);
   }).join('');
 
   const body = pageLevelEmpty

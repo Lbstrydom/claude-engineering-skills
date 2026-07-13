@@ -26,6 +26,14 @@ import { auditShadowConfig } from '../config.mjs';
 import { PurposeConfigSchema } from './schema.mjs';
 import { loadDomainRules, tagDomain } from '../symbol-index/domain-tagger.mjs';
 import { classifyPath } from '../sensitive-paths.mjs';
+import { getTieredShadowObservations } from '../store/tiered-shadow.mjs';
+import { isCloudEnabled } from '../store/repo.mjs';
+import {
+  summarize as summarizeShadow, normalizeDbRow as normalizeShadowRow,
+  readRecords as readShadowRecords, windowProgress, WINDOW_MIN, WINDOW_MAX,
+} from '../audit/tiered-shadow-summary.mjs';
+import { SHADOW_LOG_PATH } from '../audit/tiered-shadow-compare.mjs';
+import { tieredAuditConfig } from '../config.mjs';
 
 const DAYS = 30;
 const MAX_REQ_ITEMS = 200;
@@ -574,6 +582,96 @@ function classifyPurposeBadges({ purposes, domainCountByPurpose, highTally, refu
 }
 
 /**
+ * Collect the Close-out tiered-shadow validation progress (Phase-14 window).
+ * Cross-repo when cloud is on: aggregates THIS repo + every CONSUMER_REPOS
+ * checkout that exists on this machine (same identity resolution the report
+ * CLI uses); cloud off → this repo's local JSONL fallback. Reuses the SAME
+ * pure lib module (`lib/audit/tiered-shadow-summary.mjs`) the report CLI
+ * imports — not the CLI script itself — so the dashboard can never disagree
+ * with `npm run audit:tiered-shadow-report` and isn't coupled to a command
+ * entry point (2026-07-13 fix: this collector previously imported summarize/
+ * normalizeDbRow FROM the CLI script and hand-rolled a second, less careful
+ * JSONL parser for the local-fallback path instead of reusing `readRecords`).
+ */
+async function collectTieredShadow(root) {
+  const empty = {
+    cloud: false, flagEnabled: tieredAuditConfig.shadowEnabled, totalRuns: 0,
+    windowMin: WINDOW_MIN, windowMax: WINDOW_MAX, legacyFailures: 0, shadowFailures: 0,
+    comparedRuns: 0, costDeltaUsd: { mean: null, median: null },
+    latencyDeltaSec: { mean: null, median: null },
+    findingOverlapRate: { mean: null, median: null },
+    tieredRunStatusCounts: {}, perRepo: [], source: 'none',
+    truncated: false, windowMet: false,
+  };
+  // Sibling checkouts to aggregate — SOURCE-REPO-ONLY. The consumer-repo
+  // registry is a sync fan-out concept (it parent-resolves the repo root and
+  // lists the SOURCE machine's sibling paths), meaningless and relocation-
+  // breaking in a consumer's scripts/.claude-skills/ layout — the relocation
+  // guard rightly rejects it from the synced closure. The computed-specifier
+  // dynamic import below is the established walker escape (see
+  // sync-to-repos.mjs's bundle notes: computed specifiers are not followed),
+  // so consumers never receive or evaluate the module; their dashboard shows
+  // their own repo, which is the honest scope there.
+  let siblingPaths = [];
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+    if (pkg.name === 'claude-engineering-skills') {
+      const mod = await import(new URL('../consumer-repos.mjs', import.meta.url).href);
+      siblingPaths = mod.CONSUMER_REPOS.map((r) => r.path);
+    }
+  } catch { /* consumer layout / registry unavailable — this repo only */ }
+  try {
+    if (await isCloudEnabled()) {
+      const repoLabels = {}; // repoUuid → display name
+      for (const p of [root, ...siblingPaths]) {
+        if (!fs.existsSync(p)) continue;
+        try {
+          const { repoUuid, name } = resolveRepoIdentity(p);
+          repoLabels[repoUuid] = name || path.basename(p);
+        } catch { /* unresolvable checkout — skip */ }
+      }
+      const repoIds = Object.keys(repoLabels);
+      if (repoIds.length > 0) {
+        const result = await getTieredShadowObservations({ repoIds });
+        if (!result.ok) {
+          return { data: empty, status: { status: 'unexpected-error', detail: redactSecrets(`cloud read failed: ${result.error}`) } };
+        }
+        const records = result.rows.map(normalizeShadowRow);
+        const summary = summarizeShadow(records);
+        const win = windowProgress(summary.comparedRuns);
+        const perRepoCounts = {};
+        for (const r of result.rows) perRepoCounts[r.repo_id] = (perRepoCounts[r.repo_id] || 0) + 1;
+        const perRepo = Object.entries(perRepoCounts)
+          .map(([id, count]) => ({ label: repoLabels[id] || `${id.slice(0, 8)}…`, count }))
+          .sort((a, b) => b.count - a.count);
+        return {
+          // `truncated` must survive to the render layer (M1 fix, 2026-07-13):
+          // a truncated cloud read must never present as an authoritative
+          // "window met" without the caller knowing rows were cut off.
+          data: { ...empty, ...summary, cloud: true, perRepo, source: 'cloud', truncated: Boolean(result.truncated), windowMet: win.met },
+          status: { status: 'ok', detail: '' },
+        };
+      }
+    }
+    // Local fallback — this repo's JSONL only (mirrors the report CLI),
+    // via the SAME readRecords() the CLI uses (malformed-line logging included).
+    const logPath = path.resolve(root, SHADOW_LOG_PATH);
+    if (!fs.existsSync(logPath)) {
+      return { data: empty, status: { status: 'missing-optional', detail: 'no shadow runs recorded yet' } };
+    }
+    const records = readShadowRecords(logPath);
+    const summary = summarizeShadow(records);
+    const win = windowProgress(summary.comparedRuns);
+    return {
+      data: { ...empty, ...summary, source: 'local', windowMet: win.met },
+      status: { status: 'ok', detail: '' },
+    };
+  } catch (err) {
+    return { data: empty, status: { status: 'unexpected-error', detail: redactSecrets(`tiered-shadow collect failed: ${err.message}`) } };
+  }
+}
+
+/**
  * Collect the full telemetry-data object.
  * @param {{git?: {baseSha: string}}} [opts]
  * @returns {Promise<object>} a TelemetryData object (validate before render)
@@ -586,7 +684,7 @@ export async function collectTelemetry(opts = {}) {
   // Scope the Audit Runs tab to this directory's canonical repo row when
   // resolvable; null → project-wide fallback (cloud off / never-audited repo).
   const auditRepoId = await canonicalRepoId(root);
-  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow] = await Promise.all([
     collectAuditRuns(auditRepoId),
     collectLearning(root),
     collectSecurity(root),
@@ -596,6 +694,7 @@ export async function collectTelemetry(opts = {}) {
     collectAuditEffectiveness(root),
     collectAuthorTier(root),
     collectModelAb(),
+    collectTieredShadow(root),
   ]);
   const requirements = collectRequirements(root);
 
@@ -617,6 +716,7 @@ export async function collectTelemetry(opts = {}) {
       auditEffectiveness: auditEffectiveness.status,
       authorTier: authorTier.status,
       modelAb: modelAb.status,
+      tieredShadow: tieredShadow.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
@@ -628,6 +728,7 @@ export async function collectTelemetry(opts = {}) {
     auditEffectiveness: auditEffectiveness.data,
     authorTier: authorTier.data,
     modelAb: modelAb.data,
+    tieredShadow: tieredShadow.data,
   };
 }
 
