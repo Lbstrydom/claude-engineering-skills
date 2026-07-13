@@ -93,6 +93,7 @@ import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey 
 import { createOpenAIClient } from '../openai-client.mjs';
 import { createAnthropicClient } from '../anthropic-client.mjs';
 import { ossStructuredCall } from '../oss-structured-output.mjs';
+import { createGeminiReviewSubprocessAdapters } from './final-adjudication.mjs';
 import { MODEL, getPassPrompt, buildCachePrompt, callGPT, safeCallGPT } from './llm-helpers.mjs';
 import {
   LlmError, classifyLlmError, buildReducePayload, normalizeFindingsForOutput as _normalizeFindingsForOutput,
@@ -2914,15 +2915,16 @@ export async function runLegacyProductionAudit(ctx) {
  *   - `ossCall`          — a bound `(opts) => ossStructuredCall(client, opts)`
  *     over a `createOpenAIClient({oss:{...}})` client pointed at OpenRouter
  *     (mirrors the existing `audit-shadow.mjs::callModelDefault` pattern)
- *   - `geminiReviewCall` — left `null` here: the plan describes this as "a
- *     thin wrapper around Phase 12's subprocess adapter", and Phase 12
- *     (the `gemini-review.mjs` `--role adjudicator-only` harness + the
- *     production `execFile` subprocess adapter) is explicitly OUT OF SCOPE
- *     for this phase (Cluster F). `runTieredAuditPipeline`'s Stage 2 call
- *     site throws a clear, descriptive error if it's ever actually invoked
- *     with no `geminiReviewCall` wired — never a silently-fabricated verdict.
- *     `tieredAuditConfig.pipelineEnabled` defaults `false`, so this gap is
- *     inert unless an operator explicitly opts in before Phase 12 ships.
+ *   - `geminiReviewCall` + `geminiCleanRegionCall` — Phase 12's REAL
+ *     subprocess adapters (`createGeminiReviewSubprocessAdapters`), wired
+ *     2026-07-13 as part of the Close-out shadow-validation flip. TWO
+ *     handles, not one: `runFinalAdjudication`'s adapters have different
+ *     signatures (`reviewCall(envelope)` vs `cleanRegionCall(file)`), so
+ *     the earlier single-handle design could never have served both.
+ *     Construction is cheap and spawn-lazy (no subprocess until Stage 2
+ *     actually calls one); the adapters resolve `gemini-review.mjs` as a
+ *     module-relative sibling, correct in both the source and consumer
+ *     (`scripts/.claude-skills/`) layouts.
  *
  * @param {object} cliArgs - the same options object `main()` already builds
  *   for its (pre-Phase-11) `runMultiPassCodeAudit(...)` call.
@@ -2940,15 +2942,19 @@ export async function buildAuditRunContext(cliArgs) {
   } = cliArgs;
 
   // Only construct the tiered-pipeline-only provider handles when the
-  // tiered pipeline is actually enabled — `runLegacyProductionAudit` never
-  // reads `ctx.providers.anthropicClient`/`ossCall`, so paying their
-  // construction cost (a network-capable client, possibly slow/erroring
-  // when ANTHROPIC_API_KEY/OPENROUTER_API_KEY are unset) on every default
-  // (legacy-path) run would violate "every phase remains additive/env-var-
-  // gated" for a codepath the default run never exercises.
+  // tiered pipeline can actually RUN — as the gating path (`pipelineEnabled`)
+  // OR as the Close-out shadow (`shadowEnabled`, 2026-07-13: the original
+  // `pipelineEnabled`-only gate meant a shadow-validation run got
+  // `anthropicClient: null, ossCall: null` and failed its discovery portfolio
+  // on the first call, deterministically — the entire shadow window would
+  // have produced zero comparison data). `runLegacyProductionAudit` never
+  // reads these handles, so the default (both flags off) run still pays no
+  // construction cost — "every phase remains additive/env-var-gated" holds.
   let anthropicClient = null;
   let ossCall = null;
-  if (tieredAuditConfig.pipelineEnabled) {
+  let geminiReviewCall = null;
+  let geminiCleanRegionCall = null;
+  if (tieredAuditConfig.pipelineEnabled || tieredAuditConfig.shadowEnabled) {
     try {
       anthropicClient = await createAnthropicClient();
     } catch (err) {
@@ -2962,6 +2968,15 @@ export async function buildAuditRunContext(cliArgs) {
     } catch (err) {
       process.stderr.write(`  [ctx] ossCall unavailable (non-blocking — only the tiered pipeline's discovery portfolio needs it): ${err.message}\n`);
     }
+    try {
+      // Spawn-lazy: construction writes/spawns nothing — the subprocess only
+      // runs when Stage 2 actually invokes an adapter.
+      const adapters = createGeminiReviewSubprocessAdapters({ repoRoot: process.cwd() });
+      geminiReviewCall = adapters.reviewCall;
+      geminiCleanRegionCall = adapters.cleanRegionCall;
+    } catch (err) {
+      process.stderr.write(`  [ctx] gemini adjudication adapters unavailable (non-blocking — the tiered pipeline fails fast with a clear cause if Stage 2 is reached): ${err.message}\n`);
+    }
   }
 
   return {
@@ -2971,7 +2986,7 @@ export async function buildAuditRunContext(cliArgs) {
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
     outFile, model, sessionCacheHit,
     generatorOutcomes: [],
-    providers: { openai, anthropicClient, ossCall, geminiReviewCall: null },
+    providers: { openai, anthropicClient, ossCall, geminiReviewCall, geminiCleanRegionCall },
   };
 }
 

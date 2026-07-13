@@ -40,6 +40,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 // matched. This list is also the allow-list for the post-sync untrack step.
 const AUDIT_RUNTIME_IGNORES = [
   '.audit/cache-metrics.jsonl',       // openai-audit.mjs cache hit-rate log
+  '.audit/tiered-shadow-log.jsonl',   // tiered-recall Close-out shadow-validation log (tiered-shadow-compare.mjs)
   '.audit-loop/*-observed.json',      // domain-deps / nav-graph / visual observed envelopes
   '.audit-loop/*-verify-result.json', // nav-audit / visual-audit --verify results
   '.audit-loop/*-drift-ledger.json',  // nav / visual local drift caches
@@ -129,6 +130,11 @@ const CORE_ENTRY = [
   // pulls its lib/db/ closure automatically. (Was missing → both consumers
   // failed the relocation smoke; declared here to restore consistency.)
   'scripts/reconcile-repo-identity.mjs',
+  // Tiered-recall shadow-validation report CLI (Close-out) — a standalone
+  // operator diagnostic nothing imports, so the walker can't discover it;
+  // consumers need it to read THEIR OWN .audit/tiered-shadow-log.jsonl
+  // before Phase 14's production-flip decision. Also in CLI_SMOKE_SET.
+  'scripts/tiered-shadow-report.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   // Persona-test consistency mode CLIs (docs/plans/persona-test-consistency-mode.md).
   // Both are user-invoked CLIs; the import-graph walker pulls in their

@@ -403,7 +403,7 @@ export const AuditRunContextSchema = z.object({
     role: z.enum(['required', 'optional', 'exploratory']),
     status: z.enum(['succeeded', 'failed', 'skipped']),
   })).optional(),
-  // The four provider handles, constructed ONCE by `buildAuditRunContext` via
+  // The provider handles, constructed ONCE by `buildAuditRunContext` via
   // the existing guarded factories, threaded through unchanged — no stage
   // module constructs a provider SDK client itself.
   providers: z.object({
@@ -411,6 +411,13 @@ export const AuditRunContextSchema = z.object({
     anthropicClient: z.unknown().nullable().optional(),
     ossCall: z.unknown().nullable().optional(),
     geminiReviewCall: z.unknown().nullable().optional(),
+    // Stage 2's clean-region sampler takes a FILE, not an envelope — a
+    // different signature from geminiReviewCall, so it is its own handle
+    // (2026-07-13 shadow-wiring fix: the prior design threaded ONE function
+    // into both of runFinalAdjudication's adapters, whose signatures differ
+    // — reviewCall(envelope) vs cleanRegionCall(file) — so a single handle
+    // could never have served both correctly).
+    geminiCleanRegionCall: z.unknown().nullable().optional(),
   }).optional(),
   // Deviations from the plan's literal field-enumeration, needed by actual
   // shipped code (audit-plan fix pattern — verified via direct inspection,

@@ -57,6 +57,7 @@ const CLI_SMOKE_SET = [
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
   'model-eval-auditor.mjs', // model-swap-eval-harness Phase 3 auditor-role CLI
   'model-eval-adjudicator.mjs', // model-swap-eval-harness Phase 4 adjudicator-role CLI
+  'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
 ];
 
 const LIB_IMPORT_SET = [

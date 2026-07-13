@@ -1,5 +1,18 @@
 # Project Status Log
 
+## 2026-07-13 — Fix: shadow-validation flip pre-flight — 4 wiring gaps found by tracing the full path before enabling, all closed
+
+### Changes
+- **Context**: the user asked to flip `AUDIT_TIERED_SHADOW_ENABLED=true` for the real 10-15-commit shadow window. A full-path trace BEFORE flipping (source repo + both consumer repos) found the flip would have produced zero comparison data — every shadow observation would have failed deterministically at the same first line.
+- **Gap 1 — providers gate**: `buildAuditRunContext` only constructed `anthropicClient`/`ossCall` when `pipelineEnabled` (the gating flag) was true — but shadow validation runs with `pipelineEnabled=false` + `shadowEnabled=true`, so a shadow run got null providers and its discovery portfolio failed on the first call. Gate widened to `pipelineEnabled || shadowEnabled`; the default (both off) path still constructs nothing.
+- **Gap 2 — Stage 2 adapters were never wired at all**: `providers.geminiReviewCall` was unconditionally hardcoded `null` ("Phase 12 out of scope" — a leftover from before Phase 12 shipped). Phase 12's real, tested `createGeminiReviewSubprocessAdapters` existed with zero production callers. Now constructed in `buildAuditRunContext` (spawn-lazy — no subprocess until Stage 2 actually calls).
+- **Gap 3 — latent single-handle bug**: `tiered-pipeline.mjs` threaded ONE `geminiReviewCall` function into BOTH of `runFinalAdjudication`'s adapters, whose signatures differ (`reviewCall(envelope)` vs `cleanRegionCall(file)`) — it could never have worked. Split into two provider handles (`geminiReviewCall` + `geminiCleanRegionCall`, schema updated); fail-fast now requires both; dead `unwiredGeminiCall` removed.
+- **Gap 4 — consumer-layout ENOENT in the subprocess adapter**: the default `gemini-review.mjs` path was `path.join(repoRoot, 'scripts', 'gemini-review.mjs')` — the exact consumer-relocation defect class this repo's own KD corpus curates (KD-021/KD-026): in consumers the script lives at `scripts/.claude-skills/gemini-review.mjs`, so every Stage 2 spawn would have ENOENT'd there. Fixed with module-relative sibling resolution (`new URL('../../gemini-review.mjs', import.meta.url)`), correct in both layouts; regression test asserts cwd-independence.
+- **Consumer sync plumbing**: `tiered-shadow-report.mjs` added to `CORE_ENTRY` (standalone CLI, walker can't discover it — consumers need it to read their own logs) + `CLI_SMOKE_SET`; `.audit/tiered-shadow-log.jsonl` added to `AUDIT_RUNTIME_IGNORES` (consumer managed-gitignore block).
+- **Cross-repo flip mechanism verified**: `~/.audit-loop.env` loads ALL keys (no allowlist, `override:false`) into every repo's env — one line flips all local repos. Consumers' Stage 1 falls back to GPT-5.5 with a loud named reason (deliberate: the GLM validation manifest was graded on THIS repo's finding distribution; extrapolating it is unsupported, and the manifest is intentionally not synced).
+- **No-spend end-to-end smoke**: with only the shadow flag set, `buildAuditRunContext` produces all four provider handles, real and distinct — verified in-process before flipping anything.
+- **Full suite**: 5007 passed, 0 failed, 20 pre-existing skips (+5 new wiring tests).
+
 ## 2026-07-13 — Feat: tiered-recall pipeline — wired Phase 5's validated Stage 1 model, corrected the stale Cluster F doc gap, built Close-out shadow-validation infra
 
 ### Changes

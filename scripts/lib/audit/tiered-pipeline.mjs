@@ -25,16 +25,16 @@
  * module is inert (never imported into a live code path with real effect)
  * until an operator explicitly opts in.
  *
- * **Known-incomplete piece (documented, not silently glossed over)**: Stage
- * 2's Gemini adjudicator/clean-challenge calls depend on Phase 12's
- * `gemini-review.mjs --role adjudicator-only` subprocess adapter, which is
- * explicitly OUT OF SCOPE for this phase (Cluster F). `ctx.providers
- * .geminiReviewCall` is `null` until Phase 12 ships; the default `reviewCall`/
- * `cleanRegionCall` adapters below throw a clear, descriptive error when
- * actually invoked with no `geminiReviewCall` wired — `runFinalAdjudication`'s
- * existing catch-and-escalate logic (already implemented, tested in Cluster
- * D) routes that to `unresolved`/`cleanRegionFailures`, never a fabricated
- * verdict.
+ * **Stage 2 adapters (wired 2026-07-13, Close-out shadow-validation flip)**:
+ * `ctx.providers.geminiReviewCall` + `.geminiCleanRegionCall` carry Phase
+ * 12's REAL subprocess adapters (`createGeminiReviewSubprocessAdapters`,
+ * constructed once in `buildAuditRunContext` when `pipelineEnabled` OR
+ * `shadowEnabled`). TWO handles because `runFinalAdjudication`'s adapters
+ * have different signatures — `reviewCall(envelope)` vs
+ * `cleanRegionCall(file)` — the earlier single-handle design threaded one
+ * function into both roles, which could never have worked. The fail-fast
+ * below still throws a clear configuration error if either handle is
+ * missing — never a silently-fabricated verdict.
  *
  * **Stage 1 triager model resolution** (wired 2026-07-13, once Cluster C's
  * validation manifest existed and passed): `resolveStage1TriagerModel`
@@ -147,15 +147,6 @@ async function validatedTriagerCall(dto, providers, model) {
   return result;
 }
 
-/** Throws a clear, descriptive "not yet wired" error — Phase 12 dependency. */
-function unwiredGeminiCall() {
-  throw new Error(
-    'tiered-pipeline: Stage 2 Gemini adjudication requires ctx.providers.geminiReviewCall, ' +
-    'which is not yet wired (Phase 12 — the gemini-review.mjs subprocess adapter — is out of ' +
-    'scope for this phase). This candidate escalates to unresolved/pending, never a fabricated verdict.'
-  );
-}
-
 /**
  * @param {import('../schemas.mjs').AuditRunContext} ctx
  * @returns {Promise<import('../schemas.mjs').AuditRunResult>}
@@ -165,22 +156,22 @@ export async function runTieredAuditPipeline(ctx) {
   const { providers = {} } = ctx;
 
   // audit-code fix H12/M10 (Cluster E round 1): the original draft let the
-  // tiered pipeline run to completion with `providers.geminiReviewCall`
-  // absent — Stage 2 candidates would then silently degrade to `unresolved`/
+  // tiered pipeline run to completion with the Stage 2 adapters absent —
+  // candidates would then silently degrade to `unresolved`/
   // `cleanRegionFailures` deep inside `runFinalAdjudication`, one call at a
-  // time, rather than the run failing fast with one clear cause. Mandatory-
-  // gate-bypass risk is real ONLY once an operator flips
-  // `tieredAuditConfig.pipelineEnabled` to `true` before Phase 12 ships the
-  // production `geminiReviewCall` adapter — but when they do, this must be a
-  // loud configuration error, not hundreds of quietly-unresolved candidates.
-  if (typeof providers.geminiReviewCall !== 'function') {
+  // time, rather than the run failing fast with one clear cause. This must
+  // be a loud configuration error, not hundreds of quietly-unresolved
+  // candidates. BOTH handles are required (2026-07-13 shadow-wiring fix:
+  // reviewCall(envelope) and cleanRegionCall(file) have different
+  // signatures — one function cannot serve both roles).
+  if (typeof providers.geminiReviewCall !== 'function' || typeof providers.geminiCleanRegionCall !== 'function') {
     throw new Error(
-      'runTieredAuditPipeline: tieredAuditConfig.pipelineEnabled is true but ' +
-      'ctx.providers.geminiReviewCall is not wired — the tiered pipeline\'s ' +
-      'Stage 2 mandatory Gemini adjudication gate cannot run. Fix: either set ' +
-      'AUDIT_TIERED_PIPELINE_ENABLED=false until Phase 12\'s production ' +
-      'geminiReviewCall adapter ships, or supply providers.geminiReviewCall ' +
-      'explicitly (e.g. in tests).'
+      'runTieredAuditPipeline: ctx.providers.geminiReviewCall and ' +
+      '.geminiCleanRegionCall must both be functions — the tiered pipeline\'s ' +
+      'Stage 2 mandatory Gemini adjudication gate cannot run without them. ' +
+      'buildAuditRunContext wires both automatically when ' +
+      'AUDIT_TIERED_PIPELINE_ENABLED or AUDIT_TIERED_SHADOW_ENABLED is true; ' +
+      'tests supply them explicitly.'
     );
   }
 
@@ -356,8 +347,11 @@ export async function runTieredAuditPipeline(ctx) {
   // reproduces exactly what the budget decided, rather than re-deriving a
   // different sample.
   const stage2Start = Date.now();
-  const reviewCall = providers.geminiReviewCall ?? unwiredGeminiCall;
-  const cleanRegionCall = providers.geminiReviewCall ?? unwiredGeminiCall;
+  // Both validated as functions by the fail-fast at the top of this run —
+  // distinct handles because the two adapter signatures differ
+  // (reviewCall(envelope) vs cleanRegionCall(file)).
+  const reviewCall = providers.geminiReviewCall;
+  const cleanRegionCall = providers.geminiCleanRegionCall;
   const stage2Result = await runFinalAdjudication(
     { escalated: triageResult.escalated, mechanicalDismissed: workItems.tailSample, confirmedSurvivor: [] },
     workItems.cleanRegionSample,

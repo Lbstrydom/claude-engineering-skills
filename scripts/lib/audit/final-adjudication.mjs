@@ -41,10 +41,28 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Stage2DecisionSchema } from '../schemas.mjs';
 import { mulberry32, seededShuffleCopy } from './seeded-random.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
 import { tieredAuditConfig } from '../config.mjs';
+
+/**
+ * Layout-aware default location of `gemini-review.mjs` — resolved as a
+ * MODULE-RELATIVE sibling (`../../gemini-review.mjs` from `lib/audit/`),
+ * NOT repo-root-relative. The previous default,
+ * `path.join(repoRoot, 'scripts', 'gemini-review.mjs')`, only exists in the
+ * SOURCE-repo layout; in a consumer the tooling lives under
+ * `scripts/.claude-skills/`, so every Stage 2 subprocess spawn would have
+ * been ENOENT there — the exact consumer-relocation defect class this
+ * repo's own known-defect corpus curates (KD-021/KD-026). This module and
+ * `gemini-review.mjs` are always shipped together at the same relative
+ * offset in BOTH layouts, so module-relative resolution is correct in both.
+ * Exported for direct test assertion.
+ */
+export function defaultGeminiReviewScriptPath() {
+  return fileURLToPath(new URL('../../gemini-review.mjs', import.meta.url));
+}
 
 function nowIso(clock) {
   return typeof clock === 'function' ? clock() : new Date().toISOString();
@@ -495,7 +513,10 @@ export function createGeminiReviewSubprocessAdapters({
   if (!repoRoot) {
     throw new TypeError('createGeminiReviewSubprocessAdapters: repoRoot is required');
   }
-  const scriptPath = geminiReviewScript || path.join(repoRoot, 'scripts', 'gemini-review.mjs');
+  // Module-relative sibling, NOT path.join(repoRoot, 'scripts', ...) — the
+  // repo-root form breaks under the consumer scripts/.claude-skills/ layout
+  // (see defaultGeminiReviewScriptPath's docblock).
+  const scriptPath = geminiReviewScript || defaultGeminiReviewScriptPath();
 
   async function reviewCall(envelope) {
     const referencedFiles = envelopeReferencedFiles(envelope);

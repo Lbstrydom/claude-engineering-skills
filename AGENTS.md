@@ -766,10 +766,28 @@ defaults **off** — production runs the legacy path today.
   code in an already-complex module for a one-time comparison, or dead
   code once Phase 14 resolves. Logs to a local, gitignored
   `.audit/tiered-shadow-log.jsonl` (Category A — bounded, temporary
-  decision-support data, no new Supabase schema). Summarize with
+  decision-support data, no new Supabase schema; also in the consumer
+  managed-gitignore block). Summarize with
   `npm run audit:tiered-shadow-report` before Phase 14's flip decision.
-- **Not yet started**: the actual shadow-validation window (10-15 real
-  commits) and Phase 14 (the production-flip decision gate) itself.
+- **Stage 2 adapters are REAL and wired (2026-07-13)**: `buildAuditRunContext`
+  constructs Phase 12's subprocess adapters
+  (`createGeminiReviewSubprocessAdapters`) whenever `pipelineEnabled` OR
+  `shadowEnabled` — TWO provider handles (`geminiReviewCall` /
+  `geminiCleanRegionCall`), because `runFinalAdjudication`'s two adapters
+  have different signatures (envelope vs file) and the earlier single-handle
+  design could never have served both. The adapter resolves
+  `gemini-review.mjs` as a **module-relative sibling** — the prior
+  repoRoot-relative default was the consumer-relocation defect class
+  (KD-021/KD-026) and would have ENOENT'd in every consumer.
+- **Cross-repo behavior**: the flag lives in `~/.audit-loop.env` (the shared
+  loader has no allowlist, `override:false`), so one line flips every local
+  repo at once. In consumers, Stage 1 falls back to GPT-5.5 with a loud
+  named reason — the GLM validation manifest was graded on THIS repo's
+  finding distribution and is deliberately NOT synced (extrapolating a
+  per-repo validation to other repos is unsupported; the conservative
+  fallback is correct there).
+- **Not yet done**: the shadow-validation window itself (10-15 real commits
+  with the flag on) and Phase 14 (the production-flip decision gate).
 
 → Full plan, phase-by-phase spec, and audit trail (including the Cluster F
 status-narrative gap found and corrected 2026-07-13 — the doc's own
