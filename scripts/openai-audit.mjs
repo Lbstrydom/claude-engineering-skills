@@ -430,14 +430,19 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     openai, planContent, projectContext, historyContext, outFile, model: MODEL, ...opts,
   });
 
-  if (tieredAuditConfig.pipelineEnabled) {
+  // `ctx.allowTiered` (shadow-flip incident fix, 2026-07-13): env flags are
+  // operator intent, global to every Node process (tests included, via the
+  // shared ~/.audit-loop.env); EXECUTION eligibility is per-call, asserted
+  // only by the CLI's main(). Without it, a flipped flag routed fully-mocked
+  // test harnesses into real multi-provider execution.
+  if (tieredAuditConfig.pipelineEnabled && ctx.allowTiered) {
     const mergedResult = await runTieredAuditPipeline(ctx);
     printAuditResult(mergedResult, { outFile, jsonMode });
     return mergedResult;
   }
 
   const legacyResultPromise = runLegacyProductionAudit(ctx);
-  const shadowTask = tieredAuditConfig.shadowEnabled
+  const shadowTask = (tieredAuditConfig.shadowEnabled && ctx.allowTiered)
     ? runTieredShadowComparison({ ctx, legacyResultPromise, runTieredAuditPipeline }).catch(() => {})
     : null;
 
@@ -773,7 +778,9 @@ async function main() {
     const codePassMultiplier = passFilter ? passFilter.length : PASS_NAMES.length;
     printCostPreflight('code', codeContextChars * codePassMultiplier, MODEL,
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
-    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope });
+    // allowTiered: true — main() is the ONE production CLI entrypoint allowed
+    // to execute the tiered pipeline / shadow (see buildAuditRunContext).
+    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true });
     return;
   }
 

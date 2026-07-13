@@ -403,6 +403,17 @@ export const AuditRunContextSchema = z.object({
     role: z.enum(['required', 'optional', 'exploratory']),
     status: z.enum(['succeeded', 'failed', 'skipped']),
   })).optional(),
+  // Call-site eligibility for tiered-pipeline / shadow EXECUTION (2026-07-13,
+  // shadow-flip incident fix). The env flags (AUDIT_TIERED_PIPELINE_ENABLED /
+  // AUDIT_TIERED_SHADOW_ENABLED) express OPERATOR intent ("the window is
+  // open") and are global — including to `npm test`, which loads the same
+  // shared ~/.audit-loop.env. Whether a specific INVOCATION may execute the
+  // tiered pipeline or its shadow (real multi-provider spend beyond the
+  // caller-injected openai client) is a per-call property only the
+  // production CLI entrypoint asserts. Default false: programmatic callers
+  // (test harnesses with stubbed clients, model-eval generation arms) never
+  // construct real provider clients or fire the shadow, regardless of env.
+  allowTiered: z.boolean().optional(),
   // The provider handles, constructed ONCE by `buildAuditRunContext` via
   // the existing guarded factories, threaded through unchanged — no stage
   // module constructs a provider SDK client itself.

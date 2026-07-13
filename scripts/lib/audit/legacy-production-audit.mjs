@@ -2938,7 +2938,7 @@ export async function buildAuditRunContext(cliArgs) {
     noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false,
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
-    outFile = null, model = null,
+    outFile = null, model = null, allowTiered = false,
   } = cliArgs;
 
   // Only construct the tiered-pipeline-only provider handles when the
@@ -2950,11 +2950,24 @@ export async function buildAuditRunContext(cliArgs) {
   // have produced zero comparison data). `runLegacyProductionAudit` never
   // reads these handles, so the default (both flags off) run still pays no
   // construction cost — "every phase remains additive/env-var-gated" holds.
+  //
+  // AND the call site must assert `allowTiered` (same day, the shadow-flip
+  // incident fix): the env flags alone are NOT sufficient — they load from
+  // the shared ~/.audit-loop.env in every Node process in every repo,
+  // INCLUDING test runs whose harnesses stub only the `openai` argument and
+  // cannot stub these independently-constructed handles. With the shadow
+  // flag flipped on, fully-mocked unit tests started executing the real
+  // tiered pipeline (real GLM/Sonnet calls, real gemini-review subprocess
+  // spawns) — the full suite went 54s → 6.5min, observed live. Execution
+  // eligibility is a per-CALL property that only the production CLI
+  // entrypoint asserts (`main()` passes `allowTiered: true`); programmatic
+  // callers (tests, model-eval generation arms) default false and stay
+  // hermetic regardless of env.
   let anthropicClient = null;
   let ossCall = null;
   let geminiReviewCall = null;
   let geminiCleanRegionCall = null;
-  if (tieredAuditConfig.pipelineEnabled || tieredAuditConfig.shadowEnabled) {
+  if ((tieredAuditConfig.pipelineEnabled || tieredAuditConfig.shadowEnabled) && allowTiered) {
     try {
       anthropicClient = await createAnthropicClient();
     } catch (err) {
@@ -2984,7 +2997,7 @@ export async function buildAuditRunContext(cliArgs) {
     passFilter, fileFilter, round, ledgerFile, diffFile, changedFiles, repoProfile, bandit, fpTracker,
     noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath,
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
-    outFile, model, sessionCacheHit,
+    outFile, model, sessionCacheHit, allowTiered,
     generatorOutcomes: [],
     providers: { openai, anthropicClient, ossCall, geminiReviewCall, geminiCleanRegionCall },
   };
