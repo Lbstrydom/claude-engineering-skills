@@ -568,47 +568,108 @@ from. Each entry:
 - The store caps the stored path at 40 steps and drops malformed entries; you don't
   need to pre-trim, but keep it to the meaningful navigation steps.
 
-Response `{"ok": true, "cloud": ..., "sessionId": "<uuid>", "existed": bool, "statsUpdated": bool}`.
-**Capture `sessionId`** for Phase 6b. If `statsUpdated: false`, log a stderr
-warning — session is preserved; stats self-heal on the next reconciler run.
+Response `{"ok": true, "cloud": ..., "sessionId": "<uuid>", "existed": bool,
+"statsUpdated": bool, "correlationSummary": {...}}`. If `statsUpdated: false`,
+log a stderr warning — session is preserved; stats self-heal on the next
+reconciler run.
 
 ---
 
-## Phase 6b — Emit Audit-Loop Correlations (MANDATORY — populates the highest-leverage table)
+## Phase 6b — Verify the Correlation Summary (automatic — do NOT re-emit)
 
-Skip ONLY if `audit_link = false` OR no P0/P1 findings produced this session.
-Otherwise this step is **mandatory and runs in-flow** — it is the sole writer of
-`persona_audit_correlations` (the bandit's user-impact reward signal). Do not
-defer it to "later" or treat the reference as optional reading.
+**As of 2026-07-13 this step is deterministic, not agent-discretionary.**
+`record-persona-session` (Phase 6) runs the correlator automatically —
+immediately after the session commits, matching every P0/P1 finding against
+recent audit findings for the repo and writing `persona_audit_correlations`
+rows itself. There is nothing to emit here; **do not call `record-correlation`
+per finding** — that CLI now exists only for manual repair (see below), and
+calling it redundantly for a finding the auto-correlator already wrote will
+just leave a second, identical row (or, for a genuinely different
+`auditFindingId`, a legitimate additional manual correlation — see the
+schema's multi-row-per-pair note in `references/audit-correlation.md`).
 
-**For every P0/P1 finding, run exactly one command** (canonical contract, so the
-hash matches the audit side byte-for-byte — `semanticId()` is the single source):
+Your only job this phase: **read `correlationSummary` from the Phase 6
+response and report it** (echo the counts into the session's debrief/report —
+this is the visibility the mechanism depends on). Shape:
+
+```json
+{
+  "attempted": true,
+  "reason": null,
+  "candidates": 4,
+  "exact": 0, "fuzzy": 2, "missed": 1,
+  "skippedExisting": 0,
+  "malformed": 0,
+  "writeFailed": 0,
+  "matcherVersion": 1
+}
+```
+
+`attempted: false` means the correlator didn't run at all — `reason` says why
+(`disabled-by-flag`, `no-repo-identity`, `no-p0p1-findings`,
+`session-write-failed`). `attempted: true` with a `reason` still set
+(`no-candidate-runs`, `candidate-read-failed`, `existence-check-failed`) means
+it tried but couldn't compare against anything real — in BOTH cases, **zero
+correlation rows were written**, which is correct (an empty candidate set is
+not evidence of an audit miss — never treat it as one). `malformed > 0` means
+some P0/P1 findings were missing `element`/`observed` and were quarantined —
+never hashed or matched (a missing-field finding degrading to a shared empty
+identity would collide with every other malformed finding, corrupting ground
+truth — quarantine is correct, not a bug). `writeFailed > 0` is the one state
+worth flagging loudly in the debrief (a real DB write failed for some
+findings; already logged to stderr by the correlator).
+
+### Manual repair — only for genuine corrections
+
+Use `record-correlation` **only** to:
+1. **Repair a false auto-emitted `audit_missed`** into a real match (the
+   auto-correlator's keyword matcher has real recall limits — a paraphrased
+   symptom description can miss a real audit finding it should have
+   matched). The store automatically retires the stale `audit_missed` row
+   when you supply a real `auditFindingId` — you never need to clean it up
+   yourself.
+2. **Emit `audit_false_positive` or `severity_overstated`** — these require
+   human judgment (a flagged issue that couldn't be reproduced) and are
+   never auto-emitted.
+
+The finding-hash contract is unchanged in spirit but the ALGORITHM changed
+(2026-07-13): `personaFindingHash()` now lives in
+`scripts/lib/persona/audit-correlator.mjs` — see the updated formula in
+`references/audit-correlation.md` (the old `sha256(element+observed+code)`
+inline formula is retired; compute it the same way the auto-correlator does
+so a manual repair's hash matches the auto-emitted row it's correcting).
+
+**When one of the two repair cases above applies, run exactly one command per
+finding being corrected** (canonical contract, so the hash matches the audit
+side byte-for-byte — `personaFindingHash()` is the single source). **Never
+inline free text into a shell-quoted `--json '...'` string** — `matchRationale`
+and other text fields come from model-composed or persona-observed prose that
+can contain quotes or shell metacharacters. Always write the payload to a
+temp JSON file and pipe it via `--stdin` (same convention as `/brainstorm`):
 
 ```bash
-node scripts/cross-skill.mjs record-correlation --json '{
+cat > /tmp/correlation-repair.json <<'EOF'
+{
   "personaSessionId": "<sessionId from Phase 6>",
-  "personaFindingHash": "<semanticId of the persona finding>",
+  "personaFindingHash": "<personaFindingHash() of the persona finding>",
   "personaSeverity": "P0|P1",
   "auditFindingId": "<matching audit_findings.id, or omit if none>",
   "auditRunId": "<the matched run id, or omit>",
-  "correlationType": "confirmed_hit | audit_missed | severity_understated",
+  "correlationType": "confirmed_hit | audit_missed | severity_understated | audit_false_positive | severity_overstated",
   "matchScore": 0.0,
   "matchRationale": "<one line>"
-}'
+}
+EOF
+node scripts/cross-skill.mjs record-correlation --stdin < /tmp/correlation-repair.json
 ```
 
-- **Match** each P0/P1 against the Phase-0d audit candidates by `semanticId()`
-  computed the SAME way both sides. A match → `confirmed_hit` with the
-  `auditFindingId`/`auditRunId`.
-- **No match → still emit** with `correlationType: 'audit_missed'` and the audit
-  link omitted. A persona-only P0/P1 is an audit *miss* — exactly what
-  `audit_effectiveness.audit_misses` measures; dropping it loses the signal.
 - Idempotent: the writer dedupes on `(persona_session_id, persona_finding_hash,
-  audit_finding_id)`, so re-running is safe.
-- **Shell safety**: `matchRationale` (and any free text) may contain quotes —
-  write the JSON to a temp file and pipe via `--stdin` rather than inlining a
-  single-quoted `--json '...'`, so a `'` in the text can't break the shell or
-  inject. (The CLI accepts `--stdin`; same convention as `/brainstorm`.)
+  audit_finding_id)`, so re-running is safe. Supplying a real `auditFindingId`
+  for a hash that previously auto-emitted `audit_missed` automatically retires
+  that stale NULL-match row — no separate cleanup step.
+- Do **not** loop this over every P0/P1 finding — the automatic correlator
+  (Phase 6) already covers the normal case. Only run this for a finding that
+  needs one of the two repair cases above.
 
 Full classification rules + reverse-direction (audit false positives) protocol:
 `references/audit-correlation.md`.
@@ -766,7 +827,7 @@ situations — read them only when the trigger applies.
 
 | File | Summary | Read when |
 |---|---|---|
-| `references/audit-correlation.md` | Pre-test audit enrichment + post-test persona↔audit correlation emission — full rules. | `audit_link = true` AND (Phase 0d fetches audit candidates OR Phase 6b emits correlations). |
+| `references/audit-correlation.md` | Pre-test audit enrichment + post-test persona↔audit correlation emission — full rules. | `audit_link = true` AND (Phase 0d fetches audit candidates OR Phase 6b's manual-repair path is needed). |
 | `references/browser-tool-detection.md` | Full browser-tool detection algorithm with tier priority, fallback rules, and Windows caveats. | Phase 1 tool selection fails on first try, OR the user is on Windows and Playwright MCP tools aren't appearing. |
 | `references/consistency-mode.md` | Full consistency-mode grammar, manifest schema, canary schema, runner exit codes, contradiction kinds. | Phase 3b runs (i.e., `--mode consistency` was passed) and you need the full grammar reference; OR the user asks how the rig decides severity / coercion / negative-space. |
 | `references/persona-debrief-format.md` | Full persona debrief generation rules, tone guide, and output wrapper. | About to write the Phase 5b debrief. |

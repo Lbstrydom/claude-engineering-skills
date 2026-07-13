@@ -40,6 +40,7 @@ import sectionAuthorTier from './sections/author-tier.mjs';
 import sectionModelAb from './sections/model-ab.mjs';
 import sectionTieredShadow from './sections/tiered-shadow.mjs';
 import sectionStartHere from './sections/start-here.mjs';
+import sectionPersonaTests from './sections/persona-tests.mjs';
 
 // Backward-compat: existing callers import these from render.mjs.
 export { escapeHtml, jsonScriptSafe };
@@ -63,6 +64,7 @@ const SLICERS = {
   learning:     (d) => ({ src: d.sources.learning || { status: 'ok', detail: '' }, learning: d.learning }),
   promptVariants:(d) => ({ src: d.sources.promptVariants || { status: 'ok', detail: '' }, promptVariants: d.promptVariants || { cloud: false, arms: [] } }),
   shipHealth:   (d) => ({ src: d.sources.shipHealth || { status: 'ok', detail: '' }, shipHealth: d.shipHealth || { cloud: false, byOutcome: [], recent: [] } }),
+  personaTests: (d) => ({ src: d.sources.personaTests || { status: 'missing-optional', detail: '' }, personaTests: d.personaTests || { cloud: false, latestByPersona: [], trend: [], correlations: { total: 0, byType: [] } } }),
   auditEffectiveness:(d) => ({ src: d.sources.auditEffectiveness || { status: 'ok', detail: '' }, auditEffectiveness: d.auditEffectiveness || { cloud: false, confirmedHits: 0, auditMisses: 0, falsePositives: 0, severityUnderstated: 0, severityOverstated: 0, precision: null, recall: null } }),
   authorTier:   (d) => ({ src: d.sources.authorTier || { status: 'ok', detail: '' }, authorTier: d.authorTier || { cloud: false, total: 0, bySuggestedTier: [], ladders: [], distinctProviderLadders: 0, diversityGateMet: false, agreement: { agree: 0, disagree: 0, declaredUnknown: 0 } } }),
   modelAb:      (d) => ({ src: d.sources.modelAb || { status: 'missing-optional', detail: '' }, modelAb: d.modelAb || { cloud: false, status: 'off', reason: '', distinctAssignments: 0, minAssignments: 12, spentEur: 0, capEur: null, pendingAdjudication: 0, arms: [] } }),
@@ -121,6 +123,8 @@ const REGISTRY = {
       desc: 'The de-facto invariants your code already enforces — extracted into a ledger the audits check against.' },
     { id: 'shipHealth',   title: 'Ship Health',    group: 'Delivery & governance', build: sectionShipHealth,   slice: SLICERS.shipHealth,
       desc: 'Every /ship outcome — shipped, warned, blocked, overridden — and why.' },
+    { id: 'personaTests', title: 'Persona Tests',  group: 'Delivery & governance', build: sectionPersonaTests, slice: SLICERS.personaTests,
+      desc: 'Latest persona-test session per persona, the recent-session trend, and whether the persona↔audit correlation loop is actually firing.' },
     { id: 'security',     title: 'Security',       group: 'Delivery & governance', build: sectionSecurity,     slice: SLICERS.security,
       desc: 'Security incident memory and the secret-gate audit trail — what was indexed, what was refused or redacted.' },
     { id: 'purposeHealth',title: 'Purpose Health', group: 'Delivery & governance', build: sectionPurposeHealth,slice: SLICERS.purposeHealth,
@@ -191,7 +195,7 @@ export function renderDocument(data, kind, assets) {
     // would show the page-level "nothing yet" placeholder while that section
     // actually has data, hiding it entirely. (modelAb + tieredShadow added
     // 2026-07-13 — both had been omitted, the exact bug this comment warns of.)
-    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow']
+    const allMissing = ['auditRuns', 'requirements', 'learning', 'promptVariants', 'auditEffectiveness', 'shipHealth', 'security', 'purposeHealth', 'authorTier', 'modelAb', 'tieredShadow', 'personaTests']
       .every((n) => (validated.sources[n]?.status || 'ok') === 'missing-optional');
     if (allMissing) {
       pageLevelEmpty = emptyPanel('telemetry-empty',

@@ -23,7 +23,7 @@ import { runTaxonomy, runLiveTaxonomy, personaScorecard } from './lib/nav/findin
 import { partitionFindings, scopeToChanged, divergenceKey } from './lib/nav/drift.mjs';
 import { renderFindings, renderLiveFindings, renderTable, renderMermaid, renderScorecard } from './lib/nav/render.mjs';
 import { assembleEnvelope, writeObservedEnvelope } from './lib/nav/envelope.mjs';
-import { computeContractDigest, NAV_VERIFY_TOOL_VERSION } from './lib/nav/schema.mjs';
+import { computeContractDigest, NAV_VERIFY_TOOL_VERSION, NAV_TOOL_VERSION } from './lib/nav/schema.mjs';
 import { runVerify } from './lib/nav/verify.mjs';
 import { mapPersonasToIntents } from './lib/nav/persona-seed.mjs';
 import { writeVerifyResult } from './lib/nav/verify-store.mjs';
@@ -208,6 +208,12 @@ async function main() {
       recall,
     });
     writeObservedEnvelope(root, envelope);
+    recordNavAuditRunTelemetry(root, {
+      headSha: envelope.headSha,
+      scope: args.scope,
+      driftKeys: advisory.map(divergenceKey),
+      findingCounts: countBySeverity(findings),
+    });
   } catch (err) {
     process.stderr.write(`[nav-audit] envelope write skipped: ${err.message}\n`);
   }
@@ -325,6 +331,33 @@ function gitHeadSha(root) {
 }
 function gitHeadDate(root) {
   try { return execFileSync('git', ['-C', root, 'show', '-s', '--format=%cI', 'HEAD'], { encoding: 'utf-8' }).trim(); } catch { return null; }
+}
+/** Dirty working tree → true. Unreadable git state degrades to "dirty" (fail closed: skip the cloud write rather than record a run against an ambiguous headSha). */
+function gitIsDirty(root) {
+  try { return execFileSync('git', ['-C', root, 'status', '--porcelain'], { encoding: 'utf-8' }).trim().length > 0; }
+  catch { return true; }
+}
+
+/**
+ * WS2 (docs/completed/persona-nav-feedback-recovery.md) — best-effort nav-audit
+ * run telemetry, STATIC PATH ONLY (the `--verify` live path produces a
+ * structurally different finding shape — no `drift_keys` — and is out of
+ * scope here). Fires only against a CLEAN working tree: `headSha` is only a
+ * meaningful join key for aging/first-seen queries when it actually
+ * identifies the code that was audited; a dirty tree's `git rev-parse HEAD`
+ * would misattribute uncommitted drift to a stale commit. ANY failure
+ * (no cloud, subprocess error, dirty tree) is silent — never fails the audit.
+ */
+function recordNavAuditRunTelemetry(root, { headSha, scope, driftKeys, findingCounts }) {
+  if (!headSha || gitIsDirty(root)) return;
+  try {
+    const csPath = fileURLToPath(new URL('./cross-skill.mjs', import.meta.url));
+    const payload = JSON.stringify({ headSha, scope, driftKeys, findingCounts, toolVersion: NAV_TOOL_VERSION });
+    execFileSync(process.execPath, [csPath, 'record-nav-audit-run', '--stdin'],
+      { input: payload, encoding: 'utf-8', stdio: ['pipe', 'ignore', 'ignore'] });
+  } catch {
+    // best-effort — never fail the audit over telemetry
+  }
 }
 
 /**

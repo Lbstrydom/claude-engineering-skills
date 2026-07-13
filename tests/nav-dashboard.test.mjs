@@ -17,23 +17,23 @@ before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-dash-')); });
 after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
 describe('collectNav degradation (section-contract)', () => {
-  it('returns missing-optional + empty panels when no contract present', () => {
-    const r = collectNav(dir);
+  it('returns missing-optional + empty panels when no contract present', async () => {
+    const r = await collectNav(dir);
     assert.equal(r.navAudit.status.status, 'missing-optional');
     assert.deepEqual(r.navAudit.scorecard, []);
     assert.deepEqual(r.navAudit.drift, []);
   });
 
-  it('returns missing-optional when contract present but no observed envelope', () => {
+  it('returns missing-optional when contract present but no observed envelope', async () => {
     fs.writeFileSync(path.join(dir, 'nav-contract.json'), JSON.stringify({
       version: 1, navLayers: { primary: ['Sidebar'] },
       personas: [{ id: 'p', intents: [{ id: 'i', destination: '/x', approvedAnchors: ['Sidebar'], requiredInLayer: 'primary' }] }],
     }));
-    const r = collectNav(dir);
+    const r = await collectNav(dir);
     assert.equal(r.navAudit.status.status, 'missing-optional');
   });
 
-  it('LIVE-ONLY: surfaces live scorecard + liveFindings from a fresh verify result when the observed envelope is absent (debt fix 2)', () => {
+  it('LIVE-ONLY: surfaces live scorecard + liveFindings from a fresh verify result when the observed envelope is absent (debt fix 2)', async () => {
     const live = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-dash-lo-'));
     const contract = {
       version: 1, navLayers: { primary: ['#primary-nav'], secondary: ['.sub'] },
@@ -48,7 +48,7 @@ describe('collectNav degradation (section-contract)', () => {
       liveAttribution: { wines: { placements: [{ container: '#primary-nav', layer: 'primary', state: 'mobile', role: null }], layers: ['primary'], states: ['mobile'] } },
       liveFindings: [{ class: 'competing-models', severity: 'P2', destination: 'primary|secondary', evidence: ['x'], confidence: 'high', gateEligible: false, verdict: 'two nav systems', source: 'live' }],
     });
-    const r = collectNav(live);
+    const r = await collectNav(live);
     assert.equal(r.navAudit.status.status, 'ok');
     assert.equal(r.navAudit.verifyMeta.live, true);
     assert.equal(r.navAudit.verifyMeta.staticStale, true);
@@ -60,7 +60,7 @@ describe('collectNav degradation (section-contract)', () => {
 });
 
 describe('collectNav scorecard', () => {
-  it('builds a per-intent reachability row and flags a buried high-freq intent red', () => {
+  it('builds a per-intent reachability row and flags a buried high-freq intent red', async () => {
     const contract = {
       version: 1, navLayers: { primary: ['Sidebar'], secondary: ['Footer'] },
       personas: [{ id: 'p', intents: [
@@ -76,7 +76,7 @@ describe('collectNav scorecard', () => {
       destinations: [{ id: '/wines' }],
     });
     writeObservedEnvelope(dir, env);
-    const r = collectNav(dir);
+    const r = await collectNav(dir);
     assert.equal(r.navAudit.status.status, 'ok');
     assert.equal(r.navAudit.scorecard.length, 1);
     const row = r.navAudit.scorecard[0];

@@ -41,6 +41,7 @@ const SECTION_FILES = [
   'security.mjs',
   'purpose.mjs',
   'purpose-health.mjs',
+  'persona-tests.mjs',
 ];
 
 const FORBIDDEN_IN_SECTIONS = [

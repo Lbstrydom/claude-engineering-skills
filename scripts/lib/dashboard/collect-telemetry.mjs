@@ -15,7 +15,8 @@ import { redactSecrets } from '../sanitizer.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { getRepoIdByUuid } from '../store/repo.mjs';
 import { loadBanditArms } from '../store/bandit-fp.mjs';
-import { readShipEvents, readAuditEffectiveness } from '../store/plans-ship.mjs';
+import { readShipEvents, readAuditEffectiveness, readCorrelationCountsByType } from '../store/plans-ship.mjs';
+import { getPersonaSessionsByRepo } from '../store/persona.mjs';
 import { getSecurityStats } from '../store/security.mjs';
 import { getPurposeHealth } from '../store/purpose-health.mjs';
 import { getAuthorTierStats } from '../store/learning-decisions.mjs';
@@ -253,6 +254,85 @@ async function collectShipHealth(root) {
     };
   } catch (err) {
     return { data: empty, status: { status: 'unexpected-error', detail: redactSecrets(`ship events query failed: ${err.message}`) } };
+  }
+}
+
+const PERSONA_TESTS_TREND_LIMIT = 15;
+
+/** Empty persona-tests shape (schema-valid). */
+function emptyPersonaTests() {
+  return { cloud: false, latestByPersona: [], trend: [], correlations: { total: 0, byType: [] } };
+}
+
+/**
+ * Collect the "Persona Tests" telemetry panel — WS3 of
+ * docs/completed/persona-nav-feedback-recovery.md. Turns WS1's correlator
+ * output into a visible surface (it had been invisible for the ~5 weeks
+ * the correlation table sat empty) and surfaces session staleness
+ * honestly ("latest session: N days ago" — the exact signal a 7-week gap
+ * would have caught).
+ *
+ * `latestByPersona` is derived from the SAME bounded trend fetch (last
+ * `PERSONA_TESTS_TREND_LIMIT` sessions), not a separate unbounded
+ * per-persona query — a persona that hasn't tested within that window
+ * simply won't have a card, which matches the panel's "recent activity"
+ * purpose and avoids a second, more expensive query for a dashboard tile.
+ *
+ * Typed states (never a clean zero on a real failure — green≠checked):
+ * `ok`+rows / `ok`+zero-sessions / `ok`+sessions-but-zero-correlations
+ * (distinct from zero-sessions — the exact signal invisible for months)
+ * / `missing-optional` (cloud off / no repo identity) / `unexpected-error`.
+ */
+async function collectPersonaTests(root) {
+  const empty = emptyPersonaTests();
+  let repoName;
+  try {
+    repoName = resolveRepoIdentity(root)?.name;
+  } catch {
+    return { data: empty, status: { status: 'missing-optional', detail: 'no resolvable repo identity for this directory' } };
+  }
+  if (!repoName) return { data: empty, status: { status: 'missing-optional', detail: 'no resolvable repo identity for this directory' } };
+  try {
+    if (!await isCloudEnabled()) return { data: empty, status: { status: 'missing-optional', detail: 'persona-test telemetry needs cloud + a service-role key' } };
+
+    const sessions = await getPersonaSessionsByRepo({
+      repoName, limit: PERSONA_TESTS_TREND_LIMIT,
+      select: ['persona', 'verdict', 'p0_count', 'p1_count', 'created_at'],
+    });
+    if (sessions.length === 0) {
+      return { data: { ...empty, cloud: true }, status: { status: 'ok', detail: 'no persona sessions recorded yet' } };
+    }
+
+    const trend = sessions.map((s) => ({
+      persona: String(s.persona || ''), verdict: String(s.verdict || ''),
+      p0Count: Number(s.p0_count) || 0, p1Count: Number(s.p1_count) || 0,
+      createdAt: s.created_at ? new Date(s.created_at).toISOString() : '',
+    }));
+    const latestByPersona = [];
+    const seen = new Set();
+    for (const t of trend) {
+      if (seen.has(t.persona)) continue;
+      seen.add(t.persona);
+      latestByPersona.push(t);
+    }
+
+    const repoId = await canonicalRepoId(root);
+    let correlations = { total: 0, byType: [] };
+    if (repoId) {
+      const corr = await readCorrelationCountsByType(repoId);
+      if (!corr.ok) {
+        return { data: { ...empty, cloud: true, latestByPersona, trend }, status: { status: 'unexpected-error', detail: redactSecrets(`correlation counts query failed: ${corr.error}`) } };
+      }
+      correlations = { total: corr.total, byType: corr.byType };
+    }
+
+    const data = { cloud: true, latestByPersona, trend, correlations };
+    if (correlations.total === 0) {
+      return { data, status: { status: 'ok', detail: 'correlation loop has not fired yet' } };
+    }
+    return { data, status: { status: 'ok', detail: '' } };
+  } catch (err) {
+    return { data: empty, status: { status: 'unexpected-error', detail: redactSecrets(`persona-tests collect failed: ${err.message}`) } };
   }
 }
 
@@ -684,7 +764,7 @@ export async function collectTelemetry(opts = {}) {
   // Scope the Audit Runs tab to this directory's canonical repo row when
   // resolvable; null → project-wide fallback (cloud off / never-audited repo).
   const auditRepoId = await canonicalRepoId(root);
-  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow] = await Promise.all([
+  const [auditRuns, learning, security, purposeHealth, promptVariants, shipHealth, auditEffectiveness, authorTier, modelAb, tieredShadow, personaTests] = await Promise.all([
     collectAuditRuns(auditRepoId),
     collectLearning(root),
     collectSecurity(root),
@@ -695,6 +775,7 @@ export async function collectTelemetry(opts = {}) {
     collectAuthorTier(root),
     collectModelAb(),
     collectTieredShadow(root),
+    collectPersonaTests(root),
   ]);
   const requirements = collectRequirements(root);
 
@@ -717,6 +798,7 @@ export async function collectTelemetry(opts = {}) {
       authorTier: authorTier.status,
       modelAb: modelAb.status,
       tieredShadow: tieredShadow.status,
+      personaTests: personaTests.status,
     },
     auditRuns: auditRuns.data,
     requirements: requirements.data,
@@ -729,6 +811,7 @@ export async function collectTelemetry(opts = {}) {
     authorTier: authorTier.data,
     modelAb: modelAb.data,
     tieredShadow: tieredShadow.data,
+    personaTests: personaTests.data,
   };
 }
 

@@ -792,6 +792,8 @@ between the 6 skills. Every skill writes to a shared learning store via
 | `ship_events` | `/ship` | Dashboards | Outcome log: shipped / blocked / warned / overridden / aborted |
 | `plan_verification_runs` | `/ux-lock verify` | `/ship`, dashboards | One row per verify invocation; totals for satisfaction % |
 | `plan_verification_items` | `/ux-lock verify` | `/ship`, meta-assess | Per-criterion pass/fail with stable `criterion_hash` for time-series |
+| `nav_audit_runs` | `/nav-audit` (static path) | dashboard drift aging | Run-history for `firstSeenFromHistory` — the >14-day governance smell needed real history, not just a gitignored local cache (`docs/completed/persona-nav-feedback-recovery.md` WS2) |
+| `persona_finding_outcomes` | `cross-skill.mjs persona-outcomes label` | `/ship` UX gate, dashboard | Durable REPO-scoped (not session-scoped) fixed/dismissed/wont_fix/stale labels — `dismissed`/`wont_fix` close a finding across sessions; `fixed` that reappears re-flags as a regression (WS4) |
 
 ### Added columns
 

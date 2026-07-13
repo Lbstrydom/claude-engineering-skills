@@ -69,14 +69,14 @@ describe('verify-store write/read', () => {
 });
 
 describe('dashboard merges live verdicts when a fresh result exists', () => {
-  it('shows pass (live) instead of the static status', () => {
+  it('shows pass (live) instead of the static status', async () => {
     fs.writeFileSync(path.join(dir, 'nav-contract.json'), JSON.stringify(contract));
     writeObservedEnvelope(dir, assembleEnvelope({
       refreshId: 'r', contractDigest: digest, headSha: null, generatedAt: '2026-06-25T00:00:00Z',
       edges: [], destinations: [{ id: 'wines' }],
     }));
     writeVerifyResult(dir, result());
-    const { navAudit } = collectNav(dir);
+    const { navAudit } = await collectNav(dir);
     assert.equal(navAudit.verifyMeta.live, true);
     const row = navAudit.scorecard.find((r) => r.destination === 'wines');
     assert.equal(row.status, 'pass'); // live verdict, not static 'unverified'

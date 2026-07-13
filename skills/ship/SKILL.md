@@ -53,27 +53,48 @@ is accurate. Best-effort — if a query fails, log and proceed.
 
 ### 0.5a — Recent persona-test P0s for this repo
 
-If `PERSONA_TEST_REPO_NAME` is set, query via cross-skill (service-role
-required after the 20260507 RLS hardening — anon reads are now blocked):
+If `PERSONA_TEST_REPO_NAME` is set, the PRIMARY source (WS4,
+`docs/completed/persona-nav-feedback-recovery.md`) joins the latest
+session's raw P0/P1 findings against the durable per-repo outcome ledger —
+a finding labeled `dismissed`/`wont_fix` no longer counts as open, but one
+labeled `fixed` that STILL appears in the latest session correctly
+re-flags as an open regression:
 
 ```bash
-node scripts/cross-skill.mjs get-persona-sessions-by-repo \
-  --repo "$PERSONA_TEST_REPO_NAME" --limit 1 --p0-only \
-  --select persona,focus,verdict,p0_count,p1_count,created_at,debrief_md
+node scripts/cross-skill.mjs persona-outcomes summary --repo "$PERSONA_TEST_REPO_NAME"
 ```
 
-Returns `{ok: true, cloud: true|false, rows: [...]}`. When `cloud:false`,
-no persona-test database is configured — proceed without the UX gate.
+Returns `{ok, cloud, sessionId, sessionCreatedAt, persona, verdict, rawP0,
+rawP1, labeled: {closed, open_relabeled_fixed, open_relabeled_stale,
+unlabeled}, openP0, openP1}`. **Closed failure semantics — never a NEW
+blocker**:
+- `cloud: false` → proceed without the UX gate, exactly as today.
+- `sessionId: null` (no recent session) → gate silent, exactly as today.
+- `ok: false` (a real store/query failure) → log one warning line and fall
+  back to the legacy raw read (below) — a summary-command regression can
+  never make the gate stricter OR blind:
+  ```bash
+  node scripts/cross-skill.mjs get-persona-sessions-by-repo \
+    --repo "$PERSONA_TEST_REPO_NAME" --limit 1 --p0-only \
+    --select persona,focus,verdict,p0_count,p1_count,created_at,debrief_md
+  ```
+  (uses that session's raw `p0_count`/`p1_count` as `open_p0_count`/`open_p1_count`).
 
-Capture `open_p0_count` + `open_p1_count` from the latest session (within
-the last 14 days). These feed the ship_event record. If a session has P0s:
+Capture `openP0` + `openP1` from the primary read (or the legacy
+`p0_count`/`p1_count` from the fallback) as `open_p0_count`/`open_p1_count`.
+These feed the ship_event record. If `openP0 > 0` (or the legacy fallback's
+`p0_count > 0`):
 
 ```
 ⚠ UX GATE (non-blocking)
   Last persona test: "<persona>" — <N> days ago → <verdict> (P0: <n>, P1: <n>)
   Unresolved P0s detected. These are user-visible broken flows.
   Shipping anyway — consider fixing before next user-facing release.
+  Label fixed/dismissed P0s: node scripts/cross-skill.mjs persona-outcomes --worksheet --repo "$PERSONA_TEST_REPO_NAME"
 ```
+
+The worksheet line only appears when the PRIMARY read succeeded (labeling
+requires the outcome ledger — the legacy fallback path has no equivalent).
 
 ### 0.5b — Fixes that lack a /ux-lock regression spec
 

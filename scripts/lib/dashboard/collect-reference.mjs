@@ -369,9 +369,9 @@ function collectFlows(skillNames, skillsOk) {
 /**
  * Collect the full reference-data object.
  * @param {{git?: {baseSha: string, dirty: boolean}}} [opts]
- * @returns {object} a ReferenceData object (validate via schema before render)
+ * @returns {Promise<object>} a ReferenceData object (validate via schema before render)
  */
-export function collectReference(opts = {}) {
+export async function collectReference(opts = {}) {
   const root = process.cwd();
   const git = opts.git || { baseSha: 'unknown', dirty: false };
   const sources = {};
@@ -431,7 +431,7 @@ export function collectReference(opts = {}) {
   // not-yet-run), mirroring collectArchitecture's status contract.
   let navAudit = { scorecard: [], drift: [], status: { status: 'missing-optional', detail: '' } };
   try {
-    navAudit = collectNav(root).navAudit;
+    navAudit = (await collectNav(root)).navAudit;
   } catch (err) {
     navAudit = { scorecard: [], drift: [], status: { status: 'unexpected-error', detail: `collectNav failed: ${err.message}` } };
   }

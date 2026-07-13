@@ -17,14 +17,46 @@ import { NavObservedSchema, OBSERVED_FILE, computeContractDigest, computeConfigD
 import { readContract } from '../nav/contract.mjs';
 import { buildModel } from '../nav/model.mjs';
 import { runTaxonomy, personaScorecard } from '../nav/findings.mjs';
-import { partitionFindings, ageDivergences, readDriftLedger } from '../nav/drift.mjs';
+import { partitionFindings, ageDivergences, readDriftLedger, firstSeenFromHistory } from '../nav/drift.mjs';
 import { readVerifyResult } from '../nav/verify-store.mjs';
+import { listNavAuditRunHistory } from '../store/nav-audit.mjs';
+import { getRepoIdByUuid } from '../store/repo.mjs';
+import { resolveRepoIdentity } from '../repo-identity.mjs';
+
+/**
+ * Discriminated repo-identity resolution (code-audit H6 fix — was a bare
+ * `catch { return null }` that made a broken DB connection indistinguishable
+ * from the legitimate no-cloud/no-identity case, the same "silent dead loop"
+ * class this workstream exists to eliminate). NOT a byte-mirror of
+ * collect-telemetry.mjs's `canonicalRepoId` (that one collapses to a bare
+ * `repoId|null` — a small, deliberate duplication over a cross-collector
+ * dependency, kept separate here specifically to carry the status).
+ * @returns {Promise<{repoId: string|null, status: 'ok'|'unavailable'|'failed', detail?: string}>}
+ *   `unavailable` = no local repo identity resolvable, or genuinely
+ *   unregistered — the routine, silent case. `failed` = the identity
+ *   resolved but the DB lookup itself threw — worth a caller-visible log.
+ */
+async function canonicalRepoId(root) {
+  let repoUuid;
+  try {
+    repoUuid = resolveRepoIdentity(root)?.repoUuid;
+  } catch {
+    return { repoId: null, status: 'unavailable' };
+  }
+  if (!repoUuid) return { repoId: null, status: 'unavailable' };
+  try {
+    const repo = await getRepoIdByUuid(repoUuid);
+    return { repoId: repo?.id || null, status: 'ok' };
+  } catch (err) {
+    return { repoId: null, status: 'failed', detail: err.message };
+  }
+}
 
 /**
  * @param {string} root
- * @returns {{navAudit: {scorecard: object[], drift: object[], status: object}}}
+ * @returns {Promise<{navAudit: {scorecard: object[], drift: object[], status: object}}>}
  */
-export function collectNav(root) {
+export async function collectNav(root) {
   const { contract, present, error } = readContract(root);
   if (error) return wrap({ status: { status: 'unexpected-error', detail: error } });
   if (!present) {
@@ -87,15 +119,40 @@ export function collectNav(root) {
   const liveFindings = live?.liveFindings ?? [];
 
   // Nav Drift = ADVISORY divergences (orphans, etc.), aged (plan §3, Gemini-1-H).
-  // Aging is cloud-sourced; with no history here, new divergences age to 0 (the
-  // >14-day governance smell fires once cloud run-history accrues).
+  // Aging is cloud-FIRST (WS2): listNavAuditRunHistory + the pre-existing
+  // firstSeenFromHistory reducer read real nav-audit run history, so the
+  // >14-day governance smell now fires off durable evidence instead of only
+  // a local cache that dies with the checkout. Falls back to the gitignored
+  // drift-ledger cache when cloud is off / no canonical repo row / the RPC
+  // fails — never a hard failure over an advisory aging figure.
   const { advisory } = partitionFindings(runTaxonomy(model, { contract }));
-  // Local dashboard reads the gitignored drift-ledger cache for firstSeen; CI/cloud
-  // callers source it from run-history (firstSeenFromHistory). Fixes Gemini-2-M
-  // (was hardcoded empty → all ages 0).
+  let cloudLookup = null;
+  try {
+    const identity = await canonicalRepoId(root);
+    if (identity.status === 'failed') {
+      // A REAL lookup failure (DB/network/auth) — distinct from the routine
+      // no-identity/cloud-off case (code-audit H6 fix). Visible, but still
+      // falls through to the local ledger — this panel is advisory, never
+      // a hard failure.
+      process.stderr.write(`  [collect-nav] repo-identity resolution failed (not the routine no-cloud case): ${identity.detail}\n`);
+    }
+    if (identity.repoId) {
+      const history = await listNavAuditRunHistory({ repoId: identity.repoId });
+      // `listNavAuditRunHistory` already logs a real query failure to
+      // stderr internally.
+      if (history.ok && history.rows.length > 0) cloudLookup = firstSeenFromHistory(history.rows);
+      if (history.truncated) {
+        process.stderr.write('  [collect-nav] run-history query hit its safety-backstop limit — some drift ages may be understated (code-audit M4/M8)\n');
+      }
+    }
+  } catch (err) {
+    // An UNEXPECTED throw escaping this whole block (canonicalRepoId itself
+    // is designed not to throw, but a defensive backstop costs nothing).
+    process.stderr.write(`  [collect-nav] cloud-first aging lookup failed, falling back to local ledger: ${err.message}\n`);
+  }
   const ledger = readDriftLedger(root);
   const aged = ageDivergences(advisory, {
-    firstSeenLookup: (key) => ledger[key] || null,
+    firstSeenLookup: (key) => cloudLookup?.(key) || ledger[key] || null,
     headCommitDate: env.envelope.generatedAt,
   });
   const drift = aged.map(({ finding, ageDays }) => ({

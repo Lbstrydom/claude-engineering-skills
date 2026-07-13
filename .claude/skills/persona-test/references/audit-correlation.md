@@ -55,48 +55,71 @@ hang or silent failure should be flagged with higher confidence.
 they wouldn't know that. Let the fragility knowledge sharpen your Reflect
 judgement silently.
 
-## Post-test correlation emission (Phase 6b)
+## Post-test correlation emission (Phase 6b — AUTOMATIC since 2026-07-13)
 
-For every P0 or P1 persona finding, classify its relationship to an audit
-candidate and emit a correlation row.
+**This is no longer an agent-discretionary step.** `record-persona-session`
+(Phase 6) runs the correlator itself, immediately after the session commits,
+and writes `persona_audit_correlations` rows for every P0/P1 finding — the
+classification rules and finding-hash formula below describe what the
+correlator DOES, for understanding the data and for the manual-repair path;
+you do not execute them by hand during a normal run. Source of truth:
+[`scripts/lib/persona/audit-correlator.mjs`](../../../scripts/lib/persona/audit-correlator.mjs).
 
-### Classification rules
+### Classification rules (as implemented by the auto-correlator)
 
 | Persona finding | Audit candidate | Severity relation | correlation_type |
 |---|---|---|---|
-| Matches file/keywords in a candidate | Yes | Audit severity matches persona severity | `confirmed_hit` |
-| Matches a candidate | Yes | Audit was LOW/MEDIUM, persona is P0/P1 | `severity_understated` |
-| Matches a candidate | Yes | Audit was HIGH, persona is P2/P3 | `severity_overstated` |
-| No file/keyword match to any candidate | No | — | `audit_missed` |
+| Overlap Coefficient ≥ 0.5 (file-path + keyword tokens) OR exact `semanticId` hit | Yes | Audit severity matches persona severity | `confirmed_hit` |
+| Matches a candidate | Yes | Audit was LOW/MEDIUM, persona is P0 | `severity_understated` |
+| No candidate scores ≥ threshold, but ≥1 candidate run existed | No | — | `audit_missed` |
+| Zero candidate audit runs in the last 14 days (and no exact commit match) | — | — | **nothing emitted** — not evidence of a miss |
 
-If an earlier audit explicitly **dismissed** a finding that the persona is
-now hitting, emit `audit_missed` — the dismissal was premature.
+`severity_overstated` and `audit_false_positive` are **never auto-emitted** —
+both require human judgment (a flagged issue that couldn't be reproduced, or
+an audit finding whose severity a human judges too high) and remain
+manual-CLI-only.
 
-### Finding hash
+### Finding hash (`personaFindingHash`, matcher v1)
 
-Compute a stable hash of the persona finding so the same observation
-dedupes across sessions:
+**Corrected 2026-07-13** — the formula below replaces an earlier, never-live
+version of this doc that specified a different (and never-implemented)
+`sha256(element + observed + code)` scheme. `persona_finding_hash` is
+computed via the shared `semanticId()` function (the same one audit findings
+use, `scripts/lib/findings.mjs`) over the real production finding shape
+(`{fix, code, step, element, expected, observed, confidence}` — `code` IS the
+severity, "P0".."P3"; there is no separate `category` field):
 
+```js
+semanticId({ section: finding.element, category: finding.code, detail: finding.observed })
+// → 8-char hex, e.g. "f4803010"
 ```
-sha256(element + '|' + observed.slice(0,120) + '|' + code).slice(0,16)
-```
 
-### Emit
+Exported as `personaFindingHash(finding)` from `audit-correlator.mjs` — call
+THIS function for a manual repair's hash, never hand-compute it, so it
+matches the auto-emitted row byte-for-byte.
 
-For each P0/P1 finding, call the CLI (graceful no-op when cloud is off):
+### Manual repair / reverse-direction emission
+
+For a manual correction or an `audit_false_positive`, call the CLI directly
+(graceful no-op when cloud is off):
 
 ```bash
 node scripts/cross-skill.mjs record-correlation --json '{
   "personaSessionId": "<persona_session_id from Phase 6>",
-  "personaFindingHash": "<hash>",
+  "personaFindingHash": "<personaFindingHash(finding) — see above>",
   "personaSeverity": "P0" | "P1" | "P2" | "P3",
   "auditFindingId": "<uuid from audit candidates, or null for audit_missed>",
   "auditRunId": "<uuid from audit candidate, or null>",
   "correlationType": "confirmed_hit" | "audit_missed" | "audit_false_positive" | "severity_understated" | "severity_overstated",
-  "matchScore": <0.0-1.0 similarity>,
+  "matchScore": <0.0-1.0 similarity, or omit>,
   "matchRationale": "<one-line reason: \"shared file src/routes/wines.js + keyword overlap 3/5\">"
 }'
 ```
+
+Supplying a real `auditFindingId` here automatically retires any stale
+auto-emitted `audit_missed` row for the same `(session, hash)` pair — the
+store does this in one transaction, so a repair actually repairs the ground
+truth rather than leaving a contradictory second row.
 
 ### Reverse direction — audit false positives
 

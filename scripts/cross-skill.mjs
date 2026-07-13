@@ -40,6 +40,8 @@ import {
   listConsistencyCandidates,
   promoteRegressionSpec,
   recordPersonaAuditCorrelation,
+  getCandidateAuditFindings,
+  getExistingCorrelationHashesForSession,
   recordShipEvent,
   recordPlanVerificationRun,
   recordPlanVerificationItems,
@@ -108,6 +110,10 @@ import { StackProfileSchema, ReachabilityEvidenceRequestSchema, ReachabilityEvid
 import { recommendSkills, renderRecommendationCard } from './lib/skill-recommender.mjs';
 import { resolvePreviewGate } from './lib/cycle/topology.mjs';
 import { cycleConfig } from './lib/config.mjs';
+import { decideCorrelations, MATCHER_VERSION, personaFindingHash } from './lib/persona/audit-correlator.mjs';
+import { recordNavAuditRun, listNavAuditRunHistory } from './lib/store/nav-audit.mjs';
+import { upsertPersonaFindingOutcome, getPersonaOutcomesSummary, getActionablePersonaOutcomeItems, resolveLabelTarget } from './lib/store/persona-outcomes.mjs';
+import { firstSeenFromHistory } from './lib/nav/drift.mjs';
 import { z } from 'zod';
 
 // ── Arg parsing ─────────────────────────────────────────────────────────────
@@ -440,7 +446,7 @@ async function cmdRecordCorrelation() {
   }
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
-  await recordPersonaAuditCorrelation(p.personaSessionId, {
+  const result = await recordPersonaAuditCorrelation(p.personaSessionId, {
     personaFindingHash: p.personaFindingHash,
     personaSeverity: p.personaSeverity,
     auditFindingId: p.auditFindingId,
@@ -449,6 +455,7 @@ async function cmdRecordCorrelation() {
     matchScore: p.matchScore,
     matchRationale: p.matchRationale,
   });
+  if (!result.ok) return emitError('WRITE_FAILED', result.error || 'correlation write failed');
   emit({ ok: true, cloud: true });
 }
 
@@ -497,17 +504,50 @@ async function cmdPlanSatisfaction() {
   emit({ ok: true, cloud: true, row, persistentFailures: persistent });
 }
 
+const NAV_AUDIT_RUN_SCOPES = ['full', 'diff'];
+
 async function cmdRecordNavAuditRun() {
-  // /nav-audit run telemetry (plan §4a.E). Idempotent by (repoId, headSha,
-  // scope). v1 introduces NO migration: when cloud is enabled but no dedicated
-  // nav-audit sink exists, this is a logged no-op (the durable per-run row is a
-  // v2 item). Graceful no-op when cloud is off.
+  // /nav-audit run telemetry (WS2, docs/completed/persona-nav-feedback-recovery.md).
+  // Idempotent by (repoId, headSha, scope) — see scripts/lib/store/nav-audit.mjs.
   const p = parsePayload();
   if (!p.headSha) return emitError('BAD_INPUT', 'headSha is required');
   if (!Array.isArray(p.driftKeys)) return emitError('BAD_INPUT', 'driftKeys (array) is required');
+  // Absent scope normalizes to 'full'; an UNKNOWN scope is rejected, never
+  // silently folded in (the store's UNIQUE constraint depends on this being
+  // one of exactly two closed values — see the migration's NOT NULL note).
+  const scope = p.scope ?? 'full';
+  if (!NAV_AUDIT_RUN_SCOPES.includes(scope)) {
+    return emitError('BAD_INPUT', `scope must be one of ${NAV_AUDIT_RUN_SCOPES.join('|')}, got "${scope}"`);
+  }
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
-  emit({ ok: true, cloud: true, persisted: false, note: 'nav-audit run persistence deferred to v2 (no migration in v1)' });
+  const repoId = await resolveRepoId(p);
+  if (!repoId) return emit({ ok: true, cloud: true, status: 'unavailable', note: 'no resolvable repo identity' });
+  const result = await recordNavAuditRun({
+    repoId, headSha: p.headSha, scope,
+    driftKeys: p.driftKeys,
+    findingCounts: p.findingCounts ?? null,
+    verifySummary: p.verifySummary ?? null,
+    toolVersion: p.toolVersion ?? null,
+  });
+  emit({ ok: result.status !== 'failed', cloud: true, ...result });
+}
+
+async function cmdGetNavFirstSeen() {
+  const p = parsePayload();
+  if (!Array.isArray(p.driftKeys) || p.driftKeys.length === 0) {
+    return emitError('BAD_INPUT', 'driftKeys (non-empty array) is required');
+  }
+  await initLearningStore();
+  if (!await isCloudEnabled()) return emit({ ok: true, cloud: false, firstSeen: {} });
+  const repoId = await resolveRepoId(p);
+  if (!repoId) return emit({ ok: true, cloud: true, firstSeen: {} });
+  const history = await listNavAuditRunHistory({ repoId, sinceDays: p.sinceDays ?? undefined });
+  if (!history.ok) return emit({ ok: false, cloud: true, firstSeen: {}, error: history.error });
+  const lookup = firstSeenFromHistory(history.rows);
+  const firstSeen = {};
+  for (const key of p.driftKeys) { const v = lookup(key); if (v) firstSeen[key] = v; }
+  emit({ ok: true, cloud: true, firstSeen, truncated: history.truncated });
 }
 
 async function cmdRecordShipEvent() {
@@ -1064,6 +1104,10 @@ const RecordPersonaSessionRequestSchema = z.object({
   repoName: z.string().optional(),
   repoId: z.string().optional(),
   personaId: z.string().optional(),
+  // WS1 — deterministic persona<->audit correlator. Default ON; the caller
+  // (persona-test skill) can pass `false` when audit_link context isn't
+  // resolvable, matching today's opt-in gate.
+  autoCorrelate: z.boolean().default(true),
   // LENIENT at the request boundary (Gemini1-H2/Gemini2-M2): a malformed or
   // over-length clickPath entry must NOT fail the whole session record. The cap
   // (40), per-entry ClickPathStepSchema validation + drop-invalid, and the
@@ -1095,7 +1139,171 @@ async function cmdRecordPersonaSession() {
   }
 
   const result = await recordPersonaSession(data);
-  emit({ ok: !!result.sessionId, cloud: true, ...result });
+  const correlationSummary = await runAutoCorrelate(data, result.sessionId);
+  emit({ ok: !!result.sessionId, cloud: true, ...result, correlationSummary });
+}
+
+/**
+ * WS1 — deterministic persona<->audit correlator orchestration. Runs
+ * automatically after the session row commits (the invocation the agent
+ * already makes for `record-persona-session` — no separate discretionary
+ * step). ALWAYS returns a structured summary (never throws to the caller,
+ * never silently no-ops) so `attempted: false` + a `reason` and
+ * `attempted: true` + a real failure are both externally visible, per
+ * docs/completed/persona-nav-feedback-recovery.md WS1.
+ * @returns {Promise<object>} correlationSummary
+ */
+async function runAutoCorrelate(data, sessionId) {
+  const base = { attempted: false, candidates: 0, exact: 0, fuzzy: 0, missed: 0, skippedExisting: 0, malformed: 0, writeFailed: 0, matcherVersion: MATCHER_VERSION };
+  // A null sessionId means recordPersonaSession's OWN write failed (a
+  // genuine DB error inside its catch block — cloud is already confirmed
+  // on by this point) — distinct from "no repo identity", which is a
+  // resolvable-input problem, not a write failure. Nothing to attach
+  // correlations to either way; result.sessionId===null already surfaces
+  // via the overall response's `ok: false`.
+  if (!sessionId) return { ...base, reason: 'session-write-failed' };
+  if (data.autoCorrelate === false) return { ...base, reason: 'disabled-by-flag' };
+  if (!data.repoId) return { ...base, reason: 'no-repo-identity' };
+
+  const p0p1 = (data.findings || []).filter((f) => f?.code === 'P0' || f?.code === 'P1');
+  if (p0p1.length === 0) return { ...base, reason: 'no-p0p1-findings' };
+
+  try {
+    const candResult = await getCandidateAuditFindings({ repoId: data.repoId, exactCommitSha: data.commitSha || null });
+    if (!candResult.ok) {
+      process.stderr.write(`  [correlator] candidate read failed: ${candResult.error}\n`);
+      return { ...base, attempted: true, reason: 'candidate-read-failed' };
+    }
+    if (candResult.rows.length === 0) {
+      // Ground-truth integrity (WS1): a session with zero eligible audit
+      // runs is NOT evidence of an audit miss — emit nothing.
+      return { ...base, attempted: true, reason: 'no-candidate-runs' };
+    }
+
+    const existResult = await getExistingCorrelationHashesForSession(sessionId);
+    if (!existResult.ok) {
+      process.stderr.write(`  [correlator] existence check failed: ${existResult.error}\n`);
+      return { ...base, attempted: true, candidates: candResult.rows.length, reason: 'existence-check-failed' };
+    }
+
+    const { emissions, skippedExisting, malformed } = decideCorrelations({
+      findings: data.findings, clickPath: data.clickPath,
+      candidates: candResult.rows, alreadyCorrelatedHashes: existResult.hashes,
+    });
+    if (malformed > 0) {
+      process.stderr.write(`  [correlator] session ${sessionId}: ${malformed} P0/P1 finding(s) quarantined (missing element/observed) — not correlated\n`);
+    }
+
+    let exact = 0, fuzzy = 0, missed = 0, writeFailed = 0;
+    for (const emission of emissions) {
+      if (emission._tier === 'exact') exact += 1;
+      else if (emission._tier === 'fuzzy') fuzzy += 1;
+      else missed += 1;
+      const writeResult = await recordPersonaAuditCorrelation(sessionId, emission);
+      if (!writeResult.ok) {
+        writeFailed += 1;
+        process.stderr.write(`  [correlator] write failed for finding ${emission.personaFindingHash}: ${writeResult.error}\n`);
+      }
+    }
+
+    const summary = {
+      attempted: true, candidates: candResult.rows.length,
+      exact, fuzzy, missed, skippedExisting, malformed, writeFailed, matcherVersion: MATCHER_VERSION,
+    };
+    if (writeFailed > 0) {
+      process.stderr.write(`  [correlator] session ${sessionId}: ${writeFailed}/${emissions.length} correlation writes failed\n`);
+    }
+    return summary;
+  } catch (err) {
+    // Best-effort invariant (graceful degradation #16): correlator failure
+    // NEVER fails the already-committed session write — but is always
+    // visible via stderr + the reason union, never a silent no-op.
+    process.stderr.write(`  [correlator] unexpected failure: ${err.message}\n`);
+    return { ...base, attempted: true, reason: 'candidate-read-failed', error: err.message };
+  }
+}
+
+// ── WS4 — durable persona-finding outcome labels ───────────────────────────
+// docs/completed/persona-nav-feedback-recovery.md. Single subcommand, three
+// modes (summary | label | --worksheet), mirroring the `quality <verb>`
+// dispatch pattern already established in this CLI.
+
+const PERSONA_OUTCOME_VALUES = ['fixed', 'dismissed', 'wont_fix', 'stale'];
+
+async function cmdPersonaOutcomes() {
+  const sub = rest[0];
+  await initLearningStore();
+
+  if (process.argv.includes('--worksheet')) {
+    const repoName = argOption('repo');
+    if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required for --worksheet');
+    const res = await getActionablePersonaOutcomeItems({ repoName });
+    if (!res.ok) return emitError('STORE_ERROR', res.error || 'worksheet query failed');
+    if (!res.cloud) return emit({ ok: true, cloud: false, count: 0 });
+    const { renderAdjudicationWorksheet } = await import('./lib/adjudication-worksheet.mjs');
+    const { writeFileSync, mkdirSync, existsSync } = await import('node:fs');
+    const md = renderAdjudicationWorksheet({
+      title: `Persona-finding outcome labels — repo ${repoName}`,
+      introLines: [
+        'Actionable P0/P1 persona findings: never labeled, OR labeled fixed/stale but' +
+        ' reappearing in the latest session (a regression). Labeling a finding' +
+        ' dismissed/wont_fix requires --rationale and retires any auto-emitted' +
+        ' audit_missed ground truth for the same hash.',
+        res.truncated
+          ? `Showing 50 of more actionable findings — re-run after labeling to see the rest.`
+          : '',
+      ].filter(Boolean),
+      items: res.items.map((it) => ({
+        runId: it.sessionId, fingerprint: it.personaFindingHash, severity: it.severity,
+        category: it.outcome ? `relabel (was: ${it.outcome})` : 'unlabeled',
+        file: it.element, detail: it.observed,
+      })),
+      actions: ['fixed', 'dismissed', 'wont_fix', 'stale'],
+      commandFor: (it, a) => `node scripts/cross-skill.mjs persona-outcomes label --session ${it.runId} --hash ${it.fingerprint} --outcome ${a}${(a === 'dismissed' || a === 'wont_fix') ? ' --rationale "<why>"' : ''}`,
+      generatedAt: new Date().toISOString(),
+    });
+    const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
+    const out = argOption('out') || `${dir}/persona-outcomes-worksheet.md`;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(out, md);
+    process.stderr.write(`  [persona-outcomes] worksheet: ${res.items.length} actionable finding(s) → ${out}\n`);
+    return emit({ ok: true, cloud: true, count: res.items.length, truncated: res.truncated, worksheet: out });
+  }
+
+  if (sub === 'summary') {
+    const repoName = argOption('repo') || process.env.PERSONA_TEST_REPO_NAME;
+    if (!repoName) return emitError('BAD_INPUT', '--repo <name> is required (or set PERSONA_TEST_REPO_NAME)');
+    const res = await getPersonaOutcomesSummary({ repoName });
+    return emit(res);
+  }
+
+  if (sub === 'label') {
+    const p = parsePayload();
+    const sessionId = p.sessionId ?? argOption('session');
+    const hash = p.personaFindingHash ?? argOption('hash');
+    const outcome = p.outcome ?? argOption('outcome');
+    const rationale = p.rationale ?? argOption('rationale') ?? null;
+    const labeledBy = p.labeledBy ?? argOption('by') ?? 'agent';
+    if (!sessionId || !hash || !outcome) {
+      return emitError('BAD_INPUT', '--session <id> --hash <h> --outcome <fixed|dismissed|wont_fix|stale> are all required');
+    }
+    if (!PERSONA_OUTCOME_VALUES.includes(outcome)) {
+      return emitError('BAD_INPUT', `--outcome must be one of ${PERSONA_OUTCOME_VALUES.join('|')}, got "${outcome}"`);
+    }
+    if ((outcome === 'dismissed' || outcome === 'wont_fix') && !(rationale && rationale.trim())) {
+      return emitError('BAD_INPUT', `--rationale is required for outcome "${outcome}"`);
+    }
+    const target = await resolveLabelTarget({ sessionId, personaFindingHash: hash });
+    if (!target.ok) return emitError('BAD_INPUT', target.error);
+    const result = await upsertPersonaFindingOutcome({
+      repoId: target.repoId, personaFindingHash: hash, outcome,
+      lastSeenSessionId: sessionId, labeledBy, rationale,
+    });
+    if (!result.ok) return emitError('WRITE_FAILED', result.error || 'label write failed');
+    return emit({ ok: true, cloud: true });
+  }
+
+  return emitError('BAD_INPUT', 'usage: persona-outcomes <summary|label> [flags] | persona-outcomes --worksheet --repo <name>');
 }
 
 // ── Persona session readers (post-RLS-hardening — service-role only) ──────
@@ -1925,6 +2133,8 @@ const commands = {
   'record-correlation': cmdRecordCorrelation,
   'record-ship-event': cmdRecordShipEvent,
   'record-nav-audit-run': cmdRecordNavAuditRun,
+  'get-nav-first-seen': cmdGetNavFirstSeen,
+  'persona-outcomes': cmdPersonaOutcomes,
   'record-plan-verify-run': cmdRecordPlanVerifyRun,
   'record-plan-verify-items': cmdRecordPlanVerifyItems,
   'plan-satisfaction': cmdPlanSatisfaction,

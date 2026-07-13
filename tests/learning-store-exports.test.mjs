@@ -74,12 +74,15 @@ const EXPECTED_EXPORTS = [
   'syncFalsePositivePatterns',
   'syncPromptRevision',
   'upsertPromptVariant',
-  // plans-ship (17)
+  // plans-ship (21 — 17 + 3 WS1 + 1 WS3 persona-nav-feedback-recovery additions)
+  'getCandidateAuditFindings', // WS1 — auto-correlator candidate read (temporally bounded)
+  'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
   'getUnlockedFixes',
   'insertRunRowWithPolicyFallback', // selector-policy 42703 write seam (plan: ux-lock-selector-policy)
   'listConsistencyCandidates',
   'promoteRegressionSpec',
   'readAuditEffectiveness',
+  'readCorrelationCountsByType', // WS3 — persona-tests dashboard correlation-loop-health line
   'readCorrelationsForFinding',
   'readCorrelationsForRun',
   'readPersistentPlanFailures',
@@ -91,6 +94,7 @@ const EXPECTED_EXPORTS = [
   'recordRegressionSpec',
   'recordRegressionSpecRun',
   'recordShipEvent',
+  'retireMissedCorrelationsForHash', // WS1 — dismissal cascade (Gemini gate round-3 finding)
   'updatePlanStatus',
   'upsertPlan',
   // persona (9 — isPersonaCloudEnabled lives in Lifecycle)
@@ -247,6 +251,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 150);
+    assert.equal(EXPECTED_EXPORTS.length, 154);
   });
 });

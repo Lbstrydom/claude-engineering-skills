@@ -348,6 +348,23 @@ export const TelemetryDataSchema = z.object({
       createdAt: z.string(),
     })),
   }).optional(),
+  // Persona-tests telemetry — WS3 (docs/completed/persona-nav-feedback-recovery.md).
+  // Optional (back-compat, same convention as every other telemetry block).
+  personaTests: z.object({
+    cloud: z.boolean(),
+    latestByPersona: z.array(z.object({
+      persona: z.string(), verdict: z.string(),
+      p0Count: count, p1Count: count, createdAt: z.string(),
+    })),
+    trend: z.array(z.object({
+      persona: z.string(), verdict: z.string(),
+      p0Count: count, p1Count: count, createdAt: z.string(),
+    })),
+    correlations: z.object({
+      total: count,
+      byType: z.array(z.object({ type: z.string(), count })),
+    }),
+  }).optional(),
   // Audit effectiveness (precision/recall vs persona ground truth) — Cluster D.
   auditEffectiveness: z.object({
     cloud: z.boolean(),

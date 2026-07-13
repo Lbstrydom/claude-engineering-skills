@@ -129,7 +129,7 @@ function isDegraded(sources) {
 }
 
 async function buildReference(git, assets) {
-  const data = collectReference({ git });
+  const data = await collectReference({ git });
   const html = renderDocument(data, 'reference', assets);
   ensureDir(OUT_DIR);
   atomicWriteFileSync(REF_OUT, html);
