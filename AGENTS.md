@@ -133,12 +133,19 @@ skills/<name>/                   ← authoritative; edit ONLY here
 .claude/skills/<name>/            ← generated copy — run `npm run skills:regenerate`
 ```
 
-> **Note**: `.github/skills/<name>/` was a previously-generated mirror that
-> no documented AI tool reads. Deprecated in Phase 4 of ai-context-sync.
-> `--keep-github-skills` flag (on `npm run skills:regenerate` and
-> `npm run sync`) preserves the old behaviour for one minor release. For
-> Copilot teammates, the supported surface is `.github/prompts/` slash-command
-> shims (see Phase 3).
+> **Note**: `.github/skills/<name>/` was a previously-generated mirror,
+> deprecated in Phase 4 of ai-context-sync (at the time, no documented AI
+> tool read it). **Updated 2026-07-13**: VS Code Copilot's Agent Skills (the
+> cross-agent open standard) now natively discovers BOTH `.github/skills/`
+> AND `.claude/skills/` — with `.github/skills/` taking PRECEDENCE on name
+> collisions. That makes keeping `.github/skills` deleted MORE important,
+> not less: a stale resurrected copy would silently shadow the fresh
+> `.claude/skills` copies Copilot already reads. The committed
+> `.claude/skills/**` is the single Copilot-native surface (frontmatter
+> `name` must equal the directory name — Copilot skips mismatches silently;
+> ours all match). `.github/prompts/` slash-command shims remain as the
+> classic prompt-file surface. `--keep-github-skills` remains a legacy
+> escape hatch only.
 
 Every reference file has `summary:` YAML frontmatter that must byte-match
 the parent SKILL.md's reference-index row. `npm run skills:check` enforces

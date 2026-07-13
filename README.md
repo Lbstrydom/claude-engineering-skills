@@ -8,6 +8,14 @@ Three-model audit loop (Claude plans/codes, GPT audits, Gemini reviews) with ada
 
 **Slash commands** (Claude Code / Copilot / Cursor):
 
+> **VS Code Copilot users**: skills load through TWO native mechanisms — the
+> committed `.claude/skills/**` directory is auto-discovered by Copilot's
+> [Agent Skills](https://code.visualstudio.com/docs/agent-customization/agent-skills)
+> (the cross-agent open standard; also read by Copilot CLI and the cloud
+> agent), and `.github/prompts/*.prompt.md` provides the same commands as
+> classic slash-command prompt files. [`AGENTS.md`](AGENTS.md) is picked up
+> automatically as always-on project instructions. No configuration needed.
+
 | When you want to… | Command |
 |---|---|
 | Design a feature (auto-detects backend / frontend / full-stack) | `/plan <task>` |
@@ -82,6 +90,35 @@ To install into a specific repo (Copilot/Cursor/Agents support):
 ```bash
 node scripts/install-skills.mjs --local --target /path/to/your/repo --force
 ```
+
+### API keys
+
+The wizard prompts for these (only `OPENAI_API_KEY` is required to start;
+everything else degrades gracefully when absent — see
+[`.env.example`](.env.example) for the full annotated list):
+
+| Key | Unlocks |
+|---|---|
+| `OPENAI_API_KEY` | GPT auditor (required) |
+| `GEMINI_API_KEY` | Gemini independent final review (falls back to Claude Opus) |
+| `ANTHROPIC_API_KEY` | Claude Opus fallback reviewer, brief generation |
+| `OPENROUTER_API_KEY` | OSS models (GLM) — tiered-pipeline discovery/triage, model-eval candidates |
+| `AUDIT_DB_URL` | Cloud learning store (Supabase Postgres) — optional, local-only mode works without it |
+
+### Corporate / Azure setup
+
+Running behind **Azure AI Foundry / Azure OpenAI** (restricted-model
+enterprise environments): the whole bundle runs on an opt-in Azure profile —
+GPT via Azure OpenAI, the final reviewer via Foundry-hosted Claude, Azure
+embeddings — activated purely by env vars, with zero drift from the public
+setup (no Azure env set → byte-identical public behavior).
+
+```bash
+cp defaults/work-profile.env.example .env   # then fill in your endpoints + deployments
+```
+
+Full guide: [`docs/azure-work-profile.md`](docs/azure-work-profile.md)
+(endpoint/deployment reference, provider precedence, quotas, rollback).
 
 ## Skills
 

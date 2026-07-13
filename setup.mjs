@@ -45,9 +45,10 @@ function checkPrereqs() {
 // ── Step 2: API Keys ────────────────────────────────────────────────────────
 
 const API_KEYS = [
-  { name: 'OPENAI_API_KEY', required: true, desc: 'GPT-5.4 auditing' },
+  { name: 'OPENAI_API_KEY', required: true, desc: 'GPT auditing' },
   { name: 'GEMINI_API_KEY', required: false, desc: 'Gemini final review + A/B pipeline' },
   { name: 'ANTHROPIC_API_KEY', required: false, desc: 'Claude Opus fallback review' },
+  { name: 'OPENROUTER_API_KEY', required: false, desc: 'OSS models via OpenRouter (tiered-pipeline GLM discovery/triage, model-eval candidates)' },
 ];
 
 async function setupApiKeys(headless) {

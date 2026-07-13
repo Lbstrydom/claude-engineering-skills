@@ -1,5 +1,12 @@
 # Project Status Log
 
+## 2026-07-13 — Docs/setup: verified latest VS Code Copilot compatibility + fresh-clone Azure/key onboarding gaps closed
+
+### Changes
+- **Copilot compatibility check (against July-2026 VS Code docs)**: our integration is fully current, and BETTER than documented — VS Code Copilot's Agent Skills (cross-agent open standard, also read by Copilot CLI + cloud agent) now natively discovers the committed `.claude/skills/**` directory, so our skills load in Copilot with zero configuration; `AGENTS.md` is natively read as always-on instructions (our canonical-file design matches exactly); the `.github/prompts/*.prompt.md` shims remain valid prompt files. Verified every `.claude/skills/*/SKILL.md` frontmatter `name` matches its directory (Copilot skips mismatches silently — all 15+ match). One sharpened invariant: `.github/skills/` takes PRECEDENCE over `.claude/skills/` on name collisions, so keeping the deprecated `.github/skills` mirror deleted is now MORE important (a stale resurrected copy would silently shadow the fresh ones) — AGENTS.md note updated from "no tool reads it" (now false) to the precedence rationale.
+- **Fresh-clone onboarding gaps closed**: README had ZERO Azure mentions (the full azure-work-profile guide + env template existed but were unreachable from the front door) — added a "Corporate / Azure setup" section pointing at `defaults/work-profile.env.example` + `docs/azure-work-profile.md`, plus an API-keys table (what each key unlocks, only OPENAI required). `setup.mjs`'s wizard didn't offer `OPENROUTER_API_KEY` (now load-bearing: tiered-pipeline GLM discovery/Stage-1 triage, model-eval OSS candidates) — added as optional; also fixed its stale "GPT-5.4" label.
+- **Phase 14 input scope confirmed by code trace**: the shadow comparison hooks `runMultiPassCodeAudit`, which only the `mode === 'code'` CLI branch calls — `/audit-plan` (and rebuttal) take the separate single-call path and never touch the chooser. So the shadow log accumulates from `/audit-code` runs ONLY, which is correct by design: the tiered pipeline's stages are diff-evidence-based (Stage 0 verifies content anchors against a diff) and structurally inapplicable to plan prose. Phase 14's flip decision governs the code-audit path only; `/audit-plan` keeps its GPT+Gemini loop either way.
+
 ## 2026-07-13 — Fix: shadow-validation flip pre-flight — 4 wiring gaps found by tracing the full path before enabling, all closed
 
 ### Changes
