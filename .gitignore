@@ -79,7 +79,9 @@ scripts/lib/consumer-repos.local.json
 # tiered-recall pipeline shadow-validation log (Close-out) — Category A,
 # non-deterministic runtime output from real production audit runs; a
 # temporary, bounded artifact for the Phase-14 decision, not a permanent record.
-.audit/tiered-shadow-log.jsonl
+# Now local-fallback only (authoritative aggregation moved to Supabase,
+# 2026-07-13); *.jsonl covers the archived pre-incident-test-noise file too.
+.audit/tiered-shadow-log*.jsonl
 
 # Human adjudication worksheets — regenerated on every queue listing
 # (Category-A volatile state; discoverable next to the session archives)

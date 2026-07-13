@@ -772,10 +772,19 @@ defaults **off** — production runs the legacy path today.
   self-contained whole-run function; forcing the fit would mean either new
   code in an already-complex module for a one-time comparison, or dead
   code once Phase 14 resolves. Logs to a local, gitignored
-  `.audit/tiered-shadow-log.jsonl` (Category A — bounded, temporary
-  decision-support data, no new Supabase schema; also in the consumer
-  managed-gitignore block). Summarize with
-  `npm run audit:tiered-shadow-report` before Phase 14's flip decision.
+  `.audit/tiered-shadow-log.jsonl` (per-repo fallback) AND, when
+  `AUDIT_DB_URL` is set, to the single-tenant Supabase
+  `tiered_shadow_observations` table (2026-07-13) — the local-only design
+  couldn't answer "have we hit 15 total yet" across the 3 local repos
+  without manually summing separate JSONL files, and a real incident (58
+  contaminated local entries from the `allowTiered` diagnosis window)
+  needed a clean, cross-repo-visible restart point.
+  `node scripts/lib/store/tiered-shadow.mjs`'s `getTieredShadowObservations`
+  takes an explicit `repoIds` list only — never an ambient "all repos"
+  scan (this DB is single-tenant; the caller resolves which local
+  checkouts to aggregate). Summarize with `npm run audit:tiered-shadow-report`
+  (cloud-first, `--repos <path,...>` for siblings, `--log <path>` to force
+  local-only) before Phase 14's flip decision.
 - **Stage 2 adapters are REAL and wired (2026-07-13)**: `buildAuditRunContext`
   constructs Phase 12's subprocess adapters
   (`createGeminiReviewSubprocessAdapters`) whenever `pipelineEnabled` OR

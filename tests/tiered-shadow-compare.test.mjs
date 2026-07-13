@@ -4,10 +4,28 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import {
+// Air-gap the cloud write `runTieredShadowComparison` now performs
+// (2026-07-13 — real Supabase persistence added alongside the local log).
+// Matches the EXISTING convention in run-multi-pass-code-audit-harness.test.mjs
+// EXACTLY, including WHY it must be a dynamic import: a static
+// `import ... from` is hoisted in ESM and evaluates before this file's own
+// top-level body runs, so a plain env override placed above a static import
+// would NOT reliably take effect first. Only a dynamic `await import()`,
+// which executes in normal top-to-bottom order, guarantees the override
+// lands before the module (and its store/db transitive imports) evaluates.
+// Prior value captured + restored so this override never leaks into a
+// differently-configured process.
+const _priorAuditDbUrl = process.env.AUDIT_DB_URL;
+process.env.AUDIT_DB_URL = '';
+process.on('exit', () => {
+  if (_priorAuditDbUrl === undefined) delete process.env.AUDIT_DB_URL;
+  else process.env.AUDIT_DB_URL = _priorAuditDbUrl;
+});
+
+const {
   buildShadowCtx, compareAuditRunResults, runShadowTieredPipeline,
   appendShadowLog, runTieredShadowComparison,
-} from '../scripts/lib/audit/tiered-shadow-compare.mjs';
+} = await import('../scripts/lib/audit/tiered-shadow-compare.mjs');
 
 describe('buildShadowCtx', () => {
   test('disables every ledger/debt write path — the load-bearing safety property', () => {

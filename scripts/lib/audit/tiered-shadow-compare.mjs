@@ -33,15 +33,21 @@
  * in the caller), cutting shadow-window wall-clock roughly in half versus
  * sequential — real, measured performance, not a hypothetical optimization.
  *
- * **Persistence**: a local, gitignored JSONL log
- * (`.audit/tiered-shadow-log.jsonl`), mirroring the existing
- * `quickfix-scan.mjs` → `.audit/quickfix-hits.jsonl` pattern — Category A
- * per AGENTS.md's generated-artifact policy (non-deterministic runtime
- * output, not a pure function of committed source). No new Supabase schema:
- * this is a bounded, temporary, one-time decision-support artifact (once
- * Phase 14 resolves, its ongoing value drops to ~zero) — provisioning
- * standing cloud infrastructure for it would be the over-engineering cliff
- * this repo's own design-rightsizing gate warns against.
+ * **Persistence — local + cloud, cloud optional** (revised 2026-07-13): a
+ * local, gitignored JSONL log (`.audit/tiered-shadow-log.jsonl`, mirroring
+ * `quickfix-scan.mjs` → `.audit/quickfix-hits.jsonl`) remains the always-
+ * available fallback, PLUS a best-effort write to `tiered_shadow_
+ * observations` (`store/tiered-shadow.mjs`) via the existing single-tenant
+ * Supabase project every repo already shares. The original "local-only,
+ * no new schema" design was reconsidered once a REAL requirement surfaced:
+ * the shadow-validation window spans 3 repos on one operator's machine, and
+ * "how many total shadow runs have we accumulated across all of them" has
+ * no answer from 3 independent local files without manually summing. The
+ * cloud write reuses this repo's already-provisioned DB (no new
+ * infrastructure, just one more table + one insert call) and matches the
+ * project's own stated convention that cross-skill data flows through the
+ * shared store — this is closing a gap in that convention, not violating
+ * the design-rightsizing gate the original reasoning invoked.
  *
  * Plan: docs/plans/tiered-recall-audit-pipeline.md Close-out (shadow validation).
  *
@@ -51,6 +57,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { semanticId } from '../findings.mjs';
+import { resolveRepoIdentity } from '../repo-identity.mjs';
+import { appendTieredShadowObservation } from '../store/tiered-shadow.mjs';
 
 export const SHADOW_LOG_PATH = path.join('.audit', 'tiered-shadow-log.jsonl');
 
@@ -196,17 +204,45 @@ export async function runTieredShadowComparison({ ctx, legacyResultPromise, runT
   } catch {
     // The real run itself failed — nothing to compare against. Still worth
     // recording that the shadow ran (or didn't), but there's no comparison.
-    appendShadowLog({
-      timestamp: new Date().toISOString(), runId: ctx.runId || null,
+    await recordObservation({
+      ctx, logPath,
       legacyOk: false, shadowOk: shadowOutcome.ok, shadowLatencyMs: shadowOutcome.latencyMs,
       shadowError: shadowOutcome.ok ? null : shadowOutcome.error, comparison: null,
-    }, logPath);
+    });
     return;
   }
-  appendShadowLog({
-    timestamp: new Date().toISOString(), runId: ctx.runId || null,
+  await recordObservation({
+    ctx, logPath,
     legacyOk: true, shadowOk: shadowOutcome.ok, shadowLatencyMs: shadowOutcome.latencyMs,
     shadowError: shadowOutcome.ok ? null : shadowOutcome.error,
     comparison: shadowOutcome.ok ? compareAuditRunResults(legacyResult, shadowOutcome.result) : null,
+  });
+}
+
+/**
+ * Writes one observation to BOTH sinks — local JSONL (always) and Supabase
+ * (best-effort, cloud-optional). The cloud write's `repoId` comes from
+ * `resolveRepoIdentity()` (synchronous, local git reads only, no network) —
+ * NOT threaded through `ctx`, since it's a repo-wide fact, not a per-run
+ * input. A cloud-write failure is logged, never thrown — this function's
+ * whole contract (matching its callers') is "always resolves".
+ * @param {{ctx: object, logPath: string, legacyOk: boolean, shadowOk: boolean, shadowLatencyMs: number, shadowError: string|null, comparison: object|null}} args
+ */
+async function recordObservation({ ctx, logPath, legacyOk, shadowOk, shadowLatencyMs, shadowError, comparison }) {
+  appendShadowLog({
+    timestamp: new Date().toISOString(), runId: ctx.runId || null,
+    legacyOk, shadowOk, shadowLatencyMs, shadowError, comparison,
   }, logPath);
+  try {
+    const { repoUuid } = resolveRepoIdentity();
+    const result = await appendTieredShadowObservation({
+      repoId: repoUuid, runId: ctx.runId ?? null,
+      legacyOk, shadowOk, shadowError, shadowLatencyMs, comparison,
+    });
+    if (!result.ok) {
+      process.stderr.write(`  [tiered-shadow] WARNING: cloud persistence failed (local log unaffected): ${result.error}\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`  [tiered-shadow] WARNING: cloud persistence failed (local log unaffected): ${err.message}\n`);
+  }
 }
