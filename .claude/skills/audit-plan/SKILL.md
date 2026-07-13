@@ -29,7 +29,7 @@ description with no path (PLAN_CYCLE: generate-then-audit).
 | `<task description>` (no path) | PLAN_CYCLE — generate plan, then audit |
 
 Validate: `OPENAI_API_KEY` is set. `GEMINI_API_KEY` for Step 6 (falls back to
-Claude Opus when absent). `SUPABASE_AUDIT_URL` for cloud learning (optional).
+Claude Opus when absent). `AUDIT_DB_URL` for cloud learning (optional).
 
 Initialise session ID: `SID=audit-plan-$(date +%s)`.
 
@@ -84,6 +84,15 @@ node scripts/openai-audit.mjs plan <plan-file> --mode plan \
 
 Plan audit is single-file — no `--passes`, `--diff`, or `--changed` plumbing
 needed (those are code-audit concerns).
+
+### Requirements rubric (automatic)
+
+When `.requirements/ledger.json` exists, the plan audit prompt gets a
+`<requirements_rubric>` block scoped to the plan's own referenced files —
+a plan that violates an active repo invariant is flagged at design time
+(the cheapest point to catch it). No flag needed; ledger absent → audit
+unaffected. Same rubric the code audit injects, derived from plan text
+instead of a diff.
 
 ### Show results
 
@@ -213,8 +222,12 @@ When stopping with deferrals, append a `## Out of Scope (Future)` section to
 the plan listing deferred concerns with rationale.
 
 **Step 6 (Gemini final review) is MANDATORY** after the last audit round,
-regardless of convergence — except when both `GEMINI_API_KEY` and
-`ANTHROPIC_API_KEY` are absent.
+regardless of convergence. No-key degradation ladder (same as audit-code's
+`references/gemini-gate.md` — never a silent skip): Gemini → Claude Opus
+fallback → an **independent adversarial review agent** over the plan +
+findings (record its verdict in the same APPROVE/CONCERNS/REJECT shape) →
+only when none of those is available, output `FINAL_GATE_SKIPPED` and do
+not claim full final-gate validation.
 
 ---
 
@@ -228,6 +241,52 @@ Full writer invocation example + status field semantics: `references/ledger-form
 
 ---
 
+## Step 3.5b — Record Triage Outcomes (closes the adaptive-learning loop)
+
+**Automatic for rounds 1..N-1 — no manual step.** Each R2+ invocation of
+`openai-audit.mjs plan` finalizes the **prior** round's accepted/dismissed
+outcomes from the ledger you just wrote (the same shared capture the code
+audit uses — plan audits create cloud `audit_runs` rows with `mode='plan'`
+since 2026-07-13, so plan-triage ground truth reaches the learning store,
+not just the local PlanFpTracker). Relies on the `…-r<N>-result.json`
+`--out` naming this skill already uses; best-effort — a failure logs and
+the audit proceeds.
+
+> **Run unification (multi-round sessions)**: each invocation mints its own
+> cloud run row by default. To attach all rounds of one plan-audit session
+> to a single `audit_runs` row, mint one id up front and pass the SAME
+> `--run-id <uuid>` to every round's invocation (same contract as the code
+> audit / `/cycle`). Fragmented per-round rows are harmless for outcome
+> labeling (each round labels against its own row) but unify effectiveness
+> metrics when you bother.
+
+**Manual fallback — run ONLY when there is no "next round" to carry the
+capture** (the final converged round, or a 1-round audit):
+
+```bash
+node scripts/write-code-outcomes.mjs \
+  --result /tmp/$SID-r<N>-result.json \
+  --ledger /tmp/$SID-ledger.json \
+  --round <N>
+```
+
+(The CLI is mode-agnostic — it works off the result+ledger artifacts;
+plan findings carry `pass: 'plan'`.) Additionally, still record dismissed
+scope-pressure findings into the LOCAL PlanFpTracker so future plan audits
+suppress the recurring ones:
+
+```bash
+node scripts/write-plan-outcomes.mjs \
+  --result /tmp/$SID-r<N>-result.json \
+  --outcomes '[{"id":"M3","action":"dismiss"},{"id":"H1","action":"fix-now"}]'
+```
+
+Two stores, two purposes: the cloud labels feed effectiveness metrics /
+FP-learning / prompt evolution; the PlanFpTracker feeds the pre-output
+recurring-finding suppression specific to plan audits.
+
+---
+
 ## Execution order
 
 **Wait for rebuttal BEFORE editing the plan.**
@@ -235,8 +294,9 @@ Full writer invocation example + status field semantics: `references/ledger-form
 1. Send rebuttal (if rebut HIGH/MEDIUM findings from triage)
 2. Wait for rebuttal response
 3. Write adjudication ledger (Step 3.5)
-4. Edit plan (Step 4)
-5. Re-audit (Step 5)
+4. Record triage outcomes — automatic next-round (Step 3.5b); manual CLIs only for the final/1-round case
+5. Edit plan (Step 4)
+6. Re-audit (Step 5)
 
 ---
 

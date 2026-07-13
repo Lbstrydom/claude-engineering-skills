@@ -347,3 +347,54 @@ clone — including the Azure work profile, which ships in this bundle. Keep the
 fork's `main` identical to upstream (no local commits on `main`) so pulls stay
 fast-forward; put any machine-specific config in the gitignored `.env` or the
 gitignored `consumer-repos.local.json`, not in tracked files.
+
+---
+
+## Sync internals (moved from AGENTS.md, 2026-07-13 sprawl trim)
+
+### Why isolated
+
+ai-organiser has its own `scripts/` with `automated-tests.js`,
+`install-ffmpeg.js`, `persona-harness/`, etc. wine-cellar-app has
+its own. Without isolation, our 40+ tooling files mix into theirs
+and either (a) pollute the consumer's commits when tracked, or
+(b) clutter `git status` when untracked. The `scripts/.claude-skills/`
+subdir makes ownership obvious and structurally avoids name
+collisions.
+
+### What sync writes
+
+`scripts/sync-to-repos.mjs` writes to each consumer:
+
+| What | Where in consumer | Tracked? |
+|---|---|---|
+| Tooling files (`scripts/X.mjs` and subdirs) | `scripts/.claude-skills/X.mjs` etc. | No (gitignored) |
+| Skill `.md` files (`.claude/skills/**`) | `.claude/skills/**` (rewritten — paths in body point at `scripts/.claude-skills/`) | Yes |
+| Copilot prompt shims (`.github/prompts/*.prompt.md`) | same path (rewritten) | Yes |
+| Editor config (`.vscode/mcp.json`) | same path (rewritten if it references scripts) | Yes |
+| Claude Code hooks + settings (`.claude/hooks/`, `.claude/settings.json`) | same path (rewritten) | Yes |
+| Per-consumer manifest (`scripts/.sync-manifest.json`) | same path; layout=`isolated` | Yes |
+| Migrations (`supabase/migrations/*.sql` in source) | `.audit-loop/migrations/*.sql` | Yes |
+
+The managed `.gitignore` block also covers our **runtime outputs** (`AUDIT_RUNTIME_IGNORES`
+in `sync-to-repos.mjs`: `.audit/cache-metrics.jsonl`, `.audit-loop/*-{observed,verify-result,drift-ledger}.json`,
+`.audit-loop/arm-eval-toggle.json`, `.audit/tiered-shadow-log*.jsonl`, and
+`docs/arm-eval/{sessions,worksheets}/*` — arm-eval exports are a *tracked* auditable
+record in the SOURCE repo but local-only runtime output in consumers, where the
+authoritative capture is the cloud `arm_eval_*` tables) so audit / `--verify` runs
+don't churn in consumers. Because a `.gitignore` rule never untracks an
+already-committed file, sync ALSO self-heals: after writing the block it
+`git rm --cached`'s any tracked file matching those patterns
+(`scripts/lib/sync-untrack.mjs`, faithful gitignore-glob semantics so `*` never
+crosses `/` → a consumer's own files and `.audit-loop/migrations/*.sql` are never
+swept; the consumer commits the resulting index change). Idempotent; dry-run
+previews it.
+
+### Key modules
+
+- `scripts/lib/sync-path-map.mjs` — bidirectional path mapper (`sourceRelToDestRel`/`destRelToSourceRel`), single source of truth for the layout.
+- `scripts/lib/sync-rewriter.mjs` — ownership-aware command rewriter. Only rewrites `node scripts/X.mjs` references when `X` is a file we own (consumer-owned `scripts/foo.js` stays untouched). Exports `COMMAND_REGEX` so the verifier reuses the same parser.
+- `scripts/lib/sync-gitignore.mjs` — managed-block `.gitignore` manager. Validates marker state and aborts on malformed input (no fail-soft).
+- `scripts/lib/sync-isolation-verify.mjs` — CLI verifier consumers run during migration (`--gates 1,2A,2B,3,4,5,6,7`).
+- `scripts/lib/remove-legacy-synced.mjs` — migration helper. Reads the legacy manifest, hash-verifies each file (skips on mismatch — won't destroy locally-modified content), preflight-blocks on dirty tracked files unless `--force-dirty`.
+- `scripts/lib/npm-script-enumerator.mjs` — extracts `npm run X` references from synced skill `.md` so the consumer's `package.json` scripts can be reconciled.

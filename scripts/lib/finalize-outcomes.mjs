@@ -20,7 +20,12 @@ import path from 'node:path';
 import { z } from 'zod';
 import { recordTriageOutcomes } from './outcome-sync.mjs';
 import { semanticId } from './findings.mjs';
-import { markRunFindingsNeedsTriage } from './store/runs-findings.mjs';
+import {
+  markRunFindingsNeedsTriage, recordAdjudicationEvent,
+  updatePassStatsPostDeliberation, updateRunMeta,
+} from './store/runs-findings.mjs';
+import { isCloudEnabled } from './store/repo.mjs';
+import { atomicWriteFileSync } from './file-io.mjs';
 
 // Permissive schemas: assert only the shape finalize needs, `.passthrough()` so
 // underscore annotations (`_cloudRunId`, `_outcomeCapture`, …) never break load.
@@ -131,4 +136,59 @@ export async function finalizeRoundOutcomes({ result, ledger, round, store, sid 
     needsTriage,
     enriched,
   };
+}
+
+/**
+ * Deterministic outcome capture (orchestrator-only). At the start of an R2+
+ * audit invocation — the one the agent already makes for R2+ suppression —
+ * finalize the PRIOR round's triage outcomes from the ledger the agent just
+ * wrote. Best-effort: any failure logs and the round-N audit proceeds unchanged
+ * (never worse than a skipped manual step). Captures rounds 1..N-1; the final
+ * converged round uses /cycle or the manual write-code-outcomes.mjs CLI.
+ *
+ * Mode-agnostic: works off the result+ledger artifacts, so both the code
+ * path (legacy-production-audit.mjs) and the plan path (openai-audit.mjs's
+ * plan branch, 2026-07-13) call this same function — one capture semantics.
+ * Plan: docs/plans/deterministic-outcome-capture.md
+ *
+ * @param {{ outFile: string|null, round: number, ledgerFile: string|null }} args
+ */
+export async function finalizePriorRoundOutcomes({ outFile, round, ledgerFile }) {
+  if (!(round >= 2 && ledgerFile && outFile)) return;
+  try {
+    const { priorResultPath, sid, priorRound } = resolveAuditArtifacts({ outPath: outFile, round });
+    if (!priorResultPath) {
+      process.stderr.write(`  [finalize] WARN: could not resolve prior-round result from --out (${outFile}); skipping capture\n`);
+      return;
+    }
+    if (!fs.existsSync(priorResultPath)) {
+      process.stderr.write(`  [finalize] prior-round result not found (${priorResultPath}); skipping\n`);
+      return;
+    }
+    const { result, ledger } = loadAuditInputs({ resultPath: priorResultPath, ledgerPath: ledgerFile });
+    const cloud = await isCloudEnabled();
+    const store = cloud ? { recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta } : null;
+    let capture;
+    try {
+      const status = await finalizeRoundOutcomes({ result, ledger, round: priorRound, store, sid });
+      // Stamp a COMPACT status (scalars only) — never spread `status.enriched`
+      // (the full findings payload) into the artifact; it's caller-only.
+      capture = {
+        status: 'captured', round: status.round, labelled: status.labelled,
+        total: status.total, cloudOk: status.cloudOk,
+        skippedLocal: status.skippedLocal, needsTriage: status.needsTriage,
+      };
+      process.stderr.write(`  [finalize] round ${priorRound}: ${status.labelled}/${status.total} labelled `
+        + `(cloud: ${status.cloudOk ? 'yes' : 'no'}${status.skippedLocal ? ', local skipped' : ''})\n`);
+    } catch (err) {
+      capture = { status: 'failed', round: priorRound, reason: err.message };
+      process.stderr.write(`  [finalize] WARN: finalize round ${priorRound} failed: ${err.message}\n`);
+    }
+    // Stamp machine-readable capture status onto the prior result artifact
+    // (M5). atomicWriteFileSync — never a torn write on crash.
+    try { result._outcomeCapture = capture; atomicWriteFileSync(priorResultPath, JSON.stringify(result)); }
+    catch { /* best-effort annotation */ }
+  } catch (err) {
+    process.stderr.write(`  [finalize] WARN: prior-round capture failed: ${err.message}\n`);
+  }
 }

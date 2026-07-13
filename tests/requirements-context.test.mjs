@@ -140,3 +140,34 @@ describe('getRequirementsContext — budget degradation (audit L1)', () => {
     assert.ok(r.tokensEst <= 120 + 20, 'block respects the budget (± truncation slack)');
   });
 });
+
+describe('getPlanRequirementsRubric — plan-content scope derivation (2026-07-13)', () => {
+  it('a plan referencing a governed, existing file surfaces that invariant in-scope', async () => {
+    const { getPlanRequirementsRubric } = await import('../scripts/lib/requirements/context.mjs');
+    // Reference a file that really exists at repo root (extractPlanPaths only
+    // returns existing paths in `found`), governed by the fixture ledger.
+    const governedFile = 'scripts/lib/requirements/context.mjs';
+    const dir = withLedger({
+      candidates: [cand({ hash: 'cafecafe', file: governedFile, assertion: 'Context blocks degrade gracefully when the ledger is absent.' })],
+      coveredFiles: [governedFile],
+      gapAssessments: [gap('REQ-correctness-cafecafe')],
+    });
+    const plan = `# Some plan\n\nWe will modify \`${governedFile}\` to add a helper.\n`;
+    // allowInfraFiles mirrors --allow-infra-scope: the referenced file is one
+    // of the audit tool's own lib modules, which extractPlanPaths excludes by
+    // default (correct for consumer plans) — this also exercises the flag
+    // passthrough from the plan-audit CLI.
+    const r = await getPlanRequirementsRubric(plan, { baseDir: dir, allowInfraFiles: true });
+    assert.equal(r.degraded, false);
+    assert.equal(r.inScopeCount, 1);
+    assert.match(r.block, /degrade gracefully/);
+  });
+
+  it('ledger absent → degraded empty block, never throws', async () => {
+    const { getPlanRequirementsRubric } = await import('../scripts/lib/requirements/context.mjs');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'req-ctx-'));
+    const r = await getPlanRequirementsRubric('# plan referencing `src/nothing.mjs`', { baseDir: dir });
+    assert.equal(r.block, '');
+    assert.equal(r.degraded, true);
+  });
+});

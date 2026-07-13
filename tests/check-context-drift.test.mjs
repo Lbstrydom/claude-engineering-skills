@@ -232,6 +232,54 @@ describe('check-context-drift', () => {
       assert.deepEqual(findings, []);
     });
 
+    it('oversized AGENTS.md: MEDIUM for ctx/oversized-agents-md (paired repo)', () => {
+      const bigAgents = '# AGENTS.md\n' + 'line\n'.repeat(60);
+      const tmpDir = path.join(FIXTURES, '_tmp-bloated-agents');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      try {
+        fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), bigAgents);
+        fs.writeFileSync(path.join(tmpDir, 'CLAUDE.md'), '# CLAUDE.md\n\n@./AGENTS.md\n');
+        fs.writeFileSync(path.join(tmpDir, '.claude-context-allowlist.json'),
+          JSON.stringify({ maxAgentsMdLines: 50 }));
+        const { findings } = runDriftCheck(tmpDir);
+        const oversized = findings.filter(f => f.ruleId === 'ctx/oversized-agents-md');
+        assert.equal(oversized.length, 1, `expected exactly one oversized-agents finding, got: ${JSON.stringify(findings)}`);
+        assert.equal(oversized[0].severity, 'warn');
+        assert.match(oversized[0].message, /progressive-disclosure/);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('oversized AGENTS.md fires even WITHOUT a CLAUDE.md pair (single-file repo pays the same cost)', () => {
+      const bigAgents = '# AGENTS.md\n' + 'line\n'.repeat(60);
+      const tmpDir = path.join(FIXTURES, '_tmp-bloated-agents-solo');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      try {
+        fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), bigAgents);
+        fs.writeFileSync(path.join(tmpDir, '.claude-context-allowlist.json'),
+          JSON.stringify({ maxAgentsMdLines: 50 }));
+        const { findings } = runDriftCheck(tmpDir);
+        const oversized = findings.filter(f => f.ruleId === 'ctx/oversized-agents-md');
+        assert.equal(oversized.length, 1);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it('AGENTS.md under the cap: no oversized-agents-md finding', () => {
+      const tmpDir = path.join(FIXTURES, '_tmp-slim-agents');
+      fs.mkdirSync(tmpDir, { recursive: true });
+      try {
+        fs.writeFileSync(path.join(tmpDir, 'AGENTS.md'), '# AGENTS.md\n\nshort\n');
+        fs.writeFileSync(path.join(tmpDir, 'CLAUDE.md'), '# CLAUDE.md\n\n@./AGENTS.md\n');
+        const { findings } = runDriftCheck(tmpDir);
+        assert.deepEqual(findings.filter(f => f.ruleId === 'ctx/oversized-agents-md'), []);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it('single-claude-only: no findings (legacy single-file repo)', () => {
       const { findings } = runDriftCheck(fx('single-claude-only'));
       assert.deepEqual(findings, []);

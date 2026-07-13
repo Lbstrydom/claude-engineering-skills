@@ -721,3 +721,55 @@ planned:
   pipeline's whole-run shape; see status.md for the open design question).
   Phase 14 (the production-flip decision gate) is contingent on that
   shadow validation completing.
+
+### Addendum 2026-07-13 — Close-out shadow validation built + wiring history (moved from AGENTS.md sprawl trim)
+
+The "Remaining before production" paragraph above is superseded: the Close-out
+shadow-validation mechanism now exists (`scripts/lib/audit/tiered-shadow-compare.mjs`
++ `scripts/lib/store/tiered-shadow.mjs` + `scripts/tiered-shadow-report.mjs`),
+deliberately NOT built as a 4th arm on the model-A/B/C shadow infra
+(`audit-shadow.mjs`/`arm-eval/toggle.mjs`) despite the plan text suggesting
+reuse — that infra substitutes a model into a per-pass GPT-5-pass loop
+(Thompson sampling, spend caps), a different shape from
+`runTieredAuditPipeline`'s self-contained whole-run function; forcing the fit
+would mean either new code in an already-complex module for a one-time
+comparison, or dead code once Phase 14 resolves. It runs genuinely
+concurrently with the legacy audit (neither pipeline mutates `process.cwd()`,
+so no chdir hazard forces serialization).
+
+**Stage-2 adapter wiring history (the 4-gap pre-flight fix, commit e0660b5)**:
+`buildAuditRunContext` constructs Phase 12's subprocess adapters
+(`createGeminiReviewSubprocessAdapters`) whenever `pipelineEnabled` OR
+`shadowEnabled` — TWO provider handles (`geminiReviewCall` /
+`geminiCleanRegionCall`), because `runFinalAdjudication`'s two adapters have
+different signatures (envelope vs file) and the earlier single-handle design
+could never have served both. The adapter resolves `gemini-review.mjs` as a
+**module-relative sibling** (`new URL('../../gemini-review.mjs', import.meta.url)`)
+— the prior repoRoot-relative default was the consumer-relocation defect class
+(KD-021/KD-026) and would have ENOENT'd in every consumer's
+`scripts/.claude-skills/` layout.
+
+**Shadow-flip incident + the `allowTiered` per-call gate (commit d73dc9d)**:
+flipping `AUDIT_TIERED_SHADOW_ENABLED=true` globally routed fully-mocked unit
+tests into real multi-provider execution (`~/.audit-loop.env` loads into every
+Node process). Root cause: the env flags express operator intent ("the window
+is open" — correctly global) but were also read as call-site EXECUTION
+eligibility (not correctly global). Fix: `AuditRunContextSchema.allowTiered`
+(default false); only `openai-audit.mjs`'s `main()` — the one production CLI
+entrypoint — passes `true`. Both the chooser and the shadow comparison require
+`ctx.allowTiered`; providers are only constructed when
+`(pipelineEnabled || shadowEnabled) && allowTiered`.
+
+**Cloud persistence (commit d48fafd)**: observations write to the local
+gitignored `.audit/tiered-shadow-log.jsonl` (always) AND Supabase's
+`tiered_shadow_observations` (best-effort, migration `20260713140000`) — the
+local-only design couldn't answer "have we hit 15 total yet" across 3 local
+repos without manually summing separate JSONL files, and a real incident (58
+contaminated local entries of real API-calling test noise from the
+`allowTiered` diagnosis window, archived to
+`.audit/tiered-shadow-log.pre-incident-test-noise.jsonl`) needed a clean,
+cross-repo-visible restart point. `getTieredShadowObservations` requires an
+explicit `repoIds` list — never an ambient "all repos" scan.
+`npm run audit:tiered-shadow-report` is the operator progress surface
+(cloud-first; `--repos <path,...>` aggregates siblings; `--log <path>` forces
+local-only).

@@ -11,7 +11,10 @@
 > *what-it-is / when-you-need-it / pointer* stub here, mirroring the skill
 > `SKILL.md ≤3K + references/` progressive-disclosure pattern. Same "avoid the
 > messy middle" discipline as the generated-artifact policy below, applied to this
-> file itself.
+> file itself. **Enforced since 2026-07-13**: `npm run context:check` (run by
+> the pre-push hook and `/ship` Step 4) fails on `ctx/oversized-agents-md`
+> when this file exceeds 1200 lines — condense a dossier section to a stub +
+> `docs/<topic>.md` rather than raising the cap.
 
 <!-- arch-map-discoverability:start -->
 > **Architecture map**: [`docs/architecture-map.md`](docs/architecture-map.md)
@@ -216,50 +219,15 @@ isn't tracked — fresh clones of a consumer repo need to re-run
 > migration, or that silently leaves the live schema ahead of the migration
 > ledger, is the failure mode this rule prevents.
 
-### Why isolated
+### Sync mechanics — pointer
 
-ai-organiser has its own `scripts/` with `automated-tests.js`,
-`install-ffmpeg.js`, `persona-harness/`, etc. wine-cellar-app has
-its own. Without isolation, our 40+ tooling files mix into theirs
-and either (a) pollute the consumer's commits when tracked, or
-(b) clutter `git status` when untracked. The `scripts/.claude-skills/`
-subdir makes ownership obvious and structurally avoids name
-collisions.
-
-### What sync does
-
-`scripts/sync-to-repos.mjs` writes to each consumer with:
-
-| What | Where in consumer | Tracked? |
-|---|---|---|
-| Tooling files (`scripts/X.mjs` and subdirs) | `scripts/.claude-skills/X.mjs` etc. | No (gitignored) |
-| Skill `.md` files (`.claude/skills/**`) | `.claude/skills/**` (rewritten — paths in body point at `scripts/.claude-skills/`) | Yes |
-| Copilot prompt shims (`.github/prompts/*.prompt.md`) | same path (rewritten) | Yes |
-| Editor config (`.vscode/mcp.json`) | same path (rewritten if it references scripts) | Yes |
-| Claude Code hooks + settings (`.claude/hooks/`, `.claude/settings.json`) | same path (rewritten) | Yes |
-| Per-consumer manifest (`scripts/.sync-manifest.json`) | same path; layout=`isolated` | Yes |
-| Migrations (`supabase/migrations/*.sql` in source) | `.audit-loop/migrations/*.sql` | Yes |
-
-The managed `.gitignore` block also covers our **runtime outputs** (`AUDIT_RUNTIME_IGNORES`
-in `sync-to-repos.mjs`: `.audit/cache-metrics.jsonl`, `.audit-loop/*-{observed,verify-result,drift-ledger}.json`,
-`.audit-loop/arm-eval-toggle.json`, and `docs/arm-eval/{sessions,worksheets}/*` — arm-eval
-exports are a *tracked* auditable record in THIS source repo but local-only runtime output in
-consumers, where the authoritative capture is the cloud `arm_eval_*` tables)
-so audit / `--verify` runs don't churn in consumers. Because a `.gitignore` rule
-never untracks an already-committed file, sync ALSO self-heals: after writing the
-block it `git rm --cached`'s any tracked file matching those patterns ([`scripts/lib/sync-untrack.mjs`](scripts/lib/sync-untrack.mjs),
-faithful gitignore-glob semantics so `*` never crosses `/` → a consumer's own files
-and `.audit-loop/migrations/*.sql` are never swept; the consumer commits the
-resulting index change). Idempotent; dry-run previews it.
-
-### Key modules
-
-- [`scripts/lib/sync-path-map.mjs`](scripts/lib/sync-path-map.mjs) — bidirectional path mapper (`sourceRelToDestRel`/`destRelToSourceRel`), single source of truth for the layout.
-- [`scripts/lib/sync-rewriter.mjs`](scripts/lib/sync-rewriter.mjs) — ownership-aware command rewriter. Only rewrites `node scripts/X.mjs` references when `X` is a file we own (consumer-owned `scripts/foo.js` stays untouched). Exports `COMMAND_REGEX` so the verifier reuses the same parser.
-- [`scripts/lib/sync-gitignore.mjs`](scripts/lib/sync-gitignore.mjs) — managed-block `.gitignore` manager. Validates marker state and aborts on malformed input (no fail-soft).
-- [`scripts/lib/sync-isolation-verify.mjs`](scripts/lib/sync-isolation-verify.mjs) — CLI verifier consumers run during migration (`--gates 1,2A,2B,3,4,5,6,7`).
-- [`scripts/lib/remove-legacy-synced.mjs`](scripts/lib/remove-legacy-synced.mjs) — migration helper. Reads the legacy manifest, hash-verifies each file (skips on mismatch — won't destroy locally-modified content), preflight-blocks on dirty tracked files unless `--force-dirty`.
-- [`scripts/lib/npm-script-enumerator.mjs`](scripts/lib/npm-script-enumerator.mjs) — extracts `npm run X` references from synced skill `.md` so the consumer's `package.json` scripts can be reconciled.
+The sync-behavior detail (why the isolated subdir exists, the full
+what-goes-where table, the managed-gitignore runtime-outputs block +
+self-healing untrack semantics, and the `sync-*` key-module list) lives in
+[`docs/consumer-adoption.md`](docs/consumer-adoption.md) §"Sync internals".
+One structural invariant stays here: **the sync layout's single source of
+truth is [`scripts/lib/sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)** —
+never hand-compute a consumer path.
 
 ### CLI smoke contract (`--selfcheck-relocation`)
 
@@ -320,45 +288,18 @@ Runs as part of `npm run check` (the pre-push hook). ERRORs block; WARNs are adv
 
 ## Architecture
 
-```
-scripts/
-├── lib/                    # Focused modules (split from former shared.mjs monolith)
-│   ├── schemas.mjs         # Zod schemas + zodToGeminiSchema() — single source of truth
-│   ├── file-io.mjs         # Core I/O (atomic writes, paths) + barrel re-exports
-│   ├── audit-scope.mjs     # Sensitive file filtering, audit-infra exclusion, context assembly
-│   ├── diff-annotation.mjs # Diff parsing, CHANGED/UNCHANGED markers for audit context
-│   ├── plan-paths.mjs      # Plan path extraction (regex + fuzzy keyword discovery)
-│   ├── ledger.mjs          # Adjudication ledger, R2+ suppression, finding metadata
-│   ├── code-analysis.mjs   # Chunking, dependency graphs, audit units, map-reduce
-│   ├── context.mjs         # Repo profiling, audit brief generation, AGENTS.md/CLAUDE.md parsing
-│   ├── findings.mjs        # Semantic IDs + barrel re-exports for findings subsystem
-│   ├── findings-format.mjs # Finding display formatting (pure renderer)
-│   ├── findings-tracker.mjs # FP tracker (v2), lazy-decay EMA, multi-scope counters
-│   ├── findings-outcomes.mjs # Outcome logging, effectiveness tracking, EWR
-│   ├── findings-tasks.mjs  # Remediation task CRUD + persistence
-│   ├── vcs.mjs             # Structured VCS helpers — closed VcsErrorCode enum, DiffShape contract, exitCodeFor()
-│   ├── sensitive-paths.mjs # Canonical path classifier (sensitive | generatedNoise | null) + state-aware diff filter + redacted skip log
-│   ├── device-presets.mjs  # Shared device-emulation registry + resolver for /persona-test + /click-test (prep + prep-matrix CLI emits runner-enforcement contracts)
-│   └── config.mjs          # Centralized validated config (all env var reads)
-├── shared.mjs              # Barrel re-export — backwards-compatible, imports from lib/
-├── openai-audit.mjs        # GPT multi-pass auditor (plan, code, rebuttal modes) — links audit_runs to commit_sha + plan_id
-├── gemini-review.mjs       # Gemini 3.1 Pro independent final reviewer (Claude Opus fallback)
-├── bandit.mjs              # Thompson Sampling + user-impact-aware reward (consumes persona_audit_correlations)
-├── learning-store.mjs      # Supabase cloud persistence for audit outcomes + learning + cross-skill data loop
-├── cross-skill.mjs         # CLI facade invoked by /ux-lock /persona-test /ship — writes plans, regression_specs, persona_audit_correlations, ship_events
-├── refine-prompts.mjs      # LLM-driven prompt refinement from outcome data
-└── phase7-check.mjs        # Pre-flight check for Step 7 readiness
-
-tests/                      # Node.js built-in test runner (node --test)
-├── shared.test.mjs         # 33 tests: schemas, atomic writes, ledger, FP tracker
-└── bandit.test.mjs         # 14 tests: Thompson Sampling, reward computation
-
-.claude/skills/audit-loop/SKILL.md   # Claude Code skill definition (generated from skills/)
-```
+**Do not hand-maintain a module tree here** — [`docs/architecture-map.md`](docs/architecture-map.md)
+is the live, generated per-symbol index (see the bootstrap note at the top of
+this file); an inline tree goes stale silently (the one removed 2026-07-13
+still listed 2 test files against 100+ real ones). Layout in one line:
+`scripts/*.mjs` are CLI entry points; `scripts/lib/**` are focused modules
+(split from the former `shared.mjs` monolith — `shared.mjs` remains as a
+backwards-compatible barrel); `tests/` is the Node built-in test-runner suite;
+`.claude/skills/**` is generated from `skills/**`.
 
 ### Script Responsibilities
 
-- **lib/*.mjs**: Focused modules — import directly from `./lib/<module>.mjs` for explicit deps, or from `./shared.mjs` barrel for convenience. Schemas are the single source of truth (JSON Schemas derived via `zodToGeminiSchema()`).
+- **lib/*.mjs**: Focused modules — import directly from `./lib/<module>.mjs` for explicit deps, or from `./shared.mjs` barrel for convenience. Schemas (`lib/schemas.mjs`) are the single source of truth (JSON Schemas derived via `zodToGeminiSchema()`).
 - **openai-audit.mjs**: 5-pass parallel code audit (structure, wiring, backend, frontend, sustainability). Plan audit. Rebuttal deliberation. Uses GPT with `responses.parse()` + Zod schemas. Integrates bandit reward updates + Supabase cloud sync.
 - **gemini-review.mjs**: Independent final review (MANDATORY — not gated by convergence). Receives full audit transcript. Detects bias, false consensus, missed issues. Uses Gemini 3.1 Pro (16K thinking budget), with Claude Opus fallback. Claude deliberates on CONCERNS, then Gemini re-verifies.
 - **learning-store.mjs**: Cloud persistence via Supabase — repos, runs, findings, pass stats, bandit arms, FP patterns, adjudication events. Graceful fallback to local-only mode.
@@ -424,64 +365,30 @@ external APIs, etc.).
 
 #### Pre-ship empirical verify — for skills that assert on a live runtime
 
-The multi-LLM audit (GPT+Gemini over plan/code) catches *static* error classes —
-logic gaps, contract holes, unhandled states. It **cannot** catch the
-data/runtime-dependent class: a bug that only manifests when a real browser renders
-a real app's real data. The `/visual-audit` shakedown proved both halves — the
-audit-catchable bugs (a device type-mismatch crash; an empty-capture-looks-clean
-gate) AND the audit-blind ones (a consumer naming its font tokens `--font-*` so they
-misclassified; reading `getComputedStyle` mid-theme-transition → a *fabricated* bug
-reported as ground truth for four passes). **No amount of LLM review finds the
-second half; one real `--verify` run finds it immediately.**
+The multi-LLM audit catches *static* error classes; it cannot catch bugs that
+only manifest when a real browser renders a real app's real data (the
+visual-audit shakedown proved this — a mid-theme-transition `getComputedStyle`
+read *fabricated* a bug that survived four review passes). Three doctrine
+rules, all load-bearing:
 
-So for any skill that drives a browser / asserts on a live runtime
-(**visual-audit, nav-audit `--verify`, persona-test, persona-consistency,
-click-test, ux-lock**): **run it against ONE real app before declaring it done.**
-This is the missing layer — empirical, not another AI gate. A field finding with a
-green repro has *zero* uncertainty about existence, so it routes to a **regression
-test** (permanent, ~free) + **one** focused review — NOT the multi-round
-adjudication loop (that exists to resolve *uncertainty*, which a repro already
-killed; spending it on a confirmed field bug is the rigor-pressure cliff). Then feed
-any audit-catchable class back into the code-audit checklist so the *next* skill
-catches it statically — that's where multi-LLM review compounds.
+1. **Any skill that drives a browser / asserts on a live runtime**
+   (visual-audit, nav-audit `--verify`, persona-test, persona-consistency,
+   click-test, ux-lock) **must run against ONE real app before being declared
+   done.** A field finding with a green repro routes to a regression test +
+   ONE focused review — never the multi-round adjudication loop (that
+   resolves *uncertainty*, which the repro already killed).
+2. **Two recurring browser-capture bug classes to check by name**:
+   mid-state-change capture (freeze transitions at runtime AFTER the flip +
+   `await document.fonts.ready`), and empty/failed capture must never read
+   clean (zero states captured → `unverified`/non-zero exit, never
+   "verified / 0 findings").
+3. **Audit your success paths**: any branch that can emit
+   pass/clean/0-findings/green is where to be adversarial — ask *"can this
+   return green without having actually checked anything?"* (the visual-audit
+   `--gate` alone yielded six such holes; none caught by static review).
 
-**Two recurring browser-capture bug classes to check by name** (both found in the
-visual-audit shakedown; the survey below records sibling status):
-- **Mid-state-change capture** — reading computed *paint* right after a programmatic
-  state flip (theme/route) captures the interpolated FROM value. Freeze
-  transitions/animations AT RUNTIME after the flip (init-script injection alone is
-  unreliable — `addInitScript` runs at document-start where `document.head` is null)
-  and `await document.fonts.ready` before any forced reflow (a naive reflow races
-  web-font loading and fabricates geometry drift). *Status: specific to
-  `visual-audit` (it's the only skill reconciling paint across state flips) — fixed
-  in `extract.mjs`. nav-audit reads visibility/presence (not transitioned paint) +
-  a 1500ms settle; ux-lock reads visibility only — neither is exposed.*
-- **Empty/failed capture must not read clean** — if zero states/elements were
-  captured (dead server, ERR_CONNECTION_REFUSED, non-2xx), the run must degrade to
-  `unverified` / non-zero exit, never "verified / 0 findings." *Status: handled in
-  `nav-audit` (`statesCollected===0` guard), `persona-consistency`
-  (`navResponseStatus` surfaces non-2xx), and `visual-audit` (exit 2). Worth a glance
-  in `ux-lock` if its capture path grows.*
-
-**Audit your success paths, not just your failure paths.** The two classes above
-are instances of a broader rule: every branch that can emit *pass / clean / 0
-findings / green* is where to be adversarial, because a wrong "pass" is **invisible**
-— nothing alarms (the "looks-protected-but-isn't" class). For any gate / check /
-validation, ask *"can this return green without having actually checked anything?"*
-and guard each such path (degrade to non-zero / `unverified`, never silent-clean).
-The visual-audit `--gate` alone yielded six — static-mode-gate, dead-server,
-all-surfaces-stalled, `--scope full` no-op, **no-surfaces-gate**, and
-**no-merge-base-gate** (the last two: a `--gate` over an empty contract, or
-`--scope diff` with no resolvable merge-base, used to *warn-then-exit-0* — the
-honesty principle was applied to capture but not to scope resolution; both now
-exit 2) — none caught by static review; each was
-found by treating a green exit as guilty until proven to have checked something.
-Worked detail lives in the skill, not here: `skills/visual-audit/references/ci-gate-and-verify.md`
-(*Gate honesty*).
-
-No new DB/schema for any of this — it's a process convention + `tests/` regression
-guards + this checklist. Queryable persistence of "was this field-tested" is data
-nobody reads back (the over-engineering cliff).
+→ Full worked detail, per-skill exposure survey, and the gate-honesty case
+list: [`docs/pre-ship-empirical-verify.md`](docs/pre-ship-empirical-verify.md).
 
 ## Model Resolution
 
@@ -593,8 +500,6 @@ lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
 | `AUDIT_DB_URL` | No | — | **Postgres DSN** for the audit-loop store. Supabase users: dashboard → Connect → **Session pooler** (URI, port 5432). Unset → local-only mode (#16 graceful degradation). Replaces the legacy `SUPABASE_AUDIT_*` triplet (postgres-parity M4). |
 | `AUDIT_DB_SSL_MODE` | No | `require` | TLS mode: `require` (default; strict verify), `no-verify` (accept self-signed — needed for Supabase poolers), `disable`. |
 | `AUDIT_DB_POOL_MAX` | No | `4` | Maximum simultaneous pg connections. Increase only when the audit-loop's chunked upserts demand it. |
-| `PERSONA_TEST_APP_URL` | No | — | Default app URL for persona-test list/add (per-project `.env`) |
-| `PERSONA_TEST_REPO_NAME` | No | — | Repo name for cross-referencing audit-loop findings (per-project `.env`) |
 | `PERSONA_TEST_APP_URL` | No | — | Default app URL for persona-test list/add (per-project `.env`) |
 | `PERSONA_TEST_REPO_NAME` | No | — | Repo name for cross-referencing audit-loop findings (per-project `.env`) |
 | `MEMORY_HEALTH_WINDOW_DAYS` | No | `30` | Memory-health lookback window |
@@ -763,181 +668,67 @@ defaults **off** — production runs the legacy path today.
 - **Close-out shadow validation** (`tieredAuditConfig.shadowEnabled`, env
   `AUDIT_TIERED_SHADOW_ENABLED`, independent of `pipelineEnabled`): runs the
   tiered pipeline as an observation-only comparison alongside the real
-  legacy run, concurrently (neither pipeline mutates `process.cwd()`, so no
-  chdir hazard forces serialization). **Deliberately NOT built as a 4th arm
-  on the model-A/B/C shadow infra** (`audit-shadow.mjs`/`arm-eval/
-  toggle.mjs`) despite the plan text suggesting reuse — that infra
-  substitutes a model into a per-pass GPT-5-pass loop (Thompson sampling,
-  spend caps), a different shape from `runTieredAuditPipeline`'s
-  self-contained whole-run function; forcing the fit would mean either new
-  code in an already-complex module for a one-time comparison, or dead
-  code once Phase 14 resolves. Logs to a local, gitignored
-  `.audit/tiered-shadow-log.jsonl` (per-repo fallback) AND, when
-  `AUDIT_DB_URL` is set, to the single-tenant Supabase
-  `tiered_shadow_observations` table (2026-07-13) — the local-only design
-  couldn't answer "have we hit 15 total yet" across the 3 local repos
-  without manually summing separate JSONL files, and a real incident (58
-  contaminated local entries from the `allowTiered` diagnosis window)
-  needed a clean, cross-repo-visible restart point.
-  `node scripts/lib/store/tiered-shadow.mjs`'s `getTieredShadowObservations`
-  takes an explicit `repoIds` list only — never an ambient "all repos"
-  scan (this DB is single-tenant; the caller resolves which local
-  checkouts to aggregate). Summarize with `npm run audit:tiered-shadow-report`
-  (cloud-first, `--repos <path,...>` for siblings, `--log <path>` to force
-  local-only) before Phase 14's flip decision.
-- **Stage 2 adapters are REAL and wired (2026-07-13)**: `buildAuditRunContext`
-  constructs Phase 12's subprocess adapters
-  (`createGeminiReviewSubprocessAdapters`) whenever `pipelineEnabled` OR
-  `shadowEnabled` — TWO provider handles (`geminiReviewCall` /
-  `geminiCleanRegionCall`), because `runFinalAdjudication`'s two adapters
-  have different signatures (envelope vs file) and the earlier single-handle
-  design could never have served both. The adapter resolves
-  `gemini-review.mjs` as a **module-relative sibling** — the prior
-  repoRoot-relative default was the consumer-relocation defect class
-  (KD-021/KD-026) and would have ENOENT'd in every consumer.
-- **Cross-repo behavior**: the flag lives in `~/.audit-loop.env` (the shared
-  loader has no allowlist, `override:false`), so one line flips every local
-  repo at once. In consumers, Stage 1 falls back to GPT-5.5 with a loud
-  named reason — the GLM validation manifest was graded on THIS repo's
-  finding distribution and is deliberately NOT synced (extrapolating a
-  per-repo validation to other repos is unsupported; the conservative
-  fallback is correct there).
+  legacy run. Observations go to the local gitignored
+  `.audit/tiered-shadow-log.jsonl` (fallback) AND, when `AUDIT_DB_URL` is
+  set, the Supabase `tiered_shadow_observations` table (cross-repo totals);
+  `getTieredShadowObservations` takes an explicit `repoIds` list only —
+  never an ambient "all repos" scan. Progress check:
+  `npm run audit:tiered-shadow-report` (cloud-first, `--repos <path,...>`
+  for siblings, `--log <path>` forces local-only). Deliberately NOT a 4th
+  arm on the model-A/B/C shadow infra — different execution shape (whole-run
+  vs per-pass substitution); rationale in the plan doc.
+- **Execution eligibility is per-call, not env-global** (`allowTiered` —
+  the 2026-07-13 incident fix): the env flags express "the window is open";
+  only `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests
+  and library callers can never spend. Both must hold before any provider
+  is constructed.
+- **Cross-repo behavior**: the flag lives in `~/.audit-loop.env` (shared
+  loader, no allowlist), so one line flips every local repo. In consumers,
+  Stage 1 falls back to GPT-5.5 with a loud named reason — the GLM
+  validation manifest was graded on THIS repo's finding distribution and is
+  deliberately NOT synced.
 - **Not yet done**: the shadow-validation window itself (10-15 real commits
   with the flag on) and Phase 14 (the production-flip decision gate).
 
-→ Full plan, phase-by-phase spec, and audit trail (including the Cluster F
-status-narrative gap found and corrected 2026-07-13 — the doc's own
-audit trail had stopped short of recording Phase 12's completion):
-[`docs/completed/tiered-recall-audit-pipeline.md`](docs/completed/tiered-recall-audit-pipeline.md).
+→ Full plan, phase-by-phase spec, Stage-2 adapter wiring history (the
+two-handle design, module-relative resolution for consumer layouts), and
+audit trail: [`docs/completed/tiered-recall-audit-pipeline.md`](docs/completed/tiered-recall-audit-pipeline.md).
 
 ## Model Swap-In Evaluation Harness
 
-A standing, repeatable test suite (`scripts/lib/model-eval/`) for evaluating a
-candidate LLM release for the **auditor** role (currently GPT) or the
-**adjudicator** role (currently Gemini) — "is this new model worth switching
-to?" with the same rigor as the completed audit-effectiveness research.
-Reuses existing assets rather than rebuilding: the `known-defects.json`
-ground-truth corpus, a forked blinded cross-family judge protocol
-(`scripts/lib/model-eval/blind-judge.mjs` — a sibling of, not an extraction
-from, the live `solo-control-audit.mjs` experiment), the $/KD cost formula,
-`model-resolver.mjs`'s sentinel system, and the shadow-final-review A/B's
-pre-registered stopping rule.
+A standing test suite (`scripts/lib/model-eval/`) answering "is this new LLM
+release worth switching to?" for the **auditor** role (currently GPT) or the
+**adjudicator** role (currently Gemini), with the audit-effectiveness
+research's rigor. Entry points:
+`node scripts/model-eval-{auditor,adjudicator}.mjs --candidate <spec> --tier screen|promotion`.
 
-- **Auditor role**: `node scripts/model-eval-auditor.mjs --candidate <spec> --tier screen|promotion`
-  runs the candidate through `known-defects.json` via `structured-extractor.mjs`,
-  scores with `deterministic-scorer.mjs`, decides via `verdict.mjs`.
-- **Adjudicator role**: `node scripts/model-eval-adjudicator.mjs --candidate <spec> --tier screen|promotion`
-  — Tier C (always available) scores the candidate as a structured T/F extractor
-  against `getAdjudicatorGroundTruth()` (real, labeled `audit_findings` rows).
-  Tier A/B (only when `route-catalog.mjs` judges the candidate/baseline
-  genuinely independent model lineages) points `gemini-review.mjs`'s
-  `FINAL_REVIEW_SHADOW` mechanism at the candidate for `minLiveShadowRuns`
-  live runs (default 20) and finalizes via `finalize-shadow-eval.mjs`.
+**Load-bearing invariants** (full mechanics, tiers, and history in the docs
+below):
 - **Accepted false-negative direction**: a Tier-C-only run (e.g. a
-  restricted-catalog Azure repo) can never emit `verdict:'switch'` —
-  only `keep`/`inconclusive`/`manual_review_required`. Schema-enforced
-  (`ThresholdConfigSchema`/`verdict.mjs`), not a convention to remember.
-- Thresholds are versioned, conservative v0.1 bootstrap values
-  (`scripts/lib/model-eval/config/{auditor,adjudicator}-thresholds.json`) —
-  not yet empirically calibrated; a recalibration is a `version: 2` bump.
-- **Screen-tier oracle matching has a real ceiling — a `verdict:'inconclusive'`
-  is not necessarily a model-quality signal (2026-07-12 first dogfood run).**
-  `known-defects.json` entries are drawn from real, organic multi-file/multi-
-  hunk commits; oracle-mode `scoreDefectLocalization` can only credit a match
-  against the ONE specific curated defect per entry, but a careful model
-  review of a real commit often finds OTHER genuine, describable issues in the
-  same diff instead (confirmed directly — both GLM and GPT-5.6 found real,
-  valid bugs in KD-005/015/017's diffs, just not the specific curated one).
-  Both models scoring `recall:0` on the same 4-case run reflects this
-  structural gap, not equal-and-bad model quality. A trustworthy comparative
-  verdict needs either more surgical single-issue KD entries or a scoring
-  redesign that credits "a real finding in the right file/region" — not yet
-  built. Don't over-read a low screen-tier recall without checking the raw
-  per-case extraction output first. **This applies to `promotion` tier's
-  Tier C fallback too** (`scoreArmTierC` uses the SAME single-shot
-  `extractStructured` mechanism as `screen` tier, not the full 5-pass
-  `runAuditGenerationArm` path) — a Tier C promotion "verdict" carries the
-  identical ceiling and is not a real comparative signal either.
-- **`promotion` tier's Tier A/B path is real generation; blind-judging
-  (Gemini) used to trip the sensitive-path egress gate on genuine findings
-  — fixed 2026-07-12.** A finding's own prose ("a token/size cap... not
-  enforced globally") read as a word/word-shaped path mention to
-  `findSensitivePathMentions` (`scripts/lib/model-eval/egress-path-scan.mjs`)
-  purely because English uses `/` for "or", not a directory separator, and
-  the first word ("token") happened to match `sensitive-paths.mjs`'s bare
-  `tokens?`/`password` keyword patterns (correct and intentionally broad for
-  REAL path classification, wrong applied to prose). Fix: a `looksLikeRealPath`
-  gate now requires actual path evidence — dotfile prefix, anchor (`./`, `~/`,
-  `/`), a real filename extension, 3+ path segments, or an explicit `.aws`/
-  `.ssh` mention — before trusting a bare-keyword match; unambiguous branches
-  (`.env*`, `id_rsa*`) always pass. Regression-guarded by
-  `tests/egress-path-scan.test.mjs`; validated against all 19 known-defect
-  descriptions + 1082 real grading-rationale text fields from the tiered-recall
-  corpus with zero false positives. Tier A/B generation itself was already
-  confirmed working end-to-end (both GLM and GPT-5.6-Terra produced 13-14 real
-  HIGH findings on the same known-defect commit) — the judge-payload gate was
-  the last blocker for a real GLM-vs-GPT-5.6 comparative verdict. Tier C
-  fallback still does NOT substitute for a Tier A/B result — see the ceiling
-  note above.
-- **A second, much bigger egress false-positive class was hiding behind the
-  first — fixed same day.** `findSensitivePathMentions` also runs on the RAW
-  DIFF in `known-defect-corpus.mjs::loadCorpusCase` (not just judge prose), and
-  its `.env`-branch match started mid-identifier: `process.env.GEMINI_API_KEY`
-  or `import.meta.env.X` (ordinary JS/TS property access, present in nearly
-  every commit that reads config) produced a token indistinguishable from a
-  real `.env.production`-style file mention. Fixed with a `(?<!\w)` negative
-  lookbehind before the leading dot — a genuine `.env` FILE mention is always
-  preceded by whitespace/quote/path-separator/start-of-string, never a bare
-  identifier character, so the lookbehind costs no real recall. Confirmed by
-  mechanically re-running the deterministic corpus gates (diff-size, egress,
-  path-mention — no LLM calls) over all 331 already-harvested-but-uncurated
-  `claude-engineering-skills` rows in
-  `docs/experiments/audit-effectiveness/known-defects.candidates.json`: clean
-  (gate-passing) candidates went 88 → 146 after this fix alone, comfortably
-  past the 2 more entries `promotion` tier needs (item 3 below). **The 6/8
-  corpus gap was never a candidate-supply problem — it was almost entirely
-  this gate.** The three residual gaps were closed the same day: (a) the
-  mention scan now flags only the `sensitive` category — `generatedNoise`
-  (lockfiles, `*.min.js`, `*.map`) is a body-egress category and a mere
-  lockfile path MENTION carries no secret, so diffs touching
-  `package-lock.json` alongside real code no longer block (body-egress call
-  sites keep the conflated `isPathSensitive`, correct there); (b) tokens
-  containing regex-source metachars (`(){}[]|*+?^$\`) are rejected — real
-  paths never contain them, so the security tooling's own pattern literals
-  (`/(^|\/)id_rsa.*$/i`) no longer self-trip (plain-string fixtures like
-  `'.ssh/id_rsa'` still trip, correctly — indistinguishable from a real
-  mention); (c) the shared classifier's `tokens?` pattern carves out
-  code/style extensions (`tokens.mjs`/`.ts`/`.css`/… are design-token
-  modules, not credentials) while `tokens/` dirs, bare `token(s)`, and data
-  files (`tokens.json`, `tokens.yaml`) stay sensitive — a code file embedding
-  a real token literal is still caught by the content scanner. One
-  strengthening attempt was tried and REVERTED same-day (trailing-punctuation
-  stripping made prose like "keys in .env)" flag, silently re-blocking two
-  valid corpus entries) — historical recall is the contract; don't re-add it.
-  All guarded in `tests/egress-path-scan.test.mjs` + `tests/sensitive-paths.test.mjs`.
+  restricted-catalog Azure repo) can never emit `verdict:'switch'` — only
+  `keep`/`inconclusive`/`manual_review_required`. Schema-enforced, not a
+  convention.
+- **The oracle-matching recall ceiling**: `known-defects.json` scoring can
+  only credit the ONE curated defect per entry, but real models find OTHER
+  genuine bugs in the same organic diffs — so a low recall or `inconclusive`
+  is NOT necessarily a model-quality signal; check the raw per-case
+  extraction output before trusting it. Applies to promotion-tier's Tier C
+  fallback too (same single-shot extractor) — Tier C never substitutes for a
+  Tier A/B comparative result.
+- **Egress-gate prose/diff false-positive classes were found + fixed
+  2026-07-12** (`looksLikeRealPath` gate; `(?<!\w)` lookbehind for `.env`;
+  category/metachar/extension carve-outs) — historical recall is the
+  contract; don't re-add trailing-punctuation stripping (tried, reverted:
+  it re-blocked valid corpus entries). Guarded in
+  `tests/egress-path-scan.test.mjs` + `tests/sensitive-paths.test.mjs`.
+- **Verdict of record (2026-07-13): GLM-5.2 vs GPT-5.6 → `keep` GPT-5.6**
+  (real Tier A, $1.87; FP-rate drove it; the recall column is untrustworthy
+  per the ceiling above).
 
-- **First real promotion-tier run (2026-07-13): GLM-5.2 vs GPT-5.6, verdict
-  `keep` (stay on GPT-5.6).** Genuine Tier A (blind, cross-family judged, all
-  three lineages independent), 8 cases across 3 of the user's own repos, cost
-  $1.87 total. GLM's false-positive rate (80.9%) exceeded 1.15× GPT-5.6's
-  (67.6%) — the metric that actually drove the verdict, and a trustworthy one
-  (computed from the judge's per-finding call, not curated-defect matching).
-  **The recall column (12.5%/0%) is NOT a trustworthy quality signal** — a raw
-  spot-check of the one case whose output survived confirmed both models
-  produced ~49 real, substantive findings each but neither matched the ONE
-  curated defect closely enough for the exact-match scorer to credit it
-  (the oracle-mode ceiling above, now reproduced at promotion tier on an
-  independent case, not just screen tier). Corpus pruned 25→18 entries as a
-  prerequisite (7 permanently-unloadable: egress-blocked, oversized, or
-  unresolvable git history — verified mechanically, not curated away).
-  Full write-up incl. the raw-finding evidence and a governance note on the
-  cross-repo egress authorization boundary that held even under direct
-  repeated user request:
-  [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
-
-→ Full design, prior-art trace, and the two-round mid-implementation
-redesign (Phase 2 forked rather than extracted from the live solo-control
-experiment): [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md).
+→ **Operational reference** (running evals, tier semantics, the egress-fix
+war stories, first-run evidence): [`docs/model-eval-harness.md`](docs/model-eval-harness.md).
+→ **Design + prior-art trace**: [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md).
+→ **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
 
 ## Azure AI Foundry Work Profile
 
@@ -1145,42 +936,20 @@ post-push reminders surface security-relevant commits via `/ship`.
 ### Secret pre-write gate + audit trail (back-port from corporate kit)
 
 `npm run security:refresh` runs every parsed incident through a hybrid
-secret/PII gate before it touches the DB
-([scripts/lib/security/secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs)):
-
-- **High-confidence secret shapes** (OpenAI/AWS/Slack/GitHub keys, JWTs,
-  PEM blocks) → **REFUSE**: the incident is NOT indexed and the refresh
-  exits non-zero so CI catches a real incident kept out of the index.
-  The operator must scrub `docs/security-strategy.md` and re-run.
-- **Low-confidence PII** (emails, phone numbers) → **auto-REDACT** into the
-  stored `description`/`lessons_learned` (not just the embedding text), so a
-  leaked address never lands in the row. Proper-names are detection-only
-  (`classifySecrets` exposes them; the gate does not act on them).
-- Defence-in-depth: the gentle pattern-based `lib/secret-patterns.mjs`
-  redactor runs as a final pass (NOT `sanitizer.mjs`, which blanket-redacts
-  any 20+ char token and would corrupt legitimate incident prose).
-
-Every refresh write is logged to the append-only **`security_strategy_events`**
-audit trail (migration `20260531120000`, RLS-enabled deny-all + owner-bypass,
-same posture as `security_incidents`): `inserted` / `updated` /
-`marked_historical` / `refused_secret` / `redacted_secret`, with branch +
-commit + who. The trail is governance evidence of what the skill indexed and
-what it kept out. Read it via `getSecurityStats(repoId)` /
-`getSecurityEvents(repoId, limit)` in [scripts/lib/store/security.mjs](scripts/lib/store/security.mjs).
-
-**Dashboard Security tab** — `build-dashboard.mjs telemetry` renders a
-Security section (incident count + embedding coverage, per-status breakdown,
-secret-gate tallies, recent audit-trail events) keyed by the SAME
-`resolveRepoIdentity` UUID the writers use, so the reader sees the rows the
-refresh wrote. Degrades to an empty panel (with a logged cause) when the
-migration is unapplied or cloud is off.
-
-> **Embedding provider stays Gemini/model-resolver here** — the corporate
-> kit used Azure (an org-only constraint). This repo's `refresh-incidents.mjs`
-> keeps its existing Gemini embeddings. The kit's Azure modules, the
-> `scripts/lib/stores/sql/` migration layout, the `.github/skills` mirror, and
-> pgvector-optional were intentionally NOT ported (see
-> [docs/plans/security/](docs/plans/security/) for the full kit + rationale).
+secret/PII gate ([scripts/lib/security/secret-classifier.mjs](scripts/lib/security/secret-classifier.mjs))
+before it touches the DB: high-confidence secret shapes → **REFUSE** (not
+indexed; refresh exits non-zero — scrub `docs/security-strategy.md` and
+re-run); low-confidence PII → **auto-REDACT** into the stored row itself.
+Every write is logged to the append-only `security_strategy_events` audit
+trail (governance evidence of what was indexed and kept out); read via
+`getSecurityStats`/`getSecurityEvents` in
+[scripts/lib/store/security.mjs](scripts/lib/store/security.mjs). One
+defence-in-depth invariant: the final-pass redactor is the gentle
+`lib/secret-patterns.mjs`, deliberately NOT `sanitizer.mjs` (which
+blanket-redacts any 20+ char token and would corrupt incident prose).
+Embeddings stay Gemini here (the corporate kit's Azure modules were
+intentionally not ported — [docs/plans/security/](docs/plans/security/) has
+the full kit + rationale; the dashboard Security tab renders the trail).
 
 ---
 
@@ -1205,50 +974,23 @@ acceptance beats silent shortcut. The system surfaces shortcuts so the
 author can decide whether they're warranted, not so they're automatically
 blocked.
 
-### Layer 1 — Prospective hook (`.claude/hooks/quickfix-scan.mjs`)
+**Layer 1 — prospective hook** (`.claude/hooks/quickfix-scan.mjs`): fires on
+every Edit/Write (PostToolUse), pure-regex scan for ~12 mechanical shortcut
+signatures (empty catch, unjustified `@ts-ignore`, masked errors, hardcoded
+localhost, …). Emits a `<system-reminder>` callout — NEVER blocks. Opt-outs:
+`QUICKFIX_HOOK_DISABLE=1` (session), `// quickfix-hook:ignore` on the line
+(language-correct comment syntax per file type), auto-bail on >80K-char
+diffs, sensitive-path short-circuit. Pattern matrix:
+`scripts/lib/quickfix-patterns.mjs` (one entry per new pattern).
 
-Fires on every Edit / Write via the PostToolUse hook in
-`.claude/settings.json`. Pattern-scans the new content for ~12 mechanical
-shortcut signatures (empty catch, TODO/FIXME, `@ts-ignore` without
-justification, magic numbers in conditionals, masked errors, disabled
-assertions, hardcoded localhost/http URLs, …). Pure regex — no LLM, no
-network, <200ms target.
+**Layer 2 — retrospective audit pass** (`quickfix` wave in /audit-code):
+low-reasoning GPT pass for DESIGN-level shortcuts the regex can't see (stub
+returns, tests asserting non-failure, masked root causes). Findings emit
+`is_quick_fix: true`; the `quickFix == 0` convergence threshold gates them.
 
-When a pattern matches the hook emits a `<system-reminder>` callout
-listing the file, snippet (redacted via `redactSecrets()` BEFORE
-truncation), and a suggestion. It NEVER blocks the tool call. The
-matched line is also appended to `.audit/quickfix-hits.jsonl`
-(gitignored) for retrospective analysis.
-
-**Disable mechanisms**:
-- `QUICKFIX_HOOK_DISABLE=1` env (whole-session opt-out, e.g. rapid prototyping)
-- `// quickfix-hook:ignore` on the same line (per-line opt-out — uses
-  language-correct comment syntax: `//` for JS/TS/SCSS, `#` for Python/Bash/Ruby,
-  `<!-- ... -->` for HTML, `/* ... */` for CSS)
-- Auto-bail on diffs > 80,000 chars (signal drowns in noise on large refactors)
-- Sensitive-path short-circuit — files matching `.env`, `secrets/`, `.aws/`,
-  `.ssh/`, `*.pem`, `*.key`, etc. are never scanned (path normalised first
-  so `C:\repo\.env` and `/Users/.../repo/.env` both match)
-
-Pattern matrix lives in `scripts/lib/quickfix-patterns.mjs` — adding a
-new pattern is one entry in the `PATTERNS` array.
-
-### Layer 2 — Retrospective audit pass (`quickfix` in /audit-code)
-
-Wave 4 in `scripts/openai-audit.mjs`. Low-reasoning GPT pass that
-catches DESIGN-level shortcuts the regex hook can't see — stub
-functions returning constants, tests asserting non-failure rather than
-correctness, hardcoded sample data inline where a fixture would be
-cleaner, side-issue fixes that mask root causes. Findings emit
-`is_quick_fix: true` and the existing `quickFix == 0` convergence
-threshold gates them so /audit-code naturally fails until they're
-addressed (or accepted via debt-capture).
-
-Why two layers: the hook catches mechanical patterns at edit time
-(immediate feedback, low cost). The audit pass catches semantic
-shortcuts during PR review (deeper analysis, higher cost). Neither
-covers the other's domain; together they cover both axes. See
-`docs/completed/brainstorm-quickfix-v1.md` §B for the full spec.
+Two layers because neither covers the other's axis: mechanical-at-edit-time
+vs semantic-at-review-time. Full spec:
+`docs/completed/brainstorm-quickfix-v1.md` §B.
 
 ## Requirements Layer — de-facto invariant ledger
 

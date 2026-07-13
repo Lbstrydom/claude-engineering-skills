@@ -57,7 +57,7 @@ import { detectRepoStack } from './lib/repo-stack.mjs';
 import { listRepoFiles } from './lib/repo-inventory.mjs';
 import { verifyExistenceFindings } from './lib/audit/finding-verification.mjs';
 import { getRepoContext } from './lib/repo-context.mjs';
-import { getRequirementsContext } from './lib/requirements/context.mjs';
+import { getRequirementsContext, getPlanRequirementsRubric } from './lib/requirements/context.mjs';
 import { ArchIntentPassSchema } from './lib/schemas.mjs';
 import { detectOrphansIntroduced } from './lib/audit/orphan-introduced.mjs';
 import { resolveDiffScope } from './lib/audit/diff-scope-resolver.mjs';
@@ -74,7 +74,8 @@ import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from './lib/debt-memory.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, recordAdjudicationEvent, updatePassStatsPostDeliberation, updateRunMeta, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from './learning-store.mjs';
-import { resolveAuditArtifacts, loadAuditInputs, finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
+import { resolveAuditArtifacts, loadAuditInputs, finalizeRoundOutcomes, finalizePriorRoundOutcomes } from './lib/finalize-outcomes.mjs';
+import { registerPlanAuditRun, completePlanAuditRun } from './lib/audit/plan-audit-cloud.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from './lib/learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from './lib/learning/author-tier-observation.mjs';
 import { loadDomainRules as _loadDomainRules, computeTargetDomains as _computeTargetDomains } from './lib/symbol-index/domain-tagger.mjs';
@@ -811,6 +812,13 @@ async function main() {
       }
     } catch { /* no package.json */ }
 
+    // Deterministic outcome capture (2026-07-13 parity with code mode): at
+    // the start of an R2+ plan invocation, finalize the PRIOR round's triage
+    // outcomes from the ledger the agent just wrote — same shared function
+    // the code orchestrator calls, so plan-audit ground truth reaches the
+    // cloud learning store instead of only the local PlanFpTracker.
+    await finalizePriorRoundOutcomes({ outFile, round, ledgerFile: ledgerPath });
+
     // R2+ rulings injection for plan mode
     let rulingsBlock = '';
     if (round >= 2 && ledgerPath) {
@@ -819,6 +827,21 @@ async function main() {
         rulingsBlock = `\n\n${rulingsBlock}`;
         process.stderr.write(`  [plan-r2] Injected ${rulingsBlock.split('\n').length} rulings from ledger\n`);
       }
+    }
+
+    // Requirements rubric (2026-07-13 parity with code mode): surface the
+    // de-facto-requirements ledger against the plan's own referenced files —
+    // a plan that violates an active repo invariant gets flagged at DESIGN
+    // time, the cheapest point to catch it. Non-blocking: ledger absent → ''.
+    let reqBlock = '';
+    try {
+      const rq = await getPlanRequirementsRubric(planContent, { allowInfraFiles: allowInfraScope });
+      if (rq.block) {
+        reqBlock = `\n\n${rq.block}`;
+        process.stderr.write(`  [requirements] plan rubric: ${rq.inScopeCount} in-scope / ${rq.indexCount} indexed (~${rq.tokensEst} tok)${rq.stale ? ' [stale]' : ''}\n`);
+      }
+    } catch (err) {
+      process.stderr.write(`  [requirements] skipped (non-blocking) — ${err.message}\n`);
     }
 
     const r2Modifier = round >= 2 ? `\n\n${R2_ROUND_MODIFIER}` : '';
@@ -838,7 +861,7 @@ async function main() {
     systemPrompt = PLAN_AUDIT_SYSTEM + r2Modifier;
     schema = PlanAuditResultSchema;
     schemaName = 'plan_audit_result';
-    userPrompt = `## Project Context\n${planContext}${depsBlock}${invBlock}${rulingsBlock}\n\n${historyContext ? `---\n\n${historyContext}\n` : ''}---\n\n## Plan to Audit\n${planContent}`;
+    userPrompt = `## Project Context\n${planContext}${depsBlock}${invBlock}${reqBlock}${rulingsBlock}\n\n${historyContext ? `---\n\n${historyContext}\n` : ''}---\n\n## Plan to Audit\n${planContent}`;
   }
 
   // Cost preflight (single-call modes: plan, rebuttal)
@@ -973,6 +996,22 @@ async function main() {
         const { log, marker } = classifyShadowFailure(err);
         process.stderr.write(`  [shadow] PLAN ${log}\n`);
         if (marker) result._modelAbShadow = marker;
+      }
+    }
+
+    // Plan-audit cloud run registration (2026-07-13 parity with code mode):
+    // mint/reuse an audit_runs row (mode='plan') + persist the post-suppression
+    // findings so Step-3.5b outcome labeling has cloud rows to label. Skipped
+    // when the arm-eval shadow block above already minted a run for this
+    // result (result._cloudRunId set) — one plan audit, one audit_runs row.
+    // Best-effort: cloud off / failure → result simply lacks _cloudRunId,
+    // exactly today's behaviour.
+    if (mode === 'plan' && !result._cloudRunId && Array.isArray(result.findings)) {
+      const { cloudRunId } = await registerPlanAuditRun({ repoProfile, planFile, runId: explicitRunId });
+      if (cloudRunId) {
+        result._cloudRunId = cloudRunId;
+        await completePlanAuditRun(cloudRunId, result, { round, durationMs: Date.now() - startMs });
+        process.stderr.write(`  [learning] plan-audit run registered: ${cloudRunId} (${result.findings.length} findings, round ${round})\n`);
       }
     }
 

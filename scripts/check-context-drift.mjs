@@ -11,6 +11,8 @@
  *   ctx/non-allowlist-heading   HIGH    CLAUDE.md h2 not in allowlist
  *   ctx/shared-section-drift    HIGH    Same h2 in both files, bodies differ
  *   ctx/oversized-claude-md     MEDIUM  CLAUDE.md exceeds maxClaudeMdLines
+ *   ctx/oversized-agents-md     MEDIUM  AGENTS.md exceeds maxAgentsMdLines (sprawl
+ *                                       cap — condense to stubs + docs/<topic>.md)
  *
  * Exit codes:
  *   0  No findings
@@ -18,7 +20,7 @@
  *   2  MEDIUM findings only (without --strict)
  *
  * Config: optional `.claude-context-allowlist.json` at repo root:
- *   { "allowlist": ["Custom Heading", ...], "maxClaudeMdLines": 100 }
+ *   { "allowlist": [...], "maxClaudeMdLines": 100, "maxAgentsMdLines": 1200 }
  *
  * @module scripts/check-context-drift
  */
@@ -37,6 +39,7 @@ import { toSarif } from './lib/claudemd/sarif-formatter.mjs';
 const ConfigSchema = z.object({
   allowlist: z.array(z.string().min(1)).optional(),
   maxClaudeMdLines: z.number().int().positive().optional(),
+  maxAgentsMdLines: z.number().int().positive().optional(),
 }).strict();
 
 // ── Defaults ────────────────────────────────────────────────────────────────
@@ -53,6 +56,15 @@ const DEFAULT_ALLOWLIST = [
 
 const DEFAULT_MAX_CLAUDE_MD_LINES = 80;
 
+// AGENTS.md is loaded into EVERY session of every agent that reads it — size
+// is a per-session cost, and long dossier-grade files degrade LLM recall of
+// the load-bearing invariants buried in them. The file's own preamble sets
+// the policy (invariants + what-it-is/when/pointer stubs; operational depth
+// in docs/); this cap is the enforcement the policy previously lacked
+// (sections silently sprawled to 1400+ lines before 2026-07-13). Generous by
+// design: it catches sprawl-by-accretion, not normal growth.
+const DEFAULT_MAX_AGENTS_MD_LINES = 1200;
+
 // ── Config loader ───────────────────────────────────────────────────────────
 
 /**
@@ -64,6 +76,7 @@ function loadConfig(repoRoot, { strict = false } = {}) {
   const defaults = {
     allowlist: DEFAULT_ALLOWLIST,
     maxClaudeMdLines: DEFAULT_MAX_CLAUDE_MD_LINES,
+    maxAgentsMdLines: DEFAULT_MAX_AGENTS_MD_LINES,
   };
   const cfgPath = path.join(repoRoot, '.claude-context-allowlist.json');
   if (!fs.existsSync(cfgPath)) return defaults;
@@ -90,6 +103,7 @@ function loadConfig(repoRoot, { strict = false } = {}) {
   return {
     allowlist: parsed.data.allowlist ?? DEFAULT_ALLOWLIST,
     maxClaudeMdLines: parsed.data.maxClaudeMdLines ?? DEFAULT_MAX_CLAUDE_MD_LINES,
+    maxAgentsMdLines: parsed.data.maxAgentsMdLines ?? DEFAULT_MAX_AGENTS_MD_LINES,
   };
 }
 
@@ -248,6 +262,31 @@ function checkPair(agentsPath, claudePath, agentsContent, claudeContent, config)
   return findings;
 }
 
+/**
+ * Check 5: AGENTS.md size — the canonical shared file is loaded every session
+ * by every agent that reads it; sprawl is a per-session cost and long
+ * dossier-grade files degrade LLM recall of the invariants buried in them.
+ * Runs for ANY AGENTS.md (paired with a CLAUDE.md or standalone) — a repo
+ * without the thin-addendum split still pays the sprawl cost. The remedy is
+ * the progressive-disclosure pattern AGENTS.md's own preamble mandates: keep
+ * the invariant + a what/when/pointer stub, move operational depth to
+ * docs/<topic>.md.
+ */
+function checkAgentsSize(agentsPath, agentsContent, config) {
+  const agentsLines = agentsContent.split('\n');
+  if (agentsLines.length <= config.maxAgentsMdLines) return [];
+  return [{
+    ruleId: 'ctx/oversized-agents-md',
+    severity: 'warn',
+    file: agentsPath,
+    line: agentsLines.length,
+    message: `AGENTS.md is ${agentsLines.length} lines, exceeding the ${config.maxAgentsMdLines}-line sprawl cap. ` +
+             'Condense dossier-grade sections to what-it-is/when-you-need-it/pointer stubs and move the operational depth to docs/<topic>.md ' +
+             '(the progressive-disclosure pattern in AGENTS.md\'s own preamble). Raise maxAgentsMdLines in .claude-context-allowlist.json only for a deliberate, justified exception.',
+    semanticId: hashId(agentsPath, 'oversized-agents'),
+  }];
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function hashId(file, key) {
@@ -299,7 +338,12 @@ export function runDriftCheck(repoRoot, opts = {}) {
         config,
       ));
     }
-    // If only one file exists, no drift to detect — single-file repo is fine.
+    // AGENTS.md size sprawl is checked whether or not a CLAUDE.md pair
+    // exists — a single-file repo pays the same per-session context cost.
+    if (pair.agents) {
+      findings.push(...checkAgentsSize(pair.agents.path, pair.agents.content, config));
+    }
+    // A CLAUDE.md alone has no drift to detect — single-file repo is fine.
   }
   return { findings };
 }
@@ -331,6 +375,8 @@ Detects drift between AGENTS.md and CLAUDE.md within a repo. Enforces:
   - CLAUDE.md h2 headings only from Claude-only allowlist
   - CLAUDE.md size cap (default 80 lines)
   - Shared section bodies match between AGENTS.md and CLAUDE.md
+  - AGENTS.md sprawl cap (default 1200 lines) — condense dossier sections
+    to stubs + docs/<topic>.md per the progressive-disclosure pattern
 
 Options:
   --repo <path>      Repo root (default: cwd)
@@ -339,7 +385,7 @@ Options:
   -h, --help         Show this help
 
 Config: .claude-context-allowlist.json (optional) at repo root:
-  { "allowlist": ["Custom Heading", ...], "maxClaudeMdLines": 100 }
+  { "allowlist": ["Custom Heading", ...], "maxClaudeMdLines": 100, "maxAgentsMdLines": 1200 }
 `);
 }
 
