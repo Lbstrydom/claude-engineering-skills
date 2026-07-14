@@ -220,6 +220,44 @@ export function validateTrailerInput(input, { skillNames }) {
 }
 
 /**
+ * Verdict verification for `--gate passed` (code-audit R1 H3/H5, sustained):
+ * freshness proves an audit RAN; only the store's convergence row proves it
+ * PASSED. Pure — the CLI supplies `cloudEnabled` + the convergence row (or
+ * null). Fail-closed: any unverifiable state refuses `passed` and points the
+ * agent at `waived` (the declared, unverified disposition).
+ *
+ * @param {object} opts
+ * @param {string} opts.gate — validated gate value
+ * @param {{state: string, runId: string|null}} opts.evidence
+ * @param {boolean} opts.cloudEnabled
+ * @param {{roundConvergedAfter: number|null}|null} opts.convergence — store row for evidence.runId
+ * @returns {null | {field: string, custom: string}}
+ */
+export function evaluateGateVerification({ gate, evidence, cloudEnabled, convergence }) {
+  if (!evidence || evidence.state !== 'fresh' || gate !== 'passed') return null;
+  const runId = evidence.runId;
+  if (!cloudEnabled) {
+    return {
+      field: 'gate-evidence',
+      custom: `AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ${runId} but verification is unavailable (AUDIT_DB_URL unset); use --gate waived (declared, unverified) or fix connectivity. Example: --gate waived`,
+    };
+  }
+  if (!convergence) {
+    return {
+      field: 'gate-evidence',
+      custom: `AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ${runId} but verification is unavailable (run not found in the store, or the query failed); use --gate waived (declared, unverified). Example: --gate waived`,
+    };
+  }
+  if (convergence.roundConvergedAfter == null) {
+    return {
+      field: 'gate-evidence',
+      custom: `AGENT FIX: gate-evidence: run ${runId} did not converge (verdict recorded in the store); "passed" is not available — --gate waived declares shipping past the gate. Example: --gate waived`,
+    };
+  }
+  return null;
+}
+
+/**
  * Render the pinned AGENT FIX stderr lines (§F1.5 — byte format is an API).
  * @param {Array<{field: string, custom?: string, expected?: string, got?: string, example?: string}>} errors
  * @returns {string[]}

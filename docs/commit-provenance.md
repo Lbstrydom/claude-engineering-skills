@@ -22,7 +22,7 @@ AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844
 |---|---|---|
 | `AI-Skill` | lowercase kebab-case, must name a `skills/` (or consumer `.claude/skills/`) directory | which skill workflow produced the commit |
 | `AI-Models` | comma-separated tokens `^[a-z][a-z0-9.-]*$`, deduplicated, sorted alphabetically | **declared** lineup of models that participated. Grammar-validated but not evidence-bound (same honesty tier as a `Co-authored-by` line) — receipt-derived binding is a v2 item |
-| `AI-Gate` | `passed` \| `waived` \| `not-run` | **evidence-bound**: `passed`/`waived` are only writable when `.audit/last-audit-run.json` is fresher than `HEAD` (an audit ran this cycle); `not-run` only when it isn't. An unevidenced `passed` cannot exist. `passed` vs `waived` within a fresh window is the workflow's declared disposition |
+| `AI-Gate` | `passed` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, or run not converged all refuse `passed`, fail-closed. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
 | `AI-Run-ID` | `[A-Za-z0-9-]{8,64}`, conditional | injected by the helper from `.audit/last-audit-run.json` when fresh — never typed by an agent. A best-effort correlation hint into the `audit_runs` store, not proof. `--no-run-id` omits it (declares the audit unrelated) and forces `--gate not-run` |
 
 The `AI-*` namespace is **reserved**: a commit-message file containing any
@@ -81,6 +81,9 @@ row-by-row by [`tests/ship-commit-cli.test.mjs`](../tests/ship-commit-cli.test.m
   unavailable — re-run npm run sync)`.
 - The helper never invents values: no fresh audit evidence → `AI-Run-ID`
   is omitted and only `not-run` is legal, rather than fabricating provenance.
+- **Cloud off / store unreachable**: `passed` is unavailable (can't verify →
+  don't claim); `waived` + `AI-Run-ID` remain, so the claim history stays
+  honest and later forensics can upgrade the reading via the run id.
 
 ## v1 scope
 

@@ -316,12 +316,17 @@ exactly the class of quiet data loss this plan exists to prevent). Both are
 pinned by rows in the CLI test matrix.
 
 The agent never types a run id, and can never mint a `passed` out of thin
-air. **Documented v1 limit**: `AI-Gate` binds to the *presence and freshness*
-of an audit run, not to its verdict — `passed` vs `waived` within a fresh
-window is the agent's declaration of gate disposition. Binding the value to a
-durable ship-evidence record (run id + repo identity + branch + verdict +
-waiver record) is the V2 hardening (§V2); v1's constraint already eliminates
-the worst lie (`passed` with no audit at all).
+air. **Verdict verification (added at Cluster A code-audit — R1 H3/H5
+sustained)**: freshness alone proves an audit *ran*, not that it *passed*
+(the pointer file carries no verdict and is agent-writable), so `passed`
+additionally requires the run's convergence verified against the cloud
+store's `audit_runs` row (`getAuditRunConvergence` — the existing dashboard
+seam). Fail-closed: cloud off, run not found, query failure, or
+non-convergence all refuse `passed` and route the agent to `waived` (the
+declared, unverified disposition; `AI-Run-ID` keeps it forensically
+resolvable). **Remaining v1 limit**: `waived` is a declaration (no waiver
+record exists to verify); the durable content-bound ship-evidence receipt
+(repo identity + tree/diff digest + waiver record) stays the V2 hardening.
 
 ### F1.3c Installation-layout resolution (source vs consumer)
 
@@ -1018,6 +1023,18 @@ scripts/check-gate-contracts.mjs (create), package.json (modify), docs/gate-hone
   code-audit territory). Registry flag re-raised at reduced strength
   ("skirts the edge, deliberately bounded") — standing right-sizing note,
   not a defect.
+
+### Cluster A code-audit addendum (2026-07-14, run 839c7842)
+
+R1: H:6 M:11 L:3 → full rebuttal deliberation: 16/18 overruled in Claude's
+favor (cluster sequencing, already-implemented sync closure + vertical slice,
+adjudicated stale-sync fallback, pre-existing domain-map debt → captured as
+architecture backlog). **H3+H5 sustained as one HIGH**: verdict-free
+freshness must not authorize `passed`/`waived` as durable claims. Fix
+applied per user decision (cloud verdict check): `evaluateGateVerification`
++ lazy store query in `ship-commit.mjs`; `passed` = store-verified
+convergence, `waived` = declared/unverified; docs + SKILL.md + AGENTS.md
+updated; 6 new unit branches + hermetic CLI rows.
 
 ## Decision record (2026-07-14 — all four resolved; implementation unblocked)
 

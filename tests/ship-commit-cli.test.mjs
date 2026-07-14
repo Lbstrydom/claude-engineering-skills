@@ -24,7 +24,12 @@ function git(args, cwd = repo) {
 }
 
 function runCli(args, cwd = repo) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf-8' });
+  // Hermetic env: redirect HOME/USERPROFILE into the temp repo so
+  // ~/.audit-loop.env (shared cloud config) can't inject a real AUDIT_DB_URL,
+  // and blank the var itself — gate-verdict verification must never hit a
+  // live store from tests (it degrades to "verification unavailable").
+  const env = { ...process.env, AUDIT_DB_URL: '', HOME: cwd, USERPROFILE: cwd };
+  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf-8', env });
 }
 
 function commitCount() {
@@ -114,10 +119,16 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run']);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: an audit ran after HEAD/);
-    // fresh evidence + passed: legal, AI-Run-ID auto-injected from the file
+    // fresh evidence + passed WITHOUT verifiable store verdict: refused
+    // fail-closed (R1 H3/H5) — freshness proves an audit ran, not that it passed
     r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ecae388d-c176-4182-9d27-0210b919b844 but verification is unavailable \(AUDIT_DB_URL unset\)/);
+    // fresh evidence + waived (declared, unverified): legal, AI-Run-ID auto-injected
+    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived']);
     assert.equal(r.status, 0, r.stderr);
     assert.match(git(['log', '-1', '--format=%B']), /AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844/);
+    assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
   });
 
   it('row 5b: --no-run-id declares the fresh audit unrelated → not-run legal, no AI-Run-ID trailer', () => {
@@ -217,7 +228,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
       JSON.stringify({ runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: '2020-01-01T00:00:00Z' }));
     fs.writeFileSync(path.join(fresh, 'work.txt'), 'x\n');
     g(['add', 'work.txt']);
-    const r = spawnSync(process.execPath, [CLI, '--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship', '--models', 'claude', '--gate', 'passed'], { cwd: fresh, encoding: 'utf-8' });
+    const r = runCli(['--message-file', path.join('.claude', 'tmp', 'msg.txt'), '--skill', 'ship', '--models', 'claude', '--gate', 'waived'], fresh);
     assert.equal(r.status, 0, r.stderr);
     const body = g(['log', '-1', '--format=%B']).stdout;
     assert.match(body, /AI-Run-ID: ecae388d/);

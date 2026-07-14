@@ -30,6 +30,7 @@ import {
   checkMessageFileSafety,
   messageFileError,
   composeFinalMessage,
+  evaluateGateVerification,
 } from './lib/commit-trailers.mjs';
 
 const KNOWN_FLAGS = new Set(['--message-file', '--skill', '--models', '--gate']);
@@ -58,7 +59,7 @@ function resolveSkillNames(repoRoot) {
   return names;
 }
 
-function main() {
+async function main() {
   // CLI smoke contract — proves imports survived the scripts/.claude-skills
   // relocation. No git side effects.
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
@@ -155,6 +156,28 @@ function main() {
     err('ship-commit: --no-run-id override — audit evidence ignored for this commit (declared unrelated)');
   }
 
+  // ---- verdict verification for "passed" (fail-closed; R1 H3/H5) ----------
+  // Freshness proves an audit ran; only the store's convergence row proves it
+  // passed. Store modules load lazily so the common paths (and --selfcheck-
+  // relocation) never touch the db closure.
+  if (values.gate === 'passed' && evidence.state === 'fresh') {
+    let cloudEnabled = false;
+    let convergence = null;
+    try {
+      const { isCloudEnabled } = await import('./lib/store/repo.mjs');
+      cloudEnabled = await isCloudEnabled();
+      if (cloudEnabled) {
+        const { getAuditRunConvergence } = await import('./lib/store/runs-findings.mjs');
+        convergence = await getAuditRunConvergence(evidence.runId);
+      }
+    } catch { /* fail-closed: cloudEnabled/convergence stay unverifiable */ }
+    const ver = evaluateGateVerification({ gate: values.gate, evidence, cloudEnabled, convergence });
+    if (ver) {
+      for (const line of renderAgentFixLines([ver])) err(line);
+      process.exit(2);
+    }
+  }
+
   // ---- staged check (row 11) ----------------------------------------------
   const staged = git(['diff', '--cached', '--quiet'], repoRoot);
   if (staged.error) { err('ship-commit: git spawn failed'); process.exit(1); }
@@ -185,4 +208,4 @@ function main() {
   }
 }
 
-main();
+await main();

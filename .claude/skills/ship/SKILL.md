@@ -435,11 +435,14 @@ them (`reserved-trailer`).
 Decide the provenance values (full convention: `docs/commit-provenance.md`):
 - `--models` — comma list of models that participated this session
   (e.g. `claude` alone; `claude,gemini,gpt` when the audit loop ran).
-- `--gate` — `passed` (audit ran this cycle, gates green) · `waived`
-  (shipped past a gate via `--ignore-p0`/`--no-tests`/etc.) · `not-run`
-  (no audit this cycle — docs-only ships). The helper enforces this
-  against `.audit/last-audit-run.json` freshness; an unevidenced
-  `passed` is rejected.
+- `--gate` — `passed` (audit ran this cycle AND its convergence verdict
+  is **verified against the cloud store** — the helper queries the run's
+  `audit_runs` row; unverifiable → `passed` is refused) · `waived`
+  (declared disposition without a verified verdict: shipped past a gate
+  via `--ignore-p0`/`--no-tests`/etc., OR verification unavailable —
+  cloud off / run not found) · `not-run` (no audit this cycle —
+  docs-only ships). The helper also enforces `.audit/last-audit-run.json`
+  freshness; an unevidenced or unverified `passed` is rejected.
 
 ### 6.3 Commit and push
 
