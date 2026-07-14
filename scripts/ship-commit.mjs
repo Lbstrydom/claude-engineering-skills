@@ -143,8 +143,20 @@ async function main() {
   }
 
   // ---- evidence (§F1.3b; unborn HEAD → T_head = 0, Gemini R2-G1) ----------
-  const head = git(['log', '-1', '--format=%ct'], repoRoot);
-  const headCommitTs = head.status === 0 ? Number(head.stdout.trim()) || 0 : 0;
+  // R4 M1: T_head=0 is legal ONLY for the verified unborn-HEAD outcome — any
+  // other git failure is operational (exit 1), never silently "fresh".
+  const headExists = git(['rev-parse', '--verify', '--quiet', 'HEAD'], repoRoot);
+  if (headExists.error) { err('ship-commit: git spawn failed'); process.exit(1); }
+  let headCommitTs = 0;
+  if (headExists.status === 0) {
+    const head = git(['log', '-1', '--format=%ct'], repoRoot);
+    const parsed = head.status === 0 ? Number(head.stdout.trim()) : NaN;
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      err(`ship-commit: git: cannot resolve HEAD committer time: ${(head.stderr || '').trim() || 'unparseable output'}`);
+      process.exit(1);
+    }
+    headCommitTs = parsed;
+  }
   const auditRunPath = path.join(repoRoot, '.audit', 'last-audit-run.json');
   const evidence = resolveEvidence({ auditRunPath, headCommitTs, noRunId: opts.noRunId });
   if (evidence.state === 'malformed') {
