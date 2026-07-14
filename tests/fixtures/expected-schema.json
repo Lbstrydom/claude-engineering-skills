@@ -1,7 +1,467 @@
 {
-  "generatedAt": "2026-06-15T09:36:36Z",
+  "generatedAt": "2026-07-14T19:08:42Z",
   "schema": "public",
   "tables": [
+    {
+      "table_name": "arm_eval_crosschecks",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "bigint",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "check_name",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "check_version",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "status",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "score",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "findings",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "evidence_refs",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "failure_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 10
+        }
+      ]
+    },
+    {
+      "table_name": "arm_eval_human_rankings",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "bigint",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "session_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "ranked_labels",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "reviewer",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 5
+        }
+      ]
+    },
+    {
+      "table_name": "arm_eval_judgments",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "bigint",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "output_hash",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "judge_pass",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "presentation_order",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "rubric_version",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "scores",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 8
+        }
+      ]
+    },
+    {
+      "table_name": "arm_eval_leaderboard",
+      "columns": [
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "experiment_type",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "arm",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "sessions",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "distinct_tasks",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "conformant_runs",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "total_runs",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "judgments",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "phase",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        }
+      ]
+    },
+    {
+      "table_name": "arm_eval_outputs",
+      "columns": [
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "output_hash",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "output_ref",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "producer_conformant",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "true",
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "normalized",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 5
+        }
+      ]
+    },
+    {
+      "table_name": "arm_eval_runs",
+      "columns": [
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "session_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "arm",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "resolved_model",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "context_pack_hash",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "budget_lease_id",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 7
+        }
+      ]
+    },
+    {
+      "table_name": "arm_eval_sessions",
+      "columns": [
+        {
+          "column_name": "session_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "experiment_type",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "task_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "phase",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "config_version",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "rubric_version",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "seed",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "task_text",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
+        }
+      ]
+    },
+    {
+      "table_name": "audit_arms",
+      "columns": [
+        {
+          "column_name": "arm_set_version",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "arm_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "stages",
+          "data_type": "ARRAY",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "is_baseline",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "label",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "effective_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 6
+        }
+      ]
+    },
     {
       "table_name": "audit_effectiveness",
       "columns": [
@@ -240,6 +700,34 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 24
+        },
+        {
+          "column_name": "stage",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 25
+        },
+        {
+          "column_name": "arm",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 26
+        },
+        {
+          "column_name": "is_quick_fix",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 27
+        },
+        {
+          "column_name": "decided_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 28
         }
       ]
     },
@@ -397,6 +885,48 @@
           "is_nullable": "NO",
           "column_default": "1",
           "ordinal_position": 18
+        },
+        {
+          "column_name": "source_model",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 19
+        },
+        {
+          "column_name": "stage",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 20
+        },
+        {
+          "column_name": "structured_output_ok",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 21
+        },
+        {
+          "column_name": "cost_usd",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 22
+        },
+        {
+          "column_name": "usage_unmeterable",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 23
+        },
+        {
+          "column_name": "arm",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 24
         }
       ]
     },
@@ -764,6 +1294,76 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 38
+        },
+        {
+          "column_name": "arm_set_version",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 39
+        },
+        {
+          "column_name": "assignment_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 40
+        },
+        {
+          "column_name": "stage_type",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": "'audit-code'::text",
+          "ordinal_position": 41
+        },
+        {
+          "column_name": "phase",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 42
+        },
+        {
+          "column_name": "prompt_variant",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 43
+        },
+        {
+          "column_name": "attempt",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": "1",
+          "ordinal_position": 44
+        },
+        {
+          "column_name": "arm_order_seed",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 45
+        },
+        {
+          "column_name": "author_model",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 46
+        },
+        {
+          "column_name": "task_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 47
+        },
+        {
+          "column_name": "arm_eval_run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 48
         }
       ]
     },
@@ -1433,6 +2033,46 @@
       ]
     },
     {
+      "table_name": "finding_equivalence",
+      "columns": [
+        {
+          "column_name": "duplicate_finding_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "canonical_finding_id",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "created_by",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 5
+        }
+      ]
+    },
+    {
       "table_name": "friction_log",
       "columns": [
         {
@@ -1586,6 +2226,849 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 14
+        }
+      ]
+    },
+    {
+      "table_name": "memory_friction",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "memory_name",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "source_hash",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "active",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "true",
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "title",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "body_excerpt",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "''::text",
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "scope_tags",
+          "data_type": "ARRAY",
+          "is_nullable": "NO",
+          "column_default": "'{}'::text[]",
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "files",
+          "data_type": "ARRAY",
+          "is_nullable": "NO",
+          "column_default": "'{}'::text[]",
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "symbols",
+          "data_type": "ARRAY",
+          "is_nullable": "NO",
+          "column_default": "'{}'::text[]",
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "cost",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "'M'::text",
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "fingerprint",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "trgm_text",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "signature_text",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "''::text",
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "mitigation_refs",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": "'[]'::jsonb",
+          "ordinal_position": 15
+        },
+        {
+          "column_name": "resolved",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 16
+        },
+        {
+          "column_name": "last_seen_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 17
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 18
+        },
+        {
+          "column_name": "updated_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 19
+        }
+      ]
+    },
+    {
+      "table_name": "model_ab_arm_cost",
+      "columns": [
+        {
+          "column_name": "assignment_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "commit_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "stage_type",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "phase",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "prompt_variant",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "arm",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "standalone_cost_usd",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "cost_known",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "pass_executions",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "conformant_passes",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "any_unmeterable",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
+        }
+      ]
+    },
+    {
+      "table_name": "model_ab_effectiveness",
+      "columns": [
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "arm",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "stage",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "source_model",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "accepted_uniques",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "dismissed_uniques",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "pending_uniques",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "total_uniques",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "accepted_high",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "cost_usd",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "pass_executions",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "conformant_passes",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "conformance_rate",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "any_unmeterable",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "commit_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 15
+        },
+        {
+          "column_name": "stage_type",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 16
+        },
+        {
+          "column_name": "assignment_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 17
+        }
+      ]
+    },
+    {
+      "table_name": "model_ab_finding_scores",
+      "columns": [
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "commit_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "assignment_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "stage_type",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "phase",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "prompt_variant",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "arm",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "stage",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "source_model",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "finding_fingerprint",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "canonical_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "severity",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "outcome",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "remediation_state",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "is_quick_fix",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 15
+        }
+      ]
+    },
+    {
+      "table_name": "model_ab_spend_ledger",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "bigint",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "arm_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "stage",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "reserved_eur",
+          "data_type": "numeric",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "actual_eur",
+          "data_type": "numeric",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "estimated",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "unmeterable",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "status",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "'reserved'::text",
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "reserved_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "reconciled_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "arm_eval_run_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 12
+        }
+      ]
+    },
+    {
+      "table_name": "model_eval_judge_batches",
+      "columns": [
+        {
+          "column_name": "batch_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "commit_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "unit",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "gradings",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "judge_route",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 8
+        }
+      ]
+    },
+    {
+      "table_name": "model_eval_runs",
+      "columns": [
+        {
+          "column_name": "run_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "role",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "tier",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "candidate_ref",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "baseline_ref",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "judge_tier",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "status",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "verdict",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "next_action",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
+        },
+        {
+          "column_name": "metrics",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
+        },
+        {
+          "column_name": "thresholds_version",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "cost",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "evidence",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "harness_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 15
+        },
+        {
+          "column_name": "corpus_version",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 16
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 17
+        }
+      ]
+    },
+    {
+      "table_name": "model_eval_shadow_observations",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "model_eval_run_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "observation",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "idempotency_key",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 5
+        }
+      ]
+    },
+    {
+      "table_name": "nav_audit_runs",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "head_sha",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "scope",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "'full'::text",
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "drift_keys",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": "'[]'::jsonb",
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "finding_counts",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "verify_summary",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "tool_version",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "content_hash",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": "''::text",
+          "ordinal_position": 10
         }
       ]
     },
@@ -1872,6 +3355,13 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 10
+        },
+        {
+          "column_name": "matcher_version",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 11
         }
       ]
     },
@@ -1987,6 +3477,74 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 3
+        }
+      ]
+    },
+    {
+      "table_name": "persona_finding_outcomes",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "persona_finding_hash",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "outcome",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "last_seen_session_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "labeled_by",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "rationale",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "updated_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 9
         }
       ]
     },
@@ -2523,6 +4081,13 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 14
+        },
+        {
+          "column_name": "skipped",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 15
         }
       ]
     },
@@ -2612,6 +4177,13 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 12
+        },
+        {
+          "column_name": "selector_policy_violations",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 13
         }
       ]
     },
@@ -3289,6 +4861,13 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 9
+        },
+        {
+          "column_name": "selector_policy_violations",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 10
         }
       ]
     },
@@ -4118,6 +5697,74 @@
       ]
     },
     {
+      "table_name": "tiered_shadow_observations",
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": "gen_random_uuid()",
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "run_id",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "legacy_ok",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "shadow_ok",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "shadow_error",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "shadow_latency_ms",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "comparison",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 9
+        }
+      ]
+    },
+    {
       "table_name": "unlocked_fixes",
       "columns": [
         {
@@ -4333,6 +5980,20 @@
       "return_type": "jsonb",
       "security_definer": true,
       "config": "search_path=pg_catalog, public"
+    },
+    {
+      "function_name": "friction_neighbourhood",
+      "args": "p_repo_id uuid, p_prompt text, k integer, min_word_sim numeric",
+      "return_type": "jsonb",
+      "security_definer": true,
+      "config": "search_path=public"
+    },
+    {
+      "function_name": "friction_recurrence",
+      "args": "repo_id_filter uuid, window_days integer, min_similarity numeric, max_anchors integer",
+      "return_type": "jsonb",
+      "security_definer": true,
+      "config": "search_path=public"
     },
     {
       "function_name": "gin_extract_query_trgm",
@@ -4804,6 +6465,13 @@
       "config": "statement_timeout=120s"
     },
     {
+      "function_name": "model_ab_attribute_arms",
+      "args": "p_stage text, p_arm text",
+      "return_type": "text[]",
+      "security_definer": false,
+      "config": null
+    },
+    {
       "function_name": "publish_refresh_run",
       "args": "p_repo_id uuid, p_refresh_id uuid, p_active_embedding_model text, p_active_embedding_dim integer",
       "return_type": "jsonb",
@@ -5056,6 +6724,20 @@
       "config": "search_path=pg_catalog, public"
     },
     {
+      "function_name": "touch_memory_friction_updated_at",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "touch_persona_finding_outcomes_updated_at",
+      "args": "",
+      "return_type": "trigger",
+      "security_definer": false,
+      "config": null
+    },
+    {
       "function_name": "touch_security_incidents_updated_at",
       "args": "",
       "return_type": "trigger",
@@ -5303,12 +6985,28 @@
   ],
   "views": [
     {
+      "view_name": "arm_eval_leaderboard",
+      "definition": " SELECT s.repo_id,\n    s.experiment_type,\n    r.arm,\n    count(DISTINCT s.session_id) AS sessions,\n    count(DISTINCT s.task_id) AS distinct_tasks,\n    count(DISTINCT o.run_id) FILTER (WHERE o.producer_conformant) AS conformant_runs,\n    count(DISTINCT o.run_id) AS total_runs,\n    count(DISTINCT j.id) AS judgments,\n    s.phase\n   FROM (((arm_eval_sessions s\n     JOIN arm_eval_runs r ON ((r.session_id = s.session_id)))\n     LEFT JOIN arm_eval_outputs o ON ((o.run_id = r.run_id)))\n     LEFT JOIN arm_eval_judgments j ON ((j.run_id = r.run_id)))\n  GROUP BY s.repo_id, s.experiment_type, r.arm, s.phase;"
+    },
+    {
       "view_name": "audit_effectiveness",
       "definition": " SELECT r.id AS repo_id,\n    r.name AS repo_name,\n    count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)) AS confirmed_hits,\n    count(*) FILTER (WHERE (c.correlation_type = 'audit_missed'::text)) AS audit_misses,\n    count(*) FILTER (WHERE (c.correlation_type = 'audit_false_positive'::text)) AS audit_false_positives,\n    count(*) FILTER (WHERE (c.correlation_type = 'severity_understated'::text)) AS severity_understated,\n    count(*) FILTER (WHERE (c.correlation_type = 'severity_overstated'::text)) AS severity_overstated,\n    round((NULLIF((count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)))::numeric, (0)::numeric) / NULLIF((count(*) FILTER (WHERE (c.correlation_type = ANY (ARRAY['confirmed_hit'::text, 'audit_false_positive'::text]))))::numeric, (0)::numeric)), 3) AS user_visible_precision,\n    round((NULLIF((count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)))::numeric, (0)::numeric) / NULLIF((count(*) FILTER (WHERE (c.correlation_type = ANY (ARRAY['confirmed_hit'::text, 'audit_missed'::text]))))::numeric, (0)::numeric)), 3) AS user_visible_recall\n   FROM ((audit_repos r\n     LEFT JOIN persona_test_sessions s ON ((s.repo_name = r.name)))\n     LEFT JOIN persona_audit_correlations c ON ((c.persona_session_id = s.id)))\n  GROUP BY r.id, r.name;"
     },
     {
       "view_name": "debt_summary",
       "definition": " SELECT repo_id,\n    severity,\n    deferred_reason,\n    count(*) AS count,\n    min(deferred_at) AS oldest,\n    max(deferred_at) AS newest,\n    array_agg(DISTINCT category) AS categories\n   FROM debt_entries\n  GROUP BY repo_id, severity, deferred_reason\n  ORDER BY\n        CASE severity\n            WHEN 'HIGH'::text THEN 1\n            WHEN 'MEDIUM'::text THEN 2\n            ELSE 3\n        END, (count(*)) DESC;"
+    },
+    {
+      "view_name": "model_ab_arm_cost",
+      "definition": " WITH ps AS (\n         SELECT ps.run_id,\n            r.commit_sha,\n            COALESCE(r.assignment_id, r.commit_sha, (r.id)::text) AS assignment_id,\n            COALESCE(r.stage_type, 'audit-code'::text) AS stage_type,\n            r.phase,\n            COALESCE(r.prompt_variant, 'default'::text) AS prompt_variant,\n            ps.stage,\n            ps.cost_usd,\n            ps.structured_output_ok,\n            ps.usage_unmeterable,\n            model_ab_attribute_arms(ps.stage, ps.arm) AS arms\n           FROM (audit_pass_stats ps\n             JOIN audit_runs r ON ((r.id = ps.run_id)))\n          WHERE (ps.stage IS NOT NULL)\n        ), exp AS (\n         SELECT ps.assignment_id,\n            ps.commit_sha,\n            ps.stage_type,\n            ps.phase,\n            ps.prompt_variant,\n            ps.cost_usd,\n            ps.structured_output_ok,\n            ps.usage_unmeterable,\n            unnest(ps.arms) AS arm\n           FROM ps\n          WHERE (ps.arms <> ARRAY['__INVALID__'::text])\n        )\n SELECT assignment_id,\n    commit_sha,\n    stage_type,\n    phase,\n    prompt_variant,\n    arm,\n    sum(cost_usd) AS standalone_cost_usd,\n    bool_and((cost_usd IS NOT NULL)) AS cost_known,\n    count(*) AS pass_executions,\n    count(*) FILTER (WHERE structured_output_ok) AS conformant_passes,\n    bool_or(usage_unmeterable) AS any_unmeterable\n   FROM exp\n  GROUP BY assignment_id, commit_sha, stage_type, phase, prompt_variant, arm;"
+    },
+    {
+      "view_name": "model_ab_effectiveness",
+      "definition": " WITH canon AS (\n         SELECT f.run_id,\n            r.commit_sha,\n            COALESCE(r.assignment_id, r.commit_sha, (r.id)::text) AS assignment_id,\n            COALESCE(r.stage_type, 'audit-code'::text) AS stage_type,\n            f.stage,\n            f.arm AS explicit_arm,\n            f.source_model,\n            f.severity,\n            COALESCE(f.adjudication_outcome, 'pending'::text) AS outcome,\n            COALESCE(fe.canonical_finding_id, f.finding_fingerprint) AS canonical_id,\n            model_ab_attribute_arms(f.stage, f.arm) AS arms\n           FROM ((audit_findings f\n             JOIN audit_runs r ON ((r.id = f.run_id)))\n             LEFT JOIN finding_equivalence fe ON ((fe.duplicate_finding_id = f.finding_fingerprint)))\n        ), expanded AS (\n         SELECT canon.run_id,\n            canon.commit_sha,\n            canon.assignment_id,\n            canon.stage_type,\n            unnest(canon.arms) AS arm,\n            canon.stage,\n            canon.source_model,\n            canon.severity,\n            canon.outcome,\n            canon.canonical_id\n           FROM canon\n          WHERE (canon.arms <> ARRAY['__INVALID__'::text])\n        ), pass_cost AS (\n         SELECT audit_pass_stats.run_id,\n            audit_pass_stats.stage,\n            audit_pass_stats.source_model,\n            sum(audit_pass_stats.cost_usd) AS cost_usd,\n            count(*) AS pass_executions,\n            count(*) FILTER (WHERE audit_pass_stats.structured_output_ok) AS conformant_passes,\n            bool_or(audit_pass_stats.usage_unmeterable) AS any_unmeterable\n           FROM audit_pass_stats\n          WHERE (audit_pass_stats.stage IS NOT NULL)\n          GROUP BY audit_pass_stats.run_id, audit_pass_stats.stage, audit_pass_stats.source_model\n        )\n SELECT e.run_id,\n    e.arm,\n    e.stage,\n    e.source_model,\n    count(DISTINCT e.canonical_id) FILTER (WHERE (e.outcome = 'accepted'::text)) AS accepted_uniques,\n    count(DISTINCT e.canonical_id) FILTER (WHERE (e.outcome = 'dismissed'::text)) AS dismissed_uniques,\n    count(DISTINCT e.canonical_id) FILTER (WHERE (e.outcome = 'pending'::text)) AS pending_uniques,\n    count(DISTINCT e.canonical_id) AS total_uniques,\n    count(DISTINCT e.canonical_id) FILTER (WHERE ((e.severity = 'HIGH'::text) AND (e.outcome = 'accepted'::text))) AS accepted_high,\n    pc.cost_usd,\n    pc.pass_executions,\n    pc.conformant_passes,\n        CASE\n            WHEN (pc.pass_executions > 0) THEN round(((pc.conformant_passes)::numeric / (pc.pass_executions)::numeric), 4)\n            ELSE NULL::numeric\n        END AS conformance_rate,\n    pc.any_unmeterable,\n    e.commit_sha,\n    e.stage_type,\n    e.assignment_id\n   FROM (expanded e\n     LEFT JOIN pass_cost pc ON (((pc.run_id = e.run_id) AND (pc.stage = e.stage) AND (COALESCE(pc.source_model, ''::text) = COALESCE(e.source_model, ''::text)))))\n  GROUP BY e.run_id, e.arm, e.stage, e.source_model, e.commit_sha, e.stage_type, e.assignment_id, pc.cost_usd, pc.pass_executions, pc.conformant_passes, pc.any_unmeterable;"
+    },
+    {
+      "view_name": "model_ab_finding_scores",
+      "definition": " WITH canon AS (\n         SELECT f.run_id,\n            r.commit_sha,\n            COALESCE(r.assignment_id, r.commit_sha, (r.id)::text) AS assignment_id,\n            COALESCE(r.stage_type, 'audit-code'::text) AS stage_type,\n            r.phase,\n            COALESCE(r.prompt_variant, 'default'::text) AS prompt_variant,\n            f.finding_fingerprint,\n            f.stage,\n            f.source_model,\n            f.severity,\n            COALESCE(f.adjudication_outcome, 'pending'::text) AS outcome,\n            COALESCE(f.remediation_state, 'pending'::text) AS remediation_state,\n            COALESCE(f.is_quick_fix, false) AS is_quick_fix,\n            COALESCE(fe.canonical_finding_id, f.finding_fingerprint) AS canonical_id,\n            model_ab_attribute_arms(f.stage, f.arm) AS arms\n           FROM ((audit_findings f\n             JOIN audit_runs r ON ((r.id = f.run_id)))\n             LEFT JOIN finding_equivalence fe ON ((fe.duplicate_finding_id = f.finding_fingerprint)))\n        )\n SELECT run_id,\n    commit_sha,\n    assignment_id,\n    stage_type,\n    phase,\n    prompt_variant,\n    unnest(arms) AS arm,\n    stage,\n    source_model,\n    finding_fingerprint,\n    canonical_id,\n    severity,\n    outcome,\n    remediation_state,\n    is_quick_fix\n   FROM canon\n  WHERE (arms <> ARRAY['__INVALID__'::text]);"
     },
     {
       "view_name": "no_brainer_recommendations",
@@ -5320,7 +7018,7 @@
     },
     {
       "view_name": "persistent_plan_failures",
-      "definition": " WITH ranked AS (\n         SELECT i.plan_id,\n            i.criterion_hash,\n            i.description,\n            i.severity,\n            i.category,\n            i.passed,\n            i.created_at,\n            row_number() OVER (PARTITION BY i.plan_id, i.criterion_hash ORDER BY i.created_at DESC) AS rn\n           FROM plan_verification_items i\n        )\n SELECT plan_id,\n    criterion_hash,\n    description,\n    severity,\n    category,\n    count(*) FILTER (WHERE (NOT passed)) AS fail_count_last_5,\n    max(created_at) FILTER (WHERE (NOT passed)) AS last_failure_at\n   FROM ranked\n  WHERE (rn <= 5)\n  GROUP BY plan_id, criterion_hash, description, severity, category\n HAVING (count(*) FILTER (WHERE (NOT passed)) >= 2)\n  ORDER BY severity, (count(*) FILTER (WHERE (NOT passed))) DESC;"
+      "definition": " WITH ranked AS (\n         SELECT i.plan_id,\n            i.criterion_hash,\n            i.description,\n            i.severity,\n            i.category,\n            i.passed,\n            i.skipped,\n            i.created_at,\n            row_number() OVER (PARTITION BY i.plan_id, i.criterion_hash ORDER BY i.created_at DESC) AS rn\n           FROM plan_verification_items i\n        )\n SELECT plan_id,\n    criterion_hash,\n    description,\n    severity,\n    category,\n    count(*) FILTER (WHERE ((NOT passed) AND (NOT skipped))) AS fail_count_last_5,\n    max(created_at) FILTER (WHERE ((NOT passed) AND (NOT skipped))) AS last_failure_at\n   FROM ranked\n  WHERE (rn <= 5)\n  GROUP BY plan_id, criterion_hash, description, severity, category\n HAVING (count(*) FILTER (WHERE ((NOT passed) AND (NOT skipped))) >= 2)\n  ORDER BY severity, (count(*) FILTER (WHERE ((NOT passed) AND (NOT skipped)))) DESC;"
     },
     {
       "view_name": "persona_dashboard",
@@ -5332,7 +7030,7 @@
     },
     {
       "view_name": "plan_satisfaction",
-      "definition": " SELECT p.id AS plan_id,\n    p.path AS plan_path,\n    p.skill AS plan_skill,\n    p.status AS plan_status,\n    r.id AS latest_run_id,\n    r.created_at AS last_verified_at,\n    r.commit_sha AS verified_commit_sha,\n    r.url AS verified_url,\n    r.total_criteria,\n    r.passed_count,\n    r.failed_count,\n    r.skipped_count,\n    round((NULLIF((100.0 * (r.passed_count)::numeric), (0)::numeric) / (NULLIF(r.total_criteria, 0))::numeric), 1) AS satisfaction_pct,\n    ( SELECT COALESCE(jsonb_agg(jsonb_build_object('description', i.description, 'category', i.category, 'error', i.error_message, 'hash', i.criterion_hash)), '[]'::jsonb) AS \"coalesce\"\n           FROM plan_verification_items i\n          WHERE ((i.run_id = r.id) AND (i.passed = false) AND (i.severity = 'P0'::text))) AS failing_p0_criteria,\n    ( SELECT COALESCE(jsonb_agg(jsonb_build_object('description', i.description, 'category', i.category, 'error', i.error_message, 'hash', i.criterion_hash)), '[]'::jsonb) AS \"coalesce\"\n           FROM plan_verification_items i\n          WHERE ((i.run_id = r.id) AND (i.passed = false) AND (i.severity = 'P1'::text))) AS failing_p1_criteria\n   FROM (plans p\n     LEFT JOIN LATERAL ( SELECT plan_verification_runs.id,\n            plan_verification_runs.plan_id,\n            plan_verification_runs.spec_id,\n            plan_verification_runs.commit_sha,\n            plan_verification_runs.url,\n            plan_verification_runs.total_criteria,\n            plan_verification_runs.passed_count,\n            plan_verification_runs.failed_count,\n            plan_verification_runs.skipped_count,\n            plan_verification_runs.duration_ms,\n            plan_verification_runs.run_context,\n            plan_verification_runs.created_at\n           FROM plan_verification_runs\n          WHERE (plan_verification_runs.plan_id = p.id)\n          ORDER BY plan_verification_runs.created_at DESC\n         LIMIT 1) r ON (true));"
+      "definition": " SELECT p.id AS plan_id,\n    p.path AS plan_path,\n    p.skill AS plan_skill,\n    p.status AS plan_status,\n    r.id AS latest_run_id,\n    r.created_at AS last_verified_at,\n    r.commit_sha AS verified_commit_sha,\n    r.url AS verified_url,\n    r.total_criteria,\n    r.passed_count,\n    r.failed_count,\n    r.skipped_count,\n    round((NULLIF((100.0 * (r.passed_count)::numeric), (0)::numeric) / (NULLIF(r.total_criteria, 0))::numeric), 1) AS satisfaction_pct,\n    ( SELECT COALESCE(jsonb_agg(jsonb_build_object('description', i.description, 'category', i.category, 'error', i.error_message, 'hash', i.criterion_hash)), '[]'::jsonb) AS \"coalesce\"\n           FROM plan_verification_items i\n          WHERE ((i.run_id = r.id) AND (i.passed = false) AND (i.skipped = false) AND (i.severity = 'P0'::text))) AS failing_p0_criteria,\n    ( SELECT COALESCE(jsonb_agg(jsonb_build_object('description', i.description, 'category', i.category, 'error', i.error_message, 'hash', i.criterion_hash)), '[]'::jsonb) AS \"coalesce\"\n           FROM plan_verification_items i\n          WHERE ((i.run_id = r.id) AND (i.passed = false) AND (i.skipped = false) AND (i.severity = 'P1'::text))) AS failing_p1_criteria\n   FROM (plans p\n     LEFT JOIN LATERAL ( SELECT plan_verification_runs.id,\n            plan_verification_runs.plan_id,\n            plan_verification_runs.spec_id,\n            plan_verification_runs.commit_sha,\n            plan_verification_runs.url,\n            plan_verification_runs.total_criteria,\n            plan_verification_runs.passed_count,\n            plan_verification_runs.failed_count,\n            plan_verification_runs.skipped_count,\n            plan_verification_runs.duration_ms,\n            plan_verification_runs.run_context,\n            plan_verification_runs.created_at,\n            plan_verification_runs.selector_policy_violations\n           FROM plan_verification_runs\n          WHERE (plan_verification_runs.plan_id = p.id)\n          ORDER BY plan_verification_runs.created_at DESC\n         LIMIT 1) r ON (true));"
     },
     {
       "view_name": "regression_saves",
@@ -5594,6 +7292,108 @@
   ],
   "constraints": [
     {
+      "table_name": "arm_eval_crosschecks",
+      "constraint_name": "arm_eval_crosschecks_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "arm_eval_crosschecks",
+      "constraint_name": "arm_eval_crosschecks_run_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (run_id) REFERENCES arm_eval_runs(run_id)"
+    },
+    {
+      "table_name": "arm_eval_human_rankings",
+      "constraint_name": "arm_eval_human_rankings_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "arm_eval_human_rankings",
+      "constraint_name": "arm_eval_human_rankings_session_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (session_id) REFERENCES arm_eval_sessions(session_id)"
+    },
+    {
+      "table_name": "arm_eval_judgments",
+      "constraint_name": "arm_eval_judgments_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "arm_eval_judgments",
+      "constraint_name": "arm_eval_judgments_run_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (run_id) REFERENCES arm_eval_runs(run_id)"
+    },
+    {
+      "table_name": "arm_eval_judgments",
+      "constraint_name": "arm_eval_judgments_run_id_output_hash_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (run_id, output_hash) REFERENCES arm_eval_outputs(run_id, output_hash)"
+    },
+    {
+      "table_name": "arm_eval_outputs",
+      "constraint_name": "arm_eval_outputs_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (run_id, output_hash)"
+    },
+    {
+      "table_name": "arm_eval_outputs",
+      "constraint_name": "arm_eval_outputs_run_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (run_id) REFERENCES arm_eval_runs(run_id)"
+    },
+    {
+      "table_name": "arm_eval_runs",
+      "constraint_name": "arm_eval_runs_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (run_id)"
+    },
+    {
+      "table_name": "arm_eval_runs",
+      "constraint_name": "arm_eval_runs_session_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (session_id) REFERENCES arm_eval_sessions(session_id)"
+    },
+    {
+      "table_name": "arm_eval_sessions",
+      "constraint_name": "arm_eval_sessions_experiment_type_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((experiment_type = ANY (ARRAY['plan-authoring'::text, 'brainstorm'::text, 'auditor'::text])))"
+    },
+    {
+      "table_name": "arm_eval_sessions",
+      "constraint_name": "arm_eval_sessions_phase_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((phase IS NULL) OR (phase = ANY (ARRAY['calibration'::text, 'prospective'::text]))))"
+    },
+    {
+      "table_name": "arm_eval_sessions",
+      "constraint_name": "arm_eval_sessions_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (session_id)"
+    },
+    {
+      "table_name": "audit_arms",
+      "constraint_name": "audit_arms_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (arm_set_version, arm_id)"
+    },
+    {
+      "table_name": "audit_findings",
+      "constraint_name": "audit_findings_arm_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((arm IS NULL) OR (arm = ANY (ARRAY['A'::text, 'B'::text, 'C'::text])))) NOT VALID"
+    },
+    {
+      "table_name": "audit_findings",
+      "constraint_name": "audit_findings_arm_specific_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((stage IS NULL) OR (stage <> ALL (ARRAY['gemini'::text, 'gpt-round'::text])) OR (arm IS NOT NULL))) NOT VALID"
+    },
+    {
       "table_name": "audit_findings",
       "constraint_name": "audit_findings_pkey",
       "constraint_type": "PRIMARY KEY",
@@ -5706,6 +7506,12 @@
       "constraint_name": "audit_runs_repo_id_fkey",
       "constraint_type": "FOREIGN KEY",
       "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id)"
+    },
+    {
+      "table_name": "audit_runs",
+      "constraint_name": "audit_runs_stage_type_chk",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((stage_type IS NULL) OR (stage_type = ANY (ARRAY['plan'::text, 'audit-plan'::text, 'audit-code'::text])))) NOT VALID"
     },
     {
       "table_name": "bandit_arms",
@@ -5882,6 +7688,12 @@
       "definition": "CHECK ((ruling = ANY (ARRAY['sustain'::text, 'overrule'::text, 'compromise'::text])))"
     },
     {
+      "table_name": "finding_equivalence",
+      "constraint_name": "finding_equivalence_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (duplicate_finding_id)"
+    },
+    {
       "table_name": "friction_log",
       "constraint_name": "friction_log_audit_run_id_fkey",
       "constraint_type": "FOREIGN KEY",
@@ -5936,6 +7748,108 @@
       "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id) ON DELETE CASCADE"
     },
     {
+      "table_name": "memory_friction",
+      "constraint_name": "memory_friction_cost_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((cost = ANY (ARRAY['S'::text, 'M'::text, 'L'::text])))"
+    },
+    {
+      "table_name": "memory_friction",
+      "constraint_name": "memory_friction_mitigation_refs_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((jsonb_typeof(mitigation_refs) = 'array'::text))"
+    },
+    {
+      "table_name": "memory_friction",
+      "constraint_name": "memory_friction_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "memory_friction",
+      "constraint_name": "memory_friction_repo_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "memory_friction",
+      "constraint_name": "memory_friction_repo_id_memory_name_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (repo_id, memory_name)"
+    },
+    {
+      "table_name": "model_ab_spend_ledger",
+      "constraint_name": "model_ab_spend_ledger_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "model_eval_judge_batches",
+      "constraint_name": "model_eval_judge_batches_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (batch_id)"
+    },
+    {
+      "table_name": "model_eval_judge_batches",
+      "constraint_name": "model_eval_judge_batches_run_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (run_id) REFERENCES model_eval_runs(run_id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "model_eval_judge_batches",
+      "constraint_name": "model_eval_judge_batches_unit_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((unit = ANY (ARRAY['findings-vs-diff'::text, 'verdict-vs-finding'::text])))"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "constraint_name": "model_eval_runs_judge_tier_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((judge_tier = ANY (ARRAY['A'::text, 'B'::text, 'C'::text])))"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "constraint_name": "model_eval_runs_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (run_id)"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "constraint_name": "model_eval_runs_role_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((role = ANY (ARRAY['auditor'::text, 'adjudicator'::text])))"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "constraint_name": "model_eval_runs_status_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((status = ANY (ARRAY['completed'::text, 'failed_preflight'::text, 'failed_egress'::text, 'failed_provider'::text, 'running'::text, 'pending_shadow'::text])))"
+    },
+    {
+      "table_name": "model_eval_runs",
+      "constraint_name": "model_eval_runs_tier_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((tier = ANY (ARRAY['screen'::text, 'promotion'::text])))"
+    },
+    {
+      "table_name": "model_eval_shadow_observations",
+      "constraint_name": "model_eval_shadow_observations_model_eval_run_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (model_eval_run_id) REFERENCES model_eval_runs(run_id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "model_eval_shadow_observations",
+      "constraint_name": "model_eval_shadow_observations_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "nav_audit_runs",
+      "constraint_name": "nav_audit_runs_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
       "table_name": "persona_audit_correlations",
       "constraint_name": "persona_audit_correlations_audit_finding_id_fkey",
       "constraint_type": "FOREIGN KEY",
@@ -5978,6 +7892,42 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "table_name": "persona_finding_outcomes",
+      "constraint_name": "persona_finding_outcomes_last_seen_session_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (last_seen_session_id) REFERENCES persona_test_sessions(id) ON DELETE SET NULL"
+    },
+    {
+      "table_name": "persona_finding_outcomes",
+      "constraint_name": "persona_finding_outcomes_outcome_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((outcome = ANY (ARRAY['fixed'::text, 'dismissed'::text, 'wont_fix'::text, 'stale'::text])))"
+    },
+    {
+      "table_name": "persona_finding_outcomes",
+      "constraint_name": "persona_finding_outcomes_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "table_name": "persona_finding_outcomes",
+      "constraint_name": "persona_finding_outcomes_repo_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "persona_finding_outcomes",
+      "constraint_name": "persona_finding_outcomes_repo_id_persona_finding_hash_key",
+      "constraint_type": "UNIQUE",
+      "definition": "UNIQUE (repo_id, persona_finding_hash)"
+    },
+    {
+      "table_name": "persona_finding_outcomes",
+      "constraint_name": "rationale_required_for_dismissal",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((outcome <> ALL (ARRAY['dismissed'::text, 'wont_fix'::text])) OR ((rationale IS NOT NULL) AND (length(btrim(rationale)) > 0))))"
+    },
+    {
       "table_name": "persona_test_candidates",
       "constraint_name": "persona_test_candidates_occurrences_check",
       "constraint_type": "CHECK",
@@ -5997,6 +7947,12 @@
     },
     {
       "table_name": "persona_test_sessions",
+      "constraint_name": "persona_click_path_is_array",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((jsonb_typeof(click_path) = 'array'::text))"
+    },
+    {
+      "table_name": "persona_test_sessions",
       "constraint_name": "persona_test_sessions_persona_id_fkey",
       "constraint_type": "FOREIGN KEY",
       "definition": "FOREIGN KEY (persona_id) REFERENCES personas(id)"
@@ -6012,12 +7968,6 @@
       "constraint_name": "persona_test_sessions_repo_id_fkey",
       "constraint_type": "FOREIGN KEY",
       "definition": "FOREIGN KEY (repo_id) REFERENCES audit_repos(id)"
-    },
-    {
-      "table_name": "persona_test_sessions",
-      "constraint_name": "persona_click_path_is_array",
-      "constraint_type": "CHECK",
-      "definition": "CHECK ((jsonb_typeof(click_path) = 'array'::text))"
     },
     {
       "table_name": "persona_test_sessions",
@@ -6462,9 +8412,85 @@
       "constraint_name": "symbol_layering_violations_severity_check",
       "constraint_type": "CHECK",
       "definition": "CHECK ((severity = ANY (ARRAY['error'::text, 'warn'::text, 'info'::text])))"
+    },
+    {
+      "table_name": "tiered_shadow_observations",
+      "constraint_name": "tiered_shadow_observations_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (id)"
     }
   ],
   "indexes": [
+    {
+      "tablename": "arm_eval_crosschecks",
+      "indexname": "arm_eval_crosschecks_pkey",
+      "indexdef": "CREATE UNIQUE INDEX arm_eval_crosschecks_pkey ON public.arm_eval_crosschecks USING btree (id)"
+    },
+    {
+      "tablename": "arm_eval_crosschecks",
+      "indexname": "arm_eval_crosschecks_run_idx",
+      "indexdef": "CREATE INDEX arm_eval_crosschecks_run_idx ON public.arm_eval_crosschecks USING btree (run_id, check_name)"
+    },
+    {
+      "tablename": "arm_eval_human_rankings",
+      "indexname": "arm_eval_human_rankings_pkey",
+      "indexdef": "CREATE UNIQUE INDEX arm_eval_human_rankings_pkey ON public.arm_eval_human_rankings USING btree (id)"
+    },
+    {
+      "tablename": "arm_eval_human_rankings",
+      "indexname": "arm_eval_human_rankings_session_idx",
+      "indexdef": "CREATE INDEX arm_eval_human_rankings_session_idx ON public.arm_eval_human_rankings USING btree (session_id)"
+    },
+    {
+      "tablename": "arm_eval_judgments",
+      "indexname": "arm_eval_judgments_pkey",
+      "indexdef": "CREATE UNIQUE INDEX arm_eval_judgments_pkey ON public.arm_eval_judgments USING btree (id)"
+    },
+    {
+      "tablename": "arm_eval_judgments",
+      "indexname": "arm_eval_judgments_run_pass_uk",
+      "indexdef": "CREATE UNIQUE INDEX arm_eval_judgments_run_pass_uk ON public.arm_eval_judgments USING btree (run_id, output_hash, judge_pass)"
+    },
+    {
+      "tablename": "arm_eval_outputs",
+      "indexname": "arm_eval_outputs_pkey",
+      "indexdef": "CREATE UNIQUE INDEX arm_eval_outputs_pkey ON public.arm_eval_outputs USING btree (run_id, output_hash)"
+    },
+    {
+      "tablename": "arm_eval_runs",
+      "indexname": "arm_eval_runs_pkey",
+      "indexdef": "CREATE UNIQUE INDEX arm_eval_runs_pkey ON public.arm_eval_runs USING btree (run_id)"
+    },
+    {
+      "tablename": "arm_eval_runs",
+      "indexname": "arm_eval_runs_session_arm_uk",
+      "indexdef": "CREATE UNIQUE INDEX arm_eval_runs_session_arm_uk ON public.arm_eval_runs USING btree (session_id, arm)"
+    },
+    {
+      "tablename": "arm_eval_sessions",
+      "indexname": "arm_eval_sessions_pkey",
+      "indexdef": "CREATE UNIQUE INDEX arm_eval_sessions_pkey ON public.arm_eval_sessions USING btree (session_id)"
+    },
+    {
+      "tablename": "arm_eval_sessions",
+      "indexname": "arm_eval_sessions_repo_idx",
+      "indexdef": "CREATE INDEX arm_eval_sessions_repo_idx ON public.arm_eval_sessions USING btree (repo_id) WHERE (repo_id IS NOT NULL)"
+    },
+    {
+      "tablename": "arm_eval_sessions",
+      "indexname": "arm_eval_sessions_type_task_idx",
+      "indexdef": "CREATE INDEX arm_eval_sessions_type_task_idx ON public.arm_eval_sessions USING btree (experiment_type, task_id)"
+    },
+    {
+      "tablename": "audit_arms",
+      "indexname": "audit_arms_pkey",
+      "indexdef": "CREATE UNIQUE INDEX audit_arms_pkey ON public.audit_arms USING btree (arm_set_version, arm_id)"
+    },
+    {
+      "tablename": "audit_findings",
+      "indexname": "audit_findings_arm_idx",
+      "indexdef": "CREATE INDEX audit_findings_arm_idx ON public.audit_findings USING btree (run_id, arm) WHERE (arm IS NOT NULL)"
+    },
     {
       "tablename": "audit_findings",
       "indexname": "audit_findings_created_at_idx",
@@ -6487,8 +8513,18 @@
     },
     {
       "tablename": "audit_findings",
+      "indexname": "audit_findings_stage_idx",
+      "indexdef": "CREATE INDEX audit_findings_stage_idx ON public.audit_findings USING btree (run_id, stage) WHERE (stage IS NOT NULL)"
+    },
+    {
+      "tablename": "audit_findings",
       "indexname": "audit_findings_user_action_idx",
       "indexdef": "CREATE INDEX audit_findings_user_action_idx ON public.audit_findings USING btree (user_action) WHERE (user_action IS NOT NULL)"
+    },
+    {
+      "tablename": "audit_findings",
+      "indexname": "idx_audit_findings_adjudicator_gt",
+      "indexdef": "CREATE INDEX idx_audit_findings_adjudicator_gt ON public.audit_findings USING btree (finding_fingerprint, decided_at DESC, id) WHERE (adjudication_outcome = ANY (ARRAY['accepted'::text, 'dismissed'::text]))"
     },
     {
       "tablename": "audit_findings",
@@ -6522,6 +8558,16 @@
     },
     {
       "tablename": "audit_pass_stats",
+      "indexname": "audit_pass_stats_arm_grain_uk",
+      "indexdef": "CREATE UNIQUE INDEX audit_pass_stats_arm_grain_uk ON public.audit_pass_stats USING btree (run_id, pass_name, COALESCE(round, '-1'::integer), COALESCE(source_model, ''::text), COALESCE(stage, ''::text), COALESCE(arm, ''::text))"
+    },
+    {
+      "tablename": "audit_pass_stats",
+      "indexname": "audit_pass_stats_arm_stage_type_idx",
+      "indexdef": "CREATE INDEX audit_pass_stats_arm_stage_type_idx ON public.audit_pass_stats USING btree (run_id, stage, arm)"
+    },
+    {
+      "tablename": "audit_pass_stats",
       "indexname": "audit_pass_stats_pkey",
       "indexdef": "CREATE UNIQUE INDEX audit_pass_stats_pkey ON public.audit_pass_stats USING btree (id)"
     },
@@ -6544,6 +8590,16 @@
       "tablename": "audit_repos",
       "indexname": "idx_audit_repos_repo_uuid",
       "indexdef": "CREATE UNIQUE INDEX idx_audit_repos_repo_uuid ON public.audit_repos USING btree (repo_uuid) WHERE (repo_uuid IS NOT NULL)"
+    },
+    {
+      "tablename": "audit_runs",
+      "indexname": "audit_runs_arm_eval_run_idx",
+      "indexdef": "CREATE INDEX audit_runs_arm_eval_run_idx ON public.audit_runs USING btree (arm_eval_run_id) WHERE (arm_eval_run_id IS NOT NULL)"
+    },
+    {
+      "tablename": "audit_runs",
+      "indexname": "audit_runs_assignment_idx",
+      "indexdef": "CREATE INDEX audit_runs_assignment_idx ON public.audit_runs USING btree (assignment_id) WHERE (assignment_id IS NOT NULL)"
     },
     {
       "tablename": "audit_runs",
@@ -6696,6 +8752,16 @@
       "indexdef": "CREATE INDEX idx_adjudication_events_finding ON public.finding_adjudication_events USING btree (finding_id)"
     },
     {
+      "tablename": "finding_equivalence",
+      "indexname": "finding_equivalence_canonical_idx",
+      "indexdef": "CREATE INDEX finding_equivalence_canonical_idx ON public.finding_equivalence USING btree (canonical_finding_id)"
+    },
+    {
+      "tablename": "finding_equivalence",
+      "indexname": "finding_equivalence_pkey",
+      "indexdef": "CREATE UNIQUE INDEX finding_equivalence_pkey ON public.finding_equivalence USING btree (duplicate_finding_id)"
+    },
+    {
       "tablename": "friction_log",
       "indexname": "friction_log_pkey",
       "indexdef": "CREATE UNIQUE INDEX friction_log_pkey ON public.friction_log USING btree (id)"
@@ -6736,6 +8802,111 @@
       "indexdef": "CREATE INDEX learning_decisions_type_created_idx ON public.learning_decisions USING btree (decision_type, created_at DESC)"
     },
     {
+      "tablename": "memory_friction",
+      "indexname": "idx_memory_friction_created",
+      "indexdef": "CREATE INDEX idx_memory_friction_created ON public.memory_friction USING btree (created_at DESC)"
+    },
+    {
+      "tablename": "memory_friction",
+      "indexname": "idx_memory_friction_open",
+      "indexdef": "CREATE INDEX idx_memory_friction_open ON public.memory_friction USING btree (repo_id, active, resolved)"
+    },
+    {
+      "tablename": "memory_friction",
+      "indexname": "idx_memory_friction_repo",
+      "indexdef": "CREATE INDEX idx_memory_friction_repo ON public.memory_friction USING btree (repo_id)"
+    },
+    {
+      "tablename": "memory_friction",
+      "indexname": "idx_memory_friction_sig_trgm",
+      "indexdef": "CREATE INDEX idx_memory_friction_sig_trgm ON public.memory_friction USING gin (signature_text gin_trgm_ops)"
+    },
+    {
+      "tablename": "memory_friction",
+      "indexname": "idx_memory_friction_trgm",
+      "indexdef": "CREATE INDEX idx_memory_friction_trgm ON public.memory_friction USING gin (trgm_text gin_trgm_ops)"
+    },
+    {
+      "tablename": "memory_friction",
+      "indexname": "memory_friction_pkey",
+      "indexdef": "CREATE UNIQUE INDEX memory_friction_pkey ON public.memory_friction USING btree (id)"
+    },
+    {
+      "tablename": "memory_friction",
+      "indexname": "memory_friction_repo_id_memory_name_key",
+      "indexdef": "CREATE UNIQUE INDEX memory_friction_repo_id_memory_name_key ON public.memory_friction USING btree (repo_id, memory_name)"
+    },
+    {
+      "tablename": "model_ab_spend_ledger",
+      "indexname": "model_ab_spend_ledger_active_idx",
+      "indexdef": "CREATE INDEX model_ab_spend_ledger_active_idx ON public.model_ab_spend_ledger USING btree (status, reserved_at) WHERE (status = 'reserved'::text)"
+    },
+    {
+      "tablename": "model_ab_spend_ledger",
+      "indexname": "model_ab_spend_ledger_pkey",
+      "indexdef": "CREATE UNIQUE INDEX model_ab_spend_ledger_pkey ON public.model_ab_spend_ledger USING btree (id)"
+    },
+    {
+      "tablename": "model_eval_judge_batches",
+      "indexname": "idx_model_eval_judge_batches_run_commit",
+      "indexdef": "CREATE UNIQUE INDEX idx_model_eval_judge_batches_run_commit ON public.model_eval_judge_batches USING btree (run_id, commit_sha) WHERE (commit_sha IS NOT NULL)"
+    },
+    {
+      "tablename": "model_eval_judge_batches",
+      "indexname": "idx_model_eval_judge_batches_run_created",
+      "indexdef": "CREATE INDEX idx_model_eval_judge_batches_run_created ON public.model_eval_judge_batches USING btree (run_id, created_at)"
+    },
+    {
+      "tablename": "model_eval_judge_batches",
+      "indexname": "model_eval_judge_batches_pkey",
+      "indexdef": "CREATE UNIQUE INDEX model_eval_judge_batches_pkey ON public.model_eval_judge_batches USING btree (batch_id)"
+    },
+    {
+      "tablename": "model_eval_runs",
+      "indexname": "idx_model_eval_runs_active_pending_shadow",
+      "indexdef": "CREATE UNIQUE INDEX idx_model_eval_runs_active_pending_shadow ON public.model_eval_runs USING btree (repo_id, role) WHERE (status = 'pending_shadow'::text)"
+    },
+    {
+      "tablename": "model_eval_runs",
+      "indexname": "idx_model_eval_runs_repo_role_created",
+      "indexdef": "CREATE INDEX idx_model_eval_runs_repo_role_created ON public.model_eval_runs USING btree (repo_id, role, created_at DESC, run_id DESC)"
+    },
+    {
+      "tablename": "model_eval_runs",
+      "indexname": "model_eval_runs_pkey",
+      "indexdef": "CREATE UNIQUE INDEX model_eval_runs_pkey ON public.model_eval_runs USING btree (run_id)"
+    },
+    {
+      "tablename": "model_eval_shadow_observations",
+      "indexname": "idx_model_eval_shadow_observations_run_created",
+      "indexdef": "CREATE INDEX idx_model_eval_shadow_observations_run_created ON public.model_eval_shadow_observations USING btree (model_eval_run_id, created_at)"
+    },
+    {
+      "tablename": "model_eval_shadow_observations",
+      "indexname": "idx_model_eval_shadow_observations_run_idempotency",
+      "indexdef": "CREATE UNIQUE INDEX idx_model_eval_shadow_observations_run_idempotency ON public.model_eval_shadow_observations USING btree (model_eval_run_id, idempotency_key)"
+    },
+    {
+      "tablename": "model_eval_shadow_observations",
+      "indexname": "model_eval_shadow_observations_pkey",
+      "indexdef": "CREATE UNIQUE INDEX model_eval_shadow_observations_pkey ON public.model_eval_shadow_observations USING btree (id)"
+    },
+    {
+      "tablename": "nav_audit_runs",
+      "indexname": "idx_nav_audit_runs_repo_created",
+      "indexdef": "CREATE INDEX idx_nav_audit_runs_repo_created ON public.nav_audit_runs USING btree (repo_id, created_at DESC)"
+    },
+    {
+      "tablename": "nav_audit_runs",
+      "indexname": "nav_audit_runs_pkey",
+      "indexdef": "CREATE UNIQUE INDEX nav_audit_runs_pkey ON public.nav_audit_runs USING btree (id)"
+    },
+    {
+      "tablename": "nav_audit_runs",
+      "indexname": "uq_nav_audit_runs_identity",
+      "indexdef": "CREATE UNIQUE INDEX uq_nav_audit_runs_identity ON public.nav_audit_runs USING btree (repo_id, head_sha, scope, content_hash)"
+    },
+    {
       "tablename": "persona_audit_correlations",
       "indexname": "idx_correlations_audit_finding",
       "indexdef": "CREATE INDEX idx_correlations_audit_finding ON public.persona_audit_correlations USING btree (audit_finding_id) WHERE (audit_finding_id IS NOT NULL)"
@@ -6764,6 +8935,26 @@
       "tablename": "persona_audit_correlations",
       "indexname": "persona_audit_correlations_pkey",
       "indexdef": "CREATE UNIQUE INDEX persona_audit_correlations_pkey ON public.persona_audit_correlations USING btree (id)"
+    },
+    {
+      "tablename": "persona_audit_correlations",
+      "indexname": "uq_correlations_missed",
+      "indexdef": "CREATE UNIQUE INDEX uq_correlations_missed ON public.persona_audit_correlations USING btree (persona_session_id, persona_finding_hash) WHERE (audit_finding_id IS NULL)"
+    },
+    {
+      "tablename": "persona_finding_outcomes",
+      "indexname": "idx_persona_finding_outcomes_repo",
+      "indexdef": "CREATE INDEX idx_persona_finding_outcomes_repo ON public.persona_finding_outcomes USING btree (repo_id, updated_at DESC)"
+    },
+    {
+      "tablename": "persona_finding_outcomes",
+      "indexname": "persona_finding_outcomes_pkey",
+      "indexdef": "CREATE UNIQUE INDEX persona_finding_outcomes_pkey ON public.persona_finding_outcomes USING btree (id)"
+    },
+    {
+      "tablename": "persona_finding_outcomes",
+      "indexname": "persona_finding_outcomes_repo_id_persona_finding_hash_key",
+      "indexdef": "CREATE UNIQUE INDEX persona_finding_outcomes_repo_id_persona_finding_hash_key ON public.persona_finding_outcomes USING btree (repo_id, persona_finding_hash)"
     },
     {
       "tablename": "persona_test_candidates",
@@ -6797,13 +8988,13 @@
     },
     {
       "tablename": "persona_test_sessions",
-      "indexname": "persona_test_sessions_repo_name_created_idx",
-      "indexdef": "CREATE INDEX persona_test_sessions_repo_name_created_idx ON public.persona_test_sessions USING btree (repo_name, created_at DESC) WHERE (repo_name IS NOT NULL)"
+      "indexname": "persona_test_sessions_pkey",
+      "indexdef": "CREATE UNIQUE INDEX persona_test_sessions_pkey ON public.persona_test_sessions USING btree (id)"
     },
     {
       "tablename": "persona_test_sessions",
-      "indexname": "persona_test_sessions_pkey",
-      "indexdef": "CREATE UNIQUE INDEX persona_test_sessions_pkey ON public.persona_test_sessions USING btree (id)"
+      "indexname": "persona_test_sessions_repo_name_created_idx",
+      "indexdef": "CREATE INDEX persona_test_sessions_repo_name_created_idx ON public.persona_test_sessions USING btree (repo_name, created_at DESC) WHERE (repo_name IS NOT NULL)"
     },
     {
       "tablename": "persona_test_sessions",
@@ -7154,9 +9345,33 @@
       "tablename": "symbol_layering_violations",
       "indexname": "symbol_layering_violations_refresh_id_rule_name_from_path_t_key",
       "indexdef": "CREATE UNIQUE INDEX symbol_layering_violations_refresh_id_rule_name_from_path_t_key ON public.symbol_layering_violations USING btree (refresh_id, rule_name, from_path, to_path)"
+    },
+    {
+      "tablename": "tiered_shadow_observations",
+      "indexname": "idx_tiered_shadow_observations_repo_created",
+      "indexdef": "CREATE INDEX idx_tiered_shadow_observations_repo_created ON public.tiered_shadow_observations USING btree (repo_id, created_at DESC)"
+    },
+    {
+      "tablename": "tiered_shadow_observations",
+      "indexname": "tiered_shadow_observations_pkey",
+      "indexdef": "CREATE UNIQUE INDEX tiered_shadow_observations_pkey ON public.tiered_shadow_observations USING btree (id)"
     }
   ],
   "triggers": [
+    {
+      "table_name": "memory_friction",
+      "trigger_name": "trg_memory_friction_touch",
+      "action_timing": "BEFORE",
+      "events": "UPDATE",
+      "action_statement": "EXECUTE FUNCTION touch_memory_friction_updated_at()"
+    },
+    {
+      "table_name": "persona_finding_outcomes",
+      "trigger_name": "trg_persona_finding_outcomes_touch",
+      "action_timing": "BEFORE",
+      "events": "UPDATE",
+      "action_statement": "EXECUTE FUNCTION touch_persona_finding_outcomes_updated_at()"
+    },
     {
       "table_name": "security_incidents",
       "trigger_name": "trg_security_incidents_touch",
@@ -7165,7 +9380,24 @@
       "action_statement": "EXECUTE FUNCTION touch_security_incidents_updated_at()"
     }
   ],
-  "sequences": [],
+  "sequences": [
+    {
+      "sequence_name": "arm_eval_crosschecks_id_seq",
+      "owned_by": null
+    },
+    {
+      "sequence_name": "arm_eval_human_rankings_id_seq",
+      "owned_by": null
+    },
+    {
+      "sequence_name": "arm_eval_judgments_id_seq",
+      "owned_by": null
+    },
+    {
+      "sequence_name": "model_ab_spend_ledger_id_seq",
+      "owned_by": null
+    }
+  ],
   "extensions": [
     {
       "extension_name": "pg_stat_statements",
@@ -7199,6 +9431,166 @@
   "grants": [
     {
       "grantee": "anon",
+      "object": "public.arm_eval_crosschecks",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.arm_eval_crosschecks",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.arm_eval_crosschecks",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.arm_eval_crosschecks",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.arm_eval_human_rankings",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.arm_eval_human_rankings",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.arm_eval_human_rankings",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.arm_eval_human_rankings",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.arm_eval_judgments",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.arm_eval_judgments",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.arm_eval_judgments",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.arm_eval_judgments",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.arm_eval_leaderboard",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.arm_eval_leaderboard",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.arm_eval_leaderboard",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.arm_eval_leaderboard",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.arm_eval_outputs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.arm_eval_outputs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.arm_eval_outputs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.arm_eval_outputs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.arm_eval_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.arm_eval_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.arm_eval_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.arm_eval_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.arm_eval_sessions",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.arm_eval_sessions",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.arm_eval_sessions",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.arm_eval_sessions",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.audit_arms",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.audit_arms",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.audit_arms",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.audit_arms",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
       "object": "public.audit_effectiveness",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -7459,6 +9851,26 @@
     },
     {
       "grantee": "anon",
+      "object": "public.finding_equivalence",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.finding_equivalence",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.finding_equivalence",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.finding_equivalence",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
       "object": "public.friction_log",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -7495,6 +9907,186 @@
     {
       "grantee": "service_role",
       "object": "public.learning_decisions",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.memory_friction",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.memory_friction",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.memory_friction",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.memory_friction",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.model_ab_arm_cost",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.model_ab_arm_cost",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.model_ab_arm_cost",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.model_ab_arm_cost",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.model_ab_effectiveness",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.model_ab_effectiveness",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.model_ab_effectiveness",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.model_ab_effectiveness",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.model_ab_finding_scores",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.model_ab_finding_scores",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.model_ab_finding_scores",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.model_ab_finding_scores",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.model_ab_spend_ledger",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.model_ab_spend_ledger",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.model_ab_spend_ledger",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.model_ab_spend_ledger",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.model_eval_judge_batches",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.model_eval_judge_batches",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.model_eval_judge_batches",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.model_eval_judge_batches",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.model_eval_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.model_eval_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.model_eval_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.model_eval_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.model_eval_shadow_observations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.model_eval_shadow_observations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.model_eval_shadow_observations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.model_eval_shadow_observations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.nav_audit_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.nav_audit_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.nav_audit_runs",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.nav_audit_runs",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -7615,6 +10207,26 @@
     {
       "grantee": "service_role",
       "object": "public.persona_density_per_repo",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.persona_finding_outcomes",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.persona_finding_outcomes",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.persona_finding_outcomes",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.persona_finding_outcomes",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -8115,6 +10727,26 @@
     {
       "grantee": "service_role",
       "object": "public.symbol_layering_violations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "anon",
+      "object": "public.tiered_shadow_observations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "authenticated",
+      "object": "public.tiered_shadow_observations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
+      "object": "public.tiered_shadow_observations",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "service_role",
+      "object": "public.tiered_shadow_observations",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -8139,6 +10771,61 @@
     }
   ],
   "owners": [
+    {
+      "object_name": "arm_eval_crosschecks_id_seq",
+      "object_kind": "S",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_human_rankings_id_seq",
+      "object_kind": "S",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_judgments_id_seq",
+      "object_kind": "S",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_ab_spend_ledger_id_seq",
+      "object_kind": "S",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_crosschecks",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_human_rankings",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_judgments",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_outputs",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_runs",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_sessions",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "audit_arms",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
     {
       "object_name": "audit_findings",
       "object_kind": "r",
@@ -8195,6 +10882,11 @@
       "owner": "postgres"
     },
     {
+      "object_name": "finding_equivalence",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
       "object_name": "friction_log",
       "object_kind": "r",
       "owner": "postgres"
@@ -8205,7 +10897,42 @@
       "owner": "postgres"
     },
     {
+      "object_name": "memory_friction",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_ab_spend_ledger",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_eval_judge_batches",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_eval_runs",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_eval_shadow_observations",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "nav_audit_runs",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
       "object_name": "persona_audit_correlations",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "persona_finding_outcomes",
       "object_kind": "r",
       "owner": "postgres"
     },
@@ -8320,12 +11047,37 @@
       "owner": "postgres"
     },
     {
+      "object_name": "tiered_shadow_observations",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "arm_eval_leaderboard",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
       "object_name": "audit_effectiveness",
       "object_kind": "v",
       "owner": "postgres"
     },
     {
       "object_name": "debt_summary",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_ab_arm_cost",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_ab_effectiveness",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "model_ab_finding_scores",
       "object_kind": "v",
       "owner": "postgres"
     },
