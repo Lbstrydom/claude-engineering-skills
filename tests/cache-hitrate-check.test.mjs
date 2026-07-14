@@ -21,7 +21,7 @@ describe('cache-hitrate-check — segmentAndDecide', () => {
     const runs = [run(0.9, true), run(0.9, true)];
     const d = segmentAndDecide(runs, { minRuns: 5, flipThreshold: 0.3 });
     assert.equal(d.recommendation, 'INSUFFICIENT_SEED_ON_DATA');
-    assert.match(d.reason, /AUDIT_CACHE_SEED=1/);
+    assert.match(d.reason, /default-ON/);
   });
 
   it('seed-ON >= minRuns but median <= threshold → HOLD', () => {

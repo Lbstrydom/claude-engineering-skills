@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
- * @fileoverview Cache-hit-rate empirical check — decides whether the
- * `AUDIT_CACHE_SEED=1` default should flip from OFF to ON.
+ * @fileoverview Cache-hit-rate empirical check — validates the
+ * `AUDIT_CACHE_SEED` default-ON flip (2026-07-14). While the default was
+ * still OFF this script decided WHETHER to flip; post-flip it watches the
+ * seed-ON cohort and recommends reverting to opt-out if seeding isn't
+ * paying off.
  *
  * Reads `.audit/session-audit-*.json` files (written by every audit run),
  * extracts the `_cacheMetrics.hitRate` from each, filters to runs since
@@ -150,15 +153,17 @@ function segmentAndDecide(runs, { minRuns = MIN_RUNS, flipThreshold = FLIP_THRES
   if (seedOn.length < minRuns) {
     recommendation = 'INSUFFICIENT_SEED_ON_DATA';
     reason = `Need >= ${minRuns} seed-ON R2+ runs to decide; have ${seedOn.length}. ` +
-      `Run a canary: set AUDIT_CACHE_SEED=1 and run audits to accumulate seed-ON data. ${baseline}`;
+      `Seed is default-ON since 2026-07-14, so data accumulates automatically as audits run ` +
+      `(a run can opt out with AUDIT_CACHE_SEED=0). ${baseline}`;
   } else if (seedOnMedian > flipThreshold) {
     recommendation = 'FLIP_TO_ON';
     reason = `Seed-ON median hit-rate ${(seedOnMedian * 100).toFixed(1)}% > ${(flipThreshold * 100).toFixed(0)}% ` +
-      `across ${seedOn.length} seed-ON runs. Set AUDIT_CACHE_SEED=1 as default. ${baseline}`;
+      `across ${seedOn.length} seed-ON runs. Default is already ON (2026-07-14 flip) — keep it. ${baseline}`;
   } else {
     recommendation = 'HOLD';
     reason = `Seed-ON median hit-rate ${(seedOnMedian * 100).toFixed(1)}% does not exceed ` +
-      `${(flipThreshold * 100).toFixed(0)}% across ${seedOn.length} seed-ON runs — seeding isn't paying off. ${baseline}`;
+      `${(flipThreshold * 100).toFixed(0)}% across ${seedOn.length} seed-ON runs — seeding isn't paying off. ` +
+      `Consider reverting the default to OFF (decideSeed in legacy-production-audit.mjs). ${baseline}`;
   }
   return {
     recommendation, reason,
