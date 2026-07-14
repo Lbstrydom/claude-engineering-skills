@@ -24,40 +24,58 @@ Typical flows:
 
 ## Writer invocation
 
-Call from the orchestrator for each finding:
+> **Load-bearing identity invariant (2026-07-14 incident — do NOT hand-construct
+> finding stand-ins).** Every downstream matcher keys on the finding's OWN
+> identity fields: R2+ suppression narrows candidates by `entry.pass ===
+> finding._pass` (the AUDIT PASS name, e.g. `Structure`/`Wiring` — never
+> `'code'`/`'plan'`) plus `affectedFiles` overlap, then Jaccard-scores
+> `category + section + detail`; `finalize-outcomes`/`write-code-outcomes`
+> join by `entry.topicId === generateTopicId(finding)` (which folds in
+> `_hash`) **or** `entry.latestFindingId === finding.id`. An entry written
+> with curated/invented values for any of these fields is INVISIBLE to all
+> of them — suppression silently never engages and outcome labeling reports
+> `0/N labelled · needs_triage`. Derive every entry FROM the result JSON's
+> actual finding object.
+
+Iterate the round's `--out` result findings and write entries from them:
 
 ```bash
-node -e "
+node --input-type=module -e "
 import { writeLedgerEntry, generateTopicId, populateFindingMetadata } from './scripts/shared.mjs';
-
-// Example: dismissed finding
-const finding = {
-  section: 'scripts/shared.mjs',
-  category: 'SOLID-SRP Violation',
-  principle: 'SRP',
-  _pass: 'backend',
+import fs from 'node:fs';
+const r = JSON.parse(fs.readFileSync('/tmp/\$SID-r1-result.json','utf8'));
+// Your triage decisions, keyed by the round's finding ids:
+const triage = {
+  H1: { outcome: 'accepted',  state: 'planned', ruling: 'sustain',  why: 'valid — fix scheduled' },
+  M3: { outcome: 'dismissed', state: 'pending', ruling: 'overrule', why: '300-line file, 2 consumers, acceptable' },
 };
-populateFindingMetadata(finding, 'backend');
-
-writeLedgerEntry('/tmp/\$SID-ledger.json', {
-  topicId: generateTopicId(finding),
-  semanticHash: 'abcd1234',
-  adjudicationOutcome: 'dismissed',
-  remediationState: 'pending',
-  severity: 'MEDIUM',
-  originalSeverity: 'MEDIUM',
-  category: finding.category,
-  section: finding.section,
-  detailSnapshot: 'shared.mjs mixes concerns...',
-  affectedFiles: ['scripts/shared.mjs'],
-  affectedPrinciples: ['SRP'],
-  ruling: 'overrule',
-  rulingRationale: '300-line file, 2 consumers, acceptable',
-  resolvedRound: 1,
-  pass: 'backend'
-});
-" --input-type=module
+for (const f of r.findings) {
+  const t = triage[f.id]; if (!t) continue;
+  populateFindingMetadata(f, f._pass);          // idempotent; ensures _hash/_primaryFile
+  writeLedgerEntry('/tmp/\$SID-ledger.json', {
+    topicId: generateTopicId(f),                // from the REAL finding — never a stand-in
+    latestFindingId: f.id,                      // second join key for outcome labeling
+    semanticHash: f._hash,
+    adjudicationOutcome: t.outcome,
+    remediationState: t.state,
+    severity: f.severity, originalSeverity: f.severity,
+    category: f.category,                       // verbatim from the finding
+    section: f.section,                         // verbatim
+    detailSnapshot: (f.detail || '').slice(0, 400),  // the finding's text, not your summary
+    affectedFiles: f.affectedFiles,             // verbatim — drives suppression file-scope
+    affectedPrinciples: f.principle ? [f.principle] : [],
+    ruling: t.ruling,
+    rulingRationale: t.why,                     // rationale is YOURS; identity is the finding's
+    resolvedRound: r.round || 1,
+    pass: f._pass,                              // the audit pass name, verbatim
+  });
+}
+" 
 ```
+
+The split to remember: **identity fields come from the finding verbatim;
+only `adjudicationOutcome`/`remediationState`/`ruling`/`rulingRationale`
+are yours.**
 
 ## Ledger ordering rule
 
