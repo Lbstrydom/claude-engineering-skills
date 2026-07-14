@@ -141,6 +141,14 @@ jobs:
             console.log('manifest matches live schema');
           " || exit 1
 
+      - name: Upload live schema artefact (diagnostic — always, so drift is downloadable without a live-repro session)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-schema
+          path: /tmp/live-schema.json
+          retention-days: 14
+
       - name: Env-gated DB tests (G1 date parser + G3 withTx + setup integration)
         run: |
           node --test \
