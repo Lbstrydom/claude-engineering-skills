@@ -1,5 +1,16 @@
 # Project Status Log
 
+## 2026-07-14 — Fix: `get-recent-findings --repo <name>` was silently ignored (cwd identity always won)
+
+### Changes
+- **Context**: asked whether ai-organiser's in-progress audits were being picked up by the shared learning store. Confirmed yes (findings landing within minutes, e.g. a live OneDrive-share-link plan-audit) — but only by querying from *inside* ai-organiser's own directory. Running `get-recent-findings --repo ai-organiser` from this repo's own root silently returned this repo's own findings instead.
+- **Root cause**: `cmdGetRecentFindings` (`scripts/cross-skill.mjs`) guarded its cwd-based repo-identity auto-resolution on `!p.repoId`, but the `--repo <name>` flag only ever populates `p.repoName` — a different field. Since that guard was true regardless of whether the user explicitly asked for a different repo, cwd resolution always ran and its result always won, even though the underlying `getRecentFindingsByRepo` store function was already correct (prefers `repoId`, falls back to `repoName`). Scanned the file for the same pattern elsewhere — the two other cwd-fallback sites check the *same* field their explicit input sets, so this was an isolated bug, not systemic.
+- **Fix**: guard changed to `!p.repoId && !p.repoName` — an explicit `--repo` now skips cwd auto-resolution entirely and always wins, matching the comment's original stated intent.
+- **Verified live** (not just unit-level): running from this repo with `--repo "Lbstrydom/ai-organiser"` now correctly returns ai-organiser's findings instead of this repo's own.
+- **Secondary discovery, not fixed** (flagged, out of scope for this fix): `--repo` requires the exact `owner/repo` form — a bare `ai-organiser` still returns 0 rows, since `getRepoIdByName` does an exact match against the stored `audit_repos.name`.
+- **No new test added**: `cross-skill.mjs` exports nothing and has no per-command unit-test convention (pure CLI dispatcher); a live-verify against the real store is the more meaningful proof for a repo-identity routing bug than a bespoke mock harness would be.
+- **Full suite**: 5244 passed, 0 failed (two unrelated flaky timing tests — `tests/install/lifecycle.test.mjs` and `hook-arch-memory-check.test.mjs`'s latency test — both clean in isolation and on repeat full runs).
+
 ## 2026-07-14 — Feat: git-native commit provenance trailers + executable gate-honesty suite (`/cycle --autonomous`, both clusters converged, consolidated Gemini APPROVE)
 
 ### Changes

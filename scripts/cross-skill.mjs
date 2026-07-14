@@ -1489,9 +1489,14 @@ async function cmdGetRecentFindings() {
 
   // Identity-first: resolve the CANONICAL repo_id (stable repo_uuid →
   // audit_repos.id) from the runner's cwd, so enrichment matches the audit
-  // findings regardless of the bare-vs-owner/repo display name. --repo <name>
-  // is a fallback for cross-repo queries from a non-repo cwd.
-  if (!p.repoId) {
+  // findings regardless of the bare-vs-owner/repo display name. An explicit
+  // --repo <name> is a deliberate cross-repo override and always wins — skip
+  // cwd auto-resolution entirely so getRecentFindingsByRepo's own
+  // repoId-then-repoName fallback resolves the REQUESTED repo, not whichever
+  // repo the cwd happens to be (the bug: checking `!p.repoId` here let cwd
+  // resolution silently clobber an explicit `--repo` every time, since the
+  // flag only ever populates `p.repoName`).
+  if (!p.repoId && !p.repoName) {
     const repoUuid = resolveRepoIdentity(process.cwd())?.repoUuid;
     const row = repoUuid ? await getRepoIdByUuid(repoUuid).catch(() => null) : null;
     if (row?.id) p.repoId = row.id;
