@@ -414,7 +414,7 @@ git add dashboard/index.html   # source repo only, after Step 0.5d, ONLY if that
 If untracked files look unintentional (temp, OS files), skip silently.
 Include all source, docs, tests, and config.
 
-### 6.2 Commit message
+### 6.2 Commit message + provenance values
 
 Follow project convention:
 
@@ -425,8 +425,21 @@ Follow project convention:
 ```
 
 Types: `feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`.
-
 Keep first line under 72 chars. Body explains WHY, not WHAT.
+
+**Write the message to a file** (never `-m`, never shell interpolation):
+use the Write tool → `.claude/tmp/ship-commit-msg-<epoch>.txt`. Do NOT
+include any `AI-*` lines — the helper is their only writer and rejects
+them (`reserved-trailer`).
+
+Decide the provenance values (full convention: `docs/commit-provenance.md`):
+- `--models` — comma list of models that participated this session
+  (e.g. `claude` alone; `claude,gemini,gpt` when the audit loop ran).
+- `--gate` — `passed` (audit ran this cycle, gates green) · `waived`
+  (shipped past a gate via `--ignore-p0`/`--no-tests`/etc.) · `not-run`
+  (no audit this cycle — docs-only ships). The helper enforces this
+  against `.audit/last-audit-run.json` freshness; an unevidenced
+  `passed` is rejected.
 
 ### 6.3 Commit and push
 
@@ -434,9 +447,22 @@ Keep first line under 72 chars. Body explains WHY, not WHAT.
 confirmation prompts:
 
 ```bash
-git commit -m "<message>"
+node scripts/ship-commit.mjs \
+  --message-file .claude/tmp/ship-commit-msg-<epoch>.txt \
+  --skill ship --models <csv> --gate <value>
 git push origin <current-branch>
 ```
+
+(Consumer repos: the synced copy of this file already carries the
+rewritten `scripts/.claude-skills/ship-commit.mjs` path.)
+
+Exit contract: `0` = committed (trailers appended). `2` = input rejected —
+fix exactly what the `AGENT FIX:` stderr lines say and re-invoke (max 2
+retries, then report). `1` = operational failure — report it; do not
+loop. **Fallback (stale consumer sync only)**: if the helper script does
+not exist on disk, fall back to `git commit -F <message-file>` and print
+one line: `provenance trailers skipped (helper unavailable — re-run npm
+run sync)`.
 
 If push fails (behind remote, etc.), inform the user and suggest the
 fix. Do NOT force push.

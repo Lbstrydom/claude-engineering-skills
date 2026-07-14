@@ -1159,6 +1159,16 @@ on parse errors by default (closes the `.filter(Boolean)` silent-data-
 loss invariant); pass `opts.maxParseErrors: Infinity` for legacy
 tolerant behaviour.
 
+## Commit provenance trailers (`AI-*`)
+
+`/ship` commits carry `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID`
+git trailers written ONLY by `scripts/ship-commit.mjs` (`/ship` Step 6.3) —
+never hand-typed; the `AI-*` namespace is reserved. `AI-Gate` is
+evidence-bound to `.audit/last-audit-run.json` freshness (an unevidenced
+`passed` cannot exist). Applies from tag `provenance-v1` forward; absence
+after that = "not mechanically produced". Schema, query cookbook, failure
+contract: [`docs/commit-provenance.md`](docs/commit-provenance.md).
+
 ## Code Style
 
 - ESM modules (`import`/`export`, not `require`)
