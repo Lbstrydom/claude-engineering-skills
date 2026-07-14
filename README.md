@@ -215,7 +215,7 @@ Per-repo symbol-index in Supabase (with embeddings) catches duplicate-function d
 **Setup per consumer repo**:
 
 ```bash
-# Add SUPABASE_AUDIT_SERVICE_ROLE_KEY to .env, then:
+# Requires AUDIT_DB_URL (the cloud learning store DSN) in .env, then:
 npm run arch:refresh:full
 git add .audit-loop/repo-id docs/architecture-map.md package.json
 git commit -m "feat(arch-memory): initial index"
@@ -253,8 +253,7 @@ Windows users — see [CLAUDE.md](CLAUDE.md#claude-code-only-notes) for the `npx
 | `GEMINI_API_KEY` | No | Gemini final review + Flash context briefs |
 | `ANTHROPIC_API_KEY` | No | Claude Opus fallback + Haiku purpose summaries |
 | `AUDIT_DB_URL` | No | Postgres DSN for the cloud learning store (Supabase pooler or self-hosted). Unset → local-only mode |
-| `AUDIT_DB_SSL_MODE` | No | `require` (default) / `no-verify` (Supabase poolers) / `disable` |
-| `SUPABASE_AUDIT_SERVICE_ROLE_KEY` | For arch-memory | Required for `npm run arch:refresh*` (writes to symbol-index tables) |
+| `AUDIT_DB_SSL_MODE` | No | `require` (default) / `no-verify` (Supabase poolers) / `disable` (localhost non-TLS) |
 | `META_ASSESS_INTERVAL` | No | Run meta-assessment every N audits (default 4) |
 | `ARCH_RENDER_MAX_SYMBOLS` | No | Cap on symbols pulled into the rendered map (default 50000) |
 | `ARCH_DRIFT_SCORE_THRESHOLD` | No | Drift score above this is RED (default 20) |

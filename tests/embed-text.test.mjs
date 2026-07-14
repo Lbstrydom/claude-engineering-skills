@@ -89,3 +89,30 @@ describe('validateVector internal', () => {
     assert.throws(() => _internals.validateVector([], 3, 'm'), /empty embedding/);
   });
 });
+
+// 2026-07-14 installer-audit P4: a cloud-enabled install with NO embedding
+// provider (no GEMINI_API_KEY, Azure inactive) used to exit non-zero from
+// get-neighbourhood. The CLIs now pre-check provider availability and degrade
+// to {ok:true, records:[], degraded:'no-embed-provider'} — same contract as
+// their cloud-disabled short-circuit. Subprocess probe (env-dependent path).
+describe('get-neighbourhood degrades gracefully when no embedding provider is configured', () => {
+  it('cloud enabled + no provider → exit 0, empty records, no-embed-provider hint', async () => {
+    const { execFileSync } = await import('node:child_process');
+    const out = execFileSync(process.execPath, [
+      'scripts/cross-skill.mjs', 'get-neighbourhood', '--json',
+      JSON.stringify({ targetPaths: ['scripts/cross-skill.mjs'], intentDescription: 'probe', k: 3 }),
+    ], {
+      encoding: 'utf8', timeout: 30000,
+      env: {
+        PATH: process.env.PATH, SYSTEMROOT: process.env.SYSTEMROOT,
+        AUDIT_LOOP_DISABLE_SHARED: '1', DOTENV_CONFIG_PATH: 'nonexistent-probe.env',
+        AUDIT_DB_URL: 'postgresql://probe:probe@localhost:5999/probe',
+      },
+    });
+    const result = JSON.parse(out.trim().split('\n').pop());
+    assert.equal(result.ok, true);
+    assert.equal(result.degraded, 'no-embed-provider');
+    assert.deepEqual(result.records, []);
+    assert.match(result.hint, /GEMINI_API_KEY/);
+  });
+});

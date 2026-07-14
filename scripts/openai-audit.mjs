@@ -664,9 +664,15 @@ async function main() {
     process.exit(1);
   }
 
-  if (!process.env.OPENAI_API_KEY) {
+  // Azure work profile authenticates via AZURE_OPENAI_API_KEY through
+  // createOpenAIClient({purpose:'gpt'}) below — an Azure-only corporate
+  // install has no OPENAI_API_KEY at all, so this gate must not fire there
+  // (2026-07-14 fresh-installer audit: this unconditional check blocked the
+  // primary audit entry point for anyone following work-profile.env.example).
+  if (!azureConfig.active && !process.env.OPENAI_API_KEY) {
     console.error('Error: OPENAI_API_KEY environment variable required');
     console.error('Set it in .env or export OPENAI_API_KEY=sk-...');
+    console.error('(Azure users: set AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY instead — see docs/azure-work-profile.md)');
     process.exit(1);
   }
 

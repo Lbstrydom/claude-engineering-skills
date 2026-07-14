@@ -157,7 +157,21 @@ class Report {
 // ── Feature: Audit-Loop ───────────────────────────────────────────────────────
 
 function checkAuditApiKeys(env, report) {
-  if (env.OPENAI_API_KEY) {
+  // Azure work profile (docs/azure-work-profile.md): AZURE_OPENAI_ENDPOINT
+  // active means the GPT auditor authenticates via AZURE_OPENAI_API_KEY —
+  // OPENAI_API_KEY is not used at all, so failing on its absence here told
+  // a correctly-configured corporate install its setup was broken
+  // (2026-07-14 fresh-installer audit).
+  const azureActive = !!(env.AZURE_OPENAI_ENDPOINT || '').trim();
+  if (azureActive) {
+    if (env.AZURE_OPENAI_API_KEY) {
+      report.pass('Azure work profile', `GPT via ${env.AZURE_OPENAI_ENDPOINT}`);
+    } else {
+      report.fail('AZURE_OPENAI_API_KEY missing',
+        'AZURE_OPENAI_ENDPOINT is set but the key is not — the Azure profile is half-configured',
+        'Add AZURE_OPENAI_API_KEY=... to .env (or unset AZURE_OPENAI_ENDPOINT for the public profile)');
+    }
+  } else if (env.OPENAI_API_KEY) {
     report.pass('OPENAI_API_KEY', 'GPT-5.4 audit');
   } else {
     report.fail('OPENAI_API_KEY missing', 'required for all audits',
@@ -166,6 +180,8 @@ function checkAuditApiKeys(env, report) {
 
   if (env.GEMINI_API_KEY) {
     report.pass('GEMINI_API_KEY', 'Step 7 final review');
+  } else if (azureActive && (env.AZURE_AI_ENDPOINT || '').trim()) {
+    report.pass('Step 7 reviewer', 'Foundry Claude (Azure profile) — Gemini not needed');
   } else if (env.ANTHROPIC_API_KEY) {
     report.warn('GEMINI_API_KEY not set', 'ANTHROPIC_API_KEY present — Claude Opus used as Step 7 fallback');
   } else {

@@ -1,11 +1,24 @@
-import OpenAI from 'openai';
+import { createOpenAIClient } from '../openai-client.mjs';
+import { azureConfig } from '../config.mjs';
 import { BRAINSTORM_SYSTEM_PROMPT } from './prompt.mjs';
 import { estimateCostUsd } from './pricing.mjs';
 
+// Routed through the shared Azure-aware seam, not a raw `new OpenAI()` —
+// the 2026-07-14 fresh-installer audit found this adapter was the one
+// remaining OpenAI call site bypassing the work profile, so /brainstorm's
+// OpenAI voice silently reported `misconfigured` on Azure-only installs
+// while the README promised the whole bundle runs on Azure.
 let _client = null;
-function client() {
-  if (!_client) _client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+async function client() {
+  if (!_client) _client = await createOpenAIClient({ purpose: 'gpt' });
   return _client;
+}
+
+// Wire-level model id: Azure serves deployments, not public model ids —
+// same substitution rule as lib/audit/llm-helpers.mjs `wireModel()` (the
+// resolved sentinel stays for logging/pricing only).
+function wireModel(model) {
+  return azureConfig.active ? azureConfig.gptDeployment : model;
 }
 
 /**
@@ -30,7 +43,7 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const payload = {
-    model,
+    model: wireModel(model),
     messages: [
       { role: 'system', content: BRAINSTORM_SYSTEM_PROMPT },
       { role: 'user', content: topic },
@@ -40,16 +53,17 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
   };
 
   try {
+    const oai = await client();
     let response;
     try {
-      response = await client().chat.completions.create(payload, { signal: controller.signal });
+      response = await oai.chat.completions.create(payload, { signal: controller.signal });
     } catch (err) {
       // Non-reasoning models reject reasoning_effort with a 400 — retry once
       // without it rather than failing the whole leg on an optional hint.
       const msg = String(err?.message || '');
       if (payload.reasoning_effort && (err?.status === 400) && /reasoning[_.]?effort|unsupported|unrecognized/i.test(msg)) {
         const { reasoning_effort: _dropped, ...bare } = payload;
-        response = await client().chat.completions.create(bare, { signal: controller.signal });
+        response = await oai.chat.completions.create(bare, { signal: controller.signal });
       } else {
         throw err;
       }

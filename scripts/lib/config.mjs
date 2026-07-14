@@ -391,7 +391,6 @@ export const symbolIndexConfig = Object.freeze({
   driftSimName:          Number.parseFloat(process.env.ARCH_DRIFT_SIM_NAME || '0.90'),
   driftNameLev:          Number.parseFloat(process.env.ARCH_DRIFT_NAME_LEVENSHTEIN || '0.50'),
   auditFullTopN:         safeInt(process.env.ARCH_AUDIT_FULL_TOPN, 200),
-  serviceRoleKey:        process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY || null,
   intentEmbedCacheTtlMs: safeInt(process.env.ARCH_INTENT_EMBED_CACHE_TTL_MS, 24 * 60 * 60 * 1000),
   refreshIncrementalDefault: process.env.ARCH_REFRESH_INCREMENTAL_DEFAULT !== 'false',
   // Duplication audit wave (docs/completed/audit-code-duplication-wave.md §2) —

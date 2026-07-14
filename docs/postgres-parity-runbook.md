@@ -12,6 +12,8 @@ a connection string.
 
 ## Connecting
 
+**Supabase-hosted:**
+
 ```
 AUDIT_DB_URL=postgresql://postgres.<ref>:<password>@aws-1-<region>.pooler.supabase.com:5432/postgres
 AUDIT_DB_SSL_MODE=no-verify       # Supabase poolers use an internal CA
@@ -22,6 +24,23 @@ AUDIT_DB_SSL_MODE=no-verify       # Supabase poolers use an internal CA
 - Plan §2 R9 / §8 R9: do NOT use the Transaction pooler (port 6543) — it doesn't
   preserve server-side prepared statements and the `options=-c search_path=public`
   startup pin the `db/` seam relies on.
+
+**Plain / self-hosted Postgres** (localhost, Docker, RDS, Neon, Railway, …):
+
+```
+AUDIT_DB_URL=postgresql://postgres:<password>@localhost:5432/audit_loop
+AUDIT_DB_SSL_MODE=disable         # localhost without TLS; `require` for TLS hosts
+```
+
+- Any Postgres 13+ works — Supabase-hosted vs self-hosted is just a connection
+  string (the compat bootstrap manufactures the `auth` schema stub, the three
+  Supabase roles, and the extensions the migrations reference; see below).
+- Prerequisites: the **pgvector** package installed on the server (`vector` is
+  the one extension that does NOT ship with stock Postgres — `pgcrypto` and
+  `pg_trgm` come from `postgresql-contrib`), and a setup role with `CREATEROLE`
+  + `CREATE EXTENSION` (the preflight aborts with a precise install hint when
+  either is missing).
+- Then bootstrap once: `node scripts/setup-postgres.mjs --migrate`.
 
 ## Privilege model (plan §2 / R2 H4 + R3 H3)
 

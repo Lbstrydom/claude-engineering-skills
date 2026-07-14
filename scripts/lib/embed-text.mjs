@@ -54,6 +54,20 @@ export function providerTag(opts = {}) {
 }
 
 /**
+ * Is ANY embedding provider configured? Distinguishes provider-ABSENT (a
+ * deterministic config state — callers should degrade gracefully, the same
+ * way they already do for cloud-disabled) from provider-ERROR (a real call
+ * failure — callers should surface it loudly). The neighbourhood-consultation
+ * CLIs use this so a cloud-enabled-but-no-Gemini fresh install gets an
+ * empty-records hint instead of a non-zero exit (2026-07-14 installer audit).
+ * @returns {Promise<boolean>}
+ */
+export async function isEmbedProviderAvailable() {
+  if (azureConfig.active) return true;
+  return !!(await getGeminiClient());
+}
+
+/**
  * Embed one string into a length-`dim` vector via the active provider.
  *
  * @param {string} text

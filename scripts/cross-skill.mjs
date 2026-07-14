@@ -1603,6 +1603,17 @@ async function cmdGetIncidentNeighbourhood() {
       hint: 'cloud disabled — security memory unavailable',
     });
   }
+  // Same provider-absent degrade as cmdGetNeighbourhood (see comment there).
+  {
+    const { isEmbedProviderAvailable } = await import('./lib/embed-text.mjs');
+    if (!await isEmbedProviderAvailable()) {
+      return emit({
+        ok: true, cloud: true, records: [], totalCandidatesConsidered: 0,
+        freshnessWarning: null, degraded: 'no-embed-provider',
+        hint: 'no embedding provider — set GEMINI_API_KEY (or activate the Azure profile) to enable incident consultation',
+      });
+    }
+  }
   // Resolve repoUuid: explicit takes precedence; else derive from cwd
   let repoUuid = p.repoUuid;
   if (!repoUuid) repoUuid = resolveRepoIdentity(process.cwd()).repoUuid;
@@ -1779,6 +1790,21 @@ async function cmdGetNeighbourhood() {
       ok: true, cloud: false, refreshId: null, records: [], totalCandidatesConsidered: 0,
       truncated: false, hint: 'cloud disabled — run `npm run arch:refresh` to enable',
     });
+  }
+  // Provider-ABSENT (deterministic config state) degrades exactly like
+  // cloud-disabled above — the consultation contract is "log a hint,
+  // proceed greenfield", and a fresh install with a DSN but no embedding
+  // provider must not read as a fatal error. Provider-ERRORS (a real call
+  // failing) still surface via emitError below (2026-07-14 installer audit).
+  {
+    const { isEmbedProviderAvailable } = await import('./lib/embed-text.mjs');
+    if (!await isEmbedProviderAvailable()) {
+      return emit({
+        ok: true, cloud: true, refreshId: null, records: [], totalCandidatesConsidered: 0,
+        truncated: false, degraded: 'no-embed-provider',
+        hint: 'no embedding provider — set GEMINI_API_KEY (or activate the Azure profile) to enable neighbourhood consultation',
+      });
+    }
   }
   // Resolve repoUuid: explicit takes precedence; else derive from cwd
   let repoUuid = p.repoUuid;
