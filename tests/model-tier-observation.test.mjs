@@ -58,7 +58,7 @@ describe('model-resolver — logical-tier abstraction (Phase 1)', () => {
 
   it('describeModel returns the partition key for known ids, null otherwise', () => {
     assert.deepEqual(describeModel('latest-sonnet'),
-      { provider: 'anthropic', family: 'claude', tier: 'standard', concreteModel: 'claude-sonnet-4-6' });
+      { provider: 'anthropic', family: 'claude', tier: 'standard', concreteModel: 'claude-sonnet-5' });
     const opus = describeModel('claude-opus-4-7');
     assert.equal(opus.provider, 'anthropic'); assert.equal(opus.tier, 'frontier');
     assert.equal(describeModel('qwen2.5-coder-7b'), null);

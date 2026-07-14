@@ -43,15 +43,26 @@ import 'dotenv/config';
 export const STATIC_POOL = Object.freeze({
   openai: Object.freeze([
     // Newest first by family — resolver picks the head when sentinels
-    // resolve. 5.5 released 2026-04-23 (verified via live catalog
-    // 2026-05-23); 5.4-mini remains the newest mini tier (no 5.5-mini yet).
+    // resolve. GPT-5.6 (2026-07-09) renamed the three-tier family to
+    // sol/terra/luna (see parseOpenAIModel above) — terra is the plain/
+    // balanced SKU (isPremium=false), so compareVersions' premium tiebreak
+    // correctly prefers it over sol for `latest-gpt`; luna is the isLite
+    // SKU, so it correctly wins `latest-gpt-mini` over the older *-mini ids.
+    'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.6-luna',
     'gpt-5.5', 'gpt-5.5-pro',
     'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-pro',
     'gpt-4.1-mini', 'gpt-4o-mini',
   ]),
   anthropic: Object.freeze([
-    'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-1',
-    'claude-sonnet-4-6', 'claude-sonnet-4-5',
+    // Claude 5 family (2026-07-14): Anthropic's /v1/models catalog fetch is
+    // currently failing (401) in this environment, so refreshModelCatalog()
+    // silently falls back to this static pool for EVERY Anthropic sentinel
+    // resolution — `claude-sonnet-5` was missing here entirely, so
+    // `latest-sonnet` was resolving to the stale `claude-sonnet-4-6` (major
+    // 4 < 5) across every call site, including the tiered-recall pipeline's
+    // discovery generator (tiered-pipeline.mjs).
+    'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-1',
+    'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5',
     'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
   ]),
   google: Object.freeze([

@@ -254,7 +254,17 @@ export async function runTieredAuditPipeline(ctx) {
     ? async () => {
         const resp = await providers.anthropicClient.messages.create({
           model: resolveModel('latest-sonnet'),
-          max_tokens: 4000,
+          // 2026-07-14: was 4000 — with maxItems:15 and per-finding text caps
+          // (detail<=600, risk<=500, recommendation<=600, plus category/
+          // section/principle/classification), a full 15-item response needs
+          // ~9000+ output tokens. On real (large) diffs the model filled the
+          // budget mid-tool-call and got cut off before the JSON closed, so
+          // `toolUse` never existed — every Close-out shadow-validation run
+          // fell back to legacy with this exact error, even after the
+          // separate CLAUDE_BACKEND=cli/tool_choice fix landed the same day.
+          // 16000 covers the worst case (15 findings at their length caps)
+          // with headroom.
+          max_tokens: 16000,
           system: 'You are a code-audit finding generator (cold pass, no prior context). Produce candidate findings by calling report_findings.',
           messages: [{ role: 'user', content: `## Plan\n${ctx.planContent ?? ''}\n\n## Changed Files (code)\n${discoveryCode}` }],
           tools: [sonnetFindingsTool],
@@ -262,7 +272,12 @@ export async function runTieredAuditPipeline(ctx) {
         });
         const toolUse = resp?.content?.find(block => block.type === 'tool_use' && block.name === 'report_findings');
         if (!toolUse || !Array.isArray(toolUse.input?.findings)) {
-          throw new Error('sonnetCall: response did not contain a report_findings tool call with a findings array');
+          // Diagnosability (2026-07-14): a bare "no tool call" message gave
+          // no way to tell truncation apart from a genuine refusal/format
+          // miss without a live-probe session. stop_reason: 'max_tokens' is
+          // the truncation signature — surface it so a future recurrence is
+          // diagnosable from the thrown/logged message alone.
+          throw new Error(`sonnetCall: response did not contain a report_findings tool call with a findings array (stop_reason: ${resp?.stop_reason ?? 'unknown'})`);
         }
         return toolUse.input.findings;
       }
