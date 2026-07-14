@@ -32,6 +32,7 @@ import {
   composeFinalMessage,
   evaluateGateVerification,
   formatTrailerBlock,
+  parseMessageTrailers,
 } from './lib/commit-trailers.mjs';
 
 const KNOWN_FLAGS = new Set(['--message-file', '--skill', '--models', '--gate']);
@@ -49,13 +50,27 @@ function git(args, cwd) {
  */
 function resolveSkillNames(repoRoot) {
   const names = new Set();
+  let readableLayouts = 0;
   for (const dir of ['skills', path.join('.claude', 'skills')]) {
     const abs = path.join(repoRoot, dir);
     try {
       for (const ent of fs.readdirSync(abs, { withFileTypes: true })) {
         if (ent.isDirectory() && !ent.name.startsWith('.')) names.add(ent.name);
       }
-    } catch { /* layout doesn't have this dir — fine */ }
+      readableLayouts++;
+    } catch (e) {
+      // ENOENT = this layout simply isn't present (source vs consumer) —
+      // expected. Anything else (EACCES, …) is operational: surfacing an
+      // empty enum as a --skill rejection would mislead the agent (R3 M2).
+      if (e?.code !== 'ENOENT') {
+        err(`ship-commit: skill enum source unreadable (${e?.code}): ${abs}`);
+        process.exit(1);
+      }
+    }
+  }
+  if (readableLayouts === 0) {
+    err(`ship-commit: no skill layout found (neither skills/ nor .claude/skills/ under ${repoRoot}) — is this an audit-loop repo?`);
+    process.exit(1);
   }
   return names;
 }
@@ -217,13 +232,20 @@ async function main() {
       if (commit.stdout) process.stderr.write(commit.stdout);
       exitCode = 1;
     } else {
-      // Post-commit integrity parse-back (R2 H3): a commit-msg hook or clean
-      // filter can rewrite the message after us — verify the persisted
-      // trailers match what we appended before claiming success.
+      // Post-commit integrity parse-back (R2 H3, tightened R3 H2): a
+      // commit-msg hook or clean filter can rewrite the message after us —
+      // parse the persisted message with git-trailer semantics (the same
+      // parser as authoring) and require each expected key to appear EXACTLY
+      // ONCE in the trailer BLOCK with the expected value. Substring matches
+      // against body prose do not count.
       const persisted = git(['log', '-1', '--format=%B'], repoRoot);
       const expected = formatTrailerBlock(values);
-      const body = persisted.status === 0 ? persisted.stdout : '';
-      const missing = expected.filter((line) => !body.includes(line));
+      const parsed = persisted.status === 0 ? parseMessageTrailers(persisted.stdout) : { isTrailerBlock: false, trailers: [] };
+      const missing = expected.filter((line) => {
+        const [key, ...rest] = line.split(': ');
+        const matches = parsed.trailers.filter((t) => t.key === key);
+        return !(parsed.isTrailerBlock && matches.length === 1 && matches[0].value === rest.join(': '));
+      });
       if (missing.length > 0) {
         err(`ship-commit: trailer integrity check failed — the committed message is missing: ${missing.join(' | ')} (a commit-msg hook may have rewritten it). The commit EXISTS but its provenance is incomplete.`);
         exitCode = 1;

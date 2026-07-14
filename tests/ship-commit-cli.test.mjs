@@ -236,6 +236,31 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     assert.equal(r2.status, 0, r2.stderr);
   });
 
+  it('trailer integrity (R3 H2): a hook DUPLICATING an AI-* trailer also fails the parse-back', () => {
+    const mf = arrange();
+    const hooksDir = path.join(repo, '.git', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(path.join(hooksDir, 'commit-msg'), '#!/bin/sh\necho "AI-Skill: ship" >> "$1"\n');
+    fs.chmodSync(path.join(hooksDir, 'commit-msg'), 0o755);
+    const r = runCli(BASE_ARGS(mf));
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /trailer integrity check failed/);
+  });
+
+  it('skill-enum layout (R3 M2): a git repo with neither skills/ nor .claude/skills/ → exit 1, named error', () => {
+    const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'ship-noskills-'));
+    const g = (args) => spawnSync('git', args, { cwd: bare, encoding: 'utf-8' });
+    g(['init', '-q', '-b', 'main']);
+    g(['config', 'user.email', 't@e.c']);
+    g(['config', 'user.name', 'T']);
+    fs.mkdirSync(path.join(bare, '.claude', 'tmp'), { recursive: true });
+    fs.writeFileSync(path.join(bare, '.claude', 'tmp', 'msg.txt'), 'feat: x\n\nbody\n');
+    const r = runCli(BASE_ARGS(path.join('.claude', 'tmp', 'msg.txt')), bare);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /ship-commit: no skill layout found/);
+    fs.rmSync(bare, { recursive: true, force: true });
+  });
+
   it('row 13: commit hook rejection → exit 1, git stderr passed through, working tree intact', () => {
     const mf = arrange();
     const hooksDir = path.join(repo, '.git', 'hooks');
