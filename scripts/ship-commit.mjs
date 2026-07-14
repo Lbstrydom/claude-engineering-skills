@@ -147,6 +147,13 @@ async function main() {
   // other git failure is operational (exit 1), never silently "fresh".
   const headExists = git(['rev-parse', '--verify', '--quiet', 'HEAD'], repoRoot);
   if (headExists.error) { err('ship-commit: git spawn failed'); process.exit(1); }
+  // status 1 is rev-parse --quiet's DOCUMENTED missing-ref outcome (unborn
+  // HEAD). Any other non-zero status is an operational failure — never a
+  // silent T_head=0 (R5 H2).
+  if (headExists.status !== 0 && headExists.status !== 1) {
+    err(`ship-commit: git: HEAD verification failed (status ${headExists.status}): ${(headExists.stderr || '').trim()}`);
+    process.exit(1);
+  }
   let headCommitTs = 0;
   if (headExists.status === 0) {
     const head = git(['log', '-1', '--format=%ct'], repoRoot);
