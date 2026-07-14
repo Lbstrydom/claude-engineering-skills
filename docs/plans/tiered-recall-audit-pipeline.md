@@ -787,3 +787,66 @@ explicit `repoIds` list — never an ambient "all repos" scan.
 `npm run audit:tiered-shadow-report` is the operator progress surface
 (cloud-first; `--repos <path,...>` aggregates siblings; `--log <path>` forces
 local-only).
+
+### Addendum 2026-07-14 — window falsely read "met": 100% fallback_legacy, root-caused + fixed
+
+The window reopened 2026-07-13 (see the `allowTiered` fix above) and by
+2026-07-14 had accumulated 20 observations across two repos (this repo +
+ai-organiser) — `npm run audit:tiered-shadow-report` reported "window met,
+time for the Phase-14 review." **Every single one of the 20 was
+`tieredRunStatus: fallback_legacy`.** Zero real tiered-vs-legacy comparisons
+existed; the report's own "met" reading was a false positive, caused by two
+independent, compounding bugs.
+
+**Root cause (confirmed via a live probe, not inferred — the stored
+telemetry didn't record enough to diagnose it from the DB alone)**:
+`discovery-portfolio.mjs`'s Sonnet generator forces
+`tool_choice:{type:'tool', name:'report_findings'}` to get structured
+findings back — a REQUIRED generator (see §1.5 failure semantics). The
+`anthropicClient` handle it runs through was constructed via the ambient
+`createAnthropicClient()` (no options), which resolves to whatever
+`CLAUDE_BACKEND` the process has — `cli` locally, flipped 2026-06-29 (see
+AGENTS.md "Anthropic Backend Routing"). The `cli` backend's
+`messages.create()` only reads `{model, max_tokens, system, messages}` — it
+silently drops `tools`/`tool_choice` entirely (by design: it always spawns
+`claude -p --tools ''`, built for single-shot-text callers that don't need
+forced tool-calling). So Sonnet returned a plain `text` block instead of
+`tool_use`, the generator's `tool_use` check failed, `requiredGeneratorFailed`
+tripped, and `runTieredAuditPipeline` fell back to
+`runLegacyProductionAudit` — every round, both repos, since the window
+reopened. GLM (the other required generator, via OpenRouter) was confirmed
+working standalone; this was Sonnet/cli-backend specific.
+
+**Compounding reporting bug**: `compareAuditRunResults` builds a non-null
+`comparison` object even when the tiered run fell back
+(`tieredRunStatus:'fallback_legacy'`) — a real, informative record (it shows
+the fallback happened), but NOT a genuine comparison.
+`tiered-shadow-summary.mjs`'s `summarize()` counted `comparedRuns` as "any
+record with a non-null `comparison`," so 20/20 fallback observations read as
+20 decision-grade comparisons — the exact silent-green failure mode the
+file's own 2026-07-13 doc comment had already warned about for a DIFFERENT
+gate (`totalRuns` vs `comparedRuns`). And `tieredFallbackReason` was never
+persisted on the comparison row at all — confirming the cause required a
+live probe of the two required generators directly, not a DB query.
+
+**Fix (2026-07-14, all three changes tested — 57 tiered-shadow-suite tests +
+full 5174-test suite green, live-verified: a direct forced-tool_choice Sonnet
+call now returns a real `tool_use` block)**:
+1. `legacy-production-audit.mjs`'s `buildAuditRunContext` now constructs the
+   tiered pipeline's `anthropicClient` via
+   `createAnthropicClient({backend:'sdk'})` explicitly — never the ambient
+   `CLAUDE_BACKEND`. This handle is used SOLELY for Sonnet's forced
+   tool-calling; nothing else reads it.
+2. `tiered-shadow-summary.mjs`'s `summarize()` now requires
+   `tieredRunStatus === 'complete'` for a record to count toward
+   `comparedRuns`. `tieredRunStatusCounts` and the new
+   `tieredFallbackReasons` breakdown are computed over the wider
+   any-comparison-exists set, so a 100%-fallback state stays visible in the
+   CLI/dashboard even when `comparedRuns` correctly reads 0.
+3. `tiered-shadow-compare.mjs` now persists `tieredFallbackReason` on every
+   comparison row, surfaced in both `tiered-shadow-report.mjs`'s CLI output
+   and the dashboard's Tiered Shadow tab.
+
+The existing 20 rows are now correctly excluded from `comparedRuns` by fix
+#2 (no data deletion needed) — the 10-15-run window restarts from zero,
+genuinely collecting this time.

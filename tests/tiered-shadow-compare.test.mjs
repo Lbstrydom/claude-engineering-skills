@@ -86,6 +86,22 @@ describe('compareAuditRunResults', () => {
     assert.equal(cmp.legacyRunStatus, 'complete');
     assert.equal(cmp.tieredRunStatus, 'fallback_legacy');
   });
+
+  // 2026-07-14 incident: the fallback reason was never persisted, so 20/20
+  // silent fallbacks across two repos were invisible in stored telemetry —
+  // confirming the cause required a live repro instead of a DB query.
+  test('fallbackReason is passed through so a fallback is diagnosable without a live repro', () => {
+    const cmp = compareAuditRunResults(
+      { findings: [], runStatus: 'complete' },
+      { findings: [], runStatus: 'fallback_legacy', fallbackReason: 'required generator failed: sonnet: boom' },
+    );
+    assert.equal(cmp.tieredFallbackReason, 'required generator failed: sonnet: boom');
+  });
+
+  test('fallbackReason is null (never undefined) when the tiered run completed normally', () => {
+    const cmp = compareAuditRunResults({ findings: [], runStatus: 'complete' }, { findings: [], runStatus: 'complete' });
+    assert.equal(cmp.tieredFallbackReason, null);
+  });
 });
 
 describe('runShadowTieredPipeline', () => {

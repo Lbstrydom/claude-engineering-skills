@@ -56,4 +56,41 @@ describe('windowProgress gates on comparedRuns, not totalRuns (H3 regression)', 
     assert.equal(summary.comparedRuns, WINDOW_MAX);
     assert.equal(windowProgress(summary.comparedRuns).met, true);
   });
+
+  // 2026-07-14 incident: 20 real shadow runs across two repos ALL fell back
+  // to legacy (a required discovery generator broke under CLAUDE_BACKEND=cli),
+  // yet the report read "window met" because `compared = records.filter(r =>
+  // r.comparison)` counted a fallback's non-null comparison object as a real
+  // comparison. `comparison` exists whenever the shadow attempt didn't crash
+  // outright — it does NOT mean the tiered pipeline actually completed.
+  test('20 fallback_legacy "comparisons" → comparedRuns is 0, window NOT met (the exact 2026-07-14 incident)', () => {
+    const fallbackComparison = {
+      legacyCostUsd: 1, tieredCostUsd: null, legacyLatencySec: 10, tieredLatencySec: 9,
+      overlapCount: 0, legacyFindingCount: 3, onlyTieredCount: 0,
+      tieredRunStatus: 'fallback_legacy', tieredFallbackReason: 'required generator failed: sonnet: response did not contain a report_findings tool call',
+    };
+    const records = Array.from({ length: 20 }, () => ({ legacyOk: true, shadowOk: true, comparison: fallbackComparison }));
+    const summary = summarize(records);
+    assert.equal(summary.totalRuns, 20);
+    assert.equal(summary.comparedRuns, 0, 'an all-fallback window must never read as decision-grade');
+    assert.equal(windowProgress(summary.comparedRuns).met, false);
+    assert.deepEqual(summary.tieredRunStatusCounts, { fallback_legacy: 20 }, 'the breakdown must still be visible even though comparedRuns is 0');
+    assert.deepEqual(summary.tieredFallbackReasons, {
+      'required generator failed: sonnet: response did not contain a report_findings tool call': 20,
+    }, 'fallback reasons must surface so the cause is diagnosable without a live repro');
+  });
+
+  test('a mix of complete and fallback_legacy counts only the complete ones toward comparedRuns', () => {
+    const complete = { legacyCostUsd: 1, tieredCostUsd: 0.5, legacyLatencySec: 10, tieredLatencySec: 5, overlapCount: 1, legacyFindingCount: 1, onlyTieredCount: 0, tieredRunStatus: 'complete' };
+    const fallback = { legacyCostUsd: 1, tieredCostUsd: null, legacyLatencySec: 10, tieredLatencySec: 9, overlapCount: 0, legacyFindingCount: 1, onlyTieredCount: 0, tieredRunStatus: 'fallback_legacy', tieredFallbackReason: 'oss_provider_unavailable' };
+    const records = [
+      { legacyOk: true, shadowOk: true, comparison: complete },
+      { legacyOk: true, shadowOk: true, comparison: fallback },
+      { legacyOk: true, shadowOk: true, comparison: fallback },
+    ];
+    const summary = summarize(records);
+    assert.equal(summary.comparedRuns, 1);
+    assert.deepEqual(summary.tieredRunStatusCounts, { complete: 1, fallback_legacy: 2 });
+    assert.deepEqual(summary.tieredFallbackReasons, { oss_provider_unavailable: 2 });
+  });
 });

@@ -680,7 +680,7 @@ async function collectTieredShadow(root) {
     comparedRuns: 0, costDeltaUsd: { mean: null, median: null },
     latencyDeltaSec: { mean: null, median: null },
     findingOverlapRate: { mean: null, median: null },
-    tieredRunStatusCounts: {}, perRepo: [], source: 'none',
+    tieredRunStatusCounts: {}, tieredFallbackReasons: {}, perRepo: [], source: 'none',
     truncated: false, windowMet: false,
   };
   // Sibling checkouts to aggregate — SOURCE-REPO-ONLY. The consumer-repo

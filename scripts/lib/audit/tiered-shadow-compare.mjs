@@ -133,6 +133,11 @@ export function compareAuditRunResults(legacyResult, tieredResult) {
     tieredLatencySec: parseTotalSeconds(tieredResult._pass_timings?.total),
     legacyRunStatus: legacyResult.runStatus ?? null,
     tieredRunStatus: tieredResult.runStatus ?? null,
+    // Load-bearing for diagnosability (2026-07-14 incident): without this,
+    // a 100%-fallback window is invisible in stored telemetry — only
+    // `tieredRunStatus:'fallback_legacy'` is recorded, never WHY, so
+    // confirming it requires a live repro instead of a DB query.
+    tieredFallbackReason: tieredResult.fallbackReason ?? null,
   };
 }
 

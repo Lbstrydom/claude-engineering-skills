@@ -618,6 +618,20 @@ available cli backend.
 **Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through
 whichever backend the env resolves to.
 
+> **Forced tool-calling needs `{backend:'sdk'}` explicitly (load-bearing
+> gotcha, found 2026-07-14).** The `cli` backend's `messages.create()` only
+> reads `{model, max_tokens, system, messages}` — it silently drops `tools`/
+> `tool_choice` (by design: it always spawns `claude -p --tools ''`, a
+> single-shot-text contract). A caller that needs `tool_choice:{type:'tool',
+> name:'...'}` for structured output gets a plain `text` block back instead,
+> with **no error** — the failure surfaces one layer up, wherever the caller
+> checks for a `tool_use` block. This broke the tiered-recall pipeline's
+> Sonnet discovery generator silently for the entire 2026-07-13→07-14 shadow
+> window (20/20 runs fell back to legacy) before being root-caused; see
+> `docs/plans/tiered-recall-audit-pipeline.md`. Any new call site that forces
+> `tool_choice` must pass `createAnthropicClient({backend:'sdk'})` explicitly
+> — never rely on the ambient `CLAUDE_BACKEND` resolution for that case.
+
 ## Shadow Final-Review A/B
 
 Plan: [`docs/completed/final-review-shadow-reviewer.md`](docs/completed/final-review-shadow-reviewer.md).
@@ -690,8 +704,22 @@ defaults **off** — production runs the legacy path today.
   Stage 1 falls back to GPT-5.5 with a loud named reason — the GLM
   validation manifest was graded on THIS repo's finding distribution and is
   deliberately NOT synced.
+- **2026-07-14 incident, fixed**: the window read as "met" (20 runs across
+  two repos) while every single run was `fallback_legacy` — two compounding
+  bugs. Root cause: the Sonnet discovery generator needs forced
+  `tool_choice`, which the ambient `CLAUDE_BACKEND=cli` silently can't do
+  (see the Anthropic Backend Routing gotcha above) — every round's required
+  generator failed, every round fell back. Reporting bug: `comparedRuns`
+  counted a `fallback_legacy` run as a real comparison merely because a
+  `comparison` object existed, letting the fake "met" reading through. Both
+  fixed: the tiered pipeline's `anthropicClient` now forces
+  `{backend:'sdk'}`; `comparedRuns` now requires `tieredRunStatus ===
+  'complete'`; `tieredFallbackReason` is now persisted so a future all-
+  fallback state is diagnosable from the DB/dashboard, not a live repro. The
+  old 20 rows are void — the window restarts from zero.
 - **Not yet done**: the shadow-validation window itself (10-15 real commits
-  with the flag on) and Phase 14 (the production-flip decision gate).
+  with the flag on, now genuinely collecting from zero) and Phase 14 (the
+  production-flip decision gate).
 
 → Full plan, phase-by-phase spec, Stage-2 adapter wiring history (the
 two-handle design, module-relative resolution for consumer layouts), and

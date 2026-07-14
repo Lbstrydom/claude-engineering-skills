@@ -406,7 +406,7 @@ export const TelemetryDataSchema = z.object({
     })),
   }).optional(),
   // Tiered-recall Close-out shadow validation — Phase-14 window progress
-  // (docs/completed/tiered-recall-audit-pipeline.md). Aggregation reuses the
+  // (docs/plans/tiered-recall-audit-pipeline.md). Aggregation reuses the
   // report CLI's summarize(); the dashboard is a read surface, the CLI stays
   // authoritative. Optional so pre-feature snapshots validate.
   tieredShadow: z.object({
@@ -422,6 +422,7 @@ export const TelemetryDataSchema = z.object({
     latencyDeltaSec: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),
     findingOverlapRate: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),
     tieredRunStatusCounts: z.record(z.string(), count),
+    tieredFallbackReasons: z.record(z.string(), count),
     perRepo: z.array(z.object({ label: z.string(), count })),
     source: z.enum(['cloud', 'local', 'none']),
     // A cloud read hit the query LIMIT — the aggregate may be missing

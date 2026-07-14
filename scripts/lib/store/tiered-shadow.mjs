@@ -13,7 +13,7 @@
  * always-available fallback — this is additive persistence, not a
  * replacement.
  *
- * Plan: docs/completed/tiered-recall-audit-pipeline.md (Close-out).
+ * Plan: docs/plans/tiered-recall-audit-pipeline.md (Close-out).
  *
  * @module scripts/lib/store/tiered-shadow
  */

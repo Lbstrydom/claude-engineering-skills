@@ -1,7 +1,7 @@
 /**
  * @fileoverview Tiered Shadow tab — the tiered-recall pipeline's Close-out
  * shadow-validation progress toward the Phase-14 production-flip decision
- * (docs/completed/tiered-recall-audit-pipeline.md). Read-only visual surface;
+ * (docs/plans/tiered-recall-audit-pipeline.md). Read-only visual surface;
  * `npm run audit:tiered-shadow-report` stays the authoritative operator CLI
  * (both reuse the SAME summarize(), so they can never disagree on the math).
  * Signature: `default({src, tieredShadow}, ui) → string`.
@@ -63,6 +63,14 @@ export default function sectionTieredShadow({ src, tieredShadow }, ui) {
   const statusLine = statusCounts.length
     ? statusCounts.map(([k, v]) => `${ui.escapeHtml(k)}: ${ui.escapeHtml(v)}`).join(' · ')
     : '—';
+  // Surfaced regardless of comparedRuns (2026-07-14 incident: comparedRuns
+  // can read 0 while dozens of shadow attempts silently fell back to legacy
+  // every time — this is the one line that tells an operator WHY, without
+  // needing a live repro to find out).
+  const fallbackReasonEntries = Object.entries(t.tieredFallbackReasons || {});
+  const fallbackReasonLine = fallbackReasonEntries.length
+    ? `<div><span class="muted">Fallback reasons</span> <span>${fallbackReasonEntries.map(([k, v]) => `${ui.escapeHtml(k)}: ${ui.escapeHtml(v)}`).join(' · ')}</span></div>`
+    : '';
 
   return `<p class="panel-lede">The <strong>tiered audit pipeline</strong> is a cheaper, staged alternative to the
     current always-on 5-pass GPT audit. Before it can become the default, it runs in <em>shadow mode</em>:
@@ -89,6 +97,7 @@ export default function sectionTieredShadow({ src, tieredShadow }, ui) {
       <div><span class="muted">Latency delta</span> <strong>${fmt(t.latencyDeltaSec.mean, 1, '', 's')}</strong> <span class="muted">mean · negative = tiered faster</span></div>
       <div><span class="muted">Finding overlap</span> <strong>${pctFmt(t.findingOverlapRate.mean)}</strong> <span class="muted">mean · how much of the legacy audit's findings the tiered run also caught</span></div>
       <div><span class="muted">Tiered run status</span> <span>${statusLine}</span></div>
+      ${fallbackReasonLine}
     </div>
 
     <h3>Runs per repo</h3>
@@ -100,5 +109,5 @@ export default function sectionTieredShadow({ src, tieredShadow }, ui) {
     <p class="muted">Authoritative CLI: <code>npm run audit:tiered-shadow-report</code> (add
     <code>--repos &lt;path,...&gt;</code> from a sibling checkout). The Phase-14 review is a
     decision gate — an operator reads these numbers before any flip; inconclusive means stay
-    on legacy and extend the window. Plan: docs/completed/tiered-recall-audit-pipeline.md.</p>`;
+    on legacy and extend the window. Plan: docs/plans/tiered-recall-audit-pipeline.md.</p>`;
 }

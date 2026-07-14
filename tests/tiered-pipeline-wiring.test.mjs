@@ -149,6 +149,28 @@ describe('allowTiered call-site gate (shadow-flip incident regression, 2026-07-1
     assert.match(src, /tieredAuditConfig\.pipelineEnabled\s*&&\s*ctx\.allowTiered/, 'tiered-pipeline branch must require ctx.allowTiered');
     assert.match(src, /tieredAuditConfig\.shadowEnabled\s*&&\s*ctx\.allowTiered/, 'shadow-comparison branch must require ctx.allowTiered');
   });
+
+  // 2026-07-14 incident: this handle is constructed with the AMBIENT
+  // CLAUDE_BACKEND-resolved backend (`createAnthropicClient()`, no options),
+  // which is `cli` locally. The cli backend silently drops `tools`/
+  // `tool_choice` (anthropic-client.mjs's messages.create() only reads
+  // {model, max_tokens, system, messages}), so discovery-portfolio.mjs's
+  // Sonnet generator — which REQUIRES `tool_choice:{type:'tool',…}` to get
+  // structured findings back — got plain text instead and failed its
+  // `tool_use` check on every call. Both real repos' Close-out shadow
+  // windows were 100% fallback_legacy as a result (confirmed via a live
+  // probe, since `tieredFallbackReason` wasn't even persisted at the time).
+  // A live end-to-end test would require real ANTHROPIC_API_KEY/CLAUDE_BIN
+  // wiring in CI, so this is a static source pin — cheap and reliable
+  // against someone reverting the `{ backend: 'sdk' }` override by accident.
+  test('static pin: the tiered pipeline\'s anthropicClient forces backend:"sdk", never the ambient CLAUDE_BACKEND', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf8');
+    assert.match(
+      src,
+      /anthropicClient\s*=\s*await createAnthropicClient\(\s*\{\s*backend:\s*['"]sdk['"]\s*\}\s*\)/,
+      'the tiered pipeline\'s Sonnet generator needs real tool_choice support — the cli backend silently drops it (2026-07-14 incident: 20/20 fallback_legacy)',
+    );
+  });
 });
 
 describe('runTieredAuditPipeline Stage 2 handle fail-fast', () => {

@@ -19,7 +19,7 @@
  *   node scripts/tiered-shadow-report.mjs --repos <path1,path2,...> [--json]
  *   node scripts/tiered-shadow-report.mjs --log <path> [--json]   (local-only override)
  *
- * Plan: docs/completed/tiered-recall-audit-pipeline.md Close-out (shadow validation).
+ * Plan: docs/plans/tiered-recall-audit-pipeline.md Close-out (shadow validation).
  */
 import { pathToFileURL } from 'node:url';
 import { SHADOW_LOG_PATH } from './lib/audit/tiered-shadow-compare.mjs';
@@ -136,7 +136,17 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
     console.log(`  cost delta (tiered - legacy, USD):    mean ${num(summary.costDeltaUsd.mean, 3)}  median ${num(summary.costDeltaUsd.median, 3)}`);
     console.log(`  latency delta (tiered - legacy, sec): mean ${num(summary.latencyDeltaSec.mean, 1)}  median ${num(summary.latencyDeltaSec.median, 1)}`);
     console.log(`  finding overlap rate:                 mean ${pct(summary.findingOverlapRate.mean)}  median ${pct(summary.findingOverlapRate.median)}`);
+  }
+  // Printed whenever ANY shadow attempt produced a comparison object — NOT
+  // gated on comparedRuns > 0 — because the exact failure mode this exists
+  // to surface (2026-07-14 incident) is comparedRuns:0 with 20/20
+  // fallback_legacy: an operator needs to see THAT breakdown precisely when
+  // there's nothing else to show.
+  if (Object.keys(summary.tieredRunStatusCounts).length > 0) {
     console.log(`  tiered runStatus breakdown: ${JSON.stringify(summary.tieredRunStatusCounts)}`);
+  }
+  if (Object.keys(summary.tieredFallbackReasons).length > 0) {
+    console.log(`  fallback reasons: ${JSON.stringify(summary.tieredFallbackReasons)}`);
   }
   // Gated on comparedRuns (decision-grade data points), NOT totalRuns — a
   // run whose shadow attempt failed outright contributes no cost/latency/

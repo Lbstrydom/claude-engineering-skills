@@ -16,7 +16,7 @@
  */
 import fs from 'node:fs';
 
-/** Pre-registered Phase-14 decision window (docs/completed/tiered-recall-audit-pipeline.md
+/** Pre-registered Phase-14 decision window (docs/plans/tiered-recall-audit-pipeline.md
  * Close-out). Single source — the CLI text output and the dashboard
  * progress bar both import these instead of hardcoding the numbers twice. */
 export const WINDOW_MIN = 10;
@@ -61,18 +61,33 @@ export function readRecords(logPath) {
  *   findingOverlapRate:object, tieredRunStatusCounts:object}}
  *
  * `totalRuns` counts every observation attempted (including ones where
- * either pipeline failed); `comparedRuns` counts only records where BOTH
- * pipelines completed and a real cost/latency/overlap comparison exists.
- * The Phase-14 decision needs DECISION-GRADE data points — see
- * `windowProgress()` below, which gates on `comparedRuns`, not `totalRuns`
- * (fixed 2026-07-13: the CLI/dashboard previously both gated on
- * `totalRuns`, so a run of the window's runs failing outright could read
- * as "window met" while zero real comparisons existed).
+ * either pipeline failed); `comparedRuns` counts only records where the
+ * tiered pipeline actually COMPLETED (`tieredRunStatus === 'complete'`) —
+ * NOT merely "a comparison object exists". The Phase-14 decision needs
+ * DECISION-GRADE data points — see `windowProgress()` below, which gates on
+ * `comparedRuns`, not `totalRuns` (fixed 2026-07-13: the CLI/dashboard
+ * previously both gated on `totalRuns`, so a run of the window's runs
+ * failing outright could read as "window met" while zero real comparisons
+ * existed).
+ *
+ * **2026-07-14 incident fix**: `compareAuditRunResults` builds a non-null
+ * `comparison` object even when the tiered pipeline fell back to legacy
+ * (`tieredRunStatus:'fallback_legacy'`) — that's a real record worth
+ * keeping (it shows the fallback happened), but it is NOT a genuine
+ * tiered-vs-legacy comparison and must never count toward the decision
+ * window. Before this fix, `compared = records.filter(r => r.comparison)`
+ * let 20/20 all-fallback observations read as "window met" — the exact
+ * silent-green failure mode this file's own doc comment above already
+ * warned about for a DIFFERENT gate (`totalRuns`). `tieredRunStatusCounts`
+ * and `tieredFallbackReasons` are computed over the WIDER `withComparison`
+ * set (not just `compared`) so an operator can see the fallback breakdown
+ * even while `comparedRuns` correctly reads 0.
  */
 export function summarize(records) {
   const legacyFailures = records.filter((r) => !r.legacyOk).length;
   const shadowFailures = records.filter((r) => r.legacyOk && !r.shadowOk).length;
-  const compared = records.filter((r) => r.comparison);
+  const withComparison = records.filter((r) => r.comparison);
+  const compared = withComparison.filter((r) => r.comparison.tieredRunStatus === 'complete');
   const costDeltas = compared.map((r) => (r.comparison.legacyCostUsd != null && r.comparison.tieredCostUsd != null) ? r.comparison.tieredCostUsd - r.comparison.legacyCostUsd : null).filter((v) => v != null);
   const latencyDeltas = compared.map((r) => (r.comparison.legacyLatencySec != null && r.comparison.tieredLatencySec != null) ? r.comparison.tieredLatencySec - r.comparison.legacyLatencySec : null).filter((v) => v != null);
   const overlapRates = compared.map((r) => {
@@ -88,11 +103,18 @@ export function summarize(records) {
     costDeltaUsd: { mean: mean(costDeltas), median: median(costDeltas) },
     latencyDeltaSec: { mean: mean(latencyDeltas), median: median(latencyDeltas) },
     findingOverlapRate: { mean: mean(overlapRates), median: median(overlapRates) },
-    tieredRunStatusCounts: compared.reduce((acc, r) => {
+    tieredRunStatusCounts: withComparison.reduce((acc, r) => {
       const s = r.comparison.tieredRunStatus || 'unknown';
       acc[s] = (acc[s] || 0) + 1;
       return acc;
     }, {}),
+    tieredFallbackReasons: withComparison
+      .filter((r) => r.comparison.tieredRunStatus === 'fallback_legacy')
+      .reduce((acc, r) => {
+        const reason = r.comparison.tieredFallbackReason || 'unknown';
+        acc[reason] = (acc[reason] || 0) + 1;
+        return acc;
+      }, {}),
   };
 }
 
