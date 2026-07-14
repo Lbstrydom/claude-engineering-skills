@@ -1,19 +1,33 @@
 # Plan: Tiered Recall-Weighted Audit Pipeline
 
 - **Date**: 2026-07-09
-- **Status**: Complete — Clusters A-F implemented and gate-clear. Cluster E's
-  pre-existing debt was scoped into a dedicated companion plan
-  (`docs/plans/audit-orchestrator-hardening.md`, also complete). Mandatory
-  consolidated Gemini gate over the Cluster E+F(+hardening) union diff:
-  `APPROVE` (round 2, after fixing 2 genuine bugs round 1 surfaced — a
-  stage1-mechanical suppression not checking `remediationState==='regressed'`,
-  and a Zod-validation-bypass in `cost-budget.mjs`'s event loaders). Shipped
-  2026-07-10. **Phase 5's validation session (the actual human-graded run —
-  distinct from the tooling, which shipped with the rest of Cluster C) ran
-  2026-07-12**: `docs/experiments/audit-effectiveness/cheap-triager-validation.json`
+- **Status**: In Progress — implementation complete (Clusters A-F implemented
+  and gate-clear), but the plan's own terminal gate (Phase 14, the
+  production-flip decision) has NOT run and is not eligible to yet. **Moved
+  back from `docs/completed/` on 2026-07-13** — it had been mis-filed there
+  while a pending decision gate was still open; `docs/completed/` is for
+  plans with nothing left to decide. Cluster E's pre-existing debt was scoped
+  into a dedicated companion plan (`docs/plans/audit-orchestrator-hardening.md`,
+  also complete). Mandatory consolidated Gemini gate over the Cluster
+  E+F(+hardening) union diff: `APPROVE` (round 2, after fixing 2 genuine bugs
+  round 1 surfaced — a stage1-mechanical suppression not checking
+  `remediationState==='regressed'`, and a Zod-validation-bypass in
+  `cost-budget.mjs`'s event loaders). Shipped 2026-07-10. **Phase 5's
+  validation session (the actual human-graded run — distinct from the
+  tooling, which shipped with the rest of Cluster C) ran 2026-07-12**:
+  `docs/experiments/audit-effectiveness/cheap-triager-validation.json`
   PASSED for `z-ai/glm-5.2` (both load-bearing strata at 0.0% false-dismissal;
   see status.md 2026-07-12 for the full write-up and the omission-stratum
   small-sample caveat). Phase 7 can now select GLM as the Stage-1 triager.
+  **Still open**: the Close-out shadow-validation window (10-15 real
+  `/audit-code` runs with `AUDIT_TIERED_SHADOW_ENABLED=true`) has not
+  actually started collecting — the flag was flipped `true` then reverted to
+  `false` as an emergency stop during the 2026-07-13 shadow-flip incident #2
+  fix (see status.md same date) and was never re-flipped afterward, despite
+  several "Next" notes since saying it should be. `~/.audit-loop.env`
+  currently has `AUDIT_TIERED_SHADOW_ENABLED=false` — confirmed live
+  2026-07-13, zero shadow runs recorded in Supabase. Phase 14 is blocked on
+  this, not on any remaining code.
 - **Author**: Claude + Louis
 - **Scope**: backend
 

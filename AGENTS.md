@@ -695,7 +695,9 @@ defaults **off** — production runs the legacy path today.
 
 → Full plan, phase-by-phase spec, Stage-2 adapter wiring history (the
 two-handle design, module-relative resolution for consumer layouts), and
-audit trail: [`docs/completed/tiered-recall-audit-pipeline.md`](docs/completed/tiered-recall-audit-pipeline.md).
+audit trail: [`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md)
+(still in `docs/plans/`, not `docs/completed/` — Phase 14 is pending on the
+shadow-validation window, which has not started collecting).
 
 ## Model Swap-In Evaluation Harness
 
