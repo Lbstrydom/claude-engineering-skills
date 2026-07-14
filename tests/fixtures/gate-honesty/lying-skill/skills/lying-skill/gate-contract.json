@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "skill": "lying-skill",
+  "gates": [
+    {
+      "id": "always-green",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "statedIn": "skills/lying-skill/SKILL.md",
+      "stated": "Refuses green output without a live capture.",
+      "implementation": "fake-cli.mjs",
+      "tests": ["lying-tests.mjs"],
+      "scenario": "visual-static-gate-refusal",
+      "proof": "process"
+    },
+    {
+      "id": "fake-tiered-shadow",
+      "kind": "executable",
+      "oracle": "tiered-shadow-window",
+      "statedIn": "skills/lying-skill/SKILL.md",
+      "stated": "Never reports the window as met while every run fell back to legacy.",
+      "implementation": "fake-tiered-shadow.mjs",
+      "tests": ["lying-tests.mjs"],
+      "fixture": {
+        "rows": [
+          { "legacyOk": true, "shadowOk": true, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": true, "comparison": { "tieredRunStatus": "fallback_legacy" } }
+        ]
+      },
+      "proof": "unit-seam"
+    },
+    {
+      "id": "fake-convergence",
+      "kind": "executable",
+      "oracle": "convergence-threshold",
+      "statedIn": "skills/lying-skill/SKILL.md",
+      "stated": "Always exits 2 on an unfixable threshold breach.",
+      "implementation": "fake-convergence.mjs",
+      "tests": ["lying-tests.mjs"],
+      "params": { "high": 0, "medium": 2, "quickFix": 0 },
+      "proof": "unit-seam"
+    }
+  ]
+}

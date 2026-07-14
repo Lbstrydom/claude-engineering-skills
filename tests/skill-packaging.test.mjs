@@ -80,6 +80,30 @@ describe('enumerateSkillFiles', () => {
   it('throws when skill directory does not exist', () => {
     assert.throws(() => enumerateSkillFiles(path.join(tmp, 'nonexistent')));
   });
+
+  describe('gate-contract.json — tolerated, never packaged (plan §F2.3, SKILL_LOCAL_FILES)', () => {
+    it('is tolerated (strict mode does not throw) alongside a valid skill', () => {
+      write('SKILL.md');
+      write('gate-contract.json', '{"version":1}');
+      assert.doesNotThrow(() => enumerateSkillFiles(tmp));
+    });
+
+    it('is absent from the returned file list (byte-identical packaged output for a contract-bearing skill)', () => {
+      write('SKILL.md');
+      write('references/a.md');
+      const withoutContract = enumerateSkillFiles(tmp);
+      write('gate-contract.json', '{"version":1}');
+      const withContract = enumerateSkillFiles(tmp);
+      assert.deepEqual(withContract, withoutContract, 'adding gate-contract.json must not change the packaged file list');
+      assert.ok(!withContract.includes('gate-contract.json'));
+    });
+
+    it('any OTHER non-md json file at skill root is still rejected', () => {
+      write('SKILL.md');
+      write('some-other-config.json', '{}');
+      assert.throws(() => enumerateSkillFiles(tmp), /outside the allowlist/);
+    });
+  });
 });
 
 describe('listSkillNames', () => {

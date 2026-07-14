@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skill": "stated-absent",
+  "gates": [
+    {
+      "id": "phantom-statement",
+      "kind": "executable",
+      "oracle": "convergence-threshold",
+      "statedIn": "skills/stated-absent/SKILL.md",
+      "stated": "this exact sentence never appears anywhere in the SKILL.md file",
+      "implementation": "real-impl.mjs",
+      "tests": ["real-tests.mjs"],
+      "params": { "high": 0, "medium": 2, "quickFix": 0 },
+      "proof": "unit-seam"
+    }
+  ]
+}

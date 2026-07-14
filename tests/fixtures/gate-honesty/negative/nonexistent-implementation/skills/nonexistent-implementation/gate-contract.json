@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skill": "nonexistent-implementation",
+  "gates": [
+    {
+      "id": "missing-impl",
+      "kind": "executable",
+      "oracle": "convergence-threshold",
+      "statedIn": "skills/nonexistent-implementation/SKILL.md",
+      "stated": "the gate always enforces the threshold",
+      "implementation": "no-such-file.mjs",
+      "tests": ["missing-impl-tests.mjs"],
+      "params": { "high": 0, "medium": 2, "quickFix": 0 },
+      "proof": "unit-seam"
+    }
+  ]
+}

@@ -3,8 +3,13 @@
  * Used by build-manifest.mjs, regenerate-skill-copies.mjs, sync-to-repos.mjs,
  * and check-sync.mjs — single source of truth for what ships.
  *
- * Skills are pure-markdown surfaces. Non-markdown files inside a skill dir
- * are rejected with a clear error — code belongs in scripts/ at repo root.
+ * Packaged surfaces are pure-markdown. A colocated `gate-contract.json`
+ * (plan §F2.3 — the gate-honesty suite) is repo-local gate metadata, never
+ * packaged: it is TOLERATED at a skill's root (not rejected as unexpected)
+ * but excluded from the returned file list, so it never reaches the
+ * generated `.claude/skills/**` copies, the sync inventory, or the build
+ * manifest — all four packaging consumers inherit this from this ONE
+ * function. Any other non-markdown file is still rejected.
  * @module scripts/lib/skill-packaging
  */
 
@@ -15,6 +20,13 @@ import path from 'node:path';
 export const SKILL_ALLOWED_FILES = ['SKILL.md'];
 export const SKILL_ALLOWED_DIRS = ['references', 'examples'];
 export const SKILL_ALLOWED_EXTENSIONS = ['.md'];
+
+/**
+ * Files tolerated at a skill's root — recognized, never rejected as
+ * "unexpected", but deliberately excluded from `enumerateSkillFiles`'s
+ * returned list (never packaged, never synced, never in the manifest).
+ */
+export const SKILL_LOCAL_FILES = ['gate-contract.json'];
 
 export const SKILL_EXCLUDED_BASENAME_PATTERNS = [
   /^\./,                 // dotfiles (.DS_Store, .gitkeep, .foo.swp etc.)
@@ -47,6 +59,8 @@ export function enumerateSkillFiles(skillDir, { strict = true } = {}) {
     if (ent.isFile()) {
       if (SKILL_ALLOWED_FILES.includes(ent.name)) {
         results.push(ent.name);
+      } else if (SKILL_LOCAL_FILES.includes(ent.name)) {
+        // Tolerated, not packaged — deliberately absent from `results`.
       } else {
         unexpected.push(ent.name);
       }

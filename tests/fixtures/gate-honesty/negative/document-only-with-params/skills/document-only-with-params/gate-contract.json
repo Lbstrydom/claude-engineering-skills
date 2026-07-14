@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "skill": "document-only-with-params",
+  "gates": [
+    {
+      "id": "smuggled-params",
+      "kind": "document-only",
+      "reason": "this is a judgement call — but it illegally carries a params block",
+      "params": { "high": 0, "medium": 2, "quickFix": 0 }
+    }
+  ]
+}
