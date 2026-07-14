@@ -1036,6 +1036,18 @@ applied per user decision (cloud verdict check): `evaluateGateVerification`
 convergence, `waived` = declared/unverified; docs + SKILL.md + AGENTS.md
 updated; 6 new unit branches + hermetic CLI rows.
 
+**Cluster A CONVERGED (R5, 2026-07-14)** — threshold met on the post-triage
+open set (H:0 M:0 quickFix:0, stable rounds 3-5). Commits: 9e92ce0 (recon),
+30cfec9 (helper), e753bea (adoption + `provenance-v1`), 343de18 (verdict
+verification), b48d2be (honest failure states), a6e7526 (parse-back
+semantics + skill-enum errors), 2b3fb0c + 3518d1a (unborn-HEAD
+discrimination). Residual audit stream decayed to two precedent-dismissed
+families: F2-not-implemented (= Cluster B, raised 6×) and the pre-existing
+repo-wide domain-map backlog (recorded as standing architecture debt —
+candidates for a separate arch:refresh/domain-map maintenance task, NOT this
+plan). Consolidated Gemini gate pending after Cluster B (§11 `fix-gate:
+final`). 51 helper tests; full suite 5230/0.
+
 ## Decision record (2026-07-14 — all four resolved; implementation unblocked)
 
 Recorded per the decision-record rule (R2-M2). Each decision is an acceptance
