@@ -128,8 +128,8 @@ jobs:
           node scripts/postgres-parity/generate-expected-schema.mjs --out /tmp/live-schema.json
           # Use the script's own diff helper via node — keeps the comparator
           # logic in one place (scripts/setup-postgres.mjs _internals.diffSchemas).
-          node -e "
-            const fs = require('fs');
+          node --input-type=module -e "
+            const fs = await import('node:fs');
             const { _internals } = await import('./scripts/setup-postgres.mjs');
             const expected = JSON.parse(fs.readFileSync('tests/fixtures/expected-schema.json', 'utf-8'));
             const live = JSON.parse(fs.readFileSync('/tmp/live-schema.json', 'utf-8'));
@@ -139,7 +139,7 @@ jobs:
               process.exit(1);
             }
             console.log('manifest matches live schema');
-          " --input-type=module || exit 1
+          " || exit 1
 
       - name: Env-gated DB tests (G1 date parser + G3 withTx + setup integration)
         run: |
