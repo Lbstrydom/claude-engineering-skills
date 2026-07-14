@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-14T19:08:42Z",
+  "generatedAt": "2026-07-14T19:18:18Z",
   "schema": "public",
   "tables": [
     {
@@ -1128,242 +1128,200 @@
           "ordinal_position": 14
         },
         {
-          "column_name": "diff_lines_changed",
-          "data_type": "integer",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 15
-        },
-        {
-          "column_name": "diff_files_changed",
-          "data_type": "integer",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 16
-        },
-        {
-          "column_name": "session_cache_hit",
-          "data_type": "boolean",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 17
-        },
-        {
-          "column_name": "map_reduce_passes",
-          "data_type": "ARRAY",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 18
-        },
-        {
-          "column_name": "scope_mode",
-          "data_type": "character varying",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 19
-        },
-        {
-          "column_name": "r2_skip_reason",
-          "data_type": "character varying",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 20
-        },
-        {
           "column_name": "labeled",
           "data_type": "boolean",
           "is_nullable": "YES",
           "column_default": "false",
-          "ordinal_position": 21
+          "ordinal_position": 15
         },
         {
           "column_name": "suppression_stats",
           "data_type": "jsonb",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 22
+          "ordinal_position": 16
         },
         {
           "column_name": "commit_sha",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 23
+          "ordinal_position": 17
         },
         {
           "column_name": "branch",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 24
+          "ordinal_position": 18
         },
         {
           "column_name": "plan_id",
           "data_type": "uuid",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 25
+          "ordinal_position": 19
         },
         {
           "column_name": "diff_complexity",
           "data_type": "jsonb",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 26
+          "ordinal_position": 20
         },
         {
           "column_name": "round_converged_after",
           "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 27
+          "ordinal_position": 21
         },
         {
           "column_name": "rigor_pressure_round",
           "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 28
+          "ordinal_position": 22
         },
         {
           "column_name": "cache_input_tokens",
           "data_type": "bigint",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 29
+          "ordinal_position": 23
         },
         {
           "column_name": "cache_cached_tokens",
           "data_type": "bigint",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 30
+          "ordinal_position": 24
         },
         {
           "column_name": "cache_hit_rate",
           "data_type": "numeric",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 31
+          "ordinal_position": 25
         },
         {
           "column_name": "cache_estimated_savings_pct",
           "data_type": "numeric",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 32
+          "ordinal_position": 26
         },
         {
           "column_name": "final_review_model",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 33
+          "ordinal_position": 27
         },
         {
           "column_name": "final_review_shadow_model",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 34
+          "ordinal_position": 28
         },
         {
           "column_name": "final_review_shadow_input_tokens",
           "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 35
+          "ordinal_position": 29
         },
         {
           "column_name": "final_review_shadow_output_tokens",
           "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 36
+          "ordinal_position": 30
         },
         {
           "column_name": "final_review_shadow_latency_ms",
           "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 37
+          "ordinal_position": 31
         },
         {
           "column_name": "cache_seed_enabled",
           "data_type": "boolean",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 38
+          "ordinal_position": 32
         },
         {
           "column_name": "arm_set_version",
           "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 39
+          "ordinal_position": 33
         },
         {
           "column_name": "assignment_id",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 40
+          "ordinal_position": 34
         },
         {
           "column_name": "stage_type",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": "'audit-code'::text",
-          "ordinal_position": 41
+          "ordinal_position": 35
         },
         {
           "column_name": "phase",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 42
+          "ordinal_position": 36
         },
         {
           "column_name": "prompt_variant",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 43
+          "ordinal_position": 37
         },
         {
           "column_name": "attempt",
           "data_type": "integer",
           "is_nullable": "YES",
           "column_default": "1",
-          "ordinal_position": 44
+          "ordinal_position": 38
         },
         {
           "column_name": "arm_order_seed",
           "data_type": "bigint",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 45
+          "ordinal_position": 39
         },
         {
           "column_name": "author_model",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 46
+          "ordinal_position": 40
         },
         {
           "column_name": "task_id",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 47
+          "ordinal_position": 41
         },
         {
           "column_name": "arm_eval_run_id",
           "data_type": "uuid",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 48
+          "ordinal_position": 42
         }
       ]
     },
@@ -1729,60 +1687,6 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 11
-        }
-      ]
-    },
-    {
-      "table_name": "debt_summary",
-      "columns": [
-        {
-          "column_name": "repo_id",
-          "data_type": "uuid",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 1
-        },
-        {
-          "column_name": "severity",
-          "data_type": "text",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 2
-        },
-        {
-          "column_name": "deferred_reason",
-          "data_type": "text",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 3
-        },
-        {
-          "column_name": "count",
-          "data_type": "bigint",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 4
-        },
-        {
-          "column_name": "oldest",
-          "data_type": "timestamp with time zone",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 5
-        },
-        {
-          "column_name": "newest",
-          "data_type": "timestamp with time zone",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 6
-        },
-        {
-          "column_name": "categories",
-          "data_type": "ARRAY",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 7
         }
       ]
     },
@@ -3230,6 +3134,60 @@
       ]
     },
     {
+      "table_name": "persistent_p0s",
+      "columns": [
+        {
+          "column_name": "url",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "element",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "observed",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "fix_direction",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "sessions_seen",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "first_seen",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "last_seen",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
+        }
+      ]
+    },
+    {
       "table_name": "persistent_plan_failures",
       "columns": [
         {
@@ -3383,36 +3341,36 @@
           "ordinal_position": 2
         },
         {
-          "column_name": "description",
+          "column_name": "app_url",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 3
         },
         {
-          "column_name": "app_url",
+          "column_name": "app_name",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 4
         },
         {
-          "column_name": "app_name",
+          "column_name": "description",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 5
         },
         {
-          "column_name": "repo_name",
+          "column_name": "notes",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 6
         },
         {
-          "column_name": "notes",
-          "data_type": "text",
+          "column_name": "test_count",
+          "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 7
@@ -3439,15 +3397,15 @@
           "ordinal_position": 10
         },
         {
-          "column_name": "test_count",
+          "column_name": "days_since_last_test",
           "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 11
         },
         {
-          "column_name": "created_at",
-          "data_type": "timestamp with time zone",
+          "column_name": "recent_sessions",
+          "data_type": "jsonb",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 12
@@ -3627,16 +3585,16 @@
           "ordinal_position": 1
         },
         {
-          "column_name": "session_id",
-          "data_type": "text",
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
           "is_nullable": "NO",
-          "column_default": null,
+          "column_default": "now()",
           "ordinal_position": 2
         },
         {
-          "column_name": "persona_id",
-          "data_type": "uuid",
-          "is_nullable": "YES",
+          "column_name": "session_id",
+          "data_type": "text",
+          "is_nullable": "NO",
           "column_default": null,
           "ordinal_position": 3
         },
@@ -3664,121 +3622,128 @@
         {
           "column_name": "browser_tool",
           "data_type": "text",
-          "is_nullable": "YES",
+          "is_nullable": "NO",
           "column_default": null,
           "ordinal_position": 7
         },
         {
           "column_name": "steps_taken",
           "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "ordinal_position": 8
+        },
+        {
+          "column_name": "duration_ms",
+          "data_type": "integer",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 8
+          "ordinal_position": 9
         },
         {
           "column_name": "verdict",
           "data_type": "text",
-          "is_nullable": "YES",
+          "is_nullable": "NO",
           "column_default": null,
-          "ordinal_position": 9
+          "ordinal_position": 10
         },
         {
           "column_name": "p0_count",
           "data_type": "integer",
           "is_nullable": "NO",
           "column_default": "0",
-          "ordinal_position": 10
+          "ordinal_position": 11
         },
         {
           "column_name": "p1_count",
           "data_type": "integer",
           "is_nullable": "NO",
           "column_default": "0",
-          "ordinal_position": 11
+          "ordinal_position": 12
         },
         {
           "column_name": "p2_count",
           "data_type": "integer",
           "is_nullable": "NO",
           "column_default": "0",
-          "ordinal_position": 12
+          "ordinal_position": 13
         },
         {
           "column_name": "p3_count",
           "data_type": "integer",
           "is_nullable": "NO",
           "column_default": "0",
-          "ordinal_position": 13
+          "ordinal_position": 14
         },
         {
           "column_name": "avg_confidence",
           "data_type": "numeric",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 14
+          "ordinal_position": 15
         },
         {
           "column_name": "findings",
           "data_type": "jsonb",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 15
+          "is_nullable": "NO",
+          "column_default": "'[]'::jsonb",
+          "ordinal_position": 16
         },
         {
           "column_name": "report_md",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 16
+          "ordinal_position": 17
         },
         {
           "column_name": "debrief_md",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 17
+          "ordinal_position": 18
+        },
+        {
+          "column_name": "persona_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 19
         },
         {
           "column_name": "repo_name",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 18
-        },
-        {
-          "column_name": "created_at",
-          "data_type": "timestamp with time zone",
-          "is_nullable": "NO",
-          "column_default": "now()",
-          "ordinal_position": 19
+          "ordinal_position": 20
         },
         {
           "column_name": "commit_sha",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 20
+          "ordinal_position": 21
         },
         {
           "column_name": "deployment_id",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 21
+          "ordinal_position": 22
         },
         {
           "column_name": "repo_id",
           "data_type": "uuid",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 22
+          "ordinal_position": 23
         },
         {
           "column_name": "click_path",
           "data_type": "jsonb",
           "is_nullable": "NO",
           "column_default": "'[]'::jsonb",
-          "ordinal_position": 23
+          "ordinal_position": 24
         }
       ]
     },
@@ -3793,80 +3758,80 @@
           "ordinal_position": 1
         },
         {
-          "column_name": "name",
-          "data_type": "text",
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
           "is_nullable": "NO",
-          "column_default": null,
+          "column_default": "now()",
           "ordinal_position": 2
         },
         {
-          "column_name": "description",
+          "column_name": "name",
           "data_type": "text",
           "is_nullable": "NO",
           "column_default": null,
           "ordinal_position": 3
         },
         {
-          "column_name": "app_url",
+          "column_name": "description",
           "data_type": "text",
           "is_nullable": "NO",
           "column_default": null,
           "ordinal_position": 4
         },
         {
-          "column_name": "app_name",
+          "column_name": "app_url",
           "data_type": "text",
-          "is_nullable": "YES",
+          "is_nullable": "NO",
           "column_default": null,
           "ordinal_position": 5
         },
         {
-          "column_name": "notes",
+          "column_name": "app_name",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 6
         },
         {
-          "column_name": "repo_name",
+          "column_name": "notes",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 7
         },
         {
+          "column_name": "test_count",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "ordinal_position": 8
+        },
+        {
           "column_name": "last_tested_at",
           "data_type": "timestamp with time zone",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 8
+          "ordinal_position": 9
         },
         {
           "column_name": "last_verdict",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 9
+          "ordinal_position": 10
         },
         {
           "column_name": "last_focus",
           "data_type": "text",
           "is_nullable": "YES",
           "column_default": null,
-          "ordinal_position": 10
-        },
-        {
-          "column_name": "test_count",
-          "data_type": "integer",
-          "is_nullable": "NO",
-          "column_default": "0",
           "ordinal_position": 11
         },
         {
-          "column_name": "created_at",
-          "data_type": "timestamp with time zone",
-          "is_nullable": "NO",
-          "column_default": "now()",
+          "column_name": "repo_name",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
           "ordinal_position": 12
         }
       ]
@@ -4594,6 +4559,53 @@
           "is_nullable": "NO",
           "column_default": "'open'::text",
           "ordinal_position": 11
+        }
+      ]
+    },
+    {
+      "table_name": "recurring_issues",
+      "columns": [
+        {
+          "column_name": "url",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "element",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "severity",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "observed",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "occurrence_count",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "last_seen",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
         }
       ]
     },
@@ -5835,6 +5847,20 @@
   ],
   "functions": [
     {
+      "function_name": "armor",
+      "args": "bytea",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "armor",
+      "args": "bytea, text[], text[]",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
       "function_name": "array_to_halfvec",
       "args": "double precision[], integer, boolean",
       "return_type": "halfvec",
@@ -5968,6 +5994,34 @@
       "config": null
     },
     {
+      "function_name": "crypt",
+      "args": "text, text",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "dearmor",
+      "args": "text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "decrypt",
+      "args": "bytea, bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "decrypt_iv",
+      "args": "bytea, bytea, bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
       "function_name": "defer_finding",
       "args": "p_finding_id uuid, p_dismiss_reason text, p_evidence jsonb, p_cluster_hash text, p_severity text, p_audit_run_id uuid, p_round integer, p_sequence integer",
       "return_type": "void",
@@ -5975,11 +6029,39 @@
       "config": "search_path=pg_catalog, public"
     },
     {
+      "function_name": "digest",
+      "args": "bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "digest",
+      "args": "text, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
       "function_name": "drift_score",
       "args": "p_repo_id uuid, p_refresh_id uuid, p_sim_dup numeric, p_sim_name numeric",
       "return_type": "jsonb",
       "security_definer": true,
       "config": "search_path=pg_catalog, public"
+    },
+    {
+      "function_name": "encrypt",
+      "args": "bytea, bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "encrypt_iv",
+      "args": "bytea, bytea, bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
     },
     {
       "function_name": "friction_neighbourhood",
@@ -5994,6 +6076,34 @@
       "return_type": "jsonb",
       "security_definer": true,
       "config": "search_path=public"
+    },
+    {
+      "function_name": "gen_random_bytes",
+      "args": "integer",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "gen_random_uuid",
+      "args": "",
+      "return_type": "uuid",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "gen_salt",
+      "args": "text",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "gen_salt",
+      "args": "text, integer",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
     },
     {
       "function_name": "gin_extract_query_trgm",
@@ -6290,6 +6400,20 @@
       "config": null
     },
     {
+      "function_name": "hmac",
+      "args": "bytea, bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "hmac",
+      "args": "text, text, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
       "function_name": "hnsw_bit_support",
       "args": "internal",
       "return_type": "internal",
@@ -6468,6 +6592,146 @@
       "function_name": "model_ab_attribute_arms",
       "args": "p_stage text, p_arm text",
       "return_type": "text[]",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_armor_headers",
+      "args": "text, OUT key text, OUT value text",
+      "return_type": "SETOF record",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_key_id",
+      "args": "bytea",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_decrypt",
+      "args": "bytea, bytea",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_decrypt",
+      "args": "bytea, bytea, text",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_decrypt",
+      "args": "bytea, bytea, text, text",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_decrypt_bytea",
+      "args": "bytea, bytea",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_decrypt_bytea",
+      "args": "bytea, bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_decrypt_bytea",
+      "args": "bytea, bytea, text, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_encrypt",
+      "args": "text, bytea",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_encrypt",
+      "args": "text, bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_encrypt_bytea",
+      "args": "bytea, bytea",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_pub_encrypt_bytea",
+      "args": "bytea, bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_sym_decrypt",
+      "args": "bytea, text",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_sym_decrypt",
+      "args": "bytea, text, text",
+      "return_type": "text",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_sym_decrypt_bytea",
+      "args": "bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_sym_decrypt_bytea",
+      "args": "bytea, text, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_sym_encrypt",
+      "args": "text, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_sym_encrypt",
+      "args": "text, text, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_sym_encrypt_bytea",
+      "args": "bytea, text",
+      "return_type": "bytea",
+      "security_definer": false,
+      "config": null
+    },
+    {
+      "function_name": "pgp_sym_encrypt_bytea",
+      "args": "bytea, text, text",
+      "return_type": "bytea",
       "security_definer": false,
       "config": null
     },
@@ -6993,10 +7257,6 @@
       "definition": " SELECT r.id AS repo_id,\n    r.name AS repo_name,\n    count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)) AS confirmed_hits,\n    count(*) FILTER (WHERE (c.correlation_type = 'audit_missed'::text)) AS audit_misses,\n    count(*) FILTER (WHERE (c.correlation_type = 'audit_false_positive'::text)) AS audit_false_positives,\n    count(*) FILTER (WHERE (c.correlation_type = 'severity_understated'::text)) AS severity_understated,\n    count(*) FILTER (WHERE (c.correlation_type = 'severity_overstated'::text)) AS severity_overstated,\n    round((NULLIF((count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)))::numeric, (0)::numeric) / NULLIF((count(*) FILTER (WHERE (c.correlation_type = ANY (ARRAY['confirmed_hit'::text, 'audit_false_positive'::text]))))::numeric, (0)::numeric)), 3) AS user_visible_precision,\n    round((NULLIF((count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)))::numeric, (0)::numeric) / NULLIF((count(*) FILTER (WHERE (c.correlation_type = ANY (ARRAY['confirmed_hit'::text, 'audit_missed'::text]))))::numeric, (0)::numeric)), 3) AS user_visible_recall\n   FROM ((audit_repos r\n     LEFT JOIN persona_test_sessions s ON ((s.repo_name = r.name)))\n     LEFT JOIN persona_audit_correlations c ON ((c.persona_session_id = s.id)))\n  GROUP BY r.id, r.name;"
     },
     {
-      "view_name": "debt_summary",
-      "definition": " SELECT repo_id,\n    severity,\n    deferred_reason,\n    count(*) AS count,\n    min(deferred_at) AS oldest,\n    max(deferred_at) AS newest,\n    array_agg(DISTINCT category) AS categories\n   FROM debt_entries\n  GROUP BY repo_id, severity, deferred_reason\n  ORDER BY\n        CASE severity\n            WHEN 'HIGH'::text THEN 1\n            WHEN 'MEDIUM'::text THEN 2\n            ELSE 3\n        END, (count(*)) DESC;"
-    },
-    {
       "view_name": "model_ab_arm_cost",
       "definition": " WITH ps AS (\n         SELECT ps.run_id,\n            r.commit_sha,\n            COALESCE(r.assignment_id, r.commit_sha, (r.id)::text) AS assignment_id,\n            COALESCE(r.stage_type, 'audit-code'::text) AS stage_type,\n            r.phase,\n            COALESCE(r.prompt_variant, 'default'::text) AS prompt_variant,\n            ps.stage,\n            ps.cost_usd,\n            ps.structured_output_ok,\n            ps.usage_unmeterable,\n            model_ab_attribute_arms(ps.stage, ps.arm) AS arms\n           FROM (audit_pass_stats ps\n             JOIN audit_runs r ON ((r.id = ps.run_id)))\n          WHERE (ps.stage IS NOT NULL)\n        ), exp AS (\n         SELECT ps.assignment_id,\n            ps.commit_sha,\n            ps.stage_type,\n            ps.phase,\n            ps.prompt_variant,\n            ps.cost_usd,\n            ps.structured_output_ok,\n            ps.usage_unmeterable,\n            unnest(ps.arms) AS arm\n           FROM ps\n          WHERE (ps.arms <> ARRAY['__INVALID__'::text])\n        )\n SELECT assignment_id,\n    commit_sha,\n    stage_type,\n    phase,\n    prompt_variant,\n    arm,\n    sum(cost_usd) AS standalone_cost_usd,\n    bool_and((cost_usd IS NOT NULL)) AS cost_known,\n    count(*) AS pass_executions,\n    count(*) FILTER (WHERE structured_output_ok) AS conformant_passes,\n    bool_or(usage_unmeterable) AS any_unmeterable\n   FROM exp\n  GROUP BY assignment_id, commit_sha, stage_type, phase, prompt_variant, arm;"
     },
@@ -7017,12 +7277,16 @@
       "definition": " SELECT af.id,\n    ar.repo_id,\n    af.severity,\n    af.category AS title,\n    af.detail_snapshot AS body,\n    af.dismiss_reason,\n    af.primary_file,\n    af.created_at,\n    ar.commit_sha,\n    ar.branch\n   FROM (audit_findings af\n     JOIN audit_runs ar ON ((ar.id = af.run_id)))\n  WHERE (af.user_action = 'needs_triage'::text)\n  ORDER BY\n        CASE\n            WHEN (af.severity = 'HIGH'::text) THEN 0\n            WHEN (af.severity = 'MEDIUM'::text) THEN 1\n            ELSE 2\n        END, af.created_at DESC;"
     },
     {
+      "view_name": "persistent_p0s",
+      "definition": " SELECT persona_test_sessions.url,\n    (f.value ->> 'element'::text) AS element,\n    (f.value ->> 'observed'::text) AS observed,\n    (f.value ->> 'fix'::text) AS fix_direction,\n    count(*) AS sessions_seen,\n    min(persona_test_sessions.created_at) AS first_seen,\n    max(persona_test_sessions.created_at) AS last_seen\n   FROM persona_test_sessions,\n    LATERAL jsonb_array_elements(persona_test_sessions.findings) f(value)\n  WHERE (((f.value ->> 'code'::text) = 'P0'::text) AND (((f.value ->> 'confidence'::text))::numeric >= 0.7))\n  GROUP BY persona_test_sessions.url, (f.value ->> 'element'::text), (f.value ->> 'observed'::text), (f.value ->> 'fix'::text)\n HAVING (count(*) >= 2)\n  ORDER BY (count(*)) DESC;"
+    },
+    {
       "view_name": "persistent_plan_failures",
       "definition": " WITH ranked AS (\n         SELECT i.plan_id,\n            i.criterion_hash,\n            i.description,\n            i.severity,\n            i.category,\n            i.passed,\n            i.skipped,\n            i.created_at,\n            row_number() OVER (PARTITION BY i.plan_id, i.criterion_hash ORDER BY i.created_at DESC) AS rn\n           FROM plan_verification_items i\n        )\n SELECT plan_id,\n    criterion_hash,\n    description,\n    severity,\n    category,\n    count(*) FILTER (WHERE ((NOT passed) AND (NOT skipped))) AS fail_count_last_5,\n    max(created_at) FILTER (WHERE ((NOT passed) AND (NOT skipped))) AS last_failure_at\n   FROM ranked\n  WHERE (rn <= 5)\n  GROUP BY plan_id, criterion_hash, description, severity, category\n HAVING (count(*) FILTER (WHERE ((NOT passed) AND (NOT skipped))) >= 2)\n  ORDER BY severity, (count(*) FILTER (WHERE ((NOT passed) AND (NOT skipped)))) DESC;"
     },
     {
       "view_name": "persona_dashboard",
-      "definition": " SELECT id,\n    name,\n    description,\n    app_url,\n    app_name,\n    repo_name,\n    notes,\n    last_tested_at,\n    last_verdict,\n    last_focus,\n    test_count,\n    created_at\n   FROM personas p\n  ORDER BY\n        CASE\n            WHEN (last_tested_at IS NULL) THEN 0\n            ELSE 1\n        END, last_tested_at;"
+      "definition": " SELECT id,\n    name,\n    app_url,\n    app_name,\n    description,\n    notes,\n    test_count,\n    last_tested_at,\n    last_verdict,\n    last_focus,\n        CASE\n            WHEN (last_tested_at IS NULL) THEN NULL::integer\n            ELSE (EXTRACT(day FROM (now() - last_tested_at)))::integer\n        END AS days_since_last_test,\n    ( SELECT jsonb_agg(jsonb_build_object('date', (s.created_at)::date, 'verdict', s.verdict, 'focus', s.focus, 'p0', s.p0_count, 'p1', s.p1_count) ORDER BY s.created_at DESC) AS jsonb_agg\n           FROM ( SELECT persona_test_sessions.id,\n                    persona_test_sessions.created_at,\n                    persona_test_sessions.session_id,\n                    persona_test_sessions.persona,\n                    persona_test_sessions.url,\n                    persona_test_sessions.focus,\n                    persona_test_sessions.browser_tool,\n                    persona_test_sessions.steps_taken,\n                    persona_test_sessions.duration_ms,\n                    persona_test_sessions.verdict,\n                    persona_test_sessions.p0_count,\n                    persona_test_sessions.p1_count,\n                    persona_test_sessions.p2_count,\n                    persona_test_sessions.p3_count,\n                    persona_test_sessions.avg_confidence,\n                    persona_test_sessions.findings,\n                    persona_test_sessions.report_md,\n                    persona_test_sessions.debrief_md,\n                    persona_test_sessions.persona_id\n                   FROM persona_test_sessions\n                  WHERE (persona_test_sessions.persona_id = p.id)\n                  ORDER BY persona_test_sessions.created_at DESC\n                 LIMIT 5) s) AS recent_sessions\n   FROM personas p\n  ORDER BY app_url, last_tested_at NULLS FIRST;"
     },
     {
       "view_name": "persona_density_per_repo",
@@ -7031,6 +7295,10 @@
     {
       "view_name": "plan_satisfaction",
       "definition": " SELECT p.id AS plan_id,\n    p.path AS plan_path,\n    p.skill AS plan_skill,\n    p.status AS plan_status,\n    r.id AS latest_run_id,\n    r.created_at AS last_verified_at,\n    r.commit_sha AS verified_commit_sha,\n    r.url AS verified_url,\n    r.total_criteria,\n    r.passed_count,\n    r.failed_count,\n    r.skipped_count,\n    round((NULLIF((100.0 * (r.passed_count)::numeric), (0)::numeric) / (NULLIF(r.total_criteria, 0))::numeric), 1) AS satisfaction_pct,\n    ( SELECT COALESCE(jsonb_agg(jsonb_build_object('description', i.description, 'category', i.category, 'error', i.error_message, 'hash', i.criterion_hash)), '[]'::jsonb) AS \"coalesce\"\n           FROM plan_verification_items i\n          WHERE ((i.run_id = r.id) AND (i.passed = false) AND (i.skipped = false) AND (i.severity = 'P0'::text))) AS failing_p0_criteria,\n    ( SELECT COALESCE(jsonb_agg(jsonb_build_object('description', i.description, 'category', i.category, 'error', i.error_message, 'hash', i.criterion_hash)), '[]'::jsonb) AS \"coalesce\"\n           FROM plan_verification_items i\n          WHERE ((i.run_id = r.id) AND (i.passed = false) AND (i.skipped = false) AND (i.severity = 'P1'::text))) AS failing_p1_criteria\n   FROM (plans p\n     LEFT JOIN LATERAL ( SELECT plan_verification_runs.id,\n            plan_verification_runs.plan_id,\n            plan_verification_runs.spec_id,\n            plan_verification_runs.commit_sha,\n            plan_verification_runs.url,\n            plan_verification_runs.total_criteria,\n            plan_verification_runs.passed_count,\n            plan_verification_runs.failed_count,\n            plan_verification_runs.skipped_count,\n            plan_verification_runs.duration_ms,\n            plan_verification_runs.run_context,\n            plan_verification_runs.created_at,\n            plan_verification_runs.selector_policy_violations\n           FROM plan_verification_runs\n          WHERE (plan_verification_runs.plan_id = p.id)\n          ORDER BY plan_verification_runs.created_at DESC\n         LIMIT 1) r ON (true));"
+    },
+    {
+      "view_name": "recurring_issues",
+      "definition": " SELECT persona_test_sessions.url,\n    (f.value ->> 'element'::text) AS element,\n    (f.value ->> 'code'::text) AS severity,\n    (f.value ->> 'observed'::text) AS observed,\n    count(*) AS occurrence_count,\n    max(persona_test_sessions.created_at) AS last_seen\n   FROM persona_test_sessions,\n    LATERAL jsonb_array_elements(persona_test_sessions.findings) f(value)\n  WHERE (((f.value ->> 'confidence'::text))::numeric >= 0.6)\n  GROUP BY persona_test_sessions.url, (f.value ->> 'element'::text), (f.value ->> 'code'::text), (f.value ->> 'observed'::text)\n HAVING (count(*) >= 2)\n  ORDER BY (count(*)) DESC, (max(persona_test_sessions.created_at)) DESC;"
     },
     {
       "view_name": "regression_saves",
@@ -7955,7 +8223,7 @@
       "table_name": "persona_test_sessions",
       "constraint_name": "persona_test_sessions_persona_id_fkey",
       "constraint_type": "FOREIGN KEY",
-      "definition": "FOREIGN KEY (persona_id) REFERENCES personas(id)"
+      "definition": "FOREIGN KEY (persona_id) REFERENCES personas(id) ON DELETE SET NULL"
     },
     {
       "table_name": "persona_test_sessions",
@@ -7974,6 +8242,18 @@
       "constraint_name": "persona_test_sessions_session_id_key",
       "constraint_type": "UNIQUE",
       "definition": "UNIQUE (session_id)"
+    },
+    {
+      "table_name": "persona_test_sessions",
+      "constraint_name": "persona_test_sessions_verdict_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((verdict = ANY (ARRAY['Ready for users'::text, 'Needs work'::text, 'Blocked'::text])))"
+    },
+    {
+      "table_name": "personas",
+      "constraint_name": "personas_last_verdict_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((last_verdict = ANY (ARRAY['Ready for users'::text, 'Needs work'::text, 'Blocked'::text])) OR (last_verdict IS NULL)))"
     },
     {
       "table_name": "personas",
@@ -8988,6 +9268,21 @@
     },
     {
       "tablename": "persona_test_sessions",
+      "indexname": "persona_test_sessions_created_at_idx",
+      "indexdef": "CREATE INDEX persona_test_sessions_created_at_idx ON public.persona_test_sessions USING btree (created_at DESC)"
+    },
+    {
+      "tablename": "persona_test_sessions",
+      "indexname": "persona_test_sessions_persona_id_idx",
+      "indexdef": "CREATE INDEX persona_test_sessions_persona_id_idx ON public.persona_test_sessions USING btree (persona_id)"
+    },
+    {
+      "tablename": "persona_test_sessions",
+      "indexname": "persona_test_sessions_persona_idx",
+      "indexdef": "CREATE INDEX persona_test_sessions_persona_idx ON public.persona_test_sessions USING btree (persona)"
+    },
+    {
+      "tablename": "persona_test_sessions",
       "indexname": "persona_test_sessions_pkey",
       "indexdef": "CREATE UNIQUE INDEX persona_test_sessions_pkey ON public.persona_test_sessions USING btree (id)"
     },
@@ -8998,8 +9293,23 @@
     },
     {
       "tablename": "persona_test_sessions",
+      "indexname": "persona_test_sessions_repo_name_idx",
+      "indexdef": "CREATE INDEX persona_test_sessions_repo_name_idx ON public.persona_test_sessions USING btree (repo_name)"
+    },
+    {
+      "tablename": "persona_test_sessions",
       "indexname": "persona_test_sessions_session_id_key",
       "indexdef": "CREATE UNIQUE INDEX persona_test_sessions_session_id_key ON public.persona_test_sessions USING btree (session_id)"
+    },
+    {
+      "tablename": "persona_test_sessions",
+      "indexname": "persona_test_sessions_url_idx",
+      "indexdef": "CREATE INDEX persona_test_sessions_url_idx ON public.persona_test_sessions USING btree (url)"
+    },
+    {
+      "tablename": "personas",
+      "indexname": "personas_app_url_idx",
+      "indexdef": "CREATE INDEX personas_app_url_idx ON public.personas USING btree (app_url)"
     },
     {
       "tablename": "personas",
@@ -9010,6 +9320,11 @@
       "tablename": "personas",
       "indexname": "personas_pkey",
       "indexdef": "CREATE UNIQUE INDEX personas_pkey ON public.personas USING btree (id)"
+    },
+    {
+      "tablename": "personas",
+      "indexname": "personas_repo_name_idx",
+      "indexdef": "CREATE INDEX personas_repo_name_idx ON public.personas USING btree (repo_name)"
     },
     {
       "tablename": "plan_verification_items",
@@ -9400,10 +9715,6 @@
   ],
   "extensions": [
     {
-      "extension_name": "pg_stat_statements",
-      "version": "1.11"
-    },
-    {
       "extension_name": "pg_trgm",
       "version": "1.6"
     },
@@ -9416,47 +9727,14 @@
       "version": "1.0"
     },
     {
-      "extension_name": "supabase_vault",
-      "version": "0.3.1"
-    },
-    {
-      "extension_name": "uuid-ossp",
-      "version": "1.1"
-    },
-    {
       "extension_name": "vector",
-      "version": "0.8.0"
+      "version": "0.8.5"
     }
   ],
   "grants": [
     {
-      "grantee": "anon",
-      "object": "public.arm_eval_crosschecks",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.arm_eval_crosschecks",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.arm_eval_crosschecks",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.arm_eval_crosschecks",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.arm_eval_human_rankings",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.arm_eval_human_rankings",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9465,38 +9743,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.arm_eval_human_rankings",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.arm_eval_judgments",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.arm_eval_judgments",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.arm_eval_judgments",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.arm_eval_judgments",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.arm_eval_leaderboard",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.arm_eval_leaderboard",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9505,38 +9753,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.arm_eval_leaderboard",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.arm_eval_outputs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.arm_eval_outputs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.arm_eval_outputs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.arm_eval_outputs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.arm_eval_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.arm_eval_runs",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9545,38 +9763,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.arm_eval_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.arm_eval_sessions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.arm_eval_sessions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.arm_eval_sessions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.arm_eval_sessions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.audit_arms",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.audit_arms",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9585,38 +9773,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.audit_arms",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.audit_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.audit_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.audit_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.audit_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.audit_findings",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.audit_findings",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9625,38 +9783,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.audit_findings",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.audit_loop_migrations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.audit_loop_migrations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.audit_loop_migrations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.audit_loop_migrations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.audit_pass_stats",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.audit_pass_stats",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9665,38 +9793,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.audit_pass_stats",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.audit_repos",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.audit_repos",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.audit_repos",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.audit_repos",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.audit_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.audit_runs",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9705,38 +9803,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.audit_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.bandit_arms",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.bandit_arms",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.bandit_arms",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.bandit_arms",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.debt_entries",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.debt_entries",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9745,58 +9813,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.debt_entries",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.debt_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.debt_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.debt_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.debt_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.debt_summary",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.debt_summary",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "postgres",
-      "object": "public.debt_summary",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.debt_summary",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.domain_summaries",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.domain_summaries",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9805,38 +9823,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.domain_summaries",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.false_positive_patterns",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.false_positive_patterns",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.false_positive_patterns",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.false_positive_patterns",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.finding_adjudication_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.finding_adjudication_events",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9845,38 +9833,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.finding_adjudication_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.finding_equivalence",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.finding_equivalence",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.finding_equivalence",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.finding_equivalence",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.friction_log",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.friction_log",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9885,38 +9843,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.friction_log",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.learning_decisions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.learning_decisions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.learning_decisions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.learning_decisions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.memory_friction",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.memory_friction",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9925,38 +9853,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.memory_friction",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.model_ab_arm_cost",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.model_ab_arm_cost",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.model_ab_arm_cost",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.model_ab_arm_cost",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.model_ab_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.model_ab_effectiveness",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -9965,38 +9863,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.model_ab_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.model_ab_finding_scores",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.model_ab_finding_scores",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.model_ab_finding_scores",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.model_ab_finding_scores",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.model_ab_spend_ledger",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.model_ab_spend_ledger",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10005,38 +9873,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.model_ab_spend_ledger",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.model_eval_judge_batches",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.model_eval_judge_batches",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.model_eval_judge_batches",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.model_eval_judge_batches",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.model_eval_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.model_eval_runs",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10045,38 +9883,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.model_eval_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.model_eval_shadow_observations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.model_eval_shadow_observations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.model_eval_shadow_observations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.model_eval_shadow_observations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.nav_audit_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.nav_audit_runs",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10085,38 +9893,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.nav_audit_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.no_brainer_recommendations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.no_brainer_recommendations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.no_brainer_recommendations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.no_brainer_recommendations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.pending_triage_findings",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.pending_triage_findings",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10125,18 +9903,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.pending_triage_findings",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.persistent_plan_failures",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.persistent_plan_failures",
+      "grantee": "postgres",
+      "object": "public.persistent_p0s",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10145,38 +9913,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.persistent_plan_failures",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.persona_audit_correlations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.persona_audit_correlations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.persona_audit_correlations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.persona_audit_correlations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.persona_dashboard",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.persona_dashboard",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10185,38 +9923,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.persona_dashboard",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.persona_density_per_repo",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.persona_density_per_repo",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.persona_density_per_repo",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.persona_density_per_repo",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.persona_finding_outcomes",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.persona_finding_outcomes",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10225,38 +9933,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.persona_finding_outcomes",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.persona_test_candidates",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.persona_test_candidates",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.persona_test_candidates",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.persona_test_candidates",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.persona_test_sessions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.persona_test_sessions",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10265,38 +9943,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.persona_test_sessions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.personas",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.personas",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.personas",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.personas",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.plan_satisfaction",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.plan_satisfaction",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10305,38 +9953,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.plan_satisfaction",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.plan_verification_items",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.plan_verification_items",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.plan_verification_items",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.plan_verification_items",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.plan_verification_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.plan_verification_runs",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10345,38 +9963,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.plan_verification_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.plans",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.plans",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.plans",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.plans",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.prompt_experiments",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.prompt_experiments",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10385,38 +9973,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.prompt_experiments",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.prompt_revisions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.prompt_revisions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.prompt_revisions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.prompt_revisions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.prompt_variants",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.prompt_variants",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10425,38 +9983,13 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.prompt_variants",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.recurring_finding_clusters",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.recurring_finding_clusters",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.recurring_finding_clusters",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.recurring_finding_clusters",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.refresh_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.refresh_runs",
+      "grantee": "postgres",
+      "object": "public.recurring_issues",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10465,38 +9998,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.refresh_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.regression_saves",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.regression_saves",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.regression_saves",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.regression_saves",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.regression_spec_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.regression_spec_runs",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10505,38 +10008,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.regression_spec_runs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.regression_specs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.regression_specs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.regression_specs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.regression_specs",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.security_incidents",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.security_incidents",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10545,38 +10018,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.security_incidents",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.security_strategy_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.security_strategy_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.security_strategy_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.security_strategy_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.ship_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.ship_events",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10585,38 +10028,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.ship_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.ship_gate_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.ship_gate_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.ship_gate_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.ship_gate_effectiveness",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.suppression_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.suppression_events",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10625,38 +10038,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.suppression_events",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.symbol_definitions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.symbol_definitions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.symbol_definitions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.symbol_definitions",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.symbol_embeddings",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.symbol_embeddings",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10665,38 +10048,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.symbol_embeddings",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.symbol_file_imports",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.symbol_file_imports",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.symbol_file_imports",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.symbol_file_imports",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.symbol_index",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.symbol_index",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10705,38 +10058,8 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.symbol_index",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.symbol_layering_violations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.symbol_layering_violations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
       "object": "public.symbol_layering_violations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
-      "object": "public.symbol_layering_violations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.tiered_shadow_observations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.tiered_shadow_observations",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
@@ -10745,27 +10068,7 @@
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
     {
-      "grantee": "service_role",
-      "object": "public.tiered_shadow_observations",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "anon",
-      "object": "public.unlocked_fixes",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "authenticated",
-      "object": "public.unlocked_fixes",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
       "grantee": "postgres",
-      "object": "public.unlocked_fixes",
-      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
-    },
-    {
-      "grantee": "service_role",
       "object": "public.unlocked_fixes",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     }
@@ -11062,11 +10365,6 @@
       "owner": "postgres"
     },
     {
-      "object_name": "debt_summary",
-      "object_kind": "v",
-      "owner": "postgres"
-    },
-    {
       "object_name": "model_ab_arm_cost",
       "object_kind": "v",
       "owner": "postgres"
@@ -11092,6 +10390,11 @@
       "owner": "postgres"
     },
     {
+      "object_name": "persistent_p0s",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
       "object_name": "persistent_plan_failures",
       "object_kind": "v",
       "owner": "postgres"
@@ -11108,6 +10411,11 @@
     },
     {
       "object_name": "plan_satisfaction",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "recurring_issues",
       "object_kind": "v",
       "owner": "postgres"
     },
