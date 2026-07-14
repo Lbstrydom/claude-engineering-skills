@@ -1,7 +1,7 @@
 # Plan: Git-Native Provenance Trailers (F1) + Executable Gate-Honesty Suite (F2)
 
 - **Date**: 2026-07-14
-- **Status**: Approved (audited 3×GPT + 2×Gemini; all four open decisions recorded 2026-07-14 — see §Decision record)
+- **Status**: Complete — implemented via `/cycle --autonomous` (Cluster A: 5×GPT + 1 rebuttal, converged; Cluster B: 3×GPT + 3 rebuttals, converged; consolidated Gemini final gate: APPROVE round 1). Shipped 2026-07-14.
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `install`, `shared-lib`, `skills-content`, `tests`
@@ -1094,3 +1094,40 @@ criterion of its owning phase; losing alternatives are struck from the body.
    ordering (§F1.7 → §F2.10) already guarantees this; the Phase 3 close-out
    verifies it with `git log --oneline provenance-v1.. --grep='^AI-Skill:'`
    before Phase 4 begins.
+
+## Implementation Log
+
+### 2026-07-14
+
+- **Completed**: both clusters, in full, per the plan's §11 execution order.
+  Cluster A (F1): `scripts/ship-commit.mjs` + `scripts/lib/commit-trailers.mjs`,
+  `/ship` rewired through it, `docs/commit-provenance.md`, annotated tag
+  `provenance-v1`, sync wiring, 51 helper tests. Cluster B (F2):
+  `scripts/lib/gate-honesty/{schema,oracles,loader}.mjs`, the lying-skill +
+  3 negative fixtures, `tests/gate-honesty.test.mjs` (11 tests, pinned v1
+  census), `scripts/check-gate-contracts.mjs` wired into `skills:check`,
+  `docs/gate-honesty.md`, two real skill contracts (5 executable + 4
+  document-only gates), the `convergence.mjs` extraction. 12 commits total
+  since the recon commit, all now behind the `provenance-v1` boundary.
+- **Remaining**: nothing against this plan's declared scope. §V2 lists
+  seven explicitly-deferred items with promotion triggers (receipt-derived
+  `AI-Models`, verdict-bound ship-evidence receipt, `/cycle` trailer
+  emission, contracts for the other 6+ skills, etc.) — none block this
+  plan's completion.
+- **Deviations** (both recorded in-line where they occur, repeated here for
+  the log): (1) `AI-Gate: passed` requires **store-verified convergence**
+  against `audit_runs`, not just evidence freshness — sustained as a HIGH
+  during Cluster A's audit loop and fixed per an explicit user decision
+  among three presented options (§F1.3b). (2) `partial-matrix-refusal`
+  reclassified executable→document-only during Cluster B — no
+  independently-testable pure predicate exists for that inline check, and
+  building one was out of this plan's declared file scope (§F2.6, §F2.8).
+- **Process note, not a plan deviation**: a ledger-identity mistake in the
+  session's own ad-hoc audit-triage scripting (using a shrunken finding
+  stand-in instead of the real finding object) zeroed R2+ suppression
+  signal and outcome-telemetry labeling for a time in both clusters —
+  caught via the `0/N labelled` symptom, root-caused, and repaired (ledger
+  rebuilt from real finding objects, outcomes re-finalized: 79/79 then
+  20/20 labelled). The canonical `docs/audit/shared-references/ledger-format.md`
+  example was rewritten with the identity invariant stated explicitly so
+  future sessions don't reconstruct the same mistake from the doc.
