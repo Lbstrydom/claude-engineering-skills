@@ -26,7 +26,7 @@
 > advisory). v1's origin signal was **empirically confirmed** firing on the real `.mpc-add-btn`
 > dark-mode bug on 2026-07-01 (faithful ground-truth render, both themes, `source:'live'`). That
 > pre-ship empirical gate is what unblocks v2. Origin brainstorm:
-> [`docs/plans/theme-parity-contrast-delta.md`](theme-parity-contrast-delta.md) (Superseded note).
+> [`docs/completed/theme-parity-contrast-delta.md`](theme-parity-contrast-delta.md) (Superseded note).
 
 ---
 
