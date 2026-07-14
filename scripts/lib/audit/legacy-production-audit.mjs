@@ -367,7 +367,10 @@ let _runSeedUsed = false;
 // envelope { seedEligible, seedUsed, seedSkipReason, seedUnitIdx, seedUnitTokens }
 // so the audit-pass telemetry can record which mode ran.
 function decideSeed(units, passName, buildPromptForUnit) {
-  const envFlag = process.env.AUDIT_CACHE_SEED === '1';
+  // Default-ON since 2026-07-14 (PR-6 flip; docs/completed/openai-prefix-cache.md §8).
+  // Opt out per-run with AUDIT_CACHE_SEED=0. The cache-hitrate-check routine
+  // validates the flip empirically from the seed-ON cohort in audit_runs.
+  const envFlag = process.env.AUDIT_CACHE_SEED !== '0';
   const minPrefix = safeInt(process.env.AUDIT_CACHE_STABLE_PREFIX_MIN, 1024);
   const decision = { seedEligible: false, seedUsed: false, seedSkipReason: null, seedUnitIdx: null, seedUnitTokens: null };
   if (!envFlag) {
@@ -463,7 +466,7 @@ async function runMapReducePass(openai, files, passName, buildPromptForUnit, max
   process.stderr.write(`  [${passName}] MAP: ${units.length} units, concurrency=${CONCURRENCY_LIMIT}\n`);
   const mapStart = Date.now();
 
-  // Cache-seed (PR-5): opt-in via AUDIT_CACHE_SEED=1. When enabled AND
+  // Cache-seed (PR-5, default-ON since PR-6 flip): opt out via AUDIT_CACHE_SEED=0. When enabled AND
   // units.length > 1 AND stable-prefix is large enough, run the smallest
   // unit sequentially FIRST to warm OpenAI's prefix cache, then fan out
   // the rest in parallel. Result ordering is reconstructed by original
