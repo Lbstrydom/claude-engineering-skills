@@ -1,7 +1,7 @@
 /**
  * @fileoverview Stale `// @duplicate-justification` pragma sweep — the
  * "Out of Scope (Future)" mitigation for the duplication audit wave
- * (docs/plans/audit-code-duplication-wave.md, Gemini gate round 2's
+ * (docs/completed/audit-code-duplication-wave.md, Gemini gate round 2's
  * wrongly_dismissed H4 finding). Extracted from `scripts/symbol-index/
  * drift.mjs` into its own pure module (not left inline) so it's directly
  * importable by tests — `drift.mjs` itself is a CLI entry point with an

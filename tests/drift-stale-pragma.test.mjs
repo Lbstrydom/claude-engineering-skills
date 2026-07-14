@@ -1,6 +1,6 @@
 /**
  * @fileoverview Tests for the stale-suppression-pragma sweep added to
- * `arch:drift` (docs/plans/audit-code-duplication-wave.md, "Out of Scope
+ * `arch:drift` (docs/completed/audit-code-duplication-wave.md, "Out of Scope
  * (Future)" mitigation for round-2 Gemini's wrongly_dismissed H4 finding).
  * Exercises the real `git grep`-backed scan against a throwaway temp git
  * repo — not a fake — since the false-positive this test guards against

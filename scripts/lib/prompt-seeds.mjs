@@ -115,7 +115,7 @@ SEVERITY:
 export const PASS_QUICKFIX_SYSTEM = PASS_QUICKFIX_OBJECTIVE_R1 + '\n\n' + PASS_QUICKFIX_RUBRIC;
 export { PASS_QUICKFIX_RUBRIC };
 
-// ── Duplication bouncer (Wave 5 — docs/plans/audit-code-duplication-wave.md) ─
+// ── Duplication bouncer (Wave 5 — docs/completed/audit-code-duplication-wave.md) ─
 //
 // Unlike every other pass, this one does NOT read code and find issues — the
 // mechanical detector (duplication-detector.mjs) already found candidate

@@ -394,7 +394,7 @@ export const symbolIndexConfig = Object.freeze({
   serviceRoleKey:        process.env.SUPABASE_AUDIT_SERVICE_ROLE_KEY || null,
   intentEmbedCacheTtlMs: safeInt(process.env.ARCH_INTENT_EMBED_CACHE_TTL_MS, 24 * 60 * 60 * 1000),
   refreshIncrementalDefault: process.env.ARCH_REFRESH_INCREMENTAL_DEFAULT !== 'false',
-  // Duplication audit wave (docs/plans/audit-code-duplication-wave.md §2) —
+  // Duplication audit wave (docs/completed/audit-code-duplication-wave.md §2) —
   // cheap preflight bound (checked before any Git extraction happens) and
   // the post-extraction candidate-count cap. Both return `unavailable`
   // rather than silently truncating when exceeded.

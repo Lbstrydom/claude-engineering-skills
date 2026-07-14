@@ -189,7 +189,7 @@ Opt out for a single run with `--passes <csv>` omitting `duplication`
 silent, non-blocking `unavailable` state when the architectural-memory
 store isn't configured for this repo.
 
-Plan: `docs/plans/audit-code-duplication-wave.md`.
+Plan: `docs/completed/audit-code-duplication-wave.md`.
 
 ### Handle results
 

@@ -70,7 +70,7 @@ export const ProducerFindingSchema = z.object({
  * `.max()` here — the cap is operator-configurable (env var), so baking a
  * fixed number into the schema would drift from `symbolIndexConfig` silently.
  *
- * Plan: docs/plans/audit-code-duplication-wave.md §2 / §4 Phase 3 (round-3 H2).
+ * Plan: docs/completed/audit-code-duplication-wave.md §2 / §4 Phase 3 (round-3 H2).
  */
 export const DuplicationBouncerResponseSchema = z.object({
   decisions: z.array(z.object({

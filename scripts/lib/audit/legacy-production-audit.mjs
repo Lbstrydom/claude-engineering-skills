@@ -1956,7 +1956,7 @@ export async function runLegacyProductionAudit(ctx) {
   cachePassResult('quickfix', quickfixResult);
 
   // 4.6 Wave 5: Duplication detector (mechanical detection + low-reasoning LLM bouncer)
-  // Plan: docs/plans/audit-code-duplication-wave.md. Mirrors runArchitecturePass's
+  // Plan: docs/completed/audit-code-duplication-wave.md. Mirrors runArchitecturePass's
   // two-stage shape (mechanical report → LLM bouncer → deterministic fallback).
   // Attribution is pure Git (no DB dependency) — see duplication-detector.mjs's
   // module docblock for the Gemini-round-3 decoupling this design is built on.
@@ -3041,7 +3041,20 @@ export async function buildAuditRunContext(cliArgs) {
   let geminiCleanRegionCall = null;
   if ((tieredAuditConfig.pipelineEnabled || tieredAuditConfig.shadowEnabled) && allowTiered) {
     try {
-      anthropicClient = await createAnthropicClient();
+      // Forced `backend: 'sdk'` — NOT the ambient CLAUDE_BACKEND-resolved
+      // default. This handle is used SOLELY for discovery-portfolio.mjs's
+      // Sonnet generator, which requires `tool_choice:{type:'tool',…}` to
+      // get structured findings back. The `cli` backend's messages.create()
+      // silently drops `tools`/`tool_choice` (by design, for its original
+      // single-shot-text callers — see anthropic-client.mjs) and returns
+      // plain text instead, which the generator's `tool_use` check then
+      // fails — a REQUIRED generator failure, so every round fell back to
+      // legacy. Root-caused 2026-07-14: with CLAUDE_BACKEND=cli active
+      // locally since 2026-06-29, 20/20 Close-out shadow observations across
+      // two repos were silent no-op fallbacks, not real comparisons. This
+      // handle needs the real Messages API tool-calling surface regardless
+      // of what the rest of the process is configured to use.
+      anthropicClient = await createAnthropicClient({ backend: 'sdk' });
     } catch (err) {
       process.stderr.write(`  [ctx] anthropicClient unavailable (non-blocking — only the tiered pipeline's Sonnet generator needs it): ${err.message}\n`);
     }

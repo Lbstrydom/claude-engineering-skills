@@ -5,7 +5,7 @@
  * assembly-level pattern: asserts the actual composed artifact a real audit
  * would send to an external LLM, not the classifier in isolation.
  *
- * Two halves, per docs/plans/audit-code-duplication-wave.md §2/§4 Phase 4:
+ * Two halves, per docs/completed/audit-code-duplication-wave.md §2/§4 Phase 4:
  *  1. Secret-shaped CONTENT never reaches the assembled bouncer prompt
  *     (formatCandidatesForPrompt → buildRedactedAuditContext's refuse,
  *     never scrub-and-send, doctrine).

@@ -4,7 +4,7 @@
  * 'keep'` becomes a real finding. Asserts is_quick_fix/is_mechanical are
  * hardcoded literals invariant to anything an (adversarial, fake) bouncer
  * response contains, since the bouncer's own schema has no such fields.
- * Plan: docs/plans/audit-code-duplication-wave.md §4 Phase 4 (round-2 H4 fix).
+ * Plan: docs/completed/audit-code-duplication-wave.md §4 Phase 4 (round-2 H4 fix).
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';

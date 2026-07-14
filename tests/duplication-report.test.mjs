@@ -3,7 +3,7 @@
  * deterministic fallback/failed-state finding constructors, and the
  * query-exclude glob list. Bouncer-decision mapping is covered separately
  * in tests/duplication-bouncer-mapping.test.mjs.
- * Plan: docs/plans/audit-code-duplication-wave.md §4 Phase 4.
+ * Plan: docs/completed/audit-code-duplication-wave.md §4 Phase 4.
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
