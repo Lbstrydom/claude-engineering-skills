@@ -226,3 +226,66 @@ v1 hard-wires `public`. Plan §2 "Schema scope" + the audit at
 4 migrations qualify `public.<table>` inside `publish_refresh_run` and 11
 `SECURITY DEFINER` functions pin `search_path = pg_catalog, public`. Arbitrary-schema
 support is §10 Out of Scope until that audit pass is re-run.
+
+## Incident: `AUDIT_DB_TEST_URL` safety gate (2026-07-14)
+
+**What happened**: `tests/db-setup.test.mjs` and `tests/db-withtx.test.mjs`'s
+integration suites (env-gated on `AUDIT_DB_TEST_URL`) swap `AUDIT_DB_URL =
+AUDIT_DB_TEST_URL` for their duration and run `DROP SCHEMA public CASCADE` in
+`beforeEach` to reset between test cases. The only gate was "is
+`AUDIT_DB_TEST_URL` **set**" — never "is it actually a disposable database".
+Whoever ran these tests had `AUDIT_DB_TEST_URL` resolving to the real
+production DSN (exact process never pinned down). Result: the shared
+Supabase project (`uahjjdelnnpfmaqjrwoz`, "Audit-loop" — the store behind all
+three repos: claude-engineering-skills, wine-cellar-app, ai-organiser) was
+wiped from ~30 tables down to one leftover `drift_test` table.
+
+**Root-caused, not guessed**: pulled the raw Postgres logs (Supabase
+`get_logs` service=postgres) and found the exact statement sequence —
+`DROP SCHEMA IF EXISTS public CASCADE` → `CREATE SCHEMA public` → `GRANT ALL`
+→ rebuild, repeated once per integration test case (matching
+`db-setup.test.mjs`'s own documented test list: fresh-apply, idempotent
+re-apply, sha256-mismatch, adopt-mode ×2), cut off right after the LAST test
+(`"detects when live has a table the manifest does not"`) created
+`CREATE TABLE drift_test (id int PRIMARY KEY)` — the run stopped there,
+before any later step could restore the schema. A confirmed direct `pg`
+query (bypassing all tooling) showed exactly 1 table (`drift_test`) in
+`public` at discovery time — not a connection/tooling artifact.
+
+**Impact — data is gone, schema is not**: the schema is fully recoverable
+(migrations are deterministic and committed — restored same-day via
+`node scripts/setup-postgres.mjs --migrate`, 61/61 applied cleanly, back to
+69 tables). The **data** — every `audit_runs`/`audit_findings`/
+`bandit_arms`/`false_positive_patterns`/`debt_entries`/persona/
+tiered-shadow-observation/`model_eval_runs`/`learning_decisions` row across
+all three repos — is permanently lost unless Supabase Point-in-Time Recovery
+is later used (the operator explicitly chose "restore schema now, accept the
+data loss" over checking PITR first).
+
+**Fixed same day**: `scripts/lib/db/client.mjs::assertDisposableDbUrl(testUrl,
+{productionUrl})` — both suites' `before()` hooks now call it BEFORE any pool
+reset or connection. Rejects (a) any Supabase-hosted host
+(`*.supabase.co`/`*.supabase.com` — a genuine disposable test DB is never
+Supabase-hosted in this repo's design, it's a local/container Postgres) and
+(b) a test URL identical to the real `AUDIT_DB_URL`, even on a non-Supabase
+host (catches a same-database copy-paste that isn't Supabase at all).
+Regression-guarded in
+[`tests/db-dsn-validation.test.mjs`](../tests/db-dsn-validation.test.mjs).
+**Live-repro-verified, not just unit-tested**: exporting `AUDIT_DB_TEST_URL`
+to the real production DSN and re-running `db-setup.test.mjs` now fails the
+`before()` hook immediately — all 5 subtests in that describe block show
+`cancelled` (never ran), zero destructive queries issued. Full suite green
+(5274 tests, 0 fail) after the fix.
+
+**A stray `drift_test` table remains in production** (harmless leftover from
+the incident) — not dropped without separate explicit confirmation.
+
+**Follow-on consequence — the architectural-memory symbol index is also
+empty.** `symbol_index`/embeddings live in the same wiped database. An
+incremental `npm run arch:refresh` after the restore only rebuilds files
+touched since the last commit (10 symbols), which would shrink the committed
+`docs/architecture-map.md` from ~4,460 lines to ~36 if staged — reverted,
+not shipped. **`npm run arch:refresh:full` is needed as a separate follow-up**
+(a full repo re-index, non-trivial embedding/summarisation cost) before
+`get-neighbourhood`/`compute-target-domains`/the architecture map are
+trustworthy again.

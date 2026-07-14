@@ -541,6 +541,10 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   [`tests/store-jsonb-array-serialization.test.mjs`](tests/store-jsonb-array-serialization.test.mjs);
   the `/audit-code` backend pass also flags raw-array-to-jsonb + silent DB-write
   error-swallow + unverified-write-success (RLS/0-row) as HIGH.
+- **`AUDIT_DB_TEST_URL` must be disposable — enforced, not documented-only.**
+  `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`) runs before any pool reset
+  in the `db-setup`/`db-withtx` integration suites, rejecting a Supabase-hosted or
+  production-identical test URL — closes a 2026-07-14 wipe incident. Detail: [postgres-parity-runbook.md](docs/postgres-parity-runbook.md) §Incident.
 
 → **Design** (the no-adapter `pg`-direct decision, schema scope, privilege model, file
 plan): [`docs/completed/postgres-parity.md`](docs/completed/postgres-parity.md) +
@@ -711,9 +715,11 @@ defaults **off** — production runs the legacy path today.
   'complete'`; `tieredFallbackReason` is now persisted so a future all-
   fallback state is diagnosable from the DB/dashboard, not a live repro. The
   old 20 rows are void — the window restarts from zero.
-- **Not yet done**: the shadow-validation window itself (10-15 real commits
-  with the flag on, now genuinely collecting from zero) and Phase 14 (the
-  production-flip decision gate).
+- **Not yet done**: the shadow-validation window itself (10-15 real commits with
+  the flag on, now genuinely collecting from zero) and Phase 14 (the production-
+  flip decision gate). **Also check at Phase 14**: the model-swap-eval-harness's
+  adjudicator-role eval has never run (Stage 2 here uses Gemini) — see
+  [model-eval-harness.md](docs/model-eval-harness.md) §"Adjudicator role — not yet run".
 
 → Full plan, phase-by-phase spec, Stage-2 adapter wiring history (the
 two-handle design, module-relative resolution for consumer layouts), and

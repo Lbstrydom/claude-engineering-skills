@@ -79,6 +79,55 @@ export function assertSafeDsn(url) {
   }
 }
 
+/** Hostname suffixes that indicate a Supabase-hosted (never disposable) database. */
+const HOSTED_SUPABASE_SUFFIXES = /(\.supabase\.co|\.supabase\.com)$/i;
+
+/**
+ * Fail-closed guard for `AUDIT_DB_TEST_URL` before ANY destructive
+ * integration-test operation (schema drop/recreate) runs against it.
+ *
+ * Root-caused incident (2026-07-14): `tests/db-setup.test.mjs` /
+ * `tests/db-withtx.test.mjs`'s integration suites swap `AUDIT_DB_URL =
+ * AUDIT_DB_TEST_URL` for their duration and then run `DROP SCHEMA public
+ * CASCADE` in `beforeEach`. The only prior gate was "is AUDIT_DB_TEST_URL
+ * SET" — never "is it actually disposable" — so when `AUDIT_DB_TEST_URL`
+ * was set to (or resolved to the same database as) the real production
+ * `AUDIT_DB_URL`, the suite wiped the shared Supabase learning store with
+ * no warning. This closes that gap at the one place both suites' `before()`
+ * hooks already call before touching the pool: reject a hosted Supabase URL
+ * outright (a genuine disposable test DB is never Supabase-hosted in this
+ * repo's design — it's a local/container Postgres), and reject a test URL
+ * that's identical to the real `AUDIT_DB_URL` even if it isn't Supabase
+ * (e.g. a self-hosted production instance).
+ *
+ * @param {string} testUrl - the candidate `AUDIT_DB_TEST_URL` value
+ * @param {{productionUrl?: string|null}} [opts] - the real `AUDIT_DB_URL`
+ *   (read BEFORE any swap), so an accidental copy-paste is caught even when
+ *   it isn't Supabase-hosted.
+ */
+export function assertDisposableDbUrl(testUrl, { productionUrl = null } = {}) {
+  let parsed;
+  try {
+    parsed = new URL(testUrl);
+  } catch {
+    throw new Error('AUDIT_DB_TEST_URL is not a valid URL — expected a postgresql:// connection string.');
+  }
+  if (HOSTED_SUPABASE_SUFFIXES.test(parsed.hostname)) {
+    throw new Error(
+      `AUDIT_DB_TEST_URL points at a Supabase-hosted database (host "${parsed.hostname}") — ` +
+      'refusing to run destructive integration tests against it. AUDIT_DB_TEST_URL must be a ' +
+      'disposable local/container Postgres instance (e.g. 127.0.0.1), never a hosted Supabase ' +
+      'project (this repo has exactly one Supabase project, and it is always production).',
+    );
+  }
+  if (productionUrl && testUrl === productionUrl) {
+    throw new Error(
+      'AUDIT_DB_TEST_URL is identical to AUDIT_DB_URL — refusing to run destructive integration ' +
+      'tests against what would be the same database as production.',
+    );
+  }
+}
+
 /**
  * AsyncLocalStorage context that withTx populates with the active
  * { client, savepointDepth } so query helpers can auto-bind to the

@@ -15,7 +15,7 @@
 import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getPool, closePool, _resetForTest, getActiveTxClient } from '../scripts/lib/db/client.mjs';
+import { getPool, closePool, _resetForTest, getActiveTxClient, assertDisposableDbUrl } from '../scripts/lib/db/client.mjs';
 import { query, many, one, insertReturning, withTx } from '../scripts/lib/db/query.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
@@ -30,8 +30,11 @@ const TMP_TABLE = 'db_withtx_test_tmp';
 
 describe('withTx — re-entrant + auto-bind (G3)', { skip }, () => {
   before(async () => {
-    await _resetForTest();
     savedUrl = process.env.AUDIT_DB_URL;
+    // Fail-closed BEFORE any pool reset / connection — 2026-07-14 incident
+    // guard (see assertDisposableDbUrl's own doc comment for the full story).
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    await _resetForTest();
     savedPoolMax = process.env.AUDIT_DB_POOL_MAX;
     process.env.AUDIT_DB_URL = TEST_URL;
     process.env.AUDIT_DB_POOL_MAX = '1';

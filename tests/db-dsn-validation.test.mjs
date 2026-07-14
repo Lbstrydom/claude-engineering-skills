@@ -4,7 +4,7 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { assertSafeDsn, buildPoolConfig } from '../scripts/lib/db/client.mjs';
+import { assertSafeDsn, assertDisposableDbUrl, buildPoolConfig } from '../scripts/lib/db/client.mjs';
 
 const fakePgTypes = { getTypeParser: () => (v) => v };
 
@@ -32,6 +32,46 @@ describe('assertSafeDsn — forbidden / invalid DSNs', () => {
 
   it('rejects a non-URL string', () => {
     assert.throws(() => assertSafeDsn('not a url'), /not a valid URL/);
+  });
+});
+
+describe('assertDisposableDbUrl — 2026-07-14 incident guard', () => {
+  it('rejects a Supabase direct-connection host (db.<ref>.supabase.co)', () => {
+    assert.throws(
+      () => assertDisposableDbUrl('postgresql://u:p@db.uahjjdelnnpfmaqjrwoz.supabase.co:5432/postgres'),
+      /Supabase-hosted database/,
+    );
+  });
+
+  it('rejects a Supabase pooler host (*.pooler.supabase.com)', () => {
+    assert.throws(
+      () => assertDisposableDbUrl('postgresql://postgres.ref:p@aws-1-eu-west-2.pooler.supabase.com:5432/postgres'),
+      /Supabase-hosted database/,
+    );
+  });
+
+  it('rejects when identical to the real AUDIT_DB_URL, even on a non-Supabase host', () => {
+    const url = 'postgresql://u:p@db.internal:5432/postgres';
+    assert.throws(
+      () => assertDisposableDbUrl(url, { productionUrl: url }),
+      /identical to AUDIT_DB_URL/,
+    );
+  });
+
+  it('accepts a local/container Postgres host', () => {
+    assert.doesNotThrow(() => assertDisposableDbUrl('postgresql://postgres:postgres@127.0.0.1:5432/postgres'));
+    assert.doesNotThrow(() => assertDisposableDbUrl('postgresql://postgres:postgres@localhost:5432/postgres'));
+  });
+
+  it('accepts a local/container host even when a DIFFERENT productionUrl is set', () => {
+    assert.doesNotThrow(() => assertDisposableDbUrl(
+      'postgresql://postgres:postgres@127.0.0.1:5432/postgres',
+      { productionUrl: 'postgresql://u:p@aws-1-eu-west-2.pooler.supabase.com:5432/postgres' },
+    ));
+  });
+
+  it('rejects a non-URL string', () => {
+    assert.throws(() => assertDisposableDbUrl('not a url'), /not a valid URL/);
   });
 });
 

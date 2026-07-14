@@ -27,7 +27,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { _internals as setup } from '../scripts/setup-postgres.mjs';
-import { getPool, closePool, _resetForTest } from '../scripts/lib/db/client.mjs';
+import { getPool, closePool, _resetForTest, assertDisposableDbUrl } from '../scripts/lib/db/client.mjs';
 import { query } from '../scripts/lib/db/query.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -178,8 +178,11 @@ let savedUrl;
 
 describe('setup-postgres integration (env-gated)', { skip }, () => {
   before(async () => {
-    await _resetForTest();
     savedUrl = process.env.AUDIT_DB_URL;
+    // Fail-closed BEFORE any pool reset / connection — 2026-07-14 incident
+    // guard (see assertDisposableDbUrl's own doc comment for the full story).
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    await _resetForTest();
     process.env.AUDIT_DB_URL = TEST_URL;
   });
 

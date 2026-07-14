@@ -143,3 +143,36 @@ history — verified mechanically, not curated away). Full write-up incl. the
 raw-finding evidence and a governance note on the cross-repo egress
 authorization boundary that held even under direct repeated user request:
 [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](research/experiment-3-model-swap-glm-vs-gpt.md).
+
+## Adjudicator role — not yet run (open item, 2026-07-14)
+
+Unlike the auditor role above, **no `model-eval-adjudicator.mjs` run has ever
+been executed** — screen or promotion tier, any candidate. The harness
+supports it identically (`node scripts/model-eval-adjudicator.mjs --candidate
+<spec> --tier screen|promotion`), and the shared core (route resolution,
+structured extraction, verdict computation) is the same machinery the
+auditor-role run above already exercised — nobody has pointed it at a real
+candidate yet.
+
+**What running it needs**:
+- **Tier C** (always available, cheapest first signal) — `structured-
+  extractor.mjs` scores the candidate as a T/F extractor against
+  `getAdjudicatorGroundTruth()` (real, labeled `audit_findings` rows via
+  `scripts/lib/store/model-ab.mjs`). No live shadow run required.
+- **Tier A/B** (comparative — only reachable when `route-catalog.mjs` judges
+  candidate/baseline as genuinely independent lineages) — points
+  `gemini-review.mjs`'s `FINAL_REVIEW_SHADOW` mechanism at the candidate for
+  `minLiveShadowRuns` live runs (default 20, mirroring the shadow-final-
+  review A/B's own pre-registered stopping rule), then finalizes via
+  `finalize-shadow-eval.mjs`.
+- Thresholds are the same uncalibrated v0.1 bootstrap values as the auditor
+  role (`config/adjudicator-thresholds.json`) — not yet empirically
+  validated by a real run either.
+
+**Cross-reference for the tiered-recall pipeline**: Stage 2 of that pipeline
+(`docs/plans/tiered-recall-audit-pipeline.md`) uses Gemini as its adjudicator.
+That plan's Phase 14 production-flip review is a natural moment to also ask
+whether Gemini is still the right adjudicator choice — the two decisions are
+independent (Phase 14 doesn't require this eval to run first) but they touch
+the same "which model does final review" question, so decide them together
+rather than flipping Phase 14 and separately forgetting this is still open.
