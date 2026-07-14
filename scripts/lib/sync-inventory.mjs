@@ -58,6 +58,10 @@ const CORE_ENTRY = [
   // GREEN≠REALIZED Cluster A efficacy-lints CLI — walker pulls in lib/efficacy-lints.mjs +
   // its model-resolver / glob-match / sensitive-paths closure. Keep in lock-step with sync-to-repos.mjs.
   'scripts/efficacy-lints-check.mjs',
+  // Deterministic /ship commit helper (AI-* provenance trailers). Authoritative
+  // list is sync-to-repos.mjs; keep in lock-step. Walker pulls in
+  // lib/commit-trailers.mjs + sensitive-paths closure.
+  'scripts/ship-commit.mjs',
 ];
 
 // CORE_NON_IMPORTABLE lists modules that are documented runtime injection

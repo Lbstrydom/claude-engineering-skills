@@ -28,6 +28,12 @@ test('sourceRelToDestRel: scripts/postgres-parity/X.mjs covered by default rule'
   assert.equal(sourceRelToDestRel('scripts/postgres-parity/foo.mjs'), 'scripts/.claude-skills/postgres-parity/foo.mjs');
 });
 
+test('sourceRelToDestRel: ship-commit.mjs entry point + its lib closure map to the consumer tooling dir (R2-H3)', () => {
+  assert.equal(sourceRelToDestRel('scripts/ship-commit.mjs'), 'scripts/.claude-skills/ship-commit.mjs');
+  assert.equal(sourceRelToDestRel('scripts/lib/commit-trailers.mjs'), 'scripts/.claude-skills/lib/commit-trailers.mjs');
+  assert.equal(destRelToSourceRel('scripts/.claude-skills/ship-commit.mjs'), 'scripts/ship-commit.mjs');
+});
+
 test('sourceRelToDestRel: scripts/.sync-manifest.json is an explicit exception', () => {
   assert.equal(sourceRelToDestRel('scripts/.sync-manifest.json'), 'scripts/.sync-manifest.json');
 });

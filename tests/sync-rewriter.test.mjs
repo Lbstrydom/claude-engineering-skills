@@ -28,6 +28,15 @@ test('rewriter rewrites a known owned invocation', () => {
   assert.equal(out, 'Run `node scripts/.claude-skills/openai-audit.mjs --out foo.json`');
 });
 
+test('rewriter rewrites the /ship SKILL.md helper invocation to the consumer path (R2-H3)', () => {
+  const cfg = { ownedSourceTails: new Set([...OWNED, 'ship-commit.mjs']) };
+  const input = 'node scripts/ship-commit.mjs --message-file .claude/tmp/msg.txt --skill ship --models claude,gpt --gate passed';
+  assert.equal(
+    rewriteTextCommandInvocations(input, cfg),
+    'node scripts/.claude-skills/ship-commit.mjs --message-file .claude/tmp/msg.txt --skill ship --models claude,gpt --gate passed',
+  );
+});
+
 test('rewriter handles subdir invocation', () => {
   const out = rewriteTextCommandInvocations('node scripts/lib/redact.mjs --selfcheck', CFG);
   assert.equal(out, 'node scripts/.claude-skills/lib/redact.mjs --selfcheck');

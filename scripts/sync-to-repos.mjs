@@ -135,6 +135,11 @@ const CORE_ENTRY = [
   // consumers need it to read THEIR OWN .audit/tiered-shadow-log.jsonl
   // before Phase 14's production-flip decision. Also in CLI_SMOKE_SET.
   'scripts/tiered-shadow-report.mjs',
+  // Deterministic /ship commit helper — validates + appends the AI-*
+  // provenance trailer block and performs the commit (docs/commit-provenance.md).
+  // /ship SKILL.md shells it, nothing imports it. Walker pulls in
+  // lib/commit-trailers.mjs (+ its sensitive-paths closure). Also in CLI_SMOKE_SET.
+  'scripts/ship-commit.mjs',
   '.claude/hooks/quickfix-scan.mjs',
   // Persona-test consistency mode CLIs (docs/plans/persona-test-consistency-mode.md).
   // Both are user-invoked CLIs; the import-graph walker pulls in their

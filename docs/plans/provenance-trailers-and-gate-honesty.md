@@ -402,7 +402,7 @@ One example per rejection class (frozen — this is an API for our own agents):
 
 ```text
 AGENT FIX: --skill: expected one of [audit-code|audit-loop|...|ship] (skills/ directory names); got "shipping". Example: --skill ship
-AGENT FIX: --models: expected comma-separated tokens matching ^[a-z][a-z0-9.-]*$; got "Claude, GPT-5". Example: --models claude,gpt
+AGENT FIX: --models: expected comma-separated tokens matching ^[a-z][a-z0-9.-]*$; got "claude gpt". Example: --models claude,gpt
 AGENT FIX: --gate: expected one of passed|waived|not-run; got "green". Example: --gate passed
 AGENT FIX: --message-file: expected a readable non-empty file; got ".claude/tmp/missing.txt" (ENOENT). Example: --message-file .claude/tmp/ship-commit-msg-1784022000000.txt
 AGENT FIX: reserved-trailer: expected no AI-* trailers in the message (the helper is the only writer); got "AI-Skill: ship" at message line 7. Example: remove the line and pass --skill ship
@@ -428,10 +428,10 @@ ambiguity).
 | `tests/ship-commit-cli.test.mjs` | new | spawn against a temp git repo (existing `gitInit` test idiom): asserts **every row of the §F1.4 taxonomy** (exit code + stderr family + commit-attempted), plus a parse-back through `git interpret-trailers --parse` on the happy path |
 | `skills/ship/SKILL.md` | modify | Step 6.2/6.3 rewritten to the helper invocation (BOTH layout paths stated) + consumer fallback; §"Reminders" line |
 | `.claude/skills/ship/SKILL.md` | regenerated | `npm run skills:regenerate` (never hand-edited) |
-| `scripts/lib/sync-path-map.mjs` | modify | add `ship-commit.mjs` as a sync entry point (transitive deps auto-resolved) |
-| `tests/sync-path-map.test.mjs` | modify | assert the new entry point + its transitive closure (`commit-trailers.mjs`) map to the consumer destination (R2-H3) |
+| `scripts/sync-to-repos.mjs` + `scripts/lib/sync-inventory.mjs` | modify | add `scripts/ship-commit.mjs` to BOTH lock-step `CORE_ENTRY` lists (the actual entry-point seam — `sync-path-map.mjs`'s generic `scripts/*` rule needs no change; transitive `lib/commit-trailers.mjs` closure auto-resolved) |
+| `scripts/lib/sync-isolation-verify.mjs` | modify | add `ship-commit.mjs` to `CLI_SMOKE_SET` — the single source both relocation tests iterate, so they inherit the new entry with no test-file edit (R2-H3 mechanism, discovered at implementation) |
+| `tests/sync-path-map.test.mjs` | modify | assert the new entry point + its transitive closure (`commit-trailers.mjs`) map to the consumer destination + round-trip (R2-H3) |
 | `tests/sync-rewriter.test.mjs` | modify | assert the SKILL.md invocation line rewrites to `scripts/.claude-skills/ship-commit.mjs` in the consumer copy (R2-H3) |
-| `tests/relocation-guard.test.mjs` + `tests/relocation-selfcheck-smoke.test.mjs` | modify | add `ship-commit.mjs` to `CLI_SMOKE_SET`; smoke-prove `--selfcheck-relocation` exits 0 with no git side effects under BOTH source and hermetic consumer-style layouts (R2-H3) |
 | `AGENTS.md` | modify | short "Commit provenance trailers" stub (what/when/pointer — ≤15 lines, respecting the 1200-line gate) |
 | `docs/commit-provenance.md` | new | full convention: schema, grammar, adoption boundary, query cookbook (§F1.2), degradation semantics |
 | `package.json` | modify | (only if a convenience alias is wanted — default: none; the skill calls `node scripts/ship-commit.mjs` directly) |
@@ -914,9 +914,9 @@ docs/plans/provenance-trailers-and-gate-honesty.md (create).
 **Phase 2 — F1 helper**: pure lib + CLI + tests + sync entry. Files:
 scripts/lib/commit-trailers.mjs (create), scripts/ship-commit.mjs (create),
 tests/commit-trailers.test.mjs (create), tests/ship-commit-cli.test.mjs (create),
-scripts/lib/sync-path-map.mjs (modify), tests/sync-path-map.test.mjs (modify),
-tests/sync-rewriter.test.mjs (modify), tests/relocation-guard.test.mjs (modify),
-tests/relocation-selfcheck-smoke.test.mjs (modify).
+scripts/sync-to-repos.mjs (modify), scripts/lib/sync-inventory.mjs (modify),
+scripts/lib/sync-isolation-verify.mjs (modify), tests/sync-path-map.test.mjs (modify),
+tests/sync-rewriter.test.mjs (modify).
 **Phase 3 — F1 adoption**: route /ship through the helper + document. Files:
 skills/ship/SKILL.md (modify), AGENTS.md (modify), docs/commit-provenance.md (create),
 .claude/skills/ship/SKILL.md (modify).
