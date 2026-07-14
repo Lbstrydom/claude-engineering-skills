@@ -40,35 +40,51 @@ import 'dotenv/config';
 // when a bare model name hasn't shipped yet (the -preview suffix is load-bearing).
 // Updated quarterly.
 
+// Pruning policy (2026-07-14): STATIC_POOL is an offline-only fallback (the
+// live-catalog refresh, when it succeeds, already picks the true newest —
+// see `refreshModelCatalog`); `compareVersions` always sorts newest-first
+// regardless of list order or how many entries exist, so an entry more than
+// one generation behind the current head can NEVER be selected by any
+// sentinel — it's dead weight, not a safety net. Kept depth: current
+// generation + one generation back per tier (resilience if the newest
+// generation is retired unexpectedly), everything older removed. Verified
+// via `npm run models:freshness` (HIGH: 0) before and after this prune.
 export const STATIC_POOL = Object.freeze({
   openai: Object.freeze([
-    // Newest first by family — resolver picks the head when sentinels
-    // resolve. GPT-5.6 (2026-07-09) renamed the three-tier family to
-    // sol/terra/luna (see parseOpenAIModel above) — terra is the plain/
-    // balanced SKU (isPremium=false), so compareVersions' premium tiebreak
-    // correctly prefers it over sol for `latest-gpt`; luna is the isLite
-    // SKU, so it correctly wins `latest-gpt-mini` over the older *-mini ids.
+    // GPT-5.6 (2026-07-09) renamed the three-tier family to sol/terra/luna
+    // (see parseOpenAIModel above) — terra is the plain/balanced SKU
+    // (isPremium=false), so compareVersions' premium tiebreak correctly
+    // prefers it over sol for `latest-gpt`; luna is the isLite SKU, so it
+    // correctly wins `latest-gpt-mini`. 5.5 kept one generation back;
+    // 5.4/4.1-mini/4o-mini removed — strictly dominated, never selectable.
     'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-5.6-luna',
     'gpt-5.5', 'gpt-5.5-pro',
-    'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-pro',
-    'gpt-4.1-mini', 'gpt-4o-mini',
   ]),
   anthropic: Object.freeze([
-    // Claude 5 family (2026-07-14): Anthropic's /v1/models catalog fetch is
-    // currently failing (401) in this environment, so refreshModelCatalog()
-    // silently falls back to this static pool for EVERY Anthropic sentinel
-    // resolution — `claude-sonnet-5` was missing here entirely, so
-    // `latest-sonnet` was resolving to the stale `claude-sonnet-4-6` (major
-    // 4 < 5) across every call site, including the tiered-recall pipeline's
-    // discovery generator (tiered-pipeline.mjs).
-    'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-opus-4-1',
-    'claude-sonnet-5', 'claude-sonnet-4-6', 'claude-sonnet-4-5',
+    // Claude 5 family (2026-07-14): `claude-sonnet-5`/`claude-opus-4-8`
+    // added — this pool is a fallback ONLY, used when live-catalog refresh
+    // fails or a call site never invokes it (e.g. the tiered-recall
+    // pipeline's `sonnetCall` in tiered-pipeline.mjs); confirmed live via
+    // `refreshModelCatalog()` that both ids exist in Anthropic's real
+    // catalog. `claude-opus-4-6`/`claude-opus-4-1`/`claude-sonnet-4-5`
+    // removed — more than one generation behind 4-8/5, never selectable.
+    // Haiku's dated/undated pair is intentional (model-resolver.mjs's
+    // `resolveModel` doc: "prefers undated alias"), not staleness — kept.
+    'claude-opus-4-8', 'claude-opus-4-7',
+    'claude-sonnet-5', 'claude-sonnet-4-6',
     'claude-haiku-4-5', 'claude-haiku-4-5-20251001',
   ]),
   google: Object.freeze([
+    // Google's `gemini-{tier}-latest` alias is authoritative (isAlias:true
+    // → major:Infinity in parseGeminiModel, always wins compareVersions) —
+    // these three entries win every `latest-*` sentinel resolution
+    // regardless of what else is in this list. The 3.x numbered entries are
+    // kept as an explicit one-generation-back fallback in case an alias is
+    // ever absent from a given catalog snapshot; the 2.5 generation was
+    // removed as strictly older and unreachable behind both the aliases and
+    // the 3.x entries.
     'gemini-pro-latest', 'gemini-flash-latest', 'gemini-flash-lite-latest',
     'gemini-3.1-pro-preview', 'gemini-3-flash-preview',
-    'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite',
   ]),
 });
 
@@ -208,17 +224,29 @@ export function parseGeminiModel(id) {
   // Alternation order matters: `flash-lite` MUST precede `flash`, else `flash`
   // matches first and `-lite` is swallowed as a suffix → flash-lite mis-tiered
   // as flash (audit Cluster-A finding).
-  const m = /^gemini-(\d+)(?:\.(\d+))?-(pro|flash-lite|flash)(?:-(preview|lite|tts|image|exp|\d+))?$/.exec(id);
+  //
+  // The trailing suffix is captured as ONE opaque `.+` group rather than a
+  // fixed alternation (`preview|lite|tts|image|exp|\d+`) — a single-token
+  // alternation cannot match multi-segment legacy suffixes like
+  // `-preview-tts` or `-lite-001` (two dash-segments, only one capture
+  // group), so ids like `gemini-2.5-flash-preview-tts` failed to parse at
+  // all under the old regex and fell through to check-model-freshness.mjs's
+  // "can't tell how old this is, flag it" fallback — permanent false-
+  // positive noise for models that were, in fact, straightforwardly old
+  // (model-freshness noise fix, 2026-07-14). `isPreview` now substring-
+  // tests the whole suffix instead of requiring an exact single-token match.
+  const m = /^gemini-(\d+)(?:\.(\d+))?-(pro|flash-lite|flash)(?:-(.+))?$/.exec(id);
   if (!m) return null;
+  const suffix = m[4] || null;
   return {
     provider: 'google',
     family: 'gemini',
     tier: m[3],
     major: Number.parseInt(m[1], 10),
     minor: m[2] ? Number.parseInt(m[2], 10) : 0,
-    suffix: m[4] || null,
+    suffix,
     isAlias: false,
-    isPreview: m[4] === 'preview',
+    isPreview: /(^|-)preview(-|$)/.test(suffix || ''),
     original: id,
   };
 }
@@ -233,23 +261,36 @@ export function parseOpenAIModel(id) {
   // same tier shape as pro/plain/mini, just renamed. Without these the regex
   // returns null for every gpt-5.6-* id (falls back to a stale STATIC_POOL
   // pick with NO error surfaced — see model-resolver.mjs's dotenv-load fix).
-  const m = /^(gpt|o)-?(\d+)o?(?:\.(\d+))?(?:-(mini|nano|turbo|pro|preview|sol|terra|luna|[\d-]+))?$/.exec(id);
+  //
+  // The trailing suffix is captured as ONE opaque `.+` group rather than a
+  // fixed single-token alternation — a single-token alternation cannot match
+  // multi-segment legacy suffixes (`-turbo-16k`, `-turbo-instruct-0914`), so
+  // those ids failed to parse at all and fell through to check-model-
+  // freshness.mjs's "can't tell how old this is, flag it" fallback —
+  // permanent false-positive noise for models that were, in fact,
+  // straightforwardly old (model-freshness noise fix, 2026-07-14).
+  // isLite/isPremium classify on the FIRST dash-segment only (`turbo-16k`'s
+  // SKU is `turbo`, not a new unrecognised one; trailing segments are
+  // snapshot dates / context-window tags, not distinct SKUs); isPreview
+  // substring-tests the whole suffix.
+  const m = /^(gpt|o)-?(\d+)o?(?:\.(\d+))?(?:-(.+))?$/.exec(id);
   if (!m) return null;
   const variant = m[4] || null;
+  const firstSeg = variant ? variant.split('-')[0] : null;
   return {
     provider: 'openai',
     family: m[1],
     major: Number.parseInt(m[2], 10),
     minor: m[3] ? Number.parseInt(m[3], 10) : 0,
     variant,
-    isLite: /^(mini|nano|luna)$/.test(variant || ''),
+    isLite: /^(mini|nano|luna)$/.test(firstSeg || ''),
     // Premium/flagship SKU at the same version as the plain/balanced SKU
     // (pro, sol). TIER_MAP's own documented design: for OpenAI, latest-gpt's
     // tier axis is reasoning effort, not model SKU — a premium SKU must be
     // pinned explicitly, never silently auto-selected by the standard/
     // frontier sentinel. See compareVersions' isPremium tiebreak.
-    isPremium: /^(pro|sol)$/.test(variant || ''),
-    isPreview: /preview/.test(variant || ''),
+    isPremium: /^(pro|sol)$/.test(firstSeg || ''),
+    isPreview: /(^|-)preview(-|$)/.test(variant || ''),
     original: id,
   };
 }
@@ -359,7 +400,12 @@ export function describeModel(modelId) {
 
 // ── Tier pickers ────────────────────────────────────────────────────────────
 
-function compareVersions(a, b) {
+// Exported so check-model-freshness.mjs can reuse the SAME newer-than
+// comparison the resolver itself uses to pick a sentinel's model — a
+// separate, ad-hoc "is this id notable" heuristic in the checker would
+// silently diverge from what actually drives resolution (model-freshness
+// noise fix, 2026-07-14).
+export function compareVersions(a, b) {
   if (a.major !== b.major) return b.major - a.major;
   if ((a.minor ?? 0) !== (b.minor ?? 0)) return (b.minor ?? 0) - (a.minor ?? 0);
   // Prefer the plain/balanced SKU over a premium one (pro/sol) at the same

@@ -37,6 +37,10 @@ import {
   setCatalog,
   getLiveCatalog,
   _resetCatalogCache,
+  parseClaudeModel,
+  parseGeminiModel,
+  parseOpenAIModel,
+  compareVersions,
 } from './lib/model-resolver.mjs';
 import { toSarif } from './lib/claudemd/sarif-formatter.mjs';
 
@@ -60,6 +64,28 @@ const TIER_PATTERNS = {
   anthropic: /^claude-(opus|sonnet|haiku)-\d/i,
   google:    /^gemini-(\d|pro|flash)/i,
 };
+
+// Per-provider id parser, for the domination check below.
+const PARSE_FN = {
+  openai: parseOpenAIModel,
+  anthropic: parseClaudeModel,
+  google: parseGeminiModel,
+};
+
+/**
+ * The functional selection bucket a parsed id competes in — mirrors exactly
+ * what pickNewestOpenAI/pickNewestClaude/pickNewestGemini group together
+ * when a sentinel actually resolves, so "missing" tracks the same buckets
+ * real resolution uses (not an ad-hoc grouping that could disagree with it).
+ * OpenAI has only two REAL selection groups regardless of SKU name (`latest-
+ * gpt` pulls from every non-lite variant together, `latest-gpt-mini` from
+ * every lite variant) — see pickNewestOpenAI's `variant === null` filter.
+ */
+function bucketKeyFor(provider, parsed) {
+  if (provider === 'anthropic' || provider === 'google') return parsed.tier;
+  if (provider === 'openai') return parsed.isLite ? 'lite' : 'nonlite';
+  return null;
+}
 
 // ── Drift detection ─────────────────────────────────────────────────────────
 
@@ -143,17 +169,59 @@ export function detectSentinelDrift(liveCatalog) {
 }
 
 /**
- * For each provider: report live IDs that match tier patterns but aren't
- * in STATIC_POOL. These are candidates for inclusion in the static pool.
+ * For each provider: report live IDs that represent genuine, un-covered
+ * version progress over STATIC_POOL — i.e. IDs a sentinel could actually
+ * resolve to that nothing already in the pool dominates.
+ *
+ * Deliberately NOT "any live id not literally a string in STATIC_POOL"
+ * (the pre-2026-07-14 behaviour) — that flagged every retired/ancient model
+ * (`gpt-3.5-turbo-1106`, `gemini-2.0-flash-lite-001`, dated Claude
+ * snapshots older than what's already pooled) as "missing" forever, since
+ * STATIC_POOL is deliberately pruned to current-generation-plus-one and
+ * will never contain them. That's permanent, unscientific noise: the same
+ * live catalog produces the same false "drift" every single run regardless
+ * of whether anything real changed. Reusing `compareVersions` (the SAME
+ * comparison `pickNewest*` uses to actually pick a sentinel's model) means
+ * a live id is flagged only when it would functionally change a real
+ * resolution — genuine drift, not pool-pruning noise.
  */
 export function detectMissingFromStatic(liveCatalog) {
   const findings = [];
   for (const provider of ['openai', 'anthropic', 'google']) {
     const live = liveCatalog[provider] || [];
     if (live.length === 0) continue;
-    const staticSet = new Set(STATIC_POOL[provider]);
     const pattern = TIER_PATTERNS[provider];
-    const missing = live.filter(id => pattern.test(id) && !staticSet.has(id));
+    const parseFn = PARSE_FN[provider];
+
+    // Best (newest) STATIC_POOL entry per selection bucket.
+    const staticBest = new Map();
+    for (const id of STATIC_POOL[provider]) {
+      const p = parseFn(id);
+      if (!p) continue;
+      const key = bucketKeyFor(provider, p);
+      const cur = staticBest.get(key);
+      if (!cur || compareVersions(p, cur) < 0) staticBest.set(key, p);
+    }
+
+    const missing = live.filter(id => {
+      if (!pattern.test(id)) return false;
+      const p = parseFn(id);
+      // Pattern-matched but unparseable by the strict per-provider parser:
+      // we can't determine its age, so fail OPEN and flag it rather than
+      // silently dropping it — a genuinely novel naming shape (like GPT-5.6's
+      // sol/terra/luna before the parser learned it) must still surface for
+      // a human to notice, not vanish into "looks unfamiliar, ignore it."
+      // Widening the parser for known legacy shapes (done 2026-07-14) is
+      // the real fix; this is the backstop for shapes nobody's seen yet.
+      if (!p) return true;
+      const key = bucketKeyFor(provider, p);
+      const best = staticBest.get(key);
+      // No static entry for this bucket at all → genuinely uncovered tier.
+      // Otherwise only "missing" if strictly newer than what's already
+      // covered — same age or older than an existing (possibly
+      // intentionally-pruned) entry isn't missing, it's just old.
+      return !best || compareVersions(p, best) < 0;
+    });
     if (missing.length === 0) continue;
     // semanticId hashes the provider AND the sorted missing-ID set so that
     // each distinct drift event has a stable, distinct identity. Without

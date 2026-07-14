@@ -93,9 +93,12 @@ describe('check-model-freshness', () => {
   });
 
   describe('detectMissingFromStatic', () => {
-    it('flags relevant live IDs not in STATIC_POOL', () => {
+    it('flags relevant live IDs that are genuinely newer than anything already covered', () => {
+      // claude-opus-5-0 (major 5) is strictly newer than the pool's opus
+      // entries (major 4) — genuine drift. claude-sonnet-6-0 (major 6) is
+      // strictly newer than the pool's sonnet-5 — also genuine drift.
       const liveCatalog = {
-        anthropic: [...STATIC_POOL.anthropic, 'claude-opus-5-0', 'claude-sonnet-5-0'],
+        anthropic: [...STATIC_POOL.anthropic, 'claude-opus-5-0', 'claude-sonnet-6-0'],
         openai: [],
         google: [],
       };
@@ -103,7 +106,63 @@ describe('check-model-freshness', () => {
       const anthropic = findings.find(f => f.provider === 'anthropic');
       assert.ok(anthropic);
       assert.equal(anthropic.severity, 'warn');
-      assert.deepEqual(anthropic.missingIds.sort(), ['claude-opus-5-0', 'claude-sonnet-5-0'].sort());
+      assert.deepEqual(anthropic.missingIds.sort(), ['claude-opus-5-0', 'claude-sonnet-6-0'].sort());
+    });
+
+    it('does NOT flag a live id that version-ties an existing static entry (no functional drift)', () => {
+      // claude-sonnet-5-0 parses to the same version tuple as the already-
+      // pooled claude-sonnet-5 (major 5, minor 0) — same model, different
+      // string. Flagging it would be noise: nothing would actually change.
+      const liveCatalog = {
+        anthropic: [...STATIC_POOL.anthropic, 'claude-sonnet-5-0'],
+        openai: [],
+        google: [],
+      };
+      assert.deepEqual(detectMissingFromStatic(liveCatalog), []);
+    });
+
+    it('does NOT flag old/superseded live ids the pool has deliberately pruned (the noise this fix removes)', () => {
+      // These are all OLDER than STATIC_POOL's current entries for their
+      // tier — the pre-fix literal-string-match behaviour flagged all of
+      // them forever, since a deliberately-pruned pool will never contain
+      // them again. Includes the multi-segment legacy shapes that used to
+      // fail to parse entirely (gpt-3.5-turbo-1106, -turbo-instruct-0914,
+      // gemini-2.5-flash-preview-tts, gemini-2.0-flash-lite-001).
+      const liveCatalog = {
+        openai: [
+          ...STATIC_POOL.openai,
+          'gpt-3.5-turbo', 'gpt-3.5-turbo-1106', 'gpt-3.5-turbo-instruct-0914',
+          'gpt-4-0613', 'gpt-4', 'gpt-4o-mini', 'gpt-4.1-mini',
+        ],
+        anthropic: [
+          ...STATIC_POOL.anthropic,
+          'claude-opus-4-6', 'claude-opus-4-1-20250805', 'claude-sonnet-4-5-20250929',
+        ],
+        google: [
+          ...STATIC_POOL.google,
+          'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-preview-tts',
+          'gemini-2.0-flash-lite-001', 'gemini-3-pro-preview',
+        ],
+      };
+      assert.deepEqual(detectMissingFromStatic(liveCatalog), []);
+    });
+
+    it('fails open (flags) on a pattern-matched id the strict parser cannot parse at all', () => {
+      // Matches TIER_PATTERNS.anthropic (`claude-opus-` + a leading digit)
+      // but not parseClaudeModel's grammar (a `-beta` suffix it has no rule
+      // for) — must not be silently dropped just because it's unfamiliar-
+      // shaped; that's exactly how a genuinely new release could go
+      // unnoticed (the GPT-5.6 sol/terra/luna incident this whole fix
+      // traces back to).
+      const liveCatalog = {
+        anthropic: [...STATIC_POOL.anthropic, 'claude-opus-5-beta'],
+        openai: [],
+        google: [],
+      };
+      const findings = detectMissingFromStatic(liveCatalog);
+      const anthropic = findings.find(f => f.provider === 'anthropic');
+      assert.ok(anthropic);
+      assert.ok(anthropic.missingIds.includes('claude-opus-5-beta'));
     });
 
     it('skips IDs that do not match the tier pattern', () => {
