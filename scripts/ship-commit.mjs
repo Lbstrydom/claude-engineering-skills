@@ -31,6 +31,7 @@ import {
   messageFileError,
   composeFinalMessage,
   evaluateGateVerification,
+  formatTrailerBlock,
 } from './lib/commit-trailers.mjs';
 
 const KNOWN_FLAGS = new Set(['--message-file', '--skill', '--models', '--gate']);
@@ -136,6 +137,13 @@ async function main() {
     err(`ship-commit: audit evidence unparseable: ${auditRunPath} (fix or pass --no-run-id)`);
     process.exit(1);
   }
+  if (evidence.state === 'unreadable') {
+    // Row 10b (R2 H2/H5): evidence exists but can't be read — refusing to
+    // guess is the only honest option (treating it as absent would legalise
+    // `not-run` while an audit record sits unreadable on disk).
+    err(`ship-commit: audit evidence unreadable (${evidence.errno}): ${auditRunPath} (fix permissions or pass --no-run-id)`);
+    process.exit(1);
+  }
 
   // ---- semantic validation (rows 2-5, 8) ----------------------------------
   const skillNames = resolveSkillNames(repoRoot);
@@ -166,11 +174,17 @@ async function main() {
     try {
       const { isCloudEnabled } = await import('./lib/store/repo.mjs');
       cloudEnabled = await isCloudEnabled();
-      if (cloudEnabled) {
+    } catch { /* genuinely unavailable (import/config) → the AUDIT_DB_URL-unset line */ }
+    if (cloudEnabled) {
+      try {
         const { getAuditRunConvergence } = await import('./lib/store/runs-findings.mjs');
         convergence = await getAuditRunConvergence(evidence.runId);
+      } catch {
+        // Query/connectivity failure with cloud CONFIGURED — keep
+        // cloudEnabled=true so the diagnostic says "query failed", not
+        // "AUDIT_DB_URL unset" (R2 M3). convergence stays null (fail-closed).
       }
-    } catch { /* fail-closed: cloudEnabled/convergence stay unverifiable */ }
+    }
     const ver = evaluateGateVerification({ gate: values.gate, evidence, cloudEnabled, convergence });
     if (ver) {
       for (const line of renderAgentFixLines([ver])) err(line);
@@ -189,23 +203,40 @@ async function main() {
   fs.mkdirSync(tmpDir, { recursive: true });
   const finalPath = path.join(tmpDir, `ship-commit-final-${process.pid}-${Date.now()}.txt`);
   fs.writeFileSync(finalPath, finalMessage);
+  // process.exit() skips `finally` blocks (R2 L1) — collect the outcome and
+  // exit AFTER cleanup has run.
+  let exitCode = 0;
   try {
     // --cleanup=whitespace: the default `strip` deletes `#`-prefixed lines,
     // and LLM-authored bodies legitimately use markdown headers (Gemini R2-G2).
     const commit = git(['commit', '-F', finalPath, '--cleanup=whitespace'], repoRoot);
-    if (commit.error) { err('ship-commit: git spawn failed'); process.exit(1); }
-    if (commit.status !== 0) {
+    if (commit.error) { err('ship-commit: git spawn failed'); exitCode = 1; }
+    else if (commit.status !== 0) {
       err(`ship-commit: git commit failed:`);
       if (commit.stderr) process.stderr.write(commit.stderr);
       if (commit.stdout) process.stderr.write(commit.stdout);
-      process.exit(1);
+      exitCode = 1;
+    } else {
+      // Post-commit integrity parse-back (R2 H3): a commit-msg hook or clean
+      // filter can rewrite the message after us — verify the persisted
+      // trailers match what we appended before claiming success.
+      const persisted = git(['log', '-1', '--format=%B'], repoRoot);
+      const expected = formatTrailerBlock(values);
+      const body = persisted.status === 0 ? persisted.stdout : '';
+      const missing = expected.filter((line) => !body.includes(line));
+      if (missing.length > 0) {
+        err(`ship-commit: trailer integrity check failed — the committed message is missing: ${missing.join(' | ')} (a commit-msg hook may have rewritten it). The commit EXISTS but its provenance is incomplete.`);
+        exitCode = 1;
+      } else {
+        const subject = finalMessage.split('\n', 1)[0];
+        const trailerSummary = [`AI-Skill: ${values.skill}`, `AI-Gate: ${values.gate}`, values.runId ? `AI-Run-ID: ${values.runId}` : null].filter(Boolean).join(' · ');
+        process.stdout.write(`ship-commit: committed "${subject}" (${trailerSummary})\n`);
+      }
     }
-    const subject = finalMessage.split('\n', 1)[0];
-    const trailerSummary = [`AI-Skill: ${values.skill}`, `AI-Gate: ${values.gate}`, values.runId ? `AI-Run-ID: ${values.runId}` : null].filter(Boolean).join(' · ');
-    process.stdout.write(`ship-commit: committed "${subject}" (${trailerSummary})\n`);
   } finally {
     try { fs.unlinkSync(finalPath); } catch { /* best-effort cleanup */ }
   }
+  process.exit(exitCode);
 }
 
 await main();

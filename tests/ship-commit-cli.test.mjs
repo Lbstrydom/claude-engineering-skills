@@ -200,6 +200,42 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     fs.rmSync(bare, { recursive: true, force: true });
   });
 
+  it('trailer integrity (R2 H3): a commit-msg hook that strips AI-* trailers → exit 1 integrity error', () => {
+    const mf = arrange();
+    const hooksDir = path.join(repo, '.git', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    // hook rewrites the message, dropping every AI-* line
+    fs.writeFileSync(path.join(hooksDir, 'commit-msg'), '#!/bin/sh\ngrep -v "^AI-" "$1" > "$1.tmp" && mv "$1.tmp" "$1"\n');
+    fs.chmodSync(path.join(hooksDir, 'commit-msg'), 0o755);
+    const r = runCli(BASE_ARGS(mf));
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /ship-commit: trailer integrity check failed/);
+  });
+
+  it('cleanup (R2 L1): failure paths still remove the helper temp file (finally runs before exit)', () => {
+    const mf = arrange();
+    const hooksDir = path.join(repo, '.git', 'hooks');
+    fs.mkdirSync(hooksDir, { recursive: true });
+    fs.writeFileSync(path.join(hooksDir, 'pre-commit'), '#!/bin/sh\nexit 1\n');
+    fs.chmodSync(path.join(hooksDir, 'pre-commit'), 0o755);
+    const r = runCli(BASE_ARGS(mf));
+    assert.equal(r.status, 1);
+    const leftovers = fs.readdirSync(path.join(repo, '.claude', 'tmp')).filter((f) => f.startsWith('ship-commit-final-'));
+    assert.deepEqual(leftovers, [], 'helper-owned temp file must be cleaned up on failure');
+  });
+
+  it('row 10b (R2 H2/H5): unreadable evidence (EISDIR) → exit 1, never silently treated as absent', () => {
+    const mf = arrange();
+    // a DIRECTORY at the evidence path → EISDIR on read, but it exists
+    fs.mkdirSync(path.join(repo, '.audit', 'last-audit-run.json'), { recursive: true });
+    const r = runCli(BASE_ARGS(mf));
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /ship-commit: audit evidence unreadable \(EISDIR\)/);
+    // --no-run-id opts out of reading it entirely → proceeds
+    const r2 = runCli([...BASE_ARGS(mf), '--no-run-id']);
+    assert.equal(r2.status, 0, r2.stderr);
+  });
+
   it('row 13: commit hook rejection → exit 1, git stderr passed through, working tree intact', () => {
     const mf = arrange();
     const hooksDir = path.join(repo, '.git', 'hooks');

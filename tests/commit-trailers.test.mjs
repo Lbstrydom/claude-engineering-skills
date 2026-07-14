@@ -163,6 +163,19 @@ test('evidence: unborn HEAD (T_head=0) makes any parseable evidence fresh (Gemin
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+test('evidence: non-ENOENT read failure → unreadable with errno, never absent (R2 H2/H5 — fail closed)', () => {
+  const boom = (code) => ({ readFileSync() { const e = new Error(code); e.code = code; throw e; } });
+  assert.deepEqual(
+    resolveEvidence({ auditRunPath: '/x/last-audit-run.json', headCommitTs: 0, fsMod: boom('EACCES') }),
+    { state: 'unreadable', runId: null, ts: null, errno: 'EACCES' },
+  );
+  assert.equal(resolveEvidence({ auditRunPath: '/x/y.json', headCommitTs: 0, fsMod: boom('EISDIR') }).state, 'unreadable');
+  // ENOENT stays the expected absent condition
+  assert.equal(resolveEvidence({ auditRunPath: '/x/y.json', headCommitTs: 0, fsMod: boom('ENOENT') }).state, 'absent');
+  // --no-run-id opts out before any read
+  assert.equal(resolveEvidence({ auditRunPath: '/x/y.json', headCommitTs: 0, noRunId: true, fsMod: boom('EACCES') }).state, 'opted-out');
+});
+
 test('evidence: malformed JSON / bad runId / missing ts → malformed (row 10 feeds exit 1)', () => {
   const { dir, file } = EV_PATH();
   fs.writeFileSync(file, '{not json');

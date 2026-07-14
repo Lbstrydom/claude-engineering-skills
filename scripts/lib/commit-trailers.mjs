@@ -91,15 +91,20 @@ export function findReservedTrailers(text) {
  * @param {number} opts.headCommitTs — HEAD committer time, epoch SECONDS (0 for unborn HEAD)
  * @param {boolean} [opts.noRunId] — explicit --no-run-id opt-out
  * @param {typeof fs} [opts.fsMod] — injectable for tests
- * @returns {{state: 'fresh'|'absent'|'stale'|'malformed'|'opted-out', runId: string|null, ts: string|null}}
+ * @returns {{state: 'fresh'|'absent'|'stale'|'malformed'|'unreadable'|'opted-out', runId: string|null, ts: string|null, errno?: string}}
  */
 export function resolveEvidence({ auditRunPath, headCommitTs, noRunId = false, fsMod = fs }) {
   if (noRunId) return { state: 'opted-out', runId: null, ts: null };
   let raw;
   try {
     raw = fsMod.readFileSync(auditRunPath, 'utf-8');
-  } catch {
-    return { state: 'absent', runId: null, ts: null };
+  } catch (e) {
+    // Only the expected not-found condition means "no audit ran". Any other
+    // failure (EACCES, EISDIR, ELOOP, …) means evidence EXISTS but cannot be
+    // read — collapsing that into `absent` would dishonestly legalise
+    // `not-run` (R2 H2/H5). Fail closed as a distinct state.
+    if (e && e.code === 'ENOENT') return { state: 'absent', runId: null, ts: null };
+    return { state: 'unreadable', runId: null, ts: null, errno: e?.code || 'UNKNOWN' };
   }
   let parsed;
   try {
