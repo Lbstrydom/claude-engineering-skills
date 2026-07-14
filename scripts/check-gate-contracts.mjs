@@ -16,7 +16,14 @@ import { fileURLToPath } from 'node:url';
 import { loadGateContracts, formatSummaryLines } from './lib/gate-honesty/loader.mjs';
 
 function main() {
-  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+  // process.exitCode (not process.exit()) throughout: lets buffered
+  // stdout/stderr writes drain naturally before the process terminates —
+  // process.exit() can truncate output when stdout/stderr is a pipe (CI
+  // logs, `| tee`) rather than a TTY.
+  if (process.argv.includes('--selfcheck-relocation')) {
+    console.log('OK');
+    return;
+  }
 
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const skillsRoot = path.join(repoRoot, 'skills');
@@ -25,12 +32,12 @@ function main() {
   if (divergences.length > 0) {
     process.stderr.write('check-gate-contracts: FAILED\n');
     for (const d of divergences) process.stderr.write(`  ${d}\n`);
-    process.exit(1);
+    process.exitCode = 1;
+    return;
   }
 
   const lines = formatSummaryLines({ contracted, uncontracted });
   process.stdout.write(`${lines.join('\n')}\n`);
-  process.exit(0);
 }
 
 main();

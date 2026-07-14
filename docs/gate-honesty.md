@@ -152,6 +152,17 @@ npm run gates:check                        # scripts/check-gate-contracts.mjs, s
 npm run skills:check                       # includes gates:check — pre-push gate
 ```
 
+**`gates:check`/`skills:check` are schema-and-path-only — they do NOT run
+the oracles.** They validate shape, the `statedIn` policy, path containment,
+and the `tests[]`-references-id rule (fast, no browser/process spawns). The
+*behavioral* check — does the oracle's real production seam actually match
+what the contract claims — only runs inside `tests/gate-honesty.test.mjs`,
+which `npm run check`'s final `test` step always executes. A contract can
+therefore pass `gates:check` alone and still fail the full suite if its
+`params`/`fixture` silently drifted from the code; that split is
+deliberate (fast structural gate vs. the fuller behavioral gate), not a
+gap — `npm run check` runs both.
+
 ## Contracting a new skill
 
 1. Add `skills/<name>/gate-contract.json` (version 1, `skill` matching the
