@@ -83,9 +83,13 @@ function dedupByHash(findings) {
   return out;
 }
 
-/** The generation passes an arm runs — DERIVED from PASS_PROMPTS (minus quickfix)
- * so the shadow's decomposition can't drift from the baseline pass set (R2 M2). */
-export const SHADOW_PASSES = Object.freeze(Object.keys(PASS_PROMPTS).filter((p) => p !== 'quickfix'));
+/** The generation passes an arm runs — DERIVED from PASS_PROMPTS (minus quickfix
+ * and duplication) so the shadow's decomposition can't drift from the baseline
+ * pass set (R2 M2). `duplication` is excluded for the same reason `quickfix`
+ * already is: it's a mechanical-detection + narrow-bouncer pass (docs/plans/
+ * audit-code-duplication-wave.md), not a full "read code, generate findings"
+ * generator pass comparable across model arms. */
+export const SHADOW_PASSES = Object.freeze(Object.keys(PASS_PROMPTS).filter((p) => p !== 'quickfix' && p !== 'duplication'));
 
 /** Reservation TTL — orphaned reservations older than this are released on
  * startup. Config-driven (audit R3 M4). */

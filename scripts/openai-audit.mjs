@@ -781,7 +781,7 @@ async function main() {
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
-    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true });
+    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true });
     return;
   }
 

@@ -97,8 +97,8 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
     // defence-in-depth (refresh.mjs already filtered the diff). In full
     // mode (refresh.mjs passes no `--files`) this IS the discovery filter
     // — so the same skip policy applies to both modes (plan §6 WS3 R3-H3).
-    // Sensitive entries aggregate; generatedNoise stays per-path (visible).
-    const skip = shouldSkipForIndexing(rel, ['sensitive', 'generatedNoise']);
+    // Sensitive entries aggregate; generatedNoise/driftExempt stay per-path (visible).
+    const skip = shouldSkipForIndexing(rel, ['sensitive', 'generatedNoise', 'driftExempt']);
     if (skip.skip) {
       stats.skippedPath++;
       skippedSensitive.push({ path: rel, category: skip.category, pattern: skip.pattern, action: 'dropped' });

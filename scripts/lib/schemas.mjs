@@ -55,6 +55,33 @@ export const ProducerFindingSchema = z.object({
 });
 
 /**
+ * DuplicationBouncerResponseSchema — the duplication audit wave's (Wave 5)
+ * LLM classification-stage contract. Deliberately NOT `ProducerFindingSchema`-
+ * shaped: round-2 gate finding H4 established that letting the model author
+ * `is_quick_fix`/`is_mechanical` directly on a full finding object means a
+ * model could silently defeat convergence by omitting/misreporting the flag.
+ * This schema exposes ONLY a keep/drop decision + severity + rationale per
+ * candidate id — the orchestration-side mapper (`mapBouncerDecisionsToFindings`,
+ * scripts/lib/audit/duplication-report.mjs) constructs the actual finding and
+ * hardcodes `is_quick_fix: true` / `is_mechanical: true` as literals the model
+ * cannot influence. `decisions.length` is capped in code (against the same
+ * candidate count the detector itself bounds via `maxDuplicationCandidates`)
+ * by the caller validating array length before/after parse, not by a Zod
+ * `.max()` here — the cap is operator-configurable (env var), so baking a
+ * fixed number into the schema would drift from `symbolIndexConfig` silently.
+ *
+ * Plan: docs/plans/audit-code-duplication-wave.md §2 / §4 Phase 3 (round-3 H2).
+ */
+export const DuplicationBouncerResponseSchema = z.object({
+  decisions: z.array(z.object({
+    candidateId: z.string().max(20),
+    decision: z.enum(['keep', 'drop']),
+    severity: z.enum(['MEDIUM', 'HIGH']),
+    rationale: z.string().max(300),
+  })),
+});
+
+/**
  * FindingVerificationSchema — metadata the deterministic finding-verification
  * gate (scripts/lib/audit/finding-verification.mjs) attaches to a finding
  * AFTER the LLM produced it. The model's own fields stay immutable; the

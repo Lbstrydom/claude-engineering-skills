@@ -217,6 +217,54 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit) {
 }
 
 /**
+ * Read a file's content at a specific revision — `git show <revision>:<filePath>`.
+ * Used by the duplication-detector (docs/plans/audit-code-duplication-wave.md
+ * §2) to diff a changed symbol's base-revision content without touching the
+ * architectural-memory DB snapshot at all (Gemini-round-3 decoupling — see
+ * the plan's §8 Audit Trail).
+ *
+ * A file that doesn't exist at `revision` (e.g. it was added after the base
+ * commit) is a `BAD_REVISION`-shaped, expected outcome, not a crash — callers
+ * treat it as "no base-revision side" per the plan's `added` classification.
+ *
+ * @param {string} cwd
+ * @param {string} revision - MUST already pass `isSafeGitRevision`
+ * @param {string} filePath - repo-relative path, forward-slash form
+ * @returns {{ok: true, content: string} | {ok: false, error: VcsError}}
+ */
+export function gitShowFileAtRevision(cwd, revision, filePath) {
+  if (!isSafeGitRevision(revision)) {
+    return {
+      ok: false,
+      error: { code: 'BAD_REVISION', message: `refusing unsafe revision: ${JSON.stringify(revision).slice(0, 80)}` },
+    };
+  }
+  let res;
+  try {
+    res = spawnSync('git', ['show', `${revision}:${filePath}`], {
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 20 * 1024 * 1024,
+    });
+  } catch (err) {
+    return { ok: false, error: classifyChildError(err, { wantedRev: revision }) };
+  }
+  if (res.error) {
+    return { ok: false, error: classifyChildError(res.error, { wantedRev: revision }) };
+  }
+  if (res.status !== 0) {
+    // Non-zero here is overwhelmingly "path does not exist at this revision"
+    // (a new file) — classify via the same BAD_REVISION/stderr heuristics
+    // rather than a bespoke branch, so callers get one consistent error shape.
+    const synth = { stderr: res.stderr, status: res.status, signal: res.signal };
+    const classified = classifyChildError(synth, { wantedRev: revision });
+    if (classified.code === 'WORKING_TREE_UNREADABLE' && /path .* (does not exist|exists on disk, but not in)/i.test(res.stderr || '')) {
+      return { ok: false, error: { code: 'BAD_REVISION', message: `${filePath} does not exist at ${revision}`, cause: res } };
+    }
+    return { ok: false, error: classified };
+  }
+  return { ok: true, content: res.stdout || '' };
+}
+
+/**
  * Test-only: re-export the classifier so unit tests can drive each
  * VcsErrorCode without a live git environment. NOT part of the public API.
  *

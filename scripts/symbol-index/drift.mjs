@@ -17,6 +17,7 @@
 import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
+import { findStalePragmas, renderStalePragmaSection } from '../lib/symbol-index/stale-pragma-sweep.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -133,9 +134,10 @@ async function main() {
     })),
   }));
 
-  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters);
+  const stalePragmas = findStalePragmas(process.cwd());
+  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters) + renderStalePragmaSection(stalePragmas);
 
-  if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status }, null, 2) + '\n');
+  if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status, stalePragmas }, null, 2) + '\n');
   else process.stdout.write(md);
 
   if (args.out) atomicWrite(args.out, md);

@@ -60,6 +60,25 @@ export function signatureHash({ symbolName, signature, bodyText }) {
 }
 
 /**
+ * Build a stable text representation for embedding: identity + summary +
+ * signature. Moved here (was a local, unexported function in `embed.mjs`)
+ * so `duplication-detector.mjs` can reuse the EXACT composition indexed
+ * symbols were embedded with, without importing `embed.mjs` itself —
+ * `embed.mjs` is a CLI entry point with an unconditional top-level
+ * `main()` call (reads stdin), so importing it as a module for one pure
+ * function would trigger that CLI behaviour as a side effect.
+ *
+ * @param {{kind:string, symbolName:string, filePath:string, purposeSummary?:string, signature?:string}} s
+ * @returns {string}
+ */
+export function compose(s) {
+  const summary = s.purposeSummary || '';
+  return `${s.kind} ${s.symbolName} in ${s.filePath}\n` +
+         `${summary}\n` +
+         `${s.signature || ''}`;
+}
+
+/**
  * Chunk an array into batches of size `n`.
  * @template T
  * @param {T[]} arr

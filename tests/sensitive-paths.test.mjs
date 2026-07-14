@@ -21,6 +21,7 @@ import {
   normalisePath,
   SENSITIVE_PATTERNS,
   GENERATED_NOISE_PATTERNS,
+  DRIFT_EXEMPT_PATTERNS,
   _resetDebugBanner,
 } from '../scripts/lib/sensitive-paths.mjs';
 
@@ -69,6 +70,7 @@ describe('classifyPath — sensitive positives', () => {
     'password.txt', 'token.json',
     'config/tokens/api.json',
     'tokens.yaml', 'auth/tokens', 'service/token.txt',
+    'app/secret-keys/main.yaml', 'app/credential-store/db.yaml', // Gemini H4 — variant secret/credential dirs
   ];
   for (const p of cases) {
     it(`classifies ${p} as sensitive`, () => {
@@ -150,6 +152,26 @@ describe('shouldSkipForIndexing', () => {
     assert.equal(r.skip, true);
     assert.equal(r.category, 'sensitive');
     assert.ok(r.pattern instanceof RegExp);
+  });
+
+  it('driftExempt category skips docs/plans/security/files paths only when opted in', () => {
+    const p = 'docs/plans/security/files/scripts/lib/store/security.mjs';
+    assert.equal(shouldSkipForIndexing(p, ['sensitive', 'generatedNoise']).skip, false);
+    const r = shouldSkipForIndexing(p, ['sensitive', 'generatedNoise', 'driftExempt']);
+    assert.equal(r.skip, true);
+    assert.equal(r.category, 'driftExempt');
+    assert.ok(r.pattern instanceof RegExp);
+  });
+
+  it('driftExempt does not affect classifyPath (scoped to shouldSkipForIndexing only)', () => {
+    // Deliberate design choice: driftExempt is NOT wired into the general-purpose
+    // classifyPath used by ~15 egress/security call sites — only the indexing-skip
+    // predicate opts into it, so adding an exemption can never change egress behaviour.
+    assert.equal(classifyPath('docs/plans/security/files/scripts/lib/store/security.mjs'), null);
+  });
+
+  it('DRIFT_EXEMPT_PATTERNS does not match unrelated docs/plans paths', () => {
+    assert.equal(shouldSkipForIndexing('docs/plans/audit-code-duplication-wave.md', ['driftExempt']).skip, false);
   });
 });
 
@@ -323,6 +345,18 @@ describe('formatSkipLog — generatedNoise never aggregated', () => {
     assert.equal(lines.length, 2);
     assert.ok(lines[0].includes('package-lock.json'));
     assert.ok(lines[1].includes('bundle.min.js'));
+  });
+});
+
+describe('formatSkipLog — driftExempt never aggregated', () => {
+  it('emits per-path drift-exempt-skip lines in full (not secret)', () => {
+    _resetDebugBanner();
+    const lines = formatSkipLog([
+      { path: 'docs/plans/security/files/scripts/lib/store/security.mjs', category: 'driftExempt', pattern: /(^|\/)docs\/plans\/security\/files\//, action: 'dropped' },
+    ], { env: {} });
+    assert.equal(lines.length, 1);
+    assert.ok(lines[0].startsWith('[sensitive-paths] drift-exempt-skip:'));
+    assert.ok(lines[0].includes('docs/plans/security/files/scripts/lib/store/security.mjs'));
   });
 });
 

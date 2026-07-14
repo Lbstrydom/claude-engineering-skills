@@ -41,7 +41,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
-import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema } from '../schemas.mjs';
+import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema, DuplicationBouncerResponseSchema } from '../schemas.mjs';
+import { gitDiffWithWorkingTree } from '../vcs.mjs';
+import { runDuplicationAnalysis } from './duplication-detector.mjs';
+import {
+  isDuplicationReportClean, formatCandidatesForPrompt, mapBouncerDecisionsToFindings,
+  deriveFindingsFromDuplicationReport, buildDetectorFailedFinding, finalizeDeterministicFindings,
+} from './duplication-report.mjs';
 import {
   safeInt, readFileOrDie, readFilesAsContext, readFilesAsAnnotatedContext,
   writeOutput, normalizePath, parseDiffFile, extractPlanPaths, classifyFiles,
@@ -1082,7 +1088,7 @@ export async function runLegacyProductionAudit(ctx) {
   const {
     planContent, projectContext, historyContext = '',
     passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null,
-    changedFiles = [], repoProfile = null, bandit = null, fpTracker = null, noLedger = false,
+    changedFiles = [], auditBaseCommit = null, repoProfile = null, bandit = null, fpTracker = null, noLedger = false,
     noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false,
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
@@ -1949,6 +1955,116 @@ export async function runLegacyProductionAudit(ctx) {
   }
   cachePassResult('quickfix', quickfixResult);
 
+  // 4.6 Wave 5: Duplication detector (mechanical detection + low-reasoning LLM bouncer)
+  // Plan: docs/plans/audit-code-duplication-wave.md. Mirrors runArchitecturePass's
+  // two-stage shape (mechanical report → LLM bouncer → deterministic fallback).
+  // Attribution is pure Git (no DB dependency) — see duplication-detector.mjs's
+  // module docblock for the Gemini-round-3 decoupling this design is built on.
+  let duplicationResult;
+  const EMPTY_DUPLICATION = { pass_name: 'duplication', findings: [], summary: 'Pass skipped.' };
+  const runDuplication = shouldRunPass('duplication');
+  if (runDuplication) {
+    process.stderr.write(`\n── Wave 5: Duplication detector ──\n`);
+    const dupStart = Date.now();
+    let dupFindings = [];
+    let dupSummary = '';
+    try {
+      let report = { state: 'unavailable', reason: 'no auditBaseCommit resolved for this audit run', deterministicFindings: [], semanticCandidates: [] };
+      // Test-only injection point (round-1 code-audit M25/M26 fix): when set,
+      // bypasses Git resolution entirely and calls the override directly —
+      // a hermetic test harness can exercise the findings -> bouncer ->
+      // convergence path with a synthetic report, with no live Git/DB/
+      // embedding access and no need to also fake a real auditBaseCommit.
+      // Production callers never set this; it defaults to undefined.
+      if (ctx.__runDuplicationAnalysis) {
+        report = await ctx.__runDuplicationAnalysis({ repoRoot: process.cwd(), changedFiles: changedFiles || [], auditBaseCommit });
+      } else if (auditBaseCommit) {
+        const diff = gitDiffWithWorkingTree(process.cwd(), auditBaseCommit);
+        if (diff.ok) {
+          const scopeSet = new Set((changedFiles || []).map(normalizePath));
+          const inScope = (p) => scopeSet.size === 0 || scopeSet.has(normalizePath(p));
+          const richChangedFiles = [
+            ...diff.files.added.filter(inScope).map((p) => ({ status: 'added', currentPath: p })),
+            ...diff.files.modified.filter(inScope).map((p) => ({ status: 'modified', currentPath: p })),
+            ...diff.files.untracked.filter(inScope).map((p) => ({ status: 'added', currentPath: p })),
+            ...diff.files.renamed.filter((r) => inScope(r.to)).map((r) => ({ status: 'renamed', currentPath: r.to, previousPath: r.from })),
+          ];
+          report = await runDuplicationAnalysis({ repoRoot: process.cwd(), changedFiles: richChangedFiles, auditBaseCommit });
+        } else {
+          report = { state: 'unavailable', reason: `git diff failed: ${diff.error.message}`, deterministicFindings: [], semanticCandidates: [] };
+        }
+      }
+
+      if (report.state === 'clean') {
+        dupSummary = 'Duplication: clean — no candidates over threshold.';
+      } else if (report.state === 'unavailable') {
+        process.stderr.write(`  Duplication: SKIPPED (unavailable — ${report.reason})\n`);
+        dupSummary = `Duplication: SKIPPED (unavailable — ${report.reason})`;
+      } else if (report.state === 'failed') {
+        process.stderr.write(`  Duplication: FAILED — ${report.reason}\n`);
+        dupFindings = [buildDetectorFailedFinding(report.reason)];
+        dupSummary = 'Duplication: detector failed — see finding.';
+      } else {
+        // 'findings' — deterministicFindings always land unconditionally;
+        // semanticCandidates go through the bouncer (round-2 M3: never let a
+        // bouncer outcome affect the deterministic channel).
+        const deterministic = finalizeDeterministicFindings(report.deterministicFindings);
+        let semanticFindings = [];
+        if (report.semanticCandidates.length > 0) {
+          const { prompt, includedIds } = formatCandidatesForPrompt(report.semanticCandidates, { repoRoot: process.cwd() });
+          const included = report.semanticCandidates.filter((c) => includedIds.includes(c.id));
+          if (included.length === 0) {
+            semanticFindings = []; // every candidate refused by the egress scan — nothing to send
+          } else {
+            const dupLimits = computePassLimits(prompt.length, 'low');
+            const bouncerResult = await safeCallGPT(openai, {
+              ...passPrompt({
+                rubric: getPassPrompt('duplication'),
+                focusBlock,
+                passName: 'duplication',
+                planContent,
+                ledgerFile: isR2Plus ? ledgerFile : null,
+                impactSet,
+                isR2Plus,
+                historyBlock,
+                codeHeader: `## Candidates (${included.length})`,
+                code: prompt,
+              }),
+              schema: DuplicationBouncerResponseSchema,
+              schemaName: 'duplication_bouncer',
+              reasoning: 'low',
+              ...dupLimits,
+              passName: 'duplication',
+            }, null);
+            const decisions = bouncerResult?.result?.decisions;
+            const mapped = decisions ? mapBouncerDecisionsToFindings(decisions, included, includedIds) : { ok: false, reason: 'bouncer call failed or returned no decisions' };
+            if (mapped.ok) {
+              semanticFindings = mapped.findings;
+            } else {
+              process.stderr.write(`  Duplication bouncer failed (${mapped.reason}) — using deterministic fallback for ${included.length} candidate(s)\n`);
+              semanticFindings = deriveFindingsFromDuplicationReport(included);
+            }
+          }
+        }
+        dupFindings = [...deterministic, ...semanticFindings];
+        dupSummary = `Duplication: ${dupFindings.length} finding(s) (${deterministic.length} deterministic, ${semanticFindings.length} semantic).`;
+      }
+    } catch (err) {
+      process.stderr.write(`  Duplication: unexpected error — ${err.message}\n`);
+      dupFindings = [buildDetectorFailedFinding(err.message)];
+      dupSummary = 'Duplication: unexpected error — see finding.';
+    }
+    duplicationResult = {
+      result: { pass_name: 'duplication', findings: dupFindings, summary: dupSummary },
+      usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
+      latencyMs: Date.now() - dupStart,
+    };
+  } else {
+    process.stderr.write(`\n── Duplication SKIPPED (--passes) ──\n`);
+    duplicationResult = { result: EMPTY_DUPLICATION, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 }, latencyMs: 0 };
+  }
+  cachePassResult('duplication', duplicationResult);
+
   // 5. Merge all pass results with semantic dedup
   const totalLatency = Date.now() - totalStart;
 
@@ -1992,6 +2108,7 @@ export async function runLegacyProductionAudit(ctx) {
     { name: 'frontend', ran: runFrontend, result: frontendResult, displayPrefix: 'Frontend' },
     { name: 'sustainability', ran: runSustainability, result: sustainResult, displayPrefix: 'Sustainability' },
     { name: 'quickfix', ran: runQuickfix, result: quickfixResult, displayPrefix: 'Quickfix' },
+    { name: 'duplication', ran: runDuplication, result: duplicationResult, displayPrefix: 'Duplication' },
     { name: 'architecture', ran: archState !== 'SKIPPED_PASS_FILTER', result: archResult, displayPrefix: 'Architecture' },
     { name: 'orphan-introduced', ran: orphanState !== 'SKIPPED_PASS_FILTER', result: orphanResult, displayPrefix: 'Orphan' },
   ].map(({ name, ran, result, displayPrefix }) => {
@@ -2889,11 +3006,11 @@ export async function buildAuditRunContext(cliArgs) {
   const {
     openai, planContent, projectContext = '', historyContext = '',
     passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null,
-    changedFiles = [], repoProfile = null, bandit = null, fpTracker = null, noLedger = false,
+    changedFiles = [], auditBaseCommit = null, repoProfile = null, bandit = null, fpTracker = null, noLedger = false,
     noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false,
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
-    outFile = null, model = null, allowTiered = false,
+    outFile = null, model = null, allowTiered = false, __runDuplicationAnalysis = null,
   } = cliArgs;
 
   // Only construct the tiered-pipeline-only provider handles when the
@@ -2949,7 +3066,7 @@ export async function buildAuditRunContext(cliArgs) {
 
   return {
     planContent, projectContext, historyContext,
-    passFilter, fileFilter, round, ledgerFile, diffFile, changedFiles, repoProfile, bandit, fpTracker,
+    passFilter, fileFilter, round, ledgerFile, diffFile, changedFiles, auditBaseCommit, __runDuplicationAnalysis, repoProfile, bandit, fpTracker,
     noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath,
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
     outFile, model, sessionCacheHit, allowTiered,

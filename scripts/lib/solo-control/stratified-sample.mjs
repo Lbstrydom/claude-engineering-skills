@@ -18,6 +18,8 @@
  * @module scripts/lib/solo-control/stratified-sample
  */
 
+import { mulberry32, seededShuffleCopy } from '../audit/seeded-random.mjs';
+
 /**
  * Does `finding` (commit + file) plausibly match a known defect? RECALL-BIASED
  * by design: matches on commit + file-path overlap ONLY — not category, not
@@ -39,28 +41,6 @@ export function matchesKnownDefect(finding, knownDefects) {
     }
   }
   return null;
-}
-
-// Deterministic seeded RNG (mulberry32 — same generator family as
-// audit-shadow.mjs::seededShuffle, so sampling is reproducible given a seed).
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/** Fisher-Yates over a copy (never mutates the input), driven by the seeded RNG. */
-function seededShuffleCopy(arr, rng) {
-  const a = arr.slice();
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
 }
 
 /**

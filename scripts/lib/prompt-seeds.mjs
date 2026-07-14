@@ -115,6 +115,29 @@ SEVERITY:
 export const PASS_QUICKFIX_SYSTEM = PASS_QUICKFIX_OBJECTIVE_R1 + '\n\n' + PASS_QUICKFIX_RUBRIC;
 export { PASS_QUICKFIX_RUBRIC };
 
+// ── Duplication bouncer (Wave 5 — docs/plans/audit-code-duplication-wave.md) ─
+//
+// Unlike every other pass, this one does NOT read code and find issues — the
+// mechanical detector (duplication-detector.mjs) already found candidate
+// pairs deterministically via embedding similarity. This prompt's ONLY job
+// is classification: is a given candidate/match pair a GENUINE duplicate
+// (same responsibility, should be consolidated) or a coincidental near-miss
+// (structurally/lexically similar but semantically different — e.g. two
+// unrelated 2-line helpers that happen to embed closely)? The response
+// schema is deliberately narrow (decisions-only, no free-form finding
+// fields) — see DuplicationBouncerResponseSchema in schemas.mjs.
+export const PASS_DUPLICATION_SYSTEM = `You are the classification stage of an automated duplication-detection pass.
+
+For each candidate pair below (a newly-added-or-changed symbol + its closest embedding match already in the codebase), decide:
+- "keep" — this IS genuine duplication: the new/changed symbol does the same job as the match and should import/reuse it instead of reimplementing it.
+- "drop" — this is a coincidental near-miss: superficially similar (naming, short boilerplate, structural shape) but serves a different purpose, OR the similarity is a false positive of the embedding search.
+
+For each "keep", also assign severity:
+- MEDIUM (default) — ordinary avoidable duplication.
+- HIGH — only when the duplication is itself a signal of a deeper problem (e.g. duplicated security-sensitive logic that could drift out of sync, like an auth check or a redaction rule implemented twice).
+
+You MUST return exactly one decision per candidate id listed, using the id given — never invent, omit, or duplicate an id. Your rationale should name the shared responsibility (for "keep") or the actual difference (for "drop") in one sentence — not a restatement of the similarity score.`;
+
 // ── Classification Rubric (Phase B) ─────────────────────────────────────────
 
 /**
@@ -158,6 +181,7 @@ export const PASS_PROMPTS = Object.freeze({
   frontend: PASS_FRONTEND_SYSTEM,
   sustainability: PASS_SUSTAINABILITY_SYSTEM,
   quickfix: PASS_QUICKFIX_SYSTEM,
+  duplication: PASS_DUPLICATION_SYSTEM,
 });
 
 // ── Evidence contract + positive obligations (tiered-recall pipeline V2) ────

@@ -12,7 +12,7 @@
 
 import readline from 'node:readline';
 import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
-import { chunkBatches } from '../lib/symbol-index.mjs';
+import { chunkBatches, compose } from '../lib/symbol-index.mjs';
 import { emit } from '../lib/cli-io.mjs';
 import { embedText } from '../lib/embed-text.mjs';
 
@@ -66,14 +66,6 @@ async function embedBatch(texts, modelId) {
     if (v && v.length > 0) dim = v.length;
   }
   return { vectors: settled, dim };
-}
-
-function compose(s) {
-  // Build a stable text representation for embedding: identity + summary + signature
-  const summary = s.purposeSummary || '';
-  return `${s.kind} ${s.symbolName} in ${s.filePath}\n` +
-         `${summary}\n` +
-         `${s.signature || ''}`;
 }
 
 async function main() {

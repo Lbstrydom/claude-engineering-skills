@@ -27,11 +27,14 @@
  * The migration to a canonical predicate INTENTIONALLY tightens
  * lexical recall in exchange for higher precision. Documented losses:
  *
- *  - `app/secret-keys/main.yaml` no longer matches. The pre-WS3
- *    `audit-scope.mjs` regex `/secret/i` was a substring match; the
- *    canonical anchors on `(secrets|credentials|private|.aws|.ssh)\\/`.
- *    Trade: `src/secret-helper.ts` is no longer a false positive.
- *    Mitigation: rename dirs to `secrets/` to reclaim coverage.
+ *  - `app/secret-keys/main.yaml`-style variant secret/credential DIRECTORY
+ *    names (not just the exact `secrets`/`credentials` segment) are matched
+ *    via a `(secrets?|credentials?)[\w-]*\/` directory-segment rule — fixed
+ *    2026-07-14 (Gemini consolidated-gate H4: the duplication-wave's own
+ *    egress gate depends on this classifier, so the gap was in-scope per
+ *    "impact not authorship"). `src/secret-helper.ts` (a FILE, not a
+ *    directory) is still NOT a false positive — the rule only matches when
+ *    the extended name is followed by `/`.
  *
  *  - `myenv.env`-style files (basename `foo.env`) — DELIBERATELY
  *    EXPANDED into the sensitive set (legacy quickfix-patterns let
@@ -65,7 +68,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * @typedef {'sensitive' | 'generatedNoise'} SkipCategory
+ * @typedef {'sensitive' | 'generatedNoise' | 'driftExempt'} SkipCategory
  */
 
 /**
@@ -90,7 +93,8 @@ export const SENSITIVE_PATTERNS = Object.freeze([
   /(^|\/)secrets?(\..+)?$/,                                    // secret, secrets, secrets.json
   /(^|\/)credentials?(\..+)?$/,                                // credential, credentials, credentials.yaml
   /\.(pem|key|crt|cer|der|p12|pfx|gpg|asc)$/i,                 // cert/key bundles
-  /(^|\/)(secrets|credentials|private|\.aws|\.ssh)\//,         // sensitive directories
+  /(^|\/)(secrets?|credentials?)[\w-]*\//,                     // sensitive dirs incl. variants (secret-keys/, credential-store/) — Gemini H4
+  /(^|\/)(private|\.aws|\.ssh)\//,                              // other sensitive directories
   /(^|\/)id_rsa.*$/,                                           // ssh keys + id_rsa.pub/.bak
   /(^|\/)id_ed25519.*$/,                                       // ed25519 ssh keys
   /(^|\/)password(?:[/.]|$)/i,                                 // password.txt + password/ dir; avoids `password-strength/`
@@ -112,6 +116,23 @@ export const GENERATED_NOISE_PATTERNS = Object.freeze([
   /(^|\/)bun\.lockb$/,
   /\.min\.js$/,
   /\.map$/,
+]);
+
+/**
+ * Known-intentional duplication/reference-mirror sources that carry zero
+ * architectural signal for the symbol index — not security-sensitive (paths
+ * log in full, same as `generatedNoise`) and NOT wired into `classifyPath`
+ * (the general-purpose egress/security classifier used by ~15 call sites);
+ * this category is deliberately scoped to `shouldSkipForIndexing` only, so
+ * adding an exemption here can never change egress-gate/redaction behaviour.
+ *
+ * `docs/plans/security/files/**` is a verbatim text mirror of a corporate
+ * security kit kept for reference (see AGENTS.md "Secret pre-write gate")
+ * — indexing it as live source produces duplicate-symbol noise against the
+ * real modules it mirrors.
+ */
+export const DRIFT_EXEMPT_PATTERNS = Object.freeze([
+  /(^|\/)docs\/plans\/security\/files\//,
 ]);
 
 /**
@@ -282,6 +303,10 @@ export function shouldSkipForIndexing(input, categories) {
     const re = matchingPattern(p, GENERATED_NOISE_PATTERNS);
     if (re) return { skip: true, category: 'generatedNoise', pattern: re };
   }
+  if (categories.includes('driftExempt')) {
+    const re = matchingPattern(p, DRIFT_EXEMPT_PATTERNS);
+    if (re) return { skip: true, category: 'driftExempt', pattern: re };
+  }
   return { skip: false };
 }
 
@@ -388,6 +413,7 @@ let _warnedDebug = false;
  * Default behaviour (no debug env):
  *  - `sensitive` skips → ONE aggregated line: `[<logger>] sensitive-skip: <count> files (category=sensitive, patterns=[...])`. Raw paths never appear.
  *  - `generatedNoise` skips → per-path line: `[<logger>] noise-skip: <path> (matched <pattern>)`.
+ *  - `driftExempt` skips → per-path line: `[<logger>] drift-exempt-skip: <path> (matched <pattern>)`.
  *
  * Debug mode (`SENSITIVE_PATHS_DEBUG=1`, set process-wide):
  *  - Sensitive skips become per-file `[<logger>] sensitive-skip: [redacted:<hash8>].<ext> (matched <pattern>)`. Hash is stable per path so two log lines for the same file correlate without leaking it.
@@ -408,6 +434,7 @@ export function formatSkipLog(skipped, opts = {}) {
   const lines = [];
   const sensitive = skipped.filter(s => s.category === 'sensitive');
   const noise = skipped.filter(s => s.category === 'generatedNoise');
+  const driftExempt = skipped.filter(s => s.category === 'driftExempt');
 
   if (debug && sensitive.length > 0 && !_warnedDebug) {
     lines.push(`[${logger}] WARNING: SENSITIVE_PATHS_DEBUG enabled; sensitive skips log redacted hashes only — basenames are NOT shown. To inspect a specific path, grep the working tree directly.`);
@@ -431,6 +458,11 @@ export function formatSkipLog(skipped, opts = {}) {
   for (const n of noise) {
     const action = n.action ? ` action=${n.action}` : '';
     lines.push(`[${logger}] noise-skip: ${n.path} (matched ${n.pattern})${action}`);
+  }
+
+  for (const d of driftExempt) {
+    const action = d.action ? ` action=${d.action}` : '';
+    lines.push(`[${logger}] drift-exempt-skip: ${d.path} (matched ${d.pattern})${action}`);
   }
 
   return lines;
