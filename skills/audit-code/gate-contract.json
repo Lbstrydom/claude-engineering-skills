@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skill": "audit-code",
+  "gates": [
+    {
+      "id": "convergence-threshold",
+      "kind": "executable",
+      "oracle": "convergence-threshold",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "Quality threshold: `HIGH == 0 && MEDIUM <= 2 && quickFix == 0`",
+      "implementation": "scripts/lib/audit/convergence.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "params": { "high": 0, "medium": 2, "quickFix": 0 },
+      "proof": "unit-seam"
+    },
+    {
+      "id": "tiered-shadow-window-honesty",
+      "kind": "executable",
+      "oracle": "tiered-shadow-window",
+      "statedIn": "AGENTS.md",
+      "stated": "comparedRuns` now requires `tieredRunStatus ===\n  'complete'`",
+      "implementation": "scripts/lib/audit/tiered-shadow-summary.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "fixture": {
+        "rows": [
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } },
+          { "legacyOk": true, "shadowOk": false, "comparison": { "tieredRunStatus": "fallback_legacy" } }
+        ]
+      },
+      "proof": "unit-seam"
+    },
+    {
+      "id": "mechanical-vs-architectural-label",
+      "kind": "document-only",
+      "reason": "is_mechanical is a GPT judgement call per finding; only the RESET RULE given that label is mechanical, not the label-assignment itself",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "Mechanical vs architectural"
+    },
+    {
+      "id": "rigor-pressure-stop",
+      "kind": "document-only",
+      "reason": "deciding whether a re-raised finding is 'genuinely new' vs a stability-plateau rehash is a judgement call on GPT's part; no mechanical oracle exists for the classification itself",
+      "statedIn": "skills/audit-code/SKILL.md",
+      "stated": "Threshold met, 0 new, 2/2 stable"
+    }
+  ]
+}

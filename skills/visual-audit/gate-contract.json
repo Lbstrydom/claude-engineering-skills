@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "skill": "visual-audit",
+  "gates": [
+    {
+      "id": "static-gate-refusal",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "statedIn": "skills/visual-audit/SKILL.md",
+      "stated": "It emits **no paint findings** and says so (a banner). This is honest, not a bug.",
+      "implementation": "scripts/visual-audit.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "scenario": "visual-static-gate-refusal",
+      "proof": "process"
+    },
+    {
+      "id": "empty-capture-unverified",
+      "kind": "executable",
+      "oracle": "visual-gate-unverified",
+      "statedIn": "skills/visual-audit/SKILL.md",
+      "stated": "capture honesty degrades to `unverified` on empty\nsweep / all-ambiguous joins / zero cross-theme joins / partial device×theme matrix — never a\nsilent clean.",
+      "implementation": "scripts/lib/visual/drift.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "unit-seam"
+    },
+    {
+      "id": "gate-unverified-reasons",
+      "kind": "executable",
+      "oracle": "visual-gate-unverified",
+      "statedIn": "skills/visual-audit/SKILL.md",
+      "stated": "capture honesty degrades to `unverified` on empty\nsweep / all-ambiguous joins / zero cross-theme joins / partial device×theme matrix — never a\nsilent clean.",
+      "implementation": "scripts/lib/visual/drift.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "unit-seam"
+    },
+    {
+      "id": "partial-matrix-refusal",
+      "kind": "document-only",
+      "reason": "DEVIATION from the plan's original pinned census (recorded 2026-07-14, Cluster B): the partial device×theme-matrix refusal is an inline check in scripts/visual-audit.mjs (ext.missingStates.length), NOT part of gateUnverifiedReason — there is no independently-importable pure predicate for it. Claiming a unit-seam oracle against gateUnverifiedReason for this gate would itself be a fake-check (the exact bug class this suite exists to catch). Extracting a dedicated pure predicate is out of this plan's declared file scope (F2.8 did not list scripts/visual-audit.mjs or scripts/lib/visual/drift.mjs as touched) and is tracked as v2 follow-up.",
+      "statedIn": "skills/visual-audit/SKILL.md",
+      "stated": "capture honesty degrades to `unverified` on empty\nsweep / all-ambiguous joins / zero cross-theme joins / partial device×theme matrix — never a\nsilent clean."
+    },
+    {
+      "id": "vlm-advisory-only",
+      "kind": "document-only",
+      "reason": "whether the VLM's --explain narration is accurate/helpful is a judgement call about UX communication quality; the code-level invariant (VLM never gates, creates zero findings) is a candidate future oracle but not built in v1",
+      "statedIn": "skills/visual-audit/SKILL.md",
+      "stated": "A VLM\n  is advisory-only and never gates."
+    }
+  ]
+}

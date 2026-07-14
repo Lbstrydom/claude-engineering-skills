@@ -45,6 +45,24 @@ function divergenceLine(skill, gate, result) {
   return `[${skill}][${gate}] stated "${result.stated}"; found "${result.found}"`;
 }
 
+// Pinned v1 inventory (§F2.6 — the definitive contract census; ANY coverage
+// change requires an explicit edit here, never a silent drift). One
+// deliberate deviation from the plan's original table, recorded 2026-07-14
+// during Cluster B implementation: `partial-matrix-refusal` moved from
+// executable to document-only — see its `reason` in
+// skills/visual-audit/gate-contract.json for why (no independently
+// importable pure predicate exists for that inline check; claiming a
+// unit-seam oracle for it would itself be a fake-check).
+const PINNED_EXECUTABLE = {
+  'audit-code': ['convergence-threshold', 'tiered-shadow-window-honesty'],
+  'visual-audit': ['static-gate-refusal', 'empty-capture-unverified', 'gate-unverified-reasons'],
+};
+const PINNED_DOCUMENT_ONLY = {
+  'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop'],
+  'visual-audit': ['partial-matrix-refusal', 'vlm-advisory-only'],
+};
+const PINNED_CONTRACTED_SKILLS = ['audit-code', 'visual-audit'];
+
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {
     const skillsRoot = path.join(REPO_ROOT, 'skills');
@@ -79,6 +97,29 @@ describe('gate-honesty — real skills/', () => {
         `skill "${name}" is neither contracted nor reported uncontracted`,
       );
     }
+  });
+
+  it('matches the pinned v1 census exactly — an intentional coverage change requires editing this test', () => {
+    const skillsRoot = path.join(REPO_ROOT, 'skills');
+    const { contracted, uncontracted } = loadGateContracts({ skillsRoot, repoRoot: REPO_ROOT });
+
+    assert.deepEqual(contracted.map((c) => c.skill).sort(), [...PINNED_CONTRACTED_SKILLS].sort());
+
+    for (const c of contracted) {
+      const executableIds = c.gates.filter((g) => g.kind === 'executable').map((g) => g.id).sort();
+      const documentOnlyIds = c.gates.filter((g) => g.kind === 'document-only').map((g) => g.id).sort();
+      assert.deepEqual(executableIds, [...PINNED_EXECUTABLE[c.skill]].sort(), `${c.skill} executable gate set drifted`);
+      assert.deepEqual(documentOnlyIds, [...PINNED_DOCUMENT_ONLY[c.skill]].sort(), `${c.skill} document-only gate set drifted`);
+    }
+
+    const totalExecutable = Object.values(PINNED_EXECUTABLE).flat().length;
+    const totalDocOnly = Object.values(PINNED_DOCUMENT_ONLY).flat().length;
+    assert.equal(totalExecutable, 5);
+    assert.equal(totalDocOnly, 4);
+
+    const allSkillNames = listSkillNames(skillsRoot);
+    const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
+    assert.deepEqual([...uncontracted].sort(), expectedUncontracted.sort());
   });
 });
 

@@ -72,6 +72,7 @@ import { detectRepoStack } from '../repo-stack.mjs';
 import { listRepoFiles } from '../repo-inventory.mjs';
 import { verifyExistenceFindings } from './finding-verification.mjs';
 import { getRepoContext } from '../repo-context.mjs';
+import { evaluateConvergence } from './convergence.mjs';
 import { getRequirementsContext } from '../requirements/context.mjs';
 import { ArchIntentPassSchema } from '../schemas.mjs';
 import { detectOrphansIntroduced } from './orphan-introduced.mjs';
@@ -2798,7 +2799,10 @@ export async function runLegacyProductionAudit(ctx) {
       const mediumCount = allFindings.filter(f => f.severity === 'MEDIUM').length;
       const quickFix    = allFindings.filter(f => f.is_quick_fix).length;
       // converged = the same quality threshold /audit-code gates on, this round
-      const converged   = highCount === 0 && mediumCount <= 2 && quickFix === 0;
+      // (scripts/lib/audit/convergence.mjs — plan §F2.5, the single canonical
+      // definition; SKILL.md prose and gate-contract.json params are pinned
+      // copies asserted against this, never independent sources)
+      const converged   = evaluateConvergence({ high: highCount, medium: mediumCount, quickFix });
       _learningRecordDecision(_buildAuthorTierObservation({
         runId: cloudRunId,
         round: round || 1,
