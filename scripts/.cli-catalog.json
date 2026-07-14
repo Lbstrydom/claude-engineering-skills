@@ -201,6 +201,10 @@
       "description": "Verify skill references are valid + mirrors are in sync.",
       "category": "skills"
     },
+    "gates:check": {
+      "description": "Validate every skill's gate-contract.json against its declared oracle + statedIn policy.",
+      "category": "skills"
+    },
     "audit:sync-shared-refs": {
       "description": "Sync shared references (audit-loop docs) into skill files.",
       "category": "skills"

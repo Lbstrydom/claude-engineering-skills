@@ -136,23 +136,17 @@ skills/<name>/                   ← authoritative; edit ONLY here
 .claude/skills/<name>/            ← generated copy — run `npm run skills:regenerate`
 ```
 
-> **Note**: `.github/skills/<name>/` was a previously-generated mirror,
-> deprecated in Phase 4 of ai-context-sync (at the time, no documented AI
-> tool read it). **Updated 2026-07-13**: VS Code Copilot's Agent Skills (the
-> cross-agent open standard) now natively discovers BOTH `.github/skills/`
-> AND `.claude/skills/` — with `.github/skills/` taking PRECEDENCE on name
-> collisions. That makes keeping `.github/skills` deleted MORE important,
-> not less: a stale resurrected copy would silently shadow the fresh
-> `.claude/skills` copies Copilot already reads. The committed
-> `.claude/skills/**` is the single Copilot-native surface (frontmatter
-> `name` must equal the directory name — Copilot skips mismatches silently;
-> ours all match). `.github/prompts/` slash-command shims remain as the
-> classic prompt-file surface. `--keep-github-skills` remains a legacy
-> escape hatch only.
+> **Note**: `.github/skills/<name>/` was a previously-generated mirror, deprecated in Phase 4 of ai-context-sync (at the time, no documented AI tool read it). **Updated 2026-07-13**: VS Code Copilot's Agent Skills (the cross-agent open standard) now natively discovers BOTH `.github/skills/` AND `.claude/skills/` — with `.github/skills/` taking PRECEDENCE on name collisions. That makes keeping `.github/skills` deleted MORE important, not less: a stale resurrected copy would silently shadow the fresh `.claude/skills` copies Copilot already reads.
+>
+> The committed `.claude/skills/**` is the single Copilot-native surface (frontmatter `name` must equal the directory name — Copilot skips mismatches silently; ours all match). `.github/prompts/` slash-command shims remain as the classic prompt-file surface. `--keep-github-skills` remains a legacy escape hatch only.
 
 Every reference file has `summary:` YAML frontmatter that must byte-match
 the parent SKILL.md's reference-index row. `npm run skills:check` enforces
-this — see `docs/skill-reference-format.md`.
+this — see `docs/skill-reference-format.md`. A skill MAY also carry a
+colocated `gate-contract.json` binding a stated gate to its enforcing
+code+test (never packaged/synced; no contract = `uncontracted`, not
+failed) — `npm run skills:check`/`gates:check` validate it; details:
+`docs/gate-honesty.md`.
 
 Each skill is a sibling — they share env vars and Supabase stores but have distinct scopes:
 - **plan-***: code that doesn't exist yet. `/plan-frontend` produces a machine-parseable "Section 9 — Acceptance Criteria" that `/ux-lock verify` consumes.
