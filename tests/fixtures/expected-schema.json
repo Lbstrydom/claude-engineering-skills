@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-14T19:18:18Z",
+  "generatedAt": "2026-07-15T07:19:19Z",
   "schema": "public",
   "tables": [
     {
@@ -1687,6 +1687,60 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 11
+        }
+      ]
+    },
+    {
+      "table_name": "debt_summary",
+      "columns": [
+        {
+          "column_name": "repo_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "severity",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "deferred_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "count",
+          "data_type": "bigint",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "oldest",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "newest",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "categories",
+          "data_type": "ARRAY",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 7
         }
       ]
     },
@@ -7257,6 +7311,10 @@
       "definition": " SELECT r.id AS repo_id,\n    r.name AS repo_name,\n    count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)) AS confirmed_hits,\n    count(*) FILTER (WHERE (c.correlation_type = 'audit_missed'::text)) AS audit_misses,\n    count(*) FILTER (WHERE (c.correlation_type = 'audit_false_positive'::text)) AS audit_false_positives,\n    count(*) FILTER (WHERE (c.correlation_type = 'severity_understated'::text)) AS severity_understated,\n    count(*) FILTER (WHERE (c.correlation_type = 'severity_overstated'::text)) AS severity_overstated,\n    round((NULLIF((count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)))::numeric, (0)::numeric) / NULLIF((count(*) FILTER (WHERE (c.correlation_type = ANY (ARRAY['confirmed_hit'::text, 'audit_false_positive'::text]))))::numeric, (0)::numeric)), 3) AS user_visible_precision,\n    round((NULLIF((count(*) FILTER (WHERE (c.correlation_type = 'confirmed_hit'::text)))::numeric, (0)::numeric) / NULLIF((count(*) FILTER (WHERE (c.correlation_type = ANY (ARRAY['confirmed_hit'::text, 'audit_missed'::text]))))::numeric, (0)::numeric)), 3) AS user_visible_recall\n   FROM ((audit_repos r\n     LEFT JOIN persona_test_sessions s ON ((s.repo_name = r.name)))\n     LEFT JOIN persona_audit_correlations c ON ((c.persona_session_id = s.id)))\n  GROUP BY r.id, r.name;"
     },
     {
+      "view_name": "debt_summary",
+      "definition": " SELECT repo_id,\n    severity,\n    deferred_reason,\n    count(*) AS count,\n    min(deferred_at) AS oldest,\n    max(deferred_at) AS newest,\n    array_agg(DISTINCT category) AS categories\n   FROM debt_entries\n  GROUP BY repo_id, severity, deferred_reason\n  ORDER BY\n        CASE severity\n            WHEN 'HIGH'::text THEN 1\n            WHEN 'MEDIUM'::text THEN 2\n            ELSE 3\n        END, (count(*)) DESC;"
+    },
+    {
       "view_name": "model_ab_arm_cost",
       "definition": " WITH ps AS (\n         SELECT ps.run_id,\n            r.commit_sha,\n            COALESCE(r.assignment_id, r.commit_sha, (r.id)::text) AS assignment_id,\n            COALESCE(r.stage_type, 'audit-code'::text) AS stage_type,\n            r.phase,\n            COALESCE(r.prompt_variant, 'default'::text) AS prompt_variant,\n            ps.stage,\n            ps.cost_usd,\n            ps.structured_output_ok,\n            ps.usage_unmeterable,\n            model_ab_attribute_arms(ps.stage, ps.arm) AS arms\n           FROM (audit_pass_stats ps\n             JOIN audit_runs r ON ((r.id = ps.run_id)))\n          WHERE (ps.stage IS NOT NULL)\n        ), exp AS (\n         SELECT ps.assignment_id,\n            ps.commit_sha,\n            ps.stage_type,\n            ps.phase,\n            ps.prompt_variant,\n            ps.cost_usd,\n            ps.structured_output_ok,\n            ps.usage_unmeterable,\n            unnest(ps.arms) AS arm\n           FROM ps\n          WHERE (ps.arms <> ARRAY['__INVALID__'::text])\n        )\n SELECT assignment_id,\n    commit_sha,\n    stage_type,\n    phase,\n    prompt_variant,\n    arm,\n    sum(cost_usd) AS standalone_cost_usd,\n    bool_and((cost_usd IS NOT NULL)) AS cost_known,\n    count(*) AS pass_executions,\n    count(*) FILTER (WHERE structured_output_ok) AS conformant_passes,\n    bool_or(usage_unmeterable) AS any_unmeterable\n   FROM exp\n  GROUP BY assignment_id, commit_sha, stage_type, phase, prompt_variant, arm;"
     },
@@ -9819,6 +9877,11 @@
     },
     {
       "grantee": "postgres",
+      "object": "public.debt_summary",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
       "object": "public.domain_summaries",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -10361,6 +10424,11 @@
     },
     {
       "object_name": "audit_effectiveness",
+      "object_kind": "v",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "debt_summary",
       "object_kind": "v",
       "owner": "postgres"
     },
