@@ -15,8 +15,45 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
+import os from 'node:os';
 import { defaultGeminiReviewScriptPath } from '../scripts/lib/audit/final-adjudication.mjs';
 import { runTieredAuditPipeline } from '../scripts/lib/audit/tiered-pipeline.mjs';
+import { buildAuditRunContext } from '../scripts/lib/audit/legacy-production-audit.mjs';
+
+// 2026-07-15: root cause behind the first 4 real `complete` shadow runs all
+// landing with 0 tiered findings against 10-18 raw discovery candidates
+// EVERY time — not model-recall noise, a wiring gap. `ctx.diffText` is read
+// in 3 places (discovery-portfolio.mjs, tiered-pipeline.mjs,
+// evidence-triage.mjs) but was never ASSIGNED anywhere in the whole
+// codebase, so evidence-triage.mjs's `verifyAnchor` unconditionally
+// returned 'unverifiable' for every candidate (`if (!diffText) return
+// 'unverifiable'`) — Stage 0 rejected 100% of candidates, always.
+// `runLegacyProductionAudit` never needed this (it independently re-reads
+// `diffFile` itself for its own line-count metadata), so the gap was
+// invisible on the legacy-only path this whole time.
+describe('buildAuditRunContext — diffText wiring (2026-07-15, Stage-0-always-rejects incident)', () => {
+  test('diffFile is read into ctx.diffText — the exact field evidence-triage.mjs needs', async () => {
+    const tmpFile = path.join(os.tmpdir(), `diff-text-wiring-${process.pid}-${Date.now()}.patch`);
+    const diffContent = 'diff --git a/x.js b/x.js\n--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n-old\n+new\n';
+    fs.writeFileSync(tmpFile, diffContent, 'utf-8');
+    try {
+      const ctx = await buildAuditRunContext({ openai: { fake: true }, planContent: 'x', changedFiles: [], diffFile: tmpFile });
+      assert.equal(ctx.diffText, diffContent);
+    } finally {
+      fs.unlinkSync(tmpFile);
+    }
+  });
+
+  test('no diffFile → diffText is null, not undefined or a crash (evidence-triage degrades gracefully on null)', async () => {
+    const ctx = await buildAuditRunContext({ openai: { fake: true }, planContent: 'x', changedFiles: [] });
+    assert.equal(ctx.diffText, null);
+  });
+
+  test('an unreadable diffFile degrades to diffText:null instead of throwing — the legacy path\'s own read is the authoritative loud failure', async () => {
+    const ctx = await buildAuditRunContext({ openai: { fake: true }, planContent: 'x', changedFiles: [], diffFile: path.join(os.tmpdir(), 'does-not-exist-12345.patch') });
+    assert.equal(ctx.diffText, null);
+  });
+});
 
 describe('defaultGeminiReviewScriptPath (consumer-layout safety)', () => {
   test('resolves module-relative to an existing gemini-review.mjs sibling', () => {

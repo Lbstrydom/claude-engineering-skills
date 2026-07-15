@@ -3091,9 +3091,33 @@ export async function buildAuditRunContext(cliArgs) {
     }
   }
 
+  // Load-bearing for the tiered pipeline's Stage 0 evidence-triage
+  // (evidence-triage.mjs `verifyAnchor`: `if (!diffText) return
+  // 'unverifiable'`) — found 2026-07-15 after the first real shadow
+  // observations landed: `diffText` was read in 3 places across
+  // discovery-portfolio.mjs/tiered-pipeline.mjs/evidence-triage.mjs but
+  // never ASSIGNED anywhere in the whole codebase, so every single
+  // commission-type finding's anchor was unconditionally unverifiable —
+  // Stage 0 rejected 100% of candidates on every one of the first 4 real
+  // `complete` shadow runs (10-18 raw candidates, 0 verified, every time;
+  // not model-recall noise — deterministic). `runLegacyProductionAudit`
+  // never needed this (it re-reads `diffFile` itself, independently, for
+  // its own line/file-count metadata just above) — this is purely
+  // additive for tiered/shadow consumers, changes nothing for the legacy
+  // path. Best-effort, NEVER throws: a genuinely broken `--diff` is
+  // already validated loudly, with a detailed error, by the legacy path's
+  // own read a few hundred lines above — duplicating that failure mode
+  // here (which runs for EVERY audit, tiered or not, before either path
+  // has started) would turn a currently-recoverable-by-legacy state into
+  // a hard crash for runs that never even reach the tiered pipeline.
+  let diffText = null;
+  if (diffFile) {
+    try { diffText = fs.readFileSync(diffFile, 'utf-8'); } catch { /* legacy path's own read surfaces this loudly */ }
+  }
+
   return {
     planContent, projectContext, historyContext,
-    passFilter, fileFilter, round, ledgerFile, diffFile, changedFiles, auditBaseCommit, __runDuplicationAnalysis, repoProfile, bandit, fpTracker,
+    passFilter, fileFilter, round, ledgerFile, diffFile, diffText, changedFiles, auditBaseCommit, __runDuplicationAnalysis, repoProfile, bandit, fpTracker,
     noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath,
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
     outFile, model, sessionCacheHit, allowTiered,
