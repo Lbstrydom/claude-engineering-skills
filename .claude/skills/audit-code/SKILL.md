@@ -174,7 +174,7 @@ self-contained rather than taking a cross-module dependency), suppress it
 in place with a pragma immediately above the declaration:
 
 ```js
-// @duplicate-justification: target=scripts/lib/audit/seeded-random.mjs:mulberry32 reason=this CLI must stay dependency-free
+// @duplicate-justification: target=scripts/lib/nav/schema.mjs:sha256 reason=nav-audit and visual-audit are deliberately independent sister lenses (AGENTS.md), not accidental duplication
 ```
 
 The pragma's own MATCHING logic recognizes any comment syntax (`//`, `#`,
