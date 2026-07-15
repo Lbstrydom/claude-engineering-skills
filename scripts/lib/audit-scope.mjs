@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { classifyPath } from './sensitive-paths.mjs';
-import { scanEgressPayload } from './sensitive-egress-gate.mjs';
+import { scanEgressPayload, redactSecrets } from './sensitive-egress-gate.mjs';
 // normalizePath not used directly here but re-exported via file-io.mjs barrel
 
 // ── Sensitive File Filtering ────────────────────────────────────────────────
@@ -102,13 +102,23 @@ export function safeReadFile(relPath, cwdBoundary) {
  * - Path containment (rejects ../ escapes)
  * - Per-file error recovery (race conditions, permissions)
  * - Size guard (skip files > 2MB)
+ * - Content-level secret redaction (default ON — see `redact` below)
  * @param {string[]} filePaths
  * @param {object} opts
  * @param {number} [opts.maxPerFile=10000]
  * @param {number} [opts.maxTotal=120000]
+ * @param {boolean} [opts.redact=true] - Redact secret-shaped content (via
+ *   `sensitive-egress-gate.mjs::redactSecrets`, the fail-closed wrapper)
+ *   before truncation. Path-level filtering (`isSensitiveFile`) only ever
+ *   caught known-sensitive FILES; this catches a secret-shaped string
+ *   *inside* an otherwise-ordinary file (a CI workflow's test-container
+ *   password, a `.env.example` placeholder, etc.) — see
+ *   docs/plans/discovery-portfolio-secret-redaction.md. Defaults to `true`
+ *   (safe by default); `buildRedactedAuditContext` (below) is the one
+ *   caller with a documented reason to opt out.
  * @returns {string}
  */
-export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 120000 } = {}) {
+export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 120000, redact = true } = {}) {
   let total = '';
   let omitted = 0;
   let sensitive = 0;
@@ -120,7 +130,10 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
 
     const result = safeReadFile(relPath, cwdBoundary);
     if (!result) { omitted++; continue; }
-    const raw = result.content;
+    // Redact BEFORE truncating: truncation can otherwise cut a secret's
+    // match mid-way, leaving an un-matchable (and un-redacted) partial
+    // fragment in the retained prefix.
+    const raw = redact ? redactSecrets(result.content) : result.content;
 
     const ext = relPath.split('.').pop();
     const lang = { sql: 'sql', css: 'css', html: 'html', md: 'markdown', json: 'json', py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby', sh: 'bash' }[ext] ?? 'js';
@@ -155,11 +168,17 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
 // new provider"). File-level exclusion happens ONCE here and the same object
 // is shared by baseline + all arms — that's the "redact-once" in decision 11.
 //
+// `redact: false` is explicit and deliberate (docs/plans/discovery-portfolio-secret-redaction.md):
+// `readFilesAsContext` now defaults to `redact: true` for every OTHER caller,
+// but this function's whole contract is scanning genuinely unredacted content
+// to correctly flag it for the model-A/B/C fairness harness (decision 11) —
+// applying the new default here would silently break that contract.
+//
 // @param {string[]} filePaths
 // @param {object} [opts] - forwarded to readFilesAsContext (maxPerFile, maxTotal)
 // @returns {{ context: string, fileCount: number, egressSafe: boolean, egressPatterns: string[] }}
 export function buildRedactedAuditContext(filePaths, opts = {}) {
-  const context = readFilesAsContext(filePaths || [], opts);
+  const context = readFilesAsContext(filePaths || [], { ...opts, redact: false });
   const { safe, patterns } = scanEgressPayload(context);
   return { context, fileCount: (filePaths || []).length, egressSafe: safe, egressPatterns: patterns };
 }

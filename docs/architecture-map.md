@@ -1,9 +1,9 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-14T20:40:54.888Z   commit: f3257dac8ea6   refresh_id: f49f325d-e441-4b9c-a27a-3c0807016e5d
-- Drift score: 43 / threshold 20   status: `RED`
-- Domains: 23   Symbols: 3056   Layering violations: 0
+- Generated: 2026-07-15T06:25:49.544Z   commit: eee18a82101a   refresh_id: 7ed9f355-ce45-4f21-8bd1-347d62ea2777
+- Drift score: 44 / threshold 20   status: `RED`
+- Domains: 23   Symbols: 3057   Layering violations: 0
 
 ## Contents
 - [arch-memory](#arch-memory) — 54 symbols
@@ -26,7 +26,7 @@
 - [shared-lib](#shared-lib) — 923 symbols
 - [stores](#stores) — 208 symbols
 - [tech-debt](#tech-debt) — 71 symbols
-- [tests](#tests) — 391 symbols
+- [tests](#tests) — 392 symbols
 - [ux-lock](#ux-lock) — 35 symbols
 - [visual-audit](#visual-audit) — 122 symbols
 
@@ -2322,7 +2322,7 @@ _Domain has 284 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## shared-lib
 
-> LLM client factory with backend routing (SDK/CLI) and pre-egress secret redaction; focused infrastructure utilities (file I/O, VCS, DB, schemas, config) for the CLI skills.
+> Foundational infrastructure for all audit-loop skills: LLM client factories (Anthropic SDK/CLI routing), secret redaction, Zod schemas, database operations, file I/O, and configuration utilities.
 
 ```mermaid
 flowchart TB
@@ -2509,13 +2509,13 @@ _Domain has 923 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`resolveArms`](../scripts/lib/audit-arms.mjs#L342) | function | `scripts/lib/audit-arms.mjs` | 342-370 | Parses AUDIT_MODEL_SHADOW env var into arm IDs and resolves them to arm objects. | `scripts/lib/arm-eval/toggle.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/model-ab-decision.mjs`, +2 more |
 | [`stagesForArm`](../scripts/lib/audit-arms.mjs#L223) | function | `scripts/lib/audit-arms.mjs` | 223-228 | Returns the pipeline stages that an audit arm executes (oss-gen, gpt-gen, gpt-round, gemini). | `scripts/lib/arm-eval/toggle.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/model-ab-decision.mjs`, +2 more |
 | [`dispatch`](../scripts/lib/audit-dispatch.mjs#L26) | function | `scripts/lib/audit-dispatch.mjs` | 26-48 | Routes an audit input to the appropriate skill (plan-audit, code-audit) based on mode keywords or file paths. | _(internal)_ |
-| [`auditSubjectFileGuard`](../scripts/lib/audit-scope.mjs#L212) | function | `scripts/lib/audit-scope.mjs` | 212-218 | Aborts an audit if no implementation files reached the prompt, with targeted error messaging. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
-| [`buildRedactedAuditContext`](../scripts/lib/audit-scope.mjs#L161) | function | `scripts/lib/audit-scope.mjs` | 161-165 | Reads files as context and scans for egress-safety violations before sending to LLM. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
-| [`classifyFiles`](../scripts/lib/audit-scope.mjs#L174) | function | `scripts/lib/audit-scope.mjs` | 174-193 | Categorizes files into backend, frontend, and shared buckets based on path patterns. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
-| [`isAuditInfraFile`](../scripts/lib/audit-scope.mjs#L61) | function | `scripts/lib/audit-scope.mjs` | 61-68 | Determines if a file is audit infrastructure (scripts/*.mjs entry points). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
-| [`isSensitiveFile`](../scripts/lib/audit-scope.mjs#L22) | function | `scripts/lib/audit-scope.mjs` | 22-24 | Checks if a file path is classified as sensitive (credentials, .env, keys). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
-| [`readFilesAsContext`](../scripts/lib/audit-scope.mjs#L111) | function | `scripts/lib/audit-scope.mjs` | 111-139 | Assembles multiple files into markdown context with budget limits and omission tracking. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
-| [`safeReadFile`](../scripts/lib/audit-scope.mjs#L83) | function | `scripts/lib/audit-scope.mjs` | 83-97 | Safely reads a file with symlink resolution and size checks, rejecting sensitive/escaped paths. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
+| [`auditSubjectFileGuard`](../scripts/lib/audit-scope.mjs#L231) | function | `scripts/lib/audit-scope.mjs` | 231-237 | Returns an error message if no implementation files matched the plan, preventing empty audits. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
+| [`buildRedactedAuditContext`](../scripts/lib/audit-scope.mjs#L180) | function | `scripts/lib/audit-scope.mjs` | 180-184 | Generates audit context from file paths while redacting secrets and verifying egress safety. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
+| [`classifyFiles`](../scripts/lib/audit-scope.mjs#L193) | function | `scripts/lib/audit-scope.mjs` | 193-212 | Categorizes files into backend, frontend, or shared groups based on path patterns. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
+| [`isAuditInfraFile`](../scripts/lib/audit-scope.mjs#L61) | function | `scripts/lib/audit-scope.mjs` | 61-68 | Determines if a file belongs to the audit infrastructure (scripts/ directory basenames). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
+| [`isSensitiveFile`](../scripts/lib/audit-scope.mjs#L22) | function | `scripts/lib/audit-scope.mjs` | 22-24 | Checks if a file path is classified as sensitive (credentials, keys, .env files). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
+| [`readFilesAsContext`](../scripts/lib/audit-scope.mjs#L121) | function | `scripts/lib/audit-scope.mjs` | 121-152 | Concatenates files into a markdown context block with language-aware code fencing and size limits. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
+| [`safeReadFile`](../scripts/lib/audit-scope.mjs#L83) | function | `scripts/lib/audit-scope.mjs` | 83-97 | Safely reads a file with symlink/boundary validation, returning null if sensitive or out-of-bounds. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/diff-annotation.mjs`, `scripts/lib/file-io.mjs`, +1 more |
 | [`bucketAgainstBaseline`](../scripts/lib/audit-shadow.mjs#L286) | function | `scripts/lib/audit-shadow.mjs` | 286-294 | Labels shadow findings as 'both' or 'shadow-only' by comparing semantic hashes to baseline. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs`, `scripts/solo-control-audit.mjs` |
 | [`buildPassUserPrompt`](../scripts/lib/audit-shadow.mjs#L117) | function | `scripts/lib/audit-shadow.mjs` | 117-123 | Constructs the user prompt for a single audit pass (code + plan context). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs`, `scripts/solo-control-audit.mjs` |
 | [`buildPlanAuditUserPrompt`](../scripts/lib/audit-shadow.mjs#L132) | function | `scripts/lib/audit-shadow.mjs` | 132-134 | Constructs the user prompt for plan auditing (plan is the subject under review). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs`, `scripts/solo-control-audit.mjs` |
@@ -2648,12 +2648,12 @@ _Domain has 923 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`prepClickTest`](../scripts/lib/device-presets.mjs#L181) | function | `scripts/lib/device-presets.mjs` | 181-209 | Prepares click-test devices in single or matrix mode. | `scripts/lib/nav/verify.mjs`, `scripts/visual-audit.mjs` |
 | [`prepPersonaTest`](../scripts/lib/device-presets.mjs#L165) | function | `scripts/lib/device-presets.mjs` | 165-179 | Prepares persona-test device configuration with mental model tags. | `scripts/lib/nav/verify.mjs`, `scripts/visual-audit.mjs` |
 | [`resolveDevicePreset`](../scripts/lib/device-presets.mjs#L81) | function | `scripts/lib/device-presets.mjs` | 81-92 | Infers device preset from a description string using pattern rules. | `scripts/lib/nav/verify.mjs`, `scripts/visual-audit.mjs` |
-| [`_annotateBlockStyle`](../scripts/lib/diff-annotation.mjs#L79) | function | `scripts/lib/diff-annotation.mjs` | 79-113 | Annotates changed code hunks with block-comment markers. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
-| [`_annotateHeaderOnlyStyle`](../scripts/lib/diff-annotation.mjs#L115) | function | `scripts/lib/diff-annotation.mjs` | 115-125 | Annotates changed line ranges in file headers only. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
-| [`_buildFileBlock`](../scripts/lib/diff-annotation.mjs#L154) | function | `scripts/lib/diff-annotation.mjs` | 154-178 | Builds an annotated markdown code block for a single file. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
-| [`getCommentStyle`](../scripts/lib/diff-annotation.mjs#L72) | function | `scripts/lib/diff-annotation.mjs` | 72-77 | Determines comment syntax for a file type. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
-| [`parseDiffFile`](../scripts/lib/diff-annotation.mjs#L23) | function | `scripts/lib/diff-annotation.mjs` | 23-60 | Parses a unified diff file into per-file changed line ranges. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
-| [`readFilesAsAnnotatedContext`](../scripts/lib/diff-annotation.mjs#L138) | function | `scripts/lib/diff-annotation.mjs` | 138-152 | Reads files with diff hunks annotated, respecting size limits. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
+| [`_annotateBlockStyle`](../scripts/lib/diff-annotation.mjs#L80) | function | `scripts/lib/diff-annotation.mjs` | 80-114 | Annotates code with block-style comments separating changed hunks from unchanged context. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
+| [`_annotateHeaderOnlyStyle`](../scripts/lib/diff-annotation.mjs#L116) | function | `scripts/lib/diff-annotation.mjs` | 116-126 | Adds line numbers and a header listing which lines changed in doc/config files. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
+| [`_buildFileBlock`](../scripts/lib/diff-annotation.mjs#L164) | function | `scripts/lib/diff-annotation.mjs` | 164-194 | Generates a markdown code block for one file with secret redaction and diff-based change markers. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
+| [`getCommentStyle`](../scripts/lib/diff-annotation.mjs#L73) | function | `scripts/lib/diff-annotation.mjs` | 73-78 | Determines the appropriate comment style (block or header-only) for a file based on its extension. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
+| [`parseDiffFile`](../scripts/lib/diff-annotation.mjs#L24) | function | `scripts/lib/diff-annotation.mjs` | 24-61 | Extracts changed file paths and line ranges from a unified diff into a map structure. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
+| [`readFilesAsAnnotatedContext`](../scripts/lib/diff-annotation.mjs#L148) | function | `scripts/lib/diff-annotation.mjs` | 148-162 | Builds annotated markdown context from files, highlighting which portions were modified per diff. | `scripts/lib/file-io.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs` |
 | [`extractSection`](../scripts/lib/doc-sections.mjs#L35) | function | `scripts/lib/doc-sections.mjs` | 35-71 | Extracts a markdown section by heading, respecting code fences. | `scripts/lib/brainstorm/arch-context.mjs`, `scripts/lib/repo-context.mjs` |
 | [`loadSection`](../scripts/lib/doc-sections.mjs#L90) | function | `scripts/lib/doc-sections.mjs` | 90-122 | Loads a markdown section from a file with fallback paths and error states. | `scripts/lib/brainstorm/arch-context.mjs`, `scripts/lib/repo-context.mjs` |
 | [`astExtract`](../scripts/lib/efficacy-lints.mjs#L215) | function | `scripts/lib/efficacy-lints.mjs` | 215-242 | Walks an AST to find cache_control blocks and canary gate calls. | `scripts/efficacy-lints-check.mjs` |
@@ -3141,19 +3141,19 @@ _Domain has 923 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`normalizeFindingEvidence`](../scripts/lib/schemas.mjs#L250) | function | `scripts/lib/schemas.mjs` | 250-260 | Extracts and validates finding evidence structure (commission/omission/missing). | `scripts/cross-skill.mjs`, `scripts/debt-review.mjs`, `scripts/evolve-prompts.mjs`, +19 more |
 | [`stripJsonSchemaExtras`](../scripts/lib/schemas.mjs#L343) | function | `scripts/lib/schemas.mjs` | 343-360 | Removes Gemini-unsupported JSON schema keys. | `scripts/cross-skill.mjs`, `scripts/debt-review.mjs`, `scripts/evolve-prompts.mjs`, +19 more |
 | [`zodToGeminiSchema`](../scripts/lib/schemas.mjs#L369) | function | `scripts/lib/schemas.mjs` | 369-372 | Converts a Zod schema to a Gemini-compatible JSON schema. | `scripts/cross-skill.mjs`, `scripts/debt-review.mjs`, `scripts/evolve-prompts.mjs`, +19 more |
-| [`redactFields`](../scripts/lib/secret-patterns.mjs#L120) | function | `scripts/lib/secret-patterns.mjs` | 120-133 | Redacts secrets from specific object fields. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
-| [`redactSecrets`](../scripts/lib/secret-patterns.mjs#L89) | function | `scripts/lib/secret-patterns.mjs` | 89-112 | Replaces detected secret patterns with [REDACTED] placeholders. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
-| [`scanForSecrets`](../scripts/lib/secret-patterns.mjs#L63) | function | `scripts/lib/secret-patterns.mjs` | 63-76 | Detects secret patterns in text using regex matchers. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
+| [`redactFields`](../scripts/lib/secret-patterns.mjs#L143) | function | `scripts/lib/secret-patterns.mjs` | 143-156 | Redacts secrets in specified object fields and returns the modified object with redaction log. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
+| [`redactSecrets`](../scripts/lib/secret-patterns.mjs#L111) | function | `scripts/lib/secret-patterns.mjs` | 111-135 | Replaces secret matches with `[REDACTED:patternname]` markers, preserving newlines. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
+| [`scanForSecrets`](../scripts/lib/secret-patterns.mjs#L73) | function | `scripts/lib/secret-patterns.mjs` | 73-87 | Scans text for matches against secret patterns and returns the names of patterns found. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
 | [`classifySecrets`](../scripts/lib/security/secret-classifier.mjs#L61) | function | `scripts/lib/security/secret-classifier.mjs` | 61-76 | Categorizes detected secrets as high or low confidence. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
 | [`maskSample`](../scripts/lib/security/secret-classifier.mjs#L139) | function | `scripts/lib/security/secret-classifier.mjs` | 139-141 | Truncates a string sample to first 6 characters plus ellipsis. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
 | [`preWriteSecretGate`](../scripts/lib/security/secret-classifier.mjs#L89) | function | `scripts/lib/security/secret-classifier.mjs` | 89-136 | Refuses high-confidence secrets, auto-redacts low-confidence PII before storage. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
-| [`assertEgressSafe`](../scripts/lib/sensitive-egress-gate.mjs#L151) | function | `scripts/lib/sensitive-egress-gate.mjs` | 151-161 | Throws if payload contains secrets; gates before sending to external providers. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +14 more |
-| [`containsSecrets`](../scripts/lib/sensitive-egress-gate.mjs#L58) | function | `scripts/lib/sensitive-egress-gate.mjs` | 58-68 | Detects if text body contains secret patterns. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +14 more |
-| [`gateSymbolForEgress`](../scripts/lib/sensitive-egress-gate.mjs#L190) | function | `scripts/lib/sensitive-egress-gate.mjs` | 190-241 | Determines whether a file symbol is safe for LLM egress, checking symlink escapes and sensitivity. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +14 more |
-| [`isExtensionAllowlisted`](../scripts/lib/sensitive-egress-gate.mjs#L47) | function | `scripts/lib/sensitive-egress-gate.mjs` | 47-51 | Checks if a file extension is on the egress allowlist. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +14 more |
-| [`isPathSensitive`](../scripts/lib/sensitive-egress-gate.mjs#L38) | function | `scripts/lib/sensitive-egress-gate.mjs` | 38-40 | Checks if a file path matches the sensitive-path denylist. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +14 more |
-| [`redactSecrets`](../scripts/lib/sensitive-egress-gate.mjs#L88) | function | `scripts/lib/sensitive-egress-gate.mjs` | 88-113 | Redacts secrets from payload (string or object) with fail-closed behavior. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +14 more |
-| [`scanEgressPayload`](../scripts/lib/sensitive-egress-gate.mjs#L127) | function | `scripts/lib/sensitive-egress-gate.mjs` | 127-138 | Scans a payload for secret patterns and returns safety verdict and pattern list. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +14 more |
+| [`assertEgressSafe`](../scripts/lib/sensitive-egress-gate.mjs#L151) | function | `scripts/lib/sensitive-egress-gate.mjs` | 151-161 | Throws if payload contains secrets; gates before sending to external providers. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +15 more |
+| [`containsSecrets`](../scripts/lib/sensitive-egress-gate.mjs#L58) | function | `scripts/lib/sensitive-egress-gate.mjs` | 58-68 | Detects if text body contains secret patterns. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +15 more |
+| [`gateSymbolForEgress`](../scripts/lib/sensitive-egress-gate.mjs#L190) | function | `scripts/lib/sensitive-egress-gate.mjs` | 190-241 | Determines whether a file symbol is safe for LLM egress, checking symlink escapes and sensitivity. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +15 more |
+| [`isExtensionAllowlisted`](../scripts/lib/sensitive-egress-gate.mjs#L47) | function | `scripts/lib/sensitive-egress-gate.mjs` | 47-51 | Checks if a file extension is on the egress allowlist. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +15 more |
+| [`isPathSensitive`](../scripts/lib/sensitive-egress-gate.mjs#L38) | function | `scripts/lib/sensitive-egress-gate.mjs` | 38-40 | Checks if a file path matches the sensitive-path denylist. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +15 more |
+| [`redactSecrets`](../scripts/lib/sensitive-egress-gate.mjs#L88) | function | `scripts/lib/sensitive-egress-gate.mjs` | 88-113 | Redacts secrets from payload (string or object) with fail-closed behavior. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +15 more |
+| [`scanEgressPayload`](../scripts/lib/sensitive-egress-gate.mjs#L127) | function | `scripts/lib/sensitive-egress-gate.mjs` | 127-138 | Scans a payload for secret patterns and returns safety verdict and pattern list. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +15 more |
 | [`_resetDebugBanner`](../scripts/lib/sensitive-paths.mjs#L472) | function | `scripts/lib/sensitive-paths.mjs` | 472-474 | Resets the internal debug-banner warning flag to false. | `scripts/defect-harvest.mjs`, `scripts/lib/audit-scope.mjs`, `scripts/lib/audit/duplication-detector.mjs`, +18 more |
 | [`classifyPath`](../scripts/lib/sensitive-paths.mjs#L160) | function | `scripts/lib/sensitive-paths.mjs` | 160-166 | Classifies a path as sensitive, generatedNoise, or normal based on regex pattern matching. | `scripts/defect-harvest.mjs`, `scripts/lib/audit-scope.mjs`, `scripts/lib/audit/duplication-detector.mjs`, +18 more |
 | [`defaultHash`](../scripts/lib/sensitive-paths.mjs#L404) | function | `scripts/lib/sensitive-paths.mjs` | 404-406 | Generates an 8-character SHA-256 hash of a string value. | `scripts/defect-harvest.mjs`, `scripts/lib/audit-scope.mjs`, `scripts/lib/audit/duplication-detector.mjs`, +18 more |
@@ -3695,7 +3695,7 @@ _Domain has 71 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## tests
 
-> Node.js test suite validating deterministic modules (schemas, file I/O, parsing, VCS), LLM safety boundaries (sensitive-path egress, audit scope), consumer sync/relocation contracts, and Playwright e2e specs for browser-driven skills.
+> Node.js test suite validating three layers: deterministic utilities (schemas, file-I/O, VCS, config parsing), architectural symbol indexing (language adapters for Java/SQL/Python), and critical silent-regression-prone contracts (sensitive-path egress, consumer relocation).
 
 ```mermaid
 flowchart TB
@@ -3749,7 +3749,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 391 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 392 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -3774,7 +3774,7 @@ _Domain has 391 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`fakeJudge`](../tests/arm-eval-judge.test.mjs#L58) | function | `tests/arm-eval-judge.test.mjs` | 58-65 | Creates an async mock judgment function that scores outputs and returns parsed results. | _(internal)_ |
 | [`harness`](../tests/arm-eval-run.test.mjs#L10) | function | `tests/arm-eval-run.test.mjs` | 10-36 | Creates a test harness with mock store and dependencies for arm-eval runs. | _(internal)_ |
 | [`runCli`](../tests/audit-plan-rebuttal-split-smoke.test.mjs#L44) | function | `tests/audit-plan-rebuttal-split-smoke.test.mjs` | 44-56 | Spawns the openai-audit script with arguments and returns exit code and output. | _(internal)_ |
-| [`mkdtemp`](../tests/audit-scope-egress.test.mjs#L36) | function | `tests/audit-scope-egress.test.mjs` | 36-38 | Creates a temporary directory with a prefix name. | _(internal)_ |
+| [`mkdtemp`](../tests/audit-scope-egress.test.mjs#L38) | function | `tests/audit-scope-egress.test.mjs` | 38-40 | Creates a temporary directory for test fixtures. | _(internal)_ |
 | [`genStats`](../tests/audit-shadow.test.mjs#L50) | function | `tests/audit-shadow.test.mjs` | 50-50 | Filters pass statistics to exclude gemini-stage entries. | _(internal)_ |
 | [`harness`](../tests/audit-shadow.test.mjs#L20) | function | `tests/audit-shadow.test.mjs` | 20-47 | Creates a test harness with mock dependencies for audit-shadow testing. | _(internal)_ |
 | [`minimalEnvelope`](../tests/brainstorm-arch-context.test.mjs#L242) | function | `tests/brainstorm-arch-context.test.mjs` | 242-256 | Creates a minimal brainstorm session envelope with required fields and defaults. | _(internal)_ |
@@ -3830,6 +3830,7 @@ _Domain has 391 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`sessionEntry`](../tests/debt-suppression.test.mjs#L25) | function | `tests/debt-suppression.test.mjs` | 25-40 | Creates a dismissed audit-session ledger entry. | _(internal)_ |
 | [`reSuppressAgainstDebt`](../tests/debt-transcript-suppression.test.mjs#L19) | function | `tests/debt-transcript-suppression.test.mjs` | 19-44 | Filters findings against deferred-debt context using Jaccard similarity thresholding. | _(internal)_ |
 | [`fakeGit`](../tests/defect-harvest.test.mjs#L8) | function | `tests/defect-harvest.test.mjs` | 8-26 | Returns a mock git function simulating log, show, and blame output. | _(internal)_ |
+| [`mkdtemp`](../tests/diff-annotation-egress.test.mjs#L23) | function | `tests/diff-annotation-egress.test.mjs` | 23-25 | Creates a temporary directory for test fixtures. | _(internal)_ |
 | [`commit`](../tests/diff-scope-resolver.test.mjs#L48) | function | `tests/diff-scope-resolver.test.mjs` | 48-52 | Stages all changes and creates a git commit. | _(internal)_ |
 | [`newRepo`](../tests/diff-scope-resolver.test.mjs#L35) | function | `tests/diff-scope-resolver.test.mjs` | 35-46 | Initializes a new git repository with package.json and an initial commit. | _(internal)_ |
 | [`sh`](../tests/diff-scope-resolver.test.mjs#L24) | function | `tests/diff-scope-resolver.test.mjs` | 24-26 | Executes a git command in a specified directory. | _(internal)_ |

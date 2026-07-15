@@ -12,6 +12,10 @@ import {
   gateSymbolForEgress,
   SECRET_REDACTED,
 } from '../scripts/lib/sensitive-egress-gate.mjs';
+import {
+  scanForSecrets,
+  redactSecrets as redactSecretsRaw,
+} from '../scripts/lib/secret-patterns.mjs';
 
 describe('isPathSensitive', () => {
   it('blocks .env and variants', () => {
@@ -268,5 +272,74 @@ describe('gateSymbolForEgress — canonical-path enforcement (WS-CANON)', () => 
       assert.equal(r.action, 'skip-path');
       assert.match(r.reason, /generated-noise/);
     } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+// ── Discovery-portfolio secret-redaction fixes ──────────────────────────
+// Plan: docs/plans/discovery-portfolio-secret-redaction.md.
+//
+// Ground zero (Gemini round-1 G1): scanForSecrets/redactSecrets must not
+// re-flag redactSecrets' own [REDACTED:pattern-name] output, while still
+// flagging a genuine unrelated secret elsewhere in the same text. This is
+// the fix that makes everything else in the plan (the readFilesAsContext /
+// readFilesAsAnnotatedContext redact-by-default flip) actually work.
+
+describe('scanForSecrets / redactSecrets — marker-stripping regression (Gemini round 1 G1)', () => {
+  const DSN = 'postgresql://user:hunter2@host.example.com/db';
+
+  it('a raw DSN password is flagged', () => {
+    const r = scanForSecrets(DSN);
+    assert.equal(r.matched, true);
+    assert.ok(r.patterns.includes('dsn-password'));
+  });
+
+  it('redactSecrets output on a DSN no longer re-trips the scanner (the core G1 bug)', () => {
+    const { text, redacted } = redactSecretsRaw(DSN);
+    assert.ok(redacted.includes('dsn-password'));
+    assert.ok(text.includes('[REDACTED:dsn-password]'));
+    assert.equal(scanForSecrets(text).matched, false, 'a redacted marker must not re-trigger scanForSecrets');
+  });
+
+  it('containsSecrets(redactSecrets(text)) via the fail-closed wrapper is also false (the real call path)', () => {
+    const redacted = redactSecrets(DSN); // sensitive-egress-gate.mjs wrapper
+    assert.equal(containsSecrets(redacted), false);
+  });
+
+  it('a real secret elsewhere in the text is still flagged when a marker is already present', () => {
+    const text = 'placeholder: [REDACTED:dsn-password] but also AKIAIOSFODNN7EXAMPLE';
+    const r = scanForSecrets(text);
+    assert.equal(r.matched, true);
+    assert.ok(r.patterns.includes('aws-access-key-id'));
+    assert.equal(r.patterns.includes('dsn-password'), false, 'the marker itself must not be re-flagged as a fresh match');
+  });
+
+  it('a literal [REDACTED:...]-shaped substring does not concatenate into a false new match (Gemini round 2 G2)', () => {
+    // Marker-stripping uses a SPACE, not an empty string — text immediately
+    // before/after a marker must not concatenate into a coincidental token.
+    const text = 'AKIA[REDACTED:x]OSFODNN7EXAMPLE';
+    const r = scanForSecrets(text);
+    assert.equal(r.patterns.includes('aws-access-key-id'), false);
+  });
+});
+
+describe('redactSecrets — line-count preservation (Gemini round 3, root-cause fix)', () => {
+  it('multi-line PEM redaction preserves total line count', () => {
+    const pemLines = [
+      '-----BEGIN RSA PRIVATE KEY-----',
+      ...Array.from({ length: 10 }, (_, i) => `b64line${i}`),
+      '-----END RSA PRIVATE KEY-----',
+    ];
+    const before = ['const a = 1;', ...pemLines, 'const b = 2;'];
+    const { text: redacted, redacted: patterns } = redactSecretsRaw(before.join('\n'));
+    assert.ok(patterns.includes('pem-private-key'));
+    assert.equal(redacted.split('\n').length, before.length, 'line count must be preserved after redaction');
+    assert.ok(redacted.includes('const b = 2;'), 'content after the PEM block must remain intact');
+    assert.ok(!redacted.includes('b64line0'), 'PEM body must actually be redacted, not just counted');
+  });
+
+  it('single-line redaction adds zero newlines (capture-group path is unaffected)', () => {
+    const text = 'const dsn = "postgresql://user:hunter2@host/db";';
+    const { text: redacted } = redactSecretsRaw(text);
+    assert.equal(redacted.split('\n').length, 1);
   });
 });

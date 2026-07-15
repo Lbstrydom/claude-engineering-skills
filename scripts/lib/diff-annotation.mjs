@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizePath } from './file-io.mjs';
 import { safeReadFile } from './audit-scope.mjs';
+import { redactSecrets } from './sensitive-egress-gate.mjs';
 
 // ── Diff Parsing ────────────────────────────────────────────────────────────
 
@@ -133,15 +134,24 @@ function _annotateHeaderOnlyStyle(raw, sortedHunks) {
  * @param {object} opts
  * @param {number} [opts.maxPerFile=10000]
  * @param {number} [opts.maxTotal=120000]
+ * @param {boolean} [opts.redact=true] - Redact secret-shaped content before
+ *   annotation/truncation. Defaults to `true` (safe by default), mirroring
+ *   `audit-scope.mjs::readFilesAsContext` — see
+ *   docs/plans/discovery-portfolio-secret-redaction.md for why this is a
+ *   separate implementation needing the identical fix, and why redaction
+ *   runs BEFORE annotation (not after — annotation's hunk ranges are
+ *   computed against the original file's line numbers; redaction is
+ *   line-count-preserving, per `secret-patterns.mjs::redactSecrets`'s own
+ *   doc comment, so it cannot desync them).
  * @returns {string}
  */
-export function readFilesAsAnnotatedContext(filePaths, diffMap, { maxPerFile = 10000, maxTotal = 120000 } = {}) {
+export function readFilesAsAnnotatedContext(filePaths, diffMap, { maxPerFile = 10000, maxTotal = 120000, redact = true } = {}) {
   let total = '';
   let omitted = 0;
   const cwdBoundary = path.resolve('.');
 
   for (const relPath of filePaths) {
-    const block = _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile);
+    const block = _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact);
     if (block === null) continue;
     if (total.length + block.length > maxTotal) { omitted++; continue; }
     total += block;
@@ -151,10 +161,16 @@ export function readFilesAsAnnotatedContext(filePaths, diffMap, { maxPerFile = 1
   return total;
 }
 
-function _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile) {
+function _buildFileBlock(relPath, diffMap, cwdBoundary, maxPerFile, redact = true) {
   const result = safeReadFile(relPath, cwdBoundary);
   if (!result) return null;
-  let raw = result.content;
+  // Redact BEFORE annotating: redactSecrets preserves the original match's
+  // newline count (secret-patterns.mjs), so hunk-range annotation below stays
+  // correctly aligned to the file's real line numbers either way — but
+  // redacting first also means no annotation marker text can ever land
+  // between a secret's context and its value (the failure mode when this was
+  // tried the other way around during plan review).
+  let raw = redact ? redactSecrets(result.content) : result.content;
   const ext = relPath.split('.').pop();
   const lang = { sql: 'sql', css: 'css', html: 'html', md: 'markdown', json: 'json', py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby', sh: 'bash' }[ext] ?? 'js';
 

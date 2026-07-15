@@ -173,6 +173,26 @@ describe('allowTiered call-site gate (shadow-flip incident regression, 2026-07-1
   });
 });
 
+describe('discoveryCode assembly — secret-redaction default (discovery-portfolio-secret-redaction.md)', () => {
+  // readFilesAsContext's default flipped to redact:true (scripts/lib/audit-scope.mjs)
+  // so every caller EXCEPT the documented decision-11 opt-out (buildRedactedAuditContext)
+  // inherits safe behaviour with zero code changes here. This is a static pin, not a
+  // behavioural test (that coverage lives in tests/audit-scope-egress.test.mjs) — it
+  // guards against a future edit silently re-introducing `redact: false` on this call
+  // site, which would re-open the exact gap that suppressed 4 of the last 7
+  // tiered-shadow observations in wine-cellar-app.
+  test('static pin: the discoveryCode readFilesAsContext call does not pass redact:false', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+    const callMatch = src.match(/const discoveryCode = readFilesAsContext\([^;]*\);/s);
+    assert.ok(callMatch, 'expected to find the discoveryCode readFilesAsContext call');
+    assert.equal(
+      /redact\s*:\s*false/.test(callMatch[0]),
+      false,
+      'discoveryCode must inherit the safe redact:true default — do not opt out here',
+    );
+  });
+});
+
 describe('runTieredAuditPipeline Stage 2 handle fail-fast', () => {
   const fn = async () => {};
 

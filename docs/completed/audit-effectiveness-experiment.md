@@ -1,7 +1,7 @@
 # Plan: Audit-Effectiveness Experiment — cheap credible traction on "what's the cost-effective, high-quality code-audit setup"
 
 - **Date**: 2026-07-04
-- **Status**: Approved (audited — GPT ×2 rounds + Gemini ×2 rounds, all findings resolved)
+- **Status**: Complete — every §12.6 CLI this plan specifies was built (`scripts/ledger-decompose.mjs`, `scripts/defect-harvest.mjs`, `scripts/solo-control-audit.mjs`, `scripts/lib/solo-control/scoring.mjs`) and run against real commits; results are `docs/research/experiment-1-solo-control.md`, `experiment-2-arm-eval-and-model-ab.md`, `experiment-3-model-swap-glm-vs-gpt.md`. `docs/research/next-steps.md` (2026-07-09) explicitly hands the continuation roadmap to `docs/plans/tiered-recall-audit-pipeline.md` — nothing remains scoped to this plan. Verified 2026-07-15 (this repo's plans systematically lag actual state — see `project_plan_statuses_stale` memory — confirmed by tracing the code + research docs, not by the stale header alone).
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Origin**: `/brainstorm --with-gemini` + debate (sessions `1783195469435`, `1783195780211`); synthesis converged on a cost-ordered, phase-gated methodology.

@@ -28,7 +28,9 @@ import {
   isSensitiveFile,
   safeReadFile,
   readFilesAsContext,
+  buildRedactedAuditContext,
 } from '../scripts/lib/audit-scope.mjs';
+import { assertEgressSafe } from '../scripts/lib/sensitive-egress-gate.mjs';
 
 const BENIGN_MARKER = 'BENIGN_MARKER_aaa';
 const SECRET_MARKER = 'SECRET_TOKEN_zzz';
@@ -116,4 +118,80 @@ test('sensitive path is excluded at the integration layer', () => {
   // One integration assertion — pattern enumeration stays in sensitive-paths.test.mjs (DRY).
   assert.equal(isSensitiveFile('.env'), true);
   assert.equal(readFilesAsContext(['.env']).includes('### .env'), false);
+});
+
+// ── Discovery-portfolio secret-redaction fixes ──────────────────────────
+// Plan: docs/plans/discovery-portfolio-secret-redaction.md.
+// A secret-shaped string INSIDE an otherwise-ordinary, non-sensitive-path
+// file (a CI workflow's placeholder DB password, etc.) was not caught by
+// the path-level isSensitiveFile filter above — these tests cover that gap.
+
+const DSN = 'postgresql://user:hunter2@host.example.com/db';
+
+test('readFilesAsContext default (redact:true) redacts a secret-shaped string inside an ordinary file', (t) => {
+  const dir = mkdtemp('audit-scope-redact-default-');
+  const prevCwd = process.cwd();
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  fs.writeFileSync(path.join(dir, 'ci.yml'), `env:\n  DB_URL: ${DSN}\n`);
+  process.chdir(dir);
+  const out = readFilesAsContext(['ci.yml']);
+
+  assert.ok(!out.includes('hunter2'), 'the DSN password must be redacted by default');
+  assert.ok(out.includes('[REDACTED:dsn-password]'), 'a redaction marker must be present');
+  assert.ok(out.includes('### ci.yml'), 'the file itself must still be included (only content is redacted, not path-excluded)');
+});
+
+test('readFilesAsContext with explicit redact:false is byte-identical to pre-plan behaviour', (t) => {
+  const dir = mkdtemp('audit-scope-redact-optout-');
+  const prevCwd = process.cwd();
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  fs.writeFileSync(path.join(dir, 'ci.yml'), `env:\n  DB_URL: ${DSN}\n`);
+  process.chdir(dir);
+  const out = readFilesAsContext(['ci.yml'], { redact: false });
+
+  assert.ok(out.includes(DSN), 'redact:false must preserve the raw secret verbatim');
+});
+
+test('a secret spanning the truncation boundary is fully redacted, not leaked as a partial prefix (H2 regression guard)', (t) => {
+  const dir = mkdtemp('audit-scope-boundary-');
+  const prevCwd = process.cwd();
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  // maxPerFile lands partway through the DSN's password segment — if
+  // truncation ran BEFORE redaction (the pre-fix order), the retained
+  // prefix would contain an un-redacted partial password fragment.
+  const content = 'x'.repeat(40) + DSN + 'y'.repeat(40);
+  fs.writeFileSync(path.join(dir, 'app.js'), content);
+  process.chdir(dir);
+  const out = readFilesAsContext(['app.js'], { maxPerFile: 55 });
+
+  assert.ok(!out.includes('hunter2'), 'no fragment of the password may survive truncation');
+});
+
+test('buildRedactedAuditContext still returns UNREDACTED content + correct egress flags (decision 11 — model-A/B/C fairness)', (t) => {
+  const dir = mkdtemp('audit-scope-decision11-');
+  const prevCwd = process.cwd();
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  fs.writeFileSync(path.join(dir, 'app.js'), `const dsn = "${DSN}";\n`);
+  process.chdir(dir);
+  const result = buildRedactedAuditContext(['app.js']);
+
+  assert.ok(result.context.includes('hunter2'), 'buildRedactedAuditContext must still see raw content — the new safe default must NOT apply here');
+  assert.equal(result.egressSafe, false);
+  assert.ok(result.egressPatterns.includes('dsn-password'));
+});
+
+test('full chain: readFilesAsContext (default redact) → assertEgressSafe does not throw', (t) => {
+  const dir = mkdtemp('audit-scope-fullchain-');
+  const prevCwd = process.cwd();
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+
+  fs.writeFileSync(path.join(dir, 'app.js'), `const dsn = "${DSN}";\n`);
+  process.chdir(dir);
+  const out = readFilesAsContext(['app.js']);
+
+  assert.doesNotThrow(() => assertEgressSafe(out, { label: 'test' }));
 });
