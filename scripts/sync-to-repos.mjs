@@ -45,6 +45,9 @@ const AUDIT_RUNTIME_IGNORES = [
   '.audit-loop/*-verify-result.json', // nav-audit / visual-audit --verify results
   '.audit-loop/*-drift-ledger.json',  // nav / visual local drift caches
   '.audit-loop/arm-eval-toggle.json', // per-repo experiment toggle (operator state, timestamped)
+  '.audit-loop/last-maintenance.json', // local weekly-maintenance heartbeat (timestamped, regenerated per run)
+  '.audit-loop/last-maintenance.log', // backgrounded opportunistic-run output (round-4 Gemini gate G2 fix)
+  '.audit-loop/.maintenance.lock', // single-instance lock (round-4 Gemini gate G2 fix)
   // arm-eval session/worksheet exports. In THIS source repo docs/arm-eval/sessions/
   // is a *tracked* auditable experiment record; in a CONSUMER these are just local
   // runtime exports (the authoritative capture is the cloud arm_eval_* tables), so
@@ -170,6 +173,15 @@ const CORE_ENTRY = [
   // GREEN≠REALIZED Cluster A efficacy-lints CLI — closure walker pulls lib/efficacy-lints.mjs
   // + its model-resolver / glob-match / sensitive-paths closure. Lock-step with sync-inventory.mjs.
   'scripts/efficacy-lints-check.mjs',
+  // Local weekly-maintenance replica of the 5 GH Actions cron workflows
+  // (docs/local-maintenance-checks.md) — opt-in, default-OFF, invoked
+  // opportunistically from the pre-push hook. Spawns each replicated check
+  // as a subprocess, so memory-health.mjs + check-model-freshness.mjs must
+  // ship too — neither was previously an entry point here (a real gap this
+  // feature closes; they were unreachable in any consumer before now).
+  'scripts/maintenance-checks.mjs',
+  'scripts/memory-health.mjs',
+  'scripts/check-model-freshness.mjs',
   // Reached only via `await import('./lib/redact.mjs')` in cross-skill.mjs
   // + learning-store.mjs (dynamic specifier — walker cannot follow).
   // Required at runtime for candidate-write redaction.

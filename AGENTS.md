@@ -546,12 +546,7 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   in the `db-setup`/`db-withtx` integration suites, rejecting a Supabase-hosted or
   production-identical test URL — closes a 2026-07-14 wipe incident. Detail: [postgres-parity-runbook.md](docs/postgres-parity-runbook.md) §Incident.
 
-→ **Design** (the no-adapter `pg`-direct decision, schema scope, privilege model, file
-plan): [`docs/completed/postgres-parity.md`](docs/completed/postgres-parity.md) +
-[`postgres-parity-schema-coupling.md`](docs/completed/postgres-parity-schema-coupling.md).
-→ **Operations** (full setup recipe, migration-drift CLI + exit codes, the pre-push
-snippet, break-glass atomic-apply, shared-cloud-config, prerequisites):
-[`docs/postgres-parity-runbook.md`](docs/postgres-parity-runbook.md).
+→ **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/completed/postgres-parity.md`](docs/completed/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/completed/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/postgres-parity-runbook.md`](docs/postgres-parity-runbook.md).
 
 ## Anthropic Backend Routing
 
@@ -758,10 +753,15 @@ below):
   (real Tier A, $1.87; FP-rate drove it; the recall column is untrustworthy
   per the ceiling above).
 
-→ **Operational reference** (running evals, tier semantics, the egress-fix
-war stories, first-run evidence): [`docs/model-eval-harness.md`](docs/model-eval-harness.md).
-→ **Design + prior-art trace**: [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md).
-→ **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
+→ **Operational reference**: [`docs/model-eval-harness.md`](docs/model-eval-harness.md) · **Design + prior-art trace**: [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
+
+## Local Weekly Maintenance Checks (opt-in)
+
+Optional, default-OFF local replica of the 5 weekly GH Actions maintenance
+workflows, for orgs that block Actions runners. Opportunistic — triggered
+from the pre-push hook when overdue, **not** an OS scheduler (avoids the
+wrong-PATH/cwd/asleep-at-trigger failure class). Enable via `setup.mjs` Step 4
+or `AUDIT_LOOP_WEEKLY_MAINTENANCE=1`. Detail: [`docs/local-maintenance-checks.md`](docs/local-maintenance-checks.md).
 
 ## Azure AI Foundry Work Profile
 

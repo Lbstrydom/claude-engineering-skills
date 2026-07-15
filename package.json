@@ -40,6 +40,8 @@
     "models:freshness": "node scripts/check-model-freshness.mjs",
     "models:freshness:json": "node scripts/check-model-freshness.mjs --format json",
     "models:check": "node scripts/check-model-freshness.mjs --strict",
+    "maintenance:run": "node scripts/maintenance-checks.mjs",
+    "maintenance:status": "node scripts/maintenance-checks.mjs --status",
     "check": "npm run context:check && npm run skills:check && npm run plans:lint && npm run efficacy:check && npm test",
     "efficacy:check": "node scripts/efficacy-lints-check.mjs",
     "check:integration": "node scripts/symbol-index/refresh.mjs --full && node scripts/setup-postgres.mjs --check-drift",

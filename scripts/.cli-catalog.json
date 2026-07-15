@@ -137,6 +137,14 @@
       "description": "Strict model-freshness gate (exits non-zero on stale IDs).",
       "category": "diagnostic"
     },
+    "maintenance:run": {
+      "description": "Local replica of the 5 weekly GH Actions maintenance checks (opt-in).",
+      "category": "diagnostic"
+    },
+    "maintenance:status": {
+      "description": "Report the last local-maintenance run without running anything.",
+      "category": "diagnostic"
+    },
     "check": {
       "description": "Combined gate: context drift + skills cross-check + full test suite.",
       "category": "diagnostic"

@@ -21,6 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { hasBash } from './lib/hook-test-helpers.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(__filename, '..', '..');
@@ -42,12 +43,6 @@ function extractSnippet() {
   const closeFence = src.indexOf('```', idx);
   if (openFence < 0 || closeFence < 0) throw new Error('snippet fences not found');
   return src.slice(openFence + '```bash'.length, closeFence).trim();
-}
-
-function hasBash() {
-  // The repo runs in WSL/git-bash on Windows; assume bash is on PATH.
-  const r = spawnSync('bash', ['--version'], { stdio: ['ignore', 'pipe', 'ignore'] });
-  return r.status === 0;
 }
 
 /**

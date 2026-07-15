@@ -55,6 +55,37 @@ ${HOOK_MARKER}
 
 [ "$AUDIT_PREPUSH_DISABLE" = "1" ] && exit 0
 
+# ── Opportunistic weekly local maintenance (opt-in, backgrounded) ───────────
+# Local replica of the 5 GH Actions cron workflows (architectural-drift,
+# migration-drift, model-freshness, memory-health, learning-weekly-review)
+# for operators whose org blocks GitHub-hosted Actions runners. Deliberately
+# NOT an OS-scheduled task — see docs/local-maintenance-checks.md for why.
+#
+# MUST run before the code-audit section below (round-4 Gemini gate G1 fix):
+# that section \`exit 0\`s early whenever docs/plans/ is absent or has no
+# .md file — the common case on most pushes — which meant this block, when
+# placed at the end of the file, almost never actually ran. Placed here, it
+# fires on every push regardless of whether a plan is active.
+#
+# Always invoked (cheap no-op check); maintenance-checks.mjs itself decides
+# whether AUDIT_LOOP_WEEKLY_MAINTENANCE=1 is set and whether a run is due —
+# silent no-op otherwise. Runs the CONSUMER's own synced copy (repo-scoped
+# checks like arch:refresh need cwd = this repo, not the source sibling).
+#
+# BACKGROUNDED, not just \`|| true\` (round-1 code-audit H1 fix): \`|| true\`
+# only suppresses the exit code — the command still ran SYNCHRONOUSLY, so
+# \`git push\` blocked for up to ~40 minutes (6 checks x 5-minute timeout)
+# once overdue. \`( cmd & )\` detaches into a subshell that backgrounds the
+# node process and exits almost immediately itself, so this hook script
+# (and git) never waits for the checks to finish. Output goes to a log
+# file, not this hook's inherited stderr, since nothing is watching it live
+# once detached — check it with \`npm run maintenance:status\`.
+MAINT_SCRIPT="scripts/.claude-skills/maintenance-checks.mjs"
+if [ -f "$MAINT_SCRIPT" ]; then
+  mkdir -p .audit-loop 2>/dev/null
+  ( node "$MAINT_SCRIPT" --opportunistic > .audit-loop/last-maintenance.log 2>&1 < /dev/null & ) 2>/dev/null
+fi
+
 PLANS_DIR="docs/plans"
 [ ! -d "$PLANS_DIR" ] && exit 0
 

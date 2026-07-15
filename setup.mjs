@@ -5,9 +5,10 @@
  * Run once after cloning this repo. Configures:
  *   1. API keys (.env in this repo)
  *   2. Learning database (none / SQLite / Supabase / Postgres)
- *   3. Global skill installation (~/.claude/skills/ — works in every repo)
- *   4. Auto-update git hook (skills update when you git pull)
- *   5. npm dependencies (in this repo)
+ *   3. Weekly local maintenance checks (optional, default off)
+ *   4. npm dependencies (in this repo)
+ *   5. Global skill installation (~/.claude/skills/ — works in every repo)
+ *   6. Auto-update git hook (skills update when you git pull)
  *
  * Usage:
  *   node setup.mjs              # Interactive wizard
@@ -125,7 +126,41 @@ async function setupDatabase(headless) {
   fs.writeFileSync(envPath, content.trim() + '\n');
 }
 
-// ── Step 4: Install Skills Globally ─────────────────────────────────────────
+// ── Step 4: Weekly Local Maintenance (optional) ─────────────────────────────
+// Opt-in replica of this repo's 5 weekly GH Actions cron workflows
+// (architectural drift, migration drift, model freshness, memory health,
+// learning weekly review) for operators whose org blocks GitHub-hosted
+// Actions runners. Default No — a fresh clone with default answers must
+// behave byte-identical to today. See docs/local-maintenance-checks.md.
+
+async function setupMaintenance(headless) {
+  if (headless) { ok('Weekly maintenance: skipped (headless default)'); return; }
+
+  const envPath = path.join(SELF_DIR, '.env');
+  let content = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
+  if (content.match(/^AUDIT_LOOP_WEEKLY_MAINTENANCE=1/m)) {
+    ok('Weekly maintenance already enabled');
+    return;
+  }
+
+  console.log('');
+  console.log(`  Runs a local replica of the 5 weekly GH Actions maintenance checks`);
+  console.log(`  (architectural drift, migration drift, model freshness, memory`);
+  console.log(`  health, learning review) opportunistically from your pre-push`);
+  console.log(`  hook — for orgs that block GitHub-hosted Actions runners.\n`);
+
+  const answer = await ask(`  Schedule weekly local maintenance checks? [y/N]: `);
+  if (!/^y(es)?$/i.test(answer?.trim() || '')) {
+    ok('Weekly maintenance: not enabled (opt in later via AUDIT_LOOP_WEEKLY_MAINTENANCE=1)');
+    return;
+  }
+
+  content += `\nAUDIT_LOOP_WEEKLY_MAINTENANCE=1`;
+  fs.writeFileSync(envPath, content.trim() + '\n');
+  ok('Weekly maintenance enabled — will run opportunistically via the pre-push hook');
+}
+
+// ── Step 5: Install Skills Globally ─────────────────────────────────────────
 
 function installSkills() {
   try {
@@ -143,7 +178,7 @@ function installSkills() {
   }
 }
 
-// ── Step 5: npm Dependencies ────────────────────────────────────────────────
+// ── Step 6: npm Dependencies ────────────────────────────────────────────────
 
 function installDeps() {
   try {
@@ -154,7 +189,7 @@ function installDeps() {
   }
 }
 
-// ── Step 6: Git Hook for Auto-Update ────────────────────────────────────────
+// ── Step 7: Git Hook for Auto-Update ────────────────────────────────────────
 
 function installGitHook() {
   const hooksDir = path.join(SELF_DIR, '.git', 'hooks');
@@ -207,13 +242,16 @@ ${B}╔════════════════════════�
   console.log(`\n${B}Step 3 — Learning Database${X}`);
   await setupDatabase(headless);
 
-  console.log(`\n${B}Step 4 — Dependencies${X}`);
+  console.log(`\n${B}Step 4 — Weekly Maintenance (optional)${X}`);
+  await setupMaintenance(headless);
+
+  console.log(`\n${B}Step 5 — Dependencies${X}`);
   installDeps();
 
-  console.log(`\n${B}Step 5 — Install Skills${X}`);
+  console.log(`\n${B}Step 6 — Install Skills${X}`);
   installSkills();
 
-  console.log(`\n${B}Step 6 — Auto-Update Hook${X}`);
+  console.log(`\n${B}Step 7 — Auto-Update Hook${X}`);
   installGitHook();
 
   // Summary

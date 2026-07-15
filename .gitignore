@@ -137,6 +137,14 @@ docs/arm-eval/worksheets/
 # with a timestamp; never committed (Category A).
 .audit-loop/arm-eval-toggle.json
 
+# Local weekly-maintenance heartbeat + backgrounded-run log + single-instance
+# lock — all timestamped/transient, regenerated every run (Category A).
+# See scripts/maintenance-checks.mjs. (round-4 Gemini gate G2 fix: the log +
+# lock files were introduced by later fixes but never added here.)
+.audit-loop/last-maintenance.json
+.audit-loop/last-maintenance.log
+.audit-loop/.maintenance.lock
+
 # Solo author-model control (scripts/solo-control-audit.mjs) — S findings, the
 # blind adjudication sheet, and its private unblind map. Derived from DB + git +
 # an LLM call (Category A); the private map must never be committed.
