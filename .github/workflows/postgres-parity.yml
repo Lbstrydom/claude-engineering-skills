@@ -161,25 +161,48 @@ jobs:
           path: /tmp/live-schema.json
           retention-days: 14
 
-      - name: Env-gated DB tests (G1 date parser + G3 withTx + duplicate-justification + setup integration)
+      - name: Duplicate-justification integration (needs the migrated schema INTACT)
+        # OWN step, deliberately run BEFORE the schema-emptying step below —
+        # NOT positioned via file ORDER in a shared `node --test` invocation.
+        # Found 2026-07-15 (the wine-cellar-app upstream bug report
+        # investigation): `node --test file-a.mjs file-b.mjs` does NOT run
+        # files in the given CLI order — it sorts them ALPHABETICALLY by
+        # path, even under --test-concurrency=1. This file
+        # (symbol-index-drift-justification.test.mjs — previously wired into
+        # NO CI job at all) was placed BEFORE db-setup.test.mjs in that
+        # step's argument list on the reasoning "db-setup stays last", but
+        # alphabetically `db-setup` < `symbol-index...`, so it actually ran
+        # AFTER db-setup's DROP SCHEMA PUBLIC CASCADE every time — failing
+        # its before() hook with `relation "audit_repos" does not exist`
+        # (silently, until printed here — isCloudEnabled() swallows the
+        # real error into a bare `false`, see the CANNOT read properties of
+        # null this produced downstream). A separate step has no such
+        # ordering hazard to get wrong again. AUDIT_DB_TEST_URL is already
+        # job-level — no step env needed.
+        run: node --test tests/symbol-index-drift-justification.test.mjs
+
+      - name: Env-gated DB tests (G1 date parser + G3 withTx + setup integration)
         # --test-concurrency=1 is LOAD-BEARING: node --test runs each test
-        # file in its own process CONCURRENTLY by default, but all four
-        # files share this job's single Postgres — and db-setup.test.mjs
-        # does DROP SCHEMA public CASCADE between cases. Run in parallel,
-        # db-withtx's CREATE TABLE lands in the window where `public`
-        # doesn't exist → 3F000 "no schema has been selected to create in"
-        # (this exact race also wiped the production store on 2026-07-14
-        # when AUDIT_DB_TEST_URL pointed at it — see assertDisposableDbUrl).
-        # symbol-index-drift-justification (previously wired into NO CI job
-        # at all — closed 2026-07-15, the wine-cellar-app upstream bug
-        # report) needs the migrated schema INTACT, so it runs before
-        # db-setup empties it; db-setup itself stays LAST so the DB it
-        # leaves behind is fully migrated for the contract suite below.
+        # file in its own process CONCURRENTLY by default, but both files
+        # share this job's single Postgres. Safe regardless of the ACTUAL
+        # (alphabetical, not argument-order — see above) execution order
+        # here specifically because db-withtx.test.mjs's before() hook is
+        # self-contained (CREATE TABLE IF NOT EXISTS on its own throwaway
+        # table, no dependency on audit_repos/symbol_index/etc existing) —
+        # it tolerates db-setup having just emptied the schema. This is NOT
+        # a general safety property of file-list ordering in this step; a
+        # future addition here must independently verify it's equally
+        # schema-empty-tolerant, or get its own step like the one above.
+        # (--test-concurrency=1 itself is still load-bearing for a DIFFERENT
+        # reason: db-withtx's CREATE TABLE landing in the window where
+        # `public` doesn't exist yet → 3F000 "no schema has been selected to
+        # create in" — this exact race also wiped the production store on
+        # 2026-07-14 when AUDIT_DB_TEST_URL pointed at it, see
+        # assertDisposableDbUrl.)
         run: |
           node --test --test-concurrency=1 \
             tests/db-date-parser.test.mjs \
             tests/db-withtx.test.mjs \
-            tests/symbol-index-drift-justification.test.mjs \
             tests/db-setup.test.mjs
 
       - name: Contract suite — structural assertions
