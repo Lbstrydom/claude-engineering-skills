@@ -103,8 +103,16 @@ jobs:
           --health-timeout=5s
           --health-retries=10
 
+    # AUDIT_DB_URL is deliberately NOT job-level env. assertDisposableDbUrl
+    # (added after the 2026-07-14 production wipe) refuses to run the
+    # destructive integration suites when AUDIT_DB_TEST_URL is identical to
+    # AUDIT_DB_URL — the exact aliasing that caused the wipe. In this job
+    # both would point at the same disposable container, so a job-level
+    # AUDIT_DB_URL false-positives that guard. Instead, only the steps that
+    # operate on "the database" (migrate / schema-diff / contract suite) get
+    # AUDIT_DB_URL; the destructive test step sees only AUDIT_DB_TEST_URL,
+    # which is the guard's intended contract.
     env:
-      AUDIT_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       AUDIT_DB_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       AUDIT_DB_SSL_MODE: disable  # in-container, no TLS needed
 
@@ -117,9 +125,13 @@ jobs:
       - run: npm ci --ignore-scripts
 
       - name: Apply migrations + compat-bootstrap (setup-postgres --migrate)
+        env:
+          AUDIT_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: node scripts/setup-postgres.mjs --migrate
 
       - name: Verify schema matches the committed manifest
+        env:
+          AUDIT_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: |
           # Generate a live manifest from the freshly-migrated DB, then diff
           # it against the committed tests/fixtures/expected-schema.json.
@@ -168,5 +180,11 @@ jobs:
 
       - name: Contract suite — structural assertions
         # Per-function parity checks are gated on the fixture directory
-        # having content; structural checks always run.
+        # having content; structural checks always run (and are source-level
+        # — no DB queries today, AUDIT_DB_URL only feeds the HAS_DB gate).
+        # NOTE for when golden fixtures land (M3-followup): db-setup.test.mjs
+        # leaves the container's public schema EMPTIED, not re-migrated — a
+        # real parity run here will need a `setup-postgres --migrate` first.
+        env:
+          AUDIT_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: node --test tests/learning-store-contract.test.mjs
