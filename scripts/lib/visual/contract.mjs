@@ -58,6 +58,7 @@ export function readContract(root) {
  * @param {string} root
  * @returns {boolean}
  */
+// @duplicate-justification: target=scripts/lib/nav/contract.mjs:contractExists reason=nav-audit and visual-audit are a deliberately independent "sister lens" pair (AGENTS.md skill-naming-convention note) -- zero existing nav<->visual imports today, not accidental duplication
 export function contractExists(root) {
   return fs.existsSync(path.join(root, CONTRACT_FILE));
 }

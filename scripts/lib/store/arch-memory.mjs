@@ -20,10 +20,11 @@
  *   arch/snapshots.mjs       — active-snapshot pointer + embed config (3 fns)
  *     getActiveSnapshot, setActiveEmbeddingModel, getActiveEmbeddingModel
  *
- *   arch/symbols.mjs         — symbol_definitions/index/embeddings/violations (7 fns)
+ *   arch/symbols.mjs         — symbol_definitions/index/embeddings/violations (8 fns)
  *     recordSymbolDefinitions, recordSymbolIndex, recordSymbolEmbedding,
- *     recordLayeringViolations, listSymbolsForSnapshot,
- *     listLayeringViolationsForSnapshot, copyForwardUntouchedFiles
+ *     recordLayeringViolations, recordDuplicateJustifications,
+ *     listSymbolsForSnapshot, listLayeringViolationsForSnapshot,
+ *     copyForwardUntouchedFiles
  *
  *   arch/imports.mjs         — symbol_file_imports (6 fns)
  *     recordSymbolFileImports, copyForwardImports,

@@ -1,11 +1,12 @@
 {
-  "generatedAt": "2026-05-17T20:27:08.594Z",
-  "commitSha": "d6e246fe28e14dbf1cb95d55cb21f07536a1db0d",
-  "extractionSourceSha": "d6e246fe28e14dbf1cb95d55cb21f07536a1db0d",
+  "generatedAt": "2026-07-15T15:27:08.999Z",
+  "commitSha": "fbc6cd8f2356a06fff2613118584ed659a622e9b",
+  "extractionSourceSha": "fbc6cd8f2356a06fff2613118584ed659a622e9b",
   "coveredFiles": [
     "scripts/lib/audit/finding-verification.mjs",
     "scripts/lib/audit/prompt-builder.mjs",
     "scripts/lib/brainstorm/file-lock.mjs",
+    "scripts/lib/duplicate-justification-pragma.mjs",
     "scripts/lib/file-io.mjs",
     "scripts/lib/ledger.mjs",
     "scripts/lib/requirements/context.mjs",
@@ -14,7 +15,11 @@
     "scripts/lib/requirements/ledger.mjs",
     "scripts/lib/requirements/llm-json.mjs",
     "scripts/lib/requirements/schema.mjs",
-    "scripts/lib/sensitive-egress-gate.mjs"
+    "scripts/lib/sensitive-egress-gate.mjs",
+    "scripts/lib/store/arch/symbols.mjs",
+    "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
+    "scripts/symbol-index/drift.mjs",
+    "scripts/symbol-index/refresh.mjs"
   ],
   "requirements": [
     {
@@ -305,6 +310,37 @@
       }
     },
     {
+      "id": "REQ-behavioural-712ba5bd",
+      "assertion": "The drift report must surface ambiguous or unresolved duplicate-justification pragmas as not excluded from the drift score, and failure of this advisory reconciliation must not block report generation",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/drift.mjs",
+          "anchor": "report-time pragma reconciliation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/drift.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/drift.mjs",
+          "scripts/lib/duplicate-justification-pragma.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-712ba5bd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This advisory reconciliation behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-7e8ee53b",
       "assertion": "Refuted existence claims must have verdictSeverity LOW and countsTowardVerdict false, while confirmed and requires_verification claims must preserve the finding severity and count toward the verdict.",
       "kind": "behavioural",
@@ -367,6 +403,42 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended suppression eligibility invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-8c1552b0",
+      "assertion": "Stale duplicate-justification pragmas whose target file no longer exists must be reported as low-severity documentation findings without changing the drift command status or exit code.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
+          "anchor": "findStalePragmas and renderStalePragmaSection"
+        },
+        {
+          "file": "scripts/symbol-index/drift.mjs",
+          "anchor": "stalePragmas rendering and status exit"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
+        "scripts/symbol-index/drift.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
+          "scripts/symbol-index/drift.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-8c1552b0",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This stale-pragma reporting behavior has no linked test."
       }
     },
     {
@@ -721,6 +793,42 @@
       }
     },
     {
+      "id": "REQ-behavioural-fdd51329",
+      "assertion": "Stale duplicate-justification pragmas whose target files no longer exist must be reported only as a low-severity report section and must not change the drift status or exit code.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
+          "anchor": "findStalePragmas and renderStalePragmaSection"
+        },
+        {
+          "file": "scripts/symbol-index/drift.mjs",
+          "anchor": "stalePragmas rendering and status exit"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
+        "scripts/symbol-index/drift.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
+          "scripts/symbol-index/drift.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-fdd51329",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This stale-pragma reporting behavior has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-014a061e",
       "assertion": "Cited-entity extraction must select only a token adjacent to a missing-claim phrase in detail or section and must return null when no single such token is found.",
       "kind": "correctness",
@@ -1068,6 +1176,36 @@
       }
     },
     {
+      "id": "REQ-correctness-4a410cea",
+      "assertion": "The reported count of persisted duplicate justifications must equal the number of symbol-index rows actually updated rather than the number of requested definition IDs.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications applyResult.rowCount"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4a410cea",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This persisted-row counting invariant has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-4d6f6b65",
       "assertion": "A `contradictory` gap assessment must name at least one non-self candidate id in `conflictsWith`, otherwise it must be coerced to `none`.",
       "kind": "correctness",
@@ -1101,6 +1239,70 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended non-self conflict invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-59444f0c",
+      "assertion": "Duplicate-justification pragmas must be discovered repository-wide in tracked and non-ignored untracked files while excluding Markdown files and tests, and only syntactically valid pragmas with non-te",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/duplicate-justification-pragma.mjs",
+          "anchor": "PRAGMA_RE and findRepoPragmas"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/duplicate-justification-pragma.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/duplicate-justification-pragma.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-59444f0c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This appears to be an intended discovery invariant but has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-5e9533c1",
+      "assertion": "A duplicate-justification pragma may resolve only to the nearest subsequent indexed declaration in the same file when that declaration starts no more than five lines below the pragma.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/duplicate-justification-pragma.mjs",
+          "anchor": "PRAGMA_RESOLUTION_MAX_GAP_LINES and resolvePragmasToDefinitions"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/duplicate-justification-pragma.mjs",
+        "scripts/symbol-index/refresh.mjs",
+        "scripts/symbol-index/drift.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/duplicate-justification-pragma.mjs",
+          "scripts/symbol-index/refresh.mjs",
+          "scripts/symbol-index/drift.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-5e9533c1",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This pragma-to-declaration resolution invariant has no linked test."
       }
     },
     {
@@ -1334,6 +1536,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended cited-entity extraction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-996c8d9d",
+      "assertion": "A duplicate-justification pragma may exclude only the nearest later declaration in the same file when that declaration begins within five lines of the pragma, and pragmas that cannot meet this conditi",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/duplicate-justification-pragma.mjs",
+          "anchor": "PRAGMA_RESOLUTION_MAX_GAP_LINES and resolvePragmasToDefinitions"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/duplicate-justification-pragma.mjs",
+        "scripts/symbol-index/refresh.mjs",
+        "scripts/symbol-index/drift.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/duplicate-justification-pragma.mjs",
+          "scripts/symbol-index/refresh.mjs",
+          "scripts/symbol-index/drift.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-996c8d9d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This nearby-declaration exclusion invariant has no linked test."
       }
     },
     {
@@ -1813,6 +2049,36 @@
       }
     },
     {
+      "id": "REQ-correctness-df86df26",
+      "assertion": "Duplicate-justification discovery must search tracked and non-ignored untracked repository files while excluding Markdown files and tests, and must only return syntactically valid pragmas whose target",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/duplicate-justification-pragma.mjs",
+          "anchor": "PRAGMA_RE and findRepoPragmas"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/duplicate-justification-pragma.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/duplicate-justification-pragma.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-df86df26",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This repository-wide pragma discovery invariant has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-e861919f",
       "assertion": "Audit prompt construction must validate required prompt inputs as strings and reject optional prompt-shaping fields that are not strings or null where allowed.",
       "kind": "correctness",
@@ -1907,6 +2173,42 @@
       }
     },
     {
+      "id": "REQ-correctness-f2385875",
+      "assertion": "Incremental refreshes must copy symbol rows from the prior active snapshot only for files outside the touched-file set, ensuring changed, renamed, and deleted files are reindexed or omitted rather tha",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh.mjs",
+          "anchor": "step 13 copyForwardUntouchedFiles"
+        },
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "copyForwardUntouchedFiles touchedFileSet filter"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh.mjs",
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh.mjs",
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-f2385875",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This incremental snapshot-copy invariant has no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-fb29e05a",
       "assertion": "If fewer extraction runs succeed than were requested, any candidate confidence of high must be demoted to medium.",
       "kind": "correctness",
@@ -1964,6 +2266,36 @@
         "gap": "observed-but-unintended",
         "conflictsWith": [],
         "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-persistence-072dea02",
+      "assertion": "Persisting duplicate justifications for a refresh must transactionally clear all duplicate-justification fields for that refresh and repository before applying the currently resolved definitions, so r",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications transaction"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-072dea02",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This transactional reset-and-reapply invariant has no linked test."
       }
     },
     {
@@ -2215,6 +2547,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended pre-write ledger validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-519ddbb4",
+      "assertion": "Each successful duplicate-justification persistence operation must atomically clear all justification fields for the specified refresh and repository before applying only the currently resolved justif",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-519ddbb4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This atomic persistence behavior has no linked test."
       }
     },
     {
@@ -2678,6 +3040,36 @@
       }
     },
     {
+      "id": "REQ-safety-2150f016",
+      "assertion": "A refresh that fails after opening a refresh run must abort that run before exiting so that it no longer remains running and does not retain the per-repository refresh lock.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh.mjs",
+          "anchor": "main catch abortRefreshRun before process.exit"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-2150f016",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This refresh-run cleanup invariant has no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-3c5a0fde",
       "assertion": "Verification must not mutate the original finding fields and must attach verification data as a sibling verification object only for findings classified as existence claims.",
       "kind": "safety",
@@ -2710,6 +3102,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended non-mutating verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-41c947ea",
+      "assertion": "A strict duplicate-justification pragma sweep must throw a PRAGMA_SWEEP_FAILED error for git-grep failures other than a genuine zero-match result, whereas a non-strict sweep must degrade to an empty r",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/duplicate-justification-pragma.mjs",
+          "anchor": "findRepoPragmas strict error handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/duplicate-justification-pragma.mjs",
+        "scripts/symbol-index/refresh.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/duplicate-justification-pragma.mjs",
+          "scripts/symbol-index/refresh.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-41c947ea",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This strict sweep error-handling policy has no linked test."
       }
     },
     {
@@ -2860,6 +3284,68 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended loud degradation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-69e854ad",
+      "assertion": "A refresh must skip duplicate-justification persistence entirely when its strict repository pragma sweep fails, preserving the existing justification state rather than treating the failure as an empty",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh.mjs",
+          "anchor": "step 12a strict pragma sweep and skip-write handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh.mjs",
+          "scripts/lib/duplicate-justification-pragma.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-69e854ad",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This failed-sweep persistence safeguard has no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-6a421bed",
+      "assertion": "The refresh pipeline must not run the duplicate-justification reset-and-reapply write when its strict full-repository pragma sweep fails, leaving previously persisted justifications untouched rather t",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/refresh.mjs",
+          "anchor": "step 12a strict pragma sweep and repoPragmas null guard"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/refresh.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/refresh.mjs",
+          "scripts/lib/duplicate-justification-pragma.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-6a421bed",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This failed-sweep write-prevention behavior has no linked test."
       }
     },
     {
@@ -3128,6 +3614,40 @@
       }
     },
     {
+      "id": "REQ-safety-a56a6b9a",
+      "assertion": "If two or more pragma lines resolve to the same declaration, every such pragma must be reported as ambiguous and none may mark that declaration as duplicate-justified.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/duplicate-justification-pragma.mjs",
+          "anchor": "resolvePragmasToDefinitions ambiguity guard"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/duplicate-justification-pragma.mjs",
+        "scripts/lib/store/arch/symbols.mjs",
+        "scripts/symbol-index/refresh.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/duplicate-justification-pragma.mjs",
+          "scripts/symbol-index/refresh.mjs",
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-a56a6b9a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This duplicate-resolution ambiguity safeguard has no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-a883915d",
       "assertion": "Batch ledger writes must fail before writing if any resulting ledger entry lacks a topicId.",
       "kind": "safety",
@@ -3187,6 +3707,40 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended fresh-regex invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-b3f9d7c9",
+      "assertion": "If two or more pragmas resolve to the same declaration, none of those pragmas may exclude that declaration from duplicate-drift scoring.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/duplicate-justification-pragma.mjs",
+          "anchor": "resolvePragmasToDefinitions ambiguity guard"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/duplicate-justification-pragma.mjs",
+        "scripts/lib/store/arch/symbols.mjs",
+        "scripts/symbol-index/refresh.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/duplicate-justification-pragma.mjs",
+          "scripts/symbol-index/refresh.mjs",
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-b3f9d7c9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This ambiguity safeguard has no linked test."
       }
     },
     {
@@ -3379,6 +3933,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended lock acquire-release invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-e1235cf7",
+      "assertion": "A failed pragma sweep in strict mode must throw a PRAGMA_SWEEP_FAILED error unless git grep conclusively reports zero matches, whereas non-strict callers must degrade to an empty result.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/duplicate-justification-pragma.mjs",
+          "anchor": "findRepoPragmas error handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/duplicate-justification-pragma.mjs",
+        "scripts/symbol-index/refresh.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/duplicate-justification-pragma.mjs",
+          "scripts/symbol-index/refresh.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-e1235cf7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This strict-versus-non-strict failure policy has no linked test."
       }
     },
     {
@@ -3683,6 +4269,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended inventory-only verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-f477d380",
+      "assertion": "Duplicate-justification rows may be applied only to symbol-index rows whose definition ID, refresh ID, and repository ID all match the requested persistence scope.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/store/arch/symbols.mjs",
+          "anchor": "recordDuplicateJustifications apply UPDATE WHERE clause"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/store/arch/symbols.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/store/arch/symbols.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-f477d380",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This persistence-scope authorization invariant has no linked test."
       }
     },
     {

@@ -100,6 +100,7 @@ export function gateUnverifiedReason({ integrity, isFull, changedPathsResolved }
 }
 
 /** Build a firstSeenLookup from cloud run-history rows ({driftKeys, capturedAt}). */
+// @duplicate-justification: target=scripts/lib/nav/drift.mjs:firstSeenFromHistory reason=nav-audit and visual-audit are a deliberately independent "sister lens" pair (AGENTS.md skill-naming-convention note) -- zero existing nav<->visual imports today, not accidental duplication
 export function firstSeenFromHistory(historyRows) {
   const earliest = new Map();
   for (const row of historyRows || []) {

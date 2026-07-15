@@ -16,7 +16,7 @@
  * @module scripts/lib/audit/gpt-sentinel-trigger
  */
 
-import { seededDraw } from './seeded-random.mjs';
+import { seededDraw } from '../rng.mjs';
 
 /**
  * Keyword groups that deterministically justify a GPT sentinel fire —

@@ -4,7 +4,7 @@
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS1 §6 / §8).
  *
  * Three layers:
- *   1. EXPECTED_EXPORTS manifest — exact 31 public functions, all
+ *   1. EXPECTED_EXPORTS manifest — exact 32 public functions, all
  *      resolved through the barrel as `typeof === 'function'`.
  *   2. Per-module behavioral path — cloud-disabled neutral value matrix.
  *   3. Cross-module separation — no sub-module imports a sibling.
@@ -38,11 +38,12 @@ const EXPECTED_EXPORTS = [
   'getActiveSnapshot',
   'setActiveEmbeddingModel',
   'getActiveEmbeddingModel',
-  // arch/symbols.mjs — 7 fns
+  // arch/symbols.mjs — 8 fns
   'recordSymbolDefinitions',
   'recordSymbolIndex',
   'recordSymbolEmbedding',
   'recordLayeringViolations',
+  'recordDuplicateJustifications',
   'listSymbolsForSnapshot',
   'listLayeringViolationsForSnapshot',
   'copyForwardUntouchedFiles',
@@ -63,8 +64,8 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 31 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 31);
+  test(`exactly 32 public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 32);
   });
 
   test('every name resolves through the barrel as a function', async () => {
@@ -108,7 +109,16 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
   // resolveDbUrl() now reads the canonical DSN, its deprecated alias, AND the
   // AUDIT_STORE signal, plus loads the shared ~/.audit-loop.env layer. Unset ALL
   // of them (+ disable the shared layer) so cloud is genuinely off here.
-  const CLOUD_OFF_KEYS = ['AUDIT_DB_URL', 'AUDIT_POSTGRES_URL', 'AUDIT_STORE'];
+  // Also unset the sunset legacy triplet (AGENTS.md: "Sunset in M4") — a
+  // repo .env can still carry these even after migrating to AUDIT_DB_URL,
+  // and resolveDbUrl() THROWS a migration-nudge error (not a graceful null)
+  // when it sees legacy vars with no AUDIT_DB_URL, which a getPool()-direct
+  // caller (recordDuplicateJustifications, recordSymbolEmbedding) surfaces
+  // as a real test failure instead of the intended cloud-off neutral value.
+  const CLOUD_OFF_KEYS = [
+    'AUDIT_DB_URL', 'AUDIT_POSTGRES_URL', 'AUDIT_STORE',
+    'SUPABASE_AUDIT_URL', 'SUPABASE_AUDIT_ANON_KEY', 'SUPABASE_AUDIT_SERVICE_ROLE_KEY',
+  ];
   const saved = {};
 
   before(async () => {
@@ -192,6 +202,12 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
   test('recordLayeringViolations returns 0 on empty input', async () => {
     const { recordLayeringViolations } = await import('../scripts/lib/store/arch-memory.mjs');
     assert.equal(await recordLayeringViolations('r', 'p', []), 0);
+  });
+
+  test('recordDuplicateJustifications returns 0 when cloud-off', async () => {
+    const { recordDuplicateJustifications } = await import('../scripts/lib/store/arch-memory.mjs');
+    assert.equal(await recordDuplicateJustifications('r', 'p', []), 0);
+    assert.equal(await recordDuplicateJustifications('r', 'p', [{ definitionId: 'd1', reason: 'x', target: 't', source: 's' }]), 0);
   });
 
   test('recordSymbolFileImports returns {inserted: 0} on empty input', async () => {

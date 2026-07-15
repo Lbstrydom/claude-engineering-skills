@@ -1,11 +1,14 @@
 /**
- * Tier-1 tests for the shared seeded-RNG utilities (tiered-recall pipeline,
- * audit fix L1/L2 — extracted after mulberry32/seededShuffleCopy were
- * independently reimplemented in multiple Cluster D modules).
+ * Tier-1 tests for the shared seeded-RNG utilities. mulberry32/
+ * seededShuffleCopy/seededDraw migrated here from
+ * scripts/lib/audit/seeded-random.mjs (arch-drift-duplication-cleanup plan)
+ * — a domain-neutral PRNG now lives in the shared-lib module every domain
+ * is already allowed to depend on, closing an undeclared arm-eval ->
+ * audit-orchestration edge.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mulberry32, seededShuffleCopy, seededDraw } from '../scripts/lib/audit/seeded-random.mjs';
+import { mulberry32, seededShuffleCopy, seededDraw } from '../scripts/lib/rng.mjs';
 
 describe('mulberry32', () => {
   it('is deterministic for a fixed seed', () => {

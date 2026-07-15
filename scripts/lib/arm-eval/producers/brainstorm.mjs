@@ -10,9 +10,7 @@
  * @module scripts/lib/arm-eval/producers/brainstorm
  */
 
-import { createHash } from 'node:crypto';
-
-function hashText(t) { return createHash('sha256').update(t || '').digest('hex').slice(0, 16); }
+import { hashText } from './_shared.mjs';
 
 const BRAINSTORM_SYSTEM = 'You are an expert brainstorming partner. Give a concrete, insightful, actionable take on the topic — diverse angles, honest trade-offs. Do NOT identify your model/provider (the take is judged blind).';
 const SYNTH_SYSTEM = 'You are synthesizing two independent takes into ONE sharper combined take: keep the strongest ideas, reconcile disagreements explicitly, drop the weak. Do NOT identify any model/provider.';

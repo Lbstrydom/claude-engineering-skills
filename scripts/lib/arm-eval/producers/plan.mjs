@@ -10,10 +10,8 @@
  * @module scripts/lib/arm-eval/producers/plan
  */
 
-import { createHash } from 'node:crypto';
 import { PLAN_SYSTEM, PLAN_SEED_VERSION, buildPlanGenPrompt, parsePlanIntent } from '../plan-seed.mjs';
-
-function hashText(t) { return createHash('sha256').update(t || '').digest('hex').slice(0, 16); }
+import { hashText } from './_shared.mjs';
 
 /**
  * Produce one arm's plan for a task.

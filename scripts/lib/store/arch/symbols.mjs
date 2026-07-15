@@ -3,17 +3,20 @@
  * symbol_layering_violations + the listSymbolsForSnapshot JOIN reader +
  * copyForwardUntouchedFiles incremental-refresh helper.
  *
- * Owns 7 exports:
+ * Owns 8 exports:
  *   recordSymbolDefinitions, recordSymbolIndex, recordSymbolEmbedding,
- *   recordLayeringViolations, listSymbolsForSnapshot,
- *   listLayeringViolationsForSnapshot, copyForwardUntouchedFiles
+ *   recordLayeringViolations, recordDuplicateJustifications,
+ *   listSymbolsForSnapshot, listLayeringViolationsForSnapshot,
+ *   copyForwardUntouchedFiles
  *
- * Plan: docs/plans/sustainability-cleanup-batch.md (WS1).
+ * Plan: docs/plans/sustainability-cleanup-batch.md (WS1);
+ * recordDuplicateJustifications added by
+ * docs/plans/arch-drift-duplication-cleanup.md.
  *
  * @module scripts/lib/store/arch/symbols
  */
 
-import { many, upsert } from '../../db/query.mjs';
+import { many, upsert, withTx } from '../../db/query.mjs';
 import { getPool } from '../../db/client.mjs';
 import { isCloudEnabled } from '../repo.mjs';
 import { UPSERT_CHUNK_SIZE, chunk } from './_shared.mjs';
@@ -144,6 +147,81 @@ export async function recordLayeringViolations(refreshId, repoId, violations) {
     }
   }
   return total;
+}
+
+/**
+ * Persist which `symbol_index` rows (this `refreshId`) carry a resolved
+ * `@duplicate-justification` pragma. Always a **full reset + reapply** —
+ * mirrors `symbol_layering_violations`'s fully-recomputed-every-refresh
+ * semantics (arch-drift-duplication-cleanup, round-1 H1 fix): an omitted
+ * or empty `justifications` array still runs the reset, correctly
+ * un-flagging any row whose pragma was removed since the last refresh.
+ *
+ * **Two statements, one transaction** (round-3 H2 fix) — NOT row-count
+ * chunking (round-2 H1 fix, correcting an earlier contradictory draft):
+ * `recordLayeringViolations`'s chunking exists because it bulk-INSERTS
+ * many new rows and a single INSERT's parameter list has a practical
+ * size limit; this function only ever issues two fixed statements
+ * against rows that already exist, regardless of how many are justified.
+ *
+ * @param {string} refreshId
+ * @param {string} repoId - bound explicitly in both statements' WHERE
+ *   clauses as defense-in-depth (round-4 H3 fix) — refresh_id alone
+ *   already scopes to one repo's snapshot via its FK, but every other
+ *   record* function in this file binds repo_id explicitly too.
+ * @param {{definitionId: string, reason: string, target: string, source: string}[]} justifications
+ * @returns {Promise<number>} count of rows marked justified
+ */
+export async function recordDuplicateJustifications(refreshId, repoId, justifications) {
+  const pool = await getPool();
+  if (!pool) return 0;
+  const rows = Array.isArray(justifications) ? justifications : [];
+  try {
+    return await withTx(async (client) => {
+      // round-4 H3 fix: scope both statements on (refresh_id AND repo_id),
+      // not refresh_id alone — defense-in-depth matching this file's other
+      // record* functions' convention of always binding repo_id explicitly,
+      // even though refresh_id already implies one repo via its FK.
+      await client.query(
+        `UPDATE symbol_index
+           SET duplicate_justified = false,
+               duplicate_justification_reason = NULL,
+               duplicate_justification_target = NULL,
+               duplicate_justification_source = NULL
+         WHERE refresh_id = $1 AND repo_id = $2`,
+        [refreshId, repoId],
+      );
+      if (rows.length === 0) return 0;
+      const values = [];
+      const params = [];
+      rows.forEach((j, i) => {
+        const base = i * 4;
+        values.push(`($${base + 1}::uuid, $${base + 2}, $${base + 3}, $${base + 4})`);
+        params.push(j.definitionId, j.reason ?? null, j.target ?? null, j.source ?? null);
+      });
+      params.push(refreshId, repoId);
+      const applyResult = await client.query(
+        `UPDATE symbol_index AS si
+           SET duplicate_justified = true,
+               duplicate_justification_reason = v.reason,
+               duplicate_justification_target = v.target,
+               duplicate_justification_source = v.source
+           FROM (VALUES ${values.join(', ')}) AS v(definition_id, reason, target, source)
+          WHERE si.definition_id = v.definition_id
+            AND si.refresh_id = $${params.length - 1}
+            AND si.repo_id = $${params.length}`,
+        params,
+      );
+      // round-3 H2 fix: report the ACTUAL rows the UPDATE touched
+      // (applyResult.rowCount), not rows.length — a definitionId that
+      // doesn't exist in this refresh's symbol_index (a stale resolution,
+      // a race with a concurrent refresh) previously reported success for
+      // a write that never happened.
+      return applyResult.rowCount;
+    });
+  } catch (err) {
+    throw new Error(`recordDuplicateJustifications failed: ${err.message}`, { cause: err });
+  }
 }
 
 /**

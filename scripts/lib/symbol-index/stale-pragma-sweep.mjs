@@ -18,73 +18,41 @@
  * symbol-level re-verification is out of scope for a report that already
  * runs on a low-stakes cadence.
  *
- * Lives under `scripts/lib/symbol-index/` (arch-memory domain, not
- * `scripts/lib/audit/`) even though the pragma CONVENTION it sweeps for is
- * introduced by the duplication audit wave (audit-orchestration domain) —
- * living in `lib/audit/` would make `drift.mjs` (arch-memory) import FROM
- * audit-orchestration, creating a bidirectional arch-memory <-> audit-
- * orchestration dependency where only audit-orchestration -> arch-memory
- * is an approved edge (caught in this plan's own round-1 code-audit, H6).
- * This module has zero cross-domain imports (only node: builtins) — placing
- * it in the domain of its actual (sole) caller resolves the cycle cleanly
- * rather than adding a new allowedDeps exception.
+ * `findStalePragmas` now delegates its full-repo sweep to
+ * `findRepoPragmas` (`scripts/lib/duplicate-justification-pragma.mjs`,
+ * `shared-lib` domain — arch-drift-duplication-cleanup plan) instead of
+ * running its own `git grep`. That module is also `arch:refresh`'s
+ * (`refresh.mjs`) source for resolving pragma-bearing declarations into
+ * the drift-exclusion write path — one full-repo sweep implementation,
+ * two consumers. (A prior version of this docblock claimed "only
+ * audit-orchestration -> arch-memory is an approved edge" as the reason
+ * this module stayed self-contained; that claim was never actually
+ * verified against `.audit-loop/domain-map.json` and turned out to be
+ * false — Gemini plan-gate G2 caught it. `shared-lib` is the real answer:
+ * both `arch-memory` and `audit-orchestration` are already allowed to
+ * depend on it.)
  *
  * @module scripts/lib/symbol-index/stale-pragma-sweep
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
-
-const PRAGMA_TARGET_RE = /@duplicate-justification:\s*target=([^\s:]+):/;
+import { findRepoPragmas } from '../duplicate-justification-pragma.mjs';
 
 /**
- * Grep tracked files for the pragma, flag any whose `target` file no
- * longer exists on disk. Best-effort — a `git grep` failure (e.g. no
- * matches, exit 1) degrades to an empty list, never throws.
+ * Sweep the repo for `@duplicate-justification` pragmas, flag any whose
+ * `target` file no longer exists. Best-effort — a sweep failure (e.g. `git
+ * grep` unavailable) degrades to an empty list via `findRepoPragmas`,
+ * never throws.
  *
  * @param {string} repoRoot
  * @returns {{file: string, line: number, targetFile: string}[]}
  */
 export function findStalePragmas(repoRoot) {
-  let output;
-  try {
-    // Pathspec excludes docs AND the tests/ dir. Docs: the pragma is a
-    // source-code-comment construct; markdown files legitimately quote its
-    // syntax in prose (e.g. this plan/skill's own documentation) with
-    // placeholder targets that would otherwise false-positive as "stale"
-    // (found live against this repo's own AGENTS.md during implementation —
-    // see tests/drift-stale-pragma.test.mjs). tests/: the duplication wave's
-    // own test suite (duplication-detector.test.mjs, drift-stale-pragma.test.mjs)
-    // deliberately writes synthetic pragmas with fake/nonexistent targets as
-    // fixture data to exercise this exact sweep — found live in this repo's
-    // own drift report after adding those fixtures.
-    output = execFileSync('git', ['grep', '-n', '-F', '@duplicate-justification:', '--', '.', ':(exclude)*.md', ':(exclude)tests/*'], {
-      cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch (err) {
-    // git grep exits 1 with empty stdout when there are zero matches — not an error.
-    if (err.status === 1 && !err.stdout) return [];
-    process.stderr.write(`arch:drift: stale-pragma sweep skipped (git grep failed: ${err.message})\n`);
-    return [];
-  }
   const stale = [];
-  for (const line of output.split('\n')) {
-    if (!line.trim()) continue;
-    const m = line.match(/^([^:]+):(\d+):(.*)$/);
-    if (!m) continue;
-    const [, file, lineNo, text] = m;
-    const targetMatch = PRAGMA_TARGET_RE.exec(text);
-    if (!targetMatch) continue;
-    const targetFile = targetMatch[1];
-    // Placeholder/template text, not a real pragma on a real declaration —
-    // e.g. a `recommendation` string that BUILDS the pragma syntax as
-    // instructional text (`${topMatch.filePath}` interpolation, found live
-    // in this repo's own duplication-report.mjs) or docs prose quoting a
-    // `<file>` placeholder. No real file path contains these characters.
-    if (/[<>${}]/.test(targetFile)) continue;
+  for (const { pragmaFile, pragmaLine, targetFile } of findRepoPragmas(repoRoot)) {
     if (!fs.existsSync(path.join(repoRoot, targetFile))) {
-      stale.push({ file, line: Number(lineNo), targetFile });
+      stale.push({ file: pragmaFile, line: pragmaLine, targetFile });
     }
   }
   return stale;

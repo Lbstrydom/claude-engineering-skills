@@ -14,6 +14,7 @@
 
 import { EvidenceAnchorSchema } from '../schemas.mjs';
 import { promoteAlternative } from './candidate-envelope.mjs';
+import { nowIso } from './time-utils.mjs';
 
 /**
  * Normalise whitespace for content comparison — a quote copied from a diff
@@ -187,18 +188,6 @@ export function tagPreExisting({ file, startLine, endLine }, { blameAdapter, imp
   const isIndependent = typeof impactAdapter === 'function' ? impactAdapter(file) : null;
   if (isIndependent !== true) return 'unknown';
   return 'pre_existing_independent';
-}
-
-/**
- * Real clock by default (Cluster B audit fix M7) — the original draft
- * defaulted to the Unix epoch when no `clock` adapter was supplied, so any
- * production caller that forgot to pass one would silently timestamp every
- * Stage 0 decision at 1970. Tests inject a fixed `adapters.clock` for
- * determinism; production correctly falls through to the real clock, not an
- * obviously-wrong sentinel that only LOOKS deliberate.
- */
-function nowIso(clock) {
-  return typeof clock === 'function' ? clock() : new Date().toISOString();
 }
 
 /**

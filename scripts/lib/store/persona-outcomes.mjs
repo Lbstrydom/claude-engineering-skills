@@ -18,7 +18,7 @@
 import { z } from 'zod';
 import { many, one, upsert, withTx } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
-import { personaFindingHash } from '../persona/audit-correlator.mjs';
+import { personaFindingHash, isP0OrP1 } from '../persona/audit-correlator.mjs';
 import { retireMissedCorrelationsForHash } from './plans-ship.mjs';
 
 const OUTCOMES = ['fixed', 'dismissed', 'wont_fix', 'stale'];
@@ -131,11 +131,6 @@ export async function upsertPersonaFindingOutcome(rawArgs) {
     process.stderr.write(`  [persona-outcomes] upsertPersonaFindingOutcome failed: ${err.message}\n`);
     return { ok: false, error: err.message };
   }
-}
-
-/** P0/P1 only — matches the correlator's ground-truth scope (WS1). */
-function isP0OrP1(finding) {
-  return finding?.code === 'P0' || finding?.code === 'P1';
 }
 
 /**

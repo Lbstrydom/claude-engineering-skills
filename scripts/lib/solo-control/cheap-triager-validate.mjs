@@ -30,7 +30,7 @@
 
 import crypto from 'node:crypto';
 import { LABEL_FACTORS } from './scoring.mjs';
-import { mulberry32, seededShuffleCopy } from '../audit/seeded-random.mjs';
+import { mulberry32, seededShuffleCopy } from '../rng.mjs';
 
 // ── CSV parsing (no shared parser exists in this codebase — see Phase 5
 // research; the two existing inline parsers in solo-control-audit.mjs don't

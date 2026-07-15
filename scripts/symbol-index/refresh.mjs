@@ -43,6 +43,7 @@ import {
   recordSymbolIndex,
   recordSymbolEmbedding,
   recordLayeringViolations,
+  recordDuplicateJustifications,
   recordSymbolFileImports,
   copyForwardImports,
   markImportGraphPopulated,
@@ -59,6 +60,7 @@ import { symbolIndexConfig } from '../lib/config.mjs';
 import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules } from '../lib/symbol-index/domain-tagger.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
+import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP_LINES } from '../lib/duplicate-justification-pragma.mjs';
 
 // Resolve sibling pipeline scripts (extract/summarise/embed) relative to THIS
 // file, not the cwd. The cwd-relative form ('scripts/symbol-index/extract.mjs')
@@ -354,6 +356,45 @@ async function main() {
 
       // 12. Upsert layering violations (always full repo per R2 H8)
       await recordLayeringViolations(refreshId, repoId, violations);
+
+      // 12a. Resolve @duplicate-justification pragmas + persist exclusions
+      // (arch-drift-duplication-cleanup) — always full repo, every refresh,
+      // mirroring step 12's layering-violations pattern. Candidates are
+      // sourced from finalSymbols + defMap (already in memory from steps
+      // 9-10) rather than a DB round-trip — the same (filePath, symbolName,
+      // kind, startLine) data symbol_index was just written from.
+      // round-2 H8 fix: `strict: true` throws on a REAL git failure instead
+      // of degrading to []; a failed sweep and a genuinely-empty sweep are
+      // NOT interchangeable here — recordDuplicateJustifications always
+      // does a full reset-then-reapply, so treating "sweep failed" as
+      // "zero pragmas" would silently wipe every already-justified row.
+      // Skip the whole write step (leave existing justifications exactly
+      // as they were) rather than risk that.
+      let repoPragmas;
+      try {
+        repoPragmas = findRepoPragmas(repoRoot, { strict: true });
+      } catch (err) {
+        logOk(`WARNING: @duplicate-justification pragma sweep failed (${err.message}) — skipping this refresh's exclusion write entirely, leaving existing justifications untouched rather than risk wiping them.`);
+        repoPragmas = null;
+      }
+      if (repoPragmas !== null) {
+        const pragmaCandidates = finalSymbols
+          .map((s) => ({
+            filePath: s.filePath, symbolName: s.symbolName, kind: s.kind, startLine: s.startLine,
+            definitionId: defMap[`${s.filePath}|${s.symbolName}|${s.kind}`],
+          }))
+          .filter((c) => c.definitionId);
+        const { resolved, ambiguous, unresolved } = resolvePragmasToDefinitions(repoPragmas, pragmaCandidates);
+        await recordDuplicateJustifications(refreshId, repoId, resolved);
+        if (ambiguous.length > 0) {
+          logOk(`WARNING: ${ambiguous.length} @duplicate-justification pragma(s) target a declaration already claimed by another pragma — NEITHER is applied (round-5 M5: an ambiguous declaration is never excluded on an unreliable signal) — see stderr detail below.`);
+          for (const a of ambiguous) logErr(`  ambiguous pragma: ${a.pragmaFile}:${a.pragmaLine} (definition claimed by multiple pragmas — none applied)`);
+        }
+        if (unresolved.length > 0) {
+          logOk(`WARNING: ${unresolved.length} @duplicate-justification pragma(s) did not resolve to any declaration within ${PRAGMA_RESOLUTION_MAX_GAP_LINES} line(s) — not excluded from the drift score.`);
+          for (const u of unresolved) logErr(`  unresolved pragma: ${u.pragmaFile}:${u.pragmaLine}`);
+        }
+      }
 
       // 12b. Persist file-level import edges for "Where used" + /explain
       // (Plan §2.6). Edges are filtered to internal modules in extract.mjs

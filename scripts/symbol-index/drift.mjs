@@ -18,6 +18,7 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { findStalePragmas, renderStalePragmaSection } from '../lib/symbol-index/stale-pragma-sweep.mjs';
+import { findRepoPragmas, resolvePragmasToDefinitions } from '../lib/duplicate-justification-pragma.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -25,6 +26,7 @@ import {
   getActiveSnapshot,
   computeDriftScore,
   getTopDuplicateClusters,
+  listSymbolsForSnapshot,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
@@ -135,7 +137,47 @@ async function main() {
   }));
 
   const stalePragmas = findStalePragmas(process.cwd());
-  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters) + renderStalePragmaSection(stalePragmas);
+
+  // Report-time reconciliation of ambiguous/unresolved @duplicate-
+  // justification pragmas (round-2 M1) — the WRITE path (refresh.mjs) is
+  // the safety-critical one (an ambiguous/unresolved pragma is simply not
+  // excluded, never mis-attached), this is advisory surfacing so an author
+  // gets feedback. Best-effort — a query failure degrades to skipping this
+  // section, never blocks the report.
+  let excludedNote = '';
+  let ambiguousUnresolvedSection = '';
+  const excludedCount = Number(drift.duplication_excluded_count) || 0;
+  if (excludedCount > 0) {
+    excludedNote = `\n_Excludes ${excludedCount} \`@duplicate-justification\`-marked declaration(s) this refresh._\n`;
+  }
+  try {
+    const repoPragmas = findRepoPragmas(process.cwd());
+    if (repoPragmas.length > 0) {
+      // listSymbolsForSnapshot already returns camelCase (definitionId,
+      // filePath, startLine, symbolName, kind) — round-3 M1 fix: an
+      // earlier draft read snake_case here, so every candidate silently
+      // had undefined fields and this whole reconciliation was a no-op.
+      const symbols = await listSymbolsForSnapshot({ refreshId: snap.refreshId, limit: 10000 });
+      const candidates = symbols.map((s) => ({
+        filePath: s.filePath, symbolName: s.symbolName, kind: s.kind,
+        startLine: s.startLine, definitionId: s.definitionId,
+      }));
+      const { ambiguous, unresolved } = resolvePragmasToDefinitions(repoPragmas, candidates);
+      if (ambiguous.length > 0 || unresolved.length > 0) {
+        const rows = [
+          ...ambiguous.map((a) => `| \`${a.pragmaFile}:${a.pragmaLine}\` | ambiguous — declaration already claimed by another pragma |`),
+          ...unresolved.map((u) => `| \`${u.pragmaFile}:${u.pragmaLine}\` | unresolved — no declaration found within the resolution window |`),
+        ].join('\n');
+        ambiguousUnresolvedSection = `\n## Unresolved suppression pragmas (LOW — not excluded, not a safety gap)\n\n` +
+          `| Pragma location | Issue |\n|---|---|\n${rows}\n\n` +
+          `These \`// @duplicate-justification\` pragmas could not be resolved to a single declaration this refresh — they do NOT exclude anything from the drift score. Check placement (the pragma must sit immediately above the declaration it justifies) and that at most one pragma targets each declaration.\n`;
+      }
+    }
+  } catch (err) {
+    process.stderr.write(`arch:drift: pragma reconciliation skipped: ${err.message}\n`);
+  }
+
+  const md = renderMarkdownViaShared(drift, threshold, status, identity, clusters) + excludedNote + renderStalePragmaSection(stalePragmas) + ambiguousUnresolvedSection;
 
   if (args.json) process.stdout.write(JSON.stringify({ drift, threshold, status, stalePragmas }, null, 2) + '\n');
   else process.stdout.write(md);

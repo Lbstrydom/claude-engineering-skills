@@ -22,13 +22,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import crypto from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { buildOwnedSourceTailsFromConsumerManifest, COMMAND_REGEX as SHARED_COMMAND_REGEX } from './sync-rewriter.mjs';
 import { parseGitignoreState } from './sync-gitignore.mjs';
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
-import { SyncManifestSchema } from './sync-manifest.mjs';
+import { SyncManifestSchema, hashFile } from './sync-manifest.mjs';
 import { enumerateNpmRunRefs } from './npm-script-enumerator.mjs';
 
 // NOTE: this module intentionally does NOT import sync-inventory.mjs.
@@ -59,6 +58,7 @@ const CLI_SMOKE_SET = [
   'model-eval-adjudicator.mjs', // model-swap-eval-harness Phase 4 adjudicator-role CLI
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/commit-provenance.md)
+  'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
 ];
 
 const LIB_IMPORT_SET = [
@@ -80,11 +80,6 @@ const CMD_SCAN_PATHS = [
   '.vscode',
   '.claude/settings.json',
 ];
-
-function hashFile(absPath) {
-  const buf = fs.readFileSync(absPath);
-  return 'sha256:' + crypto.createHash('sha256').update(buf).digest('hex');
-}
 
 function parseArgs(argv) {
   const out = {

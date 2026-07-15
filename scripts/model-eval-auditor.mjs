@@ -22,6 +22,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { refreshModelCatalog } from './lib/model-resolver.mjs';
+import { mulberry32 } from './lib/rng.mjs';
 import {
   resolveCandidateRoute, resolveEvaluationTier, buildComparisonEvidenceFromRoutes,
   _internals as routeCatalogInternals,
@@ -51,19 +52,11 @@ export class RunPreflightError extends Error {
 
 // ── Deterministic stratified KD selection ──────────────────────────────────
 // Round-2 audit M2: the same corpusVersion+role+tier always yields the same
-// subset — a small, self-contained PRNG (not exported anywhere else in this
-// repo — solo-control/scoring.mjs's mulberry32 is a private, unrelated
-// implementation for a different sampler) so this CLI has no runtime
-// dependency on Math.random().
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// subset. mulberry32 now lives in scripts/lib/rng.mjs (shared-lib,
+// arch-drift-duplication-cleanup plan) — this file already imports heavily
+// from scripts/lib/* (model-resolver, model-eval/*, audit-arms), so the
+// original "no runtime dependency" rationale for a local copy didn't
+// actually hold; deduplicated instead of pragma'd.
 function seedFromString(s) {
   return crypto.createHash('sha256').update(s).digest().readUInt32BE(0);
 }

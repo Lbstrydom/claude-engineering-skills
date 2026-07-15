@@ -157,6 +157,7 @@ const EXPECTED_EXPORTS = [
   'markImportGraphPopulated',
   'openRefreshRun',
   'publishRefreshRun',
+  'recordDuplicateJustifications',
   'recordLayeringViolations',
   'recordSymbolDefinitions',
   'recordSymbolEmbedding',
@@ -251,6 +252,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 154);
+    assert.equal(EXPECTED_EXPORTS.length, 155);
   });
 });

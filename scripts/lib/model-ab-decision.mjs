@@ -361,6 +361,7 @@ function normalizeSeverityBucketIsHigh(cluster, C = DECISION_CONSTANTS) {
   return cluster.maxSevW >= C.SEV_WEIGHTS.HIGH;
 }
 
+// @duplicate-justification: target=scripts/lib/arm-eval/decision.mjs:round4 reason=arm-eval-stats and model-ab-decision are deliberately independent shadow-evaluation systems (AGENTS.md "Model-A/B/C shadow CONCLUDED" and "Arm-eval framework" sections) -- not accidental duplication, do not merge
 function round4(n) {
   return Number.isFinite(n) ? Math.round(n * 1e4) / 1e4 : n;
 }

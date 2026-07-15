@@ -42,21 +42,16 @@ import {
   modelAbSchemaReady, ensureArmSet, reserveSpend, reconcileSpend, releaseSpend, releaseOrphanedReservations,
 } from './store/model-ab.mjs';
 import { recordFindings, recordPassStats, updateRunMeta } from './store/runs-findings.mjs';
+import { mulberry32 } from './rng.mjs';
 
 // ── Deterministic seeded RNG for arm-order randomization (D10/M5) ─────────────
-// mulberry32 — a tiny, fast, well-distributed 32-bit PRNG. The order of the
-// INDEPENDENT generation units is shuffled per assignment and the SEED is
-// recorded on the run (audit_runs.arm_order_seed) so a run's exact ordering is
-// replayable. Deterministic given the seed (no Math.random in the shuffle).
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+// The order of the INDEPENDENT generation units is shuffled per assignment
+// and the SEED is recorded on the run (audit_runs.arm_order_seed) so a run's
+// exact ordering is replayable. Deterministic given the seed (no Math.random
+// in the shuffle). mulberry32 itself now lives in rng.mjs (shared-lib,
+// arch-drift-duplication-cleanup) — this file keeps its own in-place
+// Fisher-Yates wrapper since it mutates `arr` directly (different semantics
+// from rng.mjs's copy-returning `seededShuffleCopy`, not a plain duplicate).
 
 /** In-place Fisher–Yates shuffle driven by a seeded PRNG (replayable). */
 export function seededShuffle(arr, seed) {

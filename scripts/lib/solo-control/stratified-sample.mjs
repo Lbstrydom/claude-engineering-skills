@@ -18,7 +18,7 @@
  * @module scripts/lib/solo-control/stratified-sample
  */
 
-import { mulberry32, seededShuffleCopy } from '../audit/seeded-random.mjs';
+import { mulberry32, seededShuffleCopy } from '../rng.mjs';
 
 /**
  * Does `finding` (commit + file) plausibly match a known defect? RECALL-BIASED

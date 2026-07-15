@@ -40,7 +40,7 @@ const DEFAULT_MAX_TOKENS = 8000;
 const ARCH_MAP_PATH = 'docs/architecture-map.md';
 
 /** char/4 token estimate — same rule of thumb as provider-limits.mjs. */
-const estimateTokens = (t) => Math.ceil(String(t || '').length / 4);
+export const estimateTokens = (t) => Math.ceil(String(t || '').length / 4);
 
 function commitSha(baseDir) {
   try {

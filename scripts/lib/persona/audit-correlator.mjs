@@ -67,7 +67,7 @@ export function personaFindingHash(finding) {
 }
 
 /** P0/P1 only — the correlator's scope (P2/P3 are not ground-truth-worthy). */
-function isP0OrP1(finding) {
+export function isP0OrP1(finding) {
   return finding?.code === 'P0' || finding?.code === 'P1';
 }
 

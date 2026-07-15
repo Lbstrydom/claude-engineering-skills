@@ -84,3 +84,41 @@ export function reservoirSample(items, k, rng = { random: Math.random }) {
   }
   return reservoir;
 }
+
+// ── mulberry32 family ────────────────────────────────────────────────────
+// Migrated from scripts/lib/audit/seeded-random.mjs (arch-drift-duplication-
+// cleanup plan) — mulberry32 is a domain-neutral seeded PRNG independently
+// reimplemented in multiple audit-domain files; this module is already the
+// shared-lib home every domain is allowed to depend on (unlike the
+// audit-orchestration-scoped seeded-random.mjs, which created an undeclared
+// arm-eval -> audit-orchestration edge for consumers outside that domain).
+
+/** Deterministic seeded PRNG (mulberry32) — same generator family used
+ * throughout this pipeline for reproducible sampling given a fixed seed. */
+export function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Fisher-Yates shuffle over a COPY (never mutates the input), driven by an
+ * injected RNG (typically from `mulberry32`). */
+export function seededShuffleCopy(arr, rng) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/** One deterministic draw in [0, 1) for a given seed — the single-shot form
+ * used by e.g. `gpt-sentinel-trigger.mjs::isExplorationSample`, where a full
+ * generator closure would be overkill for one draw per call. */
+export function seededDraw(seed) {
+  return mulberry32(seed)();
+}

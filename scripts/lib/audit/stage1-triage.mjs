@@ -34,6 +34,7 @@ import { Stage1DecisionSchema, StageOneTriageInputSchema, normalizeFindingEviden
 import { generateTopicId, writeStage1MechanicalLedgerEntry } from '../ledger.mjs';
 import { resolveAndClassify, classifyPath } from '../sensitive-paths.mjs';
 import { redact } from '../redact.mjs';
+import { nowIso } from './time-utils.mjs';
 
 // ── Stage 1 triager DTO builder (audit-orchestrator-hardening Phase 8) ─────
 // Boundary character set for the free-text path-mention scan: whitespace,
@@ -321,15 +322,6 @@ export function buildStageOneTriageInput(finding, opts) {
     causalChain,
     redacted,
   });
-}
-
-/**
- * Real clock by default (matches `evidence-triage.mjs`'s `nowIso` — a
- * production caller that forgets a clock adapter gets the real clock, never
- * an obviously-wrong epoch sentinel). Tests inject a fixed `adapters.clock`.
- */
-function nowIso(clock) {
-  return typeof clock === 'function' ? clock() : new Date().toISOString();
 }
 
 /**

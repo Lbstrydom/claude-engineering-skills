@@ -304,6 +304,7 @@ function arrSort(a) {
   return Array.isArray(a) ? [...a].map(String).sort() : [];
 }
 
+// @duplicate-justification: target=scripts/lib/nav/schema.mjs:sha256 reason=nav-audit and visual-audit are a deliberately independent "sister lens" pair (AGENTS.md skill-naming-convention note) -- zero existing nav<->visual imports today, not accidental duplication
 function sha256(s) {
   return crypto.createHash('sha256').update(s).digest('hex');
 }

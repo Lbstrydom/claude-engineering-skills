@@ -43,7 +43,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Stage2DecisionSchema } from '../schemas.mjs';
-import { mulberry32, seededShuffleCopy } from './seeded-random.mjs';
+import { mulberry32, seededShuffleCopy } from '../rng.mjs';
+import { nowIso } from './time-utils.mjs';
 import { resolveAndClassify } from '../sensitive-paths.mjs';
 import { tieredAuditConfig } from '../config.mjs';
 
@@ -62,10 +63,6 @@ import { tieredAuditConfig } from '../config.mjs';
  */
 export function defaultGeminiReviewScriptPath() {
   return fileURLToPath(new URL('../../gemini-review.mjs', import.meta.url));
-}
-
-function nowIso(clock) {
-  return typeof clock === 'function' ? clock() : new Date().toISOString();
 }
 
 /**

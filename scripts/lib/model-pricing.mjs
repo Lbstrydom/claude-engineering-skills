@@ -80,7 +80,7 @@ for (const [id, px] of [...Object.entries(OSS_PRICING), ...Object.entries(family
 /** A trustworthy meterable token count: an actual finite non-negative NUMBER.
  * Strict `typeof` (consolidated Gemini gate R5): `Number(null|false|''|[])` all
  * coerce to 0, so a `Number()`-based check would accept junk as a valid 0-count. */
-function isValidCount(v) {
+export function isValidCount(v) {
   return typeof v === 'number' && Number.isFinite(v) && v >= 0;
 }
 

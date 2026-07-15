@@ -29,7 +29,7 @@
 import { z } from 'zod';
 import { classifyLlmError } from './robustness.mjs';
 import { assertEgressSafe } from './sensitive-egress-gate.mjs';
-import { sanitizeTokens } from './model-pricing.mjs';
+import { sanitizeTokens, isValidCount } from './model-pricing.mjs';
 import { getOssOperationPolicy, RETRY_BACKOFF_BASE_MS } from './oss-call-policy.mjs';
 
 const DEFAULT_SCHEDULER = Object.freeze({ setTimeout, clearTimeout, setInterval, clearInterval });
@@ -54,12 +54,6 @@ const EMPTY_USAGE = Object.freeze({ input_tokens: 0, cached_tokens: 0, output_to
  * pre-flight estimate / conservative fallback instead, so an unmetered call
  * can never silently zero the burn against the hard € ceiling.
  */
-/** A trustworthy meterable token count: an actual finite non-negative NUMBER.
- * Strict `typeof` (Gemini gate R5): `Number(null|false|''|[])` coerce to 0. */
-function isValidCount(v) {
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0;
-}
-
 function normaliseUsage(u, latencyMs) {
   const usage = u || {};
   // Fail-safe for the spend cap (audit R3 H4 / R4 H3): usage is "missing" if the

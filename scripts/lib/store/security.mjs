@@ -11,17 +11,11 @@
 import { many, one, updateWhere, upsert, pgArray } from '../db/query.mjs';
 import { incidentNeighbourhood as rpcIncidentNeighbourhood } from '../db/rpc.mjs';
 import { isCloudEnabled } from './repo.mjs';
+import { chunk, UPSERT_CHUNK_SIZE } from './arch/_shared.mjs';
 
 // Same chunk size the legacy path uses for chunked upserts (the Supabase
 // REST body cap is gone now, but keeping the chunk size preserves the
 // same network shape + makes incremental progress visible in logs).
-const UPSERT_CHUNK_SIZE = 500;
-
-function chunk(arr, n) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
-  return out;
-}
 
 /**
  * UPSERT a batch of parsed incidents from docs/security-strategy.md.

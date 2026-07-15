@@ -47,7 +47,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const FIXTURE_DIR = path.join(REPO_ROOT, 'tests', 'fixtures', 'contract');
 
-// The 93 frozen-contract functions — the ones the contract matrix's
+// The 94 frozen-contract functions — the ones the contract matrix's
 // off-CI recorder records fixtures for. Helpers added in M3 P3 for the
 // raw-client de-leak are out-of-scope for the contract suite (they're
 // new APIs, not legacy migrations).
@@ -95,6 +95,7 @@ const CONTRACT_FUNCTIONS = [
   'openRefreshRun', 'publishRefreshRun', 'abortRefreshRun',
   'heartbeatRefreshRun', 'getActiveSnapshot', 'recordSymbolDefinitions',
   'recordSymbolIndex', 'recordSymbolEmbedding', 'recordLayeringViolations',
+  'recordDuplicateJustifications',
   'setActiveEmbeddingModel', 'getActiveEmbeddingModel',
   'callNeighbourhoodRpc', 'computeDriftScore', 'recordSymbolFileImports',
   'copyForwardImports', 'markImportGraphPopulated',
@@ -112,8 +113,8 @@ describe('learning-store / contract suite — structural checks', () => {
     assert.deepEqual(missing, [], `barrel missing contract functions: ${missing.join(', ')}`);
   });
 
-  it('the contract function count matches the matrix (93)', () => {
-    assert.equal(CONTRACT_FUNCTIONS.length, 93);
+  it('the contract function count matches the matrix (94)', () => {
+    assert.equal(CONTRACT_FUNCTIONS.length, 94);
   });
 });
 
