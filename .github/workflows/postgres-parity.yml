@@ -150,8 +150,18 @@ jobs:
           retention-days: 14
 
       - name: Env-gated DB tests (G1 date parser + G3 withTx + setup integration)
+        # --test-concurrency=1 is LOAD-BEARING: node --test runs each test
+        # file in its own process CONCURRENTLY by default, but all three
+        # files share this job's single Postgres — and db-setup.test.mjs
+        # does DROP SCHEMA public CASCADE between cases. Run in parallel,
+        # db-withtx's CREATE TABLE lands in the window where `public`
+        # doesn't exist → 3F000 "no schema has been selected to create in"
+        # (this exact race also wiped the production store on 2026-07-14
+        # when AUDIT_DB_TEST_URL pointed at it — see assertDisposableDbUrl).
+        # db-setup stays LAST so the DB it leaves behind is fully migrated
+        # for the contract suite below.
         run: |
-          node --test \
+          node --test --test-concurrency=1 \
             tests/db-date-parser.test.mjs \
             tests/db-withtx.test.mjs \
             tests/db-setup.test.mjs
