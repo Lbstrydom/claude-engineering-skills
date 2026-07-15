@@ -1,13 +1,13 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-15T06:25:49.544Z   commit: eee18a82101a   refresh_id: 7ed9f355-ce45-4f21-8bd1-347d62ea2777
+- Generated: 2026-07-15T09:37:14.305Z   commit: 96ea99d35152   refresh_id: 4f9714cb-d518-4320-9a19-311ebfe1210d
 - Drift score: 44 / threshold 20   status: `RED`
-- Domains: 23   Symbols: 3057   Layering violations: 0
+- Domains: 23   Symbols: 3060   Layering violations: 0
 
 ## Contents
 - [arch-memory](#arch-memory) — 54 symbols
-- [audit-orchestration](#audit-orchestration) — 230 symbols
+- [audit-orchestration](#audit-orchestration) — 231 symbols
 - [brainstorm](#brainstorm) — 67 symbols
 - [claude-hooks](#claude-hooks) — 9 symbols
 - [claudemd-management](#claudemd-management) — 30 symbols
@@ -23,7 +23,7 @@
 - [plan](#plan) — 8 symbols
 - [root-scripts](#root-scripts) — 13 symbols
 - [scripts](#scripts) — 284 symbols
-- [shared-lib](#shared-lib) — 923 symbols
+- [shared-lib](#shared-lib) — 925 symbols
 - [stores](#stores) — 208 symbols
 - [tech-debt](#tech-debt) — 71 symbols
 - [tests](#tests) — 392 symbols
@@ -147,7 +147,7 @@ _Domain has 54 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## audit-orchestration
 
-> Runs multi-round code/plan audits via GPT then mandatory Gemini final review as subprocesses, and garbage-collects aged audit artifacts (preimages, logs, caches).
+> Coordinates multi-pass audit pipelines (GPT code/plan audit → Gemini final review) by spawning subprocesses, managing temporary workspaces and preimages, and aggregating results. Handles session lifecycle, output parsing, and cleanup of aged audit artifacts.
 
 ```mermaid
 flowchart TB
@@ -193,7 +193,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 230 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 231 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -395,13 +395,14 @@ _Domain has 230 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`mulberry32`](../scripts/lib/audit/seeded-random.mjs#L18) | function | `scripts/lib/audit/seeded-random.mjs` | 18-26 | Creates a seeded pseudo-random number generator (Mulberry32 algorithm). | `scripts/lib/audit/final-adjudication.mjs`, `scripts/lib/audit/gpt-sentinel-trigger.mjs`, `scripts/lib/solo-control/cheap-triager-validate.mjs`, +2 more |
 | [`seededDraw`](../scripts/lib/audit/seeded-random.mjs#L42) | function | `scripts/lib/audit/seeded-random.mjs` | 42-44 | Draws a single random float [0,1) from a seeded RNG. | `scripts/lib/audit/final-adjudication.mjs`, `scripts/lib/audit/gpt-sentinel-trigger.mjs`, `scripts/lib/solo-control/cheap-triager-validate.mjs`, +2 more |
 | [`seededShuffleCopy`](../scripts/lib/audit/seeded-random.mjs#L30) | function | `scripts/lib/audit/seeded-random.mjs` | 30-37 | Returns a shuffled copy of an array using a seeded RNG. | `scripts/lib/audit/final-adjudication.mjs`, `scripts/lib/audit/gpt-sentinel-trigger.mjs`, `scripts/lib/solo-control/cheap-triager-validate.mjs`, +2 more |
-| [`buildStageOneTriageInput`](../scripts/lib/audit/stage1-triage.mjs#L134) | function | `scripts/lib/audit/stage1-triage.mjs` | 134-223 | Builds a minimized, redacted DTO for cheap triaging from a finding. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`classifyStage1Outcome`](../scripts/lib/audit/stage1-triage.mjs#L250) | function | `scripts/lib/audit/stage1-triage.mjs` | 250-263 | Classifies a triager's dismissal attempt outcome. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`nowIso`](../scripts/lib/audit/stage1-triage.mjs#L230) | function | `scripts/lib/audit/stage1-triage.mjs` | 230-232 | Returns the current ISO timestamp (or uses provided clock function). | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`redactFreeText`](../scripts/lib/audit/stage1-triage.mjs#L67) | function | `scripts/lib/audit/stage1-triage.mjs` | 67-84 | Redacts sensitive paths and secrets from text. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`resolveEvidenceAnchor`](../scripts/lib/audit/stage1-triage.mjs#L91) | function | `scripts/lib/audit/stage1-triage.mjs` | 91-95 | Extracts the evidence anchor and quote from a finding. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`runStage1CheapTriage`](../scripts/lib/audit/stage1-triage.mjs#L340) | function | `scripts/lib/audit/stage1-triage.mjs` | 340-403 | Runs cheap-model triage on candidates, routing to mechanical-dismissed/escalated/confirmed. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`writeMechanicalDismissalToLedger`](../scripts/lib/audit/stage1-triage.mjs#L284) | function | `scripts/lib/audit/stage1-triage.mjs` | 284-307 | Records a Stage-1 mechanical dismissal to the audit ledger. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`buildStageOneTriageInput`](../scripts/lib/audit/stage1-triage.mjs#L235) | function | `scripts/lib/audit/stage1-triage.mjs` | 235-324 | Constructs a triaging input object from a raw finding with strict validation to catch upstream bugs and redact sensitive paths. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`classifyStage1Outcome`](../scripts/lib/audit/stage1-triage.mjs#L351) | function | `scripts/lib/audit/stage1-triage.mjs` | 351-364 | Determines the triage outcome (dismissed, escalated, or survived) based on dismissal validity and severity/type rules. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`isSensitiveViaSymlinkResolution`](../scripts/lib/audit/stage1-triage.mjs#L111) | function | `scripts/lib/audit/stage1-triage.mjs` | 111-136 | Checks if a token path resolves via symlink to a sensitive location (escaping the repo or triggering resolution errors that indicate a real target exists). | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`nowIso`](../scripts/lib/audit/stage1-triage.mjs#L331) | function | `scripts/lib/audit/stage1-triage.mjs` | 331-333 | Returns the current time in ISO 8601 format, accepting an optional clock function for test injection. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`redactFreeText`](../scripts/lib/audit/stage1-triage.mjs#L163) | function | `scripts/lib/audit/stage1-triage.mjs` | 163-185 | Scans free text for sensitive paths and cryptographic secrets, redacting both file paths and secret patterns before storage. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`resolveEvidenceAnchor`](../scripts/lib/audit/stage1-triage.mjs#L192) | function | `scripts/lib/audit/stage1-triage.mjs` | 192-196 | Returns the evidence anchor and quote from a finding based on whether it represents a commission or omission. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`runStage1CheapTriage`](../scripts/lib/audit/stage1-triage.mjs#L459) | function | `scripts/lib/audit/stage1-triage.mjs` | 459-570 | Runs a batch of findings through the cheap triager, collecting dismissals/escalations/survivors while respecting time budgets. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`writeMechanicalDismissalToLedger`](../scripts/lib/audit/stage1-triage.mjs#L385) | function | `scripts/lib/audit/stage1-triage.mjs` | 385-408 | Records a mechanically dismissed finding to the audit ledger for tracking and replay. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`loadValidationManifest`](../scripts/lib/audit/stage1-triager-resolver.mjs#L75) | function | `scripts/lib/audit/stage1-triager-resolver.mjs` | 75-93 | Loads and validates the Stage-1 triager's validation manifest file. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`resolveStage1TriagerModel`](../scripts/lib/audit/stage1-triager-resolver.mjs#L101) | function | `scripts/lib/audit/stage1-triager-resolver.mjs` | 101-113 | Resolves the Stage-1 triager model from override, validated manifest, or fallback. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`buildStage1TriagerPrompt`](../scripts/lib/audit/tiered-pipeline.mjs#L86) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 86-97 | Constructs a system + user prompt for the Stage-1 triager with evidence blocks. | `scripts/openai-audit.mjs` |
@@ -2322,7 +2323,7 @@ _Domain has 284 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## shared-lib
 
-> Foundational infrastructure for all audit-loop skills: LLM client factories (Anthropic SDK/CLI routing), secret redaction, Zod schemas, database operations, file I/O, and configuration utilities.
+> **Shared-lib** provides LLM client adapters (Anthropic SDK/CLI factory with request-level redaction), secret-redaction pipelines, environment-variable resolution, and common data utilities (schemas, formatting, DB queries) reused across all audit and planning skills.
 
 ```mermaid
 flowchart TB
@@ -2367,7 +2368,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 923 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 925 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -3003,6 +3004,8 @@ _Domain has 923 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`normalizeApiPath`](../scripts/lib/openai-client.mjs#L53) | function | `scripts/lib/openai-client.mjs` | 53-57 | Normalizes API paths to `/openai/v1` default format (leading slash, no trailing slash). | `scripts/azure-limits.mjs`, `scripts/cheap-triager-validate.mjs`, `scripts/gemini-review.mjs`, +9 more |
 | [`trimTrailingSlash`](../scripts/lib/openai-client.mjs#L48) | function | `scripts/lib/openai-client.mjs` | 48-50 | Removes trailing slashes from URL strings. | `scripts/azure-limits.mjs`, `scripts/cheap-triager-validate.mjs`, `scripts/gemini-review.mjs`, +9 more |
 | [`classifyResponsesSupport`](../scripts/lib/openai-responses-capability.mjs#L34) | function | `scripts/lib/openai-responses-capability.mjs` | 34-64 | Classifies OpenAI API errors to determine if structured-output route is unsupported or fatally misconfigured. | `scripts/lib/audit/llm-helpers.mjs` |
+| [`calculateWorstCaseAttemptDuration`](../scripts/lib/oss-call-policy.mjs#L76) | function | `scripts/lib/oss-call-policy.mjs` | 76-81 | Calculates the worst-case duration an OSS call might take given timeout and exponential-backoff retry policy. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/lib/oss-structured-output.mjs` |
+| [`createOssCallPolicyResolver`](../scripts/lib/oss-call-policy.mjs#L87) | function | `scripts/lib/oss-call-policy.mjs` | 87-137 | Loads and validates the OSS call policy from disk, caching it, and resolves timeout/retry settings by operation name. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/lib/oss-structured-output.mjs` |
 | [`describeProviderError`](../scripts/lib/oss-structured-output.mjs#L116) | function | `scripts/lib/oss-structured-output.mjs` | 116-120 | Formats error with HTTP status into human-readable message | `scripts/cheap-triager-validate.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +1 more |
 | [`extractRawJson`](../scripts/lib/oss-structured-output.mjs#L83) | function | `scripts/lib/oss-structured-output.mjs` | 83-92 | Extracts JSON from OpenAI response handling both text and tool-call modes | `scripts/cheap-triager-validate.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +1 more |
 | [`isResponseFormatUnsupported`](../scripts/lib/oss-structured-output.mjs#L106) | function | `scripts/lib/oss-structured-output.mjs` | 106-113 | Detects if error indicates structured output is unsupported by provider | `scripts/cheap-triager-validate.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +1 more |
@@ -4103,7 +4106,7 @@ _Domain has 392 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`classifyForPrune`](../tests/snapshot-retention.test.mjs#L17) | function | `tests/snapshot-retention.test.mjs` | 17-25 | Classifies a run record for snapshot retention based on age and retention class. | _(internal)_ |
 | [`fileDiff`](../tests/solo-control-chunk-diff.test.mjs#L19) | function | `tests/solo-control-chunk-diff.test.mjs` | 19-26 | Formats diff hunks into a unified diff header and footer for a single file. | _(internal)_ |
 | [`mkEntry`](../tests/stage1-mechanical-ledger.test.mjs#L16) | function | `tests/stage1-mechanical-ledger.test.mjs` | 16-24 | Creates a test fixture for a stage1-mechanical ledger entry with default values. | _(internal)_ |
-| [`mkdtemp`](../tests/stage1-triage-dto.test.mjs#L29) | function | `tests/stage1-triage-dto.test.mjs` | 29-31 | Creates a temporary directory with a 'stage1-dto-' prefix. | _(internal)_ |
+| [`mkdtemp`](../tests/stage1-triage-dto.test.mjs#L29) | function | `tests/stage1-triage-dto.test.mjs` | 29-31 | <no body> | _(internal)_ |
 | [`CLOCK`](../tests/stage1-triage.test.mjs#L13) | function | `tests/stage1-triage.test.mjs` | 13-13 | Returns a fixed ISO timestamp for test time consistency. | _(internal)_ |
 | [`mkEnvelope`](../tests/stage1-triage.test.mjs#L23) | function | `tests/stage1-triage.test.mjs` | 23-25 | Creates a test envelope object for stage1 triage with severity and evidence type. | _(internal)_ |
 | [`fakeFs`](../tests/stage1-triager-resolver.test.mjs#L17) | function | `tests/stage1-triager-resolver.test.mjs` | 17-19 | Creates a mock file system object that returns preset contents when read. | _(internal)_ |

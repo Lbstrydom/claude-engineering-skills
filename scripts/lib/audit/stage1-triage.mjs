@@ -58,17 +58,28 @@ const SPLIT_BOUNDARY = /[\s`()[\]{}"']+/;
 // it is semantically load-bearing for dotfile names. Trailing strip is
 // unaffected — a sentence-ending period after a dotfile mention (".env.")
 // still correctly leaves ".env".
-const EDGE_PUNCT_LEADING = /^[,:;!?]+/;
-const EDGE_PUNCT_TRAILING = /[.,:;!?]+$/;
-// audit-code round-2 H1: a source-location citation ("see .env:12 for the
-// value") wasn't being normalized before classification — `classifyPath`
-// tests the LITERAL token, so ".env:12" ≠ ".env" and the lexical/symlink
-// checks below would both silently miss it. Mirrors the `section` field's
-// OWN existing convention (`rawSection.split(':')[0]`) — strip a trailing
-// `:line` or `:line:col` suffix before classifying, but keep the ORIGINAL
-// token as the redaction match target so the whole "path:line" mention
-// (not just the path portion) gets replaced.
-const SOURCE_LOCATION_SUFFIX = /:\d+(?::\d+)?$/;
+// audit-code round-4 H1/H2: markup/wrapper punctuation (`**bold**`,
+// `<angle>` markers) was not stripped, so a wrapped mention like `**.env**`
+// or `<.env>` never reduced to the bare classifiable path. Added `*`/`<`
+// to the leading class and `*`/`>` to the trailing class — `.` remains
+// excluded from LEADING (dotfile-preserving, round-2 H1); trailing strip
+// already covered sentence punctuation.
+const EDGE_PUNCT_LEADING = /^[,:;!?*<]+/;
+const EDGE_PUNCT_TRAILING = /[.,:;!?*>]+$/;
+// audit-code round-2 H1 + round-4 H2: a source-location citation ("see
+// .env:12 for the value") or a fragment-style reference ("see .env#L12" or
+// a GitHub-style line-range fragment "see .env#L12-L15") wasn't being
+// normalized before classification — `classifyPath` tests the LITERAL
+// token, so ".env:12"/".env#L12"/".env#L12-L15" ≠ ".env" and the
+// lexical/symlink checks below would both silently miss it. Mirrors the
+// `section` field's OWN existing convention (`rawSection.split(':')[0]`) —
+// strip a trailing `:line`, `:line:col`, or `#fragment` suffix before
+// classifying, but keep the ORIGINAL token as the redaction match target so
+// the whole citation (not just the path portion) gets replaced. The
+// fragment class allows `-` (audit-code round-5 H1) — a bare `\w+` doesn't
+// match GitHub-style hyphenated ranges like `#L12-L15`, leaving them
+// unstripped and unredacted.
+const SOURCE_LOCATION_SUFFIX = /(?::\d+(?::\d+)?|#[\w-]+)$/;
 
 /**
  * Candidate-aware canonical classifier for free-text tokens (audit-code

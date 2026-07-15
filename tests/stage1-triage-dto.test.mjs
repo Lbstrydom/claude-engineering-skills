@@ -407,6 +407,72 @@ describe('isSensitiveViaSymlinkResolution — resolution-failure classification 
   });
 });
 
+describe('buildStageOneTriageInput — markup-wrapper and URL-fragment bypasses (audit-code round-4 H1/H2)', () => {
+  it('redacts a bold-markup-wrapped dotfile mention ("**.env**")', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'The secret leaked via **.env** in the log line.', severity: 'HIGH' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('.env'), false, dto.detail);
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts an angle-bracket-wrapped dotfile mention ("<.env>")', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'See <.env> for the value that leaked.', severity: 'HIGH' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('.env'), false, dto.detail);
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts a URL-fragment-suffixed dotfile citation (".env#L12")', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'The leak is cited at .env#L12 in the report.', severity: 'HIGH' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('.env#L12'), false, dto.detail);
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('an ordinary bold-markup word survives unredacted (leading/trailing "*" strip does not over-match)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'This is **important** context.', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.redacted, false);
+      assert.ok(dto.detail.includes('important'));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts a GitHub-style hyphenated line-range fragment (".env#L12-L15", audit-code round-5 H1)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'The leak is cited at .env#L12-L15 in the report.', severity: 'HIGH' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('.env#L12-L15'), false, dto.detail);
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('an ordinary hashtag mention (no leading dot) survives unredacted (fragment-class widening does not over-match)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'Ordinary text with a #hashtag mention.', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.redacted, false);
+      assert.ok(dto.detail.includes('#hashtag'));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
 describe('buildStageOneTriageInput — secret-shaped content is redacted independently of path classification', () => {
   it('redacts a hardcoded-secret-shaped anchorQuote even when its source file is NOT itself sensitive', () => {
     const repoRoot = mkdtemp();

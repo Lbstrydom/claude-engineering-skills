@@ -83,7 +83,11 @@ describe('createOssCallPolicyResolver — injectable, cached-once (round-2 M2)',
     const resolver = createOssCallPolicyResolver({
       readFile: () => {
         readCount++;
-        return JSON.stringify({ version: 1, operations: { x: { timeoutMs: 1000, maxRetries: 0 } }, stage1TriageBudget: { totalMs: 5000 } });
+        return JSON.stringify({
+          version: 1,
+          operations: { stage1_triage: { timeoutMs: 1000, maxRetries: 0 }, discovery_generation: { timeoutMs: 1000, maxRetries: 0 }, x: { timeoutMs: 1000, maxRetries: 0 } },
+          stage1TriageBudget: { totalMs: 5000 },
+        });
       },
     });
     resolver.getOssOperationPolicy('x');
@@ -96,7 +100,11 @@ describe('createOssCallPolicyResolver — injectable, cached-once (round-2 M2)',
 
   it('an unrecognized operation on a fresh instance still throws (round-1 M2, same on any instance)', () => {
     const resolver = createOssCallPolicyResolver({
-      readFile: () => JSON.stringify({ version: 1, operations: {}, stage1TriageBudget: { totalMs: 5000 } }),
+      readFile: () => JSON.stringify({
+        version: 1,
+        operations: { stage1_triage: { timeoutMs: 1000, maxRetries: 0 }, discovery_generation: { timeoutMs: 1000, maxRetries: 0 } },
+        stage1TriageBudget: { totalMs: 5000 },
+      }),
     });
     assert.throws(() => resolver.getOssOperationPolicy('anything'), /unrecognized operation/);
   });
@@ -113,7 +121,11 @@ describe('getOssOperationPolicy — inherited-property bypass fixed (audit-code 
 
   it('a fresh instance with a sparse operations map also rejects inherited names', () => {
     const resolver = createOssCallPolicyResolver({
-      readFile: () => JSON.stringify({ version: 1, operations: { real_op: { timeoutMs: 1000, maxRetries: 0 } }, stage1TriageBudget: { totalMs: 5000 } }),
+      readFile: () => JSON.stringify({
+        version: 1,
+        operations: { stage1_triage: { timeoutMs: 1000, maxRetries: 0 }, discovery_generation: { timeoutMs: 1000, maxRetries: 0 }, real_op: { timeoutMs: 1000, maxRetries: 0 } },
+        stage1TriageBudget: { totalMs: 5000 },
+      }),
     });
     assert.throws(() => resolver.getOssOperationPolicy('hasOwnProperty'), /unrecognized operation/);
     assert.doesNotThrow(() => resolver.getOssOperationPolicy('real_op'));
@@ -146,7 +158,10 @@ describe('PolicyFileSchema — cross-field budget/retry-envelope validation (aud
     const resolver = createOssCallPolicyResolver({
       readFile: () => JSON.stringify({
         version: 1,
-        operations: { stage1_triage: { timeoutMs: 45000, maxRetries: 1 } }, // worst case 90800ms
+        operations: {
+          stage1_triage: { timeoutMs: 45000, maxRetries: 1 }, // worst case 90800ms
+          discovery_generation: { timeoutMs: 1000, maxRetries: 0 },
+        },
         stage1TriageBudget: { totalMs: 50000 }, // less than one candidate's worst case
       }),
     });
@@ -157,7 +172,10 @@ describe('PolicyFileSchema — cross-field budget/retry-envelope validation (aud
     const resolver = createOssCallPolicyResolver({
       readFile: () => JSON.stringify({
         version: 1,
-        operations: { stage1_triage: { timeoutMs: 1000, maxRetries: 0 } }, // worst case 1000ms
+        operations: {
+          stage1_triage: { timeoutMs: 1000, maxRetries: 0 }, // worst case 1000ms
+          discovery_generation: { timeoutMs: 1000, maxRetries: 0 },
+        },
         stage1TriageBudget: { totalMs: 1000 },
       }),
     });
@@ -167,5 +185,29 @@ describe('PolicyFileSchema — cross-field budget/retry-envelope validation (aud
   it('the real committed oss-call-policy.json passes this cross-field check', () => {
     // If this throws, the committed config itself is misconfigured.
     assert.doesNotThrow(() => getStage1TriageBudget());
+  });
+});
+
+describe('PolicyFileSchema — stage1_triage and discovery_generation are load-time-required (audit-code round-5 H2 compromise)', () => {
+  it('a policy file omitting stage1_triage fails at load time, not deferred to first-call', () => {
+    const resolver = createOssCallPolicyResolver({
+      readFile: () => JSON.stringify({
+        version: 1,
+        operations: { discovery_generation: { timeoutMs: 1000, maxRetries: 0 } },
+        stage1TriageBudget: { totalMs: 5000 },
+      }),
+    });
+    assert.throws(() => resolver.getStage1TriageBudget(), /failed schema validation/);
+  });
+
+  it('a policy file omitting discovery_generation fails at load time', () => {
+    const resolver = createOssCallPolicyResolver({
+      readFile: () => JSON.stringify({
+        version: 1,
+        operations: { stage1_triage: { timeoutMs: 1000, maxRetries: 0 } },
+        stage1TriageBudget: { totalMs: 5000 },
+      }),
+    });
+    assert.throws(() => resolver.getStage1TriageBudget(), /failed schema validation/);
   });
 });

@@ -22,10 +22,24 @@ const OperationPolicySchema = z.object({
   maxRetries: z.number().int().nonnegative().max(3),
 });
 
+// The two operations every live call site opts into today
+// (`validatedTriagerCall`/`glmCall` in tiered-pipeline.mjs) are REQUIRED
+// keys, not optional record entries (audit-code round-5 H2/compromise): an
+// omitted `stage1_triage` policy previously validated cleanly at load time
+// and only threw at the FIRST real Stage-1 call (`getOssOperationPolicy`'s
+// `Object.hasOwn` guard) — not a silent legacy-default regression as
+// originally claimed (disproven by direct reproduction), but still a later,
+// less actionable failure point than catching it here at file-load time.
+// `.catchall(...)` keeps the schema open to future operations beyond these two.
+const OperationsSchema = z.object({
+  stage1_triage: OperationPolicySchema,
+  discovery_generation: OperationPolicySchema,
+}).catchall(OperationPolicySchema);
+
 const PolicyFileSchema = z.object({
   version: z.literal(1),
   calibrationNote: z.string().optional(),
-  operations: z.record(z.string(), OperationPolicySchema),
+  operations: OperationsSchema,
   stage1TriageBudget: z.object({
     totalMs: z.number().int().positive().finite(),
     note: z.string().optional(),
@@ -34,17 +48,16 @@ const PolicyFileSchema = z.object({
   // Cross-field validation (audit-code round-1 M5): a syntactically valid
   // policy whose stage1TriageBudget can't fit even ONE stage1_triage retry
   // envelope would zero-admit every candidate forever — a silent, permanent
-  // Stage-1 outage disguised as a passing config. Computed inline (not via
-  // calculateWorstCaseAttemptDuration, to avoid a circular reference at
-  // module-init time) using the SAME formula.
-  (data) => {
-    const stage1Policy = data.operations.stage1_triage;
-    if (!stage1Policy) return true; // stage1_triage itself is optional at the schema level
-    let backoffSum = 0;
-    for (let attempt = 1; attempt <= stage1Policy.maxRetries; attempt++) backoffSum += RETRY_BACKOFF_BASE_MS * attempt;
-    const worstCaseMs = stage1Policy.timeoutMs * (stage1Policy.maxRetries + 1) + backoffSum;
-    return worstCaseMs <= data.stage1TriageBudget.totalMs;
-  },
+  // Stage-1 outage disguised as a passing config. Calls the SAME
+  // `calculateWorstCaseAttemptDuration` runtime callers use (audit-code
+  // round-4 M3 — a prior inline reimplementation here was a DRY violation
+  // that could silently drift from the runtime formula; `function`
+  // declarations are hoisted, and this callback only ever executes at
+  // `.safeParse()` time, well after full module evaluation, so there is no
+  // real circular-reference concern — the earlier comment claiming one was
+  // mistaken). `operations.stage1_triage` is now schema-required (above),
+  // so this always has a value to check.
+  (data) => calculateWorstCaseAttemptDuration(data.operations.stage1_triage) <= data.stage1TriageBudget.totalMs,
   { message: 'stage1TriageBudget.totalMs cannot accommodate even one stage1_triage retry envelope — every candidate would be immediately budget_exhausted', path: ['stage1TriageBudget', 'totalMs'] },
 );
 
