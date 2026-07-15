@@ -6,6 +6,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { isSourceRepo } from '../sync-manifest.mjs';
 
 /**
  * Patterns that MUST be in .gitignore for any repo using the audit loop.
@@ -92,6 +93,44 @@ const BUNDLE_PATTERNS = [
 const REQUIRED_PATTERNS = [...OPERATIONAL_PATTERNS, ...BUNDLE_PATTERNS];
 
 /**
+ * The pattern set that applies to a GIVEN repo — the load-bearing seam.
+ *
+ * BUNDLE_PATTERNS are correct ONLY in consumer repos, where those files are
+ * synced-in copies that must never be committed. In the SOURCE repo
+ * (claude-engineering-skills itself) every one of those paths is real,
+ * authored, committed source — gitignoring them there directly violates
+ * AGENTS.md's generated-artifact policy (`.claude/skills/**` is Category B:
+ * committed + freshness-verified).
+ *
+ * Incident (2026-07-15): the source repo's own `post-merge` git hook
+ * (installed by setup.mjs) runs `install-skills.mjs --local ... 2>/dev/null`
+ * after every `git pull` — whose main() calls `ensureAuditGitignore(repoRoot)`
+ * with repoRoot = the source repo. That silently appended the whole
+ * consumer-only BUNDLE block (`.claude/skills/`, `scripts/openai-audit.mjs`,
+ * ~20 more core source files) into the source repo's .gitignore. Filtering
+ * HERE — rather than throwing in ensureAuditGitignore, which would break the
+ * legitimate setup.mjs/post-merge `--local` flow, or guarding one caller,
+ * which the next caller would forget — makes the mistake structurally
+ * impossible for every current and future caller, including the check/--fix
+ * loop in check-skill-updates.mjs (both functions below share this seam, so
+ * "missing" and "would add" can never disagree about bundle patterns).
+ *
+ * `isSourceRepo` (sync-manifest.mjs, package-name identity) fails FALSE on a
+ * missing/unreadable package.json — an edge target degrades to consumer
+ * semantics, which at worst adds ignorable patterns to a scratch checkout,
+ * never strips protection from a real consumer.
+ *
+ * @param {string} repoRoot - Absolute path to the target repo root
+ * @returns {{ patterns: string[], bundleSkipped: string[] }}
+ */
+export function requiredPatternsFor(repoRoot) {
+  if (isSourceRepo(repoRoot)) {
+    return { patterns: [...OPERATIONAL_PATTERNS], bundleSkipped: [...BUNDLE_PATTERNS] };
+  }
+  return { patterns: REQUIRED_PATTERNS, bundleSkipped: [] };
+}
+
+/**
  * Header comment prepended when adding the audit-loop block.
  */
 const BLOCK_HEADER = '\n# Audit-loop — operational state + synced bundle (auto-managed, do not edit by hand)\n';
@@ -114,10 +153,17 @@ export function ensureAuditGitignore(repoRoot, { dryRun = false, quiet = false }
     created = true;
   }
 
+  const { patterns, bundleSkipped } = requiredPatternsFor(repoRoot);
+  if (bundleSkipped.length > 0 && !quiet) {
+    process.stderr.write(
+      '  .gitignore: source repo detected — bundle patterns skipped (they name authored source here)\n',
+    );
+  }
+
   const added = [];
   const alreadyPresent = [];
 
-  for (const pattern of REQUIRED_PATTERNS) {
+  for (const pattern of patterns) {
     if (gi.includes(pattern)) {
       alreadyPresent.push(pattern);
     } else {
@@ -139,7 +185,7 @@ export function ensureAuditGitignore(repoRoot, { dryRun = false, quiet = false }
     process.stderr.write(`  ${verb} .gitignore: +${added.length} audit-loop patterns\n`);
   }
 
-  return { added, alreadyPresent, created };
+  return { added, alreadyPresent, created, bundleSkipped };
 }
 
 /**
@@ -150,16 +196,21 @@ export function ensureAuditGitignore(repoRoot, { dryRun = false, quiet = false }
  * @returns {{ missing: string[], present: string[], exists: boolean }}
  */
 export function checkAuditGitignore(repoRoot) {
+  // Same repo-aware seam as ensureAuditGitignore — in the source repo,
+  // bundle patterns are deliberately absent, so reporting them "missing"
+  // would send check-skill-updates' --fix loop chasing a state the writer
+  // (correctly) refuses to produce.
+  const { patterns } = requiredPatternsFor(repoRoot);
   const giPath = path.join(repoRoot, '.gitignore');
   if (!fs.existsSync(giPath)) {
-    return { missing: [...REQUIRED_PATTERNS], present: [], exists: false };
+    return { missing: [...patterns], present: [], exists: false };
   }
 
   const gi = fs.readFileSync(giPath, 'utf-8');
   const missing = [];
   const present = [];
 
-  for (const pattern of REQUIRED_PATTERNS) {
+  for (const pattern of patterns) {
     if (gi.includes(pattern)) {
       present.push(pattern);
     } else {
