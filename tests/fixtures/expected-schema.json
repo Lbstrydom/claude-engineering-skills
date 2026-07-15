@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-15T07:19:19Z",
+  "generatedAt": "2026-07-15T18:57:14Z",
   "schema": "public",
   "tables": [
     {
@@ -5691,6 +5691,34 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 11
+        },
+        {
+          "column_name": "duplicate_justified",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 12
+        },
+        {
+          "column_name": "duplicate_justification_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 13
+        },
+        {
+          "column_name": "duplicate_justification_target",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 14
+        },
+        {
+          "column_name": "duplicate_justification_source",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 15
         }
       ]
     },
