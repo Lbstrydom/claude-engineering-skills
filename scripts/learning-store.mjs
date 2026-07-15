@@ -62,4 +62,18 @@ export * from './lib/store/persona-test-candidates.mjs';
 export * from './lib/store/plans-ship.mjs';
 export * from './lib/store/repo.mjs';
 export * from './lib/store/runs-findings.mjs';
-export * from './lib/store/security.mjs';
+// Explicit (not `export *`) — `security.mjs` also exports `_internals`
+// (a test-only escape hatch, mirrors anthropic-client.mjs's pattern), which
+// must never leak into this barrel's curated, function-only public surface
+// (tests/learning-store-exports.test.mjs pins both the exact name list and
+// "every export is callable" — `_internals` is an object, not a function).
+export {
+  callIncidentNeighbourhoodRpc,
+  getMaxIncidentRefreshAt,
+  getSecurityEvents,
+  getSecurityIncidentsByRepo,
+  getSecurityStats,
+  markIncidentsHistorical,
+  recordSecurityEvents,
+  recordSecurityIncidents,
+} from './lib/store/security.mjs';

@@ -95,3 +95,62 @@ Mitigation form: `manual` (regression-locked by
 
 <!-- incident:end -->
 
+<!-- incident:start id="INC-002" -->
+### Destructive integration tests wiped the production Supabase store
+
+**Description**:
+
+`tests/db-setup.test.mjs` and `tests/db-withtx.test.mjs`'s integration
+suites swap `process.env.AUDIT_DB_URL = AUDIT_DB_TEST_URL` for their
+duration and run `DROP SCHEMA public CASCADE` in `beforeEach` to reset
+between test cases. The only gate was "is `AUDIT_DB_TEST_URL` **set**" —
+never "is it actually a disposable database". On 2026-07-14,
+`AUDIT_DB_TEST_URL` resolved to the real production DSN when these tests
+ran (the exact process that ran them was never pinned down). The shared
+Supabase project (`uahjjdelnnpfmaqjrwoz`, backing all three repos —
+claude-engineering-skills, wine-cellar-app, ai-organiser) was wiped from
+~30 tables to a single leftover `drift_test` table. Root-caused via
+Supabase's raw Postgres logs (not guessed): a clean `DROP SCHEMA CASCADE`
+→ rebuild sequence matching the integration suite's own test list exactly,
+cut off right after the last test created `drift_test`. Schema was restored
+via `node scripts/setup-postgres.mjs --migrate` (deterministic, from
+committed migrations); the underlying data — every `audit_runs`/
+`audit_findings`/persona/bandit-state/tiered-shadow-observation/
+`model_eval_runs` row across all three repos — is permanently lost (the
+operator explicitly chose to restore the schema rather than pursue
+Supabase Point-in-Time Recovery).
+
+**Affected paths**: `tests/db-setup.test.mjs`, `tests/db-withtx.test.mjs`,
+`scripts/lib/db/client.mjs`.
+
+**Mitigation**: `scripts/lib/db/client.mjs::assertDisposableDbUrl(testUrl,
+{productionUrl})` runs before any pool reset in both suites' `before()`
+hooks, rejecting (a) any Supabase-hosted host (`*.supabase.co`/
+`*.supabase.com` — a genuine disposable test DB is never Supabase-hosted in
+this repo's design) and (b) a test URL identical to the real `AUDIT_DB_URL`
+even on a non-Supabase host.
+
+Mitigation form: `manual` (regression-locked by
+`tests/db-dsn-validation.test.mjs`; live-repro-verified by re-running the
+exact incident scenario post-fix — the `before()` hook now fails immediately,
+zero destructive queries issued).
+
+**Lessons learned**:
+
+- An env-gate that checks "is this variable **set**" is not a safety gate —
+  it only proves intent to run, never that the target is safe to destroy.
+  Any test that runs `DROP`/`CASCADE`/schema-reset against an
+  operator-supplied DSN must positively verify the DSN looks disposable
+  (host pattern, or explicit non-equality with the real production DSN)
+  before the first destructive statement, not just check the variable's
+  presence.
+- Discoverable pre-existing debt made root-causing this harder than it
+  needed to be: the `debt_summary` view referenced throughout this repo's
+  own tooling (`check-setup.mjs`) had never actually been captured in a
+  migration — only hardcoded as a "create by hand if missing" SQL hint —
+  so the schema restore silently didn't recreate it either, and both
+  consumer repos' setup checks started failing on a second, unrelated gap
+  the same incident exposed. Anything the setup tooling checks for should
+  be a real, committed migration, not an informal hint.
+<!-- incident:end -->
+

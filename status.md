@@ -1,5 +1,15 @@
 # Project Status Log
 
+## 2026-07-15 — Fix: security-incidents embedding-reuse bug (found while closing out the Supabase-wipe follow-ups) + full architectural-memory re-index
+
+### Changes
+- **Logged the DB-wipe incident** as `INC-002` in `docs/security-strategy.md` (mechanical `/ship` regex gate didn't catch it — no "security"/"vuln"/"leak" in either fix commit's wording — so it was added by hand).
+- **Full architectural-memory re-index** (`npm run arch:refresh:full`): 3056 symbols extracted, 3055 embedded, import graph fully populated (the DB wipe had emptied the symbol index; an incremental refresh only rebuilds recently-touched files and would have shrunk `docs/architecture-map.md` from ~4,460 lines to ~36 — reverted earlier, now properly restored to 4490 lines from the full re-index).
+- **Dropped the stray `drift_test` table** left over from the wipe incident.
+- **Found + fixed a real, separate bug while indexing INC-002**: `getSecurityIncidentsByRepo` (`scripts/lib/store/security.mjs`) never selected the `embedding` column, so the refresh loop's "reuse the prior embedding for unchanged content" fast path always treated a successful reuse as a failure — any security incident whose markdown doesn't change between refreshes would silently fall out of the vector index after its first successful embed. Added `parseVectorLiteral` (reads pgvector's text-format return value back into a real `number[]`) and included `embedding` in the SELECT. Live-verified against production: two consecutive `security:refresh` runs both show `embedFailures: 0` (the exact scenario that was failing before).
+- **Secondary fix, caught by the test suite itself**: adding a new `_internals` test-hook export to `security.mjs` leaked through `learning-store.mjs`'s `export *` barrel and broke its frozen public-surface contract test (which pins an exact function-only export list). Converted that one barrel line from `export *` to explicit named exports so `_internals` stays test-only, matching the barrel's existing curated-surface intent.
+- **Full suite**: 5280 passed, 0 failed, 21 pre-existing skips.
+
 ## 2026-07-14 — Feat: `AUDIT_CACHE_SEED` default-ON flip (PR #53) + fix: dead cloud routine, then a production Supabase wipe incident root-caused and closed
 
 ### Changes

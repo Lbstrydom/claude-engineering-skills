@@ -68,18 +68,39 @@ export async function recordSecurityIncidents(repoId, incidents) {
 }
 
 /**
+ * Parse a raw pgvector text literal ("[0.1,0.2,...]") back into a number[].
+ * `pg` has no built-in type parser for `vector` (a custom extension type),
+ * so a plain SELECT returns it as this text form, not an array. Found while
+ * root-causing a bug where `getSecurityIncidentsByRepo`'s missing `embedding`
+ * column made the refresh loop's "reuse the prior embedding on unchanged
+ * content" fast path always report a failure instead — `prior.embedding` was
+ * always `undefined`, so unchanged incidents could never actually be reused,
+ * only ever re-embedded or (if that path was skipped) marked failed.
+ * Null-safe: a NULL embedding column already comes back as `null` from `pg`,
+ * never a string.
+ */
+function parseVectorLiteral(raw) {
+  if (raw == null) return null;
+  if (Array.isArray(raw)) return raw;
+  const trimmed = String(raw).trim().replace(/^\[|\]$/g, '');
+  if (!trimmed) return [];
+  return trimmed.split(',').map(Number);
+}
+
+/**
  * Cache-hit comparison reader during refresh. Returns the rows in their
  * compact shape used by the refresh loop.
  */
 export async function getSecurityIncidentsByRepo(repoId) {
   if (!repoId || !await isCloudEnabled()) return [];
-  return many(
-    `SELECT id, incident_id, source_fingerprint, embedding_model, embedding_dim,
+  const rows = await many(
+    `SELECT id, incident_id, source_fingerprint, embedding, embedding_model, embedding_dim,
             status, mitigation_ref, mitigation_kind
        FROM security_incidents
       WHERE repo_id = $1`,
     [repoId]
   );
+  return rows.map((r) => ({ ...r, embedding: parseVectorLiteral(r.embedding) }));
 }
 
 /**
@@ -283,3 +304,6 @@ function formatVectorOrNull(embedding) {
   }
   return `[${embedding.join(',')}]`;
 }
+
+// Test-only access to pure helpers (mirrors anthropic-client.mjs's pattern).
+export const _internals = { parseVectorLiteral, formatVectorOrNull };
