@@ -18,6 +18,7 @@ import {
   recordSymbolDefinitions,
   recordSymbolIndex,
   recordDuplicateJustifications,
+  copyForwardUntouchedFiles,
 } from '../scripts/lib/store/arch/symbols.mjs';
 import { computeDriftScore, getTopDuplicateClusters } from '../scripts/lib/store/arch/neighbourhood.mjs';
 
@@ -170,5 +171,58 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     const cluster = clusters.find((c) => c.signatureHash === hash);
     assert.ok(cluster, 'cluster still reported — 2 unjustified members remain');
     assert.equal(cluster.fileCount, 2);
+  });
+
+  // Wine-cellar-app upstream bug report (2026-07-15): duplication_excluded_count
+  // stayed 0 across two real incremental refreshes despite a correctly-formatted,
+  // correctly-placed pragma. Every in-memory resolution step (findRepoPragmas,
+  // extract.mjs's per-touched-file walk, resolvePragmasToDefinitions) was
+  // separately live-verified to work correctly — including on an INCREMENTAL-
+  // mode extract.mjs invocation — ruling out the reporter's own hypothesis
+  // (finalSymbols narrowing). The one seam that ISN'T covered by the tests
+  // above: this file's existing tests write BOTH duplicate-pair members under
+  // ONE refresh_id (a full-refresh shape). A real incremental refresh, per
+  // refresh.mjs's actual step order, writes the TOUCHED file's row (step 10)
+  // and resolves+applies its pragma (step 12a) BEFORE copy-forwarding the
+  // UNTOUCHED duplicate partner's row from the prior refresh (step 13) — so
+  // this reproduces that exact cross-refresh shape and ordering.
+  it('incremental refresh: pragma on a touched file whose duplicate partner is copy-forwarded from a PRIOR refresh (the exact bug-report scenario)', async () => {
+    const pool = await getPool();
+    const hash = `sig-incremental-${crypto.randomUUID()}`;
+
+    // Refresh 1 (full): fileA:foo and fileB:foo share a signature_hash.
+    const r1 = await insertRefreshRun(pool, repoId);
+    const defA = await makeSymbol(r1, repoId, { filePath: 'fileA.mjs', symbolName: 'foo', kind: 'function', signatureHash: hash });
+    await makeSymbol(r1, repoId, { filePath: 'fileB.mjs', symbolName: 'foo', kind: 'function', signatureHash: hash });
+
+    // Refresh 2 (incremental): ONLY fileA touched (a pragma was added above
+    // foo). Mirrors refresh.mjs's REAL order: recordSymbolIndex for the
+    // touched file (step 10) -> recordDuplicateJustifications (step 12a) ->
+    // copyForwardUntouchedFiles for fileB (step 13) — pragma resolution and
+    // write happen BEFORE fileB's row exists under refresh 2 at all.
+    const r2 = await insertRefreshRun(pool, repoId);
+    const defMap2 = await recordSymbolDefinitions(repoId, [{ canonicalPath: 'fileA.mjs', symbolName: 'foo', kind: 'function' }]);
+    const defA2 = defMap2['fileA.mjs|foo|function'];
+    assert.equal(defA2, defA, 'symbol_definitions is stable across refreshes for an unchanged declaration');
+
+    await recordSymbolIndex(r2, repoId, [
+      { definitionId: defA2, filePath: 'fileA.mjs', startLine: 2, endLine: 4, signatureHash: hash, purposeSummary: null, domainTag: null },
+    ]);
+    const applied = await recordDuplicateJustifications(r2, repoId, [
+      { definitionId: defA2, reason: 'test pragma', target: 'fileB.mjs:foo', source: 'fileA.mjs:1' },
+    ]);
+    assert.equal(applied, 1, 'the UPDATE must match exactly the touched-file row just written');
+
+    const copied = await copyForwardUntouchedFiles({
+      repoId, fromRefreshId: r1, toRefreshId: r2, touchedFileSet: new Set(['fileA.mjs']),
+    });
+    assert.equal(copied, 1, 'fileB (untouched) copy-forwards from refresh 1 into refresh 2');
+
+    const clusters = await getTopDuplicateClusters({ repoId, refreshId: r2, limit: 20 });
+    assert.ok(!clusters.some((c) => c.signatureHash === hash), 'cluster excluded once fileB is copy-forwarded into the same refresh');
+
+    const drift = await computeDriftScore({ repoId, refreshId: r2, simDup: 0.85, simName: 0.9 });
+    assert.equal(drift.duplication_excluded_count, 1, 'the bug-report symptom: this stayed 0 in the field');
+    assert.equal(drift.duplication_pairs, 0, 'the pair must not count toward the drift score once excluded');
   });
 });
