@@ -81,7 +81,6 @@ export const SHADOW_LOG_PATH = path.join('.audit', 'tiered-shadow-log.jsonl');
 export function buildShadowCtx(ctx) {
   return {
     ...ctx,
-    runId: `${ctx.runId || 'run'}-shadow`,
     ledgerFile: null,
     noLedger: true,
     // Defense-in-depth for any future tiered-pipeline addition that DOES
@@ -89,6 +88,18 @@ export function buildShadowCtx(ctx) {
     // discover missing later.
     noDebtLedger: true,
     readOnlyDebt: true,
+    // Blocks ALL learning-store writes (audit_runs, audit_findings, pass
+    // stats, decisions, …) in runLegacyProductionAudit's cloud-recording
+    // block — reached when the tiered pipeline falls back to it internally
+    // on a required-generator failure, running CONCURRENTLY with the real,
+    // gating legacy audit for the same commit. `ctx.runId` is kept
+    // UNCHANGED (not mangled) — it's still used as a local telemetry label
+    // (tiered-pipeline.mjs's `_sid`), just never reaches a DB write here.
+    // Previously mangled to `${runId}-shadow` to dodge colliding with the
+    // real run's row, which isn't a valid uuid and made every attempt fail
+    // loudly (`invalid input syntax for type uuid`) instead of writing
+    // nothing — this flag is the actual fix, not a differently-shaped id.
+    noCloudRecording: true,
   };
 }
 
@@ -145,6 +156,15 @@ export function compareAuditRunResults(legacyResult, tieredResult) {
     // persisted comparison record).
     tieredStage1BudgetExhausted: tieredResult._stage1BudgetExhausted ?? null,
     tieredStage1FailureCategories: tieredResult._stage1FailureCategories ?? null,
+    // Diagnosability (2026-07-15): a `complete` shadow run with 0 findings
+    // was previously indistinguishable in stored telemetry from "both
+    // generators genuinely found nothing" vs "candidates existed but were
+    // dropped somewhere in Stage 0/1/2" — both fields already existed on
+    // the full tieredResult (overall_reasoning's structured source), just
+    // never copied into the persisted record. Same copy-straight-through
+    // convention as tieredFallbackReason/tieredStage1* above.
+    tieredGeneratorOutcomes: tieredResult.generatorOutcomes ?? null,
+    tieredStageBreakdown: tieredResult._stageBreakdown ?? null,
   };
 }
 

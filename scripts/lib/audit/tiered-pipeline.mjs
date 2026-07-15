@@ -493,6 +493,29 @@ export async function runTieredAuditPipeline(ctx) {
     generatorOutcomes: ctx.generatorOutcomes || [],
     runStatus: 'complete',
     _suppression,
+    // Structured mirror of `overall_reasoning` above (2026-07-15): that
+    // string is the ONLY place these per-stage counts existed, and
+    // compareAuditRunResults persists neither it nor generatorOutcomes into
+    // the shadow-log/DB record — a `complete` shadow run with 0 findings is
+    // otherwise undiagnosable after the fact (can't tell "both generators
+    // found nothing" from "candidates existed but Stage 0/1/2 dropped them
+    // all" without a live repro). Every count is set unconditionally
+    // (0 when nothing happened at that stage), same convention as
+    // _stage1BudgetExhausted below.
+    _stageBreakdown: {
+      discoveryRawFindings: rawFindings.length,
+      stage0Verified: stage0Verified.length,
+      stage0Rejected: envelopes.length - stage0Verified.length,
+      stage1MechanicalDismissed: triageResult.mechanicalDismissed.length,
+      stage1Escalated: triageResult.escalated.length,
+      stage1ConfirmedSurvivor: triageResult.confirmedSurvivor.length,
+      stage1BudgetExhausted: triageResult.budgetExhausted.length,
+      stage2Verified: stage2Result.verified.length,
+      stage2Reversed: stage2Result.reversed.length,
+      stage2ConfirmedDismissal: stage2Result.confirmedDismissal.length,
+      stage2MissedCandidate: stage2Result.missedCandidates.length,
+      stage2Unresolved: stage2Result.unresolved.length,
+    },
     pendingAdjudicationItems: stage2Result.unresolved.map((e) => e.candidateId).filter(Boolean),
     // Typed Stage-1 telemetry (docs/plans/oss-call-reliability-hardening.md
     // round-3 H1/H2), directly mirroring the existing _stage2BudgetExhausted

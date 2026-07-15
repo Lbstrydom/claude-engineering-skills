@@ -268,3 +268,62 @@ describe('ossStructuredCall — retry-delay via the injected scheduler (round-3 
     assert.deepEqual(delays, [45000, 800, 45000]);
   });
 });
+
+// 2026-07-15: live-verified against the real OpenRouter API (not just this
+// mock) that GLM-5.2 is proxied across 27 heterogeneous backends, at least
+// one of which wraps a valid json_schema-mode reply in a markdown fence —
+// extractRawJson previously handed that straight to JSON.parse, hard-failing
+// as "reply was not valid JSON" and discarding an otherwise-good response.
+// Also confirmed pinning OpenRouter to a single "trusted" backend (even the
+// model's own official one) is NOT the fix — Z.AI's own endpoint returned
+// 404 for json_schema mode entirely; unpinned routing correctly avoids it.
+// The fence-tolerant parse below is the actual fix.
+function fencedClient(payload, fenceLang = 'json') {
+  const body = fenceLang === null
+    ? '```\n' + JSON.stringify(payload) + '\n```'
+    : `\`\`\`${fenceLang}\n${JSON.stringify(payload)}\n\`\`\``;
+  return { chat: { completions: { create: async () => ({ choices: [{ message: { content: body }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) } } };
+}
+
+describe('ossStructuredCall — markdown-fence-tolerant JSON parsing (2026-07-15 GLM fence incident)', () => {
+  it('parses a reply wrapped in ```json ... ``` (the exact incident shape)', async () => {
+    const result = await ossStructuredCall(fencedClient({ ok: true }), {
+      model: 'm', system: 's', userPrompt: 'u', schema: SCHEMA, schemaName: 'x',
+    });
+    assert.equal(result.conformant, true);
+    assert.deepEqual(result.result, { ok: true });
+  });
+
+  it('parses a reply wrapped in a bare ``` fence (no language tag)', async () => {
+    const result = await ossStructuredCall(fencedClient({ ok: false }, null), {
+      model: 'm', system: 's', userPrompt: 'u', schema: SCHEMA, schemaName: 'x',
+    });
+    assert.equal(result.conformant, true);
+    assert.deepEqual(result.result, { ok: false });
+  });
+
+  it('unfenced replies are unaffected (regression guard — the common case)', async () => {
+    const result = await ossStructuredCall(successClient({ ok: true }), {
+      model: 'm', system: 's', userPrompt: 'u', schema: SCHEMA, schemaName: 'x',
+    });
+    assert.equal(result.conformant, true);
+    assert.deepEqual(result.result, { ok: true });
+  });
+
+  it('a genuinely malformed reply still fails — fence-stripping does not mask real errors', async () => {
+    const client = { chat: { completions: { create: async () => ({ choices: [{ message: { content: 'not json at all, no fence either' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) } } };
+    const result = await ossStructuredCall(client, { model: 'm', system: 's', userPrompt: 'u', schema: SCHEMA, schemaName: 'x' });
+    assert.equal(result.conformant, false);
+    assert.equal(result.error, 'reply was not valid JSON');
+  });
+
+  it('a fence-like substring inside actual prose (unanchored, not wrapping the whole reply) is not stripped', async () => {
+    // The regex is start/end-anchored — text like "see ```json``` for an
+    // example" embedded in non-JSON prose must NOT be treated as a fence
+    // wrapper; it should still fail as malformed, not silently mis-parse.
+    const client = { chat: { completions: { create: async () => ({ choices: [{ message: { content: 'Note: ```json``` is the format. {"ok": true}' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) } } };
+    const result = await ossStructuredCall(client, { model: 'm', system: 's', userPrompt: 'u', schema: SCHEMA, schemaName: 'x' });
+    assert.equal(result.conformant, false);
+    assert.equal(result.error, 'reply was not valid JSON');
+  });
+});

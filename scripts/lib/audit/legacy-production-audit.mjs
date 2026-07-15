@@ -1096,7 +1096,7 @@ export async function runLegacyProductionAudit(ctx) {
     noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false,
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
-    outFile = null, providers = {},
+    outFile = null, providers = {}, noCloudRecording = false,
   } = ctx;
   const { openai } = providers;
   const totalStart = Date.now();
@@ -1154,10 +1154,17 @@ export async function runLegacyProductionAudit(ctx) {
   }
   const { backend, frontend, shared } = classifyFiles(found);
 
-  // Record audit start in cloud store (fire-and-forget)
+  // Record audit start in cloud store (fire-and-forget). noCloudRecording
+  // (set by the tiered-shadow-compare harness when this function runs as
+  // the tiered pipeline's internal required-generator-failure fallback,
+  // concurrently with the REAL, gating legacy audit for the same commit) —
+  // this branch is invisible/observation-only by design and must never
+  // write audit_runs/audit_findings/etc.; it previously tried to avoid
+  // colliding with the real run's row via a `<runId>-shadow` id, which
+  // isn't a valid uuid and just failed loudly on every reuse-probe/insert.
   let cloudRunId = null;
   let cloudRepoId = null;
-  if ((await isCloudEnabled()) && repoProfile) {
+  if (!noCloudRecording && (await isCloudEnabled()) && repoProfile) {
     // Cluster A (§2.1): resolve the STABLE audit_repos.id via repo_uuid identity
     // (not the volatile content fingerprint that fragmented B1). The returned
     // repoRowId is what every child table's repo_id FK stores.

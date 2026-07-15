@@ -83,6 +83,21 @@ function normaliseUsage(u, latencyMs) {
   };
 }
 
+/**
+ * Strip a markdown code fence wrapping a JSON reply, if present. Some
+ * OpenRouter-hosted backends (GLM-5.2 is proxied across 27 different
+ * providers, not one consistent one — live-verified 2026-07-15) wrap valid
+ * JSON in ```json ... ``` even under `response_format: json_schema`, which
+ * previously hard-failed as "reply was not valid JSON" and discarded an
+ * otherwise-good response. Only strips an EXACT whole-string fence (anchored
+ * start/end) — never touches fence-like text legitimately inside a JSON
+ * string value, and a genuinely malformed reply still fails JSON.parse.
+ */
+function stripJsonMarkdownFence(text) {
+  const m = /^\s*```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/i.exec(text);
+  return m ? m[1] : text;
+}
+
 /** Extract the raw JSON text from a chat completion, whether json_schema or tool-call mode. */
 function extractRawJson(completion, mode) {
   const choice = completion?.choices?.[0];
@@ -92,7 +107,7 @@ function extractRawJson(completion, mode) {
     const call = choice.message?.tool_calls?.[0];
     return { text: call?.function?.arguments ?? '', truncated };
   }
-  return { text: choice.message?.content ?? '', truncated };
+  return { text: stripJsonMarkdownFence(choice.message?.content ?? ''), truncated };
 }
 
 /** Sanitize a name to the OpenAI-compatible tool/schema name shape `^[a-zA-Z0-9_-]{1,64}$` (audit R1 M6). */

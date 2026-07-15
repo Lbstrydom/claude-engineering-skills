@@ -35,6 +35,7 @@ describe('buildShadowCtx', () => {
     assert.equal(shadow.noLedger, true);
     assert.equal(shadow.noDebtLedger, true);
     assert.equal(shadow.readOnlyDebt, true);
+    assert.equal(shadow.noCloudRecording, true);
   });
 
   test('preserves read-only inputs unchanged (same commit, same diff)', () => {
@@ -45,9 +46,42 @@ describe('buildShadowCtx', () => {
     assert.equal(shadow.diffText, 'diff');
   });
 
-  test('runId is suffixed, never collides with the real run', () => {
+  test('runId is left unchanged — collision-avoidance is now noCloudRecording, not id-mangling', () => {
+    // Previously suffixed to `${runId}-shadow` to dodge colliding with the
+    // real run's audit_runs row — not a valid uuid, so every write attempt
+    // failed loudly instead of writing nothing. noCloudRecording blocks the
+    // write outright, so runId stays a valid, real id — still useful as a
+    // local telemetry label (tiered-pipeline.mjs's `_sid`).
     const shadow = buildShadowCtx({ runId: 'abc123' });
-    assert.equal(shadow.runId, 'abc123-shadow');
+    assert.equal(shadow.runId, 'abc123');
+    assert.equal(shadow.noCloudRecording, true);
+  });
+});
+
+// `runLegacyProductionAudit` is not exposed for dependency injection (a giant
+// orchestrator reading real provider/store modules), and its cloud-recording
+// block is only reachable with a live AUDIT_DB_URL — not hermetically
+// unit-mockable (see run-unification.test.mjs's identical reasoning for
+// recordRunStart). Static guard instead: pins that noCloudRecording is
+// destructured with the correct default AND actually gates the block that
+// sets cloudRepoId/cloudRunId, so a future refactor can't silently drop the
+// check and resume trying (and failing) to write shadow-fallback audit_runs
+// rows under an invalid `<uuid>-shadow` id.
+describe('runLegacyProductionAudit — noCloudRecording wiring (static regression guard)', () => {
+  test('noCloudRecording is destructured from ctx with a safe default', () => {
+    const src = fs.readFileSync(
+      path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8',
+    );
+    assert.match(src, /noCloudRecording\s*=\s*false/,
+      'expected `noCloudRecording = false` in the ctx destructure');
+  });
+
+  test('the cloud-recording gate checks !noCloudRecording', () => {
+    const src = fs.readFileSync(
+      path.resolve('scripts/lib/audit/legacy-production-audit.mjs'), 'utf-8',
+    );
+    assert.match(src, /if\s*\(!noCloudRecording\s*&&\s*\(await isCloudEnabled\(\)\)\s*&&\s*repoProfile\)/,
+      'expected the cloud-recording block\'s entry condition to short-circuit on !noCloudRecording');
   });
 });
 
@@ -101,6 +135,65 @@ describe('compareAuditRunResults', () => {
   test('fallbackReason is null (never undefined) when the tiered run completed normally', () => {
     const cmp = compareAuditRunResults({ findings: [], runStatus: 'complete' }, { findings: [], runStatus: 'complete' });
     assert.equal(cmp.tieredFallbackReason, null);
+  });
+
+  // 2026-07-15: two `complete` shadow runs landed with 0 tiered findings
+  // against 8-14 legacy findings each — genuinely undiagnosable, because
+  // neither generatorOutcomes nor the per-stage counts (both already
+  // computed on the full tieredResult) were ever copied into the persisted
+  // comparison. Same failure shape as the fallbackReason incident above:
+  // the data existed in memory and was thrown away before it reached
+  // storage. These two fields close that gap.
+  test('generatorOutcomes and stageBreakdown are passed through so a 0-finding complete run is diagnosable', () => {
+    const generatorOutcomes = [
+      { model: 'z-ai/glm-5.2', role: 'required', status: 'succeeded', findingCount: 3 },
+      { model: 'claude-sonnet-5', role: 'required', status: 'succeeded', findingCount: 2 },
+    ];
+    const stageBreakdown = {
+      discoveryRawFindings: 5, stage0Verified: 0, stage0Rejected: 5,
+      stage1MechanicalDismissed: 0, stage1Escalated: 0, stage1ConfirmedSurvivor: 0, stage1BudgetExhausted: 0,
+      stage2Verified: 0, stage2Reversed: 0, stage2ConfirmedDismissal: 0, stage2MissedCandidate: 0, stage2Unresolved: 0,
+    };
+    const cmp = compareAuditRunResults(
+      { findings: [], runStatus: 'complete' },
+      { findings: [], runStatus: 'complete', generatorOutcomes, _stageBreakdown: stageBreakdown },
+    );
+    assert.deepEqual(cmp.tieredGeneratorOutcomes, generatorOutcomes);
+    assert.deepEqual(cmp.tieredStageBreakdown, stageBreakdown);
+    // This exact shape (5 raw findings, 0 verified by Stage 0) is what
+    // "generators produced candidates but Stage 0 rejected all of them"
+    // looks like — distinguishable now from "generators found nothing"
+    // (discoveryRawFindings: 0), which was impossible before this fix.
+    assert.equal(cmp.tieredStageBreakdown.discoveryRawFindings, 5);
+    assert.equal(cmp.tieredStageBreakdown.stage0Verified, 0);
+  });
+
+  test('generatorOutcomes and stageBreakdown are null (never undefined) when absent', () => {
+    const cmp = compareAuditRunResults({ findings: [] }, { findings: [] });
+    assert.equal(cmp.tieredGeneratorOutcomes, null);
+    assert.equal(cmp.tieredStageBreakdown, null);
+  });
+});
+
+// tiered-pipeline.mjs's success-path return isn't hermetically unit-testable
+// end-to-end (Stage 0/1/2 need real provider adapters + evidence-triage
+// input shapes — see the Stage 2 fail-fast describe block below for why this
+// file only injection-tests the entry guard). Static guard instead: pins
+// that `_stageBreakdown` is built from the SAME variables as
+// `overall_reasoning` immediately above it, so the two can't silently drift
+// apart (e.g. a future edit changing what `overall_reasoning` counts
+// without updating the structured mirror, or vice versa).
+describe('runTieredAuditPipeline — _stageBreakdown wiring (static regression guard)', () => {
+  test('_stageBreakdown counts use the same source variables as overall_reasoning', () => {
+    const src = fs.readFileSync(
+      path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf-8',
+    );
+    assert.match(src, /discoveryRawFindings:\s*rawFindings\.length/);
+    assert.match(src, /stage0Verified:\s*stage0Verified\.length/);
+    assert.match(src, /stage0Rejected:\s*envelopes\.length\s*-\s*stage0Verified\.length/);
+    assert.match(src, /stage1MechanicalDismissed:\s*triageResult\.mechanicalDismissed\.length/);
+    assert.match(src, /stage2Verified:\s*stage2Result\.verified\.length/);
+    assert.match(src, /stage2Unresolved:\s*stage2Result\.unresolved\.length/);
   });
 });
 
