@@ -51,7 +51,7 @@
  */
 
 import { z } from 'zod';
-import { ProducerFindingSchema } from '../schemas.mjs';
+import { ProducerFindingSchema, clampToJsonSchemaLimits } from '../schemas.mjs';
 import { readFilesAsContext } from '../file-io.mjs';
 import { processFindings, computeAuditVerdict } from './findings-pipeline.mjs';
 import { mergeIntoEnvelopes, flattenEnvelopeToFinding } from './candidate-envelope.mjs';
@@ -65,6 +65,7 @@ import { callGPT } from './llm-helpers.mjs';
 import { tieredAuditConfig } from '../config.mjs';
 import { resolveModel } from '../model-resolver.mjs';
 import { resolveStage1TriagerModel } from './stage1-triager-resolver.mjs';
+import { getOssOperationPolicy, getStage1TriageBudget, calculateWorstCaseAttemptDuration } from '../oss-call-policy.mjs';
 
 const Stage1TriagerResponseSchema = z.object({
   dismissalAttempted: z.boolean(),
@@ -138,12 +139,25 @@ async function defaultTriagerCall(dto, providers) {
 async function validatedTriagerCall(dto, providers, model) {
   if (!providers?.ossCall) throw new Error('validatedTriagerCall: providers.ossCall is required');
   const { system, userPrompt } = buildStage1TriagerPrompt(dto);
-  const { result } = await providers.ossCall({
+  const { result, category, error } = await providers.ossCall({
     model, system, userPrompt,
     schema: Stage1TriagerResponseSchema,
     schemaName: 'stage1_triager_response',
     passName: 'stage1-triager',
+    operation: 'stage1_triage',
   });
+  // Fix a latent contract bug (docs/plans/oss-call-reliability-hardening.md
+  // round-1 H2): this function's own contract says "any failure THROWS,
+  // never fabricates a dismissal", but ossStructuredCall normally RETURNS a
+  // {result: null, failed: true, ...} shape on retry-exhaustion rather than
+  // throwing — so a failed call was silently returning null instead of
+  // throwing. `err.category` carries classification through the throw
+  // boundary so it can reach the schema-validated Stage-1 decision record.
+  if (!result) {
+    const err = new Error(`validatedTriagerCall: ossCall failed${error ? ` (${error})` : ''}`);
+    err.category = category ?? null;
+    throw err;
+  }
   return result;
 }
 
@@ -200,15 +214,31 @@ export async function runTieredAuditPipeline(ctx) {
   const discoveryCode = readFilesAsContext(ctx.changedFiles || [], { maxPerFile: 8000, maxTotal: 100000 });
 
   const glmModel = tieredAuditConfig.discoveryModel;
+  // Lenient ingestion for the discovery generator (2026-07-15): OSS routers
+  // accept our JSON Schema but don't enforce maxLength/maxItems, and GLM
+  // emitted `principle` fields >150 chars — the strict safeParse inside
+  // ossCall then hard-failed the WHOLE response, a required-generator
+  // failure, and every round fell back to legacy (the 4th distinct cause of
+  // an all-fallback shadow window). Over-limit strings/arrays are clamped
+  // BEFORE validation; genuinely semantic violations (enums, missing
+  // fields) still fail loud. z.toJSONSchema on the preprocess pipe resolves
+  // to the inner schema, so the provider-facing JSON Schema is unchanged.
+  const glmStrictSchema = z.object({ findings: z.array(ProducerFindingSchema).max(15) });
+  const glmResponseJsonSchema = z.toJSONSchema(glmStrictSchema);
+  const glmLenientSchema = z.preprocess(
+    (v) => clampToJsonSchemaLimits(v, glmResponseJsonSchema),
+    glmStrictSchema,
+  );
   const glmCall = providers.ossCall
     ? async () => {
-        const { result } = await providers.ossCall({
+        const { result, category, error } = await providers.ossCall({
           model: glmModel,
           system: 'You are a code-audit finding generator. Produce candidate findings with a content-verifiable evidence anchor where possible.',
           userPrompt: `## Plan\n${ctx.planContent ?? ''}\n\n## Changed Files (code)\n${discoveryCode}`,
-          schema: z.object({ findings: z.array(ProducerFindingSchema).max(15) }),
+          schema: glmLenientSchema,
           schemaName: 'discovery_glm_pass',
           passName: 'discovery-glm',
+          operation: 'discovery_generation',
         });
         // audit-code fix H2 (Cluster E round 3): `result?.findings ?? []`
         // silently converted a missing/malformed provider result into an
@@ -219,7 +249,13 @@ export async function runTieredAuditPipeline(ctx) {
         // §1.5's required-generator-failure fallback. A required generator
         // must fail LOUD, not fail quiet-and-clean.
         if (!result || !Array.isArray(result.findings)) {
-          throw new Error('glmCall: providers.ossCall did not return a result.findings array');
+          // docs/plans/oss-call-reliability-hardening.md round-1 H2: the
+          // original generic message discarded whatever category/error the
+          // underlying ossCall response carried — the exact gap that made
+          // the 2026-07-14 incident undiagnosable from stored telemetry.
+          const err = new Error(`glmCall: providers.ossCall did not return a result.findings array${error ? ` (${error})` : ''}`);
+          err.category = category ?? null;
+          throw err;
         }
         return result.findings;
       }
@@ -294,7 +330,7 @@ export async function runTieredAuditPipeline(ctx) {
     const discoveryGeneratorOutcomes = [...(ctx.generatorOutcomes || [])];
     const { runLegacyProductionAudit } = await import('./legacy-production-audit.mjs');
     const legacyResult = await runLegacyProductionAudit(ctx);
-    const failedNames = discoveryGeneratorOutcomes.filter((o) => o.role === 'required' && o.status === 'failed').map((o) => `${o.model}: ${o.errorMessage ?? 'unknown error'}`);
+    const failedNames = discoveryGeneratorOutcomes.filter((o) => o.role === 'required' && o.status === 'failed').map((o) => `${o.model}: ${o.category ? `[${o.category}] ` : ''}${o.errorMessage ?? 'unknown error'}`);
     return {
       ...legacyResult,
       generatorOutcomes: discoveryGeneratorOutcomes,
@@ -335,6 +371,15 @@ export async function runTieredAuditPipeline(ctx) {
     process.stderr.write(`  [tiered-pipeline] WARNING: Stage 1 triager falling back to GPT-5.5 (${reason})\n`);
     triagerCall = (envelope) => defaultTriagerCall(envelope, providers);
   }
+  // Resolve BOTH the Stage-1 admission budget AND the per-candidate
+  // worst-case duration HERE (docs/plans/oss-call-reliability-hardening.md
+  // round-3 M1 + Gemini-round-1 G2): this orchestrator is the only component
+  // that knows both that it's running under runShadowTieredPipeline's
+  // 20-minute race AND that its triager uses the OSS/stage1_triage policy
+  // specifically — runStage1CheapTriage stays a fully decoupled, reusable
+  // component that never imports OSS-policy internals itself.
+  const stage1AdmissionBudgetMs = getStage1TriageBudget();
+  const stage1CandidateWorstCaseMs = calculateWorstCaseAttemptDuration(getOssOperationPolicy('stage1_triage'));
   const triageResult = await runStage1CheapTriage(stage0Verified, { triagerCall }, {
     ledgerPath: ctx.ledgerFile,
     round: ctx.round,
@@ -343,6 +388,8 @@ export async function runTieredAuditPipeline(ctx) {
     // symlink-bypass class). This orchestrator-level `process.cwd()` mirrors
     // the SAME pattern `runArchitecturePass` already uses in the legacy path.
     repoRoot: process.cwd(),
+    admissionBudgetMs: stage1AdmissionBudgetMs,
+    candidateWorstCaseMs: stage1CandidateWorstCaseMs,
   });
   const stage1LatencyMs = Date.now() - stage1Start;
 
@@ -401,7 +448,7 @@ export async function runTieredAuditPipeline(ctx) {
   const overall_reasoning = [
     `**Discovery portfolio**:\n${generatorSummary || 'n/a'}`,
     `**Stage 0**: ${stage0Verified.length} verified / ${envelopes.length - stage0Verified.length} rejected (local telemetry only)`,
-    `**Stage 1**: ${triageResult.mechanicalDismissed.length} mechanical_dismissed, ${triageResult.escalated.length} escalated, ${triageResult.confirmedSurvivor.length} confirmed_survivor (direct to human queue)`,
+    `**Stage 1**: ${triageResult.mechanicalDismissed.length} mechanical_dismissed, ${triageResult.escalated.length} escalated, ${triageResult.confirmedSurvivor.length} confirmed_survivor (direct to human queue), ${triageResult.budgetExhausted.length} budget_exhausted (not reviewed this round)`,
     `**Stage 2**: ${stage2Result.verified.length} verified, ${stage2Result.reversed.length} reversed, ${stage2Result.confirmedDismissal.length} confirmed_dismissal, ${stage2Result.missedCandidates.length} missed_candidate, ${stage2Result.unresolved.length} pending_adjudication`,
   ].join('\n\n');
 
@@ -447,5 +494,16 @@ export async function runTieredAuditPipeline(ctx) {
     runStatus: 'complete',
     _suppression,
     pendingAdjudicationItems: stage2Result.unresolved.map((e) => e.candidateId).filter(Boolean),
+    // Typed Stage-1 telemetry (docs/plans/oss-call-reliability-hardening.md
+    // round-3 H1/H2), directly mirroring the existing _stage2BudgetExhausted
+    // shape — set unconditionally (0/[] when nothing was skipped/classified,
+    // never omitted) so a consumer never has to distinguish "absent" from
+    // "zero". compareAuditRunResults (tiered-shadow-compare.mjs) copies both
+    // into the persisted shadow-log record.
+    _stage1BudgetExhausted: {
+      count: triageResult.skippedBudgetExhaustedCount,
+      itemIds: triageResult.budgetExhausted.map((e) => e.candidateId).filter(Boolean),
+    },
+    _stage1FailureCategories: triageResult.failureCategories,
   };
 }

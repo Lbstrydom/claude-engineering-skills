@@ -28,6 +28,8 @@
  * @module scripts/lib/audit/stage1-triage
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { Stage1DecisionSchema, StageOneTriageInputSchema, normalizeFindingEvidence } from '../schemas.mjs';
 import { generateTopicId, writeStage1MechanicalLedgerEntry } from '../ledger.mjs';
 import { resolveAndClassify, classifyPath } from '../sensitive-paths.mjs';
@@ -45,7 +47,82 @@ import { redact } from '../redact.mjs';
 // 2 — this is a SECONDARY, defense-in-depth net behind the structured
 // `section` field, which is the primary, complete path-redaction contract).
 const SPLIT_BOUNDARY = /[\s`()[\]{}"']+/;
-const EDGE_PUNCT = /^[.,:;!?]+|[.,:;!?]+$/g;
+// audit-code round-2 H1 (root-caused, not just patched): stripping a LEADING
+// `.` was silently destroying the classification of any dotfile mention —
+// ".env" -> "env" no longer matches `.env`'s sensitive pattern at all. This
+// was a pre-existing gap (predates this plan's diff), invisible because no
+// existing test used a leading-dot sensitive name (only extension-less
+// "id_rsa" and slash-shaped "secrets/db.yaml" were covered). The leading
+// strip now excludes `.` — a genuinely leading sentence-punctuation char
+// (`,`/`:`/`;`/`!`/`?`) is still stripped; a leading `.` is preserved since
+// it is semantically load-bearing for dotfile names. Trailing strip is
+// unaffected — a sentence-ending period after a dotfile mention (".env.")
+// still correctly leaves ".env".
+const EDGE_PUNCT_LEADING = /^[,:;!?]+/;
+const EDGE_PUNCT_TRAILING = /[.,:;!?]+$/;
+// audit-code round-2 H1: a source-location citation ("see .env:12 for the
+// value") wasn't being normalized before classification — `classifyPath`
+// tests the LITERAL token, so ".env:12" ≠ ".env" and the lexical/symlink
+// checks below would both silently miss it. Mirrors the `section` field's
+// OWN existing convention (`rawSection.split(':')[0]`) — strip a trailing
+// `:line` or `:line:col` suffix before classifying, but keep the ORIGINAL
+// token as the redaction match target so the whole "path:line" mention
+// (not just the path portion) gets replaced.
+const SOURCE_LOCATION_SUFFIX = /:\d+(?::\d+)?$/;
+
+/**
+ * Candidate-aware canonical classifier for free-text tokens (audit-code
+ * round 1, H1/H3 — sustained twice with a concrete, proportionate remediation
+ * request: "a dedicated design within this implementation... not a broad new
+ * scanning framework"). `sensitive-paths.mjs::resolveAndClassify` is NOT
+ * reusable here directly: its contract fail-closes to `'sensitive'` on ANY
+ * `fs.realpathSync` error INCLUDING plain ENOENT — correct for a structured
+ * field known to hold exactly one real repo path (`section`, an anchor's
+ * `newFile`), but catastrophic for free-text tokenization, where the
+ * overwhelming majority of tokens are ordinary English words that simply
+ * don't exist on disk. Naively reusing `resolveAndClassify` per-token would
+ * redact nearly all prose (verified directly: `fs.realpathSync('the')`
+ * ENOENTs like any other non-path word).
+ *
+ * This helper inverts that default: ENOENT (the token doesn't correspond to
+ * a real file) means "ordinary word, not a path at all" — benign, not
+ * fail-closed. Only a token that resolves to a REAL, EXISTING filesystem
+ * entry is classified further: if its canonical (symlink-resolved) target
+ * is lexically sensitive, or escapes `repoRoot` entirely, it's sensitive —
+ * closing the symlink-bypass gap H3 identified for candidate path-shaped
+ * free-text mentions, without the false-positive blast radius a blind
+ * `resolveAndClassify` swap would cause.
+ *
+ * @param {string} token
+ * @param {string} repoRoot
+ * @returns {boolean}
+ */
+function isSensitiveViaSymlinkResolution(token, repoRoot) {
+  let abs;
+  try {
+    abs = path.isAbsolute(token) ? token : path.resolve(repoRoot, token);
+  } catch {
+    return false; // not a resolvable path shape at all — ordinary token
+  }
+  let canonical;
+  try {
+    canonical = fs.realpathSync(abs);
+  } catch (err) {
+    // audit-code round-2 H2: ENOENT/ENOTDIR specifically mean "this path
+    // segment doesn't exist" — the EXPECTED, overwhelmingly common case for
+    // an ordinary English word being resolved as a path candidate, and the
+    // only case safe to treat as benign. Any OTHER error (EACCES — exists
+    // but permission-denied; ELOOP — symlink cycle; etc.) means the path
+    // DOES exist but its target could not be verified — that must fail-
+    // closed to sensitive, matching `resolveAndClassify`'s own contract for
+    // genuine resolution problems, not be conflated with "just a word".
+    if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return false;
+    return true;
+  }
+  const rel = path.relative(path.resolve(repoRoot), canonical);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return true; // escapes repo — fail-safe
+  return classifyPath(canonical) === 'sensitive';
+}
 
 /**
  * Tokenize-then-classify a free-text string for embedded sensitive-path
@@ -61,19 +138,32 @@ const EDGE_PUNCT = /^[.,:;!?]+|[.,:;!?]+$/g;
  * token has its EXACT original (un-trimmed) substring replaced, so
  * enclosing punctuation redacts along with it.
  *
+ * A token that survives the lexical check is ALSO checked via
+ * `isSensitiveViaSymlinkResolution` (audit-code round-1 H1/H3) — a token
+ * whose lexical name is innocent but which resolves (as a real, existing
+ * file) to a sensitive canonical target is caught too, closing the
+ * symlink-bypass gap the structured `section`/anchor-file fields already
+ * close via `resolveAndClassify`.
+ *
  * @param {string|null|undefined} text
+ * @param {string} repoRoot
  * @returns {{text: string, redacted: boolean}}
  */
-function redactFreeText(text) {
+function redactFreeText(text, repoRoot) {
   if (text == null) return { text: '', redacted: false };
   const raw = String(text);
   let scanned = raw;
   let anyRedacted = false;
   const rawTokens = raw.split(SPLIT_BOUNDARY).filter(Boolean);
   for (const rawToken of rawTokens) {
-    const trimmed = rawToken.replace(EDGE_PUNCT, '');
+    const trimmed = rawToken.replace(EDGE_PUNCT_LEADING, '').replace(EDGE_PUNCT_TRAILING, '');
     if (!trimmed) continue;
-    if (classifyPath(trimmed) === 'sensitive') {
+    // Strip a trailing source-location suffix (":12", ":12:4") BEFORE
+    // classification (round-2 H1) — ".env:12" must classify the same as
+    // ".env"; the ORIGINAL rawToken (still carrying the suffix) remains the
+    // redaction match target so the whole citation is replaced.
+    const pathCandidate = trimmed.replace(SOURCE_LOCATION_SUFFIX, '');
+    if (classifyPath(pathCandidate) === 'sensitive' || isSensitiveViaSymlinkResolution(pathCandidate, repoRoot)) {
       anyRedacted = true;
       scanned = scanned.split(rawToken).join('[REDACTED]');
     }
@@ -167,8 +257,8 @@ export function buildStageOneTriageInput(finding, opts) {
     redacted = true;
   }
 
-  const categoryResult = redactFreeText(f.category);
-  const detailResult = redactFreeText(f.detail);
+  const categoryResult = redactFreeText(f.category, repoRoot);
+  const detailResult = redactFreeText(f.detail, repoRoot);
   if (categoryResult.redacted || detailResult.redacted) redacted = true;
 
   const evidence = normalizeFindingEvidence(f);
@@ -191,7 +281,7 @@ export function buildStageOneTriageInput(finding, opts) {
     if (anchorIsSensitive) {
       redacted = true; // source file itself is sensitive — degrade the quote to null
     } else if (quote) {
-      const r = redactFreeText(quote);
+      const r = redactFreeText(quote, repoRoot);
       anchorQuote = r.text;
       if (r.redacted) redacted = true;
     }
@@ -202,7 +292,7 @@ export function buildStageOneTriageInput(finding, opts) {
     if (anchorIsSensitive) {
       redacted = true; // trigger anchor's file is sensitive — degrade the chain to null too
     } else {
-      const r = redactFreeText(evidence.causalChain);
+      const r = redactFreeText(evidence.causalChain, repoRoot);
       causalChain = r.text;
       if (r.redacted) redacted = true;
     }
@@ -319,8 +409,12 @@ function writeMechanicalDismissalToLedger(envelope, disproof, ledgerOpts) {
  *   fabricated `{dismissalAttempted: false}`) — this function treats a throw
  *   as `stage1_escalated` per §1.5's failure semantics ("never treated as an
  *   implicit dismissal")
- * @param {() => string} [adapters.clock]
- * @param {{ledgerPath?: string|null, round?: number, repoRoot: string}} ledgerOpts -
+ * @param {() => string} [adapters.clock] - ISO-timestamp clock for `createdAt`
+ *   fields (distinct from `ledgerOpts.clock` below, a monotonic elapsed-time
+ *   source for the admission guard).
+ * @param {{ledgerPath?: string|null, round?: number, repoRoot: string,
+ *   admissionBudgetMs?: number|null, candidateWorstCaseMs?: number|(() => number),
+ *   clock?: () => number}} ledgerOpts -
  *   tiered-recall pipeline Phase 11 introduced `ledgerPath`/`round` as opt-in
  *   (omitting the whole object preserves the pre-Phase-11 no-ledger-I/O
  *   behavior). `repoRoot` (audit-orchestrator-hardening Phase 8) is now
@@ -332,7 +426,21 @@ function writeMechanicalDismissalToLedger(envelope, disproof, ledgerOpts) {
  *   When `ledgerPath` is set, every `mechanical_dismissed` decision is ALSO
  *   written via `writeStage1MechanicalLedgerEntry` at the point the decision
  *   is made (not deferred to a later finalize step).
- * @returns {Promise<{mechanicalDismissed: Array<object>, escalated: Array<object>, confirmedSurvivor: Array<object>}>}
+ *   **Admission guard** (docs/plans/oss-call-reliability-hardening.md, round-3
+ *   M1 + Gemini-round-1 G2): `admissionBudgetMs` and `candidateWorstCaseMs` are
+ *   BOTH caller-owned — this function never resolves an OSS policy or a
+ *   deadline itself, keeping it a fully decoupled, reusable Stage-1 triage
+ *   component (a caller using a non-OSS adapter, or with no outer deadline,
+ *   simply omits both — the guard never triggers, every envelope is processed
+ *   exactly as before this feature existed). `clock` defaults to
+ *   `() => performance.now()` (monotonic — immune to NTP/VM wall-clock
+ *   adjustments, unlike `Date.now()`); tests inject a fake monotonic counter.
+ * @returns {Promise<{mechanicalDismissed: Array<object>, escalated: Array<object>,
+ *   confirmedSurvivor: Array<object>, budgetExhausted: Array<object>,
+ *   skippedBudgetExhaustedCount: number, failureCategories: Record<string, number>}>}
+ *   `budgetExhausted` is a separate bucket, never merged into `escalated` — the
+ *   caller must NOT route it into Stage 2 (that would inflate Stage 2's
+ *   workload instead of reducing total worst-case time — round-2 H1).
  * @throws {Error} if an internally-constructed Stage1 decision record fails schema
  *   validation (audit fix H2 — a code bug, never expected in normal operation),
  *   or if `buildStageOneTriageInput` is invoked with no `repoRoot` wired.
@@ -341,9 +449,40 @@ export async function runStage1CheapTriage(envelopes, adapters, ledgerOpts = nul
   const mechanicalDismissed = [];
   const escalated = [];
   const confirmedSurvivor = [];
+  const budgetExhausted = [];
+  const failureCategories = {};
   const repoRoot = ledgerOpts?.repoRoot;
 
+  const admissionBudgetMs = ledgerOpts?.admissionBudgetMs ?? null;
+  const candidateWorstCaseMsOpt = ledgerOpts?.candidateWorstCaseMs;
+  // Monotonic elapsed-time source (round-3 M3, Gemini-round-1 G1's crash-bug
+  // fix applied): an arrow-function wrapper, NEVER the bare `performance.now`
+  // method reference — calling it unbound throws `TypeError: Illegal
+  // invocation` (performance.now relies on `this` being bound internally).
+  const admissionClock = ledgerOpts?.clock ?? (() => performance.now());
+  const loopStartMs = admissionBudgetMs != null ? admissionClock() : null;
+
   for (const envelope of envelopes) {
+    // Admission guard (round-1 H1's compromise ruling, round-2/3 fixes): only
+    // active when the caller passed a budget. Re-evaluated every iteration —
+    // once exhausted, elapsed time only grows, so every remaining envelope
+    // is naturally skipped without an explicit early-exit branch.
+    if (admissionBudgetMs != null) {
+      const worstCaseMs = typeof candidateWorstCaseMsOpt === 'function' ? candidateWorstCaseMsOpt() : candidateWorstCaseMsOpt;
+      if ((admissionClock() - loopStartMs) + worstCaseMs > admissionBudgetMs) {
+        const skippedDecision = {
+          stage: 'stage1', outcome: 'budget_exhausted', reasonCode: 'skipped_budget_exhausted',
+          hasDeterministicDisproof: false, createdAt: nowIso(adapters.clock),
+        };
+        const parsedSkipped = Stage1DecisionSchema.safeParse(skippedDecision);
+        if (!parsedSkipped.success) {
+          throw new Error(`runStage1CheapTriage: internally-constructed budget-exhausted decision failed schema validation — ${parsedSkipped.error.message.slice(0, 200)}`);
+        }
+        envelope.stageDecisions.push(parsedSkipped.data);
+        budgetExhausted.push(envelope);
+        continue;
+      }
+    }
     // Phase 8: build the minimized, redacted DTO OUTSIDE the main try/catch —
     // a missing/misconfigured repoRoot is a wiring bug and must throw
     // loudly, never silently degrade into "escalate everything" via the
@@ -372,7 +511,15 @@ export async function runStage1CheapTriage(envelopes, adapters, ledgerOpts = nul
       const response = await adapters.triagerCall(dto);
       decision = classifyStage1Outcome(envelope.canonicalFinding, response);
     } catch (err) {
-      decision = { outcome: 'escalated', reasonCode: 'stage1_call_failed', hasDeterministicDisproof: false, errorMessage: err?.message || String(err) };
+      // Classification now reaches the schema-validated record (round-3 H1,
+      // the concrete fix after two prior rounds only fixed the DISCOVERY
+      // path's category propagation): `validatedTriagerCall`/`ossCall` set
+      // `err.category` on a classified failure; captured here instead of
+      // being dropped.
+      decision = {
+        outcome: 'escalated', reasonCode: 'stage1_call_failed', hasDeterministicDisproof: false,
+        errorMessage: err?.message || String(err), category: err?.category ?? null,
+      };
     }
 
     // audit fix H2 (round 1): this is an INTERNALLY-CONSTRUCTED record — a
@@ -385,6 +532,7 @@ export async function runStage1CheapTriage(envelopes, adapters, ledgerOpts = nul
       reasonCode: decision.reasonCode,
       hasDeterministicDisproof: decision.hasDeterministicDisproof,
       createdAt: nowIso(adapters.clock),
+      category: decision.category ?? null,
     };
     const parsed = Stage1DecisionSchema.safeParse(stageDecision);
     if (!parsed.success) {
@@ -395,9 +543,17 @@ export async function runStage1CheapTriage(envelopes, adapters, ledgerOpts = nul
     if (decision.outcome === 'mechanical_dismissed') {
       if (ledgerOpts?.ledgerPath) writeMechanicalDismissalToLedger(envelope, decision.disproof, ledgerOpts);
       mechanicalDismissed.push(envelope);
-    } else if (decision.outcome === 'escalated') escalated.push(envelope);
-    else confirmedSurvivor.push(envelope);
+    } else if (decision.outcome === 'escalated') {
+      escalated.push(envelope);
+      // Aggregate tally of classified failure categories this round (round-3
+      // H1) — the persisted answer to "classification remains lost for the
+      // live sequential Stage-1 production route".
+      if (decision.category) failureCategories[decision.category] = (failureCategories[decision.category] || 0) + 1;
+    } else confirmedSurvivor.push(envelope);
   }
 
-  return { mechanicalDismissed, escalated, confirmedSurvivor };
+  return {
+    mechanicalDismissed, escalated, confirmedSurvivor,
+    budgetExhausted, skippedBudgetExhaustedCount: budgetExhausted.length, failureCategories,
+  };
 }

@@ -276,10 +276,22 @@ export const Stage0DecisionSchema = z.object({
 
 export const Stage1DecisionSchema = z.object({
   stage: z.literal('stage1'),
-  outcome: z.enum(['mechanical_dismissed', 'escalated', 'confirmed_survivor']),
+  // `budget_exhausted` added (docs/plans/oss-call-reliability-hardening.md,
+  // round-2 H2): mirrors Stage2DecisionSchema's `pending_adjudication`
+  // precedent below — a work item the admission guard never started because
+  // the reserved Stage-1 wall-clock budget ran out, distinct from
+  // `stage1_call_failed` (a real provider/triager failure). Never written to
+  // the mechanical-dismissal ledger, so it naturally resurfaces if the
+  // underlying finding is rediscovered — same non-loss guarantee
+  // `pending_adjudication` already has.
+  outcome: z.enum(['mechanical_dismissed', 'escalated', 'confirmed_survivor', 'budget_exhausted']),
   reasonCode: z.string().max(200),
   hasDeterministicDisproof: z.boolean(),
   createdAt: z.string(),
+  // Present (never `null`) only when outcome is `escalated` with reasonCode
+  // `stage1_call_failed` AND the underlying error was classifyLlmError-
+  // classified; absent/null for every other outcome.
+  category: z.string().nullable().optional(),
 });
 
 export const Stage2DecisionSchema = z.object({
@@ -369,6 +381,61 @@ function stripJsonSchemaExtras(obj) {
 export function zodToGeminiSchema(zodSchema) {
   const raw = z.toJSONSchema(zodSchema);
   return stripJsonSchemaExtras(raw);
+}
+
+/**
+ * Clamp a parsed LLM reply to a JSON Schema's cosmetic size limits BEFORE
+ * strict Zod validation — truncates strings exceeding `maxLength` and slices
+ * arrays exceeding `maxItems`, guided by the schema tree. Everything else
+ * (enums, types, required fields, semantic invariants) is deliberately left
+ * for the real validator to reject.
+ *
+ * Why this exists (2026-07-15): OpenRouter/OSS providers accept our derived
+ * JSON Schema via `response_format: json_schema` but do NOT enforce
+ * `maxLength`/`maxItems` — GLM emitted `principle` fields >150 chars, the
+ * strict `safeParse` in oss-structured-output.mjs hard-failed the entire
+ * discovery response, and the tiered pipeline's required-generator failure
+ * fell the whole round back to legacy. For a DISCOVERY generator whose
+ * candidates are re-verified by Stage 0/1/2 anyway, an over-long field is
+ * cosmetic — truncating is honest; discarding the round is not.
+ *
+ * Use via `z.preprocess`, which keeps `z.toJSONSchema` working on the
+ * wrapped schema (a preprocess pipe converts as its output schema):
+ *
+ *   const lenient = z.preprocess(
+ *     (v) => clampToJsonSchemaLimits(v, z.toJSONSchema(strictSchema)),
+ *     strictSchema,
+ *   );
+ *
+ * @param {*} value - parsed (post-JSON.parse) reply value
+ * @param {object} jsonSchema - the matching JSON Schema node (z.toJSONSchema output)
+ * @returns {*} value with over-limit strings/arrays clamped
+ */
+export function clampToJsonSchemaLimits(value, jsonSchema) {
+  if (jsonSchema == null || typeof jsonSchema !== 'object' || value == null) return value;
+  if (typeof value === 'string') {
+    // Never truncate enum values — a clipped enum is corruption, not cosmetics.
+    if (!jsonSchema.enum && Number.isInteger(jsonSchema.maxLength) && value.length > jsonSchema.maxLength) {
+      return value.slice(0, jsonSchema.maxLength);
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const capped = Number.isInteger(jsonSchema.maxItems) && value.length > jsonSchema.maxItems
+      ? value.slice(0, jsonSchema.maxItems)
+      : value;
+    return jsonSchema.items ? capped.map((v) => clampToJsonSchemaLimits(v, jsonSchema.items)) : capped;
+  }
+  if (typeof value === 'object' && jsonSchema.properties) {
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = Object.hasOwn(jsonSchema.properties, k)
+        ? clampToJsonSchemaLimits(v, jsonSchema.properties[k])
+        : v;
+    }
+    return out;
+  }
+  return value;
 }
 
 // ── Derived JSON Schema ──────────────────────────────────────────────────────
@@ -514,6 +581,15 @@ export const AuditRunResultSchema = z.object({
   // budget-exhaustion path (Phase 9's FinalAdjudicationBudget) surfaces on
   // the run result the next round's R2+ mechanism reads.
   _stage2BudgetExhausted: z.object({ count: z.number(), itemIds: z.array(z.string()) }).optional(),
+  // Added (docs/plans/oss-call-reliability-hardening.md, round-3 H1/H2) —
+  // the Stage-1 sibling of `_stage2BudgetExhausted` above, same shape: how
+  // the Stage-1 admission guard's skipped candidates surface on the run
+  // result (and, via compareAuditRunResults, the persisted shadow log).
+  _stage1BudgetExhausted: z.object({ count: z.number(), itemIds: z.array(z.string()) }).optional(),
+  // Aggregate tally of classified Stage-1 failure categories this round
+  // (e.g. {timeout: 2, network: 1}) — the persisted answer to "classification
+  // remains lost for the live sequential Stage-1 production route".
+  _stage1FailureCategories: z.record(z.string(), z.number()).optional(),
   pendingAdjudicationItems: z.array(z.string()).optional(),
   // Added 2026-07-10 (Phase 12) — item IDs routed to the NEW
   // `pendingSecurityReview` accumulator (final-adjudication.mjs), distinct

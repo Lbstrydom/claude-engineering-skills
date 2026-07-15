@@ -36,6 +36,9 @@ import { resolveModel } from '../model-resolver.mjs';
  * @property {'succeeded'|'failed'|'skipped'} status
  * @property {number} findingCount
  * @property {string} [errorMessage]
+ * @property {string|null} [category] - classifyLlmError category (timeout/network/
+ *   http-4xx/permanent), when the underlying error was classified. Threaded from
+ *   err.category (docs/plans/oss-call-reliability-hardening.md).
  */
 
 /**
@@ -72,6 +75,7 @@ async function runOneGenerator(generator, generatorOutcomes) {
       model: generator.model, role: generator.role, status: 'failed', findingCount: 0,
       errorMessage: err?.message || String(err),
       errorStatus: err?.status ?? null,
+      category: err?.category ?? null,
     });
     return [];
   }

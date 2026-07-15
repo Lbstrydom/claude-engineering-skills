@@ -30,6 +30,10 @@ import { z } from 'zod';
 import { classifyLlmError } from './robustness.mjs';
 import { assertEgressSafe } from './sensitive-egress-gate.mjs';
 import { sanitizeTokens } from './model-pricing.mjs';
+import { getOssOperationPolicy, RETRY_BACKOFF_BASE_MS } from './oss-call-policy.mjs';
+
+const DEFAULT_SCHEDULER = Object.freeze({ setTimeout, clearTimeout, setInterval, clearInterval });
+const HEARTBEAT_INTERVAL_MS = 15000;
 
 /** Derive a plain JSON Schema from a Zod schema for the provider's structured-output field. */
 export function zodToOpenAiJsonSchema(zodSchema) {
@@ -130,8 +134,14 @@ function describeProviderError(err) {
  * @param {import('zod').ZodType} opts.schema
  * @param {string}  opts.schemaName
  * @param {number} [opts.maxTokens=16000]
- * @param {number} [opts.timeoutMs=300000]
- * @param {number} [opts.maxRetries=2]  - retries for RETRYABLE categories only
+ * @param {number} [opts.timeoutMs]  - explicit override; wins over the resolved policy
+ * @param {number} [opts.maxRetries]  - explicit override; wins over the resolved policy
+ * @param {string} [opts.operation]  - semantic operation key resolved against
+ *   oss-call-policy.json (docs/plans/oss-call-reliability-hardening.md). Omitted →
+ *   today's literal defaults (300s/2 retries), byte-identical for dormant callers.
+ *   Present but unrecognized → throws immediately (never silently falls back).
+ * @param {{setTimeout:Function, clearTimeout:Function, setInterval:Function, clearInterval:Function}} [opts.scheduler]
+ *   - injectable timer source (default: native globals) for deterministic tests.
  * @param {string} [opts.passName]
  * @param {'low'|'medium'|'high'|null} [opts.reasoningEffort]  - REASONING PARITY
  *   (plan D4a): OpenRouter's unified `reasoning:{effort}` param, normalized
@@ -141,14 +151,25 @@ function describeProviderError(err) {
  *   `requestedReasoningEffort:null` records that the knob was not set).
  * @returns {Promise<{result:object|null, usage:object, latencyMs:number,
  *   conformant:boolean, failed:boolean, error:string|null, mode:'json_schema'|'tool'|null,
- *   requestedReasoningEffort:string|null}>}
+ *   requestedReasoningEffort:string|null, category?:string}>} `category` is present
+ *   (never `null`) only on a `classifyLlmError`-routed failure; absent on success and
+ *   on the non-classified early-return failure paths (schema derivation/truncation/
+ *   JSON-parse/schema-validation).
  */
 export async function ossStructuredCall(client, opts) {
   const {
     model, system, userPrompt, schema, schemaName,
-    maxTokens = 16000, timeoutMs = 300000, maxRetries = 2, passName = 'oss',
-    reasoningEffort = null,
+    maxTokens = 16000, operation, passName = 'oss',
+    reasoningEffort = null, scheduler = DEFAULT_SCHEDULER,
   } = opts;
+
+  const resolvedPolicy = getOssOperationPolicy(operation);
+  const timeoutMs = opts.timeoutMs ?? resolvedPolicy.timeoutMs;
+  const maxRetries = opts.maxRetries ?? resolvedPolicy.maxRetries;
+  // JSON.stringify drops `undefined`-valued keys — a heartbeat record for an
+  // omitted operation must use a canonical label instead (round-2 L1), so it
+  // doesn't silently vanish from serialized log output.
+  const heartbeatOperationLabel = operation ?? 'legacy_default';
 
   if (!model) throw new Error('[oss-structured-output] opts.model (resolved id) is required');
   if (typeof system !== 'string' || typeof userPrompt !== 'string') {
@@ -184,7 +205,17 @@ export async function ossStructuredCall(client, opts) {
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const attemptStartMs = Date.now();
+    const timer = scheduler.setTimeout(() => controller.abort(), timeoutMs);
+    // In-flight heartbeat (round-1 M4): logs progress while THIS attempt is
+    // outstanding, independent of the abort timer. Cleared in the same
+    // try/finally scope as `timer` on every exit path.
+    const heartbeat = scheduler.setInterval(() => {
+      process.stderr.write(`  [${passName}] OSS heartbeat: ${JSON.stringify({
+        operation: heartbeatOperationLabel, model, attempt: attempt + 1, maxRetries,
+        elapsedMs: Date.now() - attemptStartMs, timeoutMs,
+      })}\n`);
+    }, HEARTBEAT_INTERVAL_MS);
     try {
       const params = {
         model,
@@ -212,7 +243,6 @@ export async function ossStructuredCall(client, opts) {
       // wire call so nothing egresses unchecked.
       assertEgressSafe(params, { label: `oss:${passName}:${mode}` });
       const completion = await client.chat.completions.create(params, { signal: controller.signal });
-      clearTimeout(timer);
       const latencyMs = Date.now() - startMs;
       const usage = normaliseUsage(completion.usage, latencyMs);
 
@@ -239,7 +269,6 @@ export async function ossStructuredCall(client, opts) {
       }
       return { result: validated.data, usage, latencyMs, conformant: true, failed: false, error: null, mode, requestedReasoningEffort: reasoningEffort };
     } catch (err) {
-      clearTimeout(timer);
       lastErr = err;
 
       // An egress-gate refusal must NEVER be swallowed into a graceful "failed"
@@ -260,18 +289,24 @@ export async function ossStructuredCall(client, opts) {
 
       const { retryable, category } = classifyLlmError(err);
       if (attempt < maxRetries && retryable) {
-        const delayMs = 800 * (attempt + 1);
+        const delayMs = RETRY_BACKOFF_BASE_MS * (attempt + 1);
         process.stderr.write(`  [${passName}] OSS retry ${attempt + 1}/${maxRetries} in ${(delayMs / 1000).toFixed(1)}s [${category}]\n`);
-        await new Promise((r) => setTimeout(r, delayMs));
+        await new Promise((r) => scheduler.setTimeout(r, delayMs));
         continue;
       }
-      // Non-retryable (4xx except 429) or retries exhausted → surface the real error.
+      // Non-retryable (4xx except 429) or retries exhausted → surface the real error + classification.
       const latencyMs = Date.now() - startMs;
       return {
         result: null, usage: { ...EMPTY_USAGE, latency_ms: latencyMs }, latencyMs,
         conformant: false, failed: true, error: describeProviderError(err), mode,
-        requestedReasoningEffort: reasoningEffort,
+        requestedReasoningEffort: reasoningEffort, category,
       };
+    } finally {
+      // Both timers always cleared on every exit path (success, error return,
+      // or a `continue` back to the top of the loop) — a `finally` block runs
+      // before ANY of those, unlike scattered manual clearTimeout() calls.
+      scheduler.clearTimeout(timer);
+      scheduler.clearInterval(heartbeat);
     }
   }
 

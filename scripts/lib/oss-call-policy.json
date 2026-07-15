@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "calibrationNote": "v1 bootstrap values from the 2026-07-14 OpenRouter stall incident — recalibrate if either operation still times out routinely.",
+  "operations": {
+    "stage1_triage": { "timeoutMs": 45000, "maxRetries": 1 },
+    "discovery_generation": { "timeoutMs": 120000, "maxRetries": 1 }
+  },
+  "stage1TriageBudget": {
+    "totalMs": 600000,
+    "note": "reserved ceiling for the ENTIRE sequential Stage-1 loop — leaves ~10 min of the 20-min outer race for discovery (~241s) + Stage 2 + overhead. See docs/plans/oss-call-reliability-hardening.md Execution Model."
+  }
+}

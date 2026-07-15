@@ -138,6 +138,13 @@ export function compareAuditRunResults(legacyResult, tieredResult) {
     // `tieredRunStatus:'fallback_legacy'` is recorded, never WHY, so
     // confirming it requires a live repro instead of a DB query.
     tieredFallbackReason: tieredResult.fallbackReason ?? null,
+    // docs/plans/oss-call-reliability-hardening.md round-3 H1/H2: typed
+    // Stage-1 telemetry (classified-failure categories + admission-guard
+    // skip count), not prose-only — mirrors the tieredFallbackReason
+    // pattern above (copy straight from the AuditRunResult into the
+    // persisted comparison record).
+    tieredStage1BudgetExhausted: tieredResult._stage1BudgetExhausted ?? null,
+    tieredStage1FailureCategories: tieredResult._stage1FailureCategories ?? null,
   };
 }
 
@@ -147,6 +154,21 @@ export function compareAuditRunResults(legacyResult, tieredResult) {
  * timeout, bug in not-yet-production-flipped code) must never surface to
  * the caller, since this pipeline hasn't earned production trust yet.
  *
+ * **Worst-case budget reconciliation** (docs/plans/oss-call-reliability-hardening.md
+ * Execution Model — deliberate, not accidental): the default `timeoutMs` below
+ * (20 min) is the outer ceiling every inner stage's budget is reasoned against.
+ * `oss-call-policy.json`'s `stage1TriageBudget.totalMs` (10 min) reserves the
+ * ENTIRE sequential Stage-1 admission-guard loop's ceiling, leaving ~10 min for
+ * discovery (`stage1_triage`/`discovery_generation` policies, worst case
+ * ~241s for discovery alone) + Stage 2's Gemini adjudication + overhead. The
+ * Stage-1 admission guard (`stage1-triage.mjs`) BOUNDS how much new work Stage 1
+ * can *start* within its reservation — it does NOT cancel work already in
+ * flight: `Promise.race` below does not cancel its losing promise, so an inner
+ * OpenRouter call can keep running (and spending) after this outer race has
+ * already recorded a timeout. That is a known, independent, pre-existing
+ * limitation (deferred, not solved by the admission guard) — fixing it would
+ * require threading an `AbortSignal`/cancellation context through the entire
+ * inner pipeline, a materially larger change than this budget reconciliation.
  * @param {import('../schemas.mjs').AuditRunContext} ctx
  * @param {{runTieredAuditPipeline: Function, timeoutMs?: number}} deps - injectable for tests
  * @returns {Promise<{ok: true, result: object, latencyMs: number} | {ok: false, error: string, latencyMs: number}>}

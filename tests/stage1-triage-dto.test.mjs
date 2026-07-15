@@ -231,6 +231,182 @@ describe('buildStageOneTriageInput — symlink resolving into a sensitive path i
   });
 });
 
+describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED IN FREE-TEXT is redacted (audit-code round-1 H1/H3)', () => {
+  // The block above covers STRUCTURED path fields (section, anchor.newFile),
+  // which already went through resolveAndClassify before this fix. This
+  // block covers the gap those tests did NOT reach: a path-shaped token
+  // embedded in ordinary prose (category/detail/anchorQuote/causalChain),
+  // which previously only got a lexical classifyPath check.
+  it('redacts a lexically-innocent path mentioned in `detail` prose that resolves via symlink into secrets/', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    try {
+      const secretsDir = path.join(repoRoot, 'secrets');
+      fs.mkdirSync(secretsDir);
+      const realTarget = path.join(secretsDir, 'db.yaml');
+      fs.writeFileSync(realTarget, 'password: hunter2');
+      fs.symlinkSync(realTarget, path.join(repoRoot, 'notes.txt'));
+
+      const finding = { category: 'c', detail: 'See notes.txt for the full context of this bug.', section: 'other.mjs:1', severity: 'MEDIUM' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('notes.txt'), false, 'the symlinked mention must not survive unredacted');
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts a symlinked-to-sensitive path mentioned in `category` prose too (every free-text field, not just detail)', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    try {
+      const secretsDir = path.join(repoRoot, 'secrets');
+      fs.mkdirSync(secretsDir);
+      const realTarget = path.join(secretsDir, 'creds.yaml');
+      fs.writeFileSync(realTarget, '');
+      fs.symlinkSync(realTarget, path.join(repoRoot, 'config.txt'));
+
+      const finding = { category: 'Relates to config.txt', detail: 'd', section: 'other.mjs:1', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.category.includes('config.txt'), false);
+      assert.ok(dto.category.includes('[REDACTED]'), dto.category);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts a symlink-escaping-the-repo-root path mentioned in an anchorQuote (fail-safe)', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    const outside = mkdtemp();
+    try {
+      const target = path.join(outside, 'outside-secret.txt');
+      fs.writeFileSync(target, 'pretend-secret');
+      fs.symlinkSync(target, path.join(repoRoot, 'escape.txt'));
+
+      const finding = {
+        category: 'c', detail: 'd', section: 'other.mjs:1', severity: 'HIGH', evidenceType: 'commission',
+        anchor: { ...VALID_ANCHOR_BASE, oldFile: 'unrelated.ts', newFile: 'unrelated.ts', quote: 'Mentioned in escape.txt, see there.' },
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.anchorQuote.includes('escape.txt'), false);
+      assert.ok(dto.anchorQuote.includes('[REDACTED]'), dto.anchorQuote);
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+      fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('does NOT mass-redact ordinary prose (the false-positive risk a naive resolveAndClassify swap would cause)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      // section is deliberately OMITTED — a non-existent `section` file
+      // fail-closes via the PRE-EXISTING, correct, unrelated resolveAndClassify
+      // check for structured path fields (not this test's concern; isolating
+      // it here so this test only exercises the free-text detail/category path).
+      const finding = {
+        category: 'Correctness', severity: 'MEDIUM',
+        detail: 'The function returns early when the input array is empty, causing downstream consumers to receive undefined instead of a default value. This affects the retry loop and the cache invalidation path.',
+      };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('[REDACTED]'), false, 'ordinary English words must never be treated as sensitive paths');
+      assert.equal(dto.category.includes('[REDACTED]'), false);
+      assert.equal(dto.redacted, false);
+      assert.ok(dto.detail.includes('function returns early'));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('a real, existing, but NON-sensitive file mentioned in prose is left unredacted (only sensitive canonical targets trigger)', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    try {
+      fs.writeFileSync(path.join(repoRoot, 'helper.mjs'), 'export const x = 1;');
+      const finding = { category: 'c', detail: 'See helper.mjs for the utility function.', section: 'other.mjs:1', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.ok(dto.detail.includes('helper.mjs'), 'a real, non-sensitive file mention must survive');
+      assert.equal(dto.redacted, false);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+describe('buildStageOneTriageInput — source-location suffix + dotfile classification (audit-code round-2 H1)', () => {
+  it('redacts a ".env:12"-style source-location citation in detail', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'The leak is at .env:12 in this repo.', severity: 'MEDIUM' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('.env:12'), false);
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+      assert.equal(dto.redacted, true);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts a ".env:12:4"-style line:col citation', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'See .env:12:4 for the value.', severity: 'MEDIUM' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('.env:12:4'), false);
+      assert.ok(dto.detail.includes('[REDACTED]'));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('redacts a BARE ".env" mention in prose (the deeper pre-existing gap this fix root-caused: leading-dot stripping broke dotfile classification entirely, not just the :line suffix case)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'Check .env for the configuration.', severity: 'MEDIUM' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('.env '), false);
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('a dotfile mention with a trailing sentence period (".env.") is still correctly redacted (trailing-strip regression guard)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'Check .env. Also see the code.', severity: 'MEDIUM' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('.env.'), false);
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+      assert.ok(dto.detail.includes('Also see the code'), 'the rest of the sentence must survive');
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('a leading comma/colon before an ordinary word is still stripped correctly (leading-strip regression guard, non-dot punctuation unaffected)', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'Fixed in commit abc123, see the diff.', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.redacted, false);
+      assert.ok(dto.detail.includes('commit abc123'));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
+describe('isSensitiveViaSymlinkResolution — resolution-failure classification (audit-code round-2 H2)', () => {
+  it('a symlink cycle (ELOOP) fails closed to sensitive, not benign', () => {
+    if (skipOnWin) return;
+    const repoRoot = mkdtemp();
+    try {
+      const linkA = path.join(repoRoot, 'cycleA');
+      const linkB = path.join(repoRoot, 'cycleB');
+      fs.symlinkSync(linkB, linkA);
+      fs.symlinkSync(linkA, linkB);
+      const finding = { category: 'c', detail: 'See cycleA for details.', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.detail.includes('cycleA'), false, 'an unresolvable symlink cycle must fail-closed, not be treated as an ordinary word');
+      assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+
+  it('a genuinely non-existent path (ENOENT) is still treated as benign — the fix must not fail-close ordinary words', () => {
+    const repoRoot = mkdtemp();
+    try {
+      const finding = { category: 'c', detail: 'The variable named nonexistentToken123 is unused.', severity: 'LOW' };
+      const dto = buildStageOneTriageInput(finding, { repoRoot });
+      assert.equal(dto.redacted, false);
+      assert.ok(dto.detail.includes('nonexistentToken123'));
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+  });
+});
+
 describe('buildStageOneTriageInput — secret-shaped content is redacted independently of path classification', () => {
   it('redacts a hardcoded-secret-shaped anchorQuote even when its source file is NOT itself sensitive', () => {
     const repoRoot = mkdtemp();

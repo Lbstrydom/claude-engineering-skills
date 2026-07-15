@@ -193,6 +193,58 @@ describe('discoveryCode assembly — secret-redaction default (discovery-portfol
   });
 });
 
+describe('OSS-call reliability wiring (docs/plans/oss-call-reliability-hardening.md)', () => {
+  const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+
+  test('static pin: validatedTriagerCall passes operation: stage1_triage to providers.ossCall', () => {
+    const fnMatch = src.match(/async function validatedTriagerCall[\s\S]*?\n}/);
+    assert.ok(fnMatch, 'expected to find validatedTriagerCall');
+    assert.match(fnMatch[0], /operation:\s*'stage1_triage'/);
+  });
+
+  test('static pin: glmCall passes operation: discovery_generation to providers.ossCall', () => {
+    const glmMatch = src.match(/const glmCall = providers\.ossCall[\s\S]*?: async \(\) => \{ throw new Error\('discovery portfolio: providers\.ossCall unavailable'\); \};/);
+    assert.ok(glmMatch, 'expected to find the glmCall assignment');
+    assert.match(glmMatch[0], /operation:\s*'discovery_generation'/);
+  });
+
+  test('static pin: both adapters destructure category/error from ossCall and set err.category on throw', () => {
+    const validatedMatch = src.match(/async function validatedTriagerCall[\s\S]*?\n}/)[0];
+    assert.match(validatedMatch, /const \{ result, category, error \} = await providers\.ossCall/);
+    assert.match(validatedMatch, /err\.category = category \?\? null/);
+
+    const glmMatch = src.match(/const glmCall = providers\.ossCall[\s\S]*?: async \(\) => \{ throw new Error\('discovery portfolio: providers\.ossCall unavailable'\); \};/)[0];
+    assert.match(glmMatch, /const \{ result, category, error \} = await providers\.ossCall/);
+    assert.match(glmMatch, /err\.category = category \?\? null/);
+  });
+
+  test('static pin: failedNames embeds category into the fallback-reason string', () => {
+    assert.match(src, /o\.category \? `\[\$\{o\.category\}\] ` : ''/);
+  });
+
+  test('static pin: the Stage-1 -> Stage-2 handoff (runFinalAdjudication input) never references budgetExhausted (round-2 H1 regression guard)', () => {
+    const handoffMatch = src.match(/const stage2Result = await runFinalAdjudication\(\s*\{[^}]*\}/s);
+    assert.ok(handoffMatch, 'expected to find the runFinalAdjudication call');
+    assert.match(handoffMatch[0], /escalated:\s*triageResult\.escalated/);
+    assert.equal(/budgetExhausted/.test(handoffMatch[0]), false, 'budgetExhausted must never be routed into Stage 2\'s workload');
+  });
+
+  test('static pin: runTieredAuditPipeline resolves BOTH the admission budget and the per-candidate worst-case duration before calling runStage1CheapTriage', () => {
+    assert.match(src, /const stage1AdmissionBudgetMs = getStage1TriageBudget\(\)/);
+    assert.match(src, /const stage1CandidateWorstCaseMs = calculateWorstCaseAttemptDuration\(getOssOperationPolicy\('stage1_triage'\)\)/);
+    const callMatch = src.match(/const triageResult = await runStage1CheapTriage\([\s\S]*?\}\);/);
+    assert.ok(callMatch, 'expected to find the runStage1CheapTriage call');
+    assert.match(callMatch[0], /admissionBudgetMs:\s*stage1AdmissionBudgetMs/);
+    assert.match(callMatch[0], /candidateWorstCaseMs:\s*stage1CandidateWorstCaseMs/);
+  });
+
+  test('static pin: the returned AuditRunResult carries typed _stage1BudgetExhausted/_stage1FailureCategories telemetry', () => {
+    assert.match(src, /_stage1BudgetExhausted:\s*\{/);
+    assert.match(src, /count:\s*triageResult\.skippedBudgetExhaustedCount/);
+    assert.match(src, /_stage1FailureCategories:\s*triageResult\.failureCategories/);
+  });
+});
+
 describe('runTieredAuditPipeline Stage 2 handle fail-fast', () => {
   const fn = async () => {};
 
