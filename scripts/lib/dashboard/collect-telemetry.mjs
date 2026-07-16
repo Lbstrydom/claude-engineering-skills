@@ -677,7 +677,10 @@ async function collectTieredShadow(root) {
   const empty = {
     cloud: false, flagEnabled: tieredAuditConfig.shadowEnabled, totalRuns: 0,
     windowMin: WINDOW_MIN, windowMax: WINDOW_MAX, legacyFailures: 0, shadowFailures: 0,
-    comparedRuns: 0, costDeltaUsd: { mean: null, median: null },
+    comparedRuns: 0,
+    historicalCompleteRuns: 0, excludedNoStage0Evidence: 0,
+    excludedDegenerateComparison: 0, excludedFallback: 0,
+    costDeltaUsd: { mean: null, median: null },
     latencyDeltaSec: { mean: null, median: null },
     findingOverlapRate: { mean: null, median: null },
     tieredRunStatusCounts: {}, tieredFallbackReasons: {}, perRepo: [], source: 'none',

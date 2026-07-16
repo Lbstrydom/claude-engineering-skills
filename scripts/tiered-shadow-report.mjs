@@ -122,7 +122,33 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
   console.log(scopeLine);
   console.log(`  legacy failures:    ${summary.legacyFailures}`);
   console.log(`  shadow failures:    ${summary.shadowFailures}`);
-  console.log(`  compared runs:      ${summary.comparedRuns}`);
+  console.log(`  compared runs:      ${summary.comparedRuns}   (decision-grade: tiered completed AND at least one side had a non-empty eligible population)`);
+  // The two metrics are printed TOGETHER, never interchangeably
+  // (docs/plans/stage0-evidence-relevance-split.md round-3 M1) — an operator
+  // seeing only `comparedRuns: 0` after a run of `complete` shadows would
+  // reasonably think the pipeline never ran. Showing the historical metric
+  // beside it makes "it completed, but the comparison was degenerate/
+  // old-shape" legible at a glance instead of alarming.
+  if (summary.historicalCompleteRuns !== summary.comparedRuns) {
+    console.log(`  (tiered-complete runs: ${summary.historicalCompleteRuns} — the wider, pre-split metric; the delta is broken out below)`);
+  }
+  // Three exclusion reasons, reported SEPARATELY — "nothing verifiable" vs
+  // "verifiable but degenerate" vs "fell back to legacy" are different
+  // problems with different fixes, and collapsing them into one number is
+  // exactly what made the 2026-07-14 all-fallback window undiagnosable.
+  const excluded = summary.excludedNoStage0Evidence + summary.excludedDegenerateComparison + summary.excludedFallback;
+  if (excluded > 0) {
+    console.log(`  excluded from the decision window (${excluded}):`);
+    if (summary.excludedFallback > 0) {
+      console.log(`    ${summary.excludedFallback} × fell back to legacy — the tiered pipeline never really ran (see fallback reasons below)`);
+    }
+    if (summary.excludedNoStage0Evidence > 0) {
+      console.log(`    ${summary.excludedNoStage0Evidence} × no Stage-0 evidence — tiered completed but verified zero candidates`);
+    }
+    if (summary.excludedDegenerateComparison > 0) {
+      console.log(`    ${summary.excludedDegenerateComparison} × degenerate comparison — BOTH sides empty despite Stage-0 evidence, or a pre-split row with no eligible counts recorded (a one-sided zero is NOT excluded — it counts as a real comparison)`);
+    }
+  }
   if (summary.comparedRuns > 0) {
     // `null` must render as "no data" (—), never as a formatted number: raw
     // `null * 100` coerces to 0 in JS, so an EMPTY overlap-rate sample (e.g.

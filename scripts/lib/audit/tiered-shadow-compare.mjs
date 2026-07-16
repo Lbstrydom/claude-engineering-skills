@@ -57,8 +57,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { semanticId } from '../findings.mjs';
+import { normalizePath } from '../file-io.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { appendTieredShadowObservation } from '../store/tiered-shadow.mjs';
+import { isFileInChangedScope } from './deferral-classifier.mjs';
 
 export const SHADOW_LOG_PATH = path.join('.audit', 'tiered-shadow-log.jsonl');
 
@@ -112,8 +114,29 @@ export function buildShadowCtx(ctx) {
  */
 function parseTotalSeconds(totalStr) {
   if (typeof totalStr !== 'string') return null;
-  const m = totalStr.match(/^([\d.]+)s$/);
+  // Strict decimal grammar (Cluster-C audit M1/M4): the old `[\d.]+` class
+  // accepted malformed strings like "1..5s" / "..s", which parseFloat then
+  // silently truncated to a numeric prefix (or NaN) — a shape mismatch
+  // masquerading as a real timing. Exactly one optional fraction part.
+  const m = totalStr.match(/^(\d+(?:\.\d+)?)s$/);
   return m ? Number.parseFloat(m[1]) : null;
+}
+
+/**
+ * Resolve the file a finding cites, using this repo's existing
+ * `_primaryFile`/`affectedFiles` convention (ledger.mjs::populateFindingMetadata),
+ * falling back to the `section`'s own `file:line` prefix — the same
+ * derivation `populateFindingMetadata` itself uses when no regex match
+ * exists, so an un-enriched finding still resolves.
+ * @param {object} f
+ * @returns {string|null}
+ */
+function findingFile(f) {
+  if (f?._primaryFile) return normalizePath(f._primaryFile);
+  if (Array.isArray(f?.affectedFiles) && f.affectedFiles[0]) return normalizePath(f.affectedFiles[0]);
+  const section = f?.section || '';
+  const derived = section.split(':')[0].split('(')[0].trim();
+  return derived ? normalizePath(derived) : null;
 }
 
 /**
@@ -123,21 +146,114 @@ function parseTotalSeconds(totalStr) {
  * model/cross-round finding identity (findings.mjs), reused rather than a
  * second bespoke fingerprint.
  *
+ * Two tiers of output (docs/plans/stage0-evidence-relevance-split.md
+ * decisions #6/#7/#10):
+ *
+ *  - **Always emitted, never gated on `opts`** — the decision-grade fields
+ *    `legacyEligibleCount`/`tieredEligibleCount` (the symmetric population
+ *    counts `tiered-shadow-summary.mjs`'s `comparedRuns` predicate reads) and
+ *    `overlapDebtRouted`. Neither needs the bucket maps, so neither is gated
+ *    on them: a caller that forgets `opts` can NOT silently produce an
+ *    un-comparable "old-shape" row.
+ *    `overlapDebtRouted` is decision #10 — the single most consequential fix:
+ *    a legacy finding whose file was correctly debt-routed by the tiered
+ *    pipeline is counted here, NOT in `onlyLegacyCount`, because the tiered
+ *    pipeline handled it by design and counting it as a "miss" would
+ *    systematically penalize its most important new capability in the very
+ *    metric this plan exists to make trustworthy. File-level matching
+ *    (consistent with decision #6's file-level legacy-side bucketing); a
+ *    false-positive here under-counts misses rather than falsely inflating
+ *    them, which is the safe direction.
+ *  - **`opts`-gated** — the sub-bucket PROVENANCE counts only
+ *    (`legacyOutOfScopeCount`, `tiered{ChangeRelated,PreExistingImpactful,PreExistingIndependent}Count`),
+ *    which genuinely need `legacyBuckets`/`tieredBuckets`
+ *    (`Map<semanticId, scopeBucket>`). Reported for visibility, never gating:
+ *    **`isComparisonEligible` is unconditionally TRUE for every bucket value**
+ *    (round-3 plan-audit H5 / Gemini round-2 G2) — decision #9 already
+ *    guarantees a SUCCESSFULLY debt-routed candidate never becomes a finding
+ *    at all, so anything reaching this function is by construction something
+ *    Stage 1/2 actually processed and belongs in the comparison. A
+ *    `pre_existing_independent`-bucketed finding present here is specifically
+ *    a debt-routing FAILURE fallback, not a routed one.
+ *
+ * Omitting `opts` leaves `overlapCount`/`onlyLegacyCount`/`onlyTieredCount`
+ * and every pre-plan field byte-identical to the pre-plan behaviour (an
+ * absent `debtRoutedFiles` makes `overlapDebtRouted` 0).
+ *
  * @param {import('../schemas.mjs').AuditRunResult} legacyResult
  * @param {import('../schemas.mjs').AuditRunResult} tieredResult
+ * @param {{legacyBuckets?: Map<string,string>, tieredBuckets?: Map<string,string>}} [opts]
  * @returns {object}
  */
-export function compareAuditRunResults(legacyResult, tieredResult) {
-  const legacyIds = new Set((legacyResult.findings || []).map(semanticId));
-  const tieredIds = new Set((tieredResult.findings || []).map(semanticId));
-  const overlapCount = [...legacyIds].filter((id) => tieredIds.has(id)).length;
+export function compareAuditRunResults(legacyResult, tieredResult, opts = undefined) {
+  const legacyFindings = legacyResult.findings || [];
+  const tieredFindings = tieredResult.findings || [];
+  const legacyIds = new Set(legacyFindings.map(semanticId));
+  const tieredIds = new Set(tieredFindings.map(semanticId));
+  const rawOverlapCount = [...legacyIds].filter((id) => tieredIds.has(id)).length;
+
+  const overlapCount = rawOverlapCount;
+  const onlyTieredCount = tieredIds.size - rawOverlapCount;
+
+  // ── ALWAYS-EMITTED decision-grade fields (never gated on `opts`) ─────────
+  // Load-bearing structural choice, found while checking a concurrent
+  // session's flag ("an unbucketed production call site would make every
+  // future row old-shape and silently un-comparable — a fourth way for this
+  // window to read wrong"). It doesn't manifest today (the ONE production
+  // call site passes opts), but the dependency was accidental, not
+  // necessary: NEITHER of these needs the bucket maps. `*EligibleCount` is
+  // just `findings.length`; `overlapDebtRouted` reads `debtRoutedFiles` off
+  // the tiered RESULT. Only the sub-bucket PROVENANCE counts genuinely need
+  // `opts`. Emitting the decision-grade fields unconditionally removes the
+  // "forgot to pass opts → silently un-comparable forever" failure mode by
+  // construction rather than guarding it with a static pin — a caller can no
+  // longer get this wrong.
+  const debtRoutedFiles = new Set((tieredResult.debtRoutedFiles || []).map(normalizePath));
+  let overlapDebtRouted = 0;
+  for (const f of legacyFindings) {
+    if (tieredIds.has(semanticId(f))) continue; // a real two-sided overlap, not a miss
+    const file = findingFile(f);
+    if (file && debtRoutedFiles.has(file)) overlapDebtRouted++;
+  }
+  // Decision #10: a legacy finding on a debt-routed file is HANDLED, not
+  // missed — it only ever reclassifies findings that would otherwise land in
+  // `onlyLegacyCount`; a genuine two-sided overlap stays an overlap. An
+  // absent `debtRoutedFiles` (any pre-plan result) yields 0, leaving
+  // `onlyLegacyCount` byte-identical to the pre-plan value.
+  const onlyLegacyCount = (legacyIds.size - rawOverlapCount) - overlapDebtRouted;
+
+  let bucketedFields = {};
+  if (opts) {
+    const { legacyBuckets = new Map(), tieredBuckets = new Map() } = opts;
+    const countBucket = (findings, buckets, bucket) =>
+      findings.filter((f) => (buckets.get(semanticId(f)) ?? 'change_related') === bucket).length;
+    // Detailed sub-bucket provenance ONLY — reported for visibility, never
+    // gating (round-3 plan-audit H5 / Gemini round-2 G2: `isComparisonEligible`
+    // is unconditionally true for every bucket value).
+    bucketedFields = {
+      legacyOutOfScopeCount: countBucket(legacyFindings, legacyBuckets, 'out-of-scope'),
+      tieredPreExistingIndependentCount: countBucket(tieredFindings, tieredBuckets, 'pre_existing_independent'),
+      tieredChangeRelatedCount: countBucket(tieredFindings, tieredBuckets, 'change_related'),
+      tieredPreExistingImpactfulCount: countBucket(tieredFindings, tieredBuckets, 'pre_existing_impactful'),
+    };
+  }
 
   return {
-    legacyFindingCount: (legacyResult.findings || []).length,
-    tieredFindingCount: (tieredResult.findings || []).length,
+    legacyFindingCount: legacyFindings.length,
+    tieredFindingCount: tieredFindings.length,
     overlapCount,
-    onlyLegacyCount: legacyIds.size - overlapCount,
-    onlyTieredCount: tieredIds.size - overlapCount,
+    onlyLegacyCount,
+    onlyTieredCount,
+    overlapDebtRouted,
+    // Symmetric + ALWAYS persisted (decision #7 / round-2 plan-audit H3).
+    // Deliberately identical to the finding counts above: eligibility ===
+    // "reached the comparison at all", so these ARE the vacuity check. Kept
+    // as separate named fields anyway because `summarize()`'s decision-grade
+    // predicate reads them by name, and a future eligibility rule needs one
+    // place to change without redefining what `*FindingCount` means.
+    legacyEligibleCount: legacyFindings.length,
+    tieredEligibleCount: tieredFindings.length,
+    ...bucketedFields,
     legacyCostUsd: legacyResult._usage?.costUsd ?? null,
     tieredCostUsd: tieredResult._usage?.costUsd ?? null,
     legacyLatencySec: parseTotalSeconds(legacyResult._pass_timings?.total),
@@ -165,6 +281,18 @@ export function compareAuditRunResults(legacyResult, tieredResult) {
     // convention as tieredFallbackReason/tieredStage1* above.
     tieredGeneratorOutcomes: tieredResult.generatorOutcomes ?? null,
     tieredStageBreakdown: tieredResult._stageBreakdown ?? null,
+    // docs/plans/stage0-evidence-relevance-split.md: hoisted out of the
+    // nested `_stageBreakdown` blob to a top-level field, mirroring the
+    // existing copy-straight-through convention — it's the headline
+    // "did Stage 0 verify anything at all" number the summary's
+    // `excludedNoStage0Evidence` reason and the CLI report both read.
+    tieredStage0Verified: tieredResult._stageBreakdown?.stage0Verified ?? null,
+    // Decision #9: per-fingerprint reasons for any pre_existing_independent
+    // candidate whose debt-routing FAILED (restored to the Stage-1 pool
+    // instead) — a silent restore would make the debt-routing path's own
+    // failures invisible in stored telemetry, the exact class of gap the
+    // 2026-07-14 incident was.
+    tieredDebtRoutingIncomplete: tieredResult.debtRoutingIncomplete ?? null,
   };
 }
 
@@ -262,8 +390,59 @@ export async function runTieredShadowComparison({ ctx, legacyResultPromise, runT
     ctx, logPath,
     legacyOk: true, shadowOk: shadowOutcome.ok, shadowLatencyMs: shadowOutcome.latencyMs,
     shadowError: shadowOutcome.ok ? null : shadowOutcome.error,
-    comparison: shadowOutcome.ok ? compareAuditRunResults(legacyResult, shadowOutcome.result) : null,
+    comparison: shadowOutcome.ok
+      ? compareAuditRunResults(legacyResult, shadowOutcome.result, {
+          legacyBuckets: buildLegacyBuckets(legacyResult, ctx.changedFiles),
+          tieredBuckets: buildTieredBuckets(shadowOutcome.result),
+        })
+      : null,
   });
+}
+
+/**
+ * Legacy-side SCOPE bucketing (decision #6). The legacy pipeline has no
+ * per-candidate evidence model at all, so its buckets are FILE-level: a
+ * finding is `change_related` when its cited file is in this run's
+ * `changedFiles`, `out-of-scope` when it authoritatively isn't. The
+ * membership check is the shared `isFileInChangedScope` predicate extracted
+ * from `deferral-classifier.mjs`'s gate (b) — reused, not re-implemented,
+ * so the two can't drift.
+ *
+ * Its tri-state `null` (unknown: empty/absent `changedFiles`, or an
+ * unresolvable file) maps to `change_related` — the safe, inclusion-biased
+ * default (decision #2), never a silent `out-of-scope` mass-exclusion.
+ *
+ * @param {import('../schemas.mjs').AuditRunResult} legacyResult
+ * @param {Array<string>|null|undefined} changedFiles
+ * @returns {Map<string, 'change_related'|'out-of-scope'>}
+ */
+export function buildLegacyBuckets(legacyResult, changedFiles) {
+  const normalizedChanged = Array.isArray(changedFiles) ? changedFiles.map(normalizePath) : changedFiles;
+  const buckets = new Map();
+  for (const f of (legacyResult.findings || [])) {
+    const inScope = isFileInChangedScope(findingFile(f), normalizedChanged);
+    buckets.set(semanticId(f), inScope === false ? 'out-of-scope' : 'change_related');
+  }
+  return buckets;
+}
+
+/**
+ * Tiered-side bucketing — reads each finding's own `scopeBucket`, resolved
+ * at the single ownership point in `tiered-pipeline.mjs` from the Stage 0
+ * routing manifest via `resolveScopeBucketForFinding` (decision #8's
+ * provenance link — NOT re-derived from `stageDecisions` here, which was
+ * round-1's vague claim). A finding with no `scopeBucket` (a pre-plan
+ * result shape) falls back to the same safe `change_related` default.
+ *
+ * @param {import('../schemas.mjs').AuditRunResult} tieredResult
+ * @returns {Map<string, string>}
+ */
+export function buildTieredBuckets(tieredResult) {
+  const buckets = new Map();
+  for (const f of (tieredResult.findings || [])) {
+    buckets.set(semanticId(f), f.scopeBucket ?? 'change_related');
+  }
+  return buckets;
 }
 
 /**

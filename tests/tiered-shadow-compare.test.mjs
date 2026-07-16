@@ -25,7 +25,18 @@ process.on('exit', () => {
 const {
   buildShadowCtx, compareAuditRunResults, runShadowTieredPipeline,
   appendShadowLog, runTieredShadowComparison,
+  buildLegacyBuckets, buildTieredBuckets,
 } = await import('../scripts/lib/audit/tiered-shadow-compare.mjs');
+
+// Shared fixture helper for the bucketing suites below — `semanticId` keys
+// on `category|section|detail`, so distinct values here guarantee distinct ids.
+const mkFinding = (n, over = {}) => ({
+  id: `F${n}`, severity: 'MEDIUM', category: `cat-${n}`, section: `src/f${n}.mjs:1`,
+  detail: `detail-${n}`, risk: 'r', recommendation: 'rec',
+  is_quick_fix: false, is_mechanical: false, principle: 'p',
+  _primaryFile: `src/f${n}.mjs`, affectedFiles: [`src/f${n}.mjs`],
+  ...over,
+});
 
 describe('buildShadowCtx', () => {
   test('disables every ledger/debt write path — the load-bearing safety property', () => {
@@ -189,8 +200,16 @@ describe('runTieredAuditPipeline — _stageBreakdown wiring (static regression g
       path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf-8',
     );
     assert.match(src, /discoveryRawFindings:\s*rawFindings\.length/);
-    assert.match(src, /stage0Verified:\s*stage0Verified\.length/);
-    assert.match(src, /stage0Rejected:\s*envelopes\.length\s*-\s*stage0Verified\.length/);
+    // docs/plans/stage0-evidence-relevance-split.md decision #9/#10: this
+    // now reports the ACTUAL Stage-1-eligible pool (Gate-A survivors PLUS
+    // any pre_existing_independent candidate restored after a debt-routing
+    // failure), not the raw Gate-A bucket alone — the number that matters
+    // for shadow-comparison eligibility. stage0Rejected now reads directly
+    // off runStage0EvidenceTriage's own third bucket instead of a derived
+    // subtraction (envelopes.length - stage0Verified.length), which stopped
+    // being exact once a third (preExistingIndependent) bucket existed.
+    assert.match(src, /stage0Verified:\s*stage0EligibleForStage1\.length/);
+    assert.match(src, /stage0Rejected:\s*stage0Rejected\.length/);
     assert.match(src, /stage1MechanicalDismissed:\s*triageResult\.mechanicalDismissed\.length/);
     assert.match(src, /stage2Verified:\s*stage2Result\.verified\.length/);
     assert.match(src, /stage2Unresolved:\s*stage2Result\.unresolved\.length/);
@@ -314,5 +333,226 @@ describe('appendShadowLog + runTieredShadowComparison (file I/O)', () => {
     assert.match(record.shadowError, /tiered blew up/);
     assert.equal(record.comparison, null);
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+});
+
+// ── Cluster C: symmetric scope bucketing + bucketed comparison
+//    (docs/plans/stage0-evidence-relevance-split.md decisions #6/#7/#10) ────
+
+describe('buildLegacyBuckets — file-level scope bucketing (decision #6)', () => {
+  test('a finding whose file IS in changedFiles buckets as change_related', () => {
+    const f = mkFinding(1);
+    const buckets = buildLegacyBuckets({ findings: [f] }, ['src/f1.mjs', 'src/other.mjs']);
+    assert.equal([...buckets.values()][0], 'change_related');
+  });
+
+  test('a finding whose file is NOT in a non-empty changedFiles buckets as out-of-scope', () => {
+    const f = mkFinding(1);
+    const buckets = buildLegacyBuckets({ findings: [f] }, ['src/unrelated.mjs']);
+    assert.equal([...buckets.values()][0], 'out-of-scope');
+  });
+
+  // The tri-state's whole point: an empty changedFiles is AMBIGUOUS (diff
+  // resolution may have failed), so it must never mass-classify everything
+  // as out-of-scope — it falls back to the safe, inclusion-biased default.
+  test('an empty/absent changedFiles falls back to change_related, never a silent mass out-of-scope', () => {
+    const f = mkFinding(1);
+    assert.equal([...buildLegacyBuckets({ findings: [f] }, []).values()][0], 'change_related');
+    assert.equal([...buildLegacyBuckets({ findings: [f] }, null).values()][0], 'change_related');
+  });
+
+  test('an unresolvable file falls back to change_related (the safe default), never out-of-scope', () => {
+    const f = mkFinding(1, { _primaryFile: undefined, affectedFiles: [], section: '' });
+    assert.equal([...buildLegacyBuckets({ findings: [f] }, ['src/a.mjs']).values()][0], 'change_related');
+  });
+
+  test('reuses the isFileInChangedScope predicate — normalized paths match (Windows-safe)', () => {
+    const f = mkFinding(1, { _primaryFile: 'SRC/F1.MJS', affectedFiles: ['SRC/F1.MJS'] });
+    // normalizePath lowercases (documented accepted debt for Windows) — the
+    // legacy side must not report out-of-scope purely on a case difference.
+    const buckets = buildLegacyBuckets({ findings: [f] }, ['src/f1.mjs']);
+    assert.equal([...buckets.values()][0], 'change_related');
+  });
+
+  test('no findings → an empty map, never a throw', () => {
+    assert.equal(buildLegacyBuckets({ findings: [] }, ['a.mjs']).size, 0);
+    assert.equal(buildLegacyBuckets({}, ['a.mjs']).size, 0);
+  });
+});
+
+describe('buildTieredBuckets — reads the finding own scopeBucket (decision #8 provenance link)', () => {
+  test('each finding scopeBucket is used verbatim', () => {
+    const findings = [
+      mkFinding(1, { scopeBucket: 'change_related' }),
+      mkFinding(2, { scopeBucket: 'pre_existing_impactful' }),
+      mkFinding(3, { scopeBucket: 'pre_existing_independent' }),
+    ];
+    const buckets = buildTieredBuckets({ findings });
+    assert.deepEqual([...buckets.values()].sort(), ['change_related', 'pre_existing_impactful', 'pre_existing_independent']);
+  });
+
+  test('a finding with no scopeBucket (pre-plan result shape) falls back to change_related', () => {
+    const buckets = buildTieredBuckets({ findings: [mkFinding(1)] });
+    assert.equal([...buckets.values()][0], 'change_related');
+  });
+});
+
+describe('compareAuditRunResults — bucketed mode (decisions #7/#10)', () => {
+  test('omitting opts preserves the pre-plan overlap math EXACTLY (backward compatible)', () => {
+    const shared = mkFinding(1);
+    const legacy = { findings: [shared, mkFinding(2)] };
+    const tiered = { findings: [shared, mkFinding(3)] };
+    const c = compareAuditRunResults(legacy, tiered);
+    assert.equal(c.overlapCount, 1);
+    assert.equal(c.onlyLegacyCount, 1);
+    assert.equal(c.onlyTieredCount, 1);
+    // Only the sub-bucket PROVENANCE counts are opts-gated.
+    assert.equal('legacyOutOfScopeCount' in c, false);
+    assert.equal('tieredPreExistingIndependentCount' in c, false);
+  });
+
+  // The structural half of the concurrent session's flag: "an unbucketed
+  // production call site would make every future row old-shape and silently
+  // un-comparable — a fourth way for this window to read wrong". Fixed by
+  // construction: the decision-grade fields never needed the bucket maps, so
+  // they are no longer gated on them. A caller CANNOT forget them into
+  // existence-as-null.
+  test('the decision-grade fields are emitted even WITHOUT opts — an unbucketed caller can never produce a silently un-comparable row', () => {
+    const c = compareAuditRunResults({ findings: [mkFinding(1)] }, { findings: [mkFinding(2)] });
+    assert.equal(c.legacyEligibleCount, 1);
+    assert.equal(c.tieredEligibleCount, 1);
+    assert.equal(c.overlapDebtRouted, 0);
+  });
+
+  test('overlapDebtRouted is honoured without opts too (it reads debtRoutedFiles off the RESULT, never the bucket maps)', () => {
+    const legacy = { findings: [mkFinding(1)] };
+    const tiered = { findings: [], debtRoutedFiles: ['src/f1.mjs'] };
+    const c = compareAuditRunResults(legacy, tiered);
+    assert.equal(c.overlapDebtRouted, 1);
+    assert.equal(c.onlyLegacyCount, 0, 'debt-routed is handled, not missed — with or without opts');
+  });
+
+  test('symmetric eligible counts are BOTH populated from the same bucket maps (decision #7 / round-2 H3)', () => {
+    const legacy = { findings: [mkFinding(1), mkFinding(2)] };
+    const tiered = { findings: [mkFinding(3)] };
+    const c = compareAuditRunResults(legacy, tiered, {
+      legacyBuckets: buildLegacyBuckets(legacy, ['src/f1.mjs', 'src/f2.mjs']),
+      tieredBuckets: buildTieredBuckets(tiered),
+    });
+    assert.equal(c.legacyEligibleCount, 2);
+    assert.equal(c.tieredEligibleCount, 1);
+  });
+
+  // Decision #10 — the single most consequential fix in the plan. A
+  // correctly debt-routed candidate is ABSENT from tieredResult.findings by
+  // design; counting the legacy side's finding on that file as a tiered
+  // "miss" would penalize the pipeline exactly when it did its job right.
+  test('a legacy finding on a debt-routed file counts as overlapDebtRouted, NOT onlyLegacyCount', () => {
+    const legacy = { findings: [mkFinding(1), mkFinding(2)] };
+    const tiered = { findings: [], debtRoutedFiles: ['src/f1.mjs'] };
+    const c = compareAuditRunResults(legacy, tiered, {
+      legacyBuckets: buildLegacyBuckets(legacy, ['src/f1.mjs', 'src/f2.mjs']),
+      tieredBuckets: buildTieredBuckets(tiered),
+    });
+    assert.equal(c.overlapDebtRouted, 1, 'f1 was debt-routed — handled, not missed');
+    assert.equal(c.onlyLegacyCount, 1, 'only f2 is a genuine miss');
+    assert.equal(c.overlapCount, 0, 'a debt-routed match is NOT a two-sided overlap');
+  });
+
+  test('a genuine two-sided overlap is never reclassified as overlapDebtRouted', () => {
+    const shared = mkFinding(1);
+    const legacy = { findings: [shared] };
+    const tiered = { findings: [shared], debtRoutedFiles: ['src/f1.mjs'] };
+    const c = compareAuditRunResults(legacy, tiered, {
+      legacyBuckets: buildLegacyBuckets(legacy, ['src/f1.mjs']),
+      tieredBuckets: buildTieredBuckets(tiered),
+    });
+    assert.equal(c.overlapCount, 1, 'both sides independently produced it — a real overlap');
+    assert.equal(c.overlapDebtRouted, 0);
+    assert.equal(c.onlyLegacyCount, 0);
+  });
+
+  test('no debtRoutedFiles → overlapDebtRouted is 0 and onlyLegacyCount is unchanged', () => {
+    const legacy = { findings: [mkFinding(1)] };
+    const tiered = { findings: [] };
+    const c = compareAuditRunResults(legacy, tiered, {
+      legacyBuckets: buildLegacyBuckets(legacy, ['src/f1.mjs']),
+      tieredBuckets: buildTieredBuckets(tiered),
+    });
+    assert.equal(c.overlapDebtRouted, 0);
+    assert.equal(c.onlyLegacyCount, 1);
+  });
+
+  // Round-3 plan-audit H5, corrected by Gemini round-2 G2: eligibility is
+  // "did this finding reach the comparison at all" — decision #9 already
+  // guarantees a SUCCESSFULLY routed candidate never becomes a finding, so a
+  // pre_existing_independent finding present here is a debt-routing FAILURE
+  // fallback and MUST be compared like any other.
+  test('a pre_existing_independent-bucketed tiered finding is still eligible (it is a debt-routing FAILURE fallback)', () => {
+    const f = mkFinding(1, { scopeBucket: 'pre_existing_independent' });
+    const tiered = { findings: [f] };
+    const c = compareAuditRunResults({ findings: [] }, tiered, {
+      legacyBuckets: new Map(),
+      tieredBuckets: buildTieredBuckets(tiered),
+    });
+    assert.equal(c.tieredEligibleCount, 1, 'never excluded by bucket — it reached the comparison, so it counts');
+    assert.equal(c.tieredPreExistingIndependentCount, 1, 'but its provenance is still reported separately');
+    assert.equal(c.onlyTieredCount, 1);
+  });
+
+  test('detailed sub-bucket counts are reported for provenance without gating eligibility', () => {
+    const tiered = { findings: [
+      mkFinding(1, { scopeBucket: 'change_related' }),
+      mkFinding(2, { scopeBucket: 'change_related' }),
+      mkFinding(3, { scopeBucket: 'pre_existing_impactful' }),
+      mkFinding(4, { scopeBucket: 'pre_existing_independent' }),
+    ] };
+    const legacy = { findings: [mkFinding(5)] };
+    const c = compareAuditRunResults(legacy, tiered, {
+      legacyBuckets: buildLegacyBuckets(legacy, ['src/unrelated.mjs']),
+      tieredBuckets: buildTieredBuckets(tiered),
+    });
+    assert.equal(c.tieredEligibleCount, 4, 'every bucket is eligible');
+    assert.equal(c.tieredChangeRelatedCount, 2);
+    assert.equal(c.tieredPreExistingImpactfulCount, 1);
+    assert.equal(c.tieredPreExistingIndependentCount, 1);
+    assert.equal(c.legacyOutOfScopeCount, 1, 'f5 is not in changedFiles');
+  });
+});
+
+describe('compareAuditRunResults — new copy-through telemetry fields', () => {
+  test('tieredStage0Verified is hoisted from _stageBreakdown to a top-level field', () => {
+    const c = compareAuditRunResults(
+      { findings: [] },
+      { findings: [], _stageBreakdown: { stage0Verified: 7 } },
+    );
+    assert.equal(c.tieredStage0Verified, 7);
+  });
+
+  test('tieredStage0Verified is null (never 0) when no _stageBreakdown exists — absent must not read as "verified nothing"', () => {
+    const c = compareAuditRunResults({ findings: [] }, { findings: [] });
+    assert.equal(c.tieredStage0Verified, null);
+  });
+
+  test('debtRoutingIncomplete is persisted so a silent restore-to-pool is diagnosable', () => {
+    const c = compareAuditRunResults(
+      { findings: [] },
+      { findings: [], debtRoutingIncomplete: [{ fingerprint: 'fp1', reason: 'writeDebtEntries threw: disk full' }] },
+    );
+    assert.deepEqual(c.tieredDebtRoutingIncomplete, [{ fingerprint: 'fp1', reason: 'writeDebtEntries threw: disk full' }]);
+  });
+});
+
+describe('parseTotalSeconds strictness (Cluster-C audit M1/M4)', () => {
+  test('malformed decimal strings resolve to null, never a numeric-prefix truncation', () => {
+    // Reached via the public API: _pass_timings.total carries the string.
+    const via = (total) => compareAuditRunResults(
+      { findings: [], _pass_timings: { total } }, { findings: [] },
+    ).legacyLatencySec;
+    assert.equal(via('1..5s'), null, '"1..5s" must not parse as 1');
+    assert.equal(via('..s'), null);
+    assert.equal(via('1.2.3s'), null);
+    assert.equal(via('3.2s'), 3.2, 'well-formed values still parse');
+    assert.equal(via('10s'), 10, 'integer seconds still parse');
   });
 });

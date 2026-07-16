@@ -418,6 +418,16 @@ export const TelemetryDataSchema = z.object({
     legacyFailures: count,
     shadowFailures: count,
     comparedRuns: count,
+    // docs/plans/stage0-evidence-relevance-split.md round-3 M1 — the two
+    // named, non-overlapping completion metrics + the three exclusion
+    // reasons. Defaulted (not `.optional()`) so a pre-split snapshot still
+    // validates while every NEW snapshot always carries them: an absent
+    // count would otherwise be indistinguishable from a genuine zero on the
+    // render side.
+    historicalCompleteRuns: count.default(0),
+    excludedNoStage0Evidence: count.default(0),
+    excludedDegenerateComparison: count.default(0),
+    excludedFallback: count.default(0),
     costDeltaUsd: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),
     latencyDeltaSec: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),
     findingOverlapRate: z.object({ mean: z.number().nullable(), median: z.number().nullable() }),

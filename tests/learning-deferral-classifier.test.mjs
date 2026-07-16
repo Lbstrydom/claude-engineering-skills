@@ -6,10 +6,41 @@ import {
   parseAcceptV1Markers,
   isAutoDeferrableClass,
   isForbiddenClass,
+  isFileInChangedScope,
   AUTO_DEFERRABLE_CLASSES,
   FORBIDDEN_CLASSES,
   _internals,
 } from '../scripts/lib/audit/deferral-classifier.mjs';
+
+// ── isFileInChangedScope (docs/plans/stage0-evidence-relevance-split.md
+//    decision #6 — extracted from gate (b) so tiered-shadow-compare.mjs can
+//    reuse the EXACT predicate rather than re-implementing it) ─────────────
+
+describe('isFileInChangedScope', () => {
+  it('returns true when the file is in the changed set', () => {
+    assert.equal(isFileInChangedScope('src/a.mjs', ['src/a.mjs', 'src/b.mjs']), true);
+  });
+
+  it('returns false when the changed set is non-empty and does NOT contain the file', () => {
+    assert.equal(isFileInChangedScope('src/z.mjs', ['src/a.mjs', 'src/b.mjs']), false);
+  });
+
+  // The load-bearing tri-state (gate (b)'s own audit-fix H3): an empty
+  // changedFiles can mean "diff resolution failed", NOT "zero files changed".
+  // Treating it as authoritative would silently mass-classify everything as
+  // out-of-scope.
+  it('returns null (UNKNOWN) for an empty/absent changed set — never an authoritative false', () => {
+    assert.equal(isFileInChangedScope('src/a.mjs', []), null);
+    assert.equal(isFileInChangedScope('src/a.mjs', null), null);
+    assert.equal(isFileInChangedScope('src/a.mjs', undefined), null);
+    assert.equal(isFileInChangedScope('src/a.mjs', 'not-an-array'), null);
+  });
+
+  it('returns null (UNKNOWN) for an absent filePath', () => {
+    assert.equal(isFileInChangedScope('', ['src/a.mjs']), null);
+    assert.equal(isFileInChangedScope(null, ['src/a.mjs']), null);
+  });
+});
 
 // ── parseAcceptV1Markers ──────────────────────────────────────────────────
 

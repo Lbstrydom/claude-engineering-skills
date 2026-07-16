@@ -59,12 +59,28 @@ async function convergenceThreshold(gate, { repoRoot }) {
 async function tieredShadowWindow(gate, { repoRoot }) {
   const mod = await importImplementation(gate, repoRoot);
   const rows = gate.fixture.rows;
-  const expectedCompared = rows.filter((r) => r.comparison?.tieredRunStatus === 'complete').length;
+  // Mirrors `summarize()`'s CURRENT decision-grade predicate exactly
+  // (docs/plans/stage0-evidence-relevance-split.md round-3 M1, with the
+  // 2026-07-16 one-sided correction): `complete` is necessary but no longer
+  // sufficient — a decision-grade comparison additionally requires both
+  // eligible-count fields to be confirmed numbers AND at least ONE side's
+  // population non-empty (`||`, not `&&` — the symmetric form silently
+  // dropped one-sided recall-failure/value-add runs, biasing the overlap
+  // rate upward). Deriving `expectedCompared` from `complete` alone would
+  // encode the SUPERSEDED contract here and read as divergent for any
+  // fixture with a complete-but-degenerate row.
+  const expectedCompared = rows.filter((r) => {
+    const c = r.comparison;
+    return c?.tieredRunStatus === 'complete'
+      && typeof c.tieredEligibleCount === 'number'
+      && typeof c.legacyEligibleCount === 'number'
+      && (c.tieredEligibleCount > 0 || c.legacyEligibleCount > 0);
+  }).length;
   const summary = mod.summarize(rows);
   if (summary.comparedRuns !== expectedCompared) {
     return {
       state: 'divergent',
-      stated: `comparedRuns excludes fallback_legacy rows (expected ${expectedCompared})`,
+      stated: `comparedRuns requires 'complete' AND a non-empty eligible population on at least one side (expected ${expectedCompared})`,
       found: `comparedRuns === ${summary.comparedRuns}`,
     };
   }

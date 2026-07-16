@@ -265,6 +265,84 @@ export function gitShowFileAtRevision(cwd, revision, filePath) {
 }
 
 /**
+ * Occurrence-specific pre-existence check for the tiered-recall Stage 0
+ * evidence-relevance split (plan: docs/plans/stage0-evidence-relevance-split.md
+ * decision #4/§4). Confirms whether a specific, ALREADY-DIFF-LINE-MAPPED
+ * base-revision line range contains `quote`, unchanged since `baseSha` —
+ * never a whole-file content search (round-2 plan-audit H1: a global search
+ * can misclassify a genuinely new occurrence of a common snippet as
+ * pre-existing when the SAME snippet also exists, unrelatedly, elsewhere in
+ * the file).
+ *
+ * Deliberately takes NO free-floating "search the whole base file" mode —
+ * `mappedBaseRange` MUST already be the caller's diff-derived mapping
+ * (`evidence-triage.mjs::mapHeadRangeToBase`), not a raw guess.
+ *
+ * @param {string} cwd
+ * @param {string} filePath - repo-relative path, forward-slash form
+ * @param {{startLine: number, endLine: number}} mappedBaseRange - 1-indexed, inclusive
+ * @param {string} quote - the anchor's own cited text, compared against the
+ *   mapped range's content (round-3 plan-audit H1 — the comparison operand
+ *   the earlier draft's signature omitted)
+ * @param {string} baseSha - MUST already pass `isSafeGitRevision`
+ * @param {{preloadedContent?: string}} [opts] - decision #5/M4's run-scoped
+ *   caching: when the caller already fetched this file's base-revision
+ *   content (e.g. a prior candidate cited the same file), pass it here to
+ *   skip the `gitShowFileAtRevision` call entirely — one fetch per unique
+ *   `(filePath, baseSha)` per run, not per candidate. Omitted (the default)
+ *   → fetches internally, identical to this function's original behavior.
+ * @returns {boolean | null} `true` if `quote` (source-preservingly
+ *   canonicalized — see below) is found within the mapped range's content
+ *   at `baseSha`; `false` if the range exists but the content differs
+ *   (genuinely new/moved/reworded); `null` on any resolution failure —
+ *   file didn't exist at `baseSha` (added by this commit), an unreadable
+ *   revision, an out-of-bounds range, or an empty quote — fail-closed,
+ *   never guessed.
+ */
+export function contentExistsAtMappedRange(cwd, filePath, mappedBaseRange, quote, baseSha, opts = {}) {
+  let content;
+  if (typeof opts.preloadedContent === 'string') {
+    content = opts.preloadedContent;
+  } else {
+    const result = gitShowFileAtRevision(cwd, baseSha, filePath);
+    if (!result.ok) return null;
+    content = result.content;
+  }
+  const canonQuote = canonicalizeForOccurrenceMatch(quote);
+  if (!canonQuote) return null;
+  const lines = content.split('\n');
+  const { startLine, endLine } = mappedBaseRange || {};
+  if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) return null;
+  if (startLine < 1 || startLine > endLine || endLine > lines.length) return null;
+  const windowContent = lines.slice(startLine - 1, endLine).join('\n');
+  return canonicalizeForOccurrenceMatch(windowContent).includes(canonQuote);
+}
+
+/**
+ * Source-preserving canonicalization for `contentExistsAtMappedRange`'s
+ * exact-occurrence comparison — deliberately NOT `normalizeWhitespace`
+ * (round-2 plan-audit-code H2: `normalizeWhitespace` collapses every
+ * interior whitespace run, so `"a  b"` and `"a b"` compare equal — fine for
+ * Gate A's coarser "is this a real quote" question, where a false-negative
+ * is the unsafe direction, but wrong for Gate B's "is this EXACTLY
+ * unchanged" question, where a false-positive match inside a string
+ * literal, template literal, or comment would misclassify genuinely new
+ * content as pre-existing). Only tolerates line-ending differences and
+ * per-line leading/trailing whitespace (indentation) — never collapses
+ * whitespace WITHIN a line.
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+function canonicalizeForOccurrenceMatch(s) {
+  return String(s ?? '')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n');
+}
+
+/**
  * Test-only: re-export the classifier so unit tests can drive each
  * VcsErrorCode without a live git environment. NOT part of the public API.
  *

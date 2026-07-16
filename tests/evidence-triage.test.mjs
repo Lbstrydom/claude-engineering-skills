@@ -8,7 +8,11 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyAnchor, tagPreExisting, runStage0EvidenceTriage } from '../scripts/lib/audit/evidence-triage.mjs';
+import {
+  verifyAnchor, tagPreExisting, runStage0EvidenceTriage,
+  resolveAnchorLocation, mapHeadLineToBase, mapHeadRangeToBase,
+  resolveScopeBucketForFinding,
+} from '../scripts/lib/audit/evidence-triage.mjs';
 import { createEnvelope, mergeIntoEnvelopes, promoteAlternative } from '../scripts/lib/audit/candidate-envelope.mjs';
 
 const DIFF = `diff --git a/src/foo.js b/src/foo.js
@@ -402,5 +406,271 @@ describe('runStage0EvidenceTriage — evidenceType branch (Gemini gate round-1 f
     assert.equal(rejected.length, 0);
     assert.equal(verified.length, 1);
     assert.equal(verified[0].stageDecisions[0].outcome, 'unverifiable');
+  });
+});
+
+// Full current content of src/foo.js — note "return 42;" inside unrelated()
+// is genuinely pre-existing content, outside any diff hunk entirely, unlike
+// anything DIFF's hunk for src/foo.js shows.
+const FOO_HEAD_CONTENT = `function unrelated() {
+  return 42;
+}
+
+function foo() {
+  const a = 1;
+  await db.insert(a);
+  return a;
+}
+`;
+
+describe('resolveAnchorLocation — Gate A (docs/plans/stage0-evidence-relevance-split.md)', () => {
+  it('returns in_hunk when the quote is found within a diff hunk', () => {
+    const r = resolveAnchorLocation(HEAD_ANCHOR, DIFF, FOO_HEAD_CONTENT);
+    assert.equal(r.status, 'in_hunk');
+  });
+
+  it('returns outside_hunk_in_head with a matched line range when the quote is real but not in any hunk', () => {
+    const anchor = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 2, endLine: 2 };
+    const r = resolveAnchorLocation(anchor, DIFF, FOO_HEAD_CONTENT);
+    assert.equal(r.status, 'outside_hunk_in_head');
+    assert.deepEqual(r.headLineRange, { startLine: 2, endLine: 2 });
+    assert.ok(Array.isArray(r.hunks));
+  });
+
+  it('returns a correct multi-line headLineRange for a quote spanning several lines', () => {
+    const multiLine = 'function unrelated() {\n  return 42;\n}';
+    const anchor = { ...HEAD_ANCHOR, quote: multiLine, startLine: 1, endLine: 3 };
+    const r = resolveAnchorLocation(anchor, DIFF, FOO_HEAD_CONTENT);
+    assert.equal(r.status, 'outside_hunk_in_head');
+    assert.deepEqual(r.headLineRange, { startLine: 1, endLine: 3 });
+  });
+
+  it('returns unverifiable when the file is not in the diff at all', () => {
+    const anchor = { ...HEAD_ANCHOR, diffPathId: 'src/missing.js', oldFile: 'src/missing.js', newFile: 'src/missing.js' };
+    const r = resolveAnchorLocation(anchor, DIFF, FOO_HEAD_CONTENT);
+    assert.equal(r.status, 'unverifiable');
+  });
+
+  it('returns fabricated when the quote is nowhere — not in a hunk, not in headContent', () => {
+    const anchor = { ...HEAD_ANCHOR, quote: 'this text does not exist anywhere' };
+    const r = resolveAnchorLocation(anchor, DIFF, FOO_HEAD_CONTENT);
+    assert.equal(r.status, 'fabricated');
+  });
+
+  it('does not attempt the HEAD-fallback for a base-side anchor (discovery never saw base content)', () => {
+    const anchor = { ...HEAD_ANCHOR, side: 'base', quote: 'return 42;', startLine: 2, endLine: 2 };
+    // 'return 42;' is real HEAD content but this is a base-side anchor — it
+    // has no hunk match either (the hunk's base side is "return a;"), so it
+    // must be fabricated, never outside_hunk_in_head.
+    const r = resolveAnchorLocation(anchor, DIFF, FOO_HEAD_CONTENT);
+    assert.equal(r.status, 'fabricated');
+  });
+
+  it('never fires the HEAD-fallback when headContent is absent (matches pre-restructure behavior exactly)', () => {
+    const anchor = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 2, endLine: 2 };
+    const r = resolveAnchorLocation(anchor, DIFF, null);
+    assert.equal(r.status, 'fabricated');
+  });
+});
+
+describe('mapHeadLineToBase / mapHeadRangeToBase — diff-derived line mapping (round-2 plan-audit H1)', () => {
+  // Two hunks on one file: hunk 1 grows head by 1 line (base 5-6 -> head 5-7),
+  // hunk 2 shrinks head by 1 line (base 20-22 -> head 21-22).
+  const HUNKS = [
+    { header: { baseStart: 5, baseCount: 2, headStart: 5, headCount: 3 }, lines: [] },
+    { header: { baseStart: 20, baseCount: 3, headStart: 21, headCount: 2 }, lines: [] },
+  ];
+
+  it('maps a line BEFORE the first hunk with zero offset', () => {
+    assert.equal(mapHeadLineToBase(3, HUNKS), 3);
+  });
+
+  it('returns null for a line WITHIN a hunk (not this function\'s case — that\'s in_hunk)', () => {
+    assert.equal(mapHeadLineToBase(6, HUNKS), null);
+    assert.equal(mapHeadLineToBase(21, HUNKS), null);
+  });
+
+  it('maps a line BETWEEN two hunks using the cumulative offset from the hunk(s) already passed', () => {
+    // After hunk 1 (head grew by 1: headCount 3 - baseCount 2 = +1), a head
+    // line of 10 maps back to base line 9.
+    assert.equal(mapHeadLineToBase(10, HUNKS), 9);
+  });
+
+  it('maps a line AFTER all hunks using the total cumulative offset', () => {
+    // Net offset across both hunks: (3-2) + (2-3) = 0.
+    assert.equal(mapHeadLineToBase(25, HUNKS), 25);
+  });
+
+  it('returns null when any hunk header failed to parse — never trusts a partial offset chain', () => {
+    const brokenHunks = [{ header: null, lines: [] }, ...HUNKS];
+    assert.equal(mapHeadLineToBase(3, brokenHunks), null);
+  });
+
+  it('mapHeadRangeToBase requires BOTH endpoints to map and the length to be preserved', () => {
+    // [10,25] straddles hunk 2 (offset changes mid-range) — inconsistent
+    // mapped length is a real ambiguity, not a guessable answer.
+    assert.equal(mapHeadRangeToBase({ startLine: 10, endLine: 25 }, HUNKS), null);
+  });
+
+  it('mapHeadRangeToBase returns a consistent range when both endpoints share the same offset', () => {
+    // [8,10] is entirely between hunk 1 and hunk 2 — one consistent offset (+1).
+    assert.deepEqual(mapHeadRangeToBase({ startLine: 8, endLine: 10 }, HUNKS), { startLine: 7, endLine: 9 });
+  });
+});
+
+describe('runStage0EvidenceTriage — Gate B relevance classification (docs/plans/stage0-evidence-relevance-split.md)', () => {
+  function makeEnvelope(finding, sourceModel = 'gpt') {
+    return createEnvelope({ ...finding, _fingerprint: 'fp' }, { sourceModel, pass: 'backend' });
+  }
+  const OUTSIDE_HUNK_ANCHOR = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 2, endLine: 2 };
+  const adapters = (blameAdapter, impactAdapter) => ({
+    headContentAdapter: (filePath) => (filePath === 'src/foo.js' ? FOO_HEAD_CONTENT : null),
+    blameAdapter, impactAdapter,
+  });
+
+  it('a genuinely pre-existing, independent candidate reaches pre_existing_independent — the exact reachability Gemini final-review round-2 G1 found broken', () => {
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor: OUTSIDE_HUNK_ANCHOR });
+    const { verified, preExistingIndependent, rejected } = runStage0EvidenceTriage(
+      [envelope], { diffText: DIFF },
+      adapters(() => true, () => true),
+    );
+    assert.equal(rejected.length, 0);
+    assert.equal(verified.length, 0);
+    assert.equal(preExistingIndependent.length, 1);
+    assert.equal(preExistingIndependent[0].scopeBucket, 'pre_existing_independent');
+  });
+
+  it('predates the commit but a changed file depends on it -> pre_existing_impactful, stays Stage-1-eligible', () => {
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor: OUTSIDE_HUNK_ANCHOR });
+    const { verified, preExistingIndependent } = runStage0EvidenceTriage(
+      [envelope], { diffText: DIFF },
+      adapters(() => true, () => false),
+    );
+    assert.equal(preExistingIndependent.length, 0);
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0].scopeBucket, 'pre_existing_impactful');
+  });
+
+  it('blame says NOT pre-existing -> change_related, Gate B never even reaches impactAdapter\'s answer mattering', () => {
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor: OUTSIDE_HUNK_ANCHOR });
+    const { verified } = runStage0EvidenceTriage(
+      [envelope], { diffText: DIFF },
+      adapters(() => false, () => true),
+    );
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0].scopeBucket, 'change_related');
+  });
+
+  it('blame or impact unknown (null) -> safe default change_related, never independent', () => {
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor: OUTSIDE_HUNK_ANCHOR });
+    const { verified, preExistingIndependent } = runStage0EvidenceTriage(
+      [envelope], { diffText: DIFF },
+      adapters(() => true, () => null),
+    );
+    assert.equal(preExistingIndependent.length, 0);
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0].scopeBucket, 'change_related');
+  });
+
+  it('in_hunk candidates get scopeBucket change_related WITHOUT Gate B ever running (blameAdapter never called)', () => {
+    let blameCalls = 0;
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor: HEAD_ANCHOR });
+    const { verified } = runStage0EvidenceTriage(
+      [envelope], { diffText: DIFF },
+      adapters(() => { blameCalls++; return true; }, () => true),
+    );
+    assert.equal(verified[0].scopeBucket, 'change_related');
+    assert.equal(blameCalls, 0);
+  });
+
+  it('runStage0EvidenceTriage calls headContentAdapter — the explicit injection Gemini final-review round-1 G2 required', () => {
+    let adapterCalls = 0;
+    const envelope = makeEnvelope({ evidenceType: 'commission', anchor: OUTSIDE_HUNK_ANCHOR });
+    runStage0EvidenceTriage([envelope], { diffText: DIFF }, {
+      headContentAdapter: (filePath) => { adapterCalls++; return filePath === 'src/foo.js' ? FOO_HEAD_CONTENT : null; },
+      blameAdapter: () => true, impactAdapter: () => true,
+    });
+    assert.ok(adapterCalls >= 1);
+  });
+});
+
+describe('runStage0EvidenceTriage — backward compatibility with the degraded (all-null-adapter) shape', () => {
+  // Cluster A (this change) and Cluster B (wiring real adapters into
+  // tiered-pipeline.mjs) were declared as SEPARATE, independently
+  // fix-gated clusters in docs/plans/stage0-evidence-relevance-split.md —
+  // deliberately, so Cluster A's pure logic was independently testable
+  // before Cluster B existed. Cluster B has since landed (tiered-pipeline.mjs
+  // now wires real `makeBlameAdapter`/`makeImpactAdapter`/
+  // `makeHeadContentAdapter` closures — see tests/tiered-pipeline-wiring.test.mjs's
+  // static pins), so this is no longer "the current production call site" —
+  // but the all-null shape stays a REAL, reachable degraded state (cloud
+  // disabled, dirty working tree, or an unreadable file all resolve their
+  // respective adapter to a `null`-returning lookup) that must still degrade
+  // safely, exactly like the pre-restructure implementation did.
+  const CURRENT_PRODUCTION_ADAPTERS = { blameAdapter: () => null, impactAdapter: () => null };
+
+  it('never crashes and never fires the HEAD-fallback when headContentAdapter is absent — degrades to the exact pre-restructure behavior', () => {
+    const envelope = createEnvelope(
+      { evidenceType: 'commission', anchor: { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 2, endLine: 2 }, _fingerprint: 'fp' },
+      { sourceModel: 'gpt', pass: 'backend' },
+    );
+    const { verified, preExistingIndependent, rejected } = runStage0EvidenceTriage(
+      [envelope], { diffText: DIFF }, CURRENT_PRODUCTION_ADAPTERS,
+    );
+    // 'return 42;' is real content but only reachable via the HEAD-fallback
+    // (it's outside every hunk) — with no headContentAdapter, that fallback
+    // can never fire, so this is fabricated/rejected, exactly as it was
+    // before this restructure existed.
+    assert.equal(preExistingIndependent.length, 0);
+    assert.equal(verified.length, 0);
+    assert.equal(rejected.length, 1);
+  });
+
+  it('in-hunk verification is completely unaffected by the missing headContentAdapter', () => {
+    const envelope = createEnvelope(
+      { evidenceType: 'commission', anchor: HEAD_ANCHOR, _fingerprint: 'fp' },
+      { sourceModel: 'gpt', pass: 'backend' },
+    );
+    const { verified, rejected } = runStage0EvidenceTriage([envelope], { diffText: DIFF }, CURRENT_PRODUCTION_ADAPTERS);
+    assert.equal(rejected.length, 0);
+    assert.equal(verified.length, 1);
+    assert.equal(verified[0].scopeBucket, 'change_related');
+  });
+});
+
+describe('resolveScopeBucketForFinding — decision #8 (docs/plans/stage0-evidence-relevance-split.md)', () => {
+  it('resolves a single origin directly from the manifest', () => {
+    const manifest = new Map([['fp1', 'pre_existing_impactful']]);
+    assert.equal(resolveScopeBucketForFinding(['fp1'], manifest), 'pre_existing_impactful');
+  });
+
+  it('takes the LEAST-restrictive bucket among multiple origins — change_related wins if ANY origin is change_related', () => {
+    const manifest = new Map([
+      ['fp1', 'pre_existing_independent'],
+      ['fp2', 'change_related'],
+    ]);
+    assert.equal(resolveScopeBucketForFinding(['fp1', 'fp2'], manifest), 'change_related');
+  });
+
+  it('pre_existing_impactful beats pre_existing_independent when neither origin is change_related', () => {
+    const manifest = new Map([
+      ['fp1', 'pre_existing_independent'],
+      ['fp2', 'pre_existing_impactful'],
+    ]);
+    assert.equal(resolveScopeBucketForFinding(['fp1', 'fp2'], manifest), 'pre_existing_impactful');
+  });
+
+  it('an empty originCandidateIds array (e.g. a Stage-2 missed_candidate with no Stage 0 origin) defaults to change_related', () => {
+    assert.equal(resolveScopeBucketForFinding([], new Map([['fp1', 'pre_existing_independent']])), 'change_related');
+  });
+
+  it('an origin id absent from the manifest is skipped, not treated as an error', () => {
+    const manifest = new Map([['fp1', 'pre_existing_independent']]);
+    assert.equal(resolveScopeBucketForFinding(['unknown-fp'], manifest), 'change_related');
+  });
+
+  it('a null/undefined originCandidateIds degrades to the safe default, never throws', () => {
+    assert.equal(resolveScopeBucketForFinding(null, new Map()), 'change_related');
+    assert.equal(resolveScopeBucketForFinding(undefined, new Map()), 'change_related');
   });
 });

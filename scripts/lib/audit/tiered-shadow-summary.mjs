@@ -56,38 +56,97 @@ export function readRecords(logPath) {
 
 /**
  * @param {object[]} records
- * @returns {{totalRuns:number, comparedRuns:number, legacyFailures:number,
- *   shadowFailures:number, costDeltaUsd:object, latencyDeltaSec:object,
- *   findingOverlapRate:object, tieredRunStatusCounts:object}}
+ * @returns {{totalRuns:number, historicalCompleteRuns:number, comparedRuns:number,
+ *   legacyFailures:number, shadowFailures:number, excludedNoStage0Evidence:number,
+ *   excludedDegenerateComparison:number, excludedFallback:number,
+ *   costDeltaUsd:object, latencyDeltaSec:object, findingOverlapRate:object,
+ *   tieredRunStatusCounts:object}}
  *
  * `totalRuns` counts every observation attempted (including ones where
- * either pipeline failed); `comparedRuns` counts only records where the
- * tiered pipeline actually COMPLETED (`tieredRunStatus === 'complete'`) —
- * NOT merely "a comparison object exists". The Phase-14 decision needs
- * DECISION-GRADE data points — see `windowProgress()` below, which gates on
- * `comparedRuns`, not `totalRuns` (fixed 2026-07-13: the CLI/dashboard
- * previously both gated on `totalRuns`, so a run of the window's runs
- * failing outright could read as "window met" while zero real comparisons
- * existed).
+ * either pipeline failed).
  *
- * **2026-07-14 incident fix**: `compareAuditRunResults` builds a non-null
- * `comparison` object even when the tiered pipeline fell back to legacy
- * (`tieredRunStatus:'fallback_legacy'`) — that's a real record worth
- * keeping (it shows the fallback happened), but it is NOT a genuine
- * tiered-vs-legacy comparison and must never count toward the decision
- * window. Before this fix, `compared = records.filter(r => r.comparison)`
- * let 20/20 all-fallback observations read as "window met" — the exact
- * silent-green failure mode this file's own doc comment above already
- * warned about for a DIFFERENT gate (`totalRuns`). `tieredRunStatusCounts`
+ * **TWO NAMED, NON-OVERLAPPING completion metrics** (docs/plans/stage0-evidence-relevance-split.md
+ * round-3 plan-audit M1 — never conflated):
+ *
+ *  - `historicalCompleteRuns` — the PRE-EXISTING metric, unchanged:
+ *    `tieredRunStatus === 'complete'`, regardless of row shape. Old-shape
+ *    rows (`tieredEligibleCount` absent/null, written before the
+ *    evidence-relevance split) count here exactly as they did before.
+ *  - `comparedRuns` — the NEW, STRICTER, Phase-14-decision-grade metric:
+ *    `complete` AND both eligible-count fields confirmed numbers (an
+ *    old-shape row's null/absent field is EXCLUDED — insufficient data,
+ *    never "zero confirmed") AND at least ONE side's population non-empty.
+ *    Deliberately `||`, not the plan's original symmetric `&&` (corrected at
+ *    implementation, 2026-07-16): requiring BOTH sides non-empty silently
+ *    dropped every one-sided run — legacy-found-tiered-missed (a recall
+ *    failure) and tiered-found-legacy-missed (tiered's value-add) — i.e.
+ *    exactly the runs the Phase-14 decision most needs, biasing the
+ *    surviving overlap rate upward toward a false "flip it". Only a
+ *    both-sides-empty run is genuinely uninformative for recall and is
+ *    excluded as degenerate. `windowProgress()` consumes ONLY this.
+ *
+ * Round-1 plan-audit M3: `stage0Verified > 0` alone still admits a
+ * degenerate run — the population requirement above (with the one-sided
+ * correction) is the real fix.
+ *
+ * Three EXCLUSION REASONS are reported separately (never collapsed into one
+ * count) so an operator can tell "nothing verifiable" apart from "verifiable
+ * but degenerate" apart from "fell back to legacy" at a glance.
+ *
+ * **2026-07-14 incident fix** (retained): `compareAuditRunResults` builds a
+ * non-null `comparison` object even when the tiered pipeline fell back to
+ * legacy (`tieredRunStatus:'fallback_legacy'`) — a real record worth keeping
+ * (it shows the fallback happened), but NOT a genuine tiered-vs-legacy
+ * comparison, and it must never count toward the decision window. Before
+ * that fix, `compared = records.filter(r => r.comparison)` let 20/20
+ * all-fallback observations read as "window met". `tieredRunStatusCounts`
  * and `tieredFallbackReasons` are computed over the WIDER `withComparison`
- * set (not just `compared`) so an operator can see the fallback breakdown
- * even while `comparedRuns` correctly reads 0.
+ * set so the fallback breakdown stays visible even while `comparedRuns`
+ * correctly reads 0.
  */
 export function summarize(records) {
   const legacyFailures = records.filter((r) => !r.legacyOk).length;
   const shadowFailures = records.filter((r) => r.legacyOk && !r.shadowOk).length;
   const withComparison = records.filter((r) => r.comparison);
-  const compared = withComparison.filter((r) => r.comparison.tieredRunStatus === 'complete');
+  // The PRE-EXISTING metric — deliberately unchanged by this plan.
+  const historicalComplete = withComparison.filter((r) => r.comparison.tieredRunStatus === 'complete');
+  // The NEW, stricter, decision-grade metric. Two parts, deliberately split:
+  //  1. SHAPE — both eligible-count fields must be confirmed numbers. An
+  //     old-shape (pre-split) row's null/absent field is insufficient data,
+  //     never "zero population confirmed" — asserted explicitly rather than
+  //     relying on `null > 0` coercion by accident.
+  //  2. POPULATION — at least ONE side non-empty (`||`, NOT `&&`). The
+  //     symmetric `&&` the plan originally specified was a vestige of an
+  //     earlier eligibility design (a post-bucketing subset); once Gemini
+  //     round-2 G2 collapsed eligibility to "reached the comparison at all",
+  //     `&&` reduced to "both pipelines found ≥1 finding" — a selection bias
+  //     in the DANGEROUS direction: it drops exactly the one-sided runs
+  //     (legacy-found-tiered-missed = recall failure; tiered-found-legacy-
+  //     missed = tiered's value-add) that the Phase-14 decision most needs,
+  //     inflating the headline overlap rate toward a false "flip it". Only a
+  //     both-sides-empty run carries no recall information and is excluded
+  //     as degenerate. This also keeps the overlap-rate denominator
+  //     (legacyFindingCount + onlyTieredCount) non-zero for every compared
+  //     run — the null-rate branch stays unreachable by construction.
+  const hasComparablePopulation = (c) =>
+    typeof c.tieredEligibleCount === 'number' &&
+    typeof c.legacyEligibleCount === 'number' &&
+    (c.tieredEligibleCount > 0 || c.legacyEligibleCount > 0);
+  const compared = historicalComplete.filter((r) => hasComparablePopulation(r.comparison));
+
+  // Exclusion reasons — computed over the same record sets, reported
+  // separately (round-3 plan-audit M1's "not collapsed into one count").
+  const excludedFallback = withComparison.filter((r) => r.comparison.tieredRunStatus === 'fallback_legacy').length;
+  const notCompared = historicalComplete.filter((r) => !hasComparablePopulation(r.comparison));
+  // "Tiered found nothing verifiable at all" — Stage 0 verified zero
+  // candidates. Distinct from a degenerate-but-nonzero-evidence run. Under
+  // the `||` predicate this class only lands here when the LEGACY side was
+  // ALSO empty (a one-sided tiered-zero run with legacy findings now
+  // correctly COUNTS as a comparison — a 0% overlap is recall signal, not a
+  // measurement artifact).
+  const excludedNoStage0Evidence = notCompared.filter((r) => r.comparison.tieredStage0Verified === 0).length;
+  const excludedDegenerateComparison = notCompared.length - excludedNoStage0Evidence;
+
   const costDeltas = compared.map((r) => (r.comparison.legacyCostUsd != null && r.comparison.tieredCostUsd != null) ? r.comparison.tieredCostUsd - r.comparison.legacyCostUsd : null).filter((v) => v != null);
   const latencyDeltas = compared.map((r) => (r.comparison.legacyLatencySec != null && r.comparison.tieredLatencySec != null) ? r.comparison.tieredLatencySec - r.comparison.legacyLatencySec : null).filter((v) => v != null);
   const overlapRates = compared.map((r) => {
@@ -99,7 +158,11 @@ export function summarize(records) {
     totalRuns: records.length,
     legacyFailures,
     shadowFailures,
+    historicalCompleteRuns: historicalComplete.length,
     comparedRuns: compared.length,
+    excludedNoStage0Evidence,
+    excludedDegenerateComparison,
+    excludedFallback,
     costDeltaUsd: { mean: mean(costDeltas), median: median(costDeltas) },
     latencyDeltaSec: { mean: mean(latencyDeltas), median: median(latencyDeltas) },
     findingOverlapRate: { mean: mean(overlapRates), median: median(overlapRates) },

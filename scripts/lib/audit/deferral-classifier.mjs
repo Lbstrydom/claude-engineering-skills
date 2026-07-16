@@ -71,16 +71,20 @@ const ACCEPT_V1_RE = /<!--\s*audit:accept-v1:\s*([^:]+?)\s*::\s*(.+?)\s*-->/g;
  * Parse `<!-- audit:accept-v1: ... -->` markers out of a plan document.
  * Returns the list of {fileGlob, reason} pairs in order.
  *
+ * Consolidated Gemini gate G1: iterated via `matchAll`, NOT `exec` + a manual
+ * `lastIndex = 0` reset. The old form leaned on shared mutable state on a
+ * module-level `/g` regex — safe only while every caller stays synchronous
+ * and non-interleaved. `matchAll` iterates statelessly (it clones the regex
+ * internally), so the invariant holds by construction rather than by a
+ * convention a future async/reentrant caller could silently break.
+ *
  * @param {string} planContent
  * @returns {Array<{fileGlob: string, reason: string}>}
  */
 export function parseAcceptV1Markers(planContent) {
   if (!planContent || typeof planContent !== 'string') return [];
   const out = [];
-  // Reset lastIndex for /g regex reuse.
-  ACCEPT_V1_RE.lastIndex = 0;
-  let m;
-  while ((m = ACCEPT_V1_RE.exec(planContent)) !== null) {
+  for (const m of planContent.matchAll(ACCEPT_V1_RE)) {
     out.push({ fileGlob: m[1].trim(), reason: m[2].trim() });
   }
   return out;
@@ -194,26 +198,27 @@ export function classifyDeferralEvidence(finding, runContext) {
   }
 
   // (b) out-of-scope: cited file NOT in --changed.
-  // Audit-fix H3: empty array `changedFiles=[]` is suspicious — it can mean
-  // "diff resolution failed" rather than "the audit truly touched zero files".
-  // Treat empty as "unknown" (not authoritative) so we don't silently mass-
-  // defer everything as out-of-scope.  Callers that genuinely want to express
-  // "no files changed" should not be running auto-deferral at all.
+  // The membership check itself now lives in the shared, narrow
+  // `isFileInChangedScope` export (decision #6 / round-2 plan-audit M2) so
+  // tiered-shadow-compare.mjs reuses the EXACT same predicate — including
+  // its load-bearing tri-state: audit-fix H3's "empty array `changedFiles=[]`
+  // is ambiguous (diff resolution may have failed), never authoritative
+  // out-of-scope" rule is encoded there as the `null` return, so this gate
+  // behaves exactly as before (a `null` falls through; only an explicit
+  // `false` classifies).
   const changedFiles = Array.isArray(runContext.changedFiles) && runContext.changedFiles.length > 0
     ? runContext.changedFiles
     : null;
-  if (changedFiles && filePath) {
-    if (!changedFiles.includes(filePath)) {
-      return {
-        class: 'out-of-scope',
-        evidence: {
-          type: 'file-not-in-diff',
-          file: filePath,
-          changedCount: changedFiles.length,
-        },
-        isDeterministic: true,
-      };
-    }
+  if (isFileInChangedScope(filePath, changedFiles) === false) {
+    return {
+      class: 'out-of-scope',
+      evidence: {
+        type: 'file-not-in-diff',
+        file: filePath,
+        changedCount: changedFiles.length,
+      },
+      isDeterministic: true,
+    };
   }
 
   // (c) rigor-pressure: same finding hash in TWO DIFFERENT prior rounds.
@@ -295,6 +300,34 @@ export function classifyDeferralEvidence(finding, runContext) {
 }
 
 // ── Public introspection helpers ───────────────────────────────────────────
+
+/**
+ * Is `filePath` inside this run's changed-file scope? The narrow, pure
+ * membership predicate extracted from `classifyDeferralEvidence`'s gate (b)
+ * (docs/plans/stage0-evidence-relevance-split.md decision #6 / round-2
+ * plan-audit M2) so `tiered-shadow-compare.mjs` can reuse the EXACT same
+ * check WITHOUT importing `classifyDeferralEvidence` and its three unrelated
+ * gates (scope-mode, class-allowlist, rigor-pressure).
+ *
+ * Tri-state, NOT a bare boolean — the `null` case is load-bearing and is the
+ * whole reason gate (b) can't just be `changedFiles.includes(f)`: an EMPTY
+ * `changedFiles` array is ambiguous (it can mean "diff resolution failed"
+ * rather than "the audit truly touched zero files"), so it must never be
+ * treated as authoritative "nothing is in scope" — that would silently
+ * mass-classify everything as out-of-scope (the original gate (b)'s own
+ * audit-fix H3).
+ *
+ * @param {string} filePath
+ * @param {Array<string>|null|undefined} changedFiles
+ * @returns {boolean|null} `true` if in scope, `false` if authoritatively out
+ *   of scope, `null` if the answer is UNKNOWN (no/empty changedFiles, or no
+ *   filePath) — never a guess.
+ */
+export function isFileInChangedScope(filePath, changedFiles) {
+  const changed = Array.isArray(changedFiles) && changedFiles.length > 0 ? changedFiles : null;
+  if (!changed || !filePath) return null;
+  return changed.includes(filePath);
+}
 
 export function isAutoDeferrableClass(category) {
   return AUTO_DEFERRABLE_CLASSES.includes(category);

@@ -26,7 +26,7 @@
  *     listSymbolsForSnapshot, listLayeringViolationsForSnapshot,
  *     copyForwardUntouchedFiles
  *
- *   arch/imports.mjs         — symbol_file_imports (6 fns)
+ *   arch/imports.mjs         — symbol_file_imports (7 fns)
  *     recordSymbolFileImports, copyForwardImports,
  *     listFileImportsForSnapshot, markImportGraphPopulated,
  *     getImportGraphPopulated, getImportersForFiles

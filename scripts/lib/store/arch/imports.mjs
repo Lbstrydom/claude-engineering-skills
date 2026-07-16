@@ -1,9 +1,10 @@
 /**
  * @fileoverview symbol_file_imports — file-import graph edges + populated flag.
  *
- * Owns 6 exports:
+ * Owns 7 exports:
  *   recordSymbolFileImports, copyForwardImports, listFileImportsForSnapshot,
- *   markImportGraphPopulated, getImportGraphPopulated, getImportersForFiles
+ *   markImportGraphPopulated, getImportGraphPopulated, getImportersForFiles,
+ *   getFreshImportersOrNull
  *
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS1).
  *
@@ -141,4 +142,116 @@ export async function getImportersForFiles({ refreshId, paths }) {
   }
   for (const list of out.values()) list.sort();
   return out;
+}
+
+/**
+ * Freshness-validated, dirty-tree-guarded, BOUNDED TRANSITIVE reverse-
+ * dependency query for the tiered-recall Stage 0 evidence-relevance split
+ * (plan: docs/plans/stage0-evidence-relevance-split.md decisions #5/#7).
+ * Answers `tagPreExisting`'s `impactAdapter` contract DIRECTLY — `true`
+ * means INDEPENDENT (no changed file depends on `filePath`, within
+ * `maxDepth`), matching `evidence-triage.mjs::tagPreExisting`'s existing
+ * polarity, not this function's own internal "found a dependent?" framing
+ * (Gemini final-review round-2 G1 — the earlier draft's opposite polarity
+ * made `pre_existing_independent` structurally unreachable).
+ *
+ * @param {object} args
+ * @param {string} args.repoUuid
+ * @param {string} args.headSha - the commit under audit; compared against
+ *   the active refresh's own generation commit for freshness
+ * @param {boolean} args.workingTreeDirty - round-2 plan-audit H2: a graph
+ *   fresh for a COMMITTED headSha cannot see imports introduced/removed by
+ *   an uncommitted change: `true` here always short-circuits to `null`
+ * @param {string} args.filePath - the cited file to check
+ * @param {string[]} args.changedFiles - this audit run's changed-file set
+ * @param {number} [args.maxDepth=6] - bounded BFS depth (repo-configurable
+ *   by the caller)
+ * @returns {Promise<boolean|null>} `false` if `filePath` is itself among
+ *   `changedFiles` (round-1 code-audit H2 — the cross-file import graph
+ *   structurally cannot see a same-file dependency between new hunks
+ *   elsewhere in `filePath` and the cited pre-existing lines, so a directly
+ *   changed file is always confidently dependent, never independent), OR if
+ *   a changed file depends on `filePath` (directly or transitively) within
+ *   `maxDepth` — confident, regardless of overall graph completeness, since
+ *   a found edge (or the file's own changed-ness) is real; `true` if the
+ *   bounded traversal exhausts with no such dependent found, on an already
+ *   freshness- AND completeness-validated graph; `null` on cloud-
+ *   unavailable, stale OR incompletely-populated graph (round-1 code-audit
+ *   H1/H6 — commit-sha match alone is not sufficient; a refresh whose
+ *   import-graph population crashed partway through must never be treated
+ *   as authoritative), dirty working tree, missing snapshot, an invalid
+ *   `maxDepth` (round-1 code-audit M4 — must be a finite, non-negative
+ *   integer; `Infinity`/`NaN`/negative would defeat the bound), or a
+ *   depth-limit / unresolved-edge outcome — never a guess.
+ */
+export async function getFreshImportersOrNull({ repoUuid, headSha, workingTreeDirty, filePath, changedFiles, maxDepth = 6 }) {
+  if (workingTreeDirty) return null;
+  if (!repoUuid || !headSha || !filePath) return null;
+  if (!Number.isInteger(maxDepth) || maxDepth < 0) return null;
+
+  const changedSet = new Set(Array.isArray(changedFiles) ? changedFiles : []);
+  // A directly changed file is confidently DEPENDENT on itself for this
+  // adapter's purposes — the import graph is cross-file only and has no
+  // visibility into whether NEW code elsewhere in the same file calls the
+  // cited pre-existing lines. Checked BEFORE isCloudEnabled()/any DB
+  // round-trip — cheap, and correct regardless of cloud availability or
+  // graph freshness/completeness.
+  if (changedSet.has(filePath)) return false;
+
+  if (!await isCloudEnabled()) return null;
+
+  let repoRow;
+  try {
+    repoRow = await one(`SELECT id, active_refresh_id FROM audit_repos WHERE repo_uuid = $1 LIMIT 1`, [repoUuid]);
+  } catch {
+    return null;
+  }
+  if (!repoRow?.active_refresh_id) return null;
+
+  let refreshRow;
+  try {
+    refreshRow = await one(
+      `SELECT commit_sha, import_graph_populated FROM refresh_runs WHERE id = $1 LIMIT 1`,
+      [repoRow.active_refresh_id]
+    );
+  } catch {
+    return null;
+  }
+  // Freshness requires BOTH the commit sha match AND the graph-population
+  // completion marker — a refresh row can exist for the right commit while
+  // its import-graph population crashed partway through (round-1 code-audit
+  // H1/H6); `import_graph_populated !== true` degrades to the same 'stale'
+  // null result as a commit-sha mismatch, never treated as an empty-but-
+  // authoritative importer set.
+  if (!refreshRow?.commit_sha || refreshRow.commit_sha !== headSha || refreshRow.import_graph_populated !== true) {
+    return null;
+  }
+
+  const refreshId = repoRow.active_refresh_id;
+  const visited = new Set([filePath]);
+  let frontier = [filePath];
+  let depth = 0;
+
+  while (frontier.length > 0) {
+    if (depth >= maxDepth) return null; // depth-limit hit before resolution
+    let importersMap;
+    try {
+      importersMap = await getImportersForFiles({ refreshId, paths: frontier });
+    } catch {
+      return null;
+    }
+    const nextFrontier = [];
+    for (const node of frontier) {
+      for (const importer of (importersMap.get(node) || [])) {
+        if (changedSet.has(importer)) return false; // confidently dependent
+        if (!visited.has(importer)) {
+          visited.add(importer);
+          nextFrontier.push(importer);
+        }
+      }
+    }
+    frontier = nextFrontier;
+    depth += 1;
+  }
+  return true; // bounded traversal exhausted, no dependent found -> confidently independent
 }

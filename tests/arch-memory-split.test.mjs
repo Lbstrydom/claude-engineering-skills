@@ -4,7 +4,7 @@
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS1 §6 / §8).
  *
  * Three layers:
- *   1. EXPECTED_EXPORTS manifest — exact 32 public functions, all
+ *   1. EXPECTED_EXPORTS manifest — exact 33 public functions, all
  *      resolved through the barrel as `typeof === 'function'`.
  *   2. Per-module behavioral path — cloud-disabled neutral value matrix.
  *   3. Cross-module separation — no sub-module imports a sibling.
@@ -54,6 +54,7 @@ const EXPECTED_EXPORTS = [
   'markImportGraphPopulated',
   'getImportGraphPopulated',
   'getImportersForFiles',
+  'getFreshImportersOrNull',
   // arch/domain-summaries.mjs — 2 fns
   'upsertDomainSummary',
   'getDomainSummaries',
@@ -64,8 +65,8 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 32 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 32);
+  test(`exactly 33 public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 33);
   });
 
   test('every name resolves through the barrel as a function', async () => {
@@ -81,6 +82,17 @@ describe('arch-memory.mjs barrel — public export contract', () => {
     assert.deepEqual(wrongKind, [], 'wrong-kind exports through barrel');
   });
 
+  // round-1 code-audit L5: the previous version only checked the LISTED
+  // names exist and are functions — it never failed when the barrel started
+  // exporting something new/accidental. Exact-set equality closes that gap
+  // (an accidental new export, or one forgotten from EXPECTED_EXPORTS,
+  // fails loudly here instead of silently widening the public contract).
+  test('the barrel exports EXACTLY EXPECTED_EXPORTS — no accidental additions', async () => {
+    const mod = await import('../scripts/lib/store/arch-memory.mjs');
+    const actual = Object.keys(mod).sort();
+    assert.deepEqual(actual, [...EXPECTED_EXPORTS].sort());
+  });
+
   test('GET_REFRESH_RUN_COLUMNS is NOT exported (file-private)', async () => {
     const mod = await import('../scripts/lib/store/arch-memory.mjs');
     assert.equal(mod.GET_REFRESH_RUN_COLUMNS, undefined,
@@ -91,6 +103,17 @@ describe('arch-memory.mjs barrel — public export contract', () => {
     const mod = await import('../scripts/learning-store.mjs');
     const missing = EXPECTED_EXPORTS.filter((n) => typeof mod[n] !== 'function');
     assert.deepEqual(missing, [], 'top-level learning-store barrel must re-export every arch fn');
+  });
+});
+
+describe('getFreshImportersOrNull — dirty-tree guard (round-2 plan-audit H2)', () => {
+  it('returns null unconditionally when workingTreeDirty is true, regardless of cloud state', async () => {
+    const { getFreshImportersOrNull } = await import('../scripts/lib/store/arch-memory.mjs');
+    const r = await getFreshImportersOrNull({
+      repoUuid: 'repo-x', headSha: 'abc123', workingTreeDirty: true,
+      filePath: 'src/a.mjs', changedFiles: ['src/b.mjs'],
+    });
+    assert.equal(r, null);
   });
 });
 
@@ -182,6 +205,50 @@ describe('arch-memory cloud-disabled neutral-value contract', () => {
   test('getActiveSnapshot returns null when cloud-off', async () => {
     const { getActiveSnapshot } = await import('../scripts/lib/store/arch-memory.mjs');
     assert.equal(await getActiveSnapshot('repo-x'), null);
+  });
+
+  test('getFreshImportersOrNull returns null when cloud-off', async () => {
+    const { getFreshImportersOrNull } = await import('../scripts/lib/store/arch-memory.mjs');
+    const r = await getFreshImportersOrNull({
+      repoUuid: 'repo-x', headSha: 'abc123', workingTreeDirty: false,
+      filePath: 'src/a.mjs', changedFiles: ['src/b.mjs'],
+    });
+    assert.equal(r, null);
+  });
+
+  test('getFreshImportersOrNull returns null on missing required params, before ever reaching cloud', async () => {
+    const { getFreshImportersOrNull } = await import('../scripts/lib/store/arch-memory.mjs');
+    assert.equal(await getFreshImportersOrNull({ repoUuid: null, headSha: 'abc', workingTreeDirty: false, filePath: 'a.mjs' }), null);
+    assert.equal(await getFreshImportersOrNull({ repoUuid: 'x', headSha: null, workingTreeDirty: false, filePath: 'a.mjs' }), null);
+    assert.equal(await getFreshImportersOrNull({ repoUuid: 'x', headSha: 'abc', workingTreeDirty: false, filePath: null }), null);
+  });
+
+  // round-1 code-audit H2: the cross-file import graph has zero visibility
+  // into a same-file dependency between new hunks elsewhere in filePath and
+  // the cited pre-existing lines — a directly changed file must resolve to
+  // `false` (confidently dependent), and it must do so BEFORE any cloud/DB
+  // round-trip (still correct — and cheap — with cloud off).
+  test('getFreshImportersOrNull returns false when filePath is itself in changedFiles, even with cloud off', async () => {
+    const { getFreshImportersOrNull } = await import('../scripts/lib/store/arch-memory.mjs');
+    const r = await getFreshImportersOrNull({
+      repoUuid: 'repo-x', headSha: 'abc123', workingTreeDirty: false,
+      filePath: 'src/a.mjs', changedFiles: ['src/a.mjs', 'src/b.mjs'],
+    });
+    assert.equal(r, false);
+  });
+
+  // round-1 code-audit M4: an unbounded/invalid maxDepth (Infinity, NaN, a
+  // negative number) would defeat `depth >= maxDepth`'s intended bound —
+  // validated at the public boundary, before any cloud/DB round-trip.
+  test('getFreshImportersOrNull returns null for a non-finite or negative maxDepth, before ever reaching cloud', async () => {
+    const { getFreshImportersOrNull } = await import('../scripts/lib/store/arch-memory.mjs');
+    for (const maxDepth of [Infinity, NaN, -1, 1.5]) {
+      const r = await getFreshImportersOrNull({
+        repoUuid: 'repo-x', headSha: 'abc123', workingTreeDirty: false,
+        filePath: 'src/a.mjs', changedFiles: ['src/b.mjs'], maxDepth,
+      });
+      assert.equal(r, null, `expected null for maxDepth=${maxDepth}`);
+    }
   });
 
   test('getActiveEmbeddingModel returns null when cloud-off', async () => {

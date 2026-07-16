@@ -282,6 +282,60 @@ describe('OSS-call reliability wiring (docs/plans/oss-call-reliability-hardening
   });
 });
 
+describe('buildAuditRunContext — commitSha/workingTreeDirty threading (docs/plans/stage0-evidence-relevance-split.md decision #5)', () => {
+  test('commitSha/workingTreeDirty pass through unchanged when supplied', async () => {
+    const ctx = await buildAuditRunContext({
+      openai: { fake: true }, planContent: 'x', changedFiles: [],
+      commitSha: 'abc1234', workingTreeDirty: true,
+    });
+    assert.equal(ctx.commitSha, 'abc1234');
+    assert.equal(ctx.workingTreeDirty, true);
+  });
+
+  test('defaults to null/false when omitted (backward compatible with every pre-existing call site)', async () => {
+    const ctx = await buildAuditRunContext({ openai: { fake: true }, planContent: 'x', changedFiles: [] });
+    assert.equal(ctx.commitSha, null);
+    assert.equal(ctx.workingTreeDirty, false);
+  });
+});
+
+describe('static pins — Stage 0 relevance-split wiring (docs/plans/stage0-evidence-relevance-split.md)', () => {
+  const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+
+  test('the discovery generator schema is V2 (evidence-bearing), never V1 — Stage 0 cannot function without evidenceType/anchor', () => {
+    assert.match(src, /import \{ ProducerFindingV2Schema, clampToJsonSchemaLimits \} from '\.\.\/schemas\.mjs'/);
+    assert.match(src, /const glmStrictSchema = z\.object\(\{ findings: z\.array\(ProducerFindingV2Schema\)\.max\(15\) \}\)/);
+    assert.match(src, /items:\s*z\.toJSONSchema\(ProducerFindingV2Schema\)/);
+  });
+
+  test('the Stage 0 stub adapters (() => null) are gone — real adapters are wired', () => {
+    assert.equal(/blameAdapter:\s*\(\)\s*=>\s*null/.test(src), false, 'blameAdapter must no longer be the unconditional-null stub');
+    assert.equal(/impactAdapter:\s*\(\)\s*=>\s*null/.test(src), false, 'impactAdapter must no longer be the unconditional-null stub');
+    assert.match(src, /blameAdapter:\s*makeBlameAdapter\(/);
+    assert.match(src, /impactAdapter:\s*makeImpactAdapter\(/);
+    assert.match(src, /headContentAdapter:\s*makeHeadContentAdapter\(/);
+  });
+
+  test('runStage0EvidenceTriage is called with the 3-bucket destructure (verified/preExistingIndependent/rejected)', () => {
+    assert.match(src, /const \{ verified: stage0Verified, preExistingIndependent, rejected: stage0Rejected \} = runStage0EvidenceTriage\(/);
+  });
+
+  test('debt-routing reconciliation and the routing manifest are wired before Stage 1', () => {
+    assert.match(src, /routePreExistingIndependent\(preExistingIndependent, ctx\)/);
+    assert.match(src, /const stage0EligibleForStage1 = \[\.\.\.stage0Verified, \.\.\.restoredFromDebtRouting\]/);
+    assert.match(src, /const triageResult = await runStage1CheapTriage\(stage0EligibleForStage1,/);
+  });
+
+  test('AuditRunResult carries debtRoutedFiles/debtRoutingIncomplete (decision #9)', () => {
+    assert.match(src, /debtRoutedFiles,\s*\n\s*debtRoutingIncomplete,/);
+  });
+
+  test('findings carry _originCandidateIds + resolveScopeBucketForFinding-derived scopeBucket (decision #8)', () => {
+    assert.match(src, /_originCandidateIds:\s*\[env\.fingerprint\]/);
+    assert.match(src, /scopeBucket:\s*resolveScopeBucketForFinding\(\[env\.fingerprint\], stage0RoutingManifest\)/);
+  });
+});
+
 describe('runTieredAuditPipeline Stage 2 handle fail-fast', () => {
   const fn = async () => {};
 

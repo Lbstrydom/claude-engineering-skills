@@ -3020,6 +3020,17 @@ export async function buildAuditRunContext(cliArgs) {
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
     outFile = null, model = null, allowTiered = false, __runDuplicationAnalysis = null,
+    // docs/plans/stage0-evidence-relevance-split.md decision #5: the tiered
+    // pipeline's Stage 0 blame/impact adapters need the current HEAD sha
+    // (import-graph freshness validation) and dirty-tree status (both
+    // adapters degrade to their safe 'unknown' default on a dirty tree —
+    // a graph/blame check built against a committed HEAD can't see
+    // uncommitted changes). Resolved once by openai-audit.mjs's `main()`
+    // (the one CLI entrypoint) using the SAME git primitives its own
+    // --scope=diff dirty-check already uses, and threaded through
+    // unchanged — no new resolution logic here. `runLegacyProductionAudit`
+    // never reads either field, so this is purely additive.
+    commitSha = null, workingTreeDirty = false,
   } = cliArgs;
 
   // Only construct the tiered-pipeline-only provider handles when the
@@ -3115,7 +3126,7 @@ export async function buildAuditRunContext(cliArgs) {
     passFilter, fileFilter, round, ledgerFile, diffFile, diffText, changedFiles, auditBaseCommit, __runDuplicationAnalysis, repoProfile, bandit, fpTracker,
     noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath,
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
-    outFile, model, sessionCacheHit, allowTiered,
+    outFile, model, sessionCacheHit, allowTiered, commitSha, workingTreeDirty,
     generatorOutcomes: [],
     providers: { openai, anthropicClient, ossCall, geminiReviewCall, geminiCleanRegionCall },
   };

@@ -20,11 +20,17 @@ describe('median/mean', () => {
 });
 
 describe('summarize', () => {
+  // The eligible counts are what make a row DECISION-GRADE — `comparedRuns`
+  // requires both sides non-empty, so a row without them is excluded and this
+  // suite would silently stop testing its own subject (the failure/delta math)
+  // rather than fail loudly. They mirror the finding counts because
+  // `compareAuditRunResults` derives both from the same `findings.length`.
   const okRecord = (overrides = {}) => ({
     legacyOk: true, shadowOk: true,
     comparison: {
       legacyCostUsd: 2, tieredCostUsd: 0.5, legacyLatencySec: 20, tieredLatencySec: 8,
       overlapCount: 3, legacyFindingCount: 4, onlyTieredCount: 1, tieredRunStatus: 'complete',
+      legacyEligibleCount: 4, tieredEligibleCount: 4, tieredStage0Verified: 4,
       ...overrides,
     },
   });
@@ -48,8 +54,16 @@ describe('summarize', () => {
   });
 
   test('finding overlap rate excludes comparisons with zero total findings, never divides by zero', () => {
-    const zeroFindings = okRecord({ legacyFindingCount: 0, onlyTieredCount: 0, overlapCount: 0 });
+    // A zero-finding run has zero eligible population on both sides, so it is
+    // now excluded from `comparedRuns` upstream — the division is unreachable
+    // rather than merely guarded. Asserting null still pins the outcome the
+    // 2026-07-13 Gemini gate cared about (never a bare 0 from `null` coercion).
+    const zeroFindings = okRecord({
+      legacyFindingCount: 0, onlyTieredCount: 0, overlapCount: 0,
+      legacyEligibleCount: 0, tieredEligibleCount: 0, tieredStage0Verified: 0,
+    });
     const s = summarize([zeroFindings]);
+    assert.equal(s.comparedRuns, 0, 'a both-sides-empty run is not a comparison');
     assert.equal(s.findingOverlapRate.mean, null);
   });
 
@@ -138,15 +152,29 @@ describe('CLI', () => {
   });
 
   test('a null overlap/cost/latency mean renders as "—", never "0%" or "undefined" (Gemini gate 2026-07-13)', () => {
-    // A compared run where both pipelines found zero findings (nothing to
-    // overlap) and neither reported cost/latency — every mean in summarize()
-    // is null. `null * 100` coerces to 0 in JS, so this previously printed
-    // "0%" (misread as "tiered pipeline missed everything") and "undefined"
-    // (from `null?.toFixed()`) instead of an honest "no data" placeholder.
+    // A decision-grade run where NEITHER pipeline reported cost/latency, so
+    // those means are null. `null?.toFixed()` printed the literal "undefined"
+    // and `null * 100` coerces to 0, so a null mean previously rendered as a
+    // confident-looking number instead of an honest "no data" placeholder.
+    //
+    // This is not hypothetical: every real observation recorded 2026-07-15/16
+    // has `legacyCostUsd: null`, which is why the live report shows "mean —"
+    // for cost. The fixture must be DECISION-GRADE (non-empty eligible counts
+    // on both sides) or `comparedRuns` excludes it and the renderer never runs
+    // — the test would then pass by printing nothing at all.
+    //
+    // The overlap half of the original guard is now unreachable by
+    // construction: `compareAuditRunResults` derives `legacyEligibleCount` and
+    // `legacyFindingCount` from the same `findings.length`, so a decision-grade
+    // row always has a non-zero overlap denominator. `pct`'s null branch
+    // survives as defence only.
     const tmpLog = path.join(os.tmpdir(), `tiered-shadow-null-mean-${process.pid}.jsonl`);
     fs.writeFileSync(tmpLog, `${JSON.stringify({
       legacyOk: true, shadowOk: true,
-      comparison: { legacyFindingCount: 0, onlyTieredCount: 0, overlapCount: 0, tieredRunStatus: 'complete' },
+      comparison: {
+        legacyFindingCount: 2, onlyTieredCount: 0, overlapCount: 2, tieredRunStatus: 'complete',
+        legacyEligibleCount: 2, tieredEligibleCount: 2, tieredStage0Verified: 2,
+      },
     })}\n`);
     try {
       const out = execFileSync('node', ['scripts/tiered-shadow-report.mjs', '--log', tmpLog], { encoding: 'utf8' });

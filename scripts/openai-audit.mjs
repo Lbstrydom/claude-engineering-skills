@@ -672,7 +672,7 @@ async function main() {
   if (!azureConfig.active && !process.env.OPENAI_API_KEY) {
     console.error('Error: OPENAI_API_KEY environment variable required');
     console.error('Set it in .env or export OPENAI_API_KEY=sk-...');
-    console.error('(Azure users: set AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY instead — see docs/azure-work-profile.md)');
+    console.error('(Azure users: set AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY instead — see docs/runbooks/azure-work-profile.md)');
     process.exit(1);
   }
 
@@ -779,6 +779,28 @@ async function main() {
     } else if (scopeMode === 'plan') {
       process.stderr.write(`  [scope] --scope=plan: auditing all plan-referenced files\n`);
     }
+    // docs/plans/stage0-evidence-relevance-split.md decision #5: the tiered
+    // pipeline's Stage 0 blame/impact adapters need ctx.commitSha (HEAD) and
+    // ctx.workingTreeDirty regardless of --scope (a --scope=full/plan audit
+    // can still route through runTieredAuditPipeline, and the --scope=diff
+    // branch above may not have run at all — explicit --files, or a
+    // non-diff scope). Resolved once, unconditionally, independent of that
+    // branch's own narrower dirty-tree check (which only exists to pick a
+    // diff base). Best-effort — never throws; a resolution failure degrades
+    // the tiered pipeline's adapters to their safe 'unknown' default, same
+    // as every other git-derived signal in this file.
+    let ctxCommitSha = null;
+    let ctxWorkingTreeDirty = false;
+    try {
+      const { execFileSync } = await import('node:child_process');
+      ctxCommitSha = execFileSync('git', ['rev-parse', 'HEAD'], {
+        encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000,
+      }).trim() || null;
+      const porcelainForCtx = execFileSync('git', ['status', '--porcelain'], {
+        encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 10000,
+      }).trim();
+      ctxWorkingTreeDirty = porcelainForCtx.length > 0;
+    } catch { /* not a git repo / git missing — tiered pipeline adapters degrade to 'unknown' */ }
     // Cost preflight — code audit is the most expensive: 5 passes × file context + Gemini final
     const codeContextChars = (planContent?.length || 0) + (projectContext?.length || 0)
       + (effectiveFileFilter ? measureContextChars(effectiveFileFilter, 8000) : 0);
@@ -787,7 +809,7 @@ async function main() {
       openaiConfig.reasoning === 'high' ? codeContextChars * 4 : 0);
     // allowTiered: true — main() is the ONE production CLI entrypoint allowed
     // to execute the tiered pipeline / shadow (see buildAuditRunContext).
-    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true });
+    await runMultiPassCodeAudit(openai, planContent, projectContext, jsonMode, outFile, historyContext, { passFilter, fileFilter: effectiveFileFilter, round, ledgerFile: ledgerPath, diffFile, changedFiles, auditBaseCommit: diffBase, repoProfile, bandit, fpTracker, noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath, escalateRecurring, sessionCacheHit: cacheHit, scopeMode, planFile, runId: explicitRunId, allowInfraScope, allowTiered: true, commitSha: ctxCommitSha, workingTreeDirty: ctxWorkingTreeDirty });
     return;
   }
 

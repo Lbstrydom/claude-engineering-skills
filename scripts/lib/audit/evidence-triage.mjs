@@ -1,13 +1,33 @@
 /**
  * @fileoverview Stage 0 — deterministic evidence triage for the tiered-recall
- * audit pipeline. Plan: docs/plans/tiered-recall-audit-pipeline.md Phase 3.
+ * audit pipeline. Plan: docs/plans/tiered-recall-audit-pipeline.md Phase 3;
+ * restructured into a fact/relevance split by
+ * docs/plans/stage0-evidence-relevance-split.md — the discovery generator
+ * (`tiered-pipeline.mjs`) is prompted with FULL current file content, not
+ * diff-scoped content, so a real finding about pre-existing (unchanged) code
+ * legitimately lives outside any diff hunk. The original single-gate design
+ * (`verifyAnchor`, hunk-only) treated "outside a hunk" as "fabricated" —
+ * this file now splits that into two sequential gates:
  *
- * `verifyAnchor` and `tagPreExisting` are PURE — no I/O, no VCS access — so
- * they're directly unit-testable (Tier 1). `runStage0EvidenceTriage` is the
- * orchestration entry point that supplies real diff text / git access via
- * injectable `adapters`, per the plan's design (round-2 finding #3 —
- * `findings-pipeline.mjs::processFindings` stays pure; Stage 0 does NOT live
- * inside it, and lives here instead as its own orchestration layer).
+ *   Gate A (`resolveAnchorLocation`) — is this quote REAL? Tries the hunk
+ *   first (delegates to the unchanged `quoteAppearsOnSide`/`verifyAnchor`),
+ *   then falls back to a line-indexed search of the current working-tree
+ *   file content (`headContent`, supplied by the caller's
+ *   `headContentAdapter` — this file stays I/O-free).
+ *
+ *   Gate B (`tagPreExisting`, reused unmodified) — for a quote found outside
+ *   a hunk, does the shipped change depend on it? Diff-derived line mapping
+ *   (`mapHeadLineToBase`) locates the quote's corresponding BASE-revision
+ *   position (never by raw line-number equality across revisions — an
+ *   earlier hunk shifts every later line number); `blameAdapter`/
+ *   `impactAdapter` (both caller-injected) answer pre-existence + impact-
+ *   independence against that exact, occurrence-specific location.
+ *
+ * `resolveAnchorLocation`, `mapHeadLineToBase`, and `tagPreExisting` are
+ * PURE — no I/O, no VCS access — so they're directly unit-testable
+ * (Tier 1). `runStage0EvidenceTriage` is the orchestration entry point that
+ * supplies real diff text / file content / git-derived adapters, per the
+ * plan's design.
  *
  * @module scripts/lib/audit/evidence-triage
  */
@@ -15,21 +35,27 @@
 import { EvidenceAnchorSchema } from '../schemas.mjs';
 import { promoteAlternative } from './candidate-envelope.mjs';
 import { nowIso } from './time-utils.mjs';
-
-/**
- * Normalise whitespace for content comparison — a quote copied from a diff
- * may have different leading indentation or line-ending style than what a
- * naive substring search would require. Collapses all whitespace runs to a
- * single space and trims.
- */
-function normalizeWhitespace(s) {
-  return String(s || '').replace(/\s+/g, ' ').trim();
-}
+import { normalizeWhitespace } from '../text-normalize.mjs';
 
 /**
  * Extract the per-file section of a unified diff (from its `diff --git`
  * header to the next one, or end of string). Returns `null` if the file
  * isn't mentioned in the diff at all.
+ *
+ * PRE-EXISTING function (predates the Stage 0 relevance-split restructure —
+ * `verifyAnchor` has always used it); `resolveAnchorLocation` (Gate A) now
+ * also calls it, which is a genuine load-bearing dependency, not just
+ * pre-existing debt to ignore. Round-1 code-audit M3/L2: the header regex
+ * below handles unquoted paths and a narrow quoted-space case, not Git's
+ * full C-style quoted-path grammar (octal escapes, embedded quotes/
+ * backslashes) — an exotic filename can fail to match here. Documented
+ * as accepted debt rather than fixed now because the failure direction is
+ * SAFE: a header match miss returns `null` → the caller treats the anchor
+ * as `unverifiable` (never a false match/wrong classification), and a full
+ * grammar-compliant parser is a substantial, orthogonal scope expansion
+ * this plan (evidence RELEVANCE, not diff-parsing robustness) does not
+ * need to absorb. Revisit if a real discovery run surfaces a rejected
+ * candidate citing a quote-grammar-affected filename.
  *
  * @param {string} diffText
  * @param {string} filePath - either the old or new path
@@ -68,8 +94,33 @@ function extractFileDiffSection(diffText, filePath) {
 }
 
 /**
- * Split a file's diff section into individual `@@ ... @@` hunks. Each hunk's
- * body is everything up to (not including) the next `@@` line or EOF.
+ * Parse a `@@ -a,b +c,d @@` hunk header into line-number/count fields.
+ * The count is 1 when the `,count` group is omitted (unified-diff
+ * convention) — distinct from an EXPLICIT `,0` (a pure add/delete hunk on
+ * that side), so the two are never conflated.
+ *
+ * @param {string} line
+ * @returns {{baseStart:number, baseCount:number, headStart:number, headCount:number} | null}
+ */
+function parseHunkHeader(line) {
+  const m = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
+  if (!m) return null;
+  return {
+    baseStart: Number(m[1]),
+    baseCount: m[2] !== undefined ? Number(m[2]) : 1,
+    headStart: Number(m[3]),
+    headCount: m[4] !== undefined ? Number(m[4]) : 1,
+  };
+}
+
+/**
+ * Split a file's diff section into individual hunks. Each hunk carries its
+ * parsed `header` (line-number/count fields, `null` if the `@@` line failed
+ * to parse) alongside its `lines` (the body content, unchanged shape from
+ * before this module's Stage 0 restructure — every existing consumer of
+ * "a hunk's lines" keeps working).
+ *
+ * @returns {Array<{header: object|null, lines: string[]}>}
  */
 function splitIntoHunks(section) {
   const hunks = [];
@@ -77,11 +128,11 @@ function splitIntoHunks(section) {
   for (const rawLine of section.split('\n')) {
     if (rawLine.startsWith('@@')) {
       if (current) hunks.push(current);
-      current = [];
+      current = { header: parseHunkHeader(rawLine), lines: [] };
       continue;
     }
     if (current === null) continue; // before the first hunk (file header lines)
-    current.push(rawLine);
+    current.lines.push(rawLine);
   }
   if (current) hunks.push(current);
   return hunks;
@@ -106,7 +157,7 @@ function quoteAppearsOnSide(section, quote, side) {
   const wantedPrefixes = side === 'head' ? ['+', ' '] : ['-', ' '];
   for (const hunk of splitIntoHunks(section)) {
     const contentLines = [];
-    for (const rawLine of hunk) {
+    for (const rawLine of hunk.lines) {
       const prefix = rawLine[0];
       if (!wantedPrefixes.includes(prefix)) continue;
       contentLines.push(normalizeWhitespace(rawLine.slice(1)));
@@ -126,23 +177,146 @@ function quoteAppearsOnSide(section, quote, side) {
 }
 
 /**
- * verifyAnchor — confirms an anchor's `quote` is real, content-verified
- * against the actual diff, on the correct side of the correct file, AND
- * (Cluster B audit fix H3, round 1) that the anchor's claimed `fileStatus`
- * matches what the diff itself shows for that file — an anchor claiming
- * `added` against a file the diff shows as merely `modified` is fabricated
- * metadata even if the quote text happens to match.
+ * Line-indexed sliding-window search for `quote` within `content` — never
+ * normalizes the WHOLE blob first (a whole-blob normalize-then-search makes
+ * the matched character offset impossible to map back to a line number
+ * without a separate token-to-line index; Gemini final-review round-1 G3).
+ * The window size is the quote's OWN raw line count, so a verbatim
+ * multi-line quote is matched at its exact original span — a quote that was
+ * reformatted to a different line count since being cited will miss (a
+ * known, documented trade-off: `contentExistsAtMappedRange`'s own docblock
+ * and the plan's Risk Register both cover this).
  *
- * Round-2 residual H3: the diff section was previously located via ONLY
- * `filePath` (whichever of `oldFile`/`newFile` the anchor's `side` selects),
- * so a `renamed`/`copied` anchor could fabricate the OTHER path field (the
- * one not used to locate the section) while still verifying — e.g. a real
- * rename `a.js -> b.js` anchored with `side: 'head'` only ever checked
- * `newFile === 'b.js'` against the located section, never cross-checking
- * `oldFile` against that same section's actual old path. Now BOTH fields
- * are cross-checked against the section's real `oldPath`/`newPath` whenever
- * the anchor declares both (renamed/copied; schema already requires both
- * there — see `EvidenceAnchorSchema`'s `superRefine`).
+ * @param {string} content
+ * @param {string} quote
+ * @returns {{startLine:number, endLine:number} | null} 1-indexed, inclusive
+ */
+function findLineRangeInContent(content, quote) {
+  const normQuote = normalizeWhitespace(quote);
+  if (!normQuote) return null;
+  const lines = String(content || '').split('\n');
+  const quoteLineCount = String(quote).split('\n').length;
+  for (let start = 0; start + quoteLineCount <= lines.length; start++) {
+    const windowLines = lines.slice(start, start + quoteLineCount).map(normalizeWhitespace);
+    if (normalizeWhitespace(windowLines.join(' ')).includes(normQuote)) {
+      return { startLine: start + 1, endLine: start + quoteLineCount };
+    }
+  }
+  return null;
+}
+
+/**
+ * Map a single HEAD-side line number to its corresponding BASE-side line
+ * number, for a line that falls OUTSIDE every hunk in `hunks` (a line
+ * WITHIN a hunk has no single stable base correspondence — that's the
+ * `in_hunk` case, handled separately). Cumulative-offset diff-line mapping:
+ * walks hunks in order, accumulating each hunk's net line-count delta
+ * (`headCount - baseCount`) until it finds the gap `headLine` falls in.
+ *
+ * Never based on raw line-number equality across revisions (round-2
+ * plan-audit H1 — an EARLIER hunk shifts every LATER line number in HEAD,
+ * so comparing "line 40 in base" against "line 40 in HEAD" compares
+ * unrelated content when any earlier edit changed the line count).
+ *
+ * @param {number} headLine - 1-indexed
+ * @param {Array<{header: object|null, lines: string[]}>} hunks
+ * @returns {number | null} the base line number, or `null` if `headLine`
+ *   falls within a hunk, a hunk header failed to parse, or the computed
+ *   result is out of bounds (< 1) — all ambiguous, never guessed.
+ */
+export function mapHeadLineToBase(headLine, hunks) {
+  let delta = 0;
+  for (const hunk of hunks) {
+    const h = hunk.header;
+    if (!h) return null; // an unparseable header anywhere makes every later offset unreliable
+    if (headLine < h.headStart) {
+      const baseLine = headLine - delta;
+      return baseLine >= 1 ? baseLine : null;
+    }
+    const headEnd = h.headStart + h.headCount - 1;
+    if (headLine <= headEnd) return null; // within this hunk — not this function's case
+    delta += (h.headCount - h.baseCount);
+  }
+  const baseLine = headLine - delta;
+  return baseLine >= 1 ? baseLine : null;
+}
+
+/**
+ * Map a HEAD-side line RANGE to its corresponding BASE-side range. Requires
+ * BOTH endpoints to map successfully AND the mapped range to preserve the
+ * original range's length — a hunk boundary crossing partway through the
+ * cited range makes the whole range ambiguous (some of it maps cleanly,
+ * some doesn't), so that case returns `null` rather than a partial answer.
+ *
+ * @param {{startLine:number, endLine:number}} headRange
+ * @param {Array<{header: object|null, lines: string[]}>} hunks
+ * @returns {{startLine:number, endLine:number} | null}
+ */
+export function mapHeadRangeToBase(headRange, hunks) {
+  const mappedStart = mapHeadLineToBase(headRange.startLine, hunks);
+  const mappedEnd = mapHeadLineToBase(headRange.endLine, hunks);
+  if (mappedStart === null || mappedEnd === null) return null;
+  const expectedLength = headRange.endLine - headRange.startLine;
+  if (mappedEnd - mappedStart !== expectedLength) return null;
+  return { startLine: mappedStart, endLine: mappedEnd };
+}
+
+/**
+ * resolveAnchorLocation — Gate A. Confirms an anchor's `quote` is real,
+ * content-verified against the actual diff OR (on a hunk miss, head-side
+ * anchors only) the current working-tree file content, AND that the
+ * anchor's claimed `fileStatus`/paths match what the diff itself shows —
+ * an anchor claiming `added` against a file the diff shows as merely
+ * `modified` is fabricated metadata even if the quote text happens to
+ * match (same cross-checks `verifyAnchor` already performs).
+ *
+ * Stays PURE — `headContent` is a plain parameter, supplied by the caller
+ * (`runStage0EvidenceTriage`, via `adapters.headContentAdapter`); this
+ * function never reads a file itself.
+ *
+ * @param {object} anchor - EvidenceAnchorSchema shape
+ * @param {string} diffText - the full unified diff for this commit
+ * @param {string|null} [headContent] - the file's current working-tree
+ *   content, for the HEAD-fallback search on a hunk miss
+ * @returns {{status: 'in_hunk'|'outside_hunk_in_head'|'unverifiable'|'fabricated',
+ *   headLineRange?: {startLine:number, endLine:number},
+ *   hunks?: Array<{header: object|null, lines: string[]}>}}
+ */
+export function resolveAnchorLocation(anchor, diffText, headContent) {
+  if (!EvidenceAnchorSchema.safeParse(anchor).success) return { status: 'fabricated' };
+  const filePath = anchor.side === 'base' ? anchor.oldFile : anchor.newFile;
+  if (!filePath) return { status: 'fabricated' };
+  if (!diffText) return { status: 'unverifiable' };
+  const section = extractFileDiffSection(diffText, filePath);
+  if (!section) return { status: 'unverifiable' };
+  if (section.fileStatus !== anchor.fileStatus) return { status: 'fabricated' };
+  if (anchor.oldFile && anchor.oldFile !== section.oldPath) return { status: 'fabricated' };
+  if (anchor.newFile && anchor.newFile !== section.newPath) return { status: 'fabricated' };
+
+  if (quoteAppearsOnSide(section.section, anchor.quote, anchor.side)) {
+    return { status: 'in_hunk' };
+  }
+
+  // HEAD-fallback only makes sense for head-side anchors — discovery only
+  // ever reads current (head) file content, so a base-side quote missing
+  // from the hunk has no head-content equivalent to search.
+  if (anchor.side === 'head' && headContent) {
+    const range = findLineRangeInContent(headContent, anchor.quote);
+    if (range) {
+      return { status: 'outside_hunk_in_head', headLineRange: range, hunks: splitIntoHunks(section.section) };
+    }
+  }
+
+  return { status: 'fabricated' };
+}
+
+/**
+ * verifyAnchor — UNCHANGED (round-1/round-2 plan-audit M2 — a new
+ * discriminator value does not preserve a closed 3-state contract for any
+ * consumer that branches exhaustively on `verified | unverifiable |
+ * fabricated`; `resolveAnchorLocation` above is the Stage-0-only detailed
+ * resolver, used nowhere else). Every existing caller keeps working with
+ * zero modification.
  *
  * @param {object} anchor - EvidenceAnchorSchema shape
  * @param {string} diffText - the full unified diff for this commit
@@ -191,31 +365,77 @@ export function tagPreExisting({ file, startLine, endLine }, { blameAdapter, imp
 }
 
 /**
- * Verify one anchor field (`'anchor'` for commission, `'triggerAnchor'` for
- * omission) with the envelope-aware fallback (Gemini gate round-2 finding
- * #G1): if the canonical claim's anchor is fabricated, try every OTHER
- * contributing source's anchor before giving up on the whole envelope.
- * Shared between commission and omission handling (Cluster B audit fix H3 —
- * omission's `triggerAnchor` is itself a commission-type fact per the plan's
- * round-3 refinement and must be verified the same way, not skipped).
+ * Resolve a finding's `scopeBucket` from its origin candidate(s) against the
+ * Stage 0 routing manifest (decision #8 — round-3 plan-audit H6/H4). A
+ * finding merged from multiple origin candidates takes the LEAST-restrictive
+ * bucket among them (`change_related` if ANY origin is change-related —
+ * safe-toward-inclusion, mirroring decision #2's default). An origin id with
+ * no manifest entry (e.g. a Stage-2 clean-region `missed_candidate` finding,
+ * which has no Stage 0 origin at all) is simply skipped, never treated as an
+ * error — `originCandidateIds: []` correctly falls through to the same safe
+ * default as an unresolvable id.
  *
- * @returns {{envelope: object, outcome: 'verified'|'unverifiable'|'rejected'}}
+ * Pure — no I/O. Co-located here (not tiered-pipeline.mjs) because it reads
+ * the same routing-manifest shape `runStage0EvidenceTriage` produces
+ * (`Map<fingerprint, scopeBucket>`, built by the caller from `verified` +
+ * `preExistingIndependent`'s own `.scopeBucket` fields).
+ *
+ * @param {string[]} originCandidateIds
+ * @param {Map<string, 'change_related'|'pre_existing_impactful'|'pre_existing_independent'>} routingManifest
+ * @returns {'change_related'|'pre_existing_impactful'|'pre_existing_independent'}
  */
-function verifyWithFallback(envelope, anchorField, diffText) {
+const SCOPE_BUCKET_RESTRICTIVENESS = {
+  change_related: 0,
+  pre_existing_impactful: 1,
+  pre_existing_independent: 2,
+};
+
+export function resolveScopeBucketForFinding(originCandidateIds, routingManifest) {
+  let best = null;
+  for (const id of originCandidateIds || []) {
+    const bucket = routingManifest?.get?.(id);
+    if (!bucket) continue;
+    if (best === null || SCOPE_BUCKET_RESTRICTIVENESS[bucket] < SCOPE_BUCKET_RESTRICTIVENESS[best]) {
+      best = bucket;
+    }
+  }
+  return best ?? 'change_related';
+}
+
+/**
+ * Resolve one anchor field (`'anchor'` for commission, `'triggerAnchor'` for
+ * omission) via `resolveAnchorLocation`, with the envelope-aware fallback
+ * (Gemini gate round-2 finding #G1, ported from the pre-restructure
+ * `verifyWithFallback`): if the canonical claim's anchor is fabricated, try
+ * every OTHER contributing source's anchor before giving up on the whole
+ * envelope. Shared between commission and omission handling (Cluster B
+ * audit fix H3 — omission's `triggerAnchor` is itself a commission-type
+ * fact and must be resolved the same way, not skipped).
+ *
+ * @returns {{envelope: object, status: 'in_hunk'|'outside_hunk_in_head'|'unverifiable'|'rejected',
+ *   headLineRange?: object, hunks?: Array}}
+ */
+function resolveWithFallback(envelope, anchorField, diffText, headContentAdapter) {
   const originalAnchor = envelope.canonicalFinding[anchorField];
-  let outcome = verifyAnchor(originalAnchor, diffText);
-  if (outcome !== 'fabricated') return { envelope, outcome };
+  const originalFilePath = originalAnchor?.side === 'base' ? originalAnchor?.oldFile : originalAnchor?.newFile;
+  const originalHeadContent = typeof headContentAdapter === 'function' && originalFilePath
+    ? headContentAdapter(originalFilePath) : null;
+  const result = resolveAnchorLocation(originalAnchor, diffText, originalHeadContent);
+  if (result.status !== 'fabricated') return { envelope, ...result };
 
   for (let i = 0; i < envelope.evidenceAlternatives.length; i++) {
     const alt = envelope.evidenceAlternatives[i];
     if (alt[anchorField] === originalAnchor) continue; // that's the one that just failed
     if (!alt[anchorField]) continue;
-    const altOutcome = verifyAnchor(alt[anchorField], diffText);
-    if (altOutcome === 'verified') {
-      return { envelope: promoteAlternative(envelope, i), outcome: 'verified' };
+    const altFilePath = alt[anchorField].side === 'base' ? alt[anchorField].oldFile : alt[anchorField].newFile;
+    const altHeadContent = typeof headContentAdapter === 'function' && altFilePath
+      ? headContentAdapter(altFilePath) : null;
+    const altResult = resolveAnchorLocation(alt[anchorField], diffText, altHeadContent);
+    if (altResult.status === 'in_hunk' || altResult.status === 'outside_hunk_in_head') {
+      return { envelope: promoteAlternative(envelope, i), ...altResult };
     }
   }
-  return { envelope, outcome: 'rejected' };
+  return { envelope, status: 'rejected' };
 }
 
 /**
@@ -228,21 +448,51 @@ function verifyWithFallback(envelope, anchorField, diffText) {
  * obligation's *absence* is semantic and deferred to Stage 1/2 judgment).
  * Both paths share the same envelope-aware fallback-then-reject logic.
  *
- * `stage0_rejected` envelopes are returned separately in `rejected` and MUST
- * be treated by the caller as local diagnostic telemetry ONLY — never written
- * to the adjudication ledger (per the state machine in the plan's §1.5).
+ * Per-candidate result model (docs/plans/stage0-evidence-relevance-split.md):
+ *   `in_hunk` → `scopeBucket: 'change_related'`, Gate B skipped (already
+ *     directly touched — no relevance question to ask).
+ *   `outside_hunk_in_head` → Gate B runs; `scopeBucket` is one of
+ *     `change_related` (unmappable range, or blame/impact `unknown` —
+ *     decision #2's safe default) / `pre_existing_impactful` (predates the
+ *     commit, and a changed file depends on it) / `pre_existing_independent`
+ *     (predates the commit, confirmed independent — routed OUT of `verified`
+ *     into `preExistingIndependent`, never reaching Stage 1 directly).
+ *   `unverifiable` (file not in diff at all) → unchanged from before this
+ *     restructure — still Stage-1-eligible, `scopeBucket: 'change_related'`
+ *     (decision #8's safe default; no Gate B ever ran).
+ *   `fabricated` → unchanged — local telemetry only, never Stage-1-eligible.
+ *
+ * `rejected` envelopes are returned separately and MUST be treated by the
+ * caller as local diagnostic telemetry ONLY — never written to the
+ * adjudication ledger (per the state machine in the tiered-recall plan's
+ * §1.5). `preExistingIndependent` envelopes are the caller's responsibility
+ * to route through debt capture (`tiered-pipeline.mjs`) — restoring a
+ * candidate to `verified` on a debt-write failure is the CALLER's job, not
+ * this pure function's.
  *
  * @param {Array<import('./candidate-envelope.mjs').AuditCandidateEnvelope>} envelopes
  * @param {object} ctx
  * @param {string} ctx.diffText
  * @param {object} adapters
- * @param {(file: string, startLine: number, endLine: number) => boolean|null} [adapters.blameAdapter]
+ * @param {(file: string, startLine: number, endLine: number, quote: string) => boolean|null} [adapters.blameAdapter]
+ *   Given the MAPPED BASE-revision line range and the anchor's own quote
+ *   text (threaded through by this function — `tagPreExisting`'s own
+ *   3-arg contract is unchanged; this 4th arg is this module's own
+ *   addition when constructing the per-candidate closure it hands to
+ *   `tagPreExisting`), returns whether that exact content predates the
+ *   commit.
  * @param {(file: string) => boolean|null} [adapters.impactAdapter]
+ * @param {(filePath: string) => string|null} [adapters.headContentAdapter]
+ *   The file's current working-tree content, for Gate A's HEAD-fallback
+ *   search — explicit injected dependency (Gemini final-review round-1
+ *   G2), matching `blameAdapter`/`impactAdapter`'s existing injection
+ *   pattern rather than implicit threading.
  * @param {() => string} [adapters.clock] - injectable for deterministic tests; defaults to the real clock in production
- * @returns {{verified: Array<object>, rejected: Array<object>}}
+ * @returns {{verified: Array<object>, preExistingIndependent: Array<object>, rejected: Array<object>}}
  */
 export function runStage0EvidenceTriage(envelopes, ctx, adapters = {}) {
   const verified = [];
+  const preExistingIndependent = [];
   const rejected = [];
 
   for (const rawEnvelope of envelopes) {
@@ -250,26 +500,96 @@ export function runStage0EvidenceTriage(envelopes, ctx, adapters = {}) {
     const anchorField = evidenceType === 'omission' ? 'triggerAnchor' : 'anchor';
     const reasonPrefix = evidenceType === 'omission' ? 'omission_trigger' : 'commission_anchor';
 
-    const { envelope, outcome } = verifyWithFallback(rawEnvelope, anchorField, ctx.diffText);
+    const { envelope, status, headLineRange, hunks } = resolveWithFallback(
+      rawEnvelope, anchorField, ctx.diffText, adapters.headContentAdapter,
+    );
 
-    if (outcome === 'rejected') {
+    if (status === 'rejected') {
       envelope.stageDecisions.push({
-        stage: 'stage0', outcome: 'rejected', reasonCode: `${reasonPrefix}_fabricated_all_alternatives_failed`,
+        stage: 'stage0a', outcome: 'rejected', reasonCode: `${reasonPrefix}_fabricated_all_alternatives_failed`,
         evidenceRef: envelope.fingerprint, createdAt: nowIso(adapters.clock),
       });
       rejected.push(envelope); // LOCAL TELEMETRY ONLY — caller must never write this to the ledger
       continue;
     }
 
+    // Gate A decision — exactly one `stage0a` entry per candidate, always.
+    const anchorVerified = status === 'in_hunk' || status === 'outside_hunk_in_head';
     envelope.stageDecisions.push({
-      stage: 'stage0',
-      outcome: outcome === 'verified' ? 'verified' : 'unverifiable',
-      reasonCode: outcome === 'verified' ? `${reasonPrefix}_content_verified` : `${reasonPrefix}_diff_section_unavailable`,
+      stage: 'stage0a',
+      outcome: anchorVerified ? 'verified' : 'unverifiable',
+      reasonCode: anchorVerified ? `${reasonPrefix}_content_verified` : `${reasonPrefix}_diff_section_unavailable`,
       evidenceRef: envelope.fingerprint,
       createdAt: nowIso(adapters.clock),
     });
-    verified.push(envelope);
+
+    if (status !== 'outside_hunk_in_head') {
+      // in_hunk (implicit change_related) and unverifiable (safe default) —
+      // neither runs Gate B, per the result-model table above.
+      envelope.scopeBucket = 'change_related';
+      verified.push(envelope);
+      continue;
+    }
+
+    // Gate B — only for outside_hunk_in_head candidates.
+    const anchorObj = envelope.canonicalFinding[anchorField];
+    const filePath = anchorObj.side === 'base' ? anchorObj.oldFile : anchorObj.newFile;
+    const mappedBaseRange = mapHeadRangeToBase(headLineRange, hunks);
+
+    if (mappedBaseRange === null) {
+      // Unmappable range short-circuits straight to the safe default
+      // WITHOUT calling blameAdapter at all (decision #4).
+      envelope.scopeBucket = 'change_related';
+      envelope.stageDecisions.push({
+        stage: 'stage0b', outcome: 'unknown', reasonCode: `${reasonPrefix}_unmappable_base_range`,
+        evidenceRef: envelope.fingerprint, createdAt: nowIso(adapters.clock),
+      });
+      verified.push(envelope);
+      continue;
+    }
+
+    const blameAdapterForCandidate = typeof adapters.blameAdapter === 'function'
+      ? (file, s, e) => adapters.blameAdapter(file, s, e, anchorObj.quote)
+      : undefined;
+
+    const relevance = tagPreExisting(
+      { file: filePath, startLine: mappedBaseRange.startLine, endLine: mappedBaseRange.endLine },
+      { blameAdapter: blameAdapterForCandidate, impactAdapter: adapters.impactAdapter },
+    );
+
+    let scopeBucket;
+    if (relevance === 'pre_existing_independent') {
+      scopeBucket = 'pre_existing_independent';
+    } else {
+      // tagPreExisting's binary output conflates "not confirmed pre-
+      // existing" with "pre-existing but impactful" — re-derive the finer
+      // 3-way split decision #8 needs. blameAdapter/impactAdapter results
+      // are memoized per (file, range)/(file) by the caller's
+      // Stage0RelevanceContext, so this is a cache hit, not a second live
+      // query.
+      const predatesCommit = blameAdapterForCandidate
+        ? blameAdapterForCandidate(filePath, mappedBaseRange.startLine, mappedBaseRange.endLine)
+        : null;
+      if (predatesCommit === true) {
+        const isIndependent = typeof adapters.impactAdapter === 'function' ? adapters.impactAdapter(filePath) : null;
+        scopeBucket = isIndependent === false ? 'pre_existing_impactful' : 'change_related';
+      } else {
+        scopeBucket = 'change_related';
+      }
+    }
+
+    envelope.scopeBucket = scopeBucket;
+    envelope.stageDecisions.push({
+      stage: 'stage0b', outcome: scopeBucket, reasonCode: `${reasonPrefix}_relevance_${scopeBucket}`,
+      evidenceRef: envelope.fingerprint, createdAt: nowIso(adapters.clock),
+    });
+
+    if (scopeBucket === 'pre_existing_independent') {
+      preExistingIndependent.push(envelope);
+    } else {
+      verified.push(envelope);
+    }
   }
 
-  return { verified, rejected };
+  return { verified, preExistingIndependent, rejected };
 }

@@ -138,7 +138,7 @@ const EXPECTED_EXPORTS = [
   'recordDiffComplexity',
   'recordFindingResolution',
   'getAuthorTierStats', // model-tier-observation — author_tier dashboard reader
-  // arch-memory (24 frozen + 7 new caller helpers below)
+  // arch-memory (25 frozen + 7 new caller helpers below)
   'abortRefreshRun',
   'callNeighbourhoodRpc',
   'computeDriftScore',
@@ -147,6 +147,7 @@ const EXPECTED_EXPORTS = [
   'getActiveEmbeddingModel',
   'getActiveSnapshot',
   'getDomainSummaries',
+  'getFreshImportersOrNull', // docs/plans/stage0-evidence-relevance-split.md decision #5/#9 — Stage 0 impactAdapter's bounded-BFS import-graph query
   'getImportGraphPopulated',
   'getImportersForFiles',
   'getTopDuplicateClusters',
@@ -252,6 +253,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 155);
+    assert.equal(EXPECTED_EXPORTS.length, 156);
   });
 });
