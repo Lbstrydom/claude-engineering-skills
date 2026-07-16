@@ -1,5 +1,14 @@
 # Project Status Log
 
+## 2026-07-16 — Fix: flaky `tests/install/lifecycle.test.mjs` EPERM (test-isolation gap, not a product bug)
+
+### Changes
+- **Origin**: a single test failure (`EPERM: operation not permitted, rename ...`) intermittently blocked the pre-push hook's `npm run check` twice this session, always non-reproducible on immediate retry. Investigated at the user's request after shipping the `redact-secrets` fix.
+- **Root cause**: `tests/install/lifecycle.test.mjs`'s `'accepts Array<{absPath,content}> directly'` test (the legacy-array-signature `executeTransaction()` call) was the ONLY call in the file that omits `journalPath` — the legacy API has no such parameter, so it falls back to `defaultJournalPath()` = `path.resolve('.audit-loop-install-txn.json')`, resolved against `process.cwd()` — i.e. the **real repo root**, not the isolated per-test temp dir every other test in the file uses. Under the I/O pressure of the 5514-test full suite, that shared, always-same-path file occasionally collided with a transient Windows file lock (antivirus real-time scan / Explorer indexing) right as `fs.renameSync` tried to commit the journal.
+- **Fix**: the test now `chdir`s into its own isolated temp directory for the call's duration. First attempt used `t.after()` to restore cwd — that broke the suite's `afterEach` (`fs.rmSync(tmp, ...)`), since Windows refuses to `rmdir` a directory that's still the process cwd and the restore hadn't run yet. Fixed with an inline `try/finally` so the restore completes synchronously before the test function returns, ahead of any cleanup hook.
+- **Verification**: 15 isolated runs of the file (5 pre-fix clean in isolation — confirms the bug needs full-suite I/O pressure to surface —5 more post-fix, all clean), plus 5 full-suite runs post-fix: 4 clean, 1 had an unrelated single failure with logs not captured. Good evidence, not airtight — the same unguarded `fs.renameSync` pattern exists in `atomicWriteFileSync` (`scripts/lib/file-io.mjs`) too, so a low background rate of similar Windows transient-lock flakiness elsewhere in the suite remains plausible.
+- **Deliberately not done**: adding retry-on-EPERM/EBUSY to the underlying `renameSync` calls repo-wide. That's a real, separate robustness question (affects production installer runs, not just tests) but changes production error-handling semantics across multiple call sites — flagged for the user as a follow-up decision, not folded into this test-only fix.
+
 ## 2026-07-16 — `/cycle --autonomous` on `redact-secrets-positional-collision-fix.md` — fixed a genuine secret-leak bug in the shared egress redactor, 5 GPT + 1 Gemini plan-audit rounds, 4 GPT + 1 Gemini code-audit rounds
 
 ### Changes

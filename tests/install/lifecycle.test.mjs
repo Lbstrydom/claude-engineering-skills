@@ -172,10 +172,32 @@ describe('recoverFromJournal', () => {
 
 describe('executeTransaction — legacy array signature (backward compat)', () => {
   it('accepts Array<{absPath,content}> directly', () => {
-    const a = path.join(tmp, 'a.md');
-    const r = executeTransaction([{ absPath: a, content: Buffer.from('A') }]);
-    assert.equal(r.success, true);
-    assert.equal(r.written, 1);
-    assert.equal(fs.readFileSync(a, 'utf8'), 'A');
+    // The legacy array signature has no journalPath param, so
+    // executeTransaction falls back to defaultJournalPath() =
+    // path.resolve('.audit-loop-install-txn.json') — resolved against
+    // process.cwd(). Every other test in this file isolates via an
+    // explicit journalPath into `tmp`; this one can't, so it chdir's into
+    // `tmp` instead — otherwise it writes+renames a REAL file at the repo
+    // root on every run, which intermittently collided with a transient
+    // Windows file-lock (antivirus real-time scan, Explorer indexing) and
+    // produced a flaky EPERM on fs.renameSync under full-suite I/O load.
+    //
+    // Restored via try/finally, NOT t.after() — the suite-level afterEach
+    // (line 11) rmSync's `tmp` right after this test returns, and Windows
+    // refuses to remove a directory that is still the process cwd; the
+    // restore must complete synchronously before the test function exits,
+    // which try/finally guarantees and a t.after() callback (a separate,
+    // later-queued hook) does not.
+    const prevCwd = process.cwd();
+    process.chdir(tmp);
+    try {
+      const a = path.join(tmp, 'a.md');
+      const r = executeTransaction([{ absPath: a, content: Buffer.from('A') }]);
+      assert.equal(r.success, true);
+      assert.equal(r.written, 1);
+      assert.equal(fs.readFileSync(a, 'utf8'), 'A');
+    } finally {
+      process.chdir(prevCwd);
+    }
   });
 });
