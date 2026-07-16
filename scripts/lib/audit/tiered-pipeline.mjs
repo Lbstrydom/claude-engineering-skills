@@ -80,6 +80,29 @@ const Stage1TriagerResponseSchema = z.object({
 });
 
 /**
+ * Thrown INSTEAD of falling back to a second legacy audit when a required
+ * discovery generator fails on a SHADOW run (`ctx.shadowMode`).
+ * Plan: docs/plans/shadow-no-legacy-fallback.md decision #3.
+ *
+ * Carries `.reason` ONLY — deliberately not `generatorOutcomes` (round-2
+ * plan-audit M4): `discovery-portfolio.mjs` mutates `ctx.generatorOutcomes`
+ * in place and `runShadowTieredPipeline` already holds the `shadowCtx`, so
+ * threading them through the exception would be a second, redundant channel
+ * for state the catch already has in hand.
+ *
+ * It exists for exactly two small, real reasons: the shadow's catch can
+ * record the clean formatted `.reason` rather than a raw `err.message`, and
+ * tests can assert the class instead of regexing a string.
+ */
+export class TieredUnavailableError extends Error {
+  constructor(reason) {
+    super(reason);
+    this.name = 'TieredUnavailableError';
+    this.reason = reason;
+  }
+}
+
+/**
  * Normalize the ONE definitionally-determined anchor invariant an OSS router
  * reliably gets wrong (found by this plan's pre-ship empirical verify,
  * 2026-07-16): `EvidenceAnchorSchema.superRefine` requires a `'modified'`
@@ -661,14 +684,45 @@ export async function runTieredAuditPipeline(ctx) {
     // path's own generatorOutcomes:[] would otherwise silently overwrite the
     // discovery attempt that JUST happened.
     const discoveryGeneratorOutcomes = [...(ctx.generatorOutcomes || [])];
+    const failedNames = discoveryGeneratorOutcomes.filter((o) => o.role === 'required' && o.status === 'failed').map((o) => `${o.model}: ${o.category ? `[${o.category}] ` : ''}${o.errorMessage ?? 'unknown error'}`);
+    const reason = `required generator failed: ${failedNames.join('; ') || 'unknown'}`;
+
+    // Falling back is a PRODUCTION obligation, not a universal one
+    // (plan: docs/plans/shadow-no-legacy-fallback.md). This function has
+    // exactly two callers and they have opposite contracts:
+    //   - openai-audit.mjs:440 (pipelineEnabled) — GATING. Its result IS the
+    //     audit, so it must return findings. Falling back is CORRECT.
+    //   - tiered-shadow-compare.mjs (runShadowTieredPipeline) —
+    //     observation-only. It has NO obligation to return findings, and
+    //     falling back here ran a SECOND full legacy audit inside the shadow,
+    //     then returned legacy's findings labelled as the tiered result — so
+    //     compareAuditRunResults compared the real legacy run against a second
+    //     legacy run. Measured over 57 live records: 41 of them, each paying
+    //     for a whole extra 5-pass GPT audit to yield zero tiered signal.
+    //     Their `overlap: 0` was never recall — it was two independent legacy
+    //     runs disagreeing with each other (an accidental, unwanted
+    //     measurement of GPT's own nondeterminism) polluting the very
+    //     denominator the Phase-14 decision reads.
+    // "The tiered pipeline could not run" is a complete, cheap, honest shadow
+    // result, and `runShadowTieredPipeline`'s existing {ok:false, error} path
+    // already persists it via the existing `shadow_error` column — so this
+    // needs no new status, no schema change, and no migration.
+    if (ctx.shadowMode) throw new TieredUnavailableError(reason);
+
+    // Production only. The dynamic import lives INSIDE this branch so a shadow
+    // run never even loads the legacy module — and so the throw above
+    // structurally precludes reaching it (which is half the proof that the
+    // shadow never invokes legacy; the other half is a static pin in
+    // tests/tiered-pipeline-wiring.test.mjs, since an internal dynamic import
+    // has no injection seam to spy on and inventing one purely for a test
+    // would be the over-engineered cliff — round-1 plan-audit M2).
     const { runLegacyProductionAudit } = await import('./legacy-production-audit.mjs');
     const legacyResult = await runLegacyProductionAudit(ctx);
-    const failedNames = discoveryGeneratorOutcomes.filter((o) => o.role === 'required' && o.status === 'failed').map((o) => `${o.model}: ${o.category ? `[${o.category}] ` : ''}${o.errorMessage ?? 'unknown error'}`);
     return {
       ...legacyResult,
       generatorOutcomes: discoveryGeneratorOutcomes,
       runStatus: 'fallback_legacy',
-      fallbackReason: `required generator failed: ${failedNames.join('; ') || 'unknown'}`,
+      fallbackReason: reason,
     };
   }
 

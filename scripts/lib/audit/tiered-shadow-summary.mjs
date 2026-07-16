@@ -60,7 +60,16 @@ export function readRecords(logPath) {
  *   legacyFailures:number, shadowFailures:number, excludedNoStage0Evidence:number,
  *   excludedDegenerateComparison:number, excludedFallback:number,
  *   costDeltaUsd:object, latencyDeltaSec:object, findingOverlapRate:object,
- *   tieredRunStatusCounts:object}}
+ *   tieredRunStatusCounts:object, tieredFallbackReasons:object,
+ *   shadowFailureReasons:object}}
+ *
+ * **Two reason breakdowns, deliberately** (docs/plans/shadow-no-legacy-fallback.md):
+ * `tieredFallbackReasons` reports HISTORICAL `fallback_legacy` rows (the 41
+ * pre-plan records; the shadow no longer produces that status).
+ * `shadowFailureReasons` reports LIVE causes, since a required-generator
+ * failure now lands as `shadowOk:false` + `shadowError`. Both group by raw
+ * string — never bucketed, because 19/41 live rows are multi-cause and
+ * bucketing would mis-attribute them.
  *
  * `totalRuns` counts every observation attempted (including ones where
  * either pipeline failed).
@@ -175,6 +184,28 @@ export function summarize(records) {
       .filter((r) => r.comparison.tieredRunStatus === 'fallback_legacy')
       .reduce((acc, r) => {
         const reason = r.comparison.tieredFallbackReason || 'unknown';
+        acc[reason] = (acc[reason] || 0) + 1;
+        return acc;
+      }, {}),
+    // The shadow no longer falls back (plan:
+    // docs/plans/shadow-no-legacy-fallback.md) — a required-generator failure
+    // now surfaces as `shadowOk:false` + a `shadowError` reason instead of a
+    // `fallback_legacy` comparison row. So `tieredFallbackReasons` above goes
+    // quiet for NEW rows (it still reports the 41 historical ones), and this
+    // is where a live cause shows up. Without it the change would trade one
+    // silent-failure mode for another — the exact anti-pattern this whole
+    // effort exists to end (decision #4).
+    //
+    // Deliberately byte-identical in shape to the reducer above: group by the
+    // RAW reason string, no coarse bucketing. That is not laziness — 19 of the
+    // 41 live fallback rows carry TWO generator causes in one string
+    // (`sonnet: …; glm: [timeout] …`), so bucketing into one class would
+    // mis-attribute the majority of the corpus, and a diagnostic that lies is
+    // worse than none. A multi-cause row is simply its own key.
+    shadowFailureReasons: records
+      .filter((r) => r.legacyOk && !r.shadowOk)
+      .reduce((acc, r) => {
+        const reason = r.shadowError || 'unknown';
         acc[reason] = (acc[reason] || 0) + 1;
         return acc;
       }, {}),

@@ -27,6 +27,7 @@ const {
   appendShadowLog, runTieredShadowComparison,
   buildLegacyBuckets, buildTieredBuckets,
 } = await import('../scripts/lib/audit/tiered-shadow-compare.mjs');
+const { TieredUnavailableError } = await import('../scripts/lib/audit/tiered-pipeline.mjs');
 
 // Shared fixture helper for the bucketing suites below — `semanticId` keys
 // on `category|section|detail`, so distinct values here guarantee distinct ids.
@@ -554,5 +555,128 @@ describe('parseTotalSeconds strictness (Cluster-C audit M1/M4)', () => {
     assert.equal(via('1.2.3s'), null);
     assert.equal(via('3.2s'), 3.2, 'well-formed values still parse');
     assert.equal(via('10s'), 10, 'integer seconds still parse');
+  });
+});
+
+// ── The shadow ctx marks itself; the catch preserves the clean reason ─────
+// docs/plans/shadow-no-legacy-fallback.md decisions #1/#3.
+describe('buildShadowCtx — shadowMode (no-legacy-fallback plan)', () => {
+  test('marks the ctx so runTieredAuditPipeline never falls back to a second legacy audit', () => {
+    const shadow = buildShadowCtx({ runId: 'r1', planContent: 'x', changedFiles: ['a.js'] });
+    assert.equal(shadow.shadowMode, true);
+  });
+
+  test('sits alongside the other "not the real run" markers — one coherent set', () => {
+    const shadow = buildShadowCtx({ runId: 'r1' });
+    // If a future edit drops shadowMode while keeping the rest, the shadow
+    // silently resumes burning a full legacy audit per failed run.
+    for (const flag of ['noLedger', 'noDebtLedger', 'readOnlyDebt', 'noCloudRecording', 'shadowMode']) {
+      assert.equal(shadow[flag], true, `${flag} must be set on a shadow ctx`);
+    }
+  });
+
+  test('PRODUCTION never gets shadowMode — the flag is opt-in, absence is the safe default', () => {
+    // The production caller (openai-audit.mjs:440) passes its ctx straight
+    // through; nothing sets shadowMode for it.
+    const productionCtx = { runId: 'r1', planContent: 'x' };
+    assert.equal(productionCtx.shadowMode, undefined);
+  });
+});
+
+describe('runShadowTieredPipeline — TieredUnavailableError handling', () => {
+  test('a TieredUnavailableError resolves ok:false with the CLEAN .reason (not a raw message)', async () => {
+    const reason = 'required generator failed: glm: [timeout] aborted; sonnet: 529 overloaded';
+    const outcome = await runShadowTieredPipeline({ runId: 'r1' }, {
+      runTieredAuditPipeline: async () => { throw new TieredUnavailableError(reason); },
+    });
+    assert.equal(outcome.ok, false);
+    assert.equal(outcome.error, reason, 'the formatted reason must reach shadowError verbatim');
+    assert.equal(typeof outcome.latencyMs, 'number');
+  });
+
+  test('a NON-typed throw (a real harness bug) still resolves ok:false with err.message', async () => {
+    const outcome = await runShadowTieredPipeline({ runId: 'r1' }, {
+      runTieredAuditPipeline: async () => { throw new TypeError("Cannot read properties of undefined (reading 'x')"); },
+    });
+    assert.equal(outcome.ok, false);
+    assert.match(outcome.error, /Cannot read properties of undefined/);
+  });
+
+  // The reason string is self-discriminating — which is why no persisted
+  // boolean was added (plan decision #3/#4). An operator reading
+  // shadowFailureReasons can tell a provider outage from a harness bug.
+  test('the two failure classes are distinguishable by their reason string alone', async () => {
+    const unavailable = await runShadowTieredPipeline({}, {
+      runTieredAuditPipeline: async () => { throw new TieredUnavailableError('required generator failed: glm: boom'); },
+    });
+    const bug = await runShadowTieredPipeline({}, {
+      runTieredAuditPipeline: async () => { throw new Error('undefined is not a function'); },
+    });
+    assert.match(unavailable.error, /^required generator failed: /);
+    assert.doesNotMatch(bug.error, /^required generator failed: /);
+  });
+});
+
+describe('runTieredShadowComparison — an unavailable tiered run records honestly and cheaply', () => {
+  test('records shadowOk:false + the reason + comparison:null — and never fabricates a comparison', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shadow-unavail-'));
+    const logPath = path.join(dir, 'log.jsonl');
+    try {
+      await runTieredShadowComparison({
+        ctx: { runId: 'r1', planContent: 'x', changedFiles: ['a.js'] },
+        legacyResultPromise: Promise.resolve({ findings: [], runStatus: 'complete' }),
+        runTieredAuditPipeline: async () => {
+          throw new TieredUnavailableError('required generator failed: glm: [timeout] aborted');
+        },
+        logPath,
+      });
+      const rec = JSON.parse(fs.readFileSync(logPath, 'utf8').trim());
+      assert.equal(rec.legacyOk, true);
+      assert.equal(rec.shadowOk, false);
+      assert.match(rec.shadowError, /required generator failed: glm/);
+      assert.equal(rec.comparison, null,
+        'an unavailable tiered run must NOT produce a comparison — that was the legacy-vs-legacy bug');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
+
+// ── buildShadowCtx must not share mutable state with the real ctx ─────────
+// Audit round-1 M2, reproduced directly: the shallow spread shared the
+// `generatorOutcomes` ARRAY, and discovery-portfolio.mjs mutates it IN PLACE
+// (append-only) — so the shadow's discovery pushed its outcomes into the
+// REAL run's array while the two ran concurrently. Contained today only
+// because runLegacyProductionAudit hardcodes `generatorOutcomes: []` on its
+// result (legacy-production-audit.mjs:2974); a latent hazard, and a direct
+// contradiction of this function's own contract.
+describe('buildShadowCtx — no shared mutable state with the real ctx (audit M2)', () => {
+  test('generatorOutcomes is SNAPSHOT, not shared by reference', () => {
+    const real = { runId: 'r1', generatorOutcomes: [] };
+    const shadow = buildShadowCtx(real);
+    assert.notEqual(shadow.generatorOutcomes, real.generatorOutcomes,
+      'the shadow must not hold the same array instance as the real ctx');
+  });
+
+  test("the shadow's in-place appends never reach the real ctx", () => {
+    const real = { runId: 'r1', generatorOutcomes: [] };
+    const shadow = buildShadowCtx(real);
+    // Exactly what discovery-portfolio.mjs does (append-only, in place).
+    shadow.generatorOutcomes.push({ model: 'glm', role: 'required', status: 'failed' });
+    shadow.generatorOutcomes.push({ model: 'sonnet', role: 'required', status: 'failed' });
+    assert.equal(real.generatorOutcomes.length, 0,
+      'the real, concurrently-running audit ctx must be untouched by the shadow');
+    assert.equal(shadow.generatorOutcomes.length, 2, 'the shadow still records its own outcomes');
+  });
+
+  test('pre-existing outcomes are COPIED forward, not dropped', () => {
+    const real = { runId: 'r1', generatorOutcomes: [{ model: 'prior', role: 'required', status: 'succeeded' }] };
+    const shadow = buildShadowCtx(real);
+    assert.deepEqual(shadow.generatorOutcomes, real.generatorOutcomes, 'contents equal…');
+    assert.notEqual(shadow.generatorOutcomes, real.generatorOutcomes, '…but not the same instance');
+  });
+
+  test('an absent generatorOutcomes degrades to an empty array, never a crash', () => {
+    assert.deepEqual(buildShadowCtx({ runId: 'r1' }).generatorOutcomes, []);
   });
 });

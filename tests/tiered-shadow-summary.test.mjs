@@ -185,3 +185,82 @@ describe('two-metric window readiness — historicalCompleteRuns vs comparedRuns
     assert.equal(summary.excludedFallback, 1);
   });
 });
+
+// ── shadowFailureReasons — the live cause breakdown ───────────────────────
+// docs/plans/shadow-no-legacy-fallback.md decision #4. The shadow no longer
+// falls back, so tieredFallbackReasons goes quiet for NEW rows; without this
+// breakdown the change would trade one silent-failure mode for another.
+describe('shadowFailureReasons (no-legacy-fallback plan, decision #4)', () => {
+  const failed = (shadowError) => ({ legacyOk: true, shadowOk: false, shadowError, comparison: null });
+
+  test('groups live shadow failures by their reason', () => {
+    const s = summarize([
+      failed('required generator failed: glm: [timeout] aborted'),
+      failed('required generator failed: glm: [timeout] aborted'),
+      failed('required generator failed: sonnet: 529 overloaded'),
+    ]);
+    assert.deepEqual(s.shadowFailureReasons, {
+      'required generator failed: glm: [timeout] aborted': 2,
+      'required generator failed: sonnet: 529 overloaded': 1,
+    });
+    assert.equal(s.shadowFailures, 3);
+  });
+
+  // The load-bearing one. 19 of the 41 live fallback rows carry TWO generator
+  // causes in one string; coarse bucketing would mis-attribute the majority.
+  // Grouping by the raw string cannot: a multi-cause row is its own key.
+  test('a MULTI-CAUSE reason is its own key — never mis-attributed to one class', () => {
+    const multi = 'required generator failed: sonnet: response did not contain a report_findings tool call; glm: [timeout] aborted';
+    const s = summarize([failed(multi), failed(multi), failed('required generator failed: glm: [timeout] aborted')]);
+    assert.equal(s.shadowFailureReasons[multi], 2, 'the multi-cause string is one honest key');
+    assert.equal(s.shadowFailureReasons['required generator failed: glm: [timeout] aborted'], 1,
+      'and it is NOT merged into the single-cause glm bucket');
+    assert.equal(Object.keys(s.shadowFailureReasons).length, 2);
+  });
+
+  test('a missing shadowError keys as "unknown" — mirroring the sibling reducer, never dropped', () => {
+    const s = summarize([{ legacyOk: true, shadowOk: false, shadowError: null, comparison: null }]);
+    assert.deepEqual(s.shadowFailureReasons, { unknown: 1 });
+  });
+
+  test('a harness bug and a provider outage are distinguishable by reason alone (no persisted flag needed)', () => {
+    const s = summarize([
+      failed('required generator failed: glm: [timeout] aborted'),
+      failed("Cannot read properties of undefined (reading 'x')"),
+    ]);
+    const keys = Object.keys(s.shadowFailureReasons);
+    assert.equal(keys.filter((k) => k.startsWith('required generator failed: ')).length, 1);
+    assert.equal(keys.filter((k) => !k.startsWith('required generator failed: ')).length, 1);
+  });
+
+  test('a LEGACY failure is not a shadow failure — the existing partition is unchanged', () => {
+    const s = summarize([{ legacyOk: false, shadowOk: false, shadowError: 'x', comparison: null }]);
+    assert.equal(s.legacyFailures, 1);
+    assert.equal(s.shadowFailures, 0, 'shadowFailures only counts runs where legacy succeeded');
+    assert.deepEqual(s.shadowFailureReasons, {}, 'and its reason must not pollute the live breakdown');
+  });
+
+  // Mixed-corpus guard: 41 historical fallback_legacy rows must keep reporting
+  // exactly as before, alongside new-shape unavailable rows.
+  test('MIXED corpus: historical fallback_legacy rows still report under tieredFallbackReasons', () => {
+    const historicalFallback = {
+      legacyOk: true, shadowOk: true,
+      comparison: {
+        tieredRunStatus: 'fallback_legacy',
+        tieredFallbackReason: 'required generator failed: glm: [egress-gate] refusing to send',
+        legacyFindingCount: 3, onlyTieredCount: 0, overlapCount: 0,
+      },
+    };
+    const s = summarize([historicalFallback, failed('required generator failed: glm: [timeout] aborted')]);
+    // Old rows: unchanged reporting.
+    assert.equal(s.excludedFallback, 1);
+    assert.deepEqual(s.tieredFallbackReasons, {
+      'required generator failed: glm: [egress-gate] refusing to send': 1,
+    });
+    // New rows: the live breakdown.
+    assert.deepEqual(s.shadowFailureReasons, { 'required generator failed: glm: [timeout] aborted': 1 });
+    // Neither is decision-grade, and neither ever was.
+    assert.equal(s.comparedRuns, 0);
+    assert.equal(s.totalRuns, 2);
+  });
+});

@@ -172,7 +172,15 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
     console.log(`  tiered runStatus breakdown: ${JSON.stringify(summary.tieredRunStatusCounts)}`);
   }
   if (Object.keys(summary.tieredFallbackReasons).length > 0) {
-    console.log(`  fallback reasons: ${JSON.stringify(summary.tieredFallbackReasons)}`);
+    console.log(`  fallback reasons (historical rows — the shadow no longer falls back): ${JSON.stringify(summary.tieredFallbackReasons)}`);
+  }
+  // The LIVE cause breakdown. Printed whenever any shadow attempt failed —
+  // NOT gated on comparedRuns > 0 — for the same reason the fallback
+  // breakdown above isn't: the state an operator most needs to diagnose is
+  // precisely the one where there's nothing else to show
+  // (docs/plans/shadow-no-legacy-fallback.md decision #4).
+  if (Object.keys(summary.shadowFailureReasons).length > 0) {
+    console.log(`  shadow failure reasons (live): ${JSON.stringify(summary.shadowFailureReasons)}`);
   }
   // Gated on comparedRuns (decision-grade data points), NOT totalRuns — a
   // run whose shadow attempt failed outright contributes no cost/latency/

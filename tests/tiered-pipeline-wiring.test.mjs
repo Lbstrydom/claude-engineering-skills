@@ -17,7 +17,7 @@ import { execFileSync } from 'node:child_process';
 
 import os from 'node:os';
 import { defaultGeminiReviewScriptPath } from '../scripts/lib/audit/final-adjudication.mjs';
-import { runTieredAuditPipeline } from '../scripts/lib/audit/tiered-pipeline.mjs';
+import { runTieredAuditPipeline, TieredUnavailableError } from '../scripts/lib/audit/tiered-pipeline.mjs';
 import { buildAuditRunContext } from '../scripts/lib/audit/legacy-production-audit.mjs';
 
 // 2026-07-15: root cause behind the first 4 real `complete` shadow runs all
@@ -358,5 +358,93 @@ describe('runTieredAuditPipeline Stage 2 handle fail-fast', () => {
       () => runTieredAuditPipeline({ providers: { geminiCleanRegionCall: fn } }),
       /must both be functions/,
     );
+  });
+});
+
+// ── The shadow must never fall back to a second legacy audit ──────────────
+// docs/plans/shadow-no-legacy-fallback.md. Measured motivation: 41 of 57 live
+// shadow records each ran a FULL extra 5-pass GPT audit and then compared
+// legacy against legacy (their `overlap: 0` was GPT nondeterminism, not
+// recall). The fallback is CORRECT for production (openai-audit.mjs:440 must
+// return findings) and WRONG for the shadow — so it is gated, not deleted.
+describe('shadow vs production fallback (docs/plans/shadow-no-legacy-fallback.md)', () => {
+  // A ctx that reaches the requiredGeneratorFailed branch deterministically:
+  // both required generators are unavailable (no ossCall, no anthropicClient),
+  // so runDiscoveryPortfolio marks required-failure without any network call.
+  const failingCtx = (over = {}) => ({
+    planContent: 'p', changedFiles: [], diffText: '', generatorOutcomes: [],
+    providers: {
+      openai: null, ossCall: null, anthropicClient: null,
+      geminiReviewCall: async () => ({ verdict: 'verified' }),
+      geminiCleanRegionCall: async () => ({ verdict: 'clean' }),
+    },
+    ...over,
+  });
+
+  test('shadowMode: a required-generator failure THROWS TieredUnavailableError — no legacy audit', async () => {
+    await assert.rejects(
+      () => runTieredAuditPipeline(failingCtx({ shadowMode: true })),
+      (err) => {
+        assert.equal(err.name, 'TieredUnavailableError', 'must be the typed error, not a bare Error');
+        assert.match(err.reason, /required generator failed/);
+        // .reason is the clean formatted string the shadow's catch records.
+        assert.equal(typeof err.reason, 'string');
+        return true;
+      },
+    );
+  });
+
+  // The throw IS the behavioural half of the "legacy is never invoked" proof:
+  // the `await import('./legacy-production-audit.mjs')` sits AFTER the
+  // shadowMode branch inside the same block, so propagating the throw
+  // structurally guarantees that line was never reached. There is no
+  // injection seam to spy on (round-1 plan-audit M2) — the static pin below
+  // is the other half, and it is what survives a refactor that hoists the
+  // import above the branch.
+  test('static pin: the legacy dynamic import lives INSIDE the non-shadow branch', () => {
+    const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+    const throwIdx = src.indexOf('if (ctx.shadowMode) throw new TieredUnavailableError(reason);');
+    const importIdx = src.indexOf("await import('./legacy-production-audit.mjs')");
+    assert.ok(throwIdx > 0, 'expected the shadowMode throw');
+    assert.ok(importIdx > 0, 'expected the legacy dynamic import');
+    assert.ok(
+      throwIdx < importIdx,
+      'the shadowMode throw MUST precede the legacy import — otherwise a shadow run would load/execute the legacy audit before the guard',
+    );
+  });
+
+  // The production regression guard: without the flag, today's exact
+  // behaviour must survive byte-for-byte. Production is the untouched
+  // default; a caller that forgets the flag fails SAFE (falls back — costly
+  // but correct, never a wrong result).
+  test('NO shadowMode (production): still returns fallback_legacy, unchanged', async () => {
+    // The legacy path is reached for real here; give it a stub openai whose
+    // every call fails gracefully (safeCallGPT degrades per-pass), so the run
+    // completes without network.
+    const ctx = failingCtx({
+      planContent: '# plan\n\nImplement `tests/fixtures/harness-plan/src/service.mjs`.\n',
+      providers: {
+        openai: { responses: { parse: async () => { throw new Error('stub'); } } },
+        ossCall: null, anthropicClient: null,
+        geminiReviewCall: async () => ({ verdict: 'verified' }),
+        geminiCleanRegionCall: async () => ({ verdict: 'clean' }),
+      },
+      noLedger: true, noDebtLedger: true, noTools: true, noCloudRecording: true,
+      passFilter: ['structure'],
+    });
+    const result = await runTieredAuditPipeline(ctx);
+    assert.equal(result.runStatus, 'fallback_legacy', 'production MUST still fall back');
+    assert.match(result.fallbackReason, /required generator failed/);
+    assert.ok(Array.isArray(result.generatorOutcomes), 'the discovery attempt is still reported');
+  });
+
+  test('the reason string is identical in both modes — only the delivery differs', async () => {
+    let shadowReason;
+    await runTieredAuditPipeline(failingCtx({ shadowMode: true })).catch((e) => { shadowReason = e.reason; });
+    assert.match(shadowReason, /^required generator failed: /);
+    // Same prefix the production fallbackReason uses, so shadowFailureReasons
+    // and tieredFallbackReasons stay mutually legible.
+    assert.ok(shadowReason.includes('glm') || shadowReason.includes('sonnet'),
+      'the failing generator must be named in the reason');
   });
 });

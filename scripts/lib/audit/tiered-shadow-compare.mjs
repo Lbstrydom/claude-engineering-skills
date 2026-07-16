@@ -61,6 +61,7 @@ import { normalizePath } from '../file-io.mjs';
 import { resolveRepoIdentity } from '../repo-identity.mjs';
 import { appendTieredShadowObservation } from '../store/tiered-shadow.mjs';
 import { isFileInChangedScope } from './deferral-classifier.mjs';
+import { TieredUnavailableError } from './tiered-pipeline.mjs';
 
 export const SHADOW_LOG_PATH = path.join('.audit', 'tiered-shadow-log.jsonl');
 
@@ -83,11 +84,27 @@ export const SHADOW_LOG_PATH = path.join('.audit', 'tiered-shadow-log.jsonl');
 export function buildShadowCtx(ctx) {
   return {
     ...ctx,
+    // A shallow spread shares every NESTED value with the real ctx — and
+    // `generatorOutcomes` is mutated IN PLACE (append-only) by
+    // discovery-portfolio.mjs, so the shadow's discovery was pushing its
+    // outcomes into the REAL run's array while the two ran concurrently
+    // (audit round-1 M2, reproduced directly). Contained today only by
+    // luck: `runLegacyProductionAudit` happens to hardcode
+    // `generatorOutcomes: []` on its result (legacy-production-audit.mjs:2974),
+    // so the pollution never escaped into the real audit's output. That is a
+    // latent hazard, not a design — and it directly contradicts this
+    // function's own contract ("every stateful WRITE path disabled so the
+    // shadow run cannot mutate anything the real audit … depends on").
+    // Snapshot it: the shadow gets its own array, nothing shared.
+    generatorOutcomes: [...(ctx.generatorOutcomes || [])],
     ledgerFile: null,
     noLedger: true,
-    // Defense-in-depth for any future tiered-pipeline addition that DOES
-    // read these flags (it doesn't today) — cheap to set now, expensive to
-    // discover missing later.
+    // Read TODAY by `routePreExistingIndependent` (tiered-pipeline.mjs) —
+    // a shadow's pre_existing_independent candidates resolve to
+    // `debt_ledger_disabled` and write nothing (verified directly; audit
+    // round-1 H1 claimed the opposite and was refuted by reproduction).
+    // This comment previously said "it doesn't today", which went stale when
+    // the Stage-0 debt-routing path landed.
     noDebtLedger: true,
     readOnlyDebt: true,
     // Blocks ALL learning-store writes (audit_runs, audit_findings, pass
@@ -102,6 +119,20 @@ export function buildShadowCtx(ctx) {
     // loudly (`invalid input syntax for type uuid`) instead of writing
     // nothing — this flag is the actual fix, not a differently-shaped id.
     noCloudRecording: true,
+    // The shadow has NO obligation to return findings, so it must never fall
+    // back to a second legacy audit when a required discovery generator fails
+    // (plan: docs/plans/shadow-no-legacy-fallback.md). Without this, 41 of 57
+    // live records each burned a full extra 5-pass GPT audit and then
+    // compared legacy against legacy. `runTieredAuditPipeline` throws
+    // TieredUnavailableError instead, which the catch below turns into this
+    // module's EXISTING honest {ok:false, error} outcome.
+    //
+    // Sits with the four flags above as one more "this is not the real run"
+    // marker — the same role this function already has. PRODUCTION never sets
+    // it, so `openai-audit.mjs`'s gating path keeps falling back exactly as
+    // before; a future caller that forgets it fails SAFE (it falls back —
+    // costly but correct, never a wrong result).
+    shadowMode: true,
   };
 }
 
@@ -337,7 +368,18 @@ export async function runShadowTieredPipeline(ctx, { runTieredAuditPipeline, tim
     const result = await Promise.race([runTieredAuditPipeline(shadowCtx), timeout]);
     return { ok: true, result, latencyMs: Date.now() - start };
   } catch (err) {
-    return { ok: false, error: err.message, latencyMs: Date.now() - start };
+    // A TieredUnavailableError is the EXPECTED outcome of a required
+    // generator being unavailable (plan: docs/plans/shadow-no-legacy-fallback.md
+    // decision #3) — not a harness bug. Prefer its clean formatted `.reason`
+    // over a raw `err.message` so the existing `shadowError` field (and the
+    // existing `shadow_error` column) carries the useful string.
+    //
+    // No `unavailable` boolean is persisted: the reason string is
+    // self-discriminating (`required generator failed: …` vs any other
+    // throw), which is what a human reading `shadowFailureReasons` actually
+    // uses, and a flag no consumer branches on would be ceremony.
+    const error = err instanceof TieredUnavailableError ? err.reason : err.message;
+    return { ok: false, error, latencyMs: Date.now() - start };
   } finally {
     clearTimeout(timer);
   }
