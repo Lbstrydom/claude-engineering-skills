@@ -36,6 +36,7 @@ import { fileURLToPath } from 'node:url';
 import 'dotenv/config';
 
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { retrySync } from './lib/retry-transient-fs.mjs';
 import { renderCandidateSpec } from './lib/ux-lock/candidate-spec.mjs';
 import {
   WitnessRecordSchema,
@@ -346,7 +347,7 @@ async function promoteOne(repoRoot, repoId, cand, promotedBy) {
     });
     if (!updateResult.ok || updateResult.rowsAffected === 0) {
       // DB didn't transition — remove the .tmp and bail.
-      try { fs.unlinkSync(tmpPath); } catch { /* swallow */ }
+      try { retrySync(() => fs.unlinkSync(tmpPath)); } catch { /* swallow */ }
       removeJournal(repoRoot, cand.id);
       throw new Error('DB update returned zero rows (candidate may have been promoted by a concurrent run)');
     }
@@ -383,14 +384,14 @@ async function promoteOne(repoRoot, repoId, cand, promotedBy) {
       }
       if (existing === incoming) {
         // Idempotent re-run — discard the .tmp; the locked file already matches.
-        try { fs.unlinkSync(tmpPath); } catch { /* swallow */ }
+        try { retrySync(() => fs.unlinkSync(tmpPath)); } catch { /* swallow */ }
       } else {
         throw new Error(
           `promote rename refused — ${finalPath} already exists with different content (possible concurrent promotion or fingerprint collision)`,
         );
       }
     } else {
-      fs.renameSync(tmpPath, finalPath);
+      retrySync(() => fs.renameSync(tmpPath, finalPath));
     }
 
     // 7. Journal finalised; record ship_event; delete journal.
@@ -467,10 +468,10 @@ export async function reconcilePromotionJournal(repoRoot) {
     const journalPath = path.join(dir, f);
     let entry;
     try { entry = JSON.parse(fs.readFileSync(journalPath, 'utf-8')); }
-    catch { fs.unlinkSync(journalPath); continue; }
+    catch { retrySync(() => fs.unlinkSync(journalPath)); continue; }
 
     if (entry.stage === 'finalised') {
-      fs.unlinkSync(journalPath);
+      retrySync(() => fs.unlinkSync(journalPath));
       continue;
     }
 
@@ -478,9 +479,9 @@ export async function reconcilePromotionJournal(repoRoot) {
       // The DB UPDATE landed; we crashed before the rename. Complete it.
       try {
         if (fs.existsSync(entry.tmpPath) && !fs.existsSync(entry.intendedPath)) {
-          fs.renameSync(entry.tmpPath, entry.intendedPath);
+          retrySync(() => fs.renameSync(entry.tmpPath, entry.intendedPath));
         }
-        fs.unlinkSync(journalPath);
+        retrySync(() => fs.unlinkSync(journalPath));
         recovered += 1;
         process.stderr.write(`[reconcile] Completed deferred rename for ${entry.specId}\n`);
       } catch (err) {
@@ -513,8 +514,8 @@ export async function reconcilePromotionJournal(repoRoot) {
 
       if (stillCandidate) {
         try {
-          if (entry.tmpPath && fs.existsSync(entry.tmpPath)) fs.unlinkSync(entry.tmpPath);
-          fs.unlinkSync(journalPath);
+          if (entry.tmpPath && fs.existsSync(entry.tmpPath)) retrySync(() => fs.unlinkSync(entry.tmpPath));
+          retrySync(() => fs.unlinkSync(journalPath));
           rolledBack += 1;
           process.stderr.write(`[reconcile] Rolled back incomplete promotion for ${entry.specId} (DB confirmed never committed)\n`);
         } catch (err) {
@@ -525,9 +526,9 @@ export async function reconcilePromotionJournal(repoRoot) {
         // Complete the rename.
         try {
           if (fs.existsSync(entry.tmpPath) && !fs.existsSync(entry.intendedPath)) {
-            fs.renameSync(entry.tmpPath, entry.intendedPath);
+            retrySync(() => fs.renameSync(entry.tmpPath, entry.intendedPath));
           }
-          fs.unlinkSync(journalPath);
+          retrySync(() => fs.unlinkSync(journalPath));
           recovered += 1;
           process.stderr.write(`[reconcile] DB query reveals ${entry.specId} was committed despite stale journal; completed rename\n`);
         } catch (err) {
@@ -556,7 +557,7 @@ function writeJournal(repoRoot, specId, entry) {
 
 function removeJournal(repoRoot, specId) {
   const p = path.join(repoRoot, JOURNAL_DIR, `${specId}.json`);
-  try { fs.unlinkSync(p); } catch { /* ignore */ }
+  try { retrySync(() => fs.unlinkSync(p)); } catch { /* ignore */ }
 }
 
 function defaultPrompt(question) {

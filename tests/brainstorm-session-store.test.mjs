@@ -155,3 +155,53 @@ describe('pruneOldSessions — best-effort housekeeping', () => {
     assert.equal(n2, 0);
   });
 });
+
+// ── __test__.appendQuarantine — failure contract (atomic-write-adoption plan) ──
+// Deterministic, cross-platform fault: point root's ancestor at a FILE, not a
+// directory. atomicWriteFileSync's internal mkdirSync then throws ENOTDIR
+// every time, on every platform — no OS permissions involved.
+
+describe('appendQuarantine — failure contract', () => {
+  it('does not throw and logs a WARN when the write fails', () => {
+    const parent = mkTmp();
+    const blocker = path.join(parent, 'blocker');
+    fs.writeFileSync(blocker, 'not a directory');
+    const root = path.join(blocker, 'nested');
+
+    const originalWrite = process.stderr.write;
+    let warned = '';
+    process.stderr.write = (chunk) => { warned += chunk; return true; };
+    try {
+      assert.doesNotThrow(() => {
+        __test__.appendQuarantine('sid1', [{ lineIdx: 0, raw: 'bad', reason: 'test' }], root);
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    assert.match(warned, /cannot prepare quarantine dir/);
+  });
+
+  it('does not throw and logs a WARN when an existing quarantine file cannot be read (EISDIR)', () => {
+    const root = mkTmp();
+    fs.mkdirSync(root, { recursive: true });
+    // qPath exists but as a directory, not a file — fs.readFileSync throws
+    // EISDIR deterministically, exercising the OTHER pre-existing swallow
+    // path (independent of the ensureDir fix above and of the
+    // atomicWriteFileSync delegation, which the guard test + the existing
+    // happy-path suite already cover).
+    const qPath = __test__.quarantinePath('sid2', root);
+    fs.mkdirSync(qPath, { recursive: true });
+
+    const originalWrite = process.stderr.write;
+    let warned = '';
+    process.stderr.write = (chunk) => { warned += chunk; return true; };
+    try {
+      assert.doesNotThrow(() => {
+        __test__.appendQuarantine('sid2', [{ lineIdx: 0, raw: 'bad', reason: 'test' }], root);
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    assert.match(warned, /cannot read quarantine/);
+  });
+});

@@ -1,13 +1,13 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-16T15:14:39.405Z   commit: 1ef5fd211440   refresh_id: acda693c-9485-4e59-ba67-7dcdd1032eb1
+- Generated: 2026-07-16T17:02:26.074Z   commit: cd877196e9f2   refresh_id: 22de2fa1-159c-4b4b-a837-8b1be140f5d5
 - Drift score: 28 / threshold 20   status: `RED`
-- Domains: 23   Symbols: 3109   Layering violations: 0
+- Domains: 23   Symbols: 3131   Layering violations: 0
 
 ## Contents
 - [arch-memory](#arch-memory) — 54 symbols
-- [audit-orchestration](#audit-orchestration) — 226 symbols
+- [audit-orchestration](#audit-orchestration) — 230 symbols
 - [brainstorm](#brainstorm) — 67 symbols
 - [claude-hooks](#claude-hooks) — 9 symbols
 - [claudemd-management](#claudemd-management) — 30 symbols
@@ -23,10 +23,10 @@
 - [plan](#plan) — 8 symbols
 - [root-scripts](#root-scripts) — 14 symbols
 - [scripts](#scripts) — 302 symbols
-- [shared-lib](#shared-lib) — 939 symbols
+- [shared-lib](#shared-lib) — 942 symbols
 - [stores](#stores) — 208 symbols
 - [tech-debt](#tech-debt) — 71 symbols
-- [tests](#tests) — 413 symbols
+- [tests](#tests) — 428 symbols
 - [ux-lock](#ux-lock) — 35 symbols
 - [visual-audit](#visual-audit) — 122 symbols
 
@@ -34,7 +34,7 @@
 
 ## arch-memory
 
-> Tags files to architectural domains via glob patterns; detects stale `@duplicate-justification` pragmas and thin-delegation patterns to flag codebase drift.
+> Domain-tags source files using glob patterns and rules; detects stale duplicate-justification pragmas and thin-wrapper functions that hint at missed refactoring.
 
 ```mermaid
 flowchart TB
@@ -97,11 +97,11 @@ _Domain has 54 symbols (>50). Diagram shows top-15 by file order; see flat table
 | [`findStalePragmas`](../scripts/lib/symbol-index/stale-pragma-sweep.mjs#L51) | function | `scripts/lib/symbol-index/stale-pragma-sweep.mjs` | 51-59 | Finds @duplicate-justification pragmas whose target files no longer exist in the repo. | `scripts/symbol-index/drift.mjs` |
 | [`renderStalePragmaSection`](../scripts/lib/symbol-index/stale-pragma-sweep.mjs#L62) | function | `scripts/lib/symbol-index/stale-pragma-sweep.mjs` | 62-69 | Returns markdown listing stale duplicate-justification pragmas referencing deleted target files. | `scripts/symbol-index/drift.mjs` |
 | [`isThinDelegate`](../scripts/lib/symbol-index/thin-delegate.mjs#L50) | function | `scripts/lib/symbol-index/thin-delegate.mjs` | 50-85 | Detects whether a function body is a thin wrapper/delegate (returns or single-call delegator). | `scripts/symbol-index/extract.mjs` |
-| [`atomicWrite`](../scripts/symbol-index/drift.mjs#L45) | function | `scripts/symbol-index/drift.mjs` | 45-51 | Atomically writes content via temp file + rename, creating parent dirs as needed. | _(internal)_ |
-| [`classify`](../scripts/symbol-index/drift.mjs#L53) | function | `scripts/symbol-index/drift.mjs` | 53-57 | Classifies a drift score as GREEN/AMBER/RED based on thresholds. | _(internal)_ |
-| [`main`](../scripts/symbol-index/drift.mjs#L78) | function | `scripts/symbol-index/drift.mjs` | 78-189 | CLI: checks cloud status, fetches repo+snapshot, computes drift score, classifies, renders issue. | _(internal)_ |
-| [`parseArgs`](../scripts/symbol-index/drift.mjs#L36) | function | `scripts/symbol-index/drift.mjs` | 36-43 | Parses --out and --json flags from command line. | _(internal)_ |
-| [`renderMarkdownViaShared`](../scripts/symbol-index/drift.mjs#L63) | function | `scripts/symbol-index/drift.mjs` | 63-76 | Calls shared renderDriftIssue() to produce markdown output for a drift report. | _(internal)_ |
+| [`atomicWrite`](../scripts/symbol-index/drift.mjs#L44) | function | `scripts/symbol-index/drift.mjs` | 44-46 | Atomically writes content to a file. | _(internal)_ |
+| [`classify`](../scripts/symbol-index/drift.mjs#L48) | function | `scripts/symbol-index/drift.mjs` | 48-52 | Classifies a drift score as GREEN, AMBER, or RED based on a threshold. | _(internal)_ |
+| [`main`](../scripts/symbol-index/drift.mjs#L73) | function | `scripts/symbol-index/drift.mjs` | 73-184 | Computes symbol-index drift score, classifies it, fetches duplicate clusters, and outputs the result. | _(internal)_ |
+| [`parseArgs`](../scripts/symbol-index/drift.mjs#L35) | function | `scripts/symbol-index/drift.mjs` | 35-42 | Parses command-line arguments to extract --out and --json flags. | _(internal)_ |
+| [`renderMarkdownViaShared`](../scripts/symbol-index/drift.mjs#L58) | function | `scripts/symbol-index/drift.mjs` | 58-71 | Renders a drift issue as markdown using the shared renderer function. | _(internal)_ |
 | [`main`](../scripts/symbol-index/duplicates.mjs#L65) | function | `scripts/symbol-index/duplicates.mjs` | 65-101 | CLI entry point that fetches and renders exact-duplicate symbol clusters from the index. | _(internal)_ |
 | [`parseArgs`](../scripts/symbol-index/duplicates.mjs#L31) | function | `scripts/symbol-index/duplicates.mjs` | 31-46 | Parses --limit and --json CLI flags with validation for positive integers. | _(internal)_ |
 | [`renderText`](../scripts/symbol-index/duplicates.mjs#L48) | function | `scripts/symbol-index/duplicates.mjs` | 48-63 | Renders duplicate clusters as plain-text summary with file paths and symbol names. | _(internal)_ |
@@ -147,7 +147,7 @@ _Domain has 54 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## audit-orchestration
 
-> Coordinates multi-pass audit execution: chains GPT code/plan audits with Gemini final review as subprocess pipelines, manages transient artifacts (cache files, preimage worktrees), and handles result persistence.
+> Orchestrates multi-LLM audit execution via subprocess piping: GPT code/plan analysis followed by mandatory Gemini final review, supporting single-pass and iterative convergence modes. Manages result parsing and cleanup of transient audit artifacts (worktrees, caches).
 
 ```mermaid
 flowchart TB
@@ -193,7 +193,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 226 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 230 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -309,14 +309,18 @@ _Domain has 226 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`mapBouncerDecisionsToFindings`](../scripts/lib/audit/duplication-report.mjs#L166) | function | `scripts/lib/audit/duplication-report.mjs` | 166-186 | Validates bouncer LLM decisions and converts them to duplication findings. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs` |
 | [`nextId`](../scripts/lib/audit/duplication-report.mjs#L48) | function | `scripts/lib/audit/duplication-report.mjs` | 48-48 | Generates the next unique duplication finding ID. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs` |
 | [`readExcerpt`](../scripts/lib/audit/duplication-report.mjs#L75) | function | `scripts/lib/audit/duplication-report.mjs` | 75-93 | Reads source code excerpt for a symbol with padding, respecting sensitive-path restrictions. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs` |
-| [`extractFileDiffSection`](../scripts/lib/audit/evidence-triage.mjs#L38) | function | `scripts/lib/audit/evidence-triage.mjs` | 38-68 | Locates and returns the unified-diff section for a specific file, handling quoted paths and status detection. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`normalizeWhitespace`](../scripts/lib/audit/evidence-triage.mjs#L25) | function | `scripts/lib/audit/evidence-triage.mjs` | 25-27 | Collapses all consecutive whitespace to single spaces and trims edges. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`quoteAppearsOnSide`](../scripts/lib/audit/evidence-triage.mjs#L103) | function | `scripts/lib/audit/evidence-triage.mjs` | 103-126 | Verifies whether a quoted string appears in the head or base of a diff hunk, handling blank lines. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`runStage0EvidenceTriage`](../scripts/lib/audit/evidence-triage.mjs#L244) | function | `scripts/lib/audit/evidence-triage.mjs` | 244-275 | Verifies all finding anchors against the diff, separating verified/unverifiable cases from rejected fabrications. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`splitIntoHunks`](../scripts/lib/audit/evidence-triage.mjs#L74) | function | `scripts/lib/audit/evidence-triage.mjs` | 74-88 | Partitions a diff section into hunk content arrays, stopping at @@ markers. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`tagPreExisting`](../scripts/lib/audit/evidence-triage.mjs#L185) | function | `scripts/lib/audit/evidence-triage.mjs` | 185-191 | Marks a finding as pre-existing-independent if blame and impact adapters both confirm it predates the change and doesn't block the fix. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`verifyAnchor`](../scripts/lib/audit/evidence-triage.mjs#L151) | function | `scripts/lib/audit/evidence-triage.mjs` | 151-162 | Determines if a finding's evidence anchor can be verified, fabricated, or is unverifiable in the diff. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`verifyWithFallback`](../scripts/lib/audit/evidence-triage.mjs#L204) | function | `scripts/lib/audit/evidence-triage.mjs` | 204-219 | Attempts to verify a finding's anchor, trying alternative anchors if the primary fails. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`extractFileDiffSection`](../scripts/lib/audit/evidence-triage.mjs#L49) | function | `scripts/lib/audit/evidence-triage.mjs` | 49-79 | Extracts the unified diff section for a specific file. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`findLineRangeInContent`](../scripts/lib/audit/evidence-triage.mjs#L179) | function | `scripts/lib/audit/evidence-triage.mjs` | 179-191 | Locates a quote text in file content and returns its line range. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`mapHeadLineToBase`](../scripts/lib/audit/evidence-triage.mjs#L212) | function | `scripts/lib/audit/evidence-triage.mjs` | 212-227 | Converts a line number from HEAD to base version using hunk offsets. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`mapHeadRangeToBase`](../scripts/lib/audit/evidence-triage.mjs#L240) | function | `scripts/lib/audit/evidence-triage.mjs` | 240-247 | Converts a line range from HEAD to base version using hunk offsets. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`parseHunkHeader`](../scripts/lib/audit/evidence-triage.mjs#L90) | function | `scripts/lib/audit/evidence-triage.mjs` | 90-99 | Parses a unified diff hunk header into base and head line ranges. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`quoteAppearsOnSide`](../scripts/lib/audit/evidence-triage.mjs#L139) | function | `scripts/lib/audit/evidence-triage.mjs` | 139-162 | Checks if a quote text appears on one side (+ or -) of a diff. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`resolveAnchorLocation`](../scripts/lib/audit/evidence-triage.mjs#L270) | function | `scripts/lib/audit/evidence-triage.mjs` | 270-296 | Determines if an evidence anchor quote is verified, fabricated, or unverifiable. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`resolveWithFallback`](../scripts/lib/audit/evidence-triage.mjs#L365) | function | `scripts/lib/audit/evidence-triage.mjs` | 365-386 | Resolves a finding's primary anchor, falling back to alternatives if needed. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`runStage0EvidenceTriage`](../scripts/lib/audit/evidence-triage.mjs#L440) | function | `scripts/lib/audit/evidence-triage.mjs` | 440-542 | Triages finding evidence envelopes through Stage 0 verification gates. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`splitIntoHunks`](../scripts/lib/audit/evidence-triage.mjs#L110) | function | `scripts/lib/audit/evidence-triage.mjs` | 110-124 | Splits a diff file section into hunks with their content lines. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`tagPreExisting`](../scripts/lib/audit/evidence-triage.mjs#L344) | function | `scripts/lib/audit/evidence-triage.mjs` | 344-350 | Tags a finding as pre-existing-independent if blame and impact adapters confirm. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`verifyAnchor`](../scripts/lib/audit/evidence-triage.mjs#L310) | function | `scripts/lib/audit/evidence-triage.mjs` | 310-321 | Binary verification that an anchor quote appears somewhere in the diff. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`anchorFileCandidates`](../scripts/lib/audit/final-adjudication.mjs#L330) | function | `scripts/lib/audit/final-adjudication.mjs` | 330-333 | Extracts file paths from a finding's anchor and trigger anchor fields. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`buildAlternativeEvidenceLines`](../scripts/lib/audit/final-adjudication.mjs#L375) | function | `scripts/lib/audit/final-adjudication.mjs` | 375-384 | Formats alternative evidence lines for a finding, filtering out sensitive paths and canonical duplicates. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`buildFindingDetail`](../scripts/lib/audit/final-adjudication.mjs#L387) | function | `scripts/lib/audit/final-adjudication.mjs` | 387-391 | Combines a finding's base detail with alternative evidence lines for Gemini review. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs` |
@@ -430,7 +434,7 @@ _Domain has 226 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## brainstorm
 
-> Coordinates multi-model brainstorming rounds with optional peer-response debates between providers; persists insights to indexed sessions.
+> Orchestrates multi-model brainstorming with optional peer-response debates, handling CLI argument parsing to run sessions (with topic/models/depth config) or save insights to a ledger, plus session lifecycle management.
 
 ```mermaid
 flowchart TB
@@ -538,17 +542,17 @@ _Domain has 67 symbols (>50). Diagram shows top-15 by file order; see flat table
 | [`smallestCeilingTokens`](../scripts/lib/brainstorm/provider-limits.mjs#L93) | function | `scripts/lib/brainstorm/provider-limits.mjs` | 93-105 | Finds the smallest input token ceiling across multiple providers. | `scripts/lib/brainstorm/resume-context.mjs` |
 | [`assembleResumeContext`](../scripts/lib/brainstorm/resume-context.mjs#L75) | function | `scripts/lib/brainstorm/resume-context.mjs` | 75-233 | Combines architecture and context text into a resume block with independent truncation budgets. | `scripts/brainstorm-round.mjs` |
 | [`buildArchBlock`](../scripts/lib/brainstorm/resume-context.mjs#L43) | function | `scripts/lib/brainstorm/resume-context.mjs` | 43-58 | Wraps and truncates architecture context to fit within a token budget. | `scripts/brainstorm-round.mjs` |
-| [`appendQuarantine`](../scripts/lib/brainstorm/session-store.mjs#L228) | function | `scripts/lib/brainstorm/session-store.mjs` | 228-255 | Appends invalid lines to a quarantine log (capped, atomic via rename). | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`appendSession`](../scripts/lib/brainstorm/session-store.mjs#L76) | function | `scripts/lib/brainstorm/session-store.mjs` | 76-113 | Appends a round envelope to a session file under lock, computing the next round number. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`loadSession`](../scripts/lib/brainstorm/session-store.mjs#L149) | function | `scripts/lib/brainstorm/session-store.mjs` | 149-226 | Reads and validates a session file, quarantining invalid JSON/schema lines for diagnostics. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`lockPath`](../scripts/lib/brainstorm/session-store.mjs#L35) | function | `scripts/lib/brainstorm/session-store.mjs` | 35-37 | Returns the lock file path for a session. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`normalizeArchFields`](../scripts/lib/brainstorm/session-store.mjs#L140) | function | `scripts/lib/brainstorm/session-store.mjs` | 140-147 | Adds default values for architecture-related envelope fields. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`pruneOldSessions`](../scripts/lib/brainstorm/session-store.mjs#L287) | function | `scripts/lib/brainstorm/session-store.mjs` | 287-329 | Deletes session files older than a threshold age, with debounce sentinel and lock-based safety. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`quarantinePath`](../scripts/lib/brainstorm/session-store.mjs#L39) | function | `scripts/lib/brainstorm/session-store.mjs` | 39-41 | Returns the quarantine log file path for invalid lines from a session. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`readLinesUnvalidated`](../scripts/lib/brainstorm/session-store.mjs#L52) | function | `scripts/lib/brainstorm/session-store.mjs` | 52-66 | Reads JSONL lines from a session file with lenient error handling and round inference. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`sessionDir`](../scripts/lib/brainstorm/session-store.mjs#L27) | function | `scripts/lib/brainstorm/session-store.mjs` | 27-29 | Returns the session storage directory path (override or default). | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`sessionPath`](../scripts/lib/brainstorm/session-store.mjs#L31) | function | `scripts/lib/brainstorm/session-store.mjs` | 31-33 | Returns the JSONL session log file path for a session ID. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`summariseRound`](../scripts/lib/brainstorm/session-store.mjs#L264) | function | `scripts/lib/brainstorm/session-store.mjs` | 264-272 | Formats a brainstorm round into a human-readable one-line summary. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`appendQuarantine`](../scripts/lib/brainstorm/session-store.mjs#L229) | function | `scripts/lib/brainstorm/session-store.mjs` | 229-263 | Appends invalid session lines to a quarantine file with best-effort semantics. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`appendSession`](../scripts/lib/brainstorm/session-store.mjs#L77) | function | `scripts/lib/brainstorm/session-store.mjs` | 77-114 | Appends a validated envelope to a session JSONL with computed round number. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`loadSession`](../scripts/lib/brainstorm/session-store.mjs#L150) | function | `scripts/lib/brainstorm/session-store.mjs` | 150-227 | Loads all valid rounds from a session JSONL, quarantining invalid lines. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`lockPath`](../scripts/lib/brainstorm/session-store.mjs#L36) | function | `scripts/lib/brainstorm/session-store.mjs` | 36-38 | Returns the file path for a session's lock file. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`normalizeArchFields`](../scripts/lib/brainstorm/session-store.mjs#L141) | function | `scripts/lib/brainstorm/session-store.mjs` | 141-148 | Fills in default values for optional arch-related session fields. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`pruneOldSessions`](../scripts/lib/brainstorm/session-store.mjs#L295) | function | `scripts/lib/brainstorm/session-store.mjs` | 295-337 | Deletes session files older than a specified age, using a sentinel to throttle checks. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`quarantinePath`](../scripts/lib/brainstorm/session-store.mjs#L40) | function | `scripts/lib/brainstorm/session-store.mjs` | 40-42 | Returns the file path for a session's quarantine JSONL. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`readLinesUnvalidated`](../scripts/lib/brainstorm/session-store.mjs#L53) | function | `scripts/lib/brainstorm/session-store.mjs` | 53-67 | Reads session lines without schema validation, flagging invalid entries. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`sessionDir`](../scripts/lib/brainstorm/session-store.mjs#L28) | function | `scripts/lib/brainstorm/session-store.mjs` | 28-30 | Returns the brainstorm session storage directory path. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`sessionPath`](../scripts/lib/brainstorm/session-store.mjs#L32) | function | `scripts/lib/brainstorm/session-store.mjs` | 32-34 | Returns the file path for a brainstorm session JSONL. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`summariseRound`](../scripts/lib/brainstorm/session-store.mjs#L272) | function | `scripts/lib/brainstorm/session-store.mjs` | 272-280 | Formats a brainstorm round into a human-readable summary string. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
 
 ---
 
@@ -604,7 +608,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ## claudemd-management
 
-> Maintains consistency across instruction files (CLAUDE.md, AGENTS.md, SKILL.md) by detecting cross-file duplication via Jaccard similarity and validating/auto-fixing stale markdown references.
+> Scans and maintains hygiene in instruction files (CLAUDE.md, AGENTS.md, SKILL.md): validates cross-file references, detects duplicate content via Jaccard similarity, and auto-fixes stale markdown links.
 
 ```mermaid
 flowchart TB
@@ -688,7 +692,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 | Symbol | Kind | Path | Lines | Purpose | File imported by |
 |---|---|---|---|---|---|
-| [`applyFixes`](../scripts/lib/claudemd/autofix.mjs#L16) | function | `scripts/lib/claudemd/autofix.mjs` | 16-76 | Groups findings by file and removes stale markdown link references in place (or reports what would be removed in dry-run mode). | `scripts/claudemd-lint.mjs` |
+| [`applyFixes`](../scripts/lib/claudemd/autofix.mjs#L17) | function | `scripts/lib/claudemd/autofix.mjs` | 17-74 | Removes stale markdown file references with dryRun-capable line-based replacement. | `scripts/claudemd-lint.mjs` |
 | [`extractParagraphs`](../scripts/lib/claudemd/doc-similarity.mjs#L68) | function | `scripts/lib/claudemd/doc-similarity.mjs` | 68-103 | Splits content into paragraphs (excluding code blocks) and tracks their line numbers for cross-file comparison. | `scripts/lib/claudemd/rules.mjs` |
 | [`findSimilarParagraphs`](../scripts/lib/claudemd/doc-similarity.mjs#L114) | function | `scripts/lib/claudemd/doc-similarity.mjs` | 114-146 | Finds paragraphs between two files that exceed a similarity threshold using Jaccard scoring and token comparison. | `scripts/lib/claudemd/rules.mjs` |
 | [`jaccardSimilarity`](../scripts/lib/claudemd/doc-similarity.mjs#L53) | function | `scripts/lib/claudemd/doc-similarity.mjs` | 53-61 | Computes the Jaccard similarity score between two token sets (intersection divided by union). | `scripts/lib/claudemd/rules.mjs` |
@@ -1499,7 +1503,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ## memory-health
 
-> Polls postgres for three signal metrics (fuzzy re-raise rate, cluster density, recurrence rates) to assess whether the flat audit-findings design should upgrade to pgvector clustering; renders a markdown health report with trigger verdicts and recurring friction clusters.
+> Monitors the audit-findings store via three signal-decay metrics (fuzzy re-raise rate, cluster density, recurrence) to detect when pgvector + community clustering would recover signal lost to dedup collisions.
 
 ```mermaid
 flowchart TB
@@ -1537,16 +1541,16 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 | Symbol | Kind | Path | Lines | Purpose | File imported by |
 |---|---|---|---|---|---|
-| [`atomicWrite`](../scripts/memory-health.mjs#L293) | function | `scripts/memory-health.mjs` | 293-299 | Atomically writes a file (temp + rename) to protect against process crashes. | _(internal)_ |
-| [`callRpc`](../scripts/memory-health.mjs#L72) | function | `scripts/memory-health.mjs` | 72-83 | Calls the postgres RPC to fetch memory-health signal metrics. | _(internal)_ |
-| [`collectFrictionSection`](../scripts/memory-health.mjs#L95) | function | `scripts/memory-health.mjs` | 95-125 | Fetches recurring open friction clusters from the store and ranks them. | _(internal)_ |
-| [`evaluateTriggers`](../scripts/memory-health.mjs#L171) | function | `scripts/memory-health.mjs` | 171-206 | Evaluates three memory-health triggers against thresholds and determines overall status. | _(internal)_ |
-| [`main`](../scripts/memory-health.mjs#L301) | function | `scripts/memory-health.mjs` | 301-341 | CLI entry point that collects, evaluates, and outputs a memory-health report. | _(internal)_ |
-| [`numEnv`](../scripts/memory-health.mjs#L32) | function | `scripts/memory-health.mjs` | 32-41 | Reads a numeric environment variable with fallback for invalid or missing values. | _(internal)_ |
-| [`parseArgs`](../scripts/memory-health.mjs#L52) | function | `scripts/memory-health.mjs` | 52-70 | Parses memory-health CLI arguments (--out, --json, --help). | _(internal)_ |
-| [`pct`](../scripts/memory-health.mjs#L208) | function | `scripts/memory-health.mjs` | 208-210 | Formats a decimal as a percentage string. | _(internal)_ |
-| [`renderFrictionSection`](../scripts/memory-health.mjs#L127) | function | `scripts/memory-health.mjs` | 127-169 | Formats friction recurrence data into markdown, flagging hard-fail vs advisory clusters. | _(internal)_ |
-| [`renderMarkdown`](../scripts/memory-health.mjs#L212) | function | `scripts/memory-health.mjs` | 212-291 | Renders memory-health metrics and evaluation into a markdown report document. | _(internal)_ |
+| [`atomicWrite`](../scripts/memory-health.mjs#L292) | function | `scripts/memory-health.mjs` | 292-294 | Atomically writes markdown report contents to a file path. | _(internal)_ |
+| [`callRpc`](../scripts/memory-health.mjs#L71) | function | `scripts/memory-health.mjs` | 71-82 | Invokes the memory_health_metrics Postgres RPC via the db client to measure signal decay. | _(internal)_ |
+| [`collectFrictionSection`](../scripts/memory-health.mjs#L94) | function | `scripts/memory-health.mjs` | 94-124 | Gathers recurring friction recurrence data from store with protection status and priority ranking. | _(internal)_ |
+| [`evaluateTriggers`](../scripts/memory-health.mjs#L170) | function | `scripts/memory-health.mjs` | 170-205 | Evaluates three memory-health metrics against thresholds to determine overall status (GREEN/AMBER/RED/INSUFFICIENT_DATA). | _(internal)_ |
+| [`main`](../scripts/memory-health.mjs#L296) | function | `scripts/memory-health.mjs` | 296-336 | Orchestrates memory-health check: calls RPC, evaluates triggers, collects friction, renders report, outputs summary. | _(internal)_ |
+| [`numEnv`](../scripts/memory-health.mjs#L31) | function | `scripts/memory-health.mjs` | 31-40 | Parses an environment variable as a finite number with fallback default and validation. | _(internal)_ |
+| [`parseArgs`](../scripts/memory-health.mjs#L51) | function | `scripts/memory-health.mjs` | 51-69 | Parses CLI arguments for memory-health script (--out, --json, --help flags). | _(internal)_ |
+| [`pct`](../scripts/memory-health.mjs#L207) | function | `scripts/memory-health.mjs` | 207-209 | Formats a decimal number as a percentage string with one decimal place. | _(internal)_ |
+| [`renderFrictionSection`](../scripts/memory-health.mjs#L126) | function | `scripts/memory-health.mjs` | 126-168 | Formats friction recurrence clusters into a markdown table with recurrence, cost, age, and protection columns. | _(internal)_ |
+| [`renderMarkdown`](../scripts/memory-health.mjs#L211) | function | `scripts/memory-health.mjs` | 211-290 | Generates complete markdown memory-health report including metrics, evaluation, friction section, and status. | _(internal)_ |
 
 ---
 
@@ -1736,7 +1740,7 @@ _Domain has 126 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## persona-test
 
-> Enforces consistency contracts by comparing declared `data-engine-claim` HTML attributes against observed DOM state, detecting contradictions (stale projections, undeclared claims, missing surfaces) across journey steps.
+> Replay-based consistency auditor: executes deterministic persona journeys against a canary manifest (with `data-engine-claim` HTML markers) to detect UI/state contradictions—DOM-vs-network mismatches, stale projections, undeclared claims—emitting canonical findings with severity clamping.
 
 ```mermaid
 flowchart TB
@@ -1821,22 +1825,22 @@ _Domain has 71 symbols (>50). Diagram shows top-15 by file order; see flat table
 | [`renderUserPrompt`](../scripts/lib/persona-test/semantic-compare.mjs#L206) | function | `scripts/lib/persona-test/semantic-compare.mjs` | 206-217 | Formats a comparison prompt with redacted input texts and truncation note. | _(internal)_ |
 | [`safeCacheGet`](../scripts/lib/persona-test/semantic-compare.mjs#L229) | function | `scripts/lib/persona-test/semantic-compare.mjs` | 229-238 | Retrieves a cached verdict with schema validation, returning null on failure. | _(internal)_ |
 | [`safeCacheSet`](../scripts/lib/persona-test/semantic-compare.mjs#L239) | function | `scripts/lib/persona-test/semantic-compare.mjs` | 239-241 | Stores a verdict in the cache, silently ignoring failures. | _(internal)_ |
-| [`callCrossSkill`](../scripts/persona-consistency-promote.mjs#L70) | function | `scripts/persona-consistency-promote.mjs` | 70-95 | Executes a cross-skill subcommand via subprocess and returns parsed JSON response or error. | _(internal)_ |
-| [`defaultPrompt`](../scripts/persona-consistency-promote.mjs#L562) | function | `scripts/persona-consistency-promote.mjs` | 562-567 | Prompts the user for input via readline and returns their response. | _(internal)_ |
-| [`listConsistencyCandidatesViaCli`](../scripts/persona-consistency-promote.mjs#L97) | function | `scripts/persona-consistency-promote.mjs` | 97-106 | Lists pending consistency-mode regression spec candidates from the store for a repo. | _(internal)_ |
-| [`parseArgs`](../scripts/persona-consistency-promote.mjs#L141) | function | `scripts/persona-consistency-promote.mjs` | 141-158 | Parses persona-consistency-promote CLI flags into a config object. | _(internal)_ |
-| [`promoteCandidates`](../scripts/persona-consistency-promote.mjs#L194) | function | `scripts/persona-consistency-promote.mjs` | 194-275 | Main entry point that lists consistency candidates and prompts the user to approve or decline promotion of each. | _(internal)_ |
-| [`promoteOne`](../scripts/persona-consistency-promote.mjs#L281) | function | `scripts/persona-consistency-promote.mjs` | 281-422 | Renders a single consistency candidate into a Playwright spec, writes it to disk, promotes it to the store, and journals the outcome. | _(internal)_ |
-| [`promoteRegressionSpecViaCli`](../scripts/persona-consistency-promote.mjs#L108) | function | `scripts/persona-consistency-promote.mjs` | 108-114 | Promotes a consistency candidate to a locked Playwright spec in the store via cross-skill. | _(internal)_ |
-| [`readLocalRepoUuid`](../scripts/persona-consistency-promote.mjs#L569) | function | `scripts/persona-consistency-promote.mjs` | 569-575 | Reads the local repo UUID from .audit-loop/repo-identity.json. | _(internal)_ |
-| [`reconcilePromotionJournal`](../scripts/persona-consistency-promote.mjs#L428) | function | `scripts/persona-consistency-promote.mjs` | 428-545 | Recovers incomplete promotion attempts from prior crashed runs by querying the DB and reconciling journal state. | _(internal)_ |
-| [`recordShipEventViaCli`](../scripts/persona-consistency-promote.mjs#L116) | function | `scripts/persona-consistency-promote.mjs` | 116-123 | Records a ship event to the learning store via cross-skill. | _(internal)_ |
-| [`removeJournal`](../scripts/persona-consistency-promote.mjs#L557) | function | `scripts/persona-consistency-promote.mjs` | 557-560 | Deletes a promotion journal file. | _(internal)_ |
-| [`safeGitBranch`](../scripts/persona-consistency-promote.mjs#L591) | function | `scripts/persona-consistency-promote.mjs` | 591-597 | Safely retrieves the current branch name, returning null on failure. | _(internal)_ |
-| [`safeGitEmail`](../scripts/persona-consistency-promote.mjs#L577) | function | `scripts/persona-consistency-promote.mjs` | 577-583 | Safely retrieves the git user.email config, returning null on failure. | _(internal)_ |
-| [`safeGitSha`](../scripts/persona-consistency-promote.mjs#L584) | function | `scripts/persona-consistency-promote.mjs` | 584-590 | Safely retrieves the current HEAD commit SHA, returning null on failure. | _(internal)_ |
-| [`usage`](../scripts/persona-consistency-promote.mjs#L160) | function | `scripts/persona-consistency-promote.mjs` | 160-173 | Returns usage text for persona-consistency-promote. | _(internal)_ |
-| [`writeJournal`](../scripts/persona-consistency-promote.mjs#L551) | function | `scripts/persona-consistency-promote.mjs` | 551-555 | Atomically writes a promotion journal entry to disk. | _(internal)_ |
+| [`callCrossSkill`](../scripts/persona-consistency-promote.mjs#L71) | function | `scripts/persona-consistency-promote.mjs` | 71-96 | Invokes cross-skill.mjs CLI commands with JSON input, parsing structured error responses from stdout. | _(internal)_ |
+| [`defaultPrompt`](../scripts/persona-consistency-promote.mjs#L563) | function | `scripts/persona-consistency-promote.mjs` | 563-568 | Prompts the user for input via stdin and returns their response. | _(internal)_ |
+| [`listConsistencyCandidatesViaCli`](../scripts/persona-consistency-promote.mjs#L98) | function | `scripts/persona-consistency-promote.mjs` | 98-107 | Fetches pending consistency promotion candidates from cloud store via cross-skill CLI. | _(internal)_ |
+| [`parseArgs`](../scripts/persona-consistency-promote.mjs#L142) | function | `scripts/persona-consistency-promote.mjs` | 142-159 | Parses CLI arguments for persona-consistency-promote script (--auto, --since, --repo-root, --out, --help). | _(internal)_ |
+| [`promoteCandidates`](../scripts/persona-consistency-promote.mjs#L195) | function | `scripts/persona-consistency-promote.mjs` | 195-276 | Main orchestrator: lists consistency candidates, prompts for approval (or auto-approves), and promotes each via CLI. | _(internal)_ |
+| [`promoteOne`](../scripts/persona-consistency-promote.mjs#L282) | function | `scripts/persona-consistency-promote.mjs` | 282-423 | Validates and renders a Playwright regression spec candidate, then promotes it to a locked spec. | _(internal)_ |
+| [`promoteRegressionSpecViaCli`](../scripts/persona-consistency-promote.mjs#L109) | function | `scripts/persona-consistency-promote.mjs` | 109-115 | Promotes a regression spec candidate to locked spec via cross-skill CLI. | _(internal)_ |
+| [`readLocalRepoUuid`](../scripts/persona-consistency-promote.mjs#L570) | function | `scripts/persona-consistency-promote.mjs` | 570-576 | Reads the repo UUID from `.audit-loop/repo-identity.json`, returning null on error. | _(internal)_ |
+| [`reconcilePromotionJournal`](../scripts/persona-consistency-promote.mjs#L429) | function | `scripts/persona-consistency-promote.mjs` | 429-546 | Recovers incomplete promotion state from the local journal by querying the DB to disambiguate pending entries. | _(internal)_ |
+| [`recordShipEventViaCli`](../scripts/persona-consistency-promote.mjs#L117) | function | `scripts/persona-consistency-promote.mjs` | 117-124 | Records a ship event via cross-skill CLI, silently OK when cloud is off. | _(internal)_ |
+| [`removeJournal`](../scripts/persona-consistency-promote.mjs#L558) | function | `scripts/persona-consistency-promote.mjs` | 558-561 | Deletes a promotion journal entry from disk. | _(internal)_ |
+| [`safeGitBranch`](../scripts/persona-consistency-promote.mjs#L592) | function | `scripts/persona-consistency-promote.mjs` | 592-598 | Retrieves the current git branch name, returning null on error. | _(internal)_ |
+| [`safeGitEmail`](../scripts/persona-consistency-promote.mjs#L578) | function | `scripts/persona-consistency-promote.mjs` | 578-584 | Retrieves the git user email configuration, returning null on error. | _(internal)_ |
+| [`safeGitSha`](../scripts/persona-consistency-promote.mjs#L585) | function | `scripts/persona-consistency-promote.mjs` | 585-591 | Retrieves the current HEAD commit SHA, returning null on error. | _(internal)_ |
+| [`usage`](../scripts/persona-consistency-promote.mjs#L161) | function | `scripts/persona-consistency-promote.mjs` | 161-174 | Returns usage/help text for persona-consistency-promote script. | _(internal)_ |
+| [`writeJournal`](../scripts/persona-consistency-promote.mjs#L552) | function | `scripts/persona-consistency-promote.mjs` | 552-556 | Atomically writes a promotion journal entry to disk. | _(internal)_ |
 | [`applyWait`](../scripts/persona-consistency-run.mjs#L702) | function | `scripts/persona-consistency-run.mjs` | 702-715 | Applies a wait condition (visible, hidden, URL pattern, network response, or timeout) on a Playwright page. | _(internal)_ |
 | [`awaitManifestNetworkSources`](../scripts/persona-consistency-run.mjs#L534) | function | `scripts/persona-consistency-run.mjs` | 534-607 | Waits for declared network sources (API calls matching patterns) to complete before proceeding, using manifest and CLI timeouts. | _(internal)_ |
 | [`candidateDescription`](../scripts/persona-consistency-run.mjs#L766) | function | `scripts/persona-consistency-run.mjs` | 766-768 | Formats a candidate finding into a human-readable description including kind, surface, engine field, and severity. | _(internal)_ |
@@ -1979,7 +1983,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ## scripts
 
-> CLI entry points and library modules implementing a 15-skill AI-pair-programming chain spanning planning, code audit, UX regression testing, and deployment. Orchestrates multi-LLM auditing, Supabase cloud persistence, and security incident memory.
+> CLI orchestration for AI pair-programming: multi-LLM code audit (GPT/Gemini/Claude), Playwright UX testing, deployment gates, and Postgres-backed learning across the planning-to-shipping lifecycle.
 
 ```mermaid
 flowchart TB
@@ -2037,11 +2041,11 @@ _Domain has 302 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`generateBaseline`](../scripts/arch-intent-bootstrap.mjs#L54) | function | `scripts/arch-intent-bootstrap.mjs` | 54-113 | Generates an allowed-dependencies baseline by detecting the repo's tech stack and extracting the current import graph. | _(internal)_ |
 | [`log`](../scripts/arch-intent-bootstrap.mjs#L37) | function | `scripts/arch-intent-bootstrap.mjs` | 37-37 | Logs bootstrap status messages to stdout with a `[arch-intent-bootstrap]` prefix. | _(internal)_ |
 | [`main`](../scripts/arch-intent-bootstrap.mjs#L115) | function | `scripts/arch-intent-bootstrap.mjs` | 115-130 | Orchestrates architecture intent bootstrap: copies template and optionally generates baseline from detected imports. | _(internal)_ |
-| [`escapeRegex`](../scripts/archive-completed-plans.mjs#L72) | function | `scripts/archive-completed-plans.mjs` | 72-74 | Escapes special regex characters in a string for safe literal pattern matching. | _(internal)_ |
-| [`findAuditSummariesFor`](../scripts/archive-completed-plans.mjs#L64) | function | `scripts/archive-completed-plans.mjs` | 64-70 | Finds audit summary markdown files matching a plan's name via regex filename pattern. | _(internal)_ |
-| [`isComplete`](../scripts/archive-completed-plans.mjs#L54) | function | `scripts/archive-completed-plans.mjs` | 54-57 | Checks if a plan's status string matches a completion pattern (e.g., "Complete", "Done"). | _(internal)_ |
-| [`parseStatus`](../scripts/archive-completed-plans.mjs#L42) | function | `scripts/archive-completed-plans.mjs` | 42-46 | Extracts the `Status:` field value from a markdown plan file's header. | _(internal)_ |
-| [`runArchive`](../scripts/archive-completed-plans.mjs#L86) | function | `scripts/archive-completed-plans.mjs` | 86-145 | Moves completed plans and their associated audit summaries from `docs/plans` to `docs/completed`, with dry-run option. | _(internal)_ |
+| [`escapeRegex`](../scripts/archive-completed-plans.mjs#L73) | function | `scripts/archive-completed-plans.mjs` | 73-75 | Escapes special regex characters in a string. | _(internal)_ |
+| [`findAuditSummariesFor`](../scripts/archive-completed-plans.mjs#L65) | function | `scripts/archive-completed-plans.mjs` | 65-71 | Finds audit summary files matching a plan's filename pattern. | _(internal)_ |
+| [`isComplete`](../scripts/archive-completed-plans.mjs#L55) | function | `scripts/archive-completed-plans.mjs` | 55-58 | Checks if a status string indicates plan completion. | _(internal)_ |
+| [`parseStatus`](../scripts/archive-completed-plans.mjs#L43) | function | `scripts/archive-completed-plans.mjs` | 43-47 | Extracts the Status line from plan content using regex. | _(internal)_ |
+| [`runArchive`](../scripts/archive-completed-plans.mjs#L87) | function | `scripts/archive-completed-plans.mjs` | 87-146 | Moves completed plans and audit summaries to an archive directory. | _(internal)_ |
 | [`main`](../scripts/azure-limits.mjs#L66) | function | `scripts/azure-limits.mjs` | 66-93 | Probes Azure OpenAI and Foundry Claude deployments and reports current rate limits (tokens-per-minute and requests-per-minute). | _(internal)_ |
 | [`printRow`](../scripts/azure-limits.mjs#L36) | function | `scripts/azure-limits.mjs` | 36-45 | Formats and prints a single rate-limit probe result showing TPM, RPM, and window size to stdout. | _(internal)_ |
 | [`probeClaude`](../scripts/azure-limits.mjs#L59) | function | `scripts/azure-limits.mjs` | 59-64 | Hits Azure Foundry Claude endpoint to retrieve live rate-limit headers. | _(internal)_ |
@@ -2101,18 +2105,18 @@ _Domain has 302 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`installInRepo`](../scripts/install-prepush-hook.mjs#L167) | function | `scripts/install-prepush-hook.mjs` | 167-217 | Installs, updates, or uninstalls a pre-push hook in a repository with dry-run support and safety checks. | _(internal)_ |
 | [`isManagedHook`](../scripts/install-prepush-hook.mjs#L41) | function | `scripts/install-prepush-hook.mjs` | 41-45 | Checks if a pre-push hook file was installed/managed by this tool or is a legacy version. | _(internal)_ |
 | [`main`](../scripts/install-prepush-hook.mjs#L221) | function | `scripts/install-prepush-hook.mjs` | 221-245 | Resolves target repositories and orchestrates hook installation with human-readable or JSON output formatting. | _(internal)_ |
-| [`computeArchMemoryBandOutcome`](../scripts/learning/backfill-outcomes.mjs#L559) | function | `scripts/learning/backfill-outcomes.mjs` | 559-610 | Resolves arch-memory-band decisions by checking if commits touched the file within 30 minutes of recommendation. | `scripts/cross-skill.mjs` |
-| [`computeConvergencePredictOutcome`](../scripts/learning/backfill-outcomes.mjs#L634) | function | `scripts/learning/backfill-outcomes.mjs` | 634-678 | Resolves convergence-predict decisions by comparing decision round against actual run's convergence/rigor signals. | `scripts/cross-skill.mjs` |
-| [`computeFileFingerprint`](../scripts/learning/backfill-outcomes.mjs#L452) | function | `scripts/learning/backfill-outcomes.mjs` | 452-464 | Computes SHA256 hash of first 256 bytes of a file for rotation detection. | `scripts/cross-skill.mjs` |
-| [`computeOutcomeFromFileState`](../scripts/learning/backfill-outcomes.mjs#L744) | function | `scripts/learning/backfill-outcomes.mjs` | 744-802 | Resolves quickfix-hit decisions by verifying file existence and snippet presence (or file deletion). | `scripts/cross-skill.mjs` |
-| [`computePassSelectionOutcome`](../scripts/learning/backfill-outcomes.mjs#L699) | function | `scripts/learning/backfill-outcomes.mjs` | 699-725 | Resolves pass-selection decisions by checking acceptance ratio of adjudicated audit findings. | `scripts/cross-skill.mjs` |
-| [`defaultExecGit`](../scripts/learning/backfill-outcomes.mjs#L612) | function | `scripts/learning/backfill-outcomes.mjs` | 612-619 | Executes git commands synchronously with 5-second timeout and piped I/O. | `scripts/cross-skill.mjs` |
-| [`drainFrictionFallback`](../scripts/learning/backfill-outcomes.mjs#L338) | function | `scripts/learning/backfill-outcomes.mjs` | 338-402 | Drains friction notes from a local JSONL fallback to the learning store, retaining failed inserts. | `scripts/cross-skill.mjs` |
-| [`drainJsonlToCloud`](../scripts/learning/backfill-outcomes.mjs#L187) | function | `scripts/learning/backfill-outcomes.mjs` | 187-327 | Reads new lines from a local JSONL file using cursor tracking, syncing batches to cloud storage. | `scripts/cross-skill.mjs` |
-| [`readDrainCursor`](../scripts/learning/backfill-outcomes.mjs#L417) | function | `scripts/learning/backfill-outcomes.mjs` | 417-438 | Reads the drain cursor (offset, fingerprint, timestamp) from disk, supporting both JSON and legacy int formats. | `scripts/cross-skill.mjs` |
-| [`resolveUnresolvedOutcomes`](../scripts/learning/backfill-outcomes.mjs#L468) | function | `scripts/learning/backfill-outcomes.mjs` | 468-533 | Reads pending learning decisions and routes each to its type-specific resolver (quickfix, arch, convergence, pass). | `scripts/cross-skill.mjs` |
-| [`runBackfill`](../scripts/learning/backfill-outcomes.mjs#L62) | function | `scripts/learning/backfill-outcomes.mjs` | 62-171 | Orchestrates draining local JSONL outcomes to cloud and resolving pending learning decisions. | `scripts/cross-skill.mjs` |
-| [`writeDrainCursor`](../scripts/learning/backfill-outcomes.mjs#L440) | function | `scripts/learning/backfill-outcomes.mjs` | 440-445 | Persists drain cursor state (offset, fingerprint, updated-at) to track file-read progress. | `scripts/cross-skill.mjs` |
+| [`computeArchMemoryBandOutcome`](../scripts/learning/backfill-outcomes.mjs#L559) | function | `scripts/learning/backfill-outcomes.mjs` | 559-610 | Determines whether an arch-memory band recommendation led to code action. | `scripts/cross-skill.mjs` |
+| [`computeConvergencePredictOutcome`](../scripts/learning/backfill-outcomes.mjs#L634) | function | `scripts/learning/backfill-outcomes.mjs` | 634-678 | Checks if an audit convergence prediction matched the actual run outcome. | `scripts/cross-skill.mjs` |
+| [`computeFileFingerprint`](../scripts/learning/backfill-outcomes.mjs#L452) | function | `scripts/learning/backfill-outcomes.mjs` | 452-464 | Computes a SHA256 fingerprint of a file's first 256 bytes. | `scripts/cross-skill.mjs` |
+| [`computeOutcomeFromFileState`](../scripts/learning/backfill-outcomes.mjs#L744) | function | `scripts/learning/backfill-outcomes.mjs` | 744-802 | Determines if a quickfix was made by checking whether the file still exists. | `scripts/cross-skill.mjs` |
+| [`computePassSelectionOutcome`](../scripts/learning/backfill-outcomes.mjs#L699) | function | `scripts/learning/backfill-outcomes.mjs` | 699-725 | Scores a pass selection by the ratio of accepted to total findings. | `scripts/cross-skill.mjs` |
+| [`defaultExecGit`](../scripts/learning/backfill-outcomes.mjs#L612) | function | `scripts/learning/backfill-outcomes.mjs` | 612-619 | Executes a git command with timeout and piped output. | `scripts/cross-skill.mjs` |
+| [`drainFrictionFallback`](../scripts/learning/backfill-outcomes.mjs#L340) | function | `scripts/learning/backfill-outcomes.mjs` | 340-402 | Drains friction notes from local JSONL to cloud storage. | `scripts/cross-skill.mjs` |
+| [`drainJsonlToCloud`](../scripts/learning/backfill-outcomes.mjs#L189) | function | `scripts/learning/backfill-outcomes.mjs` | 189-329 | Reads new lines from a hits JSONL file and sends them to cloud with cursor tracking. | `scripts/cross-skill.mjs` |
+| [`readDrainCursor`](../scripts/learning/backfill-outcomes.mjs#L417) | function | `scripts/learning/backfill-outcomes.mjs` | 417-438 | Reads the drain cursor position and file fingerprint from a marker file. | `scripts/cross-skill.mjs` |
+| [`resolveUnresolvedOutcomes`](../scripts/learning/backfill-outcomes.mjs#L468) | function | `scripts/learning/backfill-outcomes.mjs` | 468-533 | Resolves pending learning decisions by detecting their real-world outcomes. | `scripts/cross-skill.mjs` |
+| [`runBackfill`](../scripts/learning/backfill-outcomes.mjs#L64) | function | `scripts/learning/backfill-outcomes.mjs` | 64-173 | Backfills learning outcomes from local JSONL to cloud and resolves pending decisions. | `scripts/cross-skill.mjs` |
+| [`writeDrainCursor`](../scripts/learning/backfill-outcomes.mjs#L440) | function | `scripts/learning/backfill-outcomes.mjs` | 440-445 | Writes the drain cursor position and file fingerprint to a marker file. | `scripts/cross-skill.mjs` |
 | [`fmtNum`](../scripts/learning/replay.mjs#L92) | function | `scripts/learning/replay.mjs` | 92-95 | Formats numbers with 2 decimals for ≥1 or 4 decimals for smaller values. | `scripts/cross-skill.mjs` |
 | [`loadPolicy`](../scripts/learning/replay.mjs#L99) | function | `scripts/learning/replay.mjs` | 99-109 | Dynamically imports a policy module (file path or fallback function) with export validation. | `scripts/cross-skill.mjs` |
 | [`parseDuration`](../scripts/learning/replay.mjs#L54) | function | `scripts/learning/replay.mjs` | 54-63 | Parses duration strings (e.g., "30d", "2h") into milliseconds with fallback default. | `scripts/cross-skill.mjs` |
@@ -2339,7 +2343,7 @@ _Domain has 302 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## shared-lib
 
-> Infrastructure library for CLI scripts: LLM client routing (Anthropic SDK/CLI adapter), secret redaction, schema validation, VCS operations, cloud persistence, and focused utilities for configuration, formatting, and security classification.
+> Shared-lib provides the foundational layer for all audit-loop CLI tools: LLM client configuration (Anthropic SDK/CLI adapter + backend routing), secret redaction, and common utilities (config resolution, string formatting, sensitive-path filtering). Every CLI entry point and library module depends on these exports.
 
 ```mermaid
 flowchart TB
@@ -2384,7 +2388,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 939 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 942 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -2700,12 +2704,12 @@ _Domain has 939 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`isEmbedProviderAvailable`](../scripts/lib/embed-text.mjs#L65) | function | `scripts/lib/embed-text.mjs` | 65-68 | Checks whether an embedding provider is configured and available. | `scripts/cross-skill.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/security-memory/refresh-incidents.mjs`, +1 more |
 | [`providerTag`](../scripts/lib/embed-text.mjs#L50) | function | `scripts/lib/embed-text.mjs` | 50-54 | Returns a provider tag string (Azure OpenAI or Gemini). | `scripts/cross-skill.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/security-memory/refresh-incidents.mjs`, +1 more |
 | [`validateVector`](../scripts/lib/embed-text.mjs#L137) | function | `scripts/lib/embed-text.mjs` | 137-157 | Validates that an embedding vector has correct dimensions and all finite numbers. | `scripts/cross-skill.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/security-memory/refresh-incidents.mjs`, +1 more |
-| [`atomicWriteFileSync`](../scripts/lib/file-io.mjs#L59) | function | `scripts/lib/file-io.mjs` | 59-61 | Write file atomically with optional permission bits. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +58 more |
-| [`atomicWriteFileSyncImpl`](../scripts/lib/file-io.mjs#L23) | function | `scripts/lib/file-io.mjs` | 23-57 | Write a file atomically via temp file + rename, preserving symlinks and optional permission bits. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +58 more |
-| [`normalizePath`](../scripts/lib/file-io.mjs#L72) | function | `scripts/lib/file-io.mjs` | 72-76 | Normalize paths to lowercase, forward-slash format relative to cwd for case-insensitive comparison. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +58 more |
-| [`readFileOrDie`](../scripts/lib/file-io.mjs#L88) | function | `scripts/lib/file-io.mjs` | 88-95 | Read file contents or exit the process with error if not found. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +58 more |
-| [`safeInt`](../scripts/lib/file-io.mjs#L81) | function | `scripts/lib/file-io.mjs` | 81-84 | Parse a string to integer with safe fallback value. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +58 more |
-| [`writeOutput`](../scripts/lib/file-io.mjs#L105) | function | `scripts/lib/file-io.mjs` | 105-116 | Persist results as JSON to a file or stdout depending on --out flag. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +58 more |
+| [`atomicWriteFileSync`](../scripts/lib/file-io.mjs#L59) | function | `scripts/lib/file-io.mjs` | 59-61 | Write file atomically with optional permission bits. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +65 more |
+| [`atomicWriteFileSyncImpl`](../scripts/lib/file-io.mjs#L23) | function | `scripts/lib/file-io.mjs` | 23-57 | Write a file atomically via temp file + rename, preserving symlinks and optional permission bits. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +65 more |
+| [`normalizePath`](../scripts/lib/file-io.mjs#L72) | function | `scripts/lib/file-io.mjs` | 72-76 | Normalize paths to lowercase, forward-slash format relative to cwd for case-insensitive comparison. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +65 more |
+| [`readFileOrDie`](../scripts/lib/file-io.mjs#L88) | function | `scripts/lib/file-io.mjs` | 88-95 | Read file contents or exit the process with error if not found. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +65 more |
+| [`safeInt`](../scripts/lib/file-io.mjs#L81) | function | `scripts/lib/file-io.mjs` | 81-84 | Parse a string to integer with safe fallback value. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +65 more |
+| [`writeOutput`](../scripts/lib/file-io.mjs#L105) | function | `scripts/lib/file-io.mjs` | 105-116 | Persist results as JSON to a file or stdout depending on --out flag. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +65 more |
 | [`_acquireLockSync`](../scripts/lib/file-store.mjs#L38) | function | `scripts/lib/file-store.mjs` | 38-70 | Acquires a file-based lock with stale-lock detection and exponential backoff retry. | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/audit/cost-budget.mjs`, +5 more |
 | [`_quarantineRecord`](../scripts/lib/file-store.mjs#L18) | function | `scripts/lib/file-store.mjs` | 18-34 | Quarantines corrupted data to a timestamped JSON file in a quarantine directory. | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/audit/cost-budget.mjs`, +5 more |
 | [`_releaseLock`](../scripts/lib/file-store.mjs#L72) | function | `scripts/lib/file-store.mjs` | 72-74 | Deletes a lock file. | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/audit/cost-budget.mjs`, +5 more |
@@ -2798,39 +2802,39 @@ _Domain has 939 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`updatePosterior`](../scripts/lib/learning/beta-posterior.mjs#L108) | function | `scripts/lib/learning/beta-posterior.mjs` | 108-127 | Updates a Beta posterior given an observation (0–1), validating strictly to prevent corrupt state. | `scripts/lib/learning/quickfix-stats.mjs` |
 | [`hasEnoughSamples`](../scripts/lib/learning/cold-start.mjs#L17) | function | `scripts/lib/learning/cold-start.mjs` | 17-21 | Checks if the total observation count exceeds a threshold to exit cold-start fallback mode. | _(internal)_ |
 | [`withFallback`](../scripts/lib/learning/cold-start.mjs#L36) | function | `scripts/lib/learning/cold-start.mjs` | 36-40 | Routes between a prediction function or fallback based on whether sample count meets threshold. | _(internal)_ |
-| [`_canonicalise`](../scripts/lib/learning/decision-logger.mjs#L182) | function | `scripts/lib/learning/decision-logger.mjs` | 182-189 | Recursively normalizes nested objects by sorting keys for deterministic hashing. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`_getStateForTest`](../scripts/lib/learning/decision-logger.mjs#L534) | function | `scripts/lib/learning/decision-logger.mjs` | 534-541 | Returns current queue sizes and dropped counts for test assertions. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`_isKeyInt`](../scripts/lib/learning/decision-logger.mjs#L50) | function | `scripts/lib/learning/decision-logger.mjs` | 50-50 | Predicate: checks if a value is a safe non-negative integer. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`_isNonEmptyString`](../scripts/lib/learning/decision-logger.mjs#L49) | function | `scripts/lib/learning/decision-logger.mjs` | 49-49 | Predicate: checks if a value is a non-empty, colon-free string. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`_resetForTest`](../scripts/lib/learning/decision-logger.mjs#L523) | function | `scripts/lib/learning/decision-logger.mjs` | 523-529 | Clears all module state for test isolation. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`backfillOutcome`](../scripts/lib/learning/decision-logger.mjs#L262) | function | `scripts/lib/learning/decision-logger.mjs` | 262-294 | Backfills an outcome into a queued decision or enqueues an outcome-only update for already-flushed entries. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`buildDecisionKey`](../scripts/lib/learning/decision-logger.mjs#L155) | function | `scripts/lib/learning/decision-logger.mjs` | 155-170 | Builds a stable decision key from either audit-run ID or external ID with strict type validation. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`bumpDropped`](../scripts/lib/learning/decision-logger.mjs#L89) | function | `scripts/lib/learning/decision-logger.mjs` | 89-91 | Increments the dropped-decision counter for a decision type. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`canonicaliseContext`](../scripts/lib/learning/decision-logger.mjs#L191) | function | `scripts/lib/learning/decision-logger.mjs` | 191-193 | Converts a context object to canonical JSON for deterministic hashing. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`contextHash`](../scripts/lib/learning/decision-logger.mjs#L195) | function | `scripts/lib/learning/decision-logger.mjs` | 195-197 | Computes a SHA256 hash of the canonical context. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`DecisionLoggerError`](../scripts/lib/learning/decision-logger.mjs#L108) | class | `scripts/lib/learning/decision-logger.mjs` | 108-110 | Custom error class for decision-logger validation and operational failures. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`drain`](../scripts/lib/learning/decision-logger.mjs#L484) | function | `scripts/lib/learning/decision-logger.mjs` | 484-494 | Orchestrates a graceful flush, ensuring only one is in flight at a time. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`flush`](../scripts/lib/learning/decision-logger.mjs#L307) | function | `scripts/lib/learning/decision-logger.mjs` | 307-376 | Flushes all queued decisions to cloud or outbox, tracking success/drop/loss counts. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`getQueue`](../scripts/lib/learning/decision-logger.mjs#L83) | function | `scripts/lib/learning/decision-logger.mjs` | 83-87 | Retrieves or lazily creates a queue for a given decision type. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`installLifecycleHooks`](../scripts/lib/learning/decision-logger.mjs#L496) | function | `scripts/lib/learning/decision-logger.mjs` | 496-518 | Registers process exit handlers to flush learning decisions before the process terminates. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`isCiEnv`](../scripts/lib/learning/decision-logger.mjs#L58) | function | `scripts/lib/learning/decision-logger.mjs` | 58-60 | Detects whether the script runs in a CI environment. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`reconcileOutbox`](../scripts/lib/learning/decision-logger.mjs#L387) | function | `scripts/lib/learning/decision-logger.mjs` | 387-412 | Retries flushing decisions from the local outbox directory when cloud becomes available again. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`recordDecision`](../scripts/lib/learning/decision-logger.mjs#L217) | function | `scripts/lib/learning/decision-logger.mjs` | 217-251 | Enqueues a learning decision, applying per-type queue caps and dropping oldest on overflow. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`resolveQueueCap`](../scripts/lib/learning/decision-logger.mjs#L26) | function | `scripts/lib/learning/decision-logger.mjs` | 26-37 | Parses `LEARNING_QUEUE_CAP_PER_TYPE` env var safely, returning a default on invalid input. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`retryWithBackoff`](../scripts/lib/learning/decision-logger.mjs#L434) | function | `scripts/lib/learning/decision-logger.mjs` | 434-451 | Executes a function with 3-attempt exponential backoff in CI (or single-shot locally). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`throttledWarn`](../scripts/lib/learning/decision-logger.mjs#L93) | function | `scripts/lib/learning/decision-logger.mjs` | 93-100 | Logs a throttled warning to avoid spam within a time window. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`tryWrite`](../scripts/lib/learning/decision-logger.mjs#L416) | function | `scripts/lib/learning/decision-logger.mjs` | 416-432 | Attempts a single write to cloud storage with exponential backoff retry for CI environments. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`validateInput`](../scripts/lib/learning/decision-logger.mjs#L112) | function | `scripts/lib/learning/decision-logger.mjs` | 112-147 | Validates decision-logger input: type-checks all fields and enforces audit-bound or external-bound key constraint. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`writeOutbox`](../scripts/lib/learning/decision-logger.mjs#L453) | function | `scripts/lib/learning/decision-logger.mjs` | 453-467 | Atomically writes a decision entry to the local outbox directory as a cloud-failure fallback. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`aggregateDecisions`](../scripts/lib/learning/quickfix-stats.mjs#L200) | function | `scripts/lib/learning/quickfix-stats.mjs` | 200-225 | Computes Beta posterior statistics (mean acceptance rate, confidence interval, total hits) per quickfix pattern. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`cliMain`](../scripts/lib/learning/quickfix-stats.mjs#L282) | function | `scripts/lib/learning/quickfix-stats.mjs` | 282-335 | CLI entrypoint: displays, rebuilds from cloud/bootstrap, or resets the quickfix stats cache. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`computeWatermark`](../scripts/lib/learning/quickfix-stats.mjs#L227) | function | `scripts/lib/learning/quickfix-stats.mjs` | 227-234 | Extracts maximum outcome timestamp and total decision count for cache invalidation tracking. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`loadStats`](../scripts/lib/learning/quickfix-stats.mjs#L55) | function | `scripts/lib/learning/quickfix-stats.mjs` | 55-65 | Loads quickfix pattern statistics from disk cache, returning empty stats on miss or error. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`readQuickfixDecisions`](../scripts/lib/learning/quickfix-stats.mjs#L241) | function | `scripts/lib/learning/quickfix-stats.mjs` | 241-259 | Queries the learning store for paginated quickfix decisions within scope. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`rebuildFromBootstrap`](../scripts/lib/learning/quickfix-stats.mjs#L140) | function | `scripts/lib/learning/quickfix-stats.mjs` | 140-184 | Parses a JSONL quickfix log and aggregates pattern statistics using neutral outcomes. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`rebuildFromCloud`](../scripts/lib/learning/quickfix-stats.mjs#L98) | function | `scripts/lib/learning/quickfix-stats.mjs` | 98-123 | Fetches quickfix decisions from cloud, aggregates them by pattern, and writes the cache. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`shouldSkipPattern`](../scripts/lib/learning/quickfix-stats.mjs#L78) | function | `scripts/lib/learning/quickfix-stats.mjs` | 78-84 | Determines if a quickfix pattern has high enough dismissal rate to be suppressed. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`writeAtomic`](../scripts/lib/learning/quickfix-stats.mjs#L265) | function | `scripts/lib/learning/quickfix-stats.mjs` | 265-271 | Atomically writes a file using temp+rename to prevent corruption on process crash. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`_canonicalise`](../scripts/lib/learning/decision-logger.mjs#L183) | function | `scripts/lib/learning/decision-logger.mjs` | 183-190 | Recursively sorts object keys and canonicalizes values for stable comparison. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`_getStateForTest`](../scripts/lib/learning/decision-logger.mjs#L532) | function | `scripts/lib/learning/decision-logger.mjs` | 532-539 | Returns current queue sizes and dropped-entry counts per decision type for test inspection. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`_isKeyInt`](../scripts/lib/learning/decision-logger.mjs#L51) | function | `scripts/lib/learning/decision-logger.mjs` | 51-51 | Predicate checking if a value is a safe non-negative integer. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`_isNonEmptyString`](../scripts/lib/learning/decision-logger.mjs#L50) | function | `scripts/lib/learning/decision-logger.mjs` | 50-50 | Predicate checking if a value is a non-empty, colon-free string (safe for decision keys). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`_resetForTest`](../scripts/lib/learning/decision-logger.mjs#L521) | function | `scripts/lib/learning/decision-logger.mjs` | 521-527 | Resets all module-global state (queues, counters, hooks) for test isolation. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`backfillOutcome`](../scripts/lib/learning/decision-logger.mjs#L263) | function | `scripts/lib/learning/decision-logger.mjs` | 263-295 | Updates the outcome of a prior decision record, either in-queue or as an enqueued outcome-only update. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`buildDecisionKey`](../scripts/lib/learning/decision-logger.mjs#L156) | function | `scripts/lib/learning/decision-logger.mjs` | 156-171 | Constructs a unique decision key from audit-bound or external identifiers. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`bumpDropped`](../scripts/lib/learning/decision-logger.mjs#L90) | function | `scripts/lib/learning/decision-logger.mjs` | 90-92 | Increments the dropped-decision counter for a decision type. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`canonicaliseContext`](../scripts/lib/learning/decision-logger.mjs#L192) | function | `scripts/lib/learning/decision-logger.mjs` | 192-194 | Converts a context object to a canonical JSON string. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`contextHash`](../scripts/lib/learning/decision-logger.mjs#L196) | function | `scripts/lib/learning/decision-logger.mjs` | 196-198 | Creates a SHA256 hash of canonicalized decision context for deduplication. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`DecisionLoggerError`](../scripts/lib/learning/decision-logger.mjs#L109) | class | `scripts/lib/learning/decision-logger.mjs` | 109-111 | Custom error class for decision logger exceptions with a code property. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`drain`](../scripts/lib/learning/decision-logger.mjs#L482) | function | `scripts/lib/learning/decision-logger.mjs` | 482-492 | Drains pending decisions via flush and prevents concurrent drain calls using a promise gate. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`flush`](../scripts/lib/learning/decision-logger.mjs#L308) | function | `scripts/lib/learning/decision-logger.mjs` | 308-377 | Flushes queued learning decisions to cloud or local outbox via two-phase drain with per-queue retention. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`getQueue`](../scripts/lib/learning/decision-logger.mjs#L84) | function | `scripts/lib/learning/decision-logger.mjs` | 84-88 | Retrieves or creates the queue for a decision type. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`installLifecycleHooks`](../scripts/lib/learning/decision-logger.mjs#L494) | function | `scripts/lib/learning/decision-logger.mjs` | 494-516 | Installs beforeExit and SIGINT handlers to gracefully drain the decision queue on process termination. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`isCiEnv`](../scripts/lib/learning/decision-logger.mjs#L59) | function | `scripts/lib/learning/decision-logger.mjs` | 59-61 | Detects if running in a CI environment. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`reconcileOutbox`](../scripts/lib/learning/decision-logger.mjs#L388) | function | `scripts/lib/learning/decision-logger.mjs` | 388-413 | Processes outbox files and retries their cloud writes when the store becomes available again. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`recordDecision`](../scripts/lib/learning/decision-logger.mjs#L218) | function | `scripts/lib/learning/decision-logger.mjs` | 218-252 | Records a learning decision to a per-type bounded queue, dropping oldest entry when cap is reached. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`resolveQueueCap`](../scripts/lib/learning/decision-logger.mjs#L27) | function | `scripts/lib/learning/decision-logger.mjs` | 27-38 | Parses and validates LEARNING_QUEUE_CAP_PER_TYPE env var with fallback default. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`retryWithBackoff`](../scripts/lib/learning/decision-logger.mjs#L435) | function | `scripts/lib/learning/decision-logger.mjs` | 435-452 | Retries a function with exponential backoff (3 attempts in CI, 1 in local) and treats truthy or {ok:true} as success. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`throttledWarn`](../scripts/lib/learning/decision-logger.mjs#L94) | function | `scripts/lib/learning/decision-logger.mjs` | 94-101 | Logs a warning to stderr at most once per throttle interval. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`tryWrite`](../scripts/lib/learning/decision-logger.mjs#L417) | function | `scripts/lib/learning/decision-logger.mjs` | 417-433 | Attempts to write a decision entry to cloud store with retry logic, branching on outcome-only vs regular paths. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`validateInput`](../scripts/lib/learning/decision-logger.mjs#L113) | function | `scripts/lib/learning/decision-logger.mjs` | 113-148 | Validates a decision-logger input object against required types and audit-key constraints. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`writeOutbox`](../scripts/lib/learning/decision-logger.mjs#L454) | function | `scripts/lib/learning/decision-logger.mjs` | 454-465 | Atomically writes a decision entry to the local outbox directory with timestamp-keyed filename. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`aggregateDecisions`](../scripts/lib/learning/quickfix-stats.mjs#L199) | function | `scripts/lib/learning/quickfix-stats.mjs` | 199-224 | Computes Beta-posterior acceptance rates per quickfix pattern from decision records using alpha/beta counters. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`cliMain`](../scripts/lib/learning/quickfix-stats.mjs#L277) | function | `scripts/lib/learning/quickfix-stats.mjs` | 277-330 | CLI entry point for quickfix-stats with --stats, --rebuild, --bootstrap, --reset, and --format flags. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`computeWatermark`](../scripts/lib/learning/quickfix-stats.mjs#L226) | function | `scripts/lib/learning/quickfix-stats.mjs` | 226-233 | Extracts the maximum outcome_at timestamp and total row count from decision records for cache watermarking. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`loadStats`](../scripts/lib/learning/quickfix-stats.mjs#L54) | function | `scripts/lib/learning/quickfix-stats.mjs` | 54-64 | Loads cached quickfix pattern statistics from disk, returning empty object on missing file or parse error. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`readQuickfixDecisions`](../scripts/lib/learning/quickfix-stats.mjs#L240) | function | `scripts/lib/learning/quickfix-stats.mjs` | 240-258 | Reads quickfix hit decisions from cloud store via paginated RPC, gracefully returning empty on cloud-off. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`rebuildFromBootstrap`](../scripts/lib/learning/quickfix-stats.mjs#L139) | function | `scripts/lib/learning/quickfix-stats.mjs` | 139-183 | Rebuilds quickfix statistics from a bootstrap JSONL log with synthesized neutral outcomes (no user feedback yet). | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`rebuildFromCloud`](../scripts/lib/learning/quickfix-stats.mjs#L97) | function | `scripts/lib/learning/quickfix-stats.mjs` | 97-122 | Rebuilds quickfix statistics from cloud learning store and writes aggregated stats to cache. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`shouldSkipPattern`](../scripts/lib/learning/quickfix-stats.mjs#L77) | function | `scripts/lib/learning/quickfix-stats.mjs` | 77-83 | Checks if a quickfix pattern should be skipped based on low acceptance rate and minimum hit threshold. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`writeAtomic`](../scripts/lib/learning/quickfix-stats.mjs#L264) | function | `scripts/lib/learning/quickfix-stats.mjs` | 264-266 | Atomically writes content to a target file path (thin wrapper around atomicWriteFileSync). | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
 | [`archMemoryBandReward`](../scripts/lib/learning/replay.mjs#L292) | function | `scripts/lib/learning/replay.mjs` | 292-301 | Scores architectural-memory reuse decisions (+1 correct, -1 fork, 0 neutral). | `scripts/learning/replay.mjs` |
 | [`convergencePredictReward`](../scripts/lib/learning/replay.mjs#L269) | function | `scripts/lib/learning/replay.mjs` | 269-284 | Scores whether a stop/continue choice correctly predicted the audit convergence round. | `scripts/learning/replay.mjs` |
 | [`distSummary`](../scripts/lib/learning/replay.mjs#L154) | function | `scripts/lib/learning/replay.mjs` | 154-163 | Computes mean, median, 90th percentile, and sum of a numeric array. | `scripts/learning/replay.mjs` |
@@ -3142,11 +3146,11 @@ _Domain has 939 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`provFiles`](../scripts/lib/requirements/render.mjs#L25) | function | `scripts/lib/requirements/render.mjs` | 25-25 | Extracts unique files from a requirement's provenance list. | `scripts/requirements.mjs` |
 | [`renderRequirementsMap`](../scripts/lib/requirements/render.mjs#L34) | function | `scripts/lib/requirements/render.mjs` | 34-121 | Generates a markdown report of the requirements ledger with statistics and breakdowns. | `scripts/requirements.mjs` |
 | [`uniqueIds`](../scripts/lib/requirements/schema.mjs#L110) | function | `scripts/lib/requirements/schema.mjs` | 110-110 | Returns a predicate that checks if all array elements have unique keys. | `scripts/lib/requirements/extract.mjs`, `scripts/lib/requirements/gap-challenge.mjs`, `scripts/lib/requirements/ledger.mjs`, +2 more |
-| [`blockingSleep`](../scripts/lib/retry-transient-fs.mjs#L14) | function | `scripts/lib/retry-transient-fs.mjs` | 14-18 | Blocks the current thread for a specified duration using `Atomics.wait`. | `scripts/audit-clean.mjs`, `scripts/lib/file-io.mjs`, `scripts/lib/install/transaction.mjs` |
-| [`isFiniteNonNegative`](../scripts/lib/retry-transient-fs.mjs#L32) | function | `scripts/lib/retry-transient-fs.mjs` | 32-34 | Validates that a value is a finite, non-negative number. | `scripts/audit-clean.mjs`, `scripts/lib/file-io.mjs`, `scripts/lib/install/transaction.mjs` |
-| [`isNonNegativeInteger`](../scripts/lib/retry-transient-fs.mjs#L36) | function | `scripts/lib/retry-transient-fs.mjs` | 36-38 | Validates that a value is a non-negative integer. | `scripts/audit-clean.mjs`, `scripts/lib/file-io.mjs`, `scripts/lib/install/transaction.mjs` |
-| [`isStringArray`](../scripts/lib/retry-transient-fs.mjs#L40) | function | `scripts/lib/retry-transient-fs.mjs` | 40-42 | Validates that a value is an array of strings. | `scripts/audit-clean.mjs`, `scripts/lib/file-io.mjs`, `scripts/lib/install/transaction.mjs` |
-| [`retrySync`](../scripts/lib/retry-transient-fs.mjs#L44) | function | `scripts/lib/retry-transient-fs.mjs` | 44-86 | Retries a synchronous operation with exponential backoff when it throws specific error codes. | `scripts/audit-clean.mjs`, `scripts/lib/file-io.mjs`, `scripts/lib/install/transaction.mjs` |
+| [`blockingSleep`](../scripts/lib/retry-transient-fs.mjs#L14) | function | `scripts/lib/retry-transient-fs.mjs` | 14-18 | Blocks the current thread for a specified duration using `Atomics.wait`. | `scripts/archive-completed-plans.mjs`, `scripts/audit-clean.mjs`, `scripts/learning/backfill-outcomes.mjs`, +3 more |
+| [`isFiniteNonNegative`](../scripts/lib/retry-transient-fs.mjs#L32) | function | `scripts/lib/retry-transient-fs.mjs` | 32-34 | Validates that a value is a finite, non-negative number. | `scripts/archive-completed-plans.mjs`, `scripts/audit-clean.mjs`, `scripts/learning/backfill-outcomes.mjs`, +3 more |
+| [`isNonNegativeInteger`](../scripts/lib/retry-transient-fs.mjs#L36) | function | `scripts/lib/retry-transient-fs.mjs` | 36-38 | Validates that a value is a non-negative integer. | `scripts/archive-completed-plans.mjs`, `scripts/audit-clean.mjs`, `scripts/learning/backfill-outcomes.mjs`, +3 more |
+| [`isStringArray`](../scripts/lib/retry-transient-fs.mjs#L40) | function | `scripts/lib/retry-transient-fs.mjs` | 40-42 | Validates that a value is an array of strings. | `scripts/archive-completed-plans.mjs`, `scripts/audit-clean.mjs`, `scripts/learning/backfill-outcomes.mjs`, +3 more |
+| [`retrySync`](../scripts/lib/retry-transient-fs.mjs#L44) | function | `scripts/lib/retry-transient-fs.mjs` | 44-86 | Retries a synchronous operation with exponential backoff when it throws specific error codes. | `scripts/archive-completed-plans.mjs`, `scripts/audit-clean.mjs`, `scripts/learning/backfill-outcomes.mjs`, +3 more |
 | [`createRNG`](../scripts/lib/rng.mjs#L43) | function | `scripts/lib/rng.mjs` | 43-66 | Creates a seeded or unseeded PRNG with `random()` and `beta()` methods; uses xorshift128 when seeded. | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/arm-eval/judge.mjs`, +9 more |
 | [`mulberry32`](../scripts/lib/rng.mjs#L98) | function | `scripts/lib/rng.mjs` | 98-106 | A 32-bit seeded PRNG using bitwise operations (Mulberry32 algorithm). | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/arm-eval/judge.mjs`, +9 more |
 | [`randnWith`](../scripts/lib/rng.mjs#L10) | function | `scripts/lib/rng.mjs` | 10-15 | Generates a standard normal-distributed random value using Box-Muller transform. | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/arm-eval/judge.mjs`, +9 more |
@@ -3321,14 +3325,17 @@ _Domain has 939 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`rewriteTextCommandInvocations`](../scripts/lib/sync-rewriter.mjs#L53) | function | `scripts/lib/sync-rewriter.mjs` | 53-69 | Rewrites node command invocations to use consumer isolation paths | `scripts/lib/sync-isolation-verify.mjs`, `scripts/sync-to-repos.mjs` |
 | [`gitignoreToRegExp`](../scripts/lib/sync-untrack.mjs#L38) | function | `scripts/lib/sync-untrack.mjs` | 38-43 | Converts gitignore pattern to regex for matching file paths | `scripts/sync-to-repos.mjs` |
 | [`untrackNewlyIgnored`](../scripts/lib/sync-untrack.mjs#L54) | function | `scripts/lib/sync-untrack.mjs` | 54-78 | Removes tracked files from git that now match gitignore patterns | `scripts/sync-to-repos.mjs` |
+| [`normalizeWhitespace`](../scripts/lib/text-normalize.mjs#L19) | function | `scripts/lib/text-normalize.mjs` | 19-21 | Normalizes a string by collapsing whitespace and trimming. | `scripts/lib/audit/evidence-triage.mjs` |
 | [`jaccardSimilarity`](../scripts/lib/text-similarity.mjs#L17) | function | `scripts/lib/text-similarity.mjs` | 17-25 | Calculates Jaccard similarity (intersection/union ratio) between two tokenized strings. | `scripts/lib/ledger.mjs`, `scripts/lib/model-eval/deterministic-scorer.mjs` |
-| [`classifyChildError`](../scripts/lib/vcs.mjs#L101) | function | `scripts/lib/vcs.mjs` | 101-124 | Classifies a subprocess error into a named VCS error code (binary missing, bad revision, working tree unreadable, etc.). | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
-| [`exitCodeFor`](../scripts/lib/vcs.mjs#L68) | function | `scripts/lib/vcs.mjs` | 68-77 | Maps a VCS error code enum to its corresponding Unix process exit code. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
-| [`gitCommitSha`](../scripts/lib/vcs.mjs#L134) | function | `scripts/lib/vcs.mjs` | 134-147 | Executes `git rev-parse HEAD` and returns the commit SHA in a result-object envelope with error handling. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
-| [`gitDiffWithWorkingTree`](../scripts/lib/vcs.mjs#L160) | function | `scripts/lib/vcs.mjs` | 160-217 | Compares a commit against the working tree using `git diff --name-status` to categorize file changes (added, modified, deleted, renamed, untracked). | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
-| [`gitShowFileAtRevision`](../scripts/lib/vcs.mjs#L235) | function | `scripts/lib/vcs.mjs` | 235-265 | Retrieves the content of a file at a specific git revision, returning early if the file did not exist at that revision. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
-| [`isRetryableVcsError`](../scripts/lib/vcs.mjs#L57) | function | `scripts/lib/vcs.mjs` | 57-59 | Returns true if a VCS error code is transient and retryable (subprocess execution failure only). | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
-| [`isSafeGitRevision`](../scripts/lib/vcs.mjs#L88) | function | `scripts/lib/vcs.mjs` | 88-91 | Validates that a git revision string is safe (no injection metacharacters, bounded length). | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`canonicalizeForOccurrenceMatch`](../scripts/lib/vcs.mjs#L325) | function | `scripts/lib/vcs.mjs` | 325-331 | Normalizes text for matching by removing carriage returns and trimming each line. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`classifyChildError`](../scripts/lib/vcs.mjs#L101) | function | `scripts/lib/vcs.mjs` | 101-124 | Classifies subprocess/execSync errors into structured VCS error codes via stderr pattern matching. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`contentExistsAtMappedRange`](../scripts/lib/vcs.mjs#L296) | function | `scripts/lib/vcs.mjs` | 296-307 | Checks if a quoted string exists within a specific line range of a file at a git revision. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`exitCodeFor`](../scripts/lib/vcs.mjs#L68) | function | `scripts/lib/vcs.mjs` | 68-77 | Maps VCS error codes to Unix exit codes (127 for missing git, 5 for bad repo/revision, 1 for other failures). | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`gitCommitSha`](../scripts/lib/vcs.mjs#L134) | function | `scripts/lib/vcs.mjs` | 134-147 | Retrieves the HEAD commit SHA using git rev-parse, returning {ok, sha} or {ok:false, error}. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`gitDiffWithWorkingTree`](../scripts/lib/vcs.mjs#L160) | function | `scripts/lib/vcs.mjs` | 160-217 | Lists added/modified/deleted/untracked/renamed files since a commit via git diff and ls-files. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`gitShowFileAtRevision`](../scripts/lib/vcs.mjs#L235) | function | `scripts/lib/vcs.mjs` | 235-265 | Retrieves file content at a specific git revision with path-existence checking and size limits. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`isRetryableVcsError`](../scripts/lib/vcs.mjs#L57) | function | `scripts/lib/vcs.mjs` | 57-59 | Checks if a VCS error code is retryable (only EXEC_FAILED is retryable; others are fatal). | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
+| [`isSafeGitRevision`](../scripts/lib/vcs.mjs#L88) | function | `scripts/lib/vcs.mjs` | 88-91 | Validates that a string is a safe git revision reference (200 chars max, alphanumeric + safe punctuation). | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/symbol-index/refresh.mjs` |
 
 ---
 
@@ -3728,7 +3735,7 @@ _Domain has 71 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## tests
 
-> Node.js test suite with ephemeral fixture builders (repos, SQL, Python, docs); validates audit-loop parsers, skill ecosystem wiring, store layer contracts, and egress safety gates.
+> Test-first coverage of deterministic seams: fixture builders, schema/config parsing (SQL/markdown/Python/Java), sensitive-path filtering, VCS contracts, DB integration, and consumer-repo relocation safety.
 
 ```mermaid
 flowchart TB
@@ -3782,7 +3789,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 413 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 428 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -3806,6 +3813,15 @@ _Domain has 413 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`fakeFs`](../tests/arm-eval-judge.test.mjs#L16) | function | `tests/arm-eval-judge.test.mjs` | 16-18 | Creates a mock file system with existence checks and file reads from a map. | _(internal)_ |
 | [`fakeJudge`](../tests/arm-eval-judge.test.mjs#L58) | function | `tests/arm-eval-judge.test.mjs` | 58-65 | Creates an async mock judgment function that scores outputs and returns parsed results. | _(internal)_ |
 | [`harness`](../tests/arm-eval-run.test.mjs#L10) | function | `tests/arm-eval-run.test.mjs` | 10-36 | Creates a test harness with mock store and dependencies for arm-eval runs. | _(internal)_ |
+| [`assertAllSitesRetrySyncWrapped`](../tests/atomic-write-adoption-guard.test.mjs#L198) | function | `tests/atomic-write-adoption-guard.test.mjs` | 198-220 | Asserts that all fs.renameSync and fs.unlinkSync calls in a file are wrapped in retrySync(). | _(internal)_ |
+| [`collectFsMethodBindings`](../tests/atomic-write-adoption-guard.test.mjs#L47) | function | `tests/atomic-write-adoption-guard.test.mjs` | 47-62 | Collects local binding names for fs module methods and namespace imports. | _(internal)_ |
+| [`collectNamedImportBindings`](../tests/atomic-write-adoption-guard.test.mjs#L30) | function | `tests/atomic-write-adoption-guard.test.mjs` | 30-44 | Collects all local binding names for a named import from a specific module. | _(internal)_ |
+| [`findEnclosingCall`](../tests/atomic-write-adoption-guard.test.mjs#L81) | function | `tests/atomic-write-adoption-guard.test.mjs` | 81-103 | Finds the enclosing function call wrapping a given AST node (e.g., retrySync wrapper). | _(internal)_ |
+| [`findFsMethodSites`](../tests/atomic-write-adoption-guard.test.mjs#L106) | function | `tests/atomic-write-adoption-guard.test.mjs` | 106-126 | Finds all call sites of specified fs methods (renameSync, unlinkSync) in an AST. | _(internal)_ |
+| [`findNamedFunctionRange`](../tests/atomic-write-adoption-guard.test.mjs#L129) | function | `tests/atomic-write-adoption-guard.test.mjs` | 129-147 | Locates the start/end positions of a named function or arrow function in an AST. | _(internal)_ |
+| [`functionCallsAtomicWriteFileSync`](../tests/atomic-write-adoption-guard.test.mjs#L150) | function | `tests/atomic-write-adoption-guard.test.mjs` | 150-160 | Checks whether a named function body contains a call to atomicWriteFileSync. | _(internal)_ |
+| [`parseFile`](../tests/atomic-write-adoption-guard.test.mjs#L23) | function | `tests/atomic-write-adoption-guard.test.mjs` | 23-27 | Parses a JavaScript file into an AST. | _(internal)_ |
+| [`walkAst`](../tests/atomic-write-adoption-guard.test.mjs#L64) | function | `tests/atomic-write-adoption-guard.test.mjs` | 64-78 | Recursively traverses an AST tree, invoking a visitor function on each node with its ancestor chain. | _(internal)_ |
 | [`runCli`](../tests/audit-plan-rebuttal-split-smoke.test.mjs#L44) | function | `tests/audit-plan-rebuttal-split-smoke.test.mjs` | 44-56 | Spawns openai-audit.mjs as a child process, captures output, and returns exit code and combined stdout/stderr. | _(internal)_ |
 | [`mkdtemp`](../tests/audit-scope-egress.test.mjs#L38) | function | `tests/audit-scope-egress.test.mjs` | 38-40 | Creates a temporary directory with a prefix for test isolation. | _(internal)_ |
 | [`genStats`](../tests/audit-shadow.test.mjs#L50) | function | `tests/audit-shadow.test.mjs` | 50-50 | Filters pass statistics to exclude gemini-stage entries. | _(internal)_ |
@@ -3817,11 +3833,12 @@ _Domain has 413 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`mkTmp`](../tests/brainstorm-resume-context.test.mjs#L13) | function | `tests/brainstorm-resume-context.test.mjs` | 13-15 | Creates a temporary directory for brainstorm resume context tests. | _(internal)_ |
 | [`helpText`](../tests/brainstorm-round-extensions.test.mjs#L34) | function | `tests/brainstorm-round-extensions.test.mjs` | 34-37 | Retrieves help text output from a helper script. | _(internal)_ |
 | [`runHelper`](../tests/brainstorm-round.test.mjs#L17) | function | `tests/brainstorm-round.test.mjs` | 17-23 | Spawns a helper script with arguments and stdin input. | _(internal)_ |
-| [`mkTmp`](../tests/brainstorm-session-store.test.mjs#L12) | function | `tests/brainstorm-session-store.test.mjs` | 12-14 | Creates a temporary directory for brainstorm session store tests. | _(internal)_ |
-| [`mkV2Envelope`](../tests/brainstorm-session-store.test.mjs#L16) | function | `tests/brainstorm-session-store.test.mjs` | 16-27 | Creates a v2 brainstorm session envelope with architecture context fields. | _(internal)_ |
+| [`mkTmp`](../tests/brainstorm-session-store.test.mjs#L12) | function | `tests/brainstorm-session-store.test.mjs` | 12-14 | Creates a temporary directory for brainstorm session tests. | _(internal)_ |
+| [`mkV2Envelope`](../tests/brainstorm-session-store.test.mjs#L16) | function | `tests/brainstorm-session-store.test.mjs` | 16-27 | Constructs a mock brainstorm V2 session envelope with test defaults. | _(internal)_ |
 | [`syntheticSurface`](../tests/build-surfaces-manifest.test.mjs#L59) | function | `tests/build-surfaces-manifest.test.mjs` | 59-73 | Creates a test fixture UI surface with engine fields and network data sources. | _(internal)_ |
 | [`run`](../tests/cache-hitrate-check.test.mjs#L10) | function | `tests/cache-hitrate-check.test.mjs` | 10-10 | Creates a test input object representing cache hitrate and seed settings. | _(internal)_ |
 | [`mkFinding`](../tests/candidate-envelope-provenance.test.mjs#L16) | function | `tests/candidate-envelope-provenance.test.mjs` | 16-25 | Creates a test finding object with audit fields, metadata, and classification. | _(internal)_ |
+| [`mkTmpRepo`](../tests/claudemd/autofix.test.mjs#L9) | function | `tests/claudemd/autofix.test.mjs` | 9-13 | Creates a temporary directory for autofix tests. | _(internal)_ |
 | [`runLint`](../tests/claudemd/integration.test.mjs#L10) | function | `tests/claudemd/integration.test.mjs` | 10-21 | Runs a lint CLI command and returns stdout, stderr, and exit code. | _(internal)_ |
 | [`allIndicesCoveredOnce`](../tests/cluster-propose.test.mjs#L5) | function | `tests/cluster-propose.test.mjs` | 5-9 | Asserts that every input index appears exactly once across all cluster assignments. | _(internal)_ |
 | [`writeStub`](../tests/code-analysis.test.mjs#L336) | function | `tests/code-analysis.test.mjs` | 336-339 | Writes a file filled with repeated characters to create a specific byte size. | _(internal)_ |
@@ -4027,8 +4044,8 @@ _Domain has 413 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`sha12`](../tests/install/lifecycle.test.mjs#L13) | function | `tests/install/lifecycle.test.mjs` | 13-13 | Computes the first 12 characters of a SHA256 hash. | _(internal)_ |
 | [`collectMjs`](../tests/iscloudenabled-awaited.test.mjs#L24) | function | `tests/iscloudenabled-awaited.test.mjs` | 24-36 | Recursively finds all .mjs files in a directory tree, excluding node_modules. | _(internal)_ |
 | [`mockRunConvergence`](../tests/learning-convergence-telemetry.test.mjs#L105) | function | `tests/learning-convergence-telemetry.test.mjs` | 105-107 | Returns an async function that yields a fixed audit-run row for convergence testing. | _(internal)_ |
-| [`makeMockStore`](../tests/learning-decision-logger.test.mjs#L21) | function | `tests/learning-decision-logger.test.mjs` | 21-38 | Creates a mock learning store with insert/backfill tracking and error injection. | _(internal)_ |
-| [`tmpOutbox`](../tests/learning-decision-logger.test.mjs#L40) | function | `tests/learning-decision-logger.test.mjs` | 40-42 | Creates and returns a temporary directory for learning outbox files. | _(internal)_ |
+| [`makeMockStore`](../tests/learning-decision-logger.test.mjs#L21) | function | `tests/learning-decision-logger.test.mjs` | 21-38 | Creates a mock learning store for testing with configurable failure injection. | _(internal)_ |
+| [`tmpOutbox`](../tests/learning-decision-logger.test.mjs#L40) | function | `tests/learning-decision-logger.test.mjs` | 40-42 | Creates a temporary directory for learning outbox tests. | _(internal)_ |
 | [`withCounts`](../tests/learning-pass-selection.test.mjs#L9) | function | `tests/learning-pass-selection.test.mjs` | 9-9 | Returns a minimal mock object providing getOutcomeCounts for testing. | _(internal)_ |
 | [`fixtureStore`](../tests/learning-replay.test.mjs#L22) | function | `tests/learning-replay.test.mjs` | 22-28 | Creates a mock learning store with cloud enabled and test row fixtures. | _(internal)_ |
 | [`assertFixtureMatchesLive`](../tests/learning-store-contract.test.mjs#L161) | function | `tests/learning-store-contract.test.mjs` | 161-177 | Placeholder assertion that future tests will compare store function fixtures against live behavior. | _(internal)_ |
@@ -4038,6 +4055,7 @@ _Domain has 413 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`extractSnippet`](../tests/maintenance-hook-snippet.test.mjs#L55) | function | `tests/maintenance-hook-snippet.test.mjs` | 55-68 | Extracts the weekly maintenance snippet from the hook source between marked regions. | _(internal)_ |
 | [`runSnippet`](../tests/maintenance-hook-snippet.test.mjs#L70) | function | `tests/maintenance-hook-snippet.test.mjs` | 70-109 | Executes a bash snippet in a temporary environment, optionally with simulated delay. | _(internal)_ |
 | [`waitForLog`](../tests/maintenance-hook-snippet.test.mjs#L114) | function | `tests/maintenance-hook-snippet.test.mjs` | 114-124 | Polls for a maintenance log file and returns its content before timeout. | _(internal)_ |
+| [`mkTmp`](../tests/memory-health.test.mjs#L9) | function | `tests/memory-health.test.mjs` | 9-13 | Creates a temporary directory for memory-health tests. | _(internal)_ |
 | [`mkTmp`](../tests/memory-paths.test.mjs#L19) | function | `tests/memory-paths.test.mjs` | 19-21 | Creates a temporary directory for test file operations. | _(internal)_ |
 | [`require_yaml`](../tests/memory-paths.test.mjs#L27) | function | `tests/memory-paths.test.mjs` | 27-43 | Converts a JavaScript object into YAML frontmatter format for test fixtures. | _(internal)_ |
 | [`writeFm`](../tests/memory-paths.test.mjs#L22) | function | `tests/memory-paths.test.mjs` | 22-25 | Writes a YAML frontmatter markdown file for testing memory artifacts. | _(internal)_ |
@@ -4166,6 +4184,7 @@ _Domain has 413 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`shouldCopyForward`](../tests/symbol-file-imports.test.mjs#L26) | function | `tests/symbol-file-imports.test.mjs` | 26-28 | Checks whether a row should be copied forward if its importer path was not touched. | _(internal)_ |
 | [`insertRefreshRun`](../tests/symbol-index-drift-justification.test.mjs#L31) | function | `tests/symbol-index-drift-justification.test.mjs` | 31-37 | Inserts a test refresh run record into the database and returns its ID. | _(internal)_ |
 | [`makeSymbol`](../tests/symbol-index-drift-justification.test.mjs#L39) | function | `tests/symbol-index-drift-justification.test.mjs` | 39-46 | Creates a test symbol definition and index entry in the database, returning the definition ID. | _(internal)_ |
+| [`mkTmp`](../tests/symbol-index-drift.test.mjs#L13) | function | `tests/symbol-index-drift.test.mjs` | 13-17 | Creates a temporary directory for drift tests. | _(internal)_ |
 | [`mkdtemp`](../tests/sync-manifest-idempotency.test.mjs#L18) | function | `tests/sync-manifest-idempotency.test.mjs` | 18-20 | Creates a temporary directory. | _(internal)_ |
 | [`setupRepo`](../tests/sync-manifest-idempotency.test.mjs#L22) | function | `tests/sync-manifest-idempotency.test.mjs` | 22-28 | Creates a test repository with sample text files. | _(internal)_ |
 | [`setupRepo`](../tests/sync-shared-audit-refs.test.mjs#L11) | function | `tests/sync-shared-audit-refs.test.mjs` | 11-16 | Creates a temporary directory with nested docs/audit/shared-references and skills folders. | _(internal)_ |
@@ -4189,6 +4208,9 @@ _Domain has 413 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`memFs`](../tests/ux-lock-selector-policy.test.mjs#L236) | function | `tests/ux-lock-selector-policy.test.mjs` | 236-249 | Creates an in-memory mock file system for testing without real disk I/O. | _(internal)_ |
 | [`scan`](../tests/ux-lock-selector-policy.test.mjs#L23) | function | `tests/ux-lock-selector-policy.test.mjs` | 23-24 | Scans a spec source for selector policy violations with test configuration. | _(internal)_ |
 | [`violationClasses`](../tests/ux-lock-selector-policy.test.mjs#L26) | function | `tests/ux-lock-selector-policy.test.mjs` | 26-26 | Extracts the violation class names from a scan result. | _(internal)_ |
+| [`commit`](../tests/vcs-blame.test.mjs#L31) | function | `tests/vcs-blame.test.mjs` | 31-36 | Creates a git commit with given file content and returns the commit SHA. | _(internal)_ |
+| [`gitInit`](../tests/vcs-blame.test.mjs#L24) | function | `tests/vcs-blame.test.mjs` | 24-29 | Initializes a git repo and configures basic git settings for testing. | _(internal)_ |
+| [`mkdtemp`](../tests/vcs-blame.test.mjs#L20) | function | `tests/vcs-blame.test.mjs` | 20-22 | Creates a temporary directory for vcs-blame tests. | _(internal)_ |
 | [`gitInit`](../tests/vcs.test.mjs#L33) | function | `tests/vcs.test.mjs` | 33-39 | Initializes a git repository with basic config and an empty initial commit. | _(internal)_ |
 | [`mkdtemp`](../tests/vcs.test.mjs#L29) | function | `tests/vcs.test.mjs` | 29-31 | Creates a temporary directory for testing with a predictable prefix. | _(internal)_ |
 | [`finding`](../tests/visual-changed-scope.test.mjs#L13) | function | `tests/visual-changed-scope.test.mjs` | 13-13 | Creates a test finding object for a token violation on a surface property. | _(internal)_ |

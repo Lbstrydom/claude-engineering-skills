@@ -22,8 +22,7 @@
  */
 
 import 'dotenv/config';
-import fs from 'node:fs';
-import path from 'node:path';
+import { atomicWriteFileSync } from './lib/file-io.mjs';
 
 // Parse a numeric env var, falling back to the default on absent/garbage. A bare
 // `Number("abc")` → NaN, and every threshold comparison against NaN is false → no
@@ -291,11 +290,7 @@ function renderMarkdown(metrics, evaluation, friction = { available: false, reas
 }
 
 function atomicWrite(filePath, contents) {
-  const dir = path.dirname(path.resolve(filePath));
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, contents);
-  fs.renameSync(tmp, filePath);
+  atomicWriteFileSync(filePath, contents);
 }
 
 async function main() {
@@ -340,7 +335,18 @@ async function main() {
   process.exit((evaluation.firedCount > 0 || friction.hardFail || friction.errored) ? 1 : 0);
 }
 
-main().catch(err => {
-  process.stderr.write(`memory-health: fatal: ${err.stack || err.message}\n`);
-  process.exit(2);
-});
+export const _internals = { atomicWrite };
+
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+
+if (isMain) {
+  main().catch(err => {
+    process.stderr.write(`memory-health: fatal: ${err.stack || err.message}\n`);
+    process.exit(2);
+  });
+}

@@ -25,10 +25,9 @@
  */
 import 'dotenv/config';
 import fs from 'node:fs';
-import path from 'node:path';
-import crypto from 'node:crypto';
 
 import { betaPosterior } from './beta-posterior.mjs';
+import { atomicWriteFileSync } from '../file-io.mjs';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -263,11 +262,7 @@ async function readQuickfixDecisions(learningStore, { repoId } = {}) {
  * races for matchPatterns() consumers reading concurrently.
  */
 function writeAtomic(targetPath, content) {
-  const dir = path.dirname(targetPath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tmpPath = `${targetPath}.tmp.${process.pid}.${crypto.randomBytes(4).toString('hex')}`;
-  fs.writeFileSync(tmpPath, content);
-  fs.renameSync(tmpPath, targetPath);
+  atomicWriteFileSync(targetPath, content);
 }
 
 // ── CLI entrypoint ─────────────────────────────────────────────────────────

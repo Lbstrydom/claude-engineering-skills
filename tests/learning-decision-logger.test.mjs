@@ -281,3 +281,33 @@ describe('decision-logger / flush + outbox', () => {
     assert.equal(store.updated[0].decisionKey, k);
   });
 });
+
+// ── _internals.writeOutbox — failure contract (atomic-write-adoption plan) ──
+// Deterministic, cross-platform fault: point the outbox dir's ancestor at a
+// FILE, not a directory. atomicWriteFileSync's internal mkdirSync then
+// throws ENOTDIR every time, on every platform — no OS permissions involved.
+
+describe('_internals.writeOutbox — failure contract', () => {
+  it('returns false (does not throw) and warns when the write fails', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'outbox-fail-'));
+    const blocker = path.join(tmpDir, 'blocker');
+    fs.writeFileSync(blocker, 'not a directory');
+    const outboxDir = path.join(blocker, 'nested', 'outbox');
+
+    const originalWrite = process.stderr.write;
+    let warned = '';
+    process.stderr.write = (chunk) => { warned += chunk; return true; };
+    let result;
+    try {
+      result = _internals.writeOutbox(
+        { decisionKey: 'k1', enqueuedAt: new Date().toISOString() },
+        outboxDir,
+      );
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+
+    assert.equal(result, false, 'writeOutbox must return false, not throw, on failure');
+    assert.match(warned, /outbox write failed/);
+  });
+});

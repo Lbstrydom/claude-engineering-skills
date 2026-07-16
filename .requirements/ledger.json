@@ -1,13 +1,19 @@
 {
-  "generatedAt": "2026-07-15T15:27:08.999Z",
-  "commitSha": "fbc6cd8f2356a06fff2613118584ed659a622e9b",
-  "extractionSourceSha": "fbc6cd8f2356a06fff2613118584ed659a622e9b",
+  "generatedAt": "2026-07-16T16:25:17.842Z",
+  "commitSha": "cd877196e9f2aac0144cf662007a701f2ed3dc28",
+  "extractionSourceSha": "cd877196e9f2aac0144cf662007a701f2ed3dc28",
   "coveredFiles": [
+    "scripts/archive-completed-plans.mjs",
+    "scripts/learning/backfill-outcomes.mjs",
     "scripts/lib/audit/finding-verification.mjs",
     "scripts/lib/audit/prompt-builder.mjs",
     "scripts/lib/brainstorm/file-lock.mjs",
+    "scripts/lib/brainstorm/session-store.mjs",
+    "scripts/lib/claudemd/autofix.mjs",
     "scripts/lib/duplicate-justification-pragma.mjs",
     "scripts/lib/file-io.mjs",
+    "scripts/lib/learning/decision-logger.mjs",
+    "scripts/lib/learning/quickfix-stats.mjs",
     "scripts/lib/ledger.mjs",
     "scripts/lib/requirements/context.mjs",
     "scripts/lib/requirements/extract.mjs",
@@ -18,6 +24,8 @@
     "scripts/lib/sensitive-egress-gate.mjs",
     "scripts/lib/store/arch/symbols.mjs",
     "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
+    "scripts/memory-health.mjs",
+    "scripts/persona-consistency-promote.mjs",
     "scripts/symbol-index/drift.mjs",
     "scripts/symbol-index/refresh.mjs"
   ],
@@ -80,6 +88,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended review status invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-0e8cfd16",
+      "assertion": "A drift score at or below half the configured threshold must classify as GREEN, a score above half and at or below the threshold as AMBER, and a score above the threshold as RED.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/drift.mjs",
+          "anchor": "classify"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/drift.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/drift.mjs#classify"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-behavioural-0e8cfd16",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound drift-band classification invariant with no linked test."
       }
     },
     {
@@ -180,6 +218,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-298a3c86",
+      "assertion": "A resolvable quickfix hit must be classified as `accept` when its target file is deleted or its sufficiently long snippet is no longer present, as `suppress` when the snippet or preceding line has `qu",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "computeOutcomeFromFileState outcome branches"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-298a3c86",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound quickfix-outcome classification invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-310e33fc",
       "assertion": "Audit prompt construction must keep the system prompt and first user message byte-stable across rounds by placing round modifiers and prior rulings only in a later dynamic message.",
       "kind": "behavioural",
@@ -250,6 +318,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-3f059da6",
+      "assertion": "For an eligible quickfix decision, a missing target file or missing snippet probe must resolve as accept, while a still-present probe resolves as suppress only when the quickfix-hook:ignore marker is ",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "computeOutcomeFromFileState"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs: computeOutcomeFromFileState outcome branches"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-3f059da6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound eligible-quickfix outcome invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-behavioural-4c08004f",
       "assertion": "Requirements context must include only `active` in-scope requirements in the enforced rubric while listing non-enforced active or known requirements only in the index section.",
       "kind": "behavioural",
@@ -310,23 +408,22 @@
       }
     },
     {
-      "id": "REQ-behavioural-712ba5bd",
-      "assertion": "The drift report must surface ambiguous or unresolved duplicate-justification pragmas as not excluded from the drift score, and failure of this advisory reconciliation must not block report generation",
+      "id": "REQ-behavioural-7329dcf7",
+      "assertion": "Outcome backfill may only examine unresolved decisions of the supported decision types that are at least 30 minutes old, optionally scoped to the requested repository.",
       "kind": "behavioural",
       "checkable": true,
       "provenance": [
         {
-          "file": "scripts/symbol-index/drift.mjs",
-          "anchor": "report-time pragma reconciliation"
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "resolveUnresolvedOutcomes RESOLVABLE_TYPES and cutoff query"
         }
       ],
       "appliesTo": [
-        "scripts/symbol-index/drift.mjs"
+        "scripts/learning/backfill-outcomes.mjs"
       ],
       "evidence": {
         "code": [
-          "scripts/symbol-index/drift.mjs",
-          "scripts/lib/duplicate-justification-pragma.mjs"
+          "scripts/learning/backfill-outcomes.mjs"
         ],
         "tests": []
       },
@@ -334,10 +431,10 @@
       "confidence": "low",
       "status": "inferred-only",
       "gap": {
-        "requirementId": "REQ-behavioural-712ba5bd",
+        "requirementId": "REQ-behavioural-7329dcf7",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "This advisory reconciliation behavior has no linked test."
+        "rationale": "This is a sound outcome-backfill eligibility invariant with no linked test."
       }
     },
     {
@@ -403,42 +500,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended suppression eligibility invariant but no linked test is present."
-      }
-    },
-    {
-      "id": "REQ-behavioural-8c1552b0",
-      "assertion": "Stale duplicate-justification pragmas whose target file no longer exists must be reported as low-severity documentation findings without changing the drift command status or exit code.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
-          "anchor": "findStalePragmas and renderStalePragmaSection"
-        },
-        {
-          "file": "scripts/symbol-index/drift.mjs",
-          "anchor": "stalePragmas rendering and status exit"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
-        "scripts/symbol-index/drift.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
-          "scripts/symbol-index/drift.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-8c1552b0",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This stale-pragma reporting behavior has no linked test."
       }
     },
     {
@@ -601,6 +662,66 @@
         "gap": "observed-but-unintended",
         "conflictsWith": [],
         "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-behavioural-bd805026",
+      "assertion": "A quickfix pattern is skipped only when its acceptance rate is strictly below the configured skip threshold and its total hit count is at least the configured minimum hit count.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "shouldSkipPattern"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#shouldSkipPattern"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-behavioural-bd805026",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound threshold-based pattern-skipping invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-d217e438",
+      "assertion": "The drift sweep must exit with code 1 only for RED drift status and must treat unavailable cloud configuration, an unknown repository, or a missing active snapshot as a successful skip.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/drift.mjs",
+          "anchor": "main"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/drift.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/drift.mjs#main"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-d217e438",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound drift-sweep skip and exit-code invariant with no linked test."
       }
     },
     {
@@ -793,42 +914,6 @@
       }
     },
     {
-      "id": "REQ-behavioural-fdd51329",
-      "assertion": "Stale duplicate-justification pragmas whose target files no longer exist must be reported only as a low-severity report section and must not change the drift status or exit code.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
-          "anchor": "findStalePragmas and renderStalePragmaSection"
-        },
-        {
-          "file": "scripts/symbol-index/drift.mjs",
-          "anchor": "stalePragmas rendering and status exit"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
-        "scripts/symbol-index/drift.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/symbol-index/stale-pragma-sweep.mjs",
-          "scripts/symbol-index/drift.mjs"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-fdd51329",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This stale-pragma reporting behavior has no linked test."
-      }
-    },
-    {
       "id": "REQ-correctness-014a061e",
       "assertion": "Cited-entity extraction must select only a token adjacent to a missing-claim phrase in detail or section and must return null when no single such token is found.",
       "kind": "correctness",
@@ -987,6 +1072,36 @@
       }
     },
     {
+      "id": "REQ-correctness-1daf104c",
+      "assertion": "Memory-health metric triggers must remain unfired when the finding count in the reporting window is below the configured minimum sample size.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "evaluateTriggers"
+        }
+      ],
+      "appliesTo": [
+        "scripts/memory-health.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/memory-health.mjs#evaluateTriggers"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-1daf104c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound minimum-sample trigger invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-1ef0e7cd",
       "assertion": "Jaccard similarity must tokenize lowercased alphanumeric words, ignore punctuation, return 0 for two empty token sets, and otherwise return intersection size divided by union size.",
       "kind": "correctness",
@@ -1083,6 +1198,36 @@
       }
     },
     {
+      "id": "REQ-correctness-31e1bf31",
+      "assertion": "A quickfix-hit drain cursor must be reset to byte offset zero when the source JSONL leading-byte fingerprint changes or its size is less than the stored offset.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud fingerprint and size cursor reset"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-31e1bf31",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound cursor-reset invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-3312abd0",
       "assertion": "Finding metadata population must extract normalized file references from section text, set _primaryFile to the first extracted file or normalized section prefix, set affectedFiles to all extracted fil",
       "kind": "correctness",
@@ -1142,6 +1287,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended impact-set invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-3a16df3e",
+      "assertion": "Quickfix cloud reads must request only quickfix_hit decisions, optionally constrain them to the requested repository, and use pagination with a page size of 1000 and hard cap of 50000.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "readQuickfixDecisions"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#readQuickfixDecisions"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-3a16df3e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound bounded and filtered cloud-read invariant with no linked test."
       }
     },
     {
@@ -1242,6 +1417,40 @@
       }
     },
     {
+      "id": "REQ-correctness-4f5da7b9",
+      "assertion": "Learning decisions must use only recognized decision types and must have either a complete audit-bound identity or a non-empty external identity whose caller-controlled key components contain no colon",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "validateInput decision identity validation"
+        },
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "_isNonEmptyString and VALID_DECISION_TYPES"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/decision-logger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/decision-logger.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-4f5da7b9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound learning-decision identity invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-59444f0c",
       "assertion": "Duplicate-justification pragmas must be discovered repository-wide in tracked and non-ignored untracked files while excluding Markdown files and tests, and only syntactically valid pragmas with non-te",
       "kind": "correctness",
@@ -1269,6 +1478,87 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This appears to be an intended discovery invariant but has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-59594319",
+      "assertion": "Plan archival must move only Markdown files whose Status metadata value begins with the word Complete, case-insensitively, and must not treat other statuses as complete.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/archive-completed-plans.mjs",
+          "anchor": "parseStatus"
+        },
+        {
+          "file": "scripts/archive-completed-plans.mjs",
+          "anchor": "isComplete"
+        },
+        {
+          "file": "scripts/archive-completed-plans.mjs",
+          "anchor": "runArchive"
+        }
+      ],
+      "appliesTo": [
+        "scripts/archive-completed-plans.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/archive-completed-plans.mjs#parseStatus",
+          "scripts/archive-completed-plans.mjs#isComplete",
+          "scripts/archive-completed-plans.mjs#runArchive"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-59594319",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound complete-status archival invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-59c40724",
+      "assertion": "Only Markdown files whose metadata Status value begins with \"Complete\" case-insensitively are eligible for plan archival.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/archive-completed-plans.mjs",
+          "anchor": "parseStatus"
+        },
+        {
+          "file": "scripts/archive-completed-plans.mjs",
+          "anchor": "isComplete"
+        },
+        {
+          "file": "scripts/archive-completed-plans.mjs",
+          "anchor": "runArchive"
+        }
+      ],
+      "appliesTo": [
+        "scripts/archive-completed-plans.mjs",
+        "docs/plans/*.md"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/archive-completed-plans.mjs#parseStatus",
+          "scripts/archive-completed-plans.mjs#isComplete",
+          "scripts/archive-completed-plans.mjs#runArchive"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-59c40724",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound plan-archival eligibility invariant with no linked test."
       }
     },
     {
@@ -1502,6 +1792,70 @@
       }
     },
     {
+      "id": "REQ-correctness-7760877a",
+      "assertion": "Quickfix aggregate statistics must count every decision with a pattern toward totalHits while counting only accept outcomes as alpha evidence and suppress or ignore outcomes as beta evidence.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "aggregateDecisions"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#aggregateDecisions"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-7760877a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound quickfix-statistics aggregation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-7964ca1b",
+      "assertion": "Learning-decision context hashes must be computed from recursively key-sorted objects while preserving array order, so equivalent nested object contexts produce the same hash independent of object key",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "_canonicalise"
+        },
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "contextHash"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/decision-logger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/decision-logger.mjs: _canonicalise, canonicaliseContext, contextHash"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-7964ca1b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound canonical nested-context hash invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-86969162",
       "assertion": "Existence-claim verification extracts the cited entity only from tokens adjacent to missing-claim phrases and returns requires_verification when no single cited entity can be unambiguously extracted.",
       "kind": "correctness",
@@ -1536,6 +1890,74 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended cited-entity extraction invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-8b4b42b4",
+      "assertion": "Every recorded learning decision must use a recognized decision type and must be bound either to a valid audit-run ID plus non-negative integer round and sequence or to a non-empty colon-free external",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "validateInput"
+        },
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "buildDecisionKey"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/decision-logger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/decision-logger.mjs: VALID_DECISION_TYPES, _isNonEmptyString, _isKeyInt, validateInput, buildDecisionKey"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-8b4b42b4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound learning-decision identity-validation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-8fc2fe0d",
+      "assertion": "Legacy session records must be accepted only after deterministic V2 synthesis and schema validation, with missing arch-context fields normalized to false, zero, and null rather than undefined.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/session-store.mjs",
+          "anchor": "loadSession V1 synthesis and validation"
+        },
+        {
+          "file": "scripts/lib/brainstorm/session-store.mjs",
+          "anchor": "normalizeArchFields"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/session-store.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/session-store.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-8fc2fe0d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound legacy-session normalization invariant with no linked test."
       }
     },
     {
@@ -1897,6 +2319,36 @@
       }
     },
     {
+      "id": "REQ-correctness-be519938",
+      "assertion": "Quickfix statistics aggregation must count accept outcomes as positive evidence, suppress and ignore outcomes as negative evidence, and no_action or unknown outcomes as neither while retaining every v",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "aggregateDecisions"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#aggregateDecisions"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-be519938",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound outcome-evidence aggregation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-c405ab74",
       "assertion": "Requirements context must mark the ledger stale when any covered file changed between `extractionSourceSha` and HEAD.",
       "kind": "correctness",
@@ -1989,6 +2441,36 @@
       }
     },
     {
+      "id": "REQ-correctness-cd84ad3f",
+      "assertion": "Pass-selection decisions with findings but no adjudicated findings must remain unresolved, while zero-finding runs must resolve as `low-yield` with reward zero.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "computePassSelectionOutcome pending and zero-findings guards"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-cd84ad3f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound pass-selection resolution invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-d152bee6",
       "assertion": "Repo-root-relative file claims are refuted only by exact membership in the provided repoFiles inventory and are confirmed absent only when inventoryComplete is true.",
       "kind": "correctness",
@@ -2016,6 +2498,70 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended repo-root claim verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-d2203490",
+      "assertion": "The drift CLI must exit with code 1 only for RED drift status and must exit with code 2 when drift-score computation fails.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/drift.mjs",
+          "anchor": "main"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/drift.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/drift.mjs#main"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d2203490",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound drift CLI exit-code invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-d2c4cb1a",
+      "assertion": "When the quickfix-hit JSONL file identity fingerprint changes or its size is less than the saved cursor offset, draining must restart at offset zero rather than trusting the prior cursor.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud"
+        },
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "computeFileFingerprint"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs: cursor fingerprint and size checks"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d2c4cb1a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound quickfix cursor-reset invariant with no linked test."
       }
     },
     {
@@ -2049,6 +2595,75 @@
       }
     },
     {
+      "id": "REQ-correctness-d6e2938f",
+      "assertion": "The memory-health process must exit with code 2 when its required database configuration is absent or the memory-health RPC cannot provide metrics.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "callRpc"
+        },
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "main"
+        }
+      ],
+      "appliesTo": [
+        "scripts/memory-health.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/memory-health.mjs#callRpc",
+          "scripts/memory-health.mjs#main"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-correctness-d6e2938f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound configuration and RPC failure-code invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-dacd5831",
+      "assertion": "Unresolved learning decisions may be backfilled only after they are at least 30 minutes old and only for the supported quickfix_hit, arch_memory_band, convergence_predict, and pass_selection decision ",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "STALENESS_MS"
+        },
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "resolveUnresolvedOutcomes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs: RESOLVABLE_TYPES and cutoff query"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-dacd5831",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound backfill type and age restriction invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-correctness-df86df26",
       "assertion": "Duplicate-justification discovery must search tracked and non-ignored untracked repository files while excluding Markdown files and tests, and must only return syntactically valid pragmas whose target",
       "kind": "correctness",
@@ -2076,6 +2691,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This repository-wide pragma discovery invariant has no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-e27d330c",
+      "assertion": "A pass-selection decision with findings but no adjudications must remain unresolved, whereas a run with zero findings must resolve terminally as low-yield with reward zero.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "computePassSelectionOutcome"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs: counts.anyAdjudicated guard and counts.total === 0 branch"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-e27d330c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound pass-selection terminal-state invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-e2b85434",
+      "assertion": "Semantically identical decision contexts with differently ordered nested object keys must produce the same context hash, while array order remains significant.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "_canonicalise and contextHash"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/decision-logger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/decision-logger.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-e2b85434",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound canonical context-hashing invariant with no linked test."
       }
     },
     {
@@ -2452,6 +3127,49 @@
       }
     },
     {
+      "id": "REQ-persistence-18856855",
+      "assertion": "When a local telemetry write cannot reach cloud storage, the decision must be atomically written to the outbox or retained in memory for retry rather than silently discarded.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "flush local outbox-or-retain handling"
+        },
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "writeOutbox atomicWriteFileSync"
+        },
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "flush"
+        },
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "writeOutbox"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/decision-logger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/decision-logger.mjs",
+          "scripts/lib/learning/decision-logger.mjs: retainPerQueue and writeOutbox fallback"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-persistence-18856855",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound telemetry durability invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-1c9bc191",
       "assertion": "Candidate IDs must be content-seeded from kind, normalized assertion text, and sorted provenance files rather than from LLM output or list position.",
       "kind": "persistence",
@@ -2514,6 +3232,66 @@
       }
     },
     {
+      "id": "REQ-persistence-399dd30a",
+      "assertion": "A quickfix-hit drain must retain an unterminated trailing JSONL record for the next run instead of parsing it or advancing the cursor past it.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs: endsWithNewline, partialBytes, fullProcessedOffset"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-399dd30a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound incomplete-record retention invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-3a1173ec",
+      "assertion": "Outbox entries must be deleted only after their cloud write succeeds, and unreadable or unsuccessfully replayed outbox files must remain available for later inspection or retry.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "reconcileOutbox success unlink and failure handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/decision-logger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/decision-logger.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-3a1173ec",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound outbox replay-retention invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-43456336",
       "assertion": "Writing the requirements ledger must validate it against `RequirementsLedgerSchema` before performing an atomic write.",
       "kind": "persistence",
@@ -2547,6 +3325,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended pre-write ledger validation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-47199863",
+      "assertion": "Recovery must complete a deferred temporary-to-final spec rename for a journaled promotion known to have committed in the database, while rolling back the temporary file only when the candidate is con",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "reconcilePromotionJournal"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#reconcilePromotionJournal"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-47199863",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound committed-promotion recovery invariant with no linked test."
       }
     },
     {
@@ -2744,6 +3552,71 @@
       }
     },
     {
+      "id": "REQ-persistence-9c23f3e5",
+      "assertion": "A persona-consistency promotion must durably journal its intended file and candidate transition before writing the temporary spec file or requesting the database candidate-to-locked transition.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "promoteOne"
+        },
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "writeJournal"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#promoteOne",
+          "scripts/persona-consistency-promote.mjs#writeJournal"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-persistence-9c23f3e5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound promotion journaling-order invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-a943f941",
+      "assertion": "Session appends must assign a unique next round number while holding the per-session lock and must validate the completed version-2 envelope before it is persisted.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/session-store.mjs",
+          "anchor": "appendSession"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/session-store.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/session-store.mjs: withFileLock, nextRound, BrainstormEnvelopeWriteSchema.safeParse"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-a943f941",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound locked session-round persistence invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-af19c4fa",
       "assertion": "Reconciliation must preserve a prior requirement's frozen id when a new candidate matches by exact id, identity alias, or unambiguous mutual-best rewording.",
       "kind": "persistence",
@@ -2776,6 +3649,110 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended frozen-id preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-c1fd4cfe",
+      "assertion": "Archiving must not overwrite an existing destination file unless the force option is enabled.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/archive-completed-plans.mjs",
+          "anchor": "runArchive"
+        }
+      ],
+      "appliesTo": [
+        "scripts/archive-completed-plans.mjs",
+        "docs/plans/*.md",
+        "docs/completed/*.md"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/archive-completed-plans.mjs#runArchive"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-c1fd4cfe",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound archival overwrite-protection invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-c61d7430",
+      "assertion": "Quickfix-hit records are inserted into learning decisions with a deterministic `quickfix_hit:<hit_id>` key so replaying a JSONL record does not create a distinct decision.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud decisionKey construction"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs",
+        "scripts/lib/learning/**/*.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs",
+          "scripts/lib/learning/decision-logger.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-c61d7430",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound idempotency invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-cac6fd0f",
+      "assertion": "Quickfix statistics cache writes must be atomic so concurrent readers cannot observe a partially written cache file.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "writeAtomic"
+        },
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "rebuildFromCloud"
+        },
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "rebuildFromBootstrap"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#writeAtomic",
+          "scripts/lib/learning/quickfix-stats.mjs#rebuildFromCloud",
+          "scripts/lib/learning/quickfix-stats.mjs#rebuildFromBootstrap"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-persistence-cac6fd0f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound atomic-cache-write invariant with no linked test."
       }
     },
     {
@@ -2845,6 +3822,36 @@
       }
     },
     {
+      "id": "REQ-persistence-dc43a91b",
+      "assertion": "Failed friction-note inserts must remain in the local friction JSONL fallback while successfully inserted notes are removed from it.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainFrictionFallback remaining lines rewrite"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-dc43a91b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound fallback-retention invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-dfa4776c",
       "assertion": "Ledger writes must schema-validate the full ledger before atomically writing `.requirements/ledger.json`.",
       "kind": "persistence",
@@ -2881,6 +3888,37 @@
       }
     },
     {
+      "id": "REQ-persistence-f1fdcaf0",
+      "assertion": "A persona-consistency spec must not be finalized at its target path unless the candidate-to-locked persistence transition succeeds and reports at least one affected row.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "promoteOne"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs",
+        "tests/e2e/*.spec.*"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#promoteOne"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-f1fdcaf0",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound finalized-spec transition invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-persistence-f2245f56",
       "assertion": "Reconciliation must preserve a prior requirement's frozen id for exact matches, alias matches, and unambiguous mutual-best same-kind reword matches.",
       "kind": "persistence",
@@ -2908,6 +3946,71 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended id preservation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-f9c53cfa",
+      "assertion": "Session appends must validate the session ID and envelope, assign a unique next round number while holding the per-session lock, and persist schema version 2 records.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/session-store.mjs",
+          "anchor": "appendSession lock, nextRound, and BrainstormEnvelopeWriteSchema validation"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/session-store.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/session-store.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-f9c53cfa",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound session-append consistency invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-f9d27d04",
+      "assertion": "The quickfix-hit drain cursor must not advance beyond an incomplete trailing JSONL record or the first record whose parsing or cloud insertion fails.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud partialBytes and firstFailureOffset cursor persistence"
+        },
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs",
+          "scripts/learning/backfill-outcomes.mjs: firstFailureOffset and writeDrainCursor"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-persistence-f9d27d04",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound drain-cursor durability invariant with no linked test."
       }
     },
     {
@@ -2939,6 +4042,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended high-water merge invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-persistence-fc8d7325",
+      "assertion": "Quickfix-hit records drained from .audit/quickfix-hits.jsonl must be inserted with a decision key of quickfix_hit:<hit_id> so replayed records are idempotent at the learning-decision store boundary.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs",
+        "scripts/lib/learning/decision-logger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs: drainJsonlToCloud",
+          "scripts/lib/learning/decision-logger.mjs: buildDecisionKey"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-fc8d7325",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound replay-idempotency invariant with no linked test."
       }
     },
     {
@@ -3009,6 +4144,41 @@
       }
     },
     {
+      "id": "REQ-safety-14eac142",
+      "assertion": "Ambiguous or unresolved duplicate-justification pragmas must not exclude declarations from the drift score and must be surfaced only as advisory report findings.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/symbol-index/drift.mjs",
+          "anchor": "pragma reconciliation"
+        },
+        {
+          "file": "scripts/symbol-index/drift.mjs",
+          "anchor": "ambiguousUnresolvedSection"
+        }
+      ],
+      "appliesTo": [
+        "scripts/symbol-index/drift.mjs",
+        "scripts/lib/duplicate-justification-pragma.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/symbol-index/drift.mjs#main"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-14eac142",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound ambiguity-preserving drift-scoring invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-20a957d4",
       "assertion": "A relative file specifier that cannot be resolved exactly to a repo file must yield requires_verification rather than confirmed absence.",
       "kind": "safety",
@@ -3070,6 +4240,126 @@
       }
     },
     {
+      "id": "REQ-safety-2c813c8f",
+      "assertion": "Promoting a persona-consistency candidate must reject the candidate before rendering or persistence when its witness snapshot, contradiction payload, or nonempty journey steps fail validation.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "promoteOne"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#promoteOne"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-2c813c8f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound pre-persistence candidate-validation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-2e049a30",
+      "assertion": "Missing, malformed, or structurally invalid quickfix statistics cache data must cause quickfix matching to use an empty pattern-statistics set rather than throw or skip patterns.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "loadStats"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#loadStats"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-2e049a30",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound malformed-statistics-cache fail-safe invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-33b74369",
+      "assertion": "Memory-health trigger evaluation must suppress all three metric triggers when findings in the evaluation window are below the configured minimum sample size.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "evaluateTriggers"
+        }
+      ],
+      "appliesTo": [
+        "scripts/memory-health.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/memory-health.mjs#evaluateTriggers"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-33b74369",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound low-sample trigger-suppression invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-3426cda9",
+      "assertion": "A cloud quickfix-statistics rebuild must not write a cache when cloud storage is disabled, and must return an explicit cloud-disabled failure result.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "rebuildFromCloud"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#rebuildFromCloud"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-3426cda9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound cloud-disabled safety invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-3c5a0fde",
       "assertion": "Verification must not mutate the original finding fields and must attach verification data as a sibling verification object only for findings classified as existence claims.",
       "kind": "safety",
@@ -3105,6 +4395,38 @@
       }
     },
     {
+      "id": "REQ-safety-3f67bac5",
+      "assertion": "Crash recovery for a pending persona promotion must leave its journal and temporary file untouched when database access is unavailable because the persistence state cannot be safely determined.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "reconcilePromotionJournal"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs",
+        ".persona-test/promotion-journal/*.json",
+        "tests/e2e/*.tmp"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#reconcilePromotionJournal"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-3f67bac5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound unavailable-database recovery safety invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-41c947ea",
       "assertion": "A strict duplicate-justification pragma sweep must throw a PRAGMA_SWEEP_FAILED error for git-grep failures other than a genuine zero-match result, whereas a non-strict sweep must degrade to an empty r",
       "kind": "safety",
@@ -3134,6 +4456,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This strict sweep error-handling policy has no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-4f6b9c7c",
+      "assertion": "Invalid or non-finite memory-health threshold environment values must fall back to their defaults and emit a warning to stderr rather than silently disabling threshold comparisons.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "numEnv"
+        }
+      ],
+      "appliesTo": [
+        "scripts/memory-health.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/memory-health.mjs#numEnv"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-4f6b9c7c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound threshold-fallback and warning invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-548d0892",
+      "assertion": "Missing, malformed, or structurally invalid quickfix statistics caches must degrade to an empty pattern set rather than causing pattern skipping or throwing an error.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "loadStats"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#loadStats"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-548d0892",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound invalid-cache fail-safe invariant with no linked test."
       }
     },
     {
@@ -3227,6 +4609,36 @@
       }
     },
     {
+      "id": "REQ-safety-5ac5ec02",
+      "assertion": "Plan archival must not overwrite an existing destination file unless force is enabled, and a dry run must report intended moves without modifying the filesystem.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/archive-completed-plans.mjs",
+          "anchor": "runArchive"
+        }
+      ],
+      "appliesTo": [
+        "scripts/archive-completed-plans.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/archive-completed-plans.mjs#runArchive"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-5ac5ec02",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound archival overwrite and dry-run safety invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-5aeafdc3",
       "assertion": "Batch ledger writes perform exactly one atomic write of the merged ledger after all valid entries have been upserted and after asserting every stored entry has a topicId.",
       "kind": "safety",
@@ -3284,6 +4696,41 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended loud degradation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-61f6d34b",
+      "assertion": "CLAUDE.md auto-fix must modify only fixable `stale/file-ref` findings whose referenced markdown link occupies the entire line or list-item line, and must leave embedded prose references unchanged.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/claudemd/autofix.mjs",
+          "anchor": "applyFixes stale/file-ref filter and standaloneLink matcher"
+        },
+        {
+          "file": "scripts/lib/claudemd/autofix.mjs",
+          "anchor": "applyFixes"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/claudemd/autofix.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/claudemd/autofix.mjs",
+          "scripts/lib/claudemd/autofix.mjs: stale/file-ref filter and standaloneLink regular expression"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-61f6d34b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound constrained auto-fix safety invariant with no linked test."
       }
     },
     {
@@ -3346,6 +4793,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This failed-sweep write-prevention behavior has no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-6c77c203",
+      "assertion": "Promoting a persona-consistency candidate must validate its witness snapshot, contradiction payload, and non-empty journey steps before rendering or persisting a locked regression spec.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "promoteOne"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#promoteOne"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-6c77c203",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound persona-promotion validation invariant with no linked test."
       }
     },
     {
@@ -3419,6 +4896,36 @@
       }
     },
     {
+      "id": "REQ-safety-7cae6bdc",
+      "assertion": "The memory-health process must exit with code 1 when any metric trigger fires, when an alarming protected friction cluster exists, or when the friction subsystem fails unexpectedly.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "main"
+        }
+      ],
+      "appliesTo": [
+        "scripts/memory-health.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/memory-health.mjs#main"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-7cae6bdc",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound health-gate failure-code invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-843d772a",
       "assertion": "Extraction must fail fast when any single input file exceeds the configured extraction token budget instead of attempting to batch it.",
       "kind": "safety",
@@ -3478,6 +4985,50 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended atomic lock acquisition invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-9272a416",
+      "assertion": "Session loading must exclude malformed, structurally invalid, and unsupported future-schema records from returned rounds while preserving them in a capped quarantine ledger on a best-effort basis.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/session-store.mjs",
+          "anchor": "loadSession invalid-line handling and appendQuarantine"
+        },
+        {
+          "file": "scripts/lib/brainstorm/session-store.mjs",
+          "anchor": "QUARANTINE_CAP"
+        },
+        {
+          "file": "scripts/lib/brainstorm/session-store.mjs",
+          "anchor": "loadSession"
+        },
+        {
+          "file": "scripts/lib/brainstorm/session-store.mjs",
+          "anchor": "appendQuarantine"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/session-store.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/session-store.mjs",
+          "scripts/lib/brainstorm/session-store.mjs: invalid-line branches and appendQuarantine",
+          "scripts/lib/brainstorm/session-store.mjs: QUARANTINE_CAP"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-safety-9272a416",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound malformed-session containment invariant with no linked test."
       }
     },
     {
@@ -3583,6 +5134,36 @@
       }
     },
     {
+      "id": "REQ-safety-9af234c3",
+      "assertion": "A persona-consistency promotion must not replace an existing final spec with different content, but may treat byte-identical existing and temporary specs as an idempotent completion.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "promoteOne"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#promoteOne"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-9af234c3",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound idempotent finalized-spec safety invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-9b38c1dd",
       "assertion": "Batch ledger writes treat only ENOENT as a new empty ledger and throw on malformed JSON, permission errors, or ledgers missing an entries array.",
       "kind": "safety",
@@ -3611,6 +5192,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended batch-read failure invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-9d608c5e",
+      "assertion": "A quickfix pattern may be skipped only when its acceptance rate is strictly below the configured skip threshold and its total hit count is at least the configured minimum hit count.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/quickfix-stats.mjs",
+          "anchor": "shouldSkipPattern"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/quickfix-stats.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/quickfix-stats.mjs#shouldSkipPattern"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "needs-review",
+      "gap": {
+        "requirementId": "REQ-safety-9d608c5e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound quickfix pattern-skipping safety invariant with no linked test."
       }
     },
     {
@@ -3900,6 +5511,37 @@
       }
     },
     {
+      "id": "REQ-safety-d648ae19",
+      "assertion": "Persona-consistency promotion must refuse to overwrite a pre-existing finalized spec with different content.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "promoteOne"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs",
+        "tests/e2e/*.spec.*"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#promoteOne"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-d648ae19",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound finalized-spec overwrite-protection invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-d9053cf6",
       "assertion": "File locks must be acquired with exclusive create semantics and released only when the on-disk token still matches the token acquired by the current process.",
       "kind": "safety",
@@ -3936,6 +5578,36 @@
       }
     },
     {
+      "id": "REQ-safety-db17bf8c",
+      "assertion": "Each learning decision type must have an independently bounded FIFO queue, and reaching its cap must discard only that type's oldest queued entry.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/learning/decision-logger.mjs",
+          "anchor": "recordDecision per-type queue cap handling"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/learning/decision-logger.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/learning/decision-logger.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-db17bf8c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound per-type queue isolation invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-safety-e1235cf7",
       "assertion": "A failed pragma sweep in strict mode must throw a PRAGMA_SWEEP_FAILED error unless git grep conclusively reports zero matches, whereas non-strict callers must degrade to an empty result.",
       "kind": "safety",
@@ -3965,6 +5637,106 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This strict-versus-non-strict failure policy has no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-e241250d",
+      "assertion": "A friction-recurrence query failure caused by an absent expected database function or table may be reported as unavailable without failing the health gate, whereas any other friction-query failure mus",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "collectFrictionSection"
+        },
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "main"
+        }
+      ],
+      "appliesTo": [
+        "scripts/memory-health.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/memory-health.mjs#collectFrictionSection",
+          "scripts/memory-health.mjs#main"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-e241250d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound friction-query failure-classification invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-e7e30772",
+      "assertion": "Recovery of a pending persona-promotion journal entry must leave the entry and associated files untouched when database access is unavailable because it cannot safely determine whether the database tr",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/persona-consistency-promote.mjs",
+          "anchor": "reconcilePromotionJournal"
+        }
+      ],
+      "appliesTo": [
+        "scripts/persona-consistency-promote.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/persona-consistency-promote.mjs#reconcilePromotionJournal"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-e7e30772",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound unavailable-database promotion-recovery invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-ea7bff30",
+      "assertion": "Memory-health threshold environment overrides that are absent, empty, non-finite, or otherwise invalid must use their documented fallback values rather than silently disabling trigger comparisons.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "numEnv"
+        },
+        {
+          "file": "scripts/memory-health.mjs",
+          "anchor": "THRESHOLDS"
+        }
+      ],
+      "appliesTo": [
+        "scripts/memory-health.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/memory-health.mjs#numEnv",
+          "scripts/memory-health.mjs#THRESHOLDS"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-ea7bff30",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound configuration-fallback invariant with no linked test."
       }
     },
     {
@@ -4208,6 +5980,66 @@
       }
     },
     {
+      "id": "REQ-security-b976680e",
+      "assertion": "Quickfix-hit context sent from the local JSONL log to cloud storage must redact secrets in both the recorded file path and snippet.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud context.file and context.snippet"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-b976680e",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound secret-redaction invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-c5a057de",
+      "assertion": "Before quickfix-hit file paths and snippets are sent from local JSONL telemetry to the cloud decision store, both values must be passed through secret redaction.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "drainJsonlToCloud"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs: redactSecrets calls when constructing entry.context"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-c5a057de",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound telemetry secret-redaction invariant with no linked test."
+      }
+    },
+    {
       "id": "REQ-security-d55680e9",
       "assertion": "Extraction must reject any requested file path that escapes the repo root before reading or sending file content.",
       "kind": "security",
@@ -4239,6 +6071,66 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended repo-root path-safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-dbe740a4",
+      "assertion": "The file-state outcome detector must not read a path that is absolute, drive-qualified, contains a parent-directory segment, or resolves outside the repository root.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "computeOutcomeFromFileState"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs: path-safety gate before existsSync/readFileSync"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-security-dbe740a4",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound file-state path confinement invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-security-df42857a",
+      "assertion": "Quickfix file-state resolution must refuse to read paths that are absolute, drive-qualified, contain `..` traversal segments, or resolve outside the repository root.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/learning/backfill-outcomes.mjs",
+          "anchor": "computeOutcomeFromFileState path-safety gate"
+        }
+      ],
+      "appliesTo": [
+        "scripts/learning/backfill-outcomes.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/learning/backfill-outcomes.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-df42857a",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This is a sound repository-path confinement invariant with no linked test."
       }
     },
     {
@@ -4332,5 +6224,20 @@
       }
     }
   ],
-  "identityAliases": {}
+  "identityAliases": {
+    "REQ-security-5d785efb": "REQ-security-b976680e",
+    "REQ-persistence-8d799d66": "REQ-persistence-dc43a91b",
+    "REQ-behavioural-0650734f": "REQ-behavioural-298a3c86",
+    "REQ-persistence-598c2d6c": "REQ-persistence-f9c53cfa",
+    "REQ-safety-6c7d8895": "REQ-safety-548d0892",
+    "REQ-correctness-3a67cb9b": "REQ-correctness-7760877a",
+    "REQ-safety-cd2d66f5": "REQ-safety-7cae6bdc",
+    "REQ-correctness-ab9cf98d": "REQ-correctness-d2c4cb1a",
+    "REQ-security-fd980b41": "REQ-security-dbe740a4",
+    "REQ-correctness-6817561c": "REQ-correctness-d2203490",
+    "REQ-safety-f58041bb": "REQ-safety-14eac142",
+    "REQ-safety-f44b788e": "REQ-safety-5ac5ec02",
+    "REQ-safety-9e2d548c": "REQ-safety-6c77c203",
+    "REQ-persistence-ea15dad4": "REQ-persistence-9c23f3e5"
+  }
 }

@@ -15,8 +15,6 @@
  */
 
 import 'dotenv/config';
-import fs from 'node:fs';
-import path from 'node:path';
 import { findStalePragmas, renderStalePragmaSection } from '../lib/symbol-index/stale-pragma-sweep.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions } from '../lib/duplicate-justification-pragma.mjs';
 import {
@@ -32,6 +30,7 @@ import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { renderDriftIssue } from '../lib/arch-render.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
+import { atomicWriteFileSync } from '../lib/file-io.mjs';
 
 function parseArgs(argv) {
   const args = { out: null, json: false };
@@ -43,11 +42,7 @@ function parseArgs(argv) {
 }
 
 function atomicWrite(file, content) {
-  const dir = path.dirname(path.resolve(file));
-  fs.mkdirSync(dir, { recursive: true });
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  fs.writeFileSync(tmp, content);
-  fs.renameSync(tmp, file);
+  atomicWriteFileSync(file, content);
 }
 
 function classify(driftScore, threshold) {
@@ -188,7 +183,18 @@ async function main() {
   process.exit(status === 'RED' ? 1 : 0);
 }
 
-main().catch(err => {
-  process.stderr.write(`arch:drift: fatal: ${err.stack || err.message}\n`);
-  process.exit(2);
-});
+export const _internals = { atomicWrite };
+
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+
+if (isMain) {
+  main().catch(err => {
+    process.stderr.write(`arch:drift: fatal: ${err.stack || err.message}\n`);
+    process.exit(2);
+  });
+}

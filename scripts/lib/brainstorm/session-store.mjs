@@ -17,6 +17,7 @@ import { withFileLock } from './file-lock.mjs';
 import { BrainstormEnvelopeV2Schema, BrainstormEnvelopeWriteSchema } from './schemas.mjs';
 import { validateSid } from './id-validator.mjs';
 import { ensureDir } from '../cli-io.mjs';
+import { atomicWriteFileSync } from '../file-io.mjs';
 
 const SESSION_DIR_DEFAULT = '.brainstorm/sessions';
 const PRUNE_SENTINEL = '.last-prune';
@@ -227,7 +228,17 @@ export function loadSession(sid, { root = null } = {}) {
 
 function appendQuarantine(sid, invalidLines, root = null) {
   const qPath = quarantinePath(sid, root);
-  ensureDir(sessionDir(root));
+  try {
+    ensureDir(sessionDir(root));
+  } catch (err) {
+    // atomic-write-adoption plan: ensureDir sat unprotected right above the
+    // write it exists to serve — a failure here (e.g. a transient Windows
+    // lock) escaped uncaught, breaking this function's own best-effort,
+    // never-crash-the-caller contract. Folded into the same swallow-and-warn
+    // pattern as the read/write failures below.
+    process.stderr.write(`  [session-store] WARN: cannot prepare quarantine dir for ${qPath}: ${err.code || err.message}\n`);
+    return;
+  }
   // Audit R2-M5: best-effort write. Quarantine is diagnostic — missing
   // writes don't corrupt active state. Use a brief synchronous swap via
   // tmp+rename to avoid torn writes; concurrent loadSession invocations
@@ -244,12 +255,9 @@ function appendQuarantine(sid, invalidLines, root = null) {
   const trimmed = combined.slice(-QUARANTINE_CAP);
   // Atomic-rename for crash-safety; if two loaders write concurrently the
   // last writer wins on the ENTIRE file but neither leaves a torn artefact.
-  const tmpPath = `${qPath}.tmp.${process.pid}.${Date.now()}`;
   try {
-    fs.writeFileSync(tmpPath, trimmed.join('\n') + '\n');
-    fs.renameSync(tmpPath, qPath);
+    atomicWriteFileSync(qPath, trimmed.join('\n') + '\n');
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch { /* best-effort */ }
     process.stderr.write(`  [session-store] WARN: quarantine write failed: ${err.code || err.message}\n`);
   }
 }
@@ -329,4 +337,4 @@ export async function pruneOldSessions(maxAgeDays = PRUNE_DEFAULT_DAYS, { root =
 }
 
 // Internal — exported for tests
-export const __test__ = { readLinesUnvalidated, sessionPath, lockPath, quarantinePath };
+export const __test__ = { readLinesUnvalidated, sessionPath, lockPath, quarantinePath, appendQuarantine };

@@ -26,6 +26,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { retrySync } from './lib/retry-transient-fs.mjs';
 
 const PLANS_DIR     = 'docs/plans';
 const COMPLETED_DIR = 'docs/completed';
@@ -132,8 +133,8 @@ export function runArchive({
         if (dryRun) {
           summary.moved.push({ from: src, to: dst, dryRun: true });
         } else {
-          if (force && fs.existsSync(dst)) fs.unlinkSync(dst);
-          fs.renameSync(src, dst);
+          if (force && fs.existsSync(dst)) retrySync(() => fs.unlinkSync(dst));
+          retrySync(() => fs.renameSync(src, dst));
           summary.moved.push({ from: src, to: dst });
         }
       } catch (err) {

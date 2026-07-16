@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { atomicWriteFileSync } from '../file-io.mjs';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -452,13 +453,10 @@ async function retryWithBackoff(fn) {
 
 function writeOutbox(entry, outboxDir) {
   try {
-    fs.mkdirSync(outboxDir, { recursive: true });
     const keyHash = crypto.createHash('sha256').update(entry.decisionKey).digest('hex').slice(0, 12);
     const ts = entry.enqueuedAt.replace(/[:.]/g, '-');
     const finalPath = path.join(outboxDir, `${ts}-${keyHash}.json`);
-    const tmpPath = `${finalPath}.tmp`;
-    fs.writeFileSync(tmpPath, JSON.stringify(entry));
-    fs.renameSync(tmpPath, finalPath);
+    atomicWriteFileSync(finalPath, JSON.stringify(entry));
     return true;
   } catch (err) {
     throttledWarn('outbox-write', `outbox write failed for ${entry.decisionKey}: ${err.message}`);
@@ -546,4 +544,5 @@ export const _internals = Object.freeze({
   VALID_DECISION_TYPES,
   contextHash,
   canonicaliseContext,
+  writeOutbox,
 });

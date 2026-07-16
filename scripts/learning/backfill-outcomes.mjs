@@ -36,6 +36,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { redactSecrets } from '../lib/secret-patterns.mjs';
+import { atomicWriteFileSync } from '../lib/file-io.mjs';
+import { retrySync } from '../lib/retry-transient-fs.mjs';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -387,11 +389,9 @@ async function drainFrictionFallback({ learningStore, dryRun }) {
   if (!dryRun) {
     try {
       if (remaining.length === 0) {
-        fs.unlinkSync(FRICTION_JSONL_PATH);
+        retrySync(() => fs.unlinkSync(FRICTION_JSONL_PATH));
       } else {
-        const tmp = `${FRICTION_JSONL_PATH}.tmp.${process.pid}.${Date.now()}`;
-        fs.writeFileSync(tmp, remaining.join('\n') + '\n');
-        fs.renameSync(tmp, FRICTION_JSONL_PATH);
+        atomicWriteFileSync(FRICTION_JSONL_PATH, remaining.join('\n') + '\n');
       }
     } catch (err) {
       out.errors += 1;

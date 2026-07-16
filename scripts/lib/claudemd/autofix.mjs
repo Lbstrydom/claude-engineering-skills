@@ -4,6 +4,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { atomicWriteFileSync } from '../file-io.mjs';
 
 /**
  * Apply auto-fixes to findings. Only stale/file-ref with standalone links are fixable.
@@ -65,10 +66,7 @@ export function applyFixes(findings, repoRoot, options = {}) {
     }
 
     if (modified && !dryRun) {
-      // Atomic write
-      const tmpPath = absPath + '.tmp.' + process.pid;
-      fs.writeFileSync(tmpPath, lines.join('\n'));
-      fs.renameSync(tmpPath, absPath);
+      atomicWriteFileSync(absPath, lines.join('\n'));
     }
   }
 
