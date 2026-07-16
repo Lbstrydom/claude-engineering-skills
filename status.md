@@ -1,5 +1,14 @@
 # Project Status Log
 
+## 2026-07-16 — Fix: RLS disabled on 3 model-A/B tables (Supabase advisory follow-up)
+
+### Changes
+- **Origin**: while working on an unrelated task, flagged a Supabase security advisory finding for project `uahjjdelnnpfmaqjrwoz` — `audit_arms`, `finding_equivalence`, `model_ab_spend_ledger` all had RLS disabled, advisory text framed as "fully exposed to anon/authenticated roles."
+- **Verified against the live DB rather than trusting the advisory framing**: `relrowsecurity=false` confirmed on all three, but `has_table_privilege('anon'/'authenticated', …, 'SELECT')` returned `false` for every one — in fact zero tables in the project's `public` schema currently grant anything to `anon`/`authenticated` (consistent with the postgres-parity architecture: this project never exposes PostgREST, all access is the direct `AUDIT_DB_URL`/postgres role). So there was no live read/write exposure, but RLS-disabled remained a silent single-point-of-failure — a future grant to those roles would expose the tables with no additional warning.
+- **Root cause**: `20260701120000_model_ab.sql` created the three tables without an `ENABLE ROW LEVEL SECURITY` statement; the sibling `20260701160000_arm_eval.sql` looped RLS-enable over its own new tables but didn't retroactively cover these — same oversight class as the earlier `20260507120000_persona_rls_hardening.sql` fix.
+- **Fix**: `supabase/migrations/20260715130000_model_ab_rls_hardening.sql` — bare `ENABLE ROW LEVEL SECURITY`, no policies (deny-by-default for anon/authenticated; the runtime role bypasses RLS), same pattern as `20260530120000_audit_loop_migrations_rls.sql`. Applied via `node scripts/setup-postgres.mjs --migrate` (not the dashboard, per the migration-ledger governance rule) and verified live (`relrowsecurity=true` on all three post-migrate).
+- **Left untouched (pre-existing, unrelated)**: 6 unstaged modified files (`scripts/postgres-parity/generate-expected-schema.mjs`, `scripts/setup-postgres.mjs`, `tests/db-setup.test.mjs`, `tests/db-withtx.test.mjs`, `tests/fixtures/expected-schema.json`, `tests/symbol-index-drift-justification.test.mjs`) — not part of this fix, left for the user's own in-progress work.
+
 ## 2026-07-15 — `/cycle --autonomous` on `arch-drift-duplication-cleanup.md` — consolidated 10 duplicate clusters + built a whole-repo `@duplicate-justification` exclusion mechanism, 8 genuine bugs found+fixed, consolidated Gemini APPROVE
 
 ### Changes
