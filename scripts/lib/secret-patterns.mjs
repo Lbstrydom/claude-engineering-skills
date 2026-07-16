@@ -87,12 +87,109 @@ export function scanForSecrets(text) {
 }
 
 /**
+ * True iff the runtime's RegExp supports the `d` (hasIndices) flag, computed
+ * once at module load. `d` gives `matchAll` results a `.indices` array with
+ * exact `[start,end)` offsets for the full match and every capture group,
+ * relative to the string `matchAll` was called on.
+ */
+const D_FLAG_SUPPORTED = (() => {
+  try { new RegExp('', 'gd'); return true; } catch { return false; }
+})();
+
+/**
+ * Resolve which `[start, end)` span to redact for one match: the capture
+ * group's span if `captureGroup` is set AND that group participated in the
+ * match, else the full match's span. Fails closed (never "leave
+ * unredacted") — a non-participating group (`indices[captureGroup]` is
+ * `undefined`, e.g. a future pattern with the group inside an alternation)
+ * or an out-of-range `captureGroup` both fall back to `indices[0]` (the
+ * full match).
+ *
+ * @param {Array<[number,number]|undefined>} indices - a `d`-flagged match's `.indices`
+ * @param {number|undefined} captureGroup - 1-based group index, or falsy for full-match patterns
+ * @returns {[number, number]}
+ */
+function resolveRedactionSpan(indices, captureGroup) {
+  if (captureGroup && indices[captureGroup]) return indices[captureGroup];
+  return indices[0];
+}
+
+/**
+ * Core replacement loop, parameterized on `dFlagSupported` so it's testable
+ * without relying on the real (immutable, closed-over) runtime detection —
+ * an ESM named export is a read-only binding and can't be monkeypatched by
+ * a test, so the flag is threaded as an explicit argument instead.
+ *
+ * Patterns are processed **sequentially against an accumulating string**
+ * (same semantics as the pre-fix algorithm): each pattern's `matchAll` runs
+ * against `result` as it stands at the start of that pattern's turn: every
+ * match for THIS pattern is computed against that snapshot before any
+ * splice happens (`matchAll` is lazy over the string it was called on, and
+ * the loop below only reassigns `result` after the whole pattern's pass
+ * completes), so within one pattern's pass, indices never need adjustment
+ * for an earlier splice in the same pass.
+ *
+ * When `dFlagSupported` is `false` (module-load feature-detection found no
+ * `d`-flag support — e.g. a synced consumer repo on an old Node, since
+ * `engines` in package.json is advisory and does not prevent execution):
+ * the per-pattern `RegExp` omits `'d'` entirely (so construction never
+ * throws), and every match — including `captureGroup` ones — redacts its
+ * FULL match span via `match.index`/`match[0].length` (available with or
+ * without the `d` flag), never attempting group-only isolation. This is
+ * safe (never under-redacts) even though it's more conservative than the
+ * indices-based path.
+ *
+ * @param {string} text
+ * @param {typeof SECRET_PATTERNS} patterns
+ * @param {{dFlagSupported: boolean}} opts
+ * @returns {{text: string, redacted: string[]}}
+ */
+function redactWithPatterns(text, patterns, { dFlagSupported }) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return { text: text ?? '', redacted: [] };
+  }
+  let result = text;
+  const matched = [];
+  for (const { name, re, captureGroup } of patterns) {
+    const flags = dFlagSupported
+      ? (re.flags.includes('d') ? re.flags : re.flags + 'd')
+      : re.flags;
+    const localRe = new RegExp(re.source, flags);
+    let found = false;
+    let out = '';
+    let lastEnd = 0;
+    for (const m of result.matchAll(localRe)) {
+      found = true;
+      let start; let end;
+      if (dFlagSupported) {
+        [start, end] = resolveRedactionSpan(m.indices, captureGroup);
+      } else {
+        start = m.index;
+        end = m.index + m[0].length;
+      }
+      out += result.slice(lastEnd, start) + `[REDACTED:${name}]`;
+      const newlineCount = (m[0].match(/\n/g) || []).length;
+      out += '\n'.repeat(newlineCount);
+      lastEnd = end;
+    }
+    out += result.slice(lastEnd);
+    if (found) { result = out; matched.push(name); }
+  }
+  return { text: result, redacted: matched };
+}
+
+/**
  * Redact secrets from text, replacing each match with `[REDACTED:pattern-name]`.
  * Returns the redacted text and the list of pattern names that were redacted.
  *
- * For the `generic-token` pattern we only replace the captured group (the
- * token itself), preserving the keyword context so operators can see WHAT was
- * redacted without exposing the value.
+ * For the `generic-token` and `dsn-password` patterns we only replace the
+ * captured group (the token/password itself), preserving the surrounding
+ * context so operators can see WHAT was redacted without exposing the
+ * value — redacted at the group's EXACT position via `RegExp`'s `d` flag
+ * (`hasIndices`), not a nested string search (which could hit an earlier,
+ * unrelated occurrence of the same value elsewhere in the match — e.g. a
+ * password equal to the DSN's scheme name or username; see
+ * docs/completed/redact-secrets-positional-collision-fix.md).
  *
  * **Line-count-preserving** (found reviewing `docs/plans/discovery-portfolio-secret-redaction.md`):
  * a whole-match replacement (the non-`captureGroup` path) appends trailing
@@ -109,29 +206,7 @@ export function scanForSecrets(text) {
  * @returns {{text: string, redacted: string[]}}
  */
 export function redactSecrets(text) {
-  if (typeof text !== 'string' || text.length === 0) {
-    return { text: text ?? '', redacted: [] };
-  }
-  let redacted = text;
-  const matches = [];
-  for (const { name, re, captureGroup } of SECRET_PATTERNS) {
-    const localRe = new RegExp(re.source, re.flags);
-    let found = false;
-    redacted = redacted.replace(localRe, (match, ...groups) => {
-      found = true;
-      if (captureGroup) {
-        // Replace only the captured group within the match
-        const group = groups[captureGroup - 1];
-        if (typeof group === 'string') {
-          return match.replace(group, `[REDACTED:${name}]`);
-        }
-      }
-      const newlineCount = (match.match(/\n/g) || []).length;
-      return `[REDACTED:${name}]` + '\n'.repeat(newlineCount);
-    });
-    if (found) matches.push(name);
-  }
-  return { text: redacted, redacted: matches };
+  return redactWithPatterns(text, SECRET_PATTERNS, { dFlagSupported: D_FLAG_SUPPORTED });
 }
 
 /**
@@ -154,3 +229,9 @@ export function redactFields(obj, fields) {
   }
   return { obj: copy, redacted };
 }
+
+export const _internals = Object.freeze({
+  resolveRedactionSpan,
+  redactWithPatterns,
+  isDFlagSupported: D_FLAG_SUPPORTED,
+});

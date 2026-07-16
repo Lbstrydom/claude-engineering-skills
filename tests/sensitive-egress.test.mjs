@@ -81,6 +81,13 @@ describe('redactSecrets', () => {
   });
 });
 
+describe('redactSecrets (provider-boundary wrapper) — positional collision (2026-07-16)', () => {
+  it('redacts the real password, not an earlier same-string occurrence, in a DSN passed to the LLM-provider boundary', () => {
+    const out = redactSecrets('postgresql://admin:admin@realhost.example.com:5432/prod');
+    assert.equal(out, 'postgresql://admin:[REDACTED:dsn-password]@realhost.example.com:5432/prod');
+  });
+});
+
 describe('gateSymbolForEgress', () => {
   it('skips by path for sensitive files', () => {
     const r = gateSymbolForEgress({ filePath: '.env', bodyText: 'foo' });

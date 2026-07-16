@@ -12,6 +12,7 @@ import {
   scanForSecrets,
   redactSecrets,
   redactFields,
+  _internals,
 } from '../scripts/lib/secret-patterns.mjs';
 
 describe('scanForSecrets', () => {
@@ -167,6 +168,54 @@ describe('redactSecrets', () => {
       assert.deepEqual(r.redacted, [], `no pattern should fire for: ${s}`);
       assert.equal(r.text, s);
     }
+  });
+});
+
+describe('redactSecrets — positional collision (2026-07-16 fix)', () => {
+  test('scheme collision — the real password is redacted, not a substring of the scheme', () => {
+    const r = redactSecrets('postgresql://postgres:postgres@127.0.0.1:5433/postgres');
+    assert.equal(r.text, 'postgresql://postgres:[REDACTED:dsn-password]@127.0.0.1:5433/postgres');
+  });
+
+  test('username==password collision — the real password is redacted, not the username', () => {
+    const r = redactSecrets('postgresql://admin:admin@realhost.example.com:5432/prod');
+    assert.equal(r.text, 'postgresql://admin:[REDACTED:dsn-password]@realhost.example.com:5432/prod');
+  });
+
+  test('generic-token has no realistic same-string collision (32-char min value always exceeds the ~9-char keyword prefix) — pinned regression oracle', () => {
+    const r = redactSecrets('password=abcdefghijklmnopqrstuvwxyz012345');
+    assert.equal(r.text, 'password=[REDACTED:generic-token]');
+  });
+
+  test('two DSNs, two independent collisions, one string — both redact correctly and independently', () => {
+    const r = redactSecrets('a: postgresql://x:x@h1/db  b: mysql://root:root@h2/db2');
+    assert.equal(r.text, 'a: postgresql://x:[REDACTED:dsn-password]@h1/db  b: mysql://root:[REDACTED:dsn-password]@h2/db2');
+  });
+
+  test('fail-closed: a non-participating capture group resolves to the full-match span', () => {
+    const indices = [[0, 20], undefined, [5, 10]]; // indices[0]=full match, indices[1]=undefined (didn't participate)
+    assert.deepEqual(_internals.resolveRedactionSpan(indices, 1), indices[0]);
+  });
+
+  test('fail-closed: an out-of-range captureGroup resolves to the full-match span', () => {
+    const indices = [[0, 20], [5, 10]];
+    assert.deepEqual(_internals.resolveRedactionSpan(indices, 7), indices[0]);
+  });
+
+  test('PEM byte-for-byte (upgraded from newline-count-only)', () => {
+    const pem = '-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----';
+    const r = redactSecrets(`cfg: ${pem} // ok`);
+    assert.equal(r.text, 'cfg: [REDACTED:pem-private-key]\n\n // ok');
+  });
+
+  test('d-flag-unsupported fallback: redacts the full match, never throws, never under-redacts', () => {
+    const r = _internals.redactWithPatterns(
+      'postgresql://admin:admin@host/db',
+      SECRET_PATTERNS,
+      { dFlagSupported: false },
+    );
+    assert.equal(r.text, '[REDACTED:dsn-password]host/db');
+    assert.ok(r.redacted.includes('dsn-password'));
   });
 });
 

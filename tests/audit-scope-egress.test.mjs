@@ -64,6 +64,22 @@ test('readFilesAsContext includes benign content and excludes a sensitive file (
   assert.match(out, /sensitive file\(s\) excluded/, 'must report the sensitive exclusion (not silently drop)');
 });
 
+test('readFilesAsContext redacts a same-string-collision DSN at the real secret position, not an earlier coincidental occurrence (2026-07-16)', (t) => {
+  const dir = mkdtemp('audit-scope-egress-collision-');
+  const prevCwd = process.cwd();
+  t.after(() => {
+    process.chdir(prevCwd);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  fs.writeFileSync(path.join(dir, 'dsn.js'), 'export const url = "postgresql://admin:admin@realhost.example.com:5432/prod";\n');
+  process.chdir(dir);
+  const out = readFilesAsContext(['dsn.js']);
+
+  assert.ok(out.includes('postgresql://admin:[REDACTED:dsn-password]@realhost.example.com:5432/prod'), 'the real password position must be redacted');
+  assert.ok(!out.includes(':admin@'), 'the real password must not survive in plaintext at ANY position');
+});
+
 test('safeReadFile fail-closed: rejects a symlink whose realpath escapes the boundary', (t) => {
   if (process.platform === 'win32') return; // symlink semantics differ; mirrors sensitive-egress skipOnWin
   const boundary = mkdtemp('audit-scope-bound-');
