@@ -402,7 +402,7 @@ describe('production wiring — behavioural contracts', () => {
   it('the runbook documents the operator self-service snippet with the contract markers', () => {
     // Snippet moved from AGENTS.md to the Postgres operations runbook (AGENTS.md
     // kept lean); the contract assertions follow it there.
-    const doc = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'postgres-parity-runbook.md'), 'utf-8');
+    const doc = fs.readFileSync(path.join(REPO_ROOT, 'docs', 'runbooks', 'postgres-parity.md'), 'utf-8');
     // Behavioural assertions about the snippet's CONTRACT, not the exact
     // formatting. The hook-snippet-behaviour test verifies the snippet
     // actually works under bash; this is the lighter "is it present?" gate.

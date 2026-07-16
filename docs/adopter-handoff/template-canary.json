@@ -7,7 +7,7 @@
   "fixtureSeed": null,
 
   "authBootstrap": {
-    "_doc": "PICK ONE — most real SPAs need auth before state surfaces render. kind:'none' is the default but will land on a public landing page for any auth-walled app. See docs/consistency-contract.md §'Auth-walled surfaces' for guidance.",
+    "_doc": "PICK ONE — most real SPAs need auth before state surfaces render. kind:'none' is the default but will land on a public landing page for any auth-walled app. See docs/reference/consistency-contract.md §'Auth-walled surfaces' for guidance.",
     "kind": "storageState",
     "storageStatePath": ".persona-test/storage-states/authed.json"
   },
@@ -37,7 +37,7 @@
       }
     },
     {
-      "_doc": "READ-ONLY constraint — every click step MUST carry readOnly:true. Destructive clicks (apply, delete, submit) are rejected at canary load time. See docs/consistency-contract.md §'Read-only canaries'.",
+      "_doc": "READ-ONLY constraint — every click step MUST carry readOnly:true. Destructive clicks (apply, delete, submit) are rejected at canary load time. See docs/reference/consistency-contract.md §'Read-only canaries'.",
       "action": "click",
       "label": "open analysis view",
       "locator": {

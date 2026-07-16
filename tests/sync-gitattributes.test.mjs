@@ -15,7 +15,7 @@ describe('sync .gitattributes EOL pins', () => {
     const pins = [
       '.claude/skills/** text eol=lf',
       '.github/prompts/** text eol=lf',
-      'docs/consistency-contract.md text eol=lf',
+      'docs/reference/consistency-contract.md text eol=lf',
     ];
     const r = updateManagedBlock(null, pins);
     assert.equal(r.action, 'create');

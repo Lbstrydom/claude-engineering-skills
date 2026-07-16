@@ -5,7 +5,7 @@
  * pre-registered decision status, and the pending adjudication queue depth.
  * Experiment-wide (assignments accumulate across every toggled-on repo).
  * Signature: `default({src, modelAb}, ui) → string`.
- * Runbook: docs/model-ab-experiment.md.
+ * Runbook: docs/research/runbooks/model-ab-experiment.md.
  *
  * @module scripts/lib/dashboard/sections/model-ab
  */
@@ -65,5 +65,5 @@ export default function sectionModelAb({ src, modelAb }, ui) {
       <tbody>${armRows}</tbody>
     </table></div>
     <p class="muted">CLIs: <code>model-ab-stats</code> (frontier + spend) · <code>model-ab-decision</code> (pre-registered rule) ·
-    <code>model-ab-adjudicate</code> (worksheet-first labelling). Runbook: docs/model-ab-experiment.md.</p>`;
+    <code>model-ab-adjudicate</code> (worksheet-first labelling). Runbook: docs/research/runbooks/model-ab-experiment.md.</p>`;
 }

@@ -252,7 +252,7 @@ flowchart LR
 **What is NOT committed**: the `scripts/.claude-skills/` tree itself. It's hydrated by re-running `npm run sync --target <name>` from the source repo. The skill `.md` files reference paths that only exist after sync.
 
 **Implications of this choice — documented limitations of v1**:
-1. **Fresh clones of a consumer repo on a new machine** need to run sync from source before any skill works. The skill .md files reference scripts at paths that don't exist yet. Failure mode is loud (skill invocation = "file not found"), so it's discoverable. The migration PR description and `docs/consumer-adoption.md` will document the post-clone setup step.
+1. **Fresh clones of a consumer repo on a new machine** need to run sync from source before any skill works. The skill .md files reference scripts at paths that don't exist yet. Failure mode is loud (skill invocation = "file not found"), so it's discoverable. The migration PR description and `docs/runbooks/consumer-adoption.md` will document the post-clone setup step.
 2. **CI runners**: same constraint. Neither consumer runs CI today, so this is a known-future-problem, not a blocker. If/when a consumer adds CI, the bootstrap mechanism becomes mandatory (see "Deferred to v2" below).
 3. **Inviting a collaborator** to a consumer repo: same as fresh clone. Collaborator clones the source repo too, then syncs. Documented.
 4. **`.sync-manifest.json` claims X is "installed"** but the file is gitignored. Resolution: the manifest's hashes are still valid (records what SHOULD be at that path); the freshness check warns when local file doesn't match upstream. Consumer reads manifest as a contract description, not a presence claim. Documented in the manifest schema docstring.
@@ -369,7 +369,7 @@ flowchart LR
 - New subsection: **"Adopting these skills in a new repo"** — pointer to a migration recipe (one-time `git rm --cached` dance, the package.json caveat for `npm run X`, links to the consumer-side manifest as the authoritative "what is ours" reference).
 - No changes to the existing "Architecture" mermaid block — that describes source-repo internals which are unchanged.
 
-#### `docs/consumer-adoption.md` — **NEW** (small, ~80 lines)
+#### `docs/runbooks/consumer-adoption.md` — **NEW** (small, ~80 lines)
 - The migration recipe in full. Pasted into AGENTS.md by pointer; lives separately because it's adopter-facing, not source-contributor-facing.
 - Sections: When to adopt; What gets installed where; The one-time `git rm --cached` migration; The `package.json` script-path update; Troubleshooting.
 
@@ -393,7 +393,7 @@ These PRs are mechanically identical; described once.
 - Every `node scripts/X.mjs` → `node scripts/.claude-skills/X.mjs`. Auto-done by the sync rewriter.
 
 #### Consumer's `package.json` — **NOT CHANGED BY SYNC**
-- Per scope discipline: we do NOT touch consumer-owned package.json scripts. The migration recipe in `docs/consumer-adoption.md` documents that any `npm run X` script in the consumer's `package.json` that invokes `node scripts/X.mjs` for OUR files must be updated by hand. ai-organiser has no such scripts (verified: `grep "node scripts/" package.json`); wine-cellar-app to be verified during migration. If found, the user updates them in the same migration PR.
+- Per scope discipline: we do NOT touch consumer-owned package.json scripts. The migration recipe in `docs/runbooks/consumer-adoption.md` documents that any `npm run X` script in the consumer's `package.json` that invokes `node scripts/X.mjs` for OUR files must be updated by hand. ai-organiser has no such scripts (verified: `grep "node scripts/" package.json`); wine-cellar-app to be verified during migration. If found, the user updates them in the same migration PR.
 
 ---
 
@@ -413,7 +413,7 @@ These PRs are mechanically identical; described once.
 | Manifest schema change breaks old consumer's drift-check | Very low | Low (warnings only) | `layout` field is optional with default `'legacy'`. Old consumers ignore unknown fields. Zod's permissive `.optional()` makes this safe. |
 | Path-mapper's default rule misses a `scripts/**` subdir (was H5) | Very low | Low | Default = "everything maps"; explicit exceptions table is the closed set. Inventory-driven tests catch any new top-level path that's neither default nor explicit. |
 | Synced script breaks on relocation due to `import.meta` + `'..'` (was H4) | Low | High (silent runtime fail) | Only 1 file affected today (`cache-hitrate-check.mjs`); patched. CI guard test (`relocation-guard.test.mjs`) prevents regression. |
-| Fresh clone of consumer repo can't run skills (was H2 — explicit v1 limitation) | Medium (will happen) | Medium (loud failure: "file not found") | Documented in `docs/consumer-adoption.md`; deferred bootstrap script in §5; loud failure is discoverable, not silent corruption. |
+| Fresh clone of consumer repo can't run skills (was H2 — explicit v1 limitation) | Medium (will happen) | Medium (loud failure: "file not found") | Documented in `docs/runbooks/consumer-adoption.md`; deferred bootstrap script in §5; loud failure is discoverable, not silent corruption. |
 | First-time `.gitignore` write on a consumer that doesn't have one | Very low | Very low | `updateGitignoreBlock` handles missing-file case (creates with just the block). Tested. |
 
 **Deliberately deferred**:
@@ -442,7 +442,7 @@ These PRs are mechanically identical; described once.
 
 ### Edge cases to verify (Phase 2 checklist)
 - A consumer `.gitignore` that already contains an unrelated `scripts/.claude-skills/` line outside the markers → managed block adds its own; no dedup; user resolves duplication if it matters.
-- A consumer `.gitignore` with hand-written content between our markers from a prior tool → we replace it (the block is owned). Documented in `docs/consumer-adoption.md`.
+- A consumer `.gitignore` with hand-written content between our markers from a prior tool → we replace it (the block is owned). Documented in `docs/runbooks/consumer-adoption.md`.
 - An invocation in a skill `.md` that's already on the new path (`node scripts/.claude-skills/X.mjs`) → rewriter no-ops (regex doesn't match).
 - A relFile passed to `sourceRelToDestRel` that doesn't match any class → returns the input unchanged (passthrough). Unit tested.
 - A relFile with backslashes (Windows-generated source running on Linux consumer or vice versa) → `sourceRelToDestRel` normalises to forward slashes first. Unit tested.
@@ -660,7 +660,7 @@ This plan executes as **three coordinated PRs**: one in source, two in consumers
    - .gitignore now excludes scripts/.claude-skills/ via a managed block.
    - Manifest now records layout: 'isolated'.
 
-   See claude-engineering-skills docs/consumer-adoption.md for the
+   See claude-engineering-skills docs/runbooks/consumer-adoption.md for the
    migration recipe.
 
    Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
@@ -676,7 +676,7 @@ This plan executes as **three coordinated PRs**: one in source, two in consumers
 ### Phase 5 — Documentation + ship (source repo, finishes PR 1)
 
 1. AGENTS.md edits per §7. Run `npm run context:check` again — must stay clean.
-2. New `docs/consumer-adoption.md` per §7.
+2. New `docs/runbooks/consumer-adoption.md` per §7.
 3. `npm run skills:regenerate` to refresh any prompts that reference the new layout.
 4. Final `/audit-code --scope=diff` pass on PR 1 to catch what static analysis would catch on review.
 5. `/ship` from source repo. PR title: `feat(sync): isolate consumer tooling under scripts/.claude-skills/`.

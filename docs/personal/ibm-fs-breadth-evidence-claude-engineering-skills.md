@@ -39,7 +39,7 @@ classic SDLC stages; CI/CD as automated build-and-test on each change.
 | | |
 |---|---|
 | **Type** | Doc / engineering doctrine (project instructions, read by every agent session) |
-| **Location** | [AGENTS.md:366-388](AGENTS.md#L366-L388); full version extracted to [docs/pre-ship-empirical-verify.md](docs/pre-ship-empirical-verify.md) |
+| **Location** | [AGENTS.md:366-388](../../AGENTS.md#L366-L388); full version extracted to [docs/runbooks/pre-ship-empirical-verify.md](../runbooks/pre-ship-empirical-verify.md) |
 | **Dates** | Introduced `3204910` **2026-06-26**; extracted to `docs/` in `f78852c` **2026-07-13** |
 | **Classification** | **COURSE-APPLIED** (postdates the 2026-06-22 C1 capture by four days) |
 
@@ -72,7 +72,7 @@ one, it is the branch that can report **green without having checked anything**.
 | | |
 |---|---|
 | **Type** | Skill definition |
-| **Location** | [skills/audit-code/SKILL.md:247-263](skills/audit-code/SKILL.md#L247-L263) |
+| **Location** | [skills/audit-code/SKILL.md:247-263](../../skills/audit-code/SKILL.md#L247-L263) |
 | **Dates** | File born `b5f1274` **2026-04-27**; materially rewritten post-capture — `b9474f5` **2026-06-28** ("runtime-truth audit rules + topology honesty"), `6cf88fc` **2026-06-29** (deterministic outcome capture) |
 | **Classification** | **PRE-COURSE** on the convergence design; the cited post-capture rewrites are COURSE-APPLIED on the body. Cite it as *"the course gave me the vocabulary (CI/CD, quality gates) for a mechanism I had already built"*. |
 
@@ -102,7 +102,7 @@ It is a termination condition, which is a stronger object than a checklist.
 | | |
 |---|---|
 | **Type** | Config / script |
-| **Location** | [package.json:43](package.json#L43); installer at [scripts/install-prepush-hook.mjs:1-12](scripts/install-prepush-hook.mjs#L1-L12) |
+| **Location** | [package.json:43](../../package.json#L43); installer at [scripts/install-prepush-hook.mjs:1-12](../../scripts/install-prepush-hook.mjs#L1-L12) |
 | **Dates** | `check` script pre-dates capture; its newest member, `context:check` (fails when AGENTS.md exceeds 1200 lines), landed `f78852c` **2026-07-13** |
 | **Classification** | **PRE-COURSE** (gate); **COURSE-APPLIED** on the 2026-07-13 addition |
 
@@ -128,7 +128,7 @@ traceability; "link the exact commit, not the repo root"; reversible history.
 | | |
 |---|---|
 | **Type** | Doc (invariant) + the commit that applied it |
-| **Location** | Policy: [AGENTS.md:38-63](AGENTS.md#L38-L63). Applied: commit **`966cf30`** — *"chore(sync): gitignore the source sync-manifest (kill perpetual-dirty churn)"* |
+| **Location** | Policy: [AGENTS.md:38-63](../../AGENTS.md#L38-L63). Applied: commit **`966cf30`** — *"chore(sync): gitignore the source sync-manifest (kill perpetual-dirty churn)"* |
 | **Dates** | Policy born `881d298` **2026-06-04** (PRE-COURSE); the sync-manifest clause + the 298-line untracking landed **2026-06-28** |
 | **Classification** | **COURSE-APPLIED** on the body (`966cf30`, two days after the C4 capture) |
 
@@ -157,7 +157,7 @@ explicitly named as the failure mode.
 | | |
 |---|---|
 | **Type** | Skill definition |
-| **Location** | [skills/ship/SKILL.md:363-396](skills/ship/SKILL.md#L363-L396) (Step 6 — Stage, Commit, Push); gates at [skills/ship/SKILL.md:49-72](skills/ship/SKILL.md#L49-L72) |
+| **Location** | [skills/ship/SKILL.md:363-396](../../skills/ship/SKILL.md#L363-L396) (Step 6 — Stage, Commit, Push); gates at [skills/ship/SKILL.md:49-72](../../skills/ship/SKILL.md#L49-L72) |
 | **Dates** | File born `26bc61d` **2026-04-06**; the cited Step 6.0/6.1 text was written in `966cf30` **2026-06-28** |
 | **Classification** | **PRE-COURSE** overall; **COURSE-APPLIED** on the Step 6.0/6.1 body (2026-06-28) |
 
@@ -205,7 +205,7 @@ scanner.
 | | |
 |---|---|
 | **Type** | Script / schema |
-| **Location** | `commit_sha`, `branch`, `plan_id` columns on `audit_runs`, written by `runMultiPassCodeAudit` — see [AGENTS.md "Added columns"](AGENTS.md) and [scripts/cross-skill.mjs](scripts/cross-skill.mjs) |
+| **Location** | `commit_sha`, `branch`, `plan_id` columns on `audit_runs`, written by `runMultiPassCodeAudit` — see [AGENTS.md "Added columns"](../../AGENTS.md) and [scripts/cross-skill.mjs](../../scripts/cross-skill.mjs) |
 | **Dates** | `5cf7064` **2026-04-19** (cross-skill data loop) |
 | **Classification** | **PRE-COURSE** — the course named it ("traceability"), it was already built |
 
@@ -230,7 +230,7 @@ coding-assistant descriptions are vendor characterisations, not benchmarks."**
 | | |
 |---|---|
 | **Type** | Script + research write-up |
-| **Location** | Harness: [scripts/model-eval-auditor.mjs](scripts/model-eval-auditor.mjs), [scripts/lib/model-eval/](scripts/lib/model-eval/). Verdict: [docs/research/experiment-3-model-swap-glm-vs-gpt.md:30-42](docs/research/experiment-3-model-swap-glm-vs-gpt.md#L30-L42) |
+| **Location** | Harness: [scripts/model-eval-auditor.mjs](../../scripts/model-eval-auditor.mjs), [scripts/lib/model-eval/](../../scripts/lib/model-eval). Verdict: [docs/research/experiment-3-model-swap-glm-vs-gpt.md:30-42](../research/experiment-3-model-swap-glm-vs-gpt.md#L30-L42) |
 | **Dates** | Harness `8999636` **2026-07-11** (same day as the C14 capture); verdict `67f339e` **2026-07-13** |
 | **Classification** | **COURSE-APPLIED** — the verdict doc and its supporting fixes (`fe84b4e` 07-12, `7572c04` 07-12, `ceec3cd` 07-12) all postdate 2026-07-11 unambiguously. The harness's birth commit lands *on* the capture date; treat the harness as same-day and cite the verdict as the dated artefact. |
 
@@ -267,7 +267,7 @@ counts:
 | | |
 |---|---|
 | **Type** | Commit + script |
-| **Location** | **`d73dc9d`** — *"fix: shadow flip incident #2 — allowTiered per-call gate stops real API calls leaking into unit tests"*. Code: [scripts/openai-audit.mjs:434-446](scripts/openai-audit.mjs#L434-L446) and [:782-784](scripts/openai-audit.mjs#L782-L784); guard test [tests/tiered-pipeline-wiring.test.mjs](tests/tiered-pipeline-wiring.test.mjs) (+115) |
+| **Location** | **`d73dc9d`** — *"fix: shadow flip incident #2 — allowTiered per-call gate stops real API calls leaking into unit tests"*. Code: [scripts/openai-audit.mjs:434-446](../../scripts/openai-audit.mjs#L434-L446) and [:782-784](../../scripts/openai-audit.mjs#L782-L784); guard test [tests/tiered-pipeline-wiring.test.mjs](../../tests/tiered-pipeline-wiring.test.mjs) (+115) |
 | **Dates** | **2026-07-13** |
 | **Classification** | **COURSE-APPLIED** |
 
@@ -298,7 +298,7 @@ labelled honestly as "#2".
 | | |
 |---|---|
 | **Type** | Skill definition + scripts |
-| **Location** | Triage rules [skills/audit-code/SKILL.md:178-192](skills/audit-code/SKILL.md#L178-L192); rebuttal [skills/audit-code/SKILL.md:232-244](skills/audit-code/SKILL.md#L232-L244); the mandatory independent gate [scripts/gemini-review.mjs](scripts/gemini-review.mjs) |
+| **Location** | Triage rules [skills/audit-code/SKILL.md:178-192](../../skills/audit-code/SKILL.md#L178-L192); rebuttal [skills/audit-code/SKILL.md:232-244](../../skills/audit-code/SKILL.md#L232-L244); the mandatory independent gate [scripts/gemini-review.mjs](../../scripts/gemini-review.mjs) |
 | **Dates** | `gemini-review.mjs` born `6034876` **2026-03-30**; audit-code skill `b5f1274` **2026-04-27** |
 | **Classification** | **PRE-COURSE** — honestly flagged. The course supplied the names (compound AI system, multi-agent, "AI-generated code still requires developer review"); the mechanism predates it. |
 
@@ -327,7 +327,7 @@ must be stated: this predates the C14 capture.
 | | |
 |---|---|
 | **Type** | Doc (mandatory agent instruction) + script |
-| **Location** | [AGENTS.md "Architectural Memory — Pre-fix Consultation (MANDATORY)"](AGENTS.md); [scripts/lib/neighbourhood-query.mjs](scripts/lib/neighbourhood-query.mjs) |
+| **Location** | [AGENTS.md "Architectural Memory — Pre-fix Consultation (MANDATORY)"](../../AGENTS.md); [scripts/lib/neighbourhood-query.mjs](../../scripts/lib/neighbourhood-query.mjs) |
 | **Dates** | `ffb9441` **2026-05-03** |
 | **Classification** | **PRE-COURSE** |
 
@@ -352,7 +352,7 @@ whiteboard, applied to code reuse rather than access control.
 | | |
 |---|---|
 | **Type** | Script |
-| **Location** | [scripts/lib/sensitive-paths.mjs](scripts/lib/sensitive-paths.mjs) (single source of truth), [scripts/lib/sensitive-egress-gate.mjs](scripts/lib/sensitive-egress-gate.mjs); guards `tests/sensitive-egress.test.mjs`, `tests/audit-scope-egress.test.mjs` |
+| **Location** | [scripts/lib/sensitive-paths.mjs](../../scripts/lib/sensitive-paths.mjs) (single source of truth), [scripts/lib/sensitive-egress-gate.mjs](../../scripts/lib/sensitive-egress-gate.mjs); guards `tests/sensitive-egress.test.mjs`, `tests/audit-scope-egress.test.mjs` |
 | **Dates** | Gate `ffb9441` **2026-05-03**; canonical classifier `d705331` **2026-05-22**; path-scan heuristics materially rewritten in `fe84b4e` **2026-07-12** |
 | **Classification** | **PRE-COURSE** on birth; **COURSE-APPLIED** on the 2026-07-12 body rewrite |
 
@@ -370,7 +370,7 @@ leak ships credentials to a third party" is not a bug you get to fix afterwards.
 | | |
 |---|---|
 | **Type** | Config |
-| **Location** | [.mcp.json](.mcp.json) — two stdio MCP servers: `@playwright/mcp` (drives the browser for `/persona-test`, `/click-test`) and `mcp-mermaid` (validates plan diagrams before they persist) |
+| **Location** | [.mcp.json](../../.mcp.json) — two stdio MCP servers: `@playwright/mcp` (drives the browser for `/persona-test`, `/click-test`) and `mcp-mermaid` (validates plan diagrams before they persist) |
 | **Dates** | `4578b41` **2026-04-15** |
 | **Classification** | **PRE-COURSE** |
 
@@ -458,7 +458,7 @@ and the diff of whatever it caught.
 | **A1** — Empirical model evaluation, and the verdict to *not* switch | C14 | `docs/research/experiment-3-model-swap-glm-vs-gpt.md:30-42` (commit `67f339e`, 2026-07-13); harness `scripts/model-eval-auditor.mjs` | A candidate LLM was benchmarked against a curated defect corpus and **rejected** on a false-positive floor despite higher recall — then the write-up attacks the trustworthiness of its own recall metric. Tool choice as measurement, not marketing. | **COURSE-APPLIED** |
 | **A2** — Blast-radius gate on autonomous AI spend | C14 | commit `d73dc9d` (2026-07-13); `scripts/openai-audit.mjs:434-446`, `:782-784`; `tests/tiered-pipeline-wiring.test.mjs` | An env flag meant "the window is open" and was misread as "you may spend" — real billed API calls leaked into unit tests. The fix splits eligibility from per-call permission; only the production entrypoint may spend. | **COURSE-APPLIED** |
 | **A3** — Findings are challenged, not accepted | C14 | `skills/audit-code/SKILL.md:178-192` and `:232-244`; `scripts/gemini-review.mjs` | Three models with different jobs (author / auditor / independent adjudicator). A finding marked `uncertain` **must** be rebutted; the Gemini gate is mandatory even when the first two agree. Human judgement is a costed state, not a rubber stamp. | **PRE-COURSE** (course supplied the vocabulary) |
-| **A4** — Testing doctrine: audit your success paths | C1 | `AGENTS.md:366-388` (commit `3204910`, 2026-06-26); `docs/pre-ship-empirical-verify.md` | Four LLM review passes confirmed a bug that did not exist (a mid-transition style read). Doctrine: run it against one real app, and be adversarial about any branch that can report green. | **COURSE-APPLIED** |
+| **A4** — Testing doctrine: audit your success paths | C1 | `AGENTS.md:366-388` (commit `3204910`, 2026-06-26); `docs/runbooks/pre-ship-empirical-verify.md` | Four LLM review passes confirmed a bug that did not exist (a mid-transition style read). Doctrine: run it against one real app, and be adversarial about any branch that can report green. | **COURSE-APPLIED** |
 | **A5** — Convergence as the quality gate | C1 | `skills/audit-code/SKILL.md:247-263` | "Done" is a stability property over rounds, not a count of fixes: two stable rounds, with architectural findings resetting stability and mechanical ones not. | **PRE-COURSE** |
 | **A6** — Composite local-first pre-push gate | C1 | `package.json:43`; `scripts/install-prepush-hook.mjs` | CI as a local hook. Note `context:check` — the docs themselves are gated on size, because an always-loaded instruction file is a runtime cost. | **PRE-COURSE** (2026-07-13 addition COURSE-APPLIED) |
 | **A7** — What belongs under version control | C4 | commit `966cf30` (2026-06-28); policy at `AGENTS.md:38-63` | A 298-line generated manifest carrying a timestamp was untracked, because a file that is dirty on every push destroys the signal `git status` exists to give. Two-category test, with the middle ground named as the failure mode. | **COURSE-APPLIED** |

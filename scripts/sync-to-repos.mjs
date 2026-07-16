@@ -139,7 +139,7 @@ const CORE_ENTRY = [
   // before Phase 14's production-flip decision. Also in CLI_SMOKE_SET.
   'scripts/tiered-shadow-report.mjs',
   // Deterministic /ship commit helper — validates + appends the AI-*
-  // provenance trailer block and performs the commit (docs/commit-provenance.md).
+  // provenance trailer block and performs the commit (docs/reference/commit-provenance.md).
   // /ship SKILL.md shells it, nothing imports it. Walker pulls in
   // lib/commit-trailers.mjs (+ its sensitive-paths closure). Also in CLI_SMOKE_SET.
   'scripts/ship-commit.mjs',
@@ -174,7 +174,7 @@ const CORE_ENTRY = [
   // + its model-resolver / glob-match / sensitive-paths closure. Lock-step with sync-inventory.mjs.
   'scripts/efficacy-lints-check.mjs',
   // Local weekly-maintenance replica of the 5 GH Actions cron workflows
-  // (docs/local-maintenance-checks.md) — opt-in, default-OFF, invoked
+  // (docs/runbooks/local-maintenance-checks.md) — opt-in, default-OFF, invoked
   // opportunistically from the pre-push hook. Spawns each replicated check
   // as a subprocess, so memory-health.mjs + check-model-freshness.mjs must
   // ship too — neither was previously an entry point here (a real gap this
@@ -224,7 +224,7 @@ const CORE_ASSETS = [
   // Authoritative HTML-attribute contract for persona-test consistency mode.
   // Referenced by skills/persona-test/SKILL.md Phase 3b + references/consistency-mode.md;
   // consumer-app frontend devs read it to author their data-engine-* annotations.
-  'docs/consistency-contract.md',
+  'docs/reference/consistency-contract.md',
   // postgres-parity M4 — setup-postgres.mjs reads compat-bootstrap.sql via
   // fs (the import-graph walker can't follow fs reads). Migrations are
   // similarly fs-read; ship the whole directory so `--migrate` works on
@@ -675,7 +675,7 @@ async function main() {
         '.claude/settings.json text eol=lf',
         '.github/prompts/** text eol=lf',
         '.vscode/mcp.json text eol=lf',
-        'docs/consistency-contract.md text eol=lf',
+        'docs/reference/consistency-contract.md text eol=lf',
         'scripts/.sync-manifest.json text eol=lf',
         '.audit-loop/migrations/** text eol=lf',
       ],

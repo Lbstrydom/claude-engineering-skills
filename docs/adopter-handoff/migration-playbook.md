@@ -7,7 +7,7 @@ that experience into a 10-step linear sequence so the next adopter
 (e.g. ai-organiser) lands at the same outcome in **≤2 hours**.
 
 Companion docs:
-- [docs/consistency-contract.md](../consistency-contract.md) — the attribute contract
+- [docs/reference/consistency-contract.md](../reference/consistency-contract.md) — the attribute contract
 - [./template-surfaces.json](./template-surfaces.json) — minimal manifest
 - [./template-canary.json](./template-canary.json) — minimal canary
 
@@ -210,7 +210,7 @@ for in case any of these regress in your environment.
 - **`appliesTo.requiresState` field accepted by schema but ignored** by diff engine. **Fixed in round 7**: `activeStateTags` now derived by the runner from chip-style domClaims.
 
 ### Round 2 — auth-walled SPAs
-- **`authBootstrap: {kind:'none'}` template default lands on public page** for any auth-walled app. **Fixed**: docs/consistency-contract.md gained "Auth-walled surfaces — the first-run footgun" section.
+- **`authBootstrap: {kind:'none'}` template default lands on public page** for any auth-walled app. **Fixed**: docs/reference/consistency-contract.md gained "Auth-walled surfaces — the first-run footgun" section.
 - **3000ms default network-await too short for real SPA endpoints** that do real computation. **Fixed**: bumped default; per-source override via `awaitTimeoutMs`.
 
 ### Round 3 — staged rollout
@@ -221,11 +221,11 @@ for in case any of these regress in your environment.
 - **Annotation in local source but not on prod URL** = silent `missing-surface` finding that looked like rig confusion. **Fixed**: unannotated-surface message explicitly mentions deploy gap as a root cause.
 
 ### Round 5 — stale-tolerant chips
-- **`severityFloor: P0` for SWR-style chip** fires P0 on every page load (intentional stale = P0 noise). **Resolution**: docs/consistency-contract.md severity-floor table clarifies P1 for documented stale-tolerant UX.
+- **`severityFloor: P0` for SWR-style chip** fires P0 on every page load (intentional stale = P0 noise). **Resolution**: docs/reference/consistency-contract.md severity-floor table clarifies P1 for documented stale-tolerant UX.
 
 ### Round 6 — multi-step canary
 - **Hidden DOM elements with `hidden=""` attr` but matching locator** fired `unannotated-surface` even when the JS code was on a different render path. **Fix on adopter side**: annotate ALL render branches (visible AND hidden) with the contract attributes.
-- **Cross-surface divergence detected** — chip says `major` while CTA card hides itself (slow `/analyse` data). **Fix on adopter side**: derive the slow surface's loading shell from the fast surface's state. See docs/consistency-contract.md §Cross-surface loading derivation.
+- **Cross-surface divergence detected** — chip says `major` while CTA card hides itself (slow `/analyse` data). **Fix on adopter side**: derive the slow surface's loading shell from the fast surface's state. See docs/reference/consistency-contract.md §Cross-surface loading derivation.
 
 ### Round 7 — operationalisation
 - **`appliesTo.routePattern` honoured ONLY on missing-surface path**, not on unannotated-surface path. **Fixed in upstream commit 777c03e**: `detectUnannotatedSurfaces` now calls `appliesToCurrent` before the locator probe.

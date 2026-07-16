@@ -10,14 +10,14 @@
 
 ## 1. Context Summary
 
-While drafting [docs/plans/liveness-and-canonical-paths.md](docs/plans/liveness-and-canonical-paths.md), `cross-skill.mjs upsert-plan --json '{"skill":"plan",…}'` failed with:
+While drafting [docs/plans/liveness-and-canonical-paths.md](liveness-and-canonical-paths.md), `cross-skill.mjs upsert-plan --json '{"skill":"plan",…}'` failed with:
 
 ```
 [learning] upsertPlan failed: new row for relation "plans" violates check constraint "plans_skill_check"
 ```
 
 Investigation showed the live cloud Postgres `plans_skill_check` constraint still reads
-`CHECK (skill IN ('plan-backend', 'plan-frontend', 'manual', 'other'))` — missing `'plan'`. The migration that widens it ([supabase/migrations/20260519120000_plans_skill_unified.sql](supabase/migrations/20260519120000_plans_skill_unified.sql)) was committed 4 days ago but never applied. Worse, **two more recent migrations are also unapplied**:
+`CHECK (skill IN ('plan-backend', 'plan-frontend', 'manual', 'other'))` — missing `'plan'`. The migration that widens it ([supabase/migrations/20260519120000_plans_skill_unified.sql](../../supabase/migrations/20260519120000_plans_skill_unified.sql)) was committed 4 days ago but never applied. Worse, **two more recent migrations are also unapplied**:
 
 | Migration | Status today | Silent breakage |
 |---|---|---|
@@ -29,7 +29,7 @@ The drift is silent because every `cross-skill.mjs` writer fails-soft (`{ok:fals
 
 ### Why it happened
 
-The operator applies migrations through the Supabase dashboard SQL editor, not [scripts/setup-postgres.mjs](scripts/setup-postgres.mjs)`--migrate` (which is the documented path in AGENTS.md "Postgres-Parity Store"). The dashboard doesn't update the [audit_loop_migrations](scripts/setup-postgres.mjs#L184-L189) ledger, so the project has no record of what's applied and no CI gate that fails on drift. The most recent migrations simply got missed.
+The operator applies migrations through the Supabase dashboard SQL editor, not [scripts/setup-postgres.mjs](../../scripts/setup-postgres.mjs)`--migrate` (which is the documented path in AGENTS.md "Postgres-Parity Store"). The dashboard doesn't update the [audit_loop_migrations](../../scripts/setup-postgres.mjs#L184-L189) ledger, so the project has no record of what's applied and no CI gate that fails on drift. The most recent migrations simply got missed.
 
 ### Neighbourhood considered
 
@@ -37,20 +37,20 @@ Strong reuse signal — **everything we need already exists in setup-postgres.mj
 
 | Existing function | Lines | Reuse role |
 |---|---|---|
-| [runAdopt](scripts/setup-postgres.mjs#L471-L520) | 471-520 | Closest match (`justify-divergence`, sim 0.86). Already does live-vs-expected diff + seed ledger. **Reused unchanged.** (Earlier draft proposed extending it with `--through <prefix>`; dropped per R1 H1+H2.) |
-| [runMigrate](scripts/setup-postgres.mjs#L430-L469) | 430-469 | Apply path; already idempotent via sha256-skip. No code change. |
-| [ensureLedger](scripts/setup-postgres.mjs#L191-L193) | 191-193 | Ledger DDL; reused as-is by new modes. |
-| [readLedger](scripts/setup-postgres.mjs#L195-L198) | 195-198 | `Map<filename, sha256>` reader. |
-| [recordApplied](scripts/setup-postgres.mjs#L200-L206) | 200-206 | Ledger upsert. |
-| [listMigrations](scripts/setup-postgres.mjs#L210-L213) | 210-213 | Source-dir enumerator. |
-| [sha256](scripts/setup-postgres.mjs#L215-L219) | 215-219 | File hasher. |
-| [diffSchemas](scripts/setup-postgres.mjs#L266-L290) | 266-290 | Live-vs-expected categorical diff. |
+| [runAdopt](../../scripts/setup-postgres.mjs#L471-L520) | 471-520 | Closest match (`justify-divergence`, sim 0.86). Already does live-vs-expected diff + seed ledger. **Reused unchanged.** (Earlier draft proposed extending it with `--through <prefix>`; dropped per R1 H1+H2.) |
+| [runMigrate](../../scripts/setup-postgres.mjs#L430-L469) | 430-469 | Apply path; already idempotent via sha256-skip. No code change. |
+| [ensureLedger](../../scripts/setup-postgres.mjs#L191-L193) | 191-193 | Ledger DDL; reused as-is by new modes. |
+| [readLedger](../../scripts/setup-postgres.mjs#L195-L198) | 195-198 | `Map<filename, sha256>` reader. |
+| [recordApplied](../../scripts/setup-postgres.mjs#L200-L206) | 200-206 | Ledger upsert. |
+| [listMigrations](../../scripts/setup-postgres.mjs#L210-L213) | 210-213 | Source-dir enumerator. |
+| [sha256](../../scripts/setup-postgres.mjs#L215-L219) | 215-219 | File hasher. |
+| [diffSchemas](../../scripts/setup-postgres.mjs#L266-L290) | 266-290 | Live-vs-expected categorical diff. |
 
 Pattern mirrors I'll copy for CI wiring:
 
-- **[memory-health.yml](.github/workflows/memory-health.yml)** + **[architectural-drift.yml](.github/workflows/architectural-drift.yml)**: weekly cron + sticky GitHub issue with auto-close on green. Same shape for `migration-drift.yml`.
-- **[check-context-drift.mjs](scripts/check-context-drift.mjs)** + **[check-model-freshness.mjs](scripts/check-model-freshness.mjs)**: existing project pattern for "read-only drift check with `--format json` and `--strict` exit-code gating". Same shape for the new `--check-drift` mode.
-- **[check-sync.mjs](scripts/check-sync.mjs)**: existing pattern for **conditional-on-env** pre-push diagnostic (`AUDIT_DB_URL`-gated, never blocks contributors without DB access).
+- **[memory-health.yml](../../.github/workflows/memory-health.yml)** + **[architectural-drift.yml](../../.github/workflows/architectural-drift.yml)**: weekly cron + sticky GitHub issue with auto-close on green. Same shape for `migration-drift.yml`.
+- **[check-context-drift.mjs](../../scripts/check-context-drift.mjs)** + **[check-model-freshness.mjs](../../scripts/check-model-freshness.mjs)**: existing project pattern for "read-only drift check with `--format json` and `--strict` exit-code gating". Same shape for the new `--check-drift` mode.
+- **[check-sync.mjs](../../scripts/check-sync.mjs)**: existing pattern for **conditional-on-env** pre-push diagnostic (`AUDIT_DB_URL`-gated, never blocks contributors without DB access).
 
 No prior security incidents matched these paths (incident neighbourhood: 0 records).
 
@@ -92,7 +92,7 @@ graph LR
 
 ### Key design decisions
 
-1. **No new module** (#3 Modularity, #5 Single Source of Truth). All new behaviour lands inside [scripts/setup-postgres.mjs](scripts/setup-postgres.mjs). The architecture-memory query confirmed `runAdopt` already does the bootstrap pattern at sim 0.86 — extending it is the right call vs sibling. A separate file would be the **second** module that knows the catalog-query layout — guaranteed drift surface.
+1. **No new module** (#3 Modularity, #5 Single Source of Truth). All new behaviour lands inside [scripts/setup-postgres.mjs](../../scripts/setup-postgres.mjs). The architecture-memory query confirmed `runAdopt` already does the bootstrap pattern at sim 0.86 — extending it is the right call vs sibling. A separate file would be the **second** module that knows the catalog-query layout — guaranteed drift surface.
 
 2. **`--adopt` stays strict (no `--through`)** (#13 Idempotency, #15 Graceful Degradation, addresses R1-audit H1+H2). An earlier draft proposed `--through <prefix>` for a partial-adopt mode. Two HIGH findings rejected it: (a) the prefix is lexicographically ambiguous (`20260518120000_x.sql > 20260518` is true, so files with the cutoff timestamp prefix would be unintentionally excluded), and (b) downgrading the diff to "missing-in-live is allowed" creates a false-green path — a half-applied migration (operator's dashboard run crashed mid-stream) presents as "missing" and gets silently marked applied. The only sound partial-adopt would require generating a per-cutoff expected-schema manifest by replaying migrations into a scratch DB — significant infrastructure for a strictly one-time bootstrap. Cheaper: keep `--adopt` as a STRICT full-schema diff, and require operators to apply outstanding migrations through the dashboard ONCE before adopting. Today's drift gap (3 unapplied migrations) is a one-time pain regardless of which path we choose; after the first `--adopt` succeeds, every future migration goes through `--migrate` and the ledger stays current automatically.
 
@@ -111,7 +111,7 @@ graph LR
    - **sha-mismatch**: source file edited after apply (someone amended a committed migration — should fail loud).
    - **orphan-ledger**: ledger row exists, no source file (someone deleted a migration without backing it out — investigation needed).
 
-4. **Output format dual-purpose** (#11 Testability, #19). Human-readable stderr by default (mirrors the existing setup-postgres style with G/R/Y colors). `--format json` emits the structured drift report on stdout for CI consumption. Mirrors the existing pattern in [check-model-freshness.mjs](scripts/check-model-freshness.mjs) (`--format human|json` + `--strict`).
+4. **Output format dual-purpose** (#11 Testability, #19). Human-readable stderr by default (mirrors the existing setup-postgres style with G/R/Y colors). `--format json` emits the structured drift report on stdout for CI consumption. Mirrors the existing pattern in [check-model-freshness.mjs](../../scripts/check-model-freshness.mjs) (`--format human|json` + `--strict`).
 
 5. **Pre-push wire is fail-soft** (#15 Graceful Degradation). The pre-push hook calls `npm run db:check-drift --silent` ONLY when `AUDIT_DB_URL` is set in the operator's env. On drift, prints a one-line yellow warning with the recovery command — does NOT block the push. Why fail-soft: not all contributors have DB access, and an operator who's about to push a NEW migration legitimately has drift right up until they apply it (the migration sql file exists in HEAD but the ledger row doesn't until `--migrate` runs). Hard-blocking would create a chicken-and-egg.
 
@@ -183,7 +183,7 @@ If `--check-drift` reports drift CI-side but the operator can't immediately fix 
 
 ### Assumptions encoded
 
-- **Migration files are append-only after apply** — the sha-mismatch detector enforces this. If the operator legitimately needs to amend a migration (rare; usually means a hot-fix), they manually update `audit_loop_migrations.sha256` per the existing error message in [runMigrate](scripts/setup-postgres.mjs#L457-L458). This plan doesn't change that contract; it just makes the existing rule visible at check time, not just apply time.
+- **Migration files are append-only after apply** — the sha-mismatch detector enforces this. If the operator legitimately needs to amend a migration (rare; usually means a hot-fix), they manually update `audit_loop_migrations.sha256` per the existing error message in [runMigrate](../../scripts/setup-postgres.mjs#L457-L458). This plan doesn't change that contract; it just makes the existing rule visible at check time, not just apply time.
 - **`supabase/migrations/*.sql` is the source of truth for what should be applied** — already established. The check just makes it a verifiable contract.
 - **`AUDIT_DB_URL` is the canonical pointer to "the audit-loop store"** — already established by the postgres-parity work (M1-M4). No new env var.
 - **Operator applies migrations via this tool, not via the dashboard** — NEW assumption. The operator runbook in step 7 establishes this. The plan does NOT enforce it (we can't prevent dashboard use), but the check workflow makes drift visible within a week.
@@ -202,7 +202,7 @@ If we later need multi-tenant or per-environment ledgers, the cleanest evolution
 
 ## 6. File-Level Plan
 
-### EDIT [scripts/setup-postgres.mjs](scripts/setup-postgres.mjs)
+### EDIT [scripts/setup-postgres.mjs](../../scripts/setup-postgres.mjs)
 
 Three concrete additions, all colocated. Diff is small (~80 lines of new code) and self-contained.
 
@@ -395,7 +395,7 @@ The cloud-disabled branch must sit BEFORE the existing `if (!pool) { … process
 
 `runAdopt` is **unchanged**. The earlier draft proposed `--through <prefix>` for partial-adopt; R1-audit H1+H2 deemed it unsound (lexicographic ambiguity + false-green ledger risk). Dropped — see Decision 2 in §2.
 
-### EDIT [package.json](package.json)
+### EDIT [package.json](../../package.json)
 
 ```json
 "db:check-drift":      "node scripts/setup-postgres.mjs --check-drift",
@@ -409,7 +409,7 @@ The `check:integration` change (R2-audit M3) is an explicit edit to the WS3-adde
 
 The two new `db:check-drift*` scripts are load-bearing. The two `db:migrate` / `db:adopt` aliases are convenience — the underlying `node scripts/...` invocations stay valid and documented; the aliases just match the rest of the npm-script vocabulary (cf. `arch:refresh`, `learning:replay`). Optional but cheap.
 
-### EDIT [scripts/.cli-catalog.json](scripts/.cli-catalog.json)
+### EDIT [scripts/.cli-catalog.json](../../scripts/.cli-catalog.json)
 
 ```json
 "db:check-drift": {
@@ -434,9 +434,9 @@ The two new `db:check-drift*` scripts are load-bearing. The two `db:migrate` / `
 
 ### Pre-push wire — operator-self-service snippet (NOT installed automatically)
 
-Gemini-R1 caught a category error in an earlier draft of this plan: the existing [scripts/install-prepush-hook.mjs](scripts/install-prepush-hook.mjs) template is for CONSUMER repos (auto-runs `/audit-code` on draft plans, uses `$AUDIT_LOOP_DIR`, has no `npm run check` block). It is NOT the right home for a source-repo drift check.
+Gemini-R1 caught a category error in an earlier draft of this plan: the existing [scripts/install-prepush-hook.mjs](../../scripts/install-prepush-hook.mjs) template is for CONSUMER repos (auto-runs `/audit-code` on draft plans, uses `$AUDIT_LOOP_DIR`, has no `npm run check` block). It is NOT the right home for a source-repo drift check.
 
-The source-repo `.git/hooks/pre-push` is per-machine and not regenerated by any committed template. Rather than introduce a second installer pipeline for one snippet, the plan documents the chunk in [AGENTS.md](AGENTS.md) as an operator-paste:
+The source-repo `.git/hooks/pre-push` is per-machine and not regenerated by any committed template. Rather than introduce a second installer pipeline for one snippet, the plan documents the chunk in [AGENTS.md](../../AGENTS.md) as an operator-paste:
 
 ```bash
 # ── 1b. Migration-drift check (advisory, non-blocking) ─────────────────
@@ -471,9 +471,9 @@ fi
 
 The operator pastes the chunk into their source-repo `.git/hooks/pre-push` once. Future updates are operator-discretion (this is per-machine state; the CI workflow is the primary safety net regardless of whether the hook is installed). AGENTS.md documents the snippet in a fenced code block under the "Migration-drift detection" subsection so operators can copy-paste in one shot.
 
-### NEW [.github/workflows/migration-drift.yml](.github/workflows/migration-drift.yml)
+### NEW [.github/workflows/migration-drift.yml](../../.github/workflows/migration-drift.yml)
 
-Modeled on [.github/workflows/architectural-drift.yml](.github/workflows/architectural-drift.yml) — same sticky-issue + auto-close logic, three triggers (R1-audit H3), exit-code-aware status mapping (R1-audit M2), JSON capture via `node` directly (R1-audit M3):
+Modeled on [.github/workflows/architectural-drift.yml](../../.github/workflows/architectural-drift.yml) — same sticky-issue + auto-close logic, three triggers (R1-audit H3), exit-code-aware status mapping (R1-audit M2), JSON capture via `node` directly (R1-audit M3):
 
 ```yaml
 name: migration-drift
@@ -550,7 +550,7 @@ jobs:
       #  respectively; status='infra' never reaches these blocks because the prior step failed.)
 ```
 
-### EDIT [AGENTS.md](AGENTS.md) — Postgres-Parity Store section
+### EDIT [AGENTS.md](../../AGENTS.md) — Postgres-Parity Store section
 
 Add a new sub-section after "Setup recipe":
 
@@ -786,13 +786,13 @@ Steps 1-5 of §3 shipped in one PR (per the workstream's "tightly coupled" frami
 
 | Step | File(s) | Result |
 |---|---|---|
-| 1 | [scripts/setup-postgres.mjs](scripts/setup-postgres.mjs) | `parseArgs` refactored to indexed loop. `listMigrations(dir = MIGRATIONS_DIR)` accepts DI. `runCheckDrift` + `renderHumanDriftReport` added (~80 LOC). `main()` dispatch handles cloud-disabled exit-0 for check-drift BEFORE the generic null-pool guard; skips preflight for read-only check-drift. Both functions exported via `_internals` for tests. |
-| 2 | [package.json](package.json) + [scripts/.cli-catalog.json](scripts/.cli-catalog.json) | `db:check-drift`, `db:check-drift:json`, `db:migrate`, `db:adopt` added. `check:integration` extended to chain `node scripts/setup-postgres.mjs --check-drift` after `arch:refresh --full`. Catalog entries match. |
+| 1 | [scripts/setup-postgres.mjs](../../scripts/setup-postgres.mjs) | `parseArgs` refactored to indexed loop. `listMigrations(dir = MIGRATIONS_DIR)` accepts DI. `runCheckDrift` + `renderHumanDriftReport` added (~80 LOC). `main()` dispatch handles cloud-disabled exit-0 for check-drift BEFORE the generic null-pool guard; skips preflight for read-only check-drift. Both functions exported via `_internals` for tests. |
+| 2 | [package.json](../../package.json) + [scripts/.cli-catalog.json](../../scripts/.cli-catalog.json) | `db:check-drift`, `db:check-drift:json`, `db:migrate`, `db:adopt` added. `check:integration` extended to chain `node scripts/setup-postgres.mjs --check-drift` after `arch:refresh --full`. Catalog entries match. |
 | 3 | (operator self-service, not committed) | Pre-push snippet documented in AGENTS.md for paste into source-repo `.git/hooks/pre-push`. No installer edit. |
-| 4 | [.github/workflows/migration-drift.yml](.github/workflows/migration-drift.yml) | NEW. Three triggers: `schedule '45 9 * * 1'` (Mondays 09:45 UTC) + `push paths supabase/migrations/**` + `workflow_dispatch`. Sticky-issue + auto-close mirrors `architectural-drift.yml`. Exit-code-aware: 0 green/auto-close, 1 triggered/open-issue, 2 or 3 fail-loudly-without-issue. JSON capture via `node` directly (not `npm run`) to avoid log pollution. |
-| 5 | [AGENTS.md](AGENTS.md) | New "Migration-drift detection" subsection under Postgres-Parity Store: detect commands, exit-code contract, one-time bootstrap recipe, operator pre-push snippet, and break-glass recipe with cross-platform `node -e` sha256 derivation. |
-| Tests | [tests/setup-postgres-check-drift.test.mjs](tests/setup-postgres-check-drift.test.mjs) | 25 hermetic tests across 6 suites: clean, all 3 drift kinds, empty-ledger, mixed-drift, needs-bootstrap (exit 3), output channel discipline (JSON-only on stdout vs human-only on stderr), parseArgs flag wiring, production source-inspection (parseArgs indexed loop, listMigrations DI param, runCheckDrift no `ensureLedger`, main() branch ordering, package.json scripts, workflow file shape, AGENTS.md snippet shape). |
-| Tests | [tests/hook-snippet-behaviour.test.mjs](tests/hook-snippet-behaviour.test.mjs) | 5 bash-driven tests extracting the snippet from AGENTS.md and running it under `bash -e` with a mocked `node` shim. Asserts exit 0/1/2/3 all reach the post-snippet sentinel — proves the "advisory, never blocks" contract holds even under `set -e`. |
+| 4 | [.github/workflows/migration-drift.yml](../../.github/workflows/migration-drift.yml) | NEW. Three triggers: `schedule '45 9 * * 1'` (Mondays 09:45 UTC) + `push paths supabase/migrations/**` + `workflow_dispatch`. Sticky-issue + auto-close mirrors `architectural-drift.yml`. Exit-code-aware: 0 green/auto-close, 1 triggered/open-issue, 2 or 3 fail-loudly-without-issue. JSON capture via `node` directly (not `npm run`) to avoid log pollution. |
+| 5 | [AGENTS.md](../../AGENTS.md) | New "Migration-drift detection" subsection under Postgres-Parity Store: detect commands, exit-code contract, one-time bootstrap recipe, operator pre-push snippet, and break-glass recipe with cross-platform `node -e` sha256 derivation. |
+| Tests | [tests/setup-postgres-check-drift.test.mjs](../../tests/setup-postgres-check-drift.test.mjs) | 25 hermetic tests across 6 suites: clean, all 3 drift kinds, empty-ledger, mixed-drift, needs-bootstrap (exit 3), output channel discipline (JSON-only on stdout vs human-only on stderr), parseArgs flag wiring, production source-inspection (parseArgs indexed loop, listMigrations DI param, runCheckDrift no `ensureLedger`, main() branch ordering, package.json scripts, workflow file shape, AGENTS.md snippet shape). |
+| Tests | [tests/hook-snippet-behaviour.test.mjs](../../tests/hook-snippet-behaviour.test.mjs) | 5 bash-driven tests extracting the snippet from AGENTS.md and running it under `bash -e` with a mocked `node` shim. Asserts exit 0/1/2/3 all reach the post-snippet sentinel — proves the "advisory, never blocks" contract holds even under `set -e`. |
 | 6 | Operator runbook | OUT-OF-BAND, post-merge. Documented in AGENTS.md "One-time bootstrap" table: manually apply the 3 unapplied migrations via Supabase dashboard → `--adopt` (strict full diff) → `--check-drift` to verify. |
 
 **Test suite**: 2994/3011 passing, 0 failures (was 2964 pre-implementation, +30 net new). 17 skipped — pre-existing.

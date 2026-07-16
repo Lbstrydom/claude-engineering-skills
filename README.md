@@ -117,7 +117,7 @@ setup (no Azure env set → byte-identical public behavior).
 cp defaults/work-profile.env.example .env   # then fill in your endpoints + deployments
 ```
 
-Full guide: [`docs/azure-work-profile.md`](docs/azure-work-profile.md)
+Full guide: [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md)
 (endpoint/deployment reference, provider precedence, quotas, rollback).
 
 ## Skills

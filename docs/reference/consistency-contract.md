@@ -1,12 +1,12 @@
 # Persona-Test Consistency Mode — HTML Attribute Contract
 
 > Authoritative spec for consumer-app frontend devs adopting consistency mode.
-> Plan: [docs/plans/persona-test-consistency-mode.md](plans/persona-test-consistency-mode.md).
+> Plan: [docs/plans/persona-test-consistency-mode.md](../completed/persona-test-consistency-mode.md).
 
 This document defines the HTML `data-*` attribute contract that lets the
 consistency-mode rig detect cross-step UI/state contradictions without
 text-parsing. The Zod schema enforcing the contract lives in
-[`scripts/lib/persona-test/schemas.mjs`](../scripts/lib/persona-test/schemas.mjs)
+[`scripts/lib/persona-test/schemas.mjs`](../../scripts/lib/persona-test/schemas.mjs)
 — this doc is the human-readable companion.
 
 ## Why an attribute contract
@@ -187,7 +187,7 @@ it projects. Resolution order (the runner tries each in turn):
 3. `<src-root>/persona-test-surfaces.json` — for monorepo `src/` layouts
 
 Pick one. The schema is enforced via Zod
-([`SurfaceManifestSchema`](../scripts/lib/persona-test/schemas.mjs)).
+([`SurfaceManifestSchema`](../../scripts/lib/persona-test/schemas.mjs)).
 
 ### Minimum example
 

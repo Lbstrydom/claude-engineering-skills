@@ -2123,7 +2123,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2143,7 +2143,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2163,7 +2163,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2183,7 +2183,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2203,7 +2203,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2223,7 +2223,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2243,7 +2243,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2263,7 +2263,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2283,7 +2283,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2303,7 +2303,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2323,7 +2323,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2343,7 +2343,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "package.json",
         "scripts/.cli-catalog.json",
         "scripts/.sync-manifest.json",
@@ -2391,7 +2391,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "docs/plans/azure-work-profile.md",
         "scripts/gemini-review.mjs",
         "scripts/lib/anthropic-client.mjs",
@@ -2413,7 +2413,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "docs/plans/azure-work-profile.md",
         "scripts/gemini-review.mjs",
         "scripts/lib/anthropic-client.mjs",
@@ -2435,7 +2435,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "docs/plans/azure-work-profile.md",
         "scripts/gemini-review.mjs",
         "scripts/lib/anthropic-client.mjs",
@@ -2457,7 +2457,7 @@
       "files": [
         "AGENTS.md",
         "defaults/work-profile.env.example",
-        "docs/azure-work-profile.md",
+        "docs/runbooks/azure-work-profile.md",
         "docs/plans/azure-work-profile.md",
         "scripts/gemini-review.mjs",
         "scripts/lib/anthropic-client.mjs",
@@ -2828,7 +2828,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -2873,7 +2873,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -2918,7 +2918,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -2963,7 +2963,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -3008,7 +3008,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -3053,7 +3053,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -3098,7 +3098,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -3143,7 +3143,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -3188,7 +3188,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -3233,7 +3233,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -3278,7 +3278,7 @@
       "files": [
         "AGENTS.md",
         "dashboard/index.html",
-        "docs/consumer-adoption.md",
+        "docs/runbooks/consumer-adoption.md",
         "docs/plans/scripts-claude-skills-isolation.md",
         "package.json",
         "scripts/.sync-manifest.json",
@@ -3865,7 +3865,7 @@
       "buggyCommit": "e6e731a7",
       "fixCommit": "338943f17b0602a8bcf5fd885d0652b7f51ec4eb",
       "files": [
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/lib/persona-test/consistency.mjs",
         "scripts/lib/persona-test/schemas.mjs",
         "scripts/persona-consistency-run.mjs",
@@ -3881,7 +3881,7 @@
       "buggyCommit": "8d64312a",
       "fixCommit": "338943f17b0602a8bcf5fd885d0652b7f51ec4eb",
       "files": [
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/lib/persona-test/consistency.mjs",
         "scripts/lib/persona-test/schemas.mjs",
         "scripts/persona-consistency-run.mjs",
@@ -3897,7 +3897,7 @@
       "buggyCommit": "0af636cf",
       "fixCommit": "338943f17b0602a8bcf5fd885d0652b7f51ec4eb",
       "files": [
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/lib/persona-test/consistency.mjs",
         "scripts/lib/persona-test/schemas.mjs",
         "scripts/persona-consistency-run.mjs",
@@ -3913,7 +3913,7 @@
       "buggyCommit": "777e1b17",
       "fixCommit": "338943f17b0602a8bcf5fd885d0652b7f51ec4eb",
       "files": [
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/lib/persona-test/consistency.mjs",
         "scripts/lib/persona-test/schemas.mjs",
         "scripts/persona-consistency-run.mjs",
@@ -3971,7 +3971,7 @@
       "buggyCommit": "93b5a8dc",
       "fixCommit": "f7765ebb986103de7fd26335cc0d9b4b28e89aed",
       "files": [
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/.sync-manifest.json",
         "scripts/lib/persona-test/canary.mjs",
         "scripts/lib/persona-test/ledger.mjs",
@@ -3990,7 +3990,7 @@
       "buggyCommit": "4cd7f546",
       "fixCommit": "f7765ebb986103de7fd26335cc0d9b4b28e89aed",
       "files": [
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/.sync-manifest.json",
         "scripts/lib/persona-test/canary.mjs",
         "scripts/lib/persona-test/ledger.mjs",
@@ -4009,7 +4009,7 @@
       "buggyCommit": "777e1b17",
       "fixCommit": "f7765ebb986103de7fd26335cc0d9b4b28e89aed",
       "files": [
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/.sync-manifest.json",
         "scripts/lib/persona-test/canary.mjs",
         "scripts/lib/persona-test/ledger.mjs",
@@ -4028,7 +4028,7 @@
       "buggyCommit": "d898aa31",
       "fixCommit": "f7765ebb986103de7fd26335cc0d9b4b28e89aed",
       "files": [
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/.sync-manifest.json",
         "scripts/lib/persona-test/canary.mjs",
         "scripts/lib/persona-test/ledger.mjs",
@@ -4048,7 +4048,7 @@
       "fixCommit": "d898aa31da0401565c254609945d0256bf708cea",
       "files": [
         ".claude/skills/persona-test/references/consistency-mode.md",
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/lib/persona-test/canary.mjs",
         "scripts/lib/persona-test/consistency.mjs",
         "scripts/lib/persona-test/schemas.mjs",
@@ -4070,7 +4070,7 @@
       "fixCommit": "d898aa31da0401565c254609945d0256bf708cea",
       "files": [
         ".claude/skills/persona-test/references/consistency-mode.md",
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/lib/persona-test/canary.mjs",
         "scripts/lib/persona-test/consistency.mjs",
         "scripts/lib/persona-test/schemas.mjs",
@@ -4092,7 +4092,7 @@
       "fixCommit": "d898aa31da0401565c254609945d0256bf708cea",
       "files": [
         ".claude/skills/persona-test/references/consistency-mode.md",
-        "docs/consistency-contract.md",
+        "docs/reference/consistency-contract.md",
         "scripts/lib/persona-test/canary.mjs",
         "scripts/lib/persona-test/consistency.mjs",
         "scripts/lib/persona-test/schemas.mjs",

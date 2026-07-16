@@ -163,7 +163,7 @@ export const SKILLS = [
         return { label: 'FITS', reason: 'data-engine-claim annotations + surfaces.json manifest already present.' };
       }
       const missing = [];
-      if (!p.hasEngineClaimAnnotations) missing.push('data-engine-claim attributes on key surfaces (see docs/consistency-contract.md)');
+      if (!p.hasEngineClaimAnnotations) missing.push('data-engine-claim attributes on key surfaces (see docs/reference/consistency-contract.md)');
       if (!p.hasPersonaTestManifest)    missing.push('.persona-test/surfaces.json manifest + a broken-canary journey under .persona-test/canaries/');
       return {
         label: 'PARTIAL',

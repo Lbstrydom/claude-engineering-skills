@@ -82,7 +82,7 @@ and pick the summary model.
 ### Patterns reused vs new (Neighbourhood considered)
 
 The arch-memory query surfaced **existing Azure prior art** in the unported
-"corporate kit": [`docs/plans/security/files/scripts/lib/security/azure-embed.mjs`](security/files/scripts/lib/security/azure-embed.mjs)
+"corporate kit": [`docs/plans/security/files/scripts/lib/security/azure-embed.mjs`](../plans/security/files/scripts/lib/security/azure-embed.mjs)
 (similarity **0.76 → reuse/justify-divergence**). Its client construction is
 the **canonical Azure-OpenAI v1 pattern** we will lift verbatim:
 
@@ -152,7 +152,7 @@ still defaults to `skip` under Azure (live catalog would 404).
   the **Azure OpenAI v1 surface** (`/openai/v1`) takes `api-version=preview` as a
   literal — NOT a dated `2024-..-preview` string (that's the *legacy* surface).
   This is proven by the shipped kit
-  [azure-embed.mjs:43](security/files/scripts/lib/security/azure-embed.mjs#L43)
+  [azure-embed.mjs:43](../plans/security/files/scripts/lib/security/azure-embed.mjs#L43)
   which defaults to exactly `'preview'`. It stays **overridable** via
   `AZURE_OPENAI_API_VERSION` for an operator pinned to the legacy dated surface.
 
@@ -359,7 +359,7 @@ preserving the convergence + metadata (H5) contract unchanged.
    + sentinels left at defaults (`OPENAI_AUDIT_MODEL`/`CLAUDE_FINAL_REVIEW_MODEL`
    commented — §1.5 keeps them logical, NOT deployment names) + `AUDIT_DB_URL`
    local + `MODEL_CATALOG_REFRESH=skip`.
-4. **`docs/azure-work-profile.md`** — deployment README (setup order, `~/.audit-loop.env`
+4. **`docs/runbooks/azure-work-profile.md`** — deployment README (setup order, `~/.audit-loop.env`
    chmod-600 secret surface, Postgres guided-install, the
    `AZURE_CLAUDE_API_SHAPE` decision, live-smoke verification steps).
 5. **Tests**: `tests/openai-client.test.mjs` (Azure-vs-public routing + the
@@ -493,7 +493,7 @@ Files: `scripts/openai-audit.mjs` (modify).
 (modify).
 
 **Phase 9 — Work-profile surface**. Files: `defaults/work-profile.env.example`
-(create), `docs/azure-work-profile.md` (create), `AGENTS.md` (modify).
+(create), `docs/runbooks/azure-work-profile.md` (create), `AGENTS.md` (modify).
 
 ---
 

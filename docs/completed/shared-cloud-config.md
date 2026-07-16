@@ -10,7 +10,7 @@
 
 ## 1. Context Summary
 
-Today every consumer repo (ai-organiser, wine-cellar-app, future installs) needs `AUDIT_DB_URL` set in its own `.env` to participate in the shared cloud learning store. The DSN is the **same value across all consumers** — a single Supabase project (`uahjjdelnnpfmaqjrwoz`) — yet the operator is currently expected to remember to copy-paste it into each new repo's `.env`. When they don't, the failure is silent: [`scripts/lib/store/repo.mjs::initLearningStore`](scripts/lib/store/repo.mjs#L48-L50) prints `[learning] Cloud store not configured — using local mode` and downstream features (planner's arch-memory consultation, audit-loop's cloud learning, persona-test correlations) silently no-op. The operator finds out months later when they realise their planning sessions never had real similarity-search context.
+Today every consumer repo (ai-organiser, wine-cellar-app, future installs) needs `AUDIT_DB_URL` set in its own `.env` to participate in the shared cloud learning store. The DSN is the **same value across all consumers** — a single Supabase project (`uahjjdelnnpfmaqjrwoz`) — yet the operator is currently expected to remember to copy-paste it into each new repo's `.env`. When they don't, the failure is silent: [`scripts/lib/store/repo.mjs::initLearningStore`](../../scripts/lib/store/repo.mjs#L48-L50) prints `[learning] Cloud store not configured — using local mode` and downstream features (planner's arch-memory consultation, audit-loop's cloud learning, persona-test correlations) silently no-op. The operator finds out months later when they realise their planning sessions never had real similarity-search context.
 
 The new convention introduces a per-user shared file at `~/.audit-loop.env` that any consumer can inherit from automatically, with three trigger surfaces that ensure the operator never silently misses it: (1) `setup:cloud` CLI for explicit one-time setup, (2) end-of-`sync` auto-prompt for create/update, (3) actionable recovery command in the cloud-disabled fallback message. The pattern is locked in user-feedback memory as **[[first-deploy-plus-update-from-source-pattern]]** — applies whenever we design cross-repo shared state.
 
@@ -20,11 +20,11 @@ Architectural-memory consultation returned the cluster around the points we'll t
 
 | Symbol | File | Domain | Recommendation | How we use it |
 |---|---|---|---|---|
-| `discoverDotenv` | [`scripts/lib/config.mjs:21-55`](scripts/lib/config.mjs#L21-L55) | shared-lib | **review** (sim 0.83) — extend, not replace. Current behaviour walks cwd → git root for `.env`; we add a second `dotenv.config()` call after for `~/.audit-loop.env` as fallback. |
-| `loadEnv` | [`scripts/check-setup.mjs:42-57`](scripts/check-setup.mjs#L42-L57) | install | **reuse** — straightforward `=`-delimited parser with comment-skip + quote-strip. Move to a shared lib so both `check-setup.mjs` and `setup-cloud.mjs` can call it. |
-| Sibling-dir scan (bash) | [`scripts/install-prepush-hook.mjs:74-82`](scripts/install-prepush-hook.mjs#L74-L82) | scripts | **extend pattern** — port the bash sentinel `dir contains BOTH scripts/openai-audit.mjs AND scripts/install-prepush-hook.mjs` into JS for `setup-cloud.mjs`'s source-repo discovery. |
-| `main` end-of-sync block | [`scripts/sync-to-repos.mjs:411-616`](scripts/sync-to-repos.mjs#L411-L616) | install | **extend** — insertion point for D2b trigger sits right after the Summary block, before `process.exit`. |
-| `initLearningStore` cloud-disabled message | [`scripts/lib/store/repo.mjs:48-50`](scripts/lib/store/repo.mjs#L48-L50) | shared-lib | **extend** — append the actionable recovery command. The canonical message location across the codebase. |
+| `discoverDotenv` | [`scripts/lib/config.mjs:21-55`](../../scripts/lib/config.mjs#L21-L55) | shared-lib | **review** (sim 0.83) — extend, not replace. Current behaviour walks cwd → git root for `.env`; we add a second `dotenv.config()` call after for `~/.audit-loop.env` as fallback. |
+| `loadEnv` | [`scripts/check-setup.mjs:42-57`](../../scripts/check-setup.mjs#L42-L57) | install | **reuse** — straightforward `=`-delimited parser with comment-skip + quote-strip. Move to a shared lib so both `check-setup.mjs` and `setup-cloud.mjs` can call it. |
+| Sibling-dir scan (bash) | [`scripts/install-prepush-hook.mjs:74-82`](../../scripts/install-prepush-hook.mjs#L74-L82) | scripts | **extend pattern** — port the bash sentinel `dir contains BOTH scripts/openai-audit.mjs AND scripts/install-prepush-hook.mjs` into JS for `setup-cloud.mjs`'s source-repo discovery. |
+| `main` end-of-sync block | [`scripts/sync-to-repos.mjs:411-616`](../../scripts/sync-to-repos.mjs#L411-L616) | install | **extend** — insertion point for D2b trigger sits right after the Summary block, before `process.exit`. |
+| `initLearningStore` cloud-disabled message | [`scripts/lib/store/repo.mjs:48-50`](../../scripts/lib/store/repo.mjs#L48-L50) | shared-lib | **extend** — append the actionable recovery command. The canonical message location across the codebase. |
 
 No prior security incidents matched these paths. `cross-skill-bridge` and `install` domain crossings are minimal — `cross-skill.mjs` isn't actually touched (the cloud-disabled message lives in `repo.mjs`); `install` only sees the sync.mjs end-of-flow trigger.
 
@@ -82,7 +82,7 @@ Plan flag: `--no-diagram`. The four moving parts are simple enough that a 2D dia
 
 1. **Shared file location: `~/.audit-loop.env`** (#3 Modularity, #5 SSoT). Top-level dotfile in `os.homedir()`; owned-namespace; per-USER not per-repo. Holds `AUDIT_DB_URL`, `AUDIT_DB_SSL_MODE`, and optionally the three LLM keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`) — those are shared across all consumers, single rotation surface. Alternative considered (`~/.claude/audit-loop.env` under Claude Code's namespace) rejected — could clash with Claude Code's own state in that dir.
 
-2. **Loader extends the existing `discoverDotenv` pattern** (#5 SSoT, #6 Open/Closed, #18 Backward-Compat). `scripts/lib/config.mjs` already does worktree-safe `.env` discovery via [`discoverDotenv`](scripts/lib/config.mjs#L21-L55). We add a second `dotenv.config()` call after the cwd `.env` load, pointing at `~/.audit-loop.env` with `override: false` (so cwd `.env` always wins). Three failure modes handled invisibly:
+2. **Loader extends the existing `discoverDotenv` pattern** (#5 SSoT, #6 Open/Closed, #18 Backward-Compat). `scripts/lib/config.mjs` already does worktree-safe `.env` discovery via [`discoverDotenv`](../../scripts/lib/config.mjs#L21-L55). We add a second `dotenv.config()` call after the cwd `.env` load, pointing at `~/.audit-loop.env` with `override: false` (so cwd `.env` always wins). Three failure modes handled invisibly:
    - File absent → silent no-op (the whole point of invisible inheritance)
    - File present, unparseable → dotenv's own warning, no crash
    - File present, fully shadowed by cwd `.env` → loader still notes the file existed for telemetry, but no vars actually changed
@@ -206,7 +206,7 @@ If multi-environment becomes a real need: add `--profile <name>` flag to setup-c
 
 ## 6. File-Level Plan
 
-### EDIT [`scripts/lib/config.mjs`](scripts/lib/config.mjs)
+### EDIT [`scripts/lib/config.mjs`](../../scripts/lib/config.mjs)
 
 Extend the existing `discoverDotenv` + `dotenv.config` block to also load `~/.audit-loop.env` as fallback.
 
@@ -238,7 +238,7 @@ if (fs.existsSync(SHARED_CLOUD_ENV)) {
 
 The `_AUDIT_LOOP_SHARED_LOADED` env-var sentinel propagates to spawned subprocesses (since env inherits), preventing each child process from re-logging the same notice. Module-state would only suppress within a single process.
 
-### NEW [`scripts/lib/shared-cloud-config.mjs`](scripts/lib/shared-cloud-config.mjs)
+### NEW [`scripts/lib/shared-cloud-config.mjs`](../../scripts/lib/shared-cloud-config.mjs)
 
 Pure lib module — zero side-effects (no `process.exit`, no `console.*`, no prompts). Holds all reusable helpers + the assessment layer.
 
@@ -672,7 +672,7 @@ function renderHumanResult(r, stdio) {
 }
 ```
 
-### NEW [`scripts/setup-cloud.mjs`](scripts/setup-cloud.mjs) (thin CLI adapter)
+### NEW [`scripts/setup-cloud.mjs`](../../scripts/setup-cloud.mjs) (thin CLI adapter)
 
 ```js
 #!/usr/bin/env node
@@ -726,7 +726,7 @@ const invoked = process.argv[1] && import.meta.url.endsWith(path.basename(proces
 if (invoked) main();
 ```
 
-### EDIT [`scripts/sync-to-repos.mjs`](scripts/sync-to-repos.mjs)
+### EDIT [`scripts/sync-to-repos.mjs`](../../scripts/sync-to-repos.mjs)
 
 Add the D2b trigger at the end of `main()`, before `process.exit`:
 
@@ -791,7 +791,7 @@ async function maybePromptSharedCloudUpdate({sourceRepoDir, stdio}) {
 
 `args.includes('--no-prompt')` requires the existing argv parser to surface that flag — add it to the flag set near the top of sync-to-repos.mjs.
 
-### EDIT [`scripts/lib/file-io.mjs`](scripts/lib/file-io.mjs)
+### EDIT [`scripts/lib/file-io.mjs`](../../scripts/lib/file-io.mjs)
 
 Per Gemini-G4: extend `atomicWriteFileSync` to accept an optional `mode` parameter forwarded to `fs.openSync`. One-line addition, default `0o666` preserves existing callers' behaviour.
 
@@ -817,7 +817,7 @@ export function atomicWriteFileSync(target, content, { mode = 0o666 } = {}) {
 
 No call-site updates required for existing usages — the default value matches Node's prior open-with-umask outcome. The new `mode` option is opt-in for callers that need it (this plan's `writeSharedEnv` is the first).
 
-### EDIT [`scripts/lib/store/repo.mjs`](scripts/lib/store/repo.mjs)
+### EDIT [`scripts/lib/store/repo.mjs`](../../scripts/lib/store/repo.mjs)
 
 Single-line edit to the cloud-not-configured message (line 49):
 
@@ -833,7 +833,7 @@ process.stderr.write(
 );
 ```
 
-### EDIT [`scripts/check-setup.mjs`](scripts/check-setup.mjs)
+### EDIT [`scripts/check-setup.mjs`](../../scripts/check-setup.mjs)
 
 R1-audit M1: the check must evaluate EFFECTIVE merged config, not just the local `.env`. If local `.env` has no `AUDIT_DB_URL` but `~/.audit-loop.env` provides it, the effective config IS set — current implementation would falsely warn. Extract `resolveCloudConfig()` as a shared helper used by `config.mjs`, `check-setup.mjs`, and `repo.mjs::initLearningStore`.
 
@@ -860,13 +860,13 @@ if (cloud.AUDIT_DB_URL.source === 'unset') {
 }
 ```
 
-### EDIT [`package.json`](package.json)
+### EDIT [`package.json`](../../package.json)
 
 ```json
 "setup:cloud": "node scripts/setup-cloud.mjs",
 ```
 
-### EDIT [`scripts/.cli-catalog.json`](scripts/.cli-catalog.json)
+### EDIT [`scripts/.cli-catalog.json`](../../scripts/.cli-catalog.json)
 
 ```json
 "setup:cloud": {
@@ -875,7 +875,7 @@ if (cloud.AUDIT_DB_URL.source === 'unset') {
 }
 ```
 
-### EDIT [`AGENTS.md`](AGENTS.md)
+### EDIT [`AGENTS.md`](../../AGENTS.md)
 
 New subsection under "Postgres-Parity Store" (after the "Migration-drift detection" subsection added in the prior plan):
 
@@ -942,7 +942,7 @@ same as before. Public-repo safety: the file is in `os.homedir()`, never in
 any git tree.
 ```
 
-### NEW [`tests/config-shared-env.test.mjs`](tests/config-shared-env.test.mjs)
+### NEW [`tests/config-shared-env.test.mjs`](../../tests/config-shared-env.test.mjs)
 
 Hermetic via `os.homedir()` override (set `HOME` env to a `mkdtemp` dir before spawning a subprocess; the subprocess's `os.homedir()` returns the temp path on POSIX, `USERPROFILE` on Windows). Test matrix:
 
@@ -957,7 +957,7 @@ Hermetic via `os.homedir()` override (set `HOME` env to a `mkdtemp` dir before s
 
 Subprocess pattern: invoke a tiny throwaway `.mjs` that imports `config.mjs` and prints `JSON.stringify(process.env)` keys; assert presence/absence per test.
 
-### NEW [`tests/shared-cloud-config.test.mjs`](tests/shared-cloud-config.test.mjs)
+### NEW [`tests/shared-cloud-config.test.mjs`](../../tests/shared-cloud-config.test.mjs)
 
 Hermetic via injected `homedir` + `prompt` + `stdio`. NO real filesystem outside `mkdtemp`. NO real subprocesses (CLI surface tested via direct `runSetupCloud()` calls).
 
@@ -986,7 +986,7 @@ Hermetic via injected `homedir` + `prompt` + `stdio`. NO real filesystem outside
 | `writeSharedEnv` preserves SHARED_VARS order | vars passed in random key order | file lines emitted in `SHARED_VARS` declaration order |
 | `OUTCOMES` + `EXIT_CODE_FOR` are aligned | every OUTCOMES value maps to a number in EXIT_CODE_FOR | Object.keys(EXIT_CODE_FOR) ⊇ Object.values(OUTCOMES) |
 
-### NEW [`tests/sync-shared-env-trigger.test.mjs`](tests/sync-shared-env-trigger.test.mjs)
+### NEW [`tests/sync-shared-env-trigger.test.mjs`](../../tests/sync-shared-env-trigger.test.mjs)
 
 Hermetic test of the `maybePromptSharedCloudUpdate` function (file-local in sync-to-repos.mjs — exposed via a small `_internals` export following the project convention).
 

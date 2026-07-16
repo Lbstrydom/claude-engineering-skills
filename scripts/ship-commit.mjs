@@ -6,7 +6,7 @@
  * validates against a closed grammar and refuses on semantic ambiguity.
  *
  * Plan: docs/plans/provenance-trailers-and-gate-honesty.md §F1.
- * Convention doc: docs/commit-provenance.md.
+ * Convention doc: docs/reference/commit-provenance.md.
  *
  * Usage:
  *   node scripts/ship-commit.mjs --message-file <path> --skill <name> \

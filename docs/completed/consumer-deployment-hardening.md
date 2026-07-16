@@ -71,7 +71,7 @@ managed entries. Stating the cliffs:
 4. **EOL churn fix — DONE (cheaper than the deferral assumed).** A managed
    `.gitattributes` block pins the TRACKED synced surfaces (`.claude/skills/**`,
    `.github/prompts/**`, `.claude/hooks/**`, `.claude/settings.json`,
-   `.vscode/mcp.json`, `docs/consistency-contract.md`, `scripts/.sync-manifest.json`,
+   `.vscode/mcp.json`, `docs/reference/consistency-contract.md`, `scripts/.sync-manifest.json`,
    `.audit-loop/migrations/**`) to `eol=lf`, so Windows consumers stop seeing
    them as perpetually modified. The earlier deferral assumed this needed
    generalising `updateManagedBlock` — but that helper is already

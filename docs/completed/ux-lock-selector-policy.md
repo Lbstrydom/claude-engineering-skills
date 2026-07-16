@@ -413,7 +413,7 @@ alone.
 ### H. Docs, regeneration, consumer note
 - `npm run skills:regenerate` (`.claude/skills/**` is a category-B generated artifact;
   `skills:check` enforces freshness).
-- `docs/consumer-adoption.md`: note that consumers should re-sync
+- `docs/runbooks/consumer-adoption.md`: note that consumers should re-sync
   (`npm run sync --target <name>`) to pick up the policy + lint; existing consumer
   specs are explicitly NOT rewritten — the lint defaults to warn so legacy specs keep
   running; `--strict-selectors` is opt-in per run.

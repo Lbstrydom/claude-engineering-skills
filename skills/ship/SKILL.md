@@ -432,7 +432,7 @@ use the Write tool → `.claude/tmp/ship-commit-msg-<epoch>.txt`. Do NOT
 include any `AI-*` lines — the helper is their only writer and rejects
 them (`reserved-trailer`).
 
-Decide the provenance values (full convention: `docs/commit-provenance.md`):
+Decide the provenance values (full convention: `docs/reference/commit-provenance.md`):
 - `--models` — comma list of models that participated this session
   (e.g. `claude` alone; `claude,gemini,gpt` when the audit loop ran).
 - `--gate` — `passed` (audit ran this cycle AND its convergence verdict

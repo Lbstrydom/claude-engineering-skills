@@ -157,7 +157,7 @@ class Report {
 // ── Feature: Audit-Loop ───────────────────────────────────────────────────────
 
 function checkAuditApiKeys(env, report) {
-  // Azure work profile (docs/azure-work-profile.md): AZURE_OPENAI_ENDPOINT
+  // Azure work profile (docs/runbooks/azure-work-profile.md): AZURE_OPENAI_ENDPOINT
   // active means the GPT auditor authenticates via AZURE_OPENAI_API_KEY —
   // OPENAI_API_KEY is not used at all, so failing on its absence here told
   // a correctly-configured corporate install its setup was broken
@@ -433,7 +433,7 @@ async function checkConsistencyMode(env, report) {
     report.warn(
       'No surfaces.json detected',
       'consistency mode is opt-in; this repo has not adopted it',
-      'See docs/consistency-contract.md to bootstrap',
+      'See docs/reference/consistency-contract.md to bootstrap',
     );
     return;
   }
@@ -447,7 +447,7 @@ async function checkConsistencyMode(env, report) {
   } else {
     report.warn('No .persona-test/canaries/ directory',
       'consistency mode needs at least one canary',
-      'mkdir -p .persona-test/canaries && add <canary>.json — see docs/consistency-contract.md');
+      'mkdir -p .persona-test/canaries && add <canary>.json — see docs/reference/consistency-contract.md');
   }
 
   // Playwright probe.

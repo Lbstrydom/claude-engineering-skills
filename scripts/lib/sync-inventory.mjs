@@ -183,7 +183,7 @@ const CORE_ASSETS = [
   'scripts/lib/dashboard/flows.json',
   'scripts/lib/dashboard/assets/dashboard.css',
   'scripts/lib/dashboard/assets/dashboard.js',
-  'docs/consistency-contract.md',
+  'docs/reference/consistency-contract.md',
   'scripts/lib/db/compat-bootstrap.sql',
 ];
 

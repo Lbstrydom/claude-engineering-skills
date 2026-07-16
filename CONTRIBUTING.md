@@ -29,7 +29,7 @@ node --test tests/install/*.test.mjs        # Installer tests only
 - `scripts/lib/` -- focused modules (schemas, file-io, stores, skill-packaging, skill-refs-parser, repo-stack)
 - `tests/` -- Node.js built-in test runner
 - `docs/plans/` -- feature plans (audited)
-- `docs/skill-reference-format.md` -- canonical spec for skill reference files
+- `docs/reference/skill-reference-format.md` -- canonical spec for skill reference files
 
 ## Pull Request Process
 
@@ -98,7 +98,7 @@ summary: One-line description, ≤120 chars, byte-identical to the SKILL.md inde
 | `references/topic-a.md` | Summary matching frontmatter. | Specific, detectable trigger condition. |
 ```
 
-See `docs/skill-reference-format.md` for the full spec + lint rules.
+See `docs/reference/skill-reference-format.md` for the full spec + lint rules.
 
 ### Editing workflow
 

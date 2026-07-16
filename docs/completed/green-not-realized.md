@@ -37,7 +37,7 @@ session instances, two proof classes:
 - `scripts/lib/model-resolver.mjs` — model→family resolution for the #1 min-token table. (NB: the audit
   builder's `estimateStablePrefixTokens` is audit-specific; #1 uses a GENERAL conservative token estimate, not it.)
 - `scripts/phase7-check.mjs` — pre-flight check, the wiring point for the deterministic lints.
-- `docs/consistency-contract.md` + persona-test `--mode consistency` `data-engine-claim` — the EXISTING
+- `docs/reference/consistency-contract.md` + persona-test `--mode consistency` `data-engine-claim` — the EXISTING
   cross-surface runtime contract (#4 reuses it; we do not build a new parity tool).
 - `skills/audit-plan/SKILL.md` grounding rubric (#6); `skills/cycle/SKILL.md` Step 5 persona-test (#7).
 
@@ -214,7 +214,7 @@ New structure on the table: one lint module + a config block + rubric additions 
   command+result is attached; freeze sub-step "name the field → prove its semantics match the contract".
 - **`skills/audit-code/SKILL.md`** (modify) — Step 6.x honesty clause: static approval is
   necessary-but-insufficient for cross-surface agreement; nudge to declare a `data-engine-claim` surface.
-- **`docs/consistency-contract.md`** (modify) — document the **parity-probe** use of the existing
+- **`docs/reference/consistency-contract.md`** (modify) — document the **parity-probe** use of the existing
   `data-engine-claim` attribute for "value A must equal surface B's source" (reuse, not a new tool).
 - **`skills/cycle/SKILL.md`** (modify) — Step 5: **call `resolvePreviewGate`** (not re-implement in prose);
   `action:'halt'` → halt before merge, require a preview `--url`; `action:'warn'` → bright warning
@@ -235,7 +235,7 @@ New structure on the table: one lint module + a config block + rubric additions 
   `phase7-check.mjs` (which is the ML-readiness check, not the pre-push gate). Files: `scripts/efficacy-lints-check.mjs` (create), `package.json` (modify).
 - **Phase 4 — lint tests**: recognizers + degrade-to-yellow + `unverified`≠`clean` + config-driven. Files: `tests/efficacy-lints.test.mjs` (create).
 - **Phase 5 — runtime-truth audit rules**: derived-state-parity + freeze-semantics + test-premise (+ the artifact-to-command workflow). Files: `scripts/lib/prompt-seeds.mjs` (modify), `skills/audit-plan/SKILL.md` (modify), `skills/audit-code/SKILL.md` (modify).
-- **Phase 6 — parity-probe doc (reuse)**: `data-engine-claim` parity pattern + runnable consistency command. Files: `docs/consistency-contract.md` (modify).
+- **Phase 6 — parity-probe doc (reuse)**: `data-engine-claim` parity pattern + runnable consistency command. Files: `docs/reference/consistency-contract.md` (modify).
 - **Phase 7 — topology honesty**: `resolvePreviewGate` seam + `/cycle` Step 5 call. Files: `scripts/lib/cycle/topology.mjs` (create), `skills/cycle/SKILL.md` (modify).
 - **Close-out (not a phase)**: `npm run skills:regenerate` + `npm run skills:check` + `npm test`.
 

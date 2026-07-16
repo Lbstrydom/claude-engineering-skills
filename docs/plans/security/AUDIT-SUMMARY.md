@@ -41,7 +41,7 @@ repo infrastructure (`cross-skill.mjs`, the `.claude/`+`.github/` skill mirror, 
 The GPT rebuttal (peer adjudication) resolved all 33:
 
 - **17 DISMISSED (overruled)** — notably **H4 "transaction atomicity" was factually incorrect**:
-  [refresh-incidents.mjs:286](../../scripts/security-memory/refresh-incidents.mjs#L286) wraps incident
+  [refresh-incidents.mjs:286](../../../scripts/security-memory/refresh-incidents.mjs#L286) wraps incident
   upserts + sweep + audit-event inserts in a single `withTx` (embeddings computed before the tx).
   Also H1/H2 (documented deviations), H7/H11/H12 (one-shot CLI / intentional mirror), L2 (false
   positive — the "dead" batch arrays are used inside the tx).
@@ -53,7 +53,7 @@ The GPT rebuttal (peer adjudication) resolved all 33:
 | R2 | Verdict | Evidence |
 |---|---|---|
 | H1/H2 "`//` breaks the SQL migration" | **FALSE POSITIVE** | `//` is the diff-annotation marker `readFilesAsAnnotatedContext` injects under `--diff` ([diff-tools.mjs:88](../../scripts/lib/diff-tools.mjs#L88)). Real `003-security.pg.sql` has zero `//`, starts with `-- ===`. |
-| M1 "upsert may emit ON CONFLICT" | partially valid | `buildUpsert({})` emits a plain INSERT today ([query.mjs:138](../../scripts/lib/db/query.mjs#L138)); the semantic mismatch was a maintenance trap → addressed via `insertMany` (Opus pass-1 O1). |
+| M1 "upsert may emit ON CONFLICT" | partially valid | `buildUpsert({})` emits a plain INSERT today ([query.mjs:138](../../../scripts/lib/db/query.mjs#L138)); the semantic mismatch was a maintenance trap → addressed via `insertMany` (Opus pass-1 O1). |
 | M2 "probe missing `table_schema=public`" | **VALID — FIXED** | Aligned the migration probe to runtime `pgvector-check.mjs`. |
 | M3 "pool.end() on singleton" | recurring | One-shot CLI; already overruled in R1 (H7/H12). |
 
@@ -61,7 +61,7 @@ The GPT rebuttal (peer adjudication) resolved all 33:
 
 | R3 | Verdict | Fix |
 |---|---|---|
-| H1 `d1793532` pgvector param cast | **VALID** | RPC bind for the `vector(768)` arg was untyped text → could fail overload resolution. Now `$3::vector` in [security.mjs:188](../../scripts/lib/store/security.mjs#L188). Only exercisable on pgvector-ON Postgres → covered by the new CI job. |
+| H1 `d1793532` pgvector param cast | **VALID** | RPC bind for the `vector(768)` arg was untyped text → could fail overload resolution. Now `$3::vector` in [security.mjs:188](../../../scripts/lib/store/security.mjs#L188). Only exercisable on pgvector-ON Postgres → covered by the new CI job. |
 | H2 `8b25c13c` `gen_random_uuid` needs pgcrypto | **VALID (partial FP)** | [001-core.pg.sql:9](../../scripts/lib/stores/sql/001-core.pg.sql#L9) already enables pgcrypto before 003 (real deploy path worked), but 003 is now self-contained with its own `CREATE EXTENSION IF NOT EXISTS pgcrypto`. |
 
 The 3-round hard cap prevented an in-loop R4 verification, so these fixes were validated by the Opus gate.
@@ -73,14 +73,14 @@ The 3-round hard cap prevented an in-loop R4 verification, so these fixes were v
 - **Pass 2 (APPROVE, honest transcript)** — architectural coherence **Strong**, `claude_bias_detected:
   false`, `wrongly_dismissed: []`, `over_engineering: []`. Two advisory findings, **both verified as
   non-issues against the actual code** (no fix required):
-  - O1 `6c222158` (MEDIUM, regex `/g` statefulness in [secret-classifier.mjs](../../scripts/lib/security/secret-classifier.mjs)):
+  - O1 `6c222158` (MEDIUM, regex `/g` statefulness in [secret-classifier.mjs](../../../scripts/lib/security/secret-classifier.mjs)):
     `classifySecrets` uses `text.matchAll(re)`, which per spec clones the RegExp internally — shared
     `lastIndex` cannot leak. The code already deliberately avoids `.test()` on shared `/g` regexes
     (see the comment at the `preWriteSecretGate` redact loop). Opus itself noted matchAll "creates a
     clone." Left as-is.
   - O2 `fc1dc7bd` (LOW, `updated_at` not in UPSERT payload): `recordSecurityIncidents` upserts with
     `update: 'all'`, which always performs a real UPDATE on conflict, so the `BEFORE UPDATE`
-    `trg_security_incidents_touch` trigger ([003-security.pg.sql:74](../../scripts/lib/stores/sql/003-security.pg.sql#L74))
+    `trg_security_incidents_touch` trigger ([003-security.pg.sql:74](files/scripts/lib/stores/sql/003-security.pg.sql#L74))
     always fires and refreshes `updated_at`. Working as intended.
   - Verdict: _"This is a well-executed port… pgvector is runtime-detected with graceful degradation…
     proper transaction boundaries via withTx… The 2 genuinely new HIGHs from R3 were real and were
@@ -92,13 +92,13 @@ The 3-round hard cap prevented an in-loop R4 verification, so these fixes were v
 
 | # | Origin | File | Change |
 |---|--------|------|--------|
-| 1 | R1 M7 `206f50df` | [azure-embed.mjs](../../scripts/lib/security/azure-embed.mjs) | `envInt()` NaN-safe `RETRY_MAX_ATTEMPTS` parse |
-| 2 | R1 M14 `c2ffc13d` | [repo-name.mjs](../../scripts/lib/security/repo-name.mjs) | `SECURITY_REPO_NAME` override for CI/shallow clones |
-| 3 | R2 M2 `2f737e18` | [003-security.pg.sql](../../scripts/lib/stores/sql/003-security.pg.sql) | embedding-column probe → `table_schema='public'` |
-| 4 | R3 H1 `d1793532` | [security.mjs](../../scripts/lib/store/security.mjs) | RPC vector bind cast `$3::vector` |
-| 5 | R3 H2 / Opus-1 O2 `8b25c13c` | [003-security.pg.sql](../../scripts/lib/stores/sql/003-security.pg.sql) | self-contained `CREATE EXTENSION IF NOT EXISTS pgcrypto` |
-| 6 | Opus-1 O1 / R2 M1 `563fb4fb` | [query.mjs](../../scripts/lib/db/query.mjs) + [security.mjs](../../scripts/lib/store/security.mjs) | `insertMany()` helper; audit trail uses it (explicit append-only) |
-| 7 | Opus-1 O3 `fe95f858` | [azure-embed.test.mjs](../../tests/azure-embed.test.mjs) | cleanup via `t.after()` (no fake-client leak) |
+| 1 | R1 M7 `206f50df` | [azure-embed.mjs](files/scripts/lib/security/azure-embed.mjs) | `envInt()` NaN-safe `RETRY_MAX_ATTEMPTS` parse |
+| 2 | R1 M14 `c2ffc13d` | [repo-name.mjs](files/scripts/lib/security/repo-name.mjs) | `SECURITY_REPO_NAME` override for CI/shallow clones |
+| 3 | R2 M2 `2f737e18` | [003-security.pg.sql](files/scripts/lib/stores/sql/003-security.pg.sql) | embedding-column probe → `table_schema='public'` |
+| 4 | R3 H1 `d1793532` | [security.mjs](../../../scripts/lib/store/security.mjs) | RPC vector bind cast `$3::vector` |
+| 5 | R3 H2 / Opus-1 O2 `8b25c13c` | [003-security.pg.sql](files/scripts/lib/stores/sql/003-security.pg.sql) | self-contained `CREATE EXTENSION IF NOT EXISTS pgcrypto` |
+| 6 | Opus-1 O1 / R2 M1 `563fb4fb` | [query.mjs](../../../scripts/lib/db/query.mjs) + [security.mjs](../../../scripts/lib/store/security.mjs) | `insertMany()` helper; audit trail uses it (explicit append-only) |
+| 7 | Opus-1 O3 `fe95f858` | [azure-embed.test.mjs](files/tests/azure-embed.test.mjs) | cleanup via `t.after()` (no fake-client leak) |
 
 Opus pass-2 findings (O1 regex `/g`, O2 `updated_at`) required **no** fix — verified non-issues (see
 Opus gate above). Full test suite after all fixes: **161 / 161 pass / 0 fail**.

@@ -2,8 +2,8 @@
 
 Operator guide for the funded (~€200–400) empirical burn-in that picks
 **audit-pipeline configs from real human-adjudication data**, not model
-self-opinion. Design + audit trail: [`docs/plans/model-ab-harness-v2.md`](plans/model-ab-harness-v2.md)
-(v2 delta) over [`docs/completed/model-ab-experiment-harness.md`](completed/model-ab-experiment-harness.md) (v1).
+self-opinion. Design + audit trail: [`docs/plans/model-ab-harness-v2.md`](../../completed/model-ab-harness-v2.md)
+(v2 delta) over [`docs/completed/model-ab-experiment-harness.md`](../../completed/model-ab-experiment-harness.md) (v1).
 
 > **What it is**: an observation-only *generation shadow* that generalizes the
 > final-review shadow to the AUDIT GENERATION passes. When enabled it runs the
@@ -30,7 +30,7 @@ and cancels in the relative ranking). The variable is the **audit + review stack
 pulling weight?". The GPT round in B is **independent** — it audits the SAME code
 on its own, NOT fed the OSS findings (the diversity thesis).
 
-Arms are **data** ([`scripts/lib/audit-arms.mjs`](../scripts/lib/audit-arms.mjs)
+Arms are **data** ([`scripts/lib/audit-arms.mjs`](../../../scripts/lib/audit-arms.mjs)
 `CANONICAL_ARMS`) and reference **sentinels** (`latest-gpt`,
 `latest-oss-reasoner`, `latest-pro`), never concrete ids — the resolver picks the
 newest match. **Hybrid attribution** (v2): `oss-gen` (shared by B+C) and `gpt-gen`
@@ -43,7 +43,7 @@ never silently derived, in both the JS (`attributeStageToArms`) and the SQL
 ## OSS model — DeepSeek V4 Pro (verified) + reasoning parity
 
 - **Model**: `latest-oss-reasoner` → **`deepseek/deepseek-v4-pro`** (the pool head
-  in [`model-resolver.mjs`](../scripts/lib/model-resolver.mjs); 1M ctx,
+  in [`model-resolver.mjs`](../../../scripts/lib/model-resolver.mjs); 1M ctx,
   ~$0.435/$0.87 per 1M in/out). **Pro is FIXED for the burn-in** ("see what good
   quality buys"). `deepseek/deepseek-v4-flash` (~$0.098/$0.196) is a **manual**
   operator swap only (`OSS_REASONER_MODEL=deepseek/deepseek-v4-flash`), **never
@@ -166,7 +166,7 @@ placeholders** (PowerShell reserves `<`, and a placeholder command can't be past
 
 ## The two-level decision rule (pinned — calibrate-then-freeze)
 
-[`scripts/lib/model-ab-decision.mjs`](../scripts/lib/model-ab-decision.mjs)
+[`scripts/lib/model-ab-decision.mjs`](../../../scripts/lib/model-ab-decision.mjs)
 `DECISION_CONSTANTS`. The values below are the **calibration starting point**;
 freeze them before the prospective run and do NOT tune against prospective data.
 
@@ -239,7 +239,7 @@ backstop). This is a process/manual step, not code.
 
 Per assignment ≈ `cost(A) + cost(OSS 5-pass) + cost(1 GPT round, B) + cost(B-gemini)
 + cost(C-gemini)` (oss-gen shared once across B+C). Token **usage** is always
-captured; cost is derived from [`model-pricing.mjs`](../scripts/lib/model-pricing.mjs)
+captured; cost is derived from [`model-pricing.mjs`](../../../scripts/lib/model-pricing.mjs)
 (`costFromUsage` for analytics — null-honest; `costForBudget` for the cap — never
 null, unpriced models over-estimate, unmeterable usage flagged). Prices are USD;
 the ledger stores **EUR** at the fixed `EUR_PER_USD` rate (a coarse fixed rate is

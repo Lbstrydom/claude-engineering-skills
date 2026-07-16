@@ -1027,7 +1027,7 @@ async function cmdSoloPassRetro() {
 // Companion to `apparatus` (which uses GPT to GENERATE findings) — this uses GPT
 // to GRADE the blind sheet, an independent second rater alongside the Claude-
 // subagent pass. Directly tests the "Claude-judging-Claude" bias concern
-// (docs/solo-control-experiment.md design point 2) by having a different model
+// (docs/research/runbooks/solo-control-experiment.md design point 2) by having a different model
 // family blind-grade the SAME rows. GPT has no live git access via the API, so
 // each commit's FULL diff (the same chunkDiff-fixed evidence the generation
 // passes saw, but sent WHOLE here — no re-chunking, so the judge never grades

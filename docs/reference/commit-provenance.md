@@ -4,10 +4,10 @@ Commits produced through the skills workflows carry structured git trailers
 recording how they were produced — which skill ran, which models
 participated, and whether a gate governed the change. Git-native: queryable
 with `git log` / `git interpret-trailers`, no database required. The
-authoritative writer is [`scripts/ship-commit.mjs`](../scripts/ship-commit.mjs)
-(pure logic in [`scripts/lib/commit-trailers.mjs`](../scripts/lib/commit-trailers.mjs));
+authoritative writer is [`scripts/ship-commit.mjs`](../../scripts/ship-commit.mjs)
+(pure logic in [`scripts/lib/commit-trailers.mjs`](../../scripts/lib/commit-trailers.mjs));
 `/ship` Step 6.3 invokes it. Plan + audit trail:
-[`docs/plans/provenance-trailers-and-gate-honesty.md`](plans/provenance-trailers-and-gate-honesty.md).
+[`docs/plans/provenance-trailers-and-gate-honesty.md`](../completed/provenance-trailers-and-gate-honesty.md).
 
 ## Schema (v1)
 
@@ -71,7 +71,7 @@ AGENT FIX: <field>: expected <grammar>; got "<value>". Example: <valid-example>
 Exit `1` = operational (nothing staged, hook rejection, unparseable audit
 evidence, git failure) — report, don't retry blindly. Exit `0` = committed.
 The full 15-row failure taxonomy lives in the plan (§F1.4) and is asserted
-row-by-row by [`tests/ship-commit-cli.test.mjs`](../tests/ship-commit-cli.test.mjs).
+row-by-row by [`tests/ship-commit-cli.test.mjs`](../../tests/ship-commit-cli.test.mjs).
 
 ## Degradation
 

@@ -142,11 +142,11 @@ skills/<name>/                   ← authoritative; edit ONLY here
 
 Every reference file has `summary:` YAML frontmatter that must byte-match
 the parent SKILL.md's reference-index row. `npm run skills:check` enforces
-this — see `docs/skill-reference-format.md`. A skill MAY also carry a
+this — see `docs/reference/skill-reference-format.md`. A skill MAY also carry a
 colocated `gate-contract.json` binding a stated gate to its enforcing
 code+test (never packaged/synced; no contract = `uncontracted`, not
 failed) — `npm run skills:check`/`gates:check` validate it; details:
-`docs/gate-honesty.md`.
+`docs/reference/gate-honesty.md`.
 
 Each skill is a sibling — they share env vars and Supabase stores but have distinct scopes:
 - **plan**: code that doesn't exist yet. Unified planner (auto-detects backend/frontend/full-stack); the frontend/full-stack path produces a machine-parseable "Acceptance Criteria" section that `/ux-lock verify` consumes.
@@ -156,7 +156,7 @@ Each skill is a sibling — they share env vars and Supabase stores but have dis
 - **persona-test**: deployed app, narrative QA. Three execution modes:
   - **Exploratory** (default, MCP-driven): persona walks the app via Playwright MCP, finds UX issues, writes a P0-P3 report + debrief.
   - **Pair** (`--pair "<p1>" "<p2>" <url>`): runs two opposed-expertise personas back-to-back, diffs findings into CONSENSUS / A-ONLY / B-ONLY buckets. Use when coverage matters more than speed — empirically ~92% disjoint findings.
-  - **Consistency mode** (`--mode consistency --canary <name>`, code-driven Playwright): deterministic runner against a canary journey + a `surfaces.json` manifest declaring `data-engine-claim` HTML attributes. Detects cross-step UI/state contradictions (DOM-vs-network-truth, stale-projection, undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright specs. See `docs/consistency-contract.md` for the HTML attribute contract.
+  - **Consistency mode** (`--mode consistency --canary <name>`, code-driven Playwright): deterministic runner against a canary journey + a `surfaces.json` manifest declaring `data-engine-claim` HTML attributes. Detects cross-step UI/state contradictions (DOM-vs-network-truth, stale-projection, undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright specs. See `docs/reference/consistency-contract.md` for the HTML attribute contract.
 - **click-test**: deployed app, structural DOM audit. Mechanical complement to persona-test — walks every interactive element, asserts semantic-HTML contracts (duplicate IDs, orphan labels, inputs without names, ARIA misuse, heading hierarchy, missing alt, undersized touch targets). Catches issues personas never trigger because there's no narrative reason to notice them. Optional `--with-modals` opens each modal/dropdown and re-scans the live DOM. Cache-busts service workers before scanning.
 - **nav-audit**: the **system-level** third UX lens (persona-test = journey-first, click-test = page-first, nav-audit = system-first). Static, code-derived audit of the WHOLE navigation graph — extracts every entry point × destination via `@babel/parser` AST (+ a string/template scan so vanilla template-HTML apps work), attributes anchors by render-containment, and runs a 10-class taxonomy (orphan, coverage-gap, redundancy, competing-models, anchor-regression, …) asking "is what's OFFERED what's NEEDED?" grounded in the persona registry. Two-artifact split: route-owned facts colocate in code (`navMeta`/`@nav` docblock); product intent lives in a tiny committed `nav-contract.json`; the observed graph is gitignored + regenerated. CI gate is **drift-only** (hard-fails only on a declared-intent regression on the changed surface). `--verify <url>` drives headless Chromium to reconcile static-vs-live (confirmed / static-only / runtime-only), attribute each live destination to its DOM-container layer → per-persona scorecard (pass/misplaced/missing), and ALSO run the layer-attribution finding classes over the **live** evidence ("Live findings", `source:'live'` — competing-models/over-exposure/sequencing fire on data-driven apps the static taxonomy can't model; state-scoped so responsive duplication isn't a false competing-model). A bounded **activation pass** opens collapsed menus/hamburgers and re-snapshots so behind-menu destinations aren't mislabeled "missing" (`--no-activate` to disable). The persisted verify-result is keyed on the contract digest (incl. `exclude`) + `NAV_VERIFY_TOOL_VERSION` (the live-result semantics version, decoupled from the observed-envelope `NAV_TOOL_VERSION`); the dashboard surfaces live evidence independently of the static observed envelope (live-only mode). **Capture honesty (v1.4)**: when a declared nav container is *visible-but-empty* (a stall, e.g. under a cold-init rate-limit storm) or never observable, that layer is `unverifiable` and the scorecard/live-findings degrade to `unverified` + a warning rather than emit an authoritative `misplaced`/`missing` — a `display:none` responsive container is a legitimate variant, not a stall. The activation pass adaptively aborts after 3 consecutive unactionable triggers so it can't amplify a degraded app's storm. Dashboard "Nav Audit" tab (REGISTRY.reference): Per-Persona Reachability Scorecard + Nav Drift + Live findings. Plans: `docs/completed/nav-audit-skill.md`, `nav-audit-v1.3-live-findings.md`, `nav-audit-debt-digest-decouple.md`, `nav-audit-v1.4-capture-honesty.md`.
 - **visual-audit**: the **paint-level** fourth UX lens (persona=journey, click=page, nav=system, **visual=paint**). Math-first, deterministic visual-contract auditor — drives Playwright + `getComputedStyle` + `getBoundingClientRect` + CDP `forcePseudoState` to assert what the page *paints*, with a VLM advisory-only (`--explain`, never gates). **Verify-primary** (unlike static-primary nav-audit): paint can't be asserted without rendering, so the static run only parses declared token sources → allowed-set + a source-coherence lint and emits NO paint findings (banner says so); `--verify <url>` runs the four tiers. **Tiers**: (1) declared-token reconciliation — a rendered value must be on the declared scale OR set by a token-referencing winning declaration (cascade-resolved), else `token_violation`; token-less apps get a report-only inferred-cluster fallback; (2) theme parity — MUST-MATCH in-flow geometry (only for nodes rendered in *both* themes, so a `display:none`-in-one-theme element isn't false-flagged) + may-differ-if-tokened colors (untokened literal identical across themes → `theme_unmapped_token`) + contrast over the in-browser-resolved opaque backdrop; (3) layout physics — overflow / silent clipping / overlap (ancestor-descendant containment excluded) / image distortion; (4) signifier matrix — `missing_visible_focus` (any indicator: outline/ring/border/bg), `state_has_no_visual_delta`, `disabled_not_signified`, read via CDP forced-pseudo-state after freezing transitions (no flaky actuation). Two-artifact split: committed `visual-contract.json` (surfaces + sourceGlobs + tokenSources + themes + globalStyleGlobs); gitignored `.audit-loop/visual-{observed,verify-result,drift-ledger}.json`. CI gate is **drift-only** via the canonical `ChangedScopeResolver` (changed-scope.mjs) — blocks a gate-eligible finding only when its surface's sourceGlobs, a changed token source, a contract edit, or a `globalStyleGlobs` cascade touches the change. Capture honesty: an absent/empty-skeleton surface or unresolvable backdrop degrades to `unverified`, never a false authoritative finding. The scope firewall (in SKILL.md verbatim): *"include a check only if you can assert it on a computed style without knowing what the page is FOR"* — signifiers in, affordance judgments out (those are persona-test's). Dashboard "Visual Audit" tab (REGISTRY.reference): Contracted-Surface Scorecard + Visual Findings. Plan: `docs/completed/visual-audit-skill.md`.
@@ -217,7 +217,7 @@ isn't tracked — fresh clones of a consumer repo need to re-run
 The sync-behavior detail (why the isolated subdir exists, the full
 what-goes-where table, the managed-gitignore runtime-outputs block +
 self-healing untrack semantics, and the `sync-*` key-module list) lives in
-[`docs/consumer-adoption.md`](docs/consumer-adoption.md) §"Sync internals".
+[`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md) §"Sync internals".
 One structural invariant stays here: **the sync layout's single source of
 truth is [`scripts/lib/sync-path-map.mjs`](scripts/lib/sync-path-map.mjs)** —
 never hand-compute a consumer path.
@@ -234,7 +234,7 @@ at the head of `main()`. Today: `check-setup.mjs`, `cross-skill.mjs`, `cache-hit
 
 ### Adopting these skills in a new consumer repo
 
-See [`docs/consumer-adoption.md`](docs/consumer-adoption.md) for the one-time migration recipe (legacy file cleanup, gitignore block, manifest layout transition).
+See [`docs/runbooks/consumer-adoption.md`](docs/runbooks/consumer-adoption.md) for the one-time migration recipe (legacy file cleanup, gitignore block, manifest layout transition).
 
 ## Browser Tool Setup (persona-test)
 
@@ -381,7 +381,7 @@ rules, all load-bearing:
    `--gate` alone yielded six such holes; none caught by static review).
 
 → Full worked detail, per-skill exposure survey, and the gate-honesty case
-list: [`docs/pre-ship-empirical-verify.md`](docs/pre-ship-empirical-verify.md).
+list: [`docs/runbooks/pre-ship-empirical-verify.md`](docs/runbooks/pre-ship-empirical-verify.md).
 
 ## Model Resolution
 
@@ -420,7 +420,7 @@ Self-check: `node scripts/lib/model-resolver.mjs resolve | catalog`.
   `error.message` — don't collapse to `"API error ${status}"` (it names the bad model).
 
 → Resolution-order detail, live-catalog mechanics, startup-log example, static-pool
-maintenance: [`docs/model-resolution.md`](docs/model-resolution.md).
+maintenance: [`docs/reference/model-resolution.md`](docs/reference/model-resolution.md).
 
 ## Memory-Health Gate
 
@@ -465,7 +465,7 @@ decision points to live learners. **Load-bearing**:
 
 → **Operations** (CLI `npm run learning:*`, weekly review, quickfix-learner hit
 lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
-[`docs/learning-system-runbook.md`](docs/learning-system-runbook.md).
+[`docs/runbooks/learning-system.md`](docs/runbooks/learning-system.md).
 → **Design**: master plan [`docs/completed/adaptive-learning-v1.md`](docs/completed/adaptive-learning-v1.md)
 + per-phase `adaptive-learning-phase-{1,2,3}-*.md`.
 
@@ -543,9 +543,9 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
 - **`AUDIT_DB_TEST_URL` must be disposable — enforced, not documented-only.**
   `assertDisposableDbUrl` (`scripts/lib/db/client.mjs`) runs before any pool reset
   in the `db-setup`/`db-withtx` integration suites, rejecting a Supabase-hosted or
-  production-identical test URL — closes a 2026-07-14 wipe incident. Detail: [postgres-parity-runbook.md](docs/postgres-parity-runbook.md) §Incident.
+  production-identical test URL — closes a 2026-07-14 wipe incident. Detail: [postgres-parity-runbook.md](docs/runbooks/postgres-parity.md) §Incident.
 
-→ **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/completed/postgres-parity.md`](docs/completed/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/completed/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/postgres-parity-runbook.md`](docs/postgres-parity-runbook.md).
+→ **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/completed/postgres-parity.md`](docs/completed/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/completed/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
 
 ## Anthropic Backend Routing
 
@@ -713,7 +713,7 @@ defaults **off** — production runs the legacy path today.
   the flag on, now genuinely collecting from zero) and Phase 14 (the production-
   flip decision gate). **Also check at Phase 14**: the model-swap-eval-harness's
   adjudicator-role eval has never run (Stage 2 here uses Gemini) — see
-  [model-eval-harness.md](docs/model-eval-harness.md) §"Adjudicator role — not yet run".
+  [model-eval-harness.md](docs/runbooks/model-eval-harness.md) §"Adjudicator role — not yet run".
 
 → Full plan, phase-by-phase spec, Stage-2 adapter wiring history (the
 two-handle design, module-relative resolution for consumer layouts), and
@@ -752,7 +752,7 @@ below):
   (real Tier A, $1.87; FP-rate drove it; the recall column is untrustworthy
   per the ceiling above).
 
-→ **Operational reference**: [`docs/model-eval-harness.md`](docs/model-eval-harness.md) · **Design + prior-art trace**: [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
+→ **Operational reference**: [`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md) · **Design + prior-art trace**: [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
 
 ## Local Weekly Maintenance Checks (opt-in)
 
@@ -760,13 +760,13 @@ Optional, default-OFF local replica of the 5 weekly GH Actions maintenance
 workflows, for orgs that block Actions runners. Opportunistic — triggered
 from the pre-push hook when overdue, **not** an OS scheduler (avoids the
 wrong-PATH/cwd/asleep-at-trigger failure class). Enable via `setup.mjs` Step 4
-or `AUDIT_LOOP_WEEKLY_MAINTENANCE=1`. Detail: [`docs/local-maintenance-checks.md`](docs/local-maintenance-checks.md).
+or `AUDIT_LOOP_WEEKLY_MAINTENANCE=1`. Detail: [`docs/runbooks/local-maintenance-checks.md`](docs/runbooks/local-maintenance-checks.md).
 
 ## Azure AI Foundry Work Profile
 
 Run the **same** bundle in a corporate Azure environment (restricted models)
 without drifting from the public-profile repo. Full guide:
-[`docs/azure-work-profile.md`](docs/azure-work-profile.md); plan +
+[`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md); plan +
 audit trail: [`docs/completed/azure-work-profile.md`](docs/completed/azure-work-profile.md).
 
 > **Opt-in invariant (load-bearing).** The Azure path activates **only** when
@@ -800,7 +800,7 @@ stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
   not per-token cost, is the binding constraint on the `arch:refresh` batch.
 
 → **Setup, env-var reference, provider-precedence detail, Foundry-Anthropic API shape,
-deployment quotas, rate-limits + throttling, rollback**: [`docs/azure-work-profile.md`](docs/azure-work-profile.md)
+deployment quotas, rate-limits + throttling, rollback**: [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md)
 (guide) + [`docs/completed/azure-work-profile.md`](docs/completed/azure-work-profile.md)
 (plan/audit). Template: [`defaults/work-profile.env.example`](defaults/work-profile.env.example).
 
@@ -1167,7 +1167,7 @@ verdict-verified against the store's `audit_runs` row (fail-closed — an
 unevidenced or unverified `passed` cannot exist). Applies from tag
 `provenance-v1` forward; absence
 after that = "not mechanically produced". Schema, query cookbook, failure
-contract: [`docs/commit-provenance.md`](docs/commit-provenance.md).
+contract: [`docs/reference/commit-provenance.md`](docs/reference/commit-provenance.md).
 
 ## Code Style
 

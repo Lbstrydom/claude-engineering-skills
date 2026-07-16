@@ -3,7 +3,7 @@
  * and the `summary:` frontmatter of reference files. Deterministic regex
  * parsing — no LLMs, no fuzzy matching.
  *
- * Contract documented in docs/skill-reference-format.md.
+ * Contract documented in docs/reference/skill-reference-format.md.
  * @module scripts/lib/skill-refs-parser
  */
 

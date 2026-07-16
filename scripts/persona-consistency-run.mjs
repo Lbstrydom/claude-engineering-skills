@@ -180,7 +180,7 @@ export async function runConsistency(args, deps = {}) {
       });
       ledger.close();
       process.stderr.write(
-        'fatal-rig: no surfaces.json resolved. Bootstrap: docs/consistency-contract.md\n',
+        'fatal-rig: no surfaces.json resolved. Bootstrap: docs/reference/consistency-contract.md\n',
       );
       return { exitCode: EXIT.FATAL_RIG, ledgerPath: ledger.ledgerPath, ledger: ledger.state };
     }

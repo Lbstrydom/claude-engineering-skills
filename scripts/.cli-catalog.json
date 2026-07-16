@@ -178,7 +178,7 @@
       "category": "diagnostic"
     },
     "db:local": {
-      "description": "Run the destructive DB integration suites locally against an ephemeral Docker Postgres (pgvector/pg16), mirroring the postgres-parity CI job. Requires Docker Desktop. See docs/postgres-parity-runbook.md.",
+      "description": "Run the destructive DB integration suites locally against an ephemeral Docker Postgres (pgvector/pg16), mirroring the postgres-parity CI job. Requires Docker Desktop. See docs/runbooks/postgres-parity.md.",
       "category": "diagnostic"
     },
     "db:local:regen": {
@@ -333,6 +333,14 @@
     "plans:archive:dry": {
       "description": "Preview which plans would be archived (no file moves).",
       "category": "plans"
+    },
+    "docs:check": {
+      "description": "Enforce docs/ root placement: root holds only allowlisted generated artefacts + live ledgers; hand-written docs belong in a bucket (reference/, runbooks/, plans/, research/). Runs as part of `npm run check`. Decision rule: docs/README.md.",
+      "category": "diagnostic"
+    },
+    "docs:check:json": {
+      "description": "Machine-readable docs/ root placement report ({ok, checked, unexpected, staleAllowlistEntries}).",
+      "category": "diagnostic"
     },
     "plans:lint": {
       "description": "Static-check Mermaid blocks in docs/plans/*.md for the class of bugs GitHub renders leniently but VS Code preview rejects (e.g. subgraph IDs used as edge endpoints). Runs as part of `npm run check`.",

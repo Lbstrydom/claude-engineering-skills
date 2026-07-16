@@ -28,7 +28,7 @@ No security incidents matched these paths.
 **Tight phase 1 scope: detect when a diff orphans a previously-imported file.** Catches the recurring "LLM writes new module, leaves old one with zero callers" failure mode in the same PR that introduced it.
 
 **What we DO**:
-1. New mechanical pass: `orphan-introduced` in [scripts/lib/audit/orphan-introduced.mjs](scripts/lib/audit/orphan-introduced.mjs). Pure deterministic algorithm, no LLM call.
+1. New mechanical pass: `orphan-introduced` in [scripts/lib/audit/orphan-introduced.mjs](../../scripts/lib/audit/orphan-introduced.mjs). Pure deterministic algorithm, no LLM call.
 2. Reuse the dependency-cruiser graph already computed by arch-intent. Don't re-parse.
 3. Orchestration resolves a `DiffScope` (`{baseRef, headRef, changedFiles, preEdgesByCaller}`) via the existing audit diff-scope resolver (working-tree / merge-base / passed `--diff`, with shallow-clone degradation). Pre-edge data is computed AST-style (NOT regex-on-patch — see H3 fix). Detector compares pre-edges vs HEAD graph for orphan signal.
 4. Findings emitted at **MEDIUM** severity. Dynamic imports, reflection, framework conventions can still create false positives — operator confirms via accept-v1 marker or ledger dismiss.
@@ -54,9 +54,9 @@ No security incidents matched these paths.
 
 ### What exists today (Phase 1 exploration)
 
-- **`runArchIntentAnalysis()`** ([adapter-contract.mjs:223](scripts/lib/arch-intent/adapter-contract.mjs#L223)): computes `mapped` + `unmappedFiles` + `deadIntent` + `perStackResults[].report.violations` + per-stack `_meta`. The js-ts adapter's `_meta` does NOT currently expose raw incoming-edge counts — only edge totals, vendor counts, unresolved/dynamic edge lists.
-- **dependency-cruiser** is invoked inside [adapters/js-ts.mjs:91](scripts/lib/arch-intent/adapters/js-ts.mjs#L91). The `cruise()` result has the full graph data we need (`result.output.modules[].dependencies[]`), but it's currently consumed and discarded after edge-classification.
-- **Architecture pass** ([openai-audit.mjs:1096](scripts/openai-audit.mjs#L1096)): clean pass-state taxonomy — `ANALYZED_CLEAN`, `ANALYZED_WITH_FINDINGS`, `ANALYZED_PARTIAL`, `ANALYZED_FALLBACK_DETERMINISTIC`, `SKIPPED_NO_BASELINE`, `SKIPPED_UNSUPPORTED_STACK`, `ERROR_ALL_STACKS_FAILED`. Orphan check follows the same pattern with `SKIPPED_NO_GRAPH` added.
+- **`runArchIntentAnalysis()`** ([adapter-contract.mjs:223](../../scripts/lib/arch-intent/adapter-contract.mjs#L223)): computes `mapped` + `unmappedFiles` + `deadIntent` + `perStackResults[].report.violations` + per-stack `_meta`. The js-ts adapter's `_meta` does NOT currently expose raw incoming-edge counts — only edge totals, vendor counts, unresolved/dynamic edge lists.
+- **dependency-cruiser** is invoked inside [adapters/js-ts.mjs:91](../../scripts/lib/arch-intent/adapters/js-ts.mjs#L91). The `cruise()` result has the full graph data we need (`result.output.modules[].dependencies[]`), but it's currently consumed and discarded after edge-classification.
+- **Architecture pass** ([openai-audit.mjs:1096](../../scripts/openai-audit.mjs#L1096)): clean pass-state taxonomy — `ANALYZED_CLEAN`, `ANALYZED_WITH_FINDINGS`, `ANALYZED_PARTIAL`, `ANALYZED_FALLBACK_DETERMINISTIC`, `SKIPPED_NO_BASELINE`, `SKIPPED_UNSUPPORTED_STACK`, `ERROR_ALL_STACKS_FAILED`. Orphan check follows the same pattern with `SKIPPED_NO_GRAPH` added.
 - **R2+ ledger suppression** is plumbed through `safeCallGPT` for LLM-generated findings. Mechanical findings (architecture's deterministic fallback path) currently bypass the ledger. The orphan-introduced pass needs equivalent fingerprint-based suppression for round 2+.
 - **No telemetry sink exists yet** for orphan-style mechanical findings. The pattern matches `.audit/cache-metrics.jsonl` (already exists for prefix-cache telemetry).
 - **`audit:accept-v1` marker** is parsed by the auto-deferral classifier (see [scripts/lib/learning/auto-defer.mjs](scripts/lib/learning/auto-defer.mjs) or equivalent — verify exact path during implementation). Reuse this parser; do not introduce a parallel one.
@@ -67,9 +67,9 @@ No security incidents matched these paths.
 - `runArchIntentAnalysis()` runs first; the orphan pass consumes its output. Saves ~3-15s by not re-running dependency-cruiser.
 - Pass-state taxonomy from `deriveArchState()`.
 - `safeCallGPT`'s pattern of mechanical-fallback finding emission (no LLM).
-- Findings format from [scripts/lib/findings-format.mjs](scripts/lib/findings-format.mjs).
+- Findings format from [scripts/lib/findings-format.mjs](../../scripts/lib/findings-format.mjs).
 - accept-v1 marker parser.
-- Atomic writes (`atomicWriteFileSync` from [scripts/lib/file-io.mjs](scripts/lib/file-io.mjs)) for telemetry append (use append-only mode, not full rewrite).
+- Atomic writes (`atomicWriteFileSync` from [scripts/lib/file-io.mjs](../../scripts/lib/file-io.mjs)) for telemetry append (use append-only mode, not full rewrite).
 
 **New**:
 - `scripts/lib/audit/orphan-introduced.mjs` — pure module exporting `detectOrphansIntroduced({scope, head, ctx}) → {rawFindings, _meta, state}`. Detector is side-effect-free; no git calls, no file I/O.
@@ -166,7 +166,7 @@ Context:
 
 Orchestration MUST produce `preEdgesByBaseCaller` by AST parsing, not regex:
 
-0. **Gemini-R2/H1 fix — pre-filter to source files**: filter `changedFiles` against the same `SOURCE_EXTENSIONS` set as [adapter-contract.mjs:41-47](scripts/lib/arch-intent/adapter-contract.mjs#L41). Binary files, JSON, lockfiles, .md must NEVER reach the AST parser. Skip silently — they cannot be orphan candidates anyway.
+0. **Gemini-R2/H1 fix — pre-filter to source files**: filter `changedFiles` against the same `SOURCE_EXTENSIONS` set as [adapter-contract.mjs:41-47](../../scripts/lib/arch-intent/adapter-contract.mjs#L41). Binary files, JSON, lockfiles, .md must NEVER reach the AST parser. Skip silently — they cannot be orphan candidates anyway.
 1. For each remaining `ChangedFile` with status in `{M, D, R}`: spawn `git show ${baseRef}:${baseCallerPath}` → preimage text.
    **R2/H2 fix**: `D` (deleted) callers MUST be included. A deleted file that used to import target X is a removed-edge that may orphan X.
    `A` (added) files are NOT processed here — they have no baseRef preimage.
@@ -185,7 +185,7 @@ If orchestration receives a `--diff` patch without a resolvable base tree (e.g. 
 
 #### Working-tree mode completeness (R3/H3 fix)
 
-When orchestration runs without explicit `--base/--head` refs (i.e. against the current working tree), `resolveDiffScope` MUST union three sources to build `changedFiles`, mirroring the arch-intent inventory pattern at [adapter-contract.mjs:104-120](scripts/lib/arch-intent/adapter-contract.mjs#L104).
+When orchestration runs without explicit `--base/--head` refs (i.e. against the current working tree), `resolveDiffScope` MUST union three sources to build `changedFiles`, mirroring the arch-intent inventory pattern at [adapter-contract.mjs:104-120](../../scripts/lib/arch-intent/adapter-contract.mjs#L104).
 
 **Gemini-R5/M1 — parser must handle variable-width records** (R/C statuses occupy TWO path tokens; A/M/D occupy ONE). The parser MUST peek at the status code prefix and consume the matching number of null-separated path tokens before advancing to the next record. Misalignment one record into the stream corrupts every subsequent ChangedFile.
 
@@ -200,7 +200,7 @@ Parse null-byte-separated output. The resulting `changedFiles` list normalises e
 
 #### Pass-state single source of truth (R3/M1 fix)
 
-All pass-state strings are defined ONCE in [scripts/lib/schemas.mjs](scripts/lib/schemas.mjs) as `OrphanPassStateSchema` (Zod enum):
+All pass-state strings are defined ONCE in [scripts/lib/schemas.mjs](../../scripts/lib/schemas.mjs) as `OrphanPassStateSchema` (Zod enum):
 
 ```
 'ANALYZED_CLEAN' | 'ANALYZED_WITH_FINDINGS' | 'ANALYZED_PARTIAL' |
@@ -341,7 +341,7 @@ Steps 3+4 already exist conceptually for LLM-pass findings — phase 1 makes the
 
 ### Telemetry contract (R1/M2 fix)
 
-`.audit/orphan-metrics.jsonl` is **append-only JSONL**. Writer: [scripts/lib/audit/orphan-metrics.mjs](scripts/lib/audit/orphan-metrics.mjs).
+`.audit/orphan-metrics.jsonl` is **append-only JSONL**. Writer: [scripts/lib/audit/orphan-metrics.mjs](../../scripts/lib/audit/orphan-metrics.mjs).
 
 **Write strategy** (M2 fix — atomic-write doesn't compose with append):
 
@@ -367,7 +367,7 @@ Steps 3+4 already exist conceptually for LLM-pass findings — phase 1 makes the
 
 **Triage backfill** (so phase 2 can compute FP rate):
 
-- The R2+ ledger writer ALREADY records `adjudicationOutcome` per fingerprint (dismissed / accepted / severity_adjusted) — see [scripts/lib/ledger.mjs](scripts/lib/ledger.mjs).
+- The R2+ ledger writer ALREADY records `adjudicationOutcome` per fingerprint (dismissed / accepted / severity_adjusted) — see [scripts/lib/ledger.mjs](../../scripts/lib/ledger.mjs).
 - `joinTriageOutcomes(ledgerFile)` reads the ledger and produces a derived view `{fingerprint → outcome}` for the analysis script.
 - No new triage table needed. Phase 2's analysis script joins `.audit/orphan-metrics.jsonl` × ledger entries on fingerprint.
 

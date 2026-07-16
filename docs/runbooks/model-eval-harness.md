@@ -3,9 +3,9 @@
 > Moved from AGENTS.md (2026-07-13 sprawl trim) — this holds the full
 > operational depth; AGENTS.md keeps the invariants + pointer, per the
 > progressive-disclosure policy. Design + prior-art trace:
-> [`docs/completed/model-swap-eval-harness.md`](completed/model-swap-eval-harness.md).
+> [`docs/completed/model-swap-eval-harness.md`](../completed/model-swap-eval-harness.md).
 > First real verdict:
-> [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](research/experiment-3-model-swap-glm-vs-gpt.md).
+> [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](../research/experiment-3-model-swap-glm-vs-gpt.md).
 
 A standing, repeatable test suite (`scripts/lib/model-eval/`) for evaluating a
 candidate LLM release for the **auditor** role (currently GPT) or the
@@ -142,7 +142,7 @@ permanently-unloadable: egress-blocked, oversized, or unresolvable git
 history — verified mechanically, not curated away). Full write-up incl. the
 raw-finding evidence and a governance note on the cross-repo egress
 authorization boundary that held even under direct repeated user request:
-[`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](research/experiment-3-model-swap-glm-vs-gpt.md).
+[`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](../research/experiment-3-model-swap-glm-vs-gpt.md).
 
 ## Adjudicator role — not yet run (open item, 2026-07-14)
 

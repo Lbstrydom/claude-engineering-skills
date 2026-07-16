@@ -5,7 +5,7 @@ summary: Full consistency-mode grammar, manifest schema, canary schema, runner e
 # Consistency Mode — Full Reference
 
 Loaded on demand when `/persona-test --mode consistency` runs.
-Canonical user-facing contract: [docs/consistency-contract.md](../../../docs/consistency-contract.md).
+Canonical user-facing contract: [docs/reference/consistency-contract.md](../../../docs/reference/consistency-contract.md).
 This file is the *operator's* deep dive — the canonical doc is the
 *adopter's* surface contract.
 
@@ -232,7 +232,7 @@ makes the candidate INSERT effectively an upsert per `(repo, fingerprint)`.
 ## Where this connects
 
 - **Phase 0 contract layer**: `scripts/lib/persona-test/schemas.mjs`,
-  `scripts/lib/redact.mjs`, migration `20260520120000`, `docs/consistency-contract.md`.
+  `scripts/lib/redact.mjs`, migration `20260520120000`, `docs/reference/consistency-contract.md`.
 - **Phase 1 (this PR)**: `manifest-resolver.mjs`, `consistency.mjs`,
   `semantic-compare.mjs`, `context.mjs`. SKILL.md Phase 3b dispatches.
 - **Phase 2 (next)**: `scripts/lib/ux-lock/capture.mjs` —

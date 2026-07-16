@@ -27,7 +27,7 @@ const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(__filename, '..', '..');
 // The operator-paste snippet was moved out of AGENTS.md (kept lean) into the
 // Postgres operations runbook; the test follows the content to its new home.
-const SNIPPET_DOC = path.join(REPO_ROOT, 'docs', 'postgres-parity-runbook.md');
+const SNIPPET_DOC = path.join(REPO_ROOT, 'docs', 'runbooks', 'postgres-parity.md');
 
 /**
  * Pull the snippet body out of the runbook. Matches the first ```bash

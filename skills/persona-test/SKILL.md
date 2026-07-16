@@ -374,7 +374,7 @@ Record a finding only when confidence ≥0.6. Below that, note it as
 
 Use this mode to detect cross-step UI/state contradictions (the engine says
 "infeasible" but a CTA says "Reorganise") against a registered canary journey.
-Authoritative spec: [docs/consistency-contract.md](../../docs/consistency-contract.md).
+Authoritative spec: [docs/reference/consistency-contract.md](../../docs/reference/consistency-contract.md).
 
 ### Step C1 — Validate inputs
 

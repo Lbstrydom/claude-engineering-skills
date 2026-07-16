@@ -14,7 +14,7 @@ Two recurring HIGH clusters surfaced across every WS3 audit round and were each 
 
 ### Cluster A — Pipeline liveness (WS-LIVE)
 
-[scripts/symbol-index/refresh.mjs::runJsonLines](scripts/symbol-index/refresh.mjs#L99-L114) uses **`spawnSync`** to launch the extract → summarise → embed pipeline. Each stage can run for many minutes (the ts-morph extract walks thousands of files in repos like wine-cellar). While `spawnSync` is blocking, the [`runWithHeartbeat`](scripts/symbol-index/refresh.mjs#L116-L123) `setInterval` cannot fire — heartbeats are silent for the entire pipeline duration. Implications:
+[scripts/symbol-index/refresh.mjs::runJsonLines](../../scripts/symbol-index/refresh.mjs#L99-L114) uses **`spawnSync`** to launch the extract → summarise → embed pipeline. Each stage can run for many minutes (the ts-morph extract walks thousands of files in repos like wine-cellar). While `spawnSync` is blocking, the [`runWithHeartbeat`](../../scripts/symbol-index/refresh.mjs#L116-L123) `setInterval` cannot fire — heartbeats are silent for the entire pipeline duration. Implications:
 
 - Today the partial-unique index on `(repo_id, status='running')` + the `--force` gate protects us from concurrent runs marking each other stale. But the contract is fragile: any future operator tool that decides staleness by `heartbeat_at` age would misclassify an honest in-flight refresh.
 - Structured-error propagation is coarse: `runJsonLines` throws on non-zero exit with `"<cmd> ... exited <status>"` — the catch in `main()` runs `abortRefreshRun` but the operator log doesn't say which stage (extract / summarise / embed) failed or what the child wrote on stderr.
@@ -24,19 +24,19 @@ Two recurring HIGH clusters surfaced across every WS3 audit round and were each 
 
 All sensitive-path classification operates on **lexical** path strings:
 
-- [scripts/lib/sensitive-paths.mjs::classifyPath](scripts/lib/sensitive-paths.mjs) → string matching against `SENSITIVE_PATTERNS` / `GENERATED_NOISE_PATTERNS`.
-- [scripts/lib/sensitive-egress-gate.mjs::isPathSensitive](scripts/lib/sensitive-egress-gate.mjs#L37-L39) → delegates to `classifyPath`.
+- [scripts/lib/sensitive-paths.mjs::classifyPath](../../scripts/lib/sensitive-paths.mjs) → string matching against `SENSITIVE_PATTERNS` / `GENERATED_NOISE_PATTERNS`.
+- [scripts/lib/sensitive-egress-gate.mjs::isPathSensitive](../../scripts/lib/sensitive-egress-gate.mjs#L37-L39) → delegates to `classifyPath`.
 
-A symlink whose visible name is innocent (e.g. `repo/notes.txt`) but whose `fs.realpath` target resolves into `~/.ssh/id_rsa` or `secrets/` bypasses the gate entirely. The library that *does* solve this — [scripts/lib/audit-scope.mjs::safeReadFile](scripts/lib/audit-scope.mjs#L82-L96) — already calls `fs.realpathSync` + cwd-containment check for the read path, but does NOT re-classify the canonical path as sensitive after resolution.
+A symlink whose visible name is innocent (e.g. `repo/notes.txt`) but whose `fs.realpath` target resolves into `~/.ssh/id_rsa` or `secrets/` bypasses the gate entirely. The library that *does* solve this — [scripts/lib/audit-scope.mjs::safeReadFile](../../scripts/lib/audit-scope.mjs#L82-L96) — already calls `fs.realpathSync` + cwd-containment check for the read path, but does NOT re-classify the canonical path as sensitive after resolution.
 
-Also in egress-gate: [redactSecrets](scripts/lib/sensitive-egress-gate.mjs#L76-L86) performs `JSON.stringify(payload)` **outside** its `try` block. Non-serializable inputs (BigInt, circular refs, throwing `toJSON`) cause the whole function to throw instead of producing a safe placeholder. Worse, the `catch` returns the `text` variable — for non-string inputs this is whatever `JSON.stringify` produced *before* it threw, which on the happy serialization path is the full payload as JSON. The fail-mode is "throw or return JSON" — neither matches the project's documented secret-egress invariant ("`.env` and credential files MUST NEVER be sent to external APIs").
+Also in egress-gate: [redactSecrets](../../scripts/lib/sensitive-egress-gate.mjs#L76-L86) performs `JSON.stringify(payload)` **outside** its `try` block. Non-serializable inputs (BigInt, circular refs, throwing `toJSON`) cause the whole function to throw instead of producing a safe placeholder. Worse, the `catch` returns the `text` variable — for non-string inputs this is whatever `JSON.stringify` produced *before* it threw, which on the happy serialization path is the full payload as JSON. The fail-mode is "throw or return JSON" — neither matches the project's documented secret-egress invariant ("`.env` and credential files MUST NEVER be sent to external APIs").
 
 ### Neighbourhood considered
 
 Architectural-memory consultation returned the WS3 symbol cluster (`runJsonLines`, `runWithHeartbeat`, `redactSecrets`, `gateSymbolForEgress`, `extractSymbols`) as expected — all `review` recommendation, no near-duplicates to consolidate to. **Two strong reuse signals OUTSIDE the WS3 cluster**:
 
-- [scripts/lib/redact.mjs::redactObject](scripts/lib/redact.mjs#L56-L124) — recursive object redactor with depth cap (8), node cap (50 000), and ancestor-stack cycle detection that distinguishes diamonds from true cycles. Returns `[REDACTED:cap-reached]` / `[REDACTED:cycle-detected]` placeholders — never the raw payload. **This is the fail-closed redactor WS-CANON needs.** The current `sensitive-egress-gate.mjs::redactSecrets` should delegate to it.
-- [scripts/lib/audit-scope.mjs::safeReadFile](scripts/lib/audit-scope.mjs#L82-L96) — already implements `fs.realpathSync` + repo-cwd containment. **The canonicalization pattern WS-CANON needs.** A new helper composes this with the sensitivity check.
+- [scripts/lib/redact.mjs::redactObject](../../scripts/lib/redact.mjs#L56-L124) — recursive object redactor with depth cap (8), node cap (50 000), and ancestor-stack cycle detection that distinguishes diamonds from true cycles. Returns `[REDACTED:cap-reached]` / `[REDACTED:cycle-detected]` placeholders — never the raw payload. **This is the fail-closed redactor WS-CANON needs.** The current `sensitive-egress-gate.mjs::redactSecrets` should delegate to it.
+- [scripts/lib/audit-scope.mjs::safeReadFile](../../scripts/lib/audit-scope.mjs#L82-L96) — already implements `fs.realpathSync` + repo-cwd containment. **The canonicalization pattern WS-CANON needs.** A new helper composes this with the sensitivity check.
 
 No prior security incidents matched these paths (incident neighbourhood: 0 records). `docs/security-strategy.md` exists; this PR adds an INC-### entry for the symlink-bypass class.
 
@@ -367,8 +367,8 @@ Add to the existing test file (or create as a new section):
 
 #### Doc updates
 
-- **EDIT [AGENTS.md](AGENTS.md)** — update "Sensitive paths + VCS contract" subsection to document `resolveAndClassify` + the canonical-vs-lexical layering. One paragraph.
-- **EDIT [docs/security-strategy.md](docs/security-strategy.md)** — add `INC-###: symlink-bypass of sensitive-path classifier` entry with `mitigation-passing` status referencing this plan's tests. The incident neighbourhood query in future plans will then surface this concretely.
+- **EDIT [AGENTS.md](../../AGENTS.md)** — update "Sensitive paths + VCS contract" subsection to document `resolveAndClassify` + the canonical-vs-lexical layering. One paragraph.
+- **EDIT [docs/security-strategy.md](../security-strategy.md)** — add `INC-###: symlink-bypass of sensitive-path classifier` entry with `mitigation-passing` status referencing this plan's tests. The incident neighbourhood query in future plans will then surface this concretely.
 
 ## 7. Risk & Trade-off Register
 

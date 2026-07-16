@@ -57,7 +57,7 @@ const CLI_SMOKE_SET = [
   'model-eval-auditor.mjs', // model-swap-eval-harness Phase 3 auditor-role CLI
   'model-eval-adjudicator.mjs', // model-swap-eval-harness Phase 4 adjudicator-role CLI
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
-  'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/commit-provenance.md)
+  'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
 ];
 

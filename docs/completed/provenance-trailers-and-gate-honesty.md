@@ -9,7 +9,7 @@
   (a commit-helper CLI, the skill-packaging seam, skill content, and tests are
   the four surfaces these features inherently span).
 - **Origin**: breadth-evidence scan Opportunities 1+2
-  ([docs/ibm-fs-breadth-evidence-claude-engineering-skills.md](../ibm-fs-breadth-evidence-claude-engineering-skills.md) §2),
+  ([docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md](../personal/ibm-fs-breadth-evidence-claude-engineering-skills.md) §2),
   refined by multi-LLM debate (brainstorm sessions `1784021969233`, `1784022362869`)
   and user decisions of 2026-07-14.
 
@@ -97,7 +97,7 @@ F2 seams (stated gates vs enforcement):
 | Item | True before-state | Improvement claim |
 |---|---|---|
 | F1 | Provenance join exists but is **one-way and DB-only** (`audit_runs.commit_sha`); commit messages carry zero provenance; the learning store is documented as low-signal/fragmented and is a single point of failure for provenance | one-way DB join → **git-native, offline, human-readable provenance**, from adoption forward |
-| F2 (bug class) | The class is **documented doctrine** (AGENTS.md "Pre-ship empirical verify", [docs/pre-ship-empirical-verify.md](../pre-ship-empirical-verify.md)); the three known instances are individually FIXED and individually tested | doctrine + per-incident fixes → **one executable suite that binds stated gate ↔ enforcing code ↔ named test**, fails on divergence, and reports its own non-coverage |
+| F2 (bug class) | The class is **documented doctrine** (AGENTS.md "Pre-ship empirical verify", [docs/runbooks/pre-ship-empirical-verify.md](../runbooks/pre-ship-empirical-verify.md)); the three known instances are individually FIXED and individually tested | doctrine + per-incident fixes → **one executable suite that binds stated gate ↔ enforcing code ↔ named test**, fails on divergence, and reports its own non-coverage |
 | F2 (convergence) | Threshold stated twice (SKILL.md prose + code) with **no binding check** | documented twice → **single contracted value, mechanically verified against both statements** |
 
 ### Neighbourhood considered
@@ -201,7 +201,7 @@ AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844
 | Key | Grammar | Required | Query it earns its place by |
 |---|---|---|---|
 | `AI-Skill` | `^[a-z][a-z0-9-]*$`, must name a directory under `skills/` (deterministic enum) | yes | "show every commit produced through `/ship`" — `git log --grep='^AI-Skill: ship'` |
-| `AI-Models` | comma-separated tokens `^[a-z][a-z0-9.-]*$`, deduplicated, **sorted alphabetically** (canonical order → grep-stable). **Semantics: a *declared* lineup** — the workflow's statement of which models participated, grammar-validated but not evidence-bound in v1 (no single invocation receipt exists across a ship session's model calls; receipt-derived binding is a §V2 item). Same honesty tier as a `Co-authored-by` line, and documented as such in `docs/commit-provenance.md`. | yes | "which commits involved model X?" / "when did the lineup change?" — this repo demonstrably rotates models (GLM Stage-1, Azure profiles, the 2026-07-13 eval verdict); a declared lineup answers these queries even without cryptographic provenance |
+| `AI-Models` | comma-separated tokens `^[a-z][a-z0-9.-]*$`, deduplicated, **sorted alphabetically** (canonical order → grep-stable). **Semantics: a *declared* lineup** — the workflow's statement of which models participated, grammar-validated but not evidence-bound in v1 (no single invocation receipt exists across a ship session's model calls; receipt-derived binding is a §V2 item). Same honesty tier as a `Co-authored-by` line, and documented as such in `docs/reference/commit-provenance.md`. | yes | "which commits involved model X?" / "when did the lineup change?" — this repo demonstrably rotates models (GLM Stage-1, Azure profiles, the 2026-07-13 eval verdict); a declared lineup answers these queries even without cryptographic provenance |
 | `AI-Gate` | enum `passed \| waived \| not-run` — **evidence-bound**: `passed`/`waived` are only writable when fresh audit evidence exists; `not-run` only when it doesn't (§F1.3b) | yes | "which commits were explicitly gated / shipped on a waiver / never gated?" — `not-run` distinguishes a docs-only ship from a gate bypass, and an unevidenced `passed` cannot exist |
 | `AI-Run-ID` | `^[A-Za-z0-9-]{8,64}$` | **conditional** (§F1.3) | best-effort forensic join to `audit_runs` — labelled correlation hint, never proof; git stays self-contained if the DB dies |
 
@@ -357,7 +357,7 @@ The helper never assumes a relative layout. Resolution rules:
 **Degradation contract:**
 - Manual commit / other agents / pre-adoption history → no trailers. Queries
   distinguish eras by the adoption boundary, recorded two ways: the docs
-  commit that lands this convention (referenced in `docs/commit-provenance.md`)
+  commit that lands this convention (referenced in `docs/reference/commit-provenance.md`)
   and an annotated tag `provenance-v1` on that commit. Post-adoption absence
   reads as "not mechanically produced" — deliberately NOT distinguishable
   further (per debate consensus: don't pretend absence encodes more than it does).
@@ -438,7 +438,7 @@ ambiguity).
 | `tests/sync-path-map.test.mjs` | modify | assert the new entry point + its transitive closure (`commit-trailers.mjs`) map to the consumer destination + round-trip (R2-H3) |
 | `tests/sync-rewriter.test.mjs` | modify | assert the SKILL.md invocation line rewrites to `scripts/.claude-skills/ship-commit.mjs` in the consumer copy (R2-H3) |
 | `AGENTS.md` | modify | short "Commit provenance trailers" stub (what/when/pointer — ≤15 lines, respecting the 1200-line gate) |
-| `docs/commit-provenance.md` | new | full convention: schema, grammar, adoption boundary, query cookbook (§F1.2), degradation semantics |
+| `docs/reference/commit-provenance.md` | new | full convention: schema, grammar, adoption boundary, query cookbook (§F1.2), degradation semantics |
 | `package.json` | modify | (only if a convenience alias is wanted — default: none; the skill calls `node scripts/ship-commit.mjs` directly) |
 
 Nothing else touched.
@@ -455,7 +455,7 @@ Nothing else touched.
    their tests). Standalone: nothing calls it yet; tests prove the contract.
 3. `feat(ship): route /ship commits through ship-commit.mjs; document the convention`
    — SKILL.md Step 6 edit + regenerated copy + AGENTS.md stub +
-   `docs/commit-provenance.md` + `provenance-v1` tag on this commit.
+   `docs/reference/commit-provenance.md` + `provenance-v1` tag on this commit.
    **From the next `/ship` onward, history carries trailers — commit 3 is the
    adoption boundary; the F2 commits below become the first trailer-carrying
    evidence.**
@@ -818,7 +818,7 @@ if drift is actually observed). **Cost: ~0.75–1 h, counted in §F2.11.**
 | `tests/skill-packaging.test.mjs` (or the existing packaging test home) | modify | gate-contract.json tolerated; still absent from packaged output; any OTHER json still rejected |
 | `package.json` | modify | `skills:check` chain += `node scripts/check-gate-contracts.mjs` |
 | `AGENTS.md` | modify | ≤10-line stub under the skill-file-structure section: what gate contracts are, uncontracted semantics, pointer to docs |
-| `docs/gate-honesty.md` | new | contract format, taxonomy incl. the document-only and not-worth-automating lists (so "visibly not checked" also has a durable doc home), how to contract a new skill |
+| `docs/reference/gate-honesty.md` | new | contract format, taxonomy incl. the document-only and not-worth-automating lists (so "visibly not checked" also has a durable doc home), how to contract a new skill |
 
 Nothing else touched. Explicitly out of scope: contracts for the other 6+
 skills; nav-audit/ux-lock/persona gates; mutation testing; SKILL.md
@@ -847,7 +847,7 @@ ever sent to an external API by this suite (it is fully offline).
    (counts derived, inventory pinned — §F2.6).
 6. `feat(skills-check): validate gate contracts on the pre-push path`
    — `check-gate-contracts.mjs` + package.json chain + AGENTS.md stub +
-   `docs/gate-honesty.md`.
+   `docs/reference/gate-honesty.md`.
 
 (Numbering continues from F1's 1–3; commits 4–6 are shipped via `/ship` and
 therefore carry the new trailers — F1's evidence and F2's delivery interlock.)
@@ -923,7 +923,7 @@ scripts/sync-to-repos.mjs (modify), scripts/lib/sync-inventory.mjs (modify),
 scripts/lib/sync-isolation-verify.mjs (modify), tests/sync-path-map.test.mjs (modify),
 tests/sync-rewriter.test.mjs (modify).
 **Phase 3 — F1 adoption**: route /ship through the helper + document. Files:
-skills/ship/SKILL.md (modify), AGENTS.md (modify), docs/commit-provenance.md (create),
+skills/ship/SKILL.md (modify), AGENTS.md (modify), docs/reference/commit-provenance.md (create),
 .claude/skills/ship/SKILL.md (modify).
 **Phase 4 — F2 framework**: schema/loader/suite/fixtures + packaging seam. Files:
 scripts/lib/gate-honesty/schema.mjs (create), scripts/lib/gate-honesty/loader.mjs (create),
@@ -934,7 +934,7 @@ tests/skill-packaging.test.mjs (modify).
 skills/audit-code/gate-contract.json (create), skills/visual-audit/gate-contract.json (create),
 scripts/lib/audit/convergence.mjs (create), scripts/lib/audit/legacy-production-audit.mjs (modify).
 **Phase 6 — F2 pre-push coupling**: skills:check member + docs. Files:
-scripts/check-gate-contracts.mjs (create), package.json (modify), docs/gate-honesty.md (create).
+scripts/check-gate-contracts.mjs (create), package.json (modify), docs/reference/gate-honesty.md (create).
 
 **Close-out (not a phase)**: `npm run skills:regenerate` (ship copy), `npm run check`, `npm run sync:dry`.
 
@@ -1082,7 +1082,7 @@ criterion of its owning phase; losing alternatives are struck from the body.
    lightweight — so the tag itself carries the adoption note. The boundary
    becomes a fact in the repo rather than a date to remember.
    *Acceptance criterion: `git tag -n provenance-v1` prints the adoption
-   note; `docs/commit-provenance.md` references the tag.*
+   note; `docs/reference/commit-provenance.md` references the tag.*
 4. **F2 commits as the first trailer-carrying evidence — confirmed, it's a
    feature** (owning phase: **Phase 1** registration, done —
    planId `0bc10a6c-5467-435e-8c89-e9d6613266dc`). The gate-honesty work
@@ -1101,12 +1101,12 @@ criterion of its owning phase; losing alternatives are struck from the body.
 
 - **Completed**: both clusters, in full, per the plan's §11 execution order.
   Cluster A (F1): `scripts/ship-commit.mjs` + `scripts/lib/commit-trailers.mjs`,
-  `/ship` rewired through it, `docs/commit-provenance.md`, annotated tag
+  `/ship` rewired through it, `docs/reference/commit-provenance.md`, annotated tag
   `provenance-v1`, sync wiring, 51 helper tests. Cluster B (F2):
   `scripts/lib/gate-honesty/{schema,oracles,loader}.mjs`, the lying-skill +
   3 negative fixtures, `tests/gate-honesty.test.mjs` (11 tests, pinned v1
   census), `scripts/check-gate-contracts.mjs` wired into `skills:check`,
-  `docs/gate-honesty.md`, two real skill contracts (5 executable + 4
+  `docs/reference/gate-honesty.md`, two real skill contracts (5 executable + 4
   document-only gates), the `convergence.mjs` extraction. 12 commits total
   since the recon commit, all now behind the `provenance-v1` boundary.
 - **Remaining**: nothing against this plan's declared scope. §V2 lists

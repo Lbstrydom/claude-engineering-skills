@@ -4,7 +4,7 @@
  * workflows (architectural-drift, migration-drift, model-freshness,
  * memory-health, learning-weekly-review) plus cache-hitrate-check, for
  * operators whose org blocks GitHub-hosted Actions runners (or who just
- * prefer local-only). Opt-in, default-OFF — see docs/local-maintenance-checks.md.
+ * prefer local-only). Opt-in, default-OFF — see docs/runbooks/local-maintenance-checks.md.
  *
  * Deliberately NOT an OS-scheduled job (schtasks/launchd/cron). This repo's
  * standing local-first-CI convention treats calendar workflows as

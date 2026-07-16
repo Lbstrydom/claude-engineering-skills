@@ -2,7 +2,7 @@
 
 Executable binding between a skill's STATED gate/convergence rule and the
 code + test that actually enforces it. Plan + full audit trail:
-[`docs/plans/provenance-trailers-and-gate-honesty.md`](plans/provenance-trailers-and-gate-honesty.md)
+[`docs/plans/provenance-trailers-and-gate-honesty.md`](../completed/provenance-trailers-and-gate-honesty.md)
 §F2. Bug class this closes: a SKILL.md describes a gate that the scripts
 don't enforce, or enforce differently (three documented past instances —
 see the plan's §F2.1 before-state).
@@ -38,7 +38,7 @@ A skill opts in by adding `skills/<name>/gate-contract.json`:
 
 The file is repo-local test metadata — colocated with the skill for
 visibility, but never packaged, never synced to consumers (`SKILL_LOCAL_FILES`
-in [`scripts/lib/skill-packaging.mjs`](../scripts/lib/skill-packaging.mjs)
+in [`scripts/lib/skill-packaging.mjs`](../../scripts/lib/skill-packaging.mjs)
 tolerates it at a skill's root and excludes it from the returned file list;
 `enumerateSkillFiles` still rejects any OTHER non-markdown file). No contract
 = that skill is `uncontracted` — reported, never a failure.
@@ -70,7 +70,7 @@ test suite, and `check-gate-contracts.mjs` alike — no drift between callers.
 ## Oracle registry (v1, closed set)
 
 A plain `Map` + four adapter functions
-([`scripts/lib/gate-honesty/oracles.mjs`](../scripts/lib/gate-honesty/oracles.mjs)).
+([`scripts/lib/gate-honesty/oracles.mjs`](../../scripts/lib/gate-honesty/oracles.mjs)).
 Each imports or spawns the REAL production seam named by `implementation` —
 same-module identity, never a lookalike. An unknown `oracle` id fails schema
 validation before any adapter runs.

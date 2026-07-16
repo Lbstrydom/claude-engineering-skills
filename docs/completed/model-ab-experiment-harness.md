@@ -260,7 +260,7 @@ graph LR
 | `scripts/lib/store/model-ab.mjs` | **create** | Store helpers: the reserve-then-reconcile **spend ledger** over a `model_ab_spend_ledger` table (reservation rows + `SELECT … FOR UPDATE` row-lock for atomic reservation across parallel arms — R3-H2; `audit_pass_stats` records *actuals*, the ledger holds *reservations*). **Crash-safe (Gemini NF-HIGH)**: each reservation carries a `reserved_at` + short TTL; a **reconcile-on-startup** (and a `WHERE reserved_at > now()-TTL` filter in the cap sum) releases orphaned reservations from an aborted (Ctrl-C'd) process, so a killed run can't permanently inflate `spent` and block future runs; the schema **preflight** (decision 13, invoked from the shadow layer NOT persistence — R3-M4); the **adjudication state machine** (R3-H3): a queue action maps to `adjudication_outcome` (`accepted`→accepted, `dismissed`/`not-actionable`→dismissed) and `duplicate` writes `finding_equivalence` pointing the dup at the canonical ROOT (transitive chains collapsed via union-find on write — Gemini NF-MED: a dup-of-a-dup resolves to the single root, never a chain) + sets the dup outcome to its canonical.s; transitions are idempotent + append-only. |
 | `audit_arms` config (in the migration) | **create** | **Versioned** arm definitions (R3-H4): `(arm_set_version, arm_id, stages[], effective_at)`; each `audit_run` snapshots the `arm_set_version` it used, so the view's derived membership is stable even when arm configs change mid-experiment. |
 | [`cross-skill.mjs`](../../scripts/cross-skill.mjs) | modify | `model-ab-adjudicate` (blinded human queue — decision 5a, mirrors `final-review-adjudicate`); `model-ab-stats --repo <r>` (per pass_type × arm × stage); `model-ab-decision` (evaluate the pinned constants per cell → DECIDE/CONTINUE + cumulative spend vs budget). Graceful no-op when cloud off. |
-| `docs/model-ab-experiment.md` | **create** | Runbook: the **pinned pre-registered rule** (decision 8 constants), the cost model + how the burn-in stops at budget, the `AUDIT_MODEL_SHADOW` **env syntax + `OPENROUTER_API_KEY` binding + validation errors** (R1-L1), and how to run the adjudication queue + read the CLI. |
+| `docs/research/runbooks/model-ab-experiment.md` | **create** | Runbook: the **pinned pre-registered rule** (decision 8 constants), the cost model + how the burn-in stops at budget, the `AUDIT_MODEL_SHADOW` **env syntax + `OPENROUTER_API_KEY` binding + validation errors** (R1-L1), and how to run the adjudication queue + read the CLI. |
 | `tests/audit-arms.test.mjs`, `tests/audit-shadow.test.mjs`, `tests/model-ab-egress.test.mjs` | **create** | Tier-1 pure (arm parse/validate; bucket/conformance logic) + Tier-3 egress (OSS arm payload is redacted). |
 
 ### 7b. Implementation Phases
@@ -270,7 +270,7 @@ graph LR
 - **Phase 3 — Generation-pass shadow (awaited-non-gating, spend-capped)**: the observation-only runner consuming redactedContext + the 1-independent-GPT-round + attribution tuple + bucketing/conformance + concurrency/spend cap. Files: `audit-shadow.mjs` (create), `openai-audit.mjs` (modify), `tests/audit-shadow.test.mjs` (create).
 - **Phase 4 — Persistence (attribution + usage/cost/conformance) + scorer view**: findings `stage` (NOT `arm_id` — decision 10) + pass_stats columns + the versioned `audit_arms` + `finding_equivalence` + `model_ab_spend_ledger` tables + the arm-derived view. Files: `runs-findings.mjs` (modify), `store/model-ab.mjs` (create), `supabase/migrations/<ts>_model_ab.sql` (create).
 - **Phase 5 — Adjudication queue + Scorer CLI + decision-rule evaluator**: the blinded `model-ab-adjudicate` human queue + `model-ab-stats` + `model-ab-decision` (pinned constants + cumulative-spend). Files: `cross-skill.mjs` (modify).
-- **Phase 6 — Runbook + pre-registered rule**: Files: `docs/model-ab-experiment.md` (create).
+- **Phase 6 — Runbook + pre-registered rule**: Files: `docs/research/runbooks/model-ab-experiment.md` (create).
 - **Close-out (not a phase)**: `npm test` + `node scripts/setup-postgres.mjs --migrate` + `--check-drift`; then the **empirical burn-in** (§9).
 
 ### 11. Execution Clustering
@@ -371,7 +371,7 @@ Built via `/cycle code --autonomous` over the §11 clusters (all committed to ma
   redundant preflight-column rigor).
 - **Cluster C** (`6232b6f`) — Phases 5–6, fix-gate final. `model-ab-decision.mjs`
   (pure pre-registered evaluator), `cross-skill.mjs` `model-ab-adjudicate` (blinded
-  queue) / `model-ab-stats` / `model-ab-decision`, runbook `docs/model-ab-experiment.md`.
+  queue) / `model-ab-stats` / `model-ab-decision`, runbook `docs/research/runbooks/model-ab-experiment.md`.
   Audited GPT R1 (H:0).
 - **Consolidated Gemini gate** (`f0d83b9`) — 6 rounds over the A∪B∪C union diff,
   REJECT→CONCERNS_REMAINING (0 new findings). Caught **5 genuine budget-safety /

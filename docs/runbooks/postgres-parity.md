@@ -2,7 +2,7 @@
 
 > Operational detail for the `pg`-direct cloud learning store. The **design**
 > rationale (the no-adapter decision, schema scope, privilege model, file plan)
-> lives in [`docs/completed/postgres-parity.md`](completed/postgres-parity.md);
+> lives in [`docs/completed/postgres-parity.md`](../completed/postgres-parity.md);
 > this file is the how-to. Stubbed from AGENTS.md to keep that file an invariant
 > ledger, not a runbook.
 
@@ -52,7 +52,7 @@ no separate read/write keys):
   + `CREATE EXTENSION` on `pgcrypto`, `pg_trgm`, `vector`. The setup CLI preflights
   both and aborts with a precise message when absent. Managed-Postgres-without-
   `CREATEROLE` is an explicit v1-unsupported case (plan §10).
-- **Runtime role** (the `pg.Pool` in [`scripts/lib/db/client.mjs`](../scripts/lib/db/client.mjs))
+- **Runtime role** (the `pg.Pool` in [`scripts/lib/db/client.mjs`](../../scripts/lib/db/client.mjs))
   — owns the audit-loop objects, OR holds full DML + `EXECUTE` on the 9 RPCs +
   schema/sequence `USAGE`. Ownership **bypasses RLS** — correct for the single-tenant
   store. On a Supabase project, `AUDIT_DB_URL` is the `postgres`-role string and
@@ -68,7 +68,7 @@ no separate read/write keys):
 | Compat-bootstrap only (no migrations) | `AUDIT_DB_URL=… node scripts/setup-postgres.mjs --bootstrap-only` |
 
 `--adopt` mode diffs the live schema against
-[`tests/fixtures/expected-schema.json`](../tests/fixtures/expected-schema.json) across
+[`tests/fixtures/expected-schema.json`](../../tests/fixtures/expected-schema.json) across
 10 catalog categories (tables / functions / views / policies / constraints / indexes
 / triggers / sequences / extensions / grants). Any drift aborts with a per-category
 diff so the operator decides.
@@ -204,7 +204,7 @@ Supabase project, same accounts. Rather than duplicating them in each repo's `.e
 the loader supports a per-user shared file at **`~/.audit-loop.env`** that consumers
 auto-inherit.
 
-**Loader precedence** (configured in [scripts/lib/config.mjs](../scripts/lib/config.mjs)):
+**Loader precedence** (configured in [scripts/lib/config.mjs](../../scripts/lib/config.mjs)):
 1. cwd / git-root `.env` — wins on overrides. Repo-specific values live here.
 2. `~/.audit-loop.env` — fallback for any var not set above. Shared secrets.
 
@@ -262,7 +262,7 @@ the file lives in `os.homedir()`, never in any git tree.
 ## Why the schema is `public`-only
 
 v1 hard-wires `public`. Plan §2 "Schema scope" + the audit at
-[`docs/completed/postgres-parity-schema-coupling.md`](completed/postgres-parity-schema-coupling.md):
+[`docs/completed/postgres-parity-schema-coupling.md`](../completed/postgres-parity-schema-coupling.md):
 4 migrations qualify `public.<table>` inside `publish_refresh_run` and 11
 `SECURITY DEFINER` functions pin `search_path = pg_catalog, public`. Arbitrary-schema
 support is §10 Out of Scope until that audit pass is re-run.
@@ -310,7 +310,7 @@ Supabase-hosted in this repo's design, it's a local/container Postgres) and
 (b) a test URL identical to the real `AUDIT_DB_URL`, even on a non-Supabase
 host (catches a same-database copy-paste that isn't Supabase at all).
 Regression-guarded in
-[`tests/db-dsn-validation.test.mjs`](../tests/db-dsn-validation.test.mjs).
+[`tests/db-dsn-validation.test.mjs`](../../tests/db-dsn-validation.test.mjs).
 **Live-repro-verified, not just unit-tested**: exporting `AUDIT_DB_TEST_URL`
 to the real production DSN and re-running `db-setup.test.mjs` now fails the
 `before()` hook immediately — all 5 subtests in that describe block show

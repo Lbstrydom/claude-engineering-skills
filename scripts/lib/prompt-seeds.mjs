@@ -59,7 +59,7 @@ CHECKABLE ARTIFACTS is present — name WHICH one in the finding:
   1. both surfaces read the SAME source-of-truth (one shared selector/store field — cite it), OR
   2. a parity assertion / test pins value === source, OR
   3. the value is declared as a \`data-engine-claim\` surface so persona-test --mode consistency
-     verifies it at runtime (see docs/consistency-contract.md).
+     verifies it at runtime (see docs/reference/consistency-contract.md).
 A recommendation to "make sure they stay in sync" is itself green-but-not-realized — do NOT accept
 prose; demand one of the three artifacts.
 

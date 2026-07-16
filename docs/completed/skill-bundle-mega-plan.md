@@ -12,7 +12,7 @@
 
 Each sub-phase ships independently. Dependencies flow forward: E before F, F before G, G before H.
 
-### [Phase E — Skill Consolidation + Python Profiles + Rename](../complete/phase-e-skill-consolidation-python.md)
+### [Phase E — Skill Consolidation + Python Profiles + Rename](phase-e-skill-consolidation-python.md)
 
 **Scope**: vendor the 4 external skills into this repo, add Python sections to each planning skill, rename repo to `claude-engineering-skills`.
 
@@ -32,7 +32,7 @@ Each sub-phase ships independently. Dependencies flow forward: E before F, F bef
 
 ---
 
-### [Phase F — Install + Update Infrastructure](../complete/phase-f-install-update-infra.md)
+### [Phase F — Install + Update Infrastructure](phase-f-install-update-infra.md)
 
 **Scope**: bootstrap script + installer CLI + update-check CLI with 24hr cache. Consumer repos can `curl | node` install once, then `bootstrap.mjs` manages fetching/updating.
 
@@ -63,29 +63,29 @@ Phase G was originally one plan. R1 audit surfaced 7 HIGHs — classic "too many
 
 **Ship when**: public users can run audit-loop with no cloud OR bring their own backend of choice.
 
-#### [Phase G.1 — Storage Interface + Facade + noop + Supabase refactor](../complete/phase-g1-storage-interface-noop-supabase.md)
+#### [Phase G.1 — Storage Interface + Facade + noop + Supabase refactor](phase-g1-storage-interface-noop-supabase.md)
 
 **Scope**: Define 5 split interfaces (DebtStore, RunStore, LearningStateStore, GlobalStateStore, RepoStore), build facade with `AUDIT_STORE` env selection, ship noop + refactored supabase adapters.
 
 **Key decisions**: fail-fast on broken explicit config, dual API (legacy shapes + discriminated envelopes), client-generated IDs for offline resilience, pending-writes outbox for transient failures, `lib/debt-ledger.mjs` becomes `@internal` (noop delegates to it).
 
-**Audit**: 3 rounds. R1 H:5→R2 H:4→R3 H:4. 10 fixes applied, 4 remaining HIGHs as known limitations. [Summary](../complete/phase-g1-storage-interface-noop-supabase-audit-summary.md).
+**Audit**: 3 rounds. R1 H:5→R2 H:4→R3 H:4. 10 fixes applied, 4 remaining HIGHs as known limitations. [Summary](phase-g1-storage-interface-noop-supabase-audit-summary.md).
 
-#### [Phase G.2 — SQLite + Postgres Adapters + Shared Conformance](../complete/phase-g2-sqlite-postgres-adapters.md)
+#### [Phase G.2 — SQLite + Postgres Adapters + Shared Conformance](phase-g2-sqlite-postgres-adapters.md)
 
 **Scope**: Shared `SqlAdapterBase` split into per-interface repo modules, SQLite adapter (`better-sqlite3`, WAL), Postgres adapter (`pg`), setup CLIs own DDL, conformance suite hardened.
 
 **Key decisions**: `INSERT...ON CONFLICT DO UPDATE` for both dialects (no `INSERT OR REPLACE`), application-generated UTC ISO-8601 timestamps, canonical error normalization (`normalizeError()`), setup CLIs own DDL / runtime only verifies.
 
-**Audit**: 2 rounds. R1 H:4→R2 H:4. 14 fixes applied, 2 remaining HIGHs as known limitations. [Summary](../complete/phase-g2-sqlite-postgres-adapters-audit-summary.md).
+**Audit**: 2 rounds. R1 H:4→R2 H:4. 14 fixes applied, 2 remaining HIGHs as known limitations. [Summary](phase-g2-sqlite-postgres-adapters-audit-summary.md).
 
-#### [Phase G.3 — GitHub Adapter (Branch + Issues)](../complete/phase-g3-github-adapter.md)
+#### [Phase G.3 — GitHub Adapter (Branch + Issues)](phase-g3-github-adapter.md)
 
 **Scope**: GitHub-native adapter using dedicated orphan branch as authoritative store + Issues as best-effort projection for operator UX. Atomic multi-file commits via Git Data API.
 
 **Key decisions**: branch is sole authority (Issues are projections), delta-event model for bandit/FP (append-only), 3-way merge for debt/prompts, compaction CLI, rate-limit budget cap pauses projections to preserve writes.
 
-**Audit**: 3 rounds. R1 H:6→R2 H:5→R3 H:5. 16 fixes applied, 5 remaining HIGHs as known limitations. [Summary](../complete/phase-g3-github-adapter-audit-summary.md).
+**Audit**: 3 rounds. R1 H:6→R2 H:5→R3 H:5. 16 fixes applied, 5 remaining HIGHs as known limitations. [Summary](phase-g3-github-adapter-audit-summary.md).
 
 **Does NOT deliver** (across all G sub-phases):
 - Databricks adapter (reserved enum slot, future contribution)
@@ -94,7 +94,7 @@ Phase G was originally one plan. R1 audit surfaced 7 HIGHs — classic "too many
 
 ---
 
-### [Phase H — Public-Distribution Hardening](../complete/phase-h-public-distribution.md)
+### [Phase H — Public-Distribution Hardening](phase-h-public-distribution.md)
 
 **Scope**: supply-chain integrity, signed checksums, release channels, security audit, first public launch.
 
@@ -113,7 +113,7 @@ Phase G was originally one plan. R1 audit surfaced 7 HIGHs — classic "too many
 
 ---
 
-### [Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control](../complete/phase-i-claudemd-hygiene.md)
+### [Phase I — CLAUDE.md / AGENTS.md Hygiene + Sprawl Control](phase-i-claudemd-hygiene.md)
 
 **Scope**: automated sprawl detection + reference-structure enforcement for CLAUDE.md, AGENTS.md, and skill files. Runs as a post-audit hook: after each audit loop completes, checks that instruction files remain concise and properly reference supporting docs.
 

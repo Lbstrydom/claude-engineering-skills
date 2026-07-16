@@ -25,7 +25,7 @@ GPT wastes significant reasoning tokens on mechanical issues that linters detect
 
 Meanwhile, GPT's architectural reasoning (SOLID, DRY, sustainability, wiring) is under-budgeted. The current audit takes 150-200s per pass partly because GPT is re-doing what linters already do.
 
-No external tool execution exists beyond `git` at [config.mjs:39](scripts/lib/config.mjs#L39).
+No external tool execution exists beyond `git` at [config.mjs:39](../../scripts/lib/config.mjs#L39).
 
 ### Security: Execution Trust Boundary
 

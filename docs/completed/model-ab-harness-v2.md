@@ -215,7 +215,7 @@ Gemini R2 = `CONCERNS`, 4 findings (3 MED, 1 LOW) — but **all implementation-c
 | `scripts/lib/store/model-ab.mjs` | modify | Adjudication captures the richer outcome (quality tier derived from `is_quick_fix` + `remediationState`); `stage_type` on the pass-stat writes. |
 | `scripts/lib/audit-shadow.mjs` | modify | Randomize arm order per assignment + record the seed (D10/M5); stamp `stage_type='audit-code'` (v2 scope — H6), `arm` on arm-specific-stage findings (gemini/gpt-round — H1), transport + requested-reasoning-effort (D4a) metadata; assign the `assignment_id` (H5). |
 | `scripts/cross-skill.mjs` | modify | `model-ab-stats` renders the cost–quality frontier + efficiency headlines; `model-ab-decision` applies the two-level rule; adjudication unchanged. |
-| `docs/model-ab-experiment.md` | modify | Runbook: v2 arm table, single-OSS-key setup, DeepSeek pick + verify step, two-phase burn-in, prompt-sensitivity probe, the frontier metrics, the quality tiers. |
+| `docs/research/runbooks/model-ab-experiment.md` | modify | Runbook: v2 arm table, single-OSS-key setup, DeepSeek pick + verify step, two-phase burn-in, prompt-sensitivity probe, the frontier metrics, the quality tiers. |
 | `tests/*` | modify/create | Update arm-composition + decision tests for the two-level rule, recall, quality tiers, frontier; egress/shadow tests unchanged. |
 
 ### 7b. Implementation Phases
@@ -223,7 +223,7 @@ Gemini R2 = `CONCERNS`, 4 findings (3 MED, 1 LOW) — but **all implementation-c
 1. **Arms + OSS model + config + reasoning parity** (D1, D3, D4, D4a) — re-point compositions, DeepSeek-Pro sentinel, single OSS key, OSS reasoning-effort param. Files: `scripts/lib/audit-arms.mjs` (modify), `scripts/lib/model-resolver.mjs` (modify), `scripts/lib/oss-structured-output.mjs` (modify), `scripts/lib/config.mjs` (modify), `scripts/lib/model-pricing.mjs` (modify), `tests/audit-arms.test.mjs` (modify).
 2. **Schema + scorer** (D5–D9, H1/H3–H7, M1–M6) — migration (arm/stage_type/assignment-grain cols + hybrid-attribution view + quality-tier + recall + cost), two-level decision rule (gate → weighted-quality over canonical clusters), frontier reporting. Files: `supabase/migrations/<ts>_model_ab_v2.sql` (create), `scripts/lib/store/model-ab.mjs` (modify), `scripts/lib/store/runs-findings.mjs` (modify), `scripts/lib/model-ab-decision.mjs` (modify), `scripts/cross-skill.mjs` (modify), `tests/model-ab-decision.test.mjs` (modify).
 3. **Shadow wiring + controls** (D9, D10, §4 R2-H4, §6, §7) — execution DAG (independent gen stages + in-memory shared `oss-gen`), arm-order randomization of independent units + seed, `stage_type='audit-code'` (v2 scope — **no** plan/audit-plan hooks; v2.1), `arm`/transport/reasoning metadata, `assignment_id`. Files: `scripts/lib/audit-shadow.mjs` (modify), `tests/audit-shadow.test.mjs` (modify).
-4. **Runbook + burn-in process** (D10) — two-phase (calibrate→freeze→prospective) + prompt-probe + spot-check protocol. Files: `docs/model-ab-experiment.md` (modify).
+4. **Runbook + burn-in process** (D10) — two-phase (calibrate→freeze→prospective) + prompt-probe + spot-check protocol. Files: `docs/research/runbooks/model-ab-experiment.md` (modify).
 5. **Close-out** (not a cluster phase) — `npm test` + `setup-postgres --migrate`/`--check-drift`; then the empirical calibration run.
 
 ### 11. Execution Clustering
@@ -258,7 +258,7 @@ Gemini R2 = `CONCERNS`, 4 findings (3 MED, 1 LOW) — but **all implementation-c
   - **Phase 1** — `CANONICAL_ARMS` re-pointed to the v2 compositions; `attributeStageToArms` rewritten to the hybrid fail-closed model (`SHARED_STAGES`/`ARM_SPECIFIC_STAGES`/`ARM_IDS`); `latest-oss-reasoner`→`deepseek/deepseek-v4-pro` (pool head; -flash env-only, never auto-selected); `OSS_PRICING` + `deepseek-v4-{pro,flash}`; `ossStructuredCall` forwards OpenRouter `reasoning:{effort}` + echoes `requestedReasoningEffort`; `config.PASS_REASONING` added as the parity SSoT.
   - **Phase 2** — migration `20260701140000_model_ab_v2.sql` (assignment grain on `audit_runs`; `audit_findings.arm`+`is_quick_fix` + fail-closed CHECKs NOT VALID; `audit_pass_stats.arm` + widened unique grain; `model_ab_attribute_arms` SQL function; `model_ab_effectiveness` hybrid CREATE OR REPLACE; new `model_ab_finding_scores` + `model_ab_arm_cost` views). `store/model-ab.mjs` (REQUIRED_SCHEMA, `ensureArmSet(2)`, activeTtlMs validation, spend-cap COALESCE hardening, `getModelAbFindingScores`/`getModelAbArmCost`); `store/runs-findings.mjs` (arm/is_quick_fix + assignment-grain writes). `model-ab-decision.mjs` fully rewritten (two-level gate→rank, canonical clusters, recall, €-frontier, calibrate-then-freeze `DECISION_CONSTANTS`). `cross-skill.mjs` stats/decision re-pointed.
   - **Phase 3** — `audit-shadow.mjs` v2 DAG (independent gen units, arm-order seeded shuffle, per-arm gemini with deduped upstream, `_arm` stamping, assignment grain, reasoning parity forwarding).
-  - **Phase 4** — `docs/model-ab-experiment.md` rewritten for v2.
+  - **Phase 4** — `docs/research/runbooks/model-ab-experiment.md` rewritten for v2.
 - **Deviations from plan**:
   - Migration timestamp `20260701140000` (plan wrote `<ts>`).
   - Added `is_quick_fix` as a persisted `audit_findings` column (the plan's quality tier reads it, but v1 only had it on the finding object) — a trailing-column add, consistent with H4.

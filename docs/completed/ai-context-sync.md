@@ -423,7 +423,7 @@ Steps:
 
 **Decision recorded 2026-04-26**: build it, but with strong test discipline (Louis Q3). The skill is the user-visible UX over Phase 2 + Phase 3 + Phase 5's own modes — it must be reliable. Proceeds in parallel with Phase 4 once Phases 1-3 are green.
 
-### 7.1 Structure (matches Phase B/C house style — see `docs/skill-reference-format.md`)
+### 7.1 Structure (matches Phase B/C house style — see `docs/reference/skill-reference-format.md`)
 
 ```
 skills/ai-context-management/

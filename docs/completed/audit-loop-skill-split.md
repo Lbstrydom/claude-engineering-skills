@@ -276,7 +276,7 @@ const TARGETS = {
 Behaviour:
 - Default: copy canonical → each target. Idempotent (no-op if byte-equal).
 - `--check`: SHA-256 each target, fail if any diverge from canonical.
-- Frontmatter `summary:` in target files must byte-match the SKILL.md reference-index row of the owning skill (per `docs/skill-reference-format.md`).
+- Frontmatter `summary:` in target files must byte-match the SKILL.md reference-index row of the owning skill (per `docs/reference/skill-reference-format.md`).
 
 ### 3.3 Wire into existing checks
 
@@ -509,7 +509,7 @@ Existing install ships all skill files via `sync-to-repos.mjs` enumeration — p
 
 - `CLAUDE.md` (after Phase 1 of [ai-context-sync](./ai-context-sync.md) slims it, this lives in `AGENTS.md`): update Skill Chain section to reflect 3 audit skills (plan, code, orchestrator).
 - `README.md`: update skill list.
-- `docs/skill-reference-format.md`: update example to reference the new skill names where applicable.
+- `docs/reference/skill-reference-format.md`: update example to reference the new skill names where applicable.
 
 ### 7.4 Update GH Action references
 

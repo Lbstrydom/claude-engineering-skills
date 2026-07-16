@@ -8,7 +8,7 @@ drifting from the work repo.
 > `AZURE_OPENAI_ENDPOINT` is set. With no Azure env vars, the bundle behaves
 > byte-identically to the public profile (public OpenAI/Gemini/Anthropic +
 > whatever `AUDIT_DB_URL` points at). Plan + design rationale:
-> [`docs/completed/azure-work-profile.md`](completed/azure-work-profile.md).
+> [`docs/completed/azure-work-profile.md`](../completed/azure-work-profile.md).
 
 ## What changes under the Azure profile
 
@@ -23,11 +23,11 @@ drifting from the work repo.
 
 ### 1. Provide credentials
 
-Copy [`defaults/work-profile.env.example`](../defaults/work-profile.env.example)
+Copy [`defaults/work-profile.env.example`](../../defaults/work-profile.env.example)
 into either your repo `.env` or — preferred for the shared secrets — the
 per-user shared file `~/.audit-loop.env` (gitignored, `chmod 600`). Consumer
 repos auto-inherit `~/.audit-loop.env`; see the "Shared cloud config" section of
-[AGENTS.md](../AGENTS.md).
+[AGENTS.md](../../AGENTS.md).
 
 The minimum required when `AZURE_OPENAI_ENDPOINT` is set:
 `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_GPT_DEPLOYMENT`. The final reviewer also
@@ -109,7 +109,7 @@ Deterministic, top wins:
 
 ## Env-var reference
 
-See [`defaults/work-profile.env.example`](../defaults/work-profile.env.example)
+See [`defaults/work-profile.env.example`](../../defaults/work-profile.env.example)
 for the annotated list. Notes:
 
 - **Deployment names vs sentinels** — `OPENAI_AUDIT_MODEL` /
@@ -127,14 +127,14 @@ for the annotated list. Notes:
 (Stubbed from AGENTS.md — operational depth lives here, not in the always-loaded
 context.)
 
-**Seams** (mirror `anthropic-client.mjs`): [`scripts/lib/openai-client.mjs`](../scripts/lib/openai-client.mjs)
+**Seams** (mirror `anthropic-client.mjs`): [`scripts/lib/openai-client.mjs`](../../scripts/lib/openai-client.mjs)
 `createOpenAIClient({purpose})` returns an Azure-v1 or public `OpenAI` client by env
-presence; [`scripts/lib/embed-text.mjs`](../scripts/lib/embed-text.mjs) `embedText()`
+presence; [`scripts/lib/embed-text.mjs`](../../scripts/lib/embed-text.mjs) `embedText()`
 routes embeddings the same way. The GPT auditor swaps `responses.parse()` →
 chat-completions + `zodResponseFormat` **only** on a positive Responses-unsupported
-signal ([`openai-responses-capability.mjs`](../scripts/lib/openai-responses-capability.mjs)
+signal ([`openai-responses-capability.mjs`](../../scripts/lib/openai-responses-capability.mjs)
 — a generic 404 stays fatal, per "never retry 404"). `azureConfig` lives in
-[config.mjs](../scripts/lib/config.mjs) (`buildAzureConfig`, fail-fast + redacted).
+[config.mjs](../../scripts/lib/config.mjs) (`buildAzureConfig`, fail-fast + redacted).
 
 **Role swaps**: GPT auditor → Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`,
 deployment `AZURE_OPENAI_GPT_DEPLOYMENT`); final reviewer → **Opus on Foundry**
@@ -173,7 +173,7 @@ command if missing (never auto-installs), then chains `--migrate`.
 `claude-sonnet-4-6` at 200K/200, `text-embedding-3-small` at 100K/600. `npm run
 azure:limits` probes each deployment's live TPM/RPM + reset window. Management (opt-in,
 no-op on the public path): a global in-flight concurrency cap
-([`scripts/lib/azure-throttle.mjs`](../scripts/lib/azure-throttle.mjs),
+([`scripts/lib/azure-throttle.mjs`](../../scripts/lib/azure-throttle.mjs),
 `AZURE_MAX_CONCURRENCY`, default 4 — TPM-bound on large GPT passes; raise toward 6–8 for
 RPM-bound batch work) paces the burst sources (the embedder's 25-wide `Promise.all`,
 parallel audit passes); the SDK clients run with `maxRetries` (`AZURE_MAX_RETRIES`,

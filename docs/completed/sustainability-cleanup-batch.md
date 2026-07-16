@@ -32,10 +32,10 @@
 | **EDIT** `AGENTS.md` | New "Sensitive paths + VCS contract" subsection documents the canonical locations and the closed `VcsErrorCode` enum. `Architecture` directory map updated with the two new files. |
 
 **arch:refresh blast-radius inventory** (plan §2 #7):
-- `npm run arch:refresh` / `:full` ([package.json](package.json)) — receives new exit codes (4/5/127/1) on VCS failure. No prior reliance on exit-0-on-failure.
-- `npm run dashboard:setup` ([package.json](package.json)) — `&&` chain already stops on first failure; no change.
-- [.github/workflows/architectural-drift.yml](.github/workflows/architectural-drift.yml#L59) — already uses `|| true` to ignore arch:refresh exit; new codes safe.
-- [.git/hooks/pre-push](.git/hooks/pre-push) — runs `npm run check`, not `arch:refresh`; unaffected.
+- `npm run arch:refresh` / `:full` ([package.json](../../package.json)) — receives new exit codes (4/5/127/1) on VCS failure. No prior reliance on exit-0-on-failure.
+- `npm run dashboard:setup` ([package.json](../../package.json)) — `&&` chain already stops on first failure; no change.
+- [.github/workflows/architectural-drift.yml](../../.github/workflows/architectural-drift.yml#L59) — already uses `|| true` to ignore arch:refresh exit; new codes safe.
+- [.git/hooks/pre-push](../../.git/hooks/pre-push) — runs `npm run check`, not `arch:refresh`; unaffected.
 - `scripts/install-prepush-hook.mjs` — no arch:refresh references.
 
 **Deviations from the plan**:
@@ -99,9 +99,9 @@ Three pre-existing patterns Gemini repeatedly flagged across the observed-deps a
 
 | File | Lines | Concerns inside | Frozen contract |
 |---|---|---|---|
-| [scripts/lib/store/arch-memory.mjs](scripts/lib/store/arch-memory.mjs) | 838 | 6 distinct sub-domains (refresh-runs lifecycle, snapshots, symbols, embeddings, imports, domain-summaries, neighbourhood RPCs) | **YES** — 31 exports, all re-exported by `learning-store.mjs` barrel (frozen at 107 names per `tests/learning-store-exports.test.mjs`) |
-| [scripts/lib/dashboard/render.mjs](scripts/lib/dashboard/render.mjs) | 607 | 8 section renderers (skills/cli/flows/architecture/plans/auditRuns/requirements/learning) + shared helpers (escapeHtml, panels, freshness banner, nav, renderDocument) | Only `escapeHtml`, `jsonScriptSafe`, `renderDocument` are exported externally; all sections are file-private |
-| [scripts/symbol-index/refresh.mjs](scripts/symbol-index/refresh.mjs) | 463 | CLI orchestration + 4 VCS helpers (`gitCommitSha`, `isSafeGitRevision`, `gitDiffWithWorkingTree`, `runJsonLines`) + main loop | No exports — pure CLI entry |
+| [scripts/lib/store/arch-memory.mjs](../../scripts/lib/store/arch-memory.mjs) | 838 | 6 distinct sub-domains (refresh-runs lifecycle, snapshots, symbols, embeddings, imports, domain-summaries, neighbourhood RPCs) | **YES** — 31 exports, all re-exported by `learning-store.mjs` barrel (frozen at 107 names per `tests/learning-store-exports.test.mjs`) |
+| [scripts/lib/dashboard/render.mjs](../../scripts/lib/dashboard/render.mjs) | 607 | 8 section renderers (skills/cli/flows/architecture/plans/auditRuns/requirements/learning) + shared helpers (escapeHtml, panels, freshness banner, nav, renderDocument) | Only `escapeHtml`, `jsonScriptSafe`, `renderDocument` are exported externally; all sections are file-private |
+| [scripts/symbol-index/refresh.mjs](../../scripts/symbol-index/refresh.mjs) | 463 | CLI orchestration + 4 VCS helpers (`gitCommitSha`, `isSafeGitRevision`, `gitDiffWithWorkingTree`, `runJsonLines`) + main loop | No exports — pure CLI entry |
 
 ### Neighbourhood considered
 
@@ -554,8 +554,8 @@ Apply at THREE discovery points:
 
 ### Doc updates
 
-- **EDIT** [AGENTS.md](AGENTS.md) — under the existing "Architecture" or new "Sensitive paths" subsection, document the canonical `lib/sensitive-paths.mjs` source and the VCS structured-error contract. One paragraph each.
-- **EDIT** [.audit-loop/domain-map.json](.audit-loop/domain-map.json) — no changes; the new sub-modules under `scripts/lib/store/arch/**` already tag as `stores` (via `scripts/lib/store/**` rule).
+- **EDIT** [AGENTS.md](../../AGENTS.md) — under the existing "Architecture" or new "Sensitive paths" subsection, document the canonical `lib/sensitive-paths.mjs` source and the VCS structured-error contract. One paragraph each.
+- **EDIT** [.audit-loop/domain-map.json](../../.audit-loop/domain-map.json) — no changes; the new sub-modules under `scripts/lib/store/arch/**` already tag as `stores` (via `scripts/lib/store/**` rule).
 - The first `arch:refresh` after WS1 lands will re-extract the symbols and reflect the new sub-module structure in `docs/architecture-map.md` automatically.
 
 ## 7. Risk & Trade-off Register

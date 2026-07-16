@@ -474,7 +474,7 @@ Standing policy: whenever the model-A/B/C shadow (`arm-eval`) toggle is ON, keep
 **solo author-model baseline** current — clean Sonnet-5 + Fable-5 cold-diff over the
 same shadow commits. This is the null-hypothesis control the A/B/C arms lack (do the
 external auditor pipelines earn their keep vs a capable model reviewing the diff bare,
-and is the *cheap* model already good enough?). See `docs/solo-control-experiment.md`.
+and is the *cheap* model already good enough?). See `docs/research/runbooks/solo-control-experiment.md`.
 
 Fire it **in the background, non-blocking** (it takes minutes; it must NEVER delay or
 gate the audit result):

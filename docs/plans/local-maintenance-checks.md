@@ -58,7 +58,7 @@ read "met" while 20/20 runs were silent fallbacks).
   byte-identical to before (verified: `.env` diff empty under `--headless`).
 - **`AGENTS.md`** — a 6-line stub (the repo was already at the 1200-line cap;
   two existing multi-line doc-pointer blocks were condensed to single lines
-  to make room, no content dropped) + **`docs/local-maintenance-checks.md`**
+  to make room, no content dropped) + **`docs/runbooks/local-maintenance-checks.md`**
   (full operational detail, what-it-replicates table, why-not-a-scheduler
   rationale, enable/verify instructions).
 - **`.gitignore`** (source) + the managed consumer-gitignore list in

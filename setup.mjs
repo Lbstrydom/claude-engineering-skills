@@ -131,7 +131,7 @@ async function setupDatabase(headless) {
 // (architectural drift, migration drift, model freshness, memory health,
 // learning weekly review) for operators whose org blocks GitHub-hosted
 // Actions runners. Default No — a fresh clone with default answers must
-// behave byte-identical to today. See docs/local-maintenance-checks.md.
+// behave byte-identical to today. See docs/runbooks/local-maintenance-checks.md.
 
 async function setupMaintenance(headless) {
   if (headless) { ok('Weekly maintenance: skipped (headless default)'); return; }

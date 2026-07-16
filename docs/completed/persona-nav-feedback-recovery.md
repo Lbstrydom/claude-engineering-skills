@@ -457,7 +457,7 @@ manual CLI as the override/repair path.
   findings not shown — re-run after labeling" (never silent truncation).
   `persona-outcomes label --session <id> --hash <h> --outcome fixed
   [--rationale "..."]` upserts one row. Reuses
-  [`scripts/lib/adjudication-worksheet.mjs`](../scripts/lib/adjudication-worksheet.mjs)
+  [`scripts/lib/adjudication-worksheet.mjs`](../../scripts/lib/adjudication-worksheet.mjs)
   (the shared renderer built for exactly this shape).
 - **End-to-end ship-gate read path (machine-readable, via the store — never
   raw SQL in a SKILL.md)**: new `cross-skill.mjs persona-outcomes summary

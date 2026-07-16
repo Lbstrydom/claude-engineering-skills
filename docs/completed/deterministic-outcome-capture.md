@@ -39,23 +39,23 @@
 
 - **Round loop**: `/audit-code` runs `node scripts/openai-audit.mjs code <plan> --round N
   --ledger /tmp/$SID-ledger.json --out /tmp/$SID-r<N>-result.json --changed … --diff …`
-  per round ([`skills/audit-code/SKILL.md`](skills/audit-code/SKILL.md) Step 2 / Step 5).
+  per round ([`skills/audit-code/SKILL.md`](../../skills/audit-code/SKILL.md) Step 2 / Step 5).
   **Key fact**: on rounds N ≥ 2 the orchestrator is **already handed `--ledger`** (the
   cumulative ledger the agent wrote after round N-1's deliberation, for R2+ suppression)
   and `--round N`, and `--out` follows the `…-r<N>-result.json` convention.
-- **The skipped step**: [`skills/audit-code/SKILL.md:287`](skills/audit-code/SKILL.md#L287)
+- **The skipped step**: [`skills/audit-code/SKILL.md:287`](../../skills/audit-code/SKILL.md#L287)
   Step 3.5b documents `write-code-outcomes.mjs` as MANDATORY but it's an agent-run bash step.
-- **The writer**: [`scripts/write-code-outcomes.mjs`](scripts/write-code-outcomes.mjs) and
-  the duplicate [`cross-skill.mjs:590`](scripts/cross-skill.mjs#L590) `cmdFinalizeOutcomes`
-  both call `recordTriageOutcomes` ([`outcome-sync.mjs:138`](scripts/lib/outcome-sync.mjs#L138)).
+- **The writer**: [`scripts/write-code-outcomes.mjs`](../../scripts/write-code-outcomes.mjs) and
+  the duplicate [`cross-skill.mjs:590`](../../scripts/cross-skill.mjs#L590) `cmdFinalizeOutcomes`
+  both call `recordTriageOutcomes` ([`outcome-sync.mjs:138`](../../scripts/lib/outcome-sync.mjs#L138)).
 - **Identity**: `$SID` is a unique, timestamped per-execution id (`SID=audit-code-$(date +%s)`)
   already embedded in every temp path — a durable execution identity. **No new identity is
   needed** (the v1 minted UUID was the rejected over-engineering). Cloud writes key on the
   result's existing `_cloudRunId`.
 - **Idempotency**: cloud is **already idempotent** — `recordAdjudicationEvent` does
-  `deleteWhere(finding_id) → insert` ([`runs-findings.mjs:1020`](scripts/lib/store/runs-findings.mjs#L1020)).
+  `deleteWhere(finding_id) → insert` ([`runs-findings.mjs:1020`](../../scripts/lib/store/runs-findings.mjs#L1020)).
   The only non-idempotent surface is the local `.audit/outcomes.jsonl` append
-  ([`outcome-sync.mjs:172`](scripts/lib/outcome-sync.mjs#L172)) — guarded by one marker file.
+  ([`outcome-sync.mjs:172`](../../scripts/lib/outcome-sync.mjs#L172)) — guarded by one marker file.
 - **Patterns reused vs new**: reuse `recordTriageOutcomes` + `markRunFindingsNeedsTriage`;
   consolidate the two duplicate finalize bodies into one shared fn. New: a prior-round
   finalize call at R2+ orchestrator start + a one-line local-append marker. **No hook, no
@@ -86,7 +86,7 @@ graph TD
 
 1. **Single shared `finalizeRoundOutcomes`** (#1 DRY, #5 SSoT). Extract the body
    duplicated across `write-code-outcomes.mjs` and `cmdFinalizeOutcomes` into
-   [`scripts/lib/finalize-outcomes.mjs`](scripts/lib/finalize-outcomes.mjs)
+   [`scripts/lib/finalize-outcomes.mjs`](../../scripts/lib/finalize-outcomes.mjs)
    `finalizeRoundOutcomes({result, ledger, round, store})`. The orchestrator + both CLIs
    call it — identical, tested logic.
 2. **Trigger = the existing R2+ invocation** (simplest structurally-honest). At round N ≥ 2
@@ -99,14 +99,14 @@ graph TD
    result's `_cloudRunId`. Nothing new to mint or persist across the stateless orchestrator.
 4. **Idempotency: cloud is already transactionally idempotent; the local append is
    lock-guarded** (#13, #14) — **verified, not assumed (H2)**. `recordAdjudicationEvent`
-   ([`runs-findings.mjs:999-1035`](scripts/lib/store/runs-findings.mjs#L999)) looks up the
+   ([`runs-findings.mjs:999-1035`](../../scripts/lib/store/runs-findings.mjs#L999)) looks up the
    finding by a **scoped** key `(run_id, finding_fingerprint, pass_name, round_raised)` and
    performs `delete → insert → update audit_findings` inside **`withTx(...)`** — so it is
    atomic and naturally keyed; re-finalizing a round is safe with no data-loss window. The
    one non-idempotent surface, the local `.audit/outcomes.jsonl` append, is guarded by a
    marker `.audit/.outcomes-finalized` (set of `"<cloudRunId|sid>:<round>"` keys); the
    check→append→mark critical section runs under the **existing** `withFileLock`
-   ([`scripts/lib/brainstorm/file-lock.mjs`](scripts/lib/brainstorm/file-lock.mjs)) so two
+   ([`scripts/lib/brainstorm/file-lock.mjs`](../../scripts/lib/brainstorm/file-lock.mjs)) so two
    concurrent same-repo audit sessions can't double-count bandit reward (M1). One small
    file. **No dead-letter, no `--status`, no state machine** (the rejected over-engineering).
 5. **Best-effort, never blocks the audit** (#16 Graceful Degradation). The finalize is
@@ -124,9 +124,9 @@ graph TD
    for *what* is finalized — the filename only *locates* the file.
 7. **Ledger matching uses the existing, deduped `enrichFindings`** (#correctness) —
    **resolves M4**. The ledger is **upsert-deduped per finding** on write
-   ([`ledger.mjs`](scripts/lib/ledger.mjs) preserves both adjudication axes on upsert →
+   ([`ledger.mjs`](../../scripts/lib/ledger.mjs) preserves both adjudication axes on upsert →
    one entry per `topicId`), so `enrichFindings`' `.find()`
-   ([`outcome-sync.mjs:28-41`](scripts/lib/outcome-sync.mjs#L28)) resolves a single
+   ([`outcome-sync.mjs:28-41`](../../scripts/lib/outcome-sync.mjs#L28)) resolves a single
    unambiguous current ruling (latest decision wins via the upsert); un-ruled findings stay
    `pending` → `markRunFindingsNeedsTriage`. No new matching rules — reuse the tested path.
 8. **Minimal, durable capture status — no new infra** (#19 Observability) — **resolves M5**.
@@ -176,13 +176,13 @@ graph TD
 
 | File | Action | Purpose |
 |---|---|---|
-| [`scripts/lib/finalize-outcomes.mjs`](scripts/lib/finalize-outcomes.mjs) | create | **Contract**: `loadAuditInputs({resultPath, ledgerPath})` → `{result, ledger}` validated with a **permissive** schema (asserts only `result.findings:array` + `ledger.entries:array`, `.passthrough()` so underscore annotations like `_cloudRunId`/`_outcomeCapture` never break it — M3); `resolveAuditArtifacts({outPath, round})` → `{priorResultPath\|null, sid}` (single naming SSoT — M3); `finalizeRoundOutcomes({result, ledger, round, store, sid})` (parsed objects in) → a status `{round, labelled, total, cloudOk, skippedLocal}`. The **marker key** is derived inside as `result._cloudRunId ?? sid` (H1 — both inputs are in scope: `_cloudRunId` from the result, `sid` from `resolveAuditArtifacts`/opts). Composes `recordTriageOutcomes` + `markRunFindingsNeedsTriage` + the marker guard. Shared by orchestrator + both CLIs. |
-| [`scripts/lib/outcome-sync.mjs`](scripts/lib/outcome-sync.mjs) | modify | Extract the local append into `writeLocalOutcomesOnce(enriched, {key})` — `withFileLock`-guarded check→append→mark against `.audit/.outcomes-finalized`; `recordTriageOutcomes` delegates to it (back-compat preserved). |
-| [`scripts/openai-audit.mjs`](scripts/openai-audit.mjs) | modify | Already imports the store fns (`recordAdjudicationEvent` at line 75; **add** `updatePassStatsPostDeliberation`, `updateRunMeta`) + `isCloudEnabled` — so it builds the same `store` object the CLIs use (or `null` when `!isCloudEnabled()`) — **M4**. In `runMultiPassCodeAudit`, when `round >= 2 && ledgerFile`: `resolveAuditArtifacts` → if `priorResultPath` resolves + exists, `loadAuditInputs` + `finalizeRoundOutcomes(..., {store, sid})` best-effort BEFORE the round-N audit; stamp the status onto `result._outcomeCapture` **on success, skip, AND failure** (`{status:'captured'\|'skipped'\|'failed', round, labelled, reason?}` — M2/M5); log `[finalize] round N-1: X/Y labelled` or the loud WARN on resolver no-match (M3). Wrapped try/catch — never blocks the audit. |
-| [`scripts/write-code-outcomes.mjs`](scripts/write-code-outcomes.mjs) | modify | Delegate to `finalizeRoundOutcomes` (thin CLI; manual fallback / cloud-off CI). |
-| [`scripts/cross-skill.mjs`](scripts/cross-skill.mjs) | modify | `cmdFinalizeOutcomes` delegates to `finalizeRoundOutcomes` (removes the duplicate body). |
-| [`skills/audit-code/SKILL.md`](skills/audit-code/SKILL.md) | modify | Step 3.5b: note that prior-round outcomes are captured automatically by the next round's orchestrator invocation; the manual CLI is the fallback for the **final** round / non-`/cycle` cloud-off CI. |
-| [`tests/finalize-outcomes.test.mjs`](tests/finalize-outcomes.test.mjs) | create | Tier-1 deterministic tests (below). |
+| [`scripts/lib/finalize-outcomes.mjs`](../../scripts/lib/finalize-outcomes.mjs) | create | **Contract**: `loadAuditInputs({resultPath, ledgerPath})` → `{result, ledger}` validated with a **permissive** schema (asserts only `result.findings:array` + `ledger.entries:array`, `.passthrough()` so underscore annotations like `_cloudRunId`/`_outcomeCapture` never break it — M3); `resolveAuditArtifacts({outPath, round})` → `{priorResultPath\|null, sid}` (single naming SSoT — M3); `finalizeRoundOutcomes({result, ledger, round, store, sid})` (parsed objects in) → a status `{round, labelled, total, cloudOk, skippedLocal}`. The **marker key** is derived inside as `result._cloudRunId ?? sid` (H1 — both inputs are in scope: `_cloudRunId` from the result, `sid` from `resolveAuditArtifacts`/opts). Composes `recordTriageOutcomes` + `markRunFindingsNeedsTriage` + the marker guard. Shared by orchestrator + both CLIs. |
+| [`scripts/lib/outcome-sync.mjs`](../../scripts/lib/outcome-sync.mjs) | modify | Extract the local append into `writeLocalOutcomesOnce(enriched, {key})` — `withFileLock`-guarded check→append→mark against `.audit/.outcomes-finalized`; `recordTriageOutcomes` delegates to it (back-compat preserved). |
+| [`scripts/openai-audit.mjs`](../../scripts/openai-audit.mjs) | modify | Already imports the store fns (`recordAdjudicationEvent` at line 75; **add** `updatePassStatsPostDeliberation`, `updateRunMeta`) + `isCloudEnabled` — so it builds the same `store` object the CLIs use (or `null` when `!isCloudEnabled()`) — **M4**. In `runMultiPassCodeAudit`, when `round >= 2 && ledgerFile`: `resolveAuditArtifacts` → if `priorResultPath` resolves + exists, `loadAuditInputs` + `finalizeRoundOutcomes(..., {store, sid})` best-effort BEFORE the round-N audit; stamp the status onto `result._outcomeCapture` **on success, skip, AND failure** (`{status:'captured'\|'skipped'\|'failed', round, labelled, reason?}` — M2/M5); log `[finalize] round N-1: X/Y labelled` or the loud WARN on resolver no-match (M3). Wrapped try/catch — never blocks the audit. |
+| [`scripts/write-code-outcomes.mjs`](../../scripts/write-code-outcomes.mjs) | modify | Delegate to `finalizeRoundOutcomes` (thin CLI; manual fallback / cloud-off CI). |
+| [`scripts/cross-skill.mjs`](../../scripts/cross-skill.mjs) | modify | `cmdFinalizeOutcomes` delegates to `finalizeRoundOutcomes` (removes the duplicate body). |
+| [`skills/audit-code/SKILL.md`](../../skills/audit-code/SKILL.md) | modify | Step 3.5b: note that prior-round outcomes are captured automatically by the next round's orchestrator invocation; the manual CLI is the fallback for the **final** round / non-`/cycle` cloud-off CI. |
+| [`tests/finalize-outcomes.test.mjs`](../../tests/finalize-outcomes.test.mjs) | create | Tier-1 deterministic tests (below). |
 
 > No `.claude/skills` / `.github/prompts` content change beyond what `skills:regenerate`
 > propagates from the canonical SKILL.md (freshness already enforced by `skills:check`).
@@ -208,7 +208,7 @@ dependency chain).
 | **`--out` naming drift breaks derivation (M3)** | Fail-soft + **loud** | Single `resolveAuditArtifacts` SSoT; no-match → visible stderr WARN (not silent) + empirical test asserts capture; prior result's `round`/`_cloudRunId` is the data SSoT. |
 | **Concurrent same-repo sessions → double local append** | Prevented | `withFileLock` around check→append→mark; cloud idempotent regardless. |
 | **Crash/SIGINT between local append and marker write (M1 R2)** | Accept (minor) | Worst case: a rare interrupted finalize re-appends one round's outcomes to `.audit/outcomes.jsonl` → a small bandit-reward double-count. Cloud (the SSoT for `audit_effectiveness`) is transactional + idempotent and unaffected. Data-model dedup (per-event `outcomeKey`) was **deliberately rejected** as over-engineering (Gemini flag, v1) — not worth re-introducing for a local cache feeding an already-under-fed bandit. Documented accepted debt. |
-| **Cloud idempotency unsafe/un-transactional (H2)** | Verified safe | `recordAdjudicationEvent` = scoped `(run_id,fingerprint,pass,round)` lookup + `delete→insert→update` in `withTx` ([runs-findings.mjs:999](scripts/lib/store/runs-findings.mjs#L999)). |
+| **Cloud idempotency unsafe/un-transactional (H2)** | Verified safe | `recordAdjudicationEvent` = scoped `(run_id,fingerprint,pass,round)` lookup + `delete→insert→update` in `withTx` ([runs-findings.mjs:999](../../scripts/lib/store/runs-findings.mjs#L999)). |
 | **Ledger match ambiguity across rounds (M4)** | Non-issue | Ledger upsert-deduped per finding → `enrichFindings.find()` unambiguous (latest ruling). |
 | **Prior result missing / ledger unparseable** | Tolerate | Best-effort try/catch → logged, audit unaffected (≡ today's skipped step). |
 | **Silent multi-run capture failure (M5)** | Surfaced | `result._outcomeCapture` on the existing artifact + one-line log; no new infra. |

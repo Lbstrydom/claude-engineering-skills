@@ -59,7 +59,7 @@ ${HOOK_MARKER}
 # Local replica of the 5 GH Actions cron workflows (architectural-drift,
 # migration-drift, model-freshness, memory-health, learning-weekly-review)
 # for operators whose org blocks GitHub-hosted Actions runners. Deliberately
-# NOT an OS-scheduled task — see docs/local-maintenance-checks.md for why.
+# NOT an OS-scheduled task — see docs/runbooks/local-maintenance-checks.md for why.
 #
 # MUST run before the code-audit section below (round-4 Gemini gate G1 fix):
 # that section \`exit 0\`s early whenever docs/plans/ is absent or has no

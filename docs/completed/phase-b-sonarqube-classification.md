@@ -15,7 +15,7 @@
 
 ### What Exists Today
 
-The `FindingSchema` at [schemas.mjs:12](scripts/lib/schemas.mjs#L12) has free-text `category` and `principle` fields. There's no structured taxonomy, no effort estimation, and no source attribution beyond what's embedded in category strings.
+The `FindingSchema` at [schemas.mjs:12](../../scripts/lib/schemas.mjs#L12) has free-text `category` and `principle` fields. There's no structured taxonomy, no effort estimation, and no source attribution beyond what's embedded in category strings.
 
 All three LLMs (Claude, GPT-5.4, Gemini) classify findings differently — GPT might say "DRY violation" while Claude says "code duplication" for the same issue. This inconsistency corrupts cross-round dedup and makes verdict math unreliable.
 

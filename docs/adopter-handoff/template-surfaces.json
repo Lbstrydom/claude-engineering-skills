@@ -23,7 +23,7 @@
         "id": "status-chip"
       },
       "severityFloor": "P1",
-      "_severityFloorGuidance": "P0 = trust-critical (counts, financial state). P1 = important state for which graceful stale UX is OK (SWR-style chips). P2 = advisory copy where divergence is recoverable. P3 = informational. See docs/consistency-contract.md §Severity-floor-guidance.",
+      "_severityFloorGuidance": "P0 = trust-critical (counts, financial state). P1 = important state for which graceful stale UX is OK (SWR-style chips). P2 = advisory copy where divergence is recoverable. P3 = informational. See docs/reference/consistency-contract.md §Severity-floor-guidance.",
       "engineFields": [
         {
           "field": "stateV2",

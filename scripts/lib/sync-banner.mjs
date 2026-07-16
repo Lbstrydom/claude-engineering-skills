@@ -32,7 +32,7 @@ export const BANNER_BODY = [
   '⚠ UPSTREAM-OWNED — DO NOT EDIT HERE. Synced from claude-engineering-skills',
   '  and OVERWRITTEN on the next sync. A bug here is an UPSTREAM bug: fix it in',
   '  claude-engineering-skills + re-sync. Editing the synced copy = silent drift,',
-  '  lost on the next sync. (see docs/consumer-adoption.md)',
+  '  lost on the next sync. (see docs/runbooks/consumer-adoption.md)',
 ];
 
 /**

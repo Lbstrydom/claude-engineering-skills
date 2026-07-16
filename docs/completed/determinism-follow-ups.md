@@ -83,7 +83,7 @@ equivalent manual gap because `/ux-lock` always invokes the runner.
 `recordAdjudicationEvent` (runs-findings.mjs) → `outcome-sync.recordTriageOutcomes`
 ← `write-code-outcomes.mjs`. The gap is **invocation**, rooted in two facts:
 
-1. **Per-invocation runs**: [openai-audit.mjs](scripts/openai-audit.mjs) calls
+1. **Per-invocation runs**: [openai-audit.mjs](../../scripts/openai-audit.mjs) calls
    `recordRunStart` on *every* invocation, so round 1 and round 2 are
    **separate `audit_runs` rows**. There is no single run_id spanning the audit.
 2. **Adjudication is interleaved human/Claude judgment**: openai-audit writes the

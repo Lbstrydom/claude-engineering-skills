@@ -10,7 +10,7 @@
 
 Phases completed end-to-end in a single session. All 940 tests pass.
 
-- **Phase A** — `docs/skill-reference-format.md`, `skill-refs-parser`,
+- **Phase A** — `docs/reference/skill-reference-format.md`, `skill-refs-parser`,
   `check-skill-refs` CLI, `repo-stack` lib, `cross-skill detect-stack`
   subcommand, `skill-packaging` allowlist, `regenerate-skill-copies`
   generator + `--check` verifier. 41 new unit tests.
@@ -416,7 +416,7 @@ Grouped by work-phase. Each file has purpose + imports + what-imports-it.
 
 | File | Purpose | Imports | Imported by |
 |---|---|---|---|
-| `docs/skill-reference-format.md` (NEW) | Canonical spec for the SKILL.md ref-index table format + reference-file `summary:` frontmatter. Documents trigger rules, anti-patterns, the drift-detection contract. Source of truth for the lint script. | — | Referenced by every SKILL.md; read by lint script authors |
+| `docs/reference/skill-reference-format.md` (NEW) | Canonical spec for the SKILL.md ref-index table format + reference-file `summary:` frontmatter. Documents trigger rules, anti-patterns, the drift-detection contract. Source of truth for the lint script. | — | Referenced by every SKILL.md; read by lint script authors |
 | `scripts/lib/skill-refs-parser.mjs` (NEW) | Parse the "Reference files" section of a SKILL.md into structured entries. Parse frontmatter `summary` from referenced files. Validates format. | `node:crypto`, `node:fs` | `scripts/check-skill-refs.mjs`, future meta tools |
 | `scripts/check-skill-refs.mjs` (NEW) | CLI lint: for each skill, parse its ref-index, verify every listed file exists, verify no orphan files, verify each ref's frontmatter `summary` exactly matches the index row. Exits non-zero on any violation. | `skill-refs-parser.mjs`, `node:fs` | `npm test` (added to `package.json` test scripts) |
 | `tests/skill-refs-parser.test.mjs` (NEW) | Unit tests for the parser — valid formats pass; missing files / malformed table / frontmatter mismatch fail. | — | `npm test` |
@@ -429,7 +429,7 @@ Grouped by work-phase. Each file has purpose + imports + what-imports-it.
 | `scripts/regenerate-skill-copies.mjs` (NEW) | Reads from authoritative `skills/`, byte-copies to `.claude/skills/` and `.github/skills/`. Uses `enumerateSkillFiles` for the allowlist. **Prunes** any file present in a destination tree but not in the source (skill deleted, ref file renamed, etc.) — so `.claude/skills/` and `.github/skills/` exactly mirror `skills/` after every run. Idempotent. | `skill-packaging.mjs`, `node:fs` | Pre-commit hook + CI; invoked manually when editing skills |
 
 **Why these files**:
-- `docs/skill-reference-format.md` → Principle 10 (Single Source of Truth — one place defines the format).
+- `docs/reference/skill-reference-format.md` → Principle 10 (Single Source of Truth — one place defines the format).
 - `scripts/lib/skill-refs-parser.mjs` → Principle 11 (Testability — extracted from CLI so it can be unit tested).
 - `scripts/check-skill-refs.mjs` → Principle 19 (Observability — catches ref rot before it ships).
 - `scripts/lib/repo-stack.mjs` → Principle 1 (DRY — eliminates 3x duplication).
@@ -584,7 +584,7 @@ Kept canonical:
 | Ref rot — summaries in the index drift from the ref bodies | High over time | Triggers fire for wrong content | See §2.2.1 — every reference file declares a canonical `Summary:` line in frontmatter; lint does an **exact string match** against the index table entry. No heuristic prose comparison. |
 | Installer v1 → v2 migration breaks downstream repos | Low if done right | Skills stop working in downstream repos | Ship v2 schema with `files` as optional (default: `[{relPath: 'SKILL.md', ...}]`); old installers reading v2 manifests work fine for single-file skills |
 | 3-way skill copies drift after refactor | High (this already happens) | Inconsistent behaviour in consumer repos | `check-sync.mjs` enforces byte equality across all 3 copies; CI gate |
-| "Read when" triggers are subjective | Always | Inconsistent reading behaviour across runs | Anti-pattern section in `docs/skill-reference-format.md` catches the worst cases ("when relevant" etc.); over time, trigger phrasing converges through review |
+| "Read when" triggers are subjective | Always | Inconsistent reading behaviour across runs | Anti-pattern section in `docs/reference/skill-reference-format.md` catches the worst cases ("when relevant" etc.); over time, trigger phrasing converges through review |
 | Refactor breaks a skill mid-session | Low | User-visible bug | Each skill refactors atomically: write the refs, update SKILL.md, sync the 3 copies, test the canonical invocation. Each skill is its own commit. |
 | `persona-test`'s embedded curl becomes CLI subcommands that don't exist yet | Dependency risk | Skill broken during Phase C1 | Sequence: Phase D (CLI subcommands + tests) **before** Phase C1 (persona-test refactor). |
 

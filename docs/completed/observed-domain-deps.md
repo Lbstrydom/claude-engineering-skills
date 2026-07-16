@@ -18,7 +18,7 @@
 
 ## 1. Context Summary
 
-The dashboard's Architecture tab uses [archTiers()](scripts/lib/dashboard/render.mjs#L263-L280) to bucket domains into Foundation / Core / Top-level. The bucket function reads `deps` from [collect-reference.mjs:102-110](scripts/lib/dashboard/collect-reference.mjs#L102-L110) which only consults the manually-curated `allowedDeps` block in [.audit-loop/domain-map.json](.audit-loop/domain-map.json). That hand-curated map drifts from reality the moment new files are added — currently 3 domains in [docs/architecture-map.md](docs/architecture-map.md) have no entry and incorrectly land in Foundation tier. Sister fix in the [work repo's checklist](dashboard-arch-bug-checklist.md) §6 calls for writing observed deps from the import graph to `.audit-loop/domain-deps-observed.json` and preferring it.
+The dashboard's Architecture tab uses [archTiers()](../../scripts/lib/dashboard/render.mjs#L263-L280) to bucket domains into Foundation / Core / Top-level. The bucket function reads `deps` from [collect-reference.mjs:102-110](../../scripts/lib/dashboard/collect-reference.mjs#L102-L110) which only consults the manually-curated `allowedDeps` block in [.audit-loop/domain-map.json](../../.audit-loop/domain-map.json). That hand-curated map drifts from reality the moment new files are added — currently 3 domains in [docs/architecture-map.md](../architecture-map.md) have no entry and incorrectly land in Foundation tier. Sister fix in the [work repo's checklist](dashboard-arch-bug-checklist.md) §6 calls for writing observed deps from the import graph to `.audit-loop/domain-deps-observed.json` and preferring it.
 
 **Target domains**: `arch-memory`, `dashboard`, `shared-lib`
 ⚠ **Cross-domain work** — touches 3 domains; the file-write seam belongs in `arch-memory` (where the DB queries live), the consumer in `dashboard`, and a tiny store query in `shared-lib`. Boundaries are clean — no shared mutable state.
@@ -27,11 +27,11 @@ The dashboard's Architecture tab uses [archTiers()](scripts/lib/dashboard/render
 
 | Symbol | File | Domain | Recommendation |
 |---|---|---|---|
-| `generateBaseline` | [arch-intent-bootstrap.mjs:54-113](scripts/arch-intent-bootstrap.mjs#L54-L113) | scripts | **justify-divergence** (0.75) — does similar work but via dep-cruiser, not the DB import graph |
-| `recordSymbolFileImports` | [store/arch-memory.mjs:480-500](scripts/lib/store/arch-memory.mjs#L480-L500) | arch-memory | **reuse** — populates `symbol_file_imports` table at refresh time |
-| `getImportersForFiles` | [store/arch-memory.mjs:562-583](scripts/lib/store/arch-memory.mjs#L562-L583) | arch-memory | **extend** — same table, opposite direction (sibling reader) |
-| `tagDomain` + `loadDomainRules` | [lib/symbol-index/domain-tagger.mjs](scripts/lib/symbol-index/domain-tagger.mjs) | arch-memory | **reuse** — path→domain via existing rules |
-| `cmdGetCallersForFile` | [cross-skill.mjs:715-770](scripts/cross-skill.mjs#L715-L770) | cross-skill-bridge | **extend** pattern — same DB join + tag flow at a different granularity |
+| `generateBaseline` | [arch-intent-bootstrap.mjs:54-113](../../scripts/arch-intent-bootstrap.mjs#L54-L113) | scripts | **justify-divergence** (0.75) — does similar work but via dep-cruiser, not the DB import graph |
+| `recordSymbolFileImports` | [store/arch-memory.mjs:480-500](../../scripts/lib/store/arch-memory.mjs#L480-L500) | arch-memory | **reuse** — populates `symbol_file_imports` table at refresh time |
+| `getImportersForFiles` | [store/arch-memory.mjs:562-583](../../scripts/lib/store/arch-memory.mjs#L562-L583) | arch-memory | **extend** — same table, opposite direction (sibling reader) |
+| `tagDomain` + `loadDomainRules` | [lib/symbol-index/domain-tagger.mjs](../../scripts/lib/symbol-index/domain-tagger.mjs) | arch-memory | **reuse** — path→domain via existing rules |
+| `cmdGetCallersForFile` | [cross-skill.mjs:715-770](../../scripts/cross-skill.mjs#L715-L770) | cross-skill-bridge | **extend** pattern — same DB join + tag flow at a different granularity |
 
 **Divergence note from `generateBaseline`**: it does the same conceptual work (derive `from-domain → [to-domains]` from observed imports), but runs **dep-cruiser** at bootstrap time and writes back into `domain-map.json::allowedDeps`. We can't reuse it because (a) we want this every render, not a one-shot, (b) the DB already has the import graph from `arch:refresh` — re-cruising is wasteful, (c) the work-repo design puts observed deps in a *separate* file so manual `allowedDeps` can stay as the **architectural-intent layer** (NOT a legacy fallback — see decision #4: observed = evidence layer, manual = intent layer, merge surfaces both).
 
@@ -70,7 +70,7 @@ sequenceDiagram
 
 1. **Single source of truth = the DB's `symbol_file_imports` table** (#5). It's already populated by `arch:refresh`. We don't re-cruise files; we just JOIN-in-application against the loaded domain rules.
 2. **Compute happens in `render-mermaid.mjs`, not at refresh time** (#20). The domain rules in `domain-map.json` can be edited between refreshes; observed deps must re-derive whenever rules change. Putting compute in render means: edit rules → `arch:render` regenerates → dashboard reads. No DB retag needed for the deps file (though `arch:refresh` is still needed to retag *symbols*).
-3. **Pure compute fn `computeObservedDomainDeps(edges, rules)` lives in the dashboard lib** (#1, #11). It's the same pattern as `tagDomain` — pure, no DB, unit-testable. Placed in [lib/dashboard/](scripts/lib/dashboard/) (not [lib/symbol-index/](scripts/lib/symbol-index/)) because the dashboard is its primary consumer; symbol-index just orchestrates writing the file.
+3. **Pure compute fn `computeObservedDomainDeps(edges, rules)` lives in the dashboard lib** (#1, #11). It's the same pattern as `tagDomain` — pure, no DB, unit-testable. Placed in [lib/dashboard/](../../scripts/lib/dashboard) (not [lib/symbol-index/](../../scripts/lib/symbol-index)) because the dashboard is its primary consumer; symbol-index just orchestrates writing the file.
 4. **Reader MERGES observed ∪ manual with per-edge provenance** (#15) — addresses R1-H2. Manual `allowedDeps` entries are NOT legacy fallbacks — they encode architectural intent the import graph can't see (dynamic imports, intentionally-forbidden-but-not-yet-violated edges, framework-level dependencies). The merge produces `{[fromDomain]: [{to, source}]}` where `source ∈ {observed, manual, both}`. Existing consumer `archTiers()` only cares about presence — it ignores the provenance labels — so the tier computation is unchanged. The Architecture panel subtitle exposes the per-source split (e.g. "23 edges: 18 observed · 5 manual-only"). When observed is absent, the reader returns the manual map alone, all tagged `source: manual`.
 5. **Versioned envelope on disk + read-time freshness gate** (#11, #15) — addresses R1-H1, R1-M1, R2-H1. The observed file is `{version: 1, refreshId, domainMapDigest, generatedAt, deps}` validated by a Zod 4 schema co-located with the constants in `observed-deps.mjs`. `domainMapDigest` = sha256 of the canonical-JSON-stringified `rules` array (NOT the `allowedDeps` block — only the rules drive observed tagging). On read: (a) schema-parse failure → clean fallback to manual, logged; (b) **digest mismatch against the current `loadDomainRules(root)`** → reject as stale, fall back to manual, logged with an actionable hint ("run npm run arch:render to refresh"). The reject reason is exposed to the renderer via `depsSource.observedRejectedReason` so the Architecture panel can surface "(observed stale — rules edited since last render)". The `refreshId` is informational only; it cannot be validated at read time because the dashboard reader is DB-agnostic.
 6. **Atomic replace on every render; delete on empty graph** (#15) — addresses R1-H1 staleness. Render-mermaid writes a complete envelope every run via `atomicWriteFileSync`. When the snapshot has no edges (pre-feature snapshot, `importGraphPopulated=false`, RPC failure), render **deletes** any existing `domain-deps-observed.json` so the dashboard cannot silently consume a stale file from a prior good run.
@@ -82,7 +82,7 @@ sequenceDiagram
 Operations have a strict chain: `arch:refresh` (populates `symbol_file_imports`) → `arch:render` (consumes it, writes `domain-deps-observed.json`) → `dashboard:build` (reads the file). The chain is already serialised by `npm run dashboard:setup` (Tier A item 2). No new concurrency. Partial failure semantics:
 
 - `arch:refresh` failure → existing safeguard: render aborts with "no active snapshot — run arch:refresh first" (existing line 88 of render-mermaid). New write never happens.
-- `listFileImportsForSnapshot` returns empty (pre-feature snapshot, `importGraphPopulated=false`) → render skips the file write entirely, dashboard falls back to manual `allowedDeps`. No partial file written. Match the `importerMap = null` fail-safe pattern already at [render-mermaid.mjs:159-168](scripts/symbol-index/render-mermaid.mjs#L159-L168).
+- `listFileImportsForSnapshot` returns empty (pre-feature snapshot, `importGraphPopulated=false`) → render skips the file write entirely, dashboard falls back to manual `allowedDeps`. No partial file written. Match the `importerMap = null` fail-safe pattern already at [render-mermaid.mjs:159-168](../../scripts/symbol-index/render-mermaid.mjs#L159-L168).
 - DB query throws → log to stderr, do not write the observed file, continue rendering the architecture map. Dashboard reader falls back automatically.
 
 ## 4. Engineering Principles Applied
@@ -107,7 +107,7 @@ Operations have a strict chain: `arch:refresh` (populates `symbol_file_imports`)
 
 ### New code
 
-**[scripts/lib/store/arch-memory.mjs](scripts/lib/store/arch-memory.mjs)** — add one exported reader sibling to `getImportersForFiles`:
+**[scripts/lib/store/arch-memory.mjs](../../scripts/lib/store/arch-memory.mjs)** — add one exported reader sibling to `getImportersForFiles`:
 
 ```js
 export async function listFileImportsForSnapshot(refreshId) {
@@ -172,12 +172,12 @@ export function mergeDomainDeps(observed, manual) { /* ... */ }
 export function flattenMergedDeps(merged) { /* ... */ }
 ```
 
-- Why a new file: separation between **pure compute** (this module) and the I/O orchestration in `render-mermaid.mjs`. Mirrors how [domain-tagger.mjs](scripts/lib/symbol-index/domain-tagger.mjs) is the pure tagger consumed by multiple sites.
+- Why a new file: separation between **pure compute** (this module) and the I/O orchestration in `render-mermaid.mjs`. Mirrors how [domain-tagger.mjs](../../scripts/lib/symbol-index/domain-tagger.mjs) is the pure tagger consumed by multiple sites.
 - Domain: `dashboard`. The dashboard is the primary consumer (collect-reference.mjs); render-mermaid imports the same pure fns to keep one definition.
 
 ### Edits
 
-**[scripts/symbol-index/render-mermaid.mjs](scripts/symbol-index/render-mermaid.mjs)** — add static ESM imports at top-of-file (addresses R1-H3); after `importerMap` is fetched (~line 168), add a best-effort observed-deps block. Uses envelope shape from §6 module (addresses R1-H1).
+**[scripts/symbol-index/render-mermaid.mjs](../../scripts/symbol-index/render-mermaid.mjs)** — add static ESM imports at top-of-file (addresses R1-H3); after `importerMap` is fetched (~line 168), add a best-effort observed-deps block. Uses envelope shape from §6 module (addresses R1-H1).
 
 ```js
 // Top-of-file imports (added):
@@ -225,7 +225,7 @@ try {
 
 Best-effort: a thrown error from the observed block must not abort the markdown render.
 
-**[scripts/lib/dashboard/collect-reference.mjs](scripts/lib/dashboard/collect-reference.mjs)** — replace lines 102-110. Static ESM import (R1-H3); Zod-validate observed envelope (R1-M1); MERGE observed ∪ manual rather than prefer-then-fallback (R1-H2). `readDomainDeps()` STAYS SYNCHRONOUS — `fs.readFileSync` and Zod `parse()` are both sync; no async ripple to callers.
+**[scripts/lib/dashboard/collect-reference.mjs](../../scripts/lib/dashboard/collect-reference.mjs)** — replace lines 102-110. Static ESM import (R1-H3); Zod-validate observed envelope (R1-M1); MERGE observed ∪ manual rather than prefer-then-fallback (R1-H2). `readDomainDeps()` STAYS SYNCHRONOUS — `fs.readFileSync` and Zod `parse()` are both sync; no async ripple to callers.
 
 ```js
 // Top-of-file imports (added):
@@ -306,11 +306,11 @@ export function readDomainDeps(root) {
 }
 ```
 
-The renderer at [render.mjs:285](scripts/lib/dashboard/render.mjs#L285) destructures `{domains, deps = {}, mapPath}` today. The single call site at [collect-reference.mjs](scripts/lib/dashboard/collect-reference.mjs) needs to stash `mergedDeps` + `depsSource` into the `data.architecture` payload alongside `deps`. **The `archTiers()` call is unchanged** — it still receives `deps` (the flat form). The new `depsSource` drives a one-line subtitle; `mergedDeps` is plumbed for a future per-edge tooltip but not consumed by v1 UI.
+The renderer at [render.mjs:285](../../scripts/lib/dashboard/render.mjs#L285) destructures `{domains, deps = {}, mapPath}` today. The single call site at [collect-reference.mjs](../../scripts/lib/dashboard/collect-reference.mjs) needs to stash `mergedDeps` + `depsSource` into the `data.architecture` payload alongside `deps`. **The `archTiers()` call is unchanged** — it still receives `deps` (the flat form). The new `depsSource` drives a one-line subtitle; `mergedDeps` is plumbed for a future per-edge tooltip but not consumed by v1 UI.
 
 #### `data.architecture` contract (addresses R2-H2)
 
-After this change, `data.architecture` (the payload [render.mjs:sectionArchitecture](scripts/lib/dashboard/render.mjs#L282) consumes) has the shape:
+After this change, `data.architecture` (the payload [render.mjs:sectionArchitecture](../../scripts/lib/dashboard/render.mjs#L282) consumes) has the shape:
 
 ```js
 {
@@ -340,19 +340,19 @@ After this change, `data.architecture` (the payload [render.mjs:sectionArchitect
 | `observedAvailable: false`, `rejectedReason: 'schema-invalid' \| 'unreadable'` | `{total} edges (manual intent only — observed deps file corrupt; check stderr)` |
 | No deps at all (manual empty + observed absent) | `No dependency data — run npm run dashboard:setup` |
 
-**Empty-domains case** is unchanged — [render.mjs:286-289](scripts/lib/dashboard/render.mjs#L286-L289) already renders the empty panel with the existing hint.
+**Empty-domains case** is unchanged — [render.mjs:286-289](../../scripts/lib/dashboard/render.mjs#L286-L289) already renders the empty panel with the existing hint.
 
-**[.gitignore](.gitignore)** — add one line under `.audit-loop/cache/`:
+**[.gitignore](../../.gitignore)** — add one line under `.audit-loop/cache/`:
 
 ```
 .audit-loop/domain-deps-observed.json
 ```
 
-**[AGENTS.md](AGENTS.md)** — one paragraph under the existing arch-map-discoverability block describing the **two-layer dependency model**: observed (DB import graph, written by `arch:render` to `.audit-loop/domain-deps-observed.json`, regenerated every render) is the **evidence layer**; manual `allowedDeps` in `.audit-loop/domain-map.json` is the **intent layer** (architectural rules the import graph cannot see — dynamic imports, intentionally-forbidden edges, framework wiring). The dashboard merges both with per-edge provenance. Only AGENTS.md is updated — [CLAUDE.md](CLAUDE.md) is intentionally a thin Claude-Code-only addendum (`@./AGENTS.md` include at the top) and does NOT duplicate shared rules; the project's `ai-context-management` skill enforces this canonicalisation, so this single-file edit is the right surface.
+**[AGENTS.md](../../AGENTS.md)** — one paragraph under the existing arch-map-discoverability block describing the **two-layer dependency model**: observed (DB import graph, written by `arch:render` to `.audit-loop/domain-deps-observed.json`, regenerated every render) is the **evidence layer**; manual `allowedDeps` in `.audit-loop/domain-map.json` is the **intent layer** (architectural rules the import graph cannot see — dynamic imports, intentionally-forbidden edges, framework wiring). The dashboard merges both with per-edge provenance. Only AGENTS.md is updated — [CLAUDE.md](../../CLAUDE.md) is intentionally a thin Claude-Code-only addendum (`@./AGENTS.md` include at the top) and does NOT duplicate shared rules; the project's `ai-context-management` skill enforces this canonicalisation, so this single-file edit is the right surface.
 
 ### Test
 
-**[tests/observed-deps.test.mjs](tests/observed-deps.test.mjs)** — new file, Node built-in test runner. Expanded per R1-M2 to cover precedence/merge, fallback behaviour, envelope validation, and `depsSource` propagation:
+**[tests/observed-deps.test.mjs](../../tests/observed-deps.test.mjs)** — new file, Node built-in test runner. Expanded per R1-M2 to cover precedence/merge, fallback behaviour, envelope validation, and `depsSource` propagation:
 
 **Group A — `computeObservedDomainDeps(edges, rules)`** (pure compute):
 - Empty edges → `{}`

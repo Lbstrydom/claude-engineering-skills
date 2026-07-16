@@ -13,7 +13,7 @@
  * Phase 2 redesign fork date (2026-07-11) — the same commit range cited in
  * docs/plans/model-swap-eval-harness.md's Phase 2 File-Level Plan entry.
  * `solo-control-audit.mjs` remains untouched and out of scope for this plan
- * (Audit Trail) — see docs/solo-control-experiment.md for the live
+ * (Audit Trail) — see docs/research/runbooks/solo-control-experiment.md for the live
  * experiment this protocol was forked from.
  *
  * Any future drift between this snapshot and blind-judge.mjs's own copies is

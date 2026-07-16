@@ -16,12 +16,12 @@
 
 The audit loop's code analysis is built around JavaScript/TypeScript idioms:
 
-- **`splitAtFunctionBoundaries()`** at [code-analysis.mjs:39](scripts/lib/code-analysis.mjs#L39) — regex matches `function|class|export const` only
-- **`buildDependencyGraph()`** at [code-analysis.mjs:128](scripts/lib/code-analysis.mjs#L128) — regex matches `from 'module'` (quoted) only, skips specifiers that don't start with `.`
-- **`extractImportBlock()`** at [code-analysis.mjs:24](scripts/lib/code-analysis.mjs#L24) — stops at first `function|class|export`
-- **`extractExportsOnly()`** at [code-analysis.mjs:112](scripts/lib/code-analysis.mjs#L112) — grep for `^export\s`
-- **`populateFindingMetadata()`** at [ledger.mjs:170](scripts/lib/ledger.mjs#L170) — file regex omits `.py`
-- **`classifyFiles()`** at [file-io.mjs:395](scripts/lib/file-io.mjs#L395) — no Python frontend/test patterns
+- **`splitAtFunctionBoundaries()`** at [code-analysis.mjs:39](../../scripts/lib/code-analysis.mjs#L39) — regex matches `function|class|export const` only
+- **`buildDependencyGraph()`** at [code-analysis.mjs:128](../../scripts/lib/code-analysis.mjs#L128) — regex matches `from 'module'` (quoted) only, skips specifiers that don't start with `.`
+- **`extractImportBlock()`** at [code-analysis.mjs:24](../../scripts/lib/code-analysis.mjs#L24) — stops at first `function|class|export`
+- **`extractExportsOnly()`** at [code-analysis.mjs:112](../../scripts/lib/code-analysis.mjs#L112) — grep for `^export\s`
+- **`populateFindingMetadata()`** at [ledger.mjs:170](../../scripts/lib/ledger.mjs#L170) — file regex omits `.py`
+- **`classifyFiles()`** at [file-io.mjs:395](../../scripts/lib/file-io.mjs#L395) — no Python frontend/test patterns
 
 ### Observable Symptoms
 

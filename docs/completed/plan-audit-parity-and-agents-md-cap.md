@@ -66,12 +66,12 @@ closed alongside.
   check; AGENTS.md had silently grown to 1412 lines.
 - First trim (1412 → ~1150), no information deleted — dossier sections
   moved verbatim to docs with what/when/pointer stubs left behind:
-  - Model Swap-In Evaluation Harness → `docs/model-eval-harness.md` (new)
-  - Pre-ship empirical verify worked detail → `docs/pre-ship-empirical-verify.md` (new)
+  - Model Swap-In Evaluation Harness → `docs/runbooks/model-eval-harness.md` (new)
+  - Pre-ship empirical verify worked detail → `docs/runbooks/pre-ship-empirical-verify.md` (new)
   - Tiered-recall shadow wiring history → appended to
     `docs/completed/tiered-recall-audit-pipeline.md` (addendum)
   - Consumer-sync mechanics (why-isolated, what-sync-writes table,
-    key modules) → `docs/consumer-adoption.md` §"Sync internals"
+    key modules) → `docs/runbooks/consumer-adoption.md` §"Sync internals"
   - Inline `scripts/` tree in Architecture DELETED as stale duplication
     (listed 2 test files vs 100+ real; `docs/architecture-map.md` is the
     live generated index) — replaced with a one-line layout note.

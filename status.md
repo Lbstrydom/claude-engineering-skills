@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-07-16 — `docs/` reorganisation: root 23 → 7 files, `reference/` + `runbooks/` + `personal/` + `research/runbooks/` buckets, a root-placement lint, and 210 pre-existing broken doc links repaired
+
+### Changes
+- **Origin**: user asked to organise `docs/` — "a lot of markdown files in the docs folder", suggesting subfolders and/or moving less-used docs to `docs/completed/`.
+- **Diagnosis — the convention already existed and had drifted, which reframed the task**: `docs/README.md` already documented a five-bucket taxonomy with a rule of thumb. The failure was its root bucket being defined as *"long-lived reference docs and generated artefacts"* — a catch-all that swallowed 15 files it never accounted for (its table listed 8; root held 23), plus three folders (`research/`, `experiments/`, `arm-eval/`) it never mentioned at all. So this was a stale governance doc, not an absent one.
+- **Corrected the user's `completed/` suggestion**: `docs/completed/` is the mechanical destination of `npm run plans:archive` (`Status: Complete` plans + their paired `*-audit-summary.md`), not a junk drawer — parking reference docs there would break both the semantics and the archive script's assumption that everything in it is a plan. The instinct (get archival material out of the way) was right; the destination wasn't. README now says this explicitly.
+- **Moves (16, all `git mv` so history follows)**: `reference/` — the 5 hand-written contracts something *enforces* (`consistency-contract`, `gate-honesty`, `commit-provenance`, `skill-reference-format`, `model-resolution`); `runbooks/` — the 7 operator guides, which AGENTS.md already called its "**Operations:**" half, with the redundant `-runbook.md` suffix dropped (`postgres-parity-runbook.md` → `runbooks/postgres-parity.md`); `research/runbooks/` — the 3 experiment operator guides (`arm-eval` live, `model-ab-experiment` + `solo-control-experiment` concluded — each doc states which, so a status change never means a file move); `personal/` — the IBM Full Stack MSc evidence dossier (no code reads it; it isn't project documentation). Root now holds 7 files, all generated artefacts or live ledgers.
+- **Rejected the deeper merge (user initially chose it; new evidence overturned it)**: merging `docs/arm-eval/` + `docs/experiments/` into `research/` looked tidier but they are **not docs** — they're code-coupled paths. `docs/arm-eval/**` globs are baked into `AUDIT_RUNTIME_IGNORES` (`sync-to-repos.mjs`), which is written into every consumer's managed `.gitignore` block AND doubles as the post-sync untrack allow-list (`tests/sync-untrack.test.mjs`) — verified empirically that wine-cellar-app holds 15 ignored session files that would have started nagging as untracked. `experiments/audit-effectiveness/known-defects.json` is the model-eval oracle read by 4 scripts. They're also **different kinds** — one an output (runtime export archive), one an input (curated corpus) — so a shared parent would have filed them by "neither is prose", the same define-by-exclusion trap that made root a dumping ground. Decisive: `docs/research/README.md` already codified the rule ("Everything here is the *synthesis*; raw runtime artifacts stay where the tooling reads them"). Both dirs now carry a **"don't reorganise these"** README section naming the exact code that pins each, plus the tombstone recipe (keep the old globs in `AUDIT_RUNTIME_IGNORES` alongside new ones) if they're ever moved.
+- **New gate — `scripts/check-docs-placement.mjs`** (`npm run docs:check`, wired into `npm run check`, + `docs:check:json`): closes root against an explicit `ROOT_ALLOWLIST`, each entry naming the tool that owns it. Deliberately narrow — it checks *where* files sit, not "reference vs runbook" (not mechanically decidable; a lint that guessed would be noise); directories aren't checked since adding a bucket is legitimate. Verified it **fails** on drift (exit 1, actionable message listing the buckets), not just passes. Dropped a `--selfcheck-relocation` handler added by reflex — the script isn't synced to consumers so it never relocates; `check-skill-refs.mjs` is unsynced and has none either.
+- **Reference updates — a naive find-and-replace would have shipped broken**: 57 files rewritten for the absolute `docs/<x>.md` form, but **3 references were segmented** (`path.join(REPO_ROOT, 'docs', 'postgres-parity-runbook.md')`) so string replacement never saw them — 2 in tests, caught by a targeted basename sweep (the third, `SESSIONS_DIR` in `arm-eval/export.mjs`, correctly points at the deliberately-unmoved dir). 38 relative links repaired by resolving each against its *old* location; 5 stale pointers fixed (they aimed at plans since archived into `completed/`).
+- **210 pre-existing broken links fixed repo-wide** (separate follow-up request): 167 root-relative hrefs (`scripts/lib/x.mjs` from inside `docs/completed/` → `../../scripts/lib/x.mjs` — they 404'd on GitHub and in VS Code preview), 16 archived-plan pointers, 10 `complete/` → `completed/` typos, 7 off-by-one depths under `docs/plans/security/`, 5 never-ported kit modules repointed at the vendored copy, 5 tail-matched relocations.
+- **Two near-misses caught by dry-running the fixer**: a unique-basename resolver wanted to rewrite `scripts/lib/dashboard/observed-deps.mjs` → `scripts/lib/observed-deps.mjs` (a same-name file in a *different* directory — a lookalike, not a fix), and resolved links in `docs/plans/security/AUDIT-SUMMARY.md` inconsistently between the repo and the vendored kit purely by which basename happened to be unique. Tightened the rule to require the candidate path to *end with* the referenced path (directory structure must agree). Verified rather than assumed that AUDIT-SUMMARY genuinely **mixes** referents — `query.mjs` exists only at repo root, `azure-embed.mjs`/`repo-name.mjs` only in the kit (never ported) — so a uniform rewrite either way would have been wrong.
+- **Deliberately left broken (6)**: targets that exist nowhere (`auto-defer.mjs`, `dashboard-arch-bug-checklist.md`, `diff-tools.mjs`, …) — archived plans citing since-deleted code. An archived plan pointing at a lookalike is worse than one that honestly reads as stale. Also left `.claude/skills/**` (6 links) untouched: those are generated verbatim copies of `skills/**` one directory deeper with byte-identity enforced by `skills:check` — the *source* links are correct, the copies inherently can't be, and "fixing" them would fail the gate.
+- **Verification**: `docs:check`, `skills:check` (byte-identity + shared audit refs), `plans:lint`, `context:check` all green; full suite 6436 pass / 1 fail — the known-flaky `tests/maintenance-hook-snippet.test.mjs` wall-clock assertion (`parent shell took 1481ms` vs an 800ms budget) under full-suite load, which passes 7/7 in isolation and whose `SOURCE_FILE` this change never touched. The 2 real failures it did surface were fixed: a missing `.cli-catalog.json` entry for the new npm scripts, and the segmented test path.
+- **AGENTS.md deliberately not extended** — it sits at 1198 lines against the hard 1200 `ctx/oversized-agents-md` cap, and the docs taxonomy isn't a load-bearing coding invariant; `docs/README.md` owns it (rewritten with a first-match-wins decision rule).
+- Left untouched per scope discipline: 3 pre-existing untracked Draft plans (`audit-cleanup-traversal-safety.md`, `dismissed-fp-reopen-policy.md`, `install-transaction-wal-hardening.md`).
+
 ## 2026-07-16 — `/plan` + `/audit-plan` + implement + `/audit-code` + `/ship` on `atomic-write-adoption-remaining-sites.md` — closed the 9-file gap the prior windows-fs-transient-error-hardening plan deliberately deferred, 3 GPT + 4 Gemini plan-audit rounds, 2 GPT + 2 Gemini code-audit rounds
 
 ### Changes
@@ -135,7 +152,7 @@
 ### Changes
 - **`AUDIT_CACHE_SEED` flipped to default-ON** (PR #53, squash-merged `8fcae2c`): `decideSeed` (`scripts/lib/audit/legacy-production-audit.mjs`) now defaults ON (`AUDIT_CACHE_SEED !== '0'`, opt-out per-run); `cache-hitrate-check.mjs` now validates the flip post-hoc from the seed-ON cohort instead of deciding whether to flip. Synced to wine-cellar-app + ai-organiser (0 errors).
 - **Found + fixed a dead cloud routine while verifying the flip**: the weekly `audit-cache-seed-flip-check` cron routine had been silently non-functional for months — it exported the sunset `SUPABASE_AUDIT_URL`/`SUPABASE_AUDIT_ANON_KEY` pair, but `cache-hitrate-check.mjs` only ever reads `AUDIT_DB_URL`, so every run fell back to an empty local log and reported a false `INSUFFICIENT_DATA`. A second bug rode along: the routine's report-logic checked for a recommendation value (`INSUFFICIENT_DATA`) that doesn't exist on the cloud path (the real value is `INSUFFICIENT_SEED_ON_DATA`). Fixed by rewriting the routine's stored prompt with the real `AUDIT_DB_URL`/`AUDIT_DB_SSL_MODE=no-verify` and corrected branch logic — the flip decision itself was made from a direct manual DB query, not from this routine's (until-now-always-wrong) output.
-- **A production incident surfaced mid-session, unrelated to the above**: the shared Supabase learning store (`uahjjdelnnpfmaqjrwoz`, backing all 3 repos) was found wiped to a single leftover table. Root-caused via Supabase's raw Postgres logs (not guessed) to `tests/db-setup.test.mjs`/`tests/db-withtx.test.mjs`'s integration suites, which swap `AUDIT_DB_URL` for `AUDIT_DB_TEST_URL` and run `DROP SCHEMA public CASCADE` between test cases — the only prior gate was "is `AUDIT_DB_TEST_URL` set", never "is it actually disposable". Whoever ran these tests had it resolving to the real production DSN. Schema restored via `node scripts/setup-postgres.mjs --migrate` (61/61 migrations, deterministic — data itself is not recoverable without Supabase PITR, which the operator declined to pursue). **Root cause closed**: `scripts/lib/db/client.mjs::assertDisposableDbUrl(testUrl, {productionUrl})` runs before any pool reset in both suites' `before()` hooks, rejecting a Supabase-hosted or production-identical test URL. Live-repro-verified (not just unit-tested): re-running the exact incident scenario (`AUDIT_DB_TEST_URL` = real prod DSN) now fails the hook immediately, zero destructive queries issued, instead of wiping anything. Full incident + fix detail: `docs/postgres-parity-runbook.md` §Incident.
+- **A production incident surfaced mid-session, unrelated to the above**: the shared Supabase learning store (`uahjjdelnnpfmaqjrwoz`, backing all 3 repos) was found wiped to a single leftover table. Root-caused via Supabase's raw Postgres logs (not guessed) to `tests/db-setup.test.mjs`/`tests/db-withtx.test.mjs`'s integration suites, which swap `AUDIT_DB_URL` for `AUDIT_DB_TEST_URL` and run `DROP SCHEMA public CASCADE` between test cases — the only prior gate was "is `AUDIT_DB_TEST_URL` set", never "is it actually disposable". Whoever ran these tests had it resolving to the real production DSN. Schema restored via `node scripts/setup-postgres.mjs --migrate` (61/61 migrations, deterministic — data itself is not recoverable without Supabase PITR, which the operator declined to pursue). **Root cause closed**: `scripts/lib/db/client.mjs::assertDisposableDbUrl(testUrl, {productionUrl})` runs before any pool reset in both suites' `before()` hooks, rejecting a Supabase-hosted or production-identical test URL. Live-repro-verified (not just unit-tested): re-running the exact incident scenario (`AUDIT_DB_TEST_URL` = real prod DSN) now fails the hook immediately, zero destructive queries issued, instead of wiping anything. Full incident + fix detail: `docs/runbooks/postgres-parity.md` §Incident.
 - **Follow-on, not yet done**: the architectural-memory symbol index lives in the same wiped database — `npm run arch:refresh:full` (a full repo re-index) is needed before `get-neighbourhood`/`compute-target-domains`/`docs/architecture-map.md` are trustworthy again; an incremental refresh this session would have shrunk the committed architecture map from ~4,460 lines to ~36 (reverted, not shipped). A stray `drift_test` table also remains in production (harmless, left for explicit confirmation before dropping).
 - **Also this session**: a separate `/brainstorm --with-gemini` + synthesis produced `docs/plans/oss-call-reliability-hardening.md` (fixing OpenRouter/GLM call silence-during-a-hang) — plan written, registration attempted, but implementation was paused when the DB incident was discovered mid-`/cycle`. Still `Draft`, not yet implemented.
 - **Full suite**: 5274 passed, 0 failed, 21 pre-existing skips (after the `assertDisposableDbUrl` fix).
@@ -154,8 +171,8 @@
 ## 2026-07-14 — Feat: git-native commit provenance trailers + executable gate-honesty suite (`/cycle --autonomous`, both clusters converged, consolidated Gemini APPROVE)
 
 ### Changes
-- **Origin**: the IBM Full Stack breadth-evidence scan (`docs/ibm-fs-breadth-evidence-claude-engineering-skills.md`) named two improvement opportunities the repo had documented but never enforced. Multi-LLM brainstorm (GPT + Gemini, 2 rounds incl. a debate round) converged the design; `/plan` → `/audit-plan` ran 3 GPT rounds + 2 Gemini rounds against the resulting plan (`docs/plans/provenance-trailers-and-gate-honesty.md`), then 4 open decisions (packaging-seam amendment, helper-commits-itself, `provenance-v1` tag, evidence-bootstrapping sequencing) were resolved before implementation began.
-- **F1 — git-native provenance trailers (Cluster A, 5 GPT audit rounds + 1 rebuttal deliberation, converged)**: `scripts/ship-commit.mjs` + pure `scripts/lib/commit-trailers.mjs` validate structured `/ship` input against a closed grammar and append `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID` trailers — the LLM agent never formats trailers itself; exit 2 (agent-actionable `AGENT FIX` stderr) means no commit was attempted. `AI-Gate: passed` requires the run's convergence **verified against the cloud store** (`getAuditRunConvergence`) — freshness of `.audit/last-audit-run.json` alone only proves an audit ran, not that it passed (this was the one sustained HIGH across the audit loop; fixed per an explicit user decision among three presented options). Annotated tag `provenance-v1` marks the adoption boundary — `git log provenance-v1..` is the query for "everything shipped through this convention." Full convention: `docs/commit-provenance.md`.
+- **Origin**: the IBM Full Stack breadth-evidence scan (`docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md`) named two improvement opportunities the repo had documented but never enforced. Multi-LLM brainstorm (GPT + Gemini, 2 rounds incl. a debate round) converged the design; `/plan` → `/audit-plan` ran 3 GPT rounds + 2 Gemini rounds against the resulting plan (`docs/plans/provenance-trailers-and-gate-honesty.md`), then 4 open decisions (packaging-seam amendment, helper-commits-itself, `provenance-v1` tag, evidence-bootstrapping sequencing) were resolved before implementation began.
+- **F1 — git-native provenance trailers (Cluster A, 5 GPT audit rounds + 1 rebuttal deliberation, converged)**: `scripts/ship-commit.mjs` + pure `scripts/lib/commit-trailers.mjs` validate structured `/ship` input against a closed grammar and append `AI-Skill`/`AI-Models`/`AI-Gate`/conditional `AI-Run-ID` trailers — the LLM agent never formats trailers itself; exit 2 (agent-actionable `AGENT FIX` stderr) means no commit was attempted. `AI-Gate: passed` requires the run's convergence **verified against the cloud store** (`getAuditRunConvergence`) — freshness of `.audit/last-audit-run.json` alone only proves an audit ran, not that it passed (this was the one sustained HIGH across the audit loop; fixed per an explicit user decision among three presented options). Annotated tag `provenance-v1` marks the adoption boundary — `git log provenance-v1..` is the query for "everything shipped through this convention." Full convention: `docs/reference/commit-provenance.md`.
 - **F2 — executable gate-honesty suite (Cluster B, 3 GPT audit rounds + 3 rebuttal deliberations, converged)**: `scripts/lib/gate-honesty/{schema,oracles,loader}.mjs` binds a skill's STATED gate/convergence rule to the code+test that actually enforces it, via a closed 4-oracle registry (`convergence-threshold`, `tiered-shadow-window`, `visual-gate-unverified`, `cli-exit`) that imports/spawns the real production seam — never a lookalike. `skills/audit-code/gate-contract.json` + `skills/visual-audit/gate-contract.json` contract 5 executable + 4 document-only gates (pinned census, asserted exactly in `tests/gate-honesty.test.mjs`). A lying-skill fixture (3 gates, 3 different oracles, all fake) proves the suite can fail before it's allowed to pass; 3 further fixtures isolate the remaining loader/schema failure modes. `scripts/check-gate-contracts.mjs` is wired into `skills:check` (schema/path-only — the fuller behavioral check lives in the test suite; documented explicitly so the split doesn't read as a gap). `skill-packaging.mjs` gained a tolerated-not-packaged seam for `gate-contract.json` so it colocates with the skill but never reaches `.claude/skills/**`. One deliberate deviation from the plan, recorded in three places: `partial-matrix-refusal` moved executable→document-only — no independently-testable pure predicate exists for that inline check, and claiming a unit-seam oracle for it would have been the exact fake-check bug class this suite exists to prevent.
 - **Consolidated Gemini final gate** (mandatory, `/cycle` Step 3C.2) reviewed the full union diff (43 files, both clusters) and **approved outright on round 1** — 0 new findings, 0 wrongly-dismissed, 0 over-engineering flags.
 - **Real fixes across both clusters, all in the "a control must not misreport its own state" class**: store-verified `AI-Gate: passed`; unreadable audit-evidence distinguished from absent (never silently "not-run"); post-commit trailer parse-back with real git-trailer semantics (a hook stripping/duplicating `AI-*` lines now fails the run instead of shipping silent unprovenance'd history); `process.exit()` → `process.exitCode` in the temp-file-cleanup path and in `check-gate-contracts.mjs` (buffered-write truncation on pipes); unborn-HEAD discrimination tightened twice (only `rev-parse`'s documented missing-ref status may zero the freshness baseline, never any other git failure).
@@ -242,7 +259,7 @@
 
 ### Changes
 - **Copilot compatibility check (against July-2026 VS Code docs)**: our integration is fully current, and BETTER than documented — VS Code Copilot's Agent Skills (cross-agent open standard, also read by Copilot CLI + cloud agent) now natively discovers the committed `.claude/skills/**` directory, so our skills load in Copilot with zero configuration; `AGENTS.md` is natively read as always-on instructions (our canonical-file design matches exactly); the `.github/prompts/*.prompt.md` shims remain valid prompt files. Verified every `.claude/skills/*/SKILL.md` frontmatter `name` matches its directory (Copilot skips mismatches silently — all 15+ match). One sharpened invariant: `.github/skills/` takes PRECEDENCE over `.claude/skills/` on name collisions, so keeping the deprecated `.github/skills` mirror deleted is now MORE important (a stale resurrected copy would silently shadow the fresh ones) — AGENTS.md note updated from "no tool reads it" (now false) to the precedence rationale.
-- **Fresh-clone onboarding gaps closed**: README had ZERO Azure mentions (the full azure-work-profile guide + env template existed but were unreachable from the front door) — added a "Corporate / Azure setup" section pointing at `defaults/work-profile.env.example` + `docs/azure-work-profile.md`, plus an API-keys table (what each key unlocks, only OPENAI required). `setup.mjs`'s wizard didn't offer `OPENROUTER_API_KEY` (now load-bearing: tiered-pipeline GLM discovery/Stage-1 triage, model-eval OSS candidates) — added as optional; also fixed its stale "GPT-5.4" label.
+- **Fresh-clone onboarding gaps closed**: README had ZERO Azure mentions (the full azure-work-profile guide + env template existed but were unreachable from the front door) — added a "Corporate / Azure setup" section pointing at `defaults/work-profile.env.example` + `docs/runbooks/azure-work-profile.md`, plus an API-keys table (what each key unlocks, only OPENAI required). `setup.mjs`'s wizard didn't offer `OPENROUTER_API_KEY` (now load-bearing: tiered-pipeline GLM discovery/Stage-1 triage, model-eval OSS candidates) — added as optional; also fixed its stale "GPT-5.4" label.
 - **Phase 14 input scope confirmed by code trace**: the shadow comparison hooks `runMultiPassCodeAudit`, which only the `mode === 'code'` CLI branch calls — `/audit-plan` (and rebuttal) take the separate single-call path and never touch the chooser. So the shadow log accumulates from `/audit-code` runs ONLY, which is correct by design: the tiered pipeline's stages are diff-evidence-based (Stage 0 verifies content anchors against a diff) and structurally inapplicable to plan prose. Phase 14's flip decision governs the code-audit path only; `/audit-plan` keeps its GPT+Gemini loop either way.
 
 ## 2026-07-13 — Fix: shadow-validation flip pre-flight — 4 wiring gaps found by tracing the full path before enabling, all closed
@@ -374,7 +391,7 @@
 ## 2026-07-05 — Feat: audit-effectiveness experiment — Cluster A (free diagnostics) + audited plan
 
 ### Changes
-- **Plan** ([docs/plans/audit-effectiveness-experiment.md](docs/plans/audit-effectiveness-experiment.md)) — a cost-ordered, phase-gated methodology to get *credible cheap traction* on "what's the cost-effective, high-quality code-audit setup" (apparatus vs single-shot vs iterated solo). Origin: `/brainstorm --with-gemini` + debate; audited GPT ×2 + Gemini ×2 (24 findings resolved). Biggest audit catches: the decision metric needed real formulas + a hard FP ceiling; known-defect commits have no apparatus rows so the apparatus must be *run* on them; and **the xN arm is invalid at temperature 0** (identical outputs collapse to x1 — pinned temp 1.0 + degeneracy guard).
+- **Plan** ([docs/plans/audit-effectiveness-experiment.md](docs/completed/audit-effectiveness-experiment.md)) — a cost-ordered, phase-gated methodology to get *credible cheap traction* on "what's the cost-effective, high-quality code-audit setup" (apparatus vs single-shot vs iterated solo). Origin: `/brainstorm --with-gemini` + debate; audited GPT ×2 + Gemini ×2 (24 findings resolved). Biggest audit catches: the decision metric needed real formulas + a hard FP ceiling; known-defect commits have no apparatus rows so the apparatus must be *run* on them; and **the xN arm is invalid at temperature 0** (identical outputs collapse to x1 — pinned temp 1.0 + degeneracy guard).
 - **Cluster A — free analysis tools** (`/cycle code --autonomous`, fix-gate none, audited): **`scripts/ledger-decompose.mjs`** (Phase 1 — read-only "where does accepted value come from": accepted value by round/stage + gate marginal value; a free kill-criterion) and **`scripts/defect-harvest.mjs`** (Phase 2 — mine git commit→fix pairs into candidate known-buggy commits; pure-addition/omission defects flagged for human curation, never auto-attributed). Injectable `deps` for tests; egress/sensitive-path filtered; silent-green failure semantics.
 - **Phase 1 already produced real signal** (free): round-1 accepted-value share **48%** (iteration is NOT dead weight — rounds 2+ add 52%, contra the brainstorm prior) and Gemini-gate marginal value **8.3%** (weak as a net-new generator; suppression value unmeasured). → Phase 3 runs the full apparatus, not lean.
 - **Tests** (Tier-1, +9): harvester extraction (revert/Fixes-sha/skip-#issue/pure-addition/blame) + decomposition aggregation. Audit fixes applied: `process.exitCode` (not `process.exit` after stdout — flush truncation), null-round bucket, `Fixes:` trailer, markdown table, snapshot header. npm `audit-exp:{ledger,harvest}` + catalog entries.
@@ -406,7 +423,7 @@
   tools-off, a large audit prompt empirically needs >1 internal turn (1 made big prompts
   exit error_max_turns / time out with no answer). Both are strictly safer for ALL cli
   callers (final review, summaries, prompt refinement). Test updated; 42/42 pass.
-- **Standing policy** ([docs/solo-control-experiment.md](docs/solo-control-experiment.md)):
+- **Standing policy** ([docs/research/runbooks/solo-control-experiment.md](docs/research/runbooks/solo-control-experiment.md)):
   whenever the `arm-eval` shadow is on, `/audit-code` Step 6.5b fires both author models in
   the BACKGROUND (source-repo-gated, non-blocking, toggle-self-gating, incremental); `/cycle`
   inherits via its `/audit-code` delegation. `npm run solo-control:{catchup,merge,score}`.
@@ -572,12 +589,12 @@
 ### Changes
 Built the unified **blinded-Claude-judge, human-anchored** framework that asks one question across experiments — *can an OSS combination beat the proprietary baseline?* — generalizing the shipped auditor harness. Claude is the constant JUDGE (never an arm; self-preference guard). Plan: [docs/completed/arm-eval-framework.md]. Still INERT until enabled + budgeted.
 - **Cluster A (Phases 1–4)** — `scripts/lib/arm-eval/{experiments,judge,intent-context,decision}.mjs` + `store/arm-eval.mjs` + migration `20260701160000`. Blinded, order-randomized, DOUBLE-PASS rubric judge (self-consistency); repo-intent context pack (architecture-map + domain-map `allowedDeps`+`rules` + requirements → grounds the coherence/intent rubric dims, `unscored` when absent); full session-grain schema (sessions/runs/outputs/judgments/human_rankings/crosschecks + leaderboard view + RLS + `audit_runs.author_model/task_id/arm_eval_run_id` + nullable spend FK); two-level decision (conformance GATE — fail-closed, no survivorship bias → paired-delta rank vs baseline + Kendall-τ human anchor over ≥8 tasks + € frontier; self-consistency ABSOLUTE floor so a tie stays provable; verdict `-provisional`/`credible:false` when unanchored). Audit R1(H:8)→R2(H:6): 9 genuine bugs fixed.
-- **Cluster B (Phases 5–7)** — `scripts/lib/arm-eval/{plan-seed,cross-checks,run}.mjs` + `producers/{model-call,plan,brainstorm}.mjs` + 4 `cross-skill.mjs` CLIs (`arm-eval-run/decision/stats/adjudicate`) + `docs/arm-eval.md`. Headless plan + brainstorm producers (egress-gated, conformance-tracked, provider-correct routing OSS/Gemini/GPT); pluggable objective cross-checks (audit-proxy / arch-memory-reuse [informational] / requirements / security — fail-closed to `unavailable`); run orchestration (budget-refusal, preflight, produce→judge→cross-check→persist, blinded human queue).
+- **Cluster B (Phases 5–7)** — `scripts/lib/arm-eval/{plan-seed,cross-checks,run}.mjs` + `producers/{model-call,plan,brainstorm}.mjs` + 4 `cross-skill.mjs` CLIs (`arm-eval-run/decision/stats/adjudicate`) + `docs/research/runbooks/arm-eval.md`. Headless plan + brainstorm producers (egress-gated, conformance-tracked, provider-correct routing OSS/Gemini/GPT); pluggable objective cross-checks (audit-proxy / arch-memory-reuse [informational] / requirements / security — fail-closed to `unavailable`); run orchestration (budget-refusal, preflight, produce→judge→cross-check→persist, blinded human queue).
 - **Consolidated Gemini gate** (mandatory, A∪B) — R1(2H/1M)→R2(2H/1M/1L)→**R3 APPROVE**. 7 genuine defects fixed across rounds (Gemini leg mis-routed to the OpenAI client → `providerFor` classifier + `@google/genai`; arch-memory-reuse false-penalization → informational; parseable requires BOTH blocks; backtick-path regex; greedy JSON extractor → balanced `extractJsonObject`; brainstorm one-empty-leg fail-closed; intent-pack JSON truncation). 62 arm-eval tests; full suite 4185/4165 pass/0 fail; migration applied, no drift.
 - **Also this session**: model-A/B/C harness **v2** (composition arms + outcome scoring) built+shipped+activation-verified; **v2.1** cross-skill stage_type (audit-plan shadow); OSS default flipped to **GLM-5.2** (evidence-based: leads Intelligence Index 51.1 + SWE-bench Pro 62.1%, cheaper than baseline).
 
 ### Files Affected
-- New: `scripts/lib/arm-eval/**` (9 modules), `scripts/lib/store/arm-eval.mjs`, `supabase/migrations/20260701160000_arm_eval.sql`, `docs/arm-eval.md`, `tests/arm-eval-*.test.mjs` (6).
+- New: `scripts/lib/arm-eval/**` (9 modules), `scripts/lib/store/arm-eval.mjs`, `supabase/migrations/20260701160000_arm_eval.sql`, `docs/research/runbooks/arm-eval.md`, `tests/arm-eval-*.test.mjs` (6).
 - Modified: `scripts/cross-skill.mjs` (4 CLIs).
 - Next (operator): calibrate+freeze constants → two-phase burn-in (`arm-eval-run` ≥12 tasks) → blinded spot-check → `arm-eval-decision`.
 
@@ -591,7 +608,7 @@ Built the v2 redesign (delta on the shipped-inert v1) end-to-end via the autonom
 
 ### Files Affected
 - New: `supabase/migrations/20260701140000_model_ab_v2.sql`.
-- Modified: `scripts/lib/{audit-arms,model-resolver,model-pricing,oss-structured-output,config,model-ab-decision,audit-shadow}.mjs`, `scripts/lib/store/{model-ab,runs-findings}.mjs`, `scripts/cross-skill.mjs`, `docs/model-ab-experiment.md` (v2 runbook), tests `{audit-arms,model-ab-decision,audit-shadow,learning-store-exports}.test.mjs`.
+- Modified: `scripts/lib/{audit-arms,model-resolver,model-pricing,oss-structured-output,config,model-ab-decision,audit-shadow}.mjs`, `scripts/lib/store/{model-ab,runs-findings}.mjs`, `scripts/cross-skill.mjs`, `docs/research/runbooks/model-ab-experiment.md` (v2 runbook), tests `{audit-arms,model-ab-decision,audit-shadow,learning-store-exports}.test.mjs`.
 - Next (operator): calibrate constants on a known-bug set → freeze → `AUDIT_MODEL_SHADOW=B,C` + `AUDIT_MODEL_SHADOW_BUDGET_EUR` for the prospective burn-in.
 
 ## 2026-07-01 — Theme-safety v1 empirical confirm + v2 plan (audit-converged) + ledger guard fix
@@ -633,7 +650,7 @@ Built the funded (~€200–400) observation-only auditor A/B/C harness end-to-e
 - **Consolidated Gemini gate** (mandatory, union diff) — 6 rounds, REJECT→CONCERNS_REMAINING (0 new). Caught **5 genuine budget-safety/correctness bugs the per-cluster GPT audits missed** (budget-leak-on-failure, weak distinct-assignment gate, €0-phantom on unmeterable usage, dead baseline map, strict `isValidCount`); one HIGH challenged as a verified Zod-4 category error.
 
 ### Files Affected
-- New: `scripts/lib/{audit-arms,model-pricing,oss-structured-output,audit-shadow,model-ab-decision}.mjs`, `scripts/lib/store/model-ab.mjs`, migrations `20260701120000_model_ab.sql` + `20260701130000_model_ab_assignment.sql`, `docs/model-ab-experiment.md`, 4 test files.
+- New: `scripts/lib/{audit-arms,model-pricing,oss-structured-output,audit-shadow,model-ab-decision}.mjs`, `scripts/lib/store/model-ab.mjs`, migrations `20260701120000_model_ab.sql` + `20260701130000_model_ab_assignment.sql`, `docs/research/runbooks/model-ab-experiment.md`, 4 test files.
 - Modified: `scripts/lib/{model-resolver,config,openai-client,audit-scope,sensitive-egress-gate,store/runs-findings}.mjs`, `scripts/{openai-audit,cross-skill,learning-store}.mjs`.
 - **Operator to run the burn-in**: set `OPENROUTER_API_KEY` + credits, `AUDIT_MODEL_SHADOW_BUDGET_EUR`, then `AUDIT_MODEL_SHADOW=B,C`. Building spent nothing; only enabling spends.
 
@@ -842,7 +859,7 @@ Built the funded (~€200–400) observation-only auditor A/B/C harness end-to-e
 
 ### Files Affected
 - scripts/lib/cycle/topology.mjs, scripts/cross-skill.mjs (preview-gate), scripts/lib/config.mjs (cycleConfig) — new/modified
-- scripts/lib/prompt-seeds.mjs, skills/{audit-plan,audit-code,cycle}/SKILL.md, docs/consistency-contract.md
+- scripts/lib/prompt-seeds.mjs, skills/{audit-plan,audit-code,cycle}/SKILL.md, docs/reference/consistency-contract.md
 - defaults/efficacy-lints.config.example.json, tests/cycle-topology.test.mjs, tests/prompt-seeds-rules.test.mjs (new)
 
 ### Next Steps
@@ -1617,7 +1634,7 @@ in the pass/fail path). Two-part fix:
 - `scripts/gemini-review.mjs` — precedence rework, set-provider command, streaming helper, main() guard
 - `tests/final-review-provider.test.mjs` — precedence + .env-mutation tests (new, 10 cases)
 - `package.json` / `scripts/.cli-catalog.json` — `final-review:set` script + catalog entry
-- `AGENTS.md` / `docs/azure-work-profile.md` / `defaults/work-profile.env.example` — precedence + setting docs
+- `AGENTS.md` / `docs/runbooks/azure-work-profile.md` / `defaults/work-profile.env.example` — precedence + setting docs
 - (consumer, not committed) `c:/GIT/ai-organiser/.env` — reverted to public stack
 
 ### Decisions Made
@@ -1652,7 +1669,7 @@ in the pass/fail path). Two-part fix:
 - `scripts/lib/config.mjs` — final-reviewer deployment default → claude-opus-4-7
 - `scripts/lib/azure-throttle.mjs` — AZURE_MAX_CONCURRENCY default 2 → 4 + rationale
 - `defaults/work-profile.env.example` — example deployment strings + concurrency note
-- `docs/azure-work-profile.md` — verified-contract deployments, table, Haiku note
+- `docs/runbooks/azure-work-profile.md` — verified-contract deployments, table, Haiku note
 - `AGENTS.md` — deployment refresh, killed stale "no Haiku" reasoning, rate-limit para
 
 ### Decisions Made
@@ -1727,7 +1744,7 @@ in the pass/fail path). Two-part fix:
 - `scripts/openai-audit.mjs`, `gemini-review.mjs`, `lib/anthropic-client.mjs` — provider wiring
 - `scripts/lib/neighbourhood-query.mjs`, `symbol-index/embed.mjs`, `security-memory/refresh-incidents.mjs` — embed adoption
 - `scripts/lib/db/client.mjs`, `scripts/setup-postgres.mjs` — DB aliases + guided install
-- `defaults/work-profile.env.example`, `docs/azure-work-profile.md`, `AGENTS.md` — operator surface
+- `defaults/work-profile.env.example`, `docs/runbooks/azure-work-profile.md`, `AGENTS.md` — operator surface
 - 6 new test files (openai-client, azure-config, embed-text, responses-capability, anthropic-baseurl, db-alias)
 
 ### Decisions Made
@@ -1742,7 +1759,7 @@ in the pass/fail path). Two-part fix:
 - Audit trail: GPT plan R1–R2, Gemini gate R1–R3, code audits per cluster,
   consolidated union gate R1–R2 (capped). See plan audit trail.
 - **Manual-verification-required**: live Azure/Foundry endpoint smoke (cannot run
-  from this network) — see `docs/azure-work-profile.md` §4.
+  from this network) — see `docs/runbooks/azure-work-profile.md` §4.
 
 ### Next Steps
 - In the work env: copy `defaults/work-profile.env.example`, run
@@ -1813,7 +1830,7 @@ audit-code 1 round + **Gemini 2 rounds (cap) → APPROVE**, coherence Strong. Ge
 
 ## 2026-06-04 — Learning-store signal recovery: Cluster C (cross-skill activation + recurring-cluster aggregation)
 
-Implemented Cluster C (Phases 5-6) of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md). The cluster splits by architecture: Phase 6 is fully deterministic backend; Phase 5's high-value writes are model/MCP-driven (exploratory persona-test, ux-lock), so activation = explicit mandatory adapter steps (the B5 root cause was reliance on reference-prose).
+Implemented Cluster C (Phases 5-6) of [docs/plans/learning-store-signal-recovery.md](docs/completed/learning-store-signal-recovery.md). The cluster splits by architecture: Phase 6 is fully deterministic backend; Phase 5's high-value writes are model/MCP-driven (exploratory persona-test, ux-lock), so activation = explicit mandatory adapter steps (the B5 root cause was reliance on reference-prose).
 
 ### Phase 6 — recurring_finding_clusters aggregation (deterministic, the headline win)
 - **`supabase/migrations/20260604120000_recurring_clusters_refresh.sql`**: `refresh_recurring_clusters(repo_id)` — full per-repo recompute aggregating `audit_findings` into the **existing** schema (no columns added). `cluster_key` = a coarse SQL `lower(category)|lower(file)` grouping (deliberately NOT a `semanticId` reimplementation — that hash includes detail and would never cluster; R3-M5). Recurring = same key across ≥2 runs. **UPSERT-only**, staleness via `last_seen` aging (preserves `defer_finding`-sourced rows + leaves `status` to the human/fix path). SECURITY DEFINER + pinned search_path (matches the existing definer fns).
@@ -1837,7 +1854,7 @@ audit-code 2 GPT rounds (H 7→3, the residual all scope-noise/Cluster-A-accepte
 
 ## 2026-06-04 — Learning-store signal recovery: Cluster B (outcome labeling + resolver completeness)
 
-Implemented Cluster B (Phases 3-4) of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md) — makes audit effectiveness *measurable*. Builds on Cluster A's stable identity.
+Implemented Cluster B (Phases 3-4) of [docs/plans/learning-store-signal-recovery.md](docs/completed/learning-store-signal-recovery.md) — makes audit effectiveness *measurable*. Builds on Cluster A's stable identity.
 
 ### Key discovery (simplified the plan)
 The `audit_effectiveness` view ALREADY keys on `adjudication_outcome = 'accepted'`, and `recordAdjudicationEvent` ALREADY patches `audit_findings.adjudication_outcome`. So the plan's "redefine the view / collapse user_action into it" was a misread — **no view migration needed**. The B2 gap was purely: (a) the outcome-sync is never invoked, and (b) a latent unawaited `isCloudEnabled()` in `write-code-outcomes.mjs` (would no-op even if invoked).
@@ -1861,7 +1878,7 @@ audit-code 2 GPT rounds + **2 Gemini rounds (cap) → APPROVE**, coherence Stron
 
 ## 2026-06-03 — Learning-store signal recovery: Cluster A (repo-identity unification) — CODE landed, live-apply gated
 
-Implemented Cluster A of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md) — the B1 fix. The audit/plan/learning write path keyed `audit_repos` on a volatile content `fingerprint` (a new row per evolving-repo audit → wine-cellar-app fragmented across 193 rows). Now everything resolves the STABLE `repo_uuid` identity and stores `audit_repos.id` (`repoRowId`).
+Implemented Cluster A of [docs/plans/learning-store-signal-recovery.md](docs/completed/learning-store-signal-recovery.md) — the B1 fix. The audit/plan/learning write path keyed `audit_repos` on a volatile content `fingerprint` (a new row per evolving-repo audit → wine-cellar-app fragmented across 193 rows). Now everything resolves the STABLE `repo_uuid` identity and stores `audit_repos.id` (`repoRowId`).
 
 ### Changes (code only — no live DB mutation)
 - **`supabase/migrations/20260603120000_unify_repo_identity.sql`** (new): preflight-aborts on duplicate non-null `repo_uuid`, then DROPs the `fingerprint` UNIQUE constraint (demotes it to a plain attribute). Reuses the pre-existing partial `idx_audit_repos_repo_uuid` as the integrity guard (deviation from the plan's "add full UNIQUE" — the partial index already exists and the `upsert()` helper can't emit a partial `ON CONFLICT`, Gemini-G2).
@@ -1905,14 +1922,14 @@ Deploy to local consumer repos (`npm run sync`), then signal-recovery Cluster A 
 Investigated whether Thompson-sampling prompt selection is genuinely effective. Pulled live `bandit_arms`: 14 arms, **1,269 total pulls**, top arm 538 (α154/β386), differentiated posteriors (~0.20–0.44) — **correcting an earlier overclaim** that the bandit was starved/frozen (it isn't). Real issues surfaced instead: single `context_bucket='global'` (contextual machinery unused) and arms re-seeded today to uniform α8.86/β29.14 (B1 fragmentation likely reaching the bandit).
 
 - **Decision**: the keep-vs-simplify call is **downstream of signal-recovery by construction** — "worth it" = "does the picked variant yield better audits," measurable only via `audit_effectiveness` (B3), dark until B2 lands. So NOT folded into the plan as phases.
-- **Integration**: added a sharpened **decision-criterion row to §8** of [docs/plans/learning-store-signal-recovery.md](docs/plans/learning-store-signal-recovery.md) — instrument (Phase 7 bandit panel + effectiveness view), three evaluation questions, and a concrete **simplify trigger** (replace Thompson sampling with fixed argmax-of-best-variant if no measurable lift after Clusters A–C + ≥30 days clean data).
+- **Integration**: added a sharpened **decision-criterion row to §8** of [docs/plans/learning-store-signal-recovery.md](docs/completed/learning-store-signal-recovery.md) — instrument (Phase 7 bandit panel + effectiveness view), three evaluation questions, and a concrete **simplify trigger** (replace Thompson sampling with fixed argmax-of-best-variant if no measurable lift after Clusters A–C + ≥30 days clean data).
 - Heads-up: `dashboard/index.html` is a hook-regenerated reference artifact (left for its own `chore(sync)` commit, per `a38f78e`).
 
 ---
 
 ## 2026-06-03 — Tiered testing doctrine + egress/relocation behavioral-gap backfill
 
-Plan: [docs/plans/testing-doctrine-and-egress-relocation-gaps.md](docs/plans/testing-doctrine-and-egress-relocation-gaps.md) (Complete). Implemented via full `/cycle --autonomous` (flat plan → no cluster loop; implement → audit-code → ship). Origin: a `/brainstorm --with-gemini` on "is TDD worth it here" → consensus that blanket TDD is theatre at the LLM boundary but mandatory at two silent-regression seams. Investigation found those seams already well-tested; the real gaps were narrower.
+Plan: [docs/plans/testing-doctrine-and-egress-relocation-gaps.md](docs/completed/testing-doctrine-and-egress-relocation-gaps.md) (Complete). Implemented via full `/cycle --autonomous` (flat plan → no cluster loop; implement → audit-code → ship). Origin: a `/brainstorm --with-gemini` on "is TDD worth it here" → consensus that blanket TDD is theatre at the LLM boundary but mandatory at two silent-regression seams. Investigation found those seams already well-tested; the real gaps were narrower.
 
 ### Changes
 - **AGENTS.md `### Testing`**: replaced 2 stale lines (claimed "47 tests") with a 3-tier testing doctrine — Tier 1 test-first for deterministic seams, Tier 2 eval/fixture/invariant for LLM-orchestration seams (no prose assertions / no whole-API mocks), Tier 3 HARD test-first for the two silent-regression-prone seams (sensitive-path egress; consumer sync/relocation).
@@ -1989,7 +2006,7 @@ Per-domain `audit_findings.primary_file → domain → purpose` attribution to l
 ## 2026-05-31 — Dashboard Purpose tab (v1) + /ship archive-rebuild ordering fix
 
 ### Changes
-**Purpose tab (v1)** — outcome/requirement view ([docs/plans/dashboard-purpose-view.md](docs/plans/dashboard-purpose-view.md), Approved). Deterministic, committed-file, no-cloud. Joins the curated taxonomy ([.audit-loop/domain-map.json](.audit-loop/domain-map.json) `purposes`/`domainPurposes`) + skill-chain flows + architecture domains + the requirements ledger (requirement→domain derived from `appliesTo`, transitive→purpose).
+**Purpose tab (v1)** — outcome/requirement view ([docs/plans/dashboard-purpose-view.md](docs/completed/dashboard-purpose-view.md), Approved). Deterministic, committed-file, no-cloud. Joins the curated taxonomy ([.audit-loop/domain-map.json](.audit-loop/domain-map.json) `purposes`/`domainPurposes`) + skill-chain flows + architecture domains + the requirements ledger (requirement→domain derived from `appliesTo`, transitive→purpose).
 - New: [collect-purposes.mjs](scripts/lib/dashboard/collect-purposes.mjs) (pure join), [sections/purpose.mjs](scripts/lib/dashboard/sections/purpose.mjs) (renderer — escaped, `<section aria-labelledby>` + `<details>` a11y, kind-grouped invariants, hygiene region), [anchors.mjs](scripts/lib/dashboard/anchors.mjs) (canonical cross-link id helper shared by purpose + architecture), `PurposeConfigSchema`/`PurposesSchema` in [schema.mjs](scripts/lib/dashboard/schema.mjs), `tests/dashboard-purpose.test.mjs` (15 tests).
 - Wiring: [collect-reference.mjs](scripts/lib/dashboard/collect-reference.mjs) loads the ledger + folds `purposes` into `sourceHash`; registered in [render.mjs](scripts/lib/dashboard/render.mjs) `REGISTRY.reference`; cross-tab click handler in `dashboard.js` (bound on `<main>`); CSS on existing tokens. `architecture.mjs` gained `id="arch-domain-<name>"` + a disclosure marker.
 - Live: **7 purposes · 20 domains mapped · 31 of 115 invariants · 5 unmapped**.
@@ -2080,7 +2097,7 @@ Azure modules, the deprecated `.github/skills` mirror, and pgvector-optional.
 - `scripts/setup-postgres.mjs` — `LEDGER_RLS` added to `ensureLedger()` (also bundles unrelated MIGRATIONS_DIR fallback from user's WIP)
 - `scripts/sync-to-repos.mjs` — `check-rls.mjs` added to `CORE_ENTRY` (also bundles user's sync-isolation imports + `SYNC_ISOLATION_ENTRY` block + `syncMigrations` doc-comment)
 - `package.json` — `db:check-rls` + `db:check-rls:json` npm scripts
-- AGENTS.md, scripts/lib/sync-*.mjs (new), docs/consumer-adoption.md (new), docs/plans/scripts-claude-skills-isolation.md (new), tests/sync-*.test.mjs (new), tests/relocation-guard.test.mjs (new), tests/npm-script-enumerator.test.mjs (new), and several other M/?? files from the sync-isolation WIP — see git diff for the full list
+- AGENTS.md, scripts/lib/sync-*.mjs (new), docs/runbooks/consumer-adoption.md (new), docs/plans/scripts-claude-skills-isolation.md (new), tests/sync-*.test.mjs (new), tests/relocation-guard.test.mjs (new), tests/npm-script-enumerator.test.mjs (new), and several other M/?? files from the sync-isolation WIP — see git diff for the full list
 
 ### Decisions Made
 - **RLS-on + no-policy** (not + permissive policy) for `audit_loop_migrations`. Matches the established backend-only pattern already used by `friction_log`, `learning_decisions`, `personas`, etc. (RLS on, deny-by-default for anon, postgres owner bypasses).
@@ -2123,7 +2140,7 @@ Azure modules, the deprecated `.github/skills` mirror, and pgvector-optional.
 - 48 tests across 8 suites: registry shape, resolver patterns + determinism, getPreset / parseViewportFlag / parseDevicesFlag input helpers, `prepPersonaTest` contract shape + override precedence + mental-model tagging, `prepClickTest` matrix expansion + mutual-exclusion errors.
 - Full suite: 3199 tests, 3181 pass, 0 fail (18 pre-existing skips).
 
-**Implementation brief** ([docs/plans/device-profile-emulation.md](docs/plans/device-profile-emulation.md))
+**Implementation brief** ([docs/plans/device-profile-emulation.md](docs/completed/device-profile-emulation.md))
 - Portable plan document for porting the same patch to other repos (e.g. work codebases that use a different skill-bundle structure). Covers motivation, architecture, acceptance criteria, implementation order (~3-4 hours), back-compat guarantees, trade-offs worth flagging in code review.
 
 ### Files Affected
@@ -2208,7 +2225,7 @@ Azure modules, the deprecated `.github/skills` mirror, and pgvector-optional.
 
 ## 2026-05-23 — Pipeline liveness + canonical-path enforcement (WS-LIVE + WS-CANON)
 
-Implements [docs/plans/liveness-and-canonical-paths.md](docs/plans/liveness-and-canonical-paths.md). Two pre-existing fragilities that had been recurring HIGH findings across multiple audit rounds are now retired:
+Implements [docs/plans/liveness-and-canonical-paths.md](docs/completed/liveness-and-canonical-paths.md). Two pre-existing fragilities that had been recurring HIGH findings across multiple audit rounds are now retired:
 
 1. **WS-LIVE — pipeline liveness**. `scripts/symbol-index/refresh.mjs` used `spawnSync` to drive a multi-minute extract → summarise → embed pipeline. While spawnSync blocked, the `runWithHeartbeat` setInterval could not fire — the refresh row's `heartbeat_at` went silent for the entire duration. Replaced with a new `scripts/lib/subprocess.mjs` (`runJsonLinesAsync` + `runJsonLinesAsyncStrict` + closed `SubprocErrorCode` enum). Async streaming restores heartbeat liveness. Stage-tagged errors (`stage=summarise exit=2`) give the operator log a precise failure pinpoint. Hard-fail on malformed JSON lines closes the `.filter(Boolean)` silent-data-loss invariant.
 
@@ -2252,7 +2269,7 @@ Implements [docs/plans/liveness-and-canonical-paths.md](docs/plans/liveness-and-
 
 ## 2026-05-23 — Shared cloud-config for consumer repos (~/.audit-loop.env)
 
-Implements [docs/plans/shared-cloud-config.md](docs/plans/shared-cloud-config.md). Eliminates the silent-failure pattern that hit ai-organiser this week: `[learning] Cloud store not configured` printed once at startup, then arch-memory consultation, audit-loop cloud learning, and persona-test correlations all silently no-op'd because the consumer repo's `.env` didn't have `AUDIT_DB_URL`. Three trigger surfaces ensure the operator never misses it: explicit `npm run setup:cloud`, end-of-`npm run sync` auto-prompt, and the cloud-disabled fallback message now names the recovery command. Pattern locked in `[[first-deploy-plus-update-from-source-pattern]]` memory.
+Implements [docs/plans/shared-cloud-config.md](docs/completed/shared-cloud-config.md). Eliminates the silent-failure pattern that hit ai-organiser this week: `[learning] Cloud store not configured` printed once at startup, then arch-memory consultation, audit-loop cloud learning, and persona-test correlations all silently no-op'd because the consumer repo's `.env` didn't have `AUDIT_DB_URL`. Three trigger surfaces ensure the operator never misses it: explicit `npm run setup:cloud`, end-of-`npm run sync` auto-prompt, and the cloud-disabled fallback message now names the recovery command. Pattern locked in `[[first-deploy-plus-update-from-source-pattern]]` memory.
 
 ### Files added
 - [scripts/lib/shared-cloud-config.mjs](scripts/lib/shared-cloud-config.mjs) — pure lib (558 LOC). Exports `SHARED_VARS` / `REQUIRED_VARS` / `OUTCOMES` / `EXIT_CODE_FOR` / `sharedEnvPath` / `discoverLocalEnvPath` / `parseEnvText` / `parseEnvFile` / `serializeEnvValue` / `diffSharedEnv` / `writeSharedEnv` / `resolveCloudConfig` / `resolveSourceRepo` / `assessSharedCloudConfig` / `runSetupCloud` / `formatDeltaPreview` / `_internals`. Tagged-union `resolveSourceRepo` returns `{type: 'resolved'|'invalid-override'|'ambiguous'|'none', ...}`. Lossless mixed-quote serializer with safety guards (newline / `#` / leading-quote / surrounding WS blockers).
@@ -2261,7 +2278,7 @@ Implements [docs/plans/shared-cloud-config.md](docs/plans/shared-cloud-config.md
 - [tests/sync-shared-env-trigger.test.mjs](tests/sync-shared-env-trigger.test.mjs) — 12 tests via `_internals` import (R1-audit M16 — real behaviour, not regex-asserting source text). ALREADY_CURRENT silent path + MISCONFIGURED one-line advisory + structural import-form contract (matches BOTH static `import ... from` AND dynamic `import(...)` so a future refactor can't silently bypass the lib-only rule).
 - [tests/config-shared-env.test.mjs](tests/config-shared-env.test.mjs) — 7 subprocess-driven tests for the config.mjs autoload. cwd `.env` wins over shared; shared fills unset vars; loader silent when shared file absent; one-time stderr note when shared loads; sentinel suppression for subprocess inheritance (R1-audit M17).
 - [tests/fixtures/config-shared-env-child.mjs](tests/fixtures/config-shared-env-child.mjs) — committed test fixture (R1-audit M19).
-- [docs/plans/shared-cloud-config.md](docs/plans/shared-cloud-config.md) — plan (Status: Complete).
+- [docs/plans/shared-cloud-config.md](docs/completed/shared-cloud-config.md) — plan (Status: Complete).
 
 ### Files modified
 - [scripts/lib/config.mjs](scripts/lib/config.mjs) — autoloads `~/.audit-loop.env` as a fallback layer (`override: false`) after the local `.env` walk-up; sets `_AUDIT_LOOP_SHARED_LOADED=1` sentinel in `process.env` so spawned subprocesses don't re-log the "loaded shared cloud config" notice. Refactored `discoverDotenv` to share `discoverLocalEnvPath` from the new lib (DRY).
@@ -2292,7 +2309,7 @@ Implements [docs/plans/shared-cloud-config.md](docs/plans/shared-cloud-config.md
 
 ## 2026-05-23 — Migration-drift detector + ledger bootstrap path
 
-Implements [docs/plans/migration-drift-detector.md](docs/plans/migration-drift-detector.md) (planId `a33b71f3`). Closes the silent-drift gap that bit us on 2026-05-22 — three migrations (`20260519`, `20260520`, `20260521`) had been committed to `supabase/migrations/` but never applied to the cloud, causing `/plan` upsert + `/persona-test --mode consistency` + WS-PIPE1 `persona_test_candidates` CLI to all silently no-op.
+Implements [docs/plans/migration-drift-detector.md](docs/completed/migration-drift-detector.md) (planId `a33b71f3`). Closes the silent-drift gap that bit us on 2026-05-22 — three migrations (`20260519`, `20260520`, `20260521`) had been committed to `supabase/migrations/` but never applied to the cloud, causing `/plan` upsert + `/persona-test --mode consistency` + WS-PIPE1 `persona_test_candidates` CLI to all silently no-op.
 
 ### Files added
 - [scripts/setup-postgres.mjs](scripts/setup-postgres.mjs) `runCheckDrift` + `renderHumanDriftReport` — read-only drift detection with closed 4-code exit contract (0 clean/cloud-disabled, 1 drift, 2 hard-error, 3 needs-bootstrap). Three drift kinds surfaced separately (unapplied / sha-mismatch / orphan-ledger). DI signature `{format, migrationsDir, stdout, stderr}` so tests run hermetically against a `mkdtemp` directory + in-memory stub pool. NEVER calls `ensureLedger` — the read-only contract is load-bearing.
@@ -2358,7 +2375,7 @@ Final workstream of the sustainability-cleanup-batch plan. `scripts/symbol-index
 - [tests/file-io.test.mjs](tests/file-io.test.mjs) — dropped `app/secret-keys/main.yaml` over-aggressive fixture, with a comment explaining the intentional precision trade.
 - [tests/quickfix-patterns.test.mjs](tests/quickfix-patterns.test.mjs) — dropped now-unexported `SENSITIVE_PATH_PATTERNS` import; added `myenv.env` + `production.env` as superset-positive cases.
 - [tests/arch-memory-followups.test.mjs](tests/arch-memory-followups.test.mjs) — `isSafeGitRevision` source-inspection now reads `scripts/lib/vcs.mjs`.
-- [docs/plans/sustainability-cleanup-batch.md](docs/plans/sustainability-cleanup-batch.md) — Status → Complete; full Implementation Log entry with WS3 deliveries + arch:refresh caller inventory + deviations.
+- [docs/plans/sustainability-cleanup-batch.md](docs/completed/sustainability-cleanup-batch.md) — Status → Complete; full Implementation Log entry with WS3 deliveries + arch:refresh caller inventory + deviations.
 
 ### Decisions
 - **Three sub-commits folded into ONE commit** (matches WS1 efca5ea + WS2 13a0af9 commit shapes). Tests verified green at each logical step during implementation; final suite is 2964/2981 (was 2825/2842 — +139 net tests, 0 failures).
@@ -2401,7 +2418,7 @@ Second workstream of the sustainability-cleanup-batch plan. `scripts/lib/dashboa
 
 ### Plan reference
 
-[docs/plans/sustainability-cleanup-batch.md](docs/plans/sustainability-cleanup-batch.md) — WS1 + WS2 complete. WS3 (refresh.mjs hardening) remaining.
+[docs/plans/sustainability-cleanup-batch.md](docs/completed/sustainability-cleanup-batch.md) — WS1 + WS2 complete. WS3 (refresh.mjs hardening) remaining.
 
 ---
 
@@ -2436,7 +2453,7 @@ First workstream of the sustainability-cleanup-batch plan. `scripts/lib/store/ar
 
 ### Next steps
 
-WS2 (renderer decomp) starts next session; WS3 (refresh.mjs hardening) after that. Plan: [docs/plans/sustainability-cleanup-batch.md](docs/plans/sustainability-cleanup-batch.md).
+WS2 (renderer decomp) starts next session; WS3 (refresh.mjs hardening) after that. Plan: [docs/plans/sustainability-cleanup-batch.md](docs/completed/sustainability-cleanup-batch.md).
 
 ---
 
@@ -2763,7 +2780,7 @@ before this ship.
   (`scripts/lib/redact.mjs`), additive Supabase migration
   (`supabase/migrations/20260520120000_consistency_source_kinds.sql`),
   authoritative HTML attribute contract doc
-  (`docs/consistency-contract.md`), 62 tests
+  (`docs/reference/consistency-contract.md`), 62 tests
 - **Phase 1 — diff + LLM boundary** (8d64312):
   `manifest-resolver.mjs` (priority-ordered, frozen DEFAULT_RESOLVERS),
   `consistency.mjs` (pure diffClaims with type coercion + stale-projection

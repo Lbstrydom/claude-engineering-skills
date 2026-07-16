@@ -108,7 +108,7 @@ Rubric is DATA (per experiment) so dimensions can be tuned during calibration th
 | `scripts/lib/store/arm-eval.mjs` | create | Persist sessions/runs/outputs/judgments/crosschecks + blinded human-ranking writeback; leaderboard reader. |
 | `scripts/lib/arm-eval/plan-seed.mjs` | create | Shared plan-generation seed (factored from `/plan-*`) so the producer + interactive skill don't drift. |
 | `scripts/cross-skill.mjs` | modify | `arm-eval-run` (produce+judge a task), `arm-eval-adjudicate` (blinded human spot-check), `arm-eval-stats`/`-decision`. |
-| `docs/arm-eval.md` | create | Runbook: the three experiments, the judge controls, the two-phase burn-in, the spot-check protocol. |
+| `docs/research/runbooks/arm-eval.md` | create | Runbook: the three experiments, the judge controls, the two-phase burn-in, the spot-check protocol. |
 | `tests/*` | create | experiments/validator, judge orchestration (deps-injected — blinding, order-randomization, double-pass), decision/leaderboard. |
 
 ### 7b. Implementation Phases
@@ -119,7 +119,7 @@ Rubric is DATA (per experiment) so dimensions can be tuned during calibration th
 4. **Decision + leaderboard** (D2/D3, §10.3, §10.5). Files: `scripts/lib/arm-eval/decision.mjs` (create), `tests/arm-eval-decision.test.mjs` (create).
 5. **Producers + cross-checks** (D3/D4/D8, §10.2, §10.5, §10.9). Files: `scripts/lib/arm-eval/cross-checks.mjs` (create), `scripts/lib/arm-eval/producers/plan.mjs` (create), `scripts/lib/arm-eval/producers/brainstorm.mjs` (create), `scripts/lib/arm-eval/plan-seed.mjs` (create), `tests/arm-eval-producers.test.mjs` (create).
 6. **Cross-skill CLIs** (§6). Files: `scripts/cross-skill.mjs` (modify).
-7. **Runbook** (D10). Files: `docs/arm-eval.md` (create).
+7. **Runbook** (D10). Files: `docs/research/runbooks/arm-eval.md` (create).
 8. **Close-out** (not a cluster phase): `npm test` + `node scripts/setup-postgres.mjs --migrate`/`--check-drift`.
 
 ## 11. Execution Clustering
@@ -208,7 +208,7 @@ Migration declares PKs, FKs, unique + leaderboard indexes, RLS (deny-all + owner
 ### 2026-07-02 — built via `/cycle code --autonomous` (2 clusters)
 
 - **Cluster A (Phases 1–4)**: `scripts/lib/arm-eval/{experiments,judge,intent-context,decision}.mjs` + `scripts/lib/store/arm-eval.mjs` + migration `20260701160000_arm_eval.sql`. Blinded order-randomized double-pass judge; repo-intent context pack; full session-grain schema (sessions/runs/outputs/judgments/human_rankings/crosschecks + leaderboard + RLS + audit_runs/spend linkage); two-level decision (conformance gate → paired-delta rank + Kendall-τ anchor + € frontier). Audit R1(H:8)→R2(H:6): 9 genuine bugs fixed (judge egress + label-permutation; decision baseline-conformance + fail-closed conformance + verdict-credibility gate; repo-scoped leaderboard; composite FK).
-- **Cluster B (Phases 5–7)**: `scripts/lib/arm-eval/{plan-seed,cross-checks,run}.mjs` + `producers/{model-call,plan,brainstorm}.mjs` + 4 `cross-skill.mjs` CLIs (`arm-eval-run/decision/stats/adjudicate`) + `docs/arm-eval.md` runbook. Consolidated Gemini gate R1→R2→**R3 APPROVE**: 7 genuine defects fixed (Gemini leg mis-routed to OpenAI client → `providerFor` classifier + `@google/genai` route; arch-memory-reuse false-penalization → informational; parseable requires BOTH blocks; backtick-path regex; greedy JSON extractor → balanced `extractJsonObject`; brainstorm one-empty-leg fail-closed; intent-pack JSON truncation).
+- **Cluster B (Phases 5–7)**: `scripts/lib/arm-eval/{plan-seed,cross-checks,run}.mjs` + `producers/{model-call,plan,brainstorm}.mjs` + 4 `cross-skill.mjs` CLIs (`arm-eval-run/decision/stats/adjudicate`) + `docs/research/runbooks/arm-eval.md` runbook. Consolidated Gemini gate R1→R2→**R3 APPROVE**: 7 genuine defects fixed (Gemini leg mis-routed to OpenAI client → `providerFor` classifier + `@google/genai` route; arch-memory-reuse false-penalization → informational; parseable requires BOTH blocks; backtick-path regex; greedy JSON extractor → balanced `extractJsonObject`; brainstorm one-empty-leg fail-closed; intent-pack JSON truncation).
 - **Deviations**: OSS candidates named concretely in the experiment config (the experiment's variable — not the production-auditor anti-pin rule); factored `arm-eval/run.mjs` + `producers/model-call.mjs` (not in §6) to keep cross-skill thin (its own audit flagged god-module) — within Cluster-B arm-eval scope.
 - **Remaining (operator)**: calibrate + freeze constants, then the two-phase burn-in (`arm-eval-run` across ≥12 tasks) + blinded spot-check → `arm-eval-decision`. v-next: auto-router + outcome-based scoring (both deferred).
 - **2 LOW advisory (R3, non-gating)**: `role:author` arm could carry >1 model (producer uses models[0]); `extractJsonObject` first-`{` could catch a stray prose brace (fails closed on parse). Captured; not fixed.

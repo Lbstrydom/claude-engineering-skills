@@ -3,7 +3,7 @@
 Operator guide for the unified **blinded-Claude-judge, human-anchored** framework
 that answers one question across experiments: **can an OSS combination beat the
 proprietary baseline?** Design + audit trail:
-[`docs/plans/arm-eval-framework.md`](plans/arm-eval-framework.md).
+[`docs/plans/arm-eval-framework.md`](../../completed/arm-eval-framework.md).
 
 > **What it is**: Claude is the constant JUDGE (never an arm — self-preference
 > guard). Each experiment's arms produce outputs; Claude scores them blinded,
@@ -16,9 +16,9 @@ proprietary baseline?** Design + audit trail:
 |---|---|---|---|---|
 | **plan-authoring** | GPT · GLM-5.2 (+ DeepSeek/Qwen rotation) | GPT | a plan doc | Claude-judge PRIMARY + audit-proxy cross-check |
 | **brainstorm** | D=GPT+Gemini · E=GLM+Gemini · F=GLM+GPT | D | a synthesized take | Claude-judge only |
-| **auditor** (shipped) | A/B/C audit pipelines | A | findings | human adjudication (see `docs/model-ab-experiment.md`) |
+| **auditor** (shipped) | A/B/C audit pipelines | A | findings | human adjudication (see `docs/research/runbooks/model-ab-experiment.md`) |
 
-Arm/rubric config is DATA ([`scripts/lib/arm-eval/experiments.mjs`](../scripts/lib/arm-eval/experiments.mjs)).
+Arm/rubric config is DATA ([`scripts/lib/arm-eval/experiments.mjs`](../../../scripts/lib/arm-eval/experiments.mjs)).
 GPT/Gemini legs use sentinels; OSS candidates are named concretely (the
 experiment's variable). **A Claude-family arm is a hard error.**
 
@@ -79,7 +79,7 @@ unconditionally). Fail-closed: a missing/malformed toggle file = OFF.
 ## Committed session archive (scientific log)
 
 Every session auto-exports a timestamped markdown record to
-[`docs/arm-eval/sessions/`](arm-eval/sessions/README.md) —
+[`docs/arm-eval/sessions/`](../../arm-eval/sessions/README.md) —
 `<UTC>__<experiment>__<phase>__<taskId>__<sid8>.md` — so the experiment is
 auditable without DB access (the DB stays canonical). **Blinding-aware**: a
 prospective session exports BLINDED (labels only) until its human ranking is

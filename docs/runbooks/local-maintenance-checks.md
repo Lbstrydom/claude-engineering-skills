@@ -3,7 +3,7 @@
 Optional, default-OFF local replica of this repo's 5 weekly GitHub Actions
 maintenance workflows, for operators whose org blocks GitHub-hosted Actions
 runners (or who just prefer local-only). See
-[`AGENTS.md`](../AGENTS.md#local-weekly-maintenance-checks-opt-in) for the
+[`AGENTS.md`](../../AGENTS.md#local-weekly-maintenance-checks-opt-in) for the
 one-paragraph pointer; this doc is the operational depth.
 
 ## What it replicates
