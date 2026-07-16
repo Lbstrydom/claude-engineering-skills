@@ -14,9 +14,21 @@
  * exit code), so `git push` could block for up to ~40 minutes once overdue.
  * The fix wraps the invocation in a detached `( cmd & )` subshell writing to
  * a log file instead of the hook's inherited stderr; this test proves BOTH
- * that the parent shell returns immediately (never blocks) AND that the
- * backgrounded process still actually ran (polls the log file — detaching
- * must not silently mean "never launches").
+ * that the parent shell returns without waiting AND that the backgrounded
+ * process still actually ran (detaching must not silently mean "never
+ * launches").
+ *
+ * NON-BLOCKING IS PROVEN BY A BARRIER, NOT A STOPWATCH. The original version
+ * asserted `wallMs < 700` against an 800ms `sleep` in the mock, which timed
+ * the WHOLE spawnSync (bash startup included) and so flaked under parallel
+ * suite load — measured 1481ms on a loaded machine while the code was
+ * perfectly correct. Any absolute budget races unbounded process-spawn
+ * overhead, and raising it only lowers the flake rate. Instead the mock now
+ * parks on a release file that only this test creates: while it is parked the
+ * check provably cannot have finished, so a parent that returns has provably
+ * not waited for it. A synchronous regression cannot reach the assertions at
+ * all — spawnSync hits its timeout and `timedOut` fails loudly. No timing
+ * assumption remains, so machine load cannot affect the outcome.
  */
 
 import { describe, it, before } from 'node:test';
@@ -31,6 +43,10 @@ import { hasBash } from './lib/hook-test-helpers.mjs';
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = path.resolve(__filename, '..', '..');
 const SOURCE_FILE = path.join(REPO_ROOT, 'scripts', 'install-prepush-hook.mjs');
+
+/** Barrier file the mocked check parks on until this test releases it.
+ * Relative: the snippet runs with cwd = the temp repo. */
+const RELEASE_FILE = 'release-the-mock';
 
 /**
  * Extract the FULL HOOK_BODY template literal (not just the maintenance
@@ -67,16 +83,29 @@ function extractSnippet() {
   return src.slice(idx, endIdx + endMarker.length);
 }
 
-function runSnippet(snippet, { mockExit, maintScriptExists, mockDelayMs = 0 }) {
+/**
+ * Upper bound on how long the parent hook may take before we call it BLOCKED.
+ * Only ever reached by a genuine synchronous-invocation regression (the mock
+ * parks forever until released), so it is generous — it is a failure
+ * detector, not a performance budget. A correct parent returns in well under
+ * a second even on a loaded machine.
+ */
+const PARENT_BLOCKED_TIMEOUT_MS = 30_000;
+
+function runSnippet(snippet, { mockExit, maintScriptExists, blockUntilRelease = false }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maint-hook-snippet-'));
   try {
     const nodeShim = path.join(tmp, 'node');
-    // An optional sleep simulates the real 8-check, minutes-long run — proves
-    // the parent reaches SENTINEL_REACHED without waiting for it.
-    const sleepLine = mockDelayMs > 0 ? `sleep ${(mockDelayMs / 1000).toFixed(2)}\n` : '';
+    // Optionally park the mock on a release file, simulating the real 8-check,
+    // minutes-long run. The snippet runs the shim with cwd = tmp (it uses only
+    // relative paths), so a bare relative name resolves — and dodges quoting a
+    // Windows tmp path into the shell. While parked, the check CANNOT have
+    // completed, which is what makes "the parent returned" mean "the parent
+    // did not wait" without timing anything.
+    const gate = blockUntilRelease ? `while [ ! -f ${RELEASE_FILE} ]; do sleep 0.05; done\n` : '';
     fs.writeFileSync(
       nodeShim,
-      `#!/bin/sh\n${sleepLine}echo "MOCK maintenance-checks.mjs fired"\nexit ${mockExit}\n`,
+      `#!/bin/sh\n${gate}echo "MOCK maintenance-checks.mjs fired"\nexit ${mockExit}\n`,
       { mode: 0o755 },
     );
 
@@ -94,13 +123,22 @@ echo "SENTINEL_REACHED"
     const harnessPath = path.join(tmp, 'run.sh');
     fs.writeFileSync(harnessPath, harness, { mode: 0o755 });
 
-    const startedAt = Date.now();
     const r = spawnSync('bash', [harnessPath], {
       encoding: 'utf-8',
       env: { ...process.env, PATH: `${tmp}${path.delimiter}${process.env.PATH}` },
+      // A synchronous regression would park here forever behind the barrier;
+      // the timeout turns that into a bounded, legible failure instead of a
+      // hung suite. Never hit when the snippet backgrounds correctly.
+      timeout: PARENT_BLOCKED_TIMEOUT_MS,
     });
-    const wallMs = Date.now() - startedAt;
-    return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '', wallMs, tmp };
+    return {
+      status: r.status,
+      stdout: r.stdout || '',
+      stderr: r.stderr || '',
+      timedOut: r.error?.code === 'ETIMEDOUT',
+      tmp,
+      releasePath: path.join(tmp, RELEASE_FILE),
+    };
   } finally {
     // Caller is responsible for cleanup once done polling the log file —
     // returning tmp here, not removing it, since the backgrounded job may
@@ -108,19 +146,38 @@ echo "SENTINEL_REACHED"
   }
 }
 
+/** Sleep synchronously without burning a core. Mirrors the established
+ * `blockingSleep` in scripts/lib/retry-transient-fs.mjs (private there, and
+ * that module is about fs retries — not worth exporting for one test helper).
+ * Keeps these tests synchronous. */
+function blockingSleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Read the backgrounded job's log, or null if it hasn't appeared/flushed. */
+function readLog(tmp) {
+  const logPath = path.join(tmp, '.audit-loop', 'last-maintenance.log');
+  if (!fs.existsSync(logPath)) return null;
+  const content = fs.readFileSync(logPath, 'utf-8');
+  return content.includes('MOCK maintenance-checks.mjs fired') ? content : null;
+}
+
 /** Poll for the log file to contain the mock's output — the backgrounded
  * job runs asynchronously to the harness returning, so a single synchronous
- * read right after spawnSync would race it. */
-function waitForLog(tmp, timeoutMs = 2000) {
-  const logPath = path.join(tmp, '.audit-loop', 'last-maintenance.log');
+ * read right after spawnSync would race it.
+ *
+ * Yields between polls rather than spinning: the original hot `while
+ * (Date.now() < deadline)` loop pinned a core for up to 2s per call across 4
+ * call sites, adding to the very parallel-suite load that made this file's
+ * old wall-clock assertion flake. */
+function waitForLog(tmp, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (fs.existsSync(logPath)) {
-      const content = fs.readFileSync(logPath, 'utf-8');
-      if (content.includes('MOCK maintenance-checks.mjs fired')) return content;
-    }
+  for (;;) {
+    const content = readLog(tmp);
+    if (content) return content;
+    if (Date.now() >= deadline) return null;
+    blockingSleep(25);
   }
-  return fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : null;
 }
 
 const BASH_AVAILABLE = hasBash();
@@ -155,18 +212,33 @@ describe('maintenance-hook-snippet — opportunistic, backgrounded, never blocks
     }
   });
 
-  it('a slow (simulated multi-minute) check does NOT block the parent shell', (t) => {
+  it('a still-running (simulated multi-minute) check does NOT block the parent shell', (t) => {
     if (!BASH_AVAILABLE) return t.skip('bash not on PATH');
-    const r = runSnippet(snippet, { mockExit: 0, maintScriptExists: true, mockDelayMs: 800 });
+    const r = runSnippet(snippet, { mockExit: 0, maintScriptExists: true, blockUntilRelease: true });
     try {
+      // A synchronous invocation (the round-1 H1 regression) parks behind the
+      // barrier forever and trips the spawnSync timeout — that, not a
+      // stopwatch, is what catches the bug this test exists for.
+      assert.equal(r.timedOut, false, `parent shell never returned while the check was still running — the snippet invoked it SYNCHRONOUSLY (round-1 H1 regression). stderr=${r.stderr}`);
       assert.equal(r.status, 0, `stderr=${r.stderr}`);
       assert.match(r.stdout, /SENTINEL_REACHED/);
-      // The whole point of the fix: the parent returns almost immediately,
-      // NOT after the (simulated) 800ms check completes.
-      assert.ok(r.wallMs < 700, `parent shell took ${r.wallMs}ms — should return well before the 800ms simulated check completes (not blocking)`);
+      // Still parked (we have not written the release file), so the check
+      // cannot have finished — yet the parent already returned. That IS
+      // "did not block", proven causally rather than by elapsed time.
+      assert.equal(readLog(r.tmp), null, 'the check must still be mid-flight when the parent returns — if its output is already complete, the parent waited for it');
+
+      // Detaching must not silently mean "never launches": release and confirm
+      // it genuinely ran.
+      fs.writeFileSync(r.releasePath, '');
       const log = waitForLog(r.tmp);
-      assert.ok(log && log.includes('MOCK maintenance-checks.mjs fired'), 'the backgrounded process must still actually run, not just be detached into nothing');
+      assert.ok(log && log.includes('MOCK maintenance-checks.mjs fired'), 'the backgrounded process must still actually run once released, not be detached into nothing');
     } finally {
+      // Always release: the shim spins until this file exists and it is
+      // DETACHED, so a failed assertion (or a killed bash) would otherwise
+      // strand it spinning forever. Then let it exit and close the log handle
+      // before rmSync — Windows throws EBUSY on a dir with an open handle.
+      try { fs.writeFileSync(r.releasePath, ''); } catch { /* tmp already gone */ }
+      waitForLog(r.tmp);
       fs.rmSync(r.tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
