@@ -39,7 +39,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   process.env.CLAUDE_BACKEND = savedEnv.CLAUDE_BACKEND;
   process.env.CLAUDE_BIN = savedEnv.CLAUDE_BIN;
   process.env.ANTHROPIC_API_KEY = savedEnv.ANTHROPIC_API_KEY;

@@ -81,7 +81,7 @@ describe('model-eval-auditor.mjs — CLI preflight', () => {
   // missing a branch.
   describe('an egress-blocked KD entry is reported cleanly, not a stack-trace crash', () => {
     let dir;
-    after(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
+    after(() => { if (dir) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
     test('exits 2 (preflight) naming the KD id, not 1 (fatal)', () => {
       dir = fs.mkdtempSync(path.join(os.tmpdir(), 'model-eval-egress-'));

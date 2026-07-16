@@ -37,7 +37,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     const stale = findStalePragmas(repo);
     assert.equal(stale.length, 1);
     assert.equal(stale[0].targetFile, 'nowhere.mjs');
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('does not flag a pragma whose target file exists', () => {
@@ -47,7 +47,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     commitAll(repo);
     const stale = findStalePragmas(repo);
     assert.equal(stale.length, 0);
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('excludes markdown docs quoting the pragma syntax as a placeholder example (the false-positive found against this repo\'s own AGENTS.md)', () => {
@@ -56,7 +56,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     commitAll(repo);
     const stale = findStalePragmas(repo);
     assert.equal(stale.length, 0);
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('excludes tests/ fixture files carrying synthetic pragmas with fake targets (found live against this repo\'s own duplication-wave test suite)', () => {
@@ -69,7 +69,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     commitAll(repo);
     const stale = findStalePragmas(repo);
     assert.equal(stale.length, 0);
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('excludes a targetFile containing template-interpolation/placeholder syntax (source code BUILDING the pragma as instructional text, found live in this repo\'s own duplication-report.mjs recommendation string)', () => {
@@ -81,7 +81,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     commitAll(repo);
     const stale = findStalePragmas(repo);
     assert.equal(stale.length, 0);
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('returns [] (never throws) when there are zero pragmas anywhere', () => {
@@ -89,7 +89,7 @@ describe('findStalePragmas — real git grep against a throwaway repo', () => {
     fs.writeFileSync(path.join(repo, 'a.mjs'), 'function foo() {}\n');
     commitAll(repo);
     assert.deepEqual(findStalePragmas(repo), []);
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
 

@@ -20,7 +20,7 @@ const {
 
 let tmpDir;
 beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-py-')); });
-afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 /** Write a {relPath: content} tree under tmpDir; return the root path. */
 function writeTree(files) {

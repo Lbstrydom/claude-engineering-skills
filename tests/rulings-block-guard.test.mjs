@@ -41,7 +41,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe('buildRulingsBlock — malformed-entry defensive guards', () => {

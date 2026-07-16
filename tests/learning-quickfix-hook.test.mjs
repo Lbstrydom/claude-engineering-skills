@@ -63,7 +63,7 @@ describe('quickfix-patterns / loadSkippedPatternSet', () => {
 
   afterEach(() => {
     process.chdir(prevCwd);
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
   it('returns empty Set when cache file is absent', () => {

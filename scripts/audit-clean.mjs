@@ -26,6 +26,7 @@ import { readdirSync, statSync, rmSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { sweepStaleOrphanPreimages } from './lib/audit/diff-scope-resolver.mjs';
+import { retrySync } from './lib/retry-transient-fs.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -127,7 +128,7 @@ function main() {
   }
   for (const c of unique.sort((a, b) => b.bytes - a.bytes)) {
     process.stdout.write(`  ${apply ? 'rm' : 'would rm'}  ${c.p}  (${Math.round(c.bytes / 1024)}KB, ${c.ageDays}d)\n`);
-    if (apply) { try { rmSync(c.p); } catch (err) { process.stderr.write(`  [audit-clean] failed: ${c.p}: ${err.message}\n`); } }
+    if (apply) { try { retrySync(() => rmSync(c.p)); } catch (err) { process.stderr.write(`  [audit-clean] failed: ${c.p}: ${err.message}\n`); } }
   }
   process.stdout.write(`audit-clean: ${unique.length} file(s) + ${stalePreimages.length} stale worktree(s), ~${totalKb}KB ${apply ? 'deleted' : 'would be deleted'} (files > ${ageDays}d, worktrees > 1h).${apply ? '' : ' Re-run with --apply to delete.'}\n`);
 }

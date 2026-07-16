@@ -70,7 +70,7 @@ test('NON_OK source → warning panel', () => {
 
 test('collectPurposeHealth on a root with no domain-map → missing-optional (ENOENT, graceful)', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
   const r = await collectPurposeHealth(root);
   assert.equal(r.status.status, 'missing-optional');
   assert.deepEqual(r.data.purposeBadges, []);

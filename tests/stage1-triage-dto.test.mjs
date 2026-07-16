@@ -61,7 +61,7 @@ describe('buildStageOneTriageInput — output always schema-valid', () => {
         () => buildStageOneTriageInput(null, { repoRoot }),
         (err) => err.code === 'MALFORMED_FINDING'
       );
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('produces a DTO that parses via StageOneTriageInputSchema for a minimal-but-present finding', () => {
@@ -76,7 +76,7 @@ describe('buildStageOneTriageInput — output always schema-valid', () => {
       assert.equal(dto.evidenceStatus, 'missing');
       assert.equal(dto.anchorQuote, null);
       assert.equal(dto.causalChain, null);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('never carries a field outside its schema (only the documented DTO fields)', () => {
@@ -87,7 +87,7 @@ describe('buildStageOneTriageInput — output always schema-valid', () => {
         Object.keys(dto).sort(),
         ['anchorQuote', 'category', 'causalChain', 'detail', 'evidenceStatus', 'redacted', 'section', 'severity'].sort(),
       );
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -104,7 +104,7 @@ describe('buildStageOneTriageInput — a .env-path anchor never survives unredac
       assert.equal(dto.anchorQuote, null, 'the .env-sourced quote must never reach the DTO');
       assert.equal(dto.redacted, true);
       assert.equal(dto.evidenceStatus, 'commission');
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('degrades anchorQuote to null when the omission trigger anchor cites a .env file', () => {
@@ -118,7 +118,7 @@ describe('buildStageOneTriageInput — a .env-path anchor never survives unredac
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.anchorQuote, null, 'the .env-sourced trigger quote must never reach the DTO');
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -134,7 +134,7 @@ describe('buildStageOneTriageInput — a bare sensitive filename embedded in pro
       assert.equal(dto.detail.includes('id_rsa'), false, 'the bare sensitive filename must not survive in prose');
       assert.match(dto.detail, /\[REDACTED\]/);
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts a path-shaped mention (e.g. "secrets/db.yaml") inside category text', () => {
@@ -147,7 +147,7 @@ describe('buildStageOneTriageInput — a bare sensitive filename embedded in pro
       assert.equal(dto.category.includes('secrets/db.yaml'), false);
       assert.match(dto.category, /\[REDACTED\]/);
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -159,7 +159,7 @@ describe('buildStageOneTriageInput — a configured-sensitive path in `section` 
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.section, '[REDACTED]');
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('leaves an ordinary, non-sensitive, REAL (resolvable) section untouched', () => {
@@ -176,7 +176,7 @@ describe('buildStageOneTriageInput — a configured-sensitive path in `section` 
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.section, 'src/index.ts:42');
       assert.equal(dto.redacted, false);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('an unresolvable (nonexistent) section fails closed to sensitive, per resolveAndClassify\'s own documented contract', () => {
@@ -186,7 +186,7 @@ describe('buildStageOneTriageInput — a configured-sensitive path in `section` 
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.section, '[REDACTED]');
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -205,7 +205,7 @@ describe('buildStageOneTriageInput — symlink resolving into a sensitive path i
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.section, '[REDACTED]', 'canonical target inside secrets/ must classify sensitive even though the visible name is innocent');
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts an evidence anchor whose file is a symlink escaping the repo root', () => {
@@ -225,8 +225,8 @@ describe('buildStageOneTriageInput — symlink resolving into a sensitive path i
       assert.equal(dto.anchorQuote, null, 'a symlink escaping the repo root must fail-closed to sensitive');
       assert.equal(dto.redacted, true);
     } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true });
-      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -252,7 +252,7 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
       assert.equal(dto.detail.includes('notes.txt'), false, 'the symlinked mention must not survive unredacted');
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts a symlinked-to-sensitive path mentioned in `category` prose too (every free-text field, not just detail)', () => {
@@ -269,7 +269,7 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.category.includes('config.txt'), false);
       assert.ok(dto.category.includes('[REDACTED]'), dto.category);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts a symlink-escaping-the-repo-root path mentioned in an anchorQuote (fail-safe)', () => {
@@ -289,8 +289,8 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
       assert.equal(dto.anchorQuote.includes('escape.txt'), false);
       assert.ok(dto.anchorQuote.includes('[REDACTED]'), dto.anchorQuote);
     } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true });
-      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -310,7 +310,7 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
       assert.equal(dto.category.includes('[REDACTED]'), false);
       assert.equal(dto.redacted, false);
       assert.ok(dto.detail.includes('function returns early'));
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a real, existing, but NON-sensitive file mentioned in prose is left unredacted (only sensitive canonical targets trigger)', () => {
@@ -322,7 +322,7 @@ describe('buildStageOneTriageInput — a symlinked-to-sensitive path MENTIONED I
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.ok(dto.detail.includes('helper.mjs'), 'a real, non-sensitive file mention must survive');
       assert.equal(dto.redacted, false);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -335,7 +335,7 @@ describe('buildStageOneTriageInput — source-location suffix + dotfile classifi
       assert.equal(dto.detail.includes('.env:12'), false);
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts a ".env:12:4"-style line:col citation', () => {
@@ -345,7 +345,7 @@ describe('buildStageOneTriageInput — source-location suffix + dotfile classifi
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.detail.includes('.env:12:4'), false);
       assert.ok(dto.detail.includes('[REDACTED]'));
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts a BARE ".env" mention in prose (the deeper pre-existing gap this fix root-caused: leading-dot stripping broke dotfile classification entirely, not just the :line suffix case)', () => {
@@ -355,7 +355,7 @@ describe('buildStageOneTriageInput — source-location suffix + dotfile classifi
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.detail.includes('.env '), false);
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a dotfile mention with a trailing sentence period (".env.") is still correctly redacted (trailing-strip regression guard)', () => {
@@ -366,7 +366,7 @@ describe('buildStageOneTriageInput — source-location suffix + dotfile classifi
       assert.equal(dto.detail.includes('.env.'), false);
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
       assert.ok(dto.detail.includes('Also see the code'), 'the rest of the sentence must survive');
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a leading comma/colon before an ordinary word is still stripped correctly (leading-strip regression guard, non-dot punctuation unaffected)', () => {
@@ -376,7 +376,7 @@ describe('buildStageOneTriageInput — source-location suffix + dotfile classifi
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.redacted, false);
       assert.ok(dto.detail.includes('commit abc123'));
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -393,7 +393,7 @@ describe('isSensitiveViaSymlinkResolution — resolution-failure classification 
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.detail.includes('cycleA'), false, 'an unresolvable symlink cycle must fail-closed, not be treated as an ordinary word');
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a genuinely non-existent path (ENOENT) is still treated as benign — the fix must not fail-close ordinary words', () => {
@@ -403,7 +403,7 @@ describe('isSensitiveViaSymlinkResolution — resolution-failure classification 
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.redacted, false);
       assert.ok(dto.detail.includes('nonexistentToken123'));
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -416,7 +416,7 @@ describe('buildStageOneTriageInput — markup-wrapper and URL-fragment bypasses 
       assert.equal(dto.detail.includes('.env'), false, dto.detail);
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts an angle-bracket-wrapped dotfile mention ("<.env>")', () => {
@@ -427,7 +427,7 @@ describe('buildStageOneTriageInput — markup-wrapper and URL-fragment bypasses 
       assert.equal(dto.detail.includes('.env'), false, dto.detail);
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts a URL-fragment-suffixed dotfile citation (".env#L12")', () => {
@@ -438,7 +438,7 @@ describe('buildStageOneTriageInput — markup-wrapper and URL-fragment bypasses 
       assert.equal(dto.detail.includes('.env#L12'), false, dto.detail);
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('an ordinary bold-markup word survives unredacted (leading/trailing "*" strip does not over-match)', () => {
@@ -448,7 +448,7 @@ describe('buildStageOneTriageInput — markup-wrapper and URL-fragment bypasses 
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.redacted, false);
       assert.ok(dto.detail.includes('important'));
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('redacts a GitHub-style hyphenated line-range fragment (".env#L12-L15", audit-code round-5 H1)', () => {
@@ -459,7 +459,7 @@ describe('buildStageOneTriageInput — markup-wrapper and URL-fragment bypasses 
       assert.equal(dto.detail.includes('.env#L12-L15'), false, dto.detail);
       assert.ok(dto.detail.includes('[REDACTED]'), dto.detail);
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('an ordinary hashtag mention (no leading dot) survives unredacted (fragment-class widening does not over-match)', () => {
@@ -469,7 +469,7 @@ describe('buildStageOneTriageInput — markup-wrapper and URL-fragment bypasses 
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.redacted, false);
       assert.ok(dto.detail.includes('#hashtag'));
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -487,7 +487,7 @@ describe('buildStageOneTriageInput — secret-shaped content is redacted indepen
       // this must be caught by redactSecrets, not the path-mention scanner.
       assert.notEqual(dto.anchorQuote, 'sk-proj-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJ');
       assert.equal(dto.redacted, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -502,7 +502,7 @@ describe('buildStageOneTriageInput — closed enums pass through unredacted', ()
       const dto = buildStageOneTriageInput(finding, { repoRoot });
       assert.equal(dto.severity, 'HIGH');
       assert.equal(dto.evidenceStatus, 'commission');
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 

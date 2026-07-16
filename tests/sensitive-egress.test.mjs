@@ -203,7 +203,7 @@ describe('gateSymbolForEgress — canonical-path enforcement (WS-CANON)', () => 
       });
       assert.equal(r.action, 'send');
       assert.ok(r.canonicalAbsPath && r.canonicalAbsPath.endsWith('foo.ts'));
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('returns skip-symlink-escape for a symlink that resolves outside repoRoot', () => {
@@ -222,8 +222,8 @@ describe('gateSymbolForEgress — canonical-path enforcement (WS-CANON)', () => 
       assert.equal(r.action, 'skip-symlink-escape');
       assert.match(r.reason, /symlink escape/);
     } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true });
-      fs.rmSync(outside,  { recursive: true, force: true });
+      fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(outside,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -243,7 +243,7 @@ describe('gateSymbolForEgress — canonical-path enforcement (WS-CANON)', () => 
       });
       assert.equal(r.action, 'skip-path');
       assert.match(r.reason, /canonical target/);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('blocks generatedNoise files in the repoRoot branch (Gemini-r2-G2)', () => {
@@ -263,7 +263,7 @@ describe('gateSymbolForEgress — canonical-path enforcement (WS-CANON)', () => 
       });
       assert.equal(r.action, 'skip-path');
       assert.match(r.reason, /generated-noise/);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('blocks package-lock.json (generatedNoise) in repoRoot branch', () => {
@@ -278,7 +278,7 @@ describe('gateSymbolForEgress — canonical-path enforcement (WS-CANON)', () => 
       });
       assert.equal(r.action, 'skip-path');
       assert.match(r.reason, /generated-noise/);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 

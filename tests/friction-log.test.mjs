@@ -113,7 +113,7 @@ describe('friction-log / detectRepoName', () => {
 describe('friction-log / appendLocalFallback', () => {
   let tmp;
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'fl-')); });
-  afterEach(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ } });
+  afterEach(() => { try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ } });
 
   it('writes JSONL line', () => {
     const fpath = path.join(tmp, 'out.jsonl');
@@ -151,7 +151,7 @@ describe('friction-log / runFrictionLog (cloud-offline)', () => {
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
   it('returns help when --help passed', async () => {

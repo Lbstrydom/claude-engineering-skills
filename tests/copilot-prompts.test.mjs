@@ -98,7 +98,7 @@ body`;
     it('truncates very long descriptions to ~240 chars in YAML frontmatter', () => {
       const longDesc = 'A'.repeat(1000) + '. Second sentence.';
       const fm = { description: longDesc };
-      const content = generatePromptFile('audit-loop', fm);
+      const content = generatePromptFile('audit-code', fm);
       const yamlDesc = /description:\s*(.+)/.exec(content)[1];
       assert.ok(yamlDesc.length <= 250, `yaml description too long: ${yamlDesc.length}`);
     });
@@ -134,7 +134,7 @@ body`;
         const out = generateAllPromptFiles(tmp);
         assert.equal(out.length, 0);
       } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
 
@@ -148,7 +148,7 @@ body`;
         const out = generateAllPromptFiles(tmp);
         assert.equal(out.length, 0);
       } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
 
@@ -163,24 +163,24 @@ body`;
         assert.equal(out.length, 1);
         assert.match(out[0].content, /Multi-pass code audit against a plan/); // entry.summary fallback
       } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
   });
 
   describe('idempotency', () => {
     it('generating the same prompt twice produces byte-equal output', () => {
-      const fm = { name: 'audit-loop', description: 'Test description.' };
-      const a = generatePromptFile('audit-loop', fm);
-      const b = generatePromptFile('audit-loop', fm);
+      const fm = { name: 'audit-code', description: 'Test description.' };
+      const a = generatePromptFile('audit-code', fm);
+      const b = generatePromptFile('audit-code', fm);
       assert.equal(a, b);
     });
 
     it('shaOfManagedBlock identifies content changes', () => {
       const fm = { description: 'Original description.' };
-      const v1 = generatePromptFile('audit-loop', fm);
+      const v1 = generatePromptFile('audit-code', fm);
       const fm2 = { description: 'Changed description.' };
-      const v2 = generatePromptFile('audit-loop', fm2);
+      const v2 = generatePromptFile('audit-code', fm2);
       assert.notEqual(shaOfManagedBlock(v1), shaOfManagedBlock(v2));
     });
 
@@ -190,8 +190,8 @@ body`;
 
     it('shaOfManagedBlock matches across runs', () => {
       const fm = { description: 'Stable.' };
-      const a = generatePromptFile('audit-loop', fm);
-      const b = generatePromptFile('audit-loop', fm);
+      const a = generatePromptFile('audit-code', fm);
+      const b = generatePromptFile('audit-code', fm);
       assert.equal(shaOfManagedBlock(a), shaOfManagedBlock(b));
     });
 
@@ -209,27 +209,27 @@ body`;
   describe('YAML safety (audit fix H4/H5)', () => {
     it('properly escapes descriptions containing colons', () => {
       const fm = { description: 'Description with: a colon.' };
-      const content = generatePromptFile('audit-loop', fm);
+      const content = generatePromptFile('audit-code', fm);
       // The description should be wrapped in double quotes
       assert.match(content, /^description:\s*".*"$/m);
     });
 
     it('escapes descriptions containing double quotes', () => {
       const fm = { description: 'A "quoted" word.' };
-      const content = generatePromptFile('audit-loop', fm);
+      const content = generatePromptFile('audit-code', fm);
       // Internal double quotes must be backslash-escaped
       assert.match(content, /description:\s*"A \\"quoted\\" word\."/);
     });
 
     it('escapes descriptions containing # (YAML comment marker)', () => {
       const fm = { description: 'Use # for tags.' };
-      const content = generatePromptFile('audit-loop', fm);
+      const content = generatePromptFile('audit-code', fm);
       assert.match(content, /description:\s*".*Use # for tags\."/);
     });
 
     it('escapes backslashes', () => {
       const fm = { description: 'Path\\to\\thing' };
-      const content = generatePromptFile('audit-loop', fm);
+      const content = generatePromptFile('audit-code', fm);
       // Each \ becomes \\ in YAML
       assert.match(content, /description:\s*"Path\\\\to\\\\thing"/);
     });
@@ -248,14 +248,19 @@ body`;
       }
     });
 
-    it('registry covers all expected skills (post-split)', () => {
+    it('registry covers all expected skills (post plan/audit-loop consolidation)', () => {
       const expected = [
-        'audit-plan', 'audit-code', 'audit-loop',
-        'plan-backend', 'plan-frontend', 'persona-test',
-        'ux-lock', 'ship', 'ai-context-management',
+        'audit-plan', 'audit-code', 'plan', 'cycle',
+        'persona-test', 'ux-lock', 'ship', 'ai-context-management',
       ];
       for (const name of expected) {
         assert.ok(SKILL_ENTRY_SCRIPTS[name], `expected ${name} in registry`);
+      }
+    });
+
+    it('does not carry dead entries for skills removed from skills/ (plan-backend, plan-frontend, audit-loop)', () => {
+      for (const name of ['plan-backend', 'plan-frontend', 'audit-loop']) {
+        assert.equal(SKILL_ENTRY_SCRIPTS[name], undefined, `${name} should no longer be registered`);
       }
     });
 

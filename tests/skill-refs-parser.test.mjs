@@ -9,7 +9,7 @@ import {
 
 let tmp;
 beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-refs-')); });
-afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 function write(rel, body) {
   const p = path.join(tmp, rel);

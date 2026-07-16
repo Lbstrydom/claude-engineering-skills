@@ -150,7 +150,7 @@ describe('quickfix-stats / rebuildFromBootstrap', () => {
 
   afterEach(() => {
     process.chdir(prevCwd);
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
   it('returns error when JSONL is missing', async () => {

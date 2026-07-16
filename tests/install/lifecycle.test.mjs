@@ -8,7 +8,7 @@ import { executeTransaction, recoverFromJournal } from '../../scripts/lib/instal
 
 let tmp;
 beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'install-lifecycle-')); });
-afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 function sha12(buf) { return crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12); }
 const journalPath = () => path.join(tmp, '.audit-loop-install-txn.json');

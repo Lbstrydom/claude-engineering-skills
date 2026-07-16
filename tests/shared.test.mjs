@@ -41,6 +41,8 @@ import {
   bootstrapFromConstants
 } from '../scripts/shared.mjs';
 import { z } from 'zod';
+import { _internals as fileIoInternals } from '../scripts/lib/file-io.mjs';
+import { retrySync } from '../scripts/lib/retry-transient-fs.mjs';
 
 // ── Test Helpers ────────────────────────────────────────────────────────────
 
@@ -49,7 +51,7 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-test-'));
 });
 afterEach(() => {
-  fs.rmSync(tmpDir, { recursive: true, force: true });
+  fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 // ── atomicWriteFileSync ─────────────────────────────────────────────────────
@@ -99,6 +101,103 @@ describe('atomicWriteFileSync', () => {
     assert.equal(fs.readFileSync(physical, 'utf-8'), 'updated', 'physical target must hold new content');
     // Link still resolves to the physical target.
     assert.equal(fs.realpathSync(link), fs.realpathSync(physical));
+  });
+
+  // ── retry-on-transient-error (Windows EPERM/EBUSY hardening) ──────────────
+  // Exercised via _internals.atomicWriteFileSyncImpl with an injected
+  // renameFn — the injected failure travels through the REAL function body
+  // (symlink-following, mkdirSync, temp-write, retry-wrapped rename,
+  // cleanup-on-failure), not just the retry helper in isolation.
+
+  function failNTimes(realFn, code, n) {
+    let calls = 0;
+    return (...args) => {
+      calls++;
+      if (calls <= n) {
+        const err = new Error(`simulated ${code}`);
+        err.code = code;
+        throw err;
+      }
+      return realFn(...args);
+    };
+  }
+
+  it('retries EPERM then succeeds', () => {
+    const filePath = path.join(tmpDir, 'retry-eperm.json');
+    const renameFn = failNTimes(fs.renameSync, 'EPERM', 2);
+    fileIoInternals.atomicWriteFileSyncImpl(filePath, 'data', { renameFn });
+    assert.equal(fs.readFileSync(filePath, 'utf-8'), 'data');
+  });
+
+  it('retries EBUSY then succeeds', () => {
+    const filePath = path.join(tmpDir, 'retry-ebusy.json');
+    const renameFn = failNTimes(fs.renameSync, 'EBUSY', 2);
+    fileIoInternals.atomicWriteFileSyncImpl(filePath, 'data', { renameFn });
+    assert.equal(fs.readFileSync(filePath, 'utf-8'), 'data');
+  });
+
+  it('throws after exhausting retries and cleans up the temp file', () => {
+    const filePath = path.join(tmpDir, 'exhaust.json');
+    const renameFn = () => { const err = new Error('simulated EPERM'); err.code = 'EPERM'; throw err; };
+    assert.throws(
+      () => fileIoInternals.atomicWriteFileSyncImpl(filePath, 'data', { renameFn }),
+      /simulated EPERM/
+    );
+    assert.equal(fs.existsSync(filePath), false, 'target must not exist');
+    const leftoverTemp = fs.readdirSync(tmpDir).filter((f) => f.startsWith('.tmp-'));
+    assert.deepEqual(leftoverTemp, [], 'temp file must be cleaned up after exhaustion');
+  });
+
+  it('throws immediately on a non-retryable error code (no wasted attempts)', () => {
+    const filePath = path.join(tmpDir, 'non-retryable.json');
+    let calls = 0;
+    const renameFn = () => {
+      calls++;
+      const err = new Error('simulated ENOSPC');
+      err.code = 'ENOSPC';
+      throw err;
+    };
+    assert.throws(
+      () => fileIoInternals.atomicWriteFileSyncImpl(filePath, 'data', { renameFn }),
+      /simulated ENOSPC/
+    );
+    assert.equal(calls, 1, 'must not retry a non-retryable code');
+    assert.equal(fs.existsSync(filePath), false);
+    const leftoverTemp = fs.readdirSync(tmpDir).filter((f) => f.startsWith('.tmp-'));
+    assert.deepEqual(leftoverTemp, [], 'temp file must be cleaned up');
+  });
+});
+
+// ── retrySync option validation (audit-code R1-M5) ─────────────────────────
+
+describe('retrySync — option validation', () => {
+  it('rejects NaN maxRetries (would never satisfy the termination condition)', () => {
+    assert.throws(() => retrySync(() => {}, { maxRetries: NaN }), TypeError);
+  });
+
+  it('rejects Infinity maxRetries', () => {
+    assert.throws(() => retrySync(() => {}, { maxRetries: Infinity }), TypeError);
+  });
+
+  it('rejects negative retryDelayMs', () => {
+    assert.throws(() => retrySync(() => {}, { retryDelayMs: -1 }), TypeError);
+  });
+
+  it('rejects fractional maxRetries (attempt count must be a whole number, audit-code R2-M5)', () => {
+    assert.throws(() => retrySync(() => {}, { maxRetries: 2.5 }), TypeError);
+  });
+
+  it('rejects an invalid retryableCodes (audit-code R3-L1)', () => {
+    assert.throws(() => retrySync(() => {}, { retryableCodes: null }), TypeError);
+    assert.throws(() => retrySync(() => {}, { retryableCodes: 'EPERM' }), TypeError);
+    assert.throws(() => retrySync(() => {}, { retryableCodes: [42] }), TypeError);
+  });
+
+  it('accepts valid finite options and still runs fn', () => {
+    let calls = 0;
+    const result = retrySync(() => { calls++; return 'ok'; }, { maxRetries: 2, retryDelayMs: 5 });
+    assert.equal(result, 'ok');
+    assert.equal(calls, 1);
   });
 });
 

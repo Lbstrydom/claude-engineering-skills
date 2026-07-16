@@ -41,7 +41,7 @@ beforeEach(() => {
   ledgerPath = path.join(tmpDir, 'tech-debt.json');
 });
 afterEach(() => {
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
 });
 
 describe('debt-budget-check CLI', () => {

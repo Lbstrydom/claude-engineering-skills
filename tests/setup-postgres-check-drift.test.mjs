@@ -100,7 +100,7 @@ describe('runCheckDrift — clean', () => {
       assert.match(stdout.text(), /"hasDrift": false/);
       assert.equal(stderr.text(), '');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -126,7 +126,7 @@ describe('runCheckDrift — drift kinds', () => {
       assert.deepEqual(r.drift.shaMismatch, []);
       assert.deepEqual(r.drift.orphanLedger, []);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -147,7 +147,7 @@ describe('runCheckDrift — drift kinds', () => {
       assert.ok(r.drift.shaMismatch[0].ledgerSha.startsWith('sha-from'));
       assert.ok(r.drift.shaMismatch[0].sourceSha.length === 64);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -166,7 +166,7 @@ describe('runCheckDrift — drift kinds', () => {
       assert.equal(r.exitCode, 1);
       assert.deepEqual(r.drift.orphanLedger, ['20259999_deleted.sql']);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -190,7 +190,7 @@ describe('runCheckDrift — drift kinds', () => {
       assert.equal(r.drift.shaMismatch.length, 1);
       assert.equal(r.drift.orphanLedger.length, 1);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -211,7 +211,7 @@ describe('runCheckDrift — drift kinds', () => {
       assert.equal(r.applied, 0);
       assert.equal(r.sourceTotal, 3);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -230,7 +230,7 @@ describe('runCheckDrift — needs-bootstrap (exit 3)', () => {
       assert.match(stdout.text(), /audit_loop_migrations table missing/);
       assert.match(stdout.text(), /--adopt/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -246,7 +246,7 @@ describe('runCheckDrift — needs-bootstrap (exit 3)', () => {
       assert.equal(stdout.text(), '');
       assert.match(stderr.text(), /audit_loop_migrations table missing/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -266,7 +266,7 @@ describe('runCheckDrift — output channel discipline', () => {
       assert.ok(stdout.text().length > 0);
       assert.equal(stderr.text(), '');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -285,7 +285,7 @@ describe('runCheckDrift — output channel discipline', () => {
       assert.match(stderr.text(), /Migration drift check/);
       assert.match(stderr.text(), /no drift/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -304,7 +304,7 @@ describe('runCheckDrift — output channel discipline', () => {
       assert.equal(typeof parsed.applied, 'number');
       assert.equal(typeof parsed.sourceTotal, 'number');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

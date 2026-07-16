@@ -37,7 +37,7 @@ beforeEach(async () => {
   await writeDebtEntries([makeEntry('existing1'), makeEntry('existing2')], { ledgerPath });
 });
 afterEach(() => {
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
 });
 
 describe('debt-resolve CLI', () => {

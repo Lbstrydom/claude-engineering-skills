@@ -137,7 +137,7 @@ function pruneOrphanSkillDirs(srcSet, opts) {
       if (opts.dryOrCheck) {
         process.stdout.write(`${R}-${X} ${path.relative(ROOT, dstDir)}/ ${D}(prune orphan skill)${X}\n`);
       } else {
-        fs.rmSync(dstDir, { recursive: true, force: true });
+        fs.rmSync(dstDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
       deletes++;
     }

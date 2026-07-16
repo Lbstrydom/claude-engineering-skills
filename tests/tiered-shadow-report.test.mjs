@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { median, mean, summarize, argOption } from '../scripts/tiered-shadow-report.mjs';
+import { retrySync } from '../scripts/lib/retry-transient-fs.mjs';
 
 describe('median/mean', () => {
   test('median of odd/even-length arrays', () => {
@@ -153,7 +154,7 @@ describe('CLI', () => {
       assert.doesNotMatch(out, /undefined/, 'a null cost/latency mean must never render as the literal string "undefined"');
       assert.match(out, /mean —/, 'a null mean should render as an explicit placeholder');
     } finally {
-      fs.rmSync(tmpLog, { force: true });
+      retrySync(() => fs.rmSync(tmpLog, { force: true }));
     }
   });
 });

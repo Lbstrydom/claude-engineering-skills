@@ -43,7 +43,7 @@ ignored second block
     assert.equal(r._present, true);
     assert.match(r.mermaid, /graph TB/);
     assert.equal(r.mermaid.includes('ignored second block'), false);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('warns when no mermaid block present', () => {
@@ -51,14 +51,14 @@ ignored second block
     const r = parseIntentDoc(file);
     assert.equal(r.mermaid, null);
     assert.ok(r._warnings.some(w => /No mermaid/i.test(w)));
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('extracts version from header', () => {
     const { dir, file } = mkDoc('- **Version**: 1.2.3\n# Title');
     const r = parseIntentDoc(file);
     assert.equal(r.version, '1.2.3');
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('captures section narratives keyed by header', () => {
@@ -74,12 +74,12 @@ Other text here.
 `);
     const r = parseIntentDoc(file);
     assert.ok(Object.keys(r.narratives).length >= 1);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('never throws on malformed input', () => {
     const { dir, file } = mkDoc('```mermaid\nincomplete fence');
     assert.doesNotThrow(() => parseIntentDoc(file));
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

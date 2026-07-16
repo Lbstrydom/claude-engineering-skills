@@ -123,7 +123,7 @@ describe('sensitive-egress gate — symlink resolving into a sensitive path (WS-
       const response = await adapters.reviewCall(mkEnvelope({ anchorFile: 'innocent.ts' }));
       assert.deepEqual(response, { verdict: 'pending_security_review' });
     } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true });
+      fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -140,8 +140,8 @@ describe('sensitive-egress gate — symlink resolving into a sensitive path (WS-
       const response = await adapters.cleanRegionCall('notes.txt');
       assert.deepEqual(response, { verdict: 'pending_security_review' });
     } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true });
-      fs.rmSync(outside, { recursive: true, force: true });
+      fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 

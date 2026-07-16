@@ -16,6 +16,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 
 import { sweepStaleOrphanPreimages } from '../scripts/lib/audit/diff-scope-resolver.mjs';
+import { retrySync } from '../scripts/lib/retry-transient-fs.mjs';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
 
@@ -40,8 +41,8 @@ before(() => {
 
 after(() => {
   try { git(repo, 'worktree', 'prune'); } catch { /* ignore */ }
-  fs.rmSync(tmpHome, { recursive: true, force: true });
-  fs.rmSync(repo, { recursive: true, force: true });
+  fs.rmSync(tmpHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe('sweepStaleOrphanPreimages', () => {
@@ -91,8 +92,8 @@ describe('sweepStaleOrphanPreimages', () => {
     assert.equal(fs.existsSync(asFile), true);
 
     assert.doesNotThrow(() => sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: path.join(tmpHome, 'nope') }));
-    fs.rmSync(asFile, { force: true });
-    fs.rmSync(other, { recursive: true, force: true });
+    retrySync(() => fs.rmSync(asFile, { force: true }));
+    fs.rmSync(other, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   test('maxAgeMs is honored (a 36s-old dir sweeps under a 1s gate, kept under the 1h default)', () => {

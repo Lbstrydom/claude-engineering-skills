@@ -16,7 +16,7 @@ function setupRepo() {
 }
 
 function teardown() {
-  if (TMP) fs.rmSync(TMP, { recursive: true, force: true });
+  if (TMP) fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   TMP = null;
 }
 

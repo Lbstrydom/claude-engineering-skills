@@ -135,7 +135,7 @@ describe('final-adjudication subprocess adapter — negative/early-exit path', (
       assert.match(output, /--role must be "adjudicator-only"/);
       assert.ok(!fs.existsSync(outPath), 'must not write --out on a rejected --role');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -165,7 +165,7 @@ describe('final-adjudication subprocess adapter — success path (--provider fix
       assert.match(output, /--provider fixture is test-only/);
       assert.ok(!fs.existsSync(outPath));
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 

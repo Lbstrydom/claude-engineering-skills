@@ -217,7 +217,7 @@ describe('runMultiPassCodeAudit harness — R2+ suppression', () => {
     assert.equal(stillPresent, false, 'a round-2 finding matching a dismissed ledger entry must be excluded');
     assert.ok(result._suppression, '_suppression must be populated on an R2+ run with a matching dismissal');
     assert.ok(result._suppression.suppressedCount >= 1, '_suppression.suppressedCount must reflect the dismissal');
-    fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true });
+    fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
 
@@ -311,7 +311,7 @@ describe('runMultiPassCodeAudit harness — return-value regression guard', () =
     assert.deepEqual(strip(withOut), strip(withoutOut), 'mergedResult must be equivalent (module output) regardless of whether --out was set');
     assert.ok(fs.existsSync(outFile), '--out must still write the result file');
 
-    fs.rmSync(outDir, { recursive: true, force: true });
+    fs.rmSync(outDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
 

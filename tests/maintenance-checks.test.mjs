@@ -267,7 +267,7 @@ describe('maintenance-checks — heartbeat read/write round-trip', () => {
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('loadHeartbeat returns null when the file does not exist', () => {
@@ -315,7 +315,7 @@ describe('maintenance-checks — runExclusive (round-2 audit M3/M4: reuses lib/b
   });
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('runs fn and returns its result when the lock is free', async () => {

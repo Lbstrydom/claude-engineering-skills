@@ -144,7 +144,7 @@ describe('Python chunking with decorators', () => {
 describe('extractExportsOnly', () => {
   let tmpDir;
   beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-exports-')); });
-  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   it("extracts JS exports", () => {
     const file = path.join(tmpDir, 'mod.js');
@@ -184,7 +184,7 @@ describe('buildDependencyGraph — JS', () => {
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("resolves relative ESM imports", () => {
@@ -227,7 +227,7 @@ describe('buildDependencyGraph — Python', () => {
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("resolves relative imports (from .x import y)", () => {
@@ -297,7 +297,7 @@ describe('buildDependencyGraph — mixed JS+Python', () => {
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("each file uses its own profile's resolver", () => {
@@ -347,7 +347,7 @@ describe('buildAuditUnits — maxFilesPerUnit', () => {
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('packs all files into one unit when under both caps', () => {

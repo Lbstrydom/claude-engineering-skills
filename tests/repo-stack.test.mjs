@@ -11,7 +11,7 @@ import {
 
 let tmp;
 beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'repo-stack-')); });
-afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 function write(rel, body) {
   fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true });

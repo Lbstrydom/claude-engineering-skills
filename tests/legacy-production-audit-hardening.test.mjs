@@ -90,7 +90,7 @@ describe('Phase 1 — atomic artifact writes', () => {
       const leftoverTemp = fs.readdirSync(cacheDir).filter(f => f.startsWith('.tmp-'));
       assert.deepEqual(leftoverTemp, [], 'a failed rename must not leave a leftover .tmp-* file');
     } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -128,7 +128,7 @@ describe('Phase 2 — validateLedgerForR2 per-entry schema validation', () => {
       assert.equal(result.entryCount, 2);
       assert.equal(result.validEntries.length, 2);
       assert.equal(result.invalidEntryCount, 0);
-    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true }); }
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a per-entry-malformed ledger (structurally-present entries array, one entry missing required fields) keeps valid entries and skips the malformed one — never throws', () => {
@@ -141,7 +141,7 @@ describe('Phase 2 — validateLedgerForR2 per-entry schema validation', () => {
       assert.equal(result.validEntries.length, 1);
       assert.equal(result.invalidEntryCount, 1);
       assert.equal(result.validEntries[0].topicId, 't1');
-    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true }); }
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('validEntries preserves the ORIGINAL raw entry (not a Zod-stripped copy) — extra bookkeeping fields survive', () => {
@@ -151,7 +151,7 @@ describe('Phase 2 — validateLedgerForR2 per-entry schema validation', () => {
       const result = validateLedgerForR2(ledgerPath, 2);
       assert.equal(result.validEntries[0]._hash, 'abc123');
       assert.equal(result.validEntries[0].findingId, 'H1');
-    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true }); }
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('every entry surviving into validEntries independently parses via LedgerEntrySchema', () => {
@@ -161,7 +161,7 @@ describe('Phase 2 — validateLedgerForR2 per-entry schema validation', () => {
       for (const entry of result.validEntries) {
         assert.doesNotThrow(() => LedgerEntrySchema.parse(entry));
       }
-    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true }); }
+    } finally { fs.rmSync(path.dirname(ledgerPath), { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a missing entries array is UNCHANGED behavior — {valid:false, suppressionUnavailable:true}', () => {
@@ -171,7 +171,7 @@ describe('Phase 2 — validateLedgerForR2 per-entry schema validation', () => {
     try {
       const result = validateLedgerForR2(ledgerPath, 2);
       assert.deepEqual(result, { valid: false, suppressionUnavailable: true });
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('an unreadable/missing ledger file is UNCHANGED behavior — {valid:false, suppressionUnavailable:true}', () => {
@@ -252,7 +252,7 @@ describe('Phase 4 — runMapReducePass mapUnitStatus', () => {
       assert.equal(result.unitsAttempted, 2);
       assert.equal(result.unitsFailed, 0);
       assert.deepEqual(result.result.findings, []);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('every unit throwing yields mapUnitStatus "total_failure" (unitsFailed === unitsAttempted)', async () => {
@@ -264,7 +264,7 @@ describe('Phase 4 — runMapReducePass mapUnitStatus', () => {
       assert.equal(result.unitsAttempted, 3);
       assert.equal(result.unitsFailed, 3);
       assert.deepEqual(result.result.findings, [], 'total failure surfaces zero findings — nothing survived to report');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a mix of failures + empty-findings survivors yields mapUnitStatus "partial" with ZERO surviving findings', async () => {
@@ -279,7 +279,7 @@ describe('Phase 4 — runMapReducePass mapUnitStatus', () => {
       assert.equal(result.unitsFailed, 2);
       assert.equal(result.result.findings.length, 0,
         'partial-with-zero-survivor-findings is the false-clean case this phase exists to surface');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('a mix of failures + real-findings survivors yields mapUnitStatus "partial" WITH surviving findings (real signal, not folded as failed)', async () => {
@@ -296,7 +296,7 @@ describe('Phase 4 — runMapReducePass mapUnitStatus', () => {
       assert.equal(result.unitsAttempted, 4);
       assert.equal(result.unitsFailed, 1);
       assert.ok(result.result.findings.length > 0, 'real survivor findings must be present, not discarded');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 

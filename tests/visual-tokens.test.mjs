@@ -46,7 +46,7 @@ test('extractAllowedSet reads css-vars + json and builds a usable index', async 
   assert.ok(tokenIndex.has('spacing', '8px'), 'css var spacing in scale');
   assert.ok(tokenIndex.has('colors', '255,136,0'), 'json color in scale');
   assert.equal(tokenIndex.has('colors', '1,2,3'), false, 'unknown color not in scale');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('`--font-*` named length tokens classify as fontSize, not spacing (shakedown #1)', async () => {
@@ -58,7 +58,7 @@ test('`--font-*` named length tokens classify as fontSize, not spacing (shakedow
   assert.ok(tokenIndex.has('spacing', '8px'), '--space-2 stays spacing');
   assert.ok(!(allowedSet.families.spacing || []).some((t) => t.value === '13.6px'), 'font sizes no longer pollute spacing');
   assert.ok(tokenIndex.has('fontWeight', '700'), '--font-weight-bold stays fontWeight (unitless)');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('extractAllowedSet with no sources → inferredMode', async () => {

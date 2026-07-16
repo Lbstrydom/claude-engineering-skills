@@ -24,7 +24,7 @@ describe('backfill-outcomes / computeOutcomeFromFileState', () => {
 
   afterEach(() => {
     process.chdir(prevCwd);
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
   it('returns null when context is missing', () => {
@@ -176,7 +176,7 @@ describe('drainFrictionFallback', () => {
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
   it('no-op when fallback file absent', async () => {

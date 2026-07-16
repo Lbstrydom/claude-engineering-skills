@@ -266,7 +266,7 @@ export function createLifecycle(deps = {}) {
       }
     }
     if (runTmpDir) {
-      try { fs.rmSync(runTmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      try { fs.rmSync(runTmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best-effort */ }
     }
     return { ok };
   }

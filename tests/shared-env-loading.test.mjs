@@ -52,7 +52,7 @@ function freshTmp(label) {
 // the migration tests use — don't litter os.tmpdir() across runs).
 after(() => {
   for (const dir of _createdDirs) {
-    try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* best-effort */ }
   }
 });
 

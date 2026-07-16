@@ -146,7 +146,7 @@ async function cliExit(gate, { repoRoot }) {
     }
     return { state: 'ok' };
   } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 }
 

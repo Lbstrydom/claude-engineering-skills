@@ -144,7 +144,7 @@ test('evidence: fresh when ts postdates HEAD commit time', () => {
   const ev = resolveEvidence({ auditRunPath: file, headCommitTs: Date.parse('2026-07-14T09:00:00Z') / 1000 });
   assert.equal(ev.state, 'fresh');
   assert.equal(ev.runId, 'ecae388d-c176-4182-9d27-0210b919b844');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('evidence: stale when ts predates HEAD; absent when file missing; opted-out with --no-run-id', () => {
@@ -153,14 +153,14 @@ test('evidence: stale when ts predates HEAD; absent when file missing; opted-out
   assert.equal(resolveEvidence({ auditRunPath: file, headCommitTs: Date.parse('2026-07-14T00:00:00Z') / 1000 }).state, 'stale');
   assert.equal(resolveEvidence({ auditRunPath: path.join(dir, 'nope.json'), headCommitTs: 0 }).state, 'absent');
   assert.equal(resolveEvidence({ auditRunPath: file, headCommitTs: 0, noRunId: true }).state, 'opted-out');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('evidence: unborn HEAD (T_head=0) makes any parseable evidence fresh (Gemini R2-G1)', () => {
   const { dir, file } = EV_PATH();
   fs.writeFileSync(file, JSON.stringify({ runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: '2020-01-01T00:00:00Z' }));
   assert.equal(resolveEvidence({ auditRunPath: file, headCommitTs: 0 }).state, 'fresh');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('evidence: non-ENOENT read failure → unreadable with errno, never absent (R2 H2/H5 — fail closed)', () => {
@@ -184,7 +184,7 @@ test('evidence: malformed JSON / bad runId / missing ts → malformed (row 10 fe
   assert.equal(resolveEvidence({ auditRunPath: file, headCommitTs: 0 }).state, 'malformed');
   fs.writeFileSync(file, JSON.stringify({ runId: 'ecae388d-c176-4182-9d27-0210b919b844' }));
   assert.equal(resolveEvidence({ auditRunPath: file, headCommitTs: 0 }).state, 'malformed');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 // ------------------------------------------------- gate ↔ evidence rules
@@ -271,8 +271,8 @@ test('message-file safety: in-repo clean file passes; escape/sensitive/missing r
   assert.equal(checkMessageFileSafety(path.join(outside, 'evil.txt'), { repoRoot })?.reason, 'escapes-repo');
   assert.equal(checkMessageFileSafety('.claude/tmp/nope.txt', { repoRoot })?.reason, 'unresolvable');
 
-  fs.rmSync(repoRoot, { recursive: true, force: true });
-  fs.rmSync(outside, { recursive: true, force: true });
+  fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('messageFileError: pinned formats for missing / containment (rows 6/6b)', () => {

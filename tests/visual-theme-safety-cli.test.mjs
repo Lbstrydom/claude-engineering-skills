@@ -31,7 +31,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'visual-contract.json'), CONTRACT);
 });
-afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 describe('visual-audit theme-safety CLI', () => {
   it('static mode emits the advisory lint finding (exit 0)', () => {

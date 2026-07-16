@@ -111,7 +111,7 @@ describe('known-defect-corpus.mjs — hardening (throwaway git repo)', () => {
     const sha = g(['rev-parse', 'HEAD']).trim();
     const kd = { id: 'KD-SENSITIVE-001', repo: path.basename(dir), buggyCommit: sha, files: ['.env'], defectDesc: 'x', expectedFindingRubric: 'y', severity: 'HIGH' };
     assert.throws(() => loadCorpusCase({ kdEntry: kd, repoRoots: [dir] }), EgressGateError);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   test('pre-ship empirical verify regression — an uppercase-containing declared file path is NOT falsely rejected (parseDiffFile lowercases via normalizePath, kdEntry.files does not)', () => {
@@ -125,6 +125,6 @@ describe('known-defect-corpus.mjs — hardening (throwaway git repo)', () => {
     const kd = { id: 'KD-UPPER-001', repo: path.basename(dir), buggyCommit: sha, files: [upperFile], defectDesc: 'x', expectedFindingRubric: 'y', severity: 'LOW' };
     const { visibleInput } = loadCorpusCase({ kdEntry: kd, repoRoots: [dir] });
     assert.ok(visibleInput.files.length > 0);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

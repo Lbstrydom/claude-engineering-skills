@@ -200,7 +200,7 @@ export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxA
     try {
       execFileSync('git', ['worktree', 'remove', '--force', p], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch {
-      try { fs.rmSync(p, { recursive: true, force: true }); } catch { continue; } // still held → skip, next sweep retries
+      try { fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { continue; } // still held → skip, next sweep retries
     }
     swept.push(p);
   }
@@ -260,7 +260,7 @@ function cleanupTempRoot(repoPath, tempRoot) {
     });
   } catch {
     // Fallback: best-effort fs rm in case the worktree never registered.
-    try { fs.rmSync(tempRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   }
 }
 

@@ -14,7 +14,7 @@ const { stripSqlCommentsAndStrings, parseFile, buildSqlCatalog, resolveSqlRef } 
 
 let tmpDir;
 beforeEach(() => { tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-pg-')); });
-afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 function writeTree(files) {
   for (const [rel, content] of Object.entries(files)) {

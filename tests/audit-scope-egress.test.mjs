@@ -44,7 +44,7 @@ test('readFilesAsContext includes benign content and excludes a sensitive file (
   const prevCwd = process.cwd();
   t.after(() => {
     process.chdir(prevCwd);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   fs.writeFileSync(path.join(dir, 'benign.js'), `export const x = "${BENIGN_MARKER}";\n`);
@@ -69,7 +69,7 @@ test('readFilesAsContext redacts a same-string-collision DSN at the real secret 
   const prevCwd = process.cwd();
   t.after(() => {
     process.chdir(prevCwd);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   fs.writeFileSync(path.join(dir, 'dsn.js'), 'export const url = "postgresql://admin:admin@realhost.example.com:5432/prod";\n');
@@ -87,8 +87,8 @@ test('safeReadFile fail-closed: rejects a symlink whose realpath escapes the bou
   const prevCwd = process.cwd();
   t.after(() => {
     process.chdir(prevCwd);
-    fs.rmSync(boundary, { recursive: true, force: true });
-    fs.rmSync(outside, { recursive: true, force: true });
+    fs.rmSync(boundary, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   const secret = path.join(outside, 'secret.txt');
@@ -112,8 +112,8 @@ test('readFilesAsContext (end-to-end chain) excludes a symlink escaping cwd', (t
   const prevCwd = process.cwd();
   t.after(() => {
     process.chdir(prevCwd);
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.rmSync(outside, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   const secret = path.join(outside, 'escape.txt');
@@ -147,7 +147,7 @@ const DSN = 'postgresql://user:hunter2@host.example.com/db';
 test('readFilesAsContext default (redact:true) redacts a secret-shaped string inside an ordinary file', (t) => {
   const dir = mkdtemp('audit-scope-redact-default-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   fs.writeFileSync(path.join(dir, 'ci.yml'), `env:\n  DB_URL: ${DSN}\n`);
   process.chdir(dir);
@@ -161,7 +161,7 @@ test('readFilesAsContext default (redact:true) redacts a secret-shaped string in
 test('readFilesAsContext with explicit redact:false is byte-identical to pre-plan behaviour', (t) => {
   const dir = mkdtemp('audit-scope-redact-optout-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   fs.writeFileSync(path.join(dir, 'ci.yml'), `env:\n  DB_URL: ${DSN}\n`);
   process.chdir(dir);
@@ -173,7 +173,7 @@ test('readFilesAsContext with explicit redact:false is byte-identical to pre-pla
 test('a secret spanning the truncation boundary is fully redacted, not leaked as a partial prefix (H2 regression guard)', (t) => {
   const dir = mkdtemp('audit-scope-boundary-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   // maxPerFile lands partway through the DSN's password segment — if
   // truncation ran BEFORE redaction (the pre-fix order), the retained
@@ -189,7 +189,7 @@ test('a secret spanning the truncation boundary is fully redacted, not leaked as
 test('buildRedactedAuditContext still returns UNREDACTED content + correct egress flags (decision 11 — model-A/B/C fairness)', (t) => {
   const dir = mkdtemp('audit-scope-decision11-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   fs.writeFileSync(path.join(dir, 'app.js'), `const dsn = "${DSN}";\n`);
   process.chdir(dir);
@@ -203,7 +203,7 @@ test('buildRedactedAuditContext still returns UNREDACTED content + correct egres
 test('full chain: readFilesAsContext (default redact) → assertEgressSafe does not throw', (t) => {
   const dir = mkdtemp('audit-scope-fullchain-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   fs.writeFileSync(path.join(dir, 'app.js'), `const dsn = "${DSN}";\n`);
   process.chdir(dir);

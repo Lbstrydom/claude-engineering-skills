@@ -58,7 +58,7 @@ describe('resolveDiffScope — failure modes', () => {
       const scope = await resolveDiffScope({ repoPath: repo, diffPatch: 'fake-patch' });
       assert.equal(scope.state, 'SKIPPED_PATCH_ONLY_MODE');
       assert.deepEqual(scope.changedFiles, []);
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('returns SKIPPED_NO_BASELINE when baseRef cannot be resolved', async () => {
@@ -66,7 +66,7 @@ describe('resolveDiffScope — failure modes', () => {
     try {
       const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'does-not-exist', headRef: 'HEAD' });
       assert.equal(scope.state, 'SKIPPED_NO_BASELINE');
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('returns SKIPPED_NO_BASELINE on shallow clone (HEAD~1 missing on initial commit)', async () => {
@@ -74,7 +74,7 @@ describe('resolveDiffScope — failure modes', () => {
     try {
       const scope = await resolveDiffScope({ repoPath: repo, baseRef: 'HEAD~1', headRef: 'HEAD' });
       assert.equal(scope.state, 'SKIPPED_NO_BASELINE');
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -94,7 +94,7 @@ describe('resolveDiffScope — AST pre-edge extraction', () => {
       const preTargets = scope.preEdgesByBaseCaller['src/main.mjs'] || [];
       assert.ok(preTargets.includes('src/lib.mjs'),
         `expected src/lib.mjs in pre-edges for src/main.mjs, got: ${JSON.stringify(preTargets)}`);
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('filters out binary / non-source files before AST stage (Gemini-R2/H1)', async () => {
@@ -111,7 +111,7 @@ describe('resolveDiffScope — AST pre-edge extraction', () => {
       // Non-source files should NOT appear in changedFiles
       assert.equal(scope.changedFiles.length, 0,
         `expected 0 changedFiles after non-source filter, got: ${JSON.stringify(scope.changedFiles)}`);
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('D-status caller pre-edges are extracted (R2/H2)', async () => {
@@ -130,7 +130,7 @@ describe('resolveDiffScope — AST pre-edge extraction', () => {
       assert.equal(dEntry.headCallerPath, null);
       // Pre-edges should include the deleted file's import targets
       assert.ok(scope.preEdgesByBaseCaller['src/main.mjs'], 'expected pre-edges for deleted file');
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -149,7 +149,7 @@ describe('resolveDiffScope — targetExistedAtBase via single ls-tree', () => {
         'expected src/x.mjs in base manifest');
       assert.ok(!scope.targetExistedAtBase.includes('src/y.mjs'),
         'src/y.mjs did NOT exist at base — should be absent');
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -167,7 +167,7 @@ describe('computeEntryPoints', () => {
       const ep = computeEntryPoints(repo);
       assert.ok(ep.has('index.mjs'), 'main → entry point');
       assert.ok(ep.has('cli.mjs'), 'bin → entry point');
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('includes scripts/* directory', () => {
@@ -178,7 +178,7 @@ describe('computeEntryPoints', () => {
       const ep = computeEntryPoints(repo);
       assert.ok(ep.has('scripts/foo.mjs'));
       assert.ok(ep.has('scripts/bar.mjs'));
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('handles missing package.json gracefully', () => {
@@ -186,7 +186,7 @@ describe('computeEntryPoints', () => {
     try {
       const ep = computeEntryPoints(repo);
       assert.equal(ep.size, 0);
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -203,6 +203,6 @@ describe('resolveDiffScope — rename status', () => {
       // git diff --name-status may report R or "M + D + A" depending on similarity score.
       // Either is acceptable; we just check we got SOMETHING.
       assert.ok(scope.changedFiles.length > 0, 'expected changes detected');
-    } finally { fs.rmSync(repo, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });

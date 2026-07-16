@@ -63,7 +63,7 @@ describe('resolveAndClassify — fail-closed on resolution errors', () => {
       assert.equal(r.escapedRepo, false);
       // The lexical check ran and returned null — only the canonical step failed.
       assert.equal(r.lexical, null);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('returns sensitive + resolutionFailed for a broken symlink', () => {
@@ -77,7 +77,7 @@ describe('resolveAndClassify — fail-closed on resolution errors', () => {
       const r = resolveAndClassify('innocent.ts', { repoRoot });
       assert.equal(r.category, 'sensitive');
       assert.equal(r.resolutionFailed, true);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -97,8 +97,8 @@ describe('resolveAndClassify — symlink escape detection (WS-CANON)', () => {
       // canonical reported (the path the symlink resolved to).
       assert.ok(r.canonical && r.canonical.includes('secret-target'));
     } finally {
-      fs.rmSync(repoRoot, { recursive: true, force: true });
-      fs.rmSync(outside,  { recursive: true, force: true });
+      fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(outside,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -114,7 +114,7 @@ describe('resolveAndClassify — symlink escape detection (WS-CANON)', () => {
       assert.equal(r.escapedRepo, false);
       assert.equal(r.resolutionFailed, false);
       assert.equal(r.category, null);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -136,7 +136,7 @@ describe('resolveAndClassify — canonical re-classification', () => {
       assert.equal(r.lexical, null, 'lexical name was innocent');
       assert.equal(r.escapedRepo, false);
       assert.equal(r.resolutionFailed, false);
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('returns null category for an ordinary innocent file', () => {
@@ -149,7 +149,7 @@ describe('resolveAndClassify — canonical re-classification', () => {
       assert.equal(r.escapedRepo, false);
       assert.equal(r.resolutionFailed, false);
       assert.ok(r.canonical && r.canonical.endsWith('innocent.ts'));
-    } finally { fs.rmSync(repoRoot, { recursive: true, force: true }); }
+    } finally { fs.rmSync(repoRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 

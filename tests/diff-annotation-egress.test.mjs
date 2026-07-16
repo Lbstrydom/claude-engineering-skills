@@ -27,7 +27,7 @@ function mkdtemp(prefix) {
 test('readFilesAsAnnotatedContext default (redact:true) redacts a secret-shaped string', (t) => {
   const dir = mkdtemp('diff-annot-redact-default-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   fs.writeFileSync(path.join(dir, 'app.js'), `const dsn = "${DSN}";\nconst x = 1;\n`);
   const diffMap = new Map([['app.js', { hunks: [{ startLine: 2, lineCount: 1 }] }]]);
@@ -42,7 +42,7 @@ test('readFilesAsAnnotatedContext default (redact:true) redacts a secret-shaped 
 test('readFilesAsAnnotatedContext with explicit redact:false preserves the raw secret', (t) => {
   const dir = mkdtemp('diff-annot-redact-optout-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   fs.writeFileSync(path.join(dir, 'app.js'), `const dsn = "${DSN}";\nconst x = 1;\n`);
   const diffMap = new Map([['app.js', { hunks: [{ startLine: 2, lineCount: 1 }] }]]);
@@ -56,7 +56,7 @@ test('readFilesAsAnnotatedContext with explicit redact:false preserves the raw s
 test('full chain: readFilesAsAnnotatedContext (default redact) → assertEgressSafe does not throw', (t) => {
   const dir = mkdtemp('diff-annot-fullchain-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   fs.writeFileSync(path.join(dir, 'app.js'), `const dsn = "${DSN}";\nconst x = 1;\n`);
   const diffMap = new Map([['app.js', { hunks: [{ startLine: 2, lineCount: 1 }] }]]);
@@ -70,7 +70,7 @@ test('full chain: readFilesAsAnnotatedContext (default redact) → assertEgressS
 test('unredacted output correctly reports egressSafe:false with dsn-password (named expected values, L3 fix)', (t) => {
   const dir = mkdtemp('diff-annot-egresssafe-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   fs.writeFileSync(path.join(dir, 'app.js'), `const dsn = "${DSN}";\nconst x = 1;\n`);
   const diffMap = new Map([['app.js', { hunks: [{ startLine: 2, lineCount: 1 }] }]]);
@@ -88,7 +88,7 @@ test('unredacted output correctly reports egressSafe:false with dsn-password (na
 test('multi-line PEM redaction does not desync diff-hunk CHANGED/UNCHANGED annotation markers (Gemini round 2+3 fix)', (t) => {
   const dir = mkdtemp('diff-annot-pem-boundary-');
   const prevCwd = process.cwd();
-  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(() => { process.chdir(prevCwd); fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   const headerLines = Array.from({ length: 5 }, (_, i) => `const a${i} = 1;`);
   const pemLines = [

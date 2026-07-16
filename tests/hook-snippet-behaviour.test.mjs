@@ -82,7 +82,7 @@ echo "SENTINEL_REACHED"
     });
     return { status: r.status, stdout: r.stdout || '', stderr: r.stderr || '' };
   } finally {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 }
 

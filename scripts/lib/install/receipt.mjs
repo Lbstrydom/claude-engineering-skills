@@ -2,8 +2,8 @@
  * @fileoverview Install receipt read/write with schema validation.
  */
 import fs from 'node:fs';
-import path from 'node:path';
 import { InstallReceiptSchema } from '../schemas-install.mjs';
+import { atomicWriteFileSync } from '../file-io.mjs';
 
 /**
  * Read and validate an install receipt.
@@ -30,10 +30,7 @@ export function readReceipt(receiptPath) {
  */
 export function writeReceipt(receiptPath, receipt) {
   InstallReceiptSchema.parse(receipt); // Validate before write
-  const tmpPath = receiptPath + '.tmp.' + process.pid;
-  fs.mkdirSync(path.dirname(receiptPath), { recursive: true });
-  fs.writeFileSync(tmpPath, JSON.stringify(receipt, null, 2) + '\n');
-  fs.renameSync(tmpPath, receiptPath);
+  atomicWriteFileSync(receiptPath, JSON.stringify(receipt, null, 2) + '\n');
 }
 
 /**

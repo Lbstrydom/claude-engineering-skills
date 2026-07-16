@@ -146,7 +146,7 @@ describe('resolveSourceRepo', () => {
     try {
       const r = resolveSourceRepo({ cwd: dir });
       assert.deepEqual(r, { type: 'none' });
-    } finally { fs.rmSync(parent, { recursive: true, force: true }); }
+    } finally { fs.rmSync(parent, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('accepts cwd if it has the sentinel file', () => {
@@ -156,7 +156,7 @@ describe('resolveSourceRepo', () => {
       assert.equal(r.type, 'resolved');
       assert.equal(r.path, dir);
       assert.equal(r.source, 'cwd');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('explicit flag pointing at non-source returns {type:"invalid-override"} (R2-audit H3)', () => {
@@ -169,7 +169,7 @@ describe('resolveSourceRepo', () => {
       assert.equal(r.type, 'invalid-override');
       assert.equal(r.source, 'flag');
       assert.equal(r.value, notSource);
-    } finally { fs.rmSync(notSource, { recursive: true, force: true }); }
+    } finally { fs.rmSync(notSource, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('finds sibling source repo when cwd is not source itself', () => {
@@ -185,7 +185,7 @@ describe('resolveSourceRepo', () => {
       assert.equal(r.type, 'resolved');
       assert.equal(r.path, sibling);
       assert.equal(r.source, 'sibling');
-    } finally { fs.rmSync(parent, { recursive: true, force: true }); }
+    } finally { fs.rmSync(parent, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('isSourceRepo rejects a consumer-repo with the OTHER synced files but no sync-to-repos.mjs', () => {
@@ -197,7 +197,7 @@ describe('resolveSourceRepo', () => {
     fs.writeFileSync(path.join(dir, 'scripts/install-prepush-hook.mjs'), '// synced\n');
     try {
       assert.equal(_internals.isSourceRepo(dir), false);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -214,7 +214,7 @@ describe('diffSharedEnv add/change/remove/unchanged', () => {
       assert.deepEqual(r.change, {});
       assert.deepEqual(r.remove, {});
       assert.deepEqual(r.unchanged, { AUDIT_DB_URL: 'x' });
-    } finally { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); }
+    } finally { fs.rmSync(a, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(b, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('add: source has key, shared does not', () => {
@@ -224,7 +224,7 @@ describe('diffSharedEnv add/change/remove/unchanged', () => {
       fs.writeFileSync(path.join(b, '.env'), 'AUDIT_DB_URL=new\n');      // source has it
       const r = diffSharedEnv({ sharedPath: path.join(a, '.env'), sourcePath: path.join(b, '.env') });
       assert.deepEqual(r.add, { AUDIT_DB_URL: 'new' });
-    } finally { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); }
+    } finally { fs.rmSync(a, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(b, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('change: same key, different value', () => {
@@ -234,7 +234,7 @@ describe('diffSharedEnv add/change/remove/unchanged', () => {
       fs.writeFileSync(path.join(b, '.env'), 'AUDIT_DB_URL=new\n');
       const r = diffSharedEnv({ sharedPath: path.join(a, '.env'), sourcePath: path.join(b, '.env') });
       assert.deepEqual(r.change, { AUDIT_DB_URL: { from: 'old', to: 'new' } });
-    } finally { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); }
+    } finally { fs.rmSync(a, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(b, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('remove: shared has key, source removed it (revocation propagates)', () => {
@@ -245,7 +245,7 @@ describe('diffSharedEnv add/change/remove/unchanged', () => {
       const r = diffSharedEnv({ sharedPath: path.join(a, '.env'), sourcePath: path.join(b, '.env') });
       assert.deepEqual(r.remove, { OPENAI_API_KEY: 'stale' });
       assert.deepEqual(r.unchanged, { AUDIT_DB_URL: 'x' });
-    } finally { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); }
+    } finally { fs.rmSync(a, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(b, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('ignores keys outside SHARED_VARS', () => {
@@ -259,7 +259,7 @@ describe('diffSharedEnv add/change/remove/unchanged', () => {
       assert.equal(r.change.CUSTOM_X, undefined);
       assert.equal(r.unchanged.CUSTOM_X, undefined);
       assert.deepEqual(r.add, { AUDIT_DB_URL: 'x' });
-    } finally { fs.rmSync(a, { recursive: true, force: true }); fs.rmSync(b, { recursive: true, force: true }); }
+    } finally { fs.rmSync(a, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(b, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -275,7 +275,7 @@ describe('writeSharedEnv', () => {
       const parsed = parseEnvFile(file);
       assert.equal(parsed.AUDIT_DB_URL, 'postgres://a:b@h:5432/d');
       assert.equal(parsed.OPENAI_API_KEY, 'sk-xxx');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('preserves unmanaged keys across updates', () => {
@@ -287,7 +287,7 @@ describe('writeSharedEnv', () => {
       const parsed = parseEnvFile(file);
       assert.equal(parsed.AUDIT_DB_URL, 'new');
       assert.equal(parsed.MY_CUSTOM_VAR, 'keepme', 'unmanaged key must survive update');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('removes managed keys not in desired set (revocation)', () => {
@@ -300,7 +300,7 @@ describe('writeSharedEnv', () => {
       const parsed = parseEnvFile(file);
       assert.equal(parsed.AUDIT_DB_URL, 'x');
       assert.equal(parsed.OPENAI_API_KEY, undefined, 'revoked managed key must be removed');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('chmod 0600 on POSIX', { skip: process.platform === 'win32' && 'POSIX only' }, () => {
@@ -310,7 +310,7 @@ describe('writeSharedEnv', () => {
       writeSharedEnv(file, { AUDIT_DB_URL: 'x' });
       const mode = fs.statSync(file).mode & 0o777;
       assert.equal(mode, 0o600, `expected 0600, got ${mode.toString(8)}`);
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -328,7 +328,7 @@ describe('resolveCloudConfig (Gemini-G2 differ-check)', () => {
       });
       assert.equal(r.AUDIT_DB_URL.source, 'local', 'must attribute to local when peVal matches localVal');
       assert.equal(r.AUDIT_DB_URL.value, 'fromfile');
-    } finally { fs.rmSync(dir, { recursive: true, force: true }); fs.rmSync(shared, { recursive: true, force: true }); }
+    } finally { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(shared, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('shared wins when peSet but peVal === sharedVal AND local is unset', () => {
@@ -342,7 +342,7 @@ describe('resolveCloudConfig (Gemini-G2 differ-check)', () => {
         sharedPath: path.join(home, '.audit-loop.env'),
       });
       assert.equal(r.AUDIT_DB_URL.source, 'shared');
-    } finally { fs.rmSync(cwd, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); }
+    } finally { fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('process-env wins when peVal differs from both files (genuine external override)', () => {
@@ -357,7 +357,7 @@ describe('resolveCloudConfig (Gemini-G2 differ-check)', () => {
       });
       assert.equal(r.AUDIT_DB_URL.source, 'process-env');
       assert.equal(r.AUDIT_DB_URL.value, 'fromexport');
-    } finally { fs.rmSync(cwd, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); }
+    } finally { fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('process-env wins when files empty + peSet (external-only)', () => {
@@ -369,7 +369,7 @@ describe('resolveCloudConfig (Gemini-G2 differ-check)', () => {
         sharedPath: path.join(home, '.audit-loop.env'),
       });
       assert.equal(r.AUDIT_DB_URL.source, 'process-env');
-    } finally { fs.rmSync(cwd, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); }
+    } finally { fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('unset everywhere → source: "unset"', () => {
@@ -382,7 +382,7 @@ describe('resolveCloudConfig (Gemini-G2 differ-check)', () => {
       });
       assert.equal(r.AUDIT_DB_URL.source, 'unset');
       assert.equal(r.AUDIT_DB_URL.value, null);
-    } finally { fs.rmSync(cwd, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); }
+    } finally { fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('explicit empty string in process.env reports source:"process-env", value:"" (Gemini-r3-r4 G2)', () => {
@@ -400,7 +400,7 @@ describe('resolveCloudConfig (Gemini-G2 differ-check)', () => {
       });
       assert.equal(r.AUDIT_DB_URL.source, 'process-env');
       assert.equal(r.AUDIT_DB_URL.value, '');
-    } finally { fs.rmSync(cwd, { recursive: true, force: true }); fs.rmSync(home, { recursive: true, force: true }); }
+    } finally { fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -420,7 +420,7 @@ describe('assessSharedCloudConfig', () => {
       });
       assert.equal(r.outcome, OUTCOMES.MISCONFIGURED);
       assert.equal(r.reason, 'invalid-override');
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(notSource, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(notSource, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('MISCONFIGURED — source repo found but no .env', () => {
@@ -430,7 +430,7 @@ describe('assessSharedCloudConfig', () => {
       const r = assessSharedCloudConfig({ sourceRepoDir: src, homedir: home });
       assert.equal(r.outcome, OUTCOMES.MISCONFIGURED);
       assert.equal(r.reason, 'source-env-missing');
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('MISCONFIGURED — source .env missing REQUIRED_VARS', () => {
@@ -441,7 +441,7 @@ describe('assessSharedCloudConfig', () => {
       assert.equal(r.outcome, OUTCOMES.MISCONFIGURED);
       assert.equal(r.reason, 'source-missing-required');
       assert.deepEqual(r.missingRequired, ['AUDIT_DB_URL']);
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('CREATED — shared file absent, source has required vars', () => {
@@ -451,7 +451,7 @@ describe('assessSharedCloudConfig', () => {
       const r = assessSharedCloudConfig({ sourceRepoDir: src, homedir: home });
       assert.equal(r.outcome, OUTCOMES.CREATED);
       assert.deepEqual(r.deltas.add, { AUDIT_DB_URL: 'postgres://x' });
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('ALREADY_CURRENT — shared file matches source', () => {
@@ -461,7 +461,7 @@ describe('assessSharedCloudConfig', () => {
     try {
       const r = assessSharedCloudConfig({ sourceRepoDir: src, homedir: home });
       assert.equal(r.outcome, OUTCOMES.ALREADY_CURRENT);
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('UPDATED — shared file diverges from source (add/change/remove)', () => {
@@ -475,7 +475,7 @@ describe('assessSharedCloudConfig', () => {
       assert.deepEqual(r.deltas.add, { GEMINI_API_KEY: 'gemini-new' });
       assert.deepEqual(r.deltas.change, { AUDIT_DB_URL: { from: 'old', to: 'new' } });
       assert.deepEqual(r.deltas.remove, { OPENAI_API_KEY: 'stale' });
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -497,7 +497,7 @@ describe('runSetupCloud executor', () => {
       assert.equal(r.exitCode, 0);
       assert.equal(promptCalled, 0);
       assert.match(stdio.text(), /in sync/);
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('CREATED with autoYes: no prompt, file written, exit 0', async () => {
@@ -515,7 +515,7 @@ describe('runSetupCloud executor', () => {
       const parsed = parseEnvFile(sharedEnvPath(home));
       assert.equal(parsed.AUDIT_DB_URL, 'postgres://x');
       assert.equal(parsed.OPENAI_API_KEY, 'sk');
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('UPDATED prompt accepted: file rewritten, exit 0', async () => {
@@ -533,7 +533,7 @@ describe('runSetupCloud executor', () => {
       assert.match(promptArg, /old/);  // delta preview shows old → new
       const parsed = parseEnvFile(sharedEnvPath(home));
       assert.equal(parsed.AUDIT_DB_URL, 'new');
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('USER_SKIPPED: prompt rejected, file unchanged, exit 0', async () => {
@@ -549,7 +549,7 @@ describe('runSetupCloud executor', () => {
       assert.equal(r.exitCode, 0);
       const parsed = parseEnvFile(sharedEnvPath(home));
       assert.equal(parsed.AUDIT_DB_URL, 'old', 'declined update must not write');
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('dryRun: prompt happens, file unchanged, exit 0', async () => {
@@ -562,7 +562,7 @@ describe('runSetupCloud executor', () => {
       assert.equal(r.outcome, OUTCOMES.CREATED);
       assert.equal(r.dryRun, true);
       assert.equal(fs.existsSync(sharedEnvPath(home)), false);
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('MISCONFIGURED: exit 4', async () => {
@@ -575,7 +575,7 @@ describe('runSetupCloud executor', () => {
       });
       assert.equal(r.outcome, OUTCOMES.MISCONFIGURED);
       assert.equal(r.exitCode, 4);
-    } finally { fs.rmSync(home, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -644,8 +644,8 @@ describe('JSON output secret masking (_internals.maskDeltasForOutput)', () => {
       });
     } finally {
       process.stdout.write = origWrite;
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(src,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(src,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
     const out = captured.join('');
     // The JSON should parse cleanly.

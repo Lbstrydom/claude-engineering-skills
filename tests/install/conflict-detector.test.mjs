@@ -14,7 +14,7 @@ describe('computeFileSha', () => {
     fs.writeFileSync(p, 'hello world');
     const sha = computeFileSha(p);
     assert.match(sha, /^[0-9a-f]{12}$/);
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('returns null for nonexistent file', () => {
@@ -40,7 +40,7 @@ describe('detectConflicts', () => {
     const { safe, conflicts } = detectConflicts(writes, receipt);
     assert.equal(safe.length, 1);
     assert.equal(conflicts.length, 0);
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('flags unmanaged existing files as conflicts', () => {
@@ -52,7 +52,7 @@ describe('detectConflicts', () => {
     assert.equal(safe.length, 0);
     assert.equal(conflicts.length, 1);
     assert.ok(conflicts[0].reason.includes('not managed'));
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('allows --force to override conflicts', () => {
@@ -63,6 +63,6 @@ describe('detectConflicts', () => {
     const { safe, conflicts } = detectConflicts(writes, null, { force: true });
     assert.equal(safe.length, 1);
     assert.equal(conflicts.length, 0);
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

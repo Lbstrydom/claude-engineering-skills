@@ -68,7 +68,7 @@ describe('formatCandidatesForPrompt — secret-shaped content never reaches the 
       assert.deepEqual(refusedIds, ['dup-1']);
     } finally {
       process.chdir(cwd);
-      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -92,7 +92,7 @@ describe('formatCandidatesForPrompt — secret-shaped content never reaches the 
       assert.ok(prompt.includes('src/a.mjs'));
     } finally {
       process.chdir(cwd);
-      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -129,7 +129,7 @@ describe('formatCandidatesForPrompt — excerpts the symbol span, not the whole 
       assert.ok(prompt.includes('src/a.mjs'));
     } finally {
       process.chdir(cwd);
-      fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -150,7 +150,7 @@ describe('runDuplicationAnalysis — sensitive/symlink path never read (WS-CANON
     });
     assert.equal(report.state, 'clean');
     assert.equal(readCalled, false);
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('excludes a candidate whose matched path is an innocent-looking symlink resolving into a sensitive target', { skip: skipOnWin }, async () => {
@@ -173,6 +173,6 @@ describe('runDuplicationAnalysis — sensitive/symlink path never read (WS-CANON
     });
     assert.equal(report.state, 'clean');
     assert.equal(readCalled, false);
-    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

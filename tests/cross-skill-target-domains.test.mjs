@@ -48,7 +48,7 @@ describe('cross-skill compute-target-domains', () => {
       assert.equal(out.crossDomain, false);
       assert.deepEqual(out.untaggedPaths, []);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -63,7 +63,7 @@ describe('cross-skill compute-target-domains', () => {
       assert.deepEqual(out.domains, ['pairing', 'tests', 'wine-shop']);
       assert.equal(out.crossDomain, true);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -79,7 +79,7 @@ describe('cross-skill compute-target-domains', () => {
       assert.deepEqual(out.untaggedPaths, ['random-utility.js']);
       assert.equal(out.crossDomain, false, 'one tagged + one untagged is not cross-domain');
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -102,7 +102,7 @@ describe('cross-skill compute-target-domains', () => {
       const out = JSON.parse(r.stdout);
       assert.equal(out.ruleCount, 3);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -118,7 +118,7 @@ describe('cross-skill compute-target-domains', () => {
       assert.deepEqual(out.domains, []);
       assert.deepEqual(out.untaggedPaths, ['anything.js']);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

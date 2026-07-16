@@ -159,7 +159,7 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
     execSync('git config user.name test', { cwd: tmp });
   });
   afterEach(() => {
-    fs.rmSync(tmp, { recursive: true, force: true });
+    fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('finds a pragma in a genuinely UNTRACKED file (never git add-ed) — round-2 M7 regression guard', () => {
@@ -201,7 +201,7 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
       const pragmas = findRepoPragmas(notARepo);
       assert.deepEqual(pragmas, []);
     } finally {
-      fs.rmSync(notARepo, { recursive: true, force: true });
+      fs.rmSync(notARepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -210,7 +210,7 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
     try {
       assert.throws(() => findRepoPragmas(notARepo, { strict: true }), /PRAGMA_SWEEP_FAILED|findRepoPragmas failed/);
     } finally {
-      fs.rmSync(notARepo, { recursive: true, force: true });
+      fs.rmSync(notARepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 

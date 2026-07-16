@@ -67,7 +67,7 @@ test('plan mode: main() resolves its imports and reaches callGPT (a clean provid
     `plan mode must fail on the PROVIDER call, never on a broken import from the Phase 11 split. output:\n${output.slice(-800)}`);
   assert.match(output, /401|Incorrect API key|api-keys/i, `expected a clean OpenAI auth error. output:\n${output.slice(-800)}`);
 
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('rebuttal mode: main() resolves its imports and reaches callGPT (a clean provider auth error, never a ReferenceError/module-resolution crash)', () => {
@@ -84,5 +84,5 @@ test('rebuttal mode: main() resolves its imports and reaches callGPT (a clean pr
     `rebuttal mode must fail on the PROVIDER call, never on a broken import from the Phase 11 split. output:\n${output.slice(-800)}`);
   assert.match(output, /401|Incorrect API key|api-keys/i, `expected a clean OpenAI auth error. output:\n${output.slice(-800)}`);
 
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });

@@ -32,7 +32,7 @@ afterEach(() => {
   process.chdir(cwd0);
   if (dbUrl0 === undefined) delete process.env.AUDIT_DB_URL;
   else process.env.AUDIT_DB_URL = dbUrl0;
-  fs.rmSync(tmp, { recursive: true, force: true });
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 /** A finding + a ledger entry that rules it `accepted` (matched by topicId). */

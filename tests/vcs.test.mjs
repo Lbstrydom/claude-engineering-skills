@@ -146,7 +146,7 @@ describe('gitCommitSha', () => {
       assert.equal(r.ok, true);
       assert.match(r.sha, /^[0-9a-f]{40}$/);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
   it('returns {ok:false, NOT_A_GIT_REPOSITORY} outside a repo', () => {
@@ -156,7 +156,7 @@ describe('gitCommitSha', () => {
       assert.equal(r.ok, false);
       assert.equal(r.error.code, 'NOT_A_GIT_REPOSITORY');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -176,7 +176,7 @@ describe('gitDiffWithWorkingTree', () => {
       assert.ok(Array.isArray(r.files.renamed));
       assert.ok(r.files.untracked.includes('untracked.txt'));
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -201,7 +201,7 @@ describe('gitDiffWithWorkingTree', () => {
         }
       }
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -213,7 +213,7 @@ describe('gitDiffWithWorkingTree', () => {
       assert.equal(r.ok, false);
       assert.equal(r.error.code, 'BAD_REVISION');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -225,7 +225,7 @@ describe('gitDiffWithWorkingTree', () => {
       assert.equal(r.ok, false);
       assert.equal(r.error.code, 'BAD_REVISION');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -236,7 +236,7 @@ describe('gitDiffWithWorkingTree', () => {
       assert.equal(r.ok, false);
       assert.equal(r.error.code, 'NOT_A_GIT_REPOSITORY');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

@@ -24,7 +24,7 @@ function fixtureRoot(t, mapBlocks) {
     path.join(root, '.audit-loop', 'domain-map.json'),
     JSON.stringify({ rules: [], allowedDeps: {}, ...mapBlocks }),
   );
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
   return root;
 }
 

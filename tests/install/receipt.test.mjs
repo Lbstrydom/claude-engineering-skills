@@ -28,7 +28,7 @@ describe('receipt', () => {
     assert.equal(error, null);
     assert.equal(receipt.bundleVersion, 'abc123');
     assert.equal(receipt.managedFiles.length, 1);
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('rejects invalid receipt JSON', () => {
@@ -38,6 +38,6 @@ describe('receipt', () => {
     const { receipt, error } = readReceipt(p);
     assert.equal(receipt, null);
     assert.ok(error.includes('Invalid receipt'));
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

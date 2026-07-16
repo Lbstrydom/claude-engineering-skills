@@ -75,7 +75,7 @@ describe('redact-once — buildRedactedAuditContext excludes sensitive files', (
       assert.ok(!context.includes(FAKE_SECRET), 'sensitive file secret must NOT appear in context');
       assert.equal(egressSafe, true);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -212,7 +212,7 @@ describe('egress backstop — secret content is caught even inside an allowed fi
       assert.equal(egressSafe, false);
       assert.ok(egressPatterns.length > 0);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

@@ -262,7 +262,7 @@ function cacheWaveResults(passNames, results) {
 
 function cleanupCache() {
   if (!_cacheDir) return;
-  try { fs.rmSync(_cacheDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(_cacheDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
 }
 
 // buildReducePayload and normalizeFindingsForOutput imported from lib/robustness.mjs

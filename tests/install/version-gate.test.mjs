@@ -89,7 +89,7 @@ describe('ManifestSchema', () => {
 describe('installer version-gate entrypoint', () => {
   let tmp;
   beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'install-gate-')); });
-  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+  afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
   it('rejects schemaVersion 99 with UNSUPPORTED_MANIFEST_VERSION', async () => {
     // Arrange a synthetic target dir with a skills/ and a v99 manifest

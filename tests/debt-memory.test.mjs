@@ -27,7 +27,7 @@ beforeEach(() => {
   eventsPath = path.join(tmpDir, 'local', 'debt-events.jsonl');
 });
 afterEach(() => {
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
 });
 
 // ── selectEventSource ───────────────────────────────────────────────────────

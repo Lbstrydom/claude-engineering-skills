@@ -247,7 +247,7 @@ describe('check-context-drift', () => {
         assert.equal(oversized[0].severity, 'warn');
         assert.match(oversized[0].message, /progressive-disclosure/);
       } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
 
@@ -263,7 +263,7 @@ describe('check-context-drift', () => {
         const oversized = findings.filter(f => f.ruleId === 'ctx/oversized-agents-md');
         assert.equal(oversized.length, 1);
       } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
 
@@ -276,7 +276,7 @@ describe('check-context-drift', () => {
         const { findings } = runDriftCheck(tmpDir);
         assert.deepEqual(findings.filter(f => f.ruleId === 'ctx/oversized-agents-md'), []);
       } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     });
 
@@ -326,7 +326,7 @@ describe('check-context-drift', () => {
         }
         return fn(tmpDir);
       } finally {
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
       }
     }
 

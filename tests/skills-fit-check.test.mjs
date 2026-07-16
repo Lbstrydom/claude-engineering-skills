@@ -299,7 +299,7 @@ describe('runFitCheck — end-to-end', () => {
       assert.equal(written.summary.fits + written.summary.partial + written.summary.mismatch,
                    written.verdicts.length);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 

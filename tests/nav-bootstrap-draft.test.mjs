@@ -92,6 +92,6 @@ d2('readContract requiredInLayer validation (R3-M4)', () => {
     const r = readContract(dir);
     assert2.equal(r.contract, null);
     assert2.match(r.error, /requiredInLayer 'sidebar' is not a key/);
-    fs2.rmSync(dir, { recursive: true, force: true });
+    fs2.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

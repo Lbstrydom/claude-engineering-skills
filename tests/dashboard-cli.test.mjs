@@ -19,7 +19,7 @@ import { renderDocument } from '../scripts/lib/dashboard/render.mjs';
 function withTmp(fn) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-collect-'));
   try { return fn(tmp); }
-  finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  finally { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
 }
 
 function writePkg(root, scripts) {

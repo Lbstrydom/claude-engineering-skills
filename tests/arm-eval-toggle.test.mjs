@@ -13,7 +13,7 @@ import { readToggle, writeToggle, resolveShadowArmsWithToggle, TOGGLE_RELPATH, T
 
 let root;
 before(() => { root = mkdtempSync(path.join(tmpdir(), 'arm-eval-toggle-')); });
-after(() => { rmSync(root, { recursive: true, force: true }); });
+after(() => { rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 describe('toggle read/write', () => {
   it('absent file → disabled (fail-closed OFF, present:false)', () => {
@@ -69,6 +69,6 @@ describe('resolveShadowArmsWithToggle — precedence', () => {
       const r = resolveShadowArmsWithToggle({}, { repoRoot: empty });
       assert.equal(r.enabled, false);
       assert.equal(r.source, 'off');
-    } finally { rmSync(empty, { recursive: true, force: true }); }
+    } finally { rmSync(empty, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });

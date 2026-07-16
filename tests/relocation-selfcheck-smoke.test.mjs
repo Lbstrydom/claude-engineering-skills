@@ -74,7 +74,7 @@ function assertSelfcheckOk(scriptAbsPath) {
     const leaked = LEAK_MARKERS.find((m) => stderr.includes(m));
     assert.equal(leaked, undefined, `${name} reached a config/credential path before short-circuit (stderr marker: ${leaked}): ${stderr.slice(0, 200)}`);
   } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 }
 
@@ -119,6 +119,6 @@ test('negative control: assertSelfcheckOk rejects a missing/broken handler (dete
       'must reject a script that exits non-zero',
     );
   } finally {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 });

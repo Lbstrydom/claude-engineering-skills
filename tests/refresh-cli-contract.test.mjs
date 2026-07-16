@@ -82,7 +82,7 @@ describe('refresh pipeline integration — diff filtering on real git tree', () 
       // Default mode: no raw sensitive paths leaked.
       assert.ok(!joined.includes('.env.local'), 'default log must not leak basename');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -110,7 +110,7 @@ describe('refresh pipeline integration — diff filtering on real git tree', () 
       assert.ok(skipped.some(s => s.action === 'rewritten-delete'),
         `expected rewritten-delete in skipped; got ${JSON.stringify(skipped)}`);
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -149,7 +149,7 @@ describe('full-vs-incremental skip parity', () => {
       assert.ok(incPaths.has('.env.local'));
       assert.ok(incPaths.has('package-lock.json'));
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -241,7 +241,7 @@ describe('extract.mjs --files-from (ENAMETOOLONG fix)', () => {
       assert.ok(names.includes('alphaFn'), `expected alphaFn; got ${JSON.stringify(names)}`);
       assert.ok(!names.includes('betaFn'), 'betaFn was not in the manifest — must not be extracted');
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

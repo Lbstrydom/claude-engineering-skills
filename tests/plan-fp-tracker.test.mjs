@@ -21,7 +21,7 @@ describe('PlanFpTracker — basic dismiss accumulation', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-fp-'));
     dataPath = path.join(tmpDir, 'plan-fp-patterns.json');
   });
-  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
 
   it('does not suppress on first dismiss', () => {
     const tracker = new PlanFpTracker(dataPath).load();
@@ -68,7 +68,7 @@ describe('PlanFpTracker — similarity-based matching', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-fp-'));
     dataPath = path.join(tmpDir, 'plan-fp-patterns.json');
   });
-  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
 
   it('matches similar (but not identical) text', () => {
     const tracker = new PlanFpTracker(dataPath).load();
@@ -94,7 +94,7 @@ describe('PlanFpTracker — save/load persistence', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-fp-'));
     dataPath = path.join(tmpDir, 'plan-fp-patterns.json');
   });
-  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
 
   it('persists patterns across tracker instances', () => {
     const t1 = new PlanFpTracker(dataPath).load();
@@ -160,7 +160,7 @@ describe('PlanFpTracker — edge cases', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-fp-'));
     dataPath = path.join(tmpDir, 'plan-fp-patterns.json');
   });
-  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true }));
+  afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }));
 
   it('ignores empty string input', () => {
     const tracker = new PlanFpTracker(dataPath).load();

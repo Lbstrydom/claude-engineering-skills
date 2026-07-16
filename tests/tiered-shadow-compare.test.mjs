@@ -259,7 +259,7 @@ describe('appendShadowLog + runTieredShadowComparison (file I/O)', () => {
     assert.equal(lines.length, 2);
     assert.equal(lines[0].a, 1);
     assert.equal(lines[1].a, 2);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   test('a write failure is swallowed, never thrown (fail-open telemetry)', () => {
@@ -281,7 +281,7 @@ describe('appendShadowLog + runTieredShadowComparison (file I/O)', () => {
     assert.equal(record.shadowOk, true);
     assert.ok(record.comparison);
     assert.equal(record.comparison.legacyCostUsd, 1);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   test('a legacy failure is recorded with comparison:null, never a crash', async () => {
@@ -296,7 +296,7 @@ describe('appendShadowLog + runTieredShadowComparison (file I/O)', () => {
     const record = JSON.parse(fs.readFileSync(logPath, 'utf8').trim());
     assert.equal(record.legacyOk, false);
     assert.equal(record.comparison, null);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   test('a shadow failure is recorded with shadowOk:false + shadowError, comparison:null', async () => {
@@ -313,6 +313,6 @@ describe('appendShadowLog + runTieredShadowComparison (file I/O)', () => {
     assert.equal(record.shadowOk, false);
     assert.match(record.shadowError, /tiered blew up/);
     assert.equal(record.comparison, null);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

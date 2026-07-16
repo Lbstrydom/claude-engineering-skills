@@ -56,7 +56,7 @@ def user_detail(id):
 
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it("LanguageContext detects src/ as Python package root", () => {

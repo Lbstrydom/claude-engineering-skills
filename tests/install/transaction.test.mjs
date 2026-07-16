@@ -20,7 +20,7 @@ describe('executeTransaction', () => {
     assert.equal(result.written, 2);
     assert.equal(fs.readFileSync(path.join(dir, 'a.txt'), 'utf-8'), 'hello');
     assert.equal(fs.readFileSync(path.join(dir, 'b.txt'), 'utf-8'), 'world');
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('creates directories as needed', () => {
@@ -29,7 +29,7 @@ describe('executeTransaction', () => {
     const result = executeTransaction(writes);
     assert.equal(result.success, true);
     assert.ok(fs.existsSync(path.join(dir, 'file.txt')));
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('preserves existing file content as snapshot', () => {
@@ -41,6 +41,6 @@ describe('executeTransaction', () => {
     const result = executeTransaction(writes);
     assert.equal(result.success, true);
     assert.equal(fs.readFileSync(p, 'utf-8'), 'updated');
-    fs.rmSync(TMP, { recursive: true, force: true });
+    fs.rmSync(TMP, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

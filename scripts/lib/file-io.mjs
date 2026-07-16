@@ -9,11 +9,22 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { retrySync } from './retry-transient-fs.mjs';
 
 // ── Atomic File Writes ──────────────────────────────────────────────────────
 // Write to a temp file in the same directory, then rename for crash-safety.
 
-export function atomicWriteFileSync(filePath, data, { mode } = {}) {
+/**
+ * Real implementation body, parameterized over the fs functions so tests
+ * can inject a failing renameFn/unlinkFn and exercise the whole function
+ * (symlink-following, mkdirSync, temp-write, retry-wrapped rename,
+ * cleanup-on-failure) rather than mocking at the module boundary.
+ */
+export function atomicWriteFileSyncImpl(filePath, data, {
+  mode,
+  renameFn = fs.renameSync,
+  unlinkFn = fs.unlinkSync,
+} = {}) {
   let absPath = path.resolve(filePath);
   // Gemini-r3-r2 G1: symlink preservation. If the target is a symlink
   // (common for dotfiles managed by stow / chezmoi / etc., e.g. ~/.audit-loop.env
@@ -36,14 +47,20 @@ export function atomicWriteFileSync(filePath, data, { mode } = {}) {
   const writeOpts = mode !== undefined ? { encoding: 'utf-8', mode } : 'utf-8';
   try {
     fs.writeFileSync(tmpPath, data, writeOpts);
-    fs.renameSync(tmpPath, absPath);
+    retrySync(() => renameFn(tmpPath, absPath));
   } catch (err) {
-    try { fs.unlinkSync(tmpPath); } catch (cleanupErr) {
+    try { unlinkFn(tmpPath); } catch (cleanupErr) {
       process.stderr.write(`  [atomic-write] Temp file cleanup failed: ${cleanupErr.message}\n`);
     }
     throw err;
   }
 }
+
+export function atomicWriteFileSync(filePath, data, { mode } = {}) {
+  atomicWriteFileSyncImpl(filePath, data, { mode });
+}
+
+export const _internals = { atomicWriteFileSyncImpl };
 
 // ── Path Normalization ──────────────────────────────────────────────────────
 

@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { retrySync } from '../retry-transient-fs.mjs';
 
 /**
  * @typedef {Object} WriteOp
@@ -66,7 +67,7 @@ function writeJournal(journalPath, body) {
   } finally {
     fs.closeSync(fd);
   }
-  fs.renameSync(tmp, journalPath);
+  retrySync(() => fs.renameSync(tmp, journalPath));
 }
 
 /**
@@ -140,7 +141,7 @@ export function executeTransaction(opsOrWrites) {
   const writtenPaths = [];
   try {
     for (const { absPath, tmpPath } of staged) {
-      fs.renameSync(tmpPath, absPath);
+      retrySync(() => fs.renameSync(tmpPath, absPath));
       writtenPaths.push(absPath);
     }
   } catch (err) {
@@ -165,7 +166,7 @@ export function executeTransaction(opsOrWrites) {
         continue;
       }
     }
-    try { fs.unlinkSync(d.absPath); deletedCount++; }
+    try { retrySync(() => fs.unlinkSync(d.absPath)); deletedCount++; }
     catch (err) {
       skippedDeletes.push({ absPath: d.absPath, reason: `DELETE_FAILED: ${err.message}` });
     }
@@ -178,18 +179,18 @@ export function executeTransaction(opsOrWrites) {
 function rollbackPartialTransaction(writtenPaths, snapshots, staged) {
   // Remove any unused .tmp files first
   for (const { tmpPath } of staged) {
-    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* best effort */ }
+    try { if (fs.existsSync(tmpPath)) retrySync(() => fs.unlinkSync(tmpPath)); } catch { /* best effort */ }
   }
   // Revert any completed renames to their snapshot
   for (const absPath of writtenPaths) {
     const snapshot = snapshots.get(absPath);
     try {
       if (snapshot === undefined) {
-        if (fs.existsSync(absPath)) fs.unlinkSync(absPath);
+        if (fs.existsSync(absPath)) retrySync(() => fs.unlinkSync(absPath));
       } else if (snapshot !== null) {
         const tmpPath = `${absPath}.tmp.${tmpSuffix()}`;
         fs.writeFileSync(tmpPath, snapshot);
-        fs.renameSync(tmpPath, absPath);
+        retrySync(() => fs.renameSync(tmpPath, absPath));
       }
     } catch (err) {
       process.stderr.write(`  [rollback] Failed to restore ${absPath}: ${err.message}\n`);
@@ -198,7 +199,7 @@ function rollbackPartialTransaction(writtenPaths, snapshots, staged) {
 }
 
 function cleanupJournal(journalPath) {
-  try { if (fs.existsSync(journalPath)) fs.unlinkSync(journalPath); }
+  try { if (fs.existsSync(journalPath)) retrySync(() => fs.unlinkSync(journalPath)); }
   catch { /* best effort */ }
 }
 
@@ -215,7 +216,7 @@ export function recoverFromJournal(journalPath = defaultJournalPath()) {
   try { journal = JSON.parse(fs.readFileSync(journalPath, 'utf8')); }
   catch (err) {
     // Unreadable journal — remove it to avoid infinite recovery loop
-    try { fs.unlinkSync(journalPath); } catch { /* best effort */ }
+    try { retrySync(() => fs.unlinkSync(journalPath)); } catch { /* best effort */ }
     return { recovered: false, rolledForward: 0, rolledBack: 0, error: `corrupt journal: ${err.message}` };
   }
 
@@ -225,7 +226,7 @@ export function recoverFromJournal(journalPath = defaultJournalPath()) {
     // Roll forward — any staged .tmp file whose rename didn't complete, rename now.
     for (const { absPath, tmpPath } of journal.staged || []) {
       if (fs.existsSync(tmpPath)) {
-        try { fs.renameSync(tmpPath, absPath); rolledForward++; }
+        try { retrySync(() => fs.renameSync(tmpPath, absPath)); rolledForward++; }
         catch (err) { process.stderr.write(`  [recover] roll-forward failed for ${absPath}: ${err.message}\n`); }
       }
     }
@@ -233,12 +234,12 @@ export function recoverFromJournal(journalPath = defaultJournalPath()) {
     // stage === 'staged' — nothing was renamed yet; discard all .tmp files.
     for (const { tmpPath } of journal.staged || []) {
       if (fs.existsSync(tmpPath)) {
-        try { fs.unlinkSync(tmpPath); rolledBack++; } catch { /* best effort */ }
+        try { retrySync(() => fs.unlinkSync(tmpPath)); rolledBack++; } catch { /* best effort */ }
       }
     }
   }
 
-  try { fs.unlinkSync(journalPath); } catch { /* best effort */ }
+  try { retrySync(() => fs.unlinkSync(journalPath)); } catch { /* best effort */ }
   return { recovered: true, rolledForward, rolledBack };
 }
 

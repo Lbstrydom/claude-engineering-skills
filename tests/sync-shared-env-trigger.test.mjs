@@ -57,7 +57,7 @@ describe('D2b trigger — assessment outcomes drive the right side-effects', () 
       const a = assessSharedCloudConfig({ sourceRepoDir: src, homedir: home });
       assert.equal(a.outcome, OUTCOMES.ALREADY_CURRENT);
       // The trigger early-returns on this outcome (no stdio write, no prompt).
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('MISCONFIGURED — trigger would render one-line skip notice', () => {
@@ -67,7 +67,7 @@ describe('D2b trigger — assessment outcomes drive the right side-effects', () 
       const a = assessSharedCloudConfig({ sourceRepoDir: notSource, homedir: home });
       assert.equal(a.outcome, OUTCOMES.MISCONFIGURED);
       // The trigger writes `[sync] shared cloud config: <reason> — skipping`.
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(notSource, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(notSource, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('CREATED — assess proposes; executor with mock prompt writes file', async () => {
@@ -85,7 +85,7 @@ describe('D2b trigger — assessment outcomes drive the right side-effects', () 
       assert.equal(r.outcome, OUTCOMES.CREATED);
       assert.ok(fs.existsSync(sharedEnvPath(home)));
       assert.equal(parseEnvFile(sharedEnvPath(home)).AUDIT_DB_URL, 'postgres://x');
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('UPDATED with divergence — prompt previews specific deltas', async () => {
@@ -102,7 +102,7 @@ describe('D2b trigger — assessment outcomes drive the right side-effects', () 
       assert.match(promptArg, /Update/);
       assert.match(promptArg, /\+ OPENAI_API_KEY/);  // add line
       assert.match(promptArg, /~ AUDIT_DB_URL/);     // change line (old → new)
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('USER_SKIPPED — declined update leaves file unchanged', async () => {
@@ -116,7 +116,7 @@ describe('D2b trigger — assessment outcomes drive the right side-effects', () 
       });
       assert.equal(r.outcome, OUTCOMES.USER_SKIPPED);
       assert.equal(parseEnvFile(sharedEnvPath(home)).AUDIT_DB_URL, 'old');
-    } finally { fs.rmSync(home, { recursive: true, force: true }); fs.rmSync(src, { recursive: true, force: true }); }
+    } finally { fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); fs.rmSync(src, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });
 
@@ -147,8 +147,8 @@ describe('maybePromptSharedCloudUpdate (exported via _internals)', () => {
       assert.equal(stdio.text(), '', 'silent on already_current');
     } finally {
       process.env[homeKey] = prevHome;
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(src,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(src,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -164,8 +164,8 @@ describe('maybePromptSharedCloudUpdate (exported via _internals)', () => {
       assert.match(stdio.text(), /shared cloud config:.*skipping/);
     } finally {
       process.env[homeKey] = prevHome;
-      fs.rmSync(home,      { recursive: true, force: true });
-      fs.rmSync(notSource, { recursive: true, force: true });
+      fs.rmSync(home,      { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(notSource, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

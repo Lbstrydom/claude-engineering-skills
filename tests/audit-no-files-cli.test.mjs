@@ -53,7 +53,7 @@ test('CLI: a code audit over a plan whose files do not exist refuses (exit≠0, 
   assert.notEqual(exitCode, 0, `expected non-zero exit; got ${exitCode}. output:\n${output.slice(-800)}`);
   assert.match(output, /0 implementation files|refusing to emit a verdict|reached the prompt/i, 'must print the A1 refusal');
   assert.ok(!fs.existsSync(out), 'must NOT write a hollow result file when refusing');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('CLI: an explicit but unreadable --diff (the base..HEAD range-misuse) fails fast', () => {
@@ -80,5 +80,5 @@ test('CLI: an explicit but unreadable --diff (the base..HEAD range-misuse) fails
   assert.notEqual(exitCode, 0, `expected non-zero exit; got ${exitCode}. output:\n${output.slice(-800)}`);
   assert.match(output, /not a readable file|git RANGE|unified-diff FILE/i, 'must explain the --diff misuse');
   assert.ok(!fs.existsSync(out), 'must NOT write a result file');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });

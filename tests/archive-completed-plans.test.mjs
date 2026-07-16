@@ -69,7 +69,7 @@ describe('archive-completed-plans / findAuditSummariesFor', () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'arc-'));
   });
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
   it('finds bare audit-summary file', () => {
@@ -114,7 +114,7 @@ describe('archive-completed-plans / runArchive', () => {
     fs.mkdirSync(completedDir, { recursive: true });
   });
   afterEach(() => {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   });
 
   it('moves completed plans + audit summaries; leaves drafts in place', () => {

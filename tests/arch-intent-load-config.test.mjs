@@ -23,7 +23,7 @@ describe('loadArchIntentConfig', () => {
       () => loadArchIntentConfig(dir),
       (err) => err instanceof ArchIntentConfigError && /not found/.test(err.message)
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('throws on malformed JSON', () => {
@@ -34,7 +34,7 @@ describe('loadArchIntentConfig', () => {
       () => loadArchIntentConfig(dir),
       (err) => err instanceof ArchIntentConfigError && /Invalid JSON/.test(err.message)
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('absent allowedDeps → null (NOT empty {})', () => {
@@ -43,7 +43,7 @@ describe('loadArchIntentConfig', () => {
     });
     const cfg = loadArchIntentConfig(dir);
     assert.equal(cfg.allowedDeps, null);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('explicit null allowedDeps → null', () => {
@@ -53,7 +53,7 @@ describe('loadArchIntentConfig', () => {
     });
     const cfg = loadArchIntentConfig(dir);
     assert.equal(cfg.allowedDeps, null);
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('empty {} allowedDeps preserved as {}', () => {
@@ -63,7 +63,7 @@ describe('loadArchIntentConfig', () => {
     });
     const cfg = loadArchIntentConfig(dir);
     assert.deepEqual(cfg.allowedDeps, {});
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('populated allowedDeps preserved', () => {
@@ -73,7 +73,7 @@ describe('loadArchIntentConfig', () => {
     });
     const cfg = loadArchIntentConfig(dir);
     assert.deepEqual(cfg.allowedDeps, { app: ['core'] });
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('throws semantic error on allowedDeps key not in declared domains', () => {
@@ -85,7 +85,7 @@ describe('loadArchIntentConfig', () => {
       () => loadArchIntentConfig(dir),
       (err) => err instanceof ArchIntentConfigError && err.semantic === true && /undeclared/.test(err.message)
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('throws semantic error on allowedDeps value not in declared domains', () => {
@@ -97,7 +97,7 @@ describe('loadArchIntentConfig', () => {
       () => loadArchIntentConfig(dir),
       (err) => err instanceof ArchIntentConfigError && err.semantic === true && /nonsense/.test(err.message)
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('vendor as target value is always allowed', () => {
@@ -107,7 +107,7 @@ describe('loadArchIntentConfig', () => {
     });
     const cfg = loadArchIntentConfig(dir); // should not throw
     assert.deepEqual(cfg.allowedDeps, { app: ['vendor'] });
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('rejects on invalid domain name in rules', () => {
@@ -118,6 +118,6 @@ describe('loadArchIntentConfig', () => {
       () => loadArchIntentConfig(dir),
       (err) => err instanceof ArchIntentConfigError
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });

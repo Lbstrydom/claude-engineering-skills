@@ -44,7 +44,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  fs.rmSync(tmpRoot, { recursive: true, force: true });
+  fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 describe('requiredPatternsFor — the repo-aware seam', () => {

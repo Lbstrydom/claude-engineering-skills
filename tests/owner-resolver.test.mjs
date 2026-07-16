@@ -29,7 +29,7 @@ beforeEach(() => {
   _resetCache();
 });
 afterEach(() => {
-  try { fs.rmSync(tmpRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
   _resetCache();
 });
 

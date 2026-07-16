@@ -183,7 +183,7 @@ describe('loadDomainRules', () => {
     try {
       assert.deepEqual(loadDomainRules(tmp), []);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -194,7 +194,7 @@ describe('loadDomainRules', () => {
       fs.writeFileSync(path.join(tmp, '.audit-loop/domain-map.json'), '{ not json');
       assert.deepEqual(loadDomainRules(tmp), []);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -205,7 +205,7 @@ describe('loadDomainRules', () => {
       fs.writeFileSync(path.join(tmp, '.audit-loop/domain-map.json'), '{}');
       assert.deepEqual(loadDomainRules(tmp), []);
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -223,7 +223,7 @@ describe('loadDomainRules', () => {
       assert.equal(out[0].domain, 'src');
       assert.equal(out[1].domain, 'tests');
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -243,7 +243,7 @@ describe('loadDomainRules', () => {
       assert.equal(out.length, 1);
       assert.equal(out[0].domain, 'good-domain');
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

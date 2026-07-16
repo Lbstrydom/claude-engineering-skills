@@ -22,7 +22,7 @@ beforeEach(() => {
   eventsPath = path.join(tmpDir, 'debt-events.jsonl');
 });
 afterEach(() => {
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
 });
 
 // ── Append / Read ───────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@ function result(over = {}) {
 
 let dir;
 before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-vs-')); });
-after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+after(() => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 describe('verify-store write/read', () => {
   it('round-trips a valid result', () => {
@@ -64,7 +64,7 @@ describe('verify-store write/read', () => {
     const { result: r, rejectedReason } = readVerifyResult(fresh, digest);
     assert.equal(r, null);
     assert.equal(rejectedReason, null);
-    fs.rmSync(fresh, { recursive: true, force: true });
+    fs.rmSync(fresh, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
 

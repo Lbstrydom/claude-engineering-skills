@@ -61,7 +61,7 @@ beforeEach(() => {
   git(['config', 'user.name', 'Test']);
 });
 afterEach(() => {
-  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
 });
 
 // ── countCommitsTouchingTopic ───────────────────────────────────────────────
@@ -77,7 +77,7 @@ describe('countCommitsTouchingTopic', () => {
     try {
       assert.equal(countCommitsTouchingTopic('anything', { cwd: nonRepo }), 0);
     } finally {
-      fs.rmSync(nonRepo, { recursive: true, force: true });
+      fs.rmSync(nonRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -171,7 +171,7 @@ describe('findFirstDeferCommit', () => {
     try {
       assert.equal(findFirstDeferCommit('aa11bb22', { cwd: nonRepo }), null);
     } finally {
-      fs.rmSync(nonRepo, { recursive: true, force: true });
+      fs.rmSync(nonRepo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 

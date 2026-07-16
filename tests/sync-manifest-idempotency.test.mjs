@@ -34,7 +34,7 @@ describe('writeManifest — idempotency (no churn when files unchanged)', () => 
       const r = writeManifest(root, ['a.txt', 'b.txt']);
       assert.equal(r.skipped, false);
       assert.ok(fs.existsSync(path.join(root, 'scripts/.sync-manifest.json')));
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('second write with identical file contents does NOT touch the file', () => {
@@ -56,7 +56,7 @@ describe('writeManifest — idempotency (no churn when files unchanged)', () => 
       assert.equal(fs.readFileSync(manifestPath, 'utf-8'), contentBefore);
       assert.equal(fs.statSync(manifestPath).mtimeMs, mtimeBefore,
         'manifest mtime must not advance when content unchanged');
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('rewrites when a tracked file content actually changes', () => {
@@ -72,7 +72,7 @@ describe('writeManifest — idempotency (no churn when files unchanged)', () => 
 
       const after = fs.readFileSync(manifestPath, 'utf-8');
       assert.notEqual(after, before, 'manifest content must change when hashes change');
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('rewrites when the tracked file set changes (file added)', () => {
@@ -82,7 +82,7 @@ describe('writeManifest — idempotency (no churn when files unchanged)', () => 
       fs.writeFileSync(path.join(root, 'c.txt'), 'new');
       const r2 = writeManifest(root, ['a.txt', 'c.txt']);
       assert.equal(r2.skipped, false, 'adding a file to tracked set must rewrite');
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('rewrites when the tracked file set changes (file removed)', () => {
@@ -91,7 +91,7 @@ describe('writeManifest — idempotency (no churn when files unchanged)', () => 
       writeManifest(root, ['a.txt', 'b.txt']);
       const r2 = writeManifest(root, ['a.txt']);
       assert.equal(r2.skipped, false, 'removing a file from tracked set must rewrite');
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 
   it('recovers from a corrupt existing manifest by overwriting it', () => {
@@ -104,6 +104,6 @@ describe('writeManifest — idempotency (no churn when files unchanged)', () => 
       // The written manifest must now be valid JSON.
       const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
       assert.ok(parsed.files);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); }
   });
 });

@@ -23,7 +23,7 @@ beforeEach(() => {
   git('config user.email t@t.t');
   git('config user.name t');
 });
-afterEach(() => { fs.rmSync(repo, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 function write(rel, body = 'x') {
   const abs = path.join(repo, rel);

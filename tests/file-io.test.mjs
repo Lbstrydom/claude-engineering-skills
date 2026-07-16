@@ -31,7 +31,7 @@ describe('readFilesAsAnnotatedContext — JS/TS code files (block style)', () =>
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('returns full file content unchanged when no diff entry', () => {
@@ -95,7 +95,7 @@ describe('readFilesAsAnnotatedContext — JSON/YAML/Markdown (header-only style)
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('injects line numbers into JSON file content', () => {
@@ -151,7 +151,7 @@ describe('readFilesAsAnnotatedContext — unchanged files (no diff entry)', () =
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('outputs file verbatim with no annotations when diffMap is empty', () => {
@@ -188,7 +188,7 @@ describe('readFilesAsAnnotatedContext — budget limits', () => {
   });
   afterEach(() => {
     process.chdir(prevCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('omits files beyond maxTotal budget and reports count', () => {
@@ -294,7 +294,7 @@ describe('readFilesAsContext — safety', () => {
 
   afterEach(() => {
     process.chdir(origCwd);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('rejects paths that escape the CWD via ../', () => {

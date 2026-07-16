@@ -49,7 +49,7 @@ test('baseline ratchet: absent → null; round-trips; novelty filter blocks only
 
   const blockers = [preexisting, fresh].filter((b) => !baseline.has(divergenceKey(b)));
   assert.deepEqual(blockers, [fresh], 'only the NEW finding survives the baseline filter');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('assessCaptureIntegrity flags degraded (all stalled) vs partial vs clean (silent-green guard)', () => {

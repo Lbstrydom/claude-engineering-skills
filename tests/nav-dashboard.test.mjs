@@ -14,7 +14,7 @@ import { writeVerifyResult } from '../scripts/lib/nav/verify-store.mjs';
 
 let dir;
 before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nav-dash-')); });
-after(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+after(() => { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 describe('collectNav degradation (section-contract)', () => {
   it('returns missing-optional + empty panels when no contract present', async () => {
@@ -55,7 +55,7 @@ describe('collectNav degradation (section-contract)', () => {
     assert.equal(r.navAudit.liveFindings.length, 1);
     assert.ok(r.navAudit.scorecard.length >= 1, 'live scorecard rows surfaced without a static model');
     assert.deepEqual(r.navAudit.drift, [], 'no static drift in live-only mode');
-    fs.rmSync(live, { recursive: true, force: true });
+    fs.rmSync(live, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 });
 

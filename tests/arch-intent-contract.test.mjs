@@ -134,7 +134,7 @@ describe('inventoryFiles + computeDeadIntent (synthetic fixture)', () => {
     assert.equal(unmappedFiles.length, 1);
     assert.match(unmappedFiles[0], /orphan/);
 
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('computeDeadIntent reports declared-but-empty domains', () => {

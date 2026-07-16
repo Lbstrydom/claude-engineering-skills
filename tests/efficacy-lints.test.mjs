@@ -69,7 +69,7 @@ test('cache-inertness: a small cached prefix below the model min is PROVABLY INE
   assert.ok(hit && hit.confidence === 'high', 'flags the tiny prefix as inert');
   assert.match(hit.id, /^[0-9a-f]{8}$/, 'finding carries a stable semanticId');
   assert.equal(rule(r, 'cache-inertness').status, 'findings');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('cache-inertness: a large prefix is clean; unknown model degrades to unverified', () => {
@@ -77,19 +77,19 @@ test('cache-inertness: a large prefix is clean; unknown model degrades to unveri
   const dirBig = tmpRepo({ 'src/p.mjs': `const sys = { text: "${big}", cache_control: { type:"ephemeral" } };` });
   const rBig = runEfficacyLints({ root: dirBig, modelHint: 'claude-sonnet-4-6', config: { enabled: true, promptSourceGlobs: ['src/**'], modelMinTokens: { 'claude-sonnet': 1024 } } });
   assert.equal(rBig.findings.filter((f) => f.ruleId === 'cache-inertness' && f.confidence === 'high').length, 0, 'big prefix not flagged');
-  fs.rmSync(dirBig, { recursive: true, force: true });
+  fs.rmSync(dirBig, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 
   const dirUnk = tmpRepo({ 'src/p.mjs': 'const s = { text:"hi", cache_control:{type:"ephemeral"} };' });
   const rUnk = runEfficacyLints({ root: dirUnk, modelHint: 'who-knows', config: { enabled: true, promptSourceGlobs: ['src/**'], modelMinTokens: { 'claude-sonnet': 1024 } } });
   assert.equal(rule(rUnk, 'cache-inertness').status, 'unverified', 'unknown model → unverified, never a fake clean');
-  fs.rmSync(dirUnk, { recursive: true, force: true });
+  fs.rmSync(dirUnk, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('cache-instability: cache_control near a per-request-varying value is flagged', () => {
   const dir = tmpRepo({ 'src/p.mjs': 'const turnId = Date.now();\nconst block = { text: summary, cache_control: { type:"ephemeral" } };' });
   const r = runEfficacyLints({ root: dir, config: { enabled: true, promptSourceGlobs: ['src/**'] } });
   assert.ok(r.findings.some((f) => f.ruleId === 'cache-instability'), 'flags the unstable prefix');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('canary-no-test: an uncovered gate is flagged; a covered one is clean', () => {
@@ -106,7 +106,7 @@ test('canary-no-test: an uncovered gate is flagged; a covered one is clean', () 
   r = runEfficacyLints({ root: dir, config: cfg });
   assert.ok(!r.findings.some((f) => f.ruleId === 'canary-no-test'), 'covered canary not flagged');
   assert.equal(rule(r, 'canary-no-test').status, 'clean');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('a canary mention inside a comment/string does NOT count as a gate (stripped detection)', () => {
@@ -114,7 +114,7 @@ test('a canary mention inside a comment/string does NOT count as a gate (strippe
   const r = runEfficacyLints({ root: dir, config: { enabled: true, canaryPattern: 'isInCanary', canaryTestPattern: 'setCanary', canarySourceGlobs: ['src/**'], canaryTestGlobs: ['tests/**'] } });
   assert.equal(r.findings.filter((f) => f.ruleId === 'canary-no-test').length, 0, 'commented/stringy mentions are not real gates');
   assert.equal(rule(r, 'canary-no-test').status, 'clean', 'scanned a file, found no real gate → clean');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('contract: scannedFiles:0 → unverified (couldn\'t look), NOT clean', () => {
@@ -123,14 +123,14 @@ test('contract: scannedFiles:0 → unverified (couldn\'t look), NOT clean', () =
   const r = runEfficacyLints({ root: dir, modelHint: 'claude-sonnet-4-6', config: { enabled: true, promptSourceGlobs: ['no-such-dir/**'], modelMinTokens: { 'claude-sonnet': 1024 } } });
   assert.equal(rule(r, 'cache-inertness').status, 'unverified');
   assert.match(rule(r, 'cache-inertness').skipReason || '', /no-files-matched/);
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('contract: enabled but genuinely no sites → clean (NOT a false build failure — Gemini-R3)', () => {
   const dir = tmpRepo({ 'src/f.mjs': 'export const noCanaryHere = 1;' });
   const r = runEfficacyLints({ root: dir, config: { enabled: true, canaryPattern: 'isInCanary', canaryTestPattern: 'setCanary', canarySourceGlobs: ['src/**'], canaryTestGlobs: ['tests/**'] } });
   assert.equal(rule(r, 'canary-no-test').status, 'clean', 'scanned files, no gates exist → clean, not unverified');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('contract: disabled → all rules skipped; no canaryPattern → canary skipped', () => {
@@ -141,7 +141,7 @@ test('contract: disabled → all rules skipped; no canaryPattern → canary skip
   const noCanary = runEfficacyLints({ root: dir, config: { enabled: true, promptSourceGlobs: ['src/**'] } });
   assert.equal(rule(noCanary, 'canary-no-test').status, 'skipped');
   assert.match(rule(noCanary, 'canary-no-test').skipReason || '', /no-canaryPattern/);
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('loadEfficacyConfig: absent → off-defaults; MALFORMED → throws (never silent-disable)', () => {
@@ -165,7 +165,7 @@ test('loadEfficacyConfig: absent → off-defaults; MALFORMED → throws (never s
   // `_`-prefixed keys are comments — stripped, NOT rejected by the strict schema.
   fs.writeFileSync(path.join(dir, 'efficacy-lints.config.json'), JSON.stringify({ _note: 'hi', enabled: true }));
   assert.equal(loadEfficacyConfig(dir).enabled, true, '_note comment key tolerated');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('the shipped example template loads cleanly through loadEfficacyConfig', () => {
@@ -175,7 +175,7 @@ test('the shipped example template loads cleanly through loadEfficacyConfig', ()
   const cfg = loadEfficacyConfig(dir);          // must not throw (it carries a _note)
   assert.equal(cfg.enabled, false, 'example ships OFF by default');
   assert.equal(cfg.canaryPattern, 'isInCanary');
-  fs.rmSync(dir, { recursive: true, force: true });
+  fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 });
 
 test('aggregate status is the worst per-rule status', () => {

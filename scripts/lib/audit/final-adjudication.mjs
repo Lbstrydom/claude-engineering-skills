@@ -460,7 +460,7 @@ async function invokeGeminiReviewSubprocess({ transcript, repoRoot, geminiReview
   } finally {
     // Entire directory, not just the two files — robust to the adapter having
     // written anything else transient into it. Success or failure, always runs.
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }
 }
 

@@ -151,7 +151,7 @@ describe('maintenance-hook-snippet — opportunistic, backgrounded, never blocks
       assert.match(r.stdout, /SENTINEL_REACHED/);
       assert.equal(fs.existsSync(path.join(r.tmp, '.audit-loop', 'last-maintenance.log')), false, 'node shim must not fire when the synced file is absent');
     } finally {
-      fs.rmSync(r.tmp, { recursive: true, force: true });
+      fs.rmSync(r.tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -167,7 +167,7 @@ describe('maintenance-hook-snippet — opportunistic, backgrounded, never blocks
       const log = waitForLog(r.tmp);
       assert.ok(log && log.includes('MOCK maintenance-checks.mjs fired'), 'the backgrounded process must still actually run, not just be detached into nothing');
     } finally {
-      fs.rmSync(r.tmp, { recursive: true, force: true });
+      fs.rmSync(r.tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -183,7 +183,7 @@ describe('maintenance-hook-snippet — opportunistic, backgrounded, never blocks
       // that the parent returns BEFORE the background job finishes).
       waitForLog(r.tmp);
     } finally {
-      fs.rmSync(r.tmp, { recursive: true, force: true });
+      fs.rmSync(r.tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -195,7 +195,7 @@ describe('maintenance-hook-snippet — opportunistic, backgrounded, never blocks
       assert.match(r.stdout, /SENTINEL_REACHED/);
       waitForLog(r.tmp); // see EBUSY note above
     } finally {
-      fs.rmSync(r.tmp, { recursive: true, force: true });
+      fs.rmSync(r.tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
@@ -249,7 +249,7 @@ describe('maintenance-hook — runs even when the code-audit section early-exits
       const log = waitForLog(tmp);
       assert.ok(log && log.includes('MOCK maintenance-checks.mjs fired'), 'maintenance block must have fired despite docs/plans being absent');
     } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });

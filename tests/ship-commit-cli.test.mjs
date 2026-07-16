@@ -64,7 +64,7 @@ beforeEach(() => {
   git(['add', 'README.md']);
   git(['commit', '-q', '-m', 'seed']);
 });
-afterEach(() => { fs.rmSync(repo, { recursive: true, force: true }); });
+afterEach(() => { fs.rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); });
 
 describe('ship-commit CLI — §F1.4 taxonomy', () => {
   it('row 0: all valid → exit 0, commit carries the AI-* block, parse-back round-trips', () => {
@@ -166,7 +166,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     let r = runCli(BASE_ARGS(path.join(outside, 'evil.txt')));
     assert.equal(r.status, 2);
     assert.match(r.stderr, /must resolve inside the repo and not be a sensitive path/);
-    fs.rmSync(outside, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
 
     fs.writeFileSync(path.join(repo, '.env'), 'SECRET=1\n');
     r = runCli(BASE_ARGS('.env'));
@@ -197,7 +197,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     const r = runCli(['--message-file', 'x.txt', '--skill', 'ship', '--models', 'claude', '--gate', 'not-run'], bare);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /ship-commit: git:/);
-    fs.rmSync(bare, { recursive: true, force: true });
+    fs.rmSync(bare, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('trailer integrity (R2 H3): a commit-msg hook that strips AI-* trailers → exit 1 integrity error', () => {
@@ -258,7 +258,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     const r = runCli(BASE_ARGS(path.join('.claude', 'tmp', 'msg.txt')), bare);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /ship-commit: no skill layout found/);
-    fs.rmSync(bare, { recursive: true, force: true });
+    fs.rmSync(bare, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('row 13: commit hook rejection → exit 1, git stderr passed through, working tree intact', () => {
@@ -293,7 +293,7 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     assert.equal(r.status, 0, r.stderr);
     const body = g(['log', '-1', '--format=%B']).stdout;
     assert.match(body, /AI-Run-ID: ecae388d/);
-    fs.rmSync(fresh, { recursive: true, force: true });
+    fs.rmSync(fresh, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('--selfcheck-relocation → prints OK, exit 0, no git side effects', () => {

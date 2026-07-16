@@ -56,8 +56,8 @@ describe('config.mjs shared ~/.audit-loop.env loader', () => {
       const env = JSON.parse(r.stdout);
       assert.equal(env.AUDIT_DB_URL, 'cwd-value');
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(cwd,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(cwd,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -74,8 +74,8 @@ describe('config.mjs shared ~/.audit-loop.env loader', () => {
       assert.equal(env.AUDIT_DB_URL, 'postgres-shared');
       assert.equal(env.OPENAI_API_KEY, 'sk-shared');
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(cwd,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(cwd,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -88,8 +88,8 @@ describe('config.mjs shared ~/.audit-loop.env loader', () => {
       assert.equal(r.status, 0);
       assert.doesNotMatch(r.stderr, /loaded shared cloud config/);
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(cwd,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(cwd,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -103,8 +103,8 @@ describe('config.mjs shared ~/.audit-loop.env loader', () => {
       assert.equal(env.AUDIT_DB_URL, null);
       assert.equal(env.OPENAI_API_KEY, null);
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(cwd,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(cwd,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -121,8 +121,8 @@ describe('config.mjs shared ~/.audit-loop.env loader', () => {
       assert.match(r.stderr, /AUDIT_DB_URL/);
       assert.match(r.stderr, /OPENAI_API_KEY/);
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(cwd,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(cwd,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -138,8 +138,8 @@ describe('config.mjs shared ~/.audit-loop.env loader', () => {
       // attempted but override:false meant it set 0 NEW vars → no note.
       assert.doesNotMatch(r.stderr, /loaded shared cloud config/);
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(cwd,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(cwd,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 
@@ -164,8 +164,8 @@ describe('config.mjs shared ~/.audit-loop.env loader', () => {
       // Note must NOT fire (sentinel suppresses re-log).
       assert.doesNotMatch(r.stderr, /loaded shared cloud config/);
     } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-      fs.rmSync(cwd,  { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+      fs.rmSync(cwd,  { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
     }
   });
 });
