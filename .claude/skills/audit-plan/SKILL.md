@@ -8,7 +8,7 @@ description: |
   "audit docs/plans/", "verify the plan", "review the plan", "is this plan good",
   "check the plan", "/audit-plan".
   Usage: /audit-plan <plan-file>             — Audit existing plan iteratively
-  Usage: /audit-plan <task-description>      — Generate plan with /plan-*, then audit
+  Usage: /audit-plan <task-description>      — Generate plan with /plan, then audit
 ---
 
 # Plan Audit Loop
@@ -49,11 +49,10 @@ Generate the plan with `/plan` (the unified planner — auto-detects scope
 as backend / frontend / full-stack). Save to `docs/plans/<name>.md`.
 Skip for PLAN_AUDIT.
 
-`/plan-backend` and `/plan-frontend` are deprecated thin aliases that
-inject `--scope=backend|frontend` into `/plan`; either entry-point
-works. The output is one consolidated plan document regardless of
-scope, so this step always produces a single file to audit (no
-child-plan merging like the old flow).
+Use `--scope=backend|frontend` on `/plan` for an explicit scope hint if
+auto-detection picks the wrong one. The output is one consolidated plan
+document regardless of scope, so this step always produces a single file
+to audit (no child-plan merging like the old flow).
 
 ---
 

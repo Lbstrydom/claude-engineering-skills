@@ -2,14 +2,14 @@
 summary: Pre-test audit enrichment + post-test persona↔audit correlation emission — full rules.
 ---
 
-# Audit-Loop Correlation Protocol
+# Audit Correlation Protocol
 
 When `audit_link = true` and `repo_name` is set, persona-test reads recent
 audit findings to enrich exploration, then emits correlation rows that
-become ground-truth labels for audit-loop's bandit reward function.
+become ground-truth labels for the audit's bandit reward function.
 
 This is the highest-leverage cross-skill interaction — every correlation
-row shifts how audit-loop weights its prompt-variant selection.
+row shifts how the audit weights its prompt-variant selection.
 
 ## Pre-test enrichment (Phase 0d)
 
@@ -148,5 +148,5 @@ The rows immediately feed the `audit_effectiveness` view and the
 
 Persona severity weight: P0=1.0, P1=0.85, P2=0.6, P3=0.4.
 
-No further work needed in this skill — `/audit-loop` picks up the signal
-on its next run.
+No further work needed in this skill — `/audit-code` and `/audit-plan` pick
+up the signal on their next run.

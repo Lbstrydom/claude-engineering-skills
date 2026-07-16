@@ -4,7 +4,7 @@ summary: 20 engineering principles — core design, robustness, performance, sus
 
 # Engineering Principles — Full Tables
 
-Reference for Phase 2 in `/plan-backend`. Every design decision in the
+Reference for Phase 2 in `/plan` (backend/full-stack scope). Every design decision in the
 plan must be evaluated against these principles. Cite principle numbers
 in the plan's "Proposed Architecture" section.
 

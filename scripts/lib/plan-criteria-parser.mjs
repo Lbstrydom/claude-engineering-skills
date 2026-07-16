@@ -1,10 +1,10 @@
 /**
- * @fileoverview Parser for the "Acceptance Criteria" section of a plan-frontend
+ * @fileoverview Parser for the "Acceptance Criteria" section of a /plan
  * plan. Extracts structured criteria so /ux-lock verify can generate one
  * Playwright test case per criterion.
  *
  * Format parsed:
- *   ### 9. Acceptance Criteria (Playwright-verifiable)
+ *   ### 10. Acceptance Criteria (Playwright-verifiable)
  *   - [P0] [visibility] Cellar grid is visible after login
  *     - Setup: login → navigate to /cellar
  *     - Assert: getByRole('grid', { name: /cellar/i }) is visible

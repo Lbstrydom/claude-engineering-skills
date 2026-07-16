@@ -5,7 +5,7 @@ summary: 17 technical implementation principles — component architecture, stat
 # Technical Implementation Principles — Full Tables
 
 Reference for Phase 3 (Technical Implementation Principles) in
-`/plan-frontend`. UX only works if the implementation is solid — evaluate
+`/plan` (frontend/full-stack scope). UX only works if the implementation is solid — evaluate
 the technical approach against these principles and cite them in the
 plan's "Technical Architecture" section.
 

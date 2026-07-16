@@ -3,8 +3,8 @@ name: ux-lock
 description: |
   Generate Playwright e2e specs. Two modes:
     1. LOCK mode — pin a fix's DOM contract so it doesn't regress (default).
-    2. VERIFY mode — check that a /plan-frontend plan was actually implemented
-       by parsing its Acceptance Criteria (Section 9) and driving the live URL.
+    2. VERIFY mode — check that a /plan plan was actually implemented
+       by parsing its Acceptance Criteria section and driving the live URL.
   Triggers on: "ux lock", "lock ux", "lock in the fix", "write regression spec",
   "generate e2e test for", "regression test for commit", "lock this fix",
   "verify the plan", "verify plan implementation", "check the plan was built",
@@ -25,7 +25,7 @@ Two modes, one skill. Both drive Playwright against semantic DOM contracts.
 
 - **LOCK mode** (default): generate an e2e spec that pins a fix's DOM contract.
 - **VERIFY mode** (`verify <plan.md>`): parse the plan's Acceptance Criteria
-  (Section 9 of a `/plan-frontend` plan) and run one assertion per criterion
+  section (from a `/plan` plan) and run one assertion per criterion
   against the live URL — producing a pass/fail grade for the plan.
 
 Read the first word of `$ARGUMENTS`:
@@ -170,17 +170,17 @@ Omit the `Recorded:` line when cloud mode is off.
 
 ## Mode: VERIFY
 
-Grade a `/plan-frontend` plan against its live implementation. Each
-criterion in Section 9 becomes one Playwright `test()`; per-criterion
-outcomes are recorded with a stable `criterion_hash` for time-series
-tracking across verify runs.
+Grade a `/plan` plan against its live implementation. Each
+criterion in the Acceptance Criteria section becomes one Playwright `test()`;
+per-criterion outcomes are recorded with a stable `criterion_hash` for
+time-series tracking across verify runs.
 
 ### Step V0 — Parse the plan
 
 Read the plan at the path in `$ARGUMENTS` (first positional after
-`verify`). Parse Section 9 using `scripts/lib/plan-criteria-parser.mjs`.
+`verify`). Parse the Acceptance Criteria section using `scripts/lib/plan-criteria-parser.mjs`.
 
-If `found = false` → plan has no Acceptance Criteria; offer to add Section 9.
+If `found = false` → plan has no Acceptance Criteria; offer to add one.
 If `errors.length > 0` → print + stop (malformed criteria).
 
 Register the plan → capture `planId`.
@@ -253,20 +253,20 @@ shipping, `/ship` reads `plan_satisfaction.failing_p0_criteria` via
 
 ## When to use this skill
 
-- **After /audit-loop convergence**: lock in the fixes before moving on
+- **After /audit-code convergence**: lock in the fixes before moving on
 - **After a /persona-test P0 fix**: prevent recurrence
 - **After any production bug fix**: before closing the issue
 - **Before a major refactor**: baseline the current behaviour
-- **After /plan-frontend implementation**: `verify` mode grades the implementation
+- **After /plan implementation**: `verify` mode grades the implementation
 
 ---
 
 ## Integration with other skills
 
-- **/audit-loop** converges → **/ux-lock** locks in fixes
+- **/audit-code** converges → **/ux-lock** locks in fixes
 - **/persona-test** finds P0 → fix → **/ux-lock** prevents recurrence
 - **/ship** warns if recent fixes lack regression specs
-- **/plan-frontend** produces Section 9 → **/ux-lock verify** grades implementation
+- **/plan** produces Acceptance Criteria → **/ux-lock verify** grades implementation
 
 ---
 

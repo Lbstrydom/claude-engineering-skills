@@ -4,15 +4,15 @@ summary: VERIFY mode — criterion parser wiring, translation rules, per-criteri
 
 # VERIFY Mode — Plan Verification Protocol
 
-VERIFY mode grades a `/plan-frontend` plan against its live implementation
-by parsing its Section 9 (Acceptance Criteria), generating one Playwright
+VERIFY mode grades a `/plan` plan against its live implementation
+by parsing its Acceptance Criteria section, generating one Playwright
 `test()` per criterion, running the spec, and recording per-criterion
 outcomes keyed by stable `criterion_hash` for time-series tracking.
 
 ## Step V0 — Parse the plan
 
 Read the plan file at the path in `$ARGUMENTS` (first positional after
-`verify`). Parse Section 9 via the shared parser. Set the plan path in a
+`verify`). Parse the Acceptance Criteria section via the shared parser. Set the plan path in a
 variable first — never paste free-form values inline into the JS string
 (command-template injection + PowerShell reserves `<`/`>`, so placeholder
 commands can't even be pasted):
@@ -30,8 +30,7 @@ console.log(JSON.stringify(parseAcceptanceCriteria(md), null, 2));
 Returns `{ criteria: [...], errors: [...], found: boolean }`.
 
 - `found = false` → tell the user the plan has no Acceptance Criteria
-  section; offer to run `/plan-frontend` to add one, or have them add
-  Section 9 manually.
+  section; offer to run `/plan` to add one, or have them add it manually.
 - `errors.length > 0` → print and stop — malformed criteria need fixing
   first.
 
@@ -40,7 +39,7 @@ Register the plan:
 ```bash
 node scripts/cross-skill.mjs upsert-plan --json '{
   "path": "<plan-path>",
-  "skill": "plan-frontend",
+  "skill": "plan",
   "status": "in_progress"
 }'
 ```
@@ -131,7 +130,7 @@ node scripts/cross-skill.mjs record-regression-spec --json '{
   "description": "Plan verification for <plan-path>",
   "assertionCount": <total criteria>,
   "domContractTypes": [<unique set of categories across the plan>],
-  "sourceKind": "plan-frontend-verify",
+  "sourceKind": "plan-verify",
   "sourceFindingId": "<planId from V0>",
   "sourceFindingType": "plan"
 }'

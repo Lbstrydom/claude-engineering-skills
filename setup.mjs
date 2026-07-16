@@ -264,16 +264,15 @@ ${B}╔════════════════════════�
 
   ${B}How it works:${X}
     - Skills live in ~/.claude/skills/ (global to your machine)
-    - Open any repo in VS Code → type /audit-loop → it works
+    - Open any repo in VS Code → type /plan → it works
     - Run ${D}git pull${X} in this repo to get updates (auto-installs via hook)
 
   ${B}Usage:${X}
     ${D}In any repo:${X}
-      /audit-loop code docs/plans/my-feature.md
-      /audit-loop plan docs/plans/my-feature.md
-      /plan-backend <description>
-      /plan-frontend <description>
-      /audit <plan-file>
+      /plan <description>
+      /audit-plan docs/plans/my-feature.md
+      /audit-code docs/plans/my-feature.md
+      /cycle <description>
 
     ${D}From this repo (CLI):${X}
       node scripts/audit-loop.mjs code <plan-file>

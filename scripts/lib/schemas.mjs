@@ -956,7 +956,7 @@ export const ExecutionMetaSchema = z.object({
 
 /**
  * Canonical output shape for `cross-skill.mjs detect-stack`.
- * Shared by plan-backend, plan-frontend, ship — see scripts/lib/repo-stack.mjs.
+ * Shared by plan, ship — see scripts/lib/repo-stack.mjs.
  */
 export const StackProfileSchema = z.object({
   ok: z.literal(true),

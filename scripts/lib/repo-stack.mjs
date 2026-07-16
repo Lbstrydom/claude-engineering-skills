@@ -1,7 +1,7 @@
 /**
  * @fileoverview Repo stack detection — pure functions used by the
  * `cross-skill.mjs detect-stack` subcommand. Shared detection logic for
- * /plan-backend, /plan-frontend, /ship which each run this at their Phase 0.
+ * /plan, /ship which each run this at their Phase 0.
  *
  * All functions are synchronous; filesystem + `git ls-files` only. No
  * network, no cache. (`git ls-files` is a subprocess used by the

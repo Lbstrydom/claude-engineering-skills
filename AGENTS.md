@@ -99,7 +99,7 @@
 
 ## Project Overview
 
-**Purpose**: A bundle of 8 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
+**Purpose**: A bundle of 15 AI-pair-programming skills covering the full development quality lifecycle — from planning through code audit to live UX testing and shipping.
 **Runtime**: Node.js (ESM modules, `"type": "module"`)
 **Deployment**: CLI scripts + skill files, invoked by AI coding assistants (Claude Code, Copilot, Cursor, Windsurf)
 **Repo**: Renamed from `claude-audit-loop` to `claude-engineering-skills` (Phase E)
@@ -107,13 +107,13 @@
 ## Skill Chain
 
 ```
-/plan-backend + /plan-frontend   → architecture & UX planning
+/plan                             → architecture & UX planning (auto-detects backend/frontend/full-stack)
         ↓
 /audit-plan                      → iterative plan refinement (max 3 rounds, rigor-pressure stop)
         ↓
 /audit-code                      → multi-pass code audit (R2+ suppression, debt capture)
         ↓
-(/audit-loop dispatches to one of the above by mode keyword)
+(/cycle runs this whole chain end-to-end, pausing for human implementation between audit-plan and audit-code)
         ↓
 /ux-lock                         → Playwright e2e spec for each fix (locks in DOM contract)
         ↓
@@ -149,11 +149,10 @@ failed) — `npm run skills:check`/`gates:check` validate it; details:
 `docs/gate-honesty.md`.
 
 Each skill is a sibling — they share env vars and Supabase stores but have distinct scopes:
-- **plan-***: code that doesn't exist yet. `/plan-frontend` produces a machine-parseable "Section 9 — Acceptance Criteria" that `/ux-lock verify` consumes.
+- **plan**: code that doesn't exist yet. Unified planner (auto-detects backend/frontend/full-stack); the frontend/full-stack path produces a machine-parseable "Acceptance Criteria" section that `/ux-lock verify` consumes.
 - **audit-plan**: refines plans before implementation (max 3 rounds, rigor-pressure stop). Single-file edits.
 - **audit-code**: code that was just written (5-pass parallel static analysis + LLM audit + R2+ suppression). Always also runs a mechanical **duplication** wave (pure-Git diff attribution against the architectural-memory index, read-only) — suppress an intentional duplicate with a `// @duplicate-justification: target=<file>:<symbol> reason=<why>` pragma above the declaration; see `skills/audit-code/SKILL.md` and `docs/completed/audit-code-duplication-wave.md`.
-- **audit-loop**: thin orchestrator dispatching to /audit-plan or /audit-code by input shape.
-- **ux-lock**: code that was just fixed (Playwright e2e regression lock). **Verify mode** (`/ux-lock verify <plan.md>`) grades a plan-frontend plan against its live implementation — each criterion becomes a Playwright test case; results populate `plan_verification_runs` + `plan_verification_items`. **Selector policy (2026-07)**: generated specs LOCATE via the semantic ladder (`getByRole` → `getByLabel`/`getByPlaceholder` → `getByText` → `getByTestId` → justified-structural CSS carrying `// selector-policy: structural — <reason>`); `ux-lock-run.mjs` lints every spec it runs plus its local-helper import closure (unmarked structural selectors, `app-module-import` — specs must never import app source; drive the UI). Warn by default, `--strict-selectors` exits 6; unjustified counts persist per run row (`selector_policy_violations`, migration `20260703200000`). [`scripts/lib/ux-lock/selector-policy.mjs`](scripts/lib/ux-lock/selector-policy.mjs) `classifySelector` is the single policy oracle — `candidate-spec.mjs` reuses it so consistency-candidate promotion emits the same markers. Plan: `docs/completed/ux-lock-selector-policy.md`.
+- **ux-lock**: code that was just fixed (Playwright e2e regression lock). **Verify mode** (`/ux-lock verify <plan.md>`) grades a `/plan` plan against its live implementation — each criterion becomes a Playwright test case; results populate `plan_verification_runs` + `plan_verification_items`. **Selector policy (2026-07)**: generated specs LOCATE via the semantic ladder (`getByRole` → `getByLabel`/`getByPlaceholder` → `getByText` → `getByTestId` → justified-structural CSS carrying `// selector-policy: structural — <reason>`); `ux-lock-run.mjs` lints every spec it runs plus its local-helper import closure (unmarked structural selectors, `app-module-import` — specs must never import app source; drive the UI). Warn by default, `--strict-selectors` exits 6; unjustified counts persist per run row (`selector_policy_violations`, migration `20260703200000`). [`scripts/lib/ux-lock/selector-policy.mjs`](scripts/lib/ux-lock/selector-policy.mjs) `classifySelector` is the single policy oracle — `candidate-spec.mjs` reuses it so consistency-candidate promotion emits the same markers. Plan: `docs/completed/ux-lock-selector-policy.md`.
 - **persona-test**: deployed app, narrative QA. Three execution modes:
   - **Exploratory** (default, MCP-driven): persona walks the app via Playwright MCP, finds UX issues, writes a P0-P3 report + debrief.
   - **Pair** (`--pair "<p1>" "<p2>" <url>`): runs two opposed-expertise personas back-to-back, diffs findings into CONSENSUS / A-ONLY / B-ONLY buckets. Use when coverage matters more than speed — empirically ~92% disjoint findings.
@@ -808,14 +807,14 @@ deployment quotas, rate-limits + throttling, rollback**: [`docs/azure-work-profi
 ## Cross-Skill Data Loop
 
 Migration `20260419120000_cross_skill_data_loop.sql` closes the feedback loop
-between the 6 skills. Every skill writes to a shared learning store via
+between the skills. Every skill writes to a shared learning store via
 `scripts/cross-skill.mjs` — graceful no-op when Supabase is off.
 
 ### Tables
 
 | Table | Writer | Reader | Purpose |
 |-------|--------|--------|---------|
-| `plans` | `/plan-backend`, `/plan-frontend`, `openai-audit.mjs` | `/audit-loop`, `/ux-lock verify` | Register plan artefact, link audit_runs via plan_id |
+| `plans` | `/plan`, `openai-audit.mjs` | `/audit-plan`, `/audit-code`, `/ux-lock verify` | Register plan artefact, link audit_runs via plan_id |
 | `regression_specs` | `/ux-lock`, `/ux-lock verify` | `/ship` | Record every Playwright spec authored (lock or verify mode) |
 | `regression_spec_runs` | `/ux-lock`, CI | `meta-assess.mjs` | Per-run pass/fail history — `captured_regression=true` is a "save" |
 | `persona_audit_correlations` | `/persona-test` | `bandit.mjs` | The highest-leverage table — persona P0/P1 ↔ audit finding ground-truth labels |
@@ -890,10 +889,10 @@ Two-axis state model: `adjudicationOutcome` (dismissed/accepted/severity_adjuste
 
 The architectural-memory feature (`docs/completed/architectural-memory.md`)
 indexes every symbol in this repo into Supabase, with embeddings, so we
-can find near-duplicates before writing new code. The `/plan-backend`
-and `/plan-frontend` skills consult it automatically. **But ad-hoc
-fixes in Claude Code or Copilot bypass the planning skill entirely** —
-which is where most architectural drift creeps in.
+can find near-duplicates before writing new code. The `/plan` skill
+consults it automatically. **But ad-hoc fixes in Claude Code or Copilot
+bypass the planning skill entirely** — which is where most architectural
+drift creeps in.
 
 **Rule** — if you (the AI agent reading this) are about to write a new
 function, class, hook, component, route, method, or constant as part of

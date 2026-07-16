@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "4f4303864ef55630",
+  "bundleVersion": "c528290ba08d800b",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-07-16T13:46:36.221Z",
+  "updatedAt": "2026-07-16T15:03:25.874Z",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
@@ -18,7 +18,7 @@
         },
         {
           "relPath": "examples/monorepo-layout.md",
-          "sha": "de753c5579df",
+          "sha": "8084e4c84d5d",
           "size": 3238
         },
         {
@@ -33,8 +33,8 @@
         },
         {
           "relPath": "references/canonical-flip.md",
-          "sha": "3c4c66a5d67f",
-          "size": 4805
+          "sha": "0843135f8c15",
+          "size": 4800
         },
         {
           "relPath": "references/drift-rules.md",
@@ -43,8 +43,8 @@
         },
         {
           "relPath": "references/prompt-file-format.md",
-          "sha": "b0bf5e609a50",
-          "size": 3785
+          "sha": "23c567037735",
+          "size": 3737
         },
         {
           "relPath": "references/reconcile-playbook.md",
@@ -88,14 +88,14 @@
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "9f7b4bf03cc6",
-      "size": 17821,
+      "sha": "8a698f1f1bc6",
+      "size": 17783,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "9f7b4bf03cc6",
-          "size": 17821
+          "sha": "8a698f1f1bc6",
+          "size": 17783
         },
         {
           "relPath": "references/gemini-gate.md",
@@ -206,14 +206,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "0c662c658d6f",
-      "size": 37230,
+      "sha": "b0f2c5fb757b",
+      "size": 37239,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "0c662c658d6f",
-          "size": 37230
+          "sha": "b0f2c5fb757b",
+          "size": 37239
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -222,8 +222,8 @@
         },
         {
           "relPath": "references/audit-correlation.md",
-          "sha": "68a5137fc5a5",
-          "size": 7217
+          "sha": "96edb36cdd75",
+          "size": 7229
         },
         {
           "relPath": "references/browser-tool-detection.md",
@@ -237,8 +237,8 @@
         },
         {
           "relPath": "references/interop.md",
-          "sha": "1b04565c231e",
-          "size": 3701
+          "sha": "d3022c7f9ab7",
+          "size": 3677
         },
         {
           "relPath": "references/persona-debrief-format.md",
@@ -254,14 +254,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "ebcf13e3aeb3",
-      "size": 30342,
+      "sha": "e9bb9de354f4",
+      "size": 30278,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "ebcf13e3aeb3",
-          "size": 30342
+          "sha": "e9bb9de354f4",
+          "size": 30278
         },
         {
           "relPath": "examples/mermaid-blocks.md",
@@ -270,8 +270,8 @@
         },
         {
           "relPath": "references/engineering-principles.md",
-          "sha": "473889f0879b",
-          "size": 3215
+          "sha": "bb2c6b3f1f64",
+          "size": 3234
         },
         {
           "relPath": "references/python-backend-profile.md",
@@ -285,13 +285,13 @@
         },
         {
           "relPath": "references/technical-principles.md",
-          "sha": "f485662340bc",
-          "size": 3484
+          "sha": "ab4587550303",
+          "size": 3503
         },
         {
           "relPath": "references/ux-principles.md",
-          "sha": "7b2daef4bd6b",
-          "size": 4350
+          "sha": "54b3df671271",
+          "size": 4369
         }
       ]
     },
@@ -346,18 +346,18 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "00c67cdde39b",
-      "size": 13095,
+      "sha": "a8d4474a6ea5",
+      "size": 13094,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "00c67cdde39b",
-          "size": 13095
+          "sha": "a8d4474a6ea5",
+          "size": 13094
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",
-          "sha": "0deaffc8052d",
+          "sha": "5a35700b2dd0",
           "size": 5805
         },
         {
@@ -367,8 +367,8 @@
         },
         {
           "relPath": "references/verify-mode-generation.md",
-          "sha": "920fe02b871b",
-          "size": 9307
+          "sha": "423d19e59827",
+          "size": 9280
         }
       ]
     },

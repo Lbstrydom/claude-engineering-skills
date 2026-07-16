@@ -1183,14 +1183,9 @@ export async function runLegacyProductionAudit(ctx) {
       // If we have a plan file path, register it so audit_runs.plan_id links back.
       let planId = null;
       if (planFile) {
-        const inferredSkill = /plan[-_]?frontend|\bfrontend\b|\bui\b/i.test(planFile)
-          ? 'plan-frontend'
-          : /plan[-_]?backend|\bbackend\b|\bapi\b/i.test(planFile)
-            ? 'plan-backend'
-            : 'manual';
         planId = await upsertPlan(cloudRepoId, {
           path: planFile,
-          skill: inferredSkill,
+          skill: 'plan',
           status: 'in_progress',
           commitSha,
         }).catch(() => null);

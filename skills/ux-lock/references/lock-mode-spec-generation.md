@@ -106,7 +106,7 @@ hand-parsing, no shell-quoting of free text:
 node scripts/ux-lock-run.mjs spec \
   --spec tests/e2e/<name>.spec.js \
   --commit <sha> --run-context ux-lock \
-  --source-kind audit-loop-fix \  # or persona-test-p0 | persona-test-p1 | manual
+  --source-kind audit-code-fix \  # or persona-test-p0 | persona-test-p1 | manual
   --strict-selectors              # newly generated spec → lint FAILS (exit 6), not warns
   # [--specs <glob>]   run + group a suite by spec_path (one run row per file)
   #                    (globs are Playwright-expanded — NOT combinable with
@@ -133,7 +133,7 @@ save" signal — a spec that should pass but doesn't surfaces in the
 
 | Trigger | source_kind |
 |---|---|
-| Commit from `/audit-loop` converged fix | `audit-loop-fix` |
+| Commit from `/audit-code` converged fix | `audit-code-fix` |
 | Commit or description tied to a `/persona-test` P0 | `persona-test-p0` |
 | Same for P1 | `persona-test-p1` |
 | Plain-text description / manual use | `manual` |

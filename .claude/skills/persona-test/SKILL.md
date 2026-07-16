@@ -832,5 +832,5 @@ situations — read them only when the trigger applies.
 | `references/consistency-mode.md` | Full consistency-mode grammar, manifest schema, canary schema, runner exit codes, contradiction kinds. | Phase 3b runs (i.e., `--mode consistency` was passed) and you need the full grammar reference; OR the user asks how the rig decides severity / coercion / negative-space. |
 | `references/persona-debrief-format.md` | Full persona debrief generation rules, tone guide, and output wrapper. | About to write the Phase 5b debrief. |
 | `references/session-history.md` | Post-session history readback — recurring-issue surface + cross-session pattern detection. | Phase 6c runs AND Supabase is configured. |
-| `references/interop.md` | How persona-test interacts with /ship, /plan-*, and /audit-loop — integration contracts. | User asks about cross-skill effects, OR a sibling skill needs to reference persona-test data. |
+| `references/interop.md` | How persona-test interacts with /ship, /plan, and /audit-code/audit-plan — integration contracts. | User asks about cross-skill effects, OR a sibling skill needs to reference persona-test data. |
 | `examples/report-and-debrief.md` | Sample full persona-test output — structured report + debrief fences and example content. | About to emit Phase 5 + 5b output and unsure of the exact fence format. |

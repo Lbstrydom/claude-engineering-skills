@@ -136,8 +136,13 @@ All skills support **JS/TS** and **Python** (FastAPI, Django, Flask) with automa
 | **[ship](skills/ship/SKILL.md)** | Pre-push quality gate; warns on open persona-test P0s + missing regression specs |
 | **[brainstorm](skills/brainstorm/SKILL.md)** | Concept-level multi-LLM thinking partner; user-driven manual convergence |
 | **[ai-context-management](skills/ai-context-management/SKILL.md)** | Keeps AGENTS.md / CLAUDE.md aligned across Claude / Copilot / Cursor / Windsurf |
+| **[nav-audit](skills/nav-audit/SKILL.md)** | System-level nav/IA audit — builds the whole nav graph from source, checks offered-vs-needed against the persona registry |
+| **[visual-audit](skills/visual-audit/SKILL.md)** | Math-first paint audit — token conformance, light/dark theme parity, layout physics, focus/state signifiers |
+| **[click-test](skills/click-test/SKILL.md)** | Structural DOM audit of a live app — semantic-HTML contracts across every interactive element |
+| **[security-strategy](skills/security-strategy/SKILL.md)** | Maintains the per-repo security incident memory (`docs/security-strategy.md` + Supabase index) |
+| **[skills](skills/skills/SKILL.md)** | Quick reference for every available skill, read directly from SKILL.md frontmatter |
 
-**Deprecated aliases** (kept for muscle memory): `/plan-backend` and `/plan-frontend` → `/plan` with scope hint; `/audit-loop` → `/cycle` (chained) or atomic `/audit-plan` / `/audit-code`.
+`/plan-backend`, `/plan-frontend`, and `/audit-loop` were removed once their replacements (`/plan`'s auto-detected scope, and `/cycle` / atomic `/audit-plan` / `/audit-code`) fully covered their use cases — they are no longer installed or invokable.
 
 **Cross-skill data flow**: every skill writes to a shared Supabase store via `scripts/cross-skill.mjs`. Plans link to audit runs (`plan_id`); ux-lock's Playwright specs link to source findings; persona-test P0/P1s become bandit reward labels; ship logs gate outcomes. See views: `audit_effectiveness`, `unlocked_fixes`, `regression_saves`, `ship_gate_effectiveness`.
 

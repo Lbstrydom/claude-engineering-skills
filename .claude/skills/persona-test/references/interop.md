@@ -1,5 +1,5 @@
 ---
-summary: How persona-test interacts with /ship, /plan-*, and /audit-loop — integration contracts.
+summary: How persona-test interacts with /ship, /plan, and /audit-code/audit-plan — integration contracts.
 ---
 
 # Engineering Skills Interplay
@@ -30,11 +30,11 @@ Resolve before next user-facing release.
 This is **non-blocking** — `/ship` continues. The debrief (`debrief_md`) from
 the most recent session can also be appended as a "User Perspective" section.
 
-## /plan-backend + /plan-frontend — Pre-Plan Context
+## /plan — Pre-Plan Context
 
-When planning a new feature, both plan skills benefit from knowing what
+When planning a new feature, `/plan` benefits from knowing what
 persona tests have already found. At the start of Phase 1 (codebase
-exploration), if `PERSONA_TEST_REPO_NAME` is set, they query via the
+exploration), if `PERSONA_TEST_REPO_NAME` is set, it queries via the
 cross-skill bridge (service-role only post-RLS-hardening):
 
 ```bash
@@ -49,12 +49,12 @@ user-visible pain points** — prevents the plan from re-solving already-known
 UX problems, and raises priority on code paths persona testing has flagged
 as fragile.
 
-## /audit-loop — Gemini Arbiter Context + Bandit Reward
+## /audit-code — Gemini Arbiter Context + Bandit Reward
 
 In the final review step (Step 7), the Gemini arbiter receives a transcript
 of all Claude-GPT deliberations. When the cloud store is on (`AUDIT_DB_URL`
 set — persona sessions live in the same Postgres store post-M4),
-`/audit-loop` appends to the transcript:
+`/audit-code` appends to the transcript:
 
 ```json
 {
@@ -71,7 +71,7 @@ be treated as higher-priority than theoretical concerns.
 
 **Bandit reward augmentation**: persona-audit correlation rows (emitted by
 Phase 6b — see `audit-correlation.md`) become ground-truth labels for
-audit-loop's Thompson Sampling. A `confirmed_hit` correlation on P0 raises
+audit-code's Thompson Sampling. A `confirmed_hit` correlation on P0 raises
 the reward for the finding's prompt variant; an `audit_missed` correlation
 lowers it.
 

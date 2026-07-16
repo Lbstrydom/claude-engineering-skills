@@ -28,8 +28,7 @@ description: |
 # Unified Architecture + UX Planner
 
 Single planning skill that produces ONE consolidated plan document, even
-for cross-stack work. Replaces `/plan-backend` and `/plan-frontend` —
-those still work as thin scope-hinted aliases.
+for cross-stack work.
 
 **Token efficiency**: principle tables (20 engineering, 26 UX, 17
 technical) live in `references/*.md` and load on demand only when the
@@ -499,8 +498,8 @@ separately as `**Close-out (not a phase)**: <commands>`, excluded from the
 
 #### 10. Acceptance Criteria (Playwright-verifiable)
 
-Same machine-parseable Section 9 as the previous `/plan-frontend`. Drives
-`/ux-lock verify`. Format:
+Same machine-parseable format the removed `/plan-frontend` skill used to call
+Section 9. Drives `/ux-lock verify`. Format:
 
 ```
 - [SEVERITY] [CATEGORY] <one-line description>
@@ -580,7 +579,7 @@ needed. Metadata header:
 - **Scope**: backend | frontend | full-stack   ← from Phase 0
 ```
 
-Register in the cross-skill store so audit-loop + ux-lock can link:
+Register in the cross-skill store so audit-plan/audit-code + ux-lock can link:
 
 Include the user's ORIGINAL task description as `taskText` in the SAME payload
 — that is what arm-eval scores the arms on. Persisting the plan and dispatching

@@ -4,8 +4,8 @@ summary: 26 UX + design principles — Gestalt, interaction, cognitive load, acc
 
 # UX + Design Principles — Full Tables
 
-Reference for Phase 2 (Apply UX & Design Principles) in `/plan-frontend`.
-Cite principle numbers in the plan's "UX Design Decisions" section when
+Reference for Phase 2 (Apply UX & Design Principles) in `/plan`
+(frontend/full-stack scope). Cite principle numbers in the plan's "UX Design Decisions" section when
 justifying each choice.
 
 ## Gestalt Principles

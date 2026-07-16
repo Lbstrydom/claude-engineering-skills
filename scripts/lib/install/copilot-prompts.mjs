@@ -39,11 +39,6 @@ export const SKILL_ENTRY_SCRIPTS = Object.freeze({
     cli: 'node scripts/openai-audit.mjs code ${input:plan_path} --scope diff',
     summary: 'Multi-pass code audit against a plan with R2+ ledger suppression and debt capture.',
   },
-  'audit-loop': {
-    script: 'openai-audit.mjs',
-    cli: 'node scripts/openai-audit.mjs code ${input:plan_path}',
-    summary: 'DEPRECATED — use /cycle for chained workflow, /audit-plan or /audit-code for atomic invocations.',
-  },
   'cycle': {
     script: 'cycle.mjs',
     cli: 'node scripts/cycle.mjs ${input:task_or_plan}',
@@ -68,16 +63,6 @@ export const SKILL_ENTRY_SCRIPTS = Object.freeze({
     script: 'plan.mjs',
     cli: 'node scripts/plan.mjs ${input:task}',
     summary: 'Unified planner — auto-detects backend/frontend/full-stack scope; one consolidated plan output.',
-  },
-  'plan-backend': {
-    script: 'plan-backend.mjs',
-    cli: 'node scripts/plan-backend.mjs ${input:task}',
-    summary: 'DEPRECATED alias — invokes /plan with --scope=backend. Prefer /plan directly.',
-  },
-  'plan-frontend': {
-    script: 'plan-frontend.mjs',
-    cli: 'node scripts/plan-frontend.mjs ${input:task}',
-    summary: 'DEPRECATED alias — invokes /plan with --scope=frontend. Prefer /plan directly.',
   },
   'persona-test': {
     script: 'persona-test.mjs',

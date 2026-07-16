@@ -26,7 +26,7 @@ mode: agent
 Invoke the engineering skills CLI:
 
 ```bash
-node .audit-loop/scripts/<entry-script>.mjs <args>
+node scripts/<entry-script>.mjs <args>
 ```
 
 <context line about what the underlying script does>
@@ -61,7 +61,7 @@ export const SKILL_ENTRY_SCRIPTS = Object.freeze({
   '<skill-name>': {
     script: '<entry-script>.mjs',
     argsHint: '<args>',
-    cli: 'node .audit-loop/scripts/<script>.mjs ${input:placeholder}',
+    cli: 'node scripts/<script>.mjs ${input:placeholder}',
     summary: 'Single-sentence purpose.',
   },
 });
@@ -79,7 +79,7 @@ export const SKILL_ENTRY_SCRIPTS = Object.freeze({
 
 The SKILL.md frontmatter describes the skill from the developer's perspective
 (triggers, usage examples, what it does). The registry binds the skill to a
-consumer-repo CLI invocation path (`.audit-loop/scripts/...`). These are
+consumer-repo CLI invocation path (`scripts/...`). These are
 distinct concerns — the SKILL.md correctly does not know its own deployment
 path. Tests in `tests/copilot-prompts.test.mjs` enforce that every registered
 skill has a `cli` field that points at the consumer-repo path.
@@ -90,7 +90,7 @@ Copilot prompt files support `${input:name}` placeholders — Copilot prompts th
 user at invocation time. Supports multiple inputs:
 
 ```bash
-node .audit-loop/scripts/persona-test.mjs ${input:persona} ${input:url}
+node scripts/persona-test.mjs ${input:persona} ${input:url}
 ```
 
 Use placeholders for arguments the user must always supply. For optional flags,
@@ -110,6 +110,6 @@ Copilot prompt files do not support:
 - Multi-turn conversational orchestration.
 - Hook integration.
 
-For complex skills (audit-loop, persona-test), the prompt file provides
+For complex skills (audit-code, persona-test), the prompt file provides
 **CLI parity**: the user gets structured JSON output and ledger files. The
 multi-turn fix-iterate loop is Claude-only.

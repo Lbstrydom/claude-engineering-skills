@@ -59,17 +59,12 @@ export async function registerPlanAuditRun({ repoProfile, planFile, runId = null
 
     const { commitSha, branch } = await gitAnchor();
 
-    // Register the plan artifact so audit_runs.plan_id links back — same
-    // skill inference as the code path (cross-skill data-loop joins).
+    // Register the plan artifact so audit_runs.plan_id links back
+    // (cross-skill data-loop joins).
     let planId = null;
     if (planFile) {
-      const inferredSkill = /plan[-_]?frontend|\bfrontend\b|\bui\b/i.test(planFile)
-        ? 'plan-frontend'
-        : /plan[-_]?backend|\bbackend\b|\bapi\b/i.test(planFile)
-          ? 'plan-backend'
-          : 'manual';
       planId = await upsertPlan(cloudRepoId, {
-        path: planFile, skill: inferredSkill, status: 'in_progress', commitSha,
+        path: planFile, skill: 'plan', status: 'in_progress', commitSha,
       }).catch(() => null);
     }
 

@@ -80,7 +80,7 @@ Target: ≤80 lines (the default `maxClaudeMdLines` cap).
 ### Step 3: update brief generators
 
 Any script that reads CLAUDE.md programmatically should be updated to read
-AGENTS.md first. The audit-loop's brief generator is at
+AGENTS.md first. The audit's brief generator is at
 `scripts/lib/context.mjs` — its `INSTRUCTION_FILE_CANDIDATES` array determines
 search order:
 
