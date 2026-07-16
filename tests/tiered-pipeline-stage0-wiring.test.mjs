@@ -442,3 +442,76 @@ describe('normalizeModifiedAnchorPaths (empirical-verify fix, 2026-07-16)', () =
     assert.equal(ProducerFindingV2Schema.safeParse(repaired).success, true, 'the normalizer must make it valid');
   });
 });
+
+// ── planContent redaction at the discovery-payload boundary ───────────────
+// Root cause of 15/41 tiered-shadow fallbacks (the single largest cause,
+// 2026-07-16): `discoveryCode` is redacted by readFilesAsContext's
+// `redact: true` default, but `planContent` — interpolated raw into BOTH
+// generator prompts — had no redaction path at all. The fail-closed egress
+// gate at the OSS adapter boundary then correctly refused the payload:
+//   [egress-gate] refusing to send oss:discovery-glm payload ...
+//   secret pattern(s) detected: pem-private-key, dsn-password
+// which is exactly what docs/completed/discovery-portfolio-secret-redaction.md
+// (the plan FOR the redaction feature — it necessarily quotes the secret
+// shapes it redacts) contains.
+describe('discovery payload — planContent redaction (egress-gate root cause, 2026-07-16)', () => {
+  const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+
+  it('static pin: NEITHER generator interpolates raw ctx.planContent into its prompt', () => {
+    assert.equal(
+      /\$\{ctx\.planContent/.test(src), false,
+      'raw ctx.planContent must never reach a provider prompt — use the redacted discoveryPlan',
+    );
+  });
+
+  it('static pin: both generators use the single redacted discoveryPlan', () => {
+    assert.match(src, /const discoveryPlan = redactSecrets\(ctx\.planContent \?\? ''\)/);
+    // GLM (userPrompt) + Sonnet (messages) — both halves of the portfolio.
+    assert.equal((src.match(/## Plan\\n\$\{discoveryPlan\}/g) || []).length, 2,
+      'both the GLM and Sonnet call sites must use the redacted plan');
+  });
+
+  // The decisive one: the REAL offending document, through the REAL redactor,
+  // against the REAL gate scanner that rejected it in production.
+  it('the real plan that caused the live egress blocks now passes the real gate', async () => {
+    const { scanEgressPayload } = await import('../scripts/lib/sensitive-egress-gate.mjs');
+    const { redactSecrets } = await import('../scripts/lib/sensitive-egress-gate.mjs');
+    const offender = 'docs/completed/discovery-portfolio-secret-redaction.md';
+    if (!fs.existsSync(offender)) return; // doc archived/renamed — pin below still holds
+    const raw = fs.readFileSync(offender, 'utf8');
+
+    // Precondition: this really is a payload the gate refuses. If this ever
+    // stops being true the test has lost its subject and must be re-pointed.
+    assert.equal(scanEgressPayload(raw).safe, false,
+      'precondition: the offending plan must still trip the gate when raw');
+    assert.deepEqual(
+      scanEgressPayload(raw).patterns.sort(), ['dsn-password', 'pem-private-key'],
+      'precondition: the exact pattern pair the live gate reported',
+    );
+
+    // The fix: the same redaction the code now applies makes it sendable.
+    assert.equal(scanEgressPayload(redactSecrets(raw)).safe, true,
+      'after redactSecrets the discovery payload must pass the egress gate');
+  });
+
+  it('redaction is fail-closed and total-payload-safe for every committed doc', async () => {
+    const { scanEgressPayload, redactSecrets } = await import('../scripts/lib/sensitive-egress-gate.mjs');
+    const { execSync } = await import('node:child_process');
+    const docs = execSync('git ls-files "docs/**/*.md"', { encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    const stillBlocked = [];
+    for (const f of docs) {
+      let txt;
+      try { txt = fs.readFileSync(f, 'utf8'); } catch { continue; }
+      if (scanEgressPayload(txt).safe) continue; // never was a problem
+      if (!scanEgressPayload(redactSecrets(txt)).safe) stillBlocked.push(f);
+    }
+    assert.deepEqual(stillBlocked, [],
+      'every doc that trips the gate raw must pass after redaction — otherwise a plan can still block discovery');
+  });
+
+  it('a null/absent planContent degrades to empty, never a crash or a literal "undefined"', async () => {
+    const { redactSecrets } = await import('../scripts/lib/sensitive-egress-gate.mjs');
+    assert.equal(redactSecrets(null ?? ''), '');
+    assert.equal(redactSecrets(undefined ?? ''), '');
+  });
+});

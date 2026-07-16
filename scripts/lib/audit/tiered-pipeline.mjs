@@ -54,6 +54,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { ProducerFindingV2Schema, clampToJsonSchemaLimits } from '../schemas.mjs';
 import { readFilesAsContext, safeReadFile } from '../file-io.mjs';
+import { redactSecrets } from '../sensitive-egress-gate.mjs';
 import { processFindings, computeAuditVerdict } from './findings-pipeline.mjs';
 import { mergeIntoEnvelopes, flattenEnvelopeToFinding } from './candidate-envelope.mjs';
 import { runStage0EvidenceTriage, resolveScopeBucketForFinding } from './evidence-triage.mjs';
@@ -476,6 +477,30 @@ export async function runTieredAuditPipeline(ctx) {
   // second context-assembly path.
   const discoveryCode = readFilesAsContext(ctx.changedFiles || [], { maxPerFile: 8000, maxTotal: 100000 });
 
+  // The discovery payload's OTHER half. `discoveryCode` above is redacted by
+  // `readFilesAsContext`'s `redact: true` default — `planContent` had NO
+  // redaction path at all, and it is interpolated raw into BOTH generator
+  // prompts. That asymmetry was the single largest cause of tiered-shadow
+  // failure: 15 of 41 fallbacks (36%) were `[egress-gate] refusing to send
+  // oss:discovery-glm payload ... secret pattern(s) detected: pem-private-key,
+  // dsn-password` — the fail-closed gate at the OSS adapter boundary correctly
+  // refusing an unredacted payload.
+  //
+  // Root-caused 2026-07-16 by scanning every committed doc with the gate's own
+  // scanner: 7 plans trip it, and the exact pattern pair the gate reported
+  // matches `docs/completed/discovery-portfolio-secret-redaction.md` — the plan
+  // FOR the secret-redaction feature, which necessarily quotes the secret shapes
+  // it exists to redact. A plan is prose (its secret-shaped content is
+  // illustrative, never a live credential), so redacting it costs the generator
+  // nothing real; leaving it raw cost us a third of the experiment.
+  //
+  // Same `redactSecrets` the file path already uses, so the two halves of one
+  // payload can no longer disagree — and it is fail-closed (a redactor throw
+  // yields '[REDACTED:redaction-failed]', never the raw text). The egress gate
+  // stays exactly as-is: this fixes the redact-once upstream failure the gate's
+  // own error message names, rather than weakening the gate.
+  const discoveryPlan = redactSecrets(ctx.planContent ?? '');
+
   const glmModel = tieredAuditConfig.discoveryModel;
   // Lenient ingestion for the discovery generator (2026-07-15): OSS routers
   // accept our JSON Schema but don't enforce maxLength/maxItems, and GLM
@@ -528,7 +553,7 @@ export async function runTieredAuditPipeline(ctx) {
             '- `startLine`/`endLine` are 1-indexed and must bracket the quote (`startLine <= endLine`).',
             '- commission findings need `anchor`; omission findings need `triggerAnchor` AND `causalChain`.',
           ].join('\n'),
-          userPrompt: `## Plan\n${ctx.planContent ?? ''}\n\n## Changed Files (code)\n${discoveryCode}`,
+          userPrompt: `## Plan\n${discoveryPlan}\n\n## Changed Files (code)\n${discoveryCode}`,
           schema: glmLenientSchema,
           schemaName: 'discovery_glm_pass',
           passName: 'discovery-glm',
@@ -610,7 +635,7 @@ export async function runTieredAuditPipeline(ctx) {
             '- `startLine`/`endLine` are 1-indexed and must bracket the quote.',
             '- commission findings need `anchor`; omission findings need `triggerAnchor` AND `causalChain`.',
           ].join('\n'),
-          messages: [{ role: 'user', content: `## Plan\n${ctx.planContent ?? ''}\n\n## Changed Files (code)\n${discoveryCode}` }],
+          messages: [{ role: 'user', content: `## Plan\n${discoveryPlan}\n\n## Changed Files (code)\n${discoveryCode}` }],
           tools: [sonnetFindingsTool],
           tool_choice: { type: 'tool', name: 'report_findings' },
         });
