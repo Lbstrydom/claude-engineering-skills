@@ -12,13 +12,23 @@ const END_MARKER = '<!-- audit-loop-bundle:end -->';
 export const COPILOT_BLOCK = `${START_MARKER}
 ## Engineering Skills Bundle
 
-This repo uses \`claude-engineering-skills\`. Five skills are available:
+This repo uses \`claude-engineering-skills\`. Skills available:
 
-- \`/audit-loop\` -- multi-model plan-audit-fix orchestration with persistent debt memory
-- \`/plan-backend\` -- backend architecture planning
-- \`/plan-frontend\` -- frontend/UX planning
-- \`/ship\` -- autonomous commit/push with docs update
-- \`/audit\` -- single-pass plan audit
+- \`/plan\` -- unified architecture + UX planner (auto-detects backend/frontend/full-stack)
+- \`/audit-plan\` -- iterative plan audit with GPT + Gemini final gate
+- \`/audit-code\` -- multi-pass code audit against a plan with GPT + Gemini final gate
+- \`/cycle\` -- end-to-end orchestrator: plan -> audit-plan -> audit-code -> persona-test -> ux-lock -> ship
+- \`/ux-lock\` -- generate/verify Playwright e2e specs (lock a fix or verify a plan was built)
+- \`/click-test\` -- structural DOM audit of a live app
+- \`/persona-test\` -- persona-driven exploratory browser testing against a live URL
+- \`/nav-audit\` -- static navigation / information-architecture audit
+- \`/visual-audit\` -- deterministic visual/paint contract audit (tokens, theme parity, layout)
+- \`/ship\` -- sync docs, commit, and push
+- \`/brainstorm\` -- multi-LLM concept-level brainstorming
+- \`/explain\` -- explain why code is structured the way it is
+- \`/security-strategy\` -- maintain the per-repo security incident memory
+- \`/ai-context-management\` -- keep AGENTS.md/CLAUDE.md aligned across agents
+- \`/skills\` -- quick reference for every available skill in this repo
 
 Source: https://github.com/Lbstrydom/claude-engineering-skills
 

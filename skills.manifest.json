@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "50248e747f8bec67",
+  "bundleVersion": "4f4303864ef55630",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-06-27T06:40:12.539Z",
+  "updatedAt": "2026-07-16T13:46:36.221Z",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
@@ -55,14 +55,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "ded00d54d0e1",
-      "size": 20122,
+      "sha": "dc0ea7862863",
+      "size": 27223,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "ded00d54d0e1",
-          "size": 20122
+          "sha": "dc0ea7862863",
+          "size": 27223
         },
         {
           "relPath": "references/debt-capture.md",
@@ -71,54 +71,54 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "e08dc816a93d",
-          "size": 6293
+          "sha": "efba1a34676b",
+          "size": 8424
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "0cb6a7815e70",
-          "size": 3094
+          "sha": "64ebf359f230",
+          "size": 4871
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "20d541bae5bd",
-          "size": 4630
+          "sha": "ba0df9b4a385",
+          "size": 5594
         }
       ]
     },
     "audit-plan": {
       "path": "skills/audit-plan/SKILL.md",
-      "sha": "016b2a9b0af9",
-      "size": 14289,
+      "sha": "9f7b4bf03cc6",
+      "size": 17821,
       "summary": "Iteratively audit a plan file (docs/plans/*.md) with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "016b2a9b0af9",
-          "size": 14289
+          "sha": "9f7b4bf03cc6",
+          "size": 17821
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "e08dc816a93d",
-          "size": 6293
+          "sha": "efba1a34676b",
+          "size": 8424
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "0cb6a7815e70",
-          "size": 3094
+          "sha": "64ebf359f230",
+          "size": 4871
         }
       ]
     },
     "brainstorm": {
       "path": "skills/brainstorm/SKILL.md",
-      "sha": "ef288af592bf",
-      "size": 13702,
+      "sha": "6082f4cf55f5",
+      "size": 14355,
       "summary": "Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "ef288af592bf",
-          "size": 13702
+          "sha": "6082f4cf55f5",
+          "size": 14355
         }
       ]
     },
@@ -142,14 +142,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "ffb7e378ae98",
-      "size": 18246,
+      "sha": "839b566b5927",
+      "size": 23881,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "ffb7e378ae98",
-          "size": 18246
+          "sha": "839b566b5927",
+          "size": 23881
         }
       ]
     },
@@ -168,14 +168,14 @@
     },
     "nav-audit": {
       "path": "skills/nav-audit/SKILL.md",
-      "sha": "42a7a3e1ceb6",
-      "size": 9565,
+      "sha": "bfcddea06038",
+      "size": 10881,
       "summary": "Static, code-derived navigation / information-architecture audit — the",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "42a7a3e1ceb6",
-          "size": 9565
+          "sha": "bfcddea06038",
+          "size": 10881
         },
         {
           "relPath": "examples/example-report.md",
@@ -206,14 +206,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "f173bd59e41b",
-      "size": 33658,
+      "sha": "0c662c658d6f",
+      "size": 37230,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "f173bd59e41b",
-          "size": 33658
+          "sha": "0c662c658d6f",
+          "size": 37230
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -222,8 +222,8 @@
         },
         {
           "relPath": "references/audit-correlation.md",
-          "sha": "a6db418a3bd4",
-          "size": 5518
+          "sha": "68a5137fc5a5",
+          "size": 7217
         },
         {
           "relPath": "references/browser-tool-detection.md",
@@ -254,14 +254,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "cb66c2a6bf23",
-      "size": 29494,
+      "sha": "ebcf13e3aeb3",
+      "size": 30342,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "cb66c2a6bf23",
-          "size": 29494
+          "sha": "ebcf13e3aeb3",
+          "size": 30342
         },
         {
           "relPath": "examples/mermaid-blocks.md",
@@ -310,14 +310,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "2701bd0a555b",
-      "size": 21161,
+      "sha": "8f96b377c7a8",
+      "size": 24649,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "2701bd0a555b",
-          "size": 21161
+          "sha": "8f96b377c7a8",
+          "size": 24649
         },
         {
           "relPath": "references/python-environment-discovery.md",
@@ -346,42 +346,42 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "97befdb402e6",
-      "size": 10872,
+      "sha": "00c67cdde39b",
+      "size": 13095,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "97befdb402e6",
-          "size": 10872
+          "sha": "00c67cdde39b",
+          "size": 13095
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",
-          "sha": "3aeb782b7a26",
-          "size": 4212
+          "sha": "0deaffc8052d",
+          "size": 5805
         },
         {
           "relPath": "references/scope-and-limitations.md",
-          "sha": "6b8a853d9635",
-          "size": 3359
+          "sha": "582f99c2a883",
+          "size": 4502
         },
         {
           "relPath": "references/verify-mode-generation.md",
-          "sha": "79f9678a3672",
-          "size": 7904
+          "sha": "920fe02b871b",
+          "size": 9307
         }
       ]
     },
     "visual-audit": {
       "path": "skills/visual-audit/SKILL.md",
-      "sha": "73c28b3fee77",
-      "size": 7522,
+      "sha": "218b11c1157a",
+      "size": 9926,
       "summary": "Math-first, deterministic visual/paint inspection — the 4th UX lens, complementing",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "73c28b3fee77",
-          "size": 7522
+          "sha": "218b11c1157a",
+          "size": 9926
         },
         {
           "relPath": "examples/example-report.md",
@@ -390,8 +390,8 @@
         },
         {
           "relPath": "references/ci-gate-and-verify.md",
-          "sha": "1d345182d501",
-          "size": 3707
+          "sha": "cd02ddc71106",
+          "size": 8673
         },
         {
           "relPath": "references/contract-and-bootstrap.md",
@@ -400,8 +400,8 @@
         },
         {
           "relPath": "references/finding-taxonomy.md",
-          "sha": "c17004f24ffe",
-          "size": 3475
+          "sha": "d136a593a451",
+          "size": 4434
         },
         {
           "relPath": "references/token-extraction-and-adapters.md",

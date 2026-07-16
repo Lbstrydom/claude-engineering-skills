@@ -213,7 +213,7 @@ function buildCopilotMergeWrite(args, repoRoot) {
   const recordPath = path.relative(repoRoot, copilotPath).replaceAll(/\\/g, '/');
   return {
     write: { path: recordPath, absPath: copilotPath, content: mergedBuf, sha: mergedSha, scope: 'repo' },
-    managed: { path: recordPath, sha: mergedSha, blockSha, skill: null, merged: true, scope: 'repo' },
+    managed: { path: recordPath, sha: mergedSha, blockSha, merged: true, scope: 'repo' },
   };
 }
 
