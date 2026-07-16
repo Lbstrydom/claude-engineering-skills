@@ -15,7 +15,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { getPool, closePool, _resetForTest } from '../scripts/lib/db/client.mjs';
+import { getPool, closePool, _resetForTest, assertDisposableDbUrl } from '../scripts/lib/db/client.mjs';
 import { many, one } from '../scripts/lib/db/query.mjs';
 
 const TEST_URL = process.env.AUDIT_DB_TEST_URL;
@@ -27,15 +27,27 @@ let savedUrl;
 
 describe('pool-scoped date parsers (G1)', { skip }, () => {
   before(async () => {
-    await _resetForTest();
     savedUrl = process.env.AUDIT_DB_URL;
+    // Fail-closed BEFORE any pool reset / connection — same 2026-07-14
+    // incident guard as the sibling db-withtx.test.mjs before() hook
+    // (this file was the odd one out missing it — found by /audit-code
+    // while auditing docs/plans/local-db-test-container.md, since that
+    // plan's CLI is what now routes AUDIT_DB_TEST_URL into this file
+    // for local runs, not just CI).
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    await _resetForTest();
     process.env.AUDIT_DB_URL = TEST_URL;
   });
 
   after(async () => {
-    await closePool();
-    if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
-    else process.env.AUDIT_DB_URL = savedUrl;
+    // Restore env even if closePool() throws (Gemini gate G1) — matches
+    // the sibling db-withtx.test.mjs pattern.
+    try {
+      await closePool();
+    } finally {
+      if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
+      else process.env.AUDIT_DB_URL = savedUrl;
+    }
   });
 
   it('builds a pool against AUDIT_DB_TEST_URL', async () => {

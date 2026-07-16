@@ -51,6 +51,8 @@
     "db:check-rls:json": "node scripts/check-rls.mjs --format json",
     "db:migrate": "node scripts/setup-postgres.mjs --migrate",
     "db:adopt": "node scripts/setup-postgres.mjs --adopt",
+    "db:local": "node scripts/db-test-container.mjs",
+    "db:local:regen": "node scripts/db-test-container.mjs regen-schema",
     "setup:cloud": "node scripts/setup-cloud.mjs",
     "sync": "node scripts/sync-to-repos.mjs",
     "sync:refresh": "node scripts/sync-refresh.mjs",

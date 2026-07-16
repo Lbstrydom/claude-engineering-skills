@@ -73,6 +73,46 @@ no separate read/write keys):
 / triggers / sequences / extensions / grants). Any drift aborts with a per-category
 diff so the operator decides.
 
+## Local disposable test container
+
+`scripts/db-test-container.mjs` runs an ephemeral local Docker Postgres
+(`pgvector/pgvector:pg16`, mirroring `.github/workflows/postgres-parity.yml`'s
+`db-suite` service container) so the destructive DB integration suites and
+`tests/fixtures/expected-schema.json` regeneration are runnable locally —
+not just in CI. Root cause: after the 2026-07-14 production wipe (INC-002),
+`assertDisposableDbUrl` refuses to run these suites against anything but a
+genuinely disposable DSN, so in practice they only ran in CI before this
+existed. See the `local-db-test-container` plan under `docs/plans/` or
+`docs/completed/` for the full design and audit trail.
+
+```
+npm run db:local              # full CI-mirror suite run (migrate → schema-diff → drift-justification → destructive trio → contract)
+npm run db:local:regen        # migrate → regenerate tests/fixtures/expected-schema.json in place
+node scripts/db-test-container.mjs up    # start + migrate, leave running (prints both DSN forms) — for manual psql/debugging
+node scripts/db-test-container.mjs down  # idempotent teardown
+```
+
+Flags: `--keep` (skip teardown after `suites`/`regen-schema`), `--port <n>`
+(default `5433` — escape hatch for a local port conflict).
+
+**Why `AUDIT_DB_URL` is absent from the destructive step.** The container's
+DSN (`postgresql://postgres:postgres@127.0.0.1:<port>/postgres`) always
+passes `assertDisposableDbUrl` on its own merits (loopback host, never a
+Supabase host). But the guard *also* rejects a test URL identical to the
+real `AUDIT_DB_URL` — so if an operator-exported `AUDIT_DB_URL` were
+inherited into the destructive-suite child process, it could accidentally
+equal the container DSN and false-positive the guard. The CLI actively
+**deletes** `AUDIT_DB_URL` from that step's env (not merely omits it) so
+the guard's equality check stays meaningful, exactly mirroring the CI
+workflow's own env split (see the comment at
+`.github/workflows/postgres-parity.yml:106-114`).
+
+**Docker unavailable / wedged.** The CLI fails loud on a bad `docker
+version` preflight rather than attempting any repair — see the WSL/Docker
+wedge recovery recipe in project memory (`taskkill wsl.exe` zombies, cycle
+the `WSLService` Windows service, restart `com.docker.service`) if
+`docker version` itself hangs or errors.
+
 ## Migration-drift detection
 
 The `audit_loop_migrations` ledger (created on first `--migrate` or `--adopt`) records

@@ -1,9 +1,9 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-16T03:59:37.287Z   commit: 8ae42d5686d1   refresh_id: de758d22-4b06-4d79-a894-89ce36f5c260
+- Generated: 2026-07-16T09:15:21.830Z   commit: 6a09a1fcfbf9   refresh_id: 3638652d-53b0-4b8d-9820-43768b368ee1
 - Drift score: 28 / threshold 20   status: `RED`
-- Domains: 23   Symbols: 3074   Layering violations: 0
+- Domains: 23   Symbols: 3088   Layering violations: 0
 
 ## Contents
 - [arch-memory](#arch-memory) — 54 symbols
@@ -22,11 +22,11 @@
 - [persona-test](#persona-test) — 71 symbols
 - [plan](#plan) — 8 symbols
 - [root-scripts](#root-scripts) — 14 symbols
-- [scripts](#scripts) — 293 symbols
+- [scripts](#scripts) — 302 symbols
 - [shared-lib](#shared-lib) — 925 symbols
 - [stores](#stores) — 208 symbols
 - [tech-debt](#tech-debt) — 71 symbols
-- [tests](#tests) — 401 symbols
+- [tests](#tests) — 406 symbols
 - [ux-lock](#ux-lock) — 35 symbols
 - [visual-audit](#visual-audit) — 122 symbols
 
@@ -1979,7 +1979,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ## scripts
 
-> CLI orchestration for 8 AI-pair-programming skills (`/plan`, `/audit-code`, `/ux-lock`, `/ship`, etc.) running LLM audits, browser automation, and schema persistence; `scripts/lib/**` provides focused reusable modules (db queries, LLM routing, git diffs, sensitive-path filtering) imported by CLI and synced consumer tooling.
+> CLI orchestrators for multi-pass code audits (GPT 5-pass + Gemini final review), plan refinement, Playwright-driven UX testing (persona/nav/visual audits), and regression-spec locking; supporting libraries for LLM clients, Postgres persistence, schema validation, and sensitive-path egress guards.
 
 ```mermaid
 flowchart TB
@@ -2026,7 +2026,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 293 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 302 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -2069,6 +2069,15 @@ _Domain has 293 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`loadConfig`](../scripts/claudemd-lint.mjs#L48) | function | `scripts/claudemd-lint.mjs` | 48-66 | Loads a JSON config file from a provided or default path, returning empty config as fallback. | _(internal)_ |
 | [`main`](../scripts/claudemd-lint.mjs#L68) | function | `scripts/claudemd-lint.mjs` | 68-172 | Scans instruction files, runs linting rules, sorts findings by severity, and applies auto-fixes if requested. | _(internal)_ |
 | [`parseArgs`](../scripts/claudemd-lint.mjs#L26) | function | `scripts/claudemd-lint.mjs` | 26-46 | Extracts --format, --out, --config, --fix, and --yes command-line arguments into an options object. | _(internal)_ |
+| [`buildDsn`](../scripts/db-test-container.mjs#L77) | function | `scripts/db-test-container.mjs` | 77-79 | [SECRET_REDACTED] | _(internal)_ |
+| [`buildStepEnv`](../scripts/db-test-container.mjs#L96) | function | `scripts/db-test-container.mjs` | 96-106 | Constructs environment variables for a test step, routing to AUDIT_DB_TEST_URL for destructive steps and AUDIT_DB_URL otherwise. | _(internal)_ |
+| [`classifyRunFailure`](../scripts/db-test-container.mjs#L148) | function | `scripts/db-test-container.mjs` | 148-160 | Classifies docker run failures by stderr pattern and suggests remediation (port conflict, binding error, networking failure). | _(internal)_ |
+| [`createLifecycle`](../scripts/db-test-container.mjs#L243) | function | `scripts/db-test-container.mjs` | 243-465 | Returns an object managing the full lifecycle of a test container: run, teardown, abort, and signal handling. | _(internal)_ |
+| [`defaultWaitForReady`](../scripts/db-test-container.mjs#L217) | function | `scripts/db-test-container.mjs` | 217-236 | Polls a Postgres server connection until ready or timeout, returning connection-success status. | _(internal)_ |
+| [`main`](../scripts/db-test-container.mjs#L469) | function | `scripts/db-test-container.mjs` | 469-495 | Parses CLI args, validates relocation contract, creates a container lifecycle, installs signal handlers, and runs the specified mode. | _(internal)_ |
+| [`parseArgs`](../scripts/db-test-container.mjs#L112) | function | `scripts/db-test-container.mjs` | 112-137 | Parses CLI arguments to extract mode (suites/postgres/custom), --port, and --keep flags with validation. | _(internal)_ |
+| [`realExec`](../scripts/db-test-container.mjs#L173) | function | `scripts/db-test-container.mjs` | 173-203 | Spawns a subprocess with optional timeout, capturing output, and returning exit code, signal, and streams. | _(internal)_ |
+| [`sleep`](../scripts/db-test-container.mjs#L205) | function | `scripts/db-test-container.mjs` | 205-207 | <no body> | _(internal)_ |
 | [`argOption`](../scripts/defect-harvest.mjs#L27) | function | `scripts/defect-harvest.mjs` | 27-30 | Returns the value following a named CLI flag, with a default fallback if flag is absent. | _(internal)_ |
 | [`blameIntroducers`](../scripts/defect-harvest.mjs#L68) | function | `scripts/defect-harvest.mjs` | 68-84 | Uses git-blame to identify which commits originally introduced the lines modified in a commit. | _(internal)_ |
 | [`changedFiles`](../scripts/defect-harvest.mjs#L52) | function | `scripts/defect-harvest.mjs` | 52-64 | Extracts changed files from a commit, excluding binary files and sensitive/generated paths. | _(internal)_ |
@@ -2181,7 +2190,7 @@ _Domain has 293 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`pathToFileUrl`](../scripts/postgres-parity/check-non-core-references.mjs#L221) | function | `scripts/postgres-parity/check-non-core-references.mjs` | 221-221 | Converts a file path to a `file://` URL with forward slashes. | _(internal)_ |
 | [`readMigrations`](../scripts/postgres-parity/check-non-core-references.mjs#L60) | function | `scripts/postgres-parity/check-non-core-references.mjs` | 60-69 | Reads all SQL migration files from the migrations directory in sorted order. | _(internal)_ |
 | [`scanForFindings`](../scripts/postgres-parity/check-non-core-references.mjs#L71) | function | `scripts/postgres-parity/check-non-core-references.mjs` | 71-162 | Scans SQL migrations for references to unauthorized auth, roles, extensions, and public-schema qualifications. | _(internal)_ |
-| [`main`](../scripts/postgres-parity/generate-expected-schema.mjs#L183) | function | `scripts/postgres-parity/generate-expected-schema.mjs` | 183-222 | Connects to Postgres, queries schema via predefined catalog statements, and writes the live schema structure to a JSON file. | _(internal)_ |
+| [`main`](../scripts/postgres-parity/generate-expected-schema.mjs#L183) | function | `scripts/postgres-parity/generate-expected-schema.mjs` | 183-222 | Validates environment, queries a fully-migrated Postgres database, and exports its schema snapshot to JSON for parity testing. | _(internal)_ |
 | [`assertLocalOnly`](../scripts/postgres-parity/record-golden-fixtures.mjs#L92) | function | `scripts/postgres-parity/record-golden-fixtures.mjs` | 92-135 | Validates that a Supabase URL is local (127.0.0.1, localhost) or a pre-approved remote sandbox, refusing production. | _(internal)_ |
 | [`captureTableSnapshot`](../scripts/postgres-parity/record-golden-fixtures.mjs#L194) | function | `scripts/postgres-parity/record-golden-fixtures.mjs` | 194-198 | <no body> | _(internal)_ |
 | [`diffSnapshots`](../scripts/postgres-parity/record-golden-fixtures.mjs#L200) | function | `scripts/postgres-parity/record-golden-fixtures.mjs` | 200-202 | <no body> | _(internal)_ |
@@ -2224,26 +2233,26 @@ _Domain has 293 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`main`](../scripts/security-memory/refresh-incidents.mjs#L136) | function | `scripts/security-memory/refresh-incidents.mjs` | 136-400 | Parses security incidents from markdown, generates embeddings, and persists them to the database. | _(internal)_ |
 | [`defaultPrompt`](../scripts/setup-cloud.mjs#L37) | function | `scripts/setup-cloud.mjs` | 37-46 | Prompts the user for a yes/no answer with readline and returns the parsed boolean. | _(internal)_ |
 | [`main`](../scripts/setup-cloud.mjs#L48) | function | `scripts/setup-cloud.mjs` | 48-99 | Sets up cloud configuration by parsing CLI arguments, handling --yes, --dry-run, and --source-repo flags. | _(internal)_ |
-| [`applyBootstrap`](../scripts/setup-postgres.mjs#L272) | function | `scripts/setup-postgres.mjs` | 272-279 | Applies the compat-bootstrap.sql script (creating Supabase-compatible stub roles) or simulates it in dry-run mode. | _(internal)_ |
-| [`applyMigration`](../scripts/setup-postgres.mjs#L260) | function | `scripts/setup-postgres.mjs` | 260-270 | Reads a migration SQL file, computes its hash, and executes it (or reports what would happen in dry-run mode). | _(internal)_ |
-| [`canonicalise`](../scripts/setup-postgres.mjs#L331) | function | `scripts/setup-postgres.mjs` | 331-342 | Recursively normalizes an object by sorting arrays and object keys to enable deterministic schema comparison. | _(internal)_ |
-| [`captureLiveSchema`](../scripts/setup-postgres.mjs#L291) | function | `scripts/setup-postgres.mjs` | 291-303 | Captures the current live database schema by running the same catalog queries used by the expected-schema generator. | _(internal)_ |
-| [`diffSchemas`](../scripts/setup-postgres.mjs#L305) | function | `scripts/setup-postgres.mjs` | 305-328 | Compares expected and live schema objects, canonicalizes their structure, and returns a list of category-level differences with item-level examples. | _(internal)_ |
-| [`ensureLedger`](../scripts/setup-postgres.mjs#L229) | function | `scripts/setup-postgres.mjs` | 229-232 | Creates the `audit_loop_migrations` ledger table and applies its RLS policy. | _(internal)_ |
-| [`isSupabaseManaged`](../scripts/setup-postgres.mjs#L197) | function | `scripts/setup-postgres.mjs` | 197-209 | Detects Supabase-hosted databases by checking if the `auth` schema owner is `supabase_admin` or `supabase_auth_admin`. | _(internal)_ |
-| [`listMigrations`](../scripts/setup-postgres.mjs#L249) | function | `scripts/setup-postgres.mjs` | 249-252 | Reads the migrations directory and returns a sorted list of `.sql` filenames. | _(internal)_ |
-| [`main`](../scripts/setup-postgres.mjs#L712) | function | `scripts/setup-postgres.mjs` | 712-788 | CLI entry point for database setup that routes to ensure-local/migrate/adopt/check-drift based on parsed arguments and pool availability. | _(internal)_ |
-| [`parseArgs`](../scripts/setup-postgres.mjs#L68) | function | `scripts/setup-postgres.mjs` | 68-109 | Parses command-line arguments to extract setup mode (migrate/adopt/ensure-local/check-drift) and boolean/valued options. | _(internal)_ |
-| [`preflight`](../scripts/setup-postgres.mjs#L124) | function | `scripts/setup-postgres.mjs` | 124-147 | Queries the current Postgres user's CREATEROLE privilege and checks whether required extensions (pgcrypto, pg_trgm, vector) are installed or available. | _(internal)_ |
-| [`readLedger`](../scripts/setup-postgres.mjs#L234) | function | `scripts/setup-postgres.mjs` | 234-237 | Queries the `audit_loop_migrations` table and returns a Map of applied migration filenames to their SHA256 hashes. | _(internal)_ |
-| [`recordApplied`](../scripts/setup-postgres.mjs#L239) | function | `scripts/setup-postgres.mjs` | 239-245 | Inserts or updates a migration record in `audit_loop_migrations` with filename and hash, idempotent on filename conflict. | _(internal)_ |
-| [`renderHumanDriftReport`](../scripts/setup-postgres.mjs#L632) | function | `scripts/setup-postgres.mjs` | 632-653 | Prints a colored human-readable summary of migration drift categories (unapplied, sha-mismatch, orphan-ledger) to stderr. | _(internal)_ |
-| [`reportPreflight`](../scripts/setup-postgres.mjs#L149) | function | `scripts/setup-postgres.mjs` | 149-183 | Prints a preflight check report and enforces strict-mode validation, exiting with errors if CREATEROLE is missing or required extensions unavailable. | _(internal)_ |
-| [`runAdopt`](../scripts/setup-postgres.mjs#L509) | function | `scripts/setup-postgres.mjs` | 509-558 | Validates a pre-existing database's live schema matches the expected-schema manifest, then seeds the ledger without replaying migrations. | _(internal)_ |
-| [`runCheckDrift`](../scripts/setup-postgres.mjs#L579) | function | `scripts/setup-postgres.mjs` | 579-630 | Compares the migration ledger against source files to detect unapplied, modified, or orphaned migrations, reporting in human or JSON format. | _(internal)_ |
-| [`runEnsureLocal`](../scripts/setup-postgres.mjs#L663) | function | `scripts/setup-postgres.mjs` | 663-710 | [SECRET_REDACTED] | _(internal)_ |
-| [`runMigrate`](../scripts/setup-postgres.mjs#L468) | function | `scripts/setup-postgres.mjs` | 468-507 | Applies the bootstrap (unless Supabase-managed) and sequences unapplied migrations, recording each to the ledger. | _(internal)_ |
-| [`sha256`](../scripts/setup-postgres.mjs#L254) | function | `scripts/setup-postgres.mjs` | 254-258 | Computes and returns the SHA256 hash digest of a migration file. | _(internal)_ |
+| [`applyBootstrap`](../scripts/setup-postgres.mjs#L272) | function | `scripts/setup-postgres.mjs` | 272-279 | Executes or dry-runs the compat-bootstrap.sql file for Supabase compatibility stubs. | `scripts/db-test-container.mjs` |
+| [`applyMigration`](../scripts/setup-postgres.mjs#L260) | function | `scripts/setup-postgres.mjs` | 260-270 | Executes or dry-runs a migration SQL file and returns its hash. | `scripts/db-test-container.mjs` |
+| [`canonicalise`](../scripts/setup-postgres.mjs#L331) | function | `scripts/setup-postgres.mjs` | 331-342 | Recursively normalizes schema objects by sorting keys and arrays to enable deterministic JSON equality checks. | `scripts/db-test-container.mjs` |
+| [`captureLiveSchema`](../scripts/setup-postgres.mjs#L291) | function | `scripts/setup-postgres.mjs` | 291-303 | Queries the live database to extract schema metadata (tables, columns, constraints, roles) for drift comparison. | `scripts/db-test-container.mjs` |
+| [`diffSchemas`](../scripts/setup-postgres.mjs#L305) | function | `scripts/setup-postgres.mjs` | 305-328 | Compares expected and live schema states category-by-category and returns lists of missing and extra items per category. | `scripts/db-test-container.mjs` |
+| [`ensureLedger`](../scripts/setup-postgres.mjs#L229) | function | `scripts/setup-postgres.mjs` | 229-232 | Creates the audit_loop_migrations table and applies row-level security policies. | `scripts/db-test-container.mjs` |
+| [`isSupabaseManaged`](../scripts/setup-postgres.mjs#L197) | function | `scripts/setup-postgres.mjs` | 197-209 | Detects Supabase-hosted databases by checking if the auth schema is owned by supabase_admin or supabase_auth_admin. | `scripts/db-test-container.mjs` |
+| [`listMigrations`](../scripts/setup-postgres.mjs#L249) | function | `scripts/setup-postgres.mjs` | 249-252 | Lists all .sql migration files from the migrations directory in alphabetical order. | `scripts/db-test-container.mjs` |
+| [`main`](../scripts/setup-postgres.mjs#L712) | function | `scripts/setup-postgres.mjs` | 712-788 | Parses CLI args, validates relocation contract, optionally ensures local Postgres, then delegates to migrate/adopt/check-drift mode. | `scripts/db-test-container.mjs` |
+| [`parseArgs`](../scripts/setup-postgres.mjs#L68) | function | `scripts/setup-postgres.mjs` | 68-109 | Parses CLI flags to determine migration mode (migrate/adopt/check-drift/ensure-local) and optional parameters like --format, --dry-run, --preflight-only. | `scripts/db-test-container.mjs` |
+| [`preflight`](../scripts/setup-postgres.mjs#L124) | function | `scripts/setup-postgres.mjs` | 124-147 | Checks whether the current DB user has CREATEROLE privilege and verifies that required extensions (pgcrypto, pg_trgm, vector) are installed or available. | `scripts/db-test-container.mjs` |
+| [`readLedger`](../scripts/setup-postgres.mjs#L234) | function | `scripts/setup-postgres.mjs` | 234-237 | Fetches all applied migration filenames and their SHA256 hashes from the ledger table. | `scripts/db-test-container.mjs` |
+| [`recordApplied`](../scripts/setup-postgres.mjs#L239) | function | `scripts/setup-postgres.mjs` | 239-245 | Inserts or updates a migration record with its filename and hash via upsert. | `scripts/db-test-container.mjs` |
+| [`renderHumanDriftReport`](../scripts/setup-postgres.mjs#L632) | function | `scripts/setup-postgres.mjs` | 632-653 | Formats and prints a human-readable drift report with color-coded summaries of unapplied, sha256-mismatched, and orphan migrations. | `scripts/db-test-container.mjs` |
+| [`reportPreflight`](../scripts/setup-postgres.mjs#L149) | function | `scripts/setup-postgres.mjs` | 149-183 | Prints a preflight status report and in strict mode enforces CREATEROLE availability and presence of all required extensions. | `scripts/db-test-container.mjs` |
+| [`runAdopt`](../scripts/setup-postgres.mjs#L509) | function | `scripts/setup-postgres.mjs` | 509-558 | Verifies live schema matches an expected-schema manifest, then seeds the migration ledger without replaying DDL. | `scripts/db-test-container.mjs` |
+| [`runCheckDrift`](../scripts/setup-postgres.mjs#L579) | function | `scripts/setup-postgres.mjs` | 579-630 | Detects and reports migration drift: unapplied files, SHA256 mismatches, and orphaned ledger entries. | `scripts/db-test-container.mjs` |
+| [`runEnsureLocal`](../scripts/setup-postgres.mjs#L663) | function | `scripts/setup-postgres.mjs` | 663-710 | [SECRET_REDACTED] | `scripts/db-test-container.mjs` |
+| [`runMigrate`](../scripts/setup-postgres.mjs#L468) | function | `scripts/setup-postgres.mjs` | 468-507 | Orchestrates migrate mode: applies compat-bootstrap unless Supabase-managed, then applies all unapplied migrations in sequence. | `scripts/db-test-container.mjs` |
+| [`sha256`](../scripts/setup-postgres.mjs#L254) | function | `scripts/setup-postgres.mjs` | 254-258 | Computes and returns the SHA256 hash of a migration file's binary content. | `scripts/db-test-container.mjs` |
 | [`err`](../scripts/ship-commit.mjs#L41) | function | `scripts/ship-commit.mjs` | 41-41 | Writes an error message to stderr. | _(internal)_ |
 | [`git`](../scripts/ship-commit.mjs#L43) | function | `scripts/ship-commit.mjs` | 43-45 | Runs a git command synchronously in a working directory. | _(internal)_ |
 | [`main`](../scripts/ship-commit.mjs#L78) | function | `scripts/ship-commit.mjs` | 78-281 | CLI entry point that parses commit metadata (message, skill, models, gate), validates inputs, resolves repo root, and commits with AI trailers. | _(internal)_ |
@@ -2505,9 +2514,9 @@ _Domain has 925 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`readToggle`](../scripts/lib/arm-eval/toggle.mjs#L37) | function | `scripts/lib/arm-eval/toggle.mjs` | 37-52 | Reads the arm-eval feature toggle from disk, returning enabled state, budget, and timestamp. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
 | [`resolveShadowArmsWithToggle`](../scripts/lib/arm-eval/toggle.mjs#L85) | function | `scripts/lib/arm-eval/toggle.mjs` | 85-91 | Resolves shadow audit arms from environment variables or the toggle file, returning the active source. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
 | [`writeToggle`](../scripts/lib/arm-eval/toggle.mjs#L59) | function | `scripts/lib/arm-eval/toggle.mjs` | 59-69 | Writes the arm-eval feature toggle state to disk in JSON format. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
-| [`assertRepoRoot`](../scripts/lib/assert-repo-root.mjs#L54) | function | `scripts/lib/assert-repo-root.mjs` | 54-85 | Validates that the current working directory matches the script's repo root, exiting with error if not. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +21 more |
-| [`findExpectedRoot`](../scripts/lib/assert-repo-root.mjs#L30) | function | `scripts/lib/assert-repo-root.mjs` | 30-38 | Locates the repo root by walking up from a script path until finding the 'scripts' directory. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +21 more |
-| [`findRepoRootFromScript`](../scripts/lib/assert-repo-root.mjs#L99) | function | `scripts/lib/assert-repo-root.mjs` | 99-102 | Finds the repo root from a script's import.meta.url by searching for the 'scripts' directory. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +21 more |
+| [`assertRepoRoot`](../scripts/lib/assert-repo-root.mjs#L54) | function | `scripts/lib/assert-repo-root.mjs` | 54-85 | Validates that the current working directory matches the script's repo root, exiting with error if not. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +22 more |
+| [`findExpectedRoot`](../scripts/lib/assert-repo-root.mjs#L30) | function | `scripts/lib/assert-repo-root.mjs` | 30-38 | Locates the repo root by walking up from a script path until finding the 'scripts' directory. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +22 more |
+| [`findRepoRootFromScript`](../scripts/lib/assert-repo-root.mjs#L99) | function | `scripts/lib/assert-repo-root.mjs` | 99-102 | Finds the repo root from a script's import.meta.url by searching for the 'scripts' directory. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +22 more |
 | [`attributeStageToArms`](../scripts/lib/audit-arms.mjs#L283) | function | `scripts/lib/audit-arms.mjs` | 283-312 | Validates and returns which arm(s) own a given pipeline stage (arm-specific vs. derived). | `scripts/lib/arm-eval/toggle.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/model-ab-decision.mjs`, +2 more |
 | [`buildCandidateArm`](../scripts/lib/audit-arms.mjs#L245) | function | `scripts/lib/audit-arms.mjs` | 245-259 | Constructs an audit arm from a resolved model/deployment route. | `scripts/lib/arm-eval/toggle.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/model-ab-decision.mjs`, +2 more |
 | [`executionPlan`](../scripts/lib/audit-arms.mjs#L321) | function | `scripts/lib/audit-arms.mjs` | 321-327 | Determines which pipeline stages need to run based on active arms. | `scripts/lib/arm-eval/toggle.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/model-ab-decision.mjs`, +2 more |
@@ -3705,7 +3714,7 @@ _Domain has 71 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## tests
 
-> Tier-1 TDD for deterministic boundaries (schemas, file I/O, VCS, Postgres) and Tier-3 hard tests for two load-bearing seams: sensitive-path egress and consumer-sync/relocation contracts.
+> Node.js built-in test suite validating file-I/O atomicity, sensitive-path egress, schema contracts, VCS integration, consumer-repo sync mechanics, and architecture-intent parsing (SQL/docs/Python/Java).
 
 ```mermaid
 flowchart TB
@@ -3759,7 +3768,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 401 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 406 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -3823,6 +3832,11 @@ _Domain has 401 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`refData`](../tests/dashboard.test.mjs#L26) | function | `tests/dashboard.test.mjs` | 26-58 | Constructs reference metadata for dashboard tests (skills, plans, architecture, flows). | _(internal)_ |
 | [`telData`](../tests/dashboard.test.mjs#L60) | function | `tests/dashboard.test.mjs` | 60-74 | Constructs telemetry data for dashboard tests (audit runs, requirements, learning). | _(internal)_ |
 | [`clearEnv`](../tests/db-alias.test.mjs#L8) | function | `tests/db-alias.test.mjs` | 8-8 | Deletes all database-related environment variables. | _(internal)_ |
+| [`listVolumeNames`](../tests/db-test-container.integration.test.mjs#L31) | function | `tests/db-test-container.integration.test.mjs` | 31-34 | Executes `docker volume ls -q` and returns the set of volume names as a Set. | _(internal)_ |
+| [`createFakeExec`](../tests/db-test-container.test.mjs#L259) | function | `tests/db-test-container.test.mjs` | 259-270 | Returns a mock exec function that logs calls, dispatches to handlers, and exposes a .calls array for inspection. | _(internal)_ |
+| [`extractJobBlock`](../tests/db-test-container.test.mjs#L147) | function | `tests/db-test-container.test.mjs` | 147-155 | Extracts a YAML job block from workflow text by locating its marker and the boundary of the next job. | _(internal)_ |
+| [`fail`](../tests/db-test-container.test.mjs#L273) | function | `tests/db-test-container.test.mjs` | 273-273 | Returns a handler that simulates a failed subprocess exit with specified stderr and exit code. | _(internal)_ |
+| [`ok`](../tests/db-test-container.test.mjs#L272) | function | `tests/db-test-container.test.mjs` | 272-272 | Returns a handler that simulates a successful subprocess exit with optional stdout content. | _(internal)_ |
 | [`makeEntry`](../tests/debt-budget-check-cli.test.mjs#L17) | function | `tests/debt-budget-check-cli.test.mjs` | 17-28 | Creates a test debt ledger entry with default values. | _(internal)_ |
 | [`runCli`](../tests/debt-budget-check-cli.test.mjs#L35) | function | `tests/debt-budget-check-cli.test.mjs` | 35-37 | Spawns the debt-budget-check CLI script with arguments. | _(internal)_ |
 | [`seedLedger`](../tests/debt-budget-check-cli.test.mjs#L30) | function | `tests/debt-budget-check-cli.test.mjs` | 30-33 | Writes a debt ledger JSON structure to a file. | _(internal)_ |
@@ -4129,8 +4143,8 @@ _Domain has 401 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`mkScript`](../tests/subprocess.test.mjs#L22) | function | `tests/subprocess.test.mjs` | 22-26 | Creates a temporary JavaScript file with a unique name and writes content to it. | _(internal)_ |
 | [`computeImportGraphPopulated`](../tests/symbol-file-imports.test.mjs#L21) | function | `tests/symbol-file-imports.test.mjs` | 21-23 | Determines whether the import graph has been populated based on mode and prior state. | _(internal)_ |
 | [`shouldCopyForward`](../tests/symbol-file-imports.test.mjs#L26) | function | `tests/symbol-file-imports.test.mjs` | 26-28 | Checks whether a row should be copied forward if its importer path was not touched. | _(internal)_ |
-| [`insertRefreshRun`](../tests/symbol-index-drift-justification.test.mjs#L31) | function | `tests/symbol-index-drift-justification.test.mjs` | 31-37 | Inserts a test fixture refresh_run record and returns its generated ID. | _(internal)_ |
-| [`makeSymbol`](../tests/symbol-index-drift-justification.test.mjs#L39) | function | `tests/symbol-index-drift-justification.test.mjs` | 39-46 | Creates a test fixture symbol definition and index record with the given parameters. | _(internal)_ |
+| [`insertRefreshRun`](../tests/symbol-index-drift-justification.test.mjs#L31) | function | `tests/symbol-index-drift-justification.test.mjs` | 31-37 | Inserts a test refresh_run record and returns its ID for linking test symbols. | _(internal)_ |
+| [`makeSymbol`](../tests/symbol-index-drift-justification.test.mjs#L39) | function | `tests/symbol-index-drift-justification.test.mjs` | 39-46 | Inserts a test symbol definition and index record into the database. | _(internal)_ |
 | [`mkdtemp`](../tests/sync-manifest-idempotency.test.mjs#L18) | function | `tests/sync-manifest-idempotency.test.mjs` | 18-20 | Creates a temporary directory with a 'sync-mft-' prefix. | _(internal)_ |
 | [`setupRepo`](../tests/sync-manifest-idempotency.test.mjs#L22) | function | `tests/sync-manifest-idempotency.test.mjs` | 22-28 | Creates a test repository with a scripts directory and two text files. | _(internal)_ |
 | [`setupRepo`](../tests/sync-shared-audit-refs.test.mjs#L11) | function | `tests/sync-shared-audit-refs.test.mjs` | 11-16 | Creates a test repository with audit and skills directory structures. | _(internal)_ |
