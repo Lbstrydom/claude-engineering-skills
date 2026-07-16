@@ -46,15 +46,24 @@ describe('withTx — re-entrant + auto-bind (G3)', { skip }, () => {
   });
 
   after(async () => {
-    const pool = await getPool();
-    if (pool) {
-      try { await pool.query(`DROP TABLE IF EXISTS ${TMP_TABLE}`); } catch { /* best-effort */ }
+    // try/finally so a thrown getPool() error (misconfiguration, unreachable
+    // DB, etc.) can't skip env restoration — getPool() here is unguarded,
+    // unlike the sibling before() hook (Gemini final-review G2, cross-
+    // applied from tests/symbol-index-drift-justification.test.mjs's round-2
+    // fix). Env restoration happens before closePool(), which doesn't read
+    // AUDIT_DB_URL.
+    try {
+      const pool = await getPool();
+      if (pool) {
+        try { await pool.query(`DROP TABLE IF EXISTS ${TMP_TABLE}`); } catch { /* best-effort */ }
+      }
+    } finally {
+      if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
+      else process.env.AUDIT_DB_URL = savedUrl;
+      if (savedPoolMax === undefined) delete process.env.AUDIT_DB_POOL_MAX;
+      else process.env.AUDIT_DB_POOL_MAX = savedPoolMax;
+      try { await closePool(); } catch { /* best-effort — env is already restored */ }
     }
-    await closePool();
-    if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
-    else process.env.AUDIT_DB_URL = savedUrl;
-    if (savedPoolMax === undefined) delete process.env.AUDIT_DB_POOL_MAX;
-    else process.env.AUDIT_DB_POOL_MAX = savedPoolMax;
   });
 
   beforeEach(async () => {
@@ -136,7 +145,8 @@ describe('withTx — re-entrant + auto-bind (G3)', { skip }, () => {
     // when the pool is saturated. AUDIT_DB_POOL_MAX=1 makes that a hard
     // deadlock if the code regresses. We add a small overall timeout so
     // a regression fails the test fast instead of hanging CI.
-    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('nested withTx deadlocked on pool max=1')), 5000));
+    let timerId;
+    const timeout = new Promise((_, rej) => { timerId = setTimeout(() => rej(new Error('nested withTx deadlocked on pool max=1')), 5000); });
     const work = withTx(async () => {
       await insertReturning(TMP_TABLE, { label: 'L1' });
       await withTx(async () => {
@@ -146,7 +156,13 @@ describe('withTx — re-entrant + auto-bind (G3)', { skip }, () => {
         });
       });
     });
-    await Promise.race([work, timeout]);
+    try {
+      await Promise.race([work, timeout]);
+    } finally {
+      // Gemini final-review G2 (round 2) — an unresolved timer keeps the
+      // event loop alive for the full 5s even after the race is won.
+      clearTimeout(timerId);
+    }
     const labels = (await many(`SELECT label FROM ${TMP_TABLE} ORDER BY id`)).map((r) => r.label);
     assert.deepEqual(labels, ['L1', 'L2', 'L3']);
   });

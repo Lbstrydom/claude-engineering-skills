@@ -305,7 +305,6 @@ async function captureLiveSchema(pool) {
 function diffSchemas(expected, live) {
   const differences = [];
   const keys = new Set([...Object.keys(expected), ...Object.keys(live)]);
-  keys.delete('generatedAt');  // metadata field — not part of the comparison
   keys.delete('schema');       // always 'public' by contract
   for (const k of keys) {
     const e = expected[k] || [];

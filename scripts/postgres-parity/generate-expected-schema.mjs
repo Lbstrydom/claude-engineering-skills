@@ -184,7 +184,12 @@ async function main() {
   assertRepoRoot(import.meta.url);
   const args = process.argv.slice(2);
   const outIdx = args.indexOf('--out');
-  const outPath = outIdx >= 0 ? args[outIdx + 1] : DEFAULT_OUT;
+  const outArg = outIdx >= 0 ? args[outIdx + 1] : undefined;
+  if (outIdx >= 0 && (!outArg || outArg.startsWith('--'))) {
+    process.stderr.write('--out requires a file path argument.\n');
+    process.exit(2);
+  }
+  const outPath = outArg ?? DEFAULT_OUT;
 
   if (!process.env.AUDIT_DB_URL) {
     process.stderr.write(
@@ -202,7 +207,7 @@ async function main() {
     process.exit(2);
   }
 
-  const out = { generatedAt: new Date().toISOString().replace(/\.\d+Z$/, 'Z'), schema: 'public' };
+  const out = { schema: 'public' };
   for (const [key, sql] of Object.entries(QUERIES)) {
     process.stderr.write(`  [expected-schema] querying ${key}…\n`);
     const res = await pool.query(sql);

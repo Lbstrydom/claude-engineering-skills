@@ -56,22 +56,60 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
   });
 
   after(async () => {
-    const pool = await getPool();
-    if (pool) {
-      try {
-        // round-4 L2 fix: each DELETE gets its own try/catch — a shared
-        // block meant a failure in the FIRST statement silently skipped
-        // every later one, leaving partial residue in the disposable DB
-        // while the test still appeared to clean up fine.
-        try { await pool.query(`DELETE FROM symbol_index WHERE repo_id = $1`, [repoId]); } catch { /* best-effort */ }
-        try { await pool.query(`DELETE FROM symbol_definitions WHERE repo_id = $1`, [repoId]); } catch { /* best-effort */ }
-        try { await pool.query(`DELETE FROM refresh_runs WHERE repo_id = $1`, [repoId]); } catch { /* best-effort */ }
-        try { await pool.query(`DELETE FROM audit_repos WHERE id = $1`, [repoId]); } catch { /* best-effort */ }
-      } catch { /* best-effort cleanup */ }
+    // try/finally so a thrown error from a DELETE can never leave
+    // process.env.AUDIT_DB_URL pointed at TEST_URL for the rest of the
+    // process (round-2 code audit M1). Env restoration happens BEFORE
+    // closePool() (not after, inside the finally) — closePool() doesn't
+    // read AUDIT_DB_URL, so ordering doesn't matter functionally, and this
+    // way a hypothetical future closePool() rejection can't skip it either
+    // (Gemini final-review G1 — closePool() itself already swallows its
+    // only failure point, p.end(), internally, so this is defense-in-depth
+    // against a future change to that function, not a fix for a live bug).
+    const cleanupErrors = [];
+    try {
+      const pool = await getPool();
+      if (pool) {
+        // Each DELETE is attempted independently (a failure in one must not
+        // skip the rest), but a failure is no longer swallowed — round-1
+        // code audit H1/M1/M2 found the prior best-effort catches let this
+        // hook report success while leaving rows behind in the disposable DB.
+        const statements = [
+          [`DELETE FROM symbol_index WHERE repo_id = $1`, [repoId]],
+          [`DELETE FROM symbol_definitions WHERE repo_id = $1`, [repoId]],
+          [`DELETE FROM refresh_runs WHERE repo_id = $1`, [repoId]],
+        ];
+        for (const [sql, params] of statements) {
+          try {
+            await pool.query(sql, params);
+          } catch (err) {
+            cleanupErrors.push(new Error(`${sql}: ${err?.message || err}`));
+          }
+        }
+        // audit_repos is the one row `before()` guarantees exists (via
+        // upsertRepoByUuid on a fresh crypto.randomUUID()) — rowCount === 0
+        // here means the delete silently matched nothing, which is a real
+        // signal something's wrong (round-2 code audit H2). The three
+        // deletes above aren't checked the same way: they can legitimately
+        // match 0 rows if the `it()` block failed before creating that data,
+        // and asserting rowCount there would raise a false teardown failure
+        // that masks the real test failure.
+        try {
+          const { rowCount } = await pool.query(`DELETE FROM audit_repos WHERE id = $1`, [repoId]);
+          if (rowCount === 0) {
+            cleanupErrors.push(new Error(`DELETE FROM audit_repos WHERE id = ${repoId}: matched 0 rows — expected exactly 1`));
+          }
+        } catch (err) {
+          cleanupErrors.push(new Error(`DELETE FROM audit_repos WHERE id = $1: ${err?.message || err}`));
+        }
+      }
+    } finally {
+      if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
+      else process.env.AUDIT_DB_URL = savedUrl;
+      try { await closePool(); } catch { /* best-effort — env is already restored */ }
     }
-    await closePool();
-    if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
-    else process.env.AUDIT_DB_URL = savedUrl;
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError(cleanupErrors, `${cleanupErrors.length} teardown step(s) failed — disposable DB may have residual rows`);
+    }
   });
 
   it('a justified pair drops out of top_duplicate_clusters + drift_score, an unannotated pair does not', async () => {
@@ -89,18 +127,18 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     await makeSymbol(refreshId, repoId, { filePath: 'd.mjs', symbolName: 'bar', kind: 'function', signatureHash: plainHash });
 
     // Before justification: both clusters present.
-    const before = await getTopDuplicateClusters({ repoId, refreshId, limit: 20 });
-    assert.ok(before.some((c) => c.signatureHash === annotatedHash), 'annotated cluster present before justification');
-    assert.ok(before.some((c) => c.signatureHash === plainHash), 'plain cluster present');
+    const clustersBefore = await getTopDuplicateClusters({ repoId, refreshId, limit: 20 });
+    assert.ok(clustersBefore.some((c) => c.signatureHash === annotatedHash), 'annotated cluster present before justification');
+    assert.ok(clustersBefore.some((c) => c.signatureHash === plainHash), 'plain cluster present');
 
     // Justify d1 (a.mjs's foo).
     await recordDuplicateJustifications(refreshId, repoId, [
       { definitionId: d1, reason: 'intentional test duplicate', target: 'b.mjs:foo', source: 'a.mjs:1' },
     ]);
 
-    const after = await getTopDuplicateClusters({ repoId, refreshId, limit: 20 });
-    assert.ok(!after.some((c) => c.signatureHash === annotatedHash), 'annotated cluster excluded after justification (dropped below the >1-file threshold)');
-    assert.ok(after.some((c) => c.signatureHash === plainHash), 'plain (unannotated) cluster is UNAFFECTED');
+    const clustersAfter = await getTopDuplicateClusters({ repoId, refreshId, limit: 20 });
+    assert.ok(!clustersAfter.some((c) => c.signatureHash === annotatedHash), 'annotated cluster excluded after justification (dropped below the >1-file threshold)');
+    assert.ok(clustersAfter.some((c) => c.signatureHash === plainHash), 'plain (unannotated) cluster is UNAFFECTED');
 
     const drift = await computeDriftScore({ repoId, refreshId, simDup: 0.85, simName: 0.9 });
     assert.equal(drift.duplication_excluded_count, 1, 'exactly one declaration excluded');

@@ -82,9 +82,9 @@ describe('setup-postgres diffSchemas', () => {
     assert.deepEqual(diffSchemas(exp, live), []);
   });
 
-  it('returns [] when only `generatedAt` / `schema` differ', () => {
-    const exp = { generatedAt: 'X', schema: 'public', tables: [{ table_name: 't' }] };
-    const live = { generatedAt: 'Y', schema: 'public', tables: [{ table_name: 't' }] };
+  it('returns [] when only `schema` differs (always \'public\' by contract)', () => {
+    const exp = { schema: 'public', tables: [{ table_name: 't' }] };
+    const live = { schema: 'live-value-ignored', tables: [{ table_name: 't' }] };
     assert.deepEqual(diffSchemas(exp, live), []);
   });
 
@@ -187,9 +187,13 @@ describe('setup-postgres integration (env-gated)', { skip }, () => {
   });
 
   after(async () => {
-    await closePool();
+    // Env restoration before closePool() (Gemini final-review G2, cross-
+    // applied from tests/symbol-index-drift-justification.test.mjs's round-2
+    // fix) — closePool() doesn't read AUDIT_DB_URL, so this removes any
+    // dependency on it succeeding before the process env is put back.
     if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
     else process.env.AUDIT_DB_URL = savedUrl;
+    try { await closePool(); } catch { /* best-effort — env is already restored */ }
   });
 
   beforeEach(async () => {
