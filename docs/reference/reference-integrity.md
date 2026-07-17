@@ -74,9 +74,17 @@ catch them. Anchoring on `.md` fixes it by construction:
 
 ### Contexts
 
-One parser, not two. `[text](dest)` → only `dest` is extracted. Reference-style
-`[text][id]` + `[id]: dest` → the **definition line** is the citation site. Plain
-prose, code comments, and JSON strings all use the same grammar.
+**One parser, one rule: a token matching the grammar is a citation wherever it
+appears.** Plain prose, code comments, JSON strings, Markdown link destinations,
+and Markdown link *labels* are all the same — there is no per-context special
+case to get wrong.
+
+That means `[docs/plans/a.md](docs/plans/a.md)` is **two sites**, not one, and
+that is correct: a label naming a path is itself a claim about that path. Both
+sites resolve identically and both are fixed by the same edit, so the duplication
+costs nothing. (An earlier draft said "only the destination is extracted" — a
+rule the implementation never had and did not need. It was removed rather than
+implemented: it added a context-sensitive branch to buy nothing.)
 
 Each occurrence is its own **site**; a marker binds to its own token only.
 

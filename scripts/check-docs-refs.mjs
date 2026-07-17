@@ -5,12 +5,18 @@
  * Contract: docs/reference/reference-integrity.md (the grammar, the classes,
  * the exclusions). Plan: docs/plans/reference-integrity-gate.md.
  *
- * Why this exists: /ship used to archive a completed plan from `docs/plans/`
+ * Why this exists: /ship's archive step moves a completed plan from `docs/plans/`
  * to `docs/completed/`, silently invalidating every reference to it. Nothing
- * verified. The directory was a denormalized cache of the `Status:` line and
- * nothing invalidated it. Consolidating to one directory removes that failure
- * class by construction; this gate catches what consolidation cannot — typos,
- * deleted targets, and refs to files that never existed.
+ * verifies. The directory is a denormalized cache of the `Status:` line, and
+ * nothing invalidates it.
+ *
+ * STATE OF PLAY (present tense on purpose — the archiver still exists today):
+ * this module is Cluster A of the plan, and ships FIRST and ALONE because it is
+ * the measurement instrument the rest is checked against. Consolidating to one
+ * `docs/plans/` (Cluster B) is what removes the failure class by construction;
+ * deleting the archiver is Cluster C. Until those land, this gate reports the
+ * breakage rather than preventing it. It permanently catches what consolidation
+ * cannot — typos, deleted targets, and refs to files that never existed.
  *
  * Deliberately narrow (mirroring check-docs-placement.mjs's doctrine): it
  * checks whether a cited path RESOLVES, not whether the citation is apt. That
@@ -65,7 +71,14 @@ const REF_RE = new RegExp(`(?<![A-Za-z0-9._/<>*-])(${TOKEN})(?![A-Za-z0-9_-])`, 
 // at most one space, or by a single closing backtick/paren then one space.
 // Nothing else on the line, in the sentence, or in an enclosing block confers
 // it — placeholder-ness and planned-ness are properties of the TOKEN.
-const PLANNED_RE = /^[`)]?\s?\(planned\)/;
+//
+// The separator is a LITERAL SPACE, not `\s`. `\s` also matches tab, CR and LF,
+// which let a `(planned)` on the FOLLOWING LINE bind to this token and silently
+// suppress a real GONE finding — exactly the "a loose implementation can
+// suppress a real typo" failure the contract's attachment rule exists to
+// prevent. Verified: with `\s?`, both `a.md\t(planned)` and `a.md\n(planned)`
+// wrongly bound.
+const PLANNED_RE = /^[`)]?[ ]?\(planned\)/;
 
 /**
  * Extract every citation site from a chunk of text.
@@ -205,6 +218,32 @@ export const EXCLUSIONS = [
       'an append-only session log. A past entry was true when it was written; rewriting it to keep ' +
       'a link green would falsify the record.',
     test: rel => rel === 'status.md',
+  },
+  {
+    id: 'SPEC',
+    reason:
+      'the specification OF this grammar. A document that defines the citation notation must SHOW ' +
+      'the notation — `docs/plans/a.md` as an example of a concrete token, `docs/plans/../x.md` as ' +
+      'an example of traversal. Those are mentions, not claims (use vs mention), and they cannot be ' +
+      'marked away: rewriting the concrete example as `docs/plans/<name>.md` would turn it into a ' +
+      'PLACEHOLDER example and destroy the thing being illustrated. Precedent, same class, same repo: ' +
+      'scripts/lib/model-eval/egress-path-scan.mjs documents its own security tooling self-tripping ' +
+      'its own gate on its own pattern literals (2026-07-12), and carved the class out for exactly ' +
+      'this reason. ACCEPTED TRADE-OFF, stated plainly: a REAL citation inside these two files goes ' +
+      'unchecked. That is tolerable because they are specs (few real citations, and both are read ' +
+      'end-to-end by anyone changing the grammar), and because the alternative — ~20 permanent ' +
+      'un-fixable findings — is the noise-then-bypass spiral this gate exists to avoid. Deliberately ' +
+      'a 4-file allowlist, NOT a `docs/reference/**` / `docs/plans/**` / `**/*refs*` glob: any wider ' +
+      'and it would start hiding real breakage. The gate\'s own module and test file are in the set ' +
+      'for the same reason and on the same precedent — egress-path-scan.mjs names "sensitive-paths.mjs, ' +
+      'secret-patterns.mjs, THEIR TESTS" as the self-tripping set. A grammar\'s test fixtures are ' +
+      'necessarily made of the tokens it parses.',
+    test: rel => (
+      rel === 'docs/reference/reference-integrity.md' ||
+      rel === 'docs/plans/reference-integrity-gate.md' ||
+      rel === 'scripts/check-docs-refs.mjs' ||
+      rel === 'tests/check-docs-refs.test.mjs'
+    ),
   },
 ];
 

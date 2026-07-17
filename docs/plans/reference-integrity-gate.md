@@ -332,7 +332,7 @@ phstem      := "<" [A-Za-z0-9._-]+ ">"          ; bracketed final stem
 | **Resolvability** | **Only `concrete` is resolved.** `placeholder` is emitted as PLACEHOLDER and **never** resolved — so a placeholder can never be a finding. |
 | **Neither alternative** | Not a citation. Never a finding. (E.g. `docs/plans/` bare, or a token with a space.) |
 | **Anchors / queries** | A trailing `#fragment` / `?query` is **stripped before resolution**; the fragment is never validated (it is not a path). |
-| **Markdown links** | `[text](dest)` → only `dest` is extracted. Reference-style `[text][id]` + `[id]: dest` → the **definition line** is the citation site. The same grammar applies to plain text and to link destinations — one parser, not two. |
+| **Markdown links** | **No special case.** A token matching the grammar is a citation *wherever* it appears — prose, code comment, JSON string, link destination, **or link label**. So `[docs/plans/a.md](docs/plans/a.md)` is **two sites**, and that is correct: a label naming a path is itself a claim about that path; both resolve identically and one edit fixes both. *(An earlier draft said "only `dest` is extracted" — a context-sensitive rule the implementation never had and did not need. Caught by the Cluster-A code audit (R1-M3) and **removed rather than implemented**: it bought nothing and added a branch to get wrong.)* |
 | **`(planned)` marker** | Valid **only** as the literal `(planned)` **immediately following the token**, separated by at most one space, or by a single closing `` ` `` / `)` then one space. Nothing else on the line, in the sentence, or in an enclosing block confers it. |
 | **Normalization** | No case-folding (see R13). A token containing `..` is a **finding**, never resolved. |
 | **Multiple per line** | Each occurrence is its own site; a marker binds to **its own** token only. |
@@ -520,8 +520,17 @@ overwritten).
   reads the source of truth directly.
 - **Pattern for others**: "status is metadata, never a path" becomes uniform across
   `docs/` — matching `research/`'s existing rule rather than contradicting it.
-- **Extension point**: the refs lint resolves *any* repo path, not just plans. The
-  `docs/auth.md` dangling ref found during exploration is already in its net.
+- **Extension point**: the refs lint resolves any `docs/**.md` citation, not just
+  `docs/plans/` ones — the `docs/auth.md` dangling ref found during exploration is
+  already in its net, and the first real run classified 1289 sites across the whole
+  `docs/` tree. **It does NOT check non-`docs` repo paths** (`scripts/lib/x.mjs`
+  cited in prose) — §2's grammar is explicit that a citation begins with `docs/`.
+  *(An earlier draft of this bullet claimed "any repo path", which overclaimed
+  against §2's own grammar — caught by the Cluster-A code audit, R1-H3. A plan
+  about making claims checkable is a poor place for an unchecked claim.)*
+  Widening to arbitrary repo paths is a **deliberate v2 decision**, not an
+  oversight: every code path mentioned in prose becomes a candidate, so it needs
+  its own noise analysis before the placeholder convention can absorb it (R6).
 
 ## Security Considerations
 

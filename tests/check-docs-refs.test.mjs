@@ -54,6 +54,14 @@ describe('check-docs-refs / extractRefs — grammar', () => {
     ['inline link', '[x](docs/plans/a.md)', [{ target: 'docs/plans/a.md', kind: 'concrete' }]],
     ['link with fragment', '[x](docs/plans/a.md#heading)', [{ target: 'docs/plans/a.md', kind: 'concrete' }]],
     ['reference definition', '[id]: docs/plans/a.md', [{ target: 'docs/plans/a.md', kind: 'concrete' }]],
+    // No per-context special case: a token is a citation wherever it appears,
+    // including a link LABEL — a label naming a path is a claim about that path.
+    // Two sites is correct here; both resolve identically, one edit fixes both.
+    ['label AND destination', '[docs/plans/a.md](docs/plans/a.md)', [
+      { target: 'docs/plans/a.md', kind: 'concrete' },
+      { target: 'docs/plans/a.md', kind: 'concrete' },
+    ]],
+    ['label only (external dest)', '[docs/plans/a.md](https://x.com)', [{ target: 'docs/plans/a.md', kind: 'concrete' }]],
 
     // ── multiple sites per line ──────────────────────────────────────────
     ['two on one line', 'docs/plans/a.md and docs/plans/b.md', [
@@ -103,6 +111,25 @@ describe('check-docs-refs / (planned) marker', () => {
 
   it('does NOT bind from elsewhere in the sentence', () => {
     assert.equal(extractRefs('docs/plans/a.md is (planned) eventually')[0].planned, false);
+  });
+
+  // The separator is a LITERAL space, never `\s`. `\s` matches tab/CR/LF, which
+  // let a marker on the FOLLOWING LINE bind to this token and silently suppress
+  // a real GONE finding. Both of these bound wrongly before the fix.
+  it('does NOT bind across a tab', () => {
+    assert.equal(extractRefs('docs/plans/a.md\t(planned)')[0].planned, false);
+  });
+
+  it('does NOT bind across a newline — a marker on the next line is not this token\'s', () => {
+    assert.equal(extractRefs('docs/plans/a.md\n(planned)')[0].planned, false);
+  });
+
+  it('does NOT bind across a CR (CRLF files)', () => {
+    assert.equal(extractRefs('docs/plans/a.md\r\n(planned)')[0].planned, false);
+  });
+
+  it('does NOT bind across two spaces', () => {
+    assert.equal(extractRefs('docs/plans/a.md  (planned)')[0].planned, false);
   });
 
   it('binds to its OWN token only', () => {
@@ -230,6 +257,24 @@ describe('check-docs-refs / exclusions', () => {
 
   it('excludes the append-only session log', () => {
     assert.equal(isExcluded('status.md')?.id, 'HISTORICAL');
+  });
+
+  it('excludes the grammar\'s own SPEC (use vs mention)', () => {
+    // A doc that defines the notation must show the notation; those tokens are
+    // mentions, not claims. Same class as egress-path-scan.mjs's own security
+    // patterns self-tripping its own gate — which names "their tests" too, and
+    // a grammar's fixtures are necessarily made of the tokens it parses.
+    assert.equal(isExcluded('docs/reference/reference-integrity.md')?.id, 'SPEC');
+    assert.equal(isExcluded('docs/plans/reference-integrity-gate.md')?.id, 'SPEC');
+    assert.equal(isExcluded('scripts/check-docs-refs.mjs')?.id, 'SPEC');
+    assert.equal(isExcluded('tests/check-docs-refs.test.mjs')?.id, 'SPEC');
+  });
+
+  it('the SPEC exclusion is a 4-file allowlist, NOT a directory glob', () => {
+    // Any wider and it starts hiding real breakage — other plans and other
+    // reference docs make real claims and must stay checked.
+    assert.equal(isExcluded('docs/reference/model-resolution.md'), null);
+    assert.equal(isExcluded('docs/plans/some-other-plan.md'), null);
   });
 
   it('does not exclude ordinary source', () => {
