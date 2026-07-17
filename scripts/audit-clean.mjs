@@ -22,7 +22,7 @@
  *
  * @module scripts/audit-clean
  */
-import { readdirSync, statSync, rmSync, existsSync } from 'node:fs';
+import { readdirSync, statSync, lstatSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { sweepStaleOrphanPreimages } from './lib/audit/diff-scope-resolver.mjs';
@@ -37,20 +37,55 @@ if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); proces
  *  1h age gate (a LIVE preimage lives for seconds), independent of --age-days. */
 const PREIMAGE_MAX_AGE_MS = 60 * 60 * 1000;
 
-function listStalePreimages() {
+/**
+ * A `TRANSIENT` directory that simply doesn't exist is the NORMAL case — most
+ * repos lack most of them. Warning on it would fire every run and train
+ * operators to ignore the channel, drowning a real failure. Every other errno
+ * is unexpected and must be reported: a silent catch turns EACCES/EIO into an
+ * apparently clean sweep while stale data sits unreadable.
+ *
+ * Same shape as `transaction.mjs::BENIGN_FSYNC_CODES` — the repo's established
+ * "expected absence vs real failure" split.
+ */
+const BENIGN_FS_CODES = new Set(['ENOENT']);
+
+
+/**
+ * @returns {{stale: Array<{p: string, ageDays: number}>, scanned: boolean}}
+ *   `scanned:false` means the scan did not happen — the caller MUST NOT report
+ *   `stale.length` as a count, because "none found" and "never looked" are then
+ *   the same empty array. A `warn` is not sufficient on its own: the summary
+ *   line is the authoritative-looking output, and "0 stale worktree(s)" reads
+ *   clean regardless of what was printed above it.
+ */
+function listStalePreimages({ warn } = { warn: () => {} }) {
   const out = [];
   let entries = [];
-  try { entries = readdirSync(os.tmpdir()); } catch { return out; }
+  // Same classifier as collectCandidates — a silent catch here let the CLI
+  // report a clean sweep while the preimage scope was never checked, which is
+  // indistinguishable from "there are no stale preimages". That is the same
+  // false-clean defect the collector's error policy exists to prevent; leaving
+  // it here would give one file two contradictory policies.
+  try { entries = readdirSync(os.tmpdir()); } catch (err) {
+    if (!BENIGN_FS_CODES.has(err.code)) {
+      warn(`could not scan ${os.tmpdir()} for stale preimages: ${err.code || err.message} — preimage cleanup SKIPPED this run`);
+      return { stale: out, scanned: false };
+    }
+    return { stale: out, scanned: true };   // ENOENT: no temp dir => genuinely none
+  }
   for (const name of entries) {
     if (!name.startsWith('orphan-preimage-')) continue;
     const p = path.join(os.tmpdir(), name);
     let st;
-    try { st = statSync(p); } catch { continue; }
+    try { st = statSync(p); } catch (err) {
+      if (!BENIGN_FS_CODES.has(err.code)) warn(`skipped unreadable preimage ${p}: ${err.code || err.message}`);
+      continue;
+    }
     if (!st.isDirectory()) continue;
     if (Date.now() - st.mtimeMs < PREIMAGE_MAX_AGE_MS) continue;
     out.push({ p, ageDays: Math.floor((Date.now() - st.mtimeMs) / 86400000) });
   }
-  return out;
+  return { stale: out, scanned: true };
 }
 
 /** Transient patterns, scoped per directory. RegExp over the basename. */
@@ -80,6 +115,89 @@ const KEEP = new Set([
   'arm-eval-toggle.json', 'domain-map.json', 'repo-id',
 ]);
 
+/**
+ * Collect delete candidates under `dir`.
+ *
+ * SYMLINKS ARE A BOUNDARY THIS NEVER CROSSES — the whole point of the
+ * function. `walk` is documented as allowlist-only and directory-scoped, but
+ * scoping is *lexical*, so following a link silently converts `--apply` into a
+ * recursive delete of files OUTSIDE the repo. The realistic trigger is not an
+ * attacker but an ordinary `ln -s /mnt/big/audit-cache .audit-loop/cache`, and
+ * the one `recurse: true` entry pairs with `re: /./` — matching every basename.
+ *
+ * Two guards are required, because they cover different halves:
+ *   - ROOT (`lstatSync(dir)`): `readdirSync` has already opened `dir` by the
+ *     time it returns Dirents, so a symlinked ROOT hands back the target's
+ *     children as NORMAL files — indistinguishable from in-tree ones. Verified
+ *     empirically; this is the half that closes the documented trigger.
+ *   - ENTRIES (`withFileTypes`): `Dirent.isDirectory()` reflects the directory
+ *     ENTRY, not a followed target, so a symlink never enters the recursion.
+ *     This half also stops the link itself being DELETED as a `re: /./` match.
+ * Mirrors `fsWalkFallback` (`lib/arch-intent/adapter-contract.mjs:68-88`), the
+ * repo's other recursive walker, which is already immune for the same reason.
+ *
+ * KNOWN LIMIT — the guards are point-in-time, not race-free. A process that
+ * swapped a real directory for a symlink between the `lstatSync` and the
+ * `readdirSync` would defeat them. This is documented rather than fixed, on two
+ * grounds: (1) closing it properly needs fd-relative traversal (`openat` +
+ * `O_NOFOLLOW`), which Node does not expose — there is no `readdirat`, so no
+ * amount of re-checking removes the window, only shrinks it; (2) the threat
+ * model does not fit a local dev CLI — an actor able to win that race already
+ * has write access to the repo and can delete the files directly, so the guard
+ * buys nothing against them. What the guards DO close is the realistic,
+ * non-adversarial case this function exists for: a cache directory that is
+ * *statically* a symlink (`ln -s /mnt/big/audit-cache .audit-loop/cache`).
+ *
+ * Extracted from `main()` so it is testable: it used to close over main-local
+ * `candidates`/`cutoff`. Takes an injected `warn` rather than writing to stderr
+ * itself — CLI policy stays in the CLI, and tests assert on a spy.
+ *
+ * @param {string} dir
+ * @param {RegExp} re - tested against the basename
+ * @param {boolean} recurse
+ * @param {number} cutoff - epoch ms; only files older than this qualify
+ * @param {Array<{p: string, bytes: number, ageDays: number}>} out - mutated
+ * @param {{warn: (msg: string) => void}} deps
+ */
+export function collectCandidates(dir, re, recurse, cutoff, out, { warn }) {
+  let entries;
+  // ONE error boundary over both calls. `existsSync` is deliberately GONE: it
+  // was redundant with lstat, a TOCTOU, and it silently skipped real errors
+  // (an ENOTDIR read as "absent") — which is the failure this classifier fixes.
+  try {
+    if (lstatSync(dir).isSymbolicLink()) {
+      warn(`skipped symlinked directory (never traversed, never deleted): ${dir}`);
+      return;
+    }
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err) {
+    if (!BENIGN_FS_CODES.has(err.code)) {
+      warn(`skipped unreadable directory ${dir}: ${err.code || err.message}`);
+    }
+    return;
+  }
+
+  for (const e of entries) {
+    const p = path.join(dir, e.name);
+    if (e.isSymbolicLink()) {
+      warn(`skipped symlink (never traversed, never deleted): ${p}`);
+      continue;
+    }
+    if (e.isDirectory()) { if (recurse) collectCandidates(p, re, recurse, cutoff, out, { warn }); continue; }
+    if (!e.isFile()) continue; // sockets/FIFOs/devices are not ours to delete
+    if (KEEP.has(e.name)) continue;
+    if (!re.test(e.name)) continue;
+    let st;
+    // Same classifier: a file vanishing mid-sweep is benign; EACCES/EIO is not.
+    try { st = statSync(p); } catch (err) {
+      if (!BENIGN_FS_CODES.has(err.code)) warn(`skipped unreadable file ${p}: ${err.code || err.message}`);
+      continue;
+    }
+    if (st.mtimeMs > cutoff) continue;
+    out.push({ p, bytes: st.size, ageDays: Math.floor((Date.now() - st.mtimeMs) / 86400000) });
+  }
+}
+
 function main() {
   const apply = process.argv.includes('--apply');
   const ageIdx = process.argv.indexOf('--age-days');
@@ -90,21 +208,13 @@ function main() {
   }
   const cutoff = Date.now() - ageDays * 24 * 60 * 60 * 1000;
 
+  // Unconditional — NOT gated on --apply. A dry run is a preview of what
+  // --apply would do, so it must disclose that a symlinked cache would be
+  // skipped; that is precisely when the operator can still act on it.
+  const warn = (msg) => process.stderr.write(`  [audit-clean] ${msg}\n`);
+
   const candidates = [];
-  const walk = (dir, re, recurse) => {
-    if (!existsSync(dir)) return;
-    for (const name of readdirSync(dir)) {
-      const p = path.join(dir, name);
-      let st;
-      try { st = statSync(p); } catch { continue; }
-      if (st.isDirectory()) { if (recurse) walk(p, re, recurse); continue; }
-      if (KEEP.has(name)) continue;
-      if (!re.test(name)) continue;
-      if (st.mtimeMs > cutoff) continue;
-      candidates.push({ p, bytes: st.size, ageDays: Math.floor((Date.now() - st.mtimeMs) / 86400000) });
-    }
-  };
-  for (const t of TRANSIENT) walk(t.dir, t.re, t.recurse === true);
+  for (const t of TRANSIENT) collectCandidates(t.dir, t.re, t.recurse === true, cutoff, candidates, { warn });
 
   // A path can match several patterns — dedupe.
   const seen = new Set();
@@ -112,7 +222,7 @@ function main() {
   const totalKb = Math.round(unique.reduce((s, c) => s + c.bytes, 0) / 1024);
 
   // Orphaned preimage worktrees (worktree-aware sweep, fixed 1h gate).
-  const stalePreimages = listStalePreimages();
+  const { stale: stalePreimages, scanned: preimagesScanned } = listStalePreimages({ warn });
   if (stalePreimages.length > 0) {
     if (apply) {
       const r = sweepStaleOrphanPreimages({ repoPath: process.cwd(), maxAgeMs: PREIMAGE_MAX_AGE_MS });
@@ -133,4 +243,11 @@ function main() {
   process.stdout.write(`audit-clean: ${unique.length} file(s) + ${stalePreimages.length} stale worktree(s), ~${totalKb}KB ${apply ? 'deleted' : 'would be deleted'} (files > ${ageDays}d, worktrees > 1h).${apply ? '' : ' Re-run with --apply to delete.'}\n`);
 }
 
-main();
+/** Internal seams for tests. Underscore-prefixed per repo convention. */
+export const _internals = { collectCandidates, listStalePreimages, BENIGN_FS_CODES, TRANSIENT, KEEP };
+
+// isMain guard — importing this module (from a test) must not run a sweep.
+const isMain = import.meta.url === `file://${process.argv[1]}`
+  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+
+if (isMain) main();
