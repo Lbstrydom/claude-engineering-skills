@@ -100,6 +100,54 @@ Deliberately **not** shortlisted: another single-host OSS model with no
 failover (repeats GLM's structural weakness), and anything requiring a new
 provider integration (the role already speaks OpenRouter).
 
+## The structural restriction this role lives under (flagged 2026-07-17)
+
+The discovery-generator slot is **the most constrained model slot in the
+entire architecture**, and that constraint — not bad luck — is why an OSS
+model ended up in a `required` role unmeasured. Every frontier lineage is
+already committed to a role whose independence the experiment depends on:
+
+| Lineage | Already committed as | Why it can't fill the second required slot |
+|---|---|---|
+| **Anthropic** (Sonnet/Opus) | Required generator #1 — AND usually the *author* of the code under audit | A second Anthropic slot destroys the portfolio's disjoint-findings premise and compounds the author-model self-review bias (experiment-1's subject) |
+| **OpenAI** (GPT) | The **legacy baseline** the tiered pipeline is being compared against — and already wired as a deliberately *optional/exploratory* discovery arm (`gptCall`, `discovery-portfolio.mjs:95,128`; unwired `gptCall: null` in the pipeline today) | A GPT required generator confounds the very tiered-vs-legacy comparison the window exists to produce. The existing code's own role assignment (`optional`, never `required`) encodes this |
+| **Google** (Gemini) | **Stage-2 adjudicator** + the plan/code final gates | A Gemini generator would have Gemini adjudicating its own findings — the no-self-review doctrine, violated at the pipeline's most load-bearing gate |
+
+So the second required slot is forced into a **fourth lineage** — i.e. the
+OSS pool — and the OSS pool is reached through aggregators or direct OSS
+APIs with structurally weaker SLAs than the three frontier providers. **The
+36%-availability finding is the predictable price of that corner, not an
+anomaly.** Any replacement candidate lives under the same restriction: the
+shortlist can only ever contain fourth-lineage models.
+
+Two softeners, verified in code, that keep the corner livable:
+
+1. **The OpenRouter dependency is config-soft, not code-hard.**
+   `OPENROUTER_BASE_URL` (`config.mjs:182`) points the `ossCall` seam at any
+   OpenAI-compatible endpoint — including a candidate's *direct* API (e.g.
+   DeepSeek's), which matters because reviews note OSS models via OpenRouter
+   sometimes underperform the same model accessed directly, and our observed
+   stalls may be OpenRouter *routing*, not the model.
+2. **"Required ROLE, pooled MODELS" is available natively.** OpenRouter's
+   `models: []` fallback array (max 3 entries) tries each model sequentially
+   on any error — downtime, rate limit, context, moderation — and bills only
+   the one that answers. That converts the fourth-lineage slot from "one
+   fragile model is required" to "one of a vetted pool is required" with a
+   **request-body change, zero orchestration code**. This is the right-sized
+   availability fix and should be part of the gate-1 evaluation design
+   (e.g. `models: ['deepseek/deepseek-v3.2', 'qwen/qwen3.6-flash']`).
+
+And one **deployment restriction with no softener**: under the **Azure work
+profile** there is no OpenRouter/OSS access at all (`openrouterApiKey` null →
+`ossCall` never constructed → the required generator fails every run). The
+tiered pipeline as designed **structurally cannot run in that environment**
+— it degrades safely to the legacy path (production falls back; the shadow
+now records `tiered_unavailable` cheaply), but permanently. The Phase-14
+production-flip decision must therefore be scoped as **public-profile-only**
+unless the portfolio premise is redesigned for restricted environments; a
+flip that assumed universal availability would strand the corporate profile
+on a "production" path that can never execute there.
+
 ## Two orthogonal fixes, not one
 
 The failure taxonomy splits cleanly, and the fixes are independent:
