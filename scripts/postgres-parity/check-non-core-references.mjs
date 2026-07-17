@@ -5,9 +5,14 @@
  * accepted yet. Doubles as a schema-coupling check: any `<schema>.<table>`
  * qualification outside the allowlisted pair (`public`, `auth`) is flagged.
  *
- * Plan: docs/plans/postgres-parity.md §0 #2 ("CI lint re-runs the inventory").
- * Inventory: docs/plans/postgres-parity-non-core-inventory.md
- * Schema-coupling baseline: docs/plans/postgres-parity-schema-coupling.md §1
+ * Plan: docs/completed/postgres-parity.md §0 #2 ("CI lint re-runs the inventory").
+ * Inventory: docs/completed/postgres-parity-non-core-inventory.md
+ * Schema-coupling baseline: docs/completed/postgres-parity-schema-coupling.md §1
+ *
+ * Both `--strict` forms run in `npm run check` (pre-push). Until 2026-07-17 this
+ * lint was reachable only by hand — no workflow, no hook, absent from the check
+ * chain — which is exactly how three new `public.` qualifications reached main
+ * unnoticed in June.
  *
  * Usage:
  *   node scripts/postgres-parity/check-non-core-references.mjs            # text report
@@ -15,8 +20,8 @@
  *   node scripts/postgres-parity/check-non-core-references.mjs --strict   # exit 1 on any new finding
  *   node scripts/postgres-parity/check-non-core-references.mjs --schema-coupling
  *       # additionally flag any hardcoded `<schema>.` qualification beyond
- *       # the baseline (4 lines in 20260501120000_symbol_index.sql) — used
- *       # to detect new non-portable migrations.
+ *       # SCHEMA_COUPLING_BASELINE — used to detect new non-portable
+ *       # migrations. (Don't restate the baseline's size here; it drifts.)
  *
  * @module scripts/postgres-parity/check-non-core-references
  */
@@ -45,14 +50,33 @@ const ALLOWED_ROLES = new Set(['anon', 'authenticated', 'service_role']);
 
 const ALLOWED_EXTENSIONS = new Set(['pg_trgm', 'vector', 'pgcrypto']);
 
-// The schema-coupling baseline (plan §1 schema-coupling.md). Each entry is
-// `<filename>:<line>` that we ACCEPT as legacy `public.` qualification. A
-// new occurrence outside this set fails --schema-coupling.
+// The schema-coupling baseline (docs/completed/postgres-parity-schema-coupling.md §1).
+// Each entry is `<filename>:<line>` we ACCEPT as legacy `public.` qualification;
+// a new occurrence outside this set fails --schema-coupling.
+//
+// Line-keying is sound ONLY because applied migrations are immutable: the
+// ledger stores a per-file sha256 and `setup-postgres.mjs` refuses to re-apply
+// on a mismatch ("migration <f> sha256 mismatch — refusing to re-apply"), so
+// their line numbers cannot shift. That same immutability is why the entries
+// below are baselined rather than refactored — recourse (2) is unavailable for
+// a migration every environment has already applied.
 const SCHEMA_COUPLING_BASELINE = new Set([
+  // ── M0 audit baseline (2026-05-01) — the original four, inside
+  //    publish_refresh_run's function body.
   '20260501120000_symbol_index.sql:184',
   '20260501120000_symbol_index.sql:196',
   '20260501120000_symbol_index.sql:201',
   '20260501120000_symbol_index.sql:211',
+  // ── Accepted 2026-07-17. These are NOT part of the original audit: they
+  //    crept in during June because this check was never wired into any gate
+  //    (no workflow, no hook, absent from `npm run check`) — so nothing ever
+  //    ran it and nothing complained. Baselining them is what lets
+  //    --schema-coupling go live and guard every FUTURE migration; the
+  //    alternative was leaving the whole check dead. Both migrations are
+  //    applied and sha256-pinned, so they cannot be refactored.
+  '20260603120000_unify_repo_identity.sql:29',   // FROM public.audit_repos
+  '20260603120000_unify_repo_identity.sql:44',   // ALTER TABLE public.audit_repos DROP CONSTRAINT
+  '20260605130000_audit_repos_fingerprint_nullable.sql:17', // ALTER TABLE public.audit_repos
 ]);
 
 // ── Scanner ────────────────────────────────────────────────────────────────
@@ -180,9 +204,13 @@ function formatHumanReport(findings, schemaCoupling) {
   }
   return `Found ${total} un-allowlisted reference(s):\n${lines.join('\n')}\n` +
     '\nRecourse:\n' +
-    '  (1) Add the new reference to the compat-bootstrap inventory + this script\'s allowlist; or\n' +
-    '  (2) Refactor the migration to avoid the non-core reference.\n' +
-    'See docs/plans/postgres-parity-non-core-inventory.md.\n';
+    '  (1) Refactor the migration to avoid the non-core reference. This is the\n' +
+    '      default, and the only honest fix while the migration is still UNAPPLIED.\n' +
+    '  (2) Only if it is already APPLIED somewhere — (1) is then impossible, because\n' +
+    '      the ledger pins a per-file sha256 and setup-postgres.mjs refuses to\n' +
+    '      re-apply on a mismatch — add it to the compat-bootstrap inventory AND\n' +
+    '      this script\'s allowlist. Both: an allowlist edit alone is silencing.\n' +
+    'See docs/completed/postgres-parity-non-core-inventory.md.\n';
 }
 
 // ── CLI ────────────────────────────────────────────────────────────────────

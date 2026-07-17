@@ -45,7 +45,7 @@
     "models:check": "node scripts/check-model-freshness.mjs --strict",
     "maintenance:run": "node scripts/maintenance-checks.mjs",
     "maintenance:status": "node scripts/maintenance-checks.mjs --status",
-    "check": "npm run context:check && npm run docs:check && npm run skills:check && npm run plans:lint && npm run parity:check-refs:strict && npm run efficacy:check && npm test",
+    "check": "npm run context:check && npm run docs:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm test",
     "docs:check": "node scripts/check-docs-placement.mjs",
     "docs:check:json": "node scripts/check-docs-placement.mjs --format json",
     "efficacy:check": "node scripts/efficacy-lints-check.mjs",

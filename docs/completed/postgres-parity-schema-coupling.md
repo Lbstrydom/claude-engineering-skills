@@ -24,6 +24,31 @@ tables with `public.` inside the `publish_refresh_run` function body:
 A non-`public` deployment would have the table at e.g. `audit_loop.refresh_runs`,
 but the function body would still target `public.refresh_runs` → error.
 
+> **Addendum 2026-07-17 — the baseline is now seven, not four.** Three more
+> `public.` qualifications reached main in June and are now in
+> `SCHEMA_COUPLING_BASELINE`:
+>
+> | File:line | Reference |
+> |---|---|
+> | `20260603120000_unify_repo_identity.sql:29` | `FROM public.audit_repos` |
+> | `20260603120000_unify_repo_identity.sql:44` | `ALTER TABLE public.audit_repos DROP CONSTRAINT …` |
+> | `20260605130000_audit_repos_fingerprint_nullable.sql:17` | `ALTER TABLE public.audit_repos ALTER COLUMN fingerprint DROP NOT NULL;` |
+>
+> **They are accepted debt, not a revised verdict** — §1's conclusion is
+> unchanged and in fact reinforced: the migrations are hard-wired to `public`.
+>
+> **Why they were not refactored**: both migrations are applied, and the ledger
+> pins a per-file sha256 — `setup-postgres.mjs` throws `migration <f> sha256
+> mismatch — refusing to re-apply` on any edit, in every environment that has
+> already run them. Refactoring is unavailable; baselining is the only route.
+>
+> **Why they got in**: `--schema-coupling` existed and was correct, but was
+> wired to nothing — no workflow, no hook, absent from `npm run check` — so it
+> never ran. Baselining them is what lets the check go live and block the NEXT
+> one. That is the trade being made here: three accepted historical couplings in
+> exchange for a gate that is no longer dead. Both `--strict` forms now run in
+> the pre-push chain.
+
 ### 2. `SECURITY DEFINER` + `SET search_path = pg_catalog, public`
 
 11 stored procedures pin `search_path = pg_catalog, public` to harden
