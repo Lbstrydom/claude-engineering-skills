@@ -863,11 +863,77 @@ Files: `scripts/lib/ledger.mjs` (`buildRulingsBlock` only),
 change, **no** new module, **no** caller wiring, **no** new state.
 `suppressReRaises` is **not touched in Phase 1.**
 
-**Phase 2 — Layer 3 (suppression) — DEFERRED, NOT AUDIT-CLEAN. DO NOT
-IMPLEMENT from this document.** Entry conditions, both required:
+**Phase 2 — Layer 3 (suppression) — DEFERRED, and its DESIGN IS NOW SUPERSEDED.
+DO NOT IMPLEMENT from this document.** Entry conditions, both required:
 1. the Phase-1 protocol returns **≥1/5** re-raises (i.e. the prompt fix alone
    did not solve it); **and**
-2. a dedicated plan + its own audit round resolves the **open findings** below.
+2. a dedicated plan + its own audit round — which must **start from the
+   primitives below, not from this document's token-intersection design**.
+
+### 2026-07-17 re-examination — the design is obsolete; the goal is more needed
+
+Re-checked one day after the deferral, because the repo moved. Two findings
+pull in **opposite** directions, and both matter:
+
+**(a) The goal is MORE justified than at deferral time.** The tiered pipeline —
+whose `EvidenceAnchorV2` would eventually have made this whole layer moot — got
+*further* from production, not closer. `docs/research/experiment-4-discovery-model-glm-disqualification.md`
+(2026-07-17) disqualified GLM-5.2 as a `required` discovery generator on three
+axes (**36% availability**, 80.9% FP, highest cost); the two-required-generator
+portfolio's availability ceiling is `0.36 × 0.92 = 33%`, matching the observed
+~26% completion. A replacement is **shortlisted but not committed** (a two-gate
+eval must run first). The shadow window sits at **2 of 10-15** compared runs
+with **0% finding overlap**. So the legacy path stays production for the
+foreseeable future — and the legacy path is exactly where the field defect
+lives. Nothing is going to fix this for us.
+
+**(b) The DESIGN is superseded — by work that landed the same night.**
+`d907993` ("Stage 0 evidence-relevance split") shipped, in `main`, the
+machinery this plan's tokenizer was a crude lexical proxy for:
+
+| Landed primitive (`scripts/lib/audit/evidence-triage.mjs`) | What it does | Phase-2 mechanism it obsoletes |
+|---|---|---|
+| `resolveAnchorLocation(anchor, diffText, headContent)` | Locates a quote: in-hunk, else a **line-indexed search of head content** (`outside_hunk_in_head`), else `fabricated`/`unverifiable` — with the hunks returned | The whole `changedHunks` availability-record contract (**R3 M1**), and the `extractCodeTokens` grammar (**R2 M1**) |
+| `mapHeadLineToBase` / `mapHeadRangeToBase` | Diff-derived line mapping to the BASE revision — never raw line-number equality across revisions | Hand-rolled hunk/line reasoning |
+| `tagPreExisting({file,startLine,endLine}, {blameAdapter, impactAdapter})` | Two gates: lines predate the commit (**blame**) AND **no changed file depends on/references the file** (**impact**). Returns `unknown` — i.e. **fails open** — unless BOTH hold | `dismissalMayBeStale`'s entire token-intersection heuristic **and** `rationaleDependsOn` + its producer + skill-doc changes (**R3 H1, R3 M3**) |
+
+The decisive one is **`impactAdapter`**: *"returns true if no changed file in
+this diff depends on/references `file`"*. That is the reopen question asked
+**properly** — a real reachability analysis — where this plan's design asked it
+lexically ("do the hunks happen to mention a word the rationale used"). And
+`rationaleDependsOn` existed **only** to hand-declare cross-file dependencies
+that `impactAdapter` now computes mechanically; its "no producer" defect (R3 M3)
+dissolves because there is nothing left for an operator to declare.
+
+Under a Gate-A/B design, **four of the five carried findings simply evaporate**
+(R3 H1, R3 H3, R3 M1, R2 M1) — they were defects in machinery that should not be
+built. What remains is small: call `resolveAnchorLocation` + `tagPreExisting`
+from the `dismissed` branch through the existing `opts` DI seam (`ledger.mjs` is
+`shared-lib` and still may not import `audit-orchestration` — the caller
+computes and injects, exactly as this plan already specified).
+
+**One real gap survives, and it is the thing a future plan must solve**: these
+primitives need a **quote** (an `EvidenceAnchorSchema`-shaped citation), and a
+legacy ledger dismissal carries only prose `rulingRationale`. The tractable
+shape is to ask the adjudicating agent for **the quote its disproof rests on**
+when it writes a dismissal — strictly better than R1-H2's `rationaleDependsOn`
+ask (a quote is verifiable by `resolveAnchorLocation`; a hand-declared path
+list is not), and it satisfies GPT's compromise condition 2 more honestly than
+the field it actually asked for.
+
+**GPT's R1-H2 was more right than I credited.** It said *gate Phase 2 on the
+`EvidenceAnchorV2` contract*; I countered that anchors sit behind a blocked
+Phase-14 gate and that 100% of production runs the legacy path. **Both halves of
+my counter were true and remain true** — but neither of us anticipated the
+*primitives* landing in `main` **decoupled from the pipeline flip**. The tiered
+pipeline being OFF does not stop `ledger.mjs`'s caller from importing
+`evidence-triage`'s pure functions. The rebuttal won the schedule argument and
+lost the design argument.
+
+**This validates the deferral rather than undermining it**: had Phase 2 shipped
+on 2026-07-16 as specified, we would be deleting a bespoke tokenizer, an
+availability-record contract, a `rationaleDependsOn` field, its producer, and
+two skill-doc changes — 24 hours later.
 
 ### Why Phase 2 is not in this plan's scope (R3 stop decision)
 
