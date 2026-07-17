@@ -276,10 +276,23 @@ async function extractGraphAndViolations(repoRoot) {
 
   // Common JS/TS source-dir conventions, plus a fallback to the repo root
   // (dep-cruiser will then walk everything not excluded above).
+  //
+  // KNOWN LIMITATION — this allowlist is a silent-blindness generator. The
+  // `targets.length === 0` fallback below only fires when a repo matches
+  // NOTHING here, so a repo using a dir name absent from this list gets a
+  // SMALLER import graph that still reads as authoritative — no warning. That
+  // is exactly how `tests/` went unseen: only `scripts/` matched, so the
+  // largest domain in this repo (380 files) produced zero observed edges for
+  // months while being fully symbol-indexed by enumerateFiles(), which walks
+  // the whole repo. Two layers of one pipeline disagreeing about what the repo
+  // contains. Adding 'tests' fixes the instance, NOT the generator — the fix
+  // is unified discovery + a coverage invariant:
+  // docs/plans/observed-graph-discovery-unification.md
   const COMMON_SOURCE_DIRS = [
     'scripts', 'src', 'lib', 'app', 'apps', 'packages',
     'components', 'pages', 'server', 'api', 'routes',
     'frontend', 'backend', 'client',
+    'tests',
   ];
   let targets = COMMON_SOURCE_DIRS
     .map(d => path.join(repoRoot, d))

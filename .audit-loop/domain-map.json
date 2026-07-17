@@ -434,18 +434,35 @@
       "shared-lib"
     ],
     "tests": [
+      "arch-intent",
       "arch-memory",
+      "arm-eval",
+      "audit-orchestration",
       "brainstorm",
       "claude-hooks",
       "claudemd-management",
+      "dashboard",
+      "explain",
       "findings",
+      "fit-check",
+      "friction",
+      "gate-honesty",
       "install",
       "learning-store",
+      "memory-health",
+      "model-eval",
+      "nav-audit",
+      "persona-test",
       "plan",
+      "requirements",
       "scripts",
+      "security",
       "shared-lib",
+      "solo-control",
       "stores",
-      "tech-debt"
+      "tech-debt",
+      "ux-lock",
+      "visual-audit"
     ],
     "visual-audit": [
       "shared-lib"
@@ -641,5 +658,6 @@
     "supabase",
     "docs"
   ],
-  "_comment_allowedDeps": "BASELINE, NOT ENDORSEMENT (domain-map-reconciliation Phase C, 2026-07-17). Set to the OBSERVED graph AFTER Phase A fixed rule coverage (13 orphaned lib subsystems) and the file-lock move removed the false trapped-primitive edges — so these are real edges, not measurement artifacts. This makes the violation check a RATCHET: it cannot fail on what exists today, only on NEW undeclared edges. THREE entries are recorded debt, NOT intent: (1) shared-lib -> audit-orchestration/claude-hooks/model-eval/nav-audit/stores — ~6 top-level lib files (efficacy-lints, config, repo-inventory, audit-shadow, finalize-outcomes, audit-arms) are feature coordinators, not domain-neutral primitives; retag or move them. (2) stores -> model-eval/persona-test — a LAYER INVERSION: the persistence layer reaching UP into feature domains. (3) cross-skill-bridge -> 11 domains — AGENTS.md calls this a thin facade; eleven deps is not thin. Do not grow these three without fixing the underlying coupling."
+  "_comment_allowedDeps": "BASELINE, NOT ENDORSEMENT (domain-map-reconciliation Phase C, 2026-07-17). Set to the OBSERVED graph AFTER Phase A fixed rule coverage (13 orphaned lib subsystems) and the file-lock move removed the false trapped-primitive edges — so these are real edges, not measurement artifacts. This makes the violation check a RATCHET: it cannot fail on what exists today, only on NEW undeclared edges. THREE entries are recorded debt, NOT intent: (1) shared-lib -> audit-orchestration/claude-hooks/model-eval/nav-audit/stores — ~6 top-level lib files (efficacy-lints, config, repo-inventory, audit-shadow, finalize-outcomes, audit-arms) are feature coordinators, not domain-neutral primitives; retag or move them. (2) stores -> model-eval/persona-test — a LAYER INVERSION: the persistence layer reaching UP into feature domains. (3) cross-skill-bridge -> 11 domains — AGENTS.md calls this a thin facade; eleven deps is not thin. Do not grow these three without fixing the underlying coupling.",
+  "_comment_tests": "tests is a VERIFICATION domain: allowed one-way into everything, with the inverse PROHIBITED — no production domain may import tests (enforced by the absence of `tests` from every other allowedDeps entry; a violation surfaces as an undeclared edge). This entry was UNVERIFIABLE until 2026-07-17: extract.mjs handed dep-cruiser a COMMON_SOURCE_DIRS allowlist with no `tests`, so the largest domain in the repo (380 files) produced zero observed edges while being fully symbol-indexed — the 12 entries here were hand-written from real knowledge but could never be corroborated. With `tests` cruised, all 12 proved real (zero over-declaration) and 17 more appeared. See docs/plans/observed-graph-discovery-unification.md — the allowlist remains a silent-blindness generator; this fixed the instance, not the class."
 }
