@@ -59,6 +59,7 @@ export function readRecords(logPath) {
  * @returns {{totalRuns:number, historicalCompleteRuns:number, comparedRuns:number,
  *   legacyFailures:number, shadowFailures:number, excludedNoStage0Evidence:number,
  *   excludedDegenerateComparison:number, excludedFallback:number,
+ *   excludedMalformedAnchors:number,
  *   costDeltaUsd:object, latencyDeltaSec:object, findingOverlapRate:object,
  *   tieredRunStatusCounts:object, tieredFallbackReasons:object,
  *   shadowFailureReasons:object}}
@@ -141,7 +142,24 @@ export function summarize(records) {
     typeof c.tieredEligibleCount === 'number' &&
     typeof c.legacyEligibleCount === 'number' &&
     (c.tieredEligibleCount > 0 || c.legacyEligibleCount > 0);
-  const compared = historicalComplete.filter((r) => hasComparablePopulation(r.comparison));
+  // evidence-anchor-path-contract §7c — the anti-green rule with teeth.
+  // A run whose candidates were destroyed by OUR OWN schema is a contract
+  // failure, not a tiered-vs-legacy comparison: counting it would repeat the
+  // exact class of false-green this metric has already produced four times.
+  // `typeof === 'number'` (never truthiness): a historical row predating this
+  // field reads `undefined` = insufficient data, NOT "zero malformed
+  // confirmed" — the same shape-check `hasComparablePopulation` uses above.
+  const isContractFailure = (c) =>
+    typeof c.tieredStage0MalformedTripwire === 'number'
+    && c.tieredStage0MalformedTripwire > 0
+    && c.tieredStage0Verified === 0;
+  // Excluded BEFORE the population check: its tiered side is empty because our
+  // schema ate the candidates, so a legacy-only population would otherwise let
+  // it count as a legitimate 0%-overlap "recall failure" — attributing OUR bug
+  // to the tiered pipeline's quality.
+  const compared = historicalComplete
+    .filter((r) => !isContractFailure(r.comparison))
+    .filter((r) => hasComparablePopulation(r.comparison));
 
   // Exclusion reasons — computed over the same record sets, reported
   // separately (round-3 plan-audit M1's "not collapsed into one count").
@@ -155,6 +173,8 @@ export function summarize(records) {
   // measurement artifact).
   const excludedNoStage0Evidence = notCompared.filter((r) => r.comparison.tieredStage0Verified === 0).length;
   const excludedDegenerateComparison = notCompared.length - excludedNoStage0Evidence;
+
+  const excludedMalformedAnchors = withComparison.filter((r) => isContractFailure(r.comparison)).length;
 
   const costDeltas = compared.map((r) => (r.comparison.legacyCostUsd != null && r.comparison.tieredCostUsd != null) ? r.comparison.tieredCostUsd - r.comparison.legacyCostUsd : null).filter((v) => v != null);
   const latencyDeltas = compared.map((r) => (r.comparison.legacyLatencySec != null && r.comparison.tieredLatencySec != null) ? r.comparison.tieredLatencySec - r.comparison.legacyLatencySec : null).filter((v) => v != null);
@@ -172,6 +192,11 @@ export function summarize(records) {
     excludedNoStage0Evidence,
     excludedDegenerateComparison,
     excludedFallback,
+    // evidence-anchor-path-contract §7c — reported as its OWN named reason,
+    // never folded into excludedNoStage0Evidence: "our schema ate the
+    // candidates" and "the tiered pipeline found nothing" look identical in
+    // the aggregate and have opposite fixes.
+    excludedMalformedAnchors,
     costDeltaUsd: { mean: mean(costDeltas), median: median(costDeltas) },
     latencyDeltaSec: { mean: mean(latencyDeltas), median: median(latencyDeltas) },
     findingOverlapRate: { mean: mean(overlapRates), median: median(overlapRates) },

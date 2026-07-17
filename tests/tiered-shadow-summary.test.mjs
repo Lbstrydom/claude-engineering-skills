@@ -186,6 +186,75 @@ describe('two-metric window readiness — historicalCompleteRuns vs comparedRuns
   });
 });
 
+// ── Contract-failure runs are not comparisons (evidence-anchor-path-contract §7c) ──
+// THE anti-green test for this whole class. The measured reality this pins:
+// stage0Verified > 0 in 1 of 62 "complete" shadow runs, because our own schema
+// rejected every candidate as `fabricated`. Those runs reported as clean,
+// complete, zero-finding comparisons — the FOURTH false-green this metric has
+// produced. A run our contract broke is OUR bug, not a tiered-vs-legacy result.
+describe('contract-failure runs (malformed anchors) are excluded and named (§7c)', () => {
+  // Local fixture — the sibling block's OLD_SHAPE is scoped to its own describe.
+  const BASE = {
+    legacyCostUsd: 1, tieredCostUsd: 0.5, legacyLatencySec: 10, tieredLatencySec: 5,
+    overlapCount: 2, legacyFindingCount: 2, onlyTieredCount: 0, tieredRunStatus: 'complete',
+  };
+
+  test('a run whose candidates our own schema ate is NOT decision-grade, and says why', () => {
+    // The exact 2026-07-17 shape: legacy found plenty, tiered verified nothing,
+    // because Stage 0 rejected every candidate as malformed-by-our-schema.
+    const contractFailure = {
+      ...BASE,
+      legacyFindingCount: 8, overlapCount: 0, onlyTieredCount: 0,
+      legacyEligibleCount: 8, tieredEligibleCount: 0,
+      tieredStage0Verified: 0, tieredStage0MalformedTripwire: 8,
+    };
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: contractFailure }]);
+    assert.equal(summary.historicalCompleteRuns, 1, 'it IS a complete run — that is exactly the trap');
+    assert.equal(summary.comparedRuns, 0, 'but it is NOT a comparison: our schema, not the model, emptied the tiered side');
+    assert.equal(summary.excludedMalformedAnchors, 1, 'and it is named as OUR contract bug');
+  });
+
+  test('without the split it would have counted — the one-sided legacy population makes it look like a real recall failure', () => {
+    // Same row, minus the new field (i.e. the pre-fix world). The `||`
+    // population rule accepts it on legacy's 8 findings alone, so it counts as
+    // a legitimate 0%-overlap comparison — attributing our bug to tiered's
+    // recall. This is the regression this test exists to prevent.
+    const { tieredStage0MalformedTripwire, ...preFix } = {
+      ...BASE,
+      legacyFindingCount: 8, overlapCount: 0, onlyTieredCount: 0,
+      legacyEligibleCount: 8, tieredEligibleCount: 0,
+      tieredStage0Verified: 0, tieredStage0MalformedTripwire: 8,
+    };
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: preFix }]);
+    assert.equal(summary.comparedRuns, 1, 'precondition: the pre-fix shape really does count');
+    assert.equal(summary.excludedMalformedAnchors, 0);
+  });
+
+  test('absent field reads as insufficient data, NEVER as zero-malformed-confirmed (historical rows)', () => {
+    // The 62 pre-existing rows have no such key. `undefined > 0` is false, so
+    // truthiness would silently pass them — but the assertion that matters is
+    // that they are not RE-classified: they keep their existing verdict.
+    const historical = { ...BASE, legacyEligibleCount: 2, tieredEligibleCount: 2, tieredStage0Verified: 2 };
+    assert.equal(historical.tieredStage0MalformedTripwire, undefined, 'precondition: historical rows lack the field');
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: historical }]);
+    assert.equal(summary.comparedRuns, 1, 'a healthy historical row must still count');
+    assert.equal(summary.excludedMalformedAnchors, 0, 'absent is not a contract failure — it is no signal at all');
+  });
+
+  test('malformed > 0 but Stage 0 STILL verified some candidates → a real comparison, degraded not void', () => {
+    // Partial contract breakage is not a void run: the verified candidates are
+    // genuine evidence. Only a total wipe (verified === 0) voids the row —
+    // otherwise we would discard real signal on a partial bug.
+    const partial = {
+      ...BASE, legacyEligibleCount: 3, tieredEligibleCount: 2,
+      tieredStage0Verified: 2, tieredStage0MalformedTripwire: 1,
+    };
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: partial }]);
+    assert.equal(summary.comparedRuns, 1);
+    assert.equal(summary.excludedMalformedAnchors, 0);
+  });
+});
+
 // ── shadowFailureReasons — the live cause breakdown ───────────────────────
 // docs/plans/shadow-no-legacy-fallback.md decision #4. The shadow no longer
 // falls back, so tieredFallbackReasons goes quiet for NEW rows; without this

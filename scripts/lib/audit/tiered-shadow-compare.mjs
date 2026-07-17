@@ -318,6 +318,14 @@ export function compareAuditRunResults(legacyResult, tieredResult, opts = undefi
     // "did Stage 0 verify anything at all" number the summary's
     // `excludedNoStage0Evidence` reason and the CLI report both read.
     tieredStage0Verified: tieredResult._stageBreakdown?.stage0Verified ?? null,
+    // evidence-anchor-path-contract §7c: hoisted alongside tieredStage0Verified
+    // (same copy-straight-through convention) so a contract-bug run is
+    // diagnosable from the stored row, not just live stderr. Lands inside the
+    // existing `comparison` jsonb column — NO migration needed. `?? null`, never
+    // `?? 0`: absent must read as "insufficient data", never "zero malformed
+    // confirmed" (the same absent≠zero rule summarize() already applies to the
+    // eligible counts).
+    tieredStage0MalformedTripwire: tieredResult._stageBreakdown?.stage0MalformedTripwire ?? null,
     // Decision #9: per-fingerprint reasons for any pre_existing_independent
     // candidate whose debt-routing FAILED (restored to the Stage-1 pool
     // instead) — a silent restore would make the debt-routing path's own

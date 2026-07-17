@@ -274,24 +274,59 @@ export function mapHeadRangeToBase(headRange, hunks) {
  * (`runStage0EvidenceTriage`, via `adapters.headContentAdapter`); this
  * function never reads a file itself.
  *
+ * **Three failure classes, never one word** (evidence-anchor-path-contract
+ * plan §7a, 2026-07-17). This function previously returned `'fabricated'` —
+ * "the model hallucinated this" — for FIVE distinct causes, two of which are
+ * not about the model at all. That conflation is why a schema bug read as
+ * mass hallucination for weeks: measured on a real Sonnet run, 4/4 candidates
+ * were rejected `fabricated` and 4/4 were malformed by OUR schema, with 0/4
+ * genuine fabrications. The classes are now distinct because they have
+ * different owners and different fixes:
+ *
+ * | status | means | whose bug |
+ * |---|---|---|
+ * | `malformed` | the claim could not be PARSED — says nothing about the finding | **ours** (contract) |
+ * | `contradicted` | well-formed, but the diff DISPROVES its metadata | the model's |
+ * | `unsupported` | well-formed, but the quote is not in the diff or HEAD | the model's |
+ *
+ * `malformed` is deliberately NOT more permissive than the old behaviour — it
+ * still never reaches Stage 1 (its quote was never content-verified, and
+ * routing unverified evidence to a human is the failure INC-001 warns about).
+ * The change is attribution and visibility, not permissiveness.
+ *
  * @param {object} anchor - EvidenceAnchorSchema shape
  * @param {string} diffText - the full unified diff for this commit
  * @param {string|null} [headContent] - the file's current working-tree
  *   content, for the HEAD-fallback search on a hunk miss
- * @returns {{status: 'in_hunk'|'outside_hunk_in_head'|'unverifiable'|'fabricated',
+ * @returns {{status: 'in_hunk'|'outside_hunk_in_head'|'unverifiable'|'unsupported'|'contradicted'|'malformed',
+ *   reasonDetail?: string,
  *   headLineRange?: {startLine:number, endLine:number},
  *   hunks?: Array<{header: object|null, lines: string[]}>}}
  */
 export function resolveAnchorLocation(anchor, diffText, headContent) {
-  if (!EvidenceAnchorSchema.safeParse(anchor).success) return { status: 'fabricated' };
+  const parsed = EvidenceAnchorSchema.safeParse(anchor);
+  if (!parsed.success) {
+    // OUR contract rejected the claim before any evidence was examined. Carry
+    // the first issue so a recurrence is diagnosable from telemetry alone
+    // rather than needing a live repro (the 2026-07-17 root-cause hunt).
+    const issue = parsed.error.issues[0];
+    return { status: 'malformed', reasonDetail: `${issue.path.join('.') || '(root)'}: ${issue.message}` };
+  }
   const filePath = anchor.side === 'base' ? anchor.oldFile : anchor.newFile;
-  if (!filePath) return { status: 'fabricated' };
+  if (!filePath) return { status: 'malformed', reasonDetail: `no path for side='${anchor.side}'` };
   if (!diffText) return { status: 'unverifiable' };
   const section = extractFileDiffSection(diffText, filePath);
   if (!section) return { status: 'unverifiable' };
-  if (section.fileStatus !== anchor.fileStatus) return { status: 'fabricated' };
-  if (anchor.oldFile && anchor.oldFile !== section.oldPath) return { status: 'fabricated' };
-  if (anchor.newFile && anchor.newFile !== section.newPath) return { status: 'fabricated' };
+  // Metadata the diff can positively DISPROVE — a model claim, checked and refuted.
+  if (section.fileStatus !== anchor.fileStatus) {
+    return { status: 'contradicted', reasonDetail: `claimed fileStatus='${anchor.fileStatus}', diff shows '${section.fileStatus}'` };
+  }
+  if (anchor.oldFile && anchor.oldFile !== section.oldPath) {
+    return { status: 'contradicted', reasonDetail: 'oldFile does not match the diff section' };
+  }
+  if (anchor.newFile && anchor.newFile !== section.newPath) {
+    return { status: 'contradicted', reasonDetail: 'newFile does not match the diff section' };
+  }
 
   if (quoteAppearsOnSide(section.section, anchor.quote, anchor.side)) {
     return { status: 'in_hunk' };
@@ -307,8 +342,17 @@ export function resolveAnchorLocation(anchor, diffText, headContent) {
     }
   }
 
-  return { status: 'fabricated' };
+  return { status: 'unsupported', reasonDetail: 'quote not found in the diff section or HEAD content' };
 }
+
+/**
+ * The terminal-failure statuses `resolveAnchorLocation` can return — i.e. this
+ * anchor yielded no usable location. Exported as the single source of truth so
+ * a future class cannot be added to the resolver while a consumer's hardcoded
+ * status list silently keeps treating it as a success (the contract-drift
+ * shape this whole plan exists to close).
+ */
+export const ANCHOR_FAILURE_STATUSES = Object.freeze(['malformed', 'contradicted', 'unsupported']);
 
 /**
  * verifyAnchor — UNCHANGED (round-1/round-2 plan-audit M2 — a new
@@ -412,8 +456,16 @@ export function resolveScopeBucketForFinding(originCandidateIds, routingManifest
  * audit fix H3 — omission's `triggerAnchor` is itself a commission-type
  * fact and must be resolved the same way, not skipped).
  *
- * @returns {{envelope: object, status: 'in_hunk'|'outside_hunk_in_head'|'unverifiable'|'rejected',
- *   headLineRange?: object, hunks?: Array}}
+ * On total failure the TERMINAL CLASS is preserved rather than flattened to a
+ * single `'rejected'` (plan §7a): which class the last-tried anchor failed
+ * with decides whether this candidate is attributed to the model or to our own
+ * contract, and a flattened word would put the whole distinction back where it
+ * was. The fallback is still driven by "did we get a usable location", so
+ * every failure class is equally eligible to try alternatives — a malformed
+ * canonical anchor with a well-formed alternative still recovers.
+ *
+ * @returns {{envelope: object, status: 'in_hunk'|'outside_hunk_in_head'|'unverifiable'|'malformed'|'contradicted'|'unsupported',
+ *   reasonDetail?: string, headLineRange?: object, hunks?: Array}}
  */
 function resolveWithFallback(envelope, anchorField, diffText, headContentAdapter) {
   const originalAnchor = envelope.canonicalFinding[anchorField];
@@ -421,7 +473,7 @@ function resolveWithFallback(envelope, anchorField, diffText, headContentAdapter
   const originalHeadContent = typeof headContentAdapter === 'function' && originalFilePath
     ? headContentAdapter(originalFilePath) : null;
   const result = resolveAnchorLocation(originalAnchor, diffText, originalHeadContent);
-  if (result.status !== 'fabricated') return { envelope, ...result };
+  if (!ANCHOR_FAILURE_STATUSES.includes(result.status)) return { envelope, ...result };
 
   for (let i = 0; i < envelope.evidenceAlternatives.length; i++) {
     const alt = envelope.evidenceAlternatives[i];
@@ -431,11 +483,14 @@ function resolveWithFallback(envelope, anchorField, diffText, headContentAdapter
     const altHeadContent = typeof headContentAdapter === 'function' && altFilePath
       ? headContentAdapter(altFilePath) : null;
     const altResult = resolveAnchorLocation(alt[anchorField], diffText, altHeadContent);
-    if (altResult.status === 'in_hunk' || altResult.status === 'outside_hunk_in_head') {
+    if (!ANCHOR_FAILURE_STATUSES.includes(altResult.status)) {
       return { envelope: promoteAlternative(envelope, i), ...altResult };
     }
   }
-  return { envelope, status: 'rejected' };
+  // Every source failed. Keep the CANONICAL anchor's class as the envelope's
+  // verdict — it is the claim under adjudication; an alternative's class would
+  // attribute the candidate on evidence the finding didn't actually assert.
+  return { envelope, ...result };
 }
 
 /**
@@ -488,28 +543,49 @@ function resolveWithFallback(envelope, anchorField, diffText, headContentAdapter
  *   G2), matching `blameAdapter`/`impactAdapter`'s existing injection
  *   pattern rather than implicit threading.
  * @param {() => string} [adapters.clock] - injectable for deterministic tests; defaults to the real clock in production
- * @returns {{verified: Array<object>, preExistingIndependent: Array<object>, rejected: Array<object>}}
+ * @returns {{verified: Array<object>, preExistingIndependent: Array<object>,
+ *   rejected: Array<object>, malformed: Array<object>}}
+ *
+ * `malformed` is a FOURTH bucket, split out of `rejected` (plan §7a): a
+ * candidate our own contract could not parse is not evidence about the model,
+ * and blending it into `rejected` is what made a 100%-schema-rejection run
+ * read as 100% model hallucination. Both remain local telemetry only and
+ * neither reaches Stage 1 — the split is attribution, not routing (D4).
  */
 export function runStage0EvidenceTriage(envelopes, ctx, adapters = {}) {
   const verified = [];
   const preExistingIndependent = [];
   const rejected = [];
+  const malformed = [];
 
   for (const rawEnvelope of envelopes) {
     const evidenceType = rawEnvelope.canonicalFinding.evidenceType;
     const anchorField = evidenceType === 'omission' ? 'triggerAnchor' : 'anchor';
     const reasonPrefix = evidenceType === 'omission' ? 'omission_trigger' : 'commission_anchor';
 
-    const { envelope, status, headLineRange, hunks } = resolveWithFallback(
+    const { envelope, status, reasonDetail, headLineRange, hunks } = resolveWithFallback(
       rawEnvelope, anchorField, ctx.diffText, adapters.headContentAdapter,
     );
 
-    if (status === 'rejected') {
+    if (ANCHOR_FAILURE_STATUSES.includes(status)) {
+      // One reasonCode per class — never the old single
+      // `_fabricated_all_alternatives_failed`, which could not distinguish
+      // "we broke the contract" from "the model lied".
+      const REASON_BY_STATUS = {
+        malformed: 'malformed_anchor',
+        contradicted: 'metadata_mismatch',
+        unsupported: 'quote_not_found',
+      };
       envelope.stageDecisions.push({
-        stage: 'stage0a', outcome: 'rejected', reasonCode: `${reasonPrefix}_fabricated_all_alternatives_failed`,
-        evidenceRef: envelope.fingerprint, createdAt: nowIso(adapters.clock),
+        stage: 'stage0a',
+        outcome: status === 'malformed' ? 'malformed' : 'rejected',
+        reasonCode: `${reasonPrefix}_${REASON_BY_STATUS[status]}`,
+        reasonDetail: reasonDetail ?? null,
+        evidenceRef: envelope.fingerprint,
+        createdAt: nowIso(adapters.clock),
       });
-      rejected.push(envelope); // LOCAL TELEMETRY ONLY — caller must never write this to the ledger
+      // LOCAL TELEMETRY ONLY — the caller must never write either to the ledger.
+      (status === 'malformed' ? malformed : rejected).push(envelope);
       continue;
     }
 
@@ -591,5 +667,5 @@ export function runStage0EvidenceTriage(envelopes, ctx, adapters = {}) {
     }
   }
 
-  return { verified, preExistingIndependent, rejected };
+  return { verified, preExistingIndependent, rejected, malformed };
 }

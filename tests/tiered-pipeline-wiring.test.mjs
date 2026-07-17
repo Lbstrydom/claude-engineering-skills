@@ -316,8 +316,20 @@ describe('static pins — Stage 0 relevance-split wiring (docs/plans/stage0-evid
     assert.match(src, /headContentAdapter:\s*makeHeadContentAdapter\(/);
   });
 
-  test('runStage0EvidenceTriage is called with the 3-bucket destructure (verified/preExistingIndependent/rejected)', () => {
-    assert.match(src, /const \{ verified: stage0Verified, preExistingIndependent, rejected: stage0Rejected \} = runStage0EvidenceTriage\(/);
+  // 4 buckets since evidence-anchor-path-contract §7a (2026-07-17): `malformed`
+  // split out of `rejected`. The distinction is load-bearing, not cosmetic —
+  // `rejected` means the model's evidence failed, `malformed` means OUR schema
+  // couldn't parse the claim, and blending them made a 100%-schema-rejection
+  // run read as 100% model hallucination (stage0Verified > 0 in 1 of 62 runs).
+  // Pinned statically so a future refactor cannot silently drop the 4th bucket
+  // on the floor — dropping it would restore the blend without any test going red.
+  test('runStage0EvidenceTriage is called with the 4-bucket destructure (verified/preExistingIndependent/rejected/malformed)', () => {
+    assert.match(src, /const \{ verified: stage0Verified, preExistingIndependent, rejected: stage0Rejected, malformed: stage0Malformed \} = runStage0EvidenceTriage\(/);
+  });
+
+  test('the malformed bucket reaches telemetry AND stderr — never counted silently', () => {
+    assert.match(src, /stage0MalformedTripwire: stage0Malformed\.length/, 'must reach _stageBreakdown');
+    assert.match(src, /CONTRACT BUG/, 'a contract bug must be loud on stderr, not just a counter');
   });
 
   test('debt-routing reconciliation and the routing manifest are wired before Stage 1', () => {

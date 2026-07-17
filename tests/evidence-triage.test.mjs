@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import {
   verifyAnchor, tagPreExisting, runStage0EvidenceTriage,
   resolveAnchorLocation, mapHeadLineToBase, mapHeadRangeToBase,
-  resolveScopeBucketForFinding,
+  resolveScopeBucketForFinding, ANCHOR_FAILURE_STATUSES,
 } from '../scripts/lib/audit/evidence-triage.mjs';
 import { createEnvelope, mergeIntoEnvelopes, promoteAlternative } from '../scripts/lib/audit/candidate-envelope.mjs';
 
@@ -293,6 +293,94 @@ describe('promoteAlternative', () => {
   });
 });
 
+// ── Stage-0 result matrix (evidence-anchor-path-contract §7a, 2026-07-17) ────
+// The bug this pins: `resolveAnchorLocation` returned one word — `fabricated`,
+// i.e. "the model hallucinated this" — for FIVE causes, two of which are our
+// own contract failing to parse a claim it never evaluated. Measured on a real
+// Sonnet run: 4/4 candidates rejected `fabricated`, 4/4 malformed by OUR
+// schema, 0/4 genuine fabrications. A metric that cannot tell "we broke the
+// contract" from "the model lied" cannot detect its own bugs — and didn't, for
+// weeks (stage0Verified > 0 in 1 of 62 completed shadow runs).
+describe('resolveAnchorLocation — the three failure classes are distinct (§7a matrix)', () => {
+  it('malformed: a schema-invalid anchor is OUR contract bug, never `unsupported`/`contradicted`', () => {
+    // The exact live shape: fileStatus 'modified' with oldFile omitted. The
+    // quote below is REAL and verbatim from DIFF — proving the verdict is
+    // about our schema, not about the evidence.
+    const { oldFile, ...noOldFile } = HEAD_ANCHOR;
+    const r = resolveAnchorLocation(noOldFile, DIFF, null);
+    assert.equal(r.status, 'malformed');
+    assert.match(r.reasonDetail, /oldFile/, 'must name the field so a recurrence is diagnosable from telemetry alone');
+  });
+
+  it('contradicted: well-formed, but the diff disproves the claimed fileStatus', () => {
+    const anchor = { ...HEAD_ANCHOR, fileStatus: 'added' }; // DIFF shows it modified
+    const r = resolveAnchorLocation(anchor, DIFF, null);
+    assert.equal(r.status, 'contradicted');
+    assert.match(r.reasonDetail, /fileStatus/);
+  });
+
+  it('unsupported: well-formed and consistent, but the quote is not in the diff — a GENUINE fabrication', () => {
+    const r = resolveAnchorLocation({ ...HEAD_ANCHOR, quote: 'never appears anywhere' }, DIFF, null);
+    assert.equal(r.status, 'unsupported');
+  });
+
+  it('unverifiable is unchanged — file absent from the diff still gets the benefit of the doubt', () => {
+    const anchor = { ...HEAD_ANCHOR, diffPathId: 'src/nope.js', oldFile: 'src/nope.js', newFile: 'src/nope.js' };
+    assert.equal(resolveAnchorLocation(anchor, DIFF, null).status, 'unverifiable');
+  });
+
+  it('in_hunk is unchanged for a real verbatim quote', () => {
+    assert.equal(resolveAnchorLocation(HEAD_ANCHOR, DIFF, null).status, 'in_hunk');
+  });
+
+  it('ANCHOR_FAILURE_STATUSES is the single source of truth for "no usable location"', () => {
+    assert.deepEqual([...ANCHOR_FAILURE_STATUSES].sort(), ['contradicted', 'malformed', 'unsupported']);
+    // A success status must never be in the failure set — the bug shape where a
+    // consumer's hardcoded list silently diverges from the resolver.
+    for (const ok of ['in_hunk', 'outside_hunk_in_head', 'unverifiable']) {
+      assert.ok(!ANCHOR_FAILURE_STATUSES.includes(ok), `${ok} must not be a failure status`);
+    }
+  });
+});
+
+describe('runStage0EvidenceTriage — malformed is a distinct bucket (§7a, D4)', () => {
+  function mkEnv(finding, sourceModel = 'gpt') {
+    return createEnvelope({ ...finding, _fingerprint: 'fp' }, { sourceModel, pass: 'backend' });
+  }
+
+  it('a malformed candidate lands in `malformed`, NOT `rejected` — attribution, not routing', () => {
+    const { oldFile, ...noOldFile } = HEAD_ANCHOR;
+    const env = mkEnv({ evidenceType: 'commission', anchor: noOldFile });
+    const { verified, rejected, malformed } = runStage0EvidenceTriage([env], { diffText: DIFF }, {});
+    assert.equal(malformed.length, 1, 'our contract bug is its own bucket');
+    assert.equal(rejected.length, 0, 'must NOT be blamed on the model');
+    // D4 / INC-001: still not permissive — its quote was never content-verified.
+    assert.equal(verified.length, 0, 'malformed must never reach the Stage-1 eligible pool');
+    assert.equal(malformed[0].stageDecisions[0].outcome, 'malformed');
+    assert.equal(malformed[0].stageDecisions[0].reasonCode, 'commission_anchor_malformed_anchor');
+  });
+
+  it('a genuinely fabricated quote still lands in `rejected` — the model IS to blame there', () => {
+    const env = mkEnv({ evidenceType: 'commission', anchor: { ...HEAD_ANCHOR, quote: 'never appears' } });
+    const { rejected, malformed } = runStage0EvidenceTriage([env], { diffText: DIFF }, {});
+    assert.equal(rejected.length, 1);
+    assert.equal(malformed.length, 0);
+    assert.equal(rejected[0].stageDecisions[0].reasonCode, 'commission_anchor_quote_not_found');
+  });
+
+  it('every candidate lands in exactly one bucket — none silently vanishes', () => {
+    const { oldFile, ...noOldFile } = HEAD_ANCHOR;
+    const envs = [
+      mkEnv({ evidenceType: 'commission', anchor: HEAD_ANCHOR }),                                  // in_hunk
+      mkEnv({ evidenceType: 'commission', anchor: { ...HEAD_ANCHOR, quote: 'never appears' } }),   // unsupported
+      mkEnv({ evidenceType: 'commission', anchor: noOldFile }),                                    // malformed
+    ];
+    const r = runStage0EvidenceTriage(envs, { diffText: DIFF }, {});
+    const total = r.verified.length + r.rejected.length + r.malformed.length + r.preExistingIndependent.length;
+    assert.equal(total, envs.length, 'envelope-unit partition must balance');
+  });
+});
+
 describe('runStage0EvidenceTriage — evidenceType branch (Gemini gate round-1 finding #G4)', () => {
   function makeEnvelope(finding, sourceModel = 'gpt') {
     return createEnvelope({ ...finding, _fingerprint: 'fp' }, { sourceModel, pass: 'backend' });
@@ -339,7 +427,11 @@ describe('runStage0EvidenceTriage — evidenceType branch (Gemini gate round-1 f
     assert.equal(verified.length, 0);
     assert.equal(rejected.length, 1);
     assert.equal(rejected[0].stageDecisions[0].outcome, 'rejected');
-    assert.equal(rejected[0].stageDecisions[0].reasonCode, 'commission_anchor_fabricated_all_alternatives_failed');
+    // §7a: the reasonCode now names the CLASS. This case is a real fabrication
+    // (well-formed anchor, quote absent), so it is `quote_not_found` — the old
+    // `_fabricated_all_alternatives_failed` could not distinguish this from our
+    // own schema failing to parse the claim.
+    assert.equal(rejected[0].stageDecisions[0].reasonCode, 'commission_anchor_quote_not_found');
   });
 
   it('rejects an anchor whose claimed fileStatus mismatches the diff (audit fix H3 — metadata cross-check)', () => {
@@ -451,25 +543,28 @@ describe('resolveAnchorLocation — Gate A (docs/plans/stage0-evidence-relevance
     assert.equal(r.status, 'unverifiable');
   });
 
-  it('returns fabricated when the quote is nowhere — not in a hunk, not in headContent', () => {
+  it('returns unsupported when the quote is nowhere — not in a hunk, not in headContent', () => {
+    // §7a rename: `fabricated` -> `unsupported`. Same behaviour, honest name —
+    // the anchor parsed fine and its metadata matched; only the evidence is
+    // missing, which IS a model fabrication and is now the bucket's ONLY meaning.
     const anchor = { ...HEAD_ANCHOR, quote: 'this text does not exist anywhere' };
     const r = resolveAnchorLocation(anchor, DIFF, FOO_HEAD_CONTENT);
-    assert.equal(r.status, 'fabricated');
+    assert.equal(r.status, 'unsupported');
   });
 
   it('does not attempt the HEAD-fallback for a base-side anchor (discovery never saw base content)', () => {
     const anchor = { ...HEAD_ANCHOR, side: 'base', quote: 'return 42;', startLine: 2, endLine: 2 };
     // 'return 42;' is real HEAD content but this is a base-side anchor — it
     // has no hunk match either (the hunk's base side is "return a;"), so it
-    // must be fabricated, never outside_hunk_in_head.
+    // must be unsupported, never outside_hunk_in_head.
     const r = resolveAnchorLocation(anchor, DIFF, FOO_HEAD_CONTENT);
-    assert.equal(r.status, 'fabricated');
+    assert.equal(r.status, 'unsupported');
   });
 
   it('never fires the HEAD-fallback when headContent is absent (matches pre-restructure behavior exactly)', () => {
     const anchor = { ...HEAD_ANCHOR, quote: 'return 42;', startLine: 2, endLine: 2 };
     const r = resolveAnchorLocation(anchor, DIFF, null);
-    assert.equal(r.status, 'fabricated');
+    assert.equal(r.status, 'unsupported');
   });
 });
 

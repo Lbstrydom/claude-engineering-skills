@@ -1,10 +1,15 @@
 # Plan: Domain-Map Reconciliation (architecture-intent backlog)
 
 - **Date**: 2026-07-14 (refreshed 2026-07-17 against a live observed graph)
-- **Status**: Ready to execute — item 9 landed 2026-07-17; items 1-8, 11-13 pending
+- **Status**: In Progress — Phases A/B landed 2026-07-17 (`f94371c`); **Phase C is the remaining work**
 - **Author**: Claude + Louis
 - **Scope**: backend (`.audit-loop/domain-map.json` + intent bookkeeping; one
   extractor line under item 3 — see its coupling note)
+
+> **Start at "Phase C" below.** The original items 1-13 table is retained as the
+> historical capture; Phase A reshaped most of it (see "Progress"). Do not
+> execute items 1-8 as written — roughly half their edges were artifacts of
+> missing rules and no longer exist.
 
 ## Origin
 
@@ -271,22 +276,137 @@ hashed in `scripts/.sync-manifest.json`. Nothing to do.
 > capturing an audit backlog into a plan, record the **mechanical derivation**
 > (like the repro command above), not the model's summary of it.
 
-## Execution sketch (one sitting, ~2-3 h)
+## Progress — Phases A & B landed 2026-07-17 (commit `f94371c`)
 
-1. Edit [.audit-loop/domain-map.json](../../.audit-loop/domain-map.json):
-   path-rule + `allowedDeps` changes per the table (items 1-8, 11-13). Item 3
-   additionally touches `extract.mjs` — same commit, per its coupling note.
-2. **Bootstrap order is load-bearing** (AGENTS.md): `npm run dashboard:setup`
-   (`arch:refresh` → `arch:render` → `dashboard:build`) — editing
-   `domain-map.json` alone does not retag existing DB rows.
-3. Verify: re-run the repro command above and confirm it prints nothing; re-run
-   an audit and confirm the family no longer fires.
-   - **Expect `manual`, not `both`, for `tests →*` edges unless item 3's
-     extractor line lands.** The original step 3 said to look for `both`/`manual`
-     on the Architecture tab; for `tests` that was unachievable — see the
-     blindness note. Every other item's edges are genuinely observed and should
-     show `both`.
-4. ~~Add the item-9 guard~~ — ✅ done, see above.
+The reconciliation ran into a **phasing bug in this plan's own premise**: items
+1-8 all said *"declare these edges"*, but a large share of those edges existed
+only because of **missing rules**. Declaring them would have cemented a
+measurement artifact into committed intent. Correct order is rules → re-derive
+→ declare.
+
+**Phase A — rule coverage (DONE).** `shared-lib` was not a domain, it was the
+residue: `scripts/lib/**` is the second-to-last rule, so all 13 lib subsystems
+added since the rules were written (`arch-intent`, `arm-eval`, `model-eval`,
+`learning`, `requirements`, `solo-control`, `db`, `gate-honesty`, `friction`,
+`fit-check`, `cycle`, `persona`, `security`) landed in it silently — 70 of its
+156 files. Each now owns a rule. **shared-lib: 156 → 84 files, subdirectory
+residue 70 → 0. Observed graph: 21 → 30 domains.**
+
+**Phase A.2 — the trapped-primitive fix (DONE).** The mirror-image bug: the
+tagger reads *location* as ownership, so a domain-neutral primitive sitting in
+a feature directory forges edges. `lib/brainstorm/file-lock.mjs` (a sentinel
+lock, 5 consumers across 5 domains) made `requirements → brainstorm` assert
+that the requirements ledger depends on brainstorming. **Moved to `lib/` root**
+rather than patched with a per-file rule — location was the thing that lied.
+`friction → brainstorm` and `shared-lib → brainstorm` vanished;
+`requirements → brainstorm` correctly **remains** (gap-challenge.mjs really
+imports brainstorm's `openai-adapter`, which injects `BRAINSTORM_SYSTEM_PROMPT`).
+Removing the false edge left the true one standing.
+
+**Phase B — re-derive (DONE).** `arch:refresh` + `arch:render`.
+
+**The trapped-primitive sweep (DONE — clean).** Enumerated every file living in
+a `scripts/lib/<feature>/` directory that is imported from outside it: **92
+candidates, exactly 1 trapped primitive** (`file-lock.mjs`, already fixed). The
+mechanical shape is far too broad on its own — `store/repo.mjs` has 8 foreign
+importer domains because `stores` is a *layer*, and that is healthy. The
+distinguishing signal is **purpose, not import count**: every other candidate's
+own `@fileoverview` scopes it to its owner (`glob-match.mjs` → "accept-v1
+markers + audit scope checks"; `decision-logger.mjs` → "for the
+adaptive-learning system"; `sarif-formatter.mjs` → "for CLAUDE.md hygiene
+linter"). `file-lock.mjs` was the only file whose stated purpose had nothing to
+do with its folder. **Do not re-run this as a mechanical gate** — it is 91/92
+false-positive by construction.
+
+## Phase C — declare the remainder (THE REMAINING WORK)
+
+Everything below is derived from the post-Phase-A observed graph via the repro
+command above. These edges have survived rule-coverage correction and the
+trapped-primitive sweep, so they are **real**.
+
+### 7b. Implementation phases
+
+**Phase C1 — domains with no `allowedDeps` entry at all (11).** Add verbatim:
+
+```
+"arch-intent":  ["shared-lib"]
+"arm-eval":     ["shared-lib","stores"]
+"explain":      ["shared-lib"]
+"fit-check":    ["shared-lib"]
+"friction":     ["security","shared-lib","stores"]
+"gate-honesty": ["shared-lib"]
+"model-eval":   ["audit-orchestration","shared-lib","stores"]
+"persona-test": ["findings","learning-store","shared-lib","stores","ux-lock"]
+"requirements": ["brainstorm","plan","shared-lib"]
+"security":     ["shared-lib"]
+"solo-control": ["shared-lib"]
+```
+
+**Phase C2 — undeclared edges on existing entries (11).** Union in:
+
+```
+audit-orchestration += arch-intent, arch-memory, arm-eval, claude-hooks, model-eval, requirements, stores
+brainstorm          += arm-eval
+claudemd-management += shared-lib          # its entry is currently an explicit []
+cross-skill-bridge  += arch-memory, arm-eval, audit-orchestration, findings, friction, nav-audit, persona-test, scripts, stores
+dashboard           += audit-orchestration, learning-store, nav-audit, scripts, stores, visual-audit
+install             += gate-honesty, stores
+learning-store      += stores
+memory-health       += stores
+scripts             += arch-intent, arm-eval, audit-orchestration, fit-check, model-eval, persona-test, requirements, security, solo-control, ux-lock
+shared-lib          += audit-orchestration, claude-hooks, model-eval, nav-audit, stores
+stores              += model-eval, persona-test
+```
+
+**Phase C3 — `tests` (item 3).** `allowedDeps.tests` declares 12 domains and
+observes **zero** — the blindness now shows up as pure over-declaration. Add
+`'tests'` to `COMMON_SOURCE_DIRS` and extend the entry 12 → 20, same commit
+(see item 3's coupling note).
+
+**Phase C4 — annotate, don't hide, the known debt** (see the honesty note
+below): `root-scripts` declares `install` but never observes it — drop it or
+justify it.
+
+> **Phase C is a BASELINE (a ratchet), not an endorsement — say so in the map.**
+> Setting `allowedDeps` = observed makes the violation check **vacuous**: it can
+> never fail if whatever the code does is permitted. That is an acceptable and
+> normal baseline — new edges still get flagged, which is the ratchet — but only
+> if we are explicit that these three are *recorded debt*, not intent:
+> - **`shared-lib → audit-orchestration, claude-hooks, model-eval, nav-audit,
+>   stores`** — survives Phase A, so it is real: ~5 top-level lib files
+>   (`efficacy-lints`, `config`, `repo-inventory`, `audit-shadow`,
+>   `finalize-outcomes`, `audit-arms`) are feature coordinators, not primitives.
+>   Retagging or moving them is follow-on work.
+> - **`stores → model-eval, persona-test`** — a **layer inversion**: the
+>   persistence layer reaching *up* into feature domains. Worth its own look.
+> - **`cross-skill-bridge → 9 domains`** — AGENTS.md calls this a "thin façade".
+>   Nine dependencies is not thin.
+
+### 9. Acceptance Criteria
+
+1. The repro command (above) prints **nothing** — zero undeclared edges, zero
+   `NO ENTRY` domains.
+2. `npm run check` passes (includes `npm test`, which carries the dead-intent guard).
+3. `tests/domain-map-dead-intent.test.mjs` green — every declared domain owns ≥1 path.
+4. Every domain in `rules` has a `domainPurposes` entry (dashboard hygiene).
+5. **No over-declaration**: no `allowedDeps` value that the observed graph never
+   shows, except where justified in prose. Guards against the check going
+   vacuous in the *other* direction.
+6. The three known-debt declarations above carry an inline `_comment` in
+   `domain-map.json` naming them as baselined debt, not intent.
+7. `npm run dashboard:setup` completes; the Architecture tab shows the declared
+   edges as `both` (observed ∩ manual) — **except `tests → *`, which will be
+   `manual`-only unless C3's extractor line lands.**
+
+### 11. Execution Clustering
+
+| Cluster | Scope | Files | fix-gate | Coupling |
+|---|---|---|---|---|
+| **C1** | Phase C1 + C2 + C4 — pure `allowedDeps` declaration + debt comments | `.audit-loop/domain-map.json` (modify) | yes | None. Map-only; no runtime behaviour. |
+| **C2** | Phase C3 — `tests` blindness: extractor + `allowedDeps.tests` | `.audit-loop/domain-map.json` (modify), `scripts/symbol-index/extract.mjs` (modify) | final | **Internally coupled — both edits in ONE commit** (extractor alone adds 8 fresh violations; declaration alone is uncorroborated). Independent of C1. |
+
+Close-out (outside the phase set): `npm run dashboard:setup`, then re-run the
+repro command and `npm run check`.
 
 ## Non-goals
 

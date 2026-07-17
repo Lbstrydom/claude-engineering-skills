@@ -757,7 +757,7 @@ export async function runTieredAuditPipeline(ctx) {
   // ── Stage 0 — deterministic triage ─────────────────────────────────────
   const stage0Start = Date.now();
   const stage0RelevanceContext = await buildStage0RelevanceContext(ctx, envelopes);
-  const { verified: stage0Verified, preExistingIndependent, rejected: stage0Rejected } = runStage0EvidenceTriage(
+  const { verified: stage0Verified, preExistingIndependent, rejected: stage0Rejected, malformed: stage0Malformed } = runStage0EvidenceTriage(
     envelopes, { diffText: ctx.diffText },
     {
       blameAdapter: makeBlameAdapter(stage0RelevanceContext, ctx.auditBaseCommit),
@@ -765,6 +765,24 @@ export async function runTieredAuditPipeline(ctx) {
       headContentAdapter: makeHeadContentAdapter(stage0RelevanceContext),
     },
   );
+  // LOUD on any malformed candidate (evidence-anchor-path-contract §7c): a
+  // candidate our own contract couldn't parse is OUR bug, and it previously
+  // vanished into `stage0Rejected` where it read as the model hallucinating.
+  // stderr only — the shadow is observation-only and must never gate a build
+  // (openai-audit.mjs:427), so this never touches the exit code.
+  if (stage0Malformed.length > 0) {
+    const byReason = stage0Malformed.reduce((acc, env) => {
+      const d = env.stageDecisions[env.stageDecisions.length - 1];
+      const key = d?.reasonDetail ?? d?.reasonCode ?? 'unknown';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    process.stderr.write(
+      `  [stage0] CONTRACT BUG — ${stage0Malformed.length}/${envelopes.length} candidate(s) rejected as MALFORMED by our own schema, not by evidence. `
+      + `These are not model fabrications. Reasons: ${JSON.stringify(byReason)}\n`,
+    );
+  }
+
   const { eligible: restoredFromDebtRouting, debtRoutedFiles, debtRoutingIncomplete } = await routePreExistingIndependent(preExistingIndependent, ctx);
   const stage0EligibleForStage1 = [...stage0Verified, ...restoredFromDebtRouting];
   // Stage 0 routing manifest (decision #8) — built from every envelope that
@@ -886,7 +904,7 @@ export async function runTieredAuditPipeline(ctx) {
     .join('\n');
   const overall_reasoning = [
     `**Discovery portfolio**:\n${generatorSummary || 'n/a'}`,
-    `**Stage 0**: ${stage0Verified.length} verified, ${preExistingIndependent.length} pre_existing_independent (${debtRoutedFiles.length} files debt-routed, ${debtRoutingIncomplete.length} restored to eligible pool), ${stage0Rejected.length} rejected (local telemetry only)`,
+    `**Stage 0**: ${stage0Verified.length} verified, ${preExistingIndependent.length} pre_existing_independent (${debtRoutedFiles.length} files debt-routed, ${debtRoutingIncomplete.length} restored to eligible pool), ${stage0Rejected.length} rejected — model evidence failure, ${stage0Malformed.length} malformed — OUR contract bug, not the model (both local telemetry only)`,
     `**Stage 1**: ${triageResult.mechanicalDismissed.length} mechanical_dismissed, ${triageResult.escalated.length} escalated, ${triageResult.confirmedSurvivor.length} confirmed_survivor (direct to human queue), ${triageResult.budgetExhausted.length} budget_exhausted (not reviewed this round)`,
     `**Stage 2**: ${stage2Result.verified.length} verified, ${stage2Result.reversed.length} reversed, ${stage2Result.confirmedDismissal.length} confirmed_dismissal, ${stage2Result.missedCandidates.length} missed_candidate, ${stage2Result.unresolved.length} pending_adjudication`,
   ].join('\n\n');
@@ -958,6 +976,15 @@ export async function runTieredAuditPipeline(ctx) {
       // this as `tieredStage0Verified`), not just the raw Gate-A bucket.
       stage0Verified: stage0EligibleForStage1.length,
       stage0Rejected: stage0Rejected.length,
+      // Split out of stage0Rejected (evidence-anchor-path-contract §7a):
+      // envelope-unit count of candidates OUR OWN contract could not parse.
+      // Distinct from stage0Rejected (model evidence failures) because the two
+      // have different owners — blending them is what let a 100%-schema-
+      // rejection run read as 100% model hallucination for weeks.
+      // NOTE the unit: this is the Stage-0 TRIPWIRE (envelopes). The primary
+      // pre-envelope hydration counter (`discoveryMalformedRaw`, raw units)
+      // arrives with Cluster B; the two are never summed (§7a).
+      stage0MalformedTripwire: stage0Malformed.length,
       stage0PreExistingIndependent: preExistingIndependent.length,
       stage0DebtRouted: debtRoutedFiles.length,
       stage0DebtRoutingIncomplete: debtRoutingIncomplete.length,
