@@ -70,14 +70,21 @@ const TOKEN  = `docs/(?:${SEG}/)*(?:${PHSTEM}|${STEM})\\.md`;
 //
 // Trailing is TWO negative lookaheads, not a boundary-class member:
 //   (?![A-Za-z0-9_-])   — `.mdx`, `real.md-foo` are not this token
-//   (?![./][A-Za-z0-9_]) — a `.` or `/` that CONTINUES into a longer token is
+//   (?![./][A-Za-z0-9._-]) — a `.` or `/` that CONTINUES into a longer token is
 //                          not a terminator: `docs/plans/real.md.bak` and
 //                          `docs/plans/real.md/obsolete` must NOT yield
-//                          `real.md`. But a `.` followed by end/space/punct IS
-//                          a sentence period (`See docs/plans/a.md.`) and still
-//                          terminates — the second char after `.` must be a
-//                          word char for the guard to fire.
-const REF_RE = new RegExp(`(?<![A-Za-z0-9._/*-])(${TOKEN})(?![A-Za-z0-9_-])(?![./][A-Za-z0-9_])`, 'g');
+//                          `real.md`. The continuation class is `[A-Za-z0-9._-]`
+//                          — it MUST equal SEG/STEM, because those permit `.`
+//                          and `-` at every position, so `a.md.-foo` and
+//                          `a.md..x` are continuations too (an earlier draft
+//                          used `[A-Za-z0-9_]` and leaked both). But a `.`
+//                          followed by end/space/punct IS a sentence period
+//                          (`See docs/plans/a.md.`) and still terminates — the
+//                          char after `.`/`/` must be a SEG char for the guard
+//                          to fire. (A real longer `.md` file like
+//                          `a.md.v2.md` still matches whole — it is a valid
+//                          STEM + `.md`.)
+const REF_RE = new RegExp(`(?<![A-Za-z0-9._/*-])(${TOKEN})(?![A-Za-z0-9_-])(?![./][A-Za-z0-9._-])`, 'g');
 
 // `(planned)` binds to its OWN token only: immediately following, separated by
 // at most one space, or by a single closing backtick/paren then one space.

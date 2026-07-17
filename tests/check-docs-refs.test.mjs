@@ -48,6 +48,11 @@ describe('check-docs-refs / extractRefs — grammar', () => {
     ['md.bak is not a citation', 'docs/plans/real.md.bak', []],
     ['md/obsolete is not a citation', '[p](docs/plans/real.md/obsolete)', []],
     ['sentence period still terminates', 'See docs/plans/real.md. Next.', [{ target: 'docs/plans/real.md', kind: 'concrete' }]],
+    // R3-M3: the continuation guard's char class must equal SEG/STEM — those
+    // permit `.` and `-`, so these are continuations too, not terminations.
+    ['dot-dash continuation', 'docs/plans/a.md.-foo', []],
+    ['double-dot continuation', 'docs/plans/a.md..x', []],
+    ['a genuinely longer .md file still matches whole', 'docs/plans/a.md.v2.md', [{ target: 'docs/plans/a.md.v2.md', kind: 'concrete' }]],
 
     // ── R2-H3: a CommonMark angle-bracket link destination is a real citation.
     ['angle-bracket link destination', '[missing](<docs/plans/missing.md>)', [{ target: 'docs/plans/missing.md', kind: 'concrete' }]],
