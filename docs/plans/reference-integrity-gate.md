@@ -1,9 +1,50 @@
 # Plan: Repo-Wide Reference-Integrity Gate
 
 - **Date**: 2026-07-17
-- **Status**: **Approved** — 3 GPT rounds + 2 Gemini rounds. Ready to implement.
+- **Status**: **Cluster A implemented + converged** (2026-07-17). Plan approved
+  (3 GPT + 2 Gemini rounds). **Cluster A** (Phase 1, the reference-integrity
+  lint) built test-first, code-audited to convergence (5 GPT rounds + 2 Gemini
+  rounds), merged to main. **Clusters B and C remain unbuilt** — B (the 140-file
+  move + ~181-ref rewrite) needs an exclusive main and was deliberately deferred
+  while parallel sessions held the tree.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
+
+## Cluster A code-audit convergence (2026-07-17)
+
+`scripts/check-docs-refs.mjs` + `docs/reference/reference-integrity.md` + wiring.
+Report-only (Phase 6 turns on gating). Run in a dedicated worktree; merged to main.
+
+**GPT: 5 rounds, ledger-driven R2+ suppression. In-cluster real-defect
+trajectory `several → 2 → 1 → 1 → 0` = converged.** 10 distinct findings
+accepted+fixed, 28 dismissed. What the rounds surfaced:
+
+- **The gate self-tripped** — it flagged the ~24 tokens its own spec/tests use to
+  *illustrate* the grammar (use vs mention). Resolved with a declared 4-file
+  `SPEC` exclusion on this repo's own precedent (`egress-path-scan.mjs`, which
+  names "their tests" for the identical self-trip).
+- **Four genuine grammar-extraction bugs**, each with a concrete failing input,
+  each fixed test-first: angle-bracket link destinations silently dropped (a
+  false negative); `.md`-as-prefix-of-a-longer-token mis-extraction; the
+  continuation-guard char class narrower than `seg`/`stem`; a closing paren
+  binding `(planned)` with no space (suppressing a real finding — the cardinal sin).
+- **Persistent non-findings, correctly held**: the out-of-cluster Structure-pass
+  re-raises (H1/H2 = Cluster B/C — true statements about the repo that only later
+  clusters resolve), and a **3-round Sustainability hallucination** (a claimed
+  comment-before-the-shebang syntax error; `grep -c CHANGED` = 0, the file's first
+  bytes are `23 21 2f`, it runs — refuted every round). Gemini agreed: **0
+  wrongly-dismissed** across both its rounds.
+
+**Gemini gate: 2 rounds (cap reached), 6 findings, all fixed.** Round 1 caught a
+real MEDIUM the 5 GPT rounds missed — a URL fragment broke `(planned)` marker
+attachment (false positive). Round 2 caught a real self-consistency HIGH — a
+self-linking label carrying a marker bound the destination but not the label,
+contradicting the contract's "both resolve identically". Plus doc-drift and an
+O(N²) slice and a `matchAll` fragility cleanup. **Stopped at the 2-round cap**:
+the findings had converged to ever-narrower marker-attachment regex edge cases
+(closing char → fragment → link destination), the diminishing-returns signal the
+cap exists for; the marker grammar's arbitrarily-nested-adjacent-syntax long tail
+is a documented limitation, not a blocker for a report-only lint. **77 tests pass.**
 
 ## Audit trail
 
