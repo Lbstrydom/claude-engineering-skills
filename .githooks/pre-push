@@ -1,0 +1,80 @@
+#!/bin/bash
+# Pre-push hook for claude-engineering-skills.
+#
+# 1. CHECKS — runs `npm run check` (context-drift + skills + tests). This
+#    is the local replacement for the push-triggered CI workflows; it
+#    BLOCKS the push on failure. Bypass when you must: git push --no-verify
+# 2. SYNC — propagates SKILL.md + scripts to consumer repos. Non-blocking:
+#    a missing consumer repo warns but never stops the push.
+#
+# TRACKED — this file is the source of truth, wired via core.hooksPath=.githooks
+# by `scripts/install-git-hooks.mjs` on `npm install` (the `prepare` lifecycle).
+# It used to live untracked in .git/hooks/, installed by nothing: a fresh clone
+# had NO gates at all, while AGENTS.md cited "the pre-push hook" as established.
+# `npm run check` is this repo's only gate — no workflow runs it on push or PR
+# (npm test runs solely in release.yml, on a version tag) — so an uninstallable
+# hook meant an unenforced repo. Edit here, never in .git/hooks/.
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+
+# ── 1. Checks (blocking) ────────────────────────────────────────────────
+if [ -f "$REPO_ROOT/package.json" ]; then
+  echo "→ Pre-push checks: npm run check ..."
+  ( cd "$REPO_ROOT" && npm run check )
+  CHECK_EXIT=$?
+  if [ $CHECK_EXIT -ne 0 ]; then
+    echo "✗  pre-push checks FAILED (exit $CHECK_EXIT) — push blocked."
+    echo "   Fix the issues above, or bypass with: git push --no-verify"
+    exit 1
+  fi
+  echo "✓  checks passed"
+fi
+
+# ── 1.5 DB-seam change advisory (non-blocking) ───────────────────────────
+# `npm run check` does not run the destructive DB integration suites (they
+# need AUDIT_DB_TEST_URL, which is deliberately never set here). This block
+# tells the operator when a pushed commit touches that seam so it isn't
+# silently un-covered. Never blocks, never claims coverage.
+# Uses the hook's own stdin contract (<local_ref> <local_sha> <remote_ref>
+# <remote_sha> per line) rather than @{push}, which evaluates the wrong
+# commits for an explicit-ref push or an unconfigured upstream.
+# See docs/plans/local-db-test-container.md.
+{
+  DB_SEAM_MATCHED=0
+  ZERO_SHA="0000000000000000000000000000000000000000"
+  while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+    [ -z "$LOCAL_SHA" ] && continue
+    [ "$LOCAL_SHA" = "$ZERO_SHA" ] && continue   # branch deletion — nothing pushed
+    if [ -z "$REMOTE_SHA" ] || [ "$REMOTE_SHA" = "$ZERO_SHA" ]; then
+      RANGE_BASE=$(git merge-base origin/main "$LOCAL_SHA" 2>/dev/null)
+      [ -z "$RANGE_BASE" ] && RANGE_BASE=$(git rev-parse "$LOCAL_SHA~1" 2>/dev/null)
+    else
+      RANGE_BASE="$REMOTE_SHA"
+    fi
+    [ -z "$RANGE_BASE" ] && continue
+    CHANGED=$(git diff --name-only "$RANGE_BASE" "$LOCAL_SHA" 2>/dev/null)
+    for PREFIX in "scripts/lib/db/" "scripts/lib/store/" "supabase/migrations/" "tests/db-" "scripts/setup-postgres.mjs" "tests/fixtures/expected-schema.json"; do
+      if printf '%s\n' "$CHANGED" | grep -qF "$PREFIX" 2>/dev/null; then
+        DB_SEAM_MATCHED=1
+        break
+      fi
+    done
+  done
+  if [ "$DB_SEAM_MATCHED" = "1" ]; then
+    echo "ℹ DB-seam change detected — the local pre-push checks do NOT run the destructive DB suites. Run npm run db:local before pushing, or rely on the postgres-parity CI job." >&2
+  fi
+} || true
+
+# ── 2. Consumer-repo sync (non-blocking) ────────────────────────────────
+SYNC_SCRIPT="$REPO_ROOT/scripts/sync-to-repos.mjs"
+if [ -f "$SYNC_SCRIPT" ]; then
+  echo "→ Syncing skills to consumer repos..."
+  node "$SYNC_SCRIPT" 2>&1
+  if [ $? -ne 0 ]; then
+    echo "⚠  Sync completed with warnings — push continues"
+  else
+    echo "✓  Sync complete"
+  fi
+fi
+
+exit 0

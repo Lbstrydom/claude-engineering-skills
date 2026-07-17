@@ -1,0 +1,28 @@
+#!/bin/bash
+# Auto-create .claude directory with plans routing to docs folder
+# This hook runs automatically when you clone a repo or checkout a branch
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+
+if [ -n "$REPO_ROOT" ] && [ ! -f "$REPO_ROOT/.claude/settings.local.json" ]; then
+  echo "🔧 Setting up Claude for this repo..."
+
+  mkdir -p "$REPO_ROOT/.claude"
+  mkdir -p "$REPO_ROOT/docs"
+
+  # Create project-specific settings with docs as additional directory
+  # Claude will save plans to this repo's docs folder automatically
+  cat > "$REPO_ROOT/.claude/settings.local.json" << 'EOL'
+{
+  "permissions": {
+    "additionalDirectories": [
+      "docs"
+    ]
+  },
+  "enableAllProjectMcpServers": true
+}
+EOL
+
+  echo "✅ Claude configured for $(basename "$REPO_ROOT")"
+  echo "   Plans will save to: $REPO_ROOT/docs"
+fi

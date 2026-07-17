@@ -59,6 +59,8 @@
     "db:local": "node scripts/db-test-container.mjs",
     "db:local:regen": "node scripts/db-test-container.mjs regen-schema",
     "setup:cloud": "node scripts/setup-cloud.mjs",
+    "prepare": "node scripts/install-git-hooks.mjs",
+    "hooks:wire": "node scripts/install-git-hooks.mjs",
     "sync": "node scripts/sync-to-repos.mjs",
     "sync:refresh": "node scripts/sync-refresh.mjs",
     "sync:dry": "node scripts/sync-to-repos.mjs --dry-run",

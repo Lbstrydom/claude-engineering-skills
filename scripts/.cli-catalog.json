@@ -401,6 +401,14 @@
     "audit:clean:apply": {
       "description": "audit:clean with deletion applied (transient files older than 14d; keep-list guarded).",
       "category": "diagnostic"
+    },
+    "prepare": {
+      "description": "npm lifecycle — points core.hooksPath at the tracked .githooks/ so a fresh clone is gated on first install.",
+      "category": "hooks"
+    },
+    "hooks:wire": {
+      "description": "Wire git at the tracked .githooks/ (same as prepare; run manually if hooks are not firing).",
+      "category": "hooks"
     }
   }
 }

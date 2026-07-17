@@ -46,10 +46,25 @@ node --test tests/install/*.test.mjs        # Installer tests only
 - [ ] Tests pass (`npm test`)
 - [ ] Skills lint clean (`npm run skills:check`) — reference-index + frontmatter drift detection
 - [ ] Skill copies in sync (included in `skills:check` — `.claude/` and `.github/` must equal `skills/`)
-- [ ] Manifest is fresh (`npm run skills:manifest:check`)
+- [ ] Manifest is fresh (included in `skills:check`; standalone: `npm run skills:manifest:check`)
 - [ ] No new dependencies added without justification
 - [ ] CLAUDE.md updated if architecture changed
 - [ ] New features have tests
+
+### Git hooks
+
+Hooks live in **`.githooks/`** (tracked) and are wired automatically by
+`npm install` — `prepare` runs `scripts/install-git-hooks.mjs`, which points
+`core.hooksPath` at that directory. `pre-push` runs `npm run check` and **blocks**
+on failure (`git push --no-verify` to bypass).
+
+Edit hooks in `.githooks/`, never in `.git/hooks/` — `core.hooksPath` supersedes
+that directory entirely, so an edit there does nothing. A new hook must be
+committed executable (`git update-index --chmod=+x`), or git silently ignores it
+on Linux/macOS; `tests/git-hooks-wiring.test.mjs` enforces this.
+
+`npm run check` is the only thing gating a push — no workflow runs it on push or
+PR — so an unwired hook means an unenforced repo.
 
 ## Skill Authoring
 
