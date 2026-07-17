@@ -379,3 +379,60 @@ describe('computePassReward', () => {
     assert.equal(computePassReward({ findingEditLinks: [] }), 0);
   });
 });
+
+// ── nonPersistingView (shadow-write-gate plan, Phase 1 — test-first) ────────
+//
+// An observation-only run (noCloudRecording) must be able to READ the bandit
+// (arm registration + selection keep its suppression behaviour faithful) but
+// must never persist: addArm() on a not-yet-registered key calls _save(), so
+// for the standalone verify-anchor-contract caller the shared instance was a
+// real local-persistence channel. The view closes it: cloned arms, no-op
+// store, sentinel path, own RNG.
+describe('PromptBandit.nonPersistingView', () => {
+  it('preserves the parent arms + posteriors at snapshot time', () => {
+    const bandit = new PromptBandit(path.join(tmpDir, 'state.json'));
+    bandit.addArm('backend', 'v1');
+    bandit.recordOutcome?.('backend', 'v1', 1) ?? null; // posterior nudge if API exists
+    const view = bandit.nonPersistingView();
+    assert.deepEqual(Object.keys(view.arms).sort(), Object.keys(bandit.arms).sort());
+    const key = Object.keys(bandit.arms)[0];
+    assert.equal(view.arms[key].alpha, bandit.arms[key].alpha);
+    assert.equal(view.arms[key].beta, bandit.arms[key].beta);
+  });
+
+  it('a view mutation never appears in the parent map (clone isolation)', () => {
+    const bandit = new PromptBandit(path.join(tmpDir, 'state.json'));
+    bandit.addArm('backend', 'v1');
+    const view = bandit.nonPersistingView();
+    view.addArm('frontend', 'vNEW');
+    assert.ok(!('frontend:vNEW:global' in bandit.arms), 'parent must not gain the view arm');
+    assert.ok(Object.keys(view.arms).some(k => k.startsWith('frontend:vNEW')), 'view has it');
+  });
+
+  it('view addArm + flush never touch the parent state file on disk', () => {
+    const statePath = path.join(tmpDir, 'state.json');
+    const bandit = new PromptBandit(statePath);
+    bandit.addArm('backend', 'v1');
+    bandit.flush(); // parent persists once — baseline
+    const before = fs.readFileSync(statePath, 'utf8');
+    const view = bandit.nonPersistingView();
+    view.addArm('frontend', 'vNEW'); // would _save() on a real store
+    view.flush();                    // would write the file on a real store
+    const after = fs.readFileSync(statePath, 'utf8');
+    assert.equal(after, before, 'state file must be byte-identical after view mutations');
+  });
+
+  it('the view does not share the parent RNG (a stateful seeded closure must not advance)', () => {
+    const rng = createRNG(42);
+    const bandit = new PromptBandit(path.join(tmpDir, 'state.json'), { rng });
+    const view = bandit.nonPersistingView();
+    assert.notEqual(view._rng, bandit._rng, 'view must have its own RNG');
+  });
+
+  it('the view carries a sentinel path, not the parent statePath', () => {
+    const statePath = path.join(tmpDir, 'state.json');
+    const bandit = new PromptBandit(statePath);
+    const view = bandit.nonPersistingView();
+    assert.notEqual(view.statePath, bandit.statePath, 'a real path in the view is a latent write channel');
+  });
+});

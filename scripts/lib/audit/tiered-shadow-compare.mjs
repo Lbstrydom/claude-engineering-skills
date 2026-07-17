@@ -111,7 +111,15 @@ export function buildShadowCtx(ctx) {
     // stats, decisions, …) in runLegacyProductionAudit's cloud-recording
     // block — reached when the tiered pipeline falls back to it internally
     // on a required-generator failure, running CONCURRENTLY with the real,
-    // gating legacy audit for the same commit. `ctx.runId` is kept
+    // gating legacy audit for the same commit. Since 2026-07-18 this
+    // guarantee is actually complete: the orchestrator's
+    // `learningWritesAllowed = !noCloudRecording` gates the two tail syncs
+    // the `cloudRunId` key never covered (syncBanditArms — no repoId, wrote
+    // whenever cloud was on — and syncFalsePositivePatterns), and the shared
+    // `ctx.bandit` is swapped for a `nonPersistingView()` at entry so the
+    // shadow's addArm/flush can't touch the real run's local state either
+    // (the shallow ...ctx spread above shares the live instance — the same
+    // shared-nested-value hazard as generatorOutcomes below). `ctx.runId` is kept
     // UNCHANGED (not mangled) — it's still used as a local telemetry label
     // (tiered-pipeline.mjs's `_sid`), just never reaches a DB write here.
     // Previously mangled to `${runId}-shadow` to dodge colliding with the

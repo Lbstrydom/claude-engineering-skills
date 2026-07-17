@@ -212,6 +212,38 @@ export class PromptBandit {
     this._store.save(this.arms);
   }
 
+  /**
+   * A non-persisting snapshot of this bandit for observation-only runs
+   * (noCloudRecording — the tiered shadow + verify-anchor-contract).
+   *
+   * Such a run must READ faithfully (arm registration + selection unchanged)
+   * but never persist: `addArm()` on a not-yet-registered key calls `_save()`,
+   * which for a standalone observation caller is a real local write channel.
+   * The view: cloned arms (mutations stay in its memory, never the parent's
+   * map), a no-op store (the store protocol is exactly `load()`/`save()` —
+   * every persist is swallowed; THIS is the actual write protection), a
+   * sentinel path rather than this.statePath (labelling/defence-in-depth: a
+   * future statePath-derived write would land on an obviously-fake location —
+   * on Windows `<`/`>` are invalid filename chars so it throws; on POSIX it
+   * would create a visibly-bogus file rather than corrupt the real state.
+   * Audit R2-L2: this is best-effort containment, NOT a guaranteed loud
+   * failure — the no-op store carries the guarantee), and its OWN RNG (a
+   * seeded RNG is a stateful closure — sharing it would let the view's
+   * sampling advance the real run's sequence).
+   *
+   * The view only closes the LOCAL channel. The cloud channel
+   * (`syncBanditArms(view.arms)` reads the map regardless of store) is closed
+   * separately by the orchestrator's `learningWritesAllowed` gate.
+   */
+  nonPersistingView() {
+    return new PromptBandit('<non-persisting-view>', {
+      store: {
+        load: () => structuredClone(this.arms),  // snapshot at swap time
+        save: () => {},                          // every persist is a no-op
+      },
+    });
+  }
+
   // ── Internal ─────────────────────────────────────────────────────────────
 
   _armsForBucket(passName, bucket) {

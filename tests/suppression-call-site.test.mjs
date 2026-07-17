@@ -51,7 +51,19 @@ function ledgerBranchRange() {
   let depth = 0;
   for (let i = braceStart; i < src.length; i++) {
     if (src[i] === '{') depth++;
-    else if (src[i] === '}') { depth--; if (depth === 0) return { start: open, end: i }; }
+    else if (src[i] === '}') { depth--; if (depth === 0) {
+      // KNOWN LIMITATION (Gemini consolidated-gate finding): this counter
+      // doesn't tokenize, so an unmatched brace inside a string/template/
+      // comment within the branch skews the range — and a TRUNCATED range
+      // makes the "not inside the branch" pins pass vacuously (silent
+      // false-green, the dangerous direction). Sanity-guard: the branch is
+      // known to contain the suppression composition's ledger merge; if the
+      // computed range lost it, the range is wrong — fail loudly instead.
+      const range = src.slice(open, i);
+      assert.ok(range.includes('mergedLedger'), 'ledgerBranchRange sanity: computed range lost its own landmark content — brace counting skewed (string/template brace inside the branch?)');
+      assert.ok(i - open > 200, 'ledgerBranchRange sanity: implausibly small range — brace counting skewed');
+      return { start: open, end: i };
+    } }
   }
   throw new Error('unbalanced braces from the ledger branch');
 }
@@ -151,4 +163,53 @@ test('the module actually LOADS — the cheapest guard against a crash no unit t
   // above exists alongside it.
   const mod = await import('../scripts/lib/audit/legacy-production-audit.mjs');
   assert.equal(typeof mod.runLegacyProductionAudit, 'function');
+});
+
+// ── The learningWritesAllowed gate (shadow-write-gate plan, Phase 2) ────────
+//
+// The 2026-07-18 H1 leak: syncBanditArms/syncFalsePositivePatterns were keyed
+// only on object presence, so an observation-only (noCloudRecording) shadow
+// run mutated cloud learning state while running concurrently with the real
+// audit. These pins hold the policy in place syntactically; the smoke test
+// executes both sides of it.
+
+test('learningWritesAllowed is declared once and derives from noCloudRecording', () => {
+  const decls = src.match(/const\s+learningWritesAllowed\s*=\s*!noCloudRecording\s*;/g) || [];
+  assert.equal(decls.length, 1, 'exactly one declaration, derived from the flag');
+});
+
+test('every learning-state sink sits under the learningWritesAllowed gate', () => {
+  // syncBanditArms + bandit.flush share one gated block; syncFalsePositivePatterns has its own.
+  assert.match(src, /if\s*\(bandit\s*&&\s*learningWritesAllowed\)\s*\{[^}]*bandit\.flush\(\);[^}]*syncBanditArms\(/s,
+    'bandit.flush + syncBanditArms must both live inside the gated block');
+  assert.match(src, /if\s*\(fpTracker\s*&&\s*learningWritesAllowed\)\s*\{[\s\S]{0,900}?syncFalsePositivePatterns\(/,
+    'syncFalsePositivePatterns must be gated');
+  // No UNGATED call site of either sync remains (the original leak shape).
+  const ungatedBandit = src.match(/if\s*\(bandit\)\s*\{[^}]*syncBanditArms/g) || [];
+  const ungatedFp = src.match(/if\s*\(fpTracker\)\s*\{?[^}]*syncFalsePositivePatterns/g) || [];
+  assert.equal(ungatedBandit.length, 0, 'no presence-only-gated bandit sync');
+  assert.equal(ungatedFp.length, 0, 'no presence-only-gated FP sync');
+  // The LOCAL bandit reward stream (audit R2-H1): the per-finding
+  // appendOutcome loop must be gated too — a shadow's findings would
+  // otherwise train the real bandit. `if (learningWritesAllowed) for ...`.
+  assert.match(src, /if\s*\(learningWritesAllowed\)\s*for\s*\(const f of allFindings\)\s*\{[\s\S]{0,200}?appendOutcome\(/,
+    'the outcomes.jsonl append loop must be gated');
+  // And the orphan-metrics emits (audit R1-H1): both sites inside
+  // runOrphanIntroducedPass gate on the threaded flag.
+  const emitGates = src.match(/if\s*\(learningWritesAllowed\)\s*\{\s*\n\s*await emitOrphanRunMetrics\(/g) || [];
+  assert.equal(emitGates.length, 2, `both emitOrphanRunMetrics sites gated (found ${emitGates.length})`);
+});
+
+test('the non-persisting view swap exists, references the gate, and precedes the first bandit use', () => {
+  const swapIdx = src.indexOf('bandit = bandit.nonPersistingView()');
+  assert.ok(swapIdx > 0, 'the view swap line must exist');
+  const swapLineStart = src.lastIndexOf('\n', swapIdx);
+  const swapContext = src.slice(Math.max(0, swapLineStart - 200), swapIdx);
+  assert.match(swapContext, /!learningWritesAllowed\s*&&\s*bandit/, 'the swap is keyed on the gate');
+  // The swap must precede EVERY other use of the local `bandit` binding —
+  // a refactor hoisting a use above it silently re-opens the local channel.
+  for (const use of ['bandit.addArm(', 'bandit.flush(', 'syncBanditArms(bandit.arms)']) {
+    const useIdx = src.indexOf(use);
+    assert.ok(useIdx === -1 || useIdx > swapIdx, `${use} must come after the view swap`);
+  }
 });

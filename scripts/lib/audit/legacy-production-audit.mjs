@@ -835,7 +835,7 @@ function orphanToStandardFinding(raw, idx) {
  * @param {object|null} args.ledger - parsed adjudication ledger (R2+ only)
  * @returns {Promise<{state: string, result: object}>}
  */
-async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef, runId, planContent, ledger }) {
+async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef, runId, planContent, ledger, learningWritesAllowed = true }) {
   const emptyResult = {
     result: { pass_name: 'orphan-introduced', findings: [], summary: '' },
     usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
@@ -870,9 +870,14 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
 
   // Short-circuit states from the resolver.
   if (scope.state === 'SKIPPED_NO_BASELINE' || scope.state === 'SKIPPED_PATCH_ONLY_MODE') {
-    await emitOrphanRunMetrics({
-      runId, passState: scope.state, rawFindings: [], survivors: [], suppressed: [], _meta: {}, repoPath: repoRoot,
-    });
+    // Gated (audit R1-H1): the metrics file is durable local learning
+    // telemetry (.audit/orphan-metrics.jsonl) shared with the real run — an
+    // observation-only shadow appending to it double-counts the same commit.
+    if (learningWritesAllowed) {
+      await emitOrphanRunMetrics({
+        runId, passState: scope.state, rawFindings: [], survivors: [], suppressed: [], _meta: {}, repoPath: repoRoot,
+      });
+    }
     return { state: scope.state, result: emptyResult };
   }
 
@@ -890,15 +895,19 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
   });
 
   // Emit telemetry (per-pass orchestration responsibility — Gemini-R4/H1).
-  await emitOrphanRunMetrics({
-    runId,
-    passState: detector.state,
-    rawFindings: detector.rawFindings,
-    survivors,
-    suppressed,
-    _meta: detector._meta,
-    repoPath: repoRoot,
-  });
+  // Gated on learningWritesAllowed (audit R1-H1) — see the short-circuit
+  // emit above for why an observation-only run must not append here.
+  if (learningWritesAllowed) {
+    await emitOrphanRunMetrics({
+      runId,
+      passState: detector.state,
+      rawFindings: detector.rawFindings,
+      survivors,
+      suppressed,
+      _meta: detector._meta,
+      repoPath: repoRoot,
+    });
+  }
 
   const findings = survivors.map((f, i) => orphanToStandardFinding(f, i));
   const summary = findings.length === 0
@@ -1090,7 +1099,11 @@ function deriveFindingsFromReport(report) {
  * @returns {Promise<import('../schemas.mjs').AuditRunResult>}
  */
 export async function runLegacyProductionAudit(ctx) {
-  const {
+  // `let`, not `const` (plan deviation, noted): the observation-mode view swap
+  // below reassigns `bandit`, and a const destructure would throw. The local
+  // binding is the function's complete use surface for it (verified: addArm,
+  // flush, syncBanditArms — no helper receives `bandit`, no ctx.bandit re-read).
+  let {
     planContent, projectContext, historyContext = '',
     passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null,
     changedFiles = [], auditBaseCommit = null, repoProfile = null, bandit = null, fpTracker = null, noLedger = false,
@@ -1100,6 +1113,20 @@ export async function runLegacyProductionAudit(ctx) {
     outFile = null, providers = {}, noCloudRecording = false,
   } = ctx;
   const { openai } = providers;
+
+  // May THIS run write learning state (cloud or local)? One policy, one place.
+  // noCloudRecording marks an observation-only run (tiered shadow /
+  // verify-anchor-contract): it must be able to READ bandit/fpTracker so its
+  // suppression behaviour stays faithful to the real audit, but must never
+  // persist — the real, concurrent gating audit is the only writer. This
+  // boolean closes the CLOUD channel at the tail's sync sites; the view swap
+  // below closes the LOCAL channel (addArm._save / flush on a shared
+  // instance). Both are needed: the tail's arms sync reads the map directly,
+  // regardless of which store the bandit carries.
+  const learningWritesAllowed = !noCloudRecording;
+  // Swap BEFORE any use — the local's complete in-function use surface is
+  // the arm registration, the tail flush, and the tail arms sync.
+  if (!learningWritesAllowed && bandit) bandit = bandit.nonPersistingView();
   const totalStart = Date.now();
   _runSeedUsed = false; // reset run-scoped cache-seed flag (CLI = one run/process)
 
@@ -1642,6 +1669,7 @@ export async function runLegacyProductionAudit(ctx) {
       runId: debtRunId,
       planContent,
       ledger: ledgerForOrphan,
+      learningWritesAllowed,
     });
     orphanState = orphanOut.state;
     orphanResult = orphanOut.result;
@@ -2726,7 +2754,11 @@ export async function runLegacyProductionAudit(ctx) {
 
   // Phase 3-4: Record initial findings for learning (pre-triage — accepted is null).
   // Actual triage outcomes are written by outcome-sync.mjs AFTER deliberation.
-  for (const f of allFindings) {
+  // Gated (audit R2-H1): outcomes.jsonl is the LOCAL bandit reward stream — an
+  // observation-only shadow appending its findings here trains the real
+  // bandit on data from a run that must be invisible. Same class as the tail
+  // syncs, one write site over.
+  if (learningWritesAllowed) for (const f of allFindings) {
     const revId = getActiveRevisionId(f._pass) || 'default';
     appendOutcome('.audit/outcomes.jsonl', {
       findingId: f.id,
@@ -2831,15 +2863,26 @@ export async function runLegacyProductionAudit(ctx) {
   // Phase C: surface tool-pre-pass capability state
   mergedResult._toolCapability = toolCapability;
 
-  // Phase 5: Flush bandit state + sync learning systems to cloud
-  if (bandit) {
+  // Phase 5: Flush bandit state + sync learning systems to cloud.
+  // BOTH sites are gated on learningWritesAllowed — these were the two cloud
+  // writes NOT transitively covered by the `if (cloudRunId)` key (audit H1,
+  // 2026-07-18): syncBanditArms takes no repoId, so an observation-only
+  // shadow run was mutating the shared bandit_arms table whenever cloud was
+  // on, contaminating the very data the tiered-recall window measures. The
+  // local flush() is gated too: an observation run persisting the shared
+  // bandit file is the same contamination class, one channel over.
+  if (bandit && learningWritesAllowed) {
     bandit.flush();
     syncBanditArms(bandit.arms).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
   }
-  if (fpTracker) {
+  if (fpTracker && learningWritesAllowed) {
     // cloudRepoId is the audit_repos row UUID (null → GLOBAL sentinel inside
     // the sync). Dirty subset only — syncing the whole map rewrote thousands
-    // of unchanged rows per run (2026-07-17 Disk IO incident).
+    // of unchanged rows per run (2026-07-17 Disk IO incident). The
+    // isSyncableRepoId refusal inside the sync stays as defence-in-depth for
+    // a DIFFERENT failure (unresolved repo identity on a real run) — before
+    // this gate, that coincidence was the only thing keeping shadow runs
+    // from writing FP patterns.
     syncFalsePositivePatterns(cloudRepoId, fpTracker.dirtyPatterns()).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
   }
 

@@ -1,5 +1,21 @@
 # Project Status Log
 
+## 2026-07-18 — Shadow write-gate + the first test that ever executes the audit orchestrator
+
+### Changes
+- **The noCloudRecording leak is closed — all four channels.** An observation-only shadow run (tiered shadow / verify-anchor-contract) could mutate the very learning state it exists to silently observe. One policy boolean (`learningWritesAllowed`) + one mechanism (`PromptBandit.nonPersistingView()` — cloned arms, no-op store, own RNG) now close: (1) the cloud bandit_arms sync (wrote whenever cloud was on — syncBanditArms takes no repoId, so nothing downstream refused it), (2) the cloud FP-pattern sync (previously inert only by the COINCIDENCE of where cloudRepoId is assigned), (3) the local bandit state file (addArm._save / flush on the SHARED instance — buildShadowCtx shallow-spreads the real ctx), and — found by the audits, not the plan — (4) `.audit/orphan-metrics.jsonl` + (5) `.audit/outcomes.jsonl`, the local bandit reward stream, both appended ungated on every shadow run.
+- **The orchestrator smoke-test gap is closed**: `tests/legacy-audit-smoke.test.mjs` is the first test to EXECUTE `runLegacyProductionAudit` (the dangling-cloudPass crash shipped through 6,767 green tests because nothing ever ran it). Zero passes (nothing mocked), poisoned provider handles (any use throws), per-variant mkdtemp isolation, hermetic per INC-002. Three variants: R1 allow, R2-with-real-ledger allow, and the deny-path whose observable is the bandit file's ABSENCE.
+- Layered coverage, mutation-verified: each mechanism alone is pin-caught (source assertions); both-removed turns the smoke red behaviorally. The pins also gained a range-sanity guard after Gemini spotted the brace-counter's silent-false-green corner.
+
+### Verification
+- Test-first (view tests red → green); 56 scoped tests green; smoke executes the real orchestrator. Full suite 7037/7074 — the 15 failures are the concurrent session's in-flight anthropic-client work (IDENTICAL failure set before and after this change; zero in this change's files).
+- Execution corrected the plan 5 times: const→let on the ctx destructure (the plan and Gemini G1 assumed a reassignable binding), allowInfraScope:true (the smoke target is audit-infra by classification), plan-content file citation (discovery parses the plan, not changedFiles), the full LedgerEntrySchema fixture shape, and the two extra write channels above.
+
+### Audit trail
+- Plan: 3 GPT rounds (H:4→2→0) + Gemini APPROVE (round 2). Code: 2 GPT rounds (H:5→3; the 3 R2 HIGHs = 1 real-and-fixed + 2 verified pre-existing with 0 lines in the diff) + consolidated Gemini gate round 2 **APPROVE (0 new, 0 wrongly dismissed)** — round 1's two wrongly-dismissed were STALE (already fixed post-R2; the transcript lacked remediation annotations, now carried explicitly).
+- Caveats, stated: cloud finding-labels rest as 14× needs_triage (the finalize matcher joins on an id my ledger shapes don't carry — 3 attempts, then stopped; triageable via the worksheet). The tiered diffText sensitive-egress claim (pre-existing) is spawned as a dedicated Tier-3 chip, not buried.
+
+
 ## 2026-07-17 — runStatus enum adjudicated + model-eval-discovery import footgun closed
 
 ### Changes
