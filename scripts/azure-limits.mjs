@@ -57,7 +57,14 @@ async function probeOpenAI(purpose, deployment, kind) {
 }
 
 async function probeClaude(deployment) {
-  const client = await createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl, redactor: null });
+  // `backend: 'sdk'` explicitly — the cli backend has no HTTP response to read
+  // rate-limit headers off. (The factory would coerce sdk anyway once a baseURL
+  // is set; stating it here keeps this probe's requirement self-evident.)
+  const client = await createAnthropicClient({
+    backend: 'sdk',
+    baseURL: azureConfig.claudeBaseUrl,
+    redactor: null,
+  });
   const { response } = await client.messages.create(
     { model: deployment, max_tokens: 16, messages: [{ role: 'user', content: 'ping' }] }).withResponse();
   return rowsFrom(response.headers);

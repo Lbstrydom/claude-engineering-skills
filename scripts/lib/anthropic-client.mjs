@@ -151,6 +151,50 @@ export function isClaudeAvailable() {
   return resolveBackend() === 'cli' || Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
+/** Once-per-session tracking so the baseURL→sdk coercion warns but doesn't spam. */
+let _warnedBaseUrlForcedSdk = false;
+
+/**
+ * Reconcile the resolved backend with an explicit `baseURL`.
+ *
+ * The cli adapter spawns `claude -p`, which talks to Anthropic's own service and
+ * takes NO baseURL — it cannot honour one. Silently ignoring the caller's
+ * baseURL under an ambient `CLAUDE_BACKEND=cli` is a **misroute**, not a
+ * degradation: an Azure/Foundry call would go to PUBLIC api.anthropic.com,
+ * sending a corporate payload to the wrong provider and reporting the wrong
+ * endpoint's limits/billing as Azure's.
+ *
+ * Precedence mirrors the effectiveApiKey rule below (an explicit baseURL means
+ * "target THIS endpoint", and that intent beats ambient env):
+ *   - baseURL + ambient cli   → coerce to sdk, warn once (intent wins)
+ *   - baseURL + explicit cli  → throw (the caller contradicted itself)
+ *   - no baseURL              → unchanged
+ *
+ * @param {'sdk'|'cli'} backend - the resolved backend
+ * @param {string} baseURL - the effective baseURL ('' when absent)
+ * @param {boolean} backendWasExplicit - true when the caller passed options.backend
+ * @returns {'sdk'|'cli'}
+ */
+function reconcileBackendWithBaseUrl(backend, baseURL, backendWasExplicit) {
+  if (backend !== 'cli' || !baseURL) return backend;
+  if (backendWasExplicit) {
+    throw new Error(
+      `[anthropic-client] backend:'cli' cannot honour baseURL="${baseURL}" — the cli ` +
+      `adapter spawns \`claude -p\` against Anthropic's own service and takes no baseURL. ` +
+      `Use backend:'sdk' to target a custom endpoint, or drop the baseURL.`,
+    );
+  }
+  if (!_warnedBaseUrlForcedSdk) {
+    _warnedBaseUrlForcedSdk = true;
+    process.stderr.write(
+      `  [anthropic-client] baseURL set (${baseURL}) → using the sdk backend despite ` +
+      `CLAUDE_BACKEND=cli. The cli backend cannot target a custom endpoint; honouring ` +
+      `it would silently route this call to public api.anthropic.com.\n`,
+    );
+  }
+  return 'sdk';
+}
+
 /**
  * Create or retrieve a cached Anthropic-shaped client.
  *
@@ -181,7 +225,6 @@ export function isClaudeAvailable() {
  * @returns {Promise<{messages: {create: (params: object, requestOptions?: object) => Promise<object>}}>}
  */
 export async function createAnthropicClient(options = {}) {
-  const backend = options.backend || resolveBackend();
   // Resolve effective env values BEFORE building the cache key so that two
   // unparameterised calls share a cache entry.
   // baseURL override (Azure AI Foundry `anthropic` shape). Absent → public
@@ -189,6 +232,13 @@ export async function createAnthropicClient(options = {}) {
   // AND an Azure key is present, the Foundry endpoint authenticates via the
   // `api-key` header (the SDK's default `x-api-key` is insufficient there).
   const effectiveBaseURL = options.baseURL || process.env.ANTHROPIC_BASE_URL || '';
+  // A baseURL is unhonourable by the cli backend — reconcile before the cache
+  // key is built, so a coerced call can never share an entry with a cli client.
+  const backend = reconcileBackendWithBaseUrl(
+    options.backend || resolveBackend(),
+    effectiveBaseURL,
+    options.backend != null,
+  );
   const azureKey = effectiveBaseURL ? (process.env.AZURE_OPENAI_API_KEY || '') : '';
   // When targeting an Azure/Foundry endpoint, the Azure key MUST win over a
   // stray public ANTHROPIC_API_KEY — otherwise we'd send the public key to the
@@ -294,7 +344,14 @@ function wrapSdkClient(rawClient, redactor) {
     get baseURL() { return rawClient.baseURL; },
     get authToken() { return rawClient.authToken; },
     messages: {
-      async create(params, requestOptions) {
+      // NOT `async` — deliberately. The SDK returns an `APIPromise`, a thenable
+      // carrying `.withResponse()` / `.asResponse()` for callers that need the
+      // HTTP response (azure-limits reads the `x-ratelimit-*` headers off it).
+      // An `async` wrapper awaits that thenable and re-wraps the resolved value
+      // in a plain Promise, stripping those methods — `.withResponse()` then
+      // throws `is not a function`. Returning the APIPromise unchanged keeps
+      // both the await path and the response path working.
+      create(params, requestOptions) {
         const body = redactor ? applyRedactor(params, redactor) : params;
         let opts = requestOptions;
         if (opts && opts.timeoutMs != null) {

@@ -607,6 +607,120 @@ describe('wrapSdkClient timeout translation', () => {
   });
 });
 
+// ── baseURL must never be silently dropped by the cli backend ───────────────
+//
+// The cli adapter spawns `claude -p` (Anthropic's own service) and takes no
+// baseURL. Under an ambient CLAUDE_BACKEND=cli, `createAnthropicClient({baseURL})`
+// used to return the cli adapter and IGNORE the baseURL — so an Azure/Foundry
+// call silently went to PUBLIC api.anthropic.com. On a corporate Azure profile
+// that sends the payload to the wrong provider entirely. Found while fixing the
+// azure-limits `.withResponse()` error; gemini-review's Azure final-review
+// fallback had the same latent misroute.
+describe('createAnthropicClient: baseURL vs cli backend', () => {
+  const withEnv = async (env, fn) => {
+    const saved = { ...process.env };
+    Object.assign(process.env, env);
+    try { return await fn(); } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
+  };
+
+  it('coerces an ambient cli backend to sdk when a baseURL is set (no silent misroute)', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await withEnv(
+      { CLAUDE_BACKEND: 'cli', ANTHROPIC_API_KEY: 'sk-test', AZURE_OPENAI_API_KEY: '' },
+      async () => {
+        const client = await createAnthropicClient({
+          baseURL: 'https://example.services.ai.azure.com',
+          fresh: true,
+        });
+        // The sdk client exposes baseURL; the cli adapter has no such property.
+        assert.equal(
+          client.baseURL, 'https://example.services.ai.azure.com',
+          'the sdk client must be built and actually carry the requested baseURL',
+        );
+      },
+    );
+  });
+
+  it('leaves the cli backend alone when no baseURL is requested', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await withEnv({ CLAUDE_BACKEND: 'cli', ANTHROPIC_BASE_URL: '' }, async () => {
+      const client = await createAnthropicClient({ fresh: true });
+      assert.equal(client.baseURL, undefined, 'cli adapter has no baseURL — path unchanged');
+    });
+  });
+
+  it('throws when the caller explicitly contradicts itself (backend:cli + baseURL)', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await assert.rejects(
+      () => createAnthropicClient({ backend: 'cli', baseURL: 'https://x.azure.com', fresh: true }),
+      /cannot honour baseURL/,
+    );
+  });
+});
+
+// ── wrapSdkClient: APIPromise passthrough (real bug found live, Azure) ──────
+//
+// The SDK's `messages.create()` returns an `APIPromise` — a thenable that also
+// carries `.withResponse()` / `.asResponse()` for reading the HTTP response.
+// `azure-limits.mjs` needs those to read the `x-ratelimit-*` headers. Making
+// the wrapper an `async function` awaited the APIPromise and re-wrapped the
+// resolved value in a plain Promise, silently stripping those methods —
+// `.withResponse() is not a function`. The wrapper must return the APIPromise
+// unchanged.
+describe('wrapSdkClient APIPromise passthrough', () => {
+  /** Minimal stand-in for the SDK's APIPromise: thenable + `.withResponse()`. */
+  const fakeApiPromise = (value, response) => {
+    const p = Promise.resolve(value);
+    p.withResponse = async () => ({ data: await p, response });
+    return p;
+  };
+
+  it('preserves .withResponse() so response headers stay reachable', async () => {
+    const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
+    const headers = new Map([['x-ratelimit-limit-tokens', '10000']]);
+    const fakeRaw = {
+      messages: {
+        create: () => fakeApiPromise({ content: [], usage: {} }, { headers }),
+      },
+    };
+    const client = _internals.wrapSdkClient(fakeRaw, null);
+    const ret = client.messages.create({ model: 'x', messages: [] });
+    assert.equal(typeof ret.withResponse, 'function', '.withResponse must survive the wrapper');
+    const { response } = await ret.withResponse();
+    assert.equal(response.headers.get('x-ratelimit-limit-tokens'), '10000');
+  });
+
+  it('still awaits to the response body (the plain path is unaffected)', async () => {
+    const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
+    const body = { content: [{ type: 'text', text: 'hi' }], usage: {} };
+    const fakeRaw = { messages: { create: () => fakeApiPromise(body, { headers: new Map() }) } };
+    const client = _internals.wrapSdkClient(fakeRaw, null);
+    assert.deepEqual(await client.messages.create({ model: 'x', messages: [] }), body);
+  });
+
+  it('preserves .withResponse() with a redactor applied (both concerns compose)', async () => {
+    const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
+    let capturedParams = null;
+    const fakeRaw = {
+      messages: {
+        create: (params) => {
+          capturedParams = params;
+          return fakeApiPromise({ content: [], usage: {} }, { headers: new Map() });
+        },
+      },
+    };
+    const redactor = (s) => (typeof s === 'string' ? s.replace(/SECRET/g, '[X]') : s);
+    const client = _internals.wrapSdkClient(fakeRaw, redactor);
+    const ret = client.messages.create({ system: 'has SECRET inside', messages: [] });
+    assert.equal(typeof ret.withResponse, 'function');
+    await ret.withResponse();
+    assert.ok(!capturedParams.system.includes('SECRET'), 'redaction still applied');
+  });
+});
+
 // ── createAnthropicClient (sdk backend) — error path only ───────────────────
 
 describe('createAnthropicClient (sdk backend)', () => {
