@@ -80,7 +80,16 @@ const mintId = (i) => `f${String(i + 1).padStart(4, '0')}`;
  *                 that finds no `diff --git` header in non-whitespace input has
  *                 FAILED, not found nothing.
  *
- * @param {string} diffText - already sensitive-path-filtered AND redacted by the caller.
+ * @param {string} diffText - the run's RAW unified diff. This function only
+ *   PARSES locally (no egress); do not rely on the input being pre-filtered.
+ *   Sensitive-path exclusion happens on the OUTPUT — `resolveEligibleDiffPathMap`
+ *   (tiered-pipeline.mjs) drops sensitive entries from the returned map before
+ *   any id can reach a tool schema (a documented deviation from the plan's
+ *   "filter before mapping" prose; re-parsing to pre-filter would duplicate
+ *   this parser). An earlier revision of this line claimed the caller
+ *   pre-filters — false, and exactly the kind of stale contract note that
+ *   seeded a spurious sensitive-egress audit finding (2026-07-18 R2-H3,
+ *   refuted with the gate chain's tests).
  * @param {{maxMapEntries?: number}} [budgets]
  * @returns {{kind:'ready', entries: Array<{id:string, oldPath:string, newPath:string, fileStatus:string}>}
  *   | {kind:'empty', reason:'no_eligible_diff_files'}
