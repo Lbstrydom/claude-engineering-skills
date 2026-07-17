@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -12,6 +12,7 @@ import {
   gateSymbolForEgress,
   SECRET_REDACTED,
 } from '../scripts/lib/sensitive-egress-gate.mjs';
+import { buildRulingsBlock } from '../scripts/lib/ledger.mjs';
 import {
   scanForSecrets,
   redactSecrets as redactSecretsRaw,
@@ -348,5 +349,71 @@ describe('redactSecrets — line-count preservation (Gemini round 3, root-cause 
     const text = 'const dsn = "postgresql://user:hunter2@host/db";';
     const { text: redacted } = redactSecretsRaw(text);
     assert.equal(redacted.split('\n').length, 1);
+  });
+});
+
+// ── Rulings-block rationale egress (Tier 3 HARD — AGENTS.md testing doctrine) ──
+//
+// Plan: docs/plans/dismissed-fp-reopen-policy.md §"Egress trace".
+// `buildRulingsBlock` raises the dismissed-rationale budget 100 → 300 chars, so
+// bytes 100-300 of an agent-authored rationale become a NEW outbound payload.
+// The trace performed during that plan's audit established: `ossStructuredCall`
+// gates via assertEgressSafe, but `createOpenAIClient` and the whole GPT audit
+// pass path have NO egress gate — so nothing downstream would catch a secret
+// here. The render point IS the boundary; these tests are the gate.
+describe('buildRulingsBlock — rationale redaction (expanded 100→300 payload)', () => {
+  let tmpDir;
+  let ledgerPath;
+
+  const entry = (rationale) => ({
+    topicId: 'abcdef123456', pass: 'plan',
+    adjudicationOutcome: 'dismissed', remediationState: 'pending',
+    category: 'SOLID-SRP', rulingRationale: rationale,
+    affectedFiles: ['scripts/foo.mjs'], resolvedRound: 1,
+  });
+
+  const render = (rationale) => {
+    fs.writeFileSync(ledgerPath, JSON.stringify({ entries: [entry(rationale)] }), 'utf-8');
+    return buildRulingsBlock(ledgerPath, 'plan');
+  };
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rulings-egress-'));
+    ledgerPath = path.join(tmpDir, 'ledger.json');
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('a secret at char 150 — inside the NEWLY-admitted 100-300 window — never reaches the block', () => {
+    const lead = 'Dismissed because the upstream validator already rejects this input shape; '
+      + 'see the deployment note that mentions ';           // ~110 chars
+    const rationale = `${lead}AKIAIOSFODNN7EXAMPLE and the rest of the explanation continues here.`;
+    const secretAt = rationale.indexOf('AKIAIOSFODNN7EXAMPLE');
+    assert.ok(secretAt > 100 && secretAt < 300,
+      `fixture must place the secret in the newly-admitted window (was ${secretAt}) — otherwise this test proves nothing`);
+
+    const block = render(rationale);
+    assert.ok(!block.includes('AKIAIOSFODNN7EXAMPLE'), 'the secret must not egress');
+    assert.match(block, /REDACTED/, 'it is redacted, not silently dropped');
+    assert.match(block, /upstream validator/, 'surrounding non-sensitive rationale survives');
+  });
+
+  it('redact BEFORE truncate: a secret straddling the 300-char budget is still redacted, not bisected', () => {
+    // Truncate-then-redact would slice the DSN mid-token, leaving an
+    // unmatchable fragment that the pattern scanner can no longer detect —
+    // and that fragment would ship. Ordering is the whole test.
+    const filler = 'x'.repeat(285);
+    const rationale = `${filler} postgresql://admin:sup3rS3cretPassw0rd@db.example.com:5432/prod`;
+    const block = render(rationale);
+    assert.ok(!block.includes('sup3rS3cretPassw0rd'), 'no password fragment may survive truncation');
+    assert.ok(!/sup3rS3cret/.test(block), 'not even a bisected prefix of the secret');
+  });
+
+  it('a clean rationale is untouched (the redactor must not corrupt evidence prose)', () => {
+    const rationale = 'The Zod schema at src/schemas/wine.ts:42 accepts style: null — verified by a direct parse.';
+    const block = render(rationale);
+    assert.match(block, /src\/schemas\/wine\.ts:42/, 'a cited symbol must survive verbatim');
+    assert.doesNotMatch(block, /REDACTED/, 'no false-positive redaction of ordinary code citations');
   });
 });

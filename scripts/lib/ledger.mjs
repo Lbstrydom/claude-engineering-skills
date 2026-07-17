@@ -14,6 +14,11 @@ import { normalizePath, atomicWriteFileSync } from './file-io.mjs';
 import { LedgerEntrySchema, BatchLedgerEntrySchema, Stage1MechanicalLedgerEntrySchema } from './schemas.mjs';
 import { semanticId } from './findings.mjs';
 import { buildFileReferenceRegex } from './language-profiles.mjs';
+// The rulings block is an outbound provider payload and the GPT audit pass path
+// has no egress gate of its own — `buildRulingsBlock` redacts at its render
+// point. Import is shared-lib → shared-lib (no cycle: sensitive-egress-gate
+// pulls only sensitive-paths/secret-patterns/redact).
+import { redactSecrets } from './sensitive-egress-gate.mjs';
 import { jaccardSimilarity } from './text-similarity.mjs';
 
 // Re-exported for backward compatibility — existing consumers import
@@ -419,8 +424,73 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
 
 // ── Rulings Block & R2+ Prompts ─────────────────────────────────────────────
 
+/** Rendering policy — docs/plans/dismissed-fp-reopen-policy.md (Phase 1). */
+const RULINGS_BLOCK_CAP = 2500;
+/** The disproof IS the payload for a dismissal — 100 chars cut it mid-sentence. */
+const DISMISSED_RATIONALE_BUDGET = 300;
+const OTHER_GROUP_MAX_ENTRIES = 5;
+const MARKER_MAX_IDS = 5;
+/** Bounds the marker at the RENDER point — `topicId` is an unbounded string in
+ *  the schema, so the width cannot be assumed of the data (audit R3-M2). */
+const TOPIC_ID_WIDTH = 6;
+
+const shortTopicId = (id) => String(id).slice(0, TOPIC_ID_WIDTH);
+
+/**
+ * Truncate on a word boundary. A mid-token cut turns a cited symbol into a
+ * fragment that reads like a real identifier but matches nothing — worse than
+ * omitting it. The space before the ellipsis is load-bearing, not cosmetic.
+ */
+function truncateAtWord(text, max) {
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const lastSpace = cut.lastIndexOf(' ');
+  const body = lastSpace > 0 ? cut.slice(0, lastSpace) : cut;
+  return `${body.trimEnd()} …`;
+}
+
+function renderOmissionMarker(omittedCount, ids) {
+  const shown = ids.slice(0, MARKER_MAX_IDS);
+  const extra = omittedCount - shown.length;
+  return `  ... and ${omittedCount} more dismissed items (${shown.join(', ')}${extra > 0 ? `, +${extra} more` : ''} — see ledger)`;
+}
+
+/**
+ * The marker's provable worst case: MARKER_MAX_IDS full-width ids and both
+ * counts at maximum width. Computable from the entry count ALONE, before any
+ * allocation — which is what makes the reservation non-circular. Reserving the
+ * *actual* marker would require knowing what was omitted, which requires
+ * allocating, which requires the reservation (Gemini gate G1).
+ */
+function omissionMarkerMaxLen(totalDismissed) {
+  const ids = Array.from({ length: MARKER_MAX_IDS }, () => 'x'.repeat(TOPIC_ID_WIDTH));
+  return renderOmissionMarker(totalDismissed, ids).length;
+}
+
+/** Most-recently-adjudicated first; `topicId` asc breaks ties. Total and stable
+ *  — never relies on ledger array order, so the block is byte-identical across
+ *  runs for the same entry set. */
+function byDismissalPriority(a, b) {
+  return (b.resolvedRound ?? 0) - (a.resolvedRound ?? 0)
+    || String(a.topicId).localeCompare(String(b.topicId));
+}
+
 /**
  * Format ledger entries as system-prompt exclusions for a specific pass.
+ *
+ * **Per-group headers are load-bearing** (docs/plans/dismissed-fp-reopen-policy.md).
+ * This function previously rendered DISMISSED, SEVERITY ADJUSTED and FIXED under
+ * one header reading *"Do NOT re-raise them unless the code they affect has
+ * materially changed"*. In an active fix loop the affected code has ALWAYS
+ * changed — that is what a fix loop is — so for a dismissal that sentence was an
+ * explicit licence to re-raise, and it directly contradicted `R2_ROUND_MODIFIER`
+ * ("Paraphrase a dismissed finding as 'new' — that contradicts your own
+ * judgment"), which `buildR2SystemPrompt` concatenates immediately above it. Given
+ * a prohibition followed by an always-true escape clause, the model took the
+ * permissive branch: a GPT false positive re-raised 3 consecutive rounds in the
+ * field (2026-07-16) despite being dismissed each round with deterministic
+ * disproof. The clause now attaches ONLY to FIXED, where it is correct.
+ *
  * @param {string} ledgerPath - Path to ledger JSON file
  * @param {string} passName - Current pass name
  * @param {string[]} [impactSet] - Files in the impact set
@@ -461,50 +531,88 @@ export function buildRulingsBlock(ledgerPath, passName, impactSet = []) {
   const adjusted = entries.filter(e => e.adjudicationOutcome === 'severity_adjusted');
   const fixed = entries.filter(e => e.remediationState === 'fixed' || e.remediationState === 'verified');
 
-  const lines = [
-    '## YOUR PRIOR RULINGS (scoped to this pass)',
-    '',
-    'These items were deliberated in prior rounds. Do NOT re-raise them unless',
-    'the code they affect has materially changed (in which case mark as REOPENED).',
-    ''
-  ];
-
   // Optional-field guards: an entry can be well-formed enough to render (has
   // topicId) yet omit rationale/scope; `.slice`/`.join` on those must not throw.
   const files = (e) => (Array.isArray(e.affectedFiles) ? e.affectedFiles : []).join(', ');
   const cat = (e) => e.category ?? '(uncategorized)';
 
+  const sections = [[
+    '## YOUR PRIOR RULINGS (scoped to this pass)',
+    '',
+    'These items were deliberated in prior rounds.',
+    '',
+  ].join('\n')];
+  let used = sections[0].length;
+
+  // ── DISMISSED — allocated FIRST; its disproof is what stops the re-raise ──
   if (dismissed.length > 0) {
-    lines.push('### DISMISSED');
-    for (const d of dismissed.slice(0, 8)) {
-      lines.push(`- [${d.topicId.slice(0,6)}] "${cat(d)}" — YOU ruled DISMISSED R${d.resolvedRound ?? '?'}. Reason: ${(d.rulingRationale ?? '').slice(0, 100)}. Scope: ${files(d)}`);
+    const header = [
+      '### DISMISSED — YOU ruled these claims FALSE',
+      'Do NOT re-raise them. If you believe a code change has invalidated the',
+      'stated reason, you MUST cite the specific changed line that does so — a',
+      're-raise without that citation contradicts your own prior ruling.',
+      '',
+      '',
+    ].join('\n');
+
+    // Reserve the marker's worst case up front (see omissionMarkerMaxLen). If
+    // nothing ends up omitted the slack is simply unused — deterministic, and
+    // cheaper than a fixed-point re-allocation.
+    const reservation = omissionMarkerMaxLen(dismissed.length);
+    const budget = RULINGS_BLOCK_CAP - used - header.length - reservation;
+
+    const ordered = [...dismissed].sort(byDismissalPriority);
+    const lines = [];
+    let spent = 0;
+    for (const d of ordered) {
+      // Redact BEFORE truncating: slicing first can bisect a secret into a
+      // fragment the pattern scanner no longer matches, which would then ship.
+      // This render point IS the egress boundary — the GPT audit pass path has
+      // no assertEgressSafe gate (traced 2026-07-16; only ossStructuredCall
+      // gates). `redactSecrets` is the gentle pattern-based redactor, NOT
+      // sanitizer.mjs, whose blanket 20+-char-token rule would corrupt prose.
+      const reason = truncateAtWord(redactSecrets(d.rulingRationale ?? ''), DISMISSED_RATIONALE_BUDGET);
+      const line = `- [${shortTopicId(d.topicId)}] "${cat(d)}" — YOU ruled DISMISSED R${d.resolvedRound ?? '?'}. Reason: ${reason}. Scope: ${files(d)}`;
+      if (spent + line.length + 1 > budget) break;
+      lines.push(line);
+      spent += line.length + 1;
     }
-    if (dismissed.length > 8) lines.push(`  ... and ${dismissed.length - 8} more dismissed items`);
-    lines.push('');
+
+    const omitted = ordered.length - lines.length;
+    if (omitted > 0) {
+      // Rendered AFTER allocation, and ≤ the reservation by construction.
+      lines.push(renderOmissionMarker(omitted, ordered.slice(lines.length).map((d) => shortTopicId(d.topicId))));
+    }
+    const section = `${header}${lines.join('\n')}\n`;
+    sections.push(section);
+    used += section.length;
+  }
+
+  // ── FIXED — the reopen-on-change clause lives HERE and only here ──
+  if (fixed.length > 0) {
+    const lines = [
+      '### FIXED (do not re-raise)',
+      'Re-raise ONLY if the code they affect has materially changed (in which case',
+      'mark as REOPENED) — a fix can be undone by a later change.',
+      '',
+    ];
+    for (const f of fixed.slice(0, OTHER_GROUP_MAX_ENTRIES)) {
+      lines.push(`- [${shortTopicId(f.topicId)}] "${cat(f)}" — FIXED R${f.resolvedRound ?? '?'}. Scope: ${files(f)}`);
+    }
+    const section = `${lines.join('\n')}\n`;
+    if (used + section.length <= RULINGS_BLOCK_CAP) { sections.push(section); used += section.length; }
   }
 
   if (adjusted.length > 0) {
-    lines.push('### SEVERITY ADJUSTED (do not re-escalate)');
-    for (const a of adjusted.slice(0, 5)) {
-      lines.push(`- [${a.topicId.slice(0,6)}] "${cat(a)}" — ${a.originalSeverity ?? '?'}→${a.severity ?? '?'} R${a.resolvedRound ?? '?'}. Scope: ${files(a)}`);
+    const lines = ['### SEVERITY ADJUSTED (do not re-escalate)'];
+    for (const a of adjusted.slice(0, OTHER_GROUP_MAX_ENTRIES)) {
+      lines.push(`- [${shortTopicId(a.topicId)}] "${cat(a)}" — ${a.originalSeverity ?? '?'}→${a.severity ?? '?'} R${a.resolvedRound ?? '?'}. Scope: ${files(a)}`);
     }
-    lines.push('');
+    const section = `${lines.join('\n')}\n`;
+    if (used + section.length <= RULINGS_BLOCK_CAP) { sections.push(section); used += section.length; }
   }
 
-  if (fixed.length > 0) {
-    lines.push('### FIXED (do not re-raise)');
-    for (const f of fixed.slice(0, 5)) {
-      lines.push(`- [${f.topicId.slice(0,6)}] "${cat(f)}" — FIXED R${f.resolvedRound ?? '?'}. Scope: ${files(f)}`);
-    }
-    lines.push('');
-  }
-
-  let block = lines.join('\n');
-  // Cap at ~1500 chars
-  if (block.length > 1500) {
-    block = block.slice(0, 1400) + '\n\n... [rulings truncated — see ledger for full list]';
-  }
-
+  const block = sections.join('\n');
   process.stderr.write(`  [rulings] ${entries.length} entries for pass "${passName}" (${block.length} chars)\n`);
   return block;
 }
