@@ -1,15 +1,50 @@
 # Plan: Domain-Map Reconciliation (architecture-intent backlog)
 
 - **Date**: 2026-07-14 (refreshed 2026-07-17 against a live observed graph)
-- **Status**: In Progress — Phases A/B landed 2026-07-17 (`f94371c`); **Phase C is the remaining work**
+- **Status**: Complete — Phases A/B (`f94371c`) + C (`144be83`, `500f3aa`), 2026-07-17. Gemini final gate: APPROVE.
 - **Author**: Claude + Louis
 - **Scope**: backend (`.audit-loop/domain-map.json` + intent bookkeeping; one
   extractor line under item 3 — see its coupling note)
 
-> **Start at "Phase C" below.** The original items 1-13 table is retained as the
-> historical capture; Phase A reshaped most of it (see "Progress"). Do not
-> execute items 1-8 as written — roughly half their edges were artifacts of
-> missing rules and no longer exist.
+> **Done.** The original items 1-13 table is retained as the historical
+> capture; Phase A reshaped most of it (see "Progress"). Items 1-8 were **never
+> executed as written** — roughly half their edges were artifacts of missing
+> rules and ceased to exist once Phase A fixed rule coverage. That is the single
+> most important thing this plan learned about itself.
+
+## Outcome (2026-07-17)
+
+All §9 acceptance criteria pass: zero drift across 31 domains, zero
+over-declaration, dead-intent guard green, all 36 rule domains carry a purpose,
+debt named in-map, observed envelope fresh. **Item 3 closed: `tests` went 0 → 29
+observed edges** — all 12 pre-existing declarations proved real (the hand-written
+list was correct, just incomplete) and the inverse prohibition (production never
+imports tests) is verified rather than assumed.
+
+**Audit**: GPT `SIGNIFICANT_ISSUES` H:2 M:2 L:1 → **zero findings about this
+change**. Three were false and two are pre-existing:
+
+| Finding | Verdict |
+|---|---|
+| HIGH — "`scripts/setup-postgres.mjs` is absent from the repository" | **FALSE.** The file exists (33 KB). The audit was given a narrow `--changed` set, saw 7 files, and read *absent-from-scope* as *absent-from-repo*. It is also the **item-10 `compat-bootstrap` false positive re-raising** — hours after being struck from this very plan with evidence. |
+| HIGH — "signature egress: param defaults unredacted" | **FALSE.** [extract.mjs:212-217](../../scripts/symbol-index/extract.mjs#L212-L217) already redacts signatures, with a comment naming this exact scenario and tagged `R1 H3` — i.e. a *prior* round found and fixed it. A second re-raise of a settled finding. |
+| MEDIUM — "plan-to-repo path contract drift" | **FALSE.** The plan's `../../scripts/...` links are correct markdown relative paths from `docs/plans/`, not drift. |
+| MEDIUM + LOW — `--files-from` manifest `split('\n').map(trim)` corrupts paths with leading/trailing spaces | **REAL, deferred by independence** (not authorship, per AGENTS.md): the manifest governs which files are *symbol-extracted*; this change governs which dirs are *import-cruised*. Different paths, no dependency — the diff contains zero `files-from`/`trim`/`split` matches. Worth its own fix at [extract.mjs:51](../../scripts/symbol-index/extract.mjs#L51). |
+
+**Gemini final gate: APPROVE** (0 new, 0 wrongly dismissed).
+
+> **The audit's honesty guards fired twice and were right both times** — worth
+> recording, because both would have produced a confident wrong answer:
+> (1) it refused `domain-map.json` outright — *"0 implementation files reached
+> the prompt; refusing to emit a verdict over code that was never read"*;
+> (2) with a dirty tree, `--scope diff` resolved the base to `HEAD` and saw only
+> *unrelated in-flight work*, not this committed change — it needed
+> `--base 144be83^`. Without that, the audit would have reported someone else's
+> code as this plan's findings.
+>
+> **Two of five findings were re-raises of settled findings** (item 10's struck
+> FP; the `R1 H3` already-fixed egress). That is the dismissed-FP churn pattern,
+> reproduced live on a 13-line diff.
 
 ## Origin
 
