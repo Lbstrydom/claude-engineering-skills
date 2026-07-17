@@ -41,6 +41,7 @@ import { ManifestSchema, MANIFEST_SUPPORTED_VERSIONS } from './lib/schemas-insta
 import {
   findRepoRoot, resolveSkillFiles,
   receiptPath, partitionManagedFilesByScope,
+  repoJournalPath, globalJournalPath,
 } from './lib/install/surface-paths.mjs';
 import { readReceipt, writeReceipt, buildReceipt } from './lib/install/receipt.mjs';
 import { detectConflicts } from './lib/install/conflict-detector.mjs';
@@ -148,13 +149,82 @@ function printBanner(args, repoRoot) {
   console.log('');
 }
 
-function reconcileJournals(repoRoot, globalReceiptPath) {
-  for (const journalBase of [repoRoot, path.dirname(globalReceiptPath)]) {
-    const jp = path.join(journalBase, '.audit-loop-install-txn.json');
-    const rec = recoverFromJournal(jp);
+/**
+ * Reconcile any crashed install transaction before starting a new one.
+ *
+ * Fails CLOSED on `rec.error`, not on an enumerated list of named flags: an
+ * earlier version gated only on `rec.quarantined`, which silently ignored the
+ * lock-contention failure result added later. Keying on `error` means any
+ * future non-benign result is fatal by default. The benign "no journal exists"
+ * case is the only one carrying neither `error` nor `quarantined`.
+ *
+ * @param {string} repoRoot
+ */
+function reconcileJournals(repoRoot) {
+  // BOTH anchors are scanned, and both are now live. A transaction touching the
+  // shared ~/.claude/skills surface journals globally, so the global scan is
+  // what lets THIS repo see a crash that another repo left on that surface.
+  // Paths come from surface-paths.mjs so the reader cannot drift from the
+  // writer.
+  for (const jp of [repoJournalPath(repoRoot), globalJournalPath()]) {
+    const rec = recoverFromJournal(jp, { repoRoot });
+
+    if (rec.error) {
+      process.stderr.write(`${R}[install] ABORT — unresolved install transaction at ${jp}${X}\n`);
+      process.stderr.write(`  ${rec.error}\n`);
+      if (rec.foreign) {
+        process.stderr.write('  It is left in place deliberately: it is the only record of what that\n');
+        process.stderr.write('  install had already applied, and only its own repo can complete it.\n');
+      }
+      if (rec.quarantined) {
+        process.stderr.write(`  The journal was quarantined to: ${rec.quarantined}\n`);
+        process.stderr.write('  Inspect it to see what the crashed install had already applied,\n');
+        process.stderr.write('  then delete it to unblock installs.\n');
+      }
+      process.exit(1);
+    }
+
+    for (const s of rec.skippedDeletes || []) {
+      process.stderr.write(`  ${Y}⚠ recovery skipped a delete${X}: ${s.absPath} — ${s.reason}\n`);
+    }
+    // Recovery renames are fsynced like the transaction's own, so it can
+    // degrade too — route it through the SAME channel rather than leaving the
+    // recovery path silently exempt from the "never silent" guarantee.
+    reportDegradations(rec.degradations);
     if (rec.recovered) {
       console.log(`  ${Y}Journal recovered${X} (${jp}): rolled-forward=${rec.rolledForward} rolled-back=${rec.rolledBack}`);
     }
+  }
+}
+
+/**
+ * Render durability degradations. The "degrade loudly, never silently" stance
+ * is only real if something actually prints — this is that something.
+ *
+ * Deduplicated by (code, what): the journal is written twice per transaction,
+ * so an unsupported fsync would otherwise report the identical line twice and
+ * read like two separate problems. The transaction's `degradations` array
+ * stays complete (data layer); uniqueness is a presentation concern.
+ *
+ * @param {Array<{code: string, what: string}>} degradations
+ */
+function reportDegradations(degradations) {
+  const seen = new Set();
+  for (const d of degradations || []) {
+    const key = `${d.code}|${d.what}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Do NOT say "unsupported" for every code: ENOTSUP/EINVAL are capability
+    // limits, but EIO/ENOSPC are real I/O failures and calling those
+    // "unsupported" understates them into noise. Name what actually happened.
+    const capability = d.code === 'ENOTSUP' || d.code === 'EINVAL';
+    const cause = capability
+      ? `fsync unsupported on this filesystem (${d.code})`
+      : `fsync FAILED (${d.code}) — this may indicate a failing disk or a full volume`;
+    process.stderr.write(
+      `  ${Y}⚠ durability degraded${X}: ${d.what}: ${cause} — ` +
+      'the install completed, but is not guaranteed crash-safe\n',
+    );
   }
 }
 
@@ -264,7 +334,7 @@ function main() {
 
   const globalReceiptPath = receiptPath('global', repoRoot);
   const repoReceiptPath = receiptPath('repo', repoRoot);
-  reconcileJournals(repoRoot, globalReceiptPath);
+  reconcileJournals(repoRoot);
 
   if (!args.local) {
     console.error(`${R}Error${X}: --remote mode not implemented yet (Phase F follow-up)`);
@@ -319,11 +389,18 @@ function main() {
     process.exit(0);
   }
 
+  // `allSafe` deliberately mixes repo-scope and global-scope (~/.claude/skills)
+  // writes into ONE transaction. No journalPath is passed: placement follows the
+  // transaction's own scope, which only transaction.mjs can see. A mixed-scope
+  // transaction must journal at the GLOBAL anchor so other repos can see a crash
+  // on the surface they share — a decision the caller has no business making,
+  // because getting it wrong is invisible here and harms someone else's repo.
   const result = executeTransaction({
     writes: allSafe.map(w => ({ absPath: w.absPath, content: w.content })),
     deletes,
-    journalPath: path.join(repoRoot, '.audit-loop-install-txn.json'),
+    repoRoot,
   });
+  reportDegradations(result.degradations);
 
   if (!result.success) {
     console.error(`${R}Install failed${X}: ${result.error}`);
@@ -345,10 +422,23 @@ function main() {
   for (const w of allSafe) console.log(`  ${G}+${X} ${w.path} ${D}(${w.scope})${X}`);
 }
 
-try {
-  main();
-} catch (err) {
-  console.error(`${R}Install error${X}: ${err.message}`);
-  if (process.env.DEBUG) console.error(err.stack);
-  process.exit(1);
+/**
+ * Internal seams exposed for tests. Underscore-prefixed per this repo's
+ * convention (file-io.mjs, shared.mjs, anthropic-client.mjs).
+ */
+export const _internals = { reconcileJournals, reportDegradations };
+
+// isMain guard — importing this module (e.g. from a test) must not run an
+// install. Matches the pattern used by memory-health.mjs / symbol-index/drift.mjs.
+const isMain = import.meta.url === `file://${process.argv[1]}`
+  || import.meta.url === `file:///${process.argv[1]?.replace(/\\/g, '/')}`;
+
+if (isMain) {
+  try {
+    main();
+  } catch (err) {
+    console.error(`${R}Install error${X}: ${err.message}`);
+    if (process.env.DEBUG) console.error(err.stack);
+    process.exit(1);
+  }
 }

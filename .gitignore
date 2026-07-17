@@ -102,6 +102,10 @@ docs/arm-eval/worksheets/
 .audit-loop-install-receipt.json
 .audit-loop-install-txn.json
 .audit-loop-install-txn.json.tmp.*
+# The transaction lock. This repo installs its own bundle, so it produces the
+# same Category-A artefacts a consumer does — gitignore.mjs adds this pattern to
+# CONSUMER repos, but this repo's own .gitignore is hand-maintained and missed it.
+.audit-loop-install-txn.json.lock
 
 # Author-private self-audit artefacts (this repo auditing itself)
 .audit/tech-debt.json

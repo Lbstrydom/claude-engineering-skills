@@ -97,9 +97,13 @@ describe('executeTransaction — crash-safe WAL journal', () => {
     assert.deepEqual(remnants, []);
   });
 
-  it('writes journal during transaction and removes on success', () => {
-    // We can't easily interpose the journal check mid-call, but success path
-    // must end with no journal.
+  it('removes the journal on success (CLEANUP only — ordering is guarded elsewhere)', () => {
+    // Named for what it actually asserts. It used to be called "writes journal
+    // during transaction and removes on success", which it could not check: an
+    // absent journal afterwards is equally produced by an implementation that
+    // never wrote one. The real "journal is durable BEFORE the first target
+    // mutation" contract is asserted at the filesystem seam in
+    // tests/install/transaction-hardening.test.mjs.
     const a = path.join(tmp, 'a.md');
     executeTransaction({
       writes: [{ absPath: a, content: Buffer.from('A') }],
@@ -161,12 +165,29 @@ describe('recoverFromJournal', () => {
     assert.equal(fs.existsSync(journalPath()), false);
   });
 
-  it('handles corrupt journal gracefully', () => {
+  it('QUARANTINES a corrupt journal — never deletes it', () => {
+    // This assertion used to be `existsSync(journalPath()) === false` with the
+    // comment "corrupt journal removed to avoid loop" — the pre-quarantine
+    // design that R1-H3 rejected: deleting an unreadable journal destroys the
+    // only record of a possibly half-applied transaction. It kept passing after
+    // the redesign purely because quarantine also MOVES the file, so it could
+    // not tell "preserved elsewhere" from "destroyed". A revert to unlinkSync
+    // would have stayed green. Assert the contract, not the side effect.
     fs.writeFileSync(journalPath(), '{not valid json');
-    const r = recoverFromJournal(journalPath());
+
+    const r = recoverFromJournal(journalPath(), { repoRoot: tmp });
+
     assert.equal(r.recovered, false);
-    assert.ok(r.error);
-    assert.equal(fs.existsSync(journalPath()), false, 'corrupt journal removed to avoid loop');
+    assert.ok(r.error, 'an unreadable journal is an incident, not a benign no-op');
+    assert.equal(fs.existsSync(journalPath()), false, 'moved aside, so it cannot re-loop');
+    assert.ok(r.quarantined, 'the caller needs the quarantine path to resolve the block');
+    assert.equal(fs.existsSync(r.quarantined), true, 'the evidence must still exist on disk');
+
+    // The raw bytes survive, or there is nothing for an operator to diagnose.
+    const record = JSON.parse(fs.readFileSync(r.quarantined, 'utf8'));
+    assert.equal(record.raw, '{not valid json', 'the original journal content must be preserved verbatim');
+    assert.equal(record.originJournalPath, journalPath(), 'the record must say where it came from');
+    assert.ok(record.reason, 'and why it was quarantined');
   });
 });
 

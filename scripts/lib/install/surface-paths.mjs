@@ -37,6 +37,66 @@ export function findRepoRoot(startDir = process.cwd()) {
 }
 
 /**
+ * Root of the GLOBAL (claude) install surface — `~/.claude/skills/`.
+ *
+ * Single source of truth: `resolveSkillTargets` writes under it, and
+ * `transaction.mjs` validates journal-entry containment against it. Those two
+ * MUST agree — a transaction legitimately spans both `repoRoot` and this root
+ * (`install-skills.mjs` merges repo- and global-scope writes into one
+ * transaction), so a containment check that recomputed the path locally could
+ * drift from the writer and reject every global write.
+ *
+ * @returns {string} absolute path to the global skills root
+ */
+export function globalSurfaceRoot() {
+  return path.join(os.homedir(), '.claude', 'skills');
+}
+
+/** Basename of the install transaction journal, at either anchor. */
+export const INSTALL_JOURNAL_BASENAME = '.audit-loop-install-txn.json';
+
+/**
+ * Journal + quarantine paths for the GLOBAL anchor.
+ *
+ * A transaction that mutates the SHARED `~/.claude/skills/` surface must leave
+ * its recovery record where EVERY repo already looks — not inside whichever
+ * repo happened to start it. A repo-anchored record for a global mutation is
+ * invisible to every other repo, which then installs straight over the
+ * half-applied shared state (the stranded-global-journal defect).
+ *
+ * These live here, beside `globalSurfaceRoot`, for the same reason it does:
+ * the writer (`transaction.mjs`) and the reader (`install-skills.mjs`) must
+ * derive the anchor from ONE source. A locally-recomputed `os.homedir()` join
+ * is exactly how the two drift apart.
+ */
+export function globalJournalPath() {
+  return path.join(os.homedir(), INSTALL_JOURNAL_BASENAME);
+}
+
+/**
+ * Quarantine directory for the GLOBAL anchor. A globally-anchored journal that
+ * cannot be understood must be quarantined somewhere every repo's pre-flight
+ * looks, or the block it exists to enforce silently stops applying to everyone
+ * but the repo that quarantined it.
+ *
+ * Outside every repo by construction, so — unlike the repo-anchored
+ * `.audit/quarantine/` — it needs no gitignore entry.
+ */
+export function globalQuarantineDir() {
+  return path.join(os.homedir(), '.audit-loop-install-quarantine');
+}
+
+/** Journal path for the REPO anchor. */
+export function repoJournalPath(repoRoot) {
+  return path.join(repoRoot, INSTALL_JOURNAL_BASENAME);
+}
+
+/** Quarantine directory for the REPO anchor — the long-established location. */
+export function repoQuarantineDir(repoRoot) {
+  return path.join(repoRoot, '.audit', 'quarantine');
+}
+
+/**
  * Resolve target paths for a skill based on surface selection.
  * @param {string} skillName
  * @param {string} surface - 'claude' | 'copilot' | 'agents' | 'both'
@@ -45,10 +105,9 @@ export function findRepoRoot(startDir = process.cwd()) {
  */
 export function resolveSkillTargets(skillName, surface, repoRoot) {
   const targets = [];
-  const home = os.homedir();
 
   if (surface === 'claude' || surface === 'both') {
-    const dir = path.join(home, '.claude', 'skills', skillName);
+    const dir = path.join(globalSurfaceRoot(), skillName);
     targets.push({ surface: 'claude', dir, filePath: path.join(dir, 'SKILL.md'), scope: 'global' });
   }
 

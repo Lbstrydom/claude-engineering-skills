@@ -139,3 +139,95 @@ describe('checkAuditGitignore — shares the same seam (the --fix convergence pr
     assert.deepEqual(checkAuditGitignore(repo).missing, []);
   });
 });
+
+describe('WAL Category-A artifacts are gitignored (install-transaction-wal-hardening)', () => {
+  // Both artifacts are derived from crash state and volatile — Category A under
+  // AGENTS.md's generated-artifact policy, so they must never reach a
+  // consumer's `git status`, let alone a commit.
+  it('the transaction LOCK file is covered (it sits at the repo root, outside .audit/)', () => {
+    const repo = mkRepo('some-consumer');
+    const { patterns } = requiredPatternsFor(repo);
+    assert.ok(
+      patterns.includes('.audit-loop-install-txn.json.lock'),
+      'the lock lives beside the journal at the repo ROOT, so `.audit/**/*.lock` does not match it; '
+      + 'without an explicit pattern every install dirties the working tree and a crashed install leaves it forever',
+    );
+  });
+
+  it('the quarantine directory is covered by the pre-existing .audit/quarantine/ pattern', () => {
+    const repo = mkRepo('some-consumer');
+    const { patterns } = requiredPatternsFor(repo);
+    assert.ok(
+      patterns.includes('.audit/quarantine/'),
+      'quarantined journals are written to <repoRoot>/.audit/quarantine/ — reusing this existing '
+      + 'pattern is why the WAL hardening needed no new ignore entry for them',
+    );
+  });
+});
+
+describe('pattern presence is LINE-based, not substring (code-audit H2)', () => {
+  // Adding `.audit-loop-install-txn.json.lock` made it the ONLY strict
+  // superstring in the pattern set. Under the old `gi.includes(pattern)` check
+  // its mere presence reported the shorter `.audit-loop-install-txn.json` as
+  // already-ignored — leaving the journal (which records absolute paths of
+  // every file an install touches) committable.
+  it('a longer pattern does NOT shadow the shorter one it contains', () => {
+    const repo = mkRepo('some-consumer');
+    fs.writeFileSync(path.join(repo, '.gitignore'), '.audit-loop-install-txn.json.lock\n');
+
+    const check = checkAuditGitignore(repo);
+
+    assert.ok(
+      check.missing.includes('.audit-loop-install-txn.json'),
+      'the journal pattern is absent and MUST be reported missing — a substring match would call it present',
+    );
+    assert.ok(check.present.includes('.audit-loop-install-txn.json.lock'), 'the lock pattern really is present');
+  });
+
+  it('ensure ADDS the shadowed pattern rather than skipping it', () => {
+    const repo = mkRepo('some-consumer');
+    fs.writeFileSync(path.join(repo, '.gitignore'), '.audit-loop-install-txn.json.lock\n');
+    const { added } = ensureAuditGitignore(repo, { quiet: true });
+    assert.ok(added.includes('.audit-loop-install-txn.json'));
+    assert.deepEqual(checkAuditGitignore(repo).missing, [], 'ensure must converge to complete');
+  });
+
+  it('a COMMENTED-OUT pattern does not count as present', () => {
+    const repo = mkRepo('some-consumer');
+    fs.writeFileSync(path.join(repo, '.gitignore'), '# .audit/local/ (disabled)\n');
+    assert.ok(checkAuditGitignore(repo).missing.includes('.audit/local/'));
+  });
+
+  it('no pattern in the set strictly contains another (keeps the seam honest)', () => {
+    // A defence in depth for the check above: if a future pattern reintroduces
+    // a superstring relationship, line-matching still handles it — but this
+    // makes the hazard visible at review time rather than in a consumer's repo.
+    const { patterns } = requiredPatternsFor(mkRepo('some-consumer'));
+    const collisions = [];
+    for (const a of patterns) for (const b of patterns) if (a !== b && a.includes(b)) collisions.push(`${a} shadows ${b}`);
+    assert.deepEqual(
+      collisions, ['.audit-loop-install-txn.json.lock shadows .audit-loop-install-txn.json'],
+      'the ONLY known superstring pair is the journal/lock one, which hasPattern() handles; a new entry here needs review',
+    );
+  });
+});
+
+describe('leading whitespace is significant to Git (code-audit R3-H2)', () => {
+  it('an INDENTED rule does not count as present — it does not actually ignore', () => {
+    // Verified with `git check-ignore`: a .gitignore line ' .env' matches a file
+    // literally named " .env" and leaves `.env` UNIGNORED. Reporting it present
+    // would skip adding the real rule — on the secret-protection path.
+    const repo = mkRepo('some-consumer');
+    fs.writeFileSync(path.join(repo, '.gitignore'), ' .env\n');
+    assert.ok(
+      checkAuditGitignore(repo).missing.includes('.env'),
+      'an indented .env rule does not ignore .env, so the real rule is still missing',
+    );
+  });
+
+  it('TRAILING whitespace does not block a match — Git strips it', () => {
+    const repo = mkRepo('some-consumer');
+    fs.writeFileSync(path.join(repo, '.gitignore'), '.env   \n');
+    assert.ok(checkAuditGitignore(repo).present.includes('.env'), 'a trailing-space rule is effective, so it counts');
+  });
+});

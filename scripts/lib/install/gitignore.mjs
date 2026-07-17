@@ -42,6 +42,11 @@ const OPERATIONAL_PATTERNS = [
   '.audit/meta-assessments.jsonl',
   '.audit-loop-install-receipt.json',
   '.audit-loop-install-txn.json',
+  // The transaction lock sits beside the journal at the repo ROOT, so the
+  // `.audit/**/*.lock` pattern above does not cover it. Without this every
+  // install dirties the consumer's working tree, and a crashed install leaves
+  // the file behind permanently.
+  '.audit-loop-install-txn.json.lock',
   // Brainstorm temp files (topic stdin + malformed-payload debug JSONs).
   // Files are 0o600 inside the repo (Plan brainstorm-and-arch-discoverability v6,
   // Gemini-G3); contents are ephemeral session data.
@@ -131,6 +136,36 @@ export function requiredPatternsFor(repoRoot) {
 }
 
 /**
+ * Is `pattern` present in `.gitignore` content as its own rule?
+ *
+ * LINE-based, not substring. A raw `gi.includes(pattern)` reports a pattern as
+ * present when it merely appears INSIDE another line — including a longer
+ * pattern that happens to start with it. That is not hypothetical: adding
+ * `.audit-loop-install-txn.json.lock` made it the only strict superstring in
+ * the pattern set, so `includes('.audit-loop-install-txn.json')` would return
+ * true from the `.lock` line alone and the journal — which records absolute
+ * paths of every file an install touches — would silently never get ignored.
+ * A commented-out line mentioning the pattern had the same effect.
+ *
+ * Shared by the writer (`ensureAuditGitignore`) and the checker
+ * (`checkAuditGitignore`) so the two can never disagree about presence.
+ *
+ * @param {string} gi - full .gitignore content
+ * @param {string} pattern
+ * @returns {boolean}
+ */
+function hasPattern(gi, pattern) {
+  // Trailing whitespace only. Git strips trailing spaces from a rule (unless
+  // backslash-escaped) but LEADING space is significant: a line ` .env` matches
+  // a file literally named " .env" and does NOT ignore `.env` — verified with
+  // `git check-ignore`. So `line.trim()` would report the `.env` protection as
+  // already satisfied when it isn't, and we'd skip adding the real rule. That
+  // is the secret-protection path, so the safe direction is to under-report
+  // presence (worst case: we append a rule that's already effective).
+  return gi.split(/\r?\n/).some(line => line.replace(/\s+$/, '') === pattern);
+}
+
+/**
  * Header comment prepended when adding the audit-loop block.
  */
 const BLOCK_HEADER = '\n# Audit-loop — operational state + synced bundle (auto-managed, do not edit by hand)\n';
@@ -164,7 +199,7 @@ export function ensureAuditGitignore(repoRoot, { dryRun = false, quiet = false }
   const alreadyPresent = [];
 
   for (const pattern of patterns) {
-    if (gi.includes(pattern)) {
+    if (hasPattern(gi, pattern)) {
       alreadyPresent.push(pattern);
     } else {
       added.push(pattern);
@@ -211,7 +246,7 @@ export function checkAuditGitignore(repoRoot) {
   const present = [];
 
   for (const pattern of patterns) {
-    if (gi.includes(pattern)) {
+    if (hasPattern(gi, pattern)) {
       present.push(pattern);
     } else {
       missing.push(pattern);
