@@ -515,3 +515,22 @@ describe('discovery payload — planContent redaction (egress-gate root cause, 2
     assert.equal(redactSecrets(undefined ?? ''), '');
   });
 });
+
+// ── require_parameters on both OSS call sites (gate-1 screen, 2026-07-17) ──
+// Measured through the real seam (n=60): OpenRouter hosts that accept but
+// don't honour response_format json_schema produced the ENTIRE stall class.
+// require_parameters:true → stalls 10/30 → 0/30, availability 40% → 57%,
+// p50 2.6s → 0.9s. Static pins so a refactor can't silently drop the field.
+describe('OSS call sites send require_parameters (experiment-4 stall fix)', () => {
+  const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+  it('the GLM discovery generator requires honoured parameters', () => {
+    const glm = src.match(/const glmCall = providers\.ossCall[\s\S]*?discovery portfolio: providers\.ossCall unavailable/);
+    assert.ok(glm, 'glmCall block not found');
+    assert.match(glm[0], /providerPreferences:\s*\{\s*require_parameters:\s*true\s*\}/);
+  });
+  it('the Stage-1 validated triager requires honoured parameters', () => {
+    const triager = src.match(/async function validatedTriagerCall[\s\S]*?\n\}/);
+    assert.ok(triager, 'validatedTriagerCall not found');
+    assert.match(triager[0], /providerPreferences:\s*\{\s*require_parameters:\s*true\s*\}/);
+  });
+});

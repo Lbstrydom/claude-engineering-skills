@@ -279,8 +279,103 @@ gate-1 screen (a few dollars, ~30 calls/arm) settles model-vs-router before
 any default changes. The `required→optional` interim demotion stands either
 way — it is routing-agnostic.
 
+### Gate-1 instrument: built 2026-07-17, Azure-ready by design
+
+`scripts/model-eval-discovery.mjs` implements the gate-1 screen (extends the
+model-eval family, which previously covered only auditor/adjudicator). It
+measures through the REAL production seam — `ossStructuredCall` with the same
+egress gate, fence-tolerant parsing, Zod conformance, and production-parity
+anchor normalization — against a real commit's discovery payload. Default
+arms are the three-arm design above plus a `glm-unpinned` production-
+reproduction control (self-validating: it should reproduce the ~36% rate).
+`ossStructuredCall` gained an opt-in `providerPreferences` passthrough
+(dormant callers byte-identical; tested).
+
+**Azure-testability requirement (operator, 2026-07-17)**: when the corporate
+Foundry catalogue gains models that could fill the fourth-lineage slot, it
+would be genuinely useful to run this same evaluation there. Recorded as a
+design constraint and ALREADY satisfied: arms are generic OpenAI-compatible
+endpoints — a custom arm `{ label, model: '<deployment>', baseUrl:
+'https://<resource>.openai.azure.com/openai/v1', apiKeyEnv:
+'AZURE_OPENAI_API_KEY' }` runs the identical screen against Foundry, no code
+change. The instrument, not just the verdict, is the deliverable.
+
 ### Additional sources (amendment)
 - [GLM-5.2 API Access Compared: Z.ai vs OpenRouter vs Hosts — DigitalApplied](https://www.digitalapplied.com/blog/glm-5-2-api-access-providers-price-comparison-2026)
 - [Where to Run GLM-5.2: Every Provider Compared (2026) — Developers Digest](https://www.developersdigest.tech/blog/glm-5-2-free-and-cheap-access-2026)
 - [GLM 5.2 — API Pricing & Benchmarks | OpenRouter](https://openrouter.ai/z-ai/glm-5.2)
 - Internal: `scripts/lib/oss-structured-output.mjs` (no `provider` preferences sent; multi-provider fence-wrapping live-verified 2026-07-15).
+
+
+## Gate-1 results (2026-07-17, MEASURED — 240 calls, ~$1.75, through the real seam)
+
+Two rounds of `scripts/model-eval-discovery.mjs`, n=30/arm, production-parity
+timeout (120s), maxRetries=0, identical real payload (~88KB: commit `a183c3f`'s
+files + the redacted shadow-fallback plan). Raw records:
+`.audit/discovery-screen-gate1{,-round2}.json` (gitignored).
+
+| Arm | Availability | Stalls | Non-conformant | p50 ok-latency | Measured cost (30 calls) |
+|---|---|---|---|---|---|
+| GLM unpinned (production repro) | 40% | 10 | 8 | 2.6s | $0.14 |
+| GLM pinned z-ai/fp8 (`order` pin) | 0% — **404 no endpoints** | — | — | — | $0 |
+| GLM `require_parameters` + fp8-only | 3% | **19** | 10 | 8.7s | $0.42 |
+| **GLM `require_parameters`, any quant** | **57%** | **0** | 13 | **0.9s** | $0.29 |
+| DeepSeek V3.2 unpinned | 57% | **0** | 13 | 41.5s | $0.13 |
+| DeepSeek V3.2 `require_parameters` | 50% | **0** | 15 | 43.2s | **$0.05** |
+| Qwen3.6 Flash (both configs) | 3% / 0% | 0 | 28-30 | — | $0.45-0.47 |
+
+### What the measurements established
+
+1. **The screen is self-validating**: the unpinned control reproduced
+   production's live failure rate (40% vs 36%).
+2. **The stall mechanism is identified and killed.** The endpoints API shows
+   11 of GLM's 28 hosts (Z.AI's own first-party route INCLUDED) do not
+   declare `structured_outputs` — they accept our `json_schema` request and
+   then hang or emit free text. `require_parameters: true` routes only to
+   honouring hosts: **stalls 10/30 → 0/30, p50 2.6s → 0.9s**. Confirmed
+   inversely: forcing the *declared*-fp8 pool (`quantizations:['fp8']`)
+   found the WORST hosts (19/30 stalls) — declaration ≠ honesty; the
+   quantization filter is an anti-signal for availability and must not be
+   used for routing (quality-vs-quant remains a gate-2 concern).
+3. **The operator's "are we penalising GLM?" challenge was RIGHT on
+   availability.** Under `require_parameters`, GLM's availability
+   disqualifier is **lifted**: 57% / 0 stalls — statistically
+   indistinguishable from DeepSeek (50-57%) at n=30, and 45× faster to
+   answer (0.9s vs 43s p50).
+4. **Direct z.ai is settled without a test**: the first-party route does not
+   support `structured_outputs` at all, so calling GLM "directly" cannot
+   serve this role's call shape. Question closed.
+5. **The residual failures are shared and largely OUR side.** Both finalists
+   fail the same way: `'modified'` anchor path rules and (DeepSeek)
+   `quote > 1000 chars`. The quote failures exposed a real production bug —
+   `clampToJsonSchemaLimits` never traversed `anyOf` (every nullable
+   anchor's limits were unreachable), fixed + tested same day. The
+   both-paths-absent anchor case is a candidate `normalizeModifiedAnchorPaths`
+   extension (derive from `diffPathId`; Gate A re-verifies against the real
+   diff, so a wrong derivation is caught as `fabricated`, not trusted).
+6. **Qwen3.6 Flash is disqualified** for this role: ≤3% conformance AND the
+   most expensive arm measured ($0.45-0.47/30 — reasoning-token overhead).
+
+### Production changes shipped from these measurements
+
+- `require_parameters: true` on BOTH tiered OSS call sites (discovery
+  generator + Stage-1 triager — the 2026-07-14 stall incident was the
+  Stage-1 path), via the new `providerPreferences` passthrough. Static-pinned
+  in tests.
+- `clampToJsonSchemaLimits` `anyOf`/`oneOf` traversal fix (+ end-to-end test
+  against the real V2 schema).
+
+### Revised decision
+
+- **Availability axis: GLM un-disqualified** (this document's original
+  36%-availability disqualifier is superseded by the controlled measurement —
+  the fault was routing, exactly as the operator suspected).
+- **The GLM-vs-DeepSeek call moves to gate 2 (quality)**, now a fair fight on
+  honouring hosts: GLM fast (0.9s) but ~5× pricier and carrying
+  experiment-3's (quant-confounded) 80.9% FP prior; DeepSeek slow (43s,
+  irrelevant for a concurrent shadow) but $0.05/30 calls. Gate 2 should grade
+  FP-rate per arm on `require_parameters` routes.
+- **Interim `required→optional` demotion is no longer urgent** — with the
+  stall class eliminated, expected portfolio availability rises to
+  ~0.57×0.92 ≈ 52% raw (≈81%×92% ≈ 75% with production's 1 retry) before
+  the conformance fixes land. Re-evaluate after the next ~10 live shadow runs.

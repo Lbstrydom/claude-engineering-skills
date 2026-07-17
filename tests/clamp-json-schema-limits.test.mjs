@@ -116,3 +116,49 @@ describe('clampToJsonSchemaLimits', () => {
     assert.equal(parsed.data.findings[0].principle.length, 150);
   });
 });
+
+// ── anyOf/oneOf traversal (experiment-4 gate-1 screen, 2026-07-17) ─────────
+// A nullable nested schema (EvidenceAnchorSchema.nullable() on every
+// finding's anchor) is emitted as {anyOf: [<schema>, {type:'null'}]} — the
+// walker previously stopped there, so anchor.quote's maxLength:1000 was
+// never clamped and an oversized quote hard-failed the WHOLE response.
+// Measured live: DeepSeek round-2 screen failures "quote: Too big".
+describe('clampToJsonSchemaLimits — anyOf/oneOf traversal (nullable anchors)', () => {
+  it('clamps a string limit hidden behind a nullable anyOf wrapper', () => {
+    const js = {
+      type: 'object',
+      properties: {
+        anchor: { anyOf: [{ type: 'object', properties: { quote: { type: 'string', maxLength: 10 } } }, { type: 'null' }] },
+      },
+    };
+    const out = clampToJsonSchemaLimits({ anchor: { quote: 'x'.repeat(50) } }, js);
+    assert.equal(out.anchor.quote.length, 10);
+  });
+
+  it('a null value through the same wrapper is untouched', () => {
+    const js = { anyOf: [{ type: 'object', properties: { q: { type: 'string', maxLength: 5 } } }, { type: 'null' }] };
+    assert.equal(clampToJsonSchemaLimits(null, js), null);
+  });
+
+  it('END-TO-END: the real ProducerFindingV2Schema anchor quote is now clamped (the exact live failure)', async () => {
+    const { z } = await import('zod');
+    const { ProducerFindingV2Schema } = await import('../scripts/lib/schemas.mjs');
+    const strict = z.object({ findings: z.array(ProducerFindingV2Schema).max(15) });
+    const js = z.toJSONSchema(strict);
+    const finding = {
+      id: 'H1', severity: 'MEDIUM', category: 'c', section: 's', detail: 'd', risk: 'r',
+      recommendation: 'rec', is_quick_fix: false, is_mechanical: false, principle: 'p',
+      classification: { sonarType: 'CODE_SMELL', effort: 'TRIVIAL', sourceKind: 'MODEL', sourceName: 'm' },
+      evidenceType: 'commission',
+      anchor: { diffPathId: 'a', oldFile: 'a', newFile: 'a', fileStatus: 'modified', side: 'head', startLine: 1, endLine: 1, quote: 'x'.repeat(1500), headSha: 'W' },
+    };
+    const clamped = clampToJsonSchemaLimits({ findings: [finding] }, js);
+    assert.equal(clamped.findings[0].anchor.quote.length, 1000, 'was 1500 (unreachable) before the anyOf fix');
+    assert.equal(strict.safeParse(clamped).success, true, 'and the clamped value must now pass the strict schema');
+  });
+
+  it('no matching branch → value untouched, never a throw', () => {
+    const js = { anyOf: [{ type: 'number' }] };
+    assert.equal(clampToJsonSchemaLimits('a long string', js), 'a long string');
+  });
+});

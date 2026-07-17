@@ -327,3 +327,49 @@ describe('ossStructuredCall — markdown-fence-tolerant JSON parsing (2026-07-15
     assert.equal(result.error, 'reply was not valid JSON');
   });
 });
+
+// ── providerPreferences passthrough (experiment-4 gate-1 availability screen) ──
+// Every GLM measurement to date was taken against OpenRouter's unfiltered
+// ~26-host fleet (fp8/fp4/undisclosed quantizations). Pinning via the
+// request body's `provider` field is the control that separates
+// model-vs-router — and dormant callers must stay byte-identical.
+describe('ossStructuredCall — providerPreferences passthrough (experiment-4 gate 1)', () => {
+  const capture = () => {
+    const seen = [];
+    const client = { chat: { completions: { create: async (params) => {
+      seen.push(params);
+      return { choices: [{ message: { content: '{"ok":true}' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } };
+    } } } };
+    return { client, seen };
+  };
+  const okSchema = z.object({ ok: z.boolean() });
+
+  it('sends provider preferences verbatim when given', async () => {
+    const { client, seen } = capture();
+    const prefs = { order: ['z-ai'], quantizations: ['fp8'], require_parameters: true, allow_fallbacks: false };
+    const r = await ossStructuredCall(client, {
+      model: 'z-ai/glm-5.2', system: 's', userPrompt: 'u',
+      schema: okSchema, schemaName: 'ok', providerPreferences: prefs,
+    });
+    assert.equal(r.conformant, true);
+    assert.deepEqual(seen[0].provider, prefs);
+  });
+
+  it('omits the provider field entirely when not given — dormant callers stay byte-identical', async () => {
+    const { client, seen } = capture();
+    await ossStructuredCall(client, {
+      model: 'z-ai/glm-5.2', system: 's', userPrompt: 'u',
+      schema: okSchema, schemaName: 'ok',
+    });
+    assert.equal('provider' in seen[0], false, 'no provider field may appear without an explicit opt-in');
+  });
+
+  it('null is treated as absent, not sent as a literal null', async () => {
+    const { client, seen } = capture();
+    await ossStructuredCall(client, {
+      model: 'm', system: 's', userPrompt: 'u',
+      schema: okSchema, schemaName: 'ok', providerPreferences: null,
+    });
+    assert.equal('provider' in seen[0], false);
+  });
+});

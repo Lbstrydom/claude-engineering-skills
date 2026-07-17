@@ -152,6 +152,17 @@ function describeProviderError(err) {
  * @param {{setTimeout:Function, clearTimeout:Function, setInterval:Function, clearInterval:Function}} [opts.scheduler]
  *   - injectable timer source (default: native globals) for deterministic tests.
  * @param {string} [opts.passName]
+ * @param {object|null} [opts.providerPreferences]  - OpenRouter provider-routing
+ *   preferences (e.g. `{ order: ['z-ai'], quantizations: ['fp8'],
+ *   require_parameters: true, allow_fallbacks: false }`), sent verbatim as the
+ *   request body's `provider` field. Added for experiment-4's gate-1
+ *   availability screen (docs/research/experiment-4-discovery-model-glm-disqualification.md):
+ *   every GLM measurement to date was taken against OpenRouter's unfiltered
+ *   ~26-host fleet (fp8/fp4/undisclosed quantizations), so pinning is the
+ *   control that separates model-vs-router. Omit → today's behaviour,
+ *   byte-identical (no `provider` field is ever sent). Non-OpenRouter
+ *   OpenAI-compatible endpoints ignore unknown body fields, but callers
+ *   should still only set this for OpenRouter bases.
  * @param {'low'|'medium'|'high'|null} [opts.reasoningEffort]  - REASONING PARITY
  *   (plan D4a): OpenRouter's unified `reasoning:{effort}` param, normalized
  *   across providers → DeepSeek V4's native reasoning mode. Set to the SAME
@@ -170,6 +181,7 @@ export async function ossStructuredCall(client, opts) {
     model, system, userPrompt, schema, schemaName,
     maxTokens = 16000, operation, passName = 'oss',
     reasoningEffort = null, scheduler = DEFAULT_SCHEDULER,
+    providerPreferences = null,
   } = opts;
 
   const resolvedPolicy = getOssOperationPolicy(operation);
@@ -235,6 +247,9 @@ export async function ossStructuredCall(client, opts) {
       // to DeepSeek V4's native reasoning mode. Set only when an effort tier was
       // requested so a provider that ignores it stays at its own default.
       if (reasoningEffort) params.reasoning = { effort: reasoningEffort };
+      // Provider pinning (experiment-4 gate 1) — only when explicitly given,
+      // so every existing caller's request body stays byte-identical.
+      if (providerPreferences) params.provider = providerPreferences;
       if (mode === 'json_schema') {
         params.response_format = {
           type: 'json_schema',

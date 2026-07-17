@@ -413,6 +413,25 @@ export function zodToGeminiSchema(zodSchema) {
  */
 export function clampToJsonSchemaLimits(value, jsonSchema) {
   if (jsonSchema == null || typeof jsonSchema !== 'object' || value == null) return value;
+  // anyOf/oneOf traversal (experiment-4 gate-1 screen, 2026-07-17): a
+  // NULLABLE nested schema (e.g. `EvidenceAnchorSchema.nullable()` on every
+  // finding's anchor) is emitted by z.toJSONSchema as
+  // `{anyOf: [<real schema>, {type:'null'}]}` — and this walker previously
+  // handled only {properties}/{items}/strings, so EVERY limit inside an
+  // anchor (quote maxLength:1000 above all) was silently unreachable and
+  // never clamped. Measured live: DeepSeek's oversized quotes hard-failed
+  // whole responses that this function existed to save. Recurse into the
+  // first branch whose shape matches the value's type; no match → untouched
+  // (the strict schema still fails loud, exactly as before).
+  const branches = jsonSchema.anyOf ?? jsonSchema.oneOf;
+  if (Array.isArray(branches)) {
+    const branch = branches.find((b) => b && typeof b === 'object' && (
+      (typeof value === 'string' && (b.type === 'string' || b.maxLength != null))
+      || (Array.isArray(value) && (b.type === 'array' || b.items != null))
+      || (typeof value === 'object' && !Array.isArray(value) && (b.type === 'object' || b.properties != null))
+    ));
+    return branch ? clampToJsonSchemaLimits(value, branch) : value;
+  }
   if (typeof value === 'string') {
     // Never truncate enum values — a clipped enum is corruption, not cosmetics.
     if (!jsonSchema.enum && Number.isInteger(jsonSchema.maxLength) && value.length > jsonSchema.maxLength) {

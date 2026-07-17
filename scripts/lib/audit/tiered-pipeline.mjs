@@ -130,7 +130,7 @@ export class TieredUnavailableError extends Error {
  * @param {*} value - the raw provider response (any shape; guarded)
  * @returns {*} the value with repairable 'modified' anchors normalized
  */
-function normalizeModifiedAnchorPaths(value) {
+export function normalizeModifiedAnchorPaths(value) {
   if (!value || typeof value !== 'object' || !Array.isArray(value.findings)) return value;
   const fixAnchor = (a) => {
     if (!a || typeof a !== 'object' || a.fileStatus !== 'modified') return a;
@@ -217,6 +217,11 @@ async function validatedTriagerCall(dto, providers, model) {
   const { system, userPrompt } = buildStage1TriagerPrompt(dto);
   const { result, category, error } = await providers.ossCall({
     model, system, userPrompt,
+    // Same stall-class guard as the discovery generator below (the
+    // 2026-07-14 OpenRouter stall incident that motivated oss-call-policy
+    // was THIS stage-1 path) — route only to hosts that honour our
+    // structured-output request.
+    providerPreferences: { require_parameters: true },
     schema: Stage1TriagerResponseSchema,
     schemaName: 'stage1_triager_response',
     passName: 'stage1-triager',
@@ -560,6 +565,20 @@ export async function runTieredAuditPipeline(ctx) {
     ? async () => {
         const { result, category, error } = await providers.ossCall({
           model: glmModel,
+          // require_parameters (experiment-4 gate-1 screen, 2026-07-17,
+          // n=60 through this exact seam): OpenRouter's GLM fleet contains
+          // hosts that ACCEPT our response_format json_schema request but
+          // don't honour it — 11 of 28 endpoints don't declare
+          // structured_outputs at all (Z.AI's own first-party route
+          // included), and routing to them produced the entire stall class
+          // (10/30 unpinned) plus free-text non-JSON replies. With
+          // require_parameters:true OpenRouter routes ONLY to hosts that
+          // support every requested parameter: stalls went 10/30 -> 0/30,
+          // availability 40% -> 57%, p50 latency 2.6s -> 0.9s. The remaining
+          // failures are model-emitted schema violations (handled by the
+          // normalizer/clamp), not transport.
+          providerPreferences: { require_parameters: true },
+
           // Root-cause half of the same fix: the previous one-sentence system
           // prompt never told the model what an anchor IS, so it guessed
           // (and consistently guessed a shape our schema rejects). The
