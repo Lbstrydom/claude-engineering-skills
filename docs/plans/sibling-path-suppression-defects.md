@@ -1,9 +1,53 @@
 # Plan: Close Two Sibling-Path Defects (bandit_arms NULL key + local FP tracker in the ledger branch)
 
 - **Date**: 2026-07-17
-- **Status**: Draft
+- **Status**: Approved — 4 GPT rounds + 1 Gemini round → **APPROVE** (0 new, 0
+  wrongly dismissed). Ready to implement.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
+
+## Audit trail
+
+**GPT: 4 rounds, 17 findings, HIGH 3 → 3 → 1 → 1. All 17 accepted + fixed —
+zero dismissed, zero re-raises.** Rounds exceeded the 3-round cap under the
+genuine-bugs exception: every round found concrete design defects, and several
+were in **my own prior fixes**.
+
+- **R2-H1 — the R1 recovery formula was data-DESTROYING.** It called the
+  duplicate rows independent observations and prescribed
+  `alpha = sum(alpha) − (n−1)`. Verified against `bandit.mjs:153`: `arm.alpha +=
+  clampedReward` **accumulates**, and `syncBanditArms` writes the full cumulative
+  value with `update:'all'` — so the rows are **snapshots**. The formula
+  double-counted every earlier observation. I would have told an operator to
+  destroy the exact state I claimed to protect.
+- **R3-H1 — layering fixes left TWO mutually exclusive orchestrations** in one
+  plan (a direct-call sequence from the R1 fix, and `runSuppressionPasses` from
+  the R2 fix), with an implementer free to pick either.
+- **R4-H1 — the third consecutive bug in the same four-line SQL**, resolved by
+  **deleting the procedure** rather than patching it a fourth time. Three rounds
+  of expert correction, for a zero-instance state, preserving *re-derivable*
+  20-row learned state, **is** the over-engineering verdict. It is now one
+  statement.
+- **R3-M2 closed a gap that had recurred three times across two plans** (the seam
+  is tested, the call site is not) using an established repo pattern I had
+  overlooked: **source-assertion tests**, as in
+  `tests/anthropic-client-migration.test.mjs`.
+
+**Measurement drove the plan, not assumption** — the checks changed the design
+repeatedly: `bandit_arms` = 20 rows / 0 nulls / 0 duplicates / 100% `'global'`
+(no dedupe needed); `bandit_arms_unique` **verified in planning** rather than
+deferred (R1-M2); **no `repo_id`** ⇒ one shared table per DSN, collapsing the
+drifted-consumer surface (R1-H2); `audit_findings` = 0 rows ⇒ WS-C exposure
+provably nil; 2,424 tracked patterns of which **10** would suppress ⇒ WS-B's
+blast radius; 343 debt entries ⇒ WS-B is latent.
+
+**A fourth sibling instance** (the stale `idx_bandit_arms_pass` on an always-NULL
+`user_id` — the same shape `20260717120000` dropped from
+`false_positive_patterns`) was found by applying this plan's own lesson to itself,
+and **recorded rather than silently fixed**.
+
+**Gemini gate**: round 1 → **`APPROVE`**, 0 new findings, 0 wrongly dismissed, no
+bias detected.
 
 - **Target domain(s)**: `stores` (`bandit-fp.mjs`), `audit-orchestration`
   (`legacy-production-audit.mjs`), `shared-lib` (`suppression-policy.mjs`)
@@ -75,8 +119,27 @@ materially. Both defects are real, but **neither is currently firing**, and the
 | `... WHERE context_bucket IS NULL` | **0 rows** | **No dedupe migration needed.** The brief's step 2 ("dedupe existing null-bucket rows deterministically") is dead work. |
 | duplicate `(pass_name, variant_id)` null-bucket groups | **0** | The 403k-style explosion has **not** happened here. |
 | bucket distribution | **`'global'` → 20** (100%) | Every live row already holds the sentinel the fix would write. |
+| **the unique constraint** (R1-M2 — verified in planning, not deferred) | **`bandit_arms_unique :: UNIQUE (pass_name, variant_id, context_bucket)`** | **The WS-A prerequisite is CONFIRMED**, exact name + exact ordered columns. The `ON CONFLICT` target matches it precisely, so the design rests on a measured fact rather than an assumption. |
+| **`bandit_arms` column set** (R1-H2) | `id, user_id, pass_name, variant_id, alpha, beta, pulls, context_bucket, created_at, updated_at` — **no `repo_id`** | **The table is NOT repo-scoped.** There is ONE shared `bandit_arms` for every consumer of a given `AUDIT_DB_URL` (this project backs all three repos). That collapses most of the "drifted consumer" surface — see §2 decision 2. `context_bucket` is confirmed `NULL`-able with **no default** — the fix target. |
 | local FP tracker patterns | **2,424 tracked, 10 would auto-suppress** | WS-B's blast radius is **10 patterns**, not thousands. |
 | debt-ledger entries | **343** | **WS-B is latent too** — see below. |
+| `audit_findings` row count | **0** (2026-07-14 wipe) | WS-C's historical exposure is **provably nil**; the fix is forward-only. |
+
+> **A fourth sibling, found by applying this plan's own lesson to itself.**
+> While verifying the constraint above, the catalog showed
+> `idx_bandit_arms_pass ON (pass_name, user_id)` — and `user_id` is **NULL in
+> all 20 rows** (measured). That is dead index weight on an always-null column:
+> **the same stale-`user_id` shape** that migration `20260717120000` dropped from
+> `false_positive_patterns` (where `20260330065641` had tried and missed via a
+> misspelled constraint name). A fourth instance of the sibling-path class, in
+> the very table this plan is fixing.
+>
+> **Deliberately NOT fixed here** — it is dead *weight*, not a correctness bug:
+> nothing reads it, and it cannot produce a wrong answer, only a marginally
+> slower insert on a 20-row table. Folding an unrelated index drop into a
+> NOT-NULL migration would be exactly the scope creep this plan argues against.
+> Recorded in §Out of Scope with a trigger. It is logged here because *noticing
+> it and saying nothing* is the failure mode this whole plan exists to name.
 
 ### Why WS-A does not fire (Code Trace)
 
@@ -249,23 +312,110 @@ graph LR
 
 2. **No dedupe migration** (the measurement, not an assumption). 0 null rows, 0
    duplicate groups. The migration **pre-checks and fails loudly** rather than
-   silently no-op'ing if that ever stops being true:
+   silently no-op'ing if that ever stops being true. It also **asserts its own
+   prerequisite** (R1-M2): a consumer whose schema lacks the expected unique
+   key must fail with a precise contract error, not a confusing `NOT NULL`
+   error downstream of a broken `ON CONFLICT`.
+
    ```sql
+   -- Preflight 1 — the prerequisite this design rests on (verified present here:
+   -- bandit_arms_unique UNIQUE (pass_name, variant_id, context_bucket)).
    DO $$ BEGIN
-     IF EXISTS (SELECT 1 FROM bandit_arms WHERE context_bucket IS NULL) THEN
-       RAISE EXCEPTION 'bandit_arms has NULL context_bucket rows — dedupe before applying NOT NULL';
+     IF NOT EXISTS (
+       SELECT 1 FROM pg_constraint
+        WHERE conrelid = 'bandit_arms'::regclass AND contype = 'u'
+          AND pg_get_constraintdef(oid) = 'UNIQUE (pass_name, variant_id, context_bucket)'
+     ) THEN
+       RAISE EXCEPTION
+         'bandit_arms is missing UNIQUE (pass_name, variant_id, context_bucket) — ON CONFLICT is broken for a DIFFERENT reason; fix the key before this migration';
      END IF;
    END $$;
+
+   -- Preflight 2 — refuse rather than destroy (see below).
+   DO $$
+   DECLARE n bigint;
+   BEGIN
+     SELECT count(*) INTO n FROM bandit_arms WHERE context_bucket IS NULL;
+     IF n > 0 THEN
+       RAISE EXCEPTION
+         'bandit_arms has % NULL context_bucket row(s) — cannot apply NOT NULL. These are duplicate snapshots produced by the sync defect this migration fixes; the bandit re-learns. Recover with:  DELETE FROM bandit_arms WHERE context_bucket IS NULL;  then re-run --migrate. (Inspect first if you like:  SELECT pass_name, variant_id, count(*) FROM bandit_arms WHERE context_bucket IS NULL GROUP BY 1,2;)', n;
+     END IF;
+   END $$;
+
    ALTER TABLE bandit_arms ALTER COLUMN context_bucket SET DEFAULT 'global';
    ALTER TABLE bandit_arms ALTER COLUMN context_bucket SET NOT NULL;
+
+   -- The DB invariant must match the CANONICALIZATION contract, not just
+   -- non-nullness (R2-M1). buildBanditArmRows normalizes missing, null AND
+   -- empty to the sentinel; NOT NULL alone still lets a bypassing writer insert
+   -- context_bucket = '', which is a DISTINCT unique-key identity even though
+   -- the application treats empty as absent — i.e. the identity-fragmentation
+   -- bug survives for one of the explicitly-normalized invalid values.
+   ALTER TABLE bandit_arms ADD CONSTRAINT bandit_arms_bucket_nonempty
+     CHECK (context_bucket <> '');
    ```
+
    A blind `UPDATE … SET context_bucket='global' WHERE context_bucket IS NULL`
    would be *worse than nothing*: on a table that has drifted it would collapse
    distinct arms into one identity and silently destroy bandit state. Refusing
-   is the honest failure. **Verify the unique constraint** covers exactly
-   `(pass_name, variant_id, context_bucket)` at implementation — if it is
-   missing entirely, ON CONFLICT is broken for a different reason and that is a
-   separate finding, not something to smuggle in here.
+   is the honest failure.
+
+### Drifted-consumer recovery (R1-H2 — the dead end, closed without building a tool)
+
+R1-H2 is right that "the migration RAISEs, go dedupe" — while the plan itself
+argues a blind dedupe is destructive — is an operational dead end. It is
+answered by **measurement first, then a documented manual procedure**, not by
+building an inventory/disposition/apply tool for a state with zero known
+instances:
+
+- **The surface is far smaller than it looks.** `bandit_arms` has **no
+  `repo_id`** (measured): it is **one shared table per `AUDIT_DB_URL`**, and this
+  project's DSN backs all three repos. So "consumers" are not N drifted copies —
+  they are *the same 20 rows I just measured as 0-null*. A drifted table requires
+  someone to have pointed `AUDIT_DB_URL` at a **different** database. Possible by
+  design; not the deployment.
+- **The RAISE now carries its own diagnostic** (above) — the operator gets the
+  exact inventory query, not a verb.
+- **The recovery procedure — ONE statement**:
+
+  ```sql
+  DELETE FROM bandit_arms WHERE context_bucket IS NULL;   -- then re-run --migrate
+  ```
+
+  The bandit **re-learns** from the next audit. That is the whole procedure.
+
+  > **SIMPLIFIED — and the audit trail is the argument (R4-H1).** Three
+  > successive rounds found three different real bugs in a four-line "preserve
+  > the state" recovery, each one data-destroying, each one written with
+  > confidence:
+  >
+  > | Round | The bug in my own procedure |
+  > |---|---|
+  > | **R2-H1** | Called the duplicate rows independent observations and prescribed `alpha = sum(alpha) − (n−1)`. **Verified false**: `arm.alpha += clampedReward` (`bandit.mjs:153`) accumulates and `syncBanditArms` writes the *full cumulative* value with `update:'all'`, so rows are **snapshots**. Two syncs at α=5 then α=7 → the formula gives 11 where the truth is 7. It double-counted every earlier observation. |
+  > | **R3-M1** | The latest-wins replacement retained **every row tied** for newest `updated_at`, so the follow-up `UPDATE` violated `bandit_arms_unique` — a recovery that fails the migration it is recovering for. |
+  > | **R4-H1** | Still only grouped **NULL rows**, ignoring the realistic topology where a `(pass_name, variant_id)` has NULL row(s) **and** an existing `'global'` row. Even the "count = 1, cannot collide with itself" case collides — with that pre-existing row. |
+  >
+  > Each fix was correct and each exposed the next hole. That pattern **is** the
+  > verdict: a procedure needing three rounds of expert correction, to be run by
+  > an operator under pressure, for a state with **zero known instances**, whose
+  > entire value is preserving *re-derivable* learned state — is the
+  > over-engineering cliff. The plan argued right-sizing and then failed its own
+  > test, three times, in the same four lines.
+  >
+  > **What is actually at stake**: `bandit_arms` holds **20 rows** of Thompson-
+  > sampling posteriors that re-accumulate from ordinary audit runs. There is no
+  > user data, no audit trail, nothing unrecoverable. `loadBanditArms` has **no
+  > caller on the audit path** (only `collect-telemetry.mjs`) — verified — so
+  > these rows feed a dashboard, not a decision. Trading a 3×-wrong SQL ritual
+  > for "delete 20 rows and let it re-learn" is not a compromise; it is the
+  > correct design, and it was available from the start as step 3.
+  >
+  > The elaborate version is not preserved "just in case" — a procedure with this
+  > track record is worse than no procedure, because an operator would trust it.
+- **Why not automate it either**: zero known instances, and the fallback for
+  corrupt *learned* state is discarding it — one statement. §Out of Scope keeps
+  the tooling trigger alive if a real drifted deployment ever appears **with**
+  state worth preserving.
 
 3. **`buildBanditArmRows` is extracted as a pure function** (#11), mirroring
    `buildFpPatternRows`. This is not symmetry for its own sake: it is what makes
@@ -375,9 +525,46 @@ graph LR
   `GLOBAL_CONTEXT_BUCKET`** so reader and writer share one constant (#5).
 - **Why this file**: it owns this table's write contract.
 
-#### `supabase/migrations/<ts>_bandit_arms_bucket_not_null.sql` (create)
-- Pre-check that RAISEs on any NULL row (decision #2), then `SET DEFAULT 'global'`
-  + `SET NOT NULL`. Idempotent, transactional. No dedupe — 0 rows to dedupe.
+#### `supabase/migrations/20260718090000_bandit_arms_bucket_not_null.sql` (create)
+
+**The deployment contract, named concretely (R1-H1)** — an earlier draft left the
+filename as `<ts>_…` and never named the runner, which is not a specification:
+
+| | |
+|---|---|
+| **Runner** | `node scripts/setup-postgres.mjs --migrate` — the repo's authoritative migration path (AGENTS.md §Postgres-Parity: *"Never use the dashboard as the routine migration path"*). **Verified working this session**: it applied `20260717190000_fp_pattern_read_index.sql` (`applied 1, skipped 65`) and was idempotent on re-run (`applied 0, skipped 66`). It is real regardless of the T0 inventory the finding cited. |
+| **Discovery** | filename-ordered sweep of `supabase/migrations/*.sql`; applied state recorded in the **`audit_loop_migrations`** ledger keyed by file + sha256. |
+| **Exact name** | `20260718090000_bandit_arms_bucket_not_null.sql` — strictly after `20260717190000` (the FP read index), so the ordering is unambiguous. |
+| **Transaction** | The runner applies each migration **in a transaction**. Both preflights + both `ALTER`s are one atomic unit: a RAISE rolls back cleanly and the ledger row is not written. |
+| **Drift** | `--check-drift` covers it thereafter (exit 1 on drift). |
+| **Target** | Whatever `AUDIT_DB_URL` resolves to. **No test runs this migration** — the WS-A suite is pure-function and DB-free (INC-002), so `assertDisposableDbUrl` / `AUDIT_DB_TEST_URL` are **not** in this path. Production rollout is the same one operator command; there is no separate CI apply step to authorize. |
+
+**Deliberately NOT specified**: `lock_timeout` / `statement_timeout` policy. The
+finding asks for one; on a **20-row** table a plain `ALTER` is sub-millisecond and
+its `ACCESS EXCLUSIVE` lock is a non-event. Adding timeout ceremony would be
+over-engineering against a measured non-problem — and the *large-table* case is
+already recorded in §Out of Scope (`CONCURRENTLY`), which is where a timeout
+policy would belong if it ever fires.
+
+- Content (**four statements — the CHECK is not optional**, R4-M1: an earlier
+  draft of this line said "the two preflights + `SET DEFAULT` + `SET NOT NULL`"
+  and silently dropped the `CHECK` that decision #2's own SQL calls
+  load-bearing — the same section-to-section drift as R3-H1/R3-M1):
+  1. **Preflight 1** — assert `bandit_arms_unique` exists with the exact
+     definition (the prerequisite).
+  2. **Preflight 2** — RAISE on any NULL row, carrying the one-line recovery.
+  3. `ALTER COLUMN context_bucket SET DEFAULT 'global'` + `SET NOT NULL`.
+  4. `ADD CONSTRAINT bandit_arms_bucket_nonempty CHECK (context_bucket <> '')` —
+     **without it the DB invariant does not match the canonicalization
+     contract**: the builder normalizes missing/null/**empty** to the sentinel,
+     so `NOT NULL` alone still lets a bypassing writer insert `''` as a distinct
+     unique-key identity.
+- Idempotent (`SET DEFAULT`/`SET NOT NULL` are no-ops when already applied; the
+  `CHECK` needs `IF NOT EXISTS`-equivalent handling — Postgres has no
+  `ADD CONSTRAINT IF NOT EXISTS`, so guard it with a `pg_constraint` lookup, or
+  rely on the ledger skipping a recorded file and let a re-run be a no-op at the
+  ledger level. **Decide at implementation and state which** — do not leave the
+  idempotency claim unbacked). No dedupe — 0 rows to dedupe.
 - **Why**: makes the invariant unbypassable by a writer that skips the builder.
 
 #### `tests/store-bandit-fp.test.mjs` (modify — Tier 1, test-first)
@@ -389,7 +576,20 @@ graph LR
 4. **Schema guard**: every column `buildBanditArmRows` emits is declared by a
    migration (extend the existing `declaredFpPatternColumns` parser to
    `bandit_arms`).
-5. `syncBanditArms` cloud-off → no-op, no throw (existing contract preserved).
+5. **The non-empty CHECK is present** (R4-M1): parse the migration and assert
+   `CHECK (context_bucket <> '')` exists — the tests pinned the DEFAULT but not
+   the constraint that closes the `''` bypass, so the canonicalization contract
+   was only half-guarded.
+6. **Cross-layer sentinel guard (R1-M1)**: parse the `context_bucket` DEFAULT out
+   of `supabase/migrations/*.sql` and assert it **equals `GLOBAL_CONTEXT_BUCKET`**.
+   The plan calls that constant the single source of truth while the migration
+   writes a bare SQL literal `'global'` — two values that must agree and, today,
+   nothing checks. A sentinel rename would make DEFAULT-originated rows
+   (a writer that omits the column) carry a *different identity* than
+   builder-originated rows: silent identity fragmentation, the same family as the
+   bug being fixed. The guard is ~5 lines and reuses the migration parser test 4
+   already needs, which is why it is worth it here rather than a docs note.
+6. `syncBanditArms` cloud-off → no-op, no throw (existing contract preserved).
 
 #### `tests/learning-store-exports.test.mjs` (modify)
 - Add `buildBanditArmRows` to `EXPECTED_EXPORTS` (the barrel `export *`s
@@ -409,14 +609,183 @@ graph LR
   anywhere else guarantees the two drift.
 
 #### `scripts/lib/audit/legacy-production-audit.mjs` (modify)
-- Delete the local loop from inside the ledger branch; call `runLocalFpPass`
-  **after the branch closes (`:2505`) and BEFORE `runCloudFpPass`**, preserving
-  today's local-then-cloud ordering (a cloud pattern known locally must still
-  attribute to the local counter).
-- Thread `fpSuppressedCount` from the returned count; keep the existing
-  `_suppressionData` field semantics and the `keptCount` subtraction contract
-  (the cloud-FP plan's R5-M2 fix — the same reconciliation now applies to two
-  passes, so subtract each pass's own count).
+
+**The composition contract, written out (R1-H3).** An earlier draft said "thread
+`fpSuppressedCount`" and "preserve the `keptCount` contract" — that is a gesture,
+not a specification, and `keptCount` desync is *precisely* what the sibling
+plan's R5-M2 was. With **two** passes now subtracting from one counter, the
+equations must be explicit. Exact sequence:
+
+> **ONE orchestration, not two (R3-H1).** An earlier revision of this section
+> showed the orchestrator calling `runLocalFpPass` then `runCloudFpPass`
+> directly, and a *later* revision (the R2-H3 fix) introduced
+> `runSuppressionPasses` as "the authoritative composition boundary" — leaving
+> **two mutually exclusive orchestrations** in one plan, and an implementer to
+> pick arbitrarily. The direct-call version also never assigned the synthesized
+> `suppressionData` back to `_suppressionData`. That contradiction is an artifact
+> of layering fixes without re-reading the whole section. **The direct-call
+> sequence is withdrawn**; `runSuppressionPasses` is the only orchestration, and
+> the equations below are its *internal* contract, not the orchestrator's.
+
+**The orchestrator, in full** — one unconditional call, zero decision logic:
+
+```js
+// ── BEFORE the ledger branch ──────────────────────────────────────────────
+let reopenedSet = new Set();          // already exists (cloud-FP change)
+for (const f of allFindings) populateFindingMetadata(f, f._pass);   // WS-C hoist (Phase 5)
+
+if (mergedLedger.entries.length > 0) {
+  // …suppressReRaises → kept/suppressed/reopened… (UNCHANGED)
+  // the local fpTracker loop is GONE from here (Phase 4)
+  reopenedSet = new Set(reopened);
+  allFindings.length = 0; allFindings.push(...kept, ...reopened);
+  var _suppressionData = { suppressed, reopened,
+    keptCount: kept.length,           // ledger-path kept, EXCLUDING reopened
+    suppressedCount: suppressed.length, reopenedCount: reopened.length,
+    fpSuppressedCount: 0,             // the local pass moved out; the seam sets this
+  };
+}
+
+// ── AFTER the branch — ONE call. Both passes live inside the seam. ────────
+const passes = runSuppressionPasses(allFindings, {
+  fpTracker,
+  cloudPolicy: cloudFpPolicy,
+  exempt: reopenedSet,
+  suppressionData: typeof _suppressionData !== 'undefined' ? _suppressionData : null,
+  cloudEnabled: cloudRepoId != null,
+  log: (line) => process.stderr.write(line),
+});
+allFindings.length = 0;
+allFindings.push(...passes.findings);
+_suppressionData = passes.suppressionData;   // ← the assignment the withdrawn
+                                             //   direct-call version omitted;
+                                             //   `var` hoisting makes it legal here
+```
+
+**Inside `runSuppressionPasses`** — local pass first, then cloud (ordering
+preserved: a pattern known both locally and in cloud must attribute to the local
+counter), each returning a fresh array, both taking the same `exempt` set.
+
+**Counter equations** (the seam's internal contract) — each pass subtracts **its
+own** count from `keptCount`, and each owns exactly one field:
+
+| Field | Meaning | After both passes |
+|---|---|---|
+| `keptCount` | ledger-path kept, **excluding reopened** | `kept.length − localPass.suppressedCount − cloudPass.suppressedCount` |
+| `suppressedCount` | **ledger-path** suppressions only | unchanged (`suppressReRaises`' count) |
+| `reopenedCount` | reopens | unchanged |
+| `fpSuppressedCount` | **local tracker** suppressions | `localPass.suppressedCount` |
+| `cloudFpSuppressedCount` | **cloud policy** suppressions | `cloudPass.suppressedCount` (attached only when `cloudRepoId != null`) |
+| `suppressed[]` | the union, for `recordSuppressionEvents` | ledger ⧺ local ⧺ cloud |
+
+**Subtraction, not re-measurement** — `allFindings` is `kept + reopened`, so
+`allFindings.length` is *not* `keptCount`; re-measuring would silently redefine
+the field (the exact trap caught during the sibling plan's implementation). The
+subtraction is **exact** because both passes take the same `reopenedSet` as
+`exempt`, so no suppression can come out of `reopened` — the invariant test 5
+below pins.
+
+**Conservation invariant** (assert it, don't assume it) — and it must
+**nullish-coalesce the optional counter**, because the two contracts collide as
+literally written (R4-M2):
+
+```js
+keptCount + suppressedCount + reopenedCount
+  + fpSuppressedCount + (cloudFpSuppressedCount ?? 0)   // ?? 0 is LOAD-BEARING
+  === totalFindingsRaised
+```
+
+> `cloudFpSuppressedCount` is **absent** when cloud is off (the `--out`
+> byte-identity contract from the sibling plan). In JS, `x + undefined` is
+> **`NaN`**, so the invariant as first written could not be asserted at all on
+> the cloud-off path — it would fail (or worse, be "asserted" as `NaN !== n` and
+> silently pass a sloppy check). The two available escapes are both wrong: adding
+> a zero-valued property **violates the output-shape contract**, and dropping the
+> term from the sum **stops it being a conservation law**. `?? 0` at the
+> *assertion* site keeps the property absent and the arithmetic total. The
+> cloud-off/no-ledger/local-suppression case (orchestration test 5) is exactly
+> where this bites, which is why that test must assert the invariant, not just
+> the shape.
+
+**Local suppressions enter telemetry the same way cloud ones do**: `runLocalFpPass`'s
+entries carry `matchedTopic`/`matchScore` (mirroring `runCloudFpPass`), so they
+flow through the **existing** `recordSuppressionEvents` with no recorder change.
+
+> **RESOLVED — R2-H2. The R1 draft left this an "open question", which is not a
+> contract.** It also proposed synthesizing `fp:<category>:<severity>` as a
+> fallback — R2-H2 is right that this would be **wrong data, not partial data**:
+> `shouldSuppress` walks `repo+fileType` → `repo` → `global`
+> (`findings-tracker.mjs:194-227`) and returns a **bare boolean**, discarding
+> *which* scope actually fired. A synthesized topic would name a pattern that may
+> not be the one that suppressed, so stored provenance would be confidently
+> false — worse than absent, because it looks authoritative.
+>
+> **The tracker already knows; it just throws the answer away.** So WS-B adds a
+> new method to `scripts/lib/findings-tracker.mjs` that returns it:
+>
+> ```js
+> // NEW — returns the matched pattern, not just a verdict.
+> shouldSuppressWithReason(finding, repoFingerprint = null, filePath = null)
+> //   → { suppress: boolean, key: string|null, scope: string|null,
+> //       ess: number|null, ema: number|null }
+>
+> // UNCHANGED contract — delegates, so every existing caller and test is
+> // byte-identical:
+> shouldSuppress(f, r, p) { return this.shouldSuppressWithReason(f, r, p).suppress; }
+> ```
+>
+> `matchedTopic = key`, `matchScore = ess`-derived confidence (mirroring
+> `applyCloudFpSuppression`'s `Math.min(1, ess / 10)`). This is a pure
+> refactor-plus-return-value on a Tier-1 module: **test-first, and the existing
+> `shouldSuppress` suite must stay green untouched** — that is the proof the
+> delegation changed nothing.
+
+**No-ledger case**: `_suppressionData` is undefined (the branch never ran). The
+cloud-FP change already synthesizes it when `cloudRepoId != null && cloudPass.suppressedCount > 0`;
+**this plan must extend that synthesis to cover a local-only suppression** —
+otherwise WS-B re-creates, for the local pass, the exact provenance hole R3-M1
+closed for the cloud pass. Synthesize when **either** pass suppressed. (Note the
+asymmetry that must be preserved: the **cloud** key stays gated on
+`cloudRepoId != null` for `--out` byte-identity, while `fpSuppressedCount` is
+local and carries no such gate.)
+
+#### `scripts/lib/suppression-policy.mjs` — the NAMED composition seam (R2-H3)
+
+> **R2-H3 is right and it is the same defect the sibling plan hit as R4-H2**: the
+> R1 draft specified an "orchestration regression suite" and **named no
+> production function for it to call**. The composition stayed embedded in
+> `runLegacyProductionAudit`, so the suite could only have been a pipeline mock —
+> which the plan also forbids. A test with no callable boundary is not a test.
+
+**New export `runSuppressionPasses(findings, opts)`** → the authoritative
+composition boundary, so the equations above live in **one tested function**
+rather than in orchestrator prose:
+
+```js
+runSuppressionPasses(findings, {
+  fpTracker,            // null → local pass is a no-op
+  cloudPolicy,          // null → cloud pass is a no-op
+  exempt,               // the reopenedSet — shared by BOTH passes
+  suppressionData,      // the ledger branch's object, or null when it never ran
+  cloudEnabled,         // gates the cloud-specific key only (--out byte-identity)
+  log,
+}) → {
+  findings,             // always a NEW array (the R3-H1 ownership contract)
+  suppressionData,      // reconciled, or synthesized when null-in + either pass fired
+}
+```
+
+It owns, in one place: pass ordering (local → cloud); the `keptCount`
+subtraction; the `suppressed[]` union (`ledger ⧺ local ⧺ cloud`); per-source
+counter assignment; the no-ledger synthesis; and the conservation invariant.
+The orchestrator is reduced to **one unconditional call** plus the
+clear-then-push, holding zero decision logic — exactly the shape
+`buildCloudFpPolicy` took after R4-H2.
+
+- **Why this file**: it already owns `runCloudFpPass`/`runLocalFpPass`. A
+  composition helper for those two passes anywhere else guarantees drift.
+
+#### `scripts/lib/audit/legacy-production-audit.mjs` (modify)
 - **Why this file**: it is the orchestrator; it must hold no decision logic.
 
 > **Anchors are STRUCTURAL.** The Gemini gate on the cloud-FP plan caught a line
@@ -440,19 +809,24 @@ graph LR
 - **Why this file**: it is where the enrichment currently lives; this is a move,
   not a new abstraction.
 
-#### `tests/…` — the regression pin (Tier 1, test-first)
-- The natural home is wherever `populateFindingMetadata`'s contract is already
-  pinned; if no suite covers it, add cases to the ledger suite
-  (`tests/rulings-block-guard.test.mjs` is `buildRulingsBlock`-only —
-  **check at implementation**, do not assume a `tests/ledger.test.mjs` exists;
-  the cloud-FP plan was corrected mid-flight for exactly that wrong assumption).
+#### `tests/shared.test.mjs` (modify — Tier 1, test-first)
+
+> **Named, not deferred (R2-M2).** The R1 draft said "wherever it's already
+> pinned… check at implementation" — the same non-specification class as R1-H1's
+> `<ts>` filename. **Located:** `populateFindingMetadata` is already exercised by
+> `tests/shared.test.mjs` (also `debt-suppression`, `integration-python-audit`);
+> the `outcomes.jsonl` writer boundary is `appendOutcome` —
+> `scripts/lib/findings-outcomes.mjs:38`. Both are real; no assumption remains.
 1. A finding that has been through `addFindings` (so `_hash` set, `_primaryFile`
    **not**) → after enrichment, `_primaryFile` is a normalized path and
    `affectedFiles` is non-empty.
-2. **The consumer-shape pin**: given an enriched finding, the `outcomes.jsonl`
-   payload shape records a normalized `primaryFile` and a non-empty
-   `affectedFiles` — i.e. the fields the bandit reward signal and
-   `audit_findings.primary_file` actually read.
+2. **The consumer-shape pin**: build the `appendOutcome`
+   (`scripts/lib/findings-outcomes.mjs:38`) payload from an **un-enriched**
+   finding and assert it degrades exactly as described — `primaryFile` is the
+   raw section string, `affectedFiles` is `[]`; then from an **enriched** one and
+   assert a normalized path + non-empty `affectedFiles`. This pins the *defect*
+   and the *fix* against the real consumer shape, so a future re-nesting is
+   caught by a failing assertion rather than by nobody noticing.
 3. **Idempotency**: enriching twice yields identical values (proves the hoist
    cannot change the ledger path, where the enrichment already ran).
 
@@ -467,6 +841,69 @@ graph LR
 5. **Array ownership**: `result.findings !== input` on both paths, **plus** the
    call-site replay (`arr.length = 0; arr.push(...r.findings)` → every finding
    survives) — the R3-H1 regression.
+6. **Every local suppression carries provenance**: `matchedTopic`/`matchScore`
+   present, so it reaches `recordSuppressionEvents` — the R3-M1/R4-H1 class,
+   which this seam would otherwise re-create for the local path.
+
+#### `tests/…` — the ORCHESTRATION regression suite (R1-H3, Tier 1)
+
+The seam tests above cannot see a composition defect — that is the lesson R3-H1
+paid for, and R1-H3 is right that a unit seam plus prose is not a contract. Add
+an injected-fixture suite over the composition (no LLM, no pipeline mock — a
+pure function of `(findings, ledger, fpTracker, policy, reopenedSet)` → counters):
+
+1. **Empty merged ledger + a suppressible local pattern** → the finding IS
+   suppressed (WS-B's whole point), `_suppressionData` **is synthesized**, and
+   `fpSuppressedCount == 1`.
+2. **Both passes fire**: ledger suppresses A, local suppresses B, cloud
+   suppresses C → each count lands in its **own** field and
+   `keptCount == kept.length − 2`.
+3. **The conservation invariant holds** in every case above:
+   `keptCount + suppressedCount + reopenedCount + fpSuppressedCount + cloudFpSuppressedCount == total raised`.
+4. **`reopened` survives both passes** even when it matches a local *and* a cloud
+   pattern — the premise the subtraction arithmetic rests on.
+5. **Cloud-off + no ledger + local suppression** → `--out` gains **no**
+   cloud-specific key (constraint from the sibling plan) but `fpSuppressedCount`
+   is still recorded.
+
+#### `tests/suppression-call-site.test.mjs` (create — the CALL-SITE pin, R3-M2)
+
+> **This gap has now recurred THREE times** — cloud-FP R3-H1 (a correct seam +
+> a wrong call site erased every finding), cloud-FP R4-H2, and R2-H3 here. Each
+> time the answer was "the seam is tested; the call site is review-time". R3-M2
+> is right that this is not good enough for the *fourth* occurrence, and the
+> sibling plan's own conclusion — *"ordering is the only remaining mode, visible
+> in a 3-line diff"* — was a concession, not a solution.
+>
+> **The repo already has the answer and I overlooked it**: source-assertion
+> tests. `tests/anthropic-client-migration.test.mjs` greps for any bare
+> `new Anthropic()` outside the factory; `tests/relocation-guard.test.mjs`
+> asserts the `--selfcheck-relocation` handler string is present. Both pin a
+> **call-site invariant** by reading source text — no pipeline, no mock, no LLM.
+
+Assert against the text of `legacy-production-audit.mjs`:
+
+1. `runSuppressionPasses` is called **exactly once**.
+2. Its call site is **not inside** the `if (mergedLedger.entries.length > 0)`
+   block — brace-match the branch and assert the call's index is **after** the
+   closing brace. *This is the exact invariant no test has ever covered, and the
+   one whose violation defines both WS-B and WS-C.*
+3. The call is **unconditional** — the statement preceding it is not an `if`
+   guarding it.
+4. Its result **is assigned back** to `_suppressionData` (the omission R3-H1
+   caught in the withdrawn direct-call sequence).
+5. The enrichment loop (`populateFindingMetadata`) appears **before** the branch
+   opens, and **not** inside it — WS-C's invariant, pinned the same way.
+6. `fpTracker.shouldSuppress(` does **not** appear inside the branch (the lifted
+   loop has not crept back).
+
+**Honest limits, stated rather than glossed**: a source assertion is a
+*syntactic* pin, not a semantic one — it cannot prove the call *does* the right
+thing (the pure suites do that), and a sufficiently creative refactor could
+satisfy the text while breaking the intent. It is deliberately a **guard against
+regression to a known-bad shape**, which is precisely the failure that has now
+happened three times. Keep the matchers loose (find the landmark, compare
+indices) rather than brittle regexes over formatting.
 
 ### Close-out (not a phase)
 
@@ -485,17 +922,24 @@ shared constant. Files: `scripts/lib/store/bandit-fp.mjs` (modify),
 **Phase 2 — bandit-arms DB constraint**: the pre-checked `DEFAULT` + `NOT NULL`
 migration. Files: `supabase/migrations/<ts>_bandit_arms_bucket_not_null.sql` (create).
 
-**Phase 3 — local FP pass seam**: `runLocalFpPass` + its tests. Files:
-`scripts/lib/suppression-policy.mjs` (modify), `tests/suppression-policy.test.mjs` (modify).
+**Phase 3 — tracker provenance + local FP pass seam**: add
+`shouldSuppressWithReason` (boolean `shouldSuppress` delegates — existing suite
+must stay green untouched); add `runLocalFpPass` + `runSuppressionPasses` (the
+named composition boundary) + their tests. Files:
+`scripts/lib/findings-tracker.mjs` (modify),
+`scripts/lib/suppression-policy.mjs` (modify),
+`tests/suppression-policy.test.mjs` (modify),
+`tests/findings-tracker.test.mjs` (modify — locate the existing
+`shouldSuppress` suite at implementation).
 
-**Phase 4 — orchestrator wiring**: lift the fpTracker loop out; thread the
-count; preserve local-then-cloud ordering + `keptCount` semantics. Files:
-`scripts/lib/audit/legacy-production-audit.mjs` (modify).
+**Phase 4 — orchestrator wiring**: lift the fpTracker loop out; replace the
+in-orchestrator composition with one unconditional `runSuppressionPasses` call.
+Files: `scripts/lib/audit/legacy-production-audit.mjs` (modify).
 
 **Phase 5 — metadata enrichment hoist**: move `populateFindingMetadata` above
-the branch and remove the in-branch call; pin the consumer shape. Files:
-`scripts/lib/audit/legacy-production-audit.mjs` (modify), the
-`populateFindingMetadata` test suite (modify — locate at implementation).
+the branch and remove the in-branch call; pin the consumer shape against
+`appendOutcome`. Files: `scripts/lib/audit/legacy-production-audit.mjs` (modify),
+`tests/shared.test.mjs` (modify).
 
 **Close-out (not a phase)**: `setup-postgres --migrate`; `npm test`; live
 bucket-distribution + row-count check.
@@ -506,7 +950,10 @@ bucket-distribution + row-count check.
 
 | Risk | Direction | Mitigation |
 |---|---|---|
-| The `NOT NULL` migration fails on a consumer whose `bandit_arms` HAS drifted to null rows | availability | The pre-check RAISEs with a directive message instead of applying. **Deliberate**: a blind backfill would collapse distinct arms into one identity and destroy bandit state — refusing is the honest failure. Measured 0 null rows here; a consumer may differ. |
+| The `NOT NULL` migration fails on a consumer whose `bandit_arms` HAS drifted to null rows | availability | The pre-check RAISEs **carrying its own inventory query**, and §"Drifted-consumer recovery" documents the procedure (single-row groups → safe exact update; multi-row → **latest-snapshot-wins**, mechanical, no operator judgement needed; worst case → delete and re-learn). **Deliberate**: a blind backfill would collapse distinct arms and destroy bandit state. Surface is small — measured 0 null rows, and `bandit_arms` has **no `repo_id`**, so it is one shared table per DSN rather than N drifted copies. |
+| A consumer's schema **lacks** the expected unique key, so `ON CONFLICT` is broken for an unrelated reason | correctness | Preflight 1 asserts the exact constraint definition and RAISEs a precise contract error. Verified present here (`bandit_arms_unique`) — the design no longer rests on an unverified prerequisite (R1-M2). |
+| **The sentinel drifts between layers** — JS `GLOBAL_CONTEXT_BUCKET` vs the migration's SQL literal `'global'` | correctness | A rename would give DEFAULT-originated rows a different identity than builder-originated ones: silent identity fragmentation, the same family as the bug being fixed. Pinned by the cross-layer guard (WS-A test 5), reusing the migration parser test 4 already needs. |
+| **Two passes now subtract from one `keptCount`** — a desync repeats R5-M2 | correctness | Explicit counter equations + a conservation invariant asserted in the orchestration suite, not prose. Subtraction (never re-measurement) because `allFindings` is `kept + reopened`; exact because both passes share the same `exempt` set. |
 | A stale consumer running old synced code writes `null` post-migration | correctness | It now fails **loudly** (`23502`) in its fire-and-forget stderr log instead of silently growing the table — the same escape the FP-sync migration chose, for the same reason. |
 | WS-B newly suppresses findings on no-ledger runs | recall | The single intended behaviour change. Bounded and **measured**: 10 of 2,424 patterns clear the bar; unreachable in this repo today (343 debt entries). Named in plan + commit; `reopened` exempted so regressions can never be masked. |
 | WS-B's lifted seam aliases its input and erases all findings | correctness / total data loss | The R3-H1 class, one file away. Contract: always a NEW array; pinned by the call-site-replay test, not by an isolation-only test (which is what let R3-H1 through the first time). |
@@ -523,12 +970,13 @@ null-in-conflict-target lint (§Out of Scope).
 
 | Item | Revisit trigger |
 |---|---|
-| **A mechanical check for `onConflict` targets naming a column the writer can emit as null** — the check that would have caught WS-A at 718ca90 time and will catch the next sibling | Now-ish, as its own plan. Two instances of this exact class in one repo (`false_positive_patterns`, `bandit_arms`) is a pattern, not a coincidence. Cheap: the write builders are a small, enumerable set. |
-| **An adjacency check** — when a finding is *"X is trapped inside conditional Y"*, mechanically enumerate Y's other contents and judge each. This is what found WS-C, and what 8 audit rounds across two model families did not. **NOT the wiring pass** (corrected — `PASS_WIRING_SYSTEM`, `prompt-seeds.mjs:13`, is frontend↔backend API-contract auditing only; an earlier draft of this row named it wrongly). The real precedent is the **duplication wave** (`scripts/lib/audit/duplication-{detector,report}.mjs`): a mechanical detector that emits findings and gates convergence. Verified gap: `buildT1` (`repo-context.mjs:67`), `computeImpactSet` (`ledger.mjs:660`), the duplication detector and `get-neighbourhood` cover *import*, *importer* and *embedding* adjacency — **none** covers **containment** ("what else is in this block?") or **shape** ("what else matches this defect's form?"). | Now-ish, as its own plan. Trigger is cheap and mechanical (a finding naming a conditional ⇒ enumerate that conditional); the payoff is proven: 1 hand-sweep = 1 new silent-degradation defect that 8 rounds missed. |
+| **A mechanical check for `onConflict` targets naming a column the writer can emit as null** — would have caught WS-A at 718ca90 time and will catch the next sibling | **Queued, with acceptance criteria** (R3-M3 — "Now-ish" is a wish, not a trigger). **Scope**: enumerate every `upsert(..., { onConflict: [...] })` call site (a small, closed set — `rg "onConflict"` over `scripts/lib/store/`), and for each, assert no conflict-target column can receive a nullish value from its row builder. **Acceptance**: it fires on the pre-fix `syncBanditArms` (the known positive) and is silent on the post-fix one and on `syncFalsePositivePatterns` (the known negatives) — a check that cannot reproduce the two instances we already have is not validated. **Owner**: unassigned; **next action**: `/plan` it. |
+| **An adjacency check** — when a finding is *"X is trapped inside conditional Y"*, mechanically enumerate Y's other contents and judge each. This is what found WS-C, and what 8 audit rounds across two model families did not. **NOT the wiring pass** (corrected — `PASS_WIRING_SYSTEM`, `prompt-seeds.mjs:13`, is frontend↔backend API-contract auditing only; an earlier draft of this row named it wrongly). The real precedent is the **duplication wave** (`scripts/lib/audit/duplication-{detector,report}.mjs`): a mechanical detector that emits findings and gates convergence. Verified gap: `buildT1` (`repo-context.mjs:67`), `computeImpactSet` (`ledger.mjs:660`), the duplication detector and `get-neighbourhood` cover *import*, *importer* and *embedding* adjacency — **none** covers **containment** ("what else is in this block?") or **shape** ("what else matches this defect's form?"). | **IN FLIGHT** (R3-M3). A self-contained hand-off brief exists (written 2026-07-17, covering the evidence, the verified gap table, the five design questions, and the repo constraints) and this is the operator's next work item. **Acceptance**: the proposed trigger must fire on all **four** known instances — WS-A/`bandit_arms` (shape), WS-B + WS-C (containment, same branch), and the stale `idx_bandit_arms_pass` (shape) — or the mismatch must be stated rather than the story adjusted to fit. **Owner**: operator; **next action**: `/plan` from the brief. |
 | **Backfill / quarantine of historical degraded `primary_file` + empty `affectedFiles` rows** | **Moot in this repo — measured, not assumed**: `audit_findings` holds **0 rows** (the 2026-07-14 wipe), so there is no history to backfill and this plan's fix is purely forward-looking. Retained for **consumers**, whose tables were never wiped and who may have run with a purged debt ledger. Detection query (verified to run, returns 0 here): `SELECT count(*) FROM audit_findings WHERE primary_file LIKE '% %' OR primary_file LIKE '%—%'` — a normalized path contains neither a space nor an em-dash, so a hit is the raw-section tell. Revisit when a consumer reports odd `primary_file` values. |
 | Unify `fpTracker.shouldSuppress` with `resolveSuppressionPolicy` | The local tracker's legacy raw-count fallback is retired, OR a parity suite exists. Inherited from the cloud-FP plan's Out of Scope. |
-| Dedupe/backfill tooling for `bandit_arms` | The pre-check ever RAISEs — i.e. a real deployment has drifted. |
-| Verify the `bandit_arms` unique constraint actually covers `(pass_name, variant_id, context_bucket)` | Confirm at implementation; if it is **absent**, ON CONFLICT is broken for an unrelated reason → its own finding, not a smuggled fix. |
+| **Automated** dedupe/backfill tooling for `bandit_arms` | The pre-check ever RAISEs **and** the documented manual procedure (§"Drifted-consumer recovery") proves insufficient — i.e. a real deployment has drifted *and* has identity collisions a human cannot resolve from the inventory query. Zero known instances; the always-available fallback is `DELETE … WHERE context_bucket IS NULL` (the bandit re-learns), which is why a tool is unjustified today. |
+| ~~Verify the `bandit_arms` unique constraint~~ | **DONE in planning** (R1-M2) — `bandit_arms_unique :: UNIQUE (pass_name, variant_id, context_bucket)`, verified against the live catalog and now asserted by the migration's own preflight. No longer deferred. |
+| **Drop the stale `idx_bandit_arms_pass ON (pass_name, user_id)`** — `user_id` is NULL in all 20 rows (measured); dead index weight on an always-null column, the same shape `20260717120000` dropped from `false_positive_patterns`. A **fourth** sibling-path instance, found by applying this plan's own lesson to itself | Any index-hygiene pass, or the next migration that touches `bandit_arms`. Not urgent: it is weight, not wrongness — it cannot produce a wrong answer, only a marginally slower insert on a 20-row table. Folding an unrelated index drop into a NOT-NULL migration would be the scope creep this plan argues against. |
 
 ---
 
