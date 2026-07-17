@@ -346,8 +346,8 @@ graph LR
   **Two follow-ups recorded in §Out of Scope** (deliberately NOT built here —
   each is its own plan, and this one must stay reviewable): a mechanical check
   for `onConflict` targets naming a column the writer can emit as null (catches
-  WS-A's class), and a "what else is in this branch?" prompt in the audit's
-  wiring pass (catches WS-B/WS-C's class).
+  WS-A's class), and an **adjacency check** — "what else is nested in the
+  container I just fixed something in?" (catches WS-B/WS-C's class).
 - **Assumption that could change (WS-A)**: that `addArm` remains the only arm
   constructor. If a future call site builds arm objects directly, the `|| null`
   would fire — which is *why* the DB constraint, not the code fix, is the
@@ -524,7 +524,7 @@ null-in-conflict-target lint (§Out of Scope).
 | Item | Revisit trigger |
 |---|---|
 | **A mechanical check for `onConflict` targets naming a column the writer can emit as null** — the check that would have caught WS-A at 718ca90 time and will catch the next sibling | Now-ish, as its own plan. Two instances of this exact class in one repo (`false_positive_patterns`, `bandit_arms`) is a pattern, not a coincidence. Cheap: the write builders are a small, enumerable set. |
-| **A "what else is nested in this branch?" step in `/audit-code`'s wiring pass** — when a finding is *"X is trapped inside conditional Y"*, enumerate Y's other contents and judge each. This is what found WS-C, and what 8 audit rounds across two models did not | Now-ish, as its own plan. The trigger is cheap and mechanical (a finding naming a conditional ⇒ enumerate that conditional), and the payoff is proven: 1 hand-sweep = 1 new silent-degradation defect. |
+| **An adjacency check** — when a finding is *"X is trapped inside conditional Y"*, mechanically enumerate Y's other contents and judge each. This is what found WS-C, and what 8 audit rounds across two model families did not. **NOT the wiring pass** (corrected — `PASS_WIRING_SYSTEM`, `prompt-seeds.mjs:13`, is frontend↔backend API-contract auditing only; an earlier draft of this row named it wrongly). The real precedent is the **duplication wave** (`scripts/lib/audit/duplication-{detector,report}.mjs`): a mechanical detector that emits findings and gates convergence. Verified gap: `buildT1` (`repo-context.mjs:67`), `computeImpactSet` (`ledger.mjs:660`), the duplication detector and `get-neighbourhood` cover *import*, *importer* and *embedding* adjacency — **none** covers **containment** ("what else is in this block?") or **shape** ("what else matches this defect's form?"). | Now-ish, as its own plan. Trigger is cheap and mechanical (a finding naming a conditional ⇒ enumerate that conditional); the payoff is proven: 1 hand-sweep = 1 new silent-degradation defect that 8 rounds missed. |
 | **Backfill / quarantine of historical degraded `primary_file` + empty `affectedFiles` rows** | **Moot in this repo — measured, not assumed**: `audit_findings` holds **0 rows** (the 2026-07-14 wipe), so there is no history to backfill and this plan's fix is purely forward-looking. Retained for **consumers**, whose tables were never wiped and who may have run with a purged debt ledger. Detection query (verified to run, returns 0 here): `SELECT count(*) FROM audit_findings WHERE primary_file LIKE '% %' OR primary_file LIKE '%—%'` — a normalized path contains neither a space nor an em-dash, so a hit is the raw-section tell. Revisit when a consumer reports odd `primary_file` values. |
 | Unify `fpTracker.shouldSuppress` with `resolveSuppressionPolicy` | The local tracker's legacy raw-count fallback is retired, OR a parity suite exists. Inherited from the cloud-FP plan's Out of Scope. |
 | Dedupe/backfill tooling for `bandit_arms` | The pre-check ever RAISEs — i.e. a real deployment has drifted. |
