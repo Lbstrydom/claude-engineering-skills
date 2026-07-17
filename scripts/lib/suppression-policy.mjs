@@ -74,7 +74,20 @@ function resolveFpPatterns(fpTracker, cloudPatterns, repoFingerprint, nowMs = Da
       if (!existing) {
         const mapped = {
           ...cp,
-          _key: `${cp.category}::${cp.severity}::${cp.principle}`,
+          // The PERSISTED identity, not a reconstruction. This was
+          // `${cp.category}::${cp.severity}::${cp.principle}` — the LEGACY
+          // 3-segment key shape. A SCOPED pattern's real key is 6 segments
+          // (`…::repoId::fileExtension::scope`, buildPatternKey), so the rebuild
+          // silently emitted a key matching no persisted row — and `_key`
+          // surfaces as `matched_topic_id` in suppression_events via
+          // shouldSuppressFinding -> topicId -> matchedTopic. Every scoped cloud
+          // suppression was therefore attributed to a pattern that does not
+          // exist: confidently-wrong provenance, which is worse than none
+          // because it reads as authoritative. It survived because the rebuild
+          // is CORRECT for legacy 3-segment keys and wrong only for scoped ones.
+          // `pattern_value` is NOT NULL in the schema, so no fallback is needed —
+          // and a fallback here would silently restore the lossy path.
+          _key: cp.pattern_value,
           decayedAccepted: cp.decayed_accepted ?? cp.decayedAccepted ?? 0,
           decayedDismissed: cp.decayed_dismissed ?? cp.decayedDismissed ?? 0
         };

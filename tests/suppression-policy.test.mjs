@@ -26,6 +26,7 @@ const {
   runSuppressionPasses,
 } = await import('../scripts/lib/suppression-policy.mjs');
 const { learningConfig } = await import('../scripts/lib/config.mjs');
+const { fpPatternReadColumns } = await import('../scripts/lib/store/bandit-fp.mjs');
 const { FalsePositiveTracker } = await import('../scripts/lib/findings-tracker.mjs');
 
 import test from 'node:test';
@@ -52,6 +53,10 @@ function cloudRow(over = {}) {
     decayed_dismissed: 8,
     auto_suppress: true,
     last_dismissed_at: FRESH,
+    // Real rows always carry this (pattern_value TEXT NOT NULL) — it is the
+    // pattern's persisted identity, and the policy now reads it rather than
+    // rebuilding a lossy approximation of it.
+    pattern_value: 'dry violation::MEDIUM::single source of truth',
     ...over,
   };
 }
@@ -191,6 +196,50 @@ test('every suppression carries attributable provenance — a finding never vani
   assert.equal(typeof s.matchScore, 'number');
   assert.ok(s.reason.includes('FP pattern'), 'reason states scope, n and ema');
   assert.ok(s.finding._hash === undefined || typeof s.finding._hash === 'string');
+});
+
+// ── matchedTopic must be the PERSISTED identity, not a reconstruction ───────
+//
+// The assertion above only requires matchedTopic to be TRUTHY — which is exactly
+// how a wrong-but-present key survived a full audit cycle. `_key` used to be
+// rebuilt as `category::severity::principle`, the LEGACY 3-segment shape. For a
+// SCOPED pattern the real persisted key is 6 segments
+// (`…::repoId::fileExtension::scope`, buildPatternKey), so the rebuild emitted a
+// key matching no row in the table — and it surfaces as
+// suppression_events.matched_topic_id. Confidently-wrong provenance is worse
+// than none: it reads as authoritative.
+
+test('PROVENANCE: matchedTopic EQUALS the persisted pattern_value (scoped 6-segment key)', () => {
+  // The case the old reconstruction got wrong. `pattern_value` is what
+  // buildFpPatternRows actually wrote; nothing else is the pattern's identity.
+  const PERSISTED = 'dry violation::MEDIUM::single source of truth::e89ab30aa7d1a6aa::mjs::repo+fileType';
+  const scoped = cloudRow({ scope: 'global', pattern_value: PERSISTED });
+  const policy = resolveSuppressionPolicy(null, null, { repoPatterns: [], globalPatterns: [scoped] }, undefined, { nowMs: NOW });
+  const { suppressed } = applyCloudFpSuppression([finding()], policy);
+  assert.equal(
+    suppressed[0].matchedTopic, PERSISTED,
+    'a rebuilt 3-segment key names a pattern that does not exist in false_positive_patterns'
+  );
+});
+
+test('PROVENANCE: a legacy 3-segment pattern_value round-trips too', () => {
+  // The rebuild happened to be CORRECT here — which is why the bug hid. Pin it
+  // so the fix is proven not to break the case that already worked.
+  const PERSISTED = 'dry violation::MEDIUM::single source of truth';
+  const legacy = cloudRow({ scope: 'global', pattern_value: PERSISTED });
+  const policy = resolveSuppressionPolicy(null, null, { repoPatterns: [], globalPatterns: [legacy] }, undefined, { nowMs: NOW });
+  const { suppressed } = applyCloudFpSuppression([finding()], policy);
+  assert.equal(suppressed[0].matchedTopic, PERSISTED);
+});
+
+test('PROVENANCE: the reader SELECTS pattern_value — it cannot be reconstructed downstream', () => {
+  // The root cause was structural: the query ordered BY pattern_value without
+  // selecting it, so the identity never reached the policy and had to be
+  // (lossily) rebuilt. Pin that it is fetched.
+  assert.ok(
+    fpPatternReadColumns().includes('pattern_value'),
+    'the persisted identity must be read, not recomputed from its parts'
+  );
 });
 
 // ── 9. runCloudFpPass — the composition seam ───────────────────────────────

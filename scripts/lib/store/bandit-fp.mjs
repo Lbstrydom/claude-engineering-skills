@@ -143,6 +143,18 @@ export async function upsertPromptVariant(repoId, passName, variantName, promptH
  * existed; the error was swallowed by the catch below).
  */
 const FP_PATTERN_READ_COLUMNS = [
+  // The PERSISTED identity of the pattern — the tracker key `buildFpPatternRows`
+  // wrote. Selected (not reconstructed) because the reader used to rebuild it as
+  // `category::severity::principle`, which is the LEGACY 3-segment shape: for a
+  // SCOPED pattern the real key is 6 segments
+  // (`…::repoId::fileExtension::scope`, see buildPatternKey), so the rebuild
+  // silently produced a key that matches no persisted row. Since that value
+  // surfaces as `matched_topic_id` in suppression_events, every scoped cloud
+  // suppression was attributed to a pattern that does not exist. The writer
+  // already persisted the identity; recomputing it is what invited the drift.
+  // Note it also happens to be this query's ORDER BY tie-break, which was
+  // previously ordering on an unselected column.
+  'pattern_value',
   'category', 'severity', 'principle', 'repo_id', 'file_extension', 'scope',
   'dismissed', 'accepted', 'ema', 'decayed_accepted', 'decayed_dismissed',
   'auto_suppress',
