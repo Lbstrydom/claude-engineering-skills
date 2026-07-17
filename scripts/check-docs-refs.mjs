@@ -105,7 +105,14 @@ const REF_RE = new RegExp(`(?<![A-Za-z0-9._/*-])(${TOKEN})(?![A-Za-z0-9_-])(?![.
 // paren immediately abutting the marker) bind and suppress a real GONE. That is
 // the gate's cardinal sin (suppressing a real finding), so the space is
 // mandatory after a closing char.
-const PLANNED_RE = /^(?:[`)] |[ ])?\(planned\)/;
+//
+// The leading `(?:[#?][^\s`)]*)?` consumes an optional URL fragment/query FIRST:
+// REF_RE stops strictly at `.md`, so `[x](docs/plans/a.md#phase-1) (planned)`
+// leaves `#phase-1) (planned)` as the tail. Without this, the marker check hits
+// `#` and fails, wrongly stripping a legitimate forward-ref's marker (a false
+// POSITIVE — a planned doc flagged GONE). The fragment is not part of the
+// resolved target (that stops at `.md`); this only lets the marker survive it.
+const PLANNED_RE = /^(?:[#?][^\s`)]*)?(?:[`)] |[ ])?\(planned\)/;
 
 /**
  * Extract every citation site from a chunk of text.
@@ -117,9 +124,9 @@ const PLANNED_RE = /^(?:[`)] |[ ])?\(planned\)/;
 export function extractRefs(text) {
   if (typeof text !== 'string') return [];
   const out = [];
-  REF_RE.lastIndex = 0;
-  let m;
-  while ((m = REF_RE.exec(text)) !== null) {
+  // matchAll clones the regex per spec, so it never mutates REF_RE's shared
+  // lastIndex — no manual reset, no fragile global-state dependence (G3).
+  for (const m of text.matchAll(REF_RE)) {
     const target = m[1];
     const stem = target.slice(0, -'.md'.length).split('/').pop();
     out.push({

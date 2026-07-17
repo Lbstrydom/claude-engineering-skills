@@ -45,8 +45,8 @@ punctuation-stripping pass.
 
 | Side | Rule |
 |---|---|
-| Leading | `(?<![A-Za-z0-9._/<>*-])` — the class includes `<>*` so a placeholder is not truncated at `<`, and includes `/` so `wine-cellar-app/docs/plans/a.md` (a **cross-repo** path) never matches. |
-| Trailing | `(?![A-Za-z0-9_-])` — a **negative lookahead**, not a boundary-class member. |
+| Leading | `(?<![A-Za-z0-9._/*-])` — includes `/` so `wine-cellar-app/docs/plans/a.md` (a **cross-repo** path) never matches. It **deliberately excludes `<`**: a CommonMark angle-bracket link destination `[x](<docs/plans/a.md>)` is a real citation, so a preceding `<` must not block the match (excluding it silently dropped such refs — a false negative). The placeholder `<` lives *inside* the token, consumed by `phstem`, so it never needed to be in this class. |
+| Trailing | Two negative lookaheads: `(?![A-Za-z0-9_-])` (so `.mdx` is not this token) **and** `(?![./][A-Za-z0-9._-])` (so a `.`/`/` that continues into a longer token — `real.md.bak`, `real.md/obsolete` — does not terminate here; the continuation class equals `seg`/`stem`). A `.` followed by end/space/punct is a sentence period and still terminates. |
 
 Why it matters: an earlier draft put `.` in the trailing boundary class (extensions
 need it), which made `See docs/plans/my-plan.md.` extract as `docs/plans/my-plan.md.`

@@ -165,6 +165,21 @@ describe('check-docs-refs / (planned) marker', () => {
     assert.equal(extractRefs('`docs/plans/a.md` (planned)')[0].planned, true);
   });
 
+  // Gemini G1: REF_RE stops at .md, so a URL fragment/query lands in the tail
+  // the marker check sees. The marker must survive it, or a legitimate planned
+  // ref with a fragment gets wrongly flagged GONE (a false positive).
+  it('binds across a URL fragment (markdown link + #anchor)', () => {
+    assert.equal(extractRefs('[x](docs/plans/a.md#phase-1) (planned)')[0].planned, true);
+  });
+
+  it('binds across a query string', () => {
+    assert.equal(extractRefs('docs/plans/a.md?v=2 (planned)')[0].planned, true);
+  });
+
+  it('a fragment without a marker still does NOT bind', () => {
+    assert.equal(extractRefs('[x](docs/plans/a.md#phase-1) and more')[0].planned, false);
+  });
+
   it('binds to its OWN token only', () => {
     const got = extractRefs('docs/plans/a.md and docs/plans/b.md (planned)');
     assert.equal(got[0].planned, false, 'first token must not inherit the marker');
