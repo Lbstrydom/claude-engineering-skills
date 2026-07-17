@@ -2752,7 +2752,10 @@ export async function runLegacyProductionAudit(ctx) {
     syncBanditArms(bandit.arms).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
   }
   if (fpTracker) {
-    syncFalsePositivePatterns(null, fpTracker.patterns).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+    // cloudRepoId is the audit_repos row UUID (null → GLOBAL sentinel inside
+    // the sync). Dirty subset only — syncing the whole map rewrote thousands
+    // of unchanged rows per run (2026-07-17 Disk IO incident).
+    syncFalsePositivePatterns(cloudRepoId, fpTracker.dirtyPatterns()).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
   }
 
   // Phase 3 — adaptive-learning convergence_predict telemetry.  Emit ONE

@@ -13,8 +13,9 @@
 
 import { many, upsert } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
+import { GLOBAL_REPO_ID, UNKNOWN_FILE_EXT } from '../config.mjs';
 
-const GLOBAL_REPO_ID = '00000000-0000-0000-0000-000000000000';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Bandit arms ────────────────────────────────────────────────────────────
 
@@ -104,23 +105,80 @@ export async function upsertPromptVariant(repoId, passName, variantName, promptH
 // ── False-positive patterns ────────────────────────────────────────────────
 
 /**
- * Sync local FP-tracker patterns to cloud. Idempotent on
- * `(repo_id, pattern_type, pattern_value)`.
+ * Columns loadFalsePositivePatterns selects — exposed (as a function; the
+ * learning-store barrel is pinned functions-only) so the schema-guard test
+ * can assert every one is actually declared by a migration (the reader
+ * silently returned empty for months because it selected columns that never
+ * existed; the error was swallowed by the catch below).
+ */
+const FP_PATTERN_READ_COLUMNS = [
+  'category', 'severity', 'principle', 'repo_id', 'file_extension', 'scope',
+  'dismissed', 'accepted', 'ema', 'decayed_accepted', 'decayed_dismissed',
+  'auto_suppress',
+];
+
+export function fpPatternReadColumns() {
+  return [...FP_PATTERN_READ_COLUMNS];
+}
+
+/**
+ * Build the cloud rows for an FP-pattern sync — PURE FUNCTION, exported for
+ * tests. `repo_id` is NEVER null: a missing/invalid repoId (e.g. a repo
+ * *fingerprint* hash instead of the audit_repos UUID) falls back to the
+ * GLOBAL sentinel. An explicit NULL defeated the table's ON CONFLICT
+ * (repo_id, ...) dedup — Postgres unique constraints treat NULLs as
+ * distinct — so every audit run re-inserted the whole tracker as new rows
+ * (the 2026-07-17 Disk IO Budget incident: 403k garbage rows in 3 days).
  *
- * @param {string|null} repoId - The repo UUID
- * @param {object} patterns - The local FP tracker patterns map
+ * @param {string|null} repoId - The audit_repos row UUID (not a fingerprint)
+ * @param {object} patterns - FP tracker patterns map (pattern-key → counters)
+ * @returns {object[]} Rows for the false_positive_patterns upsert
+ */
+export function buildFpPatternRows(repoId, patterns) {
+  const repoUuid = typeof repoId === 'string' && UUID_RE.test(repoId) ? repoId : GLOBAL_REPO_ID;
+  const now = new Date().toISOString();
+  return Object.entries(patterns).map(([key, p]) => {
+    // Legacy single-key patterns carry no structured fields; the key itself
+    // is `category::SEVERITY::principle` (same backfill 20260403083803 used).
+    const [keyCategory, keySeverity, keyPrinciple] = key.split('::');
+    const accepted = p.accepted || 0;
+    const dismissed = p.dismissed || 0;
+    const ema = p.ema ?? 0.5;
+    return {
+      repo_id: repoUuid,
+      pattern_type: 'category',
+      pattern_value: key,
+      category: p.category ?? keyCategory ?? '',
+      severity: p.severity ?? keySeverity ?? 'UNKNOWN',
+      principle: p.principle ?? keyPrinciple ?? 'unknown',
+      file_extension: p.fileExtension || UNKNOWN_FILE_EXT,
+      scope: p.scope || 'global',
+      dismissed,
+      accepted,
+      ema,
+      decayed_accepted: p.decayedAccepted || 0,
+      decayed_dismissed: p.decayedDismissed || 0,
+      dismissal_count: dismissed,
+      last_dismissed_at: now,
+      auto_suppress: (accepted + dismissed) >= 5 && ema < 0.15,
+      suppress_threshold: 5,
+    };
+  });
+}
+
+/**
+ * Sync local FP-tracker patterns to cloud. Idempotent on
+ * `(repo_id, pattern_type, pattern_value)`; repo_id falls back to the
+ * GLOBAL sentinel, never null (see buildFpPatternRows). Call sites should
+ * pass `fpTracker.dirtyPatterns()` — only the patterns touched this run —
+ * not the whole map, so a sync doesn't rewrite thousands of unchanged rows.
+ *
+ * @param {string|null} repoId - The audit_repos row UUID
+ * @param {object} patterns - The local FP tracker patterns map (dirty subset)
  */
 export async function syncFalsePositivePatterns(repoId, patterns) {
   if (!await isCloudEnabled()) return;
-  const rows = Object.entries(patterns).map(([key, p]) => ({
-    repo_id: repoId || null,
-    pattern_type: 'category',
-    pattern_value: key,
-    dismissal_count: p.dismissed,
-    last_dismissed_at: new Date().toISOString(),
-    auto_suppress: (p.accepted + p.dismissed) >= 5 && p.ema < 0.15,
-    suppress_threshold: 5,
-  }));
+  const rows = buildFpPatternRows(repoId, patterns);
   if (rows.length === 0) return;
   try {
     await upsert('false_positive_patterns', rows, {
@@ -141,13 +199,18 @@ export async function syncFalsePositivePatterns(repoId, patterns) {
 export async function loadFalsePositivePatterns(repoId) {
   if (!await isCloudEnabled()) return { repoPatterns: [], globalPatterns: [] };
   try {
-    const columns = `category, severity, principle, repo_id, file_extension, scope, dismissed, accepted, ema, auto_suppress`;
+    const columns = FP_PATTERN_READ_COLUMNS.join(', ');
+    // A non-UUID repoId (null, or a repo fingerprint hash) would fail the
+    // uuid cast and take the global read down with it — skip the repo query.
+    const repoQueryable = typeof repoId === 'string' && UUID_RE.test(repoId);
     const [repo, global] = await Promise.all([
-      many(
-        `SELECT ${columns} FROM false_positive_patterns
-           WHERE repo_id = $1 AND auto_suppress = true`,
-        [repoId]
-      ),
+      repoQueryable
+        ? many(
+            `SELECT ${columns} FROM false_positive_patterns
+               WHERE repo_id = $1 AND auto_suppress = true`,
+            [repoId]
+          )
+        : Promise.resolve([]),
       many(
         `SELECT ${columns} FROM false_positive_patterns
            WHERE repo_id = $1 AND auto_suppress = true`,

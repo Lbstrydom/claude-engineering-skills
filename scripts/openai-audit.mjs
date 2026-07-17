@@ -1074,7 +1074,12 @@ async function main() {
       bandit.flush();
       // Sync to Supabase (fire-and-forget)
       syncBanditArms(bandit.arms).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
-      syncFalsePositivePatterns(repoFP, fpTracker.patterns).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
+      // repoFP is the repo *fingerprint* (correct for the local tracker's
+      // scoped keys) — the cloud sync needs the audit_repos row UUID, so
+      // resolve it; null resolves to the GLOBAL sentinel inside the sync.
+      resolveRepoForStore({ profile: repoProfile }).catch(() => null)
+        .then(ref => syncFalsePositivePatterns(ref?.repoRowId ?? null, fpTracker.dirtyPatterns()))
+        .catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
 
     if (jsonMode || outFile) {

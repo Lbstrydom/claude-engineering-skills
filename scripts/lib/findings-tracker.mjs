@@ -113,6 +113,8 @@ export class FalsePositiveTracker {
     this._store = options.store || new MutexFileStore(this.statePath);
     this.patterns = this._store.load();
     if (!this.patterns || typeof this.patterns !== 'object') this.patterns = {};
+    /** Pattern keys touched by record() in THIS process — the cloud-sync payload. */
+    this.dirtyKeys = new Set();
   }
 
   /** Generate a legacy-compatible pattern key from a finding. */
@@ -139,6 +141,7 @@ export class FalsePositiveTracker {
         };
       }
       recordWithDecay(this.patterns[key], accepted);
+      this.dirtyKeys.add(key);
       this._store.save(this.patterns);
       return;
     }
@@ -162,9 +165,26 @@ export class FalsePositiveTracker {
         };
       }
       recordWithDecay(this.patterns[key], accepted);
+      this.dirtyKeys.add(key);
     }
 
     this._store.save(this.patterns);
+  }
+
+  /**
+   * Patterns touched by record() in this process — the payload for
+   * syncFalsePositivePatterns. Syncing only these (instead of the whole
+   * map) keeps a run's cloud write proportional to its deliberated
+   * findings rather than rewriting every tracked pattern (thousands of
+   * rows) on every audit — the write-amplification half of the
+   * 2026-07-17 Disk IO incident.
+   */
+  dirtyPatterns() {
+    const out = {};
+    for (const key of this.dirtyKeys) {
+      if (this.patterns[key]) out[key] = this.patterns[key];
+    }
+    return out;
   }
 
   /**

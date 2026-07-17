@@ -77,6 +77,8 @@
 | `loadBanditArms` | — | `bandit_arms` | `[{passName, variantId, alpha, beta, ...}]` | insensitive (sort by `(passName, variantId)`) | fixture-pending |
 | `upsertPromptVariant` | `prompt_variants` | — | `void` | n/a | fixture-pending |
 | `syncFalsePositivePatterns` | `false_positive_patterns` | — | `{synced}` | n/a | fixture-pending |
+| `buildFpPatternRows` | — (pure row builder for the sync above; repo_id never null — sentinel fallback) | — | `[{repo_id, pattern_value, ...}]` | n/a | `tests/store-bandit-fp.test.mjs` |
+| `fpPatternReadColumns` | — (returns the pinned reader column list; migration-backed, schema-guard-tested) | — | `string[]` | n/a | `tests/store-bandit-fp.test.mjs` |
 | `loadFalsePositivePatterns` | — | `false_positive_patterns` | `[{patternKey, ...}]` | insensitive (sort by `patternKey`) | fixture-pending |
 | `getFalsePositivePatterns` | — | `false_positive_patterns` | `[{...}]` (filtered) | insensitive (sort by `patternKey`) | fixture-pending |
 | `syncExperiments` | `prompt_experiments` | — | `{synced}` | n/a | fixture-pending |

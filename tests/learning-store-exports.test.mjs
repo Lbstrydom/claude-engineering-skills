@@ -64,7 +64,11 @@ const EXPECTED_EXPORTS = [
   'listFrictionSourceHashes',
   'reconcileTombstones',
   'upsertFrictionRow',
-  // bandit-fp (9)
+  // bandit-fp (11 — +2 from the 2026-07-17 FP-sync idempotency fix:
+  // buildFpPatternRows is the pure row builder under test; fpPatternReadColumns
+  // returns the reader's column list so the schema-guard test can verify it)
+  'buildFpPatternRows',
+  'fpPatternReadColumns',
   'getFalsePositivePatterns',
   'getPassEffectiveness',
   'loadBanditArms',
@@ -253,6 +257,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 156);
+    assert.equal(EXPECTED_EXPORTS.length, 158);
   });
 });
