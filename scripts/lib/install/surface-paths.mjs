@@ -174,6 +174,27 @@ export function receiptPath(scope, repoRoot) {
 }
 
 /**
+ * Decode a receipt entry's `path` back to an absolute path — THE single decoder.
+ *
+ * It pairs with the scope-keyed ENCODING the installer writes (`global` →
+ * absolute, `repo` → repo-relative). Every reader needs this exact branch, so
+ * it lives here once rather than being restated per call site: two independent
+ * copies of a decode rule are the drift this module exists to prevent, and the
+ * bug that motivated it (a schema silently stripping `scope`) was invisible
+ * precisely because each reader open-coded the branch.
+ *
+ * A missing `scope` means repo — matching `partitionManagedFilesByScope` and
+ * every pre-existing receipt.
+ *
+ * @param {{path: string, scope?: 'global'|'repo'}} mf
+ * @param {string} repoRoot
+ * @returns {string} absolute path
+ */
+export function managedFileAbsPath(mf, repoRoot) {
+  return mf.scope === 'global' ? mf.path : path.join(repoRoot, mf.path);
+}
+
+/**
  * Partition managed-file entries by scope. Callers use this to split a single
  * install batch into two receipts (global for claude surface, repo for others).
  *

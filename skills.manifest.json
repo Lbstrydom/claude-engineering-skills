@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "c528290ba08d800b",
+  "bundleVersion": "40e5e8d74e1e6361",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-07-16T15:03:25.874Z",
+  "updatedAt": "2026-07-17T05:12:53.250Z",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
@@ -55,14 +55,14 @@
     },
     "audit-code": {
       "path": "skills/audit-code/SKILL.md",
-      "sha": "dc0ea7862863",
-      "size": 27223,
+      "sha": "3e7a1d76155b",
+      "size": 27241,
       "summary": "Iteratively audit code against a plan with GPT + Gemini final gate.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "dc0ea7862863",
-          "size": 27223
+          "sha": "3e7a1d76155b",
+          "size": 27241
         },
         {
           "relPath": "references/debt-capture.md",
@@ -206,14 +206,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "b0f2c5fb757b",
-      "size": 37239,
+      "sha": "2903063fea92",
+      "size": 37259,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "b0f2c5fb757b",
-          "size": 37239
+          "sha": "2903063fea92",
+          "size": 37259
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -232,8 +232,8 @@
         },
         {
           "relPath": "references/consistency-mode.md",
-          "sha": "9bac52694e88",
-          "size": 10815
+          "sha": "8d29465d690d",
+          "size": 10845
         },
         {
           "relPath": "references/interop.md",
@@ -310,14 +310,14 @@
     },
     "ship": {
       "path": "skills/ship/SKILL.md",
-      "sha": "8f96b377c7a8",
-      "size": 24649,
+      "sha": "2d0066869262",
+      "size": 24659,
       "summary": "Sync all project documentation, optionally update a plan, then commit and push to git.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "8f96b377c7a8",
-          "size": 24649
+          "sha": "2d0066869262",
+          "size": 24659
         },
         {
           "relPath": "references/python-environment-discovery.md",

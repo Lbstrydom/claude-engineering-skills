@@ -40,7 +40,7 @@ import crypto from 'node:crypto';
 import { ManifestSchema, MANIFEST_SUPPORTED_VERSIONS } from './lib/schemas-install.mjs';
 import {
   findRepoRoot, resolveSkillFiles,
-  receiptPath, partitionManagedFilesByScope,
+  receiptPath, partitionManagedFilesByScope, managedFileAbsPath,
   repoJournalPath, globalJournalPath,
 } from './lib/install/surface-paths.mjs';
 import { readReceipt, writeReceipt, buildReceipt } from './lib/install/receipt.mjs';
@@ -68,7 +68,19 @@ function parseArgs(argv) {
       case '--skills': args.skills = argv[++i]?.split(','); break;
       case '--force': args.force = true; break;
       case '--dry-run': args.dryRun = true; break;
-      case '--target': case '--repo-root': args.target = path.resolve(argv[++i]); break;
+      case '--target': case '--repo-root': {
+        // Name the mistake. Without the guard `path.resolve(undefined)` throws
+        // deep in node and the top-level catch reports
+        // `The "paths[0]" argument must be of type string` — technically handled,
+        // but it tells the user nothing about which flag they mistyped.
+        const v = argv[++i];
+        if (!v) {
+          console.error(`${R}Error${X}: ${argv[i - 1]} requires a directory path`);
+          process.exit(1);
+        }
+        args.target = path.resolve(v);
+        break;
+      }
       case '--keep-github-skills': args.keepGithubSkills = true; break;
     }
   }
@@ -287,17 +299,58 @@ function buildCopilotMergeWrite(args, repoRoot) {
   };
 }
 
-function computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot) {
+/**
+ * Which previously-managed files should this run delete?
+ *
+ * A file is deleted when it was managed before and this run no longer writes it
+ * — but ONLY for skills this run is AUTHORITATIVE over. `--skills <csv>` is a
+ * FILTER selecting a partial install, not a declaration that the bundle should
+ * become exactly that set. Comparing a filtered write set against the whole
+ * receipt makes every UNSELECTED skill look "no longer managed", so
+ * `install --skills explain` would delete the other 14 — from the shared
+ * ~/.claude/skills surface, which every repo reads.
+ *
+ * This was latent: global deletes silently no-op'd (the receipt schema stripped
+ * `scope`, so their paths never resolved), which hid it. Fixing that resolution
+ * ARMED this path — measured at 112 proposed deletes for a one-skill install —
+ * so the two must land together.
+ *
+ * The installer's own docstring already states the intended rule: files
+ * "no longer in the manifest" are deleted. Skills absent from `--skills` are
+ * still in the manifest.
+ *
+ * @param {Array<{absPath: string}>} writes
+ * @param {object|null} prevGlobalReceipt
+ * @param {object|null} prevRepoReceipt
+ * @param {string} repoRoot
+ * @param {Set<string>|null} authoritativeSkills — null = this run installs the
+ *   whole manifest and is authoritative over everything.
+ */
+function computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot, authoritativeSkills = null) {
   const newAbsPaths = new Set(writes.map(w => w.absPath));
   const deletes = [];
   for (const prev of [prevGlobalReceipt, prevRepoReceipt]) {
     if (!prev?.managedFiles) continue;
     for (const mf of prev.managedFiles) {
-      const prevAbsPath = mf.scope === 'global' ? mf.path : path.join(repoRoot, mf.path);
+      // Leave other skills' files alone. Entries with no `skill` (the merged
+      // copilot-instructions block) are always in scope — they are rebuilt on
+      // every run regardless of the filter.
+      if (authoritativeSkills && mf.skill && !authoritativeSkills.has(mf.skill)) continue;
+      // Shared decoder — must not be open-coded here (see managedFileAbsPath).
+      const prevAbsPath = managedFileAbsPath(mf, repoRoot);
       if (!newAbsPaths.has(prevAbsPath)) deletes.push({ absPath: prevAbsPath, expectedSha: mf.sha });
     }
   }
   return deletes;
+}
+
+/**
+ * Carry forward receipt entries for skills this run did not touch, so a partial
+ * install does not erase the record of the rest of the bundle.
+ */
+function retainUnmanagedEntries(prevReceipt, authoritativeSkills) {
+  if (!authoritativeSkills || !prevReceipt?.managedFiles) return [];
+  return prevReceipt.managedFiles.filter(mf => mf.skill && !authoritativeSkills.has(mf.skill));
 }
 
 function checkConflicts(writes, prevGlobalReceipt, prevRepoReceipt, args) {
@@ -314,15 +367,27 @@ function checkConflicts(writes, prevGlobalReceipt, prevRepoReceipt, args) {
   return { allSafe, allConflicts };
 }
 
-function writeReceiptsByScope(managedFiles, manifest, args, repoReceiptPath, globalReceiptPath) {
+function writeReceiptsByScope(managedFiles, manifest, args, repoReceiptPath, globalReceiptPath, prev = {}) {
   const { global: globalManaged, repo: repoManaged } = partitionManagedFilesByScope(managedFiles);
   const buildOpts = {
     bundleVersion: manifest.bundleVersion,
     sourceUrl: manifest.rawUrlBase,
     surface: args.surface,
   };
-  if (repoManaged.length > 0) writeReceipt(repoReceiptPath, buildReceipt({ ...buildOpts, managedFiles: repoManaged }));
-  if (globalManaged.length > 0) writeReceipt(globalReceiptPath, buildReceipt({ ...buildOpts, managedFiles: globalManaged }));
+  // Rewrite a scope's receipt when it has files NOW **or HAD them before**.
+  // Guarding on the write side alone (`managed.length > 0`) is the same
+  // partial-enumeration mistake the transaction's lock predicate made: a DELETE
+  // changes the managed set exactly as a write does. Without the second term,
+  // an install whose last file in a scope was removed leaves that scope's
+  // receipt listing files that no longer exist — and check-skill-updates then
+  // reports every one as `missing` and tells the user to reinstall.
+  const had = (r) => (r?.managedFiles?.length ?? 0) > 0;
+  if (repoManaged.length > 0 || had(prev.repo)) {
+    writeReceipt(repoReceiptPath, buildReceipt({ ...buildOpts, managedFiles: repoManaged }));
+  }
+  if (globalManaged.length > 0 || had(prev.global)) {
+    writeReceipt(globalReceiptPath, buildReceipt({ ...buildOpts, managedFiles: globalManaged }));
+  }
   return { repoManaged, globalManaged };
 }
 
@@ -370,7 +435,17 @@ function main() {
 
   const { receipt: prevGlobalReceipt } = readReceipt(globalReceiptPath);
   const { receipt: prevRepoReceipt } = readReceipt(repoReceiptPath);
-  const deletes = computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot);
+  // `--skills` selects a PARTIAL install: this run is authoritative only over
+  // the named skills. Without the filter it installs the whole manifest and is
+  // authoritative over everything (null).
+  const authoritativeSkills = args.skills ? new Set(availableSkills) : null;
+  const deletes = computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot, authoritativeSkills);
+  // A partial install must not erase the receipt's record of the skills it left
+  // alone — otherwise the next run sees them as unmanaged and orphans them.
+  managedFiles.push(
+    ...retainUnmanagedEntries(prevRepoReceipt, authoritativeSkills),
+    ...retainUnmanagedEntries(prevGlobalReceipt, authoritativeSkills),
+  );
   const { allSafe, allConflicts } = checkConflicts(writes, prevGlobalReceipt, prevRepoReceipt, args);
 
   if (allConflicts.length > 0) {
@@ -411,7 +486,10 @@ function main() {
     console.log(`  ${Y}○${X} ${skip.absPath}: ${skip.reason}`);
   }
 
-  const { repoManaged, globalManaged } = writeReceiptsByScope(managedFiles, manifest, args, repoReceiptPath, globalReceiptPath);
+  const { repoManaged, globalManaged } = writeReceiptsByScope(
+    managedFiles, manifest, args, repoReceiptPath, globalReceiptPath,
+    { repo: prevRepoReceipt, global: prevGlobalReceipt },
+  );
   ensureAuditGitignore(repoRoot, { dryRun: args.dryRun });
   ensureAuditDeps(repoRoot, { dryRun: args.dryRun });
 
@@ -426,7 +504,10 @@ function main() {
  * Internal seams exposed for tests. Underscore-prefixed per this repo's
  * convention (file-io.mjs, shared.mjs, anthropic-client.mjs).
  */
-export const _internals = { reconcileJournals, reportDegradations };
+export const _internals = {
+  reconcileJournals, reportDegradations, computeDeletes, writeReceiptsByScope,
+  retainUnmanagedEntries,
+};
 
 // isMain guard — importing this module (e.g. from a test) must not run an
 // install. Matches the pattern used by memory-health.mjs / symbol-index/drift.mjs.

@@ -51,6 +51,22 @@ export const ManagedFileSchema = z.object({
   skill: z.string().optional(),
   blockSha: z.string().optional(),
   merged: z.boolean().optional(),
+  /**
+   * Which surface this file lives on — and therefore how `path` is encoded:
+   * `global` entries are ABSOLUTE (they live in ~/.claude/skills, outside any
+   * repo); `repo` entries are repo-relative. Every reader branches on this to
+   * decode `path` again, so it is a load-bearing discriminator, not metadata.
+   *
+   * It MUST be declared here even though nothing in this module reads it:
+   * `z.object()` strips undeclared keys, so omitting it meant `scope` reached
+   * disk and then vanished on every read — making `computeDeletes`' global
+   * branch unreachable, resolving each global path as
+   * `path.join(repoRoot, '<absolute path>')`, and silently orphaning the file.
+   *
+   * Optional because pre-existing receipts carry no scope; absence means
+   * `repo`, matching partitionManagedFilesByScope and computeDeletes.
+   */
+  scope: z.enum(['global', 'repo']).optional(),
 });
 
 export const InstallReceiptSchema = z.object({

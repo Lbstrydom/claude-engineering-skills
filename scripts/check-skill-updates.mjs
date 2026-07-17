@@ -6,7 +6,7 @@
  *   node scripts/check-skill-updates.mjs [--json] [--no-cache]
  */
 import path from 'node:path';
-import { findRepoRoot, receiptPath } from './lib/install/surface-paths.mjs';
+import { findRepoRoot, receiptPath, managedFileAbsPath } from './lib/install/surface-paths.mjs';
 import { readReceipt } from './lib/install/receipt.mjs';
 import { computeFileSha } from './lib/install/conflict-detector.mjs';
 import { checkAuditGitignore, ensureAuditGitignore } from './lib/install/gitignore.mjs';
@@ -25,17 +25,26 @@ function parseArgs(argv) {
 function main() {
   const args = parseArgs(process.argv);
   const repoRoot = args.target || findRepoRoot();
-  const repoReceiptFile = receiptPath('repo', repoRoot);
 
-  // Read receipt
-  const { receipt, error } = readReceipt(repoReceiptFile);
+  // BOTH receipts, because there are two surfaces. Reading only the repo one
+  // made this command's success path lie: a `--surface claude` install writes
+  // ONLY the global receipt, so a fully-installed bundle reported
+  // "No install detected" and exited 0 — and in the mixed case it printed
+  // "All N managed files are up-to-date" while never looking at
+  // ~/.claude/skills, the surface Claude Code actually reads.
+  const receipts = [
+    { scope: 'repo', file: receiptPath('repo', repoRoot) },
+    { scope: 'global', file: receiptPath('global', repoRoot) },
+  ].map(r => ({ ...r, ...readReceipt(r.file) }));
 
-  if (error) {
-    console.error(`${R}Error${X}: ${error}`);
+  const failed = receipts.find(r => r.error);
+  if (failed) {
+    console.error(`${R}Error${X}: ${failed.error} (${failed.file})`);
     process.exit(1);
   }
 
-  if (!receipt) {
+  const present = receipts.filter(r => r.receipt);
+  if (present.length === 0) {
     if (args.json) {
       console.log(JSON.stringify({ installed: false, message: 'No install detected' }));
     } else {
@@ -44,15 +53,19 @@ function main() {
     process.exit(0);
   }
 
+  // Prefer the repo receipt for run-level metadata, else the global one.
+  const receipt = present[0].receipt;
+  const managedFiles = present.flatMap(r => r.receipt.managedFiles);
+
   // Local drift detection
   const driftResults = [];
   let driftCount = 0;
   let matchCount = 0;
   let missingCount = 0;
 
-  for (const f of receipt.managedFiles) {
-    // All receipt paths are repo-relative — always resolve against repoRoot
-    const absPath = path.join(repoRoot, f.path);
+  for (const f of managedFiles) {
+    // Scope-aware: global entries are absolute, repo entries repo-relative.
+    const absPath = managedFileAbsPath(f, repoRoot);
 
     const actual = computeFileSha(absPath);
     const expected = f.sha || f.blockSha;
