@@ -84,6 +84,8 @@ const PLANNED_RE = /^[`)]?[ ]?\(planned\)/;
  * Extract every citation site from a chunk of text.
  * @param {string} text
  * @returns {Array<{target:string, kind:'concrete'|'placeholder', offset:number, planned:boolean, traversal:boolean}>}
+ *   `offset` is a JS string index (UTF-16 code units) locating the token in the
+ *   line — for traceability only, never used as a byte position.
  */
 export function extractRefs(text) {
   if (typeof text !== 'string') return [];

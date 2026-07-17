@@ -88,7 +88,9 @@ describe('check-docs-refs / extractRefs — grammar', () => {
     assert.equal(got[0].traversal, true);
   });
 
-  it('every site carries a byte offset so suppression is traceable', () => {
+  it('every site carries a string offset so suppression is traceable', () => {
+    // offset is a JS string index (UTF-16 code units, from String#match),
+    // used only to locate the token within its line — not a byte offset.
     const got = extractRefs('xx docs/plans/a.md');
     assert.equal(got[0].offset, 3);
   });
