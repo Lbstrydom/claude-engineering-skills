@@ -27,6 +27,7 @@ in any public-facing material.
 | 4 | [`field-records-synthesis.md`](field-records-synthesis.md) | Two years of *production* audit records mined across both repos — what the pipeline actually caught, what the false positives actually were, where Gemini genuinely earns its keep (adjudication, not discovery), and the named Claude-author blind-spot classes. |
 | 5 | [`design-synthesis-and-decisions.md`](design-synthesis-and-decisions.md) | How the evidence became a design: the cross-family brainstorm round, the synthesis, and the /audit-plan trail (26 findings across 5 review rounds) that hardened the plan. |
 | 6 | [`next-steps.md`](next-steps.md) | The roadmap — what the approved plan covers, and the four workstreams that sit *outside* it. |
+| 7 | [`experiment-4-discovery-model-glm-disqualification.md`](experiment-4-discovery-model-glm-disqualification.md) | Decision record: GLM-5.2 disqualified as a `required` discovery generator on three axes (36% availability / 80.9% FP / highest cost), the DeepSeek-V3.2-led replacement shortlist, and the two-gate (availability → quality) evaluation that must run before the default changes. Companion to `experiment-3` (which graded GLM in the *auditor* role). |
 
 ## Data artifacts in this folder
 
