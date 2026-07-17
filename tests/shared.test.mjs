@@ -417,6 +417,51 @@ describe('populateFindingMetadata', () => {
     assert.match(finding._hash, /^[a-f0-9]{8}$/);
   });
 
+  // ── WS-C: the consumer shape this enrichment feeds ────────────────────────
+  //
+  // populateFindingMetadata is the ONLY producer of _primaryFile/affectedFiles:
+  // FindingBase (the LLM output contract) carries neither, and addFindings sets
+  // `_hash` at insertion but not the derived paths. It used to live INSIDE
+  // `if (mergedLedger.entries.length > 0)`, so a run with no session ledger and
+  // no debt entries skipped it — while two consumers OUTSIDE that branch read
+  // the fields anyway: `.audit/outcomes.jsonl` (the local bandit reward signal,
+  // via appendOutcome) and cloud `audit_findings.primary_file`. Both do
+  // `f._primaryFile || f.section`, so the gap degraded silently instead of
+  // failing. These pin the DEFECT and the FIX against the real consumer shape.
+
+  /** The payload the orchestrator hands appendOutcome (findings-outcomes.mjs:38). */
+  const outcomePayload = (f) => ({
+    primaryFile: f._primaryFile || f.section,
+    affectedFiles: f.affectedFiles || [],
+  });
+
+  it('UN-enriched: the outcome payload degrades to the raw section string + empty paths', () => {
+    // A finding as addFindings leaves it — `_hash` set, derived paths absent.
+    const raw = { section: 'scripts/lib/foo.mjs:42 — the thing is wrong', category: 'x', detail: 'd', _hash: 'abc12345' };
+    const payload = outcomePayload(raw);
+    assert.match(payload.primaryFile, /\s/, 'the raw section carries prose — it is not a path');
+    assert.deepEqual(payload.affectedFiles, [], 'no paths reach the bandit reward signal');
+  });
+
+  it('ENRICHED: the outcome payload carries a normalized path + non-empty affectedFiles', () => {
+    const f = { section: 'scripts/lib/foo.mjs:42 — the thing is wrong', category: 'x', detail: 'd' };
+    populateFindingMetadata(f, 'backend');
+    const payload = outcomePayload(f);
+    assert.equal(payload.primaryFile, 'scripts/lib/foo.mjs');
+    assert.ok(!/\s/.test(payload.primaryFile), 'a normalized path contains no whitespace');
+    assert.deepEqual(payload.affectedFiles, ['scripts/lib/foo.mjs']);
+  });
+
+  it('is IDEMPOTENT — the hoist cannot change the ledger path, where it already ran', () => {
+    const f = { section: 'scripts/lib/foo.mjs:42 — thing', category: 'x', detail: 'd' };
+    populateFindingMetadata(f, 'backend');
+    const first = { _primaryFile: f._primaryFile, affectedFiles: [...f.affectedFiles], _hash: f._hash };
+    populateFindingMetadata(f, 'backend');
+    assert.equal(f._primaryFile, first._primaryFile);
+    assert.deepEqual(f.affectedFiles, first.affectedFiles);
+    assert.equal(f._hash, first._hash, '_hash must not be recomputed once set');
+  });
+
   it('preserves existing _hash', () => {
     const finding = { section: 'file.mjs', category: 'test', detail: 'detail', _hash: 'custom12' };
     populateFindingMetadata(finding, 'backend');

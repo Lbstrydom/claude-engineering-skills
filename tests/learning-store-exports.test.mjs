@@ -64,14 +64,18 @@ const EXPECTED_EXPORTS = [
   'listFrictionSourceHashes',
   'reconcileTombstones',
   'upsertFrictionRow',
-  // bandit-fp (13 — +2 from the 2026-07-17 FP-sync idempotency fix:
+  // bandit-fp (14 — +2 from the 2026-07-17 FP-sync idempotency fix:
   // buildFpPatternRows is the pure row builder under test; fpPatternReadColumns
   // returns the reader's column list so the schema-guard test can verify it.
   // +1 from the cloud FP read loop: buildFpReadQuery is the pure query builder,
   // exported so the bounded/deterministic-order/no-repo-predicate query SHAPE is
   // assertable DB-free — there is no live-DB tier here by design, INC-002.
   // +1 isSyncableRepoId: the pure repo-identity guard that stops an unresolved
-  // repo laundering repo-private patterns into the cross-repo GLOBAL bucket)
+  // repo laundering repo-private patterns into the cross-repo GLOBAL bucket.
+  // +1 buildBanditArmRows: the pure arm-row builder — context_bucket can never
+  // be null, the sibling of buildFpPatternRows repo_id pin; exported so that
+  // invariant is assertable DB-free, INC-002)
+  'buildBanditArmRows',
   'buildFpPatternRows',
   'buildFpReadQuery',
   'fpPatternReadColumns',
@@ -264,6 +268,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 160);
+    assert.equal(EXPECTED_EXPORTS.length, 161);
   });
 });

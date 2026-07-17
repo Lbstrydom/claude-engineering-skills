@@ -21,8 +21,12 @@ const {
   applyCloudFpSuppression,
   runCloudFpPass,
   buildCloudFpPolicy,
+  applyLocalFpSuppression,
+  runLocalFpPass,
+  runSuppressionPasses,
 } = await import('../scripts/lib/suppression-policy.mjs');
 const { learningConfig } = await import('../scripts/lib/config.mjs');
+const { FalsePositiveTracker } = await import('../scripts/lib/findings-tracker.mjs');
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -253,6 +257,170 @@ test('CONSERVATION: every cloud suppression comes out of kept, never out of exem
   assert.ok(r.findings.includes(reopened), 'the exempt finding must survive a matching pattern');
   assert.ok(!r.suppressed.some(s => s.finding === reopened), 'and must never appear as suppressed');
   assert.equal(r.suppressedCount, 1, 'exactly the matching non-exempt finding is suppressed');
+});
+
+// ── WS-B: the LOCAL FP pass ────────────────────────────────────────────────
+//
+// Two-sided by construction: every "must NOT suppress" case has a mirror
+// proving it still CAN. A suite that only asserted the safe direction would
+// pass with the feature dead — which is the bug this workstream fixes.
+
+/** A tracker whose legacy single-key path suppresses `category` at ema<0.15. */
+function trackerFor(category, { ema = 0.05, dismissed = 8 } = {}) {
+  return new FalsePositiveTracker('unused.json', {
+    store: {
+      load: () => ({
+        [`${category}::HIGH::correctness`]: {
+          category, severity: 'HIGH', principle: 'correctness',
+          accepted: 0, dismissed, ema,
+          decayedAccepted: 0, decayedDismissed: dismissed,
+          lastDecayTs: NOW,
+        },
+      }),
+      save: () => {},
+    },
+  });
+}
+const localFinding = (over = {}) => ({ category: 'noisy', severity: 'HIGH', principle: 'correctness', ...over });
+
+test('LOCAL: with NO ledger, a learned pattern now suppresses (the whole point of WS-B)', () => {
+  const r = runLocalFpPass([localFinding()], { fpTracker: trackerFor('noisy'), exempt: new Set() });
+  assert.equal(r.suppressedCount, 1);
+  assert.equal(r.findings.length, 0);
+});
+
+test('MIRROR: a non-matching finding still survives the local pass', () => {
+  const r = runLocalFpPass([localFinding({ category: 'unmatched' })], { fpTracker: trackerFor('noisy') });
+  assert.equal(r.suppressedCount, 0, 'the pass must not suppress indiscriminately');
+  assert.equal(r.findings.length, 1);
+});
+
+test('LOCAL: reopened findings are EXEMPT — category stats can never mask a regression', () => {
+  // A DECISION, not an inheritance: the old in-branch loop filtered `kept` only,
+  // so it never saw reopens. Lifting it over kept+reopened without this would
+  // silently acquire a new behaviour as a refactor side effect.
+  const f = localFinding();
+  const r = runLocalFpPass([f], { fpTracker: trackerFor('noisy'), exempt: new Set([f]) });
+  assert.deepEqual(r.findings, [f]);
+  assert.equal(r.suppressedCount, 0);
+});
+
+test('LOCAL: a null tracker is a no-op — findings unchanged, nothing logged', () => {
+  const input = [localFinding(), localFinding({ category: 'b' })];
+  const lines = [];
+  const r = runLocalFpPass(input, { fpTracker: null, log: (l) => lines.push(l) });
+  assert.deepEqual(r.findings, input);
+  assert.equal(r.suppressedCount, 0);
+  assert.equal(lines.length, 0);
+});
+
+test('LOCAL ARRAY OWNERSHIP: never returns the input array (both paths)', () => {
+  const input = [localFinding({ category: 'unmatched' })];
+  assert.notEqual(runLocalFpPass(input, { fpTracker: null }).findings, input);
+  assert.notEqual(runLocalFpPass(input, { fpTracker: trackerFor('noisy') }).findings, input);
+});
+
+test('LOCAL CALL-SITE REPLAY: clear-then-push keeps every finding on the no-op path', () => {
+  const arr = [localFinding({ category: 'a' }), localFinding({ category: 'b' })];
+  const before = [...arr];
+  const r = runLocalFpPass(arr, { fpTracker: null });
+  arr.length = 0; arr.push(...r.findings);
+  assert.deepEqual(arr, before, 'returning the input by reference would erase everything here');
+});
+
+test('LOCAL: a suppression names the REAL matched pattern, not a synthesized one', () => {
+  // shouldSuppress returns a bare boolean and discards which scope fired; a
+  // synthesized topic would name a pattern that may not be the one that
+  // suppressed — confidently-wrong provenance, worse than none.
+  const { suppressed } = applyLocalFpSuppression([localFinding()], trackerFor('noisy'));
+  assert.equal(suppressed[0].matchedTopic, 'noisy::HIGH::correctness');
+  assert.equal(typeof suppressed[0].matchScore, 'number');
+});
+
+// ── WS-B: the composition boundary ─────────────────────────────────────────
+
+test('COMPOSITION: no ledger + a local suppression → envelope SYNTHESIZED with provenance', () => {
+  const r = runSuppressionPasses([localFinding()], {
+    fpTracker: trackerFor('noisy'), cloudPolicy: null, suppressionData: null, cloudEnabled: false,
+  });
+  assert.ok(r.suppressionData, 'a suppression with no envelope leaves no audit trail');
+  assert.equal(r.suppressionData.fpSuppressedCount, 1);
+  assert.equal(r.suppressionData.suppressed.length, 1);
+  assert.equal(r.suppressionData.suppressed[0].matchedTopic, 'noisy::HIGH::correctness');
+});
+
+test('COMPOSITION: cloud-off adds NO cloud key (--out byte-identity) but DOES record fpSuppressedCount', () => {
+  const r = runSuppressionPasses([localFinding()], {
+    fpTracker: trackerFor('noisy'), cloudPolicy: null, suppressionData: null, cloudEnabled: false,
+  });
+  assert.equal('cloudFpSuppressedCount' in r.suppressionData, false, 'cloud-off must gain no cloud-specific key');
+  assert.equal(r.suppressionData.fpSuppressedCount, 1);
+});
+
+test('COMPOSITION: both passes fire → each count lands in its OWN field; keptCount subtracts both', () => {
+  const local = localFinding({ category: 'noisy' });
+  const cloud = finding();                       // matches the cloud policy
+  const survivor = localFinding({ category: 'untouched' });
+  const data = {
+    suppressed: [{ finding: { category: 'ledger' }, matchedTopic: 't', matchScore: 1 }],
+    reopened: [], keptCount: 3, suppressedCount: 1, reopenedCount: 0, fpSuppressedCount: 0,
+  };
+  const r = runSuppressionPasses([local, cloud, survivor], {
+    fpTracker: trackerFor('noisy'), cloudPolicy: suppressingPolicy(),
+    suppressionData: data, cloudEnabled: true,
+  });
+  assert.equal(r.suppressionData.fpSuppressedCount, 1, 'local owns its field');
+  assert.equal(r.suppressionData.cloudFpSuppressedCount, 1, 'cloud owns its field');
+  assert.equal(r.suppressionData.suppressedCount, 1, 'the ledger count is untouched');
+  assert.equal(r.suppressionData.keptCount, 1, '3 − 1 local − 1 cloud');
+  assert.equal(r.suppressionData.suppressed.length, 3, 'the union: ledger ⧺ local ⧺ cloud');
+  assert.deepEqual(r.findings, [survivor]);
+});
+
+test('COMPOSITION CONSERVATION: kept + suppressed + reopened + fp + cloud === total raised', () => {
+  const TOTAL = 3;
+  const data = { suppressed: [], reopened: [], keptCount: TOTAL, suppressedCount: 0, reopenedCount: 0, fpSuppressedCount: 0 };
+  const r = runSuppressionPasses([localFinding({ category: 'noisy' }), finding(), localFinding({ category: 'safe' })], {
+    fpTracker: trackerFor('noisy'), cloudPolicy: suppressingPolicy(), suppressionData: data, cloudEnabled: true,
+  });
+  const d = r.suppressionData;
+  // `?? 0` is LOAD-BEARING: the cloud key is ABSENT when cloud is off, and
+  // `x + undefined` is NaN — the invariant could not be asserted at all without it.
+  const total = d.keptCount + d.suppressedCount + d.reopenedCount + d.fpSuppressedCount + (d.cloudFpSuppressedCount ?? 0);
+  assert.equal(total, TOTAL, 'no finding may be created or lost across both passes');
+});
+
+test('COMPOSITION CONSERVATION holds on the cloud-OFF path too (where the key is absent)', () => {
+  const TOTAL = 2;
+  const data = { suppressed: [], reopened: [], keptCount: TOTAL, suppressedCount: 0, reopenedCount: 0, fpSuppressedCount: 0 };
+  const r = runSuppressionPasses([localFinding({ category: 'noisy' }), localFinding({ category: 'safe' })], {
+    fpTracker: trackerFor('noisy'), cloudPolicy: null, suppressionData: data, cloudEnabled: false,
+  });
+  const d = r.suppressionData;
+  const total = d.keptCount + d.suppressedCount + d.reopenedCount + d.fpSuppressedCount + (d.cloudFpSuppressedCount ?? 0);
+  assert.equal(total, TOTAL);
+});
+
+test('COMPOSITION: reopened survives BOTH passes — the premise the subtraction rests on', () => {
+  const reopened = localFinding({ category: 'noisy' });   // matches the local tracker
+  const data = { suppressed: [], reopened: [reopened], keptCount: 1, suppressedCount: 0, reopenedCount: 1, fpSuppressedCount: 0 };
+  const r = runSuppressionPasses([localFinding({ category: 'safe' }), reopened], {
+    fpTracker: trackerFor('noisy'), cloudPolicy: suppressingPolicy(),
+    exempt: new Set([reopened]), suppressionData: data, cloudEnabled: true,
+  });
+  assert.ok(r.findings.includes(reopened), 'a reopen must survive a matching pattern');
+  assert.equal(r.suppressionData.fpSuppressedCount, 0);
+  assert.equal(r.suppressionData.keptCount, 1, 'nothing came out of kept');
+});
+
+test('COMPOSITION: null tracker AND null policy → total no-op, envelope untouched', () => {
+  const input = [localFinding(), finding()];
+  const data = { suppressed: [], reopened: [], keptCount: 2, suppressedCount: 0, reopenedCount: 0, fpSuppressedCount: 0 };
+  const r = runSuppressionPasses(input, { fpTracker: null, cloudPolicy: null, suppressionData: data, cloudEnabled: false });
+  assert.deepEqual(r.findings, input);
+  assert.notEqual(r.findings, input, 'still a fresh array');
+  assert.equal(r.suppressionData.keptCount, 2);
+  assert.equal('cloudFpSuppressedCount' in r.suppressionData, false);
 });
 
 // ── 10. The clock is resolved once per policy ──────────────────────────────

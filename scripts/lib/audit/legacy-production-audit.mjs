@@ -90,7 +90,7 @@ import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from '../debt-memory.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from '../../learning-store.mjs';
-import { buildCloudFpPolicy, runCloudFpPass } from '../suppression-policy.mjs';
+import { buildCloudFpPolicy, runSuppressionPasses } from '../suppression-policy.mjs';
 import { finalizePriorRoundOutcomes } from '../finalize-outcomes.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from '../learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from '../learning/author-tier-observation.mjs';
@@ -2363,12 +2363,25 @@ export async function runLegacyProductionAudit(ctx) {
   // when it didn't, which is correct (nothing was reopened).
   let reopenedSet = new Set();
 
-  if (mergedLedger.entries.length > 0) {
-    // Enrich findings with structured metadata
-    for (const f of allFindings) {
-      populateFindingMetadata(f, f._pass);
-    }
+  // Enrich findings with structured metadata — HOISTED out of the ledger branch.
+  // This is pure enrichment derived from `section` with ZERO ledger dependency,
+  // and it is the ONLY producer of `_primaryFile`/`affectedFiles` (the LLM
+  // contract, FindingBase, carries neither; addFindings sets `_hash` but not
+  // these). Nested in the branch it was skipped whenever the merged ledger was
+  // empty, and two consumers OUTSIDE the branch read the gap: `.audit/outcomes.jsonl`
+  // (the local bandit reward signal) and cloud `audit_findings.primary_file`.
+  // Both do `f._primaryFile || f.section`, so they silently recorded the RAW
+  // SECTION STRING where a normalized path belongs, and `affectedFiles: []` —
+  // no error, no crash, just wrong-shaped data that looks fine.
+  //
+  // Slot is constrained on both sides: AFTER addFindings (which builds
+  // allFindings and sets `_hash`) and BEFORE suppressReRaises (which reads
+  // `_primaryFile`/`affectedFiles` for its impact-set narrowing).
+  for (const f of allFindings) {
+    populateFindingMetadata(f, f._pass);
+  }
 
+  if (mergedLedger.entries.length > 0) {
     let { kept, suppressed, reopened } = suppressReRaises(allFindings, mergedLedger, { changedFiles, impactSet });
 
     process.stderr.write(`\n═══════════════════════════════════════\n`);
@@ -2381,23 +2394,12 @@ export async function runLegacyProductionAudit(ctx) {
     }
     process.stderr.write(`═══════════════════════════════════════\n\n`);
 
-    // Phase 4: FP tracker — suppress patterns with historically high dismiss rates
-    let fpSuppressed = [];
-    if (fpTracker) {
-      const finalKept = [];
-      for (const f of kept) {
-        if (fpTracker.shouldSuppress(f)) {
-          fpSuppressed.push(f);
-          process.stderr.write(`    [fp-tracker] Auto-suppressed: ${f.category?.slice(0, 60)} (EMA < 0.15)\n`);
-        } else {
-          finalKept.push(f);
-        }
-      }
-      if (fpSuppressed.length > 0) {
-        process.stderr.write(`  [fp-tracker] Suppressed ${fpSuppressed.length} historically noisy findings\n`);
-        kept = finalKept;
-      }
-    }
+    // The local FP-tracker loop LIVED HERE and has moved out — it is now
+    // `runLocalFpPass`, called unconditionally below alongside the cloud pass.
+    // Nested here it was skipped entirely whenever the merged ledger was empty
+    // (no session ledger AND no debt entries), so the historically-noisy
+    // patterns the tracker had learned were simply not applied — the identical
+    // defect the cloud pass was lifted out to avoid.
 
     // Replace findings with kept + reopened only
     reopenedSet = new Set(reopened);
@@ -2412,7 +2414,7 @@ export async function runLegacyProductionAudit(ctx) {
       keptCount: kept.length,
       suppressedCount: suppressed.length,
       reopenedCount: reopened.length,
-      fpSuppressedCount: fpSuppressed.length
+      fpSuppressedCount: 0,   // set by runSuppressionPasses — the local pass moved out
     };
 
     // Phase D: emit debt events for matches against debt-ledger entries.
@@ -2504,69 +2506,32 @@ export async function runLegacyProductionAudit(ctx) {
     };
   }
 
-  // ── Layer 3: cloud FP-pattern suppression ────────────────────────────────
+  // ── Post-output suppression passes (local FP tracker, then cloud FP policy) ──
   // Position is LOAD-BEARING and must stay here:
-  //   * AFTER the ledger branch above — nesting it inside would make the whole
-  //     cross-machine read loop conditional on unrelated local ledger state, so
-  //     a run with an empty ledger (exactly the case a pattern learned on
-  //     another machine serves) would load the policy and suppress nothing.
+  //   * AFTER the ledger branch above — nesting either pass inside makes it
+  //     conditional on unrelated local ledger state. A run with an empty merged
+  //     ledger is exactly the case each pass exists to serve (a pattern the
+  //     tracker learned; a pattern another machine learned), and nesting is what
+  //     silently disabled the local one for years.
   //   * BEFORE the auto-write ledger block below, which reads allFindings.
-  // The call is UNCONDITIONAL: runCloudFpPass is a no-op on a null policy and
-  // always returns a NEW array, so there is no branch here to get wrong and the
-  // clear-then-push below can never empty its own source.
-  const cloudPass = runCloudFpPass(allFindings, {
-    policy: cloudFpPolicy,
+  // ONE unconditional call: runSuppressionPasses is a no-op with a null tracker
+  // AND a null policy, and always returns a NEW array — so there is no branch
+  // here to get wrong, and the clear-then-push can never empty its own source.
+  // All decision logic (ordering, counters, the union, the no-ledger synthesis)
+  // lives in the seam, not here.
+  const passes = runSuppressionPasses(allFindings, {
+    fpTracker,
+    cloudPolicy: cloudFpPolicy,
     exempt: reopenedSet,
+    suppressionData: typeof _suppressionData !== 'undefined' ? _suppressionData : null,
+    cloudEnabled: cloudRepoId != null,
     log: (line) => process.stderr.write(line),
   });
   allFindings.length = 0;
-  allFindings.push(...cloudPass.findings);
-  // Cloud-off runs must gain NO new serialized key (--out byte-identity).
-  // Legal here because _suppressionData is `var` (function-scoped) — reading it
-  // inside the ledger branch instead would hit the TDZ on `cloudPass`.
-  if (cloudRepoId != null) {
-    if (_suppressionData) {
-      _suppressionData.cloudFpSuppressedCount = cloudPass.suppressedCount;
-      // Cloud suppressions must reach recordSuppressionEvents in the
-      // BOTH-ACTIVE case too. `suppressed` is the union — the recorder treats
-      // every entry identically (all carry matchedTopic/matchScore/reason), so
-      // a count alone would leave cloud decisions unpersisted while ledger ones
-      // were recorded: the same accountability gap as the no-ledger branch
-      // below, just on the other side. The per-source COUNTS stay separate
-      // (`suppressedCount` = ledger path, `fpSuppressedCount` = local tracker,
-      // `cloudFpSuppressedCount` = cloud), so the array length is deliberately
-      // the union total rather than equal to any single count.
-      if (cloudPass.suppressed.length > 0) {
-        _suppressionData.suppressed = [..._suppressionData.suppressed, ...cloudPass.suppressed];
-      }
-      // keptCount was computed from the LEDGER pass's `kept`, before this cloud
-      // pass removed more; left stale it breaks finding conservation
-      // (keptCount + suppressedCount + reopenedCount == total raised).
-      // Subtract rather than re-measure `allFindings`: keptCount means "kept,
-      // EXCLUDING reopened", while allFindings is kept+reopened — re-measuring
-      // would silently redefine the field. The subtraction is exact because
-      // `reopened` is exempt from the cloud pass, so every cloud suppression
-      // necessarily came out of `kept`.
-      _suppressionData.keptCount -= cloudPass.suppressedCount;
-    } else if (cloudPass.suppressedCount > 0) {
-      // The ledger branch never ran, but the cloud pass DID suppress — the exact
-      // case this layer exists to serve (a pattern learned on another machine,
-      // no local ledger). Without this, that suppression leaves no provenance:
-      // _suppression is never attached, so recordSuppressionEvents never fires
-      // and findings vanish with only an stderr line to show for it. Synthesize
-      // the envelope so the cloud path is as accountable as the ledger path.
-      // Guarded on cloudRepoId, so a cloud-off run's --out stays byte-identical.
-      _suppressionData = {
-        suppressed: cloudPass.suppressed,
-        reopened: [],
-        keptCount: allFindings.length,
-        suppressedCount: 0,          // ledger-path suppressions — none ran
-        reopenedCount: 0,
-        fpSuppressedCount: 0,        // local-tracker suppressions — none ran
-        cloudFpSuppressedCount: cloudPass.suppressedCount,
-      };
-    }
-  }
+  allFindings.push(...passes.findings);
+  // Legal here because `_suppressionData` is `var` (function-scoped); reading
+  // it inside the ledger branch instead would hit the TDZ on `passes`.
+  _suppressionData = passes.suppressionData ?? undefined;
 
   // Auto-write ledger (default-on when ledgerFile resolved)
   if (ledgerFile && !noLedger) {
@@ -2803,13 +2768,12 @@ export async function runLegacyProductionAudit(ctx) {
       }, round).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
 
-    // Record suppression events if R2+ — OR whenever the cloud FP layer
-    // suppressed anything. The isR2Plus gate encodes "ledger suppression is an
-    // R2+ concept", which is true for the ledger path but NOT for the cloud
-    // layer: runCloudFpPass is unconditional and can suppress on round 1, where
-    // the bare gate would silently drop its provenance. A suppression that
-    // happens on R1 is no less accountable than one on R2.
-    if ((isR2Plus || cloudPass.suppressedCount > 0) && mergedResult._suppression) {
+    // Record suppression events if R2+ — OR whenever a suppression PASS fired.
+    // The isR2Plus gate encodes "ledger suppression is an R2+ concept", true for
+    // the ledger path but NOT for the local/cloud passes: both are unconditional
+    // and can suppress on round 1, where the bare gate would silently drop their
+    // provenance. A suppression on R1 is no less accountable than one on R2.
+    if ((isR2Plus || passes.suppressedCount > 0) && mergedResult._suppression) {
       recordSuppressionEvents(cloudRunId, mergedResult._suppression).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
   }

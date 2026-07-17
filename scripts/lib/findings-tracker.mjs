@@ -196,11 +196,25 @@ export class FalsePositiveTracker {
   }
 
   /**
-   * Should this finding pattern be auto-suppressed?
+   * Should this finding pattern be auto-suppressed, and WHICH pattern decided?
    * Hierarchical with confidence-aware override.
+   *
+   * The tracker has always known which scope fired and thrown it away —
+   * `shouldSuppress` returns a bare boolean. That made local suppressions
+   * unattributable: a suppression recorded with a synthesized topic id would
+   * name a pattern that may not be the one that actually fired, which is
+   * confidently-wrong provenance (worse than absent, because it reads as
+   * authoritative). Returning the matched key lets a local suppression flow
+   * through `recordSuppressionEvents` with the same honesty as a cloud one.
+   *
+   * @param {object} finding
+   * @param {string|null} [repoFingerprint]
+   * @param {string|null} [filePath]
+   * @returns {{suppress: boolean, key: string|null, scope: string|null, ess: number|null, ema: number|null}}
    */
-  shouldSuppress(finding, repoFingerprint = null, filePath = null) {
+  shouldSuppressWithReason(finding, repoFingerprint = null, filePath = null) {
     const MIN_FP_SAMPLES = learningConfig.minFpSamples;
+    const miss = { suppress: false, key: null, scope: null, ess: null, ema: null };
 
     if (repoFingerprint) {
       const dims = extractDimensions(finding, repoFingerprint, filePath);
@@ -219,19 +233,39 @@ export class FalsePositiveTracker {
         const ess = effectiveSampleSize(decayed);
         if (ess < MIN_FP_SAMPLES) continue;
 
-        return decayed.ema < 0.15;
+        // This scope decided — narrow overrides broad, so the walk stops here
+        // whichever way it goes. `key` is the pattern that made the call.
+        return { suppress: decayed.ema < 0.15, key, scope: scopeDims.scope, ess, ema: decayed.ema };
       }
     }
 
-    const p = this.patterns[this.patternKey(finding)];
-    if (!p) return false;
+    const legacyKey = this.patternKey(finding);
+    const p = this.patterns[legacyKey];
+    if (!p) return miss;
     const decayed = applyLazyDecay(p);
     const ess = effectiveSampleSize(decayed);
     if (ess < MIN_FP_SAMPLES) {
+      // Legacy raw-count fallback — deliberately preserved (see the cloud-FP
+      // plan's Out of Scope: unifying it with the policy's decayed-only gate
+      // needs a parity suite first).
       const total = (p.accepted || 0) + (p.dismissed || 0);
-      return total >= 5 && (p.ema ?? 0.5) < 0.15;
+      return {
+        suppress: total >= 5 && (p.ema ?? 0.5) < 0.15,
+        key: legacyKey, scope: 'legacy', ess, ema: p.ema ?? 0.5,
+      };
     }
-    return decayed.ema < 0.15;
+    return { suppress: decayed.ema < 0.15, key: legacyKey, scope: 'legacy', ess, ema: decayed.ema };
+  }
+
+  /**
+   * Should this finding pattern be auto-suppressed?
+   * Hierarchical with confidence-aware override.
+   *
+   * Delegates to `shouldSuppressWithReason` — the boolean contract is unchanged,
+   * and the existing suite passing untouched is the proof of that.
+   */
+  shouldSuppress(finding, repoFingerprint = null, filePath = null) {
+    return this.shouldSuppressWithReason(finding, repoFingerprint, filePath).suppress;
   }
 
   /** Get suppression report for all tracked patterns. */

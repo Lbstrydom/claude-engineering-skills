@@ -13,29 +13,58 @@
 
 import { many, upsert } from '../db/query.mjs';
 import { isCloudEnabled } from './repo.mjs';
-import { GLOBAL_REPO_ID, UNKNOWN_FILE_EXT, learningConfig, clampFpReadLimit } from '../config.mjs';
+import { GLOBAL_REPO_ID, GLOBAL_CONTEXT_BUCKET, UNKNOWN_FILE_EXT, learningConfig, clampFpReadLimit } from '../config.mjs';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ── Bandit arms ────────────────────────────────────────────────────────────
 
 /**
- * Sync local bandit-arm state to cloud. Idempotent on
- * `(pass_name, variant_id, context_bucket)`.
+ * Build the cloud rows for a bandit-arm sync — PURE FUNCTION, exported for
+ * tests. `context_bucket` is NEVER null: a missing/empty bucket falls back to
+ * the `GLOBAL_CONTEXT_BUCKET` sentinel.
+ *
+ * The old `arm.contextBucket || null` **contradicted its own ON CONFLICT
+ * target**: `syncBanditArms` upserts on `(pass_name, variant_id,
+ * context_bucket)`, and Postgres treats NULLs as DISTINCT in a unique
+ * constraint — so a null-bucket row could never match its own conflict target
+ * and every sync would INSERT a duplicate instead of updating. That is the
+ * exact defect that produced 403k garbage rows in `false_positive_patterns`
+ * (fixed by 718ca90 + migration 20260717120000); nobody checked this table.
+ *
+ * It never fired only because `PromptBandit` normalizes twice upstream
+ * (`bandit.mjs:66` legacy-arm load, `bandit.mjs:78` addArm), so `|| null` was
+ * unreachable defensive code — one refactor away from a 403k-row incident.
+ * Extracted as a pure function so "the bucket can never be null" is assertable
+ * DB-free (INC-002 forbids a live DSN in tests), mirroring `buildFpPatternRows`.
  *
  * @param {object} arms - The bandit arms map from PromptBandit
+ * @returns {object[]} Rows for the bandit_arms upsert
  */
-export async function syncBanditArms(arms) {
-  if (!await isCloudEnabled()) return;
-  const rows = Object.values(arms).map((arm) => ({
+export function buildBanditArmRows(arms) {
+  const now = new Date().toISOString();
+  return Object.values(arms || {}).map((arm) => ({
     pass_name: arm.passName,
     variant_id: arm.variantId,
     alpha: arm.alpha,
     beta: arm.beta,
     pulls: arm.pulls,
-    context_bucket: arm.contextBucket || null,
-    updated_at: new Date().toISOString(),
+    // NEVER null — see above. The sentinel is the same constant addArm writes.
+    context_bucket: arm.contextBucket || GLOBAL_CONTEXT_BUCKET,
+    updated_at: now,
   }));
+}
+
+/**
+ * Sync local bandit-arm state to cloud. Idempotent on
+ * `(pass_name, variant_id, context_bucket)` — genuinely so since the row
+ * builder can no longer emit a null conflict-key column.
+ *
+ * @param {object} arms - The bandit arms map from PromptBandit
+ */
+export async function syncBanditArms(arms) {
+  if (!await isCloudEnabled()) return;
+  const rows = buildBanditArmRows(arms);
   if (rows.length === 0) return;
   try {
     await upsert('bandit_arms', rows, {
@@ -61,7 +90,9 @@ export async function loadBanditArms() {
     if (!rows.length) return null;
     const arms = {};
     for (const row of rows) {
-      const bucket = row.context_bucket || 'global';
+      // The SAME constant the writer uses — reader and writer must agree on the
+      // sentinel or a rename silently fragments arm identity across the seam.
+      const bucket = row.context_bucket || GLOBAL_CONTEXT_BUCKET;
       const key = `${row.pass_name}:${row.variant_id}:${bucket}`;
       arms[key] = {
         passName: row.pass_name,

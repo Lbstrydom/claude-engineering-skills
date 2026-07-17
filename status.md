@@ -1,5 +1,33 @@
 # Project Status Log
 
+## 2026-07-18 — Sibling-path defects closed: bandit_arms NULL-conflict key + the local FP tracker and metadata enrichment lifted out of the ledger branch
+
+### Changes
+- **Origin**: three defects deferred from the cloud-FP cycle, all one meta-failure — *a fix was scoped to the instance that hurt, and the identical defect was left on its sibling*. Shipped via `/cycle --autonomous` (2 clusters, 5 phases).
+- **WS-A — `bandit_arms` NULL-conflict key**: `syncBanditArms` wrote `context_bucket: arm.contextBucket || null` while upserting `ON CONFLICT (pass_name, variant_id, context_bucket)` — Postgres treats NULLs as DISTINCT, so a null-bucket row could never match its own conflict target. **The exact defect that produced 403k rows in `false_positive_patterns` and depleted the Disk IO budget** (fixed there by 718ca90); nobody checked this table. New pure `buildBanditArmRows` (bucket can never be null), reader+writer aligned on `GLOBAL_CONTEXT_BUCKET`, migration `20260718090000` (`LOCK TABLE` + two preflights + `DEFAULT` + `NOT NULL` + non-empty `CHECK`).
+- **WS-B — local `fpTracker` out of the ledger branch**: the loop sat inside `if (mergedLedger.entries.length > 0)`, so a run with no session ledger and no debt entries skipped local FP suppression entirely — the identical defect the cloud pass was lifted out to avoid. Now `runLocalFpPass`, called unconditionally.
+- **WS-C — `populateFindingMetadata` hoisted** (found by sweeping the branch for the WS-B *class*, and **never reported by any audit**): it is the ONLY producer of `_primaryFile`/`affectedFiles`, and two consumers outside the branch read them — `.audit/outcomes.jsonl` (the local bandit reward signal) and cloud `audit_findings.primary_file`. Both do `f._primaryFile || f.section`, so a no-ledger run silently recorded the raw section string where a normalized path belongs, and `affectedFiles: []`. No error, no crash — wrong-shaped data that looks fine.
+- **New seams**: `shouldSuppressWithReason` (the tracker always knew which pattern fired and threw it away; boolean `shouldSuppress` now delegates — the pre-existing suite passing untouched is the proof), `runSuppressionPasses` (the authoritative composition boundary — ordering, the `keptCount` subtraction, the `suppressed[]` union, per-source counters, the no-ledger synthesis), and `partitionByVerdict`/`runFpPass` (one implementation behind both passes).
+
+### Verification
+- **Live, not asserted**: migration applied + idempotent on re-run (`applied 0, skipped 68`), `--check-drift` clean, `context_bucket` now `NOT NULL DEFAULT 'global'` with `CHECK (context_bucket <> '')`, and `bandit_arms` still **20 rows / 100% `'global'`** — growth is the 403k tell, so that is the check that actually detects this class.
+- **The call-site pin is mutation-proven**: re-nesting the enrichment loop (the exact WS-C bug) turns it red; revert turns it green. A source-assertion test that cannot fail is theatre.
+- Scope suites 180/180. **Caveat, stated rather than glossed**: the full suite has 5 failures, all attributable to a concurrent session mid-change on `schemas.mjs` and `tiered-pipeline.mjs` — verified (the failing pins assert on files this change does not touch; this diff has zero schema code). The honest claim is "my scope is green", not "the suite is green".
+
+### Audit trail
+- **Plan**: 4 GPT rounds + 1 Gemini → APPROVE. Three of four rounds found defects in my *own* prior fixes — including a recovery formula that was **data-destroying** (`alpha = sum(alpha) − (n−1)` double-counted every observation; the rows are snapshots, not increments) and, after three consecutive bugs in the same four lines of SQL, the procedure was **deleted** rather than patched a fourth time. Three rounds of expert correction for a zero-instance state preserving re-derivable data *is* the over-engineering verdict.
+- **Code**: Cluster A 2 rounds, Cluster B 1 round, consolidated Gemini gate → **APPROVE** (0 new, 0 wrongly dismissed). Only 3 of 32 Cluster-B findings cite the new code (the passes read changed *files* whole, so a 1,600-line orchestrator's pre-existing code is in view).
+- **`/cycle`'s fail-closed preflight earned its keep**, catching three §7↔§7b drifts before execution: a `<ts>` placeholder, a `(modify)` on a nonexistent file, and the call-site test in no phase's scope.
+
+### The moment worth remembering
+The refactor left a dangling `cloudPass` reference — a `ReferenceError` crashing the orchestrator on **every cloud-enabled R2+ run**. 180 scoped tests and **6,767 suite tests were all green**, because nothing executes `runLegacyProductionAudit`. Only running the real audit caught it. The audit's own M15 named the gap precisely: *"critical composition behavior is protected by source grepping."* Response: a dangling-reference pin, a module-load test, and a spawned plan for the real gap.
+
+### Spawned (independent, named, not buried)
+- **`upsertPromptVariant`'s conflict key omits `repo_id`** — one repo's variant stats silently overwrite another's, **live across the three repos on this DSN**. The **fifth instance** of this class, and now part of the §Out-of-Scope `onConflict` lint's acceptance set: a check that cannot catch it is not validated.
+- **`noCloudRecording` still mutates cloud learning state** — observation-only shadow runs sync bandit arms + FP patterns, contaminating the very data the tiered-recall window measures.
+- **FP-reader provenance** — `_key` rebuilds 3 of 6 persisted dimensions, so `matched_topic_id` names a pattern that does not exist (a defect in last cycle's shipped code).
+- **No executable smoke test for the orchestrator** — the gap the `cloudPass` crash proved.
+
 ## 2026-07-17 — Stage 0 stops calling our own schema bugs "model hallucinations" (evidence-anchor-path-contract, Cluster A of 2)
 
 ### Changes

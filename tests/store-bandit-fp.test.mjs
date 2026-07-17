@@ -24,10 +24,11 @@ const {
   fpPatternReadColumns,
   buildFpReadQuery,
   isSyncableRepoId,
+  buildBanditArmRows,
 } = await import('../scripts/lib/store/bandit-fp.mjs');
 const { FalsePositiveTracker } = await import('../scripts/lib/findings-tracker.mjs');
 const {
-  GLOBAL_REPO_ID, clampFpReadLimit, FP_READ_LIMIT_MIN, FP_READ_LIMIT_MAX, FP_READ_LIMIT_DEFAULT,
+  GLOBAL_REPO_ID, GLOBAL_CONTEXT_BUCKET, clampFpReadLimit, FP_READ_LIMIT_MIN, FP_READ_LIMIT_MAX, FP_READ_LIMIT_DEFAULT,
   learningConfig,
 } = await import('../scripts/lib/config.mjs');
 
@@ -55,6 +56,56 @@ const SAMPLE_PATTERNS = {
     decayedAccepted: 2.8, decayedDismissed: 1.9,
   },
 };
+
+// ── buildBanditArmRows: context_bucket can never be null ───────────────────
+//
+// The sibling of the repo_id pin below. `syncBanditArms` upserts ON CONFLICT
+// (pass_name, variant_id, context_bucket) and Postgres treats NULLs as DISTINCT,
+// so a null bucket can never match its own conflict target — every sync would
+// INSERT a duplicate. That is the 403k-row defect class, one table over.
+
+const SAMPLE_ARMS = {
+  'structure:v1:global': {
+    passName: 'structure', variantId: 'v1', alpha: 5, beta: 3, pulls: 8,
+    contextBucket: 'global',
+  },
+  'backend:v2:js-ts': {
+    passName: 'backend', variantId: 'v2', alpha: 2, beta: 1, pulls: 3,
+    contextBucket: 'js-ts',
+  },
+};
+
+test('buildBanditArmRows: a missing/empty/null contextBucket falls back to the sentinel, NEVER null', () => {
+  for (const bucket of [undefined, null, '']) {
+    const rows = buildBanditArmRows({ a: { passName: 'p', variantId: 'v', alpha: 1, beta: 1, pulls: 0, contextBucket: bucket } });
+    assert.equal(rows[0].context_bucket, GLOBAL_CONTEXT_BUCKET, `bucket ${JSON.stringify(bucket)} must normalize`);
+    assert.notEqual(rows[0].context_bucket, null, 'a null conflict-key column defeats ON CONFLICT');
+  }
+});
+
+test('buildBanditArmRows: an explicit bucket passes through unchanged', () => {
+  const rows = buildBanditArmRows(SAMPLE_ARMS);
+  assert.equal(rows.find(r => r.pass_name === 'backend').context_bucket, 'js-ts');
+  assert.equal(rows.find(r => r.pass_name === 'structure').context_bucket, 'global');
+});
+
+test('buildBanditArmRows: EVERY emitted context_bucket is a non-empty string', () => {
+  const mixed = {
+    ...SAMPLE_ARMS,
+    legacy: { passName: 'l', variantId: 'v', alpha: 1, beta: 1, pulls: 0 },        // no bucket at all
+    empty: { passName: 'e', variantId: 'v', alpha: 1, beta: 1, pulls: 0, contextBucket: '' },
+  };
+  for (const row of buildBanditArmRows(mixed)) {
+    assert.equal(typeof row.context_bucket, 'string');
+    assert.ok(row.context_bucket.length > 0, `empty bucket is a DISTINCT unique-key identity: ${row.pass_name}`);
+  }
+});
+
+test('buildBanditArmRows: empty/absent arms map → no rows, no throw', () => {
+  assert.deepEqual(buildBanditArmRows({}), []);
+  assert.deepEqual(buildBanditArmRows(null), []);
+  assert.deepEqual(buildBanditArmRows(undefined), []);
+});
 
 // ── buildFpPatternRows: repo_id can never be null ──────────────────────────
 
@@ -209,6 +260,75 @@ test('every column the writer emits is declared by a migration', () => {
   for (const col of Object.keys(row)) {
     assert.ok(declared.has(col), `writer emits undeclared column: ${col}`);
   }
+});
+
+// ── bandit_arms: the DB invariant must match the CANONICALIZATION contract ──
+//
+// The builder normalizes missing/null/EMPTY to the sentinel. A migration that
+// only enforces NOT NULL leaves `''` — a DISTINCT unique-key identity the
+// application treats as absent — so the identity-fragmentation bug survives for
+// one of the explicitly-normalized invalid values.
+
+function migrationsText() {
+  return fs.readdirSync(MIGRATIONS_DIR)
+    .filter(f => f.endsWith('.sql'))
+    .map(f => fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf8'))
+    .join('\n');
+}
+
+test('bandit_arms: a migration declares context_bucket NOT NULL', () => {
+  assert.match(
+    migrationsText(),
+    /ALTER TABLE bandit_arms\s+ALTER COLUMN context_bucket\s+SET NOT NULL/i,
+    'without NOT NULL the sentinel is a convention, not an invariant'
+  );
+});
+
+test('bandit_arms: a migration declares the non-empty CHECK', () => {
+  assert.match(
+    migrationsText(),
+    /CHECK\s*\(\s*context_bucket\s*<>\s*''\s*\)/i,
+    "NOT NULL alone still admits '' as a distinct identity"
+  );
+});
+
+test('bandit_arms: the preflight covers BOTH invalid identities, not just NULL', () => {
+  // A preflight that checks only NULL lets a drifted consumer with '' rows pass
+  // every gate, receive the NOT NULL alteration, and THEN fail on the CHECK with
+  // a raw constraint violation and no guidance — a worse failure than the one
+  // the preflight exists to prevent, and asymmetric with the contract the same
+  // file establishes two statements later.
+  const sql = migrationsText();
+  const preflight = sql.match(/SELECT count\(\*\) INTO n FROM bandit_arms[\s\S]{0,120}/i);
+  assert.ok(preflight, 'no bandit_arms row preflight found');
+  assert.match(preflight[0], /context_bucket IS NULL/i, 'must preflight NULL');
+  assert.match(preflight[0], /context_bucket = ''/i, "must ALSO preflight '' — the CHECK rejects it");
+});
+
+test('bandit_arms: the RAISE guidance recovers BOTH invalid identities', () => {
+  // The message is the operator's only instruction; a DELETE covering only NULL
+  // would leave the '' rows and fail the re-run.
+  const sql = migrationsText();
+  const raise = sql.match(/RAISE EXCEPTION\s*\n?\s*'bandit_arms has %[\s\S]{0,900}?', n;/i);
+  assert.ok(raise, 'no bandit_arms RAISE found');
+  assert.match(raise[0], /DELETE FROM bandit_arms WHERE context_bucket IS NULL OR context_bucket = ''''/i,
+    'the recovery must clear both NULL and empty');
+});
+
+test('CROSS-LAYER: the migration DEFAULT equals the JS sentinel — no silent drift', () => {
+  // The plan calls GLOBAL_CONTEXT_BUCKET the single source of truth while the
+  // migration writes a bare SQL literal. They MUST agree: a rename would give
+  // DEFAULT-originated rows (a writer omitting the column) a different identity
+  // than builder-originated rows — silent identity fragmentation, the same
+  // family as the bug being fixed. Nothing else checks this.
+  const m = migrationsText().match(
+    /ALTER TABLE bandit_arms\s+ALTER COLUMN context_bucket\s+SET DEFAULT\s+'([^']*)'/i
+  );
+  assert.ok(m, 'no context_bucket DEFAULT found in any migration');
+  assert.equal(
+    m[1], GLOBAL_CONTEXT_BUCKET,
+    `migration DEFAULT '${m[1]}' != GLOBAL_CONTEXT_BUCKET '${GLOBAL_CONTEXT_BUCKET}' — changing the sentinel needs a coordinated migration + code change`
+  );
 });
 
 // ── Cloud-off graceful degradation ─────────────────────────────────────────

@@ -290,29 +290,124 @@ export function buildCloudFpPolicy(envelope, { nowMs = Date.now() } = {}) {
  * @returns {{kept: object[], suppressed: object[]}}
  */
 export function applyCloudFpSuppression(findings, policy, { exempt = new Set() } = {}) {
+  return partitionByVerdict(findings, (f) => shouldSuppressFinding(f, policy), exempt);
+}
+
+/**
+ * Apply the LOCAL FP tracker to a finding list — PURE except for the tracker
+ * read. The sibling of `applyCloudFpSuppression`.
+ *
+ * `exempt` carries the same reopen exclusion the cloud pass uses. This is a
+ * DECISION, not an inheritance: today's in-branch loop filters `kept` only, so
+ * it never sees reopened findings; lifting it out over `kept + reopened` would
+ * silently start letting category statistics mask a regression. Same set, same
+ * guarantee, both passes.
+ *
+ * @param {object[]} findings
+ * @param {object} tracker - a FalsePositiveTracker
+ * @param {object} [opts]
+ * @param {Set<object>} [opts.exempt]
+ * @returns {{kept: object[], suppressed: object[]}}
+ */
+/**
+ * Partition findings by an injected verdict — the ONE implementation behind
+ * both the local and cloud passes.
+ *
+ * The two passes differ ONLY in where the verdict comes from (a tracker walk vs
+ * a policy match). Everything else — the exempt check, the kept/suppressed
+ * split, and the attributable record shape `recordSuppressionEvents` consumes —
+ * is identical, so it lives once. Mirroring the cloud pass's shape was the
+ * intent; duplicating its body was not.
+ *
+ * @param {object[]} findings
+ * @param {(f: object) => {suppress: boolean, reason: string, scope: string|null, topicId: string|null, confidence: number}} verdictFor
+ * @param {Set<object>} exempt
+ * @returns {{kept: object[], suppressed: object[]}}
+ */
+function partitionByVerdict(findings, verdictFor, exempt) {
   const kept = [];
   const suppressed = [];
   for (const f of findings) {
     if (exempt.has(f)) { kept.push(f); continue; }
-    const verdict = shouldSuppressFinding(f, policy);
-    if (verdict.suppress) {
+    const v = verdictFor(f);
+    if (v.suppress) {
       suppressed.push({
         finding: f,
-        reason: verdict.reason,
-        scope: verdict.scope,
-        confidence: verdict.confidence,
-        // `matchedTopic`/`matchScore` mirror suppressReRaises' entry shape so
-        // recordSuppressionEvents can persist a cloud suppression through the
-        // SAME path, unchanged — a suppression with no attributable cause is
-        // exactly the silent disappearance this layer must not produce.
-        matchedTopic: verdict.topicId,
-        matchScore: verdict.confidence,
+        reason: v.reason,
+        scope: v.scope,
+        confidence: v.confidence,
+        // matchedTopic/matchScore mirror suppressReRaises' entry shape so BOTH
+        // passes persist through the existing recordSuppressionEvents unchanged.
+        matchedTopic: v.topicId,
+        matchScore: v.confidence,
       });
     } else {
       kept.push(f);
     }
   }
   return { kept, suppressed };
+}
+
+export function applyLocalFpSuppression(findings, tracker, { exempt = new Set() } = {}) {
+  return partitionByVerdict(findings, (f) => {
+    // The tracker's own call signature: the orchestrator has always passed no
+    // repoFingerprint/filePath, so only the legacy single-key path engages.
+    // Preserved exactly — changing which patterns match is not this change.
+    const v = tracker.shouldSuppressWithReason(f);
+    const ess = v.ess ?? 0;
+    return {
+      suppress: v.suppress,
+      reason: `Local FP pattern (${v.scope}, n=${ess.toFixed(1)}, ema=${(v.ema ?? 0).toFixed(2)})`,
+      scope: v.scope,
+      // The REAL matched key — not a synthesized one. A suppression that cannot
+      // name its cause is the silent disappearance this layer exists to avoid;
+      // a wrong name is worse still.
+      topicId: v.key,
+      confidence: Math.min(1, ess / 10),
+    };
+  }, exempt);
+}
+
+/**
+ * The audit's local-FP pass — mirrors `runCloudFpPass` exactly, including the
+ * array-ownership contract (ALWAYS a new array; the call site clears before
+ * re-pushing, so returning the input would erase every finding).
+ *
+ * A null/absent tracker is a no-op, which is what lets the orchestrator call it
+ * unconditionally rather than nesting it in a branch that can go stale.
+ *
+ * @param {object[]} findings
+ * @param {object} opts
+ * @param {object|null} opts.fpTracker
+ * @param {Set<object>} [opts.exempt]
+ * @param {(line: string) => void} [opts.log]
+ * @returns {{findings: object[], suppressedCount: number, suppressed: object[]}}
+ */
+/**
+ * Run ONE suppression pass — the single implementation behind both named
+ * passes. A null source is a no-op, which is what lets the orchestrator call
+ * the composition unconditionally.
+ *
+ * ARRAY OWNERSHIP: ALWAYS returns a NEW array, never the input reference. The
+ * call site clears `allFindings` before re-pushing, so returning the input
+ * would empty the result too and erase every finding.
+ */
+function runFpPass(findings, { source, apply, log, perLine, summaryLine }) {
+  if (!source) return { findings: [...findings], suppressedCount: 0, suppressed: [] };
+  const { kept, suppressed } = apply();
+  for (const s of suppressed) log(perLine(s));
+  if (suppressed.length > 0) log(summaryLine(suppressed.length));
+  return { findings: kept, suppressedCount: suppressed.length, suppressed };
+}
+
+export function runLocalFpPass(findings, { fpTracker, exempt = new Set(), log = () => {} } = {}) {
+  return runFpPass(findings, {
+    source: fpTracker,
+    apply: () => applyLocalFpSuppression(findings, fpTracker, { exempt }),
+    log,
+    perLine: (s) => `    [fp-tracker] Auto-suppressed: ${(s.finding.category || '').slice(0, 60)} (EMA < 0.15)\n`,
+    summaryLine: (n) => `  [fp-tracker] Suppressed ${n} historically noisy findings\n`,
+  });
 }
 
 /**
@@ -336,14 +431,93 @@ export function applyCloudFpSuppression(findings, policy, { exempt = new Set() }
  * @returns {{findings: object[], suppressedCount: number, suppressed: object[]}}
  */
 export function runCloudFpPass(findings, { policy, exempt = new Set(), log = () => {} } = {}) {
-  if (!policy) return { findings: [...findings], suppressedCount: 0, suppressed: [] };
+  return runFpPass(findings, {
+    source: policy,
+    apply: () => applyCloudFpSuppression(findings, policy, { exempt }),
+    log,
+    perLine: (s) => `    [cloud-fp] suppressed: ${(s.finding.category || '').slice(0, 60)} — ${s.reason}\n`,
+    summaryLine: (n) => `  [cloud-fp] suppressed ${n} findings via cloud FP patterns\n`,
+  });
+}
 
-  const { kept, suppressed } = applyCloudFpSuppression(findings, policy, { exempt });
-  for (const s of suppressed) {
-    log(`    [cloud-fp] suppressed: ${(s.finding.category || '').slice(0, 60)} — ${s.reason}\n`);
+/**
+ * THE post-output suppression composition — the authoritative boundary.
+ *
+ * The orchestrator makes ONE unconditional call and holds zero decision logic.
+ * Everything that used to live as prose in the plan lives here instead, in a
+ * function a test can call: pass ordering, the keptCount arithmetic, the
+ * `suppressed[]` union, per-source counter assignment, and the no-ledger
+ * synthesis. A "composition contract" documented in prose with no callable
+ * boundary is untestable by construction — that is how a correct seam with a
+ * wrong call site erased every finding once already.
+ *
+ * ORDERING is preserved from the pre-lift behaviour: local FIRST, then cloud —
+ * a pattern known both locally and in cloud attributes to the local counter.
+ *
+ * COUNTER SEMANTICS (each pass owns exactly one field):
+ *   keptCount              ledger-path kept, EXCLUDING reopened — each pass
+ *                          SUBTRACTS its own count. Subtraction, not
+ *                          re-measurement: `findings` is kept+reopened, so
+ *                          re-measuring would silently redefine the field. It is
+ *                          EXACT because both passes share `exempt`, so no
+ *                          suppression can come out of `reopened`.
+ *   suppressedCount        ledger path only (suppressReRaises) — untouched here
+ *   fpSuppressedCount      local tracker
+ *   cloudFpSuppressedCount cloud policy — attached ONLY when cloudEnabled, so a
+ *                          cloud-off run's `--out` JSON stays byte-identical
+ *   suppressed[]           the UNION (ledger ⧺ local ⧺ cloud) for
+ *                          recordSuppressionEvents — deliberately NOT equal in
+ *                          length to any single count
+ *
+ * @param {object[]} findings
+ * @param {object} opts
+ * @param {object|null} [opts.fpTracker]
+ * @param {object|null} [opts.cloudPolicy]
+ * @param {Set<object>} [opts.exempt] - the reopened set; shared by BOTH passes
+ * @param {object|null} [opts.suppressionData] - the ledger branch's object, or null
+ * @param {boolean} [opts.cloudEnabled] - gates the cloud-specific key only
+ * @param {(line: string) => void} [opts.log]
+ * @returns {{findings: object[], suppressionData: object|null}}
+ */
+export function runSuppressionPasses(findings, {
+  fpTracker = null, cloudPolicy = null, exempt = new Set(),
+  suppressionData = null, cloudEnabled = false, log = () => {},
+} = {}) {
+  const localPass = runLocalFpPass(findings, { fpTracker, exempt, log });
+  const cloudPass = runCloudFpPass(localPass.findings, { policy: cloudPolicy, exempt, log });
+
+  let data = suppressionData;
+  if (data) {
+    data.fpSuppressedCount = localPass.suppressedCount;
+    data.keptCount -= (localPass.suppressedCount + cloudPass.suppressedCount);
+    if (localPass.suppressed.length || cloudPass.suppressed.length) {
+      data.suppressed = [...data.suppressed, ...localPass.suppressed, ...cloudPass.suppressed];
+    }
+    if (cloudEnabled) data.cloudFpSuppressedCount = cloudPass.suppressedCount;
+  } else if (localPass.suppressedCount > 0 || cloudPass.suppressedCount > 0) {
+    // The ledger branch never ran, but a pass DID suppress — the exact case
+    // this layer exists to serve. Without an envelope the suppression leaves no
+    // provenance: recordSuppressionEvents never fires and findings vanish with
+    // only an stderr line. Synthesize so both passes are as accountable here as
+    // on the ledger path.
+    data = {
+      suppressed: [...localPass.suppressed, ...cloudPass.suppressed],
+      reopened: [],
+      keptCount: cloudPass.findings.length,
+      suppressedCount: 0,          // ledger path — did not run
+      reopenedCount: 0,
+      fpSuppressedCount: localPass.suppressedCount,
+    };
+    if (cloudEnabled) data.cloudFpSuppressedCount = cloudPass.suppressedCount;
   }
-  if (suppressed.length > 0) {
-    log(`  [cloud-fp] suppressed ${suppressed.length} findings via cloud FP patterns\n`);
-  }
-  return { findings: kept, suppressedCount: suppressed.length, suppressed };
+
+  return {
+    findings: cloudPass.findings,
+    suppressionData: data,
+    // The passes' OWN total (local + cloud), excluding ledger suppressions.
+    // Exposed so the orchestrator can gate suppression-event recording without
+    // reaching into suppressionData — both passes run on round 1, where the
+    // legacy `isR2Plus` gate would otherwise drop their provenance.
+    suppressedCount: localPass.suppressedCount + cloudPass.suppressedCount,
+  };
 }

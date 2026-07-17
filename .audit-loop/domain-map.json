@@ -272,58 +272,164 @@
     }
   ],
   "allowedDeps": {
-    "audit-orchestration": [
-      "findings",
+    "arch-intent": [
+      "shared-lib"
+    ],
+    "arch-memory": [
       "learning-store",
-      "plan",
+      "shared-lib"
+    ],
+    "arm-eval": [
       "shared-lib",
-      "tech-debt"
+      "stores"
     ],
-    "findings": [
-      "shared-lib"
-    ],
-    "shared-lib": [
-      "findings",
-      "plan"
-    ],
-    "plan": [
-      "shared-lib"
-    ],
-    "learning-store": [
-      "findings",
-      "shared-lib"
-    ],
-    "brainstorm": [
-      "shared-lib"
-    ],
-    "install": [
-      "claudemd-management",
-      "shared-lib"
-    ],
-    "scripts": [
-      "claudemd-management",
+    "audit-orchestration": [
+      "arch-intent",
+      "arch-memory",
+      "arm-eval",
+      "claude-hooks",
       "findings",
       "learning-store",
+      "model-eval",
       "plan",
+      "requirements",
       "shared-lib",
       "stores",
       "tech-debt"
     ],
-    "cross-skill-bridge": [
-      "learning-store",
-      "shared-lib"
-    ],
-    "tech-debt": [
-      "learning-store",
+    "brainstorm": [
+      "arm-eval",
       "shared-lib"
     ],
     "claude-hooks": [
       "shared-lib"
     ],
-    "stores": [
+    "claudemd-management": [
       "shared-lib"
     ],
-    "arch-memory": [
+    "cross-skill-bridge": [
+      "arch-memory",
+      "arm-eval",
+      "audit-orchestration",
+      "findings",
+      "friction",
+      "learning-store",
+      "nav-audit",
+      "persona-test",
+      "scripts",
+      "shared-lib",
+      "stores"
+    ],
+    "dashboard": [
+      "arch-memory",
+      "audit-orchestration",
+      "learning-store",
+      "nav-audit",
+      "scripts",
+      "shared-lib",
+      "stores",
+      "visual-audit"
+    ],
+    "explain": [
+      "shared-lib"
+    ],
+    "findings": [
+      "shared-lib"
+    ],
+    "fit-check": [
+      "shared-lib"
+    ],
+    "friction": [
+      "security",
+      "shared-lib",
+      "stores"
+    ],
+    "gate-honesty": [
+      "shared-lib"
+    ],
+    "install": [
+      "claudemd-management",
+      "gate-honesty",
+      "shared-lib",
+      "stores"
+    ],
+    "learning-store": [
+      "findings",
+      "shared-lib",
+      "stores"
+    ],
+    "memory-health": [
+      "shared-lib",
+      "stores"
+    ],
+    "model-eval": [
+      "audit-orchestration",
+      "shared-lib",
+      "stores"
+    ],
+    "nav-audit": [
+      "shared-lib"
+    ],
+    "persona-test": [
+      "findings",
+      "learning-store",
+      "shared-lib",
+      "stores",
+      "ux-lock"
+    ],
+    "plan": [
+      "shared-lib"
+    ],
+    "requirements": [
+      "brainstorm",
+      "plan",
+      "shared-lib"
+    ],
+    "root-scripts": [],
+    "scripts": [
+      "arch-intent",
+      "arm-eval",
+      "audit-orchestration",
+      "claudemd-management",
+      "findings",
+      "fit-check",
+      "learning-store",
+      "model-eval",
+      "persona-test",
+      "plan",
+      "requirements",
+      "security",
+      "shared-lib",
+      "solo-control",
+      "stores",
+      "tech-debt",
+      "ux-lock"
+    ],
+    "security": [
+      "shared-lib"
+    ],
+    "shared-lib": [
+      "audit-orchestration",
+      "claude-hooks",
+      "findings",
+      "model-eval",
+      "nav-audit",
+      "plan",
+      "stores"
+    ],
+    "ship": [
+      "shared-lib",
+      "stores"
+    ],
+    "solo-control": [
+      "shared-lib"
+    ],
+    "stores": [
+      "model-eval",
+      "persona-test",
+      "shared-lib"
+    ],
+    "tech-debt": [
       "learning-store",
       "shared-lib"
     ],
@@ -341,77 +447,199 @@
       "stores",
       "tech-debt"
     ],
-    "claudemd-management": [],
-    "memory-health": [
-      "shared-lib"
-    ],
-    "root-scripts": [
-      "install"
-    ],
-    "dashboard": [
-      "arch-memory",
-      "shared-lib"
-    ],
-    "nav-audit": [
-      "shared-lib"
-    ],
     "visual-audit": [
       "shared-lib"
-    ],
-    "ship": [
-      "shared-lib",
-      "stores"
     ]
   },
   "_comment_purposes": "Outcome/purpose taxonomy + domain->purpose edges for the dashboard Purpose tab (docs/completed/dashboard-purpose-view.md). purposes: curated outcome nodes (7); kind=skill-chain when backed by flows.json node ids, else curated. domainPurposes: manual domain->purpose edges; a domain may serve several purposes (rendered with an 'also serves N' badge). Unmapped domains + domains absent from the architecture map surface as hygiene warnings in the tab.",
   "purposes": [
-    { "id": "plan-and-design",       "label": "Plan & design work",            "kind": "skill-chain", "flowNodes": ["plan", "audit-plan"], "summary": "Turn intent into an audited, buildable plan." },
-    { "id": "deliver-quality-audits","label": "Deliver quality audits",         "kind": "skill-chain", "flowNodes": ["audit-code"],          "summary": "Multi-pass GPT + Gemini code audit driven to a clean gate." },
-    { "id": "verify-live-ux",        "label": "Verify live UX",                "kind": "skill-chain", "flowNodes": ["ux-lock", "persona-test"], "summary": "Lock DOM contracts and run narrative + structural UX QA on the deployed app." },
-    { "id": "learn-from-outcomes",   "label": "Learn & improve from outcomes", "kind": "curated",     "flowNodes": [],                      "summary": "Close the loop: FP tracking, bandit selection, prompt evolution, recurrence health." },
-    { "id": "preserve-trust-safety", "label": "Preserve trust & safety",       "kind": "curated",     "flowNodes": [],                      "summary": "Secret exclusion, RLS, redaction, atomic writes, graceful degradation." },
-    { "id": "ship-and-sync",         "label": "Ship & sync",                   "kind": "skill-chain", "flowNodes": ["ship"],                "summary": "Commit, push, and propagate the bundle to consumer repos." },
-    { "id": "understand-the-repo",   "label": "Understand the repo",           "kind": "curated",     "flowNodes": [],                      "summary": "Architectural memory, symbol index, requirements ledger, and this dashboard." },
-    { "id": "platform-foundation",   "label": "Platform & tooling foundation", "kind": "curated",     "flowNodes": [],                      "summary": "The shared substrate every outcome rests on: utilities, CLI tooling, install, and the test suite — and the invariants that keep it sound." }
+    {
+      "id": "plan-and-design",
+      "label": "Plan & design work",
+      "kind": "skill-chain",
+      "flowNodes": [
+        "plan",
+        "audit-plan"
+      ],
+      "summary": "Turn intent into an audited, buildable plan."
+    },
+    {
+      "id": "deliver-quality-audits",
+      "label": "Deliver quality audits",
+      "kind": "skill-chain",
+      "flowNodes": [
+        "audit-code"
+      ],
+      "summary": "Multi-pass GPT + Gemini code audit driven to a clean gate."
+    },
+    {
+      "id": "verify-live-ux",
+      "label": "Verify live UX",
+      "kind": "skill-chain",
+      "flowNodes": [
+        "ux-lock",
+        "persona-test"
+      ],
+      "summary": "Lock DOM contracts and run narrative + structural UX QA on the deployed app."
+    },
+    {
+      "id": "learn-from-outcomes",
+      "label": "Learn & improve from outcomes",
+      "kind": "curated",
+      "flowNodes": [],
+      "summary": "Close the loop: FP tracking, bandit selection, prompt evolution, recurrence health."
+    },
+    {
+      "id": "preserve-trust-safety",
+      "label": "Preserve trust & safety",
+      "kind": "curated",
+      "flowNodes": [],
+      "summary": "Secret exclusion, RLS, redaction, atomic writes, graceful degradation."
+    },
+    {
+      "id": "ship-and-sync",
+      "label": "Ship & sync",
+      "kind": "skill-chain",
+      "flowNodes": [
+        "ship"
+      ],
+      "summary": "Commit, push, and propagate the bundle to consumer repos."
+    },
+    {
+      "id": "understand-the-repo",
+      "label": "Understand the repo",
+      "kind": "curated",
+      "flowNodes": [],
+      "summary": "Architectural memory, symbol index, requirements ledger, and this dashboard."
+    },
+    {
+      "id": "platform-foundation",
+      "label": "Platform & tooling foundation",
+      "kind": "curated",
+      "flowNodes": [],
+      "summary": "The shared substrate every outcome rests on: utilities, CLI tooling, install, and the test suite — and the invariants that keep it sound."
+    }
   ],
   "domainPurposes": {
-    "plan": ["plan-and-design"],
-    "brainstorm": ["plan-and-design"],
-    "explain": ["plan-and-design", "understand-the-repo"],
-    "audit-orchestration": ["deliver-quality-audits"],
-    "findings": ["deliver-quality-audits", "learn-from-outcomes"],
-    "tech-debt": ["deliver-quality-audits"],
-    "ux-lock": ["verify-live-ux"],
-    "persona-test": ["verify-live-ux"],
-    "nav-audit": ["verify-live-ux"],
-    "visual-audit": ["verify-live-ux"],
-    "learning-store": ["learn-from-outcomes"],
-    "memory-health": ["learn-from-outcomes"],
-    "arm-eval": ["learn-from-outcomes"],
-    "model-eval": ["learn-from-outcomes"],
-    "solo-control": ["learn-from-outcomes"],
-    "friction": ["learn-from-outcomes"],
-    "requirements": ["understand-the-repo", "deliver-quality-audits"],
-    "arch-intent": ["understand-the-repo"],
-    "gate-honesty": ["preserve-trust-safety"],
-    "security": ["preserve-trust-safety"],
-    "fit-check": ["ship-and-sync"],
-    "stores": ["preserve-trust-safety", "learn-from-outcomes"],
-    "supabase": ["preserve-trust-safety"],
-    "claude-hooks": ["preserve-trust-safety"],
-    "ship": ["ship-and-sync"],
-    "cross-skill-bridge": ["ship-and-sync", "learn-from-outcomes"],
-    "claudemd-management": ["ship-and-sync"],
-    "skills-content": ["ship-and-sync"],
-    "arch-memory": ["understand-the-repo"],
-    "dashboard": ["understand-the-repo"],
-    "docs": ["understand-the-repo"],
-    "shared-lib": ["platform-foundation"],
-    "scripts": ["platform-foundation"],
-    "install": ["platform-foundation"],
-    "root-scripts": ["platform-foundation"],
-    "tests": ["platform-foundation"]
+    "plan": [
+      "plan-and-design"
+    ],
+    "brainstorm": [
+      "plan-and-design"
+    ],
+    "explain": [
+      "plan-and-design",
+      "understand-the-repo"
+    ],
+    "audit-orchestration": [
+      "deliver-quality-audits"
+    ],
+    "findings": [
+      "deliver-quality-audits",
+      "learn-from-outcomes"
+    ],
+    "tech-debt": [
+      "deliver-quality-audits"
+    ],
+    "ux-lock": [
+      "verify-live-ux"
+    ],
+    "persona-test": [
+      "verify-live-ux"
+    ],
+    "nav-audit": [
+      "verify-live-ux"
+    ],
+    "visual-audit": [
+      "verify-live-ux"
+    ],
+    "learning-store": [
+      "learn-from-outcomes"
+    ],
+    "memory-health": [
+      "learn-from-outcomes"
+    ],
+    "arm-eval": [
+      "learn-from-outcomes"
+    ],
+    "model-eval": [
+      "learn-from-outcomes"
+    ],
+    "solo-control": [
+      "learn-from-outcomes"
+    ],
+    "friction": [
+      "learn-from-outcomes"
+    ],
+    "requirements": [
+      "understand-the-repo",
+      "deliver-quality-audits"
+    ],
+    "arch-intent": [
+      "understand-the-repo"
+    ],
+    "gate-honesty": [
+      "preserve-trust-safety"
+    ],
+    "security": [
+      "preserve-trust-safety"
+    ],
+    "fit-check": [
+      "ship-and-sync"
+    ],
+    "stores": [
+      "preserve-trust-safety",
+      "learn-from-outcomes"
+    ],
+    "supabase": [
+      "preserve-trust-safety"
+    ],
+    "claude-hooks": [
+      "preserve-trust-safety"
+    ],
+    "ship": [
+      "ship-and-sync"
+    ],
+    "cross-skill-bridge": [
+      "ship-and-sync",
+      "learn-from-outcomes"
+    ],
+    "claudemd-management": [
+      "ship-and-sync"
+    ],
+    "skills-content": [
+      "ship-and-sync"
+    ],
+    "arch-memory": [
+      "understand-the-repo"
+    ],
+    "dashboard": [
+      "understand-the-repo"
+    ],
+    "docs": [
+      "understand-the-repo"
+    ],
+    "shared-lib": [
+      "platform-foundation"
+    ],
+    "scripts": [
+      "platform-foundation"
+    ],
+    "install": [
+      "platform-foundation"
+    ],
+    "root-scripts": [
+      "platform-foundation"
+    ],
+    "tests": [
+      "platform-foundation"
+    ]
   },
   "_comment_codeless": "Domains that are code-less BY DESIGN (markdown / SQL / SKILL.md-only) — they have no JS symbols, so they will never appear in the code-symbol architecture map. The Purpose-tab hygiene treats a mapped-but-no-arch domain in this list as INFORMATIONAL (a neutral note), not an actionable 'stale rule' warning. Only add a domain here once you've confirmed it genuinely has no indexable code (vs a dead/mis-targeted rule that should be fixed instead).",
-  "codelessDomains": ["skills-content", "supabase", "docs"]
+  "codelessDomains": [
+    "skills-content",
+    "supabase",
+    "docs"
+  ],
+  "_comment_allowedDeps": "BASELINE, NOT ENDORSEMENT (domain-map-reconciliation Phase C, 2026-07-17). Set to the OBSERVED graph AFTER Phase A fixed rule coverage (13 orphaned lib subsystems) and the file-lock move removed the false trapped-primitive edges — so these are real edges, not measurement artifacts. This makes the violation check a RATCHET: it cannot fail on what exists today, only on NEW undeclared edges. THREE entries are recorded debt, NOT intent: (1) shared-lib -> audit-orchestration/claude-hooks/model-eval/nav-audit/stores — ~6 top-level lib files (efficacy-lints, config, repo-inventory, audit-shadow, finalize-outcomes, audit-arms) are feature coordinators, not domain-neutral primitives; retag or move them. (2) stores -> model-eval/persona-test — a LAYER INVERSION: the persistence layer reaching UP into feature domains. (3) cross-skill-bridge -> 11 domains — AGENTS.md calls this a thin facade; eleven deps is not thin. Do not grow these three without fixing the underlying coupling."
 }
