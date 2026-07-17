@@ -676,7 +676,22 @@ export const AuditRunResultSchema = z.object({
     role: z.enum(['required', 'optional', 'exploratory']),
     status: z.enum(['succeeded', 'failed', 'skipped']),
   })),
-  runStatus: z.enum(['complete', 'incomplete', 'fallback_legacy']),
+  // ADJUDICATED 2026-07-17 (evidence-anchor-path-contract §7j vs
+  // shadow-no-legacy-fallback's "why NOT a new runStatus enum value"): the two
+  // §7j values ARE in the enum, and this does not overturn the prior note — it
+  // applies the note's own tests to different facts. That note rejected
+  // `tiered_unavailable` because (a) no consumer needed the distinction,
+  // (b) existing persisted rows would need migrating, (c) an honest channel
+  // (shadowOk:false + typed error) already existed. Here: (a) §7j's design
+  // REQUIRES distinguishing `skipped_no_eligible_files` (legitimate no-op,
+  // quiet) from `failed_invalid_diff_input` (OUR bug, loud); (b) these are new
+  // states, not renamed ones — zero rows migrate; (c) they arise inside the
+  // pipeline itself (production statuses once Phase 14 flips) — no alternative
+  // channel exists. Decisively: the pipeline ALREADY emits them — a declared
+  // contract that rejects values the system produces is the exact
+  // schema-vs-reality divergence this plan exists to kill. Guarded by the
+  // emissions⊆enum scan in tests/tiered-pipeline-wiring.test.mjs.
+  runStatus: z.enum(['complete', 'incomplete', 'fallback_legacy', 'skipped_no_eligible_files', 'failed_invalid_diff_input']),
   fallbackReason: z.string().optional(),
   // Conditional / historically-optional fields:
   _failed_passes: z.array(z.string()).optional(),

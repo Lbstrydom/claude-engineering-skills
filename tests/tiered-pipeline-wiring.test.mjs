@@ -546,3 +546,58 @@ describe('shadow vs production fallback (docs/plans/shadow-no-legacy-fallback.md
     );
   });
 });
+
+// ── runStatus emissions ⊆ the declared enum (adjudicated 2026-07-17) ─────────
+// The §7j statuses were emitted for a day while the schema's closed enum
+// lacked them — a declared contract diverging from what the system actually
+// produces, i.e. the exact bug class evidence-anchor-path-contract fixed at
+// the provider seam, reproduced at our own seam. The adjudication (see the
+// enum's comment in schemas.mjs) extended the enum; this scan is what makes
+// the divergence class mechanical instead of memorial: ANY string literal
+// assigned to or compared against `runStatus` anywhere in scripts/ must be a
+// declared member, or a producer and a consumer are speaking different
+// vocabularies with no error anywhere.
+describe('runStatus emissions ⊆ AuditRunResultSchema enum (declared = actual)', () => {
+  test('every runStatus literal in scripts/ is a declared enum member', async () => {
+    const { fileURLToPath } = await import('node:url');
+    const { AuditRunResultSchema } = await import('../scripts/lib/schemas.mjs');
+    const rs = (AuditRunResultSchema.shape ?? AuditRunResultSchema._def.shape).runStatus;
+    const members = new Set(Object.keys(rs._def.entries ?? rs._def.values ?? {}));
+    assert.ok(members.has('complete') && members.has('skipped_no_eligible_files'), 'sanity: enum readable');
+
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts');
+    const files = [];
+    (function walk(dir) {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); }
+        else if (e.name.endsWith('.mjs')) files.push(p);
+      }
+    })(root);
+
+    // Three shapes, deliberately narrow (a bare "any literal on a runStatus
+    // line" scan false-positives on map.kind's 'empty' in the ternary):
+    //   runStatus: 'x'         — property emission
+    //   runStatus ===/!== 'x'  — consumer comparison (a non-member here is dead code)
+    //   runStatus = … ? 'x' : 'y' — the conditional assignment shape
+    const PATTERNS = [
+      /\brunStatus: '([a-z_]+)'/g,
+      /\brunStatus [!=]== '([a-z_]+)'/g,
+      /\brunStatus = [^;\n]*\? '([a-z_]+)' : '([a-z_]+)'/g,
+    ];
+    const offenders = [];
+    for (const file of files) {
+      const src = fs.readFileSync(file, 'utf-8');
+      for (const re of PATTERNS) {
+        for (const m of src.matchAll(re)) {
+          for (const lit of m.slice(1).filter(Boolean)) {
+            if (!members.has(lit)) offenders.push(`${path.relative(root, file)}: '${lit}'`);
+          }
+        }
+      }
+    }
+    assert.deepEqual(offenders, [],
+      'a runStatus literal is not in the declared enum — either the emission is a typo, '
+      + 'or the enum must be extended WITH an adjudication note (see schemas.mjs runStatus)');
+  });
+});

@@ -548,11 +548,14 @@ async function failRequiredGenerator(ctx, reason, discoveryGeneratorOutcomes) {
  * `summarize()`'s `historicalComplete` filter (`=== 'complete'`) excludes them
  * from `comparedRuns` and `tieredRunStatusCounts` gives each its own bucket.
  *
- * KNOWN CONTRACT GAP (reported, not papered over): `AuditRunResultSchema.runStatus`
- * (schemas.mjs) is a closed enum — `['complete','incomplete','fallback_legacy']` —
- * that does not yet carry these two values. The schema is documentation-grade
- * (never `.parse`d at runtime), and schemas.mjs is outside this phase's declared
- * file scope, so the enum needs a one-line follow-up to match §7j's table.
+ * CONTRACT GAP RESOLVED (adjudicated 2026-07-17): both values are now members
+ * of `AuditRunResultSchema.runStatus`. This was weighed against
+ * shadow-no-legacy-fallback's "why NOT a new runStatus enum value" note and
+ * found consistent with it — that note's own tests (consumer distinction
+ * needed? data migration? alternative channel?) all answer differently here;
+ * see the adjudication comment on the enum itself (schemas.mjs) for the full
+ * reasoning. An emissions⊆enum scan in tests/tiered-pipeline-wiring.test.mjs
+ * now guards the divergence class mechanically.
  *
  * @param {import('../schemas.mjs').AuditRunContext} ctx
  * @param {{kind:string, reason:string, detail?:string}} map

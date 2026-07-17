@@ -1,5 +1,15 @@
 # Project Status Log
 
+## 2026-07-17 — runStatus enum adjudicated + model-eval-discovery import footgun closed
+
+### Changes
+- **Adjudication: the `runStatus` closed-enum tension is resolved by EXTENDING the enum** with §7j's `skipped_no_eligible_files` / `failed_invalid_diff_input` — and this is *consistent with* `shadow-no-legacy-fallback.md`'s "why NOT a new enum value" note, not an overturning of it. That note rejected `tiered_unavailable` on three tests; all three answer differently here: (a) consumers DO need the empty-vs-invalid distinction (legitimate no-op vs our bug — different owners, different loudness); (b) new *states*, not renamed ones — zero persisted rows migrate; (c) no alternative honest channel exists (the states arise inside the pipeline and become production statuses at the Phase-14 flip). Decisively: the pipeline **already emitted** these values — a declared contract that rejects what the system produces is the exact schema-vs-reality divergence the evidence-anchor plan was built to kill, seeded at our own seam. Verified before ruling: zero `.parse` calls on `AuditRunResultSchema` anywhere; every consumer branches by equality, and both new values falling through is semantically correct at all four sites. The prior plan got an addendum (reasoning preserved); the ruling lives on the enum itself.
+- **Mechanical guard**: an **emissions⊆enum scan** in `tests/tiered-pipeline-wiring.test.mjs` — every string literal assigned to / compared against `runStatus` in `scripts/` must be a declared member (three deliberately narrow patterns; a naive line-scan would false-positive on `map.kind`'s `'empty'`). Declared-vs-actual divergence is now a red test, not an archaeology project.
+- **`model-eval-discovery.mjs` import footgun closed**: the module ran its entire body (arg parsing → payload build → LIVE multi-arm eval loop) at top level; importing it "to check it loads" launched a real paid run (this session's incident, killed in seconds — same class as the 2026-07-13 tiered-shadow-report incident). Executable body now in `main()` behind the standard `pathToFileURL(process.argv[1])` guard, selfcheck moved to `main()`'s head per the CLI smoke contract. New `tests/model-eval-discovery-import-safety.test.mjs` (3 tests, hermetic subprocesses) locks it — including a **spend tripwire**: the probe forces `OPENROUTER_API_KEY` empty + blocks the shared-env load, so even a regressed guard fails the test loudly (verified by simulating the regression), never silently spends.
+
+### Verification
+- Import-safety 3/3; wiring suite 39/39 (incl. the new scan); schemas + shadow-summary + verify-anchor + trap-guard 72/72. No test pinned the old enum list (checked before extending).
+
 ## 2026-07-17 — evidence-anchor Cluster B: gate round 2 findings resolved (G1/G3 + a real cross-cluster seam bug)
 
 ### Changes

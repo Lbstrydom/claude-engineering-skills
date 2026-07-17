@@ -47,6 +47,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 
 import { ossStructuredCall } from './lib/oss-structured-output.mjs';
@@ -57,8 +58,6 @@ import { buildDiffPathMap, renderDiffPathTable, prepareCandidates } from './lib/
 import { readFilesAsContext } from './lib/file-io.mjs';
 import { redactSecrets } from './lib/sensitive-egress-gate.mjs';
 import { shouldSkipForIndexing } from './lib/sensitive-paths.mjs';
-
-if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
 // ── args ────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -209,89 +208,104 @@ function summarizeArm(label, records) {
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
-const baseUrl = auditShadowConfig.openrouterBaseUrl;
-const apiKey = auditShadowConfig.openrouterApiKey;
-if (!apiKey) { console.error('OPENROUTER_API_KEY is not set'); process.exit(1); }
+async function main() {
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
-let arms = ARMS_FILE ? JSON.parse(fs.readFileSync(ARMS_FILE, 'utf8')) : DEFAULT_ARMS;
-arms = await resolveArmModels(arms, baseUrl, apiKey);
+  const baseUrl = auditShadowConfig.openrouterBaseUrl;
+  const apiKey = auditShadowConfig.openrouterApiKey;
+  if (!apiKey) { console.error('OPENROUTER_API_KEY is not set'); process.exit(1); }
 
-const payload = buildPayload();
-const estTokensIn = Math.round(payload.payloadChars / 4);
-console.error(`payload: ${payload.files.length} files from a183c3f + redacted plan = ${payload.payloadChars} chars (~${estTokensIn} tok in/call)`);
-let estTotal = 0;
-for (const a of arms) {
-  const [pi, po] = PRICE_ESTIMATE[a.label] ?? [0.5, 2];
-  const est = N * ((estTokensIn * pi) / 1e6 + (3000 * po) / 1e6);
-  estTotal += est;
-  console.error(`  arm ${a.label.padEnd(20)} model=${a.model}  ~$${est.toFixed(2)} for n=${N}${a.providerPreferences ? '  [pinned]' : ''}`);
-}
-console.error(`  estimated total: ~$${estTotal.toFixed(2)} (excl. provider-side variation)`);
-if (DRY_RUN) { console.error('dry-run: no calls made.'); process.exit(0); }
+  let arms = ARMS_FILE ? JSON.parse(fs.readFileSync(ARMS_FILE, 'utf8')) : DEFAULT_ARMS;
+  arms = await resolveArmModels(arms, baseUrl, apiKey);
 
-const perArmRecords = new Map(arms.map((a) => [a.label, []]));
-async function runArm(arm) {
-  const client = await createOpenAIClient({
-    oss: {
-      baseURL: arm.baseUrl || baseUrl,
-      apiKey: arm.apiKeyEnv ? (process.env[arm.apiKeyEnv] || '').trim() : apiKey,
-    },
-  });
-  const records = perArmRecords.get(arm.label);
-  let next = 0;
-  const worker = async () => {
-    while (next < N) {
-      const i = next++;
-      const r = await ossStructuredCall(client, {
-        model: arm.model,
-        system: payload.system, userPrompt: payload.userPrompt,
-        schema: payload.schema, schemaName: 'discovery_screen',
-        passName: `screen-${arm.label}`, timeoutMs: TIMEOUT_MS, maxRetries: 0,
-        providerPreferences: arm.providerPreferences ?? null,
-      });
-      // §7h: the SAME hydrator production uses. Reported per attempt so the
-      // screen measures the real producer boundary, not a research variant —
-      // `preparedMalformed > 0` on a conformant response means the id/side
-      // contract failed even though the JSON Schema passed, which is precisely
-      // the class the enum exists to close.
-      const prepared = Array.isArray(r.result?.findings)
-        ? prepareCandidates(r.result.findings, payload.map, { producerSchema: payload.producerFindingSchema })
-        : [];
-      const rec = {
-        arm: arm.label, model: arm.model, i,
-        outcome: null, latencyMs: r.latencyMs, conformant: r.conformant,
-        error: r.error, category: r.category ?? null,
-        providerCostUsd: r.usage?.provider_cost_usd ?? null,
-        findings: r.result?.findings?.length ?? null,
-        preparedReady: prepared.filter((p) => p.kind === 'ready').length,
-        preparedMalformed: prepared.filter((p) => p.kind === 'malformed').length,
-        preparedMalformedReasons: [...new Set(prepared.filter((p) => p.kind === 'malformed').map((p) => p.reasonCode))],
-        // Distinct from malformed (union-gate finding, 2026-07-17): a
-        // `contradicted` candidate is the MODEL's evidence failure (the diff
-        // disproved its side claim), NOT our contract failing to parse it.
-        // Dropping it from the telemetry blended the two owners — the exact
-        // misattribution this plan exists to fix, in the eval column.
-        preparedContradicted: prepared.filter((p) => p.kind === 'contradicted').length,
-      };
-      rec.outcome = classifyOutcome(r);
-      records.push(rec);
-      process.stderr.write(`  [${arm.label}] ${i + 1}/${N} ${rec.outcome} (${Math.round(r.latencyMs / 1000)}s)\n`);
-    }
+  const payload = buildPayload();
+  const estTokensIn = Math.round(payload.payloadChars / 4);
+  console.error(`payload: ${payload.files.length} files from a183c3f + redacted plan = ${payload.payloadChars} chars (~${estTokensIn} tok in/call)`);
+  let estTotal = 0;
+  for (const a of arms) {
+    const [pi, po] = PRICE_ESTIMATE[a.label] ?? [0.5, 2];
+    const est = N * ((estTokensIn * pi) / 1e6 + (3000 * po) / 1e6);
+    estTotal += est;
+    console.error(`  arm ${a.label.padEnd(20)} model=${a.model}  ~$${est.toFixed(2)} for n=${N}${a.providerPreferences ? '  [pinned]' : ''}`);
+  }
+  console.error(`  estimated total: ~$${estTotal.toFixed(2)} (excl. provider-side variation)`);
+  if (DRY_RUN) { console.error('dry-run: no calls made.'); process.exit(0); }
+
+  const perArmRecords = new Map(arms.map((a) => [a.label, []]));
+  async function runArm(arm) {
+    const client = await createOpenAIClient({
+      oss: {
+        baseURL: arm.baseUrl || baseUrl,
+        apiKey: arm.apiKeyEnv ? (process.env[arm.apiKeyEnv] || '').trim() : apiKey,
+      },
+    });
+    const records = perArmRecords.get(arm.label);
+    let next = 0;
+    const worker = async () => {
+      while (next < N) {
+        const i = next++;
+        const r = await ossStructuredCall(client, {
+          model: arm.model,
+          system: payload.system, userPrompt: payload.userPrompt,
+          schema: payload.schema, schemaName: 'discovery_screen',
+          passName: `screen-${arm.label}`, timeoutMs: TIMEOUT_MS, maxRetries: 0,
+          providerPreferences: arm.providerPreferences ?? null,
+        });
+        // §7h: the SAME hydrator production uses. Reported per attempt so the
+        // screen measures the real producer boundary, not a research variant —
+        // `preparedMalformed > 0` on a conformant response means the id/side
+        // contract failed even though the JSON Schema passed, which is precisely
+        // the class the enum exists to close.
+        const prepared = Array.isArray(r.result?.findings)
+          ? prepareCandidates(r.result.findings, payload.map, { producerSchema: payload.producerFindingSchema })
+          : [];
+        const rec = {
+          arm: arm.label, model: arm.model, i,
+          outcome: null, latencyMs: r.latencyMs, conformant: r.conformant,
+          error: r.error, category: r.category ?? null,
+          providerCostUsd: r.usage?.provider_cost_usd ?? null,
+          findings: r.result?.findings?.length ?? null,
+          preparedReady: prepared.filter((p) => p.kind === 'ready').length,
+          preparedMalformed: prepared.filter((p) => p.kind === 'malformed').length,
+          preparedMalformedReasons: [...new Set(prepared.filter((p) => p.kind === 'malformed').map((p) => p.reasonCode))],
+          // Distinct from malformed (union-gate finding, 2026-07-17): a
+          // `contradicted` candidate is the MODEL's evidence failure (the diff
+          // disproved its side claim), NOT our contract failing to parse it.
+          // Dropping it from the telemetry blended the two owners — the exact
+          // misattribution this plan exists to fix, in the eval column.
+          preparedContradicted: prepared.filter((p) => p.kind === 'contradicted').length,
+        };
+        rec.outcome = classifyOutcome(r);
+        records.push(rec);
+        process.stderr.write(`  [${arm.label}] ${i + 1}/${N} ${rec.outcome} (${Math.round(r.latencyMs / 1000)}s)\n`);
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, N) }, worker));
+  }
+
+  const started = Date.now();
+  await Promise.all(arms.map(runArm)); // arms in parallel, bounded per-arm concurrency
+  const summary = {
+    ranAt: new Date().toISOString(), commit: payload.commit, n: N, timeoutMs: TIMEOUT_MS,
+    payload: { files: payload.files, chars: payload.payloadChars },
+    arms: arms.map((a) => summarizeArm(a.label, perArmRecords.get(a.label))),
+    elapsedSec: Math.round((Date.now() - started) / 1000),
   };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, N) }, worker));
+
+  fs.mkdirSync(path.dirname(OUT), { recursive: true });
+  fs.writeFileSync(OUT, JSON.stringify({ summary, records: [...perArmRecords.values()].flat() }, null, 2));
+
+  console.log(JSON.stringify(summary, null, 2));
+  console.error(`\nraw records → ${OUT}`);
 }
 
-const started = Date.now();
-await Promise.all(arms.map(runArm)); // arms in parallel, bounded per-arm concurrency
-const summary = {
-  ranAt: new Date().toISOString(), commit: payload.commit, n: N, timeoutMs: TIMEOUT_MS,
-  payload: { files: payload.files, chars: payload.payloadChars },
-  arms: arms.map((a) => summarizeArm(a.label, perArmRecords.get(a.label))),
-  elapsedSec: Math.round((Date.now() - started) / 1000),
-};
-
-fs.mkdirSync(path.dirname(OUT), { recursive: true });
-fs.writeFileSync(OUT, JSON.stringify({ summary, records: [...perArmRecords.values()].flat() }, null, 2));
-
-console.log(JSON.stringify(summary, null, 2));
-console.error(`\nraw records → ${OUT}`);
+// Entry-point guard (2026-07-17 incident): this module previously executed its
+// whole body at top level — importing it "to check it loads" launched a REAL
+// paid multi-arm eval run (killed within seconds; the same import-runs-main
+// class as the 2026-07-13 tiered-shadow-report incident, same fix). Same
+// pathToFileURL form as tiered-shadow-report.mjs — Windows drive-letter
+// robustness. Import-safety is regression-locked by
+// tests/model-eval-discovery-import-safety.test.mjs.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

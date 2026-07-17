@@ -921,3 +921,21 @@ record: CONCERNS, adjudicated — 3/3 accepted and fixed, 0 dismissed.** Not re-
      forbidden.
 - **Audit**: GPT R1 `H:5 M:13 L:1` raw → 0 in-scope Cluster A defects after impact triage.
   19/19 outcomes labelled (run `605de4b9`). Full suite 6701 pass / 0 fail.
+
+### 2026-07-17 — runStatus enum tension adjudicated; import footgun closed
+
+- **Adjudicated (§7j vs `shadow-no-legacy-fallback.md`'s right-sizing note): the enum is
+  extended** with `skipped_no_eligible_files` / `failed_invalid_diff_input`. The tension
+  was only apparent — the prior note rejected one value on three tests (consumer
+  distinction? migration? alternative channel?), and all three answer differently for the
+  §7j pair; decisively, the pipeline already emitted them, and a declared contract that
+  rejects values the system produces is this plan's own bug class at our own seam. The
+  prior note received an addendum (not an edit) so its reasoning remains intact; the full
+  ruling lives on the enum itself (`schemas.mjs`). A new **emissions⊆enum scan**
+  (`tests/tiered-pipeline-wiring.test.mjs`) makes the divergence class mechanical.
+- **`model-eval-discovery.mjs` entry-point guard**: the module executed its whole body at
+  top level, so a bare import launched a real paid eval run (2026-07-17 incident, caught
+  in seconds — same class and same fix as the 2026-07-13 tiered-shadow-report incident).
+  Body now wrapped in `main()` behind the standard `pathToFileURL` guard;
+  `tests/model-eval-discovery-import-safety.test.mjs` locks it with a spend tripwire
+  (a regressed guard fails the probe loudly — verified by simulation, never silently).

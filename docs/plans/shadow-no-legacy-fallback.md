@@ -116,6 +116,19 @@ legacy and tiered paths.
 The current requirement is "stop the shadow burning a legacy audit and
 poisoning the denominator". Both are met without touching the enum.
 
+> **Addendum (2026-07-17, adjudicated)**: the enum was later extended with
+> `skipped_no_eligible_files` / `failed_invalid_diff_input`
+> (evidence-anchor-path-contract §7j). This is **consistent with this note,
+> not an overturning of it** — this note rejected one value on three tests,
+> and all three answer differently for the §7j pair: consumers DO need the
+> empty-vs-invalid distinction (different owners: legitimate no-op vs our
+> bug); they are new states, so no persisted row migrates; and no alternative
+> honest channel exists (they arise inside the pipeline and become production
+> statuses at the Phase-14 flip). Decisively, the pipeline already emitted
+> them — a declared contract rejecting values the system produces is the
+> schema-vs-reality divergence the evidence-anchor plan exists to kill. Full
+> reasoning: the adjudication comment on the enum in `scripts/lib/schemas.mjs`.
+
 ## Proposed Architecture
 
 ```mermaid
