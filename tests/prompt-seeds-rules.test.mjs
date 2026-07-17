@@ -31,3 +31,22 @@ test('the rule lives in the rubric constant, so it survives registry bootstrap',
   assert.ok(PASS_FRONTEND_RUBRIC.includes('DERIVED-STATE PARITY'));
   assert.ok(PASS_PROMPTS.frontend.endsWith(PASS_FRONTEND_RUBRIC) || PASS_PROMPTS.frontend.includes(PASS_FRONTEND_RUBRIC));
 });
+
+// ── Scope-completeness rule (docs/plans/install-transaction-wal-hardening.md Fix 8) ──
+//
+// Added after the partial-scope-enumeration class survived 4 GPT + 2 Gemini rounds on
+// transaction.mjs and then shipped three live bugs one layer out (receipt scope stripped by
+// Zod; a receipt rewritten on writes but not deletes; a drift checker reading one of two
+// receipts). These pin the load-bearing phrases: without the failing-scenario demand the rule
+// degrades into "consider whether you covered everything", which is unactionable noise.
+test('backend pass prompt carries the scope-completeness rule (built injection path)', () => {
+  const built = PASS_PROMPTS.backend;
+  assert.ok(built.includes('SCOPE COMPLETENESS'), 'rule header present in the built prompt');
+  assert.ok(/PARTIAL COLLECTION/.test(built), 'the writes-but-not-deletes shape is named');
+  assert.ok(/BACKWARDS DERIVATION/.test(built), 'the two-anchors shape is named');
+  assert.ok(/STRIPPED DISCRIMINATOR/.test(built), 'the schema-drops-a-branched-field shape is named');
+  // It must demand evidence, not vibes — the guard against turning this into noise.
+  assert.ok(/No failing scenario, no\nfinding/.test(built) || /No failing scenario, no finding/.test(built.replace(/\n/g, ' ')),
+    'demands a concrete failing input');
+  assert.ok(/deliberate, documented asymmetry is NOT this/.test(built), 'exempts justified asymmetry');
+});

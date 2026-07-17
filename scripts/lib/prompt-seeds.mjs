@@ -30,6 +30,29 @@ PERSISTENCE CONTRACT (DB writes — silent failures here are HIGH, they masquera
   Postgres RLS policy (or a 0-row UPDATE) can complete WITHOUT error yet mutate nothing.
 - Serialization shape: a raw JS array bound to a jsonb column (must be JSON-serialized — a raw
   array binds as a Postgres array literal), or a JSON string bound to a genuine text[] column.
+SCOPE COMPLETENESS (a rule that must cover N places, applied at only some. This class is
+invisible to review by construction — the code reads correct at every line you look at; the
+defect is the place you DIDN'T look. It survived 4 GPT + 2 Gemini rounds on one module here,
+then shipped three live bugs one layer out). Flag ONLY with a named failing input:
+- PARTIAL COLLECTION: a guard/predicate/derivation consults only SOME of the sibling
+  collections it must cover. Hunt for pairs — writes/deletes, added/removed, repo/global,
+  staged/unstaged, local/cloud — where one side is consulted and the other silently isn't.
+  (Real: a lock predicate read \`writes.some(...)\` but not \`deletes\`, so a deletes-only
+  transaction took no lock; a receipt was rewritten on writes but not deletes, leaving it
+  listing files just deleted.)
+- BACKWARDS DERIVATION: value A defaults FROM value B while B is conceptually derived from A,
+  yielding two anchors for one thing. (Real: \`journalPath = opts.journalPath || cwd\` then
+  \`repoRoot = dirname(journalPath)\`, so a caller passing only \`repoRoot\` wrote its journal
+  to the process cwd while quarantining to the repo.)
+- STRIPPED DISCRIMINATOR: a schema/serializer/DTO drops a field the code BRANCHES on, making
+  that branch unreachable and its whole side of the logic dead. Zod \`z.object()\` strips
+  undeclared keys — a field written to disk but absent from the schema is gone on read.
+  (Real: \`scope\` was omitted from the receipt schema, so every global path decoded as a repo
+  path, could not exist, and its delete silently no-op'd with nothing reported.)
+Name the input that reaches the uncovered branch and what breaks. No failing scenario, no
+finding. A deliberate, documented asymmetry is NOT this — say so and move on.
+SEVERITY: HIGH when the uncovered branch silently mutates (or fails to mutate) shared or
+persistent state — a no-op that reports success is the signature of this class.
 Do NOT check frontend files or wiring — other passes handle that.
 Every recommendation must be a PROPER sustainable solution, not a band-aid.
 
