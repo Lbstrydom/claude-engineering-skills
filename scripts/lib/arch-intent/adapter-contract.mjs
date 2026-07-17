@@ -88,25 +88,22 @@ function fsWalkFallback(repoPath) {
 }
 
 /**
- * Phase 1 — Inventory ALL source files in the repo, then apply domainMap.rules.
+ * Discover every path in the repo, normalised to forward-slash.
  *
- * Discovery strategy:
+ * Strategy:
  *   1. `git ls-files` if in a git repo (fastest + respects .gitignore)
- *   2. Else: globby with **\/* + BUILT_IN_EXCLUDES (respects .gitignore by default)
- *   3. Filter by SOURCE_EXTENSIONS
- *   4. Apply each rule's pattern to assign domain; first-match-wins
- *   5. Files matched by NO rule become `unmappedFiles`
+ *   2. Else: fs.readdir recursion with built-in directory excludes
+ *
+ * Shared by `inventoryFiles` (which then filters to SOURCE_EXTENSIONS) and
+ * `inventoryAllPaths` (which does not) so the two can never drift.
  *
  * @param {string} repoPath
- * @param {{rules: Array<{pattern, domain}>, allowedDeps?, description?}} domainMap
- * @returns {Promise<{ mapped: Map<string, string>, unmappedFiles: string[] }>}
+ * @returns {string[]} repo-relative paths, forward-slashed
  */
-export async function inventoryFiles(repoPath, domainMap) {
-  let candidates = [];
-
-  // Try git ls-files first (fast + .gitignore-aware). Union tracked +
-  // untracked-but-not-ignored so newly-added uncommitted files ARE
-  // analysed (R1/H2 fix — closes the "audit blind spot" on fresh code).
+function listRepoPaths(repoPath) {
+  let candidates;
+  // Union tracked + untracked-but-not-ignored so newly-added uncommitted
+  // files ARE analysed (R1/H2 fix — closes the "audit blind spot" on fresh code).
   try {
     const tracked = execSync('git ls-files', { cwd: repoPath, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
     const untracked = execSync('git ls-files --others --exclude-standard', { cwd: repoPath, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] });
@@ -115,12 +112,26 @@ export async function inventoryFiles(repoPath, domainMap) {
     for (const s of untracked.split('\n')) if (s.trim()) combined.add(s.trim());
     candidates = [...combined];
   } catch {
-    // Fallback: plain fs.readdir recursion with built-in directory excludes
     candidates = fsWalkFallback(repoPath);
   }
+  return candidates.map(p => p.replaceAll('\\', '/'));
+}
 
-  // Normalise paths to forward-slash for cross-platform glob matching
-  candidates = candidates.map(p => p.replaceAll('\\', '/'));
+/**
+ * Phase 1 — Inventory ALL source files in the repo, then apply domainMap.rules.
+ *
+ * Discovery strategy:
+ *   1. `listRepoPaths` (git ls-files, else fs-walk)
+ *   2. Filter by SOURCE_EXTENSIONS
+ *   3. Apply each rule's pattern to assign domain; first-match-wins
+ *   4. Files matched by NO rule become `unmappedFiles`
+ *
+ * @param {string} repoPath
+ * @param {{rules: Array<{pattern, domain}>, allowedDeps?, description?}} domainMap
+ * @returns {Promise<{ mapped: Map<string, string>, unmappedFiles: string[] }>}
+ */
+export async function inventoryFiles(repoPath, domainMap) {
+  const candidates = listRepoPaths(repoPath);
 
   // Filter to source-file extensions
   const sourceFiles = candidates.filter(p => SOURCE_EXTENSIONS.has(path.extname(p).toLowerCase()));
@@ -140,9 +151,38 @@ export async function inventoryFiles(repoPath, domainMap) {
 }
 
 /**
+ * Inventory EVERY path in the repo (no extension filter) → domain.
+ *
+ * This is the inventory `computeDeadIntent` wants: "dead" must mean *the
+ * rule matches nothing*, not "the rule matches nothing the JS symbol
+ * indexer would parse". A markdown-only domain (`skills-content`: 57 .md +
+ * 2 .json) owns real paths and is a live rule — reporting it dead sent the
+ * operator hunting for a bug that wasn't there. Conversely a genuinely dead
+ * rule (a literal `scripts/ship.mjs` after the file was renamed to
+ * `ship-commit.mjs`) matches zero paths under either filter, so this is the
+ * strictly better signal.
+ *
+ * @param {string} repoPath
+ * @param {{rules: Array<{pattern, domain}>}} domainMap
+ * @returns {Map<string,string>} path → domain, for every rule-matched path
+ */
+export function inventoryAllPaths(repoPath, domainMap) {
+  const mapped = new Map();
+  for (const p of listRepoPaths(repoPath)) {
+    const domain = resolveFileToDomain(p, domainMap.rules);
+    if (domain) mapped.set(p, domain);
+  }
+  return mapped;
+}
+
+/**
  * Compute deadIntent — declared domains that don't own any local file.
  * Excludes pseudo-domains (vendor). Operator may want to remove from intent
  * OR plan to populate.
+ *
+ * Pure in `mapped`: pass `inventoryAllPaths()` for the "is this rule dead?"
+ * question (see its note), or a source-file `inventoryFiles().mapped` for a
+ * narrower one.
  *
  * @param {Map<string,string>} mapped
  * @param {{rules, allowedDeps, description}} domainMap
@@ -223,7 +263,9 @@ function validateAdapterReport(raw, adapterName) {
 export async function runArchIntentAnalysis({ repoPath, stackKinds, domainMap }) {
   // Phase 1: inventory (shared, runs once)
   const { mapped, unmappedFiles } = await inventoryFiles(repoPath, domainMap);
-  const deadIntent = computeDeadIntent(mapped, domainMap);
+  // Dead intent is asked of the UNFILTERED path inventory, not `mapped` —
+  // a rule is dead only when it matches no path at all.
+  const deadIntent = computeDeadIntent(inventoryAllPaths(repoPath, domainMap), domainMap);
 
   // Phase 2: per-stack edge analysis with fault isolation
   const perStackResults = [];

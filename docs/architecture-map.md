@@ -1,9 +1,9 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-17T09:05:30.051Z   commit: da5168866781   refresh_id: b1d8cceb-009a-4e9e-8865-c93a417f4cc9
+- Generated: 2026-07-17T10:29:43.538Z   commit: 59f196f2ce97   refresh_id: 4c15d948-6010-4760-ae2d-6a06c7fe0294
 - Drift score: 30 / threshold 20   status: `RED`
-- Domains: 23   Symbols: 3237   Layering violations: 0
+- Domains: 24   Symbols: 3240   Layering violations: 0
 
 ## Contents
 - [arch-memory](#arch-memory) — 54 symbols
@@ -22,9 +22,10 @@
 - [persona-test](#persona-test) — 71 symbols
 - [plan](#plan) — 8 symbols
 - [root-scripts](#root-scripts) — 14 symbols
-- [scripts](#scripts) — 312 symbols
-- [shared-lib](#shared-lib) — 950 symbols
-- [stores](#stores) — 212 symbols
+- [scripts](#scripts) — 308 symbols
+- [shared-lib](#shared-lib) — 952 symbols
+- [ship](#ship) — 4 symbols
+- [stores](#stores) — 213 symbols
 - [tech-debt](#tech-debt) — 71 symbols
 - [tests](#tests) — 473 symbols
 - [ux-lock](#ux-lock) — 35 symbols
@@ -147,7 +148,7 @@ _Domain has 54 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ## audit-orchestration
 
-> Orchestrates the multi-pass code/plan audit pipeline (GPT discovery → Gemini final review) and manages transient preimage/temp files produced during audits.
+> Orchestrates end-to-end audit execution in two modes: a single-pass fused pipeline (GPT code/plan audit + mandatory Gemini final review) and an iterative multi-round loop with convergence detection. Manages session lifecycle (temp files, run IDs, subprocess spawning) and cleans up stale audit artifacts.
 
 ```mermaid
 flowchart TB
@@ -354,25 +355,25 @@ _Domain has 244 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`resolveGptTrigger`](../scripts/lib/audit/gpt-sentinel-trigger.mjs#L176) | function | `scripts/lib/audit/gpt-sentinel-trigger.mjs` | 176-191 | Combines deterministic, exploration, and sentinel bandit logic to decide GPT firing. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`shouldFireSentinel`](../scripts/lib/audit/gpt-sentinel-trigger.mjs#L132) | function | `scripts/lib/audit/gpt-sentinel-trigger.mjs` | 132-138 | Uses a Thompson-sampling bandit to decide whether GPT should fire. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`shouldTriggerGpt`](../scripts/lib/audit/gpt-sentinel-trigger.mjs#L104) | function | `scripts/lib/audit/gpt-sentinel-trigger.mjs` | 104-111 | Determines if GPT should be triggered based on diff size, keyword matches, or portfolio disagreement. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`buildAuditRunContext`](../scripts/lib/audit/legacy-production-audit.mjs#L3084) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 3084-3203 | Builds complete audit context with parameters, models, and providers for the audit pipeline. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`cachePassResult`](../scripts/lib/audit/legacy-production-audit.mjs#L244) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 244-255 | Atomically writes a single audit pass result to the cache directory. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`cacheWaveResults`](../scripts/lib/audit/legacy-production-audit.mjs#L257) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 257-262 | Caches multiple pass results and logs the cache directory location. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`cleanupCache`](../scripts/lib/audit/legacy-production-audit.mjs#L264) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 264-267 | Removes the temporary cache directory and all contents. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`decideSeed`](../scripts/lib/audit/legacy-production-audit.mjs#L370) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 370-418 | Determines cache-seed eligibility and selects the smallest audit unit to warm the prefix cache. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`deriveFindingsFromReport`](../scripts/lib/audit/legacy-production-audit.mjs#L992) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 992-1062 | Converts architecture report violations and unmapped files into structured Finding objects. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`formatViolationsForPrompt`](../scripts/lib/audit/legacy-production-audit.mjs#L924) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 924-973 | Formats architecture violations and unmapped files for GPT analysis prompt. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`initResultCache`](../scripts/lib/audit/legacy-production-audit.mjs#L234) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 234-242 | Creates temporary directory for caching audit pass results during execution. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`normalizeFindingsForOutput`](../scripts/lib/audit/legacy-production-audit.mjs#L271) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 271-273 | Normalizes findings for output by delegating to internal function with semantic ID. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`orphanToStandardFinding`](../scripts/lib/audit/legacy-production-audit.mjs#L797) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 797-819 | Converts an orphan-introduced finding into standard Finding schema format. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`runArchitecturePass`](../scripts/lib/audit/legacy-production-audit.mjs#L652) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 652-787 | Audits code against domain-map boundaries and reports violations, unmapped files, and dead intent. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`runLegacyProductionAudit`](../scripts/lib/audit/legacy-production-audit.mjs#L1092) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 1092-3048 | Orchestrates full multi-pass code audit (structure, wiring, backend, frontend, sustainability) with round-aware suppression. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`runMapReducePass`](../scripts/lib/audit/legacy-production-audit.mjs#L452) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 452-634 | Runs map phase with configurable concurrency, optional cache seeding, and reduce aggregation. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`runOneMapUnit`](../scripts/lib/audit/legacy-production-audit.mjs#L423) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 423-450 | Executes a single map-reduce audit unit with slot-based concurrency management. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`runOrphanIntroducedPass`](../scripts/lib/audit/legacy-production-audit.mjs#L838) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 838-917 | Detects newly-orphaned files that are no longer reachable from any non-test caller. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`shouldMapReduce`](../scripts/lib/audit/legacy-production-audit.mjs#L175) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 175-179 | Returns true if code audit should split into map-reduce based on file count or character threshold. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`shouldMapReduceHighReasoning`](../scripts/lib/audit/legacy-production-audit.mjs#L186) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 186-190 | Returns true if high-reasoning audit pass exceeds map-reduce size thresholds (stricter than base). | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`throwIfConfigError`](../scripts/lib/audit/legacy-production-audit.mjs#L353) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 353-359 | Re-throws if a settled LLM result contains a configuration error. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
-| [`validateLedgerForR2`](../scripts/lib/audit/legacy-production-audit.mjs#L293) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 293-325 | Validates adjudication ledger exists, is JSON-valid, and contains valid entries for R2+ suppression. | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`buildAuditRunContext`](../scripts/lib/audit/legacy-production-audit.mjs#L3138) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 3138-3257 | Assembles all audit inputs and constructs provider handles | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`cachePassResult`](../scripts/lib/audit/legacy-production-audit.mjs#L244) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 244-255 | Caches single pass result to disk | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`cacheWaveResults`](../scripts/lib/audit/legacy-production-audit.mjs#L257) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 257-262 | Caches multiple pass results to directory | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`cleanupCache`](../scripts/lib/audit/legacy-production-audit.mjs#L264) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 264-267 | Removes the cache directory | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`decideSeed`](../scripts/lib/audit/legacy-production-audit.mjs#L370) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 370-418 | Decides whether to seed OpenAI prefix cache and selects seed unit | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`deriveFindingsFromReport`](../scripts/lib/audit/legacy-production-audit.mjs#L992) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 992-1062 | Converts architecture violations to Finding objects | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`formatViolationsForPrompt`](../scripts/lib/audit/legacy-production-audit.mjs#L924) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 924-973 | Formats architecture violations and dead domains for prompts | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`initResultCache`](../scripts/lib/audit/legacy-production-audit.mjs#L234) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 234-242 | Creates temp directory for caching audit pass results | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`normalizeFindingsForOutput`](../scripts/lib/audit/legacy-production-audit.mjs#L271) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 271-273 | Normalizes findings for output | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`orphanToStandardFinding`](../scripts/lib/audit/legacy-production-audit.mjs#L797) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 797-819 | Converts orphan-code finding to Finding object | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`runArchitecturePass`](../scripts/lib/audit/legacy-production-audit.mjs#L652) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 652-787 | Analyzes cross-domain imports and dead domains for audit | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`runLegacyProductionAudit`](../scripts/lib/audit/legacy-production-audit.mjs#L1092) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 1092-3102 | Main orchestrator for multi-pass GPT audit with map-reduce and suppression | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`runMapReducePass`](../scripts/lib/audit/legacy-production-audit.mjs#L452) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 452-634 | Runs map-reduce audit with optional prefix-cache warm-up | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`runOneMapUnit`](../scripts/lib/audit/legacy-production-audit.mjs#L423) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 423-450 | Runs GPT audit on single code unit with slot-based concurrency | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`runOrphanIntroducedPass`](../scripts/lib/audit/legacy-production-audit.mjs#L838) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 838-917 | Detects orphaned or newly-orphan files in diff | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`shouldMapReduce`](../scripts/lib/audit/legacy-production-audit.mjs#L175) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 175-179 | Decides whether audit needs map-reduce based on file/character count | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`shouldMapReduceHighReasoning`](../scripts/lib/audit/legacy-production-audit.mjs#L186) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 186-190 | Decides whether high-reasoning audit needs map-reduce (higher threshold) | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`throwIfConfigError`](../scripts/lib/audit/legacy-production-audit.mjs#L353) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 353-359 | Re-throws config-level LLM errors from settled promises | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
+| [`validateLedgerForR2`](../scripts/lib/audit/legacy-production-audit.mjs#L293) | function | `scripts/lib/audit/legacy-production-audit.mjs` | 293-325 | Validates ledger exists and parses for R2+ suppression | `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
 | [`_callGPTOnce`](../scripts/lib/audit/llm-helpers.mjs#L232) | function | `scripts/lib/audit/llm-helpers.mjs` | 232-338 | Makes a single GPT call with timeout, abort handling, and structured parsing. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
 | [`buildCachePrompt`](../scripts/lib/audit/llm-helpers.mjs#L95) | function | `scripts/lib/audit/llm-helpers.mjs` | 95-112 | Builds GPT prompt for an audit pass combining rubric, brief, plan, code, history, and ledger rulings. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
 | [`callGPT`](../scripts/lib/audit/llm-helpers.mjs#L344) | function | `scripts/lib/audit/llm-helpers.mjs` | 344-385 | Wraps _callGPTOnce with retry logic and cumulative token/usage tracking. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs`, `scripts/openai-audit.mjs` |
@@ -404,20 +405,20 @@ _Domain has 244 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`writeMechanicalDismissalToLedger`](../scripts/lib/audit/stage1-triage.mjs#L377) | function | `scripts/lib/audit/stage1-triage.mjs` | 377-400 | Records a mechanically dismissed finding to the adjudication ledger with disproof. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`loadValidationManifest`](../scripts/lib/audit/stage1-triager-resolver.mjs#L75) | function | `scripts/lib/audit/stage1-triager-resolver.mjs` | 75-93 | Loads and validates the Stage-1 triager's validation manifest file. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`resolveStage1TriagerModel`](../scripts/lib/audit/stage1-triager-resolver.mjs#L101) | function | `scripts/lib/audit/stage1-triager-resolver.mjs` | 101-113 | Resolves the Stage-1 triager model from override, validated manifest, or fallback. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`buildPreExistingDebtEntry`](../scripts/lib/audit/tiered-pipeline.mjs#L373) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 373-394 | Converts out-of-scope pre-existing finding into a debt ledger entry with deferral reason. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`buildStage0RelevanceContext`](../scripts/lib/audit/tiered-pipeline.mjs#L291) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 291-329 | Prepares HEAD/base/impact caches for Stage 0 evidence relevance evaluation. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`buildStage1TriagerPrompt`](../scripts/lib/audit/tiered-pipeline.mjs#L163) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 163-174 | Builds system message and user prompt for cheap Stage-1 triager to dismiss false-positive candidates. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`collectCandidateAnchorFiles`](../scripts/lib/audit/tiered-pipeline.mjs#L253) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 253-269 | Collects all file paths referenced by finding anchors across all envelopes. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`defaultTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L188) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 188-201 | Routes Stage-1 triage to default GPT model with structured output parsing. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`extractCanonicalAnchorFile`](../scripts/lib/audit/tiered-pipeline.mjs#L358) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 358-363 | Extracts the file path from a finding's anchor, choosing based on evidence type. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`makeBlameAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L339) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 339-349 | Returns a function that checks if evidence text exists at a line range in the base revision. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`makeHeadContentAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L331) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 331-333 | Returns a function that retrieves HEAD file content from the Stage 0 cache. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`makeImpactAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L335) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 335-337 | Returns a function that retrieves file import impact data from the Stage 0 cache. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`normalizeModifiedAnchorPaths`](../scripts/lib/audit/tiered-pipeline.mjs#L133) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 133-149 | Ensures modified findings have both oldFile and newFile anchor paths for consistency. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`routePreExistingIndependent`](../scripts/lib/audit/tiered-pipeline.mjs#L409) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 409-453 | Routes pre-existing independent findings to debt ledger, tracking write failures per finding. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`runTieredAuditPipeline`](../scripts/lib/audit/tiered-pipeline.mjs#L459) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 459-987 | Executes tiered discovery, Stage 0 evidence triage, Stage 1 filtering, and Stage 2 Gemini adjudication. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`TieredUnavailableError`](../scripts/lib/audit/tiered-pipeline.mjs#L97) | class | `scripts/lib/audit/tiered-pipeline.mjs` | 97-103 | Custom error class for tiered pipeline unavailability with reason field. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`validatedTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L215) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 215-243 | Routes Stage-1 triage to OSS Call provider with structured output and error classification. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`buildPreExistingDebtEntry`](../scripts/lib/audit/tiered-pipeline.mjs#L373) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 373-394 | Converts pre-existing finding to debt-ledger entry | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`buildStage0RelevanceContext`](../scripts/lib/audit/tiered-pipeline.mjs#L291) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 291-329 | Pre-caches file content and import impact for Stage-0 adapters | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`buildStage1TriagerPrompt`](../scripts/lib/audit/tiered-pipeline.mjs#L163) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 163-174 | Builds system/user prompts for Stage-1 triager | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`collectCandidateAnchorFiles`](../scripts/lib/audit/tiered-pipeline.mjs#L253) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 253-269 | Collects files referenced in finding anchor evidence | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`defaultTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L188) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 188-201 | Calls GPT via OpenAI for Stage-1 finding triage | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`extractCanonicalAnchorFile`](../scripts/lib/audit/tiered-pipeline.mjs#L358) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 358-363 | Extracts file path from finding's evidence anchor | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`makeBlameAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L339) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 339-349 | Checks if quoted text existed at line range in base commit | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`makeHeadContentAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L331) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 331-333 | Provides HEAD file content from pre-loaded cache | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`makeImpactAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L335) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 335-337 | Provides file import-impact data from pre-loaded cache | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`normalizeModifiedAnchorPaths`](../scripts/lib/audit/tiered-pipeline.mjs#L133) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 133-149 | Ensures modified findings have both old and new file paths | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`routePreExistingIndependent`](../scripts/lib/audit/tiered-pipeline.mjs#L409) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 409-453 | Routes pre-existing findings to debt ledger with failure tracking | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`runTieredAuditPipeline`](../scripts/lib/audit/tiered-pipeline.mjs#L459) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 459-1000 | Discovers candidates via Stage 0, triages via Stage 1, adjudicates via Stage 2 | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`TieredUnavailableError`](../scripts/lib/audit/tiered-pipeline.mjs#L97) | class | `scripts/lib/audit/tiered-pipeline.mjs` | 97-103 | Custom error for tiered-pipeline unavailability | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`validatedTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L215) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 215-243 | Calls OSS-structured provider for Stage-1 finding triage | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
 | [`appendShadowLog`](../scripts/lib/audit/tiered-shadow-compare.mjs#L396) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 396-403 | Appends a shadow observation record to the local tiered-shadow-log.jsonl file. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
 | [`buildLegacyBuckets`](../scripts/lib/audit/tiered-shadow-compare.mjs#L461) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 461-469 | Categorizes findings as in-scope or out-of-scope based on whether they affect changed files. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
 | [`buildShadowCtx`](../scripts/lib/audit/tiered-shadow-compare.mjs#L84) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 84-137 | Creates a read-only shadow context that shares inputs but isolates state mutations from the real run. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
@@ -1191,12 +1192,12 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 | [`trackEdit`](../scripts/lib/findings-tasks.mjs#L53) | function | `scripts/lib/findings-tasks.mjs` | 53-57 | Records an edit against a task and updates state to fixed. | `scripts/lib/findings.mjs` |
 | [`updateTask`](../scripts/lib/findings-tasks.mjs#L84) | function | `scripts/lib/findings-tasks.mjs` | 84-87 | Updates a task's timestamp and appends it. | `scripts/lib/findings.mjs` |
 | [`verifyTask`](../scripts/lib/findings-tasks.mjs#L62) | function | `scripts/lib/findings-tasks.mjs` | 62-67 | Records task verification result (passed or regressed). | `scripts/lib/findings.mjs` |
-| [`applyLazyDecay`](../scripts/lib/findings-tracker.mjs#L29) | function | `scripts/lib/findings-tracker.mjs` | 29-54 | Applies exponential decay to acceptance/dismissal counts based on elapsed time. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
-| [`buildPatternKey`](../scripts/lib/findings-tracker.mjs#L103) | function | `scripts/lib/findings-tracker.mjs` | 103-105 | Constructs scope-aware pattern key from extracted dimensions for FP tracking. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
-| [`effectiveSampleSize`](../scripts/lib/findings-tracker.mjs#L59) | function | `scripts/lib/findings-tracker.mjs` | 59-61 | Calculates effective sample size as sum of decayed accepted and dismissed counts. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
-| [`extractDimensions`](../scripts/lib/findings-tracker.mjs#L90) | function | `scripts/lib/findings-tracker.mjs` | 90-98 | Extracts category, principle, severity, repo, and file-extension dimensions from a finding. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
-| [`FalsePositiveTracker`](../scripts/lib/findings-tracker.mjs#L113) | class | `scripts/lib/findings-tracker.mjs` | 113-254 | Manages false-positive pattern tracking with exponential decay and multi-scope outcomes. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
-| [`recordWithDecay`](../scripts/lib/findings-tracker.mjs#L67) | function | `scripts/lib/findings-tracker.mjs` | 67-83 | Records an outcome (accepted/dismissed) with exponential decay updating and EMA recalculation. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
+| [`applyLazyDecay`](../scripts/lib/findings-tracker.mjs#L29) | function | `scripts/lib/findings-tracker.mjs` | 29-54 | Applies exponential decay to a false-positive pattern's acceptance and dismissal counters over time. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
+| [`buildPatternKey`](../scripts/lib/findings-tracker.mjs#L103) | function | `scripts/lib/findings-tracker.mjs` | 103-105 | Builds a composite key from finding dimensions for pattern matching. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
+| [`effectiveSampleSize`](../scripts/lib/findings-tracker.mjs#L59) | function | `scripts/lib/findings-tracker.mjs` | 59-61 | Calculates the effective sample size by summing decayed accepted and dismissed counts. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
+| [`extractDimensions`](../scripts/lib/findings-tracker.mjs#L90) | function | `scripts/lib/findings-tracker.mjs` | 90-98 | Extracts finding metadata into structured dimensions (category, severity, principle, repo, file type). | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
+| [`FalsePositiveTracker`](../scripts/lib/findings-tracker.mjs#L113) | class | `scripts/lib/findings-tracker.mjs` | 113-254 | Tracks false-positive patterns with decay, persistence, and cloud synchronization. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
+| [`recordWithDecay`](../scripts/lib/findings-tracker.mjs#L67) | function | `scripts/lib/findings-tracker.mjs` | 67-83 | Records a finding outcome (accepted/dismissed) and recomputes the pattern's decay and EMA. | `scripts/lib/findings.mjs`, `scripts/lib/suppression-policy.mjs` |
 | [`semanticId`](../scripts/lib/findings.mjs#L27) | function | `scripts/lib/findings.mjs` | 27-40 | Creates a stable 8-character hash ID for findings based on linter/type-checker classification or message content. | `scripts/cross-skill.mjs`, `scripts/evolve-prompts.mjs`, `scripts/gemini-review.mjs`, +15 more |
 
 ---
@@ -2022,7 +2023,7 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ## scripts
 
-> CLI entry points and shared utilities (LLM clients, Postgres persistence, learning systems) for a 15-skill AI-pair-programming chain: plan → audit → UX test → ship.
+> **CLI entry points and modular utilities for the 15-skill audit-to-ship pipeline: multi-pass code review (GPT+Gemini), UX regression testing (Playwright), deployment, cloud learning store, and architectural memory indexing.**
 
 ```mermaid
 flowchart TB
@@ -2069,7 +2070,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 312 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 308 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -2306,10 +2307,6 @@ _Domain has 312 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`runEnsureLocal`](../scripts/setup-postgres.mjs#L663) | function | `scripts/setup-postgres.mjs` | 663-710 | [SECRET_REDACTED] | `scripts/db-test-container.mjs` |
 | [`runMigrate`](../scripts/setup-postgres.mjs#L468) | function | `scripts/setup-postgres.mjs` | 468-507 | Orchestrates the migration workflow: applies bootstrap DDL (skipping on Supabase-managed DBs), ensures the ledger exists, then applies unapplied or changed migrations. | `scripts/db-test-container.mjs` |
 | [`sha256`](../scripts/setup-postgres.mjs#L254) | function | `scripts/setup-postgres.mjs` | 254-258 | Computes and returns the SHA256 hash of a file's binary contents. | `scripts/db-test-container.mjs` |
-| [`err`](../scripts/ship-commit.mjs#L41) | function | `scripts/ship-commit.mjs` | 41-41 | <no body> | _(internal)_ |
-| [`git`](../scripts/ship-commit.mjs#L43) | function | `scripts/ship-commit.mjs` | 43-45 | Spawns a git subprocess with arguments in a specified directory and returns captured output. | _(internal)_ |
-| [`main`](../scripts/ship-commit.mjs#L78) | function | `scripts/ship-commit.mjs` | 78-281 | CLI entry point that parses arguments, resolves commit parameters, constructs git trailers, and commits with signature. | _(internal)_ |
-| [`resolveSkillNames`](../scripts/ship-commit.mjs#L51) | function | `scripts/ship-commit.mjs` | 51-76 | Discovers skill directory names by reading both skills/ and .claude/skills/ layouts, with error handling. | _(internal)_ |
 | [`main`](../scripts/skills-fit-check.mjs#L136) | function | `scripts/skills-fit-check.mjs` | 136-153 | CLI entry point that parses arguments, runs fit check, and outputs report as JSON or formatted card. | _(internal)_ |
 | [`parseArgs`](../scripts/skills-fit-check.mjs#L26) | function | `scripts/skills-fit-check.mjs` | 26-36 | Parses command-line arguments for repo-root, json, quiet, and help flags. | _(internal)_ |
 | [`renderCard`](../scripts/skills-fit-check.mjs#L85) | function | `scripts/skills-fit-check.mjs` | 85-131 | Formats fit-check results as a human-readable card showing repo profile and skill fit verdicts. | _(internal)_ |
@@ -2392,7 +2389,7 @@ _Domain has 312 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## shared-lib
 
-> Shared-lib abstracts LLM client management (Anthropic SDK/CLI routing) with secret redaction, provides config/environment resolution, database/file I/O layers, and defines schemas and utilities for audit findings processing and operator tooling.
+> Middleware and reusable modules for the engineering-skills CLI suite: Anthropic client abstraction (SDK vs CLI backend routing), configuration/model resolution, egress-gate secret redaction, and I/O builders (Zod schemas, file/Postgres querying).
 
 ```mermaid
 flowchart TB
@@ -2437,7 +2434,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 950 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -2460,14 +2457,16 @@ _Domain has 950 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`resolveTimeoutMs`](../scripts/lib/anthropic-client.mjs#L93) | function | `scripts/lib/anthropic-client.mjs` | 93-104 | Resolves and validates the effective CLI timeout in milliseconds from options or environment. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/evolve-prompts.mjs`, +11 more |
 | [`runClaudeCli`](../scripts/lib/anthropic-client.mjs#L522) | function | `scripts/lib/anthropic-client.mjs` | 522-636 | Spawns a `claude -p` subprocess, manages I/O, enforces timeouts, and parses JSON output. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/evolve-prompts.mjs`, +11 more |
 | [`wrapSdkClient`](../scripts/lib/anthropic-client.mjs#L289) | function | `scripts/lib/anthropic-client.mjs` | 289-308 | Wraps an SDK client to apply redaction and normalize timeout parameter names. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/evolve-prompts.mjs`, +11 more |
-| [`computeDeadIntent`](../scripts/lib/arch-intent/adapter-contract.mjs#L151) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 151-159 | Identifies declared domains in domain-map that have no corresponding source files. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`deriveArchState`](../scripts/lib/arch-intent/adapter-contract.mjs#L321) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 321-332 | Maps architecture-intent report status to a descriptive state (ANALYZED_CLEAN, ERROR_ALL_STACKS_FAILED, etc.). | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`fsWalkFallback`](../scripts/lib/arch-intent/adapter-contract.mjs#L68) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 68-88 | Recursively inventories source files via filesystem walk, excluding node_modules and build directories. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`inventoryFiles`](../scripts/lib/arch-intent/adapter-contract.mjs#L104) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 104-140 | Lists repo source files via git (tracked + untracked) or fallback filesystem, normalizing to forward-slash paths. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`isArchIntentReportClean`](../scripts/lib/arch-intent/adapter-contract.mjs#L307) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 307-312 | Checks whether an architecture-intent report is violation-free and has no dead intent or unmapped files. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`loadAdapter`](../scripts/lib/arch-intent/adapter-contract.mjs#L174) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 174-192 | Dynamically imports a stack-specific architecture-intent adapter or signals if missing. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`runArchIntentAnalysis`](../scripts/lib/arch-intent/adapter-contract.mjs#L223) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 223-289 | Orchestrates architecture-intent analysis across multiple stacks, merging results and computing dead intent. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`validateAdapterReport`](../scripts/lib/arch-intent/adapter-contract.mjs#L201) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 201-212 | Validates that an adapter report conforms to schema (violations + _meta subset). | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`computeDeadIntent`](../scripts/lib/arch-intent/adapter-contract.mjs#L191) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 191-199 | Identifies declared domains with no live files | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`deriveArchState`](../scripts/lib/arch-intent/adapter-contract.mjs#L363) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 363-374 | Categorizes architecture report status (clean/findings/error/skipped) | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`fsWalkFallback`](../scripts/lib/arch-intent/adapter-contract.mjs#L68) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 68-88 | Lists repo files by walking filesystem | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`inventoryAllPaths`](../scripts/lib/arch-intent/adapter-contract.mjs#L169) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 169-176 | Maps all repo paths to domains (for dead-domain detection) | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`inventoryFiles`](../scripts/lib/arch-intent/adapter-contract.mjs#L133) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 133-151 | Maps source files to architecture domains | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`isArchIntentReportClean`](../scripts/lib/arch-intent/adapter-contract.mjs#L349) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 349-354 | Checks whether architecture report is violation-free | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`listRepoPaths`](../scripts/lib/arch-intent/adapter-contract.mjs#L103) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 103-118 | Lists git-tracked and untracked files | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`loadAdapter`](../scripts/lib/arch-intent/adapter-contract.mjs#L214) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 214-232 | Dynamically imports stack-specific architecture analyzer | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`runArchIntentAnalysis`](../scripts/lib/arch-intent/adapter-contract.mjs#L263) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 263-331 | Runs full architecture-intent analysis pipeline (inventory, violations, dead domains) | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`validateAdapterReport`](../scripts/lib/arch-intent/adapter-contract.mjs#L241) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 241-252 | Validates adapter-returned report schema | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
 | [`analyseImports`](../scripts/lib/arch-intent/adapters/java.mjs#L325) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 325-444 | Analyzes Java import dependencies across mapped files, detecting cross-domain edges and unresolved references. | _(internal)_ |
 | [`buildJavaResolutionIndex`](../scripts/lib/arch-intent/adapters/java.mjs#L176) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 176-233 | Indexes Java files by fully-qualified name, package, and source root for import resolution. | _(internal)_ |
 | [`extractImports`](../scripts/lib/arch-intent/adapters/java.mjs#L132) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 132-164 | Parses Java import statements including static and wildcard forms with line numbers. | _(internal)_ |
@@ -2638,11 +2637,11 @@ _Domain has 950 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`renderAgentFixLines`](../scripts/lib/commit-trailers.mjs#L270) | function | `scripts/lib/commit-trailers.mjs` | 270-273 | Formats validation errors into actionable "AGENT FIX:" lines with field, expected value, actual value, and example. | `scripts/ship-commit.mjs` |
 | [`resolveEvidence`](../scripts/lib/commit-trailers.mjs#L96) | function | `scripts/lib/commit-trailers.mjs` | 96-123 | Reads and validates an audit-run evidence file to determine its freshness state and run ID validity. | `scripts/ship-commit.mjs` |
 | [`validateTrailerInput`](../scripts/lib/commit-trailers.mjs#L153) | function | `scripts/lib/commit-trailers.mjs` | 153-225 | Validates --skill, --models, --gate CLI arguments against allowed values and checks for reserved trailers in the message. | `scripts/ship-commit.mjs` |
-| [`buildAzureConfig`](../scripts/lib/config.mjs#L562) | function | `scripts/lib/config.mjs` | 562-631 | Constructs Azure AI Foundry configuration from env vars or inert snapshot if inactive. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
-| [`clampConfigNumber`](../scripts/lib/config.mjs#L76) | function | `scripts/lib/config.mjs` | 76-96 | Parses and clamps numeric config value within min/max bounds with fallback and warning. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
-| [`clampFpReadLimit`](../scripts/lib/config.mjs#L352) | function | `scripts/lib/config.mjs` | 352-364 | Clamps false-positive read limit within configured min/max with warning. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
-| [`normalizeLanguage`](../scripts/lib/config.mjs#L253) | function | `scripts/lib/config.mjs` | 253-266 | Normalizes language strings to canonical forms using alias mappings. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
-| [`validatedEnum`](../scripts/lib/config.mjs#L28) | function | `scripts/lib/config.mjs` | 28-35 | Validates an env var is in an allowed set, returns it or fallback with warning. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
+| [`buildAzureConfig`](../scripts/lib/config.mjs#L562) | function | `scripts/lib/config.mjs` | 562-631 | Builds Azure OpenAI config from environment variables or returns an inert snapshot if disabled. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
+| [`clampConfigNumber`](../scripts/lib/config.mjs#L76) | function | `scripts/lib/config.mjs` | 76-96 | Parses, validates, and clamps numeric env var to range | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
+| [`clampFpReadLimit`](../scripts/lib/config.mjs#L352) | function | `scripts/lib/config.mjs` | 352-364 | Constrains a false-positive read limit between minimum and maximum bounds. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
+| [`normalizeLanguage`](../scripts/lib/config.mjs#L253) | function | `scripts/lib/config.mjs` | 253-266 | Maps language names to normalized identifiers (js, ts, py, go, other). | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
+| [`validatedEnum`](../scripts/lib/config.mjs#L28) | function | `scripts/lib/config.mjs` | 28-35 | Validates enum env var against allowed set with warnings | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/bandit.mjs`, +50 more |
 | [`consumerAliases`](../scripts/lib/consumer-repos.mjs#L66) | function | `scripts/lib/consumer-repos.mjs` | 66-68 | Returns the list of all configured consumer repository aliases | `scripts/install-prepush-hook.mjs`, `scripts/lib/sync-inventory.mjs`, `scripts/sync-refresh.mjs`, +1 more |
 | [`loadLocalRepos`](../scripts/lib/consumer-repos.mjs#L37) | function | `scripts/lib/consumer-repos.mjs` | 37-54 | Loads consumer repository definitions from consumer-repos.local.json | `scripts/install-prepush-hook.mjs`, `scripts/lib/sync-inventory.mjs`, `scripts/sync-refresh.mjs`, +1 more |
 | [`resolveTargets`](../scripts/lib/consumer-repos.mjs#L77) | function | `scripts/lib/consumer-repos.mjs` | 77-80 | Filters consumer repositories by name or alias, returning all if no filter specified | `scripts/install-prepush-hook.mjs`, `scripts/lib/sync-inventory.mjs`, `scripts/sync-refresh.mjs`, +1 more |
@@ -3311,15 +3310,15 @@ _Domain has 950 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`stratifiedMediumSample`](../scripts/lib/solo-control/stratified-sample.mjs#L61) | function | `scripts/lib/solo-control/stratified-sample.mjs` | 61-134 | Samples clusters proportionally by commit with per-commit caps and rebalancing to exact target. | `scripts/solo-control-audit.mjs` |
 | [`runJsonLinesAsync`](../scripts/lib/subprocess.mjs#L56) | function | `scripts/lib/subprocess.mjs` | 56-128 | Spawns a subprocess, streams JSON-lines output, parses lines with error tracking. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/symbol-index/refresh.mjs` |
 | [`runJsonLinesAsyncStrict`](../scripts/lib/subprocess.mjs#L149) | function | `scripts/lib/subprocess.mjs` | 149-208 | Wraps runJsonLinesAsync to enforce strict exit code, signal, and parse-error contracts. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/symbol-index/refresh.mjs` |
-| [`applyCloudFpSuppression`](../scripts/lib/suppression-policy.mjs#L272) | function | `scripts/lib/suppression-policy.mjs` | 272-285 | Splits findings into kept and suppressed lists based on a suppression policy. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
-| [`buildCloudFpPolicy`](../scripts/lib/suppression-policy.mjs#L222) | function | `scripts/lib/suppression-policy.mjs` | 222-253 | Resolves FP patterns into a suppression policy with lifecycle state and availability info. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
-| [`buildLedgerExclusions`](../scripts/lib/suppression-policy.mjs#L24) | function | `scripts/lib/suppression-policy.mjs` | 24-36 | Extracts dismissed findings from an adjudication ledger as exclusion rules. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
-| [`matchesFinding`](../scripts/lib/suppression-policy.mjs#L105) | function | `scripts/lib/suppression-policy.mjs` | 105-112 | Tests whether a finding matches an FP pattern by category/severity/principle. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
-| [`resolveFpPatterns`](../scripts/lib/suppression-policy.mjs#L49) | function | `scripts/lib/suppression-policy.mjs` | 49-100 | Merges local and cloud FP patterns, applies decay, and deduplicates. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
-| [`resolveSuppressionPolicy`](../scripts/lib/suppression-policy.mjs#L137) | function | `scripts/lib/suppression-policy.mjs` | 137-141 | Combines ledger exclusions and FP patterns into a unified suppression policy. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
-| [`runCloudFpPass`](../scripts/lib/suppression-policy.mjs#L307) | function | `scripts/lib/suppression-policy.mjs` | 307-318 | Applies cloud FP suppression to findings and logs the suppressed count. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
-| [`scopeCompleteness`](../scripts/lib/suppression-policy.mjs#L186) | function | `scripts/lib/suppression-policy.mjs` | 186-193 | Checks if a FP scope (repo/global patterns) is complete or identifies its failure (failed/skipped/truncated). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
-| [`shouldSuppressFinding`](../scripts/lib/suppression-policy.mjs#L150) | function | `scripts/lib/suppression-policy.mjs` | 150-181 | Determines if a finding should be suppressed by FP patterns or ledger, with confidence. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`applyCloudFpSuppression`](../scripts/lib/suppression-policy.mjs#L292) | function | `scripts/lib/suppression-policy.mjs` | 292-316 | Filters findings through a cloud FP policy, returning kept findings and suppression records. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`buildCloudFpPolicy`](../scripts/lib/suppression-policy.mjs#L242) | function | `scripts/lib/suppression-policy.mjs` | 242-273 | Constructs a cloud FP suppression policy from loaded data with lifecycle state. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`buildLedgerExclusions`](../scripts/lib/suppression-policy.mjs#L24) | function | `scripts/lib/suppression-policy.mjs` | 24-36 | Extracts dismissed ledger entries into a suppression format. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`matchesFinding`](../scripts/lib/suppression-policy.mjs#L122) | function | `scripts/lib/suppression-policy.mjs` | 122-129 | Tests whether a false-positive pattern matches a finding by category, severity, and principle. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`resolveFpPatterns`](../scripts/lib/suppression-policy.mjs#L49) | function | `scripts/lib/suppression-policy.mjs` | 49-117 | Merges local and cloud false-positive patterns, applies decay-at-read, and preps for matching. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`resolveSuppressionPolicy`](../scripts/lib/suppression-policy.mjs#L154) | function | `scripts/lib/suppression-policy.mjs` | 154-158 | Combines ledger exclusions and false-positive patterns into a unified suppression policy. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`runCloudFpPass`](../scripts/lib/suppression-policy.mjs#L338) | function | `scripts/lib/suppression-policy.mjs` | 338-349 | Applies cloud false-positive suppression to findings with logging. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`scopeCompleteness`](../scripts/lib/suppression-policy.mjs#L206) | function | `scripts/lib/suppression-policy.mjs` | 206-213 | Assesses whether a cloud FP scope loaded successfully and is complete (not truncated/failed). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
+| [`shouldSuppressFinding`](../scripts/lib/suppression-policy.mjs#L167) | function | `scripts/lib/suppression-policy.mjs` | 167-201 | Decides whether to suppress a finding by checking FP patterns hierarchically, then ledger. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
 | [`chunkBatches`](../scripts/lib/symbol-index.mjs#L88) | function | `scripts/lib/symbol-index.mjs` | 88-95 | Splits an array into fixed-size chunks. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/symbol-index/embed.mjs`, +2 more |
 | [`compose`](../scripts/lib/symbol-index.mjs#L74) | function | `scripts/lib/symbol-index.mjs` | 74-79 | Formats a symbol record into a readable multi-line string. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/symbol-index/embed.mjs`, +2 more |
 | [`cosineSimilarity`](../scripts/lib/symbol-index.mjs#L105) | function | `scripts/lib/symbol-index.mjs` | 105-116 | Computes cosine similarity between two numeric vectors. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/symbol-index/embed.mjs`, +2 more |
@@ -3396,9 +3395,44 @@ _Domain has 950 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ---
 
+## ship
+
+> Constructs and commits git changes with AI provenance trailers (AI-Skill, AI-Models, AI-Gate), verifying the audit gate verdict before shipping.
+
+```mermaid
+flowchart TB
+subgraph dom_ship ["ship"]
+  file_scripts_ship_commit_mjs["scripts/ship-commit.mjs"]:::component
+  sym_scripts_ship_commit_mjs_err["err"]:::symbol
+  file_scripts_ship_commit_mjs --> sym_scripts_ship_commit_mjs_err
+  sym_scripts_ship_commit_mjs_git["git"]:::symbol
+  file_scripts_ship_commit_mjs --> sym_scripts_ship_commit_mjs_git
+  sym_scripts_ship_commit_mjs_main["main"]:::symbol
+  file_scripts_ship_commit_mjs --> sym_scripts_ship_commit_mjs_main
+  sym_scripts_ship_commit_mjs_resolveSkillName["resolveSkillNames"]:::symbol
+  file_scripts_ship_commit_mjs --> sym_scripts_ship_commit_mjs_resolveSkillName
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`err`](../scripts/ship-commit.mjs#L41) | function | `scripts/ship-commit.mjs` | 41-41 | <no body> | _(internal)_ |
+| [`git`](../scripts/ship-commit.mjs#L43) | function | `scripts/ship-commit.mjs` | 43-45 | Spawns a git subprocess with arguments in a specified directory and returns captured output. | _(internal)_ |
+| [`main`](../scripts/ship-commit.mjs#L78) | function | `scripts/ship-commit.mjs` | 78-281 | CLI entry point that parses arguments, resolves commit parameters, constructs git trailers, and commits with signature. | _(internal)_ |
+| [`resolveSkillNames`](../scripts/ship-commit.mjs#L51) | function | `scripts/ship-commit.mjs` | 51-76 | Discovers skill directory names by reading both skills/ and .claude/skills/ layouts, with error handling. | _(internal)_ |
+
+---
+
 ## stores
 
-> Persists architectural metadata (domain summaries, file-import graphs, symbol neighbourhoods) to Postgres, enabling the architecture-map and cross-skill symbol-discovery features.
+> Persists architectural metadata (domain summaries, symbol embeddings, file-import edges) to Postgres and exposes queries for symbol-index reconstruction, import-graph traversal, and semantic symbol similarity via RPC.
 
 ```mermaid
 flowchart TB
@@ -3446,7 +3480,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 212 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 213 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -3499,19 +3533,20 @@ _Domain has 212 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`recordRun`](../scripts/lib/store/arm-eval.mjs#L110) | function | `scripts/lib/store/arm-eval.mjs` | 110-120 | Inserts an arm-eval run record linking it to a session, arm, and resolved model. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/export.mjs`, `scripts/lib/arm-eval/run.mjs` |
 | [`recordSession`](../scripts/lib/store/arm-eval.mjs#L52) | function | `scripts/lib/store/arm-eval.mjs` | 52-62 | Inserts an arm-eval experiment session with task metadata and configuration versions. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/export.mjs`, `scripts/lib/arm-eval/run.mjs` |
 | [`relExists`](../scripts/lib/store/arm-eval.mjs#L23) | function | `scripts/lib/store/arm-eval.mjs` | 23-29 | Checks if a Postgres table or specific column exists, with SQL-injection prevention via identifier whitelist. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/export.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`buildFpPatternRows`](../scripts/lib/store/bandit-fp.mjs#L186) | function | `scripts/lib/store/bandit-fp.mjs` | 186-216 | Converts in-memory FP patterns to database rows with decay calculations. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`buildFpReadQuery`](../scripts/lib/store/bandit-fp.mjs#L159) | function | `scripts/lib/store/bandit-fp.mjs` | 159-171 | Generates SQL to fetch false-positive patterns filtered by repo and auto-suppress flag. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`fpPatternReadColumns`](../scripts/lib/store/bandit-fp.mjs#L127) | function | `scripts/lib/store/bandit-fp.mjs` | 127-129 | Returns the column list for false-positive pattern queries. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`getFalsePositivePatterns`](../scripts/lib/store/bandit-fp.mjs#L316) | function | `scripts/lib/store/bandit-fp.mjs` | 316-328 | Retrieves auto-suppress-enabled FP patterns for a specific repo. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`getPassEffectiveness`](../scripts/lib/store/bandit-fp.mjs#L392) | function | `scripts/lib/store/bandit-fp.mjs` | 392-409 | Queries audit pass statistics (raised/accepted/dismissed findings) from the store. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`loadBanditArms`](../scripts/lib/store/bandit-fp.mjs#L57) | function | `scripts/lib/store/bandit-fp.mjs` | 57-80 | Fetches bandit arm states from Supabase and reconstructs them locally. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`loadFalsePositivePatterns`](../scripts/lib/store/bandit-fp.mjs#L284) | function | `scripts/lib/store/bandit-fp.mjs` | 284-311 | Fetches FP patterns from both repo and global scopes with limit clamping. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`readFpScope`](../scripts/lib/store/bandit-fp.mjs#L247) | function | `scripts/lib/store/bandit-fp.mjs` | 247-261 | Executes an FP pattern query and reports whether it hit the result limit. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`syncBanditArms`](../scripts/lib/store/bandit-fp.mjs#L28) | function | `scripts/lib/store/bandit-fp.mjs` | 28-49 | Uploads bandit arm states to Supabase. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`syncExperiments`](../scripts/lib/store/bandit-fp.mjs#L335) | function | `scripts/lib/store/bandit-fp.mjs` | 335-361 | Uploads prompt experiment trial data to Supabase. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`syncFalsePositivePatterns`](../scripts/lib/store/bandit-fp.mjs#L228) | function | `scripts/lib/store/bandit-fp.mjs` | 228-241 | Uploads FP patterns to Supabase for cross-repo learning. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`syncPromptRevision`](../scripts/lib/store/bandit-fp.mjs#L368) | function | `scripts/lib/store/bandit-fp.mjs` | 368-383 | Records a promoted prompt revision to the cloud for reference. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
-| [`upsertPromptVariant`](../scripts/lib/store/bandit-fp.mjs#L87) | function | `scripts/lib/store/bandit-fp.mjs` | 87-103 | Records prompt variant effectiveness stats to the cloud store. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`buildFpPatternRows`](../scripts/lib/store/bandit-fp.mjs#L186) | function | `scripts/lib/store/bandit-fp.mjs` | 186-222 | Transforms local false-positive patterns into database row format for cloud upload. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`buildFpReadQuery`](../scripts/lib/store/bandit-fp.mjs#L159) | function | `scripts/lib/store/bandit-fp.mjs` | 159-171 | Constructs a SQL query to fetch false-positive patterns with optional auto-suppress filtering. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`fpPatternReadColumns`](../scripts/lib/store/bandit-fp.mjs#L127) | function | `scripts/lib/store/bandit-fp.mjs` | 127-129 | Returns the list of column names for the false_positive_patterns table. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`getFalsePositivePatterns`](../scripts/lib/store/bandit-fp.mjs#L362) | function | `scripts/lib/store/bandit-fp.mjs` | 362-374 | Fetches auto-suppress-eligible false-positive patterns for a repo from the cloud. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`getPassEffectiveness`](../scripts/lib/store/bandit-fp.mjs#L438) | function | `scripts/lib/store/bandit-fp.mjs` | 438-455 | Queries per-pass finding statistics (raised, accepted, dismissed) for a repo. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`isSyncableRepoId`](../scripts/lib/store/bandit-fp.mjs#L241) | function | `scripts/lib/store/bandit-fp.mjs` | 241-243 | Validates that a repo ID is a UUID and safe to sync to the cloud. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`loadBanditArms`](../scripts/lib/store/bandit-fp.mjs#L57) | function | `scripts/lib/store/bandit-fp.mjs` | 57-80 | Retrieves previously synced bandit arm state from the cloud. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`loadFalsePositivePatterns`](../scripts/lib/store/bandit-fp.mjs#L330) | function | `scripts/lib/store/bandit-fp.mjs` | 330-357 | Retrieves both repo and global false-positive patterns from the cloud with fallbacks. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`readFpScope`](../scripts/lib/store/bandit-fp.mjs#L293) | function | `scripts/lib/store/bandit-fp.mjs` | 293-307 | Fetches false-positive patterns from a specific scope (repo or global). | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`syncBanditArms`](../scripts/lib/store/bandit-fp.mjs#L28) | function | `scripts/lib/store/bandit-fp.mjs` | 28-49 | Uploads Thompson Sampling bandit arm state (alpha, beta, pulls) to the cloud database. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`syncExperiments`](../scripts/lib/store/bandit-fp.mjs#L381) | function | `scripts/lib/store/bandit-fp.mjs` | 381-407 | Persists prompt experiment results and bandit metadata to the cloud database. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`syncFalsePositivePatterns`](../scripts/lib/store/bandit-fp.mjs#L255) | function | `scripts/lib/store/bandit-fp.mjs` | 255-287 | Uploads local false-positive patterns to the cloud with identity validation. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`syncPromptRevision`](../scripts/lib/store/bandit-fp.mjs#L414) | function | `scripts/lib/store/bandit-fp.mjs` | 414-429 | Writes a prompt revision and its SHA-256 checksum to the cloud. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
+| [`upsertPromptVariant`](../scripts/lib/store/bandit-fp.mjs#L87) | function | `scripts/lib/store/bandit-fp.mjs` | 87-103 | Writes or updates prompt variant performance statistics to the cloud. | `scripts/learning-store.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
 | [`appendDebtEventsCloud`](../scripts/lib/store/debt.mjs#L131) | function | `scripts/lib/store/debt.mjs` | 131-156 | Appends debt-event records idempotently. | `scripts/learning-store.mjs` |
 | [`readDebtEntriesCloud`](../scripts/lib/store/debt.mjs#L67) | function | `scripts/lib/store/debt.mjs` | 67-105 | Fetches all debt entries for a repo from cloud. | `scripts/learning-store.mjs` |
 | [`readDebtEventsCloud`](../scripts/lib/store/debt.mjs#L163) | function | `scripts/lib/store/debt.mjs` | 163-184 | Retrieves debt-event history for a repo. | `scripts/learning-store.mjs` |
@@ -4270,15 +4305,15 @@ _Domain has 473 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`mkEnvelope`](../tests/stage1-triage.test.mjs#L23) | function | `tests/stage1-triage.test.mjs` | 23-25 | Creates a test envelope object for stage1 triage with severity and evidence type. | _(internal)_ |
 | [`fakeFs`](../tests/stage1-triager-resolver.test.mjs#L17) | function | `tests/stage1-triager-resolver.test.mjs` | 17-19 | Creates a mock file system object that returns preset contents when read. | _(internal)_ |
 | [`throwingFs`](../tests/stage1-triager-resolver.test.mjs#L20) | function | `tests/stage1-triager-resolver.test.mjs` | 20-22 | Creates a mock file system object that throws an error when read. | _(internal)_ |
-| [`declaredFpPatternColumns`](../tests/store-bandit-fp.test.mjs#L112) | function | `tests/store-bandit-fp.test.mjs` | 112-142 | Parses SQL migrations to extract false_positive_patterns table column names. | _(internal)_ |
-| [`makeTracker`](../tests/store-bandit-fp.test.mjs#L173) | function | `tests/store-bandit-fp.test.mjs` | 173-177 | Creates false-positive tracker with mock no-op storage. | _(internal)_ |
+| [`declaredFpPatternColumns`](../tests/store-bandit-fp.test.mjs#L166) | function | `tests/store-bandit-fp.test.mjs` | 166-196 | Parses SQL migrations to extract the column schema of the false_positive_patterns table. | _(internal)_ |
+| [`makeTracker`](../tests/store-bandit-fp.test.mjs#L380) | function | `tests/store-bandit-fp.test.mjs` | 380-384 | Factory function creating a FalsePositiveTracker with a mock file store for tests. | _(internal)_ |
 | [`tmpRoot`](../tests/store-friction.test.mjs#L65) | function | `tests/store-friction.test.mjs` | 65-65 | Creates a temporary directory with a 'friction-bc-' prefix. | _(internal)_ |
 | [`mkScript`](../tests/subprocess.test.mjs#L22) | function | `tests/subprocess.test.mjs` | 22-26 | Creates a temporary JavaScript file with a unique name and writes content to it. | _(internal)_ |
-| [`cloudRow`](../tests/suppression-policy.test.mjs#L37) | function | `tests/suppression-policy.test.mjs` | 37-53 | Creates a test cloud FP pattern row with dismissal and decay tracking. | _(internal)_ |
-| [`envelope`](../tests/suppression-policy.test.mjs#L59) | function | `tests/suppression-policy.test.mjs` | 59-62 | Creates a test suppression policy envelope with optional repo and global patterns. | _(internal)_ |
-| [`finding`](../tests/suppression-policy.test.mjs#L55) | function | `tests/suppression-policy.test.mjs` | 55-57 | Creates a minimal test finding object. | _(internal)_ |
-| [`iso`](../tests/suppression-policy.test.mjs#L32) | function | `tests/suppression-policy.test.mjs` | 32-32 | Converts a millisecond timestamp to ISO 8601 format. | _(internal)_ |
-| [`suppressingPolicy`](../tests/suppression-policy.test.mjs#L148) | function | `tests/suppression-policy.test.mjs` | 148-150 | Creates a test suppression policy with one FP pattern. | _(internal)_ |
+| [`cloudRow`](../tests/suppression-policy.test.mjs#L37) | function | `tests/suppression-policy.test.mjs` | 37-53 | Mocks a cloud-suppressed finding for testing | _(internal)_ |
+| [`envelope`](../tests/suppression-policy.test.mjs#L59) | function | `tests/suppression-policy.test.mjs` | 59-62 | Wraps suppression patterns with default metadata | _(internal)_ |
+| [`finding`](../tests/suppression-policy.test.mjs#L55) | function | `tests/suppression-policy.test.mjs` | 55-57 | Mocks a minimal finding for testing | _(internal)_ |
+| [`iso`](../tests/suppression-policy.test.mjs#L32) | function | `tests/suppression-policy.test.mjs` | 32-32 | Converts milliseconds to ISO date string | _(internal)_ |
+| [`suppressingPolicy`](../tests/suppression-policy.test.mjs#L161) | function | `tests/suppression-policy.test.mjs` | 161-163 | Resolves suppression policy from cloud patterns | _(internal)_ |
 | [`computeImportGraphPopulated`](../tests/symbol-file-imports.test.mjs#L21) | function | `tests/symbol-file-imports.test.mjs` | 21-23 | Determines whether the import graph has been populated based on mode and prior state. | _(internal)_ |
 | [`shouldCopyForward`](../tests/symbol-file-imports.test.mjs#L26) | function | `tests/symbol-file-imports.test.mjs` | 26-28 | Checks whether a row should be copied forward if its importer path was not touched. | _(internal)_ |
 | [`insertRefreshRun`](../tests/symbol-index-drift-justification.test.mjs#L31) | function | `tests/symbol-index-drift-justification.test.mjs` | 31-37 | Inserts a test refresh run record into the database and returns its ID. | _(internal)_ |
@@ -4294,12 +4329,12 @@ _Domain has 473 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`git`](../tests/sync-untrack.test.mjs#L15) | function | `tests/sync-untrack.test.mjs` | 15-15 | Executes a git command in the test repo and returns the output. | _(internal)_ |
 | [`isTracked`](../tests/sync-untrack.test.mjs#L16) | function | `tests/sync-untrack.test.mjs` | 16-18 | Checks whether a file path is tracked by git in the repo. | _(internal)_ |
 | [`write`](../tests/sync-untrack.test.mjs#L28) | function | `tests/sync-untrack.test.mjs` | 28-33 | Writes content to a file at a relative path within a repo, creating parent directories as needed. | _(internal)_ |
-| [`commit`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L51) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 51-56 | Commits a file and returns the commit SHA. | _(internal)_ |
-| [`gitInit`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L43) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 43-48 | Initializes a git repository with user config and gpgsign disabled. | _(internal)_ |
-| [`HEAD_ANCHOR`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L68) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 68-72 | Creates a test diff anchor representing a file modification location. | _(internal)_ |
-| [`mkdtemp`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L38) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 38-40 | Creates a temporary directory for test files. | _(internal)_ |
-| [`mkEnvelope`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L74) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 74-83 | Creates a test envelope with a fingerprint and HEAD-anchored finding. | _(internal)_ |
-| [`withCwd`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L58) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 58-66 | Temporarily changes working directory while executing a function. | _(internal)_ |
+| [`commit`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L51) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 51-56 | Writes, stages, and commits a file to a test repository, returning its commit SHA. | _(internal)_ |
+| [`gitInit`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L43) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 43-48 | Initializes a Git repository with email, user, and GPG settings for testing. | _(internal)_ |
+| [`HEAD_ANCHOR`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L68) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 68-72 | Returns a template git HEAD anchor object with customizable field overrides. | _(internal)_ |
+| [`mkdtemp`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L38) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 38-40 | Creates a temporary directory with a fixed test prefix. | _(internal)_ |
+| [`mkEnvelope`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L74) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 74-83 | Builds a test evidence envelope with a fingerprint, canonical finding, and HEAD anchor. | _(internal)_ |
+| [`withCwd`](../tests/tiered-pipeline-stage0-wiring.test.mjs#L58) | function | `tests/tiered-pipeline-stage0-wiring.test.mjs` | 58-66 | Temporarily changes the working directory during function execution, then restores it. | _(internal)_ |
 | [`mkFinding`](../tests/tiered-shadow-compare.test.mjs#L34) | function | `tests/tiered-shadow-compare.test.mjs` | 34-40 | Factory creating a test finding with optional field overrides. | _(internal)_ |
 | [`baseContradiction`](../tests/ux-lock-candidate-spec.test.mjs#L33) | function | `tests/ux-lock-candidate-spec.test.mjs` | 33-44 | Creates a test fixture for a value mismatch contradiction between DOM and engine state. | _(internal)_ |
 | [`baseJourney`](../tests/ux-lock-candidate-spec.test.mjs#L46) | function | `tests/ux-lock-candidate-spec.test.mjs` | 46-58 | Creates a test journey fixture with navigation and interaction steps. | _(internal)_ |

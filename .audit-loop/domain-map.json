@@ -162,7 +162,7 @@
       "domain": "ux-lock"
     },
     {
-      "pattern": "scripts/ship.mjs",
+      "pattern": "scripts/ship*.mjs",
       "domain": "ship"
     },
     {
@@ -296,6 +296,10 @@
     ],
     "visual-audit": [
       "shared-lib"
+    ],
+    "ship": [
+      "shared-lib",
+      "stores"
     ]
   },
   "_comment_purposes": "Outcome/purpose taxonomy + domain->purpose edges for the dashboard Purpose tab (docs/completed/dashboard-purpose-view.md). purposes: curated outcome nodes (7); kind=skill-chain when backed by flows.json node ids, else curated. domainPurposes: manual domain->purpose edges; a domain may serve several purposes (rendered with an 'also serves N' badge). Unmapped domains + domains absent from the architecture map surface as hygiene warnings in the tab.",
@@ -339,5 +343,5 @@
     "tests": ["platform-foundation"]
   },
   "_comment_codeless": "Domains that are code-less BY DESIGN (markdown / SQL / SKILL.md-only) — they have no JS symbols, so they will never appear in the code-symbol architecture map. The Purpose-tab hygiene treats a mapped-but-no-arch domain in this list as INFORMATIONAL (a neutral note), not an actionable 'stale rule' warning. Only add a domain here once you've confirmed it genuinely has no indexable code (vs a dead/mis-targeted rule that should be fixed instead).",
-  "codelessDomains": ["ship", "skills-content", "supabase", "docs"]
+  "codelessDomains": ["skills-content", "supabase", "docs"]
 }
