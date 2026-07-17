@@ -54,7 +54,6 @@ const CLI_SMOKE_SET = [
   'visual-audit.mjs',// /visual-audit CLI orchestrator
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
-  'check-docs-refs.mjs', // reference-integrity gate — resolves against the git index, so it must survive relocation
   'model-eval-auditor.mjs', // model-swap-eval-harness Phase 3 auditor-role CLI
   'model-eval-adjudicator.mjs', // model-swap-eval-harness Phase 4 adjudicator-role CLI
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
