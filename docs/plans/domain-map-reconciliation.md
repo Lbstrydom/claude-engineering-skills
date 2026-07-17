@@ -326,7 +326,7 @@ trapped-primitive sweep, so they are **real**.
 
 ### 7b. Implementation phases
 
-**Phase C1 — domains with no `allowedDeps` entry at all (11).** Add verbatim:
+**Phase 1 — domains with no `allowedDeps` entry at all (11).** Add verbatim:
 
 ```
 "arch-intent":  ["shared-lib"]
@@ -342,7 +342,7 @@ trapped-primitive sweep, so they are **real**.
 "solo-control": ["shared-lib"]
 ```
 
-**Phase C2 — undeclared edges on existing entries (11).** Union in:
+**Phase 2 — undeclared edges on existing entries (11).** Union in:
 
 ```
 audit-orchestration += arch-intent, arch-memory, arm-eval, claude-hooks, model-eval, requirements, stores
@@ -358,14 +358,14 @@ shared-lib          += audit-orchestration, claude-hooks, model-eval, nav-audit,
 stores              += model-eval, persona-test
 ```
 
-**Phase C3 — `tests` (item 3).** `allowedDeps.tests` declares 12 domains and
-observes **zero** — the blindness now shows up as pure over-declaration. Add
-`'tests'` to `COMMON_SOURCE_DIRS` and extend the entry 12 → 20, same commit
-(see item 3's coupling note).
+**Phase 3 — annotate, don't hide, the known debt** (see the honesty note
+below), and clear the one stale over-declaration: `root-scripts` declares
+`install` but never observes it — drop it or justify it in prose.
 
-**Phase C4 — annotate, don't hide, the known debt** (see the honesty note
-below): `root-scripts` declares `install` but never observes it — drop it or
-justify it.
+**Phase 4 — `tests` (item 3).** `allowedDeps.tests` declares 12 domains and
+observes **zero** — the blindness now shows up as pure over-declaration. Add
+`'tests'` to `COMMON_SOURCE_DIRS` and extend the entry 12 → 20 (see item 3's
+coupling note).
 
 > **Phase C is a BASELINE (a ratchet), not an endorsement — say so in the map.**
 > Setting `allowedDeps` = observed makes the violation check **vacuous**: it can
@@ -400,13 +400,27 @@ justify it.
 
 ### 11. Execution Clustering
 
-| Cluster | Scope | Files | fix-gate | Coupling |
-|---|---|---|---|---|
-| **C1** | Phase C1 + C2 + C4 — pure `allowedDeps` declaration + debt comments | `.audit-loop/domain-map.json` (modify) | yes | None. Map-only; no runtime behaviour. |
-| **C2** | Phase C3 — `tests` blindness: extractor + `allowedDeps.tests` | `.audit-loop/domain-map.json` (modify), `scripts/symbol-index/extract.mjs` (modify) | final | **Internally coupled — both edits in ONE commit** (extractor alone adds 8 fresh violations; declaration alone is uncorroborated). Independent of C1. |
+**Cluster A — Phases 1-3** — declare the intent baseline (map-only).
+- Files: `.audit-loop/domain-map.json` (modify)
+- fix-gate: yes
+- Coupling: None. Pure declaration + comments; no runtime behaviour changes.
+
+**Cluster B — Phase 4** — the `tests` blindness.
+- Files: `scripts/symbol-index/extract.mjs` (modify), `.audit-loop/domain-map.json` (modify)
+- fix-gate: final
+- Coupling: **Internally coupled — both edits land together** (the extractor
+  line alone adds 8 fresh violations; the declaration alone is uncorroborated
+  by any evidence). Independent of Cluster A.
+
+Final gate: consolidated Gemini review over the union diff (mandatory).
 
 Close-out (outside the phase set): `npm run dashboard:setup`, then re-run the
 repro command and `npm run check`.
+
+> **Both clusters modify `domain-map.json`** — Cluster B touches
+> `allowedDeps.tests` only, which Cluster A does not write. Run A before B; if
+> B is re-run after A cleared, A's record goes `stale` by design (shared
+> derived-scope file) and wants `--authorize-stale-reaudit`.
 
 ## Non-goals
 
