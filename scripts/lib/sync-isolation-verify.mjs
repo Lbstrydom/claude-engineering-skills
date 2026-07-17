@@ -59,6 +59,14 @@ const CLI_SMOKE_SET = [
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
+  // NOTE: `verify-anchor-contract.mjs` is deliberately NOT here. Its plan
+  // (evidence-anchor-path-contract §9a) originally demanded membership by
+  // reflex and was CORRECTED: this set asserts CONSUMER PRESENCE, so an entry
+  // obliges declaring the script in sync-to-repos.mjs — and without that, gate
+  // 4 fails in every consumer while this repo's `npm test` stays green. It is
+  // also a source-repo ship gate probing live providers against a sha pinned
+  // HERE; a consumer has no reason to own it. It keeps its
+  // `--selfcheck-relocation` handler regardless (free, and correct).
 ];
 
 const LIB_IMPORT_SET = [

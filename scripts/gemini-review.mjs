@@ -81,7 +81,12 @@ const WronglyDismissedSchema = z.object({
   ),
 });
 
-const GeminiFinalReviewSchema = z.object({
+// Exported so tests/provider-contract-enforceable.test.mjs can assert it stays
+// refinement-free (evidence-anchor-path-contract §7d). It is handed to a
+// provider via z.toJSONSchema below, and z.toJSONSchema drops `.refine`/
+// `.superRefine` SILENTLY — the guard is what stops that recurring here.
+// Export-only; the module's CLI stays behind its import.meta.url guard.
+export const GeminiFinalReviewSchema = z.object({
   verdict: z.enum(['APPROVE', 'CONCERNS', 'CONCERNS_REMAINING', 'REJECT']),
 
   deliberation_quality: z.object({

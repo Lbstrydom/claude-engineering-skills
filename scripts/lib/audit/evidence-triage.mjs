@@ -63,34 +63,68 @@ import { normalizeWhitespace } from '../text-normalize.mjs';
  */
 function extractFileDiffSection(diffText, filePath) {
   if (!diffText || !filePath) return null;
-  const parts = diffText.split(/(?=^diff --git )/m);
-  for (const part of parts) {
-    // Consolidated Gemini gate fix G1: `.` never matches a line terminator in
-    // JS regex (not just `\n` — `\r` is excluded too), so the original
-    // `a\/(.+?) b\/(.+?)\n` could never match a CRLF diff header at all — a
-    // Windows-generated diff (or one round-tripped through a CRLF-preserving
-    // tool) would silently fail EVERY file lookup, degrading Stage 0 to
-    // unverifiable-escalate-everything with no signal anything was wrong.
-    //
-    // Consolidated Gemini gate fix G3, round 3: git quotes each path in the
-    // header (`diff --git "a/path with spaces.js" "b/path with spaces.js"`)
-    // whenever it contains a space or other char core.quotepath treats as
-    // special — the unquoted-only regex returned null for every such file.
-    // Unlike G1 (which corrupted a valid match into a false 'fabricated'),
-    // this failure mode was already SAFE (unverifiable → escalate, never a
-    // silent wrong answer) — fixed anyway for correctness, not urgency.
+  // Thin filter over the shared parser (evidence-anchor-path-contract §7i).
+  // Contract, return shape, and failure direction are BYTE-IDENTICAL to the
+  // pre-refactor implementation — this file's existing tests are the pin.
+  for (const s of parseAllDiffSections(diffText)) {
+    if (s.oldPath !== filePath && s.newPath !== filePath) continue;
+    return { section: s.section, fileStatus: s.fileStatus, oldPath: s.oldPath, newPath: s.newPath };
+  }
+  return null;
+}
+
+/**
+ * Parse EVERY file section out of a unified diff. The shared core extracted
+ * from `extractFileDiffSection` (evidence-anchor-path-contract §7i, Gemini
+ * gate G2): that function takes a KNOWN `filePath` and returns only that
+ * file's section, so `buildDiffPathMap` — which must DISCOVER all files —
+ * could not reuse it without already knowing the answer. Rather than
+ * re-implement the parser (and silently lose the fixes below), the loop is
+ * lifted here and both callers filter over it.
+ *
+ * The two header fixes are REGRESSION-LOCKED behaviour, not incidental:
+ *
+ * - Consolidated Gemini gate fix G1: `.` never matches a line terminator in
+ *   JS regex (not just `\n` — `\r` is excluded too), so the original
+ *   `a\/(.+?) b\/(.+?)\n` could never match a CRLF diff header at all — a
+ *   Windows-generated diff (or one round-tripped through a CRLF-preserving
+ *   tool) would silently fail EVERY file lookup, degrading Stage 0 to
+ *   unverifiable-escalate-everything with no signal anything was wrong.
+ * - Consolidated Gemini gate fix G3, round 3: git quotes each path in the
+ *   header (`diff --git "a/path with spaces.js" "b/path with spaces.js"`)
+ *   whenever it contains a space or other char core.quotepath treats as
+ *   special — the unquoted-only regex returned null for every such file.
+ *   Unlike G1 (which corrupted a valid match into a false 'fabricated'),
+ *   this failure mode was already SAFE (unverifiable → escalate, never a
+ *   silent wrong answer) — fixed anyway for correctness, not urgency.
+ *
+ * ACCEPTED DEBT, INHERITED not re-litigated (§7i): the header regex handles
+ * unquoted paths and a narrow quoted-space case, NOT Git's full C-style
+ * quoted-path grammar (octal escapes, embedded quotes/backslashes). An exotic
+ * filename yields no section here — and the failure direction stays SAFE by
+ * construction: no section → `extractFileDiffSection` returns null → the
+ * anchor resolves `unverifiable` (never a false match), and `buildDiffPathMap`
+ * simply mints no id for it, so no anchor can cite it.
+ *
+ * @param {string} diffText
+ * @returns {Array<{section: string, fileStatus: 'modified'|'added'|'deleted'|'renamed'|'copied',
+ *   oldPath: string, newPath: string}>} in diff-header order; `[]` when nothing parses.
+ */
+export function parseAllDiffSections(diffText) {
+  if (!diffText) return [];
+  const out = [];
+  for (const part of String(diffText).split(/(?=^diff --git )/m)) {
     const header = part.match(/^diff --git "?a\/(.+?)"? "?b\/(.+?)"?\r?\n/);
     if (!header) continue;
     const [, oldPath, newPath] = header;
-    if (oldPath !== filePath && newPath !== filePath) continue;
     let fileStatus = 'modified';
     if (/^new file mode/m.test(part)) fileStatus = 'added';
     else if (/^deleted file mode/m.test(part)) fileStatus = 'deleted';
     else if (/^rename from /m.test(part)) fileStatus = 'renamed';
     else if (/^copy from /m.test(part)) fileStatus = 'copied';
-    return { section: part, fileStatus, oldPath, newPath };
+    out.push({ section: part, fileStatus, oldPath, newPath });
   }
-  return null;
+  return out;
 }
 
 /**

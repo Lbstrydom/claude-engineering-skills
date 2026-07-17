@@ -1,5 +1,27 @@
 # Project Status Log
 
+## 2026-07-17 — evidence-anchor-path-contract Cluster B: the diff-path map + provider-enforceable producer contract (Phases 3–7)
+
+### Changes
+- **Builds on Cluster A** (already in `main` via a parallel session's rebase-replay of the earlier bundled commit). Cluster A split Stage 0's single `fabricated` verdict into `malformed`/`contradicted`/`unsupported`; Cluster B removes the *cause* those classes were measuring.
+- **The diff-path map that never existed** (`scripts/lib/audit/diff-path-map.mjs`): `EvidenceAnchorSchema.diffPathId` has always been documented as "from the diff-path map", but that map was specified and never built — models were asked to cite an id from a map they were never given. `buildDiffPathMap(diffText)` now mints opaque ordinal ids (`f0001`…, never paths — D7) from `parseAllDiffSections` (extracted as the shared parser core so `extractFileDiffSection` stays byte-identical, Gemini G2), with a three-way `ready`/`empty`/`invalid` result so a broken diff can never read as an ordinary empty scope.
+- **The constraint moved from the row providers ignore to the row they enforce**: `makeProducerFindingV3Schema(ids)` narrows `diffPathId` to a `z.enum` of this run's real files and expresses the commission/omission rule as a `discriminatedUnion` — both provider-enforceable, unlike V2's `superRefine`. **Capability probe confirmed live**: BOTH Anthropic tool-use AND OpenRouter/GLM honour the enum (3/3 anchors each, 0 outside). The model no longer supplies `oldFile`/`newFile`/`fileStatus` at all — they're derived from our own map (D1).
+- **`prepareCandidates` is the untrusted producer boundary** (D6): takes `unknown`, `safeParse`s per-finding, returns `ready`/`malformed`/`contradicted` — one bad finding degrades itself, never the batch. `contradicted` (the diff disproves a model claim) is its OWN kind, never folded into `malformed` (our contract couldn't parse it) — different owners, counted separately (`discoveryContradictedRaw` ≠ `discoveryMalformedRaw`). Empty/invalid diffs skip BOTH generators and get named run statuses — never a clean 0-finding `complete` run.
+- **The generalised trap guard** (`tests/provider-contract-enforceable.test.mjs`): walks every provider-facing schema for `custom` (dropped-by-`z.toJSONSchema`) checks AND source-scans every `z.toJSONSchema(` call site against a registry — so this bug class (a refinement a provider silently ignores) cannot recur unseen. Verified it bites at root, nested-field, and inside-array depth.
+- **`normalizeModifiedAnchorPaths` retired** (the band-aid Cluster A's plan rejected); `clampToJsonSchemaLimits` kept.
+- **`scripts/verify-anchor-contract.mjs`**: the mandatory live-provider acceptance probe (§9a) — real map → enum → production payload → live call → Stage 0 counters, three-way exit (0 met / 1 failed / 2 could-not-run, never conflated).
+
+### Known-open (being fixed next, per the /cycle sequence)
+- **G1 (consolidated Gemini gate, HIGH)**: the probe's acceptance criterion still hardcodes `discoveryMalformedRaw === 0` on a single run — the plan was corrected to a RATE across n≥3 after running it flaked (Sonnet failed then passed on the same fixture), but the *implementation* wasn't updated to match. **NOT yet wired into `/ship`** precisely because it's flaky. Fix in flight.
+- **G3 (LOW)**: the refinement walker misses `ZodIntersection` `left`/`right` — no provider schema uses one today, so not live; being closed anyway.
+- **G2 was refuted** (Gemini claimed `shouldSkipForIndexing` realpaths and fails closed on deleted files; it's purely lexical — verified against `sensitive-paths.mjs`). Third confident-but-wrong reviewer *mechanism* this session; each was run to ground rather than accepted or dismissed on prose.
+
+### Verification
+- All Cluster B suites green: `diff-path-map` (18), `provider-contract-enforceable` (10), `verify-anchor-contract` (25), `evidence-triage` (80), the two tiered-pipeline wiring suites — 100% on the changed surface.
+- Probe run live: GLM accepted (raw=2, malformed=0, verified=2); Sonnet flaked (1/1 then 5/0) — which is exactly what motivated the G1 rate correction.
+- Consolidated Gemini gate over the union diff (both clusters, 3503 lines/17 files): `CONCERNS_REMAINING` — architecture called "brilliant", concerns are the two implementation findings above. Round 1 of 2 consumed; round 2 pends the G1 fix.
+- **Not verified here**: the full suite is red from a *parallel session's* uncommitted `anthropic-client` edits (HEAD test has 0 `baseURL` refs, working tree has 14) — provably not this work; this commit contains none of those files.
+
 ## 2026-07-18 — Sibling-path defects closed: bandit_arms NULL-conflict key + the local FP tracker and metadata enrichment lifted out of the ledger branch
 
 ### Changes

@@ -202,6 +202,98 @@ export const ProducerFindingV2Schema = z.object({
   }
 });
 
+// ── Producer contract V3 — provider-ENFORCEABLE by construction ──────────────
+// (evidence-anchor-path-contract, 2026-07-17)
+//
+// V2 above is the cautionary tale, kept for its existing callers. Its path
+// rules and its commission/omission rule live in `superRefine`, which
+// `z.toJSONSchema()` CANNOT express — so the provider never enforced any of
+// them. Measured: a real Sonnet call filled the REQUIRED `diffPathId` 4/4 and
+// omitted the OPTIONAL `oldFile`/`newFile` 4/4, and Stage 0 destroyed all four
+// as `fabricated`. Models behave rationally against the schema they are SHOWN.
+//
+// V3's rule: every constraint must live in the row the provider can enforce.
+//
+//   | constraint                    | JSON Schema | provider enforces |
+//   |-------------------------------|-------------|-------------------|
+//   | required / type / **enum**     | yes         | **yes**           |
+//   | cross-field (`superRefine`)    | no          | **no** (ignored)  |
+//
+// So: paths and fileStatus are DERIVED from our own diff-path map (never
+// asked for — Gate A re-verifies them against the real diff anyway, i.e. they
+// were never trusted as model input); the id is an `enum` of this run's actual
+// files; and the commission/omission conditional becomes a
+// `discriminatedUnion`, which emits `oneOf` + per-branch `required`.
+//
+// V3 MUST stay refinement-free — `tests/provider-contract-enforceable.test.mjs`
+// asserts it, and an allowlist entry would disarm that guard on its first use.
+
+/**
+ * What a generator emits for an anchor: an id, which side, where, and the
+ * quote. Nothing else — a model cannot know a diff-pair's identity, and we
+ * already do.
+ */
+export const ProducerEvidenceAnchorSchema = z.object({
+  diffPathId: z.string().max(200).describe('The `id` column from the diff-path table you were given. Copy it exactly.'),
+  side: z.enum(['base', 'head']).describe('Which side of the diff the quote is on'),
+  startLine: z.number().int().min(1),
+  endLine: z.number().int().min(1),
+  quote: z.string().min(1).max(1000).describe('Text copied VERBATIM from the code you were given — never paraphrased'),
+  symbolName: z.string().max(200).nullable().optional(),
+});
+
+/**
+ * Build the per-run producer schema, with `diffPathId` narrowed to an `enum`
+ * of THIS diff's ids. The enum is the constraint the provider can actually
+ * enforce — but it is a funnel, never a trust boundary (plan D6):
+ * `prepareCandidates` `safeParse`s the response regardless.
+ *
+ * @param {string[]} ids - from `buildDiffPathMap(...).entries` — the SOLE source (D7)
+ * @returns {import('zod').ZodType} refinement-free; safe for `z.toJSONSchema`
+ */
+export function makeProducerFindingV3Schema(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) {
+    // `z.enum([])` is not constructible. The caller must handle
+    // `{kind:'empty'}`/`{kind:'invalid'}` BEFORE reaching here (plan §7j) —
+    // failing loudly beats emitting a schema that cannot match anything.
+    throw new Error('makeProducerFindingV3Schema: ids must be non-empty — handle the empty/invalid map before building a schema (§7j)');
+  }
+  const anchor = ProducerEvidenceAnchorSchema.extend({ diffPathId: z.enum(ids) });
+  const base = { ...FindingBase, classification: ClassificationSchema };
+  return z.discriminatedUnion('evidenceType', [
+    z.object({
+      ...base,
+      evidenceType: z.literal('commission'),
+      anchor,
+    }),
+    z.object({
+      ...base,
+      evidenceType: z.literal('omission'),
+      triggerAnchor: anchor,
+      causalChain: z.string().max(800).describe('changed → obligation created → what was searched → why absent'),
+    }),
+  ]);
+}
+
+/**
+ * Schemas handed to a provider via `z.toJSONSchema`. The registry exists so
+ * `tests/provider-contract-enforceable.test.mjs` can assert refinement-freeness
+ * over ALL of them, and its companion source-scan can assert that every
+ * `z.toJSONSchema(` call site's argument is registered — so the list cannot
+ * silently fall behind a new provider contract.
+ *
+ * `ProducerFindingV2Schema` is deliberately ABSENT: it carries superRefine and
+ * is the exact anti-pattern the guard forbids. It stays for its existing
+ * callers, and Cluster B's Phase 6 migration is what removes it from the
+ * provider path.
+ */
+export const PROVIDER_FACING_SCHEMAS = Object.freeze({
+  ProducerEvidenceAnchorSchema,
+  // The per-run V3 is dynamic; its refinement-freeness is a property of the
+  // factory, so the guard instantiates it with a probe id.
+  makeProducerFindingV3Schema,
+});
+
 /**
  * PersistedFindingSchema — what we read from storage. Classification is OPTIONAL/nullable.
  * Old findings written before Phase B have no classification; must still validate.

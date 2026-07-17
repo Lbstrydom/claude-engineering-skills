@@ -302,10 +302,20 @@ describe('buildAuditRunContext — commitSha/workingTreeDirty threading (docs/pl
 describe('static pins — Stage 0 relevance-split wiring (docs/plans/stage0-evidence-relevance-split.md)', () => {
   const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
 
-  test('the discovery generator schema is V2 (evidence-bearing), never V1 — Stage 0 cannot function without evidenceType/anchor', () => {
-    assert.match(src, /import \{ ProducerFindingV2Schema, clampToJsonSchemaLimits \} from '\.\.\/schemas\.mjs'/);
-    assert.match(src, /const glmStrictSchema = z\.object\(\{ findings: z\.array\(ProducerFindingV2Schema\)\.max\(15\) \}\)/);
-    assert.match(src, /items:\s*z\.toJSONSchema\(ProducerFindingV2Schema\)/);
+  // RETARGETED V2 → V3 (evidence-anchor-path-contract Phase 6). The original
+  // pin's SUBJECT survives unchanged: the discovery schema must be
+  // evidence-bearing, never V1 — Stage 0 cannot function without
+  // evidenceType/anchor, and V1 silently stripped both. V3 keeps that property
+  // and adds the one V2 lacked: it is actually ENFORCEABLE by the provider
+  // (V2's rules lived in superRefine, which z.toJSONSchema drops silently, so
+  // "the provider validates it" was always false). Pinning V2 now would pin the
+  // defect.
+  test('the discovery generator schema is V3 (evidence-bearing AND provider-enforceable), never V1/V2', () => {
+    assert.match(src, /import \{ makeProducerFindingV3Schema, clampToJsonSchemaLimits \} from '\.\.\/schemas\.mjs'/);
+    assert.match(src, /const glmStrictSchema = z\.object\(\{ findings: z\.array\(producerFindingSchema\)\.max\(15\) \}\)/);
+    assert.match(src, /items:\s*z\.toJSONSchema\(producerFindingSchema\)/);
+    assert.equal(/ProducerFindingV2Schema/.test(src.replace(/^\s*\/\/.*$/gm, '')), false,
+      'V2 must no longer reach a provider from this module — its superRefine is the bug class');
   });
 
   test('the Stage 0 stub adapters (() => null) are gone — real adapters are wired', () => {
@@ -383,8 +393,16 @@ describe('shadow vs production fallback (docs/plans/shadow-no-legacy-fallback.md
   // A ctx that reaches the requiredGeneratorFailed branch deterministically:
   // both required generators are unavailable (no ossCall, no anthropicClient),
   // so runDiscoveryPortfolio marks required-failure without any network call.
+  //
+  // diffText was `''` until evidence-anchor-path-contract Phase 6. It must now
+  // be a REAL diff: an empty one yields `{kind:'empty'}`, which by design skips
+  // both generators and returns `skipped_no_eligible_files` BEFORE discovery
+  // ever runs — so these tests would silently stop exercising the
+  // required-generator-failure path they exist to pin. A one-file diff is the
+  // minimum that makes the map `ready`.
+  const REAL_DIFF = 'diff --git a/x.js b/x.js\nindex 111..222 100644\n--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n-old\n+new\n';
   const failingCtx = (over = {}) => ({
-    planContent: 'p', changedFiles: [], diffText: '', generatorOutcomes: [],
+    planContent: 'p', changedFiles: [], diffText: REAL_DIFF, generatorOutcomes: [],
     providers: {
       openai: null, ossCall: null, anthropicClient: null,
       geminiReviewCall: async () => ({ verdict: 'verified' }),
@@ -458,5 +476,73 @@ describe('shadow vs production fallback (docs/plans/shadow-no-legacy-fallback.md
     // and tieredFallbackReasons stay mutually legible.
     assert.ok(shadowReason.includes('glm') || shadowReason.includes('sonnet'),
       'the failing generator must be named in the reason');
+  });
+
+  // ── The anti-green rule, behaviourally (evidence-anchor-path-contract §7j) ──
+  // "The test that would have caught this on day one": a run that verified
+  // NOTHING must never summarise as a clean 0-finding `complete` run.
+  // summarize()'s decision-grade filter is `tieredRunStatus === 'complete'`, so
+  // a wrong status here silently re-poisons the Phase-14 denominator — which is
+  // exactly how 62 vacuous runs read as a met window.
+  test('empty scope: BOTH generators skipped, named status, never `complete`', async () => {
+    // Providers that would THROW if called — the strongest available proof that
+    // no provider call happens, since there is no other injection seam.
+    const ctx = failingCtx({
+      diffText: '',
+      providers: {
+        openai: null,
+        ossCall: () => { throw new Error('ossCall must never be reached for an empty map'); },
+        anthropicClient: { messages: { create: () => { throw new Error('sonnet must never be reached for an empty map'); } } },
+        geminiReviewCall: async () => ({ verdict: 'verified' }),
+        geminiCleanRegionCall: async () => ({ verdict: 'clean' }),
+      },
+    });
+    const result = await runTieredAuditPipeline(ctx);
+    assert.equal(result.runStatus, 'skipped_no_eligible_files');
+    assert.notEqual(result.runStatus, 'complete', 'a run that called no generator is NOT a clean zero-findings run');
+    assert.deepEqual(result.findings, []);
+    assert.match(result.fallbackReason, /no_eligible_diff_files/);
+    assert.equal(result.verdict, 'INCOMPLETE');
+    // The zeros must be attributable: `discoveryRawFindings: 0` here means
+    // "nothing ran", not "nothing found" — the status is what tells them apart.
+    assert.equal(result._stageBreakdown.discoveryRawFindings, 0);
+    assert.equal(result._stageBreakdown.discoveryMalformedRaw, 0);
+    assert.match(result._stageBreakdown.diffPathMapStatus, /^empty:/);
+  });
+
+  test('invalid diff input: its OWN status, never conflated with an empty scope', async () => {
+    // §7j/H5: collapsing these would let a broken input read as an ordinary
+    // no-op. `invalid` is attributed to OUR bug; `empty` to neither.
+    const result = await runTieredAuditPipeline(failingCtx({ diffText: 'this is not a diff at all\njust prose\n' }));
+    assert.equal(result.runStatus, 'failed_invalid_diff_input');
+    assert.match(result.fallbackReason, /malformed_diff_header/);
+    assert.match(result._stageBreakdown.diffPathMapStatus, /^invalid:/);
+  });
+
+  test('a shadow run reports empty/invalid as a RESULT, not a TieredUnavailableError', async () => {
+    // Distinct from a required-generator failure: the pipeline did not fail, it
+    // correctly declined to run. §7j gives it its own reason bucket in
+    // comparedRuns rather than the shadow's {ok:false} error channel.
+    const result = await runTieredAuditPipeline(failingCtx({ diffText: '', shadowMode: true }));
+    assert.equal(result.runStatus, 'skipped_no_eligible_files');
+  });
+
+  test('over-budget map: a named required-generator failure that falls back, never a truncated success', async () => {
+    // §8a: truncation would make real changed files unauditable while reporting
+    // success — the anti-green class again. It reuses §1.5's existing semantics,
+    // so production falls back and the shadow throws, exactly like any other
+    // required-generator failure.
+    const many = Array.from({ length: 400 }, (_, i) =>
+      `diff --git a/src/f${i}.js b/src/f${i}.js\nindex 1..2 100644\n--- a/src/f${i}.js\n+++ b/src/f${i}.js\n@@ -1 +1 @@\n-a\n+b\n`).join('');
+    await assert.rejects(
+      () => runTieredAuditPipeline(failingCtx({ diffText: many, shadowMode: true })),
+      (err) => {
+        assert.equal(err.name, 'TieredUnavailableError');
+        assert.match(err.reason, /^required generator failed: /);
+        assert.match(err.reason, /discovery_map_exceeds_budget/);
+        assert.match(err.reason, /not truncated/);
+        return true;
+      },
+    );
   });
 });

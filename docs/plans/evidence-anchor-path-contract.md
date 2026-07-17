@@ -697,20 +697,61 @@ it mandatory without specifying it, which is exactly the "GREEN ≠ REALIZED" ga
 
 - **CLI**: `node scripts/verify-anchor-contract.mjs --rev <sha> [--generator sonnet|glm|all] [--json] [--out <file>]`.
   Default `--generator all`.
-- **Repo-rule compliance (both currently unmet by the draft)**: implements
-  `--selfcheck-relocation` (printing `OK`, exiting 0) at the head of `main()` and is added
-  to `CLI_SMOKE_SET`; selects models via `resolveModel('latest-sonnet')` sentinels — **no
-  pinned concrete ids**.
+- **Repo-rule compliance**: implements `--selfcheck-relocation` (printing `OK`, exiting 0)
+  at the head of `main()`; selects models via `resolveModel('latest-sonnet')` sentinels —
+  **no pinned concrete ids**.
+- **`CLI_SMOKE_SET` membership is REJECTED (corrected 2026-07-17, at implementation).** The
+  draft demanded it by reflex, from the rule "every top-level CLI implements the handler".
+  But that set asserts **consumer presence** — so membership silently obliges declaring
+  this script in `sync-to-repos.mjs`'s entry points, and **without that, gate 4 fails in
+  every consumer repo while `npm test` here stays green**. An invisible cross-repo break is
+  precisely the failure class the isolation verifier exists to prevent, and the plan would
+  have caused it. It is also simply wrong on the merits: this is a **source-repo ship gate
+  that probes live providers against a sha pinned in THIS repo** — a consumer has no reason
+  to own it. The `--selfcheck-relocation` handler stays (it is free and correct); the
+  CLI_SMOKE_SET entry does not. If it is ever synced, the `sync-to-repos.mjs` entry must
+  land in the SAME commit.
 - **Fixture**: a *committed* revision, never the working tree (an uncommitted tree makes the
   result unreproducible and drags unrelated files into the payload — the confound that
   broke the 2026-07-17 shadow run). Default: a pinned known-good sha recorded in the script;
   `--rev` overrides. The diff is taken via the existing `vcs.mjs` contract.
 - **Egress**: reuses `filterDiffFiles` + `redactSecrets` on the same path as production —
   the probe MUST NOT construct its own payload, or it stops testing the real seam.
-- **Exit semantics**: `0` = acceptance met (`stage0Verified > 0 && stage0Malformed === 0`
-  for every requested generator); `1` = acceptance failed (counters present, criteria
-  unmet); `2` = could not run (provider unavailable / capability probe failed) — **never
-  conflated with pass**, per the anti-green rule.
+- **Exit semantics**: `0` = acceptance met (criterion below, for every requested
+  generator); `1` = acceptance failed (counters present, criteria unmet); `2` = could not
+  run (provider unavailable / capability probe failed / bad rev) — **never conflated with
+  pass**, per the anti-green rule. A definite failure outranks could-not-run; both are
+  non-zero, so "couldn't check" can never read as clean.
+
+#### The acceptance criterion is a RATE, not a zero (corrected 2026-07-17, by running it)
+
+The draft demanded `stage0Verified > 0 && stage0Malformed === 0`. **Running it refuted
+that**: on the same fixture, Sonnet returned 1 raw finding with 1 `producer_dto_invalid`
+(exit 1, "failed") and then, on a rerun, 5 raw findings with 0 malformed (exit 0). Same
+code, same commit, opposite verdicts — a **sampling flake, not a defect**.
+
+`=== 0` was wrong on the plan's own terms. **D6 says the enum is a funnel, not a trust
+boundary** — so an occasional provider-emitted DTO our Zod rejects is *expected variance*,
+not a contract failure. A gate that treats one sloppy field as a broken contract is doing
+exactly what this whole plan condemns: **conflating the model's error with ours**, just
+pointed the other way. And on a 1-finding run a single bad field is 100% malformed, so the
+gate's flakiness is worst precisely when the sample is smallest.
+
+What actually broke was **`stage0Verified > 0` in 1 of 62 runs** — that is the acceptance
+criterion, because that is the failure. Malformed is a *rate* to watch, not a zero to
+demand:
+
+| Signal | Rule | Why |
+|---|---|---|
+| `stage0Verified > 0` | **required, every run** | The literal defect. 0 verified = the pipeline verified nothing. |
+| `discoveryMalformedRaw / discoveryRawFindings` | **required < 0.34 across n ≥ 3 runs** (aggregate, not per-run) | Catches a SYSTEMATIC contract break (the real bug was ~100%) while tolerating the single-field variance D6 predicts. `n ≥ 3` because a 1-finding sample cannot distinguish the two. |
+| `stage0MalformedTripwire` | **required 0** | Post-hydration, this class is unreachable by construction; a non-zero value means hydration regressed — genuinely binary. |
+| `discoveryContradictedRaw` | **reported, never gates** | The MODEL's error (the diff disproved its claim) — working as designed. |
+
+The threshold is a v1 bootstrap on two observations; it needs recalibration once real runs
+accumulate, and it carries the same honesty as `oss-call-policy.json`'s `calibrationNote`.
+**Do not wire this into `/ship` until the rate rule is implemented** — a flaky ship gate
+gets disabled within a week, which is worse than no gate.
 - **Evidence**: writes the per-generator counters + resolved model ids + rev to `--out`
   (gitignored, Category A) so the acceptance claim is reproducible rather than asserted.
 

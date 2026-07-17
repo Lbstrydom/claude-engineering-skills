@@ -52,10 +52,11 @@ import { z } from 'zod';
 import { ossStructuredCall } from './lib/oss-structured-output.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
 import { auditShadowConfig } from './lib/config.mjs';
-import { ProducerFindingV2Schema, clampToJsonSchemaLimits } from './lib/schemas.mjs';
-import { normalizeModifiedAnchorPaths } from './lib/audit/tiered-pipeline.mjs';
+import { makeProducerFindingV3Schema, clampToJsonSchemaLimits } from './lib/schemas.mjs';
+import { buildDiffPathMap, renderDiffPathTable, prepareCandidates } from './lib/audit/diff-path-map.mjs';
 import { readFilesAsContext } from './lib/file-io.mjs';
 import { redactSecrets } from './lib/sensitive-egress-gate.mjs';
+import { shouldSkipForIndexing } from './lib/sensitive-paths.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -114,35 +115,63 @@ async function resolveArmModels(arms, baseUrl, apiKey) {
   });
 }
 
+const FIXTURE_REV = 'a183c3f';
+
 /** The exact discovery payload production assembles (tiered-pipeline.mjs), against a real recent commit. */
 function buildPayload() {
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  const files = execFileSync('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', 'a183c3f'], { encoding: 'utf8' })
+  const files = execFileSync('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', FIXTURE_REV], { encoding: 'utf8' })
     .trim().split('\n').filter((f) => f && fs.existsSync(f));
   const discoveryCode = readFilesAsContext(files, { maxPerFile: 8000, maxTotal: 100000 });
   const discoveryPlan = redactSecrets(fs.readFileSync('docs/plans/shadow-no-legacy-fallback.md', 'utf8'));
-  // System prompt: verbatim from tiered-pipeline.mjs's GLM generator (the
-  // anchor contract) — a research copy; production's stays authoritative.
+
+  // ONE integration, not two (evidence-anchor-path-contract §7h): this screen
+  // routes through the SAME map builder, producer schema, enum, and
+  // `prepareCandidates` as the tiered pipeline. There is deliberately no second,
+  // non-hydrated path — a research fork of the contract would make this
+  // instrument measure a contract production doesn't use.
+  const diffText = execFileSync('git', ['show', '--no-color', '--format=', FIXTURE_REV], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  const rawMap = buildDiffPathMap(diffText);
+  if (rawMap.kind !== 'ready') {
+    throw new Error(`diff-path map for ${FIXTURE_REV} is '${rawMap.kind}' (${rawMap.reason}) — the screen cannot build a producer enum without one`);
+  }
+  // Same egress rule as production: a sensitive path must never appear as a
+  // citable id in the tool schema (redactSecrets masks secret VALUES, it does
+  // not exclude sensitive PATHS).
+  const entries = rawMap.entries.filter((e) =>
+    !shouldSkipForIndexing(e.newPath, ['sensitive']).skip && !shouldSkipForIndexing(e.oldPath, ['sensitive']).skip);
+  if (entries.length === 0) throw new Error(`every file in ${FIXTURE_REV} was filtered as sensitive — no id set to cite`);
+  const map = { kind: 'ready', entries };
+
+  // System prompt: same shape as tiered-pipeline.mjs's GLM generator (the
+  // anchor contract + diff-path table) — a research copy; production's stays
+  // authoritative.
   const system = [
     'You are a code-audit finding generator. Produce candidate findings, each with a content-verifiable evidence anchor.',
     '',
     'ANCHOR CONTRACT — a finding is discarded outright if its anchor breaks these:',
+    '- `diffPathId` MUST be an `id` copied EXACTLY from the DIFF-PATH TABLE below. It is the ONLY way to name a file. Never write a path there, and never invent an id.',
+    '- Do NOT report paths or file status — we derive those from the id ourselves.',
     '- `quote` MUST be text copied VERBATIM from the code you were given. Never paraphrase, reformat, or reconstruct it — it is verified by exact content match against the real file/diff.',
-    '- `fileStatus: "modified"` (the common case) REQUIRES BOTH `oldFile` AND `newFile`, set to the SAME path — a modified file keeps its path on both sides of the diff.',
-    '- `fileStatus: "added"` requires `newFile` (no base-side content exists, so `side` must be "head").',
-    '- `fileStatus: "deleted"` requires `oldFile` (`side` must be "base").',
-    '- `fileStatus: "renamed"`/`"copied"` require BOTH paths, and they differ.',
+    '- `side` is "head" for current/added code and "base" for removed code. An `added` file has no base side; a `deleted` file has no head side.',
     '- `startLine`/`endLine` are 1-indexed and must bracket the quote (`startLine <= endLine`).',
     '- commission findings need `anchor`; omission findings need `triggerAnchor` AND `causalChain`.',
+    '',
+    'DIFF-PATH TABLE — the only files you may cite:',
+    renderDiffPathTable(entries),
   ].join('\n');
   const userPrompt = `## Plan\n${discoveryPlan}\n\n## Changed Files (code)\n${discoveryCode}`;
-  // Production-parity lenient ingestion: clamp + anchor-path normalization
-  // before the strict schema — omitting these would re-penalize exactly the
-  // quirks production already absorbs.
-  const strict = z.object({ findings: z.array(ProducerFindingV2Schema).max(15) });
+
+  // Production-parity lenient ingestion: the clamp absorbs the maxLength/maxItems
+  // violations OSS routers don't enforce. The anchor-path normalizer that used to
+  // compose here is RETIRED — paths are derived from the map now, so there is
+  // nothing left to repair (omitting the clamp would still re-penalize a quirk
+  // production absorbs).
+  const producerFindingSchema = makeProducerFindingV3Schema(entries.map((e) => e.id));
+  const strict = z.object({ findings: z.array(producerFindingSchema).max(15) });
   const jsonSchema = z.toJSONSchema(strict);
-  const schema = z.preprocess((v) => normalizeModifiedAnchorPaths(clampToJsonSchemaLimits(v, jsonSchema)), strict);
-  return { system, userPrompt, schema, files, commit, payloadChars: system.length + userPrompt.length };
+  const schema = z.preprocess((v) => clampToJsonSchemaLimits(v, jsonSchema), strict);
+  return { system, userPrompt, schema, map, producerFindingSchema, files, commit, payloadChars: system.length + userPrompt.length };
 }
 
 function classifyOutcome(r) {
@@ -166,6 +195,11 @@ function summarizeArm(label, records) {
     availabilityWith1Retry: 1 - (1 - p) ** 2, // production runs maxRetries=1
     outcomes,
     latencyMsP50: quantile(okLat, 0.5), latencyMsP95: quantile(okLat, 0.95),
+    // The producer-boundary column (§7h). Distinct from `availability`: an arm
+    // can be 100% available and still emit anchors our contract can't hydrate.
+    preparedReady: records.reduce((s, r) => s + (r.preparedReady ?? 0), 0),
+    preparedMalformed: records.reduce((s, r) => s + (r.preparedMalformed ?? 0), 0),
+    preparedMalformedReasons: [...new Set(records.flatMap((r) => r.preparedMalformedReasons ?? []))],
     measuredCostUsd: Number(measuredCost.toFixed(4)),
     errors: [...new Set(records.filter((r) => r.outcome !== 'ok').map((r) => String(r.error || '').slice(0, 140)))].slice(0, 6),
   };
@@ -212,12 +246,23 @@ async function runArm(arm) {
         passName: `screen-${arm.label}`, timeoutMs: TIMEOUT_MS, maxRetries: 0,
         providerPreferences: arm.providerPreferences ?? null,
       });
+      // §7h: the SAME hydrator production uses. Reported per attempt so the
+      // screen measures the real producer boundary, not a research variant —
+      // `preparedMalformed > 0` on a conformant response means the id/side
+      // contract failed even though the JSON Schema passed, which is precisely
+      // the class the enum exists to close.
+      const prepared = Array.isArray(r.result?.findings)
+        ? prepareCandidates(r.result.findings, payload.map, { producerSchema: payload.producerFindingSchema })
+        : [];
       const rec = {
         arm: arm.label, model: arm.model, i,
         outcome: null, latencyMs: r.latencyMs, conformant: r.conformant,
         error: r.error, category: r.category ?? null,
         providerCostUsd: r.usage?.provider_cost_usd ?? null,
         findings: r.result?.findings?.length ?? null,
+        preparedReady: prepared.filter((p) => p.kind === 'ready').length,
+        preparedMalformed: prepared.filter((p) => p.kind === 'malformed').length,
+        preparedMalformedReasons: [...new Set(prepared.filter((p) => p.kind === 'malformed').map((p) => p.reasonCode))],
       };
       rec.outcome = classifyOutcome(r);
       records.push(rec);

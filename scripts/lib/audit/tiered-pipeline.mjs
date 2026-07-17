@@ -52,9 +52,11 @@
 
 import path from 'node:path';
 import { z } from 'zod';
-import { ProducerFindingV2Schema, clampToJsonSchemaLimits } from '../schemas.mjs';
+import { makeProducerFindingV3Schema, clampToJsonSchemaLimits } from '../schemas.mjs';
 import { readFilesAsContext, safeReadFile } from '../file-io.mjs';
 import { redactSecrets } from '../sensitive-egress-gate.mjs';
+import { shouldSkipForIndexing, formatSkipLog, normalisePath } from '../sensitive-paths.mjs';
+import { buildDiffPathMap, renderDiffPathTable, prepareCandidates } from './diff-path-map.mjs';
 import { processFindings, computeAuditVerdict } from './findings-pipeline.mjs';
 import { mergeIntoEnvelopes, flattenEnvelopeToFinding } from './candidate-envelope.mjs';
 import { runStage0EvidenceTriage, resolveScopeBucketForFinding } from './evidence-triage.mjs';
@@ -103,49 +105,77 @@ export class TieredUnavailableError extends Error {
 }
 
 /**
- * Normalize the ONE definitionally-determined anchor invariant an OSS router
- * reliably gets wrong (found by this plan's pre-ship empirical verify,
- * 2026-07-16): `EvidenceAnchorSchema.superRefine` requires a `'modified'`
- * anchor to carry BOTH `oldFile` and `newFile`, present AND equal — because
- * "modified" means, by definition, the same path on both sides of the diff.
- * GLM via OpenRouter emits `{fileStatus:'modified', newFile:'x.mjs'}` with
- * `oldFile` absent, so EVERY finding failed validation, the required
- * generator failed, and every run fell back to legacy (observed live: 3/3
- * findings rejected on the same rule).
+ * RETIRED (evidence-anchor-path-contract Phase 6): `normalizeModifiedAnchorPaths`.
  *
- * Anthropic tool-use validates provider-side, so Sonnet never hits this;
- * OpenRouter accepts our JSON Schema without enforcing it. This is the same
- * class `clampToJsonSchemaLimits` (composed alongside it below) already
- * absorbs for maxLength/maxItems — extended to the one field whose correct
- * value is DERIVABLE rather than guessable.
+ * It mirrored `oldFile`↔`newFile` across a `'modified'` anchor because
+ * `EvidenceAnchorSchema.superRefine` demanded both and GLM only ever sent one.
+ * That was a band-aid on the wrong layer: the real defect was ASKING the model
+ * for `oldFile`/`newFile`/`fileStatus` at all. They are facts about the diff,
+ * not claims about the finding — Gate A always re-verified them against the
+ * real diff anyway, i.e. they were never trusted as model input, so asking for
+ * them yielded zero information and existed only as a failure surface (plan D1).
  *
- * Deliberately narrow — it only mirrors a path across a `'modified'` pair
- * when exactly one side is present. It never invents a path, never touches
- * added/deleted/renamed/copied (whose two paths legitimately differ), and
- * never edits `quote`/line numbers. Safe by construction AND independently
- * verified downstream: Gate A (`resolveAnchorLocation`) cross-checks both
- * paths against the REAL diff section and marks a mismatch `fabricated`, so
- * an incorrect mirror is caught, not trusted.
- *
- * @param {*} value - the raw provider response (any shape; guarded)
- * @returns {*} the value with repairable 'modified' anchors normalized
+ * They are now DERIVED from our own diff-path map by `prepareCandidates`, so
+ * there is nothing left to mirror. `clampToJsonSchemaLimits` (the maxLength/
+ * maxItems half of the same lenient-ingestion pipe) is RETAINED — OSS routers
+ * still accept our JSON Schema without enforcing string/array limits.
  */
-export function normalizeModifiedAnchorPaths(value) {
-  if (!value || typeof value !== 'object' || !Array.isArray(value.findings)) return value;
-  const fixAnchor = (a) => {
-    if (!a || typeof a !== 'object' || a.fileStatus !== 'modified') return a;
-    const hasOld = typeof a.oldFile === 'string' && a.oldFile.length > 0;
-    const hasNew = typeof a.newFile === 'string' && a.newFile.length > 0;
-    if (hasOld && !hasNew) return { ...a, newFile: a.oldFile };
-    if (hasNew && !hasOld) return { ...a, oldFile: a.newFile };
-    return a; // both present (equal or not) / both absent → leave it to fail loudly
-  };
-  return {
-    ...value,
-    findings: value.findings.map((f) => (f && typeof f === 'object'
-      ? { ...f, anchor: fixAnchor(f.anchor), triggerAnchor: fixAnchor(f.triggerAnchor) }
-      : f)),
-  };
+
+/**
+ * Resolve this run's diff-path map, with sensitive paths excluded BEFORE the
+ * enum and prompt table exist (plan §Security).
+ *
+ * WHY THIS FILTER IS NOT OPTIONAL: the enum enumerates file paths as
+ * first-class, structured, citable ids inside the tool schema. `redactSecrets`
+ * masks secret *values*; it does not exclude sensitive *paths*. Without this,
+ * a `.env`/`secrets/db.yaml` entry in the diff would be disclosed to the
+ * provider as a schema member — a path-level disclosure the redacted payload
+ * alone does not imply. A file excluded here simply has no id, so no anchor
+ * can cite it.
+ *
+ * TWO DELIBERATE DEVIATIONS from the plan's §Security prose, both reported:
+ *
+ * 1. The plan says "filter before mapping, not after". `buildDiffPathMap`
+ *    takes diff TEXT, so filtering "before" would mean re-implementing its
+ *    parser to split sections — the exact duplication §7i exists to prevent.
+ *    Filtering the parsed entries is equivalent for the property that
+ *    matters: the enum and table are constructed EXCLUSIVELY from the
+ *    filtered set, never from raw diff headers.
+ * 2. The plan mandates `resolveAndClassify`'s symlink-aware canonicalisation,
+ *    fail-closed on `resolutionFailed`. That is NOT implementable over a diff:
+ *    it realpaths, and a `deleted` file (or a rename's `oldPath`) legitimately
+ *    does not exist on disk — every one would fail-closed to `sensitive` and
+ *    lose its id, silently making deleted files unauditable. We use the
+ *    lexical `shouldSkipForIndexing` seam instead, which is exactly the bar
+ *    the OTHER half of this same payload already meets (`readFilesAsContext`
+ *    → `isSensitiveFile`), and the map discloses only the path string that
+ *    check already covers.
+ *
+ * @param {string|null|undefined} diffText - the run's unified diff (ctx.diffText)
+ * @returns {{map: ReturnType<typeof buildDiffPathMap>, skipped: Array<object>}}
+ */
+function resolveEligibleDiffPathMap(diffText) {
+  const map = buildDiffPathMap(diffText);
+  if (map.kind !== 'ready') return { map, skipped: [] };
+
+  const skipped = [];
+  const entries = map.entries.filter((e) => {
+    // Fail closed on EITHER side: a rename whose base path is `secrets/x` is
+    // just as much a disclosure as one whose head path is.
+    for (const p of [e.newPath, e.oldPath]) {
+      const r = shouldSkipForIndexing(p, ['sensitive']);
+      if (r.skip) {
+        skipped.push({ path: normalisePath(p), category: r.category, pattern: r.pattern, action: 'dropped' });
+        return false;
+      }
+    }
+    return true;
+  });
+
+  // Every eligible file filtered out is a legitimate empty scope, NOT invalid
+  // — the diff parsed fine, it just has nothing we may send (§7j).
+  if (entries.length === 0) return { map: { kind: 'empty', reason: 'no_eligible_diff_files' }, skipped };
+  return { map: { kind: 'ready', entries }, skipped };
 }
 
 /** Shared prompt construction for the Stage 1 triager — used by BOTH the
@@ -350,10 +380,12 @@ function makeBlameAdapter(stage0Ctx, baseRef) {
 
 /**
  * Extract the file a `pre_existing_independent` envelope's canonical claim
- * cites — `ProducerFindingV2Schema` (the discovery generator's output
- * contract `canonicalFinding` is shaped by) carries no `affectedFiles`/
- * `_primaryFile` field at all, so this reuses the SAME anchor-file
- * extraction Gate B itself already performs internally.
+ * cites — the discovery generator's output contract (the producer finding
+ * `canonicalFinding` is shaped by) carries no `affectedFiles`/`_primaryFile`
+ * field at all, so this reuses the SAME anchor-file extraction Gate B itself
+ * already performs internally. Still true post-V3: the anchor's paths are now
+ * DERIVED by `prepareCandidates` rather than model-supplied, but they land in
+ * the same `oldFile`/`newFile` fields this reads.
  */
 function extractCanonicalAnchorFile(canonicalFinding) {
   const anchorField = canonicalFinding?.evidenceType === 'omission' ? 'triggerAnchor' : 'anchor';
@@ -453,6 +485,126 @@ async function routePreExistingIndependent(preExistingIndependent, ctx) {
 }
 
 /**
+ * §1.5's required-generator-failure semantics, in ONE place because there are
+ * now two ways to reach them: a generator that actually failed, and a
+ * diff-path map that blew its budget (§8a — over-budget FAILS LOUD and falls
+ * back exactly like any other required-generator failure; it is deliberately
+ * NOT truncated and NOT partitioned).
+ *
+ * Lifted verbatim from the single call site it used to have — no new failure
+ * machinery, just one caller became two.
+ *
+ * @param {import('../schemas.mjs').AuditRunContext} ctx
+ * @param {string} reason - already prefixed `required generator failed: `
+ * @param {Array<object>} discoveryGeneratorOutcomes - captured BEFORE delegating
+ * @returns {Promise<import('../schemas.mjs').AuditRunResult>}
+ */
+async function failRequiredGenerator(ctx, reason, discoveryGeneratorOutcomes) {
+  // Falling back is a PRODUCTION obligation, not a universal one
+  // (plan: docs/plans/shadow-no-legacy-fallback.md). This function has
+  // exactly two callers and they have opposite contracts:
+  //   - openai-audit.mjs:440 (pipelineEnabled) — GATING. Its result IS the
+  //     audit, so it must return findings. Falling back is CORRECT.
+  //   - tiered-shadow-compare.mjs (runShadowTieredPipeline) —
+  //     observation-only. It has NO obligation to return findings, and
+  //     falling back here ran a SECOND full legacy audit inside the shadow,
+  //     then returned legacy's findings labelled as the tiered result — so
+  //     compareAuditRunResults compared the real legacy run against a second
+  //     legacy run. Measured over 57 live records: 41 of them, each paying
+  //     for a whole extra 5-pass GPT audit to yield zero tiered signal.
+  //     Their `overlap: 0` was never recall — it was two independent legacy
+  //     runs disagreeing with each other (an accidental, unwanted
+  //     measurement of GPT's own nondeterminism) polluting the very
+  //     denominator the Phase-14 decision reads.
+  // "The tiered pipeline could not run" is a complete, cheap, honest shadow
+  // result, and `runShadowTieredPipeline`'s existing {ok:false, error} path
+  // already persists it via the existing `shadow_error` column — so this
+  // needs no new status, no schema change, and no migration.
+  if (ctx.shadowMode) throw new TieredUnavailableError(reason);
+
+  // Production only. The dynamic import lives INSIDE this branch so a shadow
+  // run never even loads the legacy module — and so the throw above
+  // structurally precludes reaching it (which is half the proof that the
+  // shadow never invokes legacy; the other half is a static pin in
+  // tests/tiered-pipeline-wiring.test.mjs, since an internal dynamic import
+  // has no injection seam to spy on and inventing one purely for a test
+  // would be the over-engineered cliff — round-1 plan-audit M2).
+  const { runLegacyProductionAudit } = await import('./legacy-production-audit.mjs');
+  const legacyResult = await runLegacyProductionAudit(ctx);
+  return {
+    ...legacyResult,
+    generatorOutcomes: discoveryGeneratorOutcomes,
+    runStatus: 'fallback_legacy',
+    fallbackReason: reason,
+  };
+}
+
+/**
+ * The result of a run that never called a generator at all (plan §7j).
+ *
+ * THE POINT: neither an empty scope nor an invalid diff may EVER report as a
+ * clean 0-finding `complete` run — that is the anti-green class this whole
+ * plan exists to kill. Both get their own named `runStatus`, so
+ * `summarize()`'s `historicalComplete` filter (`=== 'complete'`) excludes them
+ * from `comparedRuns` and `tieredRunStatusCounts` gives each its own bucket.
+ *
+ * KNOWN CONTRACT GAP (reported, not papered over): `AuditRunResultSchema.runStatus`
+ * (schemas.mjs) is a closed enum — `['complete','incomplete','fallback_legacy']` —
+ * that does not yet carry these two values. The schema is documentation-grade
+ * (never `.parse`d at runtime), and schemas.mjs is outside this phase's declared
+ * file scope, so the enum needs a one-line follow-up to match §7j's table.
+ *
+ * @param {import('../schemas.mjs').AuditRunContext} ctx
+ * @param {{kind:string, reason:string, detail?:string}} map
+ * @param {number} startedAt
+ * @returns {import('../schemas.mjs').AuditRunResult}
+ */
+function skippedNoGeneratorResult(ctx, map, startedAt) {
+  const runStatus = map.kind === 'empty' ? 'skipped_no_eligible_files' : 'failed_invalid_diff_input';
+  const reason = `${runStatus}: ${map.reason}${map.detail ? ` — ${map.detail}` : ''}`;
+  // `invalid` is OUR bug (a diff we produced and could not parse), so it gets
+  // stage0Malformed's loud stderr treatment (§7c); `empty` is a legitimate
+  // no-op and stays quiet.
+  process.stderr.write(map.kind === 'invalid'
+    ? `  [discovery] CONTRACT BUG — ${reason}. Both generators SKIPPED; this run verified nothing and is excluded from comparedRuns.\n`
+    : `  [discovery] no eligible diff files — both generators skipped (${map.reason}). Not a clean 0-finding run.\n`);
+
+  const elapsed = `${((Date.now() - startedAt) / 1000).toFixed(1)}s`;
+  return {
+    verdict: 'INCOMPLETE',
+    files_planned: 0, files_found: 0, files_missing: 0,
+    code_files: ctx.changedFiles || [],
+    findings: [],
+    wiring_issues: [], quick_fix_warnings: [], dead_code: [],
+    overall_reasoning: `**Discovery**: SKIPPED — ${reason}. No generator was called, so this run is not a zero-findings result; it is a run that did not happen.`,
+    _pass_timings: { discovery: '0.0s', total: elapsed },
+    _usage: computeCostReport({ usageEvents: [], reviewEffortEvents: [], acceptedFindings: [] }),
+    _cacheMetrics: { totalInputTokens: 0, totalCachedTokens: 0, hitRate: 0, estimatedSavingsPct: 0, seedUsed: false, perPass: {} },
+    _toolCapability: { toolsAvailable: [], toolsFailed: [], strictLint: false, disabled: true, timestamp: Date.now() },
+    _sid: ctx.runId || `tiered-${Date.now()}`,
+    generatorOutcomes: ctx.generatorOutcomes || [],
+    runStatus,
+    fallbackReason: reason,
+    _suppression: { stage1MechanicalDismissed: 0, stage2ConfirmedDismissal: 0 },
+    debtRoutedFiles: [], debtRoutingIncomplete: [],
+    // Every count 0 because nothing ran — NOT because everything passed. The
+    // named runStatus above is what tells those two apart; a consumer must
+    // never have to infer it from the zeros.
+    _stageBreakdown: {
+      discoveryRawFindings: 0, discoveryMalformedRaw: 0,
+      stage0Verified: 0, stage0Rejected: 0, stage0MalformedTripwire: 0,
+      stage0PreExistingIndependent: 0, stage0DebtRouted: 0, stage0DebtRoutingIncomplete: 0,
+      stage1MechanicalDismissed: 0, stage1Escalated: 0, stage1ConfirmedSurvivor: 0, stage1BudgetExhausted: 0,
+      stage2Verified: 0, stage2Reversed: 0, stage2ConfirmedDismissal: 0, stage2MissedCandidate: 0, stage2Unresolved: 0,
+      diffPathMapStatus: `${map.kind}:${map.reason}`,
+    },
+    pendingAdjudicationItems: [],
+    _stage1BudgetExhausted: { count: 0, itemIds: [] },
+    _stage1FailureCategories: {},
+  };
+}
+
+/**
  * @param {import('../schemas.mjs').AuditRunContext} ctx
  * @returns {Promise<import('../schemas.mjs').AuditRunResult>}
  */
@@ -498,7 +650,7 @@ export async function runTieredAuditPipeline(ctx) {
   // both generator prompts from `planContent` + a comma-separated filename
   // list ONLY — no file content, no diff hunks. A "code-audit finding
   // generator" cannot produce evidence-backed anchors (commission claims
-  // require a content-verifiable `quote`, per ProducerFindingV2Schema)
+  // require a content-verifiable `quote`, per the producer finding contract)
   // without ever seeing the code. Reusing `readFilesAsContext` (the SAME
   // sensitive-egress-gated helper every other pass in
   // `legacy-production-audit.mjs` already uses) rather than inventing a
@@ -529,6 +681,65 @@ export async function runTieredAuditPipeline(ctx) {
   // own error message names, rather than weakening the gate.
   const discoveryPlan = redactSecrets(ctx.planContent ?? '');
 
+  // ── The diff-path map — built BEFORE any generator call (§7j) ────────────
+  // The contract `EvidenceAnchorSchema.diffPathId` has described since day one
+  // ("from the diff-path map") and which never existed, so models invented an
+  // id and Stage 0 destroyed their findings as `fabricated` (4/4 measured;
+  // stage0Verified > 0 in 1 of 62 completed shadow runs).
+  //
+  // SOURCE — `ctx.diffText`, not `discoveryCode`. The plan's §Security says
+  // "built from the already-redacted `discoveryCode`/`ctx.diffText`", conflating
+  // two different things: `discoveryCode` is `readFilesAsContext` output (fenced
+  // FILE CONTENTS — it has no `diff --git` headers at all, so the map cannot be
+  // built from it), while the map's whole job is to enumerate the diff's
+  // file-PAIRS and their fileStatus. `ctx.diffText` is also what Stage 0 verifies
+  // anchors against, so deriving ids from anything else would let the two halves
+  // disagree — the exact failure the redact-once note above documents. The
+  // load-bearing half of that constraint holds: this is ctx state, NEVER re-read
+  // from git.
+  const { map: diffPathMap, skipped: mapSkipped } = resolveEligibleDiffPathMap(ctx.diffText);
+  if (mapSkipped.length > 0) {
+    for (const line of formatSkipLog(mapSkipped, { logger: 'diff-path-map' })) process.stderr.write(`  ${line}\n`);
+  }
+
+  if (diffPathMap.kind === 'invalid' && diffPathMap.reason === 'discovery_map_exceeds_budget') {
+    // §8a: bounded by a NAMED FAILURE, not by truncation (which would make real
+    // changed files unauditable while reporting success) and not by partitioning
+    // (deferred — no current requirement, and it changes recall). Reuses §1.5's
+    // existing required-generator-failure semantics verbatim.
+    return await failRequiredGenerator(
+      ctx,
+      `required generator failed: discovery-map ${diffPathMap.reason} — ${diffPathMap.detail}`,
+      [...(ctx.generatorOutcomes || [])],
+    );
+  }
+  if (diffPathMap.kind !== 'ready') {
+    // `z.enum([])` is not constructible, so this MUST resolve before any schema
+    // is built — and skipping the generators entirely is the point, not a
+    // side-effect: there is no id set for them to cite.
+    return skippedNoGeneratorResult(ctx, diffPathMap, stageStart.discovery);
+  }
+
+  // ONE source for both the prompt table and the enum (D7), so they cannot drift.
+  const diffPathTable = renderDiffPathTable(diffPathMap.entries);
+  const producerFindingSchema = makeProducerFindingV3Schema(diffPathMap.entries.map((e) => e.id));
+  // The instruction both generators share. `diffPathId` is an ENUM in the schema
+  // the provider actually sees — the one row of D1's table a provider CAN
+  // enforce — but the enum is a funnel, never a trust boundary (D6):
+  // `prepareCandidates` safeParses every response regardless.
+  const anchorContract = [
+    'ANCHOR CONTRACT — a finding is discarded outright if its anchor breaks these:',
+    '- `diffPathId` MUST be an `id` copied EXACTLY from the DIFF-PATH TABLE below. It is the ONLY way to name a file. Never write a path there, and never invent an id.',
+    '- Do NOT report paths or file status — we derive those from the id ourselves.',
+    '- `quote` MUST be text copied VERBATIM from the code you were given. Never paraphrase, reformat, or reconstruct it — it is verified by exact content match against the real file/diff.',
+    '- `side` is "head" for current/added code and "base" for removed code. An `added` file has no base side; a `deleted` file has no head side.',
+    '- `startLine`/`endLine` are 1-indexed and must bracket the quote (`startLine <= endLine`).',
+    '- commission findings need `anchor`; omission findings need `triggerAnchor` AND `causalChain`.',
+    '',
+    'DIFF-PATH TABLE — the only files you may cite:',
+    diffPathTable,
+  ].join('\n');
+
   const glmModel = tieredAuditConfig.discoveryModel;
   // Lenient ingestion for the discovery generator (2026-07-15): OSS routers
   // accept our JSON Schema but don't enforce maxLength/maxItems, and GLM
@@ -539,26 +750,32 @@ export async function runTieredAuditPipeline(ctx) {
   // BEFORE validation; genuinely semantic violations (enums, missing
   // fields) still fail loud. z.toJSONSchema on the preprocess pipe resolves
   // to the inner schema, so the provider-facing JSON Schema is unchanged.
-  // docs/plans/stage0-evidence-relevance-split.md: MUST be the V2 schema —
-  // Stage 0's Gate A/B relevance split reads `canonicalFinding.evidenceType`/
-  // `.anchor`/`.triggerAnchor` (candidate-envelope.mjs:55/135 read them
-  // directly off the raw finding, with no independent derivation elsewhere).
-  // The V1 `ProducerFindingSchema` this used before has NO evidence fields
-  // at all — Zod strips unknown keys on parse, so every discovery finding
-  // would silently arrive with `evidenceType: null`, making EVERY candidate
-  // Stage-0-'fabricated' (no anchor to verify) regardless of the rest of
-  // this plan's implementation. Found and fixed as part of this phase — the
-  // entire Gate A/B split is unreachable without it.
-  const glmStrictSchema = z.object({ findings: z.array(ProducerFindingV2Schema).max(15) });
+  // MUST carry evidence fields — Stage 0's Gate A/B relevance split reads
+  // `canonicalFinding.evidenceType`/`.anchor`/`.triggerAnchor`
+  // (candidate-envelope.mjs:55/135 read them directly off the raw finding, with
+  // no independent derivation elsewhere). The V1 `ProducerFindingSchema` had NO
+  // evidence fields at all — Zod strips unknown keys on parse, so every finding
+  // arrived with `evidenceType: null`, making EVERY candidate Stage-0-'fabricated'.
+  //
+  // V3 (this phase) is the provider-ENFORCEABLE successor to V2: V2's path rules
+  // and its commission/omission rule lived in `superRefine`, which
+  // `z.toJSONSchema()` cannot express, so the provider never enforced ANY of them
+  // and the whole contract was decorative. V3 carries no refinement at all —
+  // enum-narrowed id + discriminatedUnion — which `tests/provider-contract-enforceable.test.mjs`
+  // asserts and which a real capability probe confirmed both Anthropic tool-use
+  // and OpenRouter/GLM honour (3/3 anchors each, 0 outside the enum).
+  const glmStrictSchema = z.object({ findings: z.array(producerFindingSchema).max(15) });
   const glmResponseJsonSchema = z.toJSONSchema(glmStrictSchema);
   const glmLenientSchema = z.preprocess(
-    // Two normalizations, both absorbing the SAME root cause (OpenRouter
-    // accepts our JSON Schema without enforcing it, unlike Anthropic's
-    // provider-side tool-use validation): length/arity clamping, then the
-    // definitionally-derivable 'modified' anchor path mirror (2026-07-16
-    // empirical verify — 3/3 findings failed on that one rule alone, taking
-    // every run to fallback_legacy).
-    (v) => normalizeModifiedAnchorPaths(clampToJsonSchemaLimits(v, glmResponseJsonSchema)),
+    // Lenient ingestion, now down to its ONE remaining job: OSS routers accept
+    // our JSON Schema without enforcing maxLength/maxItems (GLM emitted
+    // `principle` >150 chars, hard-failing the whole response). The anchor-path
+    // mirror that used to compose here is RETIRED — paths are derived from the
+    // map now, so there is nothing left to repair. Genuinely semantic violations
+    // (enums, missing fields) still fail loud. z.toJSONSchema on the preprocess
+    // pipe resolves to the inner schema, so the provider-facing JSON Schema is
+    // unchanged.
+    (v) => clampToJsonSchemaLimits(v, glmResponseJsonSchema),
     glmStrictSchema,
   );
   const glmCall = providers.ossCall
@@ -576,24 +793,18 @@ export async function runTieredAuditPipeline(ctx) {
           // support every requested parameter: stalls went 10/30 -> 0/30,
           // availability 40% -> 57%, p50 latency 2.6s -> 0.9s. The remaining
           // failures are model-emitted schema violations (handled by the
-          // normalizer/clamp), not transport.
+          // clamp), not transport.
           providerPreferences: { require_parameters: true },
 
           // Root-cause half of the same fix: the previous one-sentence system
-          // prompt never told the model what an anchor IS, so it guessed
-          // (and consistently guessed a shape our schema rejects). The
-          // normalizer above is the belt; this is the braces.
+          // prompt never told the model what an anchor IS, so it guessed (and
+          // consistently guessed a shape our schema rejects). It now cannot
+          // guess the part that mattered — `diffPathId` is enum-narrowed to the
+          // table's real ids, and the paths are ours to derive.
           system: [
             'You are a code-audit finding generator. Produce candidate findings, each with a content-verifiable evidence anchor.',
             '',
-            'ANCHOR CONTRACT — a finding is discarded outright if its anchor breaks these:',
-            '- `quote` MUST be text copied VERBATIM from the code you were given. Never paraphrase, reformat, or reconstruct it — it is verified by exact content match against the real file/diff.',
-            '- `fileStatus: "modified"` (the common case) REQUIRES BOTH `oldFile` AND `newFile`, set to the SAME path — a modified file keeps its path on both sides of the diff.',
-            '- `fileStatus: "added"` requires `newFile` (no base-side content exists, so `side` must be "head").',
-            '- `fileStatus: "deleted"` requires `oldFile` (`side` must be "base").',
-            '- `fileStatus: "renamed"`/`"copied"` require BOTH paths, and they differ.',
-            '- `startLine`/`endLine` are 1-indexed and must bracket the quote (`startLine <= endLine`).',
-            '- commission findings need `anchor`; omission findings need `triggerAnchor` AND `causalChain`.',
+            anchorContract,
           ].join('\n'),
           userPrompt: `## Plan\n${discoveryPlan}\n\n## Changed Files (code)\n${discoveryCode}`,
           schema: glmLenientSchema,
@@ -641,7 +852,7 @@ export async function runTieredAuditPipeline(ctx) {
         findings: {
           type: 'array',
           maxItems: 15,
-          items: z.toJSONSchema(ProducerFindingV2Schema),
+          items: z.toJSONSchema(producerFindingSchema),
         },
       },
       required: ['findings'],
@@ -662,20 +873,15 @@ export async function runTieredAuditPipeline(ctx) {
           // 16000 covers the worst case (15 findings at their length caps)
           // with headroom.
           max_tokens: 16000,
-          // Same anchor contract as the GLM generator. Anthropic tool-use
-          // validates the SHAPE provider-side (so this path never produced
-          // the 2026-07-16 'modified'-anchor failure), but shape-validity is
-          // not evidence-validity: `quote` must still be VERBATIM or Gate A
-          // marks the finding fabricated and it is silently lost.
+          // The SAME anchor contract + diff-path table the GLM generator gets —
+          // one string, so the two generators cannot drift into citing different
+          // id sets. Anthropic tool-use validates the SHAPE provider-side, but
+          // shape-validity is not evidence-validity: `quote` must still be
+          // VERBATIM or Gate A marks the finding unsupported and it is lost.
           system: [
             'You are a code-audit finding generator (cold pass, no prior context). Produce candidate findings by calling report_findings.',
             '',
-            'ANCHOR CONTRACT — a finding is discarded outright if its anchor breaks these:',
-            '- `quote` MUST be text copied VERBATIM from the code you were given. Never paraphrase, reformat, or reconstruct it — it is verified by exact content match against the real file/diff.',
-            '- `fileStatus: "modified"` (the common case) REQUIRES BOTH `oldFile` AND `newFile`, set to the SAME path.',
-            '- `fileStatus: "added"` requires `newFile` + `side: "head"`; `"deleted"` requires `oldFile` + `side: "base"`.',
-            '- `startLine`/`endLine` are 1-indexed and must bracket the quote.',
-            '- commission findings need `anchor`; omission findings need `triggerAnchor` AND `causalChain`.',
+            anchorContract,
           ].join('\n'),
           messages: [{ role: 'user', content: `## Plan\n${discoveryPlan}\n\n## Changed Files (code)\n${discoveryCode}` }],
           tools: [sonnetFindingsTool],
@@ -705,48 +911,53 @@ export async function runTieredAuditPipeline(ctx) {
     const discoveryGeneratorOutcomes = [...(ctx.generatorOutcomes || [])];
     const failedNames = discoveryGeneratorOutcomes.filter((o) => o.role === 'required' && o.status === 'failed').map((o) => `${o.model}: ${o.category ? `[${o.category}] ` : ''}${o.errorMessage ?? 'unknown error'}`);
     const reason = `required generator failed: ${failedNames.join('; ') || 'unknown'}`;
+    return await failRequiredGenerator(ctx, reason, discoveryGeneratorOutcomes);
+  }
 
-    // Falling back is a PRODUCTION obligation, not a universal one
-    // (plan: docs/plans/shadow-no-legacy-fallback.md). This function has
-    // exactly two callers and they have opposite contracts:
-    //   - openai-audit.mjs:440 (pipelineEnabled) — GATING. Its result IS the
-    //     audit, so it must return findings. Falling back is CORRECT.
-    //   - tiered-shadow-compare.mjs (runShadowTieredPipeline) —
-    //     observation-only. It has NO obligation to return findings, and
-    //     falling back here ran a SECOND full legacy audit inside the shadow,
-    //     then returned legacy's findings labelled as the tiered result — so
-    //     compareAuditRunResults compared the real legacy run against a second
-    //     legacy run. Measured over 57 live records: 41 of them, each paying
-    //     for a whole extra 5-pass GPT audit to yield zero tiered signal.
-    //     Their `overlap: 0` was never recall — it was two independent legacy
-    //     runs disagreeing with each other (an accidental, unwanted
-    //     measurement of GPT's own nondeterminism) polluting the very
-    //     denominator the Phase-14 decision reads.
-    // "The tiered pipeline could not run" is a complete, cheap, honest shadow
-    // result, and `runShadowTieredPipeline`'s existing {ok:false, error} path
-    // already persists it via the existing `shadow_error` column — so this
-    // needs no new status, no schema change, and no migration.
-    if (ctx.shadowMode) throw new TieredUnavailableError(reason);
-
-    // Production only. The dynamic import lives INSIDE this branch so a shadow
-    // run never even loads the legacy module — and so the throw above
-    // structurally precludes reaching it (which is half the proof that the
-    // shadow never invokes legacy; the other half is a static pin in
-    // tests/tiered-pipeline-wiring.test.mjs, since an internal dynamic import
-    // has no injection seam to spy on and inventing one purely for a test
-    // would be the over-engineered cliff — round-1 plan-audit M2).
-    const { runLegacyProductionAudit } = await import('./legacy-production-audit.mjs');
-    const legacyResult = await runLegacyProductionAudit(ctx);
-    return {
-      ...legacyResult,
-      generatorOutcomes: discoveryGeneratorOutcomes,
-      runStatus: 'fallback_legacy',
-      fallbackReason: reason,
-    };
+  // ── prepareCandidates — the untrusted producer boundary (D6, §7g) ────────
+  // THE seam between an untrusted provider response and Stage 0, and it runs
+  // BEFORE Stage 0 for both generators. It safeParses the producer DTO before
+  // touching any field, then hydrates `oldFile`/`newFile`/`fileStatus` from our
+  // own map — so the path-shaped causes that made Stage 0 destroy 4/4 real
+  // findings are unreachable from a hydrated anchor, by construction rather
+  // than by taxonomy (D2).
+  //
+  // Per-finding and non-throwing: one malformed candidate degrades ITSELF,
+  // never the batch. Only `kind:'ready'` continues.
+  const prepared = prepareCandidates(rawFindings, diffPathMap, {
+    producerSchema: producerFindingSchema,
+    headSha: ctx.commitSha || 'WORKTREE',
+  });
+  const readyFindings = prepared.filter((p) => p.kind === 'ready').map((p) => p.finding);
+  // THREE buckets, because there are three owners (§7a). Never blend
+  // `contradicted` into `malformed`: a side claim the diff DISPROVES is the
+  // model's error, and billing it to our contract is this plan's own
+  // misattribution running backwards.
+  const malformedRaw = prepared.filter((p) => p.kind === 'malformed');
+  const contradictedRaw = prepared.filter((p) => p.kind === 'contradicted');
+  if (malformedRaw.length > 0) {
+    // Same loud convention as the Stage 0 tripwire below (§7c) — a candidate our
+    // own contract couldn't parse is OUR bug, and it used to vanish into
+    // `stage0Rejected` where it read as the model hallucinating.
+    const byReason = malformedRaw.reduce((acc, m) => {
+      acc[m.reasonCode] = (acc[m.reasonCode] || 0) + 1;
+      return acc;
+    }, {});
+    process.stderr.write(
+      `  [discovery] CONTRACT BUG — ${malformedRaw.length}/${rawFindings.length} RAW candidate(s) rejected at the producer boundary, not by evidence. `
+      + `These are not model fabrications. Reasons: ${JSON.stringify(byReason)}\n`,
+    );
+  }
+  if (contradictedRaw.length > 0) {
+    // NOT a contract bug — the diff refuted a checkable model claim. Reported
+    // at a lower volume precisely because it is working as designed.
+    process.stderr.write(
+      `  [discovery] ${contradictedRaw.length}/${rawFindings.length} RAW candidate(s) CONTRADICTED by the diff (model evidence failure, not our bug).\n`,
+    );
   }
 
   // ── processFindings (pure, unchanged) → mergeIntoEnvelopes (pure, unchanged) ──
-  const taggedFindings = rawFindings.map((f) => ({ ...f, _sourceModel: f._sourceModel || 'unknown' }));
+  const taggedFindings = readyFindings.map((f) => ({ ...f, _sourceModel: f._sourceModel || 'unknown' }));
   const { survivors } = processFindings(taggedFindings, {
     ledger: null, // Stage 0-2's own envelope/ledger sequence IS the re-raise-suppression mechanism for this branch
     planContent: ctx.planContent,
@@ -904,6 +1115,7 @@ export async function runTieredAuditPipeline(ctx) {
     .join('\n');
   const overall_reasoning = [
     `**Discovery portfolio**:\n${generatorSummary || 'n/a'}`,
+    `**Producer boundary**: ${rawFindings.length} raw findings, ${malformedRaw.length} malformed — OUR contract bug, not the model (raw units; never summed with Stage 0's envelope-unit tripwire below)`,
     `**Stage 0**: ${stage0Verified.length} verified, ${preExistingIndependent.length} pre_existing_independent (${debtRoutedFiles.length} files debt-routed, ${debtRoutingIncomplete.length} restored to eligible pool), ${stage0Rejected.length} rejected — model evidence failure, ${stage0Malformed.length} malformed — OUR contract bug, not the model (both local telemetry only)`,
     `**Stage 1**: ${triageResult.mechanicalDismissed.length} mechanical_dismissed, ${triageResult.escalated.length} escalated, ${triageResult.confirmedSurvivor.length} confirmed_survivor (direct to human queue), ${triageResult.budgetExhausted.length} budget_exhausted (not reviewed this round)`,
     `**Stage 2**: ${stage2Result.verified.length} verified, ${stage2Result.reversed.length} reversed, ${stage2Result.confirmedDismissal.length} confirmed_dismissal, ${stage2Result.missedCandidates.length} missed_candidate, ${stage2Result.unresolved.length} pending_adjudication`,
@@ -969,6 +1181,25 @@ export async function runTieredAuditPipeline(ctx) {
     // _stage1BudgetExhausted below.
     _stageBreakdown: {
       discoveryRawFindings: rawFindings.length,
+      // The PRIMARY malformed counter (§7a): raw findings `prepareCandidates`
+      // rejected at the producer boundary, before envelopes exist.
+      //
+      // NEVER sum this with `stage0MalformedTripwire` below — they are DIFFERENT
+      // UNITS and a blended figure is forbidden (§7a, Gemini G2). This counts RAW
+      // findings; the tripwire counts ENVELOPES, and `mergeIntoEnvelopes` dedups
+      // raw findings by fingerprint, so the two cannot be added. A number that
+      // reads meaningful and cannot be reconciled is exactly the kind this plan
+      // exists to remove.
+      //
+      // Raw-level invariant: discoveryMalformedRaw + discoveryContradictedRaw +
+      // (raw findings contributing to envelopes) === discoveryRawFindings.
+      discoveryMalformedRaw: malformedRaw.length,
+      // A model claim the diff DISPROVES — the model's error, NOT our contract
+      // bug. Reported separately for the same reason `malformed` was split out
+      // of `rejected` in the first place: blending the two owners is what let a
+      // 100%-schema-rejection run read as 100% model hallucination. Folding
+      // this into `discoveryMalformedRaw` would invert that same mistake.
+      discoveryContradictedRaw: contradictedRaw.length,
       // stage0Verified reports the ACTUAL Stage-1-eligible pool size (Gate-A
       // 'change_related'/'unverifiable' survivors PLUS any pre_existing_
       // independent candidate restored after a debt-routing failure) — the
@@ -1026,6 +1257,6 @@ export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
       collectCandidateAnchorFiles, buildStage0RelevanceContext,
       makeHeadContentAdapter, makeImpactAdapter, makeBlameAdapter,
       extractCanonicalAnchorFile, buildPreExistingDebtEntry, routePreExistingIndependent,
-      normalizeModifiedAnchorPaths,
+      resolveEligibleDiffPathMap,
     }
   : undefined;

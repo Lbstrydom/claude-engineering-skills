@@ -31,7 +31,7 @@ const {
   collectCandidateAnchorFiles, buildStage0RelevanceContext,
   makeHeadContentAdapter, makeImpactAdapter, makeBlameAdapter,
   extractCanonicalAnchorFile, buildPreExistingDebtEntry, routePreExistingIndependent,
-  normalizeModifiedAnchorPaths,
+  resolveEligibleDiffPathMap,
 } = __testExports;
 
 // @duplicate-justification: target=tests/vcs-blame.test.mjs:mkdtemp reason=a 2-line temp-dir helper duplicated across test files matching this repo's established per-file local-helper convention (AGENTS.md: "three similar lines is better than a premature abstraction") — a shared fixture module for one trivial helper is the over-engineered extreme, not the right-sized one.
@@ -356,90 +356,236 @@ describe('buildPreExistingDebtEntry', () => {
   });
 });
 
-// ── normalizeModifiedAnchorPaths — the 2026-07-16 empirical-verify fix ─────
-// GLM via OpenRouter emitted {fileStatus:'modified', newFile:'x'} with no
-// oldFile on 3/3 findings, failing EvidenceAnchorSchema's superRefine and
-// taking every run to fallback_legacy. OpenRouter accepts our JSON Schema
-// without enforcing it (Anthropic tool-use validates provider-side, which is
-// why only the GLM path broke).
-describe('normalizeModifiedAnchorPaths (empirical-verify fix, 2026-07-16)', () => {
-  const anchor = (over = {}) => ({ diffPathId: 'a.mjs', fileStatus: 'modified', side: 'head', startLine: 1, endLine: 1, quote: 'q', headSha: 'WORKTREE', ...over });
-  const wrap = (a) => ({ findings: [{ id: 'H1', anchor: a }] });
-  const out = (v) => normalizeModifiedAnchorPaths(v).findings[0].anchor;
+// ── normalizeModifiedAnchorPaths — RETIRED by Phase 6 ─────────────────────
+// Its tests are deleted, not ported. The function mirrored oldFile↔newFile so a
+// 'modified' anchor could satisfy EvidenceAnchorSchema's superRefine — a
+// band-aid on the wrong layer. `prepareCandidates` now DERIVES those paths from
+// our own diff-path map, so there is no model-supplied path left to repair and
+// the behaviour those 10 tests pinned no longer exists to be correct or
+// incorrect. What replaces them: tests/diff-path-map.test.mjs (the derivation)
+// plus the egress + wiring pins below.
 
-  it('mirrors newFile → oldFile for a modified anchor (the exact live failure)', () => {
-    const r = out(wrap(anchor({ newFile: 'src/x.mjs' })));
-    assert.equal(r.oldFile, 'src/x.mjs');
-    assert.equal(r.newFile, 'src/x.mjs');
+// ── resolveEligibleDiffPathMap — the enum's egress gate (§Security) ────────
+// A Tier-3 seam per AGENTS.md: the enum enumerates file paths as first-class,
+// structured, citable ids inside the tool schema. `redactSecrets` masks secret
+// VALUES; it does not exclude sensitive PATHS. Without this filter a `.env` in
+// the diff is disclosed to the provider as a schema member — a path-level
+// disclosure the redacted payload alone does not imply.
+describe('resolveEligibleDiffPathMap — no sensitive path may become a citable id', () => {
+  const section = (header, body, extra = '') => `diff --git ${header}\n${extra}index 111..222 100644\n${body}\n`;
+  const mod = (p) => section(`a/${p} b/${p}`, `--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-a\n+b`);
+
+  it('drops a sensitive file so no anchor can cite it', () => {
+    const { map, skipped } = resolveEligibleDiffPathMap(mod('src/ok.js') + mod('.env') + mod('secrets/db.yaml'));
+    assert.equal(map.kind, 'ready');
+    assert.deepEqual(map.entries.map((e) => e.newPath), ['src/ok.js'], 'only the non-sensitive file may have an id');
+    assert.equal(skipped.length, 2);
   });
 
-  it('mirrors oldFile → newFile symmetrically', () => {
-    const r = out(wrap(anchor({ oldFile: 'src/x.mjs' })));
-    assert.equal(r.newFile, 'src/x.mjs');
-  });
-
-  it('leaves a well-formed modified anchor untouched', () => {
-    const r = out(wrap(anchor({ oldFile: 'src/x.mjs', newFile: 'src/x.mjs' })));
-    assert.equal(r.oldFile, 'src/x.mjs');
-    assert.equal(r.newFile, 'src/x.mjs');
-  });
-
-  // Never repair what isn't definitionally determined — a MISMATCHED pair is
-  // a real semantic error and must still fail loudly downstream.
-  it('does NOT "fix" a modified anchor whose two paths genuinely disagree', () => {
-    const r = out(wrap(anchor({ oldFile: 'a.mjs', newFile: 'b.mjs' })));
-    assert.equal(r.oldFile, 'a.mjs');
-    assert.equal(r.newFile, 'b.mjs');
-  });
-
-  it('does NOT invent a path when BOTH are absent', () => {
-    const r = out(wrap(anchor({})));
-    assert.equal(r.oldFile, undefined);
-    assert.equal(r.newFile, undefined);
-  });
-
-  // renamed/copied legitimately have two DIFFERENT paths — mirroring would
-  // corrupt real evidence.
-  it('never touches renamed/copied/added/deleted (their paths legitimately differ)', () => {
-    for (const fileStatus of ['renamed', 'copied', 'added', 'deleted']) {
-      const r = out(wrap(anchor({ fileStatus, newFile: 'b.mjs' })));
-      assert.equal(r.oldFile, undefined, `${fileStatus} must not be mirrored`);
+  it('the rendered prompt table never contains an excluded path (the actual egress surface)', async () => {
+    const { renderDiffPathTable } = await import('../scripts/lib/audit/diff-path-map.mjs');
+    const { map } = resolveEligibleDiffPathMap(mod('src/ok.js') + mod('.env.production') + mod('config/credentials.json'));
+    const table = renderDiffPathTable(map.entries);
+    assert.ok(table.includes('src/ok.js'));
+    for (const leak of ['.env.production', 'credentials']) {
+      assert.equal(table.includes(leak), false, `the prompt table leaked ${leak}`);
     }
   });
 
-  it('normalizes triggerAnchor (omission findings) the same way', () => {
-    const v = normalizeModifiedAnchorPaths({ findings: [{ id: 'H1', triggerAnchor: anchor({ newFile: 'src/x.mjs' }) }] });
-    assert.equal(v.findings[0].triggerAnchor.oldFile, 'src/x.mjs');
+  it('fails closed on EITHER side of a rename — a sensitive base path is just as much a disclosure', () => {
+    const renamed = section('a/secrets/old.yaml b/config/new.yaml', '--- a/secrets/old.yaml\n+++ b/config/new.yaml\n@@ -1 +1 @@\n-a\n+b', 'rename from secrets/old.yaml\nrename to config/new.yaml\n');
+    const { map } = resolveEligibleDiffPathMap(renamed + mod('src/ok.js'));
+    assert.deepEqual(map.entries.map((e) => e.newPath), ['src/ok.js']);
   });
 
-  it('never mutates quote or line numbers', () => {
-    const r = out(wrap(anchor({ newFile: 'src/x.mjs', quote: 'exact  text', startLine: 7, endLine: 9 })));
-    assert.equal(r.quote, 'exact  text');
-    assert.equal(r.startLine, 7);
-    assert.equal(r.endLine, 9);
+  it('a diff whose every file is sensitive collapses to EMPTY, never invalid and never a ready-with-no-ids', () => {
+    // `empty` is the honest status: the diff parsed fine, there is just nothing
+    // we may send. `z.enum([])` is unconstructible, so a `ready` with zero
+    // entries would crash schema construction downstream (§7j).
+    const { map } = resolveEligibleDiffPathMap(mod('.env') + mod('secrets/x.pem'));
+    assert.equal(map.kind, 'empty');
+    assert.equal(map.reason, 'no_eligible_diff_files');
   });
 
-  it('is a no-op on any non-conforming shape, never a throw', () => {
-    assert.equal(normalizeModifiedAnchorPaths(null), null);
-    assert.equal(normalizeModifiedAnchorPaths(undefined), undefined);
-    assert.deepEqual(normalizeModifiedAnchorPaths({}), {});
-    assert.deepEqual(normalizeModifiedAnchorPaths({ findings: 'nope' }), { findings: 'nope' });
-    assert.deepEqual(normalizeModifiedAnchorPaths({ findings: [null] }), { findings: [null] });
+  it('passes through the builder\'s own three-way result untouched', () => {
+    assert.equal(resolveEligibleDiffPathMap('').map.kind, 'empty');
+    assert.equal(resolveEligibleDiffPathMap(null).map.kind, 'empty');
+    assert.equal(resolveEligibleDiffPathMap('just prose, no diff header').map.kind, 'invalid');
+  });
+});
+
+// ── THE acceptance property (evidence-anchor-path-contract Cluster B) ──────
+// The plan's acceptance criterion is Cluster A's counter reading ZERO: a
+// hydrated anchor must never land in Stage 0's `malformed` bucket. That bucket
+// is fed by `EvidenceAnchorSchema.safeParse` failing inside
+// `resolveAnchorLocation` (Gate A) — so the property that makes the whole plan
+// work is: prepareCandidates' output ALWAYS satisfies the strict internal
+// oracle, for every fileStatus.
+//
+// This is the join between the producer DTO (what we ask a model for) and the
+// internal model (what Gate A demands) — the exact seam three recurrences of
+// this bug lived in, and neither side's own tests can see it: diff-path-map's
+// tests assert hydration, schemas' tests assert the oracle, and NOTHING
+// asserted that one satisfies the other. That gap is how V2's `superRefine`
+// went unenforced for weeks under a green suite.
+describe('hydrated anchors satisfy Gate A\'s oracle — stage0Malformed must read 0 (D2)', () => {
+  const section = (h, b, x = '') => `diff --git ${h}\n${x}index 111..222 100644\n${b}\n`;
+  const DIFF =
+    section('a/src/foo.js b/src/foo.js', '--- a/src/foo.js\n+++ b/src/foo.js\n@@ -1 +1 @@\n-const a = 1;\n+const a = 2;')
+    + section('a/src/new.js b/src/new.js', '--- /dev/null\n+++ b/src/new.js\n@@ -0,0 +1 @@\n+export const x = 1;', 'new file mode 100644\n')
+    + section('a/src/gone.js b/src/gone.js', '--- a/src/gone.js\n+++ /dev/null\n@@ -1 +0,0 @@\n-export const y = 2;', 'deleted file mode 100644\n')
+    + section('a/src/old.js b/src/renamed.js', '--- a/src/old.js\n+++ b/src/renamed.js\n@@ -1 +1 @@\n-a\n+b', 'rename from src/old.js\nrename to src/renamed.js\n')
+    + section('a/src/src.js b/src/cp.js', '--- a/src/src.js\n+++ b/src/cp.js\n@@ -1 +1 @@\n-a\n+b', 'copy from src/src.js\ncopy to src/cp.js\n');
+  const LEGAL_SIDE = { added: 'head', deleted: 'base', modified: 'head', renamed: 'head', copied: 'head' };
+  const base = {
+    id: 'H1', severity: 'HIGH', category: 'c', section: 's', detail: 'd', risk: 'r',
+    recommendation: 'rec', is_quick_fix: false, is_mechanical: false, principle: 'p',
+    classification: { sonarType: 'CODE_SMELL', effort: 'TRIVIAL', sourceKind: 'MODEL', sourceName: 'sonnet' },
+  };
+
+  it('every fileStatus hydrates into an anchor EvidenceAnchorSchema accepts', async () => {
+    const { buildDiffPathMap, prepareCandidates } = await import('../scripts/lib/audit/diff-path-map.mjs');
+    const { makeProducerFindingV3Schema, EvidenceAnchorSchema } = await import('../scripts/lib/schemas.mjs');
+
+    const map = buildDiffPathMap(DIFF);
+    assert.equal(map.kind, 'ready');
+    assert.deepEqual(map.entries.map((e) => e.fileStatus), ['modified', 'added', 'deleted', 'renamed', 'copied'],
+      'precondition: all five fileStatus values are represented');
+
+    const producerSchema = makeProducerFindingV3Schema(map.entries.map((e) => e.id));
+    // What a model emits: an id + a side + a quote. Nothing else — it cannot
+    // know a diff-pair's identity, and we already do (D1).
+    const raws = map.entries.map((e) => ({
+      ...base,
+      evidenceType: 'commission',
+      anchor: { diffPathId: e.id, side: LEGAL_SIDE[e.fileStatus], startLine: 1, endLine: 1, quote: 'q' },
+    }));
+
+    const prepared = prepareCandidates(raws, map, { producerSchema, headSha: 'abc123' });
+    for (const [i, p] of prepared.entries()) {
+      const { fileStatus } = map.entries[i];
+      assert.equal(p.kind, 'ready', `${fileStatus} failed to hydrate: ${p.reasonDetail}`);
+      const parsed = EvidenceAnchorSchema.safeParse(p.finding.anchor);
+      assert.ok(
+        parsed.success,
+        `a HYDRATED ${fileStatus} anchor was rejected by Gate A's oracle — it would land in stage0Malformed and be destroyed as OUR contract bug: ${JSON.stringify(parsed.error?.issues?.map((x) => x.message))}`,
+      );
+    }
   });
 
-  // End-to-end: the repaired shape must actually SATISFY the schema that was
-  // rejecting it — the whole point of the fix.
-  it('the repaired anchor now PASSES ProducerFindingV2Schema (the rule that failed 3/3 live)', async () => {
-    const { ProducerFindingV2Schema } = await import('../scripts/lib/schemas.mjs');
-    const broken = {
-      id: 'H1', severity: 'MEDIUM', category: 'c', section: 's', detail: 'd', risk: 'r',
-      recommendation: 'rec', is_quick_fix: false, is_mechanical: false, principle: 'p',
-      classification: { sonarType: 'CODE_SMELL', effort: 'TRIVIAL', sourceKind: 'MODEL', sourceName: 'glm' },
-      evidenceType: 'commission', anchor: anchor({ newFile: 'src/x.mjs' }),
-    };
-    assert.equal(ProducerFindingV2Schema.safeParse(broken).success, false, 'precondition: the raw GLM shape really is rejected');
-    const repaired = normalizeModifiedAnchorPaths({ findings: [broken] }).findings[0];
-    assert.equal(ProducerFindingV2Schema.safeParse(repaired).success, true, 'the normalizer must make it valid');
+  it('derives the path pair correctly per fileStatus — the rename/copy case no mirror could ever handle', async () => {
+    const { buildDiffPathMap, prepareCandidates } = await import('../scripts/lib/audit/diff-path-map.mjs');
+    const { makeProducerFindingV3Schema } = await import('../scripts/lib/schemas.mjs');
+    const map = buildDiffPathMap(DIFF);
+    const producerSchema = makeProducerFindingV3Schema(map.entries.map((e) => e.id));
+    const prepared = prepareCandidates(
+      map.entries.map((e) => ({ ...base, evidenceType: 'commission', anchor: { diffPathId: e.id, side: LEGAL_SIDE[e.fileStatus], startLine: 1, endLine: 1, quote: 'q' } })),
+      map, { producerSchema },
+    );
+    const pairs = prepared.map((p) => [p.finding.anchor.oldFile, p.finding.anchor.newFile]);
+    assert.deepEqual(pairs, [
+      ['src/foo.js', 'src/foo.js'],   // modified — same path both sides
+      [null, 'src/new.js'],           // added — no base side exists
+      ['src/gone.js', null],          // deleted — no head side exists
+      ['src/old.js', 'src/renamed.js'], // renamed — two REAL, different paths
+      ['src/src.js', 'src/cp.js'],    // copied — likewise
+    ]);
+  });
+});
+
+// ── Phase 6 wiring pins — the producer contract actually reaches the provider ──
+// Static pins because the alternative is a live multi-provider run. Each one
+// guards a step that, if silently dropped, restores the exact bug: findings the
+// model got RIGHT being destroyed as `fabricated`.
+describe('static pins — producer-contract wiring (evidence-anchor-path-contract Phase 6)', () => {
+  const src = fs.readFileSync(path.resolve('scripts/lib/audit/tiered-pipeline.mjs'), 'utf8');
+
+  it('the map is built from ctx.diffText — never re-read from git, never from discoveryCode', () => {
+    assert.match(src, /resolveEligibleDiffPathMap\(ctx\.diffText\)/);
+    // discoveryCode is readFilesAsContext output (fenced FILE CONTENTS); it has
+    // no `diff --git` headers, so a map built from it could only ever be invalid.
+    assert.equal(/buildDiffPathMap\(discoveryCode/.test(src), false);
+    assert.equal(/execFileSync\(['"]git['"]|execSync\(['"]git/.test(src), false, 'the map must come from ctx state, not a fresh git read — the two halves of one payload must not disagree');
+  });
+
+  it('empty/invalid short-circuit BEFORE any generator call or schema construction', () => {
+    const mapIdx = src.indexOf('resolveEligibleDiffPathMap(ctx.diffText)');
+    const skipIdx = src.indexOf('return skippedNoGeneratorResult(ctx, diffPathMap');
+    const schemaIdx = src.indexOf('makeProducerFindingV3Schema(diffPathMap.entries');
+    const portfolioIdx = src.indexOf('await runDiscoveryPortfolio(');
+    for (const [name, i] of [['map', mapIdx], ['skip', skipIdx], ['schema', schemaIdx], ['portfolio', portfolioIdx]]) {
+      assert.ok(i > 0, `expected to find the ${name} site`);
+    }
+    assert.ok(mapIdx < skipIdx, 'the map must resolve before the short-circuit');
+    assert.ok(skipIdx < schemaIdx, 'z.enum([]) is unconstructible — the short-circuit MUST precede schema construction');
+    assert.ok(skipIdx < portfolioIdx, 'an empty/invalid map must skip BOTH generators — no provider call');
+  });
+
+  it('neither skipped status can read as a clean 0-finding `complete` run (the anti-green rule)', () => {
+    assert.match(src, /runStatus = map\.kind === 'empty' \? 'skipped_no_eligible_files' : 'failed_invalid_diff_input'/);
+    // computed, then returned as `runStatus` — never the literal 'complete'.
+    const fn = src.match(/function skippedNoGeneratorResult[\s\S]*?\n\}/);
+    assert.ok(fn, 'expected skippedNoGeneratorResult');
+    assert.equal(/runStatus:\s*'complete'/.test(fn[0]), false);
+    assert.match(fn[0], /findings: \[\]/);
+  });
+
+  it('an over-budget map is a NAMED required-generator failure (§8a) — never truncated, never partitioned', () => {
+    assert.match(src, /diffPathMap\.reason === 'discovery_map_exceeds_budget'/);
+    const branch = src.match(/if \(diffPathMap\.kind === 'invalid' && diffPathMap\.reason === 'discovery_map_exceeds_budget'\)[\s\S]*?\n  \}/);
+    assert.ok(branch, 'expected the budget branch');
+    assert.match(branch[0], /failRequiredGenerator\(/, 'must reuse §1.5\'s EXISTING semantics, not new failure machinery');
+    assert.match(branch[0], /required generator failed: /, 'the reason prefix summarize() and the ledger read by name');
+  });
+
+  it('BOTH generators emit the V3 producer shape and are handed the SAME table', () => {
+    assert.match(src, /const producerFindingSchema = makeProducerFindingV3Schema\(/);
+    assert.match(src, /const glmStrictSchema = z\.object\(\{ findings: z\.array\(producerFindingSchema\)\.max\(15\) \}\)/, 'GLM');
+    assert.match(src, /items:\s*z\.toJSONSchema\(producerFindingSchema\)/, 'Sonnet tool input_schema');
+    // ONE anchorContract string, referenced by both — so they cannot drift into
+    // citing different id sets.
+    assert.equal((src.match(/^\s+anchorContract,$/gm) || []).length, 2, 'both generators must interpolate the same anchorContract');
+    assert.match(src, /const diffPathTable = renderDiffPathTable\(diffPathMap\.entries\)/);
+    assert.match(src, /DIFF-PATH TABLE/);
+  });
+
+  it('the prompt tells the model to copy an id from the table and NOT to report paths (D1)', () => {
+    const contract = src.match(/const anchorContract = \[[\s\S]*?\]\.join\('\\n'\);/);
+    assert.ok(contract, 'expected the anchorContract block');
+    assert.match(contract[0], /copied EXACTLY from the DIFF-PATH TABLE/);
+    assert.match(contract[0], /Do NOT report paths or file status/);
+    // The rules that only ever existed in superRefine, which the provider could
+    // never enforce — asking for them again would restore the failure surface.
+    assert.equal(/REQUIRES BOTH `oldFile` AND `newFile`/.test(contract[0]), false);
+  });
+
+  it('prepareCandidates runs BEFORE Stage 0, and only ready candidates continue (D6)', () => {
+    const prepIdx = src.indexOf('const prepared = prepareCandidates(rawFindings, diffPathMap');
+    const mergeIdx = src.indexOf('mergeIntoEnvelopes(survivors)');
+    const stage0Idx = src.indexOf('runStage0EvidenceTriage(');
+    assert.ok(prepIdx > 0, 'expected the prepareCandidates call');
+    assert.ok(prepIdx < mergeIdx, 'hydration must precede envelope merge');
+    assert.ok(prepIdx < stage0Idx, 'hydration must precede Stage 0 — a malformed DTO must never reach it');
+    assert.match(src, /const readyFindings = prepared\.filter\(\(p\) => p\.kind === 'ready'\)\.map\(\(p\) => p\.finding\)/);
+    assert.match(src, /const taggedFindings = readyFindings\.map\(/, 'processFindings must consume the HYDRATED set, not rawFindings');
+  });
+
+  it('discoveryMalformedRaw reaches telemetry and stderr, and is never blended with the envelope-unit tripwire (§7a)', () => {
+    assert.match(src, /discoveryMalformedRaw: malformedRaw\.length/, 'must reach _stageBreakdown');
+    assert.match(src, /\[discovery\] CONTRACT BUG/, 'a contract bug must be loud on stderr, not just a counter');
+    // The two counters have different units (raw vs envelope) — mergeIntoEnvelopes
+    // dedups by fingerprint, so summing them yields a number that reads
+    // meaningful and cannot be reconciled.
+    assert.equal(
+      /discoveryMalformedRaw\s*\+\s*stage0Malformed|stage0Malformed\w*\s*\+\s*malformedRaw|malformedRaw\.length\s*\+\s*stage0Malformed/.test(src),
+      false,
+      'the raw and envelope malformed counters must NEVER be summed into one figure',
+    );
+  });
+
+  it('the retired anchor-mirror is gone but the maxLength/maxItems clamp is RETAINED', () => {
+    assert.equal(/normalizeModifiedAnchorPaths/.test(src.replace(/RETIRED[\s\S]*?\*\//, '')), false, 'the normalizer must be fully retired');
+    assert.match(src, /\(v\) => clampToJsonSchemaLimits\(v, glmResponseJsonSchema\)/, 'OSS routers still ignore maxLength/maxItems — the clamp stays');
   });
 });
 
