@@ -22,6 +22,14 @@ independence, and spawned as tasks rather than buried:
 |---|---|---|
 | WS-A — `syncBanditArms` NULL-conflict key | R1-H2 + R1-H4 (two independent passes) | Genuinely independent: the cloud FP read loop reads `false_positive_patterns` only; `bandit_arms` is a disjoint table + code path it never calls. |
 | WS-B — local `fpTracker` trapped in the ledger branch | R1-M2 | Fixing it **changes cloud-off suppression behaviour**, which that plan's constraint 1 explicitly forbade and which none of its 5 GPT + 2 Gemini rounds audited. Shipping it under cover of a cloud-read PR would have been a scope violation. |
+| WS-C — `populateFindingMetadata` trapped in the **same** branch | **NOT found by any audit** — found by sweeping the branch for the WS-B *class* while writing this plan | Nothing deferred it; nobody looked. It is the third instance in the same 139-line branch, and it silently degrades the local bandit reward signal + the cloud findings table. |
+
+> **WS-C is the argument for this plan's own §Out-of-Scope item.** WS-B was
+> found by an audit looking at one loop. Asking *"what else is trapped in this
+> branch?"* — the class question rather than the instance question — found
+> another one in minutes, and it had been shipping degraded data the whole time
+> without a single finding against it. That is the third confirmed instance of
+> "fix scoped to the instance that hurt"; see §Sustainability.
 
 **The shared theme (and the reason they are one plan):** both are cases where a
 targeted fix was applied to one path and **the identical defect was left on its
@@ -116,6 +124,57 @@ no debt entries (a `--no-debt-ledger` run, a purged debt ledger, or a fresh
 consumer). And a *fresh* repo has an empty tracker too, so there is nothing to
 suppress — the two mechanisms accumulate together. The genuinely exposed case is
 a **mature tracker + deliberately-suppressed debt ledger**.
+
+### WS-C — what else is trapped in that branch (the class sweep)
+
+The branch spans **`:2366-2505`, 139 lines**. Every top-level statement in it was
+judged against one question: *is this genuinely ledger-dependent, or merely
+nested?*
+
+| Inside the branch | Verdict |
+|---|---|
+| `populateFindingMetadata` loop (`:2367-2371`) | **TRAPPED — WS-C.** Pure enrichment derived from `section`; zero ledger dependency. |
+| `suppressReRaises` (`:2372`) | Legitimate — consumes `mergedLedger` by definition. |
+| `R{n} POST-PROCESSING` card (`:2374-2382`) | Cosmetic only. A no-ledger run prints no card. Noted, not fixed (§Out of Scope). |
+| local `fpTracker` loop (`:2384-2401`) | **TRAPPED — WS-B** (the known one). |
+| `allFindings` replace (`:2404-2405`), `_suppressionData` (`:2409`) | Legitimate — built from `suppressReRaises`' `kept`/`reopened`. |
+| Phase-D debt events, status card, suppression context, `_debtMemoryData` (`:2418-2504`) | Legitimate — all iterate `suppressed`/`reopened`. |
+
+**Repo-wide sweep of the same gate shape**: the other `isR2Plus ? … : …` gates
+(`:751`, `:1533`, `:1566`, `:1633`, `:1711`, `:1715`) are **by design** — they
+select the R2+ rubric / pass the ledger to the prompt only on R2+. The one
+genuine `isR2Plus` trap (`recordSuppressionEvents` skipping cloud suppressions
+on round 1) was already found and fixed by the cloud-FP code audit (R5-M1). No
+other module carries this shape.
+
+### Why WS-C matters (Code Trace — the producer gap is airtight)
+
+`FindingBase` (`schemas.mjs:35-46`) is the **LLM output contract**. It carries
+`section` — and **no** `_primaryFile`, **no** `affectedFiles`. Those are derived,
+and `populateFindingMetadata` (`ledger.mjs:272-273`) is their **only** producer:
+
+```js
+finding._primaryFile  = files[0] || normalizePath(section.split(':')[0]…);
+finding.affectedFiles = files.length > 0 ? files : [finding._primaryFile];
+```
+
+`addFindings` (`:2265-2271`) pushes `{ ...f, id, _hash: hash, _pass, category }`
+— it sets **`_hash`** (so `_hash` is safe on every path, verified) but **not**
+the derived paths. `populateFindingMetadata` is called at exactly two sites:
+`:2369` (**inside the branch**) and `:2576` (inside the *auto-write-ledger*
+block, on a `copy` — so the ledger file is fine, `allFindings` is not).
+
+So when the merged ledger is empty, the enrichment never runs and two consumers
+**outside** the branch silently read the gap:
+
+| Consumer | Line | What it records |
+|---|---|---|
+| `.audit/outcomes.jsonl` — the **local bandit reward signal** | `:2771-2772` | `primaryFile: f._primaryFile \|\| f.section` → the **raw section string** (`"scripts/lib/foo.mjs:42 — thing"`), not a normalized path; `affectedFiles: f.affectedFiles \|\| []` → **empty** |
+| cloud `audit_findings` | `runs-findings.mjs:358` | `primary_file: f._primaryFile \|\| f.section` → the same degraded value |
+
+**No error, no crash — wrong-shaped data that looks fine.** That is the
+silent-degradation class, and the `|| f.section` fallback is what makes it
+invisible: it always produces *a* string, so nothing ever fails.
 
 ### Patterns reused vs new
 
@@ -240,26 +299,55 @@ graph LR
    discovered later — it is precisely what constraint 1 of the cloud-FP plan
    forbade shipping unaudited.
 
-7. **The two workstreams are INDEPENDENT and must not be merged.** Different
-   domains, different tables, different risk, zero shared symbols. They are one
-   *plan* because they share a provenance and a lesson; they are two *clusters*
-   because neither's correctness depends on the other. §11 splits them, and a
-   reviewer can reject one without the other.
+7. **WS-C hoists `populateFindingMetadata` above the branch — the safest fix
+   here, and the one with no behaviour trade-off at all.** It is pure enrichment
+   over `section` with zero ledger dependency, and it is **idempotent by
+   construction** (`if (!finding._hash)`; the derived paths recompute to the same
+   values from the same input). So hoisting it:
+   - on a **ledger** run: byte-identical — the enrichment already ran, just
+     earlier. The in-branch call is then redundant and is **removed** (leaving a
+     second call would be a silent second source of truth).
+   - on a **no-ledger** run: strictly **more** correct data. It cannot suppress,
+     drop, or alter a finding — it only fills fields that were `undefined`.
+
+   Unlike WS-B this has **no recall implications whatsoever**, which is why it is
+   the last phase in its cluster rather than a separate risk decision. Note the
+   `|| f.section` fallbacks at the two consumers are **kept**: they are correct
+   defensive behaviour for a finding whose `section` yields no path, and removing
+   them would convert a degradation into a crash.
+
+8. **WS-A is INDEPENDENT of WS-B/WS-C and must not be merged with them.**
+   Different domain, different table, zero shared symbols. WS-B and WS-C **are**
+   coupled — same file, same branch, overlapping lines — and must be audited
+   together or they conflict. They are one *plan* because they share a provenance
+   and a lesson; §11 splits them A / B+C so a reviewer can reject either side.
 
 ---
 
 ## 6. Sustainability Notes
 
 - **The real lesson is the sibling-path miss, and it deserves a mechanism, not
-  a resolution to be careful.** Both defects exist because a fix was scoped to
-  the instance that hurt rather than the *class*. The FP-sync fix asked "is
+  a resolution to be careful.** All three defects exist because a fix was scoped
+  to the instance that hurt rather than the *class*. The FP-sync fix asked "is
   `false_positive_patterns` broken?" instead of "which other tables share this
   ON CONFLICT shape?". The cloud-FP fix lifted one loop out of the branch and
-  stepped over its neighbour. **Follow-up recorded in §Out of Scope**: a
-  mechanical check for `onConflict` targets containing a column the writer can
-  emit as null would have caught WS-A years earlier and will catch the next one.
-  Deliberately NOT built here (it is its own plan, and this one must stay
-  reviewable).
+  stepped over its two neighbours.
+
+  **WS-C is the proof, and it is uncomfortable.** WS-B was found by a
+  multi-model audit — 5 GPT rounds + 3 Gemini rounds — looking at one loop.
+  **Not one of those rounds asked what else was in the branch.** Asking the
+  class question once, by hand, found WS-C in minutes: a third instance, in the
+  same 139 lines, silently degrading the local bandit reward signal and the
+  cloud findings table, with zero findings ever raised against it. A review
+  process that thorough missing something that adjacent is not an attention
+  problem — attention is what it already spent. It is a *question* problem, and
+  the fix is a mechanism, not more diligence.
+
+  **Two follow-ups recorded in §Out of Scope** (deliberately NOT built here —
+  each is its own plan, and this one must stay reviewable): a mechanical check
+  for `onConflict` targets naming a column the writer can emit as null (catches
+  WS-A's class), and a "what else is in this branch?" prompt in the audit's
+  wiring pass (catches WS-B/WS-C's class).
 - **Assumption that could change (WS-A)**: that `addArm` remains the only arm
   constructor. If a future call site builds arm objects directly, the `|| null`
   would fire — which is *why* the DB constraint, not the code fix, is the
@@ -322,7 +410,7 @@ graph LR
 
 #### `scripts/lib/audit/legacy-production-audit.mjs` (modify)
 - Delete the local loop from inside the ledger branch; call `runLocalFpPass`
-  **after the branch closes (`:2496`) and BEFORE `runCloudFpPass`**, preserving
+  **after the branch closes (`:2505`) and BEFORE `runCloudFpPass`**, preserving
   today's local-then-cloud ordering (a cloud pattern known locally must still
   attribute to the local counter).
 - Thread `fpSuppressedCount` from the returned count; keep the existing
@@ -330,6 +418,43 @@ graph LR
   (the cloud-FP plan's R5-M2 fix — the same reconciliation now applies to two
   passes, so subtract each pass's own count).
 - **Why this file**: it is the orchestrator; it must hold no decision logic.
+
+> **Anchors are STRUCTURAL.** The Gemini gate on the cloud-FP plan caught a line
+> anchor wrong by 100 lines that pointed *inside* this same branch — it would
+> have recreated the very bug it claimed to fix. The branch is
+> `if (mergedLedger.entries.length > 0)`, currently `:2366-2505`; re-confirm by
+> landmark at implementation, never by the number.
+
+### WS-C — `populateFindingMetadata` out of the ledger branch
+
+#### `scripts/lib/audit/legacy-production-audit.mjs` (modify — same file as WS-B)
+- **Move** the enrichment loop (`:2367-2371`) from inside the branch to
+  **immediately before** `if (mergedLedger.entries.length > 0)`, so every
+  finding carries `_primaryFile`/`affectedFiles` regardless of ledger state.
+  **Remove** the in-branch call — do not leave both (a redundant second call is
+  a second source of truth waiting to drift).
+- Ordering constraint: it must run **after** `addFindings`/tool-finding merge
+  (which builds `allFindings` and sets `_hash`) and **before** `suppressReRaises`,
+  which reads `_affectedFiles`/`_primaryFile` for its impact-set narrowing. The
+  slot immediately above the branch satisfies both.
+- **Why this file**: it is where the enrichment currently lives; this is a move,
+  not a new abstraction.
+
+#### `tests/…` — the regression pin (Tier 1, test-first)
+- The natural home is wherever `populateFindingMetadata`'s contract is already
+  pinned; if no suite covers it, add cases to the ledger suite
+  (`tests/rulings-block-guard.test.mjs` is `buildRulingsBlock`-only —
+  **check at implementation**, do not assume a `tests/ledger.test.mjs` exists;
+  the cloud-FP plan was corrected mid-flight for exactly that wrong assumption).
+1. A finding that has been through `addFindings` (so `_hash` set, `_primaryFile`
+   **not**) → after enrichment, `_primaryFile` is a normalized path and
+   `affectedFiles` is non-empty.
+2. **The consumer-shape pin**: given an enriched finding, the `outcomes.jsonl`
+   payload shape records a normalized `primaryFile` and a non-empty
+   `affectedFiles` — i.e. the fields the bandit reward signal and
+   `audit_findings.primary_file` actually read.
+3. **Idempotency**: enriching twice yields identical values (proves the hoist
+   cannot change the ledger path, where the enrichment already ran).
 
 #### `tests/suppression-policy.test.mjs` (modify — Tier 1, test-first)
 1. **No ledger → the tracker now suppresses** (the fix): a matching pattern with
@@ -363,9 +488,14 @@ migration. Files: `supabase/migrations/<ts>_bandit_arms_bucket_not_null.sql` (cr
 **Phase 3 — local FP pass seam**: `runLocalFpPass` + its tests. Files:
 `scripts/lib/suppression-policy.mjs` (modify), `tests/suppression-policy.test.mjs` (modify).
 
-**Phase 4 — orchestrator wiring**: lift the loop out; thread the count; preserve
-ordering + `keptCount` semantics. Files:
+**Phase 4 — orchestrator wiring**: lift the fpTracker loop out; thread the
+count; preserve local-then-cloud ordering + `keptCount` semantics. Files:
 `scripts/lib/audit/legacy-production-audit.mjs` (modify).
+
+**Phase 5 — metadata enrichment hoist**: move `populateFindingMetadata` above
+the branch and remove the in-branch call; pin the consumer shape. Files:
+`scripts/lib/audit/legacy-production-audit.mjs` (modify), the
+`populateFindingMetadata` test suite (modify — locate at implementation).
 
 **Close-out (not a phase)**: `setup-postgres --migrate`; `npm test`; live
 bucket-distribution + row-count check.
@@ -381,7 +511,9 @@ bucket-distribution + row-count check.
 | WS-B newly suppresses findings on no-ledger runs | recall | The single intended behaviour change. Bounded and **measured**: 10 of 2,424 patterns clear the bar; unreachable in this repo today (343 debt entries). Named in plan + commit; `reopened` exempted so regressions can never be masked. |
 | WS-B's lifted seam aliases its input and erases all findings | correctness / total data loss | The R3-H1 class, one file away. Contract: always a NEW array; pinned by the call-site-replay test, not by an isolation-only test (which is what let R3-H1 through the first time). |
 | Extracting `buildBanditArmRows` is symmetry-for-its-own-sake | over-engineering | It has a current requirement: the never-null invariant must be assertable DB-free (INC-002). Without it the fix is untestable, not merely untested. |
-| The two workstreams get merged into one commit/audit | scope | §11 splits them; each is independently rejectable. |
+| WS-A gets merged with WS-B/WS-C in one commit/audit | scope | §11 splits them A / B+C; each side is independently rejectable. |
+| **WS-C's hoist lands in the wrong slot** — above `addFindings` (so `_hash`/`allFindings` do not exist yet) or below `suppressReRaises` (which reads the metadata) | correctness | The slot is constrained on both sides and stated in §7. The Gemini gate already caught a 100-line-wrong anchor pointing *inside* this exact branch on the sibling plan — anchors here are structural, never numeric. |
+| **Degraded `primary_file` / empty `affectedFiles` already sit in the store** from historical no-ledger runs | data quality | **Measured: nil here.** `audit_findings` holds **0 rows** (2026-07-14 wipe), so there is no history to correct and this fix is purely forward-looking. Not silently ignored: §Out of Scope keeps the question alive for **consumers** (never wiped, may have run with a purged debt ledger) and records a verified detection query. |
 
 **Deliberately deferred**: the dedupe migration (0 rows — dead work); unifying
 local+cloud+ledger suppression (needs a parity suite first); the mechanical
@@ -392,6 +524,8 @@ null-in-conflict-target lint (§Out of Scope).
 | Item | Revisit trigger |
 |---|---|
 | **A mechanical check for `onConflict` targets naming a column the writer can emit as null** — the check that would have caught WS-A at 718ca90 time and will catch the next sibling | Now-ish, as its own plan. Two instances of this exact class in one repo (`false_positive_patterns`, `bandit_arms`) is a pattern, not a coincidence. Cheap: the write builders are a small, enumerable set. |
+| **A "what else is nested in this branch?" step in `/audit-code`'s wiring pass** — when a finding is *"X is trapped inside conditional Y"*, enumerate Y's other contents and judge each. This is what found WS-C, and what 8 audit rounds across two models did not | Now-ish, as its own plan. The trigger is cheap and mechanical (a finding naming a conditional ⇒ enumerate that conditional), and the payoff is proven: 1 hand-sweep = 1 new silent-degradation defect. |
+| **Backfill / quarantine of historical degraded `primary_file` + empty `affectedFiles` rows** | **Moot in this repo — measured, not assumed**: `audit_findings` holds **0 rows** (the 2026-07-14 wipe), so there is no history to backfill and this plan's fix is purely forward-looking. Retained for **consumers**, whose tables were never wiped and who may have run with a purged debt ledger. Detection query (verified to run, returns 0 here): `SELECT count(*) FROM audit_findings WHERE primary_file LIKE '% %' OR primary_file LIKE '%—%'` — a normalized path contains neither a space nor an em-dash, so a hit is the raw-section tell. Revisit when a consumer reports odd `primary_file` values. |
 | Unify `fpTracker.shouldSuppress` with `resolveSuppressionPolicy` | The local tracker's legacy raw-count fallback is retired, OR a parity suite exists. Inherited from the cloud-FP plan's Out of Scope. |
 | Dedupe/backfill tooling for `bandit_arms` | The pre-check ever RAISEs — i.e. a real deployment has drifted. |
 | Verify the `bandit_arms` unique constraint actually covers `(pass_name, variant_id, context_bucket)` | Confirm at implementation; if it is **absent**, ON CONFLICT is broken for an unrelated reason → its own finding, not a smuggled fix. |
@@ -441,11 +575,16 @@ null-in-conflict-target lint (§Out of Scope).
     builder that guarantees the sentinel.
   - Additional files: `supabase/migrations/<ts>_bandit_arms_bucket_not_null.sql` (create)
   - author-tier: standard
-- **Cluster B** — Phases 3-4 — fix-gate: final
-  - Coupling: the seam and its call site are the classic composition pair — the
-    array-ownership contract and the local-then-cloud ordering only exist *at the
-    join*, and R3-H1 proved a correct seam with a wrong call site erases every
-    finding. Auditing them apart would repeat that.
+- **Cluster B** — Phases 3-5 — fix-gate: final
+  - Coupling: all three phases edit the **same 139-line branch** in the same
+    file, with overlapping lines — done apart they conflict textually. Beyond
+    that, the seam and its call site are the classic composition pair: the
+    array-ownership contract and the local-then-cloud ordering exist only *at
+    the join*, and R3-H1 proved a correct seam with a wrong call site erases
+    every finding. Phase 5's hoist must land **above** the branch that Phase 4
+    is simultaneously reshaping, and `suppressReRaises` reads the metadata
+    Phase 5 moves — so the ordering constraint spans the phases and only a
+    single audit of the whole branch can verify it.
   - author-tier: frontier
 - **Final gate**: mandatory consolidated Gemini review over the union diff.
 
