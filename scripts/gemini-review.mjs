@@ -32,6 +32,7 @@ import { buildClassificationRubric } from './lib/prompt-seeds.mjs';
 import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAuditInfraFile, atomicWriteFileSync } from './lib/file-io.mjs';
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
+import { applyEnvSetting } from './lib/env-setting.mjs';
 import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig } from './lib/config.mjs';
 import { recordFinalReviewFindings } from './learning-store.mjs';
 import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
@@ -1375,22 +1376,12 @@ const SETTING_COMMENT = '# Final-review provider — persistent per-repo setting
  */
 export function applyProviderSetting(existingText, provider) {
   if (!SETTING_PROVIDERS.has(provider)) throw new Error(`invalid provider "${provider}"`);
-  const lines = existingText && existingText.length ? existingText.split(/\r?\n/) : [];
-  const idx = lines.findIndex((l) => /^\s*FINAL_REVIEW_PROVIDER\s*=/.test(l));
-
-  if (provider === 'default') {
-    if (idx === -1) return { text: existingText, changed: false };
-    lines.splice(idx, 1);
-    if (idx - 1 >= 0 && /managed by `set-provider`/.test(lines[idx - 1] || '')) lines.splice(idx - 1, 1);
-  } else if (idx === -1) {
-    if (lines.length && lines[lines.length - 1].trim() !== '') lines.push('');
-    lines.push(SETTING_COMMENT);
-    lines.push(`FINAL_REVIEW_PROVIDER=${provider}`);
-  } else {
-    lines[idx] = `FINAL_REVIEW_PROVIDER=${provider}`;
-  }
-  const text = lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/\s*$/, '') + '\n';
-  return { text, changed: true };
+  // Delegates to the shared pure writer (Cluster B / Phase 3). `reformat: true`
+  // preserves this function's historical blank-run normalisation so its output is
+  // byte-identical to before the extraction; `default` maps to a null value (remove).
+  return applyEnvSetting(existingText, 'FINAL_REVIEW_PROVIDER',
+    provider === 'default' ? null : provider,
+    { comment: SETTING_COMMENT, reformat: true });
 }
 
 /**
