@@ -92,7 +92,7 @@ resolver has no OSS tier), called via `ossStructuredCall` with a JSON-schema
 
 | Candidate | Why it's on the list | Watch-out |
 |---|---|---|
-| **DeepSeek V3.2** | Front-runner. **Cheapest** ($0.14/$0.28) and served by **16 providers on OpenRouter** → automatic failover, the direct antidote to GLM's single-host (`z-ai`) stalls. Strong coding lineage. | Throughput varies 4–57 tok/s across providers; pin/prefer a fast provider. |
+| **DeepSeek V3.2** | Front-runner. **Cheapest** ($0.14/$0.28) and served by **16 providers on OpenRouter** → automatic failover. Strong coding lineage. | Throughput varies 4–57 tok/s across providers; pin/prefer a fast provider. |
 | **Qwen3.6 Flash** | Cheap ($0.19/$1.13), reliable tool use, 1M context. Qwen3-family structured output is well-supported (OpenRouter Response Healing cut Qwen3-235B JSON defects 99.8%). | Slightly pricier than DeepSeek; grade its FP rate. |
 | **Qwen3.6 Plus** | Strongest agentic-coding open model per July-2026 rankings; 1M context. | Priciest of the three; only worth it if quality clearly beats the cheaper two. |
 
@@ -152,9 +152,9 @@ on a "production" path that can never execute there.
 
 The failure taxonomy splits cleanly, and the fixes are independent:
 
-1. **The stalls (the 64%)** → a model/provider change. This is the decision
-   this document forces. DeepSeek's multi-provider failover is the specific
-   availability lever, not just "a better model".
+1. **The stalls (the 64%)** → a provider-routing and/or model change — see
+   the 2026-07-17 amendment below, which corrects this document's original
+   "single-host" diagnosis and adds a pinned-GLM control arm to gate 1.
 2. **The non-JSON failures (3 of the 41)** → **OpenRouter's Response Healing
    plugin**, orthogonal to model choice (Qwen3-235B: 99.8% JSON-defect
    reduction; <1ms added latency). Worth enabling regardless of which model
@@ -221,3 +221,66 @@ denominator.
 - [Response Healing: Reduce JSON Defects by 80%+ — OpenRouter](https://openrouter.ai/announcements/response-healing-reduce-json-defects-by-80percent)
 - [Is OpenRouter Reliable? An Honest Review for Production Use (2026) — ofox.ai](https://ofox.ai/blog/is-openrouter-reliable-honest-review-2026/)
 - Internal: `docs/research/experiment-3-model-swap-glm-vs-gpt.md`; `.audit/tiered-shadow-log.jsonl`; `docs/plans/shadow-no-legacy-fallback.md`.
+
+
+## Amendment (2026-07-17, same day): the disqualification is confounded — corrected before any switch
+
+Operator challenge: *"are we penalising GLM because of OpenRouter?"* Digging
+into it exposed a **factual error above and a confound across all three
+axes**. Recorded here rather than silently rewritten:
+
+1. **The "single-host (`z-ai`) stalls" claim above is WRONG.** OpenRouter's
+   live endpoint data shows `z-ai/glm-5.2` served by **~26 providers across
+   ~20 brands** (DeepInfra, GMI Cloud, Novita, Fireworks, Baidu, SiliconFlow,
+   Together, Cloudflare, …). Worse for measurement validity: the fleet is
+   split between **fp8 hosts** (incl. Z.ai's own first-party route), **fp4
+   hosts** (DeepInfra, Wafer, Decart, Parasail, Inceptron), and hosts that
+   disclose no quantization at all.
+2. **Our call shape never controlled any of this.** `ossStructuredCall`
+   sends NO `provider` preferences — no `order`, no `quantizations` filter,
+   no `require_parameters`. Every GLM measurement we have (the 36%
+   availability, experiment-3's 80.9% FP rate, the fence-wrapped/non-JSON
+   replies the code itself live-verified as coming from "SEVERAL providers,
+   not one consistent one") was taken against an **unfiltered, partly
+   fp4-quantized, behaviourally heterogeneous fleet**. The quality axis in
+   particular may have graded a quantized GLM, not GLM.
+3. **Direct z.ai does NOT dominate either.** Z.ai first-party sticker is
+   **$1.40/$4.40** per 1M — ~3× OpenRouter's realized input price (which is
+   low precisely because it routes to cheap quantized hosts) and ~10× DeepSeek
+   V3.2. Direct also means: a new key/account/billing with Zhipu, **direct
+   egress of code payloads to a single China-based provider** (a governance
+   axis OpenRouter's US-host routing partially mitigates), and losing
+   OpenRouter's Response Healing + `models:[]` fallback. Direct z.ai is a
+   diagnostic arm, not an obvious destination.
+
+**The cheap, decisive control that answers the operator's question WITHOUT
+leaving OpenRouter**: pin GLM to its first-party fp8 route via provider
+preferences on the existing seam —
+`provider: { order: ['z-ai'], quantizations: ['fp8'], require_parameters: true }`
+— same key, same egress gate, same billing. Gate 1 therefore becomes a
+**controlled screen**:
+
+| Arm | What it isolates |
+|---|---|
+| (a) GLM-5.2 pinned z-ai/fp8 via OpenRouter | model vs router-fleet confound — the direct answer to "are we penalising it?" |
+| (b) GLM-5.2 direct z.ai | only if (a) is inconclusive (isolates OpenRouter's proxy layer itself) |
+| (c) DeepSeek V3.2, Qwen3.6 Flash (unpinned + pinned-fast-provider) | the replacement candidates, measured under the SAME controls |
+
+Decision rule: if (a) still stalls, the problem is GLM/z.ai capacity and
+**switching is justified with confidence**. If (a) is clean, GLM's
+availability axis is un-disqualified, and gate 2 re-grades its FP rate **on
+the fp8 route** (experiment-3's 80.9% may be a quantization artifact —
+unknown until measured). Axis 3 (cost) stands regardless: even exonerated,
+GLM-via-z.ai is the most expensive candidate for a per-audit role.
+
+**Bottom line recorded**: we are NOT yet confident that moving is better; we
+are confident the current GLM configuration is unusable, and the three-arm
+gate-1 screen (a few dollars, ~30 calls/arm) settles model-vs-router before
+any default changes. The `required→optional` interim demotion stands either
+way — it is routing-agnostic.
+
+### Additional sources (amendment)
+- [GLM-5.2 API Access Compared: Z.ai vs OpenRouter vs Hosts — DigitalApplied](https://www.digitalapplied.com/blog/glm-5-2-api-access-providers-price-comparison-2026)
+- [Where to Run GLM-5.2: Every Provider Compared (2026) — Developers Digest](https://www.developersdigest.tech/blog/glm-5-2-free-and-cheap-access-2026)
+- [GLM 5.2 — API Pricing & Benchmarks | OpenRouter](https://openrouter.ai/z-ai/glm-5.2)
+- Internal: `scripts/lib/oss-structured-output.mjs` (no `provider` preferences sent; multi-provider fence-wrapping live-verified 2026-07-15).
