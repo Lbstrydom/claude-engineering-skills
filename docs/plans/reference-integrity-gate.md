@@ -343,7 +343,8 @@ rows** — `docs/plans/<name>.md` → PLACEHOLDER; `docs/plans/feature.md` → c
 `docs/plans/a.md`; `docs/plans/*.md` → PLACEHOLDER; `a docs/plans/x.md, and
 docs/plans/y.md (planned)` → two sites, marker on `y` only.
 
-Every classification result carries the **marker's byte offset**, so a suppression
+Every classification result carries the **marker's string offset** (a JS UTF-16
+code-unit index, for traceability only — never a byte position), so a suppression
 is traceable to the exact token that earned it rather than inferred from context.
 `(planned)` on a token that **now resolves** is itself a finding (`stale-planned-marker`)
 — the marker cannot outlive its reason.

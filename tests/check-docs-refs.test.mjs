@@ -180,6 +180,16 @@ describe('check-docs-refs / (planned) marker', () => {
     assert.equal(extractRefs('[x](docs/plans/a.md#phase-1) and more')[0].planned, false);
   });
 
+  // Gemini round-2 G1: a self-linking label with a marker. Both the label site
+  // and the destination site must bind, or the label alone throws an
+  // un-suppressible GONE — contradicting the "both resolve identically" contract.
+  it('binds on BOTH sites of a self-linking label with a marker', () => {
+    const got = extractRefs('[docs/plans/a.md](docs/plans/a.md) (planned)');
+    assert.equal(got.length, 2);
+    assert.equal(got[0].planned, true, 'label site must bind through the ](dest)');
+    assert.equal(got[1].planned, true, 'destination site must bind');
+  });
+
   it('binds to its OWN token only', () => {
     const got = extractRefs('docs/plans/a.md and docs/plans/b.md (planned)');
     assert.equal(got[0].planned, false, 'first token must not inherit the marker');

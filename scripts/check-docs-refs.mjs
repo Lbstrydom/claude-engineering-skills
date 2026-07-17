@@ -106,13 +106,20 @@ const REF_RE = new RegExp(`(?<![A-Za-z0-9._/*-])(${TOKEN})(?![A-Za-z0-9_-])(?![.
 // the gate's cardinal sin (suppressing a real finding), so the space is
 // mandatory after a closing char.
 //
-// The leading `(?:[#?][^\s`)]*)?` consumes an optional URL fragment/query FIRST:
-// REF_RE stops strictly at `.md`, so `[x](docs/plans/a.md#phase-1) (planned)`
-// leaves `#phase-1) (planned)` as the tail. Without this, the marker check hits
-// `#` and fails, wrongly stripping a legitimate forward-ref's marker (a false
-// POSITIVE — a planned doc flagged GONE). The fragment is not part of the
-// resolved target (that stops at `.md`); this only lets the marker survive it.
-const PLANNED_RE = /^(?:[#?][^\s`)]*)?(?:[`)] |[ ])?\(planned\)/;
+// The marker check skips, in order, the bits REF_RE leaves in the tail before a
+// legitimately-adjacent `(planned)`:
+//   (?:[#?][^\s`)]*)?  — an optional URL fragment/query. REF_RE stops at `.md`,
+//                        so `[x](docs/plans/a.md#phase-1) (planned)` leaves
+//                        `#phase-1) (planned)`; without this the check hits `#`
+//                        and wrongly strips the marker (false POSITIVE).
+//   (?:\]\([^)]+\))?   — a Markdown link DESTINATION following a label token. A
+//                        self-linking label `[docs/plans/a.md](docs/plans/a.md)
+//                        (planned)` yields two sites (contract §Contexts); the
+//                        LABEL token's tail is `](docs/plans/a.md) (planned)`,
+//                        so without this the label alone would be an
+//                        un-suppressible GONE while the destination is planned —
+//                        breaking the contract's "both resolve identically".
+const PLANNED_RE = /^(?:[#?][^\s`)]*)?(?:\]\([^)]+\))?(?:[`)] |[ ])?\(planned\)/;
 
 /**
  * Extract every citation site from a chunk of text.
@@ -133,7 +140,11 @@ export function extractRefs(text) {
       target,
       kind: (stem.includes('<') || stem.includes('*')) ? 'placeholder' : 'concrete',
       offset: m.index,
-      planned: PLANNED_RE.test(text.slice(m.index + target.length)),
+      // Cap the tail slice: PLANNED_RE only matches immediately-adjacent text,
+      // so slicing the whole remainder per match is a needless O(N^2) copy in a
+      // citation-dense file (G2). 200 chars comfortably covers a fragment + a
+      // link destination + the marker.
+      planned: PLANNED_RE.test(text.slice(m.index + target.length, m.index + target.length + 200)),
       traversal: target.split('/').includes('..'),
     });
   }
