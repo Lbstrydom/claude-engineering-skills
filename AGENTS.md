@@ -870,7 +870,7 @@ When `--round >= 2`, the audit script enables three-layer defence against findin
 
 1. **Rulings injection** (Layer 1): `buildRulingsBlock()` formats prior rulings as system-prompt exclusions
 2. **R2+ prompts** (Layer 2): `R2_ROUND_MODIFIER` + pass rubric (not "find all issues")
-3. **Post-output suppression** (Layer 3): `suppressReRaises()` fuzzy-matches findings against ledger
+3. **Post-output suppression** (Layer 3): `suppressReRaises()` fuzzy-matches findings against ledger, then — when cloud is on — `runCloudFpPass()` applies the **cloud FP-pattern policy** (`docs/plans/cloud-fp-suppression-read-loop.md`). Called **unconditionally, outside the ledger branch** (a no-ledger run is exactly the case a pattern learned on another machine serves) and it **exempts `reopened`** so category statistics can never mask a regression. Layer 1 stays local-ledger-only: a pre-generation "do NOT raise X" hint can stop a required reopen from ever reaching the classifier, so the cloud policy deliberately does **not** feed the prompt.
 
 ### R2+ CLI Flags
 

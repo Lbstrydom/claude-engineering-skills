@@ -328,6 +328,41 @@ export const frictionConfig = Object.freeze({
 
 // ── Learning System v2 Config ─────────────────────────────────────────────
 
+/** Inclusive bounds for the per-scope FP-pattern read limit. */
+export const FP_READ_LIMIT_MIN = 1;
+export const FP_READ_LIMIT_MAX = 5000;
+export const FP_READ_LIMIT_DEFAULT = 500;
+
+/**
+ * Range-validate the per-scope FP-pattern read limit — PURE FUNCTION.
+ *
+ * `safeInt` only guards NaN; it happily returns 999999999, which would defeat
+ * the bounded-read guarantee, or 0/-5, which would make the SQL LIMIT inert or
+ * invalid. This is the single validation seam, applied BOTH at config
+ * resolution and at the loader's public API (a caller may pass `limit`
+ * explicitly and must not be able to bypass the bound).
+ *
+ * Already-clamped input clamps to itself — a no-op that warns nothing, so the
+ * normal config-derived path never double-warns.
+ *
+ * @param {unknown} value
+ * @param {(msg: string) => void} [warn] - injected for tests; defaults to stderr
+ * @returns {number} An integer within [FP_READ_LIMIT_MIN, FP_READ_LIMIT_MAX]
+ */
+export function clampFpReadLimit(value, warn = (m) => process.stderr.write(m)) {
+  const n = safeInt(value, FP_READ_LIMIT_DEFAULT);
+  if (!Number.isFinite(n)) return FP_READ_LIMIT_DEFAULT;
+  if (n < FP_READ_LIMIT_MIN) {
+    warn(`  [cloud-fp] FP read limit ${n} below minimum — clamped to ${FP_READ_LIMIT_MIN}\n`);
+    return FP_READ_LIMIT_MIN;
+  }
+  if (n > FP_READ_LIMIT_MAX) {
+    warn(`  [cloud-fp] FP read limit ${n} above maximum — clamped to ${FP_READ_LIMIT_MAX}\n`);
+    return FP_READ_LIMIT_MAX;
+  }
+  return n;
+}
+
 export const learningConfig = Object.freeze({
   outcomeHalfLifeMs: safeInt(process.env.OUTCOME_HALF_LIFE_DAYS, 30) * 24 * 60 * 60 * 1000,
   outcomeMaxAgeMs: safeInt(process.env.OUTCOME_MAX_AGE_DAYS, 180) * 24 * 60 * 60 * 1000,
@@ -336,6 +371,9 @@ export const learningConfig = Object.freeze({
   minBucketSamples: safeInt(process.env.MIN_BUCKET_SAMPLES, 5),
   minFpSamples: safeInt(process.env.MIN_FP_SAMPLES, 5),
   minExamplesThreshold: safeInt(process.env.MIN_EXAMPLES_THRESHOLD, 3),
+  // Per-scope cap on the cloud FP-pattern read. Range-validated, not merely
+  // parsed — a bound a typo can disable is not a bound.
+  fpReadLimit: clampFpReadLimit(process.env.FP_READ_LIMIT ?? FP_READ_LIMIT_DEFAULT),
 });
 
 // ── Outcome Reward Weights ──────────────────────────────────────────────────

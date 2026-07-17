@@ -14,12 +14,20 @@ import { GLOBAL_REPO_ID, UNKNOWN_FILE_EXT, learningConfig } from './config.mjs';
 /**
  * Apply lazy decay to a pattern's weights — PURE FUNCTION.
  * Returns a new decayed view without mutating the input.
+ *
+ * `nowMs` is injectable so callers can evaluate a whole policy against ONE
+ * instant (rather than re-reading the wall clock per pattern mid-loop) and so
+ * decay tests can pin a fixed evaluation time instead of monkey-patching global
+ * time or using `Date.now()`-relative fixtures that silently rot. The default
+ * preserves the original behaviour exactly for every existing caller.
+ *
  * @param {object} pattern
  * @param {number} halfLifeMs
+ * @param {number} [nowMs] - evaluation instant; defaults to Date.now()
  * @returns {object} Decayed copy
  */
-export function applyLazyDecay(pattern, halfLifeMs = learningConfig.outcomeHalfLifeMs) {
-  const now = Date.now();
+export function applyLazyDecay(pattern, halfLifeMs = learningConfig.outcomeHalfLifeMs, nowMs = Date.now()) {
+  const now = nowMs;
   const lambda = Math.LN2 / halfLifeMs;
   const elapsed = now - (pattern.lastDecayTs || now);
 

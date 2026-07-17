@@ -227,9 +227,13 @@ export {
 export { sanitizeOutcomes, sanitizePath, redactSecrets } from './lib/sanitizer.mjs';
 
 // ── Suppression Policy ──────────────────────────────────────────────────────
+// formatPolicyForPrompt is deliberately absent — deleted, not dormant. See
+// suppression-policy.mjs::resolveSuppressionPolicy.
 export {
   resolveSuppressionPolicy,
-  formatPolicyForPrompt,
+  buildCloudFpPolicy,
+  applyCloudFpSuppression,
+  runCloudFpPass,
   shouldSuppressFinding
 } from './lib/suppression-policy.mjs';
 

@@ -79,7 +79,8 @@
 | `syncFalsePositivePatterns` | `false_positive_patterns` | — | `{synced}` | n/a | fixture-pending |
 | `buildFpPatternRows` | — (pure row builder for the sync above; repo_id never null — sentinel fallback) | — | `[{repo_id, pattern_value, ...}]` | n/a | `tests/store-bandit-fp.test.mjs` |
 | `fpPatternReadColumns` | — (returns the pinned reader column list; migration-backed, schema-guard-tested) | — | `string[]` | n/a | `tests/store-bandit-fp.test.mjs` |
-| `loadFalsePositivePatterns` | — | `false_positive_patterns` | `[{patternKey, ...}]` | insensitive (sort by `patternKey`) | fixture-pending |
+| `buildFpReadQuery` | — (pure query builder for the read below; bounded `LIMIT n+1`, deterministic `ORDER BY decayed_dismissed DESC, pattern_value ASC`. **Repo scope carries NO `auto_suppress` predicate** — that flag is false for every hierarchy *blocker*, so filtering on it would delete the rows the scope walk depends on; global keeps it, safe because global is the last scope) | — | `{sql, params}` | n/a | `tests/store-bandit-fp.test.mjs` |
+| `loadFalsePositivePatterns` | — | `false_positive_patterns` | **per-scope status envelope** `{repo, global}` where each is `{status: ok\|failed\|skipped, patterns, atLimit, errorName?}` — an empty array cannot distinguish "no patterns" from "the read failed", and that difference gates whether global may suppress | deterministic (`decayed_dismissed DESC, pattern_value ASC`) | `tests/store-bandit-fp.test.mjs` |
 | `getFalsePositivePatterns` | — | `false_positive_patterns` | `[{...}]` (filtered) | insensitive (sort by `patternKey`) | fixture-pending |
 | `syncExperiments` | `prompt_experiments` | — | `{synced}` | n/a | fixture-pending |
 | `syncPromptRevision` | `prompt_revisions` | — | `void` | n/a | fixture-pending |

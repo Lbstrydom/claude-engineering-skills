@@ -89,7 +89,8 @@ import { executeTools, normalizeToolResults, formatLintSummary } from '../linter
 import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from '../debt-memory.mjs';
-import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from '../../learning-store.mjs';
+import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from '../../learning-store.mjs';
+import { buildCloudFpPolicy, runCloudFpPass } from '../suppression-policy.mjs';
 import { finalizePriorRoundOutcomes } from '../finalize-outcomes.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from '../learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from '../learning/author-tier-observation.mjs';
@@ -1232,6 +1233,51 @@ export async function runLegacyProductionAudit(ctx) {
     }
   }
 
+  // ── Cloud FP-pattern policy (Layer 3 input) ──────────────────────────────
+  // Read the cross-repo/cross-machine FP patterns once per run and resolve them
+  // into a cloud-only policy. cloudRepoId == null (cloud off, or the repo never
+  // resolved) → policy stays null → the Layer-3 pass below is a no-op and the
+  // run is byte-identical to a pre-cloud-FP audit.
+  //
+  // The lifecycle state is logged explicitly because "no patterns yet" and "the
+  // read blew up" must be distinguishable: with rows only accumulating from
+  // 2026-07-17 this layer is legitimately inert for a while, and a silent inert
+  // layer is indistinguishable from a broken one.
+  let cloudFpPolicy = null;
+  if (!cloudRepoId) {
+    // cloudRepoId is null for TWO different reasons and they must not read the
+    // same: cloud genuinely off (expected, silent) vs cloud on but the repo
+    // never resolved (a real failure that would otherwise make this layer
+    // silently absent — the exact inert-vs-broken conflation this feature's
+    // lifecycle logging exists to prevent).
+    if (!noCloudRecording && repoProfile && await isCloudEnabled()) {
+      process.stderr.write(`  [cloud-fp] repo unresolved — falling back to local-only\n`);
+    }
+  } else {
+    try {
+      const envelope = await loadFalsePositivePatterns(cloudRepoId);
+      const built = buildCloudFpPolicy(envelope);
+      cloudFpPolicy = built.policy;
+      if (built.lifecycleState === 'loaded-active') {
+        process.stderr.write(
+          `  [cloud-fp] policy active: ${built.counts.repo} repo + ${built.counts.global} global patterns\n`
+        );
+      } else if (built.lifecycleState === 'loaded-zero') {
+        process.stderr.write(`  [cloud-fp] no patterns yet (repo=0 global=0) — layer inert\n`);
+      } else if (built.lifecycleState === 'degraded-global-dropped') {
+        process.stderr.write(`  [cloud-fp] global scope unusable (${built.reason}) — repo patterns only\n`);
+      } else {
+        process.stderr.write(`  [cloud-fp] load failed (${built.reason}) — falling back to local-only\n`);
+      }
+    } catch (err) {
+      // The loader is internally fail-open; this catches a synchronous throw and
+      // gives it its OWN named state rather than laundering it into "no data".
+      // err.name only — err.message can carry a DSN fragment.
+      process.stderr.write(`  [cloud-fp] load failed (${err.name}) — falling back to local-only\n`);
+      cloudFpPolicy = null;
+    }
+  }
+
   // ── Phase D: Debt Memory ─────────────────────────────────────────────────
   // Load persistent debt ledger so normal audits don't resurface known debt.
   // Runs every round (not just R2+) — debt is persistent across audit runs.
@@ -2312,6 +2358,11 @@ export async function runLegacyProductionAudit(ctx) {
     : { version: 1, entries: [] };
   const mergedLedger = mergeLedgersForSuppression(sessionLedgerForSuppression, debtLedgerForSuppression);
 
+  // Findings the ledger reopened this round. Declared OUTSIDE the branch so the
+  // cloud-FP pass below can exempt them whether or not the branch ran; empty
+  // when it didn't, which is correct (nothing was reopened).
+  let reopenedSet = new Set();
+
   if (mergedLedger.entries.length > 0) {
     // Enrich findings with structured metadata
     for (const f of allFindings) {
@@ -2349,6 +2400,7 @@ export async function runLegacyProductionAudit(ctx) {
     }
 
     // Replace findings with kept + reopened only
+    reopenedSet = new Set(reopened);
     allFindings.length = 0;
     allFindings.push(...kept, ...reopened);
 
@@ -2450,6 +2502,70 @@ export async function runLegacyProductionAudit(ctx) {
       // Phase D.4: transcript envelope for Gemini (capped to 50 topics to bound context)
       suppressionContext: debtSuppressionContext.slice(0, 50),
     };
+  }
+
+  // ── Layer 3: cloud FP-pattern suppression ────────────────────────────────
+  // Position is LOAD-BEARING and must stay here:
+  //   * AFTER the ledger branch above — nesting it inside would make the whole
+  //     cross-machine read loop conditional on unrelated local ledger state, so
+  //     a run with an empty ledger (exactly the case a pattern learned on
+  //     another machine serves) would load the policy and suppress nothing.
+  //   * BEFORE the auto-write ledger block below, which reads allFindings.
+  // The call is UNCONDITIONAL: runCloudFpPass is a no-op on a null policy and
+  // always returns a NEW array, so there is no branch here to get wrong and the
+  // clear-then-push below can never empty its own source.
+  const cloudPass = runCloudFpPass(allFindings, {
+    policy: cloudFpPolicy,
+    exempt: reopenedSet,
+    log: (line) => process.stderr.write(line),
+  });
+  allFindings.length = 0;
+  allFindings.push(...cloudPass.findings);
+  // Cloud-off runs must gain NO new serialized key (--out byte-identity).
+  // Legal here because _suppressionData is `var` (function-scoped) — reading it
+  // inside the ledger branch instead would hit the TDZ on `cloudPass`.
+  if (cloudRepoId != null) {
+    if (_suppressionData) {
+      _suppressionData.cloudFpSuppressedCount = cloudPass.suppressedCount;
+      // Cloud suppressions must reach recordSuppressionEvents in the
+      // BOTH-ACTIVE case too. `suppressed` is the union — the recorder treats
+      // every entry identically (all carry matchedTopic/matchScore/reason), so
+      // a count alone would leave cloud decisions unpersisted while ledger ones
+      // were recorded: the same accountability gap as the no-ledger branch
+      // below, just on the other side. The per-source COUNTS stay separate
+      // (`suppressedCount` = ledger path, `fpSuppressedCount` = local tracker,
+      // `cloudFpSuppressedCount` = cloud), so the array length is deliberately
+      // the union total rather than equal to any single count.
+      if (cloudPass.suppressed.length > 0) {
+        _suppressionData.suppressed = [..._suppressionData.suppressed, ...cloudPass.suppressed];
+      }
+      // keptCount was computed from the LEDGER pass's `kept`, before this cloud
+      // pass removed more; left stale it breaks finding conservation
+      // (keptCount + suppressedCount + reopenedCount == total raised).
+      // Subtract rather than re-measure `allFindings`: keptCount means "kept,
+      // EXCLUDING reopened", while allFindings is kept+reopened — re-measuring
+      // would silently redefine the field. The subtraction is exact because
+      // `reopened` is exempt from the cloud pass, so every cloud suppression
+      // necessarily came out of `kept`.
+      _suppressionData.keptCount -= cloudPass.suppressedCount;
+    } else if (cloudPass.suppressedCount > 0) {
+      // The ledger branch never ran, but the cloud pass DID suppress — the exact
+      // case this layer exists to serve (a pattern learned on another machine,
+      // no local ledger). Without this, that suppression leaves no provenance:
+      // _suppression is never attached, so recordSuppressionEvents never fires
+      // and findings vanish with only an stderr line to show for it. Synthesize
+      // the envelope so the cloud path is as accountable as the ledger path.
+      // Guarded on cloudRepoId, so a cloud-off run's --out stays byte-identical.
+      _suppressionData = {
+        suppressed: cloudPass.suppressed,
+        reopened: [],
+        keptCount: allFindings.length,
+        suppressedCount: 0,          // ledger-path suppressions — none ran
+        reopenedCount: 0,
+        fpSuppressedCount: 0,        // local-tracker suppressions — none ran
+        cloudFpSuppressedCount: cloudPass.suppressedCount,
+      };
+    }
   }
 
   // Auto-write ledger (default-on when ledgerFile resolved)
@@ -2687,8 +2803,13 @@ export async function runLegacyProductionAudit(ctx) {
       }, round).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
 
-    // Record suppression events if R2+
-    if (isR2Plus && mergedResult._suppression) {
+    // Record suppression events if R2+ — OR whenever the cloud FP layer
+    // suppressed anything. The isR2Plus gate encodes "ledger suppression is an
+    // R2+ concept", which is true for the ledger path but NOT for the cloud
+    // layer: runCloudFpPass is unconditional and can suppress on round 1, where
+    // the bare gate would silently drop its provenance. A suppression that
+    // happens on R1 is no less accountable than one on R2.
+    if ((isR2Plus || cloudPass.suppressedCount > 0) && mergedResult._suppression) {
       recordSuppressionEvents(cloudRunId, mergedResult._suppression).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
   }

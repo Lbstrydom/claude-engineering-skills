@@ -1,0 +1,36 @@
+-- FP-pattern read index (2026-07-17).
+--
+-- The cloud FP-suppression read loop (docs/plans/cloud-fp-suppression-read-loop.md)
+-- issues, per scope:
+--
+--   SELECT ... FROM false_positive_patterns
+--    WHERE repo_id = $1                       -- global scope adds: AND auto_suppress = true
+--    ORDER BY decayed_dismissed DESC, pattern_value ASC
+--    LIMIT $2
+--
+-- LIMIT bounds the rows crossing the wire; it does NOT bound the work Postgres
+-- does. The existing unique key (repo_id, pattern_type, pattern_value) cannot
+-- serve that filter+order, so without this index Postgres scans every row for
+-- the repo and sorts them before applying the limit — twice per audit, on a
+-- table with a demonstrated blow-up history (403k rows in 3 days; see
+-- 20260717120000_fp_sync_idempotency.sql).
+--
+-- PLAIN, not partial. An earlier design used `WHERE auto_suppress = true`, but
+-- the repo-scope query deliberately omits that predicate: auto_suppress is
+-- written as `(accepted + dismissed) >= 5 AND ema < 0.15`, so every hierarchy
+-- BLOCKER (a well-evidenced pattern with ema >= 0.15, which must stop the scope
+-- walk and prevent a global pattern from suppressing) has auto_suppress = false.
+-- A partial index on that predicate would be unusable for the repo query. One
+-- plain index serves both scopes: the repo query as a pure index scan, the
+-- global query as an index scan on the repo_id prefix with auto_suppress as a
+-- cheap filter.
+--
+-- Plain CREATE INDEX (not CONCURRENTLY) is deliberate: the table is small (the
+-- 20260717120000 purge deleted the NULL-repo garbage; real rows accumulate only
+-- from 2026-07-17), so the build is milliseconds and its brief SHARE lock is a
+-- non-event — whereas CONCURRENTLY cannot run inside a transaction block, which
+-- is how this repo's migration runner applies migrations. If this index is ever
+-- introduced to a deployment where the table is already large, split it into its
+-- own non-transactional step.
+CREATE INDEX IF NOT EXISTS false_positive_patterns_read_idx
+  ON false_positive_patterns (repo_id, decayed_dismissed DESC, pattern_value ASC);
