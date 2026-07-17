@@ -150,6 +150,21 @@ describe('check-docs-refs / (planned) marker', () => {
     assert.equal(extractRefs('docs/plans/a.md  (planned)')[0].planned, false);
   });
 
+  // R4-M2: a closing `)`/backtick REQUIRES its following space. Without it, a
+  // link's close paren abutting the marker (`...missing.md)(planned)`) would
+  // bind and suppress a real GONE — the gate's cardinal sin.
+  it('does NOT bind when a closing paren abuts the marker (no space)', () => {
+    assert.equal(extractRefs('[x](docs/plans/missing.md)(planned)')[0].planned, false);
+  });
+
+  it('DOES bind with a closing paren THEN one space', () => {
+    assert.equal(extractRefs('[x](docs/plans/a.md) (planned)')[0].planned, true);
+  });
+
+  it('DOES bind with a closing backtick THEN one space', () => {
+    assert.equal(extractRefs('`docs/plans/a.md` (planned)')[0].planned, true);
+  });
+
   it('binds to its OWN token only', () => {
     const got = extractRefs('docs/plans/a.md and docs/plans/b.md (planned)');
     assert.equal(got[0].planned, false, 'first token must not inherit the marker');

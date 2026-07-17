@@ -97,7 +97,15 @@ const REF_RE = new RegExp(`(?<![A-Za-z0-9._/*-])(${TOKEN})(?![A-Za-z0-9_-])(?![.
 // suppress a real typo" failure the contract's attachment rule exists to
 // prevent. Verified: with `\s?`, both `a.md\t(planned)` and `a.md\n(planned)`
 // wrongly bound.
-const PLANNED_RE = /^[`)]?[ ]?\(planned\)/;
+//
+// Three accepted forms, and NOTHING else: `(planned)` immediately (no
+// separator), one space then `(planned)`, or a single closing `` ` ``/`)` THEN
+// ONE SPACE then `(planned)`. The closing char REQUIRES its following space —
+// an earlier `[`)]?[ ]?` let `docs/plans/missing.md)(planned)` (a link's close
+// paren immediately abutting the marker) bind and suppress a real GONE. That is
+// the gate's cardinal sin (suppressing a real finding), so the space is
+// mandatory after a closing char.
+const PLANNED_RE = /^(?:[`)] |[ ])?\(planned\)/;
 
 /**
  * Extract every citation site from a chunk of text.
