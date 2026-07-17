@@ -64,7 +64,10 @@ const EXPECTED_EXPORTS = [
   'listFrictionSourceHashes',
   'reconcileTombstones',
   'upsertFrictionRow',
-  // bandit-fp (14 — +2 from the 2026-07-17 FP-sync idempotency fix:
+  // bandit-fp (13 — was 14 until upsertPromptVariant was deleted 2026-07-18 as
+  // dead code (no caller, 0 rows, conflict target contradicted the table's
+  // documented global scope; flagged by on-conflict-lint). +2 from the
+  // 2026-07-17 FP-sync idempotency fix:
   // buildFpPatternRows is the pure row builder under test; fpPatternReadColumns
   // returns the reader's column list so the schema-guard test can verify it.
   // +1 from the cloud FP read loop: buildFpReadQuery is the pure query builder,
@@ -88,7 +91,6 @@ const EXPECTED_EXPORTS = [
   'syncExperiments',
   'syncFalsePositivePatterns',
   'syncPromptRevision',
-  'upsertPromptVariant',
   // plans-ship (21 — 17 + 3 WS1 + 1 WS3 persona-nav-feedback-recovery additions)
   'getCandidateAuditFindings', // WS1 — auto-correlator candidate read (temporally bounded)
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
@@ -268,6 +270,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 161);
+    assert.equal(EXPECTED_EXPORTS.length, 160);
   });
 });

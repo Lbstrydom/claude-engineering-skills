@@ -111,27 +111,17 @@ export async function loadBanditArms() {
 }
 
 // ── Prompt variants ────────────────────────────────────────────────────────
-
-/**
- * Upsert one prompt-variant effectiveness row.
- */
-export async function upsertPromptVariant(repoId, passName, variantName, promptHash, stats) {
-  if (!await isCloudEnabled()) return;
-  try {
-    await upsert('prompt_variants', [{
-      repo_id: repoId || null,
-      pass_name: passName,
-      variant_name: variantName,
-      prompt_hash: promptHash,
-      total_uses: stats.totalUses || 1,
-      avg_acceptance_rate: stats.avgAcceptanceRate,
-      avg_findings_per_use: stats.avgFindingsPerUse,
-      is_active: true,
-    }], { onConflict: ['pass_name', 'variant_name'], update: 'all' });
-  } catch (err) {
-    process.stderr.write(`  [learning] upsertPromptVariant failed: ${err.message}\n`);
-  }
-}
+//
+// `upsertPromptVariant` was removed 2026-07-18. It was dead code from the
+// original "wire Supabase learning loop" commit (9878ee8): no production caller
+// ever existed (prompt evolution in evolve-prompts.mjs / refine-prompts.mjs
+// never persisted variants), the `prompt_variants` table holds 0 rows, AND its
+// conflict target `['pass_name','variant_name']` omitted the stored `repo_id`,
+// contradicting the documented GLOBAL scope of this table (phase-g1/g2 docs) —
+// on-conflict-lint flagged it (the omitted-scope-identity class). Rather than
+// encode a per-repo identity for a feature that does not exist, the writer was
+// deleted; whoever builds prompt-evolution persistence decides the identity
+// then, and the lint catches a bad conflict target if one is reintroduced.
 
 // ── False-positive patterns ────────────────────────────────────────────────
 

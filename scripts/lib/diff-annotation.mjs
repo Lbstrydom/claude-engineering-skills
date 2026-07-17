@@ -36,27 +36,37 @@ export function parseDiffFile(diffPath) {
     return new Map();
   }
 
+  const diffMap = parseDiffText(content);
+  process.stderr.write(`  [diff] Parsed ${diffMap.size} files, ${[...diffMap.values()].reduce((s, d) => s + d.hunks.length, 0)} hunks\n`);
+  return diffMap;
+}
+
+/**
+ * Parse a unified-diff STRING into the same per-file hunk map as parseDiffFile,
+ * without touching disk. Prefer this when the diff is already in memory (e.g.
+ * `git diff` captured via execFileSync) — a file-backed parser forces a temp
+ * file, and a predictable temp path is a symlink-race vector (audit R1-H4).
+ * @param {string} content - unified diff text
+ * @returns {Map<string, {hunks: Array<{startLine: number, lineCount: number}>}>}
+ */
+export function parseDiffText(content) {
   const diffMap = new Map();
   let currentFile = null;
-
-  for (const line of content.split('\n')) {
+  for (const line of String(content).split('\n')) {
     const fileMatch = line.match(/^\+\+\+ b\/(.+)$/);
     if (fileMatch) {
       currentFile = normalizePath(fileMatch[1]);
       if (!diffMap.has(currentFile)) diffMap.set(currentFile, { hunks: [] });
       continue;
     }
-
     const hunkMatch = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/);
     if (hunkMatch && currentFile) {
       diffMap.get(currentFile).hunks.push({
         startLine: Number.parseInt(hunkMatch[1], 10),
-        lineCount: Number.parseInt(hunkMatch[2] || '1', 10)
+        lineCount: Number.parseInt(hunkMatch[2] || '1', 10),
       });
     }
   }
-
-  process.stderr.write(`  [diff] Parsed ${diffMap.size} files, ${[...diffMap.values()].reduce((s, d) => s + d.hunks.length, 0)} hunks\n`);
   return diffMap;
 }
 

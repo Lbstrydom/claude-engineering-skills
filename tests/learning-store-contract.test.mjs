@@ -64,7 +64,7 @@ const CONTRACT_FUNCTIONS = [
   'upsertDebtEntries', 'readDebtEntriesCloud', 'removeDebtEntryCloud',
   'appendDebtEventsCloud', 'readDebtEventsCloud',
   // bandit-fp
-  'syncBanditArms', 'loadBanditArms', 'upsertPromptVariant',
+  'syncBanditArms', 'loadBanditArms',
   'syncFalsePositivePatterns', 'loadFalsePositivePatterns',
   'getFalsePositivePatterns', 'syncExperiments', 'syncPromptRevision',
   'getPassEffectiveness',
@@ -114,7 +114,7 @@ describe('learning-store / contract suite — structural checks', () => {
   });
 
   it('the contract function count matches the matrix (94)', () => {
-    assert.equal(CONTRACT_FUNCTIONS.length, 94);
+    assert.equal(CONTRACT_FUNCTIONS.length, 93);
   });
 });
 
