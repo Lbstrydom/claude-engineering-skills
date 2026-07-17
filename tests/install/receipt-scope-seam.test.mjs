@@ -118,7 +118,7 @@ describe('a partial --skills install is not authoritative over other skills', ()
 
     // This run installs ONLY `explain`, and rewrites explain's file.
     const writes = [{ absPath: kept }];
-    const deletes = _internals.computeDeletes(writes, prevGlobal, null, repo, new Set(['explain']));
+    const deletes = _internals.computeDeletes(writes, prevGlobal, null, repo, { skills: new Set(['explain']) });
 
     assert.deepEqual(deletes, [], 'a one-skill install must not delete the other skills');
   });
@@ -135,7 +135,7 @@ describe('a partial --skills install is not authoritative over other skills', ()
       { path: kept, sha: 'bbb', skill: 'explain', scope: 'global' },
     ]);
 
-    const deletes = _internals.computeDeletes([{ absPath: kept }], prevGlobal, null, repo, new Set(['explain']));
+    const deletes = _internals.computeDeletes([{ absPath: kept }], prevGlobal, null, repo, { skills: new Set(['explain']) });
 
     assert.equal(deletes.length, 1);
     assert.equal(deletes[0].absPath, gone);
@@ -148,7 +148,7 @@ describe('a partial --skills install is not authoritative over other skills', ()
     const prevGlobal = receiptOf([{ path: gone, sha: 'aaa', skill: 'removed-skill', scope: 'global' }]);
 
     // null = no filter: a skill genuinely dropped from the manifest is deleted.
-    const deletes = _internals.computeDeletes([], prevGlobal, null, repo, null);
+    const deletes = _internals.computeDeletes([], prevGlobal, null, repo, {});
 
     assert.equal(deletes.length, 1, 'a full install must still clean up a skill dropped from the manifest');
     assert.equal(deletes[0].absPath, gone);
@@ -159,9 +159,67 @@ describe('a partial --skills install is not authoritative over other skills', ()
       { path: '/abs/visual-audit/SKILL.md', sha: 'aaa', skill: 'visual-audit', scope: 'global' },
       { path: '/abs/explain/SKILL.md', sha: 'bbb', skill: 'explain', scope: 'global' },
     ]);
-    const retained = _internals.retainUnmanagedEntries(prevGlobal, new Set(['explain']));
+    const retained = _internals.retainUnmanagedEntries(prevGlobal, { skills: new Set(['explain']) });
     assert.equal(retained.length, 1);
     assert.equal(retained[0].skill, 'visual-audit', 'the untouched skill must stay in the receipt');
+  });
+});
+
+describe('a partial --surface install is not authoritative over other surfaces', () => {
+  // The SECOND filter, missed on the first pass at this exact function: I
+  // narrowed authority by `--skills` and forgot `--surface` narrows it too.
+  // `--surface claude` writes only global files, so every repo-scope receipt
+  // entry looks "no longer managed" — and `.git/hooks/post-merge` runs
+  // `install-skills.mjs --local --surface claude --force` on EVERY merge.
+  // Measured end-to-end before the fix: 2 deletes; after: 0.
+  const { authoritativeScopesFor } = _internals;
+
+  it('maps each surface to the scopes it may prune', () => {
+    assert.deepEqual(authoritativeScopesFor('claude'), new Set(['global']));
+    assert.deepEqual(authoritativeScopesFor('copilot'), new Set(['repo']));
+    assert.deepEqual(authoritativeScopesFor('agents'), new Set(['repo']));
+    assert.equal(authoritativeScopesFor('both'), null, 'both covers every surface');
+  });
+
+  it('--surface claude does NOT delete repo-scope files', () => {
+    const repo = mkTmp('surf-claude');
+    const home = mkTmp('surf-claude-home');
+    const globalFile = path.join(home, '.claude', 'skills', 'explain', 'SKILL.md');
+    const prevGlobal = receiptOf([{ path: globalFile, sha: 'aaa', skill: 'explain', scope: 'global' }]);
+    const prevRepo = receiptOf([
+      { path: '.agents/skills/explain/SKILL.md', sha: 'bbb', skill: 'explain', scope: 'repo' },
+      { path: '.github/copilot-instructions.md', sha: 'ccc', merged: true, scope: 'repo' },
+    ]);
+
+    // A claude-surface run writes only the global file.
+    const deletes = _internals.computeDeletes(
+      [{ absPath: globalFile }], prevGlobal, prevRepo, repo,
+      { skills: new Set(['explain']), scopes: authoritativeScopesFor('claude') },
+    );
+
+    assert.deepEqual(deletes, [], 'a claude-only install must not prune the repo surface');
+  });
+
+  it('--surface claude still prunes a dropped GLOBAL file (its own surface)', () => {
+    const repo = mkTmp('surf-own');
+    const home = mkTmp('surf-own-home');
+    const gone = path.join(home, '.claude', 'skills', 'explain', 'references', 'old.md');
+    const prevGlobal = receiptOf([{ path: gone, sha: 'aaa', skill: 'explain', scope: 'global' }]);
+
+    const deletes = _internals.computeDeletes(
+      [], prevGlobal, null, repo,
+      { skills: new Set(['explain']), scopes: authoritativeScopesFor('claude') },
+    );
+
+    assert.equal(deletes.length, 1, 'it IS authoritative over the surface it installed');
+    assert.equal(deletes[0].absPath, gone);
+  });
+
+  it('retains the untouched surface in the receipt (refusing to delete must mean keeping tracked)', () => {
+    const prevRepo = receiptOf([{ path: '.agents/skills/x/SKILL.md', sha: 'bbb', skill: 'x', scope: 'repo' }]);
+    const retained = _internals.retainUnmanagedEntries(prevRepo, { scopes: authoritativeScopesFor('claude') });
+    assert.equal(retained.length, 1, 'an entry we will not prune must stay in the receipt');
+    assert.equal(retained[0].scope, 'repo');
   });
 });
 

@@ -319,19 +319,32 @@ function buildCopilotMergeWrite(args, repoRoot) {
  * "no longer in the manifest" are deleted. Skills absent from `--skills` are
  * still in the manifest.
  *
+ * There are TWO independent filters, and BOTH narrow authority — handling only
+ * one is the same partial-enumeration mistake in a new coat:
+ *   `--skills <csv>`  narrows WHICH SKILLS      -> authoritativeSkills
+ *   `--surface <s>`   narrows WHICH SURFACES    -> authoritativeScopes
+ * `--surface claude` writes only global files, so every repo-scope entry in the
+ * receipt looks "no longer managed" and would be deleted — measured at 2 deletes
+ * for a one-skill repo, and `post-merge` runs `--surface claude --force` on
+ * every merge.
+ *
  * @param {Array<{absPath: string}>} writes
  * @param {object|null} prevGlobalReceipt
  * @param {object|null} prevRepoReceipt
  * @param {string} repoRoot
- * @param {Set<string>|null} authoritativeSkills — null = this run installs the
- *   whole manifest and is authoritative over everything.
+ * @param {{skills?: Set<string>|null, scopes?: Set<string>|null}} [authority]
+ *   — a null/absent member means "this run covers all of that axis".
  */
-function computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot, authoritativeSkills = null) {
+function computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot, authority = {}) {
+  const authoritativeSkills = authority.skills ?? null;
+  const authoritativeScopes = authority.scopes ?? null;
   const newAbsPaths = new Set(writes.map(w => w.absPath));
   const deletes = [];
   for (const prev of [prevGlobalReceipt, prevRepoReceipt]) {
     if (!prev?.managedFiles) continue;
     for (const mf of prev.managedFiles) {
+      // A surface this run wasn't asked to install is not ours to prune.
+      if (authoritativeScopes && !authoritativeScopes.has(mf.scope ?? 'repo')) continue;
       // Leave other skills' files alone. Entries with no `skill` (the merged
       // copilot-instructions block) are always in scope — they are rebuilt on
       // every run regardless of the filter.
@@ -345,12 +358,32 @@ function computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot, au
 }
 
 /**
- * Carry forward receipt entries for skills this run did not touch, so a partial
- * install does not erase the record of the rest of the bundle.
+ * Which scopes is a `--surface` selection authoritative over? Mirrors
+ * resolveSkillTargets' surface->scope mapping (claude lives in the global
+ * surface; copilot + agents live in the repo). null = every scope.
  */
-function retainUnmanagedEntries(prevReceipt, authoritativeSkills) {
-  if (!authoritativeSkills || !prevReceipt?.managedFiles) return [];
-  return prevReceipt.managedFiles.filter(mf => mf.skill && !authoritativeSkills.has(mf.skill));
+function authoritativeScopesFor(surface) {
+  if (surface === 'claude') return new Set(['global']);
+  if (surface === 'copilot' || surface === 'agents') return new Set(['repo']);
+  return null; // 'both' — this run covers every surface
+}
+
+/**
+ * Carry forward receipt entries this run was not authoritative over, so a
+ * partial install does not erase the record of the rest of the bundle. Mirrors
+ * computeDeletes' authority test exactly — an entry we refuse to delete must
+ * also be an entry we keep tracking, or the next run sees it as unmanaged and
+ * orphans it.
+ */
+function retainUnmanagedEntries(prevReceipt, authority = {}) {
+  const skills = authority.skills ?? null;
+  const scopes = authority.scopes ?? null;
+  if ((!skills && !scopes) || !prevReceipt?.managedFiles) return [];
+  return prevReceipt.managedFiles.filter(mf => {
+    if (scopes && !scopes.has(mf.scope ?? 'repo')) return true;
+    if (skills && mf.skill && !skills.has(mf.skill)) return true;
+    return false;
+  });
 }
 
 function checkConflicts(writes, prevGlobalReceipt, prevRepoReceipt, args) {
@@ -435,16 +468,18 @@ function main() {
 
   const { receipt: prevGlobalReceipt } = readReceipt(globalReceiptPath);
   const { receipt: prevRepoReceipt } = readReceipt(repoReceiptPath);
-  // `--skills` selects a PARTIAL install: this run is authoritative only over
-  // the named skills. Without the filter it installs the whole manifest and is
-  // authoritative over everything (null).
-  const authoritativeSkills = args.skills ? new Set(availableSkills) : null;
-  const deletes = computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot, authoritativeSkills);
-  // A partial install must not erase the receipt's record of the skills it left
-  // alone — otherwise the next run sees them as unmanaged and orphans them.
+  // BOTH filters narrow what this run may prune. `--skills` selects which
+  // skills; `--surface` selects which surfaces. Absent = covers that whole axis.
+  const authority = {
+    skills: args.skills ? new Set(availableSkills) : null,
+    scopes: authoritativeScopesFor(args.surface),
+  };
+  const deletes = computeDeletes(writes, prevGlobalReceipt, prevRepoReceipt, repoRoot, authority);
+  // A partial install must not erase the receipt's record of what it left alone
+  // — otherwise the next run sees it as unmanaged and orphans it.
   managedFiles.push(
-    ...retainUnmanagedEntries(prevRepoReceipt, authoritativeSkills),
-    ...retainUnmanagedEntries(prevGlobalReceipt, authoritativeSkills),
+    ...retainUnmanagedEntries(prevRepoReceipt, authority),
+    ...retainUnmanagedEntries(prevGlobalReceipt, authority),
   );
   const { allSafe, allConflicts } = checkConflicts(writes, prevGlobalReceipt, prevRepoReceipt, args);
 
@@ -506,7 +541,7 @@ function main() {
  */
 export const _internals = {
   reconcileJournals, reportDegradations, computeDeletes, writeReceiptsByScope,
-  retainUnmanagedEntries,
+  retainUnmanagedEntries, authoritativeScopesFor,
 };
 
 // isMain guard — importing this module (e.g. from a test) must not run an
