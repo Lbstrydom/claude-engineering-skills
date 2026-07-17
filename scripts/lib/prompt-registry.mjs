@@ -178,8 +178,30 @@ export function abandonRevision(passName, revId, bandit = null) {
 // ── Bootstrap ───────────────────────────────────────────────────────────────
 
 /**
- * Bootstrap: register existing prompt constants as initial default revisions.
+ * Bootstrap: register the prompt constants and keep the active alias tracking
+ * the SEED, unless a deliberate promotion has moved it.
+ *
  * Idempotent — same content = same revision ID = no-op.
+ *
+ * **Why this promotes a changed seed** (it used to promote only when no default
+ * existed, which was a silent, per-machine no-op): the alias then pinned the
+ * FIRST seed a machine ever bootstrapped, so every later edit to
+ * `prompt-seeds.mjs` registered a revision that was never activated. Because
+ * `.audit/prompt-revisions/` is gitignored per-machine state, a fresh clone ran
+ * the new seed while an established machine silently ran an old one — the same
+ * rubric, two behaviours, no signal.
+ *
+ * That was not hypothetical. When this was found, EVERY active revision was
+ * `source: 'bootstrap'` (nothing had ever been evolved), and two rubric blocks
+ * added *specifically because they escaped to production* — the backend
+ * PERSISTENCE CONTRACT (jsonb/RLS) and the frontend DERIVED-STATE PARITY
+ * (a P0 that passed both /audit-code and the Gemini gate) — had never once run
+ * here. Roughly half of each pass's rubric was inert.
+ *
+ * A revision promoted by anything OTHER than bootstrap (prompt evolution, an
+ * operator) is a deliberate choice and is left alone: the seed is the default,
+ * not an override.
+ *
  * @param {Record<string, string>} passPrompts - { passName: promptText }
  */
 export function bootstrapFromConstants(passPrompts) {
@@ -189,9 +211,16 @@ export function bootstrapFromConstants(passPrompts) {
       source: 'bootstrap',
       createdAt: Date.now()
     });
-    // Only set default if no default exists yet
     const current = getActiveRevisionId(passName);
     if (!current) {
+      promoteRevision(passName, revId); // First run on this machine.
+      continue;
+    }
+    if (current === revId) continue; // Already tracking this seed.
+    const active = loadRevision(passName, current);
+    // Advance an older SEED to the newer one. A dangling/corrupt alias also
+    // falls back to the seed rather than pinning a revision we cannot read.
+    if (!active || active.source === 'bootstrap') {
       promoteRevision(passName, revId);
     }
   }
