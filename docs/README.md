@@ -39,6 +39,7 @@ usually because something enforces them. Durable; no `Status:` line.
 | `gate-honesty.md` | `scripts/check-gate-contracts.mjs` |
 | `commit-provenance.md` | `scripts/ship-commit.mjs` (the `AI-*` trailers) |
 | `model-resolution.md` | `scripts/lib/model-resolver.mjs` |
+| `reference-integrity.md` | `scripts/check-docs-refs.mjs` (`npm run docs:refs`) |
 
 ## `docs/runbooks/` — operator how-to
 

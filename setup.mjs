@@ -270,8 +270,8 @@ ${B}╔════════════════════════�
   ${B}Usage:${X}
     ${D}In any repo:${X}
       /plan <description>
-      /audit-plan docs/plans/my-feature.md
-      /audit-code docs/plans/my-feature.md
+      /audit-plan docs/plans/<name>.md
+      /audit-code docs/plans/<name>.md
       /cycle <description>
 
     ${D}From this repo (CLI):${X}

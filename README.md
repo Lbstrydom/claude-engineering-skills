@@ -182,8 +182,8 @@ Adaptive learning (bandit arms, FP tracker, meta-assessment, prompt evolution)
 **CLI entry point** (when not in an AI skill orchestrator):
 
 ```bash
-node scripts/audit-loop.mjs code docs/plans/X.md            # Full orchestrated loop
-node scripts/openai-audit.mjs code docs/plans/X.md          # GPT audit only
+node scripts/audit-loop.mjs code docs/plans/<name>.md       # Full orchestrated loop
+node scripts/openai-audit.mjs code docs/plans/<name>.md     # GPT audit only
 node scripts/gemini-review.mjs review <plan> <transcript>   # Gemini review only
 ```
 

@@ -338,6 +338,14 @@
       "description": "Enforce docs/ root placement: root holds only allowlisted generated artefacts + live ledgers; hand-written docs belong in a bucket (reference/, runbooks/, plans/, research/). Runs as part of `npm run check`. Decision rule: docs/README.md.",
       "category": "diagnostic"
     },
+    "docs:refs": {
+      "description": "Reference-integrity gate: every cited repo path must resolve against the git index, or be marked a placeholder (docs/plans/<name>.md) or a forward-ref ((planned)). Report-only for now; gating lands with the plan's Phase 6. Contract: docs/reference/reference-integrity.md.",
+      "category": "diagnostic"
+    },
+    "docs:refs:json": {
+      "description": "docs:refs as JSON — the citation census by class (RESOLVES/GONE/PLACEHOLDER/PLANNED) plus any scanner failures.",
+      "category": "diagnostic"
+    },
     "docs:check:json": {
       "description": "Machine-readable docs/ root placement report ({ok, checked, unexpected, staleAllowlistEntries}).",
       "category": "diagnostic"
