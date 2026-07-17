@@ -915,6 +915,18 @@ Still below the Gate-1 threshold for phasing — one sitting of work.
   concurrent same-repo installs may act on stale conflict data; each transaction
   remains atomic. Revisit trigger: a real report of two installs racing in one
   repo, or any move to run installs from CI concurrently.
+- ~~**Fixing the `populateFindingMetadata(f, f._pass)` snippet**~~ — **DONE
+  2026-07-17**, and the predicted recurrence is exactly what surfaced it. Fixed
+  at the canonical source, `docs/audit/shared-references/ledger-format.md`, which
+  `sync-shared-audit-refs.mjs` propagates to BOTH audit-plan and audit-code — the
+  per-skill path this entry names is a generated copy, so editing it there is
+  silently overwritten (learned the hard way). Now `f._pass || 'plan'`, matching
+  the auto-writers; the two forms were reproduced yielding different topicIds for
+  the same finding, confirming the orphaning. A second defect rode along: the
+  recipe told operators to inline their triage as `node -e "…"`, so an apostrophe
+  in the rationale prose ("the plan's constraint") killed the command — and the
+  workaround people reached for was stripping apostrophes out of the audit record
+  itself. Both recipes are now file-based. Original note kept for the trail:
 - **Fixing `skills/audit-plan/references/ledger-format.md`'s
   `populateFindingMetadata(f, f._pass)` snippet** (found while auditing
   this plan, 2026-07-16) — in a **plan** audit the result JSON carries no

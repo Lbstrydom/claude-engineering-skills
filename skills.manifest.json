@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "40e5e8d74e1e6361",
+  "bundleVersion": "fc759088b13d069f",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-07-17T05:12:53.250Z",
+  "updatedAt": "2026-07-17T09:28:09.304Z",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
@@ -76,8 +76,8 @@
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "64ebf359f230",
-          "size": 4871
+          "sha": "53213d403492",
+          "size": 7252
         },
         {
           "relPath": "references/r2-plus-mode.md",
@@ -104,8 +104,8 @@
         },
         {
           "relPath": "references/ledger-format.md",
-          "sha": "64ebf359f230",
-          "size": 4871
+          "sha": "53213d403492",
+          "size": 7252
         }
       ]
     },
