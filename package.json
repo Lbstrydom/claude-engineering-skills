@@ -27,6 +27,7 @@
     "solo-control:merge": "node scripts/solo-control-audit.mjs merge",
     "solo-control:score": "node scripts/solo-control-audit.mjs score",
     "azure:limits": "node scripts/azure-limits.mjs",
+    "azure:doctor": "node scripts/azure-doctor.mjs",
     "audit:refine": "node scripts/refine-prompts.mjs",
     "audit:bandit": "node scripts/bandit.mjs stats",
     "audit:phase7": "node scripts/phase7-check.mjs",

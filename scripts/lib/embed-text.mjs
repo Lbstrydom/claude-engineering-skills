@@ -147,11 +147,32 @@ export async function embedText(text, opts = {}) {
 
   if (cfg.active) {
     const client = opts.client || await createOpenAIClient({ purpose: 'embed', azure: cfg });
-    const resp = await azureThrottle(() => client.embeddings.create({
-      model: cfg.embedDeployment,
-      input: safeText,
-      dimensions: dim,
-    }));
+    let resp;
+    try {
+      resp = await azureThrottle(() => client.embeddings.create({
+        model: cfg.embedDeployment,
+        input: safeText,
+        dimensions: dim,
+      }));
+    } catch (e) {
+      // Runtime stays STRICT — never auto-switch deployments here (that would be
+      // the unconfirmed provenance switch the design forbids). But an unknown/
+      // missing-deployment error is exactly what `azure:doctor` diagnoses + fixes,
+      // so name it (plan Phase 6 wiring) instead of surfacing a bare 400.
+      const s = e?.status ?? e?.response?.status;
+      const m = String(e?.code ?? e?.error?.code ?? e?.message ?? '');
+      if (s === 400 || s === 404 || /unknown[_ ]?model|deploymentnotfound|does not exist/i.test(m)) {
+        const err = new Error(
+          `embedText: Azure embedding deployment "${cfg.embedDeployment}" was rejected ` +
+          `(${s ?? 'error'}: ${m.slice(0, 120)}). Run \`npm run azure:doctor -- --fix\` to find ` +
+          `and lock in the deployment your resource actually has.`,
+        );
+        err.code = 'EMBED_FAILED';
+        err.cause = e;
+        throw err;
+      }
+      throw e;
+    }
     const vec = resp?.data?.[0]?.embedding;
     validateVector(vec, dim, cfg.embedDeployment);
     return {

@@ -49,19 +49,51 @@ interactive terminal, offers to run it. Once Postgres is present + the DSN is
 set, it chains `--migrate` to apply the audit-loop migrations. Non-interactive
 (CI) runs print the next action and exit non-zero rather than installing.
 
-### 3. Rebuild the architecture index in the Azure vector space (important)
+### 3. Verify + lock in the embedding deployment (`azure:doctor`)
 
-Embeddings are only comparable **within one provider's vector space**. If your
-arch-memory / security-memory index was previously built with Gemini, the
-Azure profile will **refuse cross-provider queries** with an actionable error.
-Rebuild once after adopting Azure:
+`AZURE_OPENAI_EMBED_DEPLOYMENT` is easy to leave unset — most real work `.env`s
+carry only the API key + endpoints. When it's unset the config falls back to a
+**guess** (`text-embedding-3-small`) that your resource may not actually have,
+producing an opaque `400 unknown_model` on every embedding call.
 
 ```bash
-npm run arch:refresh        # re-embeds symbols via Azure OpenAI
-npm run security:refresh    # re-embeds incidents via Azure OpenAI
+npm run azure:doctor            # report-only: which deployment actually answers?
+npm run azure:doctor -- --fix   # probe → confirm → write AZURE_OPENAI_EMBED_DEPLOYMENT to .env
 ```
 
-### 4. Smoke-test the live endpoints
+The doctor does **verified-candidate selection**, not blind trust: the model
+catalog lists models that aren't deployed (both `3-small` and `3-large` show as
+"generally-available" even when only one is deployed), so it confirms each
+candidate with a real 1-token call — configured name → your `--candidate <name>`
+values (for custom deployment aliases the catalog can't see) → catalog models, in
+that order, first verified wins. It **never auto-switches without you**: `--json`
+and non-TTY runs never write; only an interactive `--fix` with a confirmed `y`
+mutates `.env`. A transient/auth/5xx failure is reported as unverifiable and
+preserves your config rather than repointing it. `npm run check` also flags the
+unset var locally (no network).
+
+> **The deployment name IS the vector-space identity.** Provenance is stored
+> endpoint-qualified (`azure-openai:<endpoint-origin>::<deployment>`), so changing
+> the deployment — or pointing `AZURE_OPENAI_ENDPOINT` at a different resource with
+> the same alias — is a *different* vector space. The doctor warns before it
+> writes, and the next `arch:refresh` auto-promotes to a full re-embed so the index
+> can't silently mix spaces. Rebuild after any change (step 4).
+
+### 4. Rebuild the architecture index in the Azure vector space (important)
+
+Embeddings are only comparable **within one provider's vector space**. If your
+arch-memory / security-memory index was previously built with Gemini (or with a
+different Azure deployment/resource), the Azure profile will **refuse
+cross-provider/cross-resource queries** with an actionable error. Rebuild once
+after adopting Azure or changing the deployment — use `--full` (a provenance
+change auto-promotes to full anyway, but be explicit):
+
+```bash
+npm run arch:refresh -- --full   # re-embeds symbols via Azure OpenAI
+npm run security:refresh         # re-embeds incidents via Azure OpenAI
+```
+
+### 5. Smoke-test the live endpoints
 
 ```bash
 node scripts/gemini-review.mjs ping   # final-reviewer (Opus) connectivity

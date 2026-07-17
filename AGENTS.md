@@ -789,9 +789,10 @@ stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
 `MODEL_CATALOG_REFRESH` auto-skips under Azure.
 
 **Load-bearing gotchas** (the operational depth is in the guide):
-- **Vector-space safety**: adopting Azure on a Gemini-built index is **refused**
-  (provenance guard in `neighbourhood-query.mjs`); rebuild once with
-  `npm run arch:refresh` + `npm run security:refresh`.
+- **Vector-space safety + embedding-deployment doctor**: provenance is the single
+  endpoint-qualified `resolveEmbedProfile()` identity; a deployment/resource switch
+  is a distinct space and `refresh` auto-promotes to full so spaces can't mix. Unset
+  `AZURE_OPENAI_EMBED_DEPLOYMENT` → guessed default may 400 → `npm run azure:doctor -- --fix` probes + locks the real name in. [Recipe](docs/runbooks/azure-work-profile.md) §3.
 - **Final-reviewer precedence** (top wins): `--provider` → `FINAL_REVIEW_PROVIDER`
   → Gemini (if `GEMINI_API_KEY`) → Azure `azure-claude` (only when the profile is
   active) → public Opus. A stray `AZURE_OPENAI_ENDPOINT` no longer silently hijacks

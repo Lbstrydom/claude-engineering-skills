@@ -621,7 +621,13 @@ export function buildAzureConfig(env = process.env) {
     claudeDeployment,
     // Arch-index summariser deployment (Sonnet on Foundry by default).
     summaryDeployment: (env.AZURE_FOUNDRY_SUMMARY_DEPLOYMENT || 'claude-sonnet-4-6').trim(),
-    embedDeployment: (env.AZURE_OPENAI_EMBED_DEPLOYMENT || 'text-embedding-3-small').trim(),
+    // `(env.X || '').trim() || default` — NOT `(env.X || default).trim()`: the
+    // latter mapped a whitespace-only value to '' (an empty deployment name → 400),
+    // a third broken outcome distinct from absent/empty (audit M6). Now absent,
+    // empty, and whitespace-only ALL collapse to the one default path, so the
+    // check-setup predicate and runtime agree. Default kept (resilience over
+    // fail-loud — the doctor handles a wrong/undeployed default by probing).
+    embedDeployment: (env.AZURE_OPENAI_EMBED_DEPLOYMENT || '').trim() || 'text-embedding-3-small',
     claudeApiShape,
     // Native-Anthropic base for the Foundry Claude path — the SDK appends
     // `/v1/messages`, yielding `…/anthropic/v1/messages`.

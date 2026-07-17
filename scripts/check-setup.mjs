@@ -171,6 +171,16 @@ function checkAuditApiKeys(env, report) {
         'AZURE_OPENAI_ENDPOINT is set but the key is not — the Azure profile is half-configured',
         'Add AZURE_OPENAI_API_KEY=... to .env (or unset AZURE_OPENAI_ENDPOINT for the public profile)');
     }
+    // Read-only, LOCAL check (audit M1) — no network. The embed deployment default
+    // (`text-embedding-3-small`) is a guess that often isn't the deployment a
+    // resource actually has (→ opaque 400 on every embedding call). Flag the
+    // guess-path with the SAME absent/empty/whitespace predicate config uses
+    // (audit M6), and point at the doctor, which probes + locks in the real one.
+    if ((env.AZURE_OPENAI_EMBED_DEPLOYMENT || '').trim() === '') {
+      report.warn('AZURE_OPENAI_EMBED_DEPLOYMENT not set',
+        'Azure embeddings will use the default guess "text-embedding-3-small", which may not be deployed',
+        'Run `npm run azure:doctor -- --fix` to probe your resource and lock in the real deployment name');
+    }
   } else if (env.OPENAI_API_KEY) {
     report.pass('OPENAI_API_KEY', 'GPT-5.4 audit');
   } else {
