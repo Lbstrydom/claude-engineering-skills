@@ -130,10 +130,34 @@ export async function removeDebtEntryCloud(repoId, topicId) {
  */
 export async function appendDebtEventsCloud(repoId, events) {
   if (!repoId || !Array.isArray(events) || events.length === 0) return { inserted: 0 };
+  // Idempotency guard runs FIRST — before any cloud work (same ordering
+  // rationale as syncFalsePositivePatterns' identity guard: the refusal must
+  // not depend on cloud state, and a DB-free suite must be able to prove the
+  // WIRING, not just the predicate). `topic_id` sits IN the idempotency key
+  // (repo_id, topic_id, run_id, event) and Postgres treats NULLs as DISTINCT
+  // in a unique index — a null-topic row can never match itself, so the
+  // DO-NOTHING dedup silently degrades to duplicate appends (the 403k-row
+  // false_positive_patterns class, bounded here only by event volume; flagged
+  // by on-conflict-lint as nullable-conflict-key; topic_id verified nullable
+  // in the live schema, so the DB would accept the null). The only
+  // legitimately topicId-less event — the local 'reconciled' marker
+  // (DebtEventSchema: `topicId: z.string().optional()`) — never reaches this
+  // function: reconcileLocalToCloud filters it out of toSync and writes it
+  // local-only. So a null here is a caller bug: refuse the whole batch
+  // loudly rather than append rows that can never dedup (a partial append
+  // would hide the bug behind the valid rows).
+  const nullTopic = events.filter((e) => e.topicId == null).length;
+  if (nullTopic > 0) {
+    const error = `appendDebtEventsCloud: refused — ${nullTopic} event(s) with null/missing topicId would defeat the (repo_id, topic_id, run_id, event) idempotency key`;
+    process.stderr.write(`  [debt] ${error}\n`);
+    return { inserted: 0, error };
+  }
   if (!await isCloudEnabled()) return { inserted: 0 };
   const rows = events.map((e) => ({
     repo_id: repoId,
-    topic_id: e.topicId ?? null,
+    // Guaranteed non-null by the guard above — never reintroduce `?? null`
+    // here; it silently defeats the conflict target (NULLs are DISTINCT).
+    topic_id: e.topicId,
     event: e.event,
     run_id: e.runId,
     ts: e.ts,

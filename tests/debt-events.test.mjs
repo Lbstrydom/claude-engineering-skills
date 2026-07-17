@@ -199,3 +199,56 @@ describe('deriveMetricsFromEvents', () => {
     assert.equal(m.lastSurfacedAt, '2026-04-05T12:00:00.000Z');
   });
 });
+
+// ── appendDebtEventsCloud null-topic guard (store seam, DB-free) ───────────
+//
+// `topic_id` sits IN the append's idempotency key (repo_id, topic_id, run_id,
+// event) and Postgres NULLs are DISTINCT — a null-topic row can never match
+// itself, so DO NOTHING dedup silently degrades to duplicate appends (the
+// 403k-row class; on-conflict-lint: nullable-conflict-key). The guard runs
+// BEFORE isCloudEnabled (same ordering rationale as syncFalsePositivePatterns'
+// identity guard), which is exactly what makes this suite possible DB-free:
+// the refusal path never touches env, pool, or DSN (INC-002).
+describe('appendDebtEventsCloud — null-topicId refusal guard', () => {
+  let appendDebtEventsCloud;
+  beforeEach(async () => {
+    process.env.AUDIT_DB_URL = ''; // pinned before the store chain is exercised
+    ({ appendDebtEventsCloud } = await import('../scripts/lib/store/debt.mjs'));
+  });
+
+  const valid = { ts: new Date().toISOString(), runId: 'r1', topicId: 't-1', event: 'deferred' };
+
+  test('an event with missing topicId refuses the whole batch with a named error', async () => {
+    const r = await appendDebtEventsCloud('00000000-0000-0000-0000-000000000001', [
+      valid,
+      { ts: valid.ts, runId: 'r1', event: 'deferred' }, // no topicId
+    ]);
+    assert.equal(r.inserted, 0);
+    assert.match(r.error, /topicId/, 'the refusal must name the cause');
+    assert.match(r.error, /idempotency/, 'and the invariant it protects');
+  });
+
+  test('an explicit null topicId is refused the same way (== null catches both)', async () => {
+    const r = await appendDebtEventsCloud('00000000-0000-0000-0000-000000000001', [
+      { ...valid, topicId: null },
+    ]);
+    assert.equal(r.inserted, 0);
+    assert.match(r.error, /1 event/);
+  });
+
+  test('a reconciled-marker-shaped event is refused — markers are local-only by design', async () => {
+    // reconcileLocalToCloud filters markers out of toSync and writes them via
+    // appendDebtEventsLocal; one arriving here is a caller bug, not a variant.
+    const r = await appendDebtEventsCloud('00000000-0000-0000-0000-000000000001', [
+      { ts: valid.ts, runId: 'reconcile-1', event: 'reconciled' },
+    ]);
+    assert.equal(r.inserted, 0);
+    assert.ok(r.error);
+  });
+
+  test('MIRROR: a fully-valid batch does NOT refuse — cloud-off returns the plain no-op shape', async () => {
+    const r = await appendDebtEventsCloud('00000000-0000-0000-0000-000000000001', [valid]);
+    assert.equal(r.inserted, 0);       // cloud off — nothing written
+    assert.equal(r.error, undefined);  // and crucially: no refusal fired
+  });
+});

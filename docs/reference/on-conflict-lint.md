@@ -45,7 +45,7 @@ the real store already handles this class correctly everywhere:
 | `symbol_index` / `symbol_layering_violations` repo_id | FALSE | `refresh_id`-scoped surrogate key |
 | `plans` repo_id nullable | FALSE | an early-return guard makes repo_id non-null; `\|\| null` is dead |
 | `persona_audit_correlations` audit_finding_id nullable | FALSE | flagged site is the non-null branch; the null branch uses a partial index |
-| `debt_events` topic_id nullable | DORMANT | `?? null` on an idempotency key, but 0/145 rows null |
+| `debt_events` topic_id nullable | FIXED 2026-07-18 | Was `?? null` on an idempotency key (dormant, 0 null rows). Now a loud pre-cloud refusal guard in `appendDebtEventsCloud`; no longer flagged. |
 
 These false-positive shapes (surrogate/global natural keys, guard-narrowed
 nullability) are **not mechanically distinguishable** from real bugs at the write
@@ -82,6 +82,12 @@ unreadable upsert shape (or a resolver regression) turns the suite red.
 
 ## Out of scope / follow-ups
 
-- **`debt_events` topic_id `?? null`** — dormant (0/145 null) but a latent
-  idempotency hole if a caller ever passes a null topicId. Worth a one-line fix
-  (drop the `?? null`, or add topic_id to a NOT-NULL guard) in its own change.
+- ~~**`debt_events` topic_id `?? null`**~~ — **closed 2026-07-18**: a refusal
+  guard in `appendDebtEventsCloud` (before `isCloudEnabled`, mirroring the
+  `syncFalsePositivePatterns` ordering rationale) rejects any batch containing
+  a null/missing topicId with a named error; the only legitimately
+  topicId-less event (the local `reconciled` marker) never reaches the cloud
+  path by construction. Guard is mutation-proven in
+  `tests/debt-events.test.mjs`. Note the subtlety for future fixes of this
+  class: dropping `?? null` alone is NOT a fix — node-postgres binds
+  `undefined` as NULL, so only an explicit guard fails loudly.
