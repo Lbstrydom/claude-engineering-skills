@@ -19,7 +19,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
-import { withFileLock } from './lib/brainstorm/file-lock.mjs';
+import { withFileLock } from './lib/file-lock.mjs';
 import { extractRequirements } from './lib/requirements/extract.mjs';
 import { classifyGaps } from './lib/requirements/gap-challenge.mjs';
 import { loadLedger, writeLedger, reconcile, deriveIndex } from './lib/requirements/ledger.mjs';

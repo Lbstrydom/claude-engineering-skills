@@ -21,7 +21,7 @@
  * `|| true`, which only suppresses the exit code — it does NOT make a
  * command asynchronous, so `git push` was blocking for up to ~40 minutes).
  * Every run — manual or opportunistic — takes a single-instance lock
- * (`.audit-loop/.maintenance.lock`, via `lib/brainstorm/file-lock.mjs`) so
+ * (`.audit-loop/.maintenance.lock`, via `lib/file-lock.mjs`) so
  * two overlapping invocations can't run the same DB-mutating checks
  * concurrently (round-3 audit H1: the lock originally covered only the
  * opportunistic path, so an attended `maintenance:run` could still overlap
@@ -66,7 +66,7 @@ import { atomicWriteFileSync } from './lib/file-io.mjs';
 // cleanup, not something to bundle into an unrelated opt-in feature.
 // Residual risk: architecture-intent.md will keep flagging this edge for
 // every future consumer until the module is relocated.
-import { withFileLock, LockTimeoutError } from './lib/brainstorm/file-lock.mjs';
+import { withFileLock, LockTimeoutError } from './lib/file-lock.mjs';
 
 if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -253,7 +253,7 @@ export function hasNewlyEligibleCheck(heartbeat) {
  * quick pushes) can't run DB-mutating checks concurrently. Reuses the
  * existing sentinel-file lock (round-2 audit M3/M4: a hand-rolled
  * acquire/release here would have re-implemented — with a real TOCTOU gap —
- * what `lib/brainstorm/file-lock.mjs` already solved across several of its
+ * what `lib/file-lock.mjs` already solved across several of its
  * own audit rounds, including stale-lock recovery and token-verified
  * release). `maxWaitMs: 0` makes this try-once-and-give-up rather than the
  * module's default bounded wait-and-retry — an opportunistic run should

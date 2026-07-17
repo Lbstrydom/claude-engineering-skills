@@ -2,15 +2,26 @@
  * @fileoverview Sentinel-file lock with bounded acquisition + stale recovery.
  * Plan: docs/plans/brainstorm-quickfix-v1.md §11.E + §16.C.
  *
- * Used by session-store for per-session-file locking. Atomic acquire via
- * `fs.writeFileSync(path, payload, {flag:'wx'})` — single syscall opens
- * with O_EXCL AND writes the PID payload, so a peer reading the lock
- * file always sees valid JSON (no partial-write race window).
+ * Domain-neutral primitive — lives at lib/ root, NOT under a feature
+ * directory. It was originally written under lib/brainstorm/ for
+ * session-store, but has five consumers across brainstorm, friction,
+ * requirements, outcome-sync, and maintenance-checks. While it sat in
+ * lib/brainstorm/, the architecture-intent domain tagger attributed it to
+ * the `brainstorm` domain, so every consumer manufactured a false
+ * `<domain> → brainstorm` edge — `requirements → brainstorm` claimed the
+ * requirements ledger depends on brainstorming, when it only needs a lock.
+ * Keep general-purpose utilities out of feature directories: the tagger
+ * reads location as ownership.
+ *
+ * Atomic acquire via `fs.writeFileSync(path, payload, {flag:'wx'})` —
+ * single syscall opens with O_EXCL AND writes the PID payload, so a peer
+ * reading the lock file always sees valid JSON (no partial-write race
+ * window).
  *
  * Stale-lock detection: lock file mtime > STALE_LOCK_MS old AND owning
  * PID is not alive → force-unlink with stderr warning.
  *
- * @module scripts/lib/brainstorm/file-lock
+ * @module scripts/lib/file-lock
  */
 import fs from 'node:fs';
 import crypto from 'node:crypto';

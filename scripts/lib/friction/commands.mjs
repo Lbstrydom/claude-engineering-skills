@@ -22,7 +22,7 @@ import path from 'node:path';
 import yaml from 'yaml';
 
 import { atomicWriteFileSync } from '../file-io.mjs';
-import { withFileLock } from '../brainstorm/file-lock.mjs';
+import { withFileLock } from '../file-lock.mjs';
 import { frictionConfig } from '../config.mjs';
 import { preWriteSecretGate } from '../security/secret-classifier.mjs';
 import { redactSecrets } from '../secret-patterns.mjs';

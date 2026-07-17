@@ -106,7 +106,7 @@ graph TD
    one non-idempotent surface, the local `.audit/outcomes.jsonl` append, is guarded by a
    marker `.audit/.outcomes-finalized` (set of `"<cloudRunId|sid>:<round>"` keys); the
    check→append→mark critical section runs under the **existing** `withFileLock`
-   ([`scripts/lib/brainstorm/file-lock.mjs`](../../scripts/lib/brainstorm/file-lock.mjs)) so two
+   ([`scripts/lib/file-lock.mjs`](../../scripts/lib/file-lock.mjs)) so two
    concurrent same-repo audit sessions can't double-count bandit reward (M1). One small
    file. **No dead-letter, no `--status`, no state machine** (the rejected over-engineering).
 5. **Best-effort, never blocks the audit** (#16 Graceful Degradation). The finalize is

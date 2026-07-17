@@ -13,7 +13,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { withFileLock } from './file-lock.mjs';
+import { withFileLock } from '../file-lock.mjs';
 import { BrainstormEnvelopeV2Schema, BrainstormEnvelopeWriteSchema } from './schemas.mjs';
 import { validateSid } from './id-validator.mjs';
 import { ensureDir } from '../cli-io.mjs';

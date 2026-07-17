@@ -20,7 +20,7 @@ import { semanticId } from './findings.mjs';
 import { batchAppendOutcomes } from './findings-outcomes.mjs';
 import { generateTopicId } from './ledger.mjs';
 import { rewardWeights } from './config.mjs';
-import { withFileLock } from './brainstorm/file-lock.mjs';
+import { withFileLock } from './file-lock.mjs';
 import { atomicWriteFileSync } from './file-io.mjs';
 
 const OUTCOMES_PATH = '.audit/outcomes.jsonl';

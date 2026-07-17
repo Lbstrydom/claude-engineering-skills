@@ -306,7 +306,7 @@ describe('maintenance-checks — heartbeat read/write round-trip', () => {
   });
 });
 
-describe('maintenance-checks — runExclusive (round-2 audit M3/M4: reuses lib/brainstorm/file-lock.mjs)', () => {
+describe('maintenance-checks — runExclusive (round-2 audit M3/M4: reuses lib/file-lock.mjs)', () => {
   let tmpDir, lockPath;
 
   beforeEach(() => {

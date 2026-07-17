@@ -178,6 +178,67 @@
       "domain": "brainstorm"
     },
     {
+      "_comment": "Phase A (domain-map-reconciliation): these subsystems each own a scripts/lib/<name>/ directory and a top-level CLI, and were silently pooled into the shared-lib catch-all below because no rule claimed them (70 of shared-lib's 156 files). shared-lib is the SECOND-TO-LAST rule — anything added under scripts/lib/ without a rule here lands in it and its deps get attributed to 'shared-lib', which is how shared-lib came to appear to import 9 feature domains. When you add a new scripts/lib/<subsystem>/, add a rule here too; tests/domain-map-dead-intent.test.mjs cannot catch this (the rule isn't dead — it's absent).",
+      "pattern": "scripts/lib/arch-intent/**",
+      "domain": "arch-intent"
+    },
+    {
+      "pattern": "scripts/lib/arm-eval/**",
+      "domain": "arm-eval"
+    },
+    {
+      "pattern": "scripts/lib/model-eval/**",
+      "domain": "model-eval"
+    },
+    {
+      "pattern": "scripts/lib/solo-control/**",
+      "domain": "solo-control"
+    },
+    {
+      "pattern": "scripts/lib/requirements/**",
+      "domain": "requirements"
+    },
+    {
+      "pattern": "scripts/lib/gate-honesty/**",
+      "domain": "gate-honesty"
+    },
+    {
+      "pattern": "scripts/lib/fit-check/**",
+      "domain": "fit-check"
+    },
+    {
+      "pattern": "scripts/lib/friction/**",
+      "domain": "friction"
+    },
+    {
+      "pattern": "scripts/lib/security/**",
+      "domain": "security"
+    },
+    {
+      "pattern": "scripts/lib/learning/**",
+      "domain": "learning-store"
+    },
+    {
+      "pattern": "scripts/lib/db/**",
+      "domain": "stores"
+    },
+    {
+      "pattern": "scripts/lib/persona/**",
+      "domain": "persona-test"
+    },
+    {
+      "pattern": "scripts/lib/cycle/**",
+      "domain": "audit-orchestration"
+    },
+    {
+      "pattern": "scripts/lib/observed-deps.mjs",
+      "domain": "arch-memory"
+    },
+    {
+      "pattern": "scripts/lib/neighbourhood-query.mjs",
+      "domain": "arch-memory"
+    },
+    {
       "pattern": "scripts/lib/**",
       "domain": "shared-lib"
     },
@@ -326,6 +387,15 @@
     "visual-audit": ["verify-live-ux"],
     "learning-store": ["learn-from-outcomes"],
     "memory-health": ["learn-from-outcomes"],
+    "arm-eval": ["learn-from-outcomes"],
+    "model-eval": ["learn-from-outcomes"],
+    "solo-control": ["learn-from-outcomes"],
+    "friction": ["learn-from-outcomes"],
+    "requirements": ["understand-the-repo", "deliver-quality-audits"],
+    "arch-intent": ["understand-the-repo"],
+    "gate-honesty": ["preserve-trust-safety"],
+    "security": ["preserve-trust-safety"],
+    "fit-check": ["ship-and-sync"],
     "stores": ["preserve-trust-safety", "learn-from-outcomes"],
     "supabase": ["preserve-trust-safety"],
     "claude-hooks": ["preserve-trust-safety"],

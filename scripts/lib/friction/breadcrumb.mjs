@@ -22,7 +22,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFileSync } from '../file-io.mjs';
-import { withFileLock } from '../brainstorm/file-lock.mjs';
+import { withFileLock } from '../file-lock.mjs';
 import { frictionConfig } from '../config.mjs';
 
 const BREADCRUMB_REL = path.join('.audit', 'friction-injected.jsonl');

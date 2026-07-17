@@ -7,7 +7,7 @@
     "scripts/learning/backfill-outcomes.mjs",
     "scripts/lib/audit/finding-verification.mjs",
     "scripts/lib/audit/prompt-builder.mjs",
-    "scripts/lib/brainstorm/file-lock.mjs",
+    "scripts/lib/file-lock.mjs",
     "scripts/lib/brainstorm/session-store.mjs",
     "scripts/lib/claudemd/autofix.mjs",
     "scripts/lib/duplicate-justification-pragma.mjs",
@@ -4867,21 +4867,21 @@
       "checkable": true,
       "provenance": [
         {
-          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "file": "scripts/lib/file-lock.mjs",
           "anchor": "stale detection in withFileLock"
         },
         {
-          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "file": "scripts/lib/file-lock.mjs",
           "anchor": "forceRelease"
         }
       ],
       "appliesTo": [
-        "scripts/lib/brainstorm/file-lock.mjs"
+        "scripts/lib/file-lock.mjs"
       ],
       "evidence": {
         "code": [
-          "scripts/lib/brainstorm/file-lock.mjs:withFileLock",
-          "scripts/lib/brainstorm/file-lock.mjs:forceRelease"
+          "scripts/lib/file-lock.mjs:withFileLock",
+          "scripts/lib/file-lock.mjs:forceRelease"
         ],
         "tests": []
       },
@@ -4963,17 +4963,17 @@
       "checkable": true,
       "provenance": [
         {
-          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "file": "scripts/lib/file-lock.mjs",
           "anchor": "tryAcquireLock"
         }
       ],
       "appliesTo": [
-        "scripts/lib/brainstorm/file-lock.mjs"
+        "scripts/lib/file-lock.mjs"
       ],
       "evidence": {
         "code": [
-          "scripts/lib/brainstorm/file-lock.mjs:tryAcquireLock",
-          "scripts/lib/brainstorm/file-lock.mjs:withFileLock"
+          "scripts/lib/file-lock.mjs:tryAcquireLock",
+          "scripts/lib/file-lock.mjs:withFileLock"
         ],
         "tests": []
       },
@@ -5548,22 +5548,22 @@
       "checkable": true,
       "provenance": [
         {
-          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "file": "scripts/lib/file-lock.mjs",
           "anchor": "tryAcquireLock"
         },
         {
-          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "file": "scripts/lib/file-lock.mjs",
           "anchor": "safeRelease"
         }
       ],
       "appliesTo": [
-        "scripts/lib/brainstorm/file-lock.mjs"
+        "scripts/lib/file-lock.mjs"
       ],
       "evidence": {
         "code": [
-          "scripts/lib/brainstorm/file-lock.mjs:tryAcquireLock",
-          "scripts/lib/brainstorm/file-lock.mjs:safeRelease",
-          "scripts/lib/brainstorm/file-lock.mjs:withFileLock"
+          "scripts/lib/file-lock.mjs:tryAcquireLock",
+          "scripts/lib/file-lock.mjs:safeRelease",
+          "scripts/lib/file-lock.mjs:withFileLock"
         ],
         "tests": []
       },
@@ -5746,17 +5746,17 @@
       "checkable": true,
       "provenance": [
         {
-          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "file": "scripts/lib/file-lock.mjs",
           "anchor": "safeRelease"
         }
       ],
       "appliesTo": [
-        "scripts/lib/brainstorm/file-lock.mjs"
+        "scripts/lib/file-lock.mjs"
       ],
       "evidence": {
         "code": [
-          "scripts/lib/brainstorm/file-lock.mjs:safeRelease",
-          "scripts/lib/brainstorm/file-lock.mjs:withFileLock"
+          "scripts/lib/file-lock.mjs:safeRelease",
+          "scripts/lib/file-lock.mjs:withFileLock"
         ],
         "tests": []
       },
@@ -5777,21 +5777,21 @@
       "checkable": true,
       "provenance": [
         {
-          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "file": "scripts/lib/file-lock.mjs",
           "anchor": "withFileLock stale detection"
         },
         {
-          "file": "scripts/lib/brainstorm/file-lock.mjs",
+          "file": "scripts/lib/file-lock.mjs",
           "anchor": "forceRelease"
         }
       ],
       "appliesTo": [
-        "scripts/lib/brainstorm/file-lock.mjs"
+        "scripts/lib/file-lock.mjs"
       ],
       "evidence": {
         "code": [
-          "scripts/lib/brainstorm/file-lock.mjs:withFileLock",
-          "scripts/lib/brainstorm/file-lock.mjs:forceRelease"
+          "scripts/lib/file-lock.mjs:withFileLock",
+          "scripts/lib/file-lock.mjs:forceRelease"
         ],
         "tests": []
       },

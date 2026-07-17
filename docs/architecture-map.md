@@ -1,31 +1,40 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-17T10:29:43.538Z   commit: 59f196f2ce97   refresh_id: 4c15d948-6010-4760-ae2d-6a06c7fe0294
+- Generated: 2026-07-17T11:43:10.261Z   commit: 4a909f9e04b6   refresh_id: 870ca6ba-fa84-4c6f-a60e-16b4f7c5274d
 - Drift score: 30 / threshold 20   status: `RED`
-- Domains: 24   Symbols: 3240   Layering violations: 0
+- Domains: 33   Symbols: 3241   Layering violations: 0
 
 ## Contents
-- [arch-memory](#arch-memory) — 54 symbols
-- [audit-orchestration](#audit-orchestration) — 244 symbols
-- [brainstorm](#brainstorm) — 67 symbols
+- [arch-intent](#arch-intent) — 53 symbols
+- [arch-memory](#arch-memory) — 66 symbols
+- [arm-eval](#arm-eval) — 45 symbols
+- [audit-orchestration](#audit-orchestration) — 246 symbols
+- [brainstorm](#brainstorm) — 58 symbols
 - [claude-hooks](#claude-hooks) — 9 symbols
 - [claudemd-management](#claudemd-management) — 30 symbols
 - [cross-skill-bridge](#cross-skill-bridge) — 82 symbols
 - [dashboard](#dashboard) — 121 symbols
 - [explain](#explain) — 10 symbols
 - [findings](#findings) — 22 symbols
+- [fit-check](#fit-check) — 14 symbols
+- [friction](#friction) — 21 symbols
+- [gate-honesty](#gate-honesty) — 14 symbols
 - [install](#install) — 163 symbols
-- [learning-store](#learning-store) — 31 symbols
+- [learning-store](#learning-store) — 89 symbols
 - [memory-health](#memory-health) — 10 symbols
+- [model-eval](#model-eval) — 66 symbols
 - [nav-audit](#nav-audit) — 126 symbols
-- [persona-test](#persona-test) — 71 symbols
+- [persona-test](#persona-test) — 87 symbols
 - [plan](#plan) — 8 symbols
+- [requirements](#requirements) — 23 symbols
 - [root-scripts](#root-scripts) — 14 symbols
 - [scripts](#scripts) — 308 symbols
-- [shared-lib](#shared-lib) — 952 symbols
+- [security](#security) — 3 symbols
+- [shared-lib](#shared-lib) — 569 symbols
 - [ship](#ship) — 4 symbols
-- [stores](#stores) — 213 symbols
+- [solo-control](#solo-control) — 24 symbols
+- [stores](#stores) — 255 symbols
 - [tech-debt](#tech-debt) — 71 symbols
 - [tests](#tests) — 473 symbols
 - [ux-lock](#ux-lock) — 35 symbols
@@ -33,48 +42,45 @@
 
 ---
 
-## arch-memory
+## arch-intent
 
-> Domain-tags source files using glob patterns and rules; detects stale duplicate-justification pragmas and thin-wrapper functions that hint at missed refactoring.
+> Maps source files to declared architectural domains and runs stack-specific analyzers to detect violations, unmapped files, and dead intent (declared-but-unused domains).
 
 ```mermaid
 flowchart TB
-subgraph dom_arch_memory ["arch-memory"]
-  file_scripts_lib_symbol_index_domain_tagger_m["scripts/lib/symbol-index/domain-tagger.mjs"]:::component
-  sym_scripts_lib_symbol_index_domain_tagger_m["computeTargetDomains"]:::symbol
-  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
-  sym_scripts_lib_symbol_index_domain_tagger_m["globToRegexBody"]:::symbol
-  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
-  sym_scripts_lib_symbol_index_domain_tagger_m["loadDomainRules"]:::symbol
-  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
-  sym_scripts_lib_symbol_index_domain_tagger_m["makeFastTagger"]:::symbol
-  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
-  sym_scripts_lib_symbol_index_domain_tagger_m["matchGlob"]:::symbol
-  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
-  sym_scripts_lib_symbol_index_domain_tagger_m["tagDomain"]:::symbol
-  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
-  file_scripts_lib_symbol_index_stale_pragma_sw["scripts/lib/symbol-index/stale-pragma-sweep.mjs"]:::component
-  sym_scripts_lib_symbol_index_stale_pragma_sw["findStalePragmas"]:::symbol
-  file_scripts_lib_symbol_index_stale_pragma_sw --> sym_scripts_lib_symbol_index_stale_pragma_sw
-  sym_scripts_lib_symbol_index_stale_pragma_sw["renderStalePragmaSection"]:::symbol
-  file_scripts_lib_symbol_index_stale_pragma_sw --> sym_scripts_lib_symbol_index_stale_pragma_sw
-  file_scripts_lib_symbol_index_thin_delegate_m["scripts/lib/symbol-index/thin-delegate.mjs"]:::component
-  sym_scripts_lib_symbol_index_thin_delegate_m["isThinDelegate"]:::symbol
-  file_scripts_lib_symbol_index_thin_delegate_m --> sym_scripts_lib_symbol_index_thin_delegate_m
-  file_scripts_symbol_index_drift_mjs["scripts/symbol-index/drift.mjs"]:::component
-  sym_scripts_symbol_index_drift_mjs_atomicWri["atomicWrite"]:::symbol
-  file_scripts_symbol_index_drift_mjs --> sym_scripts_symbol_index_drift_mjs_atomicWri
-  sym_scripts_symbol_index_drift_mjs_classify["classify"]:::symbol
-  file_scripts_symbol_index_drift_mjs --> sym_scripts_symbol_index_drift_mjs_classify
-  sym_scripts_symbol_index_drift_mjs_main["main"]:::symbol
-  file_scripts_symbol_index_drift_mjs --> sym_scripts_symbol_index_drift_mjs_main
-  sym_scripts_symbol_index_drift_mjs_parseArgs["parseArgs"]:::symbol
-  file_scripts_symbol_index_drift_mjs --> sym_scripts_symbol_index_drift_mjs_parseArgs
-  sym_scripts_symbol_index_drift_mjs_renderMar["renderMarkdownViaShared"]:::symbol
-  file_scripts_symbol_index_drift_mjs --> sym_scripts_symbol_index_drift_mjs_renderMar
-  file_scripts_symbol_index_duplicates_mjs["scripts/symbol-index/duplicates.mjs"]:::component
-  sym_scripts_symbol_index_duplicates_mjs_main["main"]:::symbol
-  file_scripts_symbol_index_duplicates_mjs --> sym_scripts_symbol_index_duplicates_mjs_main
+subgraph dom_arch_intent ["arch-intent"]
+  file_scripts_lib_arch_intent_adapter_contract["scripts/lib/arch-intent/adapter-contract.mjs"]:::component
+  sym_scripts_lib_arch_intent_adapter_contract["computeDeadIntent"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["deriveArchState"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["fsWalkFallback"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["inventoryAllPaths"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["inventoryFiles"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["isArchIntentReportClean"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["listRepoPaths"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["loadAdapter"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["runArchIntentAnalysis"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  sym_scripts_lib_arch_intent_adapter_contract["validateAdapterReport"]:::symbol
+  file_scripts_lib_arch_intent_adapter_contract --> sym_scripts_lib_arch_intent_adapter_contract
+  file_scripts_lib_arch_intent_adapters_java_mj["scripts/lib/arch-intent/adapters/java.mjs"]:::component
+  sym_scripts_lib_arch_intent_adapters_java_mj["analyseImports"]:::symbol
+  file_scripts_lib_arch_intent_adapters_java_mj --> sym_scripts_lib_arch_intent_adapters_java_mj
+  sym_scripts_lib_arch_intent_adapters_java_mj["buildJavaResolutionIndex"]:::symbol
+  file_scripts_lib_arch_intent_adapters_java_mj --> sym_scripts_lib_arch_intent_adapters_java_mj
+  sym_scripts_lib_arch_intent_adapters_java_mj["extractImports"]:::symbol
+  file_scripts_lib_arch_intent_adapters_java_mj --> sym_scripts_lib_arch_intent_adapters_java_mj
+  sym_scripts_lib_arch_intent_adapters_java_mj["extractPackage"]:::symbol
+  file_scripts_lib_arch_intent_adapters_java_mj --> sym_scripts_lib_arch_intent_adapters_java_mj
+  sym_scripts_lib_arch_intent_adapters_java_mj["progressiveResolve"]:::symbol
+  file_scripts_lib_arch_intent_adapters_java_mj --> sym_scripts_lib_arch_intent_adapters_java_mj
 end
 classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
 classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
@@ -83,12 +89,134 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 54 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 53 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
 | Symbol | Kind | Path | Lines | Purpose | File imported by |
 |---|---|---|---|---|---|
+| [`computeDeadIntent`](../scripts/lib/arch-intent/adapter-contract.mjs#L191) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 191-199 | Identifies architectural domains declared in domain-map but not present in the live codebase. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`deriveArchState`](../scripts/lib/arch-intent/adapter-contract.mjs#L363) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 363-374 | Maps a report's stack statuses and cleanliness into a single high-level architecture state (CLEAN, WITH_FINDINGS, ANALYZED_PARTIAL, ERROR, SKIPPED). | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`fsWalkFallback`](../scripts/lib/arch-intent/adapter-contract.mjs#L68) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 68-88 | Recursively walks repo directory collecting relative file paths, excluding common non-source directories, as a fallback when git commands are unavailable. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`inventoryAllPaths`](../scripts/lib/arch-intent/adapter-contract.mjs#L169) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 169-176 | Maps all repo paths (including non-source) to their architectural domains. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`inventoryFiles`](../scripts/lib/arch-intent/adapter-contract.mjs#L133) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 133-151 | Filters repo paths to source files, maps each to its architectural domain, and returns both mapped and unmapped files. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`isArchIntentReportClean`](../scripts/lib/arch-intent/adapter-contract.mjs#L349) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 349-354 | Boolean check returning true if the report has no violations, unmapped files, dead intent, and all stack adapters succeeded or are unsupported. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`listRepoPaths`](../scripts/lib/arch-intent/adapter-contract.mjs#L103) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 103-118 | Returns a deduplicated list of all tracked and untracked (but not ignored) repo file paths, falling back to filesystem walk if git fails. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`loadAdapter`](../scripts/lib/arch-intent/adapter-contract.mjs#L214) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 214-232 | Dynamically imports a stack-specific architecture intent analyzer adapter, distinguishing between missing files and import errors. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`runArchIntentAnalysis`](../scripts/lib/arch-intent/adapter-contract.mjs#L263) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 263-331 | Orchestrates the full architecture-intent analysis: inventories files, runs per-stack adapters in fault isolation, merges results, and detects dead intent. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`validateAdapterReport`](../scripts/lib/arch-intent/adapter-contract.mjs#L241) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 241-252 | Validates that an adapter's return value matches the expected schema (violations + _meta subset). | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`analyseImports`](../scripts/lib/arch-intent/adapters/java.mjs#L325) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 325-444 | Analyzes Java import dependencies across mapped files, detecting cross-domain edges and unresolved references. | _(internal)_ |
+| [`buildJavaResolutionIndex`](../scripts/lib/arch-intent/adapters/java.mjs#L176) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 176-233 | Indexes Java files by fully-qualified name, package, and source root for import resolution. | _(internal)_ |
+| [`extractImports`](../scripts/lib/arch-intent/adapters/java.mjs#L132) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 132-164 | Parses Java import statements including static and wildcard forms with line numbers. | _(internal)_ |
+| [`extractPackage`](../scripts/lib/arch-intent/adapters/java.mjs#L115) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 115-118 | Extracts the package declaration from Java source code. | _(internal)_ |
+| [`progressiveResolve`](../scripts/lib/arch-intent/adapters/java.mjs#L246) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 246-265 | Progressively resolves a Java FQN by dropping package segments or classifies as external/unresolved. | _(internal)_ |
+| [`resolveJavaImport`](../scripts/lib/arch-intent/adapters/java.mjs#L275) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 275-314 | Resolves a Java import reference to target files using the resolution index, handling wildcards and static imports. | _(internal)_ |
+| [`stripJavaCommentsAndLiterals`](../scripts/lib/arch-intent/adapters/java.mjs#L44) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 44-106 | Removes Java comments and string literals while preserving line structure for parsing. | _(internal)_ |
+| [`analyseImports`](../scripts/lib/arch-intent/adapters/js-ts.mjs#L74) | function | `scripts/lib/arch-intent/adapters/js-ts.mjs` | 74-214 | Analyzes JavaScript/TypeScript import dependencies using dependency-cruiser, tracking vendor/local/dynamic/unresolved edges. | _(internal)_ |
+| [`classifyEdge`](../scripts/lib/arch-intent/adapters/js-ts.mjs#L33) | function | `scripts/lib/arch-intent/adapters/js-ts.mjs` | 33-49 | Categorizes a dependency-cruiser edge as type-only, dynamic, local-file, vendor, or unresolved. | _(internal)_ |
+| [`normalisePath`](../scripts/lib/arch-intent/adapters/js-ts.mjs#L58) | function | `scripts/lib/arch-intent/adapters/js-ts.mjs` | 58-63 | Normalizes a path to repo-relative forward-slash form. | _(internal)_ |
+| [`analyseImports`](../scripts/lib/arch-intent/adapters/postgres.mjs#L605) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 605-698 | Performs multi-stage SQL import analysis: parsing, cataloging, resolving references, and detecting violations. | _(internal)_ |
+| [`buildSqlCatalog`](../scripts/lib/arch-intent/adapters/postgres.mjs#L499) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 499-560 | Builds an in-memory catalog of SQL objects (relations, functions, types) from parsed files, tracking definitions, references, and redefinitions. | _(internal)_ |
+| [`classifyStatement`](../scripts/lib/arch-intent/adapters/postgres.mjs#L295) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 295-427 | Parses an individual SQL statement to extract object definitions and cross-object references (foreign keys, partitioning). | _(internal)_ |
+| [`displayName`](../scripts/lib/arch-intent/adapters/postgres.mjs#L234) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 234-236 | Reverses dot-escaping for human-readable SQL name display. | _(internal)_ |
+| [`extractCallRefs`](../scripts/lib/arch-intent/adapters/postgres.mjs#L460) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 460-471 | Extracts function call names from SQL body text and records them as reference edges. | _(internal)_ |
+| [`extractPolicyTableRefs`](../scripts/lib/arch-intent/adapters/postgres.mjs#L474) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 474-483 | Identifies table references in SQL policy expressions via FROM/JOIN and dotted-identifier patterns. | _(internal)_ |
+| [`extractSelectRefs`](../scripts/lib/arch-intent/adapters/postgres.mjs#L440) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 440-457 | Parses a SQL SELECT statement to identify table/view/CTE references in FROM and JOIN clauses. | _(internal)_ |
+| [`naturalCompare`](../scripts/lib/arch-intent/adapters/postgres.mjs#L488) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 488-490 | Performs locale-aware, numerically-aware string comparison for natural sorting. | _(internal)_ |
+| [`normName`](../scripts/lib/arch-intent/adapters/postgres.mjs#L197) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 197-228 | Normalizes a SQL schema-qualified name (lowercasing unquoted identifiers, escaping internal dots). | _(internal)_ |
+| [`parseFile`](../scripts/lib/arch-intent/adapters/postgres.mjs#L262) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 262-293 | Parses a SQL file into statements and classifies each as CREATE/ALTER/DROP, extracting definitions and references. | _(internal)_ |
+| [`recoverFunctionBody`](../scripts/lib/arch-intent/adapters/postgres.mjs#L430) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 430-437 | Extracts the body of a SQL function from source code, handling dollar-quoting and `as` string syntaxes. | _(internal)_ |
+| [`resolveSqlRef`](../scripts/lib/arch-intent/adapters/postgres.mjs#L571) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 571-594 | Resolves a SQL reference name to a local definition file, proven external/builtin, or unresolved state. | _(internal)_ |
+| [`splitTopLevel`](../scripts/lib/arch-intent/adapters/postgres.mjs#L239) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 239-250 | Splits a SQL body string by a separator at depth zero (outside parentheses). | _(internal)_ |
+| [`stripSqlCommentsAndStrings`](../scripts/lib/arch-intent/adapters/postgres.mjs#L102) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 102-187 | Removes SQL comments and string literals while preserving line structure and handling nested blocks. | _(internal)_ |
+| [`analyseImports`](../scripts/lib/arch-intent/adapters/python.mjs#L507) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 507-586 | Performs multi-stage Python import analysis: discovering roots, indexing modules, extracting imports, resolving, and detecting violations. | _(internal)_ |
+| [`buildPythonModuleIndex`](../scripts/lib/arch-intent/adapters/python.mjs#L383) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 383-426 | Builds a dotted-module-name-to-file mapping, detecting collisions where multiple files define the same module. | _(internal)_ |
+| [`countUnbalanced`](../scripts/lib/arch-intent/adapters/python.mjs#L254) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 254-261 | Counts net unmatched parentheses to detect whether a logical Python line continues across physical lines. | _(internal)_ |
+| [`discoverPythonRoots`](../scripts/lib/arch-intent/adapters/python.mjs#L287) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 287-350 | Discovers Python package root directories via packaging metadata, src/ directories, and __init__.py walk. | _(internal)_ |
+| [`extractImports`](../scripts/lib/arch-intent/adapters/python.mjs#L196) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 196-251 | Parses Python import statements from source, handling continuation lines and statement-per-line multiplexing. | _(internal)_ |
+| [`extractPackageDirs`](../scripts/lib/arch-intent/adapters/python.mjs#L353) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 353-364 | Extracts package directory paths from setup.cfg or pyproject.toml configuration. | _(internal)_ |
+| [`isPySource`](../scripts/lib/arch-intent/adapters/python.mjs#L366) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 366-369 | Checks if a file is Python source (.py or .pyi extension). | _(internal)_ |
+| [`parseImportedNames`](../scripts/lib/arch-intent/adapters/python.mjs#L264) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 264-271 | Parses the imported names in a `from ... import` clause, handling aliases and wildcards. | _(internal)_ |
+| [`resolvePythonImport`](../scripts/lib/arch-intent/adapters/python.mjs#L439) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 439-496 | Resolves a Python import reference to a local file, stdlib module, or unresolved state. | _(internal)_ |
+| [`stripPythonCommentsAndStrings`](../scripts/lib/arch-intent/adapters/python.mjs#L72) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 72-178 | Removes Python comments and string literals while preserving line structure and f-string brace tracking. | _(internal)_ |
+| [`checkDepAllowed`](../scripts/lib/arch-intent/domain-resolver.mjs#L53) | function | `scripts/lib/arch-intent/domain-resolver.mjs` | 53-60 | Checks if a dependency edge from one domain to another is permitted by the allowed-dependencies config. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/adapters/java.mjs`, +4 more |
+| [`computeDeclaredDomains`](../scripts/lib/arch-intent/domain-resolver.mjs#L76) | function | `scripts/lib/arch-intent/domain-resolver.mjs` | 76-86 | Extracts all domains declared in rules, allowedDeps keys/values, or descriptions. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/adapters/java.mjs`, +4 more |
+| [`resolveFileToDomain`](../scripts/lib/arch-intent/domain-resolver.mjs#L29) | function | `scripts/lib/arch-intent/domain-resolver.mjs` | 29-38 | Matches a file path against domain rules using minimatch patterns to determine its domain assignment. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/adapters/java.mjs`, +4 more |
+| [`ArchIntentAnalyzerError`](../scripts/lib/arch-intent/errors.mjs#L18) | class | `scripts/lib/arch-intent/errors.mjs` | 18-25 | Error class for analysis-stage failures, categorizing error types and preserving cause chains. | `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/load-config.mjs`, `scripts/lib/arch-intent/semantic-validator.mjs`, +2 more |
+| [`ArchIntentConfigError`](../scripts/lib/arch-intent/errors.mjs#L9) | class | `scripts/lib/arch-intent/errors.mjs` | 9-16 | Error class for configuration loading and validation failures, distinguishing shape from semantic errors. | `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/load-config.mjs`, `scripts/lib/arch-intent/semantic-validator.mjs`, +2 more |
+| [`parseIntentDoc`](../scripts/lib/arch-intent/intent-doc-parser.mjs#L27) | function | `scripts/lib/arch-intent/intent-doc-parser.mjs` | 27-78 | Extracts mermaid diagrams, version strings, and section narratives from markdown intent documentation. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`loadArchIntentConfig`](../scripts/lib/arch-intent/load-config.mjs#L35) | function | `scripts/lib/arch-intent/load-config.mjs` | 35-69 | Loads and validates the domain-map.json configuration, performing shape and semantic validation. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`rulesDeclaredDomains`](../scripts/lib/arch-intent/semantic-validator.mjs#L30) | function | `scripts/lib/arch-intent/semantic-validator.mjs` | 30-34 | Extracts all domains declared in the rules array plus the VENDOR pseudo-domain. | `scripts/lib/arch-intent/load-config.mjs` |
+| [`validateDomainMapSemantics`](../scripts/lib/arch-intent/semantic-validator.mjs#L42) | function | `scripts/lib/arch-intent/semantic-validator.mjs` | 42-97 | Validates domain-map semantics: ensures allowedDeps and description keys reference declared domains, detects rule shadowing. | `scripts/lib/arch-intent/load-config.mjs` |
+
+---
+
+## arch-memory
+
+> Embeds code symbols and security incidents into a searchable index; queries by intent description to surface existing near-duplicates and related past incidents, preventing duplicate implementations and architectural drift.
+
+```mermaid
+flowchart TB
+subgraph dom_arch_memory ["arch-memory"]
+  file_scripts_lib_neighbourhood_query_mjs["scripts/lib/neighbourhood-query.mjs"]:::component
+  sym_scripts_lib_neighbourhood_query_mjs_cach["cacheKey"]:::symbol
+  file_scripts_lib_neighbourhood_query_mjs --> sym_scripts_lib_neighbourhood_query_mjs_cach
+  sym_scripts_lib_neighbourhood_query_mjs_gene["generateIntentEmbedding"]:::symbol
+  file_scripts_lib_neighbourhood_query_mjs --> sym_scripts_lib_neighbourhood_query_mjs_gene
+  sym_scripts_lib_neighbourhood_query_mjs_getC["getCached"]:::symbol
+  file_scripts_lib_neighbourhood_query_mjs --> sym_scripts_lib_neighbourhood_query_mjs_getC
+  sym_scripts_lib_neighbourhood_query_mjs_getI["getIncidentNeighbourhoodForIntent"]:::symbol
+  file_scripts_lib_neighbourhood_query_mjs --> sym_scripts_lib_neighbourhood_query_mjs_getI
+  sym_scripts_lib_neighbourhood_query_mjs_getN["getNeighbourhoodForIntent"]:::symbol
+  file_scripts_lib_neighbourhood_query_mjs --> sym_scripts_lib_neighbourhood_query_mjs_getN
+  sym_scripts_lib_neighbourhood_query_mjs_load["loadCache"]:::symbol
+  file_scripts_lib_neighbourhood_query_mjs --> sym_scripts_lib_neighbourhood_query_mjs_load
+  sym_scripts_lib_neighbourhood_query_mjs_putC["putCached"]:::symbol
+  file_scripts_lib_neighbourhood_query_mjs --> sym_scripts_lib_neighbourhood_query_mjs_putC
+  sym_scripts_lib_neighbourhood_query_mjs_save["saveCache"]:::symbol
+  file_scripts_lib_neighbourhood_query_mjs --> sym_scripts_lib_neighbourhood_query_mjs_save
+  file_scripts_lib_observed_deps_mjs["scripts/lib/observed-deps.mjs"]:::component
+  sym_scripts_lib_observed_deps_mjs_computeDom["computeDomainMapDigest"]:::symbol
+  file_scripts_lib_observed_deps_mjs --> sym_scripts_lib_observed_deps_mjs_computeDom
+  sym_scripts_lib_observed_deps_mjs_computeObs["computeObservedDomainDeps"]:::symbol
+  file_scripts_lib_observed_deps_mjs --> sym_scripts_lib_observed_deps_mjs_computeObs
+  sym_scripts_lib_observed_deps_mjs_flattenMer["flattenMergedDeps"]:::symbol
+  file_scripts_lib_observed_deps_mjs --> sym_scripts_lib_observed_deps_mjs_flattenMer
+  sym_scripts_lib_observed_deps_mjs_mergeDomai["mergeDomainDeps"]:::symbol
+  file_scripts_lib_observed_deps_mjs --> sym_scripts_lib_observed_deps_mjs_mergeDomai
+  file_scripts_lib_symbol_index_domain_tagger_m["scripts/lib/symbol-index/domain-tagger.mjs"]:::component
+  sym_scripts_lib_symbol_index_domain_tagger_m["computeTargetDomains"]:::symbol
+  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
+  sym_scripts_lib_symbol_index_domain_tagger_m["globToRegexBody"]:::symbol
+  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
+  sym_scripts_lib_symbol_index_domain_tagger_m["loadDomainRules"]:::symbol
+  file_scripts_lib_symbol_index_domain_tagger_m --> sym_scripts_lib_symbol_index_domain_tagger_m
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+_Domain has 66 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`cacheKey`](../scripts/lib/neighbourhood-query.mjs#L31) | function | `scripts/lib/neighbourhood-query.mjs` | 31-37 | Generates short SHA256-based cache key from intent description, model, and embedding dimension. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
+| [`generateIntentEmbedding`](../scripts/lib/neighbourhood-query.mjs#L83) | function | `scripts/lib/neighbourhood-query.mjs` | 83-126 | Generates text embedding for an intent while guarding against embedding provider/vector-space mismatches. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
+| [`getCached`](../scripts/lib/neighbourhood-query.mjs#L56) | function | `scripts/lib/neighbourhood-query.mjs` | 56-62 | Retrieves cached embedding if exists and hasn't exceeded TTL. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
+| [`getIncidentNeighbourhoodForIntent`](../scripts/lib/neighbourhood-query.mjs#L325) | function | `scripts/lib/neighbourhood-query.mjs` | 325-475 | Queries security incident index for related past incidents matching an intent. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
+| [`getNeighbourhoodForIntent`](../scripts/lib/neighbourhood-query.mjs#L139) | function | `scripts/lib/neighbourhood-query.mjs` | 139-297 | Queries symbol index for architecturally-similar symbols matching an intent description. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
+| [`loadCache`](../scripts/lib/neighbourhood-query.mjs#L39) | function | `scripts/lib/neighbourhood-query.mjs` | 39-47 | Loads embedding cache from disk, returning empty structure if missing or corrupt. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
+| [`putCached`](../scripts/lib/neighbourhood-query.mjs#L64) | function | `scripts/lib/neighbourhood-query.mjs` | 64-68 | Stores embedding in cache with current timestamp for TTL expiration tracking. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
+| [`saveCache`](../scripts/lib/neighbourhood-query.mjs#L49) | function | `scripts/lib/neighbourhood-query.mjs` | 49-54 | Writes embedding cache to disk with atomic file write. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
+| [`computeDomainMapDigest`](../scripts/lib/observed-deps.mjs#L43) | function | `scripts/lib/observed-deps.mjs` | 43-50 | Hashes domain-mapping rules into SHA256 digest for change detection. | `scripts/lib/dashboard/collect-reference.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
+| [`computeObservedDomainDeps`](../scripts/lib/observed-deps.mjs#L64) | function | `scripts/lib/observed-deps.mjs` | 64-90 | Computes domain-level dependencies from import edges using fast precompiled regex tagging. | `scripts/lib/dashboard/collect-reference.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
+| [`flattenMergedDeps`](../scripts/lib/observed-deps.mjs#L153) | function | `scripts/lib/observed-deps.mjs` | 153-162 | Converts merged domain dependencies into flat per-domain target lists. | `scripts/lib/dashboard/collect-reference.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
+| [`mergeDomainDeps`](../scripts/lib/observed-deps.mjs#L110) | function | `scripts/lib/observed-deps.mjs` | 110-144 | Merges observed and manual domain dependencies with source attribution and dangerous-key filtering. | `scripts/lib/dashboard/collect-reference.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
 | [`computeTargetDomains`](../scripts/lib/symbol-index/domain-tagger.mjs#L150) | function | `scripts/lib/symbol-index/domain-tagger.mjs` | 150-165 | Determines which domains a set of file paths belong to, splitting tagged/untagged. | `scripts/cross-skill.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/dashboard/collect-purposes.mjs`, +6 more |
 | [`globToRegexBody`](../scripts/lib/symbol-index/domain-tagger.mjs#L51) | function | `scripts/lib/symbol-index/domain-tagger.mjs` | 51-80 | Converts a glob pattern to regex body, handling ** and * wildcards and escaping literals. | `scripts/cross-skill.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/dashboard/collect-purposes.mjs`, +6 more |
 | [`loadDomainRules`](../scripts/lib/symbol-index/domain-tagger.mjs#L181) | function | `scripts/lib/symbol-index/domain-tagger.mjs` | 181-208 | Reads and validates domain-tagging rules from a domain-map JSON file. | `scripts/cross-skill.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/dashboard/collect-purposes.mjs`, +6 more |
@@ -146,9 +274,180 @@ _Domain has 54 symbols (>50). Diagram shows top-15 by file order; see flat table
 
 ---
 
+## arm-eval
+
+> Blinded multi-arm experimentation suite that captures arm-eval sessions, judges variants against rubric dimensions, computes statistical consensus (means, rank correlation, self-consistency), and produces keep/switch/inconclusive verdicts.
+
+```mermaid
+flowchart TB
+subgraph dom_arm_eval ["arm-eval"]
+  file_scripts_lib_arm_eval_capture_trigger_mjs["scripts/lib/arm-eval/capture-trigger.mjs"]:::component
+  sym_scripts_lib_arm_eval_capture_trigger_mjs["maybeFireArmEvalCaptureDetached"]:::symbol
+  file_scripts_lib_arm_eval_capture_trigger_mjs --> sym_scripts_lib_arm_eval_capture_trigger_mjs
+  file_scripts_lib_arm_eval_cross_checks_mjs["scripts/lib/arm-eval/cross-checks.mjs"]:::component
+  sym_scripts_lib_arm_eval_cross_checks_mjs_en["envelope"]:::symbol
+  file_scripts_lib_arm_eval_cross_checks_mjs --> sym_scripts_lib_arm_eval_cross_checks_mjs_en
+  sym_scripts_lib_arm_eval_cross_checks_mjs_ru["runCrossChecks"]:::symbol
+  file_scripts_lib_arm_eval_cross_checks_mjs --> sym_scripts_lib_arm_eval_cross_checks_mjs_ru
+  file_scripts_lib_arm_eval_decision_mjs["scripts/lib/arm-eval/decision.mjs"]:::component
+  sym_scripts_lib_arm_eval_decision_mjs_evalua["evaluateArmEval"]:::symbol
+  file_scripts_lib_arm_eval_decision_mjs --> sym_scripts_lib_arm_eval_decision_mjs_evalua
+  sym_scripts_lib_arm_eval_decision_mjs_kendal["kendallTau"]:::symbol
+  file_scripts_lib_arm_eval_decision_mjs --> sym_scripts_lib_arm_eval_decision_mjs_kendal
+  sym_scripts_lib_arm_eval_decision_mjs_mean["mean"]:::symbol
+  file_scripts_lib_arm_eval_decision_mjs --> sym_scripts_lib_arm_eval_decision_mjs_mean
+  sym_scripts_lib_arm_eval_decision_mjs_round4["round4"]:::symbol
+  file_scripts_lib_arm_eval_decision_mjs --> sym_scripts_lib_arm_eval_decision_mjs_round4
+  sym_scripts_lib_arm_eval_decision_mjs_sessio["sessionArmMeans"]:::symbol
+  file_scripts_lib_arm_eval_decision_mjs --> sym_scripts_lib_arm_eval_decision_mjs_sessio
+  sym_scripts_lib_arm_eval_decision_mjs_sessio["sessionSelfConsistency"]:::symbol
+  file_scripts_lib_arm_eval_decision_mjs --> sym_scripts_lib_arm_eval_decision_mjs_sessio
+  file_scripts_lib_arm_eval_experiments_mjs["scripts/lib/arm-eval/experiments.mjs"]:::component
+  sym_scripts_lib_arm_eval_experiments_mjs_get["getExperiment"]:::symbol
+  file_scripts_lib_arm_eval_experiments_mjs --> sym_scripts_lib_arm_eval_experiments_mjs_get
+  sym_scripts_lib_arm_eval_experiments_mjs_isC["isClaudeFamily"]:::symbol
+  file_scripts_lib_arm_eval_experiments_mjs --> sym_scripts_lib_arm_eval_experiments_mjs_isC
+  sym_scripts_lib_arm_eval_experiments_mjs_rub["rubricFor"]:::symbol
+  file_scripts_lib_arm_eval_experiments_mjs --> sym_scripts_lib_arm_eval_experiments_mjs_rub
+  sym_scripts_lib_arm_eval_experiments_mjs_val["validateArm"]:::symbol
+  file_scripts_lib_arm_eval_experiments_mjs --> sym_scripts_lib_arm_eval_experiments_mjs_val
+  sym_scripts_lib_arm_eval_experiments_mjs_val["validateExperiment"]:::symbol
+  file_scripts_lib_arm_eval_experiments_mjs --> sym_scripts_lib_arm_eval_experiments_mjs_val
+  file_scripts_lib_arm_eval_export_mjs["scripts/lib/arm-eval/export.mjs"]:::component
+  sym_scripts_lib_arm_eval_export_mjs_buildSes["buildSessionMarkdown"]:::symbol
+  file_scripts_lib_arm_eval_export_mjs --> sym_scripts_lib_arm_eval_export_mjs_buildSes
+  sym_scripts_lib_arm_eval_export_mjs_exportSe["exportSession"]:::symbol
+  file_scripts_lib_arm_eval_export_mjs --> sym_scripts_lib_arm_eval_export_mjs_exportSe
+  sym_scripts_lib_arm_eval_export_mjs_filename["filenameFor"]:::symbol
+  file_scripts_lib_arm_eval_export_mjs --> sym_scripts_lib_arm_eval_export_mjs_filename
+  sym_scripts_lib_arm_eval_export_mjs_redact["redact"]:::symbol
+  file_scripts_lib_arm_eval_export_mjs --> sym_scripts_lib_arm_eval_export_mjs_redact
+  file_scripts_lib_arm_eval_intent_context_mjs["scripts/lib/arm-eval/intent-context.mjs"]:::component
+  sym_scripts_lib_arm_eval_intent_context_mjs_["buildIntentContext"]:::symbol
+  file_scripts_lib_arm_eval_intent_context_mjs --> sym_scripts_lib_arm_eval_intent_context_mjs_
+  sym_scripts_lib_arm_eval_intent_context_mjs_["cap"]:::symbol
+  file_scripts_lib_arm_eval_intent_context_mjs --> sym_scripts_lib_arm_eval_intent_context_mjs_
+  sym_scripts_lib_arm_eval_intent_context_mjs_["defaultDeps"]:::symbol
+  file_scripts_lib_arm_eval_intent_context_mjs --> sym_scripts_lib_arm_eval_intent_context_mjs_
+  sym_scripts_lib_arm_eval_intent_context_mjs_["tryRead"]:::symbol
+  file_scripts_lib_arm_eval_intent_context_mjs --> sym_scripts_lib_arm_eval_intent_context_mjs_
+  file_scripts_lib_arm_eval_judge_mjs["scripts/lib/arm-eval/judge.mjs"]:::component
+  sym_scripts_lib_arm_eval_judge_mjs_buildJudg["buildJudgePrompt"]:::symbol
+  file_scripts_lib_arm_eval_judge_mjs --> sym_scripts_lib_arm_eval_judge_mjs_buildJudg
+  sym_scripts_lib_arm_eval_judge_mjs_callJudge["callJudgeDefault"]:::symbol
+  file_scripts_lib_arm_eval_judge_mjs --> sym_scripts_lib_arm_eval_judge_mjs_callJudge
+  sym_scripts_lib_arm_eval_judge_mjs_extractJs["extractJsonObject"]:::symbol
+  file_scripts_lib_arm_eval_judge_mjs --> sym_scripts_lib_arm_eval_judge_mjs_extractJs
+  sym_scripts_lib_arm_eval_judge_mjs_getShapeR["getShapeRedactor"]:::symbol
+  file_scripts_lib_arm_eval_judge_mjs --> sym_scripts_lib_arm_eval_judge_mjs_getShapeR
+  sym_scripts_lib_arm_eval_judge_mjs_judgePass["judgePassSchema"]:::symbol
+  file_scripts_lib_arm_eval_judge_mjs --> sym_scripts_lib_arm_eval_judge_mjs_judgePass
+  sym_scripts_lib_arm_eval_judge_mjs_judgeSess["judgeSession"]:::symbol
+  file_scripts_lib_arm_eval_judge_mjs --> sym_scripts_lib_arm_eval_judge_mjs_judgeSess
+  sym_scripts_lib_arm_eval_judge_mjs_scorableD["scorableDimensions"]:::symbol
+  file_scripts_lib_arm_eval_judge_mjs --> sym_scripts_lib_arm_eval_judge_mjs_scorableD
+  sym_scripts_lib_arm_eval_judge_mjs_seededShu["seededShuffle"]:::symbol
+  file_scripts_lib_arm_eval_judge_mjs --> sym_scripts_lib_arm_eval_judge_mjs_seededShu
+  file_scripts_lib_arm_eval_plan_seed_mjs["scripts/lib/arm-eval/plan-seed.mjs"]:::component
+  sym_scripts_lib_arm_eval_plan_seed_mjs_build["buildPlanGenPrompt"]:::symbol
+  file_scripts_lib_arm_eval_plan_seed_mjs --> sym_scripts_lib_arm_eval_plan_seed_mjs_build
+  sym_scripts_lib_arm_eval_plan_seed_mjs_parse["parsePlanIntent"]:::symbol
+  file_scripts_lib_arm_eval_plan_seed_mjs --> sym_scripts_lib_arm_eval_plan_seed_mjs_parse
+  file_scripts_lib_arm_eval_producers__shared_m["scripts/lib/arm-eval/producers/_shared.mjs"]:::component
+  sym_scripts_lib_arm_eval_producers__shared_m["hashText"]:::symbol
+  file_scripts_lib_arm_eval_producers__shared_m --> sym_scripts_lib_arm_eval_producers__shared_m
+  file_scripts_lib_arm_eval_producers_brainstor["scripts/lib/arm-eval/producers/brainstorm.mjs"]:::component
+  sym_scripts_lib_arm_eval_producers_brainstor["callModelDefault"]:::symbol
+  file_scripts_lib_arm_eval_producers_brainstor --> sym_scripts_lib_arm_eval_producers_brainstor
+  sym_scripts_lib_arm_eval_producers_brainstor["produceBrainstorm"]:::symbol
+  file_scripts_lib_arm_eval_producers_brainstor --> sym_scripts_lib_arm_eval_producers_brainstor
+  file_scripts_lib_arm_eval_producers_model_cal["scripts/lib/arm-eval/producers/model-call.mjs"]:::component
+  sym_scripts_lib_arm_eval_producers_model_cal["callModelFreeText"]:::symbol
+  file_scripts_lib_arm_eval_producers_model_cal --> sym_scripts_lib_arm_eval_producers_model_cal
+  sym_scripts_lib_arm_eval_producers_model_cal["providerFor"]:::symbol
+  file_scripts_lib_arm_eval_producers_model_cal --> sym_scripts_lib_arm_eval_producers_model_cal
+  file_scripts_lib_arm_eval_producers_plan_mjs["scripts/lib/arm-eval/producers/plan.mjs"]:::component
+  sym_scripts_lib_arm_eval_producers_plan_mjs_["callModelDefault"]:::symbol
+  file_scripts_lib_arm_eval_producers_plan_mjs --> sym_scripts_lib_arm_eval_producers_plan_mjs_
+  sym_scripts_lib_arm_eval_producers_plan_mjs_["producePlan"]:::symbol
+  file_scripts_lib_arm_eval_producers_plan_mjs --> sym_scripts_lib_arm_eval_producers_plan_mjs_
+  file_scripts_lib_arm_eval_run_mjs["scripts/lib/arm-eval/run.mjs"]:::component
+  sym_scripts_lib_arm_eval_run_mjs_defaultDeps["defaultDeps"]:::symbol
+  file_scripts_lib_arm_eval_run_mjs --> sym_scripts_lib_arm_eval_run_mjs_defaultDeps
+  sym_scripts_lib_arm_eval_run_mjs_hashTask["hashTask"]:::symbol
+  file_scripts_lib_arm_eval_run_mjs --> sym_scripts_lib_arm_eval_run_mjs_hashTask
+  sym_scripts_lib_arm_eval_run_mjs_runArmEvalS["runArmEvalSession"]:::symbol
+  file_scripts_lib_arm_eval_run_mjs --> sym_scripts_lib_arm_eval_run_mjs_runArmEvalS
+  file_scripts_lib_arm_eval_toggle_mjs["scripts/lib/arm-eval/toggle.mjs"]:::component
+  sym_scripts_lib_arm_eval_toggle_mjs_readTogg["readToggle"]:::symbol
+  file_scripts_lib_arm_eval_toggle_mjs --> sym_scripts_lib_arm_eval_toggle_mjs_readTogg
+  sym_scripts_lib_arm_eval_toggle_mjs_resolveS["resolveShadowArmsWithToggle"]:::symbol
+  file_scripts_lib_arm_eval_toggle_mjs --> sym_scripts_lib_arm_eval_toggle_mjs_resolveS
+  sym_scripts_lib_arm_eval_toggle_mjs_writeTog["writeToggle"]:::symbol
+  file_scripts_lib_arm_eval_toggle_mjs --> sym_scripts_lib_arm_eval_toggle_mjs_writeTog
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`maybeFireArmEvalCaptureDetached`](../scripts/lib/arm-eval/capture-trigger.mjs#L52) | function | `scripts/lib/arm-eval/capture-trigger.mjs` | 52-83 | Conditionally spawns a detached background process to capture arm-eval experiment data if enabled. | `scripts/brainstorm-round.mjs`, `scripts/cross-skill.mjs` |
+| [`envelope`](../scripts/lib/arm-eval/cross-checks.mjs#L22) | function | `scripts/lib/arm-eval/cross-checks.mjs` | 22-32 | Wraps a cross-check result in a standardized envelope with name, version, status, and findings. | `scripts/lib/arm-eval/run.mjs` |
+| [`runCrossChecks`](../scripts/lib/arm-eval/cross-checks.mjs#L80) | function | `scripts/lib/arm-eval/cross-checks.mjs` | 80-93 | Executes a list of cross-check functions sequentially, enveloping results and catching errors. | `scripts/lib/arm-eval/run.mjs` |
+| [`evaluateArmEval`](../scripts/lib/arm-eval/decision.mjs#L94) | function | `scripts/lib/arm-eval/decision.mjs` | 94-221 | Evaluates all collected arm-eval sessions to produce a verdict (keep/switch/inconclusive) and ranking based on rubric scores. | `scripts/cross-skill.mjs` |
+| [`kendallTau`](../scripts/lib/arm-eval/decision.mjs#L68) | function | `scripts/lib/arm-eval/decision.mjs` | 68-82 | Computes Kendall's tau rank correlation coefficient between two arm rankings. | `scripts/cross-skill.mjs` |
+| [`mean`](../scripts/lib/arm-eval/decision.mjs#L33) | function | `scripts/lib/arm-eval/decision.mjs` | 33-33 | Computes the arithmetic mean of a numeric array. | `scripts/cross-skill.mjs` |
+| [`round4`](../scripts/lib/arm-eval/decision.mjs#L34) | function | `scripts/lib/arm-eval/decision.mjs` | 34-34 | Rounds a number to 4 decimal places. | `scripts/cross-skill.mjs` |
+| [`sessionArmMeans`](../scripts/lib/arm-eval/decision.mjs#L38) | function | `scripts/lib/arm-eval/decision.mjs` | 38-50 | Computes the mean score per arm across judge passes in an arm-eval session. | `scripts/cross-skill.mjs` |
+| [`sessionSelfConsistency`](../scripts/lib/arm-eval/decision.mjs#L54) | function | `scripts/lib/arm-eval/decision.mjs` | 54-64 | Computes the mean absolute delta between arm dimensions across the first two judge passes. | `scripts/cross-skill.mjs` |
+| [`getExperiment`](../scripts/lib/arm-eval/experiments.mjs#L186) | function | `scripts/lib/arm-eval/experiments.mjs` | 186-190 | Looks up and returns a canonical experiment definition by type name, throwing on unknown types. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`isClaudeFamily`](../scripts/lib/arm-eval/experiments.mjs#L107) | function | `scripts/lib/arm-eval/experiments.mjs` | 107-116 | Checks if a model identifier refers to a Claude/Anthropic family model. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`rubricFor`](../scripts/lib/arm-eval/experiments.mjs#L66) | function | `scripts/lib/arm-eval/experiments.mjs` | 66-70 | Returns the complete rubric (evaluation dimensions) for an experiment type by combining core and experiment-specific dimensions. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`validateArm`](../scripts/lib/arm-eval/experiments.mjs#L122) | function | `scripts/lib/arm-eval/experiments.mjs` | 122-130 | Validates an arm definition, ensuring it parses correctly and contains no Claude-family models. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`validateExperiment`](../scripts/lib/arm-eval/experiments.mjs#L133) | function | `scripts/lib/arm-eval/experiments.mjs` | 133-141 | Validates an experiment configuration object against a schema and its arms, returning detailed error messages on failure. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`buildSessionMarkdown`](../scripts/lib/arm-eval/export.mjs#L47) | function | `scripts/lib/arm-eval/export.mjs` | 47-111 | Constructs the full markdown document for an exported arm-eval session, blinding output labels and author info in prospective phase. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`exportSession`](../scripts/lib/arm-eval/export.mjs#L118) | function | `scripts/lib/arm-eval/export.mjs` | 118-127 | Writes an arm-eval session to disk as a markdown file after building the document. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`filenameFor`](../scripts/lib/arm-eval/export.mjs#L34) | function | `scripts/lib/arm-eval/export.mjs` | 34-39 | Generates a timestamped, metadata-enriched filename for exporting a session to markdown. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`redact`](../scripts/lib/arm-eval/export.mjs#L41) | function | `scripts/lib/arm-eval/export.mjs` | 41-41 | Redacts secrets from a string using shape-based pattern matching. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`buildIntentContext`](../scripts/lib/arm-eval/intent-context.mjs#L52) | function | `scripts/lib/arm-eval/intent-context.mjs` | 52-113 | Assembles repository architecture map and domain configuration as context for arm-eval judge prompts. | `scripts/lib/arm-eval/run.mjs` |
+| [`cap`](../scripts/lib/arm-eval/intent-context.mjs#L42) | function | `scripts/lib/arm-eval/intent-context.mjs` | 42-45 | Truncates text to a maximum length with an ellipsis indicator. | `scripts/lib/arm-eval/run.mjs` |
+| [`defaultDeps`](../scripts/lib/arm-eval/intent-context.mjs#L29) | function | `scripts/lib/arm-eval/intent-context.mjs` | 29-34 | Returns default filesystem dependencies (readFile, exists) as fallback implementations. | `scripts/lib/arm-eval/run.mjs` |
+| [`tryRead`](../scripts/lib/arm-eval/intent-context.mjs#L37) | function | `scripts/lib/arm-eval/intent-context.mjs` | 37-39 | Safely reads a file, returning null on any filesystem or parsing error. | `scripts/lib/arm-eval/run.mjs` |
+| [`buildJudgePrompt`](../scripts/lib/arm-eval/judge.mjs#L64) | function | `scripts/lib/arm-eval/judge.mjs` | 64-79 | Constructs a system prompt for the judge to score multiple anonymized outputs against rubric dimensions. | `scripts/lib/arm-eval/run.mjs` |
+| [`callJudgeDefault`](../scripts/lib/arm-eval/judge.mjs#L171) | function | `scripts/lib/arm-eval/judge.mjs` | 171-210 | Invokes Claude Opus to score anonymized outputs while applying egress-safe redaction on the outbound payload. | `scripts/lib/arm-eval/run.mjs` |
+| [`extractJsonObject`](../scripts/lib/arm-eval/judge.mjs#L140) | function | `scripts/lib/arm-eval/judge.mjs` | 140-156 | Extracts the first valid JSON object from text by tracking brace depth and string escaping. | `scripts/lib/arm-eval/run.mjs` |
+| [`getShapeRedactor`](../scripts/lib/arm-eval/judge.mjs#L163) | function | `scripts/lib/arm-eval/judge.mjs` | 163-168 | Lazily loads and caches a secret-redactor that preserves legitimate identifiers while removing sensitive data. | `scripts/lib/arm-eval/run.mjs` |
+| [`judgePassSchema`](../scripts/lib/arm-eval/judge.mjs#L45) | function | `scripts/lib/arm-eval/judge.mjs` | 45-57 | Builds a Zod schema that validates judge scores covering all labels exactly once with all required dimensions. | `scripts/lib/arm-eval/run.mjs` |
+| [`judgeSession`](../scripts/lib/arm-eval/judge.mjs#L96) | function | `scripts/lib/arm-eval/judge.mjs` | 96-134 | Orchestrates a two-pass blinded scoring session, shuffling outputs and validating conformance with retry logic. | `scripts/lib/arm-eval/run.mjs` |
+| [`scorableDimensions`](../scripts/lib/arm-eval/judge.mjs#L35) | function | `scripts/lib/arm-eval/judge.mjs` | 35-39 | Returns the list of rubric dimensions to score, optionally excluding intent-only dimensions. | `scripts/lib/arm-eval/run.mjs` |
+| [`seededShuffle`](../scripts/lib/arm-eval/judge.mjs#L30) | function | `scripts/lib/arm-eval/judge.mjs` | 30-32 | Shuffles an array using a seeded random number generator for reproducible randomization. | `scripts/lib/arm-eval/run.mjs` |
+| [`buildPlanGenPrompt`](../scripts/lib/arm-eval/plan-seed.mjs#L31) | function | `scripts/lib/arm-eval/plan-seed.mjs` | 31-37 | Constructs a prompt for generating an implementation plan, optionally with repository architecture and intent context. | `scripts/lib/arm-eval/producers/plan.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`parsePlanIntent`](../scripts/lib/arm-eval/plan-seed.mjs#L41) | function | `scripts/lib/arm-eval/plan-seed.mjs` | 41-61 | Parses the machine-readable intent block (target paths and acceptance criteria) from plan markdown. | `scripts/lib/arm-eval/producers/plan.mjs`, `scripts/lib/arm-eval/run.mjs` |
+| [`hashText`](../scripts/lib/arm-eval/producers/_shared.mjs#L12) | function | `scripts/lib/arm-eval/producers/_shared.mjs` | 12-14 | Returns the first 16 hex characters of a text's SHA256 hash. | `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs` |
+| [`callModelDefault`](../scripts/lib/arm-eval/producers/brainstorm.mjs#L73) | function | `scripts/lib/arm-eval/producers/brainstorm.mjs` | 73-76 | Calls a model with up to 8000 output tokens for free-text brainstorming. | `scripts/lib/arm-eval/run.mjs` |
+| [`produceBrainstorm`](../scripts/lib/arm-eval/producers/brainstorm.mjs#L22) | function | `scripts/lib/arm-eval/producers/brainstorm.mjs` | 22-70 | Generates parallel brainstorm takes from two models and combines them, requiring both legs to be non-empty. | `scripts/lib/arm-eval/run.mjs` |
+| [`callModelFreeText`](../scripts/lib/arm-eval/producers/model-call.mjs#L21) | function | `scripts/lib/arm-eval/producers/model-call.mjs` | 21-45 | Calls a model (OpenRouter OSS, Gemini, or OpenAI GPT) and returns text output plus token usage and latency. | `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs` |
+| [`providerFor`](../scripts/lib/arm-eval/producers/model-call.mjs#L14) | function | `scripts/lib/arm-eval/producers/model-call.mjs` | 14-18 | Routes a resolved model ID to its provider (OSS via OpenRouter, Gemini, or OpenAI GPT). | `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs` |
+| [`callModelDefault`](../scripts/lib/arm-eval/producers/plan.mjs#L62) | function | `scripts/lib/arm-eval/producers/plan.mjs` | 62-65 | Calls a model for plan generation with default token limits. | `scripts/lib/arm-eval/run.mjs` |
+| [`producePlan`](../scripts/lib/arm-eval/producers/plan.mjs#L22) | function | `scripts/lib/arm-eval/producers/plan.mjs` | 22-59 | Generates a single-model plan with intent-block extraction and conformance validation. | `scripts/lib/arm-eval/run.mjs` |
+| [`defaultDeps`](../scripts/lib/arm-eval/run.mjs#L27) | function | `scripts/lib/arm-eval/run.mjs` | 27-36 | Returns default dependencies for arm-eval session runs (producers, store, cross-checks, seed). | `scripts/cross-skill.mjs` |
+| [`hashTask`](../scripts/lib/arm-eval/run.mjs#L125) | function | `scripts/lib/arm-eval/run.mjs` | 125-131 | Generates a deterministic "task-" prefixed ID from a task string using FNV-1a hashing. | `scripts/cross-skill.mjs` |
+| [`runArmEvalSession`](../scripts/lib/arm-eval/run.mjs#L45) | function | `scripts/lib/arm-eval/run.mjs` | 45-122 | Orchestrates a complete arm-eval experiment session: produces outputs per arm, judges them, runs cross-checks, and records results. | `scripts/cross-skill.mjs` |
+| [`readToggle`](../scripts/lib/arm-eval/toggle.mjs#L37) | function | `scripts/lib/arm-eval/toggle.mjs` | 37-52 | Reads the arm-eval feature toggle from disk, returning enabled state, budget, and timestamp. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
+| [`resolveShadowArmsWithToggle`](../scripts/lib/arm-eval/toggle.mjs#L85) | function | `scripts/lib/arm-eval/toggle.mjs` | 85-91 | Resolves shadow audit arms from environment variables or the toggle file, returning the active source. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
+| [`writeToggle`](../scripts/lib/arm-eval/toggle.mjs#L59) | function | `scripts/lib/arm-eval/toggle.mjs` | 59-69 | Writes the arm-eval feature toggle state to disk in JSON format. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
+
+---
+
 ## audit-orchestration
 
-> Orchestrates end-to-end audit execution in two modes: a single-pass fused pipeline (GPT code/plan audit + mandatory Gemini final review) and an iterative multi-round loop with convergence detection. Manages session lifecycle (temp files, run IDs, subprocess spawning) and cleans up stale audit artifacts.
+> Orchestrates iterative and single-shot code/plan audit pipelines with convergence tracking, subprocess management, and cleanup of aged transient audit artifacts.
 
 ```mermaid
 flowchart TB
@@ -194,7 +493,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 244 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 246 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -311,18 +610,19 @@ _Domain has 244 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`mapBouncerDecisionsToFindings`](../scripts/lib/audit/duplication-report.mjs#L166) | function | `scripts/lib/audit/duplication-report.mjs` | 166-186 | Validates bouncer LLM decisions and converts them to duplication findings. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs` |
 | [`nextId`](../scripts/lib/audit/duplication-report.mjs#L48) | function | `scripts/lib/audit/duplication-report.mjs` | 48-48 | Generates the next unique duplication finding ID. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs` |
 | [`readExcerpt`](../scripts/lib/audit/duplication-report.mjs#L75) | function | `scripts/lib/audit/duplication-report.mjs` | 75-93 | Reads source code excerpt for a symbol with padding, respecting sensitive-path restrictions. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/lib/audit/legacy-production-audit.mjs` |
-| [`extractFileDiffSection`](../scripts/lib/audit/evidence-triage.mjs#L49) | function | `scripts/lib/audit/evidence-triage.mjs` | 49-79 | Extracts the unified diff section for a specific file. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`findLineRangeInContent`](../scripts/lib/audit/evidence-triage.mjs#L179) | function | `scripts/lib/audit/evidence-triage.mjs` | 179-191 | Locates a quote text in file content and returns its line range. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`mapHeadLineToBase`](../scripts/lib/audit/evidence-triage.mjs#L212) | function | `scripts/lib/audit/evidence-triage.mjs` | 212-227 | Converts a line number from HEAD to base version using hunk offsets. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`mapHeadRangeToBase`](../scripts/lib/audit/evidence-triage.mjs#L240) | function | `scripts/lib/audit/evidence-triage.mjs` | 240-247 | Converts a line range from HEAD to base version using hunk offsets. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`parseHunkHeader`](../scripts/lib/audit/evidence-triage.mjs#L90) | function | `scripts/lib/audit/evidence-triage.mjs` | 90-99 | Parses a unified diff hunk header into base and head line ranges. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`quoteAppearsOnSide`](../scripts/lib/audit/evidence-triage.mjs#L139) | function | `scripts/lib/audit/evidence-triage.mjs` | 139-162 | Checks if a quote text appears on one side (+ or -) of a diff. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`resolveAnchorLocation`](../scripts/lib/audit/evidence-triage.mjs#L270) | function | `scripts/lib/audit/evidence-triage.mjs` | 270-296 | Determines if an evidence anchor quote is verified, fabricated, or unverifiable. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`resolveWithFallback`](../scripts/lib/audit/evidence-triage.mjs#L365) | function | `scripts/lib/audit/evidence-triage.mjs` | 365-386 | Resolves a finding's primary anchor, falling back to alternatives if needed. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`runStage0EvidenceTriage`](../scripts/lib/audit/evidence-triage.mjs#L440) | function | `scripts/lib/audit/evidence-triage.mjs` | 440-542 | Triages finding evidence envelopes through Stage 0 verification gates. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`splitIntoHunks`](../scripts/lib/audit/evidence-triage.mjs#L110) | function | `scripts/lib/audit/evidence-triage.mjs` | 110-124 | Splits a diff file section into hunks with their content lines. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`tagPreExisting`](../scripts/lib/audit/evidence-triage.mjs#L344) | function | `scripts/lib/audit/evidence-triage.mjs` | 344-350 | Tags a finding as pre-existing-independent if blame and impact adapters confirm. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`verifyAnchor`](../scripts/lib/audit/evidence-triage.mjs#L310) | function | `scripts/lib/audit/evidence-triage.mjs` | 310-321 | Binary verification that an anchor quote appears somewhere in the diff. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`extractFileDiffSection`](../scripts/lib/audit/evidence-triage.mjs#L64) | function | `scripts/lib/audit/evidence-triage.mjs` | 64-94 | Extracts a diff file section for a specific file path from a unified diff, handling quoted paths and tracking file status changes. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`findLineRangeInContent`](../scripts/lib/audit/evidence-triage.mjs#L194) | function | `scripts/lib/audit/evidence-triage.mjs` | 194-206 | Finds the line range in a content string where a multiline quote appears by sliding a normalized-comparison window. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`mapHeadLineToBase`](../scripts/lib/audit/evidence-triage.mjs#L227) | function | `scripts/lib/audit/evidence-triage.mjs` | 227-242 | Maps a line number from HEAD back to its corresponding base line, accounting for the cumulative diff of all prior hunks. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`mapHeadRangeToBase`](../scripts/lib/audit/evidence-triage.mjs#L255) | function | `scripts/lib/audit/evidence-triage.mjs` | 255-262 | Maps a range of lines from HEAD to base by mapping both endpoints and verifying the range length is preserved. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`parseHunkHeader`](../scripts/lib/audit/evidence-triage.mjs#L105) | function | `scripts/lib/audit/evidence-triage.mjs` | 105-114 | Parses a unified diff hunk header (e.g., `@@ -10,5 +20,7 @@`) to extract line ranges and counts for base and HEAD versions. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`quoteAppearsOnSide`](../scripts/lib/audit/evidence-triage.mjs#L154) | function | `scripts/lib/audit/evidence-triage.mjs` | 154-177 | Checks if a quoted code snippet appears on a specific side (base or HEAD) of a diff by normalizing whitespace and searching hunks. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`resolveAnchorLocation`](../scripts/lib/audit/evidence-triage.mjs#L306) | function | `scripts/lib/audit/evidence-triage.mjs` | 306-346 | Validates an evidence anchor against a diff, returning status (verified/fabricated/unverifiable/contradicted) with detailed reasoning. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`resolveScopeBucketForFinding`](../scripts/lib/audit/evidence-triage.mjs#L437) | function | `scripts/lib/audit/evidence-triage.mjs` | 437-447 | Selects the most restrictive scope bucket from a list of origin IDs using a routing manifest. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`resolveWithFallback`](../scripts/lib/audit/evidence-triage.mjs#L470) | function | `scripts/lib/audit/evidence-triage.mjs` | 470-494 | Attempts to resolve an evidence anchor, falls back to alternatives if the primary fails, and settles on the best available verdict. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`runStage0EvidenceTriage`](../scripts/lib/audit/evidence-triage.mjs#L555) | function | `scripts/lib/audit/evidence-triage.mjs` | 555-671 | Triages findings by verifying evidence anchors against the diff, routing pre-existing independent findings to debt, and categorizing failures. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`splitIntoHunks`](../scripts/lib/audit/evidence-triage.mjs#L125) | function | `scripts/lib/audit/evidence-triage.mjs` | 125-139 | Splits a diff file section into hunks by parsing hunk headers and grouping the lines beneath each. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`tagPreExisting`](../scripts/lib/audit/evidence-triage.mjs#L403) | function | `scripts/lib/audit/evidence-triage.mjs` | 403-409 | Determines if a finding is pre-existing and independent by checking blame and impact adapters. | `scripts/lib/audit/tiered-pipeline.mjs` |
+| [`verifyAnchor`](../scripts/lib/audit/evidence-triage.mjs#L369) | function | `scripts/lib/audit/evidence-triage.mjs` | 369-380 | Quickly verifies an anchor against a diff, returning only the verdict ('verified', 'fabricated', or 'unverifiable'). | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`anchorFileCandidates`](../scripts/lib/audit/final-adjudication.mjs#L330) | function | `scripts/lib/audit/final-adjudication.mjs` | 330-333 | Extracts file paths from a finding's anchor and trigger anchor fields. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`buildAlternativeEvidenceLines`](../scripts/lib/audit/final-adjudication.mjs#L375) | function | `scripts/lib/audit/final-adjudication.mjs` | 375-384 | Formats alternative evidence lines for a finding, filtering out sensitive paths and canonical duplicates. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`buildFindingDetail`](../scripts/lib/audit/final-adjudication.mjs#L387) | function | `scripts/lib/audit/final-adjudication.mjs` | 387-391 | Combines a finding's base detail with alternative evidence lines for Gemini review. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/tiered-pipeline.mjs` |
@@ -405,38 +705,39 @@ _Domain has 244 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`writeMechanicalDismissalToLedger`](../scripts/lib/audit/stage1-triage.mjs#L377) | function | `scripts/lib/audit/stage1-triage.mjs` | 377-400 | Records a mechanically dismissed finding to the adjudication ledger with disproof. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`loadValidationManifest`](../scripts/lib/audit/stage1-triager-resolver.mjs#L75) | function | `scripts/lib/audit/stage1-triager-resolver.mjs` | 75-93 | Loads and validates the Stage-1 triager's validation manifest file. | `scripts/lib/audit/tiered-pipeline.mjs` |
 | [`resolveStage1TriagerModel`](../scripts/lib/audit/stage1-triager-resolver.mjs#L101) | function | `scripts/lib/audit/stage1-triager-resolver.mjs` | 101-113 | Resolves the Stage-1 triager model from override, validated manifest, or fallback. | `scripts/lib/audit/tiered-pipeline.mjs` |
-| [`buildPreExistingDebtEntry`](../scripts/lib/audit/tiered-pipeline.mjs#L373) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 373-394 | Converts pre-existing finding to debt-ledger entry | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`buildStage0RelevanceContext`](../scripts/lib/audit/tiered-pipeline.mjs#L291) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 291-329 | Pre-caches file content and import impact for Stage-0 adapters | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`buildStage1TriagerPrompt`](../scripts/lib/audit/tiered-pipeline.mjs#L163) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 163-174 | Builds system/user prompts for Stage-1 triager | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`collectCandidateAnchorFiles`](../scripts/lib/audit/tiered-pipeline.mjs#L253) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 253-269 | Collects files referenced in finding anchor evidence | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`defaultTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L188) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 188-201 | Calls GPT via OpenAI for Stage-1 finding triage | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`extractCanonicalAnchorFile`](../scripts/lib/audit/tiered-pipeline.mjs#L358) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 358-363 | Extracts file path from finding's evidence anchor | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`makeBlameAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L339) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 339-349 | Checks if quoted text existed at line range in base commit | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`makeHeadContentAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L331) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 331-333 | Provides HEAD file content from pre-loaded cache | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`makeImpactAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L335) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 335-337 | Provides file import-impact data from pre-loaded cache | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`normalizeModifiedAnchorPaths`](../scripts/lib/audit/tiered-pipeline.mjs#L133) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 133-149 | Ensures modified findings have both old and new file paths | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`routePreExistingIndependent`](../scripts/lib/audit/tiered-pipeline.mjs#L409) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 409-453 | Routes pre-existing findings to debt ledger with failure tracking | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`runTieredAuditPipeline`](../scripts/lib/audit/tiered-pipeline.mjs#L459) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 459-1000 | Discovers candidates via Stage 0, triages via Stage 1, adjudicates via Stage 2 | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`TieredUnavailableError`](../scripts/lib/audit/tiered-pipeline.mjs#L97) | class | `scripts/lib/audit/tiered-pipeline.mjs` | 97-103 | Custom error for tiered-pipeline unavailability | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`validatedTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L215) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 215-243 | Calls OSS-structured provider for Stage-1 finding triage | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
-| [`appendShadowLog`](../scripts/lib/audit/tiered-shadow-compare.mjs#L396) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 396-403 | Appends a shadow observation record to the local tiered-shadow-log.jsonl file. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`buildLegacyBuckets`](../scripts/lib/audit/tiered-shadow-compare.mjs#L461) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 461-469 | Categorizes findings as in-scope or out-of-scope based on whether they affect changed files. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`buildShadowCtx`](../scripts/lib/audit/tiered-shadow-compare.mjs#L84) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 84-137 | Creates a read-only shadow context that shares inputs but isolates state mutations from the real run. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`buildTieredBuckets`](../scripts/lib/audit/tiered-shadow-compare.mjs#L482) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 482-488 | Extracts scope buckets from tiered findings into a semantic-ID-keyed map. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`compareAuditRunResults`](../scripts/lib/audit/tiered-shadow-compare.mjs#L219) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 219-328 | Compares legacy and tiered audit findings, computing overlap counts and debt-routing coverage by file. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`findingFile`](../scripts/lib/audit/tiered-shadow-compare.mjs#L165) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 165-171 | Extracts the primary file path from a finding by checking _primaryFile, affectedFiles, or the section string. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`parseTotalSeconds`](../scripts/lib/audit/tiered-shadow-compare.mjs#L146) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 146-154 | Extracts a decimal seconds value from a formatted string with strict validation to prevent silent truncation. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`recordObservation`](../scripts/lib/audit/tiered-shadow-compare.mjs#L499) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 499-516 | Logs tiered-shadow observations to local file and optionally persists to cloud database. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`runShadowTieredPipeline`](../scripts/lib/audit/tiered-shadow-compare.mjs#L355) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 355-386 | Runs the tiered pipeline in a shadow context with timeout, clearing the timer in all outcomes. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`runTieredShadowComparison`](../scripts/lib/audit/tiered-shadow-compare.mjs#L416) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 416-442 | Orchestrates a side-by-side tiered and legacy audit run, comparing results and recording observations. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`mean`](../scripts/lib/audit/tiered-shadow-summary.mjs#L43) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 43-45 | Calculates the arithmetic mean of an array, returning null for empty input. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`median`](../scripts/lib/audit/tiered-shadow-summary.mjs#L36) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 36-41 | Computes the median value from a sorted array of numbers. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`normalizeDbRow`](../scripts/lib/audit/tiered-shadow-summary.mjs#L28) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 28-34 | Normalizes database row field names from snake_case to camelCase. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`readRecords`](../scripts/lib/audit/tiered-shadow-summary.mjs#L49) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 49-55 | Reads and parses newline-delimited JSON from a file, filtering malformed lines. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`summarize`](../scripts/lib/audit/tiered-shadow-summary.mjs#L116) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 116-213 | Computes pass/failure metrics and determines whether the tiered-recall data-collection window target has been met. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
-| [`windowProgress`](../scripts/lib/audit/tiered-shadow-summary.mjs#L221) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 221-228 | Reports progress toward meeting the tiered-shadow collection window with min/max bounds. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`buildPreExistingDebtEntry`](../scripts/lib/audit/tiered-pipeline.mjs#L373) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 373-394 | Constructs a debt ledger entry for a pre-existing finding. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`buildStage0RelevanceContext`](../scripts/lib/audit/tiered-pipeline.mjs#L291) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 291-329 | Preloads HEAD/base file contents and importer information for all anchored files to optimize Stage-0 processing. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`buildStage1TriagerPrompt`](../scripts/lib/audit/tiered-pipeline.mjs#L163) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 163-174 | Constructs a system and user prompt for the Stage-1 triager, including the finding and available evidence context. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`collectCandidateAnchorFiles`](../scripts/lib/audit/tiered-pipeline.mjs#L253) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 253-269 | Extracts all file paths from canonical and alternative anchors across a set of finding envelopes. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`defaultTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L188) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 188-201 | Calls GPT as the Stage-1 triager with structured output to determine if a finding can be dismissed. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`extractCanonicalAnchorFile`](../scripts/lib/audit/tiered-pipeline.mjs#L358) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 358-363 | Extracts the file path from a finding's canonical anchor, choosing the appropriate side (oldFile for base, newFile for HEAD). | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`makeBlameAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L339) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 339-349 | Returns a function that checks if a code range existed at the base commit using preloaded content. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`makeHeadContentAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L331) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 331-333 | Returns a function that looks up HEAD file content from the Stage-0 cache. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`makeImpactAdapter`](../scripts/lib/audit/tiered-pipeline.mjs#L335) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 335-337 | Returns a function that looks up importer (impact) information from the Stage-0 cache. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`normalizeModifiedAnchorPaths`](../scripts/lib/audit/tiered-pipeline.mjs#L133) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 133-149 | Ensures modified-status anchors have both oldFile and newFile populated by copying from whichever field is present. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`routePreExistingIndependent`](../scripts/lib/audit/tiered-pipeline.mjs#L409) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 409-453 | Writes pre-existing independent findings to the debt ledger and returns routing success/failure status. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`runTieredAuditPipeline`](../scripts/lib/audit/tiered-pipeline.mjs#L459) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 459-1014 | Orchestrates the full multi-stage tiered audit pipeline (discovery, Stage 0 triage, Stage 1, Stage 2 adjudication) with comprehensive error handling. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`TieredUnavailableError`](../scripts/lib/audit/tiered-pipeline.mjs#L97) | class | `scripts/lib/audit/tiered-pipeline.mjs` | 97-103 | Custom error class indicating a required component of the tiered pipeline is unavailable. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`validatedTriagerCall`](../scripts/lib/audit/tiered-pipeline.mjs#L215) | function | `scripts/lib/audit/tiered-pipeline.mjs` | 215-243 | Calls an OSS provider as the Stage-1 triager and throws on failure instead of silently returning null. | `scripts/lib/audit/tiered-shadow-compare.mjs`, `scripts/model-eval-discovery.mjs`, `scripts/openai-audit.mjs` |
+| [`appendShadowLog`](../scripts/lib/audit/tiered-shadow-compare.mjs#L404) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 404-411 | Appends a JSON record to the shadow comparison log file, creating directories as needed. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`buildLegacyBuckets`](../scripts/lib/audit/tiered-shadow-compare.mjs#L469) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 469-477 | Creates a map from finding semantic IDs to scope buckets based on whether findings touch changed files. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`buildShadowCtx`](../scripts/lib/audit/tiered-shadow-compare.mjs#L84) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 84-137 | Creates a shadow-run context with all stateful writes disabled so concurrent execution cannot mutate the real audit. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`buildTieredBuckets`](../scripts/lib/audit/tiered-shadow-compare.mjs#L490) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 490-496 | Creates a map from finding semantic IDs to their reported scope buckets. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`compareAuditRunResults`](../scripts/lib/audit/tiered-shadow-compare.mjs#L219) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 219-336 | Compares findings from legacy and tiered audit runs, calculating overlap and categorizing differences by scope bucket. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`findingFile`](../scripts/lib/audit/tiered-shadow-compare.mjs#L165) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 165-171 | Extracts the primary file path from a finding via _primaryFile, affectedFiles, or derived from the section field. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`parseTotalSeconds`](../scripts/lib/audit/tiered-shadow-compare.mjs#L146) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 146-154 | Parses a duration string like "123.45s" to extract the numeric seconds value with strict validation. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`recordObservation`](../scripts/lib/audit/tiered-shadow-compare.mjs#L507) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 507-524 | Records a shadow comparison observation to both a local JSON-lines log and the cloud store with graceful degradation. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`runShadowTieredPipeline`](../scripts/lib/audit/tiered-shadow-compare.mjs#L363) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 363-394 | Runs the tiered pipeline as a shadow comparison with a configurable timeout, returning success/error and latency. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`runTieredShadowComparison`](../scripts/lib/audit/tiered-shadow-compare.mjs#L424) | function | `scripts/lib/audit/tiered-shadow-compare.mjs` | 424-450 | Orchestrates a full shadow comparison by running tiered and legacy audits concurrently and reconciling results. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/openai-audit.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`mean`](../scripts/lib/audit/tiered-shadow-summary.mjs#L43) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 43-45 | Calculates the arithmetic mean (average) of a numeric array. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`median`](../scripts/lib/audit/tiered-shadow-summary.mjs#L36) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 36-41 | Calculates the median value of a numeric array. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`normalizeDbRow`](../scripts/lib/audit/tiered-shadow-summary.mjs#L28) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 28-34 | Converts a Postgres database row with snake_case fields to normalized JavaScript camelCase fields. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`readRecords`](../scripts/lib/audit/tiered-shadow-summary.mjs#L49) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 49-55 | Reads and parses JSON-lines records from a log file, skipping malformed entries. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`summarize`](../scripts/lib/audit/tiered-shadow-summary.mjs#L117) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 117-238 | Synthesizes shadow audit observations into a high-level summary with success rates, overlap, validity, and window progress. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
+| [`windowProgress`](../scripts/lib/audit/tiered-shadow-summary.mjs#L246) | function | `scripts/lib/audit/tiered-shadow-summary.mjs` | 246-253 | Determines whether the shadow comparison window's data collection is complete or still collecting based on run count thresholds. | `scripts/lib/dashboard/collect-telemetry.mjs`, `scripts/tiered-shadow-report.mjs` |
 | [`nowIso`](../scripts/lib/audit/time-utils.mjs#L22) | function | `scripts/lib/audit/time-utils.mjs` | 22-24 | Returns current ISO timestamp, using a provided clock function if available. | `scripts/lib/audit/evidence-triage.mjs`, `scripts/lib/audit/final-adjudication.mjs`, `scripts/lib/audit/stage1-triage.mjs` |
 | [`buildUsageEvent`](../scripts/lib/audit/usage-event.mjs#L58) | function | `scripts/lib/audit/usage-event.mjs` | 58-94 | Constructs a typed usage-telemetry event from raw LLM call metrics. | `scripts/lib/audit/cost-budget.mjs` |
+| [`resolvePreviewGate`](../scripts/lib/cycle/topology.mjs#L30) | function | `scripts/lib/cycle/topology.mjs` | 30-49 | Resolves preview-gate configuration to an action (halt/warn/none) with guidance message | `scripts/cross-skill.mjs`, `scripts/lib/config.mjs` |
 | [`applyExclusions`](../scripts/openai-audit.mjs#L169) | function | `scripts/openai-audit.mjs` | 169-178 | Filters files by micromatch exclusion patterns and reports excluded count. | `scripts/lib/model-eval/arm-generation.mjs` |
 | [`loadExcludePatterns`](../scripts/openai-audit.mjs#L150) | function | `scripts/openai-audit.mjs` | 150-161 | Reads exclusion patterns from CLI arguments and a `.auditignore` file. | `scripts/lib/model-eval/arm-generation.mjs` |
 | [`main`](../scripts/openai-audit.mjs#L484) | function | `scripts/openai-audit.mjs` | 484-1151 | CLI entry point that refreshes models, checks tool staleness, and runs the audit. | `scripts/lib/model-eval/arm-generation.mjs` |
@@ -449,7 +750,7 @@ _Domain has 244 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## brainstorm
 
-> Orchestrates multi-model brainstorming with optional peer-response debates, handling CLI argument parsing to run sessions (with topic/models/depth config) or save insights to a ledger, plus session lifecycle management.
+> Runs topic-based brainstorm sessions across multiple LLM providers with optional debate rounds, persists insights to a ledger, and manages session pruning.
 
 ```mermaid
 flowchart TB
@@ -495,7 +796,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 67 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 58 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -519,32 +820,23 @@ _Domain has 67 symbols (>50). Diagram shows top-15 by file order; see flat table
 | [`wrapUntrusted`](../scripts/lib/brainstorm/debate-prompt.mjs#L34) | function | `scripts/lib/brainstorm/debate-prompt.mjs` | 34-37 | Wraps untrusted text in a tagged block to signal to the LLM it's user-supplied. | `scripts/brainstorm-round.mjs` |
 | [`autoPromoteDepth`](../scripts/lib/brainstorm/depth-config.mjs#L59) | function | `scripts/lib/brainstorm/depth-config.mjs` | 59-62 | Auto-promotes brainstorm depth to 'deep' if the topic matches architectural keywords. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/arch-context.mjs` |
 | [`resolveDepth`](../scripts/lib/brainstorm/depth-config.mjs#L74) | function | `scripts/lib/brainstorm/depth-config.mjs` | 74-95 | Resolves a depth configuration from explicit argument, auto-promotion, or default. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/arch-context.mjs` |
-| [`forceRelease`](../scripts/lib/brainstorm/file-lock.mjs#L112) | function | `scripts/lib/brainstorm/file-lock.mjs` | 112-180 | Force-removes a lock file after verifying the owner PID is dead and the lock is stale. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
-| [`inspectLock`](../scripts/lib/brainstorm/file-lock.mjs#L80) | function | `scripts/lib/brainstorm/file-lock.mjs` | 80-96 | Inspects a lock file and reports whether it's valid, corrupted, or unreadable. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
-| [`isPidAlive`](../scripts/lib/brainstorm/file-lock.mjs#L41) | function | `scripts/lib/brainstorm/file-lock.mjs` | 41-48 | Checks whether a process ID is still alive using a signal-0 test. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
-| [`LockTimeoutError`](../scripts/lib/brainstorm/file-lock.mjs#L23) | class | `scripts/lib/brainstorm/file-lock.mjs` | 23-30 | Custom error class signaling timeout while waiting to acquire a lock. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
-| [`readLockOwnerRaw`](../scripts/lib/brainstorm/file-lock.mjs#L183) | function | `scripts/lib/brainstorm/file-lock.mjs` | 183-189 | Parses a lock file and returns the owner's PID and token if valid. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
-| [`safeRelease`](../scripts/lib/brainstorm/file-lock.mjs#L197) | function | `scripts/lib/brainstorm/file-lock.mjs` | 197-214 | Releases a lock file if the current process still owns it. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
-| [`sleep`](../scripts/lib/brainstorm/file-lock.mjs#L32) | function | `scripts/lib/brainstorm/file-lock.mjs` | 32-32 | Returns a promise that resolves after a specified delay in milliseconds. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
-| [`tryAcquireLock`](../scripts/lib/brainstorm/file-lock.mjs#L58) | function | `scripts/lib/brainstorm/file-lock.mjs` | 58-68 | Attempts to create an exclusive file lock and returns a token on success. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
-| [`withFileLock`](../scripts/lib/brainstorm/file-lock.mjs#L227) | function | `scripts/lib/brainstorm/file-lock.mjs` | 227-299 | Acquires a file lock with exponential backoff, stale-lock recovery, and timeout. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
 | [`callGemini`](../scripts/lib/brainstorm/gemini-adapter.mjs#L16) | function | `scripts/lib/brainstorm/gemini-adapter.mjs` | 16-90 | Calls the Gemini API with a topic prompt and returns text or error state. | `scripts/brainstorm-round.mjs` |
 | [`classifyError`](../scripts/lib/brainstorm/gemini-adapter.mjs#L92) | function | `scripts/lib/brainstorm/gemini-adapter.mjs` | 92-123 | Classifies Gemini API errors into semantic categories (timeout, HTTP, malformed). | `scripts/brainstorm-round.mjs` |
 | [`client`](../scripts/lib/brainstorm/gemini-adapter.mjs#L6) | function | `scripts/lib/brainstorm/gemini-adapter.mjs` | 6-9 | Returns a cached Gemini API client, constructing it if absent. | `scripts/brainstorm-round.mjs` |
 | [`isValidSid`](../scripts/lib/brainstorm/id-validator.mjs#L43) | function | `scripts/lib/brainstorm/id-validator.mjs` | 43-45 | Predicate that tests whether a string is a valid session ID. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs` |
 | [`validateSid`](../scripts/lib/brainstorm/id-validator.mjs#L25) | function | `scripts/lib/brainstorm/id-validator.mjs` | 25-37 | Validates a session ID against a regex pattern, throwing on mismatch. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs` |
-| [`buildInsightFile`](../scripts/lib/brainstorm/insight-store.mjs#L138) | function | `scripts/lib/brainstorm/insight-store.mjs` | 138-153 | Constructs a markdown file with validated YAML frontmatter and insight text. | `scripts/brainstorm-round.mjs` |
-| [`findExistingSlugForTopic`](../scripts/lib/brainstorm/insight-store.mjs#L98) | function | `scripts/lib/brainstorm/insight-store.mjs` | 98-116 | Locates an existing slug directory for a given topic by scanning and parsing frontmatter. | `scripts/brainstorm-round.mjs` |
-| [`listAllInsights`](../scripts/lib/brainstorm/insight-store.mjs#L234) | function | `scripts/lib/brainstorm/insight-store.mjs` | 234-246 | Returns all insights across all topics, sorted by modification time. | `scripts/brainstorm-round.mjs` |
-| [`listInsightsByTopic`](../scripts/lib/brainstorm/insight-store.mjs#L216) | function | `scripts/lib/brainstorm/insight-store.mjs` | 216-225 | Returns all insights for a specific topic (or empty list if topic not found). | `scripts/brainstorm-round.mjs` |
-| [`parseFrontmatter`](../scripts/lib/brainstorm/insight-store.mjs#L125) | function | `scripts/lib/brainstorm/insight-store.mjs` | 125-132 | Extracts YAML frontmatter and body from a markdown file. | `scripts/brainstorm-round.mjs` |
-| [`readInsightsFromDirs`](../scripts/lib/brainstorm/insight-store.mjs#L248) | function | `scripts/lib/brainstorm/insight-store.mjs` | 248-278 | Reads markdown insight files from a list of directories, skipping unparseable entries. | `scripts/brainstorm-round.mjs` |
-| [`resolveUniqueSlug`](../scripts/lib/brainstorm/insight-store.mjs#L74) | function | `scripts/lib/brainstorm/insight-store.mjs` | 74-85 | Finds a unique slug by appending numeric suffixes to handle collisions. | `scripts/brainstorm-round.mjs` |
-| [`rootDir`](../scripts/lib/brainstorm/insight-store.mjs#L34) | function | `scripts/lib/brainstorm/insight-store.mjs` | 34-36 | Returns the root insights directory path (override or default). | `scripts/brainstorm-round.mjs` |
-| [`saveInsight`](../scripts/lib/brainstorm/insight-store.mjs#L162) | function | `scripts/lib/brainstorm/insight-store.mjs` | 162-205 | Persists an insight to disk with lock-protected slug allocation and idempotency deduplication. | `scripts/brainstorm-round.mjs` |
-| [`shortHash`](../scripts/lib/brainstorm/insight-store.mjs#L39) | function | `scripts/lib/brainstorm/insight-store.mjs` | 39-41 | Computes a 16-character SHA256 hash from pipe-separated parts. | `scripts/brainstorm-round.mjs` |
-| [`slugifyTopic`](../scripts/lib/brainstorm/insight-store.mjs#L57) | function | `scripts/lib/brainstorm/insight-store.mjs` | 57-63 | Converts a topic string to a slug (lowercase, dash-separated, no punctuation). | `scripts/brainstorm-round.mjs` |
-| [`tsStamp`](../scripts/lib/brainstorm/insight-store.mjs#L43) | function | `scripts/lib/brainstorm/insight-store.mjs` | 43-48 | Generates a UTC timestamp in YYYYMMDD-HHMMSS format. | `scripts/brainstorm-round.mjs` |
+| [`buildInsightFile`](../scripts/lib/brainstorm/insight-store.mjs#L138) | function | `scripts/lib/brainstorm/insight-store.mjs` | 138-153 | Assembles markdown with YAML frontmatter for an insight entry. | `scripts/brainstorm-round.mjs` |
+| [`findExistingSlugForTopic`](../scripts/lib/brainstorm/insight-store.mjs#L98) | function | `scripts/lib/brainstorm/insight-store.mjs` | 98-116 | Searches for an existing slug directory matching a given topic by parsing markdown frontmatter. | `scripts/brainstorm-round.mjs` |
+| [`listAllInsights`](../scripts/lib/brainstorm/insight-store.mjs#L234) | function | `scripts/lib/brainstorm/insight-store.mjs` | 234-246 | Fetches all insights across all topic directories. | `scripts/brainstorm-round.mjs` |
+| [`listInsightsByTopic`](../scripts/lib/brainstorm/insight-store.mjs#L216) | function | `scripts/lib/brainstorm/insight-store.mjs` | 216-225 | Fetches all insights for a given topic. | `scripts/brainstorm-round.mjs` |
+| [`parseFrontmatter`](../scripts/lib/brainstorm/insight-store.mjs#L125) | function | `scripts/lib/brainstorm/insight-store.mjs` | 125-132 | Extracts YAML frontmatter from a markdown file by parsing the leading `---` delimited block. | `scripts/brainstorm-round.mjs` |
+| [`readInsightsFromDirs`](../scripts/lib/brainstorm/insight-store.mjs#L248) | function | `scripts/lib/brainstorm/insight-store.mjs` | 248-278 | Loads markdown insight files from directories with per-file error tolerance. | `scripts/brainstorm-round.mjs` |
+| [`resolveUniqueSlug`](../scripts/lib/brainstorm/insight-store.mjs#L74) | function | `scripts/lib/brainstorm/insight-store.mjs` | 74-85 | Finds a unique slug by appending numeric suffixes until an unused directory name is found. | `scripts/brainstorm-round.mjs` |
+| [`rootDir`](../scripts/lib/brainstorm/insight-store.mjs#L34) | function | `scripts/lib/brainstorm/insight-store.mjs` | 34-36 | Returns the insights directory root path, using an override if provided. | `scripts/brainstorm-round.mjs` |
+| [`saveInsight`](../scripts/lib/brainstorm/insight-store.mjs#L162) | function | `scripts/lib/brainstorm/insight-store.mjs` | 162-205 | Stores an insight under a topic slug with collision-safe file naming and idempotency. | `scripts/brainstorm-round.mjs` |
+| [`shortHash`](../scripts/lib/brainstorm/insight-store.mjs#L39) | function | `scripts/lib/brainstorm/insight-store.mjs` | 39-41 | Computes a 16-character SHA-256 hash of pipe-delimited parts for deduplication. | `scripts/brainstorm-round.mjs` |
+| [`slugifyTopic`](../scripts/lib/brainstorm/insight-store.mjs#L57) | function | `scripts/lib/brainstorm/insight-store.mjs` | 57-63 | Converts a topic string to a URL-safe slug via lowercasing, special-character replacement, and length truncation. | `scripts/brainstorm-round.mjs` |
+| [`tsStamp`](../scripts/lib/brainstorm/insight-store.mjs#L43) | function | `scripts/lib/brainstorm/insight-store.mjs` | 43-48 | Generates a UTC timestamp string in YYYYMMDD-HHMMSS format. | `scripts/brainstorm-round.mjs` |
 | [`callOpenAI`](../scripts/lib/brainstorm/openai-adapter.mjs#L40) | function | `scripts/lib/brainstorm/openai-adapter.mjs` | 40-127 | Calls the OpenAI API with a topic prompt and returns text or error state. | `scripts/brainstorm-round.mjs`, `scripts/lib/requirements/extract.mjs`, `scripts/lib/requirements/gap-challenge.mjs` |
 | [`classifyError`](../scripts/lib/brainstorm/openai-adapter.mjs#L129) | function | `scripts/lib/brainstorm/openai-adapter.mjs` | 129-158 | Classifies OpenAI API errors into semantic categories (timeout, HTTP, malformed). | `scripts/brainstorm-round.mjs`, `scripts/lib/requirements/extract.mjs`, `scripts/lib/requirements/gap-challenge.mjs` |
 | [`client`](../scripts/lib/brainstorm/openai-adapter.mjs#L12) | function | `scripts/lib/brainstorm/openai-adapter.mjs` | 12-15 | Returns a cached OpenAI API client, constructing it if absent. | `scripts/brainstorm-round.mjs`, `scripts/lib/requirements/extract.mjs`, `scripts/lib/requirements/gap-challenge.mjs` |
@@ -557,17 +849,17 @@ _Domain has 67 symbols (>50). Diagram shows top-15 by file order; see flat table
 | [`smallestCeilingTokens`](../scripts/lib/brainstorm/provider-limits.mjs#L93) | function | `scripts/lib/brainstorm/provider-limits.mjs` | 93-105 | Finds the smallest input token ceiling across multiple providers. | `scripts/lib/brainstorm/resume-context.mjs` |
 | [`assembleResumeContext`](../scripts/lib/brainstorm/resume-context.mjs#L75) | function | `scripts/lib/brainstorm/resume-context.mjs` | 75-233 | Combines architecture and context text into a resume block with independent truncation budgets. | `scripts/brainstorm-round.mjs` |
 | [`buildArchBlock`](../scripts/lib/brainstorm/resume-context.mjs#L43) | function | `scripts/lib/brainstorm/resume-context.mjs` | 43-58 | Wraps and truncates architecture context to fit within a token budget. | `scripts/brainstorm-round.mjs` |
-| [`appendQuarantine`](../scripts/lib/brainstorm/session-store.mjs#L229) | function | `scripts/lib/brainstorm/session-store.mjs` | 229-263 | Appends invalid session lines to a quarantine file with best-effort semantics. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`appendSession`](../scripts/lib/brainstorm/session-store.mjs#L77) | function | `scripts/lib/brainstorm/session-store.mjs` | 77-114 | Appends a validated envelope to a session JSONL with computed round number. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`loadSession`](../scripts/lib/brainstorm/session-store.mjs#L150) | function | `scripts/lib/brainstorm/session-store.mjs` | 150-227 | Loads all valid rounds from a session JSONL, quarantining invalid lines. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`lockPath`](../scripts/lib/brainstorm/session-store.mjs#L36) | function | `scripts/lib/brainstorm/session-store.mjs` | 36-38 | Returns the file path for a session's lock file. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`normalizeArchFields`](../scripts/lib/brainstorm/session-store.mjs#L141) | function | `scripts/lib/brainstorm/session-store.mjs` | 141-148 | Fills in default values for optional arch-related session fields. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`pruneOldSessions`](../scripts/lib/brainstorm/session-store.mjs#L295) | function | `scripts/lib/brainstorm/session-store.mjs` | 295-337 | Deletes session files older than a specified age, using a sentinel to throttle checks. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`quarantinePath`](../scripts/lib/brainstorm/session-store.mjs#L40) | function | `scripts/lib/brainstorm/session-store.mjs` | 40-42 | Returns the file path for a session's quarantine JSONL. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`readLinesUnvalidated`](../scripts/lib/brainstorm/session-store.mjs#L53) | function | `scripts/lib/brainstorm/session-store.mjs` | 53-67 | Reads session lines without schema validation, flagging invalid entries. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`sessionDir`](../scripts/lib/brainstorm/session-store.mjs#L28) | function | `scripts/lib/brainstorm/session-store.mjs` | 28-30 | Returns the brainstorm session storage directory path. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`sessionPath`](../scripts/lib/brainstorm/session-store.mjs#L32) | function | `scripts/lib/brainstorm/session-store.mjs` | 32-34 | Returns the file path for a brainstorm session JSONL. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
-| [`summariseRound`](../scripts/lib/brainstorm/session-store.mjs#L272) | function | `scripts/lib/brainstorm/session-store.mjs` | 272-280 | Formats a brainstorm round into a human-readable summary string. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`appendQuarantine`](../scripts/lib/brainstorm/session-store.mjs#L229) | function | `scripts/lib/brainstorm/session-store.mjs` | 229-263 | Appends invalid lines to a quarantine file for forensics. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`appendSession`](../scripts/lib/brainstorm/session-store.mjs#L77) | function | `scripts/lib/brainstorm/session-store.mjs` | 77-114 | Appends a new round to a session file with schema validation and idempotency. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`loadSession`](../scripts/lib/brainstorm/session-store.mjs#L150) | function | `scripts/lib/brainstorm/session-store.mjs` | 150-227 | Loads all valid rounds from a session file with schema validation and quarantine recovery. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`lockPath`](../scripts/lib/brainstorm/session-store.mjs#L36) | function | `scripts/lib/brainstorm/session-store.mjs` | 36-38 | Returns the lock file path for a session by ID. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`normalizeArchFields`](../scripts/lib/brainstorm/session-store.mjs#L141) | function | `scripts/lib/brainstorm/session-store.mjs` | 141-148 | Fills in default values for architecture metadata fields. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`pruneOldSessions`](../scripts/lib/brainstorm/session-store.mjs#L295) | function | `scripts/lib/brainstorm/session-store.mjs` | 295-337 | Deletes session files older than a specified threshold. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`quarantinePath`](../scripts/lib/brainstorm/session-store.mjs#L40) | function | `scripts/lib/brainstorm/session-store.mjs` | 40-42 | Returns the quarantine file path for a session by ID. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`readLinesUnvalidated`](../scripts/lib/brainstorm/session-store.mjs#L53) | function | `scripts/lib/brainstorm/session-store.mjs` | 53-67 | Parses JSONL lines from a session without schema validation. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`sessionDir`](../scripts/lib/brainstorm/session-store.mjs#L28) | function | `scripts/lib/brainstorm/session-store.mjs` | 28-30 | Returns the base directory path for brainstorm session files. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`sessionPath`](../scripts/lib/brainstorm/session-store.mjs#L32) | function | `scripts/lib/brainstorm/session-store.mjs` | 32-34 | Returns the JSONL file path for a session by ID. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
+| [`summariseRound`](../scripts/lib/brainstorm/session-store.mjs#L272) | function | `scripts/lib/brainstorm/session-store.mjs` | 272-280 | Formats a session round as a human-readable summary line. | `scripts/brainstorm-round.mjs`, `scripts/lib/brainstorm/resume-context.mjs` |
 
 ---
 
@@ -1202,6 +1494,226 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ---
 
+## fit-check
+
+> Detects repository technology stacks, frameworks, test runners, and special tooling (Playwright, Supabase, etc.) by scanning package metadata, filesystem markers, and source annotations to support fit-assessment verdicts and tech-aware skill routing.
+
+```mermaid
+flowchart TB
+subgraph dom_fit_check ["fit-check"]
+  file_scripts_lib_fit_check_detect_mjs["scripts/lib/fit-check/detect.mjs"]:::component
+  sym_scripts_lib_fit_check_detect_mjs_detectS["detectShape"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_detectS
+  sym_scripts_lib_fit_check_detect_mjs_detectT["detectTestRunner"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_detectT
+  sym_scripts_lib_fit_check_detect_mjs_existsA["existsAny"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_existsA
+  sym_scripts_lib_fit_check_detect_mjs_grepFor["grepForAnnotations"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_grepFor
+  sym_scripts_lib_fit_check_detect_mjs_hasJson["hasJsonMarker"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_hasJson
+  sym_scripts_lib_fit_check_detect_mjs_pickFra["pickFramework"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_pickFra
+  sym_scripts_lib_fit_check_detect_mjs_pkgHas["pkgHas"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_pkgHas
+  sym_scripts_lib_fit_check_detect_mjs_pkgHasB["pkgHasBin"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_pkgHasB
+  sym_scripts_lib_fit_check_detect_mjs_pyDepHa["pyDepHas"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_pyDepHa
+  sym_scripts_lib_fit_check_detect_mjs_readHea["readHeadOf"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_readHea
+  sym_scripts_lib_fit_check_detect_mjs_readPkg["readPkg"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_readPkg
+  sym_scripts_lib_fit_check_detect_mjs_walkBou["walkBounded"]:::symbol
+  file_scripts_lib_fit_check_detect_mjs --> sym_scripts_lib_fit_check_detect_mjs_walkBou
+  file_scripts_lib_fit_check_rules_mjs["scripts/lib/fit-check/rules.mjs"]:::component
+  sym_scripts_lib_fit_check_rules_mjs_applyRul["applyRules"]:::symbol
+  file_scripts_lib_fit_check_rules_mjs --> sym_scripts_lib_fit_check_rules_mjs_applyRul
+  sym_scripts_lib_fit_check_rules_mjs_groupByL["groupByLabel"]:::symbol
+  file_scripts_lib_fit_check_rules_mjs --> sym_scripts_lib_fit_check_rules_mjs_groupByL
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`detectShape`](../scripts/lib/fit-check/detect.mjs#L69) | function | `scripts/lib/fit-check/detect.mjs` | 69-122 | Detects a repository's technology stack, framework, testing infrastructure, and special features (Playwright, Supabase, etc.). | `scripts/skills-fit-check.mjs` |
+| [`detectTestRunner`](../scripts/lib/fit-check/detect.mjs#L187) | function | `scripts/lib/fit-check/detect.mjs` | 187-199 | Detects which test runner (pytest, vitest, jest, mocha, node-test) is configured. | `scripts/skills-fit-check.mjs` |
+| [`existsAny`](../scripts/lib/fit-check/detect.mjs#L126) | function | `scripts/lib/fit-check/detect.mjs` | 126-128 | Checks if any file in a list exists in a directory. | `scripts/skills-fit-check.mjs` |
+| [`grepForAnnotations`](../scripts/lib/fit-check/detect.mjs#L208) | function | `scripts/lib/fit-check/detect.mjs` | 208-227 | Scans source files in common directories for data-engine-claim annotations within a bounded scan. | `scripts/skills-fit-check.mjs` |
+| [`hasJsonMarker`](../scripts/lib/fit-check/detect.mjs#L150) | function | `scripts/lib/fit-check/detect.mjs` | 150-157 | Reads a JSON file and applies a predicate function to its parsed content. | `scripts/skills-fit-check.mjs` |
+| [`pickFramework`](../scripts/lib/fit-check/detect.mjs#L180) | function | `scripts/lib/fit-check/detect.mjs` | 180-185 | Iterates through framework detection rules to identify the primary framework. | `scripts/skills-fit-check.mjs` |
+| [`pkgHas`](../scripts/lib/fit-check/detect.mjs#L137) | function | `scripts/lib/fit-check/detect.mjs` | 137-142 | Checks whether a dependency name appears in package.json's dependencies or devDependencies. | `scripts/skills-fit-check.mjs` |
+| [`pkgHasBin`](../scripts/lib/fit-check/detect.mjs#L144) | function | `scripts/lib/fit-check/detect.mjs` | 144-148 | Checks whether package.json defines any CLI binaries. | `scripts/skills-fit-check.mjs` |
+| [`pyDepHas`](../scripts/lib/fit-check/detect.mjs#L159) | function | `scripts/lib/fit-check/detect.mjs` | 159-178 | Checks whether a Python dependency appears in pyproject.toml, requirements.txt, or Pipfile via regex matching. | `scripts/skills-fit-check.mjs` |
+| [`readHeadOf`](../scripts/lib/fit-check/detect.mjs#L256) | function | `scripts/lib/fit-check/detect.mjs` | 256-263 | Reads the first N bytes of a file and returns them as UTF-8 text. | `scripts/skills-fit-check.mjs` |
+| [`readPkg`](../scripts/lib/fit-check/detect.mjs#L130) | function | `scripts/lib/fit-check/detect.mjs` | 130-135 | Reads and parses package.json, returning null if absent or invalid JSON. | `scripts/skills-fit-check.mjs` |
+| [`walkBounded`](../scripts/lib/fit-check/detect.mjs#L233) | function | `scripts/lib/fit-check/detect.mjs` | 233-254 | Generator that yields source code file paths up to a maximum count, skipping common non-source directories. | `scripts/skills-fit-check.mjs` |
+| [`applyRules`](../scripts/lib/fit-check/rules.mjs#L201) | function | `scripts/lib/fit-check/rules.mjs` | 201-206 | Evaluates all skill-fit rules against a user profile and returns verdicts. | `scripts/skills-fit-check.mjs` |
+| [`groupByLabel`](../scripts/lib/fit-check/rules.mjs#L212) | function | `scripts/lib/fit-check/rules.mjs` | 212-218 | Partitions skill verdicts into FITS, PARTIAL, and MISMATCH buckets. | `scripts/skills-fit-check.mjs` |
+
+---
+
+## friction
+
+> Tracks friction memories—recurring pain points and pattern observations—via breadcrumb injection records with TTL-based persistence, cloud sanitization, and repo-scoped retrieval.
+
+```mermaid
+flowchart TB
+subgraph dom_friction ["friction"]
+  file_scripts_lib_friction_breadcrumb_mjs["scripts/lib/friction/breadcrumb.mjs"]:::component
+  sym_scripts_lib_friction_breadcrumb_mjs_appe["appendInjected"]:::symbol
+  file_scripts_lib_friction_breadcrumb_mjs --> sym_scripts_lib_friction_breadcrumb_mjs_appe
+  sym_scripts_lib_friction_breadcrumb_mjs_read["readLines"]:::symbol
+  file_scripts_lib_friction_breadcrumb_mjs --> sym_scripts_lib_friction_breadcrumb_mjs_read
+  sym_scripts_lib_friction_breadcrumb_mjs_read["readRecent"]:::symbol
+  file_scripts_lib_friction_breadcrumb_mjs --> sym_scripts_lib_friction_breadcrumb_mjs_read
+  file_scripts_lib_friction_commands_mjs["scripts/lib/friction/commands.mjs"]:::component
+  sym_scripts_lib_friction_commands_mjs_annota["annotateCluster"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_annota
+  sym_scripts_lib_friction_commands_mjs_buildM["buildMemoryFileContent"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_buildM
+  sym_scripts_lib_friction_commands_mjs_fricti["frictionAdd"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_fricti
+  sym_scripts_lib_friction_commands_mjs_fricti["frictionDigest"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_fricti
+  sym_scripts_lib_friction_commands_mjs_fricti["frictionLink"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_fricti
+  sym_scripts_lib_friction_commands_mjs_fricti["frictionMirror"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_fricti
+  sym_scripts_lib_friction_commands_mjs_fricti["frictionNeighbourhood"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_fricti
+  sym_scripts_lib_friction_commands_mjs_fricti["frictionSessionReview"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_fricti
+  sym_scripts_lib_friction_commands_mjs_isSafe["isSafeMemoryName"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_isSafe
+  sym_scripts_lib_friction_commands_mjs_mirror["mirrorOneRow"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_mirror
+  sym_scripts_lib_friction_commands_mjs_redact["redactText"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_redact
+  sym_scripts_lib_friction_commands_mjs_resolv["resolveDeps"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_resolv
+  sym_scripts_lib_friction_commands_mjs_resolv["resolveReadRepoId"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_resolv
+  sym_scripts_lib_friction_commands_mjs_resolv["resolveWriteRepoId"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_resolv
+  sym_scripts_lib_friction_commands_mjs_saniti["sanitizeFrictionQueryInput"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_saniti
+  sym_scripts_lib_friction_commands_mjs_saniti["sanitizeRef"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_saniti
+  sym_scripts_lib_friction_commands_mjs_slugif["slugifyTitle"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_slugif
+  sym_scripts_lib_friction_commands_mjs_update["updateMemoryIndex"]:::symbol
+  file_scripts_lib_friction_commands_mjs --> sym_scripts_lib_friction_commands_mjs_update
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`appendInjected`](../scripts/lib/friction/breadcrumb.mjs#L62) | function | `scripts/lib/friction/breadcrumb.mjs` | 62-88 | Records a friction memory injection with TTL-based pruning. | `scripts/lib/friction/commands.mjs` |
+| [`readLines`](../scripts/lib/friction/breadcrumb.mjs#L36) | function | `scripts/lib/friction/breadcrumb.mjs` | 36-50 | Parses JSON lines from a breadcrumb file, skipping corrupt entries. | `scripts/lib/friction/commands.mjs` |
+| [`readRecent`](../scripts/lib/friction/breadcrumb.mjs#L98) | function | `scripts/lib/friction/breadcrumb.mjs` | 98-111 | Returns recent breadcrumb entries within a time window, deduplicated by name. | `scripts/lib/friction/commands.mjs` |
+| [`annotateCluster`](../scripts/lib/friction/commands.mjs#L397) | function | `scripts/lib/friction/commands.mjs` | 397-405 | Enriches a friction cluster with protection and alarm status. | `scripts/cross-skill.mjs` |
+| [`buildMemoryFileContent`](../scripts/lib/friction/commands.mjs#L211) | function | `scripts/lib/friction/commands.mjs` | 211-231 | Generates markdown with YAML frontmatter for a friction memory. | `scripts/cross-skill.mjs` |
+| [`frictionAdd`](../scripts/lib/friction/commands.mjs#L258) | function | `scripts/lib/friction/commands.mjs` | 258-311 | Creates a new friction memory file locally and optionally mirrors to cloud. | `scripts/cross-skill.mjs` |
+| [`frictionDigest`](../scripts/lib/friction/commands.mjs#L374) | function | `scripts/lib/friction/commands.mjs` | 374-394 | Queries and ranks recurrent friction patterns from the cloud. | `scripts/cross-skill.mjs` |
+| [`frictionLink`](../scripts/lib/friction/commands.mjs#L416) | function | `scripts/lib/friction/commands.mjs` | 416-466 | Appends a mitigation reference link to a friction memory file. | `scripts/cross-skill.mjs` |
+| [`frictionMirror`](../scripts/lib/friction/commands.mjs#L321) | function | `scripts/lib/friction/commands.mjs` | 321-365 | Syncs all local friction memory files to the cloud store. | `scripts/cross-skill.mjs` |
+| [`frictionNeighbourhood`](../scripts/lib/friction/commands.mjs#L513) | function | `scripts/lib/friction/commands.mjs` | 513-546 | Queries similar friction records by semantic proximity. | `scripts/cross-skill.mjs` |
+| [`frictionSessionReview`](../scripts/lib/friction/commands.mjs#L483) | function | `scripts/lib/friction/commands.mjs` | 483-502 | Lists recently injected friction notes for manual review and closure. | `scripts/cross-skill.mjs` |
+| [`isSafeMemoryName`](../scripts/lib/friction/commands.mjs#L167) | function | `scripts/lib/friction/commands.mjs` | 167-169 | Validates that a memory name is a safe slug without traversal risk. | `scripts/cross-skill.mjs` |
+| [`mirrorOneRow`](../scripts/lib/friction/commands.mjs#L196) | function | `scripts/lib/friction/commands.mjs` | 196-208 | Writes a sanitized friction row to the cloud store. | `scripts/cross-skill.mjs` |
+| [`redactText`](../scripts/lib/friction/commands.mjs#L48) | function | `scripts/lib/friction/commands.mjs` | 48-48 | Redacts secret patterns from text. | `scripts/cross-skill.mjs` |
+| [`resolveDeps`](../scripts/lib/friction/commands.mjs#L51) | function | `scripts/lib/friction/commands.mjs` | 51-69 | Merges overrides into a dependency resolution object. | `scripts/cross-skill.mjs` |
+| [`resolveReadRepoId`](../scripts/lib/friction/commands.mjs#L189) | function | `scripts/lib/friction/commands.mjs` | 189-193 | Resolves the repo ID for cloud friction reads. | `scripts/cross-skill.mjs` |
+| [`resolveWriteRepoId`](../scripts/lib/friction/commands.mjs#L183) | function | `scripts/lib/friction/commands.mjs` | 183-186 | Resolves the repo ID for cloud friction writes. | `scripts/cross-skill.mjs` |
+| [`sanitizeFrictionQueryInput`](../scripts/lib/friction/commands.mjs#L102) | function | `scripts/lib/friction/commands.mjs` | 102-158 | Filters friction fields through an allowlist and redacts secrets. | `scripts/cross-skill.mjs` |
+| [`sanitizeRef`](../scripts/lib/friction/commands.mjs#L469) | function | `scripts/lib/friction/commands.mjs` | 469-472 | Redacts secrets from a mitigation reference string. | `scripts/cross-skill.mjs` |
+| [`slugifyTitle`](../scripts/lib/friction/commands.mjs#L172) | function | `scripts/lib/friction/commands.mjs` | 172-180 | Converts a title to a friction-prefixed kebab-case slug. | `scripts/cross-skill.mjs` |
+| [`updateMemoryIndex`](../scripts/lib/friction/commands.mjs#L234) | function | `scripts/lib/friction/commands.mjs` | 234-246 | Adds a friction memory entry pointer to the local MEMORY.md index. | `scripts/cross-skill.mjs` |
+
+---
+
+## gate-honesty
+
+> Gate-honesty validates that skills' stated enforcement gates (convergence thresholds, unverified functions, exit codes) actually exist in the code and match gate-contract.json declarations.
+
+```mermaid
+flowchart TB
+subgraph dom_gate_honesty ["gate-honesty"]
+  file_scripts_lib_gate_honesty_loader_mjs["scripts/lib/gate-honesty/loader.mjs"]:::component
+  sym_scripts_lib_gate_honesty_loader_mjs_form["formatSummaryLines"]:::symbol
+  file_scripts_lib_gate_honesty_loader_mjs --> sym_scripts_lib_gate_honesty_loader_mjs_form
+  sym_scripts_lib_gate_honesty_loader_mjs_load["loadGateContracts"]:::symbol
+  file_scripts_lib_gate_honesty_loader_mjs --> sym_scripts_lib_gate_honesty_loader_mjs_load
+  file_scripts_lib_gate_honesty_oracles_mjs["scripts/lib/gate-honesty/oracles.mjs"]:::component
+  sym_scripts_lib_gate_honesty_oracles_mjs_cli["cliExit"]:::symbol
+  file_scripts_lib_gate_honesty_oracles_mjs --> sym_scripts_lib_gate_honesty_oracles_mjs_cli
+  sym_scripts_lib_gate_honesty_oracles_mjs_con["convergenceThreshold"]:::symbol
+  file_scripts_lib_gate_honesty_oracles_mjs --> sym_scripts_lib_gate_honesty_oracles_mjs_con
+  sym_scripts_lib_gate_honesty_oracles_mjs_imp["importImplementation"]:::symbol
+  file_scripts_lib_gate_honesty_oracles_mjs --> sym_scripts_lib_gate_honesty_oracles_mjs_imp
+  sym_scripts_lib_gate_honesty_oracles_mjs_run["runOracle"]:::symbol
+  file_scripts_lib_gate_honesty_oracles_mjs --> sym_scripts_lib_gate_honesty_oracles_mjs_run
+  sym_scripts_lib_gate_honesty_oracles_mjs_tie["tieredShadowWindow"]:::symbol
+  file_scripts_lib_gate_honesty_oracles_mjs --> sym_scripts_lib_gate_honesty_oracles_mjs_tie
+  sym_scripts_lib_gate_honesty_oracles_mjs_vis["visualGateUnverified"]:::symbol
+  file_scripts_lib_gate_honesty_oracles_mjs --> sym_scripts_lib_gate_honesty_oracles_mjs_vis
+  file_scripts_lib_gate_honesty_schema_mjs["scripts/lib/gate-honesty/schema.mjs"]:::component
+  sym_scripts_lib_gate_honesty_schema_mjs_exis["existsFile"]:::symbol
+  file_scripts_lib_gate_honesty_schema_mjs --> sym_scripts_lib_gate_honesty_schema_mjs_exis
+  sym_scripts_lib_gate_honesty_schema_mjs_file["fileTextContains"]:::symbol
+  file_scripts_lib_gate_honesty_schema_mjs --> sym_scripts_lib_gate_honesty_schema_mjs_file
+  sym_scripts_lib_gate_honesty_schema_mjs_file["fileTextReferencesId"]:::symbol
+  file_scripts_lib_gate_honesty_schema_mjs --> sym_scripts_lib_gate_honesty_schema_mjs_file
+  sym_scripts_lib_gate_honesty_schema_mjs_isAp["isApprovedStatedInSource"]:::symbol
+  file_scripts_lib_gate_honesty_schema_mjs --> sym_scripts_lib_gate_honesty_schema_mjs_isAp
+  sym_scripts_lib_gate_honesty_schema_mjs_reso["resolveContainedPath"]:::symbol
+  file_scripts_lib_gate_honesty_schema_mjs --> sym_scripts_lib_gate_honesty_schema_mjs_reso
+  sym_scripts_lib_gate_honesty_schema_mjs_vali["validateGateContract"]:::symbol
+  file_scripts_lib_gate_honesty_schema_mjs --> sym_scripts_lib_gate_honesty_schema_mjs_vali
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`formatSummaryLines`](../scripts/lib/gate-honesty/loader.mjs#L63) | function | `scripts/lib/gate-honesty/loader.mjs` | 63-86 | Formats gate-honesty check results into human-readable summary lines grouped by contract status. | `scripts/check-gate-contracts.mjs` |
+| [`loadGateContracts`](../scripts/lib/gate-honesty/loader.mjs#L25) | function | `scripts/lib/gate-honesty/loader.mjs` | 25-53 | Scans all skills for gate-contract.json files, validates each, and categorizes as contracted/uncontracted/divergent. | `scripts/check-gate-contracts.mjs` |
+| [`cliExit`](../scripts/lib/gate-honesty/oracles.mjs#L131) | function | `scripts/lib/gate-honesty/oracles.mjs` | 131-151 | Test that a CLI tool exits with expected code and stderr output under a fixture. | _(internal)_ |
+| [`convergenceThreshold`](../scripts/lib/gate-honesty/oracles.mjs#L28) | function | `scripts/lib/gate-honesty/oracles.mjs` | 28-56 | Verify that a gate's stated convergence threshold constants match the implementation. | _(internal)_ |
+| [`importImplementation`](../scripts/lib/gate-honesty/oracles.mjs#L22) | function | `scripts/lib/gate-honesty/oracles.mjs` | 22-25 | Dynamically import a module from a repo-relative path. | _(internal)_ |
+| [`runOracle`](../scripts/lib/gate-honesty/oracles.mjs#L167) | function | `scripts/lib/gate-honesty/oracles.mjs` | 167-175 | Dispatch a gate-honesty test to the appropriate oracle adapter. | _(internal)_ |
+| [`tieredShadowWindow`](../scripts/lib/gate-honesty/oracles.mjs#L59) | function | `scripts/lib/gate-honesty/oracles.mjs` | 59-81 | Verify that a tiered-shadow window's progress metrics match the implementation. | _(internal)_ |
+| [`visualGateUnverified`](../scripts/lib/gate-honesty/oracles.mjs#L84) | function | `scripts/lib/gate-honesty/oracles.mjs` | 84-111 | Verify that visual-audit's unverified-reason function returns correct values for test inputs. | _(internal)_ |
+| [`existsFile`](../scripts/lib/gate-honesty/schema.mjs#L186) | function | `scripts/lib/gate-honesty/schema.mjs` | 186-188 | Safely checks whether an absolute file path exists and is a regular file. | `scripts/lib/gate-honesty/loader.mjs` |
+| [`fileTextContains`](../scripts/lib/gate-honesty/schema.mjs#L190) | function | `scripts/lib/gate-honesty/schema.mjs` | 190-192 | Safely checks whether a file contains a substring, returning false on read errors. | `scripts/lib/gate-honesty/loader.mjs` |
+| [`fileTextReferencesId`](../scripts/lib/gate-honesty/schema.mjs#L194) | function | `scripts/lib/gate-honesty/schema.mjs` | 194-196 | Safely checks whether a file contains a gate ID string, returning false on read errors. | `scripts/lib/gate-honesty/loader.mjs` |
+| [`isApprovedStatedInSource`](../scripts/lib/gate-honesty/schema.mjs#L98) | function | `scripts/lib/gate-honesty/schema.mjs` | 98-101 | Checks whether a gate's statedIn location is an approved source (SKILL.md or AGENTS.md). | `scripts/lib/gate-honesty/loader.mjs` |
+| [`resolveContainedPath`](../scripts/lib/gate-honesty/schema.mjs#L111) | function | `scripts/lib/gate-honesty/schema.mjs` | 111-116 | Validates that a relative path resolves within the repo root and is not a broken symlink. | `scripts/lib/gate-honesty/loader.mjs` |
+| [`validateGateContract`](../scripts/lib/gate-honesty/schema.mjs#L129) | function | `scripts/lib/gate-honesty/schema.mjs` | 129-181 | Parses and validates a gate contract JSON, checking gate IDs, file existence, and source references. | `scripts/lib/gate-honesty/loader.mjs` |
+
+---
+
 ## install
 
 > Computes skill manifests with file hashes and YAML metadata to enable safe, conflict-detecting installation when syncing skills to consumer repos.
@@ -1424,7 +1936,7 @@ _Domain has 163 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## learning-store
 
-> Implements Thompson Sampling bandits for adaptive prompt-variant selection, stratifying arms by repo context (size/language) and computing rewards from audit findings, deliberation quality, and persona-test correlations to learn which prompts perform best per environment.
+> Adaptive prompt variant learning via Thompson Sampling bandits—tests prompt variants stratified by repo size/language, computes reward signals from audit findings and persona feedback, and selects high-performing variants for deployment.
 
 ```mermaid
 flowchart TB
@@ -1461,40 +1973,6 @@ subgraph dom_learning_store ["learning-store"]
   file_scripts_evolve_prompts_mjs --> sym_scripts_evolve_prompts_mjs_killExperimen
   sym_scripts_evolve_prompts_mjs_main["main"]:::symbol
   file_scripts_evolve_prompts_mjs --> sym_scripts_evolve_prompts_mjs_main
-  sym_scripts_evolve_prompts_mjs_promoteExperi["promoteExperiment"]:::symbol
-  file_scripts_evolve_prompts_mjs --> sym_scripts_evolve_prompts_mjs_promoteExperi
-  sym_scripts_evolve_prompts_mjs_reconcileOrph["reconcileOrphanedExperiments"]:::symbol
-  file_scripts_evolve_prompts_mjs --> sym_scripts_evolve_prompts_mjs_reconcileOrph
-  sym_scripts_evolve_prompts_mjs_reviewExperim["reviewExperiments"]:::symbol
-  file_scripts_evolve_prompts_mjs --> sym_scripts_evolve_prompts_mjs_reviewExperim
-  sym_scripts_evolve_prompts_mjs_showStats["showStats"]:::symbol
-  file_scripts_evolve_prompts_mjs --> sym_scripts_evolve_prompts_mjs_showStats
-  file_scripts_meta_assess_mjs["scripts/meta-assess.mjs"]:::component
-  sym_scripts_meta_assess_mjs_computeAssessmen["computeAssessmentMetrics"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_computeAssessmen
-  sym_scripts_meta_assess_mjs_emptyMetrics["emptyMetrics"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_emptyMetrics
-  sym_scripts_meta_assess_mjs_formatAssessment["formatAssessmentReport"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_formatAssessment
-  sym_scripts_meta_assess_mjs_main["main"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_main
-  sym_scripts_meta_assess_mjs_markAssessmentCo["markAssessmentComplete"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_markAssessmentCo
-  sym_scripts_meta_assess_mjs_runLLMAssessment["runLLMAssessment"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_runLLMAssessment
-  sym_scripts_meta_assess_mjs_sampleOutcomes["sampleOutcomes"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_sampleOutcomes
-  sym_scripts_meta_assess_mjs_shouldRunAssessm["shouldRunAssessment"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_shouldRunAssessm
-  sym_scripts_meta_assess_mjs_storeAssessment["storeAssessment"]:::symbol
-  file_scripts_meta_assess_mjs --> sym_scripts_meta_assess_mjs_storeAssessment
-  file_scripts_refine_prompts_mjs["scripts/refine-prompts.mjs"]:::component
-  sym_scripts_refine_prompts_mjs_analyzePass["analyzePass"]:::symbol
-  file_scripts_refine_prompts_mjs --> sym_scripts_refine_prompts_mjs_analyzePass
-  sym_scripts_refine_prompts_mjs_main["main"]:::symbol
-  file_scripts_refine_prompts_mjs --> sym_scripts_refine_prompts_mjs_main
-  sym_scripts_refine_prompts_mjs_suggestRefine["suggestRefinements"]:::symbol
-  file_scripts_refine_prompts_mjs --> sym_scripts_refine_prompts_mjs_suggestRefine
 end
 classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
 classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
@@ -1502,6 +1980,8 @@ classDef symbol fill:#fff,stroke:#999,color:#444
 classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
+
+_Domain has 89 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -1526,6 +2006,64 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 | [`reconcileOrphanedExperiments`](../scripts/evolve-prompts.mjs#L354) | function | `scripts/evolve-prompts.mjs` | 354-370 | Scans experiment manifest files for incomplete (orphaned) experiments and logs them. | _(internal)_ |
 | [`reviewExperiments`](../scripts/evolve-prompts.mjs#L240) | function | `scripts/evolve-prompts.mjs` | 240-285 | Checks active experiments for convergence using bandit posterior, identifies promotion candidates. | _(internal)_ |
 | [`showStats`](../scripts/evolve-prompts.mjs#L323) | function | `scripts/evolve-prompts.mjs` | 323-333 | Collects EWR stats per pass, list of active experiments, and bandit arm statistics. | _(internal)_ |
+| [`buildAuthorTierObservation`](../scripts/lib/learning/author-tier-observation.mjs#L188) | function | `scripts/lib/learning/author-tier-observation.mjs` | 188-232 | Constructs an audit learning observation capturing author-tier context and declared choice. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`deriveSignals`](../scripts/lib/learning/author-tier-observation.mjs#L93) | function | `scripts/lib/learning/author-tier-observation.mjs` | 93-121 | Extracts audit signals (file count, domains, security touches) from changed files. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`diffBucket`](../scripts/lib/learning/author-tier-observation.mjs#L68) | function | `scripts/lib/learning/author-tier-observation.mjs` | 68-71 | Categorizes a diff by line count into size buckets (economy/standard/frontier). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`normalizeTierHint`](../scripts/lib/learning/author-tier-observation.mjs#L141) | function | `scripts/lib/learning/author-tier-observation.mjs` | 141-145 | Normalizes author-tier hint to canonical logical form or derives tier from model ID. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`suggestTier`](../scripts/lib/learning/author-tier-observation.mjs#L128) | function | `scripts/lib/learning/author-tier-observation.mjs` | 128-133 | Recommends author tier (economy/standard/frontier) based on change signals and heuristics. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`betaPosterior`](../scripts/lib/learning/beta-posterior.mjs#L38) | function | `scripts/lib/learning/beta-posterior.mjs` | 38-61 | Computes posterior mean, variance, and 95% confidence interval for a beta distribution with priors. | `scripts/lib/learning/quickfix-stats.mjs` |
+| [`sampleGamma`](../scripts/lib/learning/beta-posterior.mjs#L136) | function | `scripts/lib/learning/beta-posterior.mjs` | 136-159 | Generates a random Gamma-distributed sample using Marsaglia & Tsang for shape ≥ 1 and boost transform for shape < 1. | `scripts/lib/learning/quickfix-stats.mjs` |
+| [`standardNormal`](../scripts/lib/learning/beta-posterior.mjs#L162) | function | `scripts/lib/learning/beta-posterior.mjs` | 162-168 | Generates a standard normal random sample using Box-Muller transform. | `scripts/lib/learning/quickfix-stats.mjs` |
+| [`thompsonSample`](../scripts/lib/learning/beta-posterior.mjs#L74) | function | `scripts/lib/learning/beta-posterior.mjs` | 74-94 | Draws a sample from a Beta distribution using Thompson Sampling with strict parameter validation. | `scripts/lib/learning/quickfix-stats.mjs` |
+| [`updatePosterior`](../scripts/lib/learning/beta-posterior.mjs#L108) | function | `scripts/lib/learning/beta-posterior.mjs` | 108-127 | Updates a Beta posterior given an observation (0–1), validating strictly to prevent corrupt state. | `scripts/lib/learning/quickfix-stats.mjs` |
+| [`hasEnoughSamples`](../scripts/lib/learning/cold-start.mjs#L17) | function | `scripts/lib/learning/cold-start.mjs` | 17-21 | Checks if the total observation count exceeds a threshold to exit cold-start fallback mode. | _(internal)_ |
+| [`withFallback`](../scripts/lib/learning/cold-start.mjs#L36) | function | `scripts/lib/learning/cold-start.mjs` | 36-40 | Routes between a prediction function or fallback based on whether sample count meets threshold. | _(internal)_ |
+| [`_canonicalise`](../scripts/lib/learning/decision-logger.mjs#L183) | function | `scripts/lib/learning/decision-logger.mjs` | 183-190 | Recursively sorts object keys and canonicalizes values for stable comparison. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`_getStateForTest`](../scripts/lib/learning/decision-logger.mjs#L532) | function | `scripts/lib/learning/decision-logger.mjs` | 532-539 | Returns current queue sizes and dropped-entry counts per decision type for test inspection. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`_isKeyInt`](../scripts/lib/learning/decision-logger.mjs#L51) | function | `scripts/lib/learning/decision-logger.mjs` | 51-51 | Predicate checking if a value is a safe non-negative integer. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`_isNonEmptyString`](../scripts/lib/learning/decision-logger.mjs#L50) | function | `scripts/lib/learning/decision-logger.mjs` | 50-50 | Predicate checking if a value is a non-empty, colon-free string (safe for decision keys). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`_resetForTest`](../scripts/lib/learning/decision-logger.mjs#L521) | function | `scripts/lib/learning/decision-logger.mjs` | 521-527 | Resets all module-global state (queues, counters, hooks) for test isolation. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`backfillOutcome`](../scripts/lib/learning/decision-logger.mjs#L263) | function | `scripts/lib/learning/decision-logger.mjs` | 263-295 | Updates the outcome of a prior decision record, either in-queue or as an enqueued outcome-only update. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`buildDecisionKey`](../scripts/lib/learning/decision-logger.mjs#L156) | function | `scripts/lib/learning/decision-logger.mjs` | 156-171 | Constructs a unique decision key from audit-bound or external identifiers. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`bumpDropped`](../scripts/lib/learning/decision-logger.mjs#L90) | function | `scripts/lib/learning/decision-logger.mjs` | 90-92 | Increments the dropped-decision counter for a decision type. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`canonicaliseContext`](../scripts/lib/learning/decision-logger.mjs#L192) | function | `scripts/lib/learning/decision-logger.mjs` | 192-194 | Converts a context object to a canonical JSON string. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`contextHash`](../scripts/lib/learning/decision-logger.mjs#L196) | function | `scripts/lib/learning/decision-logger.mjs` | 196-198 | Creates a SHA256 hash of canonicalized decision context for deduplication. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`DecisionLoggerError`](../scripts/lib/learning/decision-logger.mjs#L109) | class | `scripts/lib/learning/decision-logger.mjs` | 109-111 | Custom error class for decision logger exceptions with a code property. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`drain`](../scripts/lib/learning/decision-logger.mjs#L482) | function | `scripts/lib/learning/decision-logger.mjs` | 482-492 | Drains pending decisions via flush and prevents concurrent drain calls using a promise gate. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`flush`](../scripts/lib/learning/decision-logger.mjs#L308) | function | `scripts/lib/learning/decision-logger.mjs` | 308-377 | Flushes queued learning decisions to cloud or local outbox via two-phase drain with per-queue retention. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`getQueue`](../scripts/lib/learning/decision-logger.mjs#L84) | function | `scripts/lib/learning/decision-logger.mjs` | 84-88 | Retrieves or creates the queue for a decision type. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`installLifecycleHooks`](../scripts/lib/learning/decision-logger.mjs#L494) | function | `scripts/lib/learning/decision-logger.mjs` | 494-516 | Installs beforeExit and SIGINT handlers to gracefully drain the decision queue on process termination. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`isCiEnv`](../scripts/lib/learning/decision-logger.mjs#L59) | function | `scripts/lib/learning/decision-logger.mjs` | 59-61 | Detects if running in a CI environment. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`reconcileOutbox`](../scripts/lib/learning/decision-logger.mjs#L388) | function | `scripts/lib/learning/decision-logger.mjs` | 388-413 | Processes outbox files and retries their cloud writes when the store becomes available again. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`recordDecision`](../scripts/lib/learning/decision-logger.mjs#L218) | function | `scripts/lib/learning/decision-logger.mjs` | 218-252 | Records a learning decision to a per-type bounded queue, dropping oldest entry when cap is reached. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`resolveQueueCap`](../scripts/lib/learning/decision-logger.mjs#L27) | function | `scripts/lib/learning/decision-logger.mjs` | 27-38 | Parses and validates LEARNING_QUEUE_CAP_PER_TYPE env var with fallback default. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`retryWithBackoff`](../scripts/lib/learning/decision-logger.mjs#L435) | function | `scripts/lib/learning/decision-logger.mjs` | 435-452 | Retries a function with exponential backoff (3 attempts in CI, 1 in local) and treats truthy or {ok:true} as success. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`throttledWarn`](../scripts/lib/learning/decision-logger.mjs#L94) | function | `scripts/lib/learning/decision-logger.mjs` | 94-101 | Logs a warning to stderr at most once per throttle interval. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`tryWrite`](../scripts/lib/learning/decision-logger.mjs#L417) | function | `scripts/lib/learning/decision-logger.mjs` | 417-433 | Attempts to write a decision entry to cloud store with retry logic, branching on outcome-only vs regular paths. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`validateInput`](../scripts/lib/learning/decision-logger.mjs#L113) | function | `scripts/lib/learning/decision-logger.mjs` | 113-148 | Validates a decision-logger input object against required types and audit-key constraints. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`writeOutbox`](../scripts/lib/learning/decision-logger.mjs#L454) | function | `scripts/lib/learning/decision-logger.mjs` | 454-465 | Atomically writes a decision entry to the local outbox directory with timestamp-keyed filename. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
+| [`aggregateDecisions`](../scripts/lib/learning/quickfix-stats.mjs#L199) | function | `scripts/lib/learning/quickfix-stats.mjs` | 199-224 | Computes Beta-posterior acceptance rates per quickfix pattern from decision records using alpha/beta counters. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`cliMain`](../scripts/lib/learning/quickfix-stats.mjs#L277) | function | `scripts/lib/learning/quickfix-stats.mjs` | 277-330 | CLI entry point for quickfix-stats with --stats, --rebuild, --bootstrap, --reset, and --format flags. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`computeWatermark`](../scripts/lib/learning/quickfix-stats.mjs#L226) | function | `scripts/lib/learning/quickfix-stats.mjs` | 226-233 | Extracts the maximum outcome_at timestamp and total row count from decision records for cache watermarking. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`loadStats`](../scripts/lib/learning/quickfix-stats.mjs#L54) | function | `scripts/lib/learning/quickfix-stats.mjs` | 54-64 | Loads cached quickfix pattern statistics from disk, returning empty object on missing file or parse error. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`readQuickfixDecisions`](../scripts/lib/learning/quickfix-stats.mjs#L240) | function | `scripts/lib/learning/quickfix-stats.mjs` | 240-258 | Reads quickfix hit decisions from cloud store via paginated RPC, gracefully returning empty on cloud-off. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`rebuildFromBootstrap`](../scripts/lib/learning/quickfix-stats.mjs#L139) | function | `scripts/lib/learning/quickfix-stats.mjs` | 139-183 | Rebuilds quickfix statistics from a bootstrap JSONL log with synthesized neutral outcomes (no user feedback yet). | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`rebuildFromCloud`](../scripts/lib/learning/quickfix-stats.mjs#L97) | function | `scripts/lib/learning/quickfix-stats.mjs` | 97-122 | Rebuilds quickfix statistics from cloud learning store and writes aggregated stats to cache. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`shouldSkipPattern`](../scripts/lib/learning/quickfix-stats.mjs#L77) | function | `scripts/lib/learning/quickfix-stats.mjs` | 77-83 | Checks if a quickfix pattern should be skipped based on low acceptance rate and minimum hit threshold. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`writeAtomic`](../scripts/lib/learning/quickfix-stats.mjs#L264) | function | `scripts/lib/learning/quickfix-stats.mjs` | 264-266 | Atomically writes content to a target file path (thin wrapper around atomicWriteFileSync). | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
+| [`archMemoryBandReward`](../scripts/lib/learning/replay.mjs#L292) | function | `scripts/lib/learning/replay.mjs` | 292-301 | Scores architectural-memory reuse decisions (+1 correct, -1 fork, 0 neutral). | `scripts/learning/replay.mjs` |
+| [`convergencePredictReward`](../scripts/lib/learning/replay.mjs#L269) | function | `scripts/lib/learning/replay.mjs` | 269-284 | Scores whether a stop/continue choice correctly predicted the audit convergence round. | `scripts/learning/replay.mjs` |
+| [`distSummary`](../scripts/lib/learning/replay.mjs#L154) | function | `scripts/lib/learning/replay.mjs` | 154-163 | Computes mean, median, 90th percentile, and sum of a numeric array. | `scripts/learning/replay.mjs` |
+| [`emptyDist`](../scripts/lib/learning/replay.mjs#L165) | function | `scripts/lib/learning/replay.mjs` | 165-165 | Returns a zero-valued distribution summary for empty data. | `scripts/learning/replay.mjs` |
+| [`historicalBaseline`](../scripts/lib/learning/replay.mjs#L228) | function | `scripts/lib/learning/replay.mjs` | 228-228 | Baseline policy that always returns the recorded choice (pure replay without learning). | `scripts/learning/replay.mjs` |
+| [`neutralBaseline`](../scripts/lib/learning/replay.mjs#L231) | function | `scripts/lib/learning/replay.mjs` | 231-231 | Baseline policy that returns a neutral/no-op choice for comparison. | `scripts/learning/replay.mjs` |
+| [`passSelectionReward`](../scripts/lib/learning/replay.mjs#L250) | function | `scripts/lib/learning/replay.mjs` | 250-261 | Scores a pass-selection outcome based on findings kept, cost, persona hits, and false-positive dismissals. | `scripts/learning/replay.mjs` |
+| [`percentile`](../scripts/lib/learning/replay.mjs#L167) | function | `scripts/lib/learning/replay.mjs` | 167-176 | Computes linear-interpolated percentile from a sorted array. | `scripts/learning/replay.mjs` |
+| [`readDecisionsForType`](../scripts/lib/learning/replay.mjs#L193) | function | `scripts/lib/learning/replay.mjs` | 193-220 | Queries the learning store for historical decisions of a type since a time threshold. | `scripts/learning/replay.mjs` |
+| [`replay`](../scripts/lib/learning/replay.mjs#L62) | function | `scripts/lib/learning/replay.mjs` | 62-121 | Replays historical learning decisions through a candidate policy to measure improvement over baseline. | `scripts/learning/replay.mjs` |
+| [`safeReward`](../scripts/lib/learning/replay.mjs#L139) | function | `scripts/lib/learning/replay.mjs` | 139-145 | Evaluates a reward function safely, returning 0 on error or non-finite result. | `scripts/learning/replay.mjs` |
+| [`validateInput`](../scripts/lib/learning/replay.mjs#L125) | function | `scripts/lib/learning/replay.mjs` | 125-135 | Type-checks replay inputs: decisionType, candidatePolicy function, and rewardFn function. | `scripts/learning/replay.mjs` |
+| [`getLearningStats`](../scripts/lib/learning/stats.mjs#L33) | function | `scripts/lib/learning/stats.mjs` | 33-68 | Fetches learning metrics (triage/no-brainer/stale-cluster counts) from cloud store by repo name. | `scripts/cross-skill.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
 | [`computeAssessmentMetrics`](../scripts/meta-assess.mjs#L48) | function | `scripts/meta-assess.mjs` | 48-150 | Calculates audit FP rate, signal quality, severity calibration, and convergence metrics over a window. | `scripts/audit-loop.mjs` |
 | [`emptyMetrics`](../scripts/meta-assess.mjs#L152) | function | `scripts/meta-assess.mjs` | 152-162 | Returns a zero-valued metrics object for empty outcome sets. | `scripts/audit-loop.mjs` |
 | [`formatAssessmentReport`](../scripts/meta-assess.mjs#L353) | function | `scripts/meta-assess.mjs` | 353-398 | Formats an LLM assessment into markdown with tables and prioritized recommendations. | `scripts/audit-loop.mjs` |
@@ -1591,6 +2129,131 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 | [`pct`](../scripts/memory-health.mjs#L207) | function | `scripts/memory-health.mjs` | 207-209 | Formats a decimal number as a percentage string with one decimal place. | _(internal)_ |
 | [`renderFrictionSection`](../scripts/memory-health.mjs#L126) | function | `scripts/memory-health.mjs` | 126-168 | Formats friction recurrence clusters into a markdown table with recurrence, cost, age, and protection columns. | _(internal)_ |
 | [`renderMarkdown`](../scripts/memory-health.mjs#L211) | function | `scripts/memory-health.mjs` | 211-290 | Generates complete markdown memory-health report including metrics, evaluation, friction section, and status. | _(internal)_ |
+
+---
+
+## model-eval
+
+> A/B testing framework for code-audit LLM models: generates findings via multiple "arms," blinds them to hide the source model, and applies a judge to compare quality.
+
+```mermaid
+flowchart TB
+subgraph dom_model_eval ["model-eval"]
+  file_scripts_lib_model_eval_arm_generation_mj["scripts/lib/model-eval/arm-generation.mjs"]:::component
+  sym_scripts_lib_model_eval_arm_generation_mj["buildGenericPlanContent"]:::symbol
+  file_scripts_lib_model_eval_arm_generation_mj --> sym_scripts_lib_model_eval_arm_generation_mj
+  sym_scripts_lib_model_eval_arm_generation_mj["resolveGenerationClient"]:::symbol
+  file_scripts_lib_model_eval_arm_generation_mj --> sym_scripts_lib_model_eval_arm_generation_mj
+  sym_scripts_lib_model_eval_arm_generation_mj["runAuditGenerationArm"]:::symbol
+  file_scripts_lib_model_eval_arm_generation_mj --> sym_scripts_lib_model_eval_arm_generation_mj
+  sym_scripts_lib_model_eval_arm_generation_mj["UnsupportedGenerationTransport"]:::symbol
+  file_scripts_lib_model_eval_arm_generation_mj --> sym_scripts_lib_model_eval_arm_generation_mj
+  file_scripts_lib_model_eval_blind_judge_mjs["scripts/lib/model-eval/blind-judge.mjs"]:::component
+  sym_scripts_lib_model_eval_blind_judge_mjs_a["appendJudgeBatch"]:::symbol
+  file_scripts_lib_model_eval_blind_judge_mjs --> sym_scripts_lib_model_eval_blind_judge_mjs_a
+  sym_scripts_lib_model_eval_blind_judge_mjs_a["assertJudgePayloadSafe"]:::symbol
+  file_scripts_lib_model_eval_blind_judge_mjs --> sym_scripts_lib_model_eval_blind_judge_mjs_a
+  sym_scripts_lib_model_eval_blind_judge_mjs_b["blindFindings"]:::symbol
+  file_scripts_lib_model_eval_blind_judge_mjs --> sym_scripts_lib_model_eval_blind_judge_mjs_b
+  sym_scripts_lib_model_eval_blind_judge_mjs_g["getJudgeBatchesForRun"]:::symbol
+  file_scripts_lib_model_eval_blind_judge_mjs --> sym_scripts_lib_model_eval_blind_judge_mjs_g
+  sym_scripts_lib_model_eval_blind_judge_mjs_M["MalformedJudgeOutputError"]:::symbol
+  file_scripts_lib_model_eval_blind_judge_mjs --> sym_scripts_lib_model_eval_blind_judge_mjs_M
+  sym_scripts_lib_model_eval_blind_judge_mjs_r["runBlindJudgeProtocol"]:::symbol
+  file_scripts_lib_model_eval_blind_judge_mjs --> sym_scripts_lib_model_eval_blind_judge_mjs_r
+  file_scripts_lib_model_eval_config_schema_mjs["scripts/lib/model-eval/config/schema.mjs"]:::component
+  sym_scripts_lib_model_eval_config_schema_mjs["parseThresholdConfig"]:::symbol
+  file_scripts_lib_model_eval_config_schema_mjs --> sym_scripts_lib_model_eval_config_schema_mjs
+  sym_scripts_lib_model_eval_config_schema_mjs["tierSchema"]:::symbol
+  file_scripts_lib_model_eval_config_schema_mjs --> sym_scripts_lib_model_eval_config_schema_mjs
+  file_scripts_lib_model_eval_cost_mjs["scripts/lib/model-eval/cost.mjs"]:::component
+  sym_scripts_lib_model_eval_cost_mjs_assemble["assembleCostRows"]:::symbol
+  file_scripts_lib_model_eval_cost_mjs --> sym_scripts_lib_model_eval_cost_mjs_assemble
+  sym_scripts_lib_model_eval_cost_mjs_buildUsa["buildUsageEvent"]:::symbol
+  file_scripts_lib_model_eval_cost_mjs --> sym_scripts_lib_model_eval_cost_mjs_buildUsa
+  file_scripts_lib_model_eval_deterministic_sco["scripts/lib/model-eval/deterministic-scorer.mjs"]:::component
+  sym_scripts_lib_model_eval_deterministic_sco["basename"]:::symbol
+  file_scripts_lib_model_eval_deterministic_sco --> sym_scripts_lib_model_eval_deterministic_sco
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+_Domain has 66 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`buildGenericPlanContent`](../scripts/lib/model-eval/arm-generation.mjs#L65) | function | `scripts/lib/model-eval/arm-generation.mjs` | 65-68 | Combines generic plan instructions with a formatted list of changed files. | `scripts/model-eval-auditor.mjs` |
+| [`resolveGenerationClient`](../scripts/lib/model-eval/arm-generation.mjs#L90) | function | `scripts/lib/model-eval/arm-generation.mjs` | 90-109 | Resolves and returns an OpenAI-compatible client and model ID based on the generation spec (sentinel/OSS/Azure). | `scripts/model-eval-auditor.mjs` |
+| [`runAuditGenerationArm`](../scripts/lib/model-eval/arm-generation.mjs#L118) | function | `scripts/lib/model-eval/arm-generation.mjs` | 118-251 | Runs a code-audit generation through the multipass audit pipeline and returns findings with token usage. | `scripts/model-eval-auditor.mjs` |
+| [`UnsupportedGenerationTransport`](../scripts/lib/model-eval/arm-generation.mjs#L29) | class | `scripts/lib/model-eval/arm-generation.mjs` | 29-35 | <no body> | `scripts/model-eval-auditor.mjs` |
+| [`appendJudgeBatch`](../scripts/lib/model-eval/blind-judge.mjs#L150) | function | `scripts/lib/model-eval/blind-judge.mjs` | 150-173 | Inserts a judge batch into Supabase, handling duplicate-key collisions by fetching the existing row. | `scripts/model-eval-auditor.mjs` |
+| [`assertJudgePayloadSafe`](../scripts/lib/model-eval/blind-judge.mjs#L126) | function | `scripts/lib/model-eval/blind-judge.mjs` | 126-132 | Validates that a judge payload contains no egress-unsafe content or sensitive path mentions. | `scripts/model-eval-auditor.mjs` |
+| [`blindFindings`](../scripts/lib/model-eval/blind-judge.mjs#L102) | function | `scripts/lib/model-eval/blind-judge.mjs` | 102-122 | Shuffles candidate and baseline findings together with random IDs and returns the blinded list plus a decryption map. | `scripts/model-eval-auditor.mjs` |
+| [`getJudgeBatchesForRun`](../scripts/lib/model-eval/blind-judge.mjs#L183) | function | `scripts/lib/model-eval/blind-judge.mjs` | 183-190 | Queries Supabase for all judge batches associated with an audit run. | `scripts/model-eval-auditor.mjs` |
+| [`MalformedJudgeOutputError`](../scripts/lib/model-eval/blind-judge.mjs#L40) | class | `scripts/lib/model-eval/blind-judge.mjs` | 40-42 | <no body> | `scripts/model-eval-auditor.mjs` |
+| [`runBlindJudgeProtocol`](../scripts/lib/model-eval/blind-judge.mjs#L202) | function | `scripts/lib/model-eval/blind-judge.mjs` | 202-278 | Runs a blinded judge protocol comparing candidate vs baseline findings, optionally resuming from prior state. | `scripts/model-eval-auditor.mjs` |
+| [`parseThresholdConfig`](../scripts/lib/model-eval/config/schema.mjs#L109) | function | `scripts/lib/model-eval/config/schema.mjs` | 109-113 | Safely parses and validates a threshold config, returning success/error result. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`tierSchema`](../scripts/lib/model-eval/config/schema.mjs#L54) | function | `scripts/lib/model-eval/config/schema.mjs` | 54-84 | Returns a Zod schema for evaluation tier configuration with mandatory thresholds validation. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`assembleCostRows`](../scripts/lib/model-eval/cost.mjs#L168) | function | `scripts/lib/model-eval/cost.mjs` | 168-214 | Aggregates raw usage events into cost rows by run/role/arm/candidate with per-phase breakdown. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`buildUsageEvent`](../scripts/lib/model-eval/cost.mjs#L109) | function | `scripts/lib/model-eval/cost.mjs` | 109-158 | Builds a usage event record from LLM response metadata with cost pricing and availability checking. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`basename`](../scripts/lib/model-eval/deterministic-scorer.mjs#L84) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 84-86 | Extracts the final filename component from a file path. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`matchScore`](../scripts/lib/model-eval/deterministic-scorer.mjs#L103) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 103-132 | Scores a candidate finding against expected rubric by file and description match (exact or fuzzy). | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`normalize`](../scripts/lib/model-eval/deterministic-scorer.mjs#L80) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 80-82 | Lowercases and collapses whitespace in a string. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`scoreBinaryClassification`](../scripts/lib/model-eval/deterministic-scorer.mjs#L23) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 23-58 | Computes precision, recall, F1, and false-positive rate from binary predictions vs ground truth labels. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`scoreDefectLocalization`](../scripts/lib/model-eval/deterministic-scorer.mjs#L145) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 145-227 | Scores all candidate findings against expected rubrics with configurable match mode and threshold validation. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`EgressGateError`](../scripts/lib/model-eval/egress-path-scan.mjs#L22) | class | `scripts/lib/model-eval/egress-path-scan.mjs` | 22-24 | <no body> | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
+| [`findSensitivePathMentions`](../scripts/lib/model-eval/egress-path-scan.mjs#L108) | function | `scripts/lib/model-eval/egress-path-scan.mjs` | 108-113 | Tokenizes text and returns only the sensitive path strings found within it. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
+| [`looksLikeRealPath`](../scripts/lib/model-eval/egress-path-scan.mjs#L52) | function | `scripts/lib/model-eval/egress-path-scan.mjs` | 52-60 | Heuristically detects whether a token string looks like a real filesystem path. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
+| [`appendModelEvalShadowObservation`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L61) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 61-71 | Inserts a shadow evaluation observation into Supabase with idempotency handling. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
+| [`finalizeShadowEval`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L206) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 206-249 | Computes final shadow evaluation metrics from terminal observations and returns a verdict or collection progress. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
+| [`getShadowObservationsForEvalRun`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L79) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 79-90 | Queries Supabase for all shadow observations linked to a model-eval run. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
+| [`getTerminalShadowObservations`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L108) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 108-133 | Filters shadow observations to only those whose all findings have terminal user-action labels. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
+| [`ShadowObservationRepoMismatchError`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L46) | class | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 46-51 | <no body> | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
+| [`toBinaryRows`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L167) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 167-183 | Converts terminal shadow observations into binary classification prediction and label rows. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
+| [`toMetrics`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L185) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 185-187 | Extracts recall, false-positive rate, and F1 from a scored binary classification result. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
+| [`CorpusCaseUnavailable`](../scripts/lib/model-eval/known-defect-corpus.mjs#L35) | class | `scripts/lib/model-eval/known-defect-corpus.mjs` | 35-42 | <no body> | `scripts/model-eval-auditor.mjs` |
+| [`git`](../scripts/lib/model-eval/known-defect-corpus.mjs#L58) | function | `scripts/lib/model-eval/known-defect-corpus.mjs` | 58-63 | Executes a git command in a repo root with large output buffer and pager suppression. | `scripts/model-eval-auditor.mjs` |
+| [`loadCorpusCase`](../scripts/lib/model-eval/known-defect-corpus.mjs#L112) | function | `scripts/lib/model-eval/known-defect-corpus.mjs` | 112-211 | Loads a known-defect corpus case by extracting the buggy commit's diff from a git repo. | `scripts/model-eval-auditor.mjs` |
+| [`resolveRepoRoot`](../scripts/lib/model-eval/known-defect-corpus.mjs#L89) | function | `scripts/lib/model-eval/known-defect-corpus.mjs` | 89-95 | Finds a repo root directory by matching its basename against a candidate paths list. | `scripts/model-eval-auditor.mjs` |
+| [`tryGit`](../scripts/lib/model-eval/known-defect-corpus.mjs#L72) | function | `scripts/lib/model-eval/known-defect-corpus.mjs` | 72-75 | Wraps a git command execution in a success/error result tuple. | `scripts/model-eval-auditor.mjs` |
+| [`invokeNativeAnthropic`](../scripts/lib/model-eval/provider-adapter.mjs#L128) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 128-156 | Invokes the Anthropic API with structured output via JSON schema. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
+| [`invokeNativeGemini`](../scripts/lib/model-eval/provider-adapter.mjs#L158) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 158-200 | Invokes the Gemini API with structured output via responseSchema. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
+| [`invokeOpenAICompatible`](../scripts/lib/model-eval/provider-adapter.mjs#L83) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 83-126 | Invokes an OpenAI-compatible provider (public/OSS/Azure) with structured output response. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
+| [`invokeStructured`](../scripts/lib/model-eval/provider-adapter.mjs#L46) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 46-81 | Invokes a provider with structured output by egress-gating the message payload and dispatching to transport. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
+| [`MalformedProviderOutputError`](../scripts/lib/model-eval/provider-adapter.mjs#L31) | class | `scripts/lib/model-eval/provider-adapter.mjs` | 31-33 | <no body> | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
+| [`resolveOssClientConfig`](../scripts/lib/model-eval/provider-adapter.mjs#L210) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 210-216 | Returns the OpenRouter base URL and API key from configuration. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
+| [`assertAzureTransportSupported`](../scripts/lib/model-eval/route-catalog.mjs#L271) | function | `scripts/lib/model-eval/route-catalog.mjs` | 271-275 | Validates that an Azure-hosted transport is supported, rejecting unsupported provider combinations. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`azureTransportProvider`](../scripts/lib/model-eval/route-catalog.mjs#L279) | function | `scripts/lib/model-eval/route-catalog.mjs` | 279-287 | Resolves the HTTP transport mechanism (client type) for an Azure-hosted LLM based on the model's lineage family. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`buildComparisonEvidenceFromRoutes`](../scripts/lib/model-eval/route-catalog.mjs#L357) | function | `scripts/lib/model-eval/route-catalog.mjs` | 357-366 | Assembles complete comparison evidence from three route objects, computing independence checks and the computed evaluation tier. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`lineageForProvider`](../scripts/lib/model-eval/route-catalog.mjs#L112) | function | `scripts/lib/model-eval/route-catalog.mjs` | 112-114 | Constructs a model lineage identifier from provider and optional tier/variant/role suffix. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`loadAzureRoutes`](../scripts/lib/model-eval/route-catalog.mjs#L79) | function | `scripts/lib/model-eval/route-catalog.mjs` | 79-99 | Loads and caches Azure deployment routes from a JSON config file with validation. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`resolveCandidateRoute`](../scripts/lib/model-eval/route-catalog.mjs#L125) | function | `scripts/lib/model-eval/route-catalog.mjs` | 125-257 | Resolves a candidate model spec into a fully-qualified route with provider, model, lineage, and pricing info. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`resolveEvaluationTier`](../scripts/lib/model-eval/route-catalog.mjs#L305) | function | `scripts/lib/model-eval/route-catalog.mjs` | 305-333 | Determines the evaluation tier (A, B, or C) by checking if candidate, baseline, and judge routes are known and mutually independent. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`RouteResolutionError`](../scripts/lib/model-eval/route-catalog.mjs#L70) | class | `scripts/lib/model-eval/route-catalog.mjs` | 70-76 | Custom error class for route resolution failures, tracking whether the error occurred during preflight validation. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`toRouteEvidence`](../scripts/lib/model-eval/route-catalog.mjs#L338) | function | `scripts/lib/model-eval/route-catalog.mjs` | 338-343 | Extracts trust-relevant fields (tier, lineage status, independence eligibility, source) from a resolved route object. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`transportForProvider`](../scripts/lib/model-eval/route-catalog.mjs#L103) | function | `scripts/lib/model-eval/route-catalog.mjs` | 103-108 | Maps a provider name to its transport implementation (openai-compatible, native-anthropic, native-gemini). | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
+| [`buildAdjudicatorPrompt`](../scripts/lib/model-eval/structured-extractor.mjs#L215) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 215-220 | Constructs the system+user message pair for the adjudicator role, providing a finding and its severity for verification. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`buildAuditorPrompt`](../scripts/lib/model-eval/structured-extractor.mjs#L208) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 208-213 | Constructs the system+user message pair for the auditor role, providing diff context and file list. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`extractDiffHeaderPaths`](../scripts/lib/model-eval/structured-extractor.mjs#L124) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 124-146 | Parses all file paths from git diff headers (diff --git, ---, +++, rename, copy), handling C-quoted paths correctly. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`ExtractionInvocationError`](../scripts/lib/model-eval/structured-extractor.mjs#L42) | class | `scripts/lib/model-eval/structured-extractor.mjs` | 42-50 | Custom error for LLM invocation failures, tracking HTTP status, error code, and whether retry is possible. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`extractStructured`](../scripts/lib/model-eval/structured-extractor.mjs#L236) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 236-295 | Parses structured extraction output from an LLM, handling both auditor and adjudicator roles with automatic retries on malformed output. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`InvalidEvaluationInputError`](../scripts/lib/model-eval/structured-extractor.mjs#L33) | class | `scripts/lib/model-eval/structured-extractor.mjs` | 33-35 | Custom error for invalid inputs to the extraction pipeline (missing required context fields). | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`isRetryableMalformedOutput`](../scripts/lib/model-eval/structured-extractor.mjs#L56) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 56-58 | Checks if an error is a type that warrants retrying extraction (Zod validation, JSON parse, or malformed provider output). | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`nonBlankString`](../scripts/lib/model-eval/structured-extractor.mjs#L66) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 66-69 | Returns a Zod schema for a non-empty trimmed string with optional max length. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`prepareModelEvalPayloadForEgress`](../scripts/lib/model-eval/structured-extractor.mjs#L154) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 154-206 | Validates and sanitizes a model-eval payload before LLM egress, blocking sensitive file paths and redacting secrets. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`unquoteDiffPath`](../scripts/lib/model-eval/structured-extractor.mjs#L112) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 112-118 | Unquotes a C-style escaped git diff path, removing outer quotes and unescaping internal quotes and backslashes. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
+| [`allRoutesIndependentlyTrusted`](../scripts/lib/model-eval/verdict.mjs#L360) | function | `scripts/lib/model-eval/verdict.mjs` | 360-363 | Checks if all non-null routes in comparison evidence have verified or reviewed-pool lineage sources. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
+| [`computeRawVerdict`](../scripts/lib/model-eval/verdict.mjs#L278) | function | `scripts/lib/model-eval/verdict.mjs` | 278-352 | Evaluates all floor thresholds for a verdict input, returning verdict, floors-met status, and reasons. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
+| [`computeVerdict`](../scripts/lib/model-eval/verdict.mjs#L365) | function | `scripts/lib/model-eval/verdict.mjs` | 365-404 | Applies verdict thresholds and structural rules to produce a final verdict and next action. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
+| [`findTableRow`](../scripts/lib/model-eval/verdict.mjs#L244) | function | `scripts/lib/model-eval/verdict.mjs` | 244-247 | Looks up a decision-table row matching a mode, tier, and optionally a role. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
+| [`ratioWithinBound`](../scripts/lib/model-eval/verdict.mjs#L270) | function | `scripts/lib/model-eval/verdict.mjs` | 270-276 | Checks whether a candidate-to-baseline ratio stays within a threshold, handling zero-baseline edge cases. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
+| [`requiredMetric`](../scripts/lib/model-eval/verdict.mjs#L252) | function | `scripts/lib/model-eval/verdict.mjs` | 252-258 | Fetches a finite numeric metric from the metrics object, throwing if missing or invalid. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
 
 ---
 
@@ -1780,7 +2443,7 @@ _Domain has 126 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ## persona-test
 
-> Consistency-mode validator for persona-test: runs deterministic, journey-driven tests against canary manifests and surfaces.json, detecting cross-step DOM-vs-engine contradictions (stale projections, undeclared claims, missing surfaces).
+> **Persona-test consistency mode** detects UI/state contradictions in deployed apps by diffing DOM-rendered values against engine-claim contracts declared in canary journeys and surface manifests, with type coercion and severity clamping to validate cross-step coherence.
 
 ```mermaid
 flowchart TB
@@ -1826,7 +2489,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 71 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 87 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -1865,6 +2528,22 @@ _Domain has 71 symbols (>50). Diagram shows top-15 by file order; see flat table
 | [`renderUserPrompt`](../scripts/lib/persona-test/semantic-compare.mjs#L206) | function | `scripts/lib/persona-test/semantic-compare.mjs` | 206-217 | Formats a comparison prompt with redacted input texts and truncation note. | _(internal)_ |
 | [`safeCacheGet`](../scripts/lib/persona-test/semantic-compare.mjs#L229) | function | `scripts/lib/persona-test/semantic-compare.mjs` | 229-238 | Retrieves a cached verdict with schema validation, returning null on failure. | _(internal)_ |
 | [`safeCacheSet`](../scripts/lib/persona-test/semantic-compare.mjs#L239) | function | `scripts/lib/persona-test/semantic-compare.mjs` | 239-241 | Stores a verdict in the cache, silently ignoring failures. | _(internal)_ |
+| [`auditFilePathTokens`](../scripts/lib/persona/audit-correlator.mjs#L136) | function | `scripts/lib/persona/audit-correlator.mjs` | 136-138 | Extracts tokens from an audit finding's primary_file path. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`auditKeywordTokens`](../scripts/lib/persona/audit-correlator.mjs#L140) | function | `scripts/lib/persona/audit-correlator.mjs` | 140-142 | Extracts tokens from audit finding's detail and category. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`buildStepUrlLookup`](../scripts/lib/persona/audit-correlator.mjs#L236) | function | `scripts/lib/persona/audit-correlator.mjs` | 236-245 | Creates a map from step number to sanitized URL from click path data. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`decideCorrelations`](../scripts/lib/persona/audit-correlator.mjs#L264) | function | `scripts/lib/persona/audit-correlator.mjs` | 264-324 | Matches P0/P1 persona findings to audit findings and emits correlation records. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`isMalformedFinding`](../scripts/lib/persona/audit-correlator.mjs#L83) | function | `scripts/lib/persona/audit-correlator.mjs` | 83-86 | Detects if a finding is missing required element or observed fields. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`isNewerOrHigherSeverity`](../scripts/lib/persona/audit-correlator.mjs#L218) | function | `scripts/lib/persona/audit-correlator.mjs` | 218-223 | Compares two findings by creation timestamp, then by severity rank. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`isP0OrP1`](../scripts/lib/persona/audit-correlator.mjs#L70) | function | `scripts/lib/persona/audit-correlator.mjs` | 70-72 | Checks if a finding has severity code P0 or P1. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`isSeverityUnderstated`](../scripts/lib/persona/audit-correlator.mjs#L226) | function | `scripts/lib/persona/audit-correlator.mjs` | 226-228 | Checks if a P0 persona finding maps to a LOW or MEDIUM audit finding. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`matchFinding`](../scripts/lib/persona/audit-correlator.mjs#L183) | function | `scripts/lib/persona/audit-correlator.mjs` | 183-212 | Finds the best matching audit finding for a persona finding via exact or fuzzy matching. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`overlapCoefficient`](../scripts/lib/persona/audit-correlator.mjs#L112) | function | `scripts/lib/persona/audit-correlator.mjs` | 112-119 | Calculates Jaccard similarity ratio between two token sets. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`personaFilePathTokens`](../scripts/lib/persona/audit-correlator.mjs#L126) | function | `scripts/lib/persona/audit-correlator.mjs` | 126-129 | Extracts tokens from a finding's element and step URL. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`personaFindingHash`](../scripts/lib/persona/audit-correlator.mjs#L62) | function | `scripts/lib/persona/audit-correlator.mjs` | 62-67 | Creates a unique hash for a persona finding based on element, code, and observed details. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`personaKeywordTokens`](../scripts/lib/persona/audit-correlator.mjs#L131) | function | `scripts/lib/persona/audit-correlator.mjs` | 131-133 | Extracts tokens from a finding's observed issue description. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`pickBest`](../scripts/lib/persona/audit-correlator.mjs#L214) | function | `scripts/lib/persona/audit-correlator.mjs` | 214-216 | Selects the newest or highest-severity row from a list. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`scoreMatch`](../scripts/lib/persona/audit-correlator.mjs#L153) | function | `scripts/lib/persona/audit-correlator.mjs` | 153-163 | Scores a persona-to-audit finding match on file path and keyword similarity. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
+| [`tokenize`](../scripts/lib/persona/audit-correlator.mjs#L94) | function | `scripts/lib/persona/audit-correlator.mjs` | 94-101 | Splits text into lowercase alphanumeric tokens (min length 3). | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
 | [`callCrossSkill`](../scripts/persona-consistency-promote.mjs#L71) | function | `scripts/persona-consistency-promote.mjs` | 71-96 | Invokes cross-skill.mjs CLI commands with JSON input, parsing structured error responses from stdout. | _(internal)_ |
 | [`defaultPrompt`](../scripts/persona-consistency-promote.mjs#L563) | function | `scripts/persona-consistency-promote.mjs` | 563-568 | Prompts the user for input via stdin and returns their response. | _(internal)_ |
 | [`listConsistencyCandidatesViaCli`](../scripts/persona-consistency-promote.mjs#L98) | function | `scripts/persona-consistency-promote.mjs` | 98-107 | Fetches pending consistency promotion candidates from cloud store via cross-skill CLI. | _(internal)_ |
@@ -1952,6 +2631,105 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 | [`_extractPlanKeywords`](../scripts/lib/plan-paths.mjs#L112) | function | `scripts/lib/plan-paths.mjs` | 112-154 | Extracts PascalCase identifiers and keywords from plan content for fuzzy matching. | `scripts/lib/file-io.mjs`, `scripts/lib/requirements/context.mjs` |
 | [`_scanRepoFiles`](../scripts/lib/plan-paths.mjs#L156) | function | `scripts/lib/plan-paths.mjs` | 156-182 | Walks the repo directory tree to find all source files by extension. | `scripts/lib/file-io.mjs`, `scripts/lib/requirements/context.mjs` |
 | [`extractPlanPaths`](../scripts/lib/plan-paths.mjs#L32) | function | `scripts/lib/plan-paths.mjs` | 32-108 | Extracts file paths mentioned in plan markdown via regex patterns. | `scripts/lib/file-io.mjs`, `scripts/lib/requirements/context.mjs` |
+
+---
+
+## requirements
+
+> Extracts behavioral and correctness invariants the codebase enforces, deduplicates them, and materializes a committable ledger that audits use to enforce in-scope guardrails.
+
+```mermaid
+flowchart TB
+subgraph dom_requirements ["requirements"]
+  file_scripts_lib_requirements__shared_mjs["scripts/lib/requirements/_shared.mjs"]:::component
+  sym_scripts_lib_requirements__shared_mjs_est["estimateTokens"]:::symbol
+  file_scripts_lib_requirements__shared_mjs --> sym_scripts_lib_requirements__shared_mjs_est
+  file_scripts_lib_requirements_context_mjs["scripts/lib/requirements/context.mjs"]:::component
+  sym_scripts_lib_requirements_context_mjs_cha["changedSince"]:::symbol
+  file_scripts_lib_requirements_context_mjs --> sym_scripts_lib_requirements_context_mjs_cha
+  sym_scripts_lib_requirements_context_mjs_get["getPlanRequirementsRubric"]:::symbol
+  file_scripts_lib_requirements_context_mjs --> sym_scripts_lib_requirements_context_mjs_get
+  sym_scripts_lib_requirements_context_mjs_get["getRequirementsContext"]:::symbol
+  file_scripts_lib_requirements_context_mjs --> sym_scripts_lib_requirements_context_mjs_get
+  sym_scripts_lib_requirements_context_mjs_glo["globMatch"]:::symbol
+  file_scripts_lib_requirements_context_mjs --> sym_scripts_lib_requirements_context_mjs_glo
+  file_scripts_lib_requirements_extract_mjs["scripts/lib/requirements/extract.mjs"]:::component
+  sym_scripts_lib_requirements_extract_mjs_ass["assignId"]:::symbol
+  file_scripts_lib_requirements_extract_mjs --> sym_scripts_lib_requirements_extract_mjs_ass
+  sym_scripts_lib_requirements_extract_mjs_bat["batchFiles"]:::symbol
+  file_scripts_lib_requirements_extract_mjs --> sym_scripts_lib_requirements_extract_mjs_bat
+  sym_scripts_lib_requirements_extract_mjs_ext["extractOneRun"]:::symbol
+  file_scripts_lib_requirements_extract_mjs --> sym_scripts_lib_requirements_extract_mjs_ext
+  sym_scripts_lib_requirements_extract_mjs_ext["extractRequirements"]:::symbol
+  file_scripts_lib_requirements_extract_mjs --> sym_scripts_lib_requirements_extract_mjs_ext
+  sym_scripts_lib_requirements_extract_mjs_mer["mergeRequirements"]:::symbol
+  file_scripts_lib_requirements_extract_mjs --> sym_scripts_lib_requirements_extract_mjs_mer
+  sym_scripts_lib_requirements_extract_mjs_nor["normalizeAssertion"]:::symbol
+  file_scripts_lib_requirements_extract_mjs --> sym_scripts_lib_requirements_extract_mjs_nor
+  file_scripts_lib_requirements_gap_challenge_m["scripts/lib/requirements/gap-challenge.mjs"]:::component
+  sym_scripts_lib_requirements_gap_challenge_m["classifyGaps"]:::symbol
+  file_scripts_lib_requirements_gap_challenge_m --> sym_scripts_lib_requirements_gap_challenge_m
+  file_scripts_lib_requirements_ledger_mjs["scripts/lib/requirements/ledger.mjs"]:::component
+  sym_scripts_lib_requirements_ledger_mjs_deri["deriveIndex"]:::symbol
+  file_scripts_lib_requirements_ledger_mjs --> sym_scripts_lib_requirements_ledger_mjs_deri
+  sym_scripts_lib_requirements_ledger_mjs_load["loadLedger"]:::symbol
+  file_scripts_lib_requirements_ledger_mjs --> sym_scripts_lib_requirements_ledger_mjs_load
+  sym_scripts_lib_requirements_ledger_mjs_norm["norm"]:::symbol
+  file_scripts_lib_requirements_ledger_mjs --> sym_scripts_lib_requirements_ledger_mjs_norm
+  sym_scripts_lib_requirements_ledger_mjs_reco["reconcile"]:::symbol
+  file_scripts_lib_requirements_ledger_mjs --> sym_scripts_lib_requirements_ledger_mjs_reco
+  sym_scripts_lib_requirements_ledger_mjs_stat["statusFor"]:::symbol
+  file_scripts_lib_requirements_ledger_mjs --> sym_scripts_lib_requirements_ledger_mjs_stat
+  sym_scripts_lib_requirements_ledger_mjs_writ["writeLedger"]:::symbol
+  file_scripts_lib_requirements_ledger_mjs --> sym_scripts_lib_requirements_ledger_mjs_writ
+  file_scripts_lib_requirements_llm_json_mjs["scripts/lib/requirements/llm-json.mjs"]:::component
+  sym_scripts_lib_requirements_llm_json_mjs_pa["parseLlmJson"]:::symbol
+  file_scripts_lib_requirements_llm_json_mjs --> sym_scripts_lib_requirements_llm_json_mjs_pa
+  file_scripts_lib_requirements_render_mjs["scripts/lib/requirements/render.mjs"]:::component
+  sym_scripts_lib_requirements_render_mjs_cell["cell"]:::symbol
+  file_scripts_lib_requirements_render_mjs --> sym_scripts_lib_requirements_render_mjs_cell
+  sym_scripts_lib_requirements_render_mjs_prov["provFiles"]:::symbol
+  file_scripts_lib_requirements_render_mjs --> sym_scripts_lib_requirements_render_mjs_prov
+  sym_scripts_lib_requirements_render_mjs_rend["renderRequirementsMap"]:::symbol
+  file_scripts_lib_requirements_render_mjs --> sym_scripts_lib_requirements_render_mjs_rend
+  file_scripts_lib_requirements_schema_mjs["scripts/lib/requirements/schema.mjs"]:::component
+  sym_scripts_lib_requirements_schema_mjs_uniq["uniqueIds"]:::symbol
+  file_scripts_lib_requirements_schema_mjs --> sym_scripts_lib_requirements_schema_mjs_uniq
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`estimateTokens`](../scripts/lib/requirements/_shared.mjs#L11) | function | `scripts/lib/requirements/_shared.mjs` | 11-11 | Estimates token count by dividing string length by four. | _(internal)_ |
+| [`changedSince`](../scripts/lib/requirements/context.mjs#L33) | function | `scripts/lib/requirements/context.mjs` | 33-42 | Gets the set of files changed since a given git SHA. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`getPlanRequirementsRubric`](../scripts/lib/requirements/context.mjs#L166) | function | `scripts/lib/requirements/context.mjs` | 166-170 | Extracts plan file paths and builds a requirements context for them. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`getRequirementsContext`](../scripts/lib/requirements/context.mjs#L54) | function | `scripts/lib/requirements/context.mjs` | 54-134 | Assembles a requirements rubric context block for in-scope code invariants. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`globMatch`](../scripts/lib/requirements/context.mjs#L23) | function | `scripts/lib/requirements/context.mjs` | 23-30 | Matches a file path against a glob pattern. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
+| [`assignId`](../scripts/lib/requirements/extract.mjs#L59) | function | `scripts/lib/requirements/extract.mjs` | 59-65 | Creates a deterministic ID for a requirement based on its kind, assertion, and provenance files. | `scripts/requirements.mjs` |
+| [`batchFiles`](../scripts/lib/requirements/extract.mjs#L113) | function | `scripts/lib/requirements/extract.mjs` | 113-125 | Splits files into token-budget-aware batches for LLM processing. | `scripts/requirements.mjs` |
+| [`extractOneRun`](../scripts/lib/requirements/extract.mjs#L134) | function | `scripts/lib/requirements/extract.mjs` | 134-186 | Runs a single extraction pass over file batches to extract requirements via LLM. | `scripts/requirements.mjs` |
+| [`extractRequirements`](../scripts/lib/requirements/extract.mjs#L198) | function | `scripts/lib/requirements/extract.mjs` | 198-281 | Orchestrates requirement extraction with egress safety and symlink guards. | `scripts/requirements.mjs` |
+| [`mergeRequirements`](../scripts/lib/requirements/extract.mjs#L77) | function | `scripts/lib/requirements/extract.mjs` | 77-110 | Clusters similar extracted requirements across runs and deduplicates them. | `scripts/requirements.mjs` |
+| [`normalizeAssertion`](../scripts/lib/requirements/extract.mjs#L54) | function | `scripts/lib/requirements/extract.mjs` | 54-56 | Lowercases, trims whitespace, and removes trailing punctuation from a requirement assertion. | `scripts/requirements.mjs` |
+| [`classifyGaps`](../scripts/lib/requirements/gap-challenge.mjs#L45) | function | `scripts/lib/requirements/gap-challenge.mjs` | 45-115 | Analyzes requirement candidates for gaps and contradictions via LLM with graceful degradation on failure. | `scripts/requirements.mjs` |
+| [`deriveIndex`](../scripts/lib/requirements/ledger.mjs#L54) | function | `scripts/lib/requirements/ledger.mjs` | 54-58 | Maps ledger requirements to a simplified index of id, assertion, kind, and status. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
+| [`loadLedger`](../scripts/lib/requirements/ledger.mjs#L25) | function | `scripts/lib/requirements/ledger.mjs` | 25-37 | Loads and parses the requirements ledger JSON, returning empty object if missing or invalid. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
+| [`norm`](../scripts/lib/requirements/ledger.mjs#L22) | function | `scripts/lib/requirements/ledger.mjs` | 22-22 | Normalizes a string by lowercasing, collapsing whitespace, and trimming trailing punctuation. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
+| [`reconcile`](../scripts/lib/requirements/ledger.mjs#L83) | function | `scripts/lib/requirements/ledger.mjs` | 83-176 | Reconciles extracted requirement candidates with prior ledger via identity aliasing and gap assessment. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
+| [`statusFor`](../scripts/lib/requirements/ledger.mjs#L60) | function | `scripts/lib/requirements/ledger.mjs` | 60-68 | Determines requirement status based on overrides, ambiguity, detected gaps, and run count. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
+| [`writeLedger`](../scripts/lib/requirements/ledger.mjs#L40) | function | `scripts/lib/requirements/ledger.mjs` | 40-51 | Validates and atomically writes the requirements ledger to disk. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
+| [`parseLlmJson`](../scripts/lib/requirements/llm-json.mjs#L25) | function | `scripts/lib/requirements/llm-json.mjs` | 25-29 | Extracts JSON from text by handling markdown code fences as fallback. | `scripts/lib/requirements/extract.mjs`, `scripts/lib/requirements/gap-challenge.mjs` |
+| [`cell`](../scripts/lib/requirements/render.mjs#L22) | function | `scripts/lib/requirements/render.mjs` | 22-22 | Escapes markdown table cell content by handling newlines and pipe characters. | `scripts/requirements.mjs` |
+| [`provFiles`](../scripts/lib/requirements/render.mjs#L25) | function | `scripts/lib/requirements/render.mjs` | 25-25 | Extracts unique files from a requirement's provenance list. | `scripts/requirements.mjs` |
+| [`renderRequirementsMap`](../scripts/lib/requirements/render.mjs#L34) | function | `scripts/lib/requirements/render.mjs` | 34-121 | Generates a markdown report of the requirements ledger with statistics and breakdowns. | `scripts/requirements.mjs` |
+| [`uniqueIds`](../scripts/lib/requirements/schema.mjs#L110) | function | `scripts/lib/requirements/schema.mjs` | 110-110 | Returns a predicate that checks if all array elements have unique keys. | `scripts/lib/requirements/extract.mjs`, `scripts/lib/requirements/gap-challenge.mjs`, `scripts/lib/requirements/ledger.mjs`, +2 more |
 
 ---
 
@@ -2192,16 +2970,16 @@ _Domain has 308 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`ruleSubgraphAsEdgeEndpoint`](../scripts/lint-plan-mermaid.mjs#L137) | function | `scripts/lint-plan-mermaid.mjs` | 137-154 | Detects when a subgraph ID is used as an edge endpoint (invalid mermaid syntax). | _(internal)_ |
 | [`ruleUnquotedSpecialCharsInLabel`](../scripts/lint-plan-mermaid.mjs#L172) | function | `scripts/lint-plan-mermaid.mjs` | 172-206 | Warns when node labels contain special chars or non-ASCII text without quotes. | _(internal)_ |
 | [`walkMd`](../scripts/lint-plan-mermaid.mjs#L231) | function | `scripts/lint-plan-mermaid.mjs` | 231-240 | Recursively walks a directory tree to find all markdown files. | _(internal)_ |
-| [`hasNewlyEligibleCheck`](../scripts/maintenance-checks.mjs#L245) | function | `scripts/maintenance-checks.mjs` | 245-249 | Checks if a previously-skipped check now has all required environment variables available. | _(internal)_ |
-| [`isOverdue`](../scripts/maintenance-checks.mjs#L224) | function | `scripts/maintenance-checks.mjs` | 224-229 | Determines if maintenance hasn't been run within the specified interval days. | _(internal)_ |
-| [`loadHeartbeat`](../scripts/maintenance-checks.mjs#L203) | function | `scripts/maintenance-checks.mjs` | 203-214 | Loads the last maintenance run's timestamp and results from a JSON heartbeat file. | _(internal)_ |
-| [`main`](../scripts/maintenance-checks.mjs#L285) | function | `scripts/maintenance-checks.mjs` | 285-323 | CLI entry point handling status reporting, opportunistic background triggering, and maintenance check execution. | _(internal)_ |
-| [`missingEnv`](../scripts/maintenance-checks.mjs#L144) | function | `scripts/maintenance-checks.mjs` | 144-146 | Returns array of required environment variables that are not set. | _(internal)_ |
-| [`positiveIntEnv`](../scripts/maintenance-checks.mjs#L151) | function | `scripts/maintenance-checks.mjs` | 151-160 | Parses a positive integer from an environment variable, logging a warning and falling back to default if invalid. | _(internal)_ |
-| [`printHuman`](../scripts/maintenance-checks.mjs#L273) | function | `scripts/maintenance-checks.mjs` | 273-283 | Outputs maintenance check results in human-readable format with status icons and error details. | _(internal)_ |
-| [`runCheck`](../scripts/maintenance-checks.mjs#L169) | function | `scripts/maintenance-checks.mjs` | 169-201 | Executes a check's step scripts as subprocesses and returns combined output with failure detection. | _(internal)_ |
-| [`runExclusive`](../scripts/maintenance-checks.mjs#L264) | function | `scripts/maintenance-checks.mjs` | 264-271 | Attempts to acquire a file lock and run a function, returning null if the lock times out immediately. | _(internal)_ |
-| [`writeHeartbeat`](../scripts/maintenance-checks.mjs#L216) | function | `scripts/maintenance-checks.mjs` | 216-222 | Writes the current maintenance run's timestamp and per-check results to a JSON heartbeat file. | _(internal)_ |
+| [`hasNewlyEligibleCheck`](../scripts/maintenance-checks.mjs#L245) | function | `scripts/maintenance-checks.mjs` | 245-249 | Checks if a previously-skipped check now has its required environment variables available. | _(internal)_ |
+| [`isOverdue`](../scripts/maintenance-checks.mjs#L224) | function | `scripts/maintenance-checks.mjs` | 224-229 | Determines whether a maintenance check is overdue for re-execution based on elapsed time. | _(internal)_ |
+| [`loadHeartbeat`](../scripts/maintenance-checks.mjs#L203) | function | `scripts/maintenance-checks.mjs` | 203-214 | Reads the last maintenance check heartbeat from disk. | _(internal)_ |
+| [`main`](../scripts/maintenance-checks.mjs#L285) | function | `scripts/maintenance-checks.mjs` | 285-323 | CLI entry point handling status queries, opportunistic background runs, and exclusive check execution. | _(internal)_ |
+| [`missingEnv`](../scripts/maintenance-checks.mjs#L144) | function | `scripts/maintenance-checks.mjs` | 144-146 | Returns the names of required environment variables that are missing. | _(internal)_ |
+| [`positiveIntEnv`](../scripts/maintenance-checks.mjs#L151) | function | `scripts/maintenance-checks.mjs` | 151-160 | Reads and validates a positive integer from an environment variable. | _(internal)_ |
+| [`printHuman`](../scripts/maintenance-checks.mjs#L273) | function | `scripts/maintenance-checks.mjs` | 273-283 | Prints maintenance check results to stdout with status icons and optional detail output. | _(internal)_ |
+| [`runCheck`](../scripts/maintenance-checks.mjs#L169) | function | `scripts/maintenance-checks.mjs` | 169-201 | Executes maintenance check steps and collects pass/fail results. | _(internal)_ |
+| [`runExclusive`](../scripts/maintenance-checks.mjs#L264) | function | `scripts/maintenance-checks.mjs` | 264-271 | Runs a function with exclusive file-lock protection, returning null if the lock is unavailable. | _(internal)_ |
+| [`writeHeartbeat`](../scripts/maintenance-checks.mjs#L216) | function | `scripts/maintenance-checks.mjs` | 216-222 | Writes the maintenance check results with a timestamp to disk. | _(internal)_ |
 | [`run`](../scripts/migrate-v3-run-metadata.mjs#L66) | function | `scripts/migrate-v3-run-metadata.mjs` | 66-84 | Executes a series of SQL migrations to upgrade run metadata in the database. | _(internal)_ |
 | [`assertSourceIsPersonaTest`](../scripts/migrations/2026-05-20-persona-test-to-audit-loop.mjs#L58) | function | `scripts/migrations/2026-05-20-persona-test-to-audit-loop.mjs` | 58-65 | Verifies the source database URL belongs to the Persona Test project. | _(internal)_ |
 | [`assertTargetIsAuditLoop`](../scripts/migrations/2026-05-20-persona-test-to-audit-loop.mjs#L66) | function | `scripts/migrations/2026-05-20-persona-test-to-audit-loop.mjs` | 66-73 | Verifies the target database URL belongs to the Audit-loop project. | _(internal)_ |
@@ -2260,13 +3038,13 @@ _Domain has 308 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`main`](../scripts/reconcile-repo-identity.mjs#L107) | function | `scripts/reconcile-repo-identity.mjs` | 107-313 | Entry point that reconciles legacy (fingerprint-based) and canonical (uuid-based) repo identity records in the audit database. | _(internal)_ |
 | [`pgTextArray`](../scripts/reconcile-repo-identity.mjs#L345) | function | `scripts/reconcile-repo-identity.mjs` | 345-352 | Parses a Postgres array-literal string or JS array into a normalized string array. | _(internal)_ |
 | [`repoBaseName`](../scripts/reconcile-repo-identity.mjs#L60) | function | `scripts/reconcile-repo-identity.mjs` | 60-63 | Extracts the base (rightmost) name component from a full repo name/path. | _(internal)_ |
-| [`cmdExtract`](../scripts/requirements.mjs#L57) | function | `scripts/requirements.mjs` | 57-99 | Extracts requirements from files via multiple LLM runs, writes candidates and gap assessments to disk. | _(internal)_ |
-| [`cmdIndex`](../scripts/requirements.mjs#L158) | function | `scripts/requirements.mjs` | 158-166 | Derives and prints the requirements index in human-readable or JSON format. | _(internal)_ |
-| [`cmdReconcile`](../scripts/requirements.mjs#L101) | function | `scripts/requirements.mjs` | 101-156 | Reconciles extracted requirements with optional gap assessments and user overrides into a committed ledger. | _(internal)_ |
-| [`cmdRender`](../scripts/requirements.mjs#L169) | function | `scripts/requirements.mjs` | 169-179 | Converts a requirements ledger to markdown and writes it to a file. | _(internal)_ |
-| [`flag`](../scripts/requirements.mjs#L52) | function | `scripts/requirements.mjs` | 52-55 | Returns the value of a CLI flag name (e.g., `--files foo` → `foo`). | _(internal)_ |
-| [`gitSha`](../scripts/requirements.mjs#L44) | function | `scripts/requirements.mjs` | 44-50 | Returns the current Git HEAD commit SHA or null if the command fails. | _(internal)_ |
-| [`main`](../scripts/requirements.mjs#L181) | function | `scripts/requirements.mjs` | 181-198 | Dispatches to extract, reconcile, index, or render based on the subcommand argument. | _(internal)_ |
+| [`cmdExtract`](../scripts/requirements.mjs#L57) | function | `scripts/requirements.mjs` | 57-99 | Extracts de-facto behavioral requirements from specified files by running an LLM extractor multiple times. | _(internal)_ |
+| [`cmdIndex`](../scripts/requirements.mjs#L158) | function | `scripts/requirements.mjs` | 158-166 | Derives an indexed view of all requirements from the ledger and prints it as a table or JSON. | _(internal)_ |
+| [`cmdReconcile`](../scripts/requirements.mjs#L101) | function | `scripts/requirements.mjs` | 101-156 | Merges extracted requirement candidates with gap assessments and user overrides into a persisted ledger. | _(internal)_ |
+| [`cmdRender`](../scripts/requirements.mjs#L169) | function | `scripts/requirements.mjs` | 169-179 | Converts the requirements ledger to a markdown document and writes it to disk. | _(internal)_ |
+| [`flag`](../scripts/requirements.mjs#L52) | function | `scripts/requirements.mjs` | 52-55 | Extracts a command-line flag's value from argv by searching for the flag name and returning its next argument. | _(internal)_ |
+| [`gitSha`](../scripts/requirements.mjs#L44) | function | `scripts/requirements.mjs` | 44-50 | Retrieves the current git HEAD commit SHA. | _(internal)_ |
+| [`main`](../scripts/requirements.mjs#L181) | function | `scripts/requirements.mjs` | 181-198 | CLI dispatcher that routes `extract`, `reconcile`, `index`, or `render` commands to their handlers. | _(internal)_ |
 | [`classifyMitigation`](../scripts/security-memory/incident-status.mjs#L33) | function | `scripts/security-memory/incident-status.mjs` | 33-57 | Determines whether a security incident's mitigation is passing, failing, or manually-verifiable. | `scripts/security-memory/refresh-incidents.mjs` |
 | [`runSemgrepIfNeeded`](../scripts/security-memory/incident-status.mjs#L71) | function | `scripts/security-memory/incident-status.mjs` | 71-150 | Runs semgrep against a local rule or registry reference with caching and path-traversal guards. | `scripts/security-memory/refresh-incidents.mjs` |
 | [`sha256`](../scripts/security-memory/incident-status.mjs#L152) | function | `scripts/security-memory/incident-status.mjs` | 152-154 | Returns the first 16 hex digits of a SHA256 hash. | `scripts/security-memory/refresh-incidents.mjs` |
@@ -2387,9 +3165,41 @@ _Domain has 308 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 
 ---
 
+## security
+
+> Detects and classifies secrets in incident findings: high-confidence secrets are blocked entirely, low-confidence PII auto-redacted before indexing to the security memory.
+
+```mermaid
+flowchart TB
+subgraph dom_security ["security"]
+  file_scripts_lib_security_secret_classifier_m["scripts/lib/security/secret-classifier.mjs"]:::component
+  sym_scripts_lib_security_secret_classifier_m["classifySecrets"]:::symbol
+  file_scripts_lib_security_secret_classifier_m --> sym_scripts_lib_security_secret_classifier_m
+  sym_scripts_lib_security_secret_classifier_m["maskSample"]:::symbol
+  file_scripts_lib_security_secret_classifier_m --> sym_scripts_lib_security_secret_classifier_m
+  sym_scripts_lib_security_secret_classifier_m["preWriteSecretGate"]:::symbol
+  file_scripts_lib_security_secret_classifier_m --> sym_scripts_lib_security_secret_classifier_m
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`classifySecrets`](../scripts/lib/security/secret-classifier.mjs#L61) | function | `scripts/lib/security/secret-classifier.mjs` | 61-76 | Categorizes detected secrets as high or low confidence. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
+| [`maskSample`](../scripts/lib/security/secret-classifier.mjs#L139) | function | `scripts/lib/security/secret-classifier.mjs` | 139-141 | Truncates a string sample to first 6 characters plus ellipsis. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
+| [`preWriteSecretGate`](../scripts/lib/security/secret-classifier.mjs#L89) | function | `scripts/lib/security/secret-classifier.mjs` | 89-136 | Refuses high-confidence secrets, auto-redacts low-confidence PII before storage. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
+
+---
+
 ## shared-lib
 
-> Middleware and reusable modules for the engineering-skills CLI suite: Anthropic client abstraction (SDK vs CLI backend routing), configuration/model resolution, egress-gate secret redaction, and I/O builders (Zod schemas, file/Postgres querying).
+> Modularized library supporting the CLI skills: LLM client routing (Anthropic/OpenAI/Gemini, SDK/CLI backends), audit-loop coordination (multi-pass analysis, suppression, Gemini adjudication), secret redaction, and PostgreSQL storage.
 
 ```mermaid
 flowchart TB
@@ -2434,7 +3244,7 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+_Domain has 569 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
@@ -2457,59 +3267,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`resolveTimeoutMs`](../scripts/lib/anthropic-client.mjs#L93) | function | `scripts/lib/anthropic-client.mjs` | 93-104 | Resolves and validates the effective CLI timeout in milliseconds from options or environment. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/evolve-prompts.mjs`, +11 more |
 | [`runClaudeCli`](../scripts/lib/anthropic-client.mjs#L522) | function | `scripts/lib/anthropic-client.mjs` | 522-636 | Spawns a `claude -p` subprocess, manages I/O, enforces timeouts, and parses JSON output. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/evolve-prompts.mjs`, +11 more |
 | [`wrapSdkClient`](../scripts/lib/anthropic-client.mjs#L289) | function | `scripts/lib/anthropic-client.mjs` | 289-308 | Wraps an SDK client to apply redaction and normalize timeout parameter names. | `scripts/anthropic-ping.mjs`, `scripts/azure-limits.mjs`, `scripts/evolve-prompts.mjs`, +11 more |
-| [`computeDeadIntent`](../scripts/lib/arch-intent/adapter-contract.mjs#L191) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 191-199 | Identifies declared domains with no live files | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`deriveArchState`](../scripts/lib/arch-intent/adapter-contract.mjs#L363) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 363-374 | Categorizes architecture report status (clean/findings/error/skipped) | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`fsWalkFallback`](../scripts/lib/arch-intent/adapter-contract.mjs#L68) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 68-88 | Lists repo files by walking filesystem | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`inventoryAllPaths`](../scripts/lib/arch-intent/adapter-contract.mjs#L169) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 169-176 | Maps all repo paths to domains (for dead-domain detection) | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`inventoryFiles`](../scripts/lib/arch-intent/adapter-contract.mjs#L133) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 133-151 | Maps source files to architecture domains | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`isArchIntentReportClean`](../scripts/lib/arch-intent/adapter-contract.mjs#L349) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 349-354 | Checks whether architecture report is violation-free | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`listRepoPaths`](../scripts/lib/arch-intent/adapter-contract.mjs#L103) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 103-118 | Lists git-tracked and untracked files | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`loadAdapter`](../scripts/lib/arch-intent/adapter-contract.mjs#L214) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 214-232 | Dynamically imports stack-specific architecture analyzer | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`runArchIntentAnalysis`](../scripts/lib/arch-intent/adapter-contract.mjs#L263) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 263-331 | Runs full architecture-intent analysis pipeline (inventory, violations, dead domains) | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`validateAdapterReport`](../scripts/lib/arch-intent/adapter-contract.mjs#L241) | function | `scripts/lib/arch-intent/adapter-contract.mjs` | 241-252 | Validates adapter-returned report schema | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`analyseImports`](../scripts/lib/arch-intent/adapters/java.mjs#L325) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 325-444 | Analyzes Java import dependencies across mapped files, detecting cross-domain edges and unresolved references. | _(internal)_ |
-| [`buildJavaResolutionIndex`](../scripts/lib/arch-intent/adapters/java.mjs#L176) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 176-233 | Indexes Java files by fully-qualified name, package, and source root for import resolution. | _(internal)_ |
-| [`extractImports`](../scripts/lib/arch-intent/adapters/java.mjs#L132) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 132-164 | Parses Java import statements including static and wildcard forms with line numbers. | _(internal)_ |
-| [`extractPackage`](../scripts/lib/arch-intent/adapters/java.mjs#L115) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 115-118 | Extracts the package declaration from Java source code. | _(internal)_ |
-| [`progressiveResolve`](../scripts/lib/arch-intent/adapters/java.mjs#L246) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 246-265 | Progressively resolves a Java FQN by dropping package segments or classifies as external/unresolved. | _(internal)_ |
-| [`resolveJavaImport`](../scripts/lib/arch-intent/adapters/java.mjs#L275) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 275-314 | Resolves a Java import reference to target files using the resolution index, handling wildcards and static imports. | _(internal)_ |
-| [`stripJavaCommentsAndLiterals`](../scripts/lib/arch-intent/adapters/java.mjs#L44) | function | `scripts/lib/arch-intent/adapters/java.mjs` | 44-106 | Removes Java comments and string literals while preserving line structure for parsing. | _(internal)_ |
-| [`analyseImports`](../scripts/lib/arch-intent/adapters/js-ts.mjs#L74) | function | `scripts/lib/arch-intent/adapters/js-ts.mjs` | 74-214 | Analyzes JavaScript/TypeScript import dependencies using dependency-cruiser, tracking vendor/local/dynamic/unresolved edges. | _(internal)_ |
-| [`classifyEdge`](../scripts/lib/arch-intent/adapters/js-ts.mjs#L33) | function | `scripts/lib/arch-intent/adapters/js-ts.mjs` | 33-49 | Categorizes a dependency-cruiser edge as type-only, dynamic, local-file, vendor, or unresolved. | _(internal)_ |
-| [`normalisePath`](../scripts/lib/arch-intent/adapters/js-ts.mjs#L58) | function | `scripts/lib/arch-intent/adapters/js-ts.mjs` | 58-63 | Normalizes a path to repo-relative forward-slash form. | _(internal)_ |
-| [`analyseImports`](../scripts/lib/arch-intent/adapters/postgres.mjs#L605) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 605-698 | Performs multi-stage SQL import analysis: parsing, cataloging, resolving references, and detecting violations. | _(internal)_ |
-| [`buildSqlCatalog`](../scripts/lib/arch-intent/adapters/postgres.mjs#L499) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 499-560 | Builds an in-memory catalog of SQL objects (relations, functions, types) from parsed files, tracking definitions, references, and redefinitions. | _(internal)_ |
-| [`classifyStatement`](../scripts/lib/arch-intent/adapters/postgres.mjs#L295) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 295-427 | Parses an individual SQL statement to extract object definitions and cross-object references (foreign keys, partitioning). | _(internal)_ |
-| [`displayName`](../scripts/lib/arch-intent/adapters/postgres.mjs#L234) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 234-236 | Reverses dot-escaping for human-readable SQL name display. | _(internal)_ |
-| [`extractCallRefs`](../scripts/lib/arch-intent/adapters/postgres.mjs#L460) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 460-471 | Extracts function call names from SQL body text and records them as reference edges. | _(internal)_ |
-| [`extractPolicyTableRefs`](../scripts/lib/arch-intent/adapters/postgres.mjs#L474) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 474-483 | Identifies table references in SQL policy expressions via FROM/JOIN and dotted-identifier patterns. | _(internal)_ |
-| [`extractSelectRefs`](../scripts/lib/arch-intent/adapters/postgres.mjs#L440) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 440-457 | Parses a SQL SELECT statement to identify table/view/CTE references in FROM and JOIN clauses. | _(internal)_ |
-| [`naturalCompare`](../scripts/lib/arch-intent/adapters/postgres.mjs#L488) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 488-490 | Performs locale-aware, numerically-aware string comparison for natural sorting. | _(internal)_ |
-| [`normName`](../scripts/lib/arch-intent/adapters/postgres.mjs#L197) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 197-228 | Normalizes a SQL schema-qualified name (lowercasing unquoted identifiers, escaping internal dots). | _(internal)_ |
-| [`parseFile`](../scripts/lib/arch-intent/adapters/postgres.mjs#L262) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 262-293 | Parses a SQL file into statements and classifies each as CREATE/ALTER/DROP, extracting definitions and references. | _(internal)_ |
-| [`recoverFunctionBody`](../scripts/lib/arch-intent/adapters/postgres.mjs#L430) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 430-437 | Extracts the body of a SQL function from source code, handling dollar-quoting and `as` string syntaxes. | _(internal)_ |
-| [`resolveSqlRef`](../scripts/lib/arch-intent/adapters/postgres.mjs#L571) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 571-594 | Resolves a SQL reference name to a local definition file, proven external/builtin, or unresolved state. | _(internal)_ |
-| [`splitTopLevel`](../scripts/lib/arch-intent/adapters/postgres.mjs#L239) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 239-250 | Splits a SQL body string by a separator at depth zero (outside parentheses). | _(internal)_ |
-| [`stripSqlCommentsAndStrings`](../scripts/lib/arch-intent/adapters/postgres.mjs#L102) | function | `scripts/lib/arch-intent/adapters/postgres.mjs` | 102-187 | Removes SQL comments and string literals while preserving line structure and handling nested blocks. | _(internal)_ |
-| [`analyseImports`](../scripts/lib/arch-intent/adapters/python.mjs#L507) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 507-586 | Performs multi-stage Python import analysis: discovering roots, indexing modules, extracting imports, resolving, and detecting violations. | _(internal)_ |
-| [`buildPythonModuleIndex`](../scripts/lib/arch-intent/adapters/python.mjs#L383) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 383-426 | Builds a dotted-module-name-to-file mapping, detecting collisions where multiple files define the same module. | _(internal)_ |
-| [`countUnbalanced`](../scripts/lib/arch-intent/adapters/python.mjs#L254) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 254-261 | Counts net unmatched parentheses to detect whether a logical Python line continues across physical lines. | _(internal)_ |
-| [`discoverPythonRoots`](../scripts/lib/arch-intent/adapters/python.mjs#L287) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 287-350 | Discovers Python package root directories via packaging metadata, src/ directories, and __init__.py walk. | _(internal)_ |
-| [`extractImports`](../scripts/lib/arch-intent/adapters/python.mjs#L196) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 196-251 | Parses Python import statements from source, handling continuation lines and statement-per-line multiplexing. | _(internal)_ |
-| [`extractPackageDirs`](../scripts/lib/arch-intent/adapters/python.mjs#L353) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 353-364 | Extracts package directory paths from setup.cfg or pyproject.toml configuration. | _(internal)_ |
-| [`isPySource`](../scripts/lib/arch-intent/adapters/python.mjs#L366) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 366-369 | Checks if a file is Python source (.py or .pyi extension). | _(internal)_ |
-| [`parseImportedNames`](../scripts/lib/arch-intent/adapters/python.mjs#L264) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 264-271 | Parses the imported names in a `from ... import` clause, handling aliases and wildcards. | _(internal)_ |
-| [`resolvePythonImport`](../scripts/lib/arch-intent/adapters/python.mjs#L439) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 439-496 | Resolves a Python import reference to a local file, stdlib module, or unresolved state. | _(internal)_ |
-| [`stripPythonCommentsAndStrings`](../scripts/lib/arch-intent/adapters/python.mjs#L72) | function | `scripts/lib/arch-intent/adapters/python.mjs` | 72-178 | Removes Python comments and string literals while preserving line structure and f-string brace tracking. | _(internal)_ |
-| [`checkDepAllowed`](../scripts/lib/arch-intent/domain-resolver.mjs#L53) | function | `scripts/lib/arch-intent/domain-resolver.mjs` | 53-60 | Checks if a dependency edge from one domain to another is permitted by the allowed-dependencies config. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/adapters/java.mjs`, +4 more |
-| [`computeDeclaredDomains`](../scripts/lib/arch-intent/domain-resolver.mjs#L76) | function | `scripts/lib/arch-intent/domain-resolver.mjs` | 76-86 | Extracts all domains declared in rules, allowedDeps keys/values, or descriptions. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/adapters/java.mjs`, +4 more |
-| [`resolveFileToDomain`](../scripts/lib/arch-intent/domain-resolver.mjs#L29) | function | `scripts/lib/arch-intent/domain-resolver.mjs` | 29-38 | Matches a file path against domain rules using minimatch patterns to determine its domain assignment. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/adapters/java.mjs`, +4 more |
-| [`ArchIntentAnalyzerError`](../scripts/lib/arch-intent/errors.mjs#L18) | class | `scripts/lib/arch-intent/errors.mjs` | 18-25 | Error class for analysis-stage failures, categorizing error types and preserving cause chains. | `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/load-config.mjs`, `scripts/lib/arch-intent/semantic-validator.mjs`, +2 more |
-| [`ArchIntentConfigError`](../scripts/lib/arch-intent/errors.mjs#L9) | class | `scripts/lib/arch-intent/errors.mjs` | 9-16 | Error class for configuration loading and validation failures, distinguishing shape from semantic errors. | `scripts/lib/arch-intent/adapter-contract.mjs`, `scripts/lib/arch-intent/load-config.mjs`, `scripts/lib/arch-intent/semantic-validator.mjs`, +2 more |
-| [`parseIntentDoc`](../scripts/lib/arch-intent/intent-doc-parser.mjs#L27) | function | `scripts/lib/arch-intent/intent-doc-parser.mjs` | 27-78 | Extracts mermaid diagrams, version strings, and section narratives from markdown intent documentation. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`loadArchIntentConfig`](../scripts/lib/arch-intent/load-config.mjs#L35) | function | `scripts/lib/arch-intent/load-config.mjs` | 35-69 | Loads and validates the domain-map.json configuration, performing shape and semantic validation. | `scripts/arch-intent-bootstrap.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`rulesDeclaredDomains`](../scripts/lib/arch-intent/semantic-validator.mjs#L30) | function | `scripts/lib/arch-intent/semantic-validator.mjs` | 30-34 | Extracts all domains declared in the rules array plus the VENDOR pseudo-domain. | `scripts/lib/arch-intent/load-config.mjs` |
-| [`validateDomainMapSemantics`](../scripts/lib/arch-intent/semantic-validator.mjs#L42) | function | `scripts/lib/arch-intent/semantic-validator.mjs` | 42-97 | Validates domain-map semantics: ensures allowedDeps and description keys reference declared domains, detects rule shadowing. | `scripts/lib/arch-intent/load-config.mjs` |
 | [`escapeMarkdown`](../scripts/lib/arch-render.mjs#L22) | function | `scripts/lib/arch-render.mjs` | 22-28 | Escapes pipe, newline, and carriage-return characters for safe markdown rendering. | `scripts/symbol-index/drift.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
 | [`escapeMermaidLabel`](../scripts/lib/arch-render.mjs#L31) | function | `scripts/lib/arch-render.mjs` | 31-37 | Escapes and truncates strings for safe use as mermaid node labels, replacing special characters. | `scripts/symbol-index/drift.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
 | [`groupByDomain`](../scripts/lib/arch-render.mjs#L45) | function | `scripts/lib/arch-render.mjs` | 45-63 | Groups symbols by domain tag and sorts both domain keys and symbols within each domain. | `scripts/symbol-index/drift.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
@@ -2521,51 +3278,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`renderNeighbourhoodCallout`](../scripts/lib/arch-render.mjs#L289) | function | `scripts/lib/arch-render.mjs` | 289-357 | Renders a markdown callout displaying architectural-memory consultation results with status and reuse recommendations. | `scripts/symbol-index/drift.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
 | [`renderSymbolTable`](../scripts/lib/arch-render.mjs#L114) | function | `scripts/lib/arch-render.mjs` | 114-138 | Renders a markdown table of symbols with metadata, optionally including an importer "where used" column. | `scripts/symbol-index/drift.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
 | [`renderWhereUsed`](../scripts/lib/arch-render.mjs#L140) | function | `scripts/lib/arch-render.mjs` | 140-154 | Renders the list of files importing a given file, showing top 3 and indicating if more exist. | `scripts/symbol-index/drift.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
-| [`maybeFireArmEvalCaptureDetached`](../scripts/lib/arm-eval/capture-trigger.mjs#L52) | function | `scripts/lib/arm-eval/capture-trigger.mjs` | 52-83 | Conditionally spawns a detached background process to capture arm-eval experiment data if enabled. | `scripts/brainstorm-round.mjs`, `scripts/cross-skill.mjs` |
-| [`envelope`](../scripts/lib/arm-eval/cross-checks.mjs#L22) | function | `scripts/lib/arm-eval/cross-checks.mjs` | 22-32 | Wraps a cross-check result in a standardized envelope with name, version, status, and findings. | `scripts/lib/arm-eval/run.mjs` |
-| [`runCrossChecks`](../scripts/lib/arm-eval/cross-checks.mjs#L80) | function | `scripts/lib/arm-eval/cross-checks.mjs` | 80-93 | Executes a list of cross-check functions sequentially, enveloping results and catching errors. | `scripts/lib/arm-eval/run.mjs` |
-| [`evaluateArmEval`](../scripts/lib/arm-eval/decision.mjs#L94) | function | `scripts/lib/arm-eval/decision.mjs` | 94-221 | Evaluates all collected arm-eval sessions to produce a verdict (keep/switch/inconclusive) and ranking based on rubric scores. | `scripts/cross-skill.mjs` |
-| [`kendallTau`](../scripts/lib/arm-eval/decision.mjs#L68) | function | `scripts/lib/arm-eval/decision.mjs` | 68-82 | Computes Kendall's tau rank correlation coefficient between two arm rankings. | `scripts/cross-skill.mjs` |
-| [`mean`](../scripts/lib/arm-eval/decision.mjs#L33) | function | `scripts/lib/arm-eval/decision.mjs` | 33-33 | Computes the arithmetic mean of a numeric array. | `scripts/cross-skill.mjs` |
-| [`round4`](../scripts/lib/arm-eval/decision.mjs#L34) | function | `scripts/lib/arm-eval/decision.mjs` | 34-34 | Rounds a number to 4 decimal places. | `scripts/cross-skill.mjs` |
-| [`sessionArmMeans`](../scripts/lib/arm-eval/decision.mjs#L38) | function | `scripts/lib/arm-eval/decision.mjs` | 38-50 | Computes the mean score per arm across judge passes in an arm-eval session. | `scripts/cross-skill.mjs` |
-| [`sessionSelfConsistency`](../scripts/lib/arm-eval/decision.mjs#L54) | function | `scripts/lib/arm-eval/decision.mjs` | 54-64 | Computes the mean absolute delta between arm dimensions across the first two judge passes. | `scripts/cross-skill.mjs` |
-| [`getExperiment`](../scripts/lib/arm-eval/experiments.mjs#L186) | function | `scripts/lib/arm-eval/experiments.mjs` | 186-190 | Looks up and returns a canonical experiment definition by type name, throwing on unknown types. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`isClaudeFamily`](../scripts/lib/arm-eval/experiments.mjs#L107) | function | `scripts/lib/arm-eval/experiments.mjs` | 107-116 | Checks if a model identifier refers to a Claude/Anthropic family model. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`rubricFor`](../scripts/lib/arm-eval/experiments.mjs#L66) | function | `scripts/lib/arm-eval/experiments.mjs` | 66-70 | Returns the complete rubric (evaluation dimensions) for an experiment type by combining core and experiment-specific dimensions. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`validateArm`](../scripts/lib/arm-eval/experiments.mjs#L122) | function | `scripts/lib/arm-eval/experiments.mjs` | 122-130 | Validates an arm definition, ensuring it parses correctly and contains no Claude-family models. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`validateExperiment`](../scripts/lib/arm-eval/experiments.mjs#L133) | function | `scripts/lib/arm-eval/experiments.mjs` | 133-141 | Validates an experiment configuration object against a schema and its arms, returning detailed error messages on failure. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`buildSessionMarkdown`](../scripts/lib/arm-eval/export.mjs#L47) | function | `scripts/lib/arm-eval/export.mjs` | 47-111 | Constructs the full markdown document for an exported arm-eval session, blinding output labels and author info in prospective phase. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`exportSession`](../scripts/lib/arm-eval/export.mjs#L118) | function | `scripts/lib/arm-eval/export.mjs` | 118-127 | Writes an arm-eval session to disk as a markdown file after building the document. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`filenameFor`](../scripts/lib/arm-eval/export.mjs#L34) | function | `scripts/lib/arm-eval/export.mjs` | 34-39 | Generates a timestamped, metadata-enriched filename for exporting a session to markdown. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`redact`](../scripts/lib/arm-eval/export.mjs#L41) | function | `scripts/lib/arm-eval/export.mjs` | 41-41 | Redacts secrets from a string using shape-based pattern matching. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`buildIntentContext`](../scripts/lib/arm-eval/intent-context.mjs#L52) | function | `scripts/lib/arm-eval/intent-context.mjs` | 52-113 | Assembles repository architecture map and domain configuration as context for arm-eval judge prompts. | `scripts/lib/arm-eval/run.mjs` |
-| [`cap`](../scripts/lib/arm-eval/intent-context.mjs#L42) | function | `scripts/lib/arm-eval/intent-context.mjs` | 42-45 | Truncates text to a maximum length with an ellipsis indicator. | `scripts/lib/arm-eval/run.mjs` |
-| [`defaultDeps`](../scripts/lib/arm-eval/intent-context.mjs#L29) | function | `scripts/lib/arm-eval/intent-context.mjs` | 29-34 | Returns default filesystem dependencies (readFile, exists) as fallback implementations. | `scripts/lib/arm-eval/run.mjs` |
-| [`tryRead`](../scripts/lib/arm-eval/intent-context.mjs#L37) | function | `scripts/lib/arm-eval/intent-context.mjs` | 37-39 | Safely reads a file, returning null on any filesystem or parsing error. | `scripts/lib/arm-eval/run.mjs` |
-| [`buildJudgePrompt`](../scripts/lib/arm-eval/judge.mjs#L64) | function | `scripts/lib/arm-eval/judge.mjs` | 64-79 | Constructs a system prompt for the judge to score multiple anonymized outputs against rubric dimensions. | `scripts/lib/arm-eval/run.mjs` |
-| [`callJudgeDefault`](../scripts/lib/arm-eval/judge.mjs#L171) | function | `scripts/lib/arm-eval/judge.mjs` | 171-210 | Invokes Claude Opus to score anonymized outputs while applying egress-safe redaction on the outbound payload. | `scripts/lib/arm-eval/run.mjs` |
-| [`extractJsonObject`](../scripts/lib/arm-eval/judge.mjs#L140) | function | `scripts/lib/arm-eval/judge.mjs` | 140-156 | Extracts the first valid JSON object from text by tracking brace depth and string escaping. | `scripts/lib/arm-eval/run.mjs` |
-| [`getShapeRedactor`](../scripts/lib/arm-eval/judge.mjs#L163) | function | `scripts/lib/arm-eval/judge.mjs` | 163-168 | Lazily loads and caches a secret-redactor that preserves legitimate identifiers while removing sensitive data. | `scripts/lib/arm-eval/run.mjs` |
-| [`judgePassSchema`](../scripts/lib/arm-eval/judge.mjs#L45) | function | `scripts/lib/arm-eval/judge.mjs` | 45-57 | Builds a Zod schema that validates judge scores covering all labels exactly once with all required dimensions. | `scripts/lib/arm-eval/run.mjs` |
-| [`judgeSession`](../scripts/lib/arm-eval/judge.mjs#L96) | function | `scripts/lib/arm-eval/judge.mjs` | 96-134 | Orchestrates a two-pass blinded scoring session, shuffling outputs and validating conformance with retry logic. | `scripts/lib/arm-eval/run.mjs` |
-| [`scorableDimensions`](../scripts/lib/arm-eval/judge.mjs#L35) | function | `scripts/lib/arm-eval/judge.mjs` | 35-39 | Returns the list of rubric dimensions to score, optionally excluding intent-only dimensions. | `scripts/lib/arm-eval/run.mjs` |
-| [`seededShuffle`](../scripts/lib/arm-eval/judge.mjs#L30) | function | `scripts/lib/arm-eval/judge.mjs` | 30-32 | Shuffles an array using a seeded random number generator for reproducible randomization. | `scripts/lib/arm-eval/run.mjs` |
-| [`buildPlanGenPrompt`](../scripts/lib/arm-eval/plan-seed.mjs#L31) | function | `scripts/lib/arm-eval/plan-seed.mjs` | 31-37 | Constructs a prompt for generating an implementation plan, optionally with repository architecture and intent context. | `scripts/lib/arm-eval/producers/plan.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`parsePlanIntent`](../scripts/lib/arm-eval/plan-seed.mjs#L41) | function | `scripts/lib/arm-eval/plan-seed.mjs` | 41-61 | Parses the machine-readable intent block (target paths and acceptance criteria) from plan markdown. | `scripts/lib/arm-eval/producers/plan.mjs`, `scripts/lib/arm-eval/run.mjs` |
-| [`hashText`](../scripts/lib/arm-eval/producers/_shared.mjs#L12) | function | `scripts/lib/arm-eval/producers/_shared.mjs` | 12-14 | Returns the first 16 hex characters of a text's SHA256 hash. | `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs` |
-| [`callModelDefault`](../scripts/lib/arm-eval/producers/brainstorm.mjs#L73) | function | `scripts/lib/arm-eval/producers/brainstorm.mjs` | 73-76 | Calls a model with up to 8000 output tokens for free-text brainstorming. | `scripts/lib/arm-eval/run.mjs` |
-| [`produceBrainstorm`](../scripts/lib/arm-eval/producers/brainstorm.mjs#L22) | function | `scripts/lib/arm-eval/producers/brainstorm.mjs` | 22-70 | Generates parallel brainstorm takes from two models and combines them, requiring both legs to be non-empty. | `scripts/lib/arm-eval/run.mjs` |
-| [`callModelFreeText`](../scripts/lib/arm-eval/producers/model-call.mjs#L21) | function | `scripts/lib/arm-eval/producers/model-call.mjs` | 21-45 | Calls a model (OpenRouter OSS, Gemini, or OpenAI GPT) and returns text output plus token usage and latency. | `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs` |
-| [`providerFor`](../scripts/lib/arm-eval/producers/model-call.mjs#L14) | function | `scripts/lib/arm-eval/producers/model-call.mjs` | 14-18 | Routes a resolved model ID to its provider (OSS via OpenRouter, Gemini, or OpenAI GPT). | `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs` |
-| [`callModelDefault`](../scripts/lib/arm-eval/producers/plan.mjs#L62) | function | `scripts/lib/arm-eval/producers/plan.mjs` | 62-65 | Calls a model for plan generation with default token limits. | `scripts/lib/arm-eval/run.mjs` |
-| [`producePlan`](../scripts/lib/arm-eval/producers/plan.mjs#L22) | function | `scripts/lib/arm-eval/producers/plan.mjs` | 22-59 | Generates a single-model plan with intent-block extraction and conformance validation. | `scripts/lib/arm-eval/run.mjs` |
-| [`defaultDeps`](../scripts/lib/arm-eval/run.mjs#L27) | function | `scripts/lib/arm-eval/run.mjs` | 27-36 | Returns default dependencies for arm-eval session runs (producers, store, cross-checks, seed). | `scripts/cross-skill.mjs` |
-| [`hashTask`](../scripts/lib/arm-eval/run.mjs#L125) | function | `scripts/lib/arm-eval/run.mjs` | 125-131 | Generates a deterministic "task-" prefixed ID from a task string using FNV-1a hashing. | `scripts/cross-skill.mjs` |
-| [`runArmEvalSession`](../scripts/lib/arm-eval/run.mjs#L45) | function | `scripts/lib/arm-eval/run.mjs` | 45-122 | Orchestrates a complete arm-eval experiment session: produces outputs per arm, judges them, runs cross-checks, and records results. | `scripts/cross-skill.mjs` |
-| [`readToggle`](../scripts/lib/arm-eval/toggle.mjs#L37) | function | `scripts/lib/arm-eval/toggle.mjs` | 37-52 | Reads the arm-eval feature toggle from disk, returning enabled state, budget, and timestamp. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
-| [`resolveShadowArmsWithToggle`](../scripts/lib/arm-eval/toggle.mjs#L85) | function | `scripts/lib/arm-eval/toggle.mjs` | 85-91 | Resolves shadow audit arms from environment variables or the toggle file, returning the active source. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
-| [`writeToggle`](../scripts/lib/arm-eval/toggle.mjs#L59) | function | `scripts/lib/arm-eval/toggle.mjs` | 59-69 | Writes the arm-eval feature toggle state to disk in JSON format. | `scripts/cross-skill.mjs`, `scripts/lib/arm-eval/capture-trigger.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
 | [`assertRepoRoot`](../scripts/lib/assert-repo-root.mjs#L54) | function | `scripts/lib/assert-repo-root.mjs` | 54-85 | Validates that the current working directory matches the script's repo root, exiting with error if not. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +22 more |
 | [`findExpectedRoot`](../scripts/lib/assert-repo-root.mjs#L30) | function | `scripts/lib/assert-repo-root.mjs` | 30-38 | Locates the repo root by walking up from a script path until finding the 'scripts' directory. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +22 more |
 | [`findRepoRootFromScript`](../scripts/lib/assert-repo-root.mjs#L99) | function | `scripts/lib/assert-repo-root.mjs` | 99-102 | Finds the repo root from a script's import.meta.url by searching for the 'scripts' directory. | `scripts/bandit.mjs`, `scripts/build-dashboard.mjs`, `scripts/cache-hitrate-check.mjs`, +22 more |
@@ -2663,49 +3375,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`readProjectContext`](../scripts/lib/context.mjs#L596) | function | `scripts/lib/context.mjs` | 596-600 | Returns project context (cached brief or raw CLAUDE.md) for general audit use | `scripts/check-sync.mjs`, `scripts/debt-auto-capture.mjs`, `scripts/debt-resolve.mjs`, +5 more |
 | [`readProjectContextForPass`](../scripts/lib/context.mjs#L520) | function | `scripts/lib/context.mjs` | 520-538 | Returns project context (brief, pass-specific addendum, false-positive allowlist) for an audit pass | `scripts/check-sync.mjs`, `scripts/debt-auto-capture.mjs`, `scripts/debt-resolve.mjs`, +5 more |
 | [`saveSessionCache`](../scripts/lib/context.mjs#L311) | function | `scripts/lib/context.mjs` | 311-326 | Saves the cached brief and repo profile to disk with a staleness fingerprint | `scripts/check-sync.mjs`, `scripts/debt-auto-capture.mjs`, `scripts/debt-resolve.mjs`, +5 more |
-| [`resolvePreviewGate`](../scripts/lib/cycle/topology.mjs#L30) | function | `scripts/lib/cycle/topology.mjs` | 30-49 | Resolves preview-gate configuration to an action (halt/warn/none) with guidance message | `scripts/cross-skill.mjs`, `scripts/lib/config.mjs` |
-| [`_resetForTest`](../scripts/lib/db/client.mjs#L421) | function | `scripts/lib/db/client.mjs` | 421-423 | Closes the database connection pool for test cleanup. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`assertDisposableDbUrl`](../scripts/lib/db/client.mjs#L108) | function | `scripts/lib/db/client.mjs` | 108-129 | Ensures AUDIT_DB_TEST_URL is a disposable test database, not Supabase-hosted or production. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`assertPublicSchema`](../scripts/lib/db/client.mjs#L230) | function | `scripts/lib/db/client.mjs` | 230-239 | Ensures AUDIT_DB_SCHEMA is unset or 'public' (arbitrary schemas not supported). | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`assertSafeDsn`](../scripts/lib/db/client.mjs#L60) | function | `scripts/lib/db/client.mjs` | 60-80 | Validates AUDIT_DB_URL is a valid postgresql:// DSN, rejecting the Supabase Transaction pooler. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`buildPoolConfig`](../scripts/lib/db/client.mjs#L257) | function | `scripts/lib/db/client.mjs` | 257-319 | Constructs a pg.Pool configuration with SSL mode, pool size, custom type parsers, and search_path options. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`closePool`](../scripts/lib/db/client.mjs#L399) | function | `scripts/lib/db/client.mjs` | 399-412 | Gracefully closes the singleton pg.Pool and nulls the reference. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`getActiveTxClient`](../scripts/lib/db/client.mjs#L148) | function | `scripts/lib/db/client.mjs` | 148-151 | Returns the active transaction client from AsyncLocalStorage context, or null if none active. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`getPool`](../scripts/lib/db/client.mjs#L335) | function | `scripts/lib/db/client.mjs` | 335-387 | Lazily initializes and returns a singleton pg.Pool instance with idempotent shared-env loading. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`resolveDbUrl`](../scripts/lib/db/client.mjs#L182) | function | `scripts/lib/db/client.mjs` | 182-222 | Resolves AUDIT_DB_URL (or legacy alias) from environment, validates preconditions, and returns the connection string. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`warnAliasOnce`](../scripts/lib/db/client.mjs#L168) | function | `scripts/lib/db/client.mjs` | 168-175 | Warns once per alias that a deprecated environment variable is being used. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
-| [`isConnectionExceptionSqlstate`](../scripts/lib/db/errors.mjs#L31) | function | `scripts/lib/db/errors.mjs` | 31-33 | Checks if an error code is a Postgres connection exception (SQLSTATE class 08). | `scripts/lib/db/query.mjs` |
-| [`normalizePostgresError`](../scripts/lib/db/errors.mjs#L82) | function | `scripts/lib/db/errors.mjs` | 82-194 | Classifies a Postgres error as retryable, transient, misconfigured, or fatal. | `scripts/lib/db/query.mjs` |
-| [`_exec`](../scripts/lib/db/query.mjs#L420) | function | `scripts/lib/db/query.mjs` | 420-440 | Executes SQL via active transaction or connection pool with error normalization. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`buildDelete`](../scripts/lib/db/query.mjs#L400) | function | `scripts/lib/db/query.mjs` | 400-405 | Generates DELETE SQL with WHERE condition and optional RETURNING. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`buildInsert`](../scripts/lib/db/query.mjs#L193) | function | `scripts/lib/db/query.mjs` | 193-207 | Generates INSERT SQL with parameterized values and optional RETURNING clause. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`buildUpdate`](../scripts/lib/db/query.mjs#L374) | function | `scripts/lib/db/query.mjs` | 374-394 | Generates UPDATE SQL with SET clauses, WHERE condition, and optional RETURNING. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`buildUpsert`](../scripts/lib/db/query.mjs#L236) | function | `scripts/lib/db/query.mjs` | 236-324 | Generates INSERT ... ON CONFLICT UPDATE SQL for batch upserts with uniform column shapes. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`deleteWhere`](../scripts/lib/db/query.mjs#L543) | function | `scripts/lib/db/query.mjs` | 543-548 | Deletes rows matching a WHERE condition and returns deleted rows if requested. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`flattenWhere`](../scripts/lib/db/query.mjs#L341) | function | `scripts/lib/db/query.mjs` | 341-365 | Flattens a WHERE condition object into SQL clauses and parameter values. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`insertReturning`](../scripts/lib/db/query.mjs#L492) | function | `scripts/lib/db/query.mjs` | 492-500 | Inserts a row and returns the inserted row if a RETURNING clause was specified. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`many`](../scripts/lib/db/query.mjs#L479) | function | `scripts/lib/db/query.mjs` | 479-482 | Executes SQL and returns all rows. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`normalizeConflictTarget`](../scripts/lib/db/query.mjs#L130) | function | `scripts/lib/db/query.mjs` | 130-157 | Parses ON CONFLICT target into column list or constraint-name syntax. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`normalizeReturning`](../scripts/lib/db/query.mjs#L107) | function | `scripts/lib/db/query.mjs` | 107-116 | Normalizes the RETURNING clause to a SQL fragment ('*' or quoted column list). | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`one`](../scripts/lib/db/query.mjs#L462) | function | `scripts/lib/db/query.mjs` | 462-469 | Executes SQL and returns the first row, or null if no rows found. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`pgArray`](../scripts/lib/db/query.mjs#L55) | function | `scripts/lib/db/query.mjs` | 55-58 | Marks a value to bypass JSON serialization and store as a Postgres array literal. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`query`](../scripts/lib/db/query.mjs#L449) | function | `scripts/lib/db/query.mjs` | 449-451 | Executes raw SQL and returns the complete query result. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`quoteIdent`](../scripts/lib/db/query.mjs#L78) | function | `scripts/lib/db/query.mjs` | 78-86 | Escapes SQL identifiers with double quotes and validates against special characters. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`serializeWriteParam`](../scripts/lib/db/query.mjs#L62) | function | `scripts/lib/db/query.mjs` | 62-66 | Converts JavaScript values to database-safe forms, encoding arrays as JSON strings. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`updateWhere`](../scripts/lib/db/query.mjs#L529) | function | `scripts/lib/db/query.mjs` | 529-534 | Updates rows matching a WHERE condition and returns affected rows if requested. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`upsert`](../scripts/lib/db/query.mjs#L514) | function | `scripts/lib/db/query.mjs` | 514-519 | Inserts multiple rows with ON CONFLICT resolution and optional RETURNING. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`withTx`](../scripts/lib/db/query.mjs#L566) | function | `scripts/lib/db/query.mjs` | 566-614 | Executes a callback function within a transaction, supporting nested savepoints. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
-| [`deferFinding`](../scripts/lib/db/rpc.mjs#L96) | function | `scripts/lib/db/rpc.mjs` | 96-104 | Calls the defer_finding stored procedure to dismiss an audit finding. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`driftScore`](../scripts/lib/db/rpc.mjs#L140) | function | `scripts/lib/db/rpc.mjs` | 140-146 | Computes a drift score via stored procedure using embedding similarities. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`frictionNeighbourhood`](../scripts/lib/db/rpc.mjs#L320) | function | `scripts/lib/db/rpc.mjs` | 320-330 | Finds friction issues related to a prompt via similarity search. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`frictionRecurrence`](../scripts/lib/db/rpc.mjs#L307) | function | `scripts/lib/db/rpc.mjs` | 307-313 | Measures how frequently findings recur across runs in a window. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`incidentNeighbourhood`](../scripts/lib/db/rpc.mjs#L254) | function | `scripts/lib/db/rpc.mjs` | 254-267 | Finds related security incidents via vector search on an intent embedding. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`markFindingNeedsTriage`](../scripts/lib/db/rpc.mjs#L122) | function | `scripts/lib/db/rpc.mjs` | 122-129 | Calls mark_finding_needs_triage to flag a finding for manual review. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`memoryHealthMetrics`](../scripts/lib/db/rpc.mjs#L172) | function | `scripts/lib/db/rpc.mjs` | 172-185 | Retrieves memory-health metrics (fuzzy re-raise, cluster density, recurrence rates). | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`publishRefreshRun`](../scripts/lib/db/rpc.mjs#L283) | function | `scripts/lib/db/rpc.mjs` | 283-298 | Publishes a completed symbol-index refresh run to make it queryable. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`symbolNeighbourhood`](../scripts/lib/db/rpc.mjs#L225) | function | `scripts/lib/db/rpc.mjs` | 225-239 | Finds similar symbols via vector search on an intent embedding. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`topDuplicateClusters`](../scripts/lib/db/rpc.mjs#L202) | function | `scripts/lib/db/rpc.mjs` | 202-207 | Finds the top duplicate symbol clusters in a repo. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
-| [`vectorLiteral`](../scripts/lib/db/rpc.mjs#L59) | function | `scripts/lib/db/rpc.mjs` | 59-76 | Validates and formats an embedding vector as a Postgres literal. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
 | [`buildResizeCall`](../scripts/lib/device-presets.mjs#L158) | function | `scripts/lib/device-presets.mjs` | 158-163 | Creates a browser resize MCP call for a device. | `scripts/lib/nav/verify.mjs`, `scripts/visual-audit.mjs` |
 | [`formatLogLine`](../scripts/lib/device-presets.mjs#L152) | function | `scripts/lib/device-presets.mjs` | 152-156 | Formats a log message for a device preset. | `scripts/lib/nav/verify.mjs`, `scripts/visual-audit.mjs` |
 | [`getPreset`](../scripts/lib/device-presets.mjs#L94) | function | `scripts/lib/device-presets.mjs` | 94-100 | Retrieves and validates a named device preset. | `scripts/lib/nav/verify.mjs`, `scripts/visual-audit.mjs` |
@@ -2759,6 +3428,15 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`readFileOrDie`](../scripts/lib/file-io.mjs#L88) | function | `scripts/lib/file-io.mjs` | 88-95 | Read file contents or exit the process with error if not found. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +67 more |
 | [`safeInt`](../scripts/lib/file-io.mjs#L81) | function | `scripts/lib/file-io.mjs` | 81-84 | Parse a string to integer with safe fallback value. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +67 more |
 | [`writeOutput`](../scripts/lib/file-io.mjs#L105) | function | `scripts/lib/file-io.mjs` | 105-116 | Persist results as JSON to a file or stdout depending on --out flag. | `scripts/arch-intent-bootstrap.mjs`, `scripts/brainstorm-round.mjs`, `scripts/build-dashboard.mjs`, +67 more |
+| [`forceRelease`](../scripts/lib/file-lock.mjs#L123) | function | `scripts/lib/file-lock.mjs` | 123-191 | Forcibly removes a stale lock file when its owning process is dead and the file is older than the stale threshold. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
+| [`inspectLock`](../scripts/lib/file-lock.mjs#L91) | function | `scripts/lib/file-lock.mjs` | 91-107 | Reads and parses a lock file to determine its state as owned, corrupted, or unreadable, returning the owner's metadata if valid. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
+| [`isPidAlive`](../scripts/lib/file-lock.mjs#L52) | function | `scripts/lib/file-lock.mjs` | 52-59 | Tests whether a given process ID is currently alive using signal 0. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
+| [`LockTimeoutError`](../scripts/lib/file-lock.mjs#L34) | class | `scripts/lib/file-lock.mjs` | 34-41 | Exception class raised when a file lock cannot be acquired within the specified timeout, carrying the lock path and owner PID. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
+| [`readLockOwnerRaw`](../scripts/lib/file-lock.mjs#L194) | function | `scripts/lib/file-lock.mjs` | 194-200 | Safely reads the PID and token from a lock file's JSON payload, returning null if parsing fails. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
+| [`safeRelease`](../scripts/lib/file-lock.mjs#L208) | function | `scripts/lib/file-lock.mjs` | 208-225 | Releases a lock file only if the current process owns it, with warnings for ownership loss. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
+| [`sleep`](../scripts/lib/file-lock.mjs#L43) | function | `scripts/lib/file-lock.mjs` | 43-43 | Returns a promise that resolves after a specified number of milliseconds. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
+| [`tryAcquireLock`](../scripts/lib/file-lock.mjs#L69) | function | `scripts/lib/file-lock.mjs` | 69-79 | Atomically creates a lock file with process PID and random token, returning the token on success or null if the file already exists. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
+| [`withFileLock`](../scripts/lib/file-lock.mjs#L238) | function | `scripts/lib/file-lock.mjs` | 238-310 | Acquires a file lock with exponential backoff retry logic, executes a callback function, and releases the lock on exit. | `scripts/lib/brainstorm/insight-store.mjs`, `scripts/lib/brainstorm/session-store.mjs`, `scripts/lib/friction/breadcrumb.mjs`, +4 more |
 | [`_acquireLockSync`](../scripts/lib/file-store.mjs#L38) | function | `scripts/lib/file-store.mjs` | 38-70 | Acquires a file-based lock with stale-lock detection and exponential backoff retry. | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/audit/cost-budget.mjs`, +6 more |
 | [`_quarantineRecord`](../scripts/lib/file-store.mjs#L18) | function | `scripts/lib/file-store.mjs` | 18-34 | Quarantines corrupted data to a timestamped JSON file in a quarantine directory. | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/audit/cost-budget.mjs`, +6 more |
 | [`_releaseLock`](../scripts/lib/file-store.mjs#L72) | function | `scripts/lib/file-store.mjs` | 72-74 | Deletes a lock file. | `scripts/bandit.mjs`, `scripts/evolve-prompts.mjs`, `scripts/lib/audit/cost-budget.mjs`, +6 more |
@@ -2777,55 +3455,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`findEnclosingCall`](../scripts/lib/find-rmsync-sites.mjs#L90) | function | `scripts/lib/find-rmsync-sites.mjs` | 90-126 | Detects whether an `rmSync` call is wrapped inside an arrow function passed as a single argument. | _(internal)_ |
 | [`findRmSyncCallSites`](../scripts/lib/find-rmsync-sites.mjs#L162) | function | `scripts/lib/find-rmsync-sites.mjs` | 162-203 | Locates all `fs.rmSync` calls in source code and extracts details about options and enclosing context. | _(internal)_ |
 | [`walkAst`](../scripts/lib/find-rmsync-sites.mjs#L128) | function | `scripts/lib/find-rmsync-sites.mjs` | 128-144 | Recursively traverses an AST, visiting each node while maintaining an ancestor chain. | _(internal)_ |
-| [`detectShape`](../scripts/lib/fit-check/detect.mjs#L69) | function | `scripts/lib/fit-check/detect.mjs` | 69-122 | Detects a repository's technology stack, framework, testing infrastructure, and special features (Playwright, Supabase, etc.). | `scripts/skills-fit-check.mjs` |
-| [`detectTestRunner`](../scripts/lib/fit-check/detect.mjs#L187) | function | `scripts/lib/fit-check/detect.mjs` | 187-199 | Detects which test runner (pytest, vitest, jest, mocha, node-test) is configured. | `scripts/skills-fit-check.mjs` |
-| [`existsAny`](../scripts/lib/fit-check/detect.mjs#L126) | function | `scripts/lib/fit-check/detect.mjs` | 126-128 | Checks if any file in a list exists in a directory. | `scripts/skills-fit-check.mjs` |
-| [`grepForAnnotations`](../scripts/lib/fit-check/detect.mjs#L208) | function | `scripts/lib/fit-check/detect.mjs` | 208-227 | Scans source files in common directories for data-engine-claim annotations within a bounded scan. | `scripts/skills-fit-check.mjs` |
-| [`hasJsonMarker`](../scripts/lib/fit-check/detect.mjs#L150) | function | `scripts/lib/fit-check/detect.mjs` | 150-157 | Reads a JSON file and applies a predicate function to its parsed content. | `scripts/skills-fit-check.mjs` |
-| [`pickFramework`](../scripts/lib/fit-check/detect.mjs#L180) | function | `scripts/lib/fit-check/detect.mjs` | 180-185 | Iterates through framework detection rules to identify the primary framework. | `scripts/skills-fit-check.mjs` |
-| [`pkgHas`](../scripts/lib/fit-check/detect.mjs#L137) | function | `scripts/lib/fit-check/detect.mjs` | 137-142 | Checks whether a dependency name appears in package.json's dependencies or devDependencies. | `scripts/skills-fit-check.mjs` |
-| [`pkgHasBin`](../scripts/lib/fit-check/detect.mjs#L144) | function | `scripts/lib/fit-check/detect.mjs` | 144-148 | Checks whether package.json defines any CLI binaries. | `scripts/skills-fit-check.mjs` |
-| [`pyDepHas`](../scripts/lib/fit-check/detect.mjs#L159) | function | `scripts/lib/fit-check/detect.mjs` | 159-178 | Checks whether a Python dependency appears in pyproject.toml, requirements.txt, or Pipfile via regex matching. | `scripts/skills-fit-check.mjs` |
-| [`readHeadOf`](../scripts/lib/fit-check/detect.mjs#L256) | function | `scripts/lib/fit-check/detect.mjs` | 256-263 | Reads the first N bytes of a file and returns them as UTF-8 text. | `scripts/skills-fit-check.mjs` |
-| [`readPkg`](../scripts/lib/fit-check/detect.mjs#L130) | function | `scripts/lib/fit-check/detect.mjs` | 130-135 | Reads and parses package.json, returning null if absent or invalid JSON. | `scripts/skills-fit-check.mjs` |
-| [`walkBounded`](../scripts/lib/fit-check/detect.mjs#L233) | function | `scripts/lib/fit-check/detect.mjs` | 233-254 | Generator that yields source code file paths up to a maximum count, skipping common non-source directories. | `scripts/skills-fit-check.mjs` |
-| [`applyRules`](../scripts/lib/fit-check/rules.mjs#L201) | function | `scripts/lib/fit-check/rules.mjs` | 201-206 | Evaluates all skill-fit rules against a user profile and returns verdicts. | `scripts/skills-fit-check.mjs` |
-| [`groupByLabel`](../scripts/lib/fit-check/rules.mjs#L212) | function | `scripts/lib/fit-check/rules.mjs` | 212-218 | Partitions skill verdicts into FITS, PARTIAL, and MISMATCH buckets. | `scripts/skills-fit-check.mjs` |
-| [`appendInjected`](../scripts/lib/friction/breadcrumb.mjs#L62) | function | `scripts/lib/friction/breadcrumb.mjs` | 62-88 | Atomically appends a memory injection record to the breadcrumb file with TTL-based pruning. | `scripts/lib/friction/commands.mjs` |
-| [`readLines`](../scripts/lib/friction/breadcrumb.mjs#L36) | function | `scripts/lib/friction/breadcrumb.mjs` | 36-50 | Parses a breadcrumb file as JSON lines, filtering for records with timestamp and memory_name. | `scripts/lib/friction/commands.mjs` |
-| [`readRecent`](../scripts/lib/friction/breadcrumb.mjs#L98) | function | `scripts/lib/friction/breadcrumb.mjs` | 98-111 | Returns recently injected memory records since a timestamp, deduplicated and sorted newest-first. | `scripts/lib/friction/commands.mjs` |
-| [`annotateCluster`](../scripts/lib/friction/commands.mjs#L397) | function | `scripts/lib/friction/commands.mjs` | 397-405 | Enriches a friction cluster with derived fields: protected status, weight, rank, and alarm flag. | `scripts/cross-skill.mjs` |
-| [`buildMemoryFileContent`](../scripts/lib/friction/commands.mjs#L211) | function | `scripts/lib/friction/commands.mjs` | 211-231 | Constructs a friction memory file with YAML frontmatter metadata and prose body. | `scripts/cross-skill.mjs` |
-| [`frictionAdd`](../scripts/lib/friction/commands.mjs#L258) | function | `scripts/lib/friction/commands.mjs` | 258-311 | CLI command to create a new friction memory file locally with metadata and optional cloud mirroring. | `scripts/cross-skill.mjs` |
-| [`frictionDigest`](../scripts/lib/friction/commands.mjs#L374) | function | `scripts/lib/friction/commands.mjs` | 374-394 | CLI command to retrieve and rank friction clusters from the cloud by recurrence and cost weight. | `scripts/cross-skill.mjs` |
-| [`frictionLink`](../scripts/lib/friction/commands.mjs#L416) | function | `scripts/lib/friction/commands.mjs` | 416-466 | CLI command to append a mitigation reference to a friction memory's frontmatter. | `scripts/cross-skill.mjs` |
-| [`frictionMirror`](../scripts/lib/friction/commands.mjs#L321) | function | `scripts/lib/friction/commands.mjs` | 321-365 | CLI command to scan local friction memories and upsert valid/safe rows to the cloud store. | `scripts/cross-skill.mjs` |
-| [`frictionNeighbourhood`](../scripts/lib/friction/commands.mjs#L513) | function | `scripts/lib/friction/commands.mjs` | 513-546 | CLI command to query similar friction memories by prompt and record breadcrumb injections. | `scripts/cross-skill.mjs` |
-| [`frictionSessionReview`](../scripts/lib/friction/commands.mjs#L483) | function | `scripts/lib/friction/commands.mjs` | 483-502 | CLI command to list recently injected friction memories within a time window for human review. | `scripts/cross-skill.mjs` |
-| [`isSafeMemoryName`](../scripts/lib/friction/commands.mjs#L167) | function | `scripts/lib/friction/commands.mjs` | 167-169 | Checks whether a string is a valid single-segment slug for a memory file name. | `scripts/cross-skill.mjs` |
-| [`mirrorOneRow`](../scripts/lib/friction/commands.mjs#L196) | function | `scripts/lib/friction/commands.mjs` | 196-208 | Attempts to upsert a sanitized friction row to the cloud store, returning success/refusal/error. | `scripts/cross-skill.mjs` |
-| [`redactText`](../scripts/lib/friction/commands.mjs#L48) | function | `scripts/lib/friction/commands.mjs` | 48-48 | Redacts secrets from a string input. | `scripts/cross-skill.mjs` |
-| [`resolveDeps`](../scripts/lib/friction/commands.mjs#L51) | function | `scripts/lib/friction/commands.mjs` | 51-69 | Returns a dependency object with friction-command helpers, optionally merged with overrides. | `scripts/cross-skill.mjs` |
-| [`resolveReadRepoId`](../scripts/lib/friction/commands.mjs#L189) | function | `scripts/lib/friction/commands.mjs` | 189-193 | Resolves the current repository's ID from its UUID for cloud read operations. | `scripts/cross-skill.mjs` |
-| [`resolveWriteRepoId`](../scripts/lib/friction/commands.mjs#L183) | function | `scripts/lib/friction/commands.mjs` | 183-186 | Resolves the current repository's ID for cloud write operations. | `scripts/cross-skill.mjs` |
-| [`sanitizeFrictionQueryInput`](../scripts/lib/friction/commands.mjs#L102) | function | `scripts/lib/friction/commands.mjs` | 102-158 | Validates and redacts a friction row for safe cloud storage, filtering to allowlisted fields and gating secrets. | `scripts/cross-skill.mjs` |
-| [`sanitizeRef`](../scripts/lib/friction/commands.mjs#L469) | function | `scripts/lib/friction/commands.mjs` | 469-472 | Sanitizes a reference string by redacting secrets. | `scripts/cross-skill.mjs` |
-| [`slugifyTitle`](../scripts/lib/friction/commands.mjs#L172) | function | `scripts/lib/friction/commands.mjs` | 172-180 | Converts a title string into a lowercase hyphenated slug for a memory file name. | `scripts/cross-skill.mjs` |
-| [`updateMemoryIndex`](../scripts/lib/friction/commands.mjs#L234) | function | `scripts/lib/friction/commands.mjs` | 234-246 | Adds a pointer line to MEMORY.md index, avoiding duplicates and sanitizing the title. | `scripts/cross-skill.mjs` |
-| [`formatSummaryLines`](../scripts/lib/gate-honesty/loader.mjs#L63) | function | `scripts/lib/gate-honesty/loader.mjs` | 63-86 | Formats gate-honesty check results into human-readable summary lines grouped by contract status. | `scripts/check-gate-contracts.mjs` |
-| [`loadGateContracts`](../scripts/lib/gate-honesty/loader.mjs#L25) | function | `scripts/lib/gate-honesty/loader.mjs` | 25-53 | Scans all skills for gate-contract.json files, validates each, and categorizes as contracted/uncontracted/divergent. | `scripts/check-gate-contracts.mjs` |
-| [`cliExit`](../scripts/lib/gate-honesty/oracles.mjs#L131) | function | `scripts/lib/gate-honesty/oracles.mjs` | 131-151 | Test that a CLI tool exits with expected code and stderr output under a fixture. | _(internal)_ |
-| [`convergenceThreshold`](../scripts/lib/gate-honesty/oracles.mjs#L28) | function | `scripts/lib/gate-honesty/oracles.mjs` | 28-56 | Verify that a gate's stated convergence threshold constants match the implementation. | _(internal)_ |
-| [`importImplementation`](../scripts/lib/gate-honesty/oracles.mjs#L22) | function | `scripts/lib/gate-honesty/oracles.mjs` | 22-25 | Dynamically import a module from a repo-relative path. | _(internal)_ |
-| [`runOracle`](../scripts/lib/gate-honesty/oracles.mjs#L167) | function | `scripts/lib/gate-honesty/oracles.mjs` | 167-175 | Dispatch a gate-honesty test to the appropriate oracle adapter. | _(internal)_ |
-| [`tieredShadowWindow`](../scripts/lib/gate-honesty/oracles.mjs#L59) | function | `scripts/lib/gate-honesty/oracles.mjs` | 59-81 | Verify that a tiered-shadow window's progress metrics match the implementation. | _(internal)_ |
-| [`visualGateUnverified`](../scripts/lib/gate-honesty/oracles.mjs#L84) | function | `scripts/lib/gate-honesty/oracles.mjs` | 84-111 | Verify that visual-audit's unverified-reason function returns correct values for test inputs. | _(internal)_ |
-| [`existsFile`](../scripts/lib/gate-honesty/schema.mjs#L186) | function | `scripts/lib/gate-honesty/schema.mjs` | 186-188 | Safely checks whether an absolute file path exists and is a regular file. | `scripts/lib/gate-honesty/loader.mjs` |
-| [`fileTextContains`](../scripts/lib/gate-honesty/schema.mjs#L190) | function | `scripts/lib/gate-honesty/schema.mjs` | 190-192 | Safely checks whether a file contains a substring, returning false on read errors. | `scripts/lib/gate-honesty/loader.mjs` |
-| [`fileTextReferencesId`](../scripts/lib/gate-honesty/schema.mjs#L194) | function | `scripts/lib/gate-honesty/schema.mjs` | 194-196 | Safely checks whether a file contains a gate ID string, returning false on read errors. | `scripts/lib/gate-honesty/loader.mjs` |
-| [`isApprovedStatedInSource`](../scripts/lib/gate-honesty/schema.mjs#L98) | function | `scripts/lib/gate-honesty/schema.mjs` | 98-101 | Checks whether a gate's statedIn location is an approved source (SKILL.md or AGENTS.md). | `scripts/lib/gate-honesty/loader.mjs` |
-| [`resolveContainedPath`](../scripts/lib/gate-honesty/schema.mjs#L111) | function | `scripts/lib/gate-honesty/schema.mjs` | 111-116 | Validates that a relative path resolves within the repo root and is not a broken symlink. | `scripts/lib/gate-honesty/loader.mjs` |
-| [`validateGateContract`](../scripts/lib/gate-honesty/schema.mjs#L129) | function | `scripts/lib/gate-honesty/schema.mjs` | 129-181 | Parses and validates a gate contract JSON, checking gate IDs, file existence, and source references. | `scripts/lib/gate-honesty/loader.mjs` |
 | [`buildFileReferenceRegex`](../scripts/lib/language-profiles.mjs#L302) | function | `scripts/lib/language-profiles.mjs` | 302-308 | Creates a regex to locate file-path references in source code across all supported languages. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/code-analysis.mjs`, `scripts/lib/ledger.mjs`, +4 more |
 | [`buildLanguageContext`](../scripts/lib/language-profiles.mjs#L317) | function | `scripts/lib/language-profiles.mjs` | 317-322 | Constructs context (repo files, Python package roots) for language-aware import resolution. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/code-analysis.mjs`, `scripts/lib/ledger.mjs`, +4 more |
 | [`countFilesByLanguage`](../scripts/lib/language-profiles.mjs#L247) | function | `scripts/lib/language-profiles.mjs` | 247-254 | Counts files grouped by their language profile. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/code-analysis.mjs`, `scripts/lib/ledger.mjs`, +4 more |
@@ -2839,64 +3468,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`makeRegexBoundaries`](../scripts/lib/language-profiles.mjs#L40) | function | `scripts/lib/language-profiles.mjs` | 40-48 | Creates a boundary-scanner function that applies a regex to detect line positions. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/code-analysis.mjs`, `scripts/lib/ledger.mjs`, +4 more |
 | [`pyResolveImport`](../scripts/lib/language-profiles.mjs#L402) | function | `scripts/lib/language-profiles.mjs` | 402-457 | Resolves Python import statements to module or package files using relative/absolute strategies. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/code-analysis.mjs`, `scripts/lib/ledger.mjs`, +4 more |
 | [`pythonBoundaryScanner`](../scripts/lib/language-profiles.mjs#L56) | function | `scripts/lib/language-profiles.mjs` | 56-76 | Identifies Python function/class boundaries while accounting for decorator blocks. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/code-analysis.mjs`, `scripts/lib/ledger.mjs`, +4 more |
-| [`buildAuthorTierObservation`](../scripts/lib/learning/author-tier-observation.mjs#L188) | function | `scripts/lib/learning/author-tier-observation.mjs` | 188-232 | Constructs an audit learning observation capturing author-tier context and declared choice. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`deriveSignals`](../scripts/lib/learning/author-tier-observation.mjs#L93) | function | `scripts/lib/learning/author-tier-observation.mjs` | 93-121 | Extracts audit signals (file count, domains, security touches) from changed files. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`diffBucket`](../scripts/lib/learning/author-tier-observation.mjs#L68) | function | `scripts/lib/learning/author-tier-observation.mjs` | 68-71 | Categorizes a diff by line count into size buckets (economy/standard/frontier). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`normalizeTierHint`](../scripts/lib/learning/author-tier-observation.mjs#L141) | function | `scripts/lib/learning/author-tier-observation.mjs` | 141-145 | Normalizes author-tier hint to canonical logical form or derives tier from model ID. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`suggestTier`](../scripts/lib/learning/author-tier-observation.mjs#L128) | function | `scripts/lib/learning/author-tier-observation.mjs` | 128-133 | Recommends author tier (economy/standard/frontier) based on change signals and heuristics. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`betaPosterior`](../scripts/lib/learning/beta-posterior.mjs#L38) | function | `scripts/lib/learning/beta-posterior.mjs` | 38-61 | Computes posterior mean, variance, and 95% confidence interval for a beta distribution with priors. | `scripts/lib/learning/quickfix-stats.mjs` |
-| [`sampleGamma`](../scripts/lib/learning/beta-posterior.mjs#L136) | function | `scripts/lib/learning/beta-posterior.mjs` | 136-159 | Generates a random Gamma-distributed sample using Marsaglia & Tsang for shape ≥ 1 and boost transform for shape < 1. | `scripts/lib/learning/quickfix-stats.mjs` |
-| [`standardNormal`](../scripts/lib/learning/beta-posterior.mjs#L162) | function | `scripts/lib/learning/beta-posterior.mjs` | 162-168 | Generates a standard normal random sample using Box-Muller transform. | `scripts/lib/learning/quickfix-stats.mjs` |
-| [`thompsonSample`](../scripts/lib/learning/beta-posterior.mjs#L74) | function | `scripts/lib/learning/beta-posterior.mjs` | 74-94 | Draws a sample from a Beta distribution using Thompson Sampling with strict parameter validation. | `scripts/lib/learning/quickfix-stats.mjs` |
-| [`updatePosterior`](../scripts/lib/learning/beta-posterior.mjs#L108) | function | `scripts/lib/learning/beta-posterior.mjs` | 108-127 | Updates a Beta posterior given an observation (0–1), validating strictly to prevent corrupt state. | `scripts/lib/learning/quickfix-stats.mjs` |
-| [`hasEnoughSamples`](../scripts/lib/learning/cold-start.mjs#L17) | function | `scripts/lib/learning/cold-start.mjs` | 17-21 | Checks if the total observation count exceeds a threshold to exit cold-start fallback mode. | _(internal)_ |
-| [`withFallback`](../scripts/lib/learning/cold-start.mjs#L36) | function | `scripts/lib/learning/cold-start.mjs` | 36-40 | Routes between a prediction function or fallback based on whether sample count meets threshold. | _(internal)_ |
-| [`_canonicalise`](../scripts/lib/learning/decision-logger.mjs#L183) | function | `scripts/lib/learning/decision-logger.mjs` | 183-190 | Recursively sorts object keys and canonicalizes values for stable comparison. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`_getStateForTest`](../scripts/lib/learning/decision-logger.mjs#L532) | function | `scripts/lib/learning/decision-logger.mjs` | 532-539 | Returns current queue sizes and dropped-entry counts per decision type for test inspection. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`_isKeyInt`](../scripts/lib/learning/decision-logger.mjs#L51) | function | `scripts/lib/learning/decision-logger.mjs` | 51-51 | Predicate checking if a value is a safe non-negative integer. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`_isNonEmptyString`](../scripts/lib/learning/decision-logger.mjs#L50) | function | `scripts/lib/learning/decision-logger.mjs` | 50-50 | Predicate checking if a value is a non-empty, colon-free string (safe for decision keys). | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`_resetForTest`](../scripts/lib/learning/decision-logger.mjs#L521) | function | `scripts/lib/learning/decision-logger.mjs` | 521-527 | Resets all module-global state (queues, counters, hooks) for test isolation. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`backfillOutcome`](../scripts/lib/learning/decision-logger.mjs#L263) | function | `scripts/lib/learning/decision-logger.mjs` | 263-295 | Updates the outcome of a prior decision record, either in-queue or as an enqueued outcome-only update. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`buildDecisionKey`](../scripts/lib/learning/decision-logger.mjs#L156) | function | `scripts/lib/learning/decision-logger.mjs` | 156-171 | Constructs a unique decision key from audit-bound or external identifiers. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`bumpDropped`](../scripts/lib/learning/decision-logger.mjs#L90) | function | `scripts/lib/learning/decision-logger.mjs` | 90-92 | Increments the dropped-decision counter for a decision type. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`canonicaliseContext`](../scripts/lib/learning/decision-logger.mjs#L192) | function | `scripts/lib/learning/decision-logger.mjs` | 192-194 | Converts a context object to a canonical JSON string. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`contextHash`](../scripts/lib/learning/decision-logger.mjs#L196) | function | `scripts/lib/learning/decision-logger.mjs` | 196-198 | Creates a SHA256 hash of canonicalized decision context for deduplication. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`DecisionLoggerError`](../scripts/lib/learning/decision-logger.mjs#L109) | class | `scripts/lib/learning/decision-logger.mjs` | 109-111 | Custom error class for decision logger exceptions with a code property. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`drain`](../scripts/lib/learning/decision-logger.mjs#L482) | function | `scripts/lib/learning/decision-logger.mjs` | 482-492 | Drains pending decisions via flush and prevents concurrent drain calls using a promise gate. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`flush`](../scripts/lib/learning/decision-logger.mjs#L308) | function | `scripts/lib/learning/decision-logger.mjs` | 308-377 | Flushes queued learning decisions to cloud or local outbox via two-phase drain with per-queue retention. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`getQueue`](../scripts/lib/learning/decision-logger.mjs#L84) | function | `scripts/lib/learning/decision-logger.mjs` | 84-88 | Retrieves or creates the queue for a decision type. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`installLifecycleHooks`](../scripts/lib/learning/decision-logger.mjs#L494) | function | `scripts/lib/learning/decision-logger.mjs` | 494-516 | Installs beforeExit and SIGINT handlers to gracefully drain the decision queue on process termination. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`isCiEnv`](../scripts/lib/learning/decision-logger.mjs#L59) | function | `scripts/lib/learning/decision-logger.mjs` | 59-61 | Detects if running in a CI environment. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`reconcileOutbox`](../scripts/lib/learning/decision-logger.mjs#L388) | function | `scripts/lib/learning/decision-logger.mjs` | 388-413 | Processes outbox files and retries their cloud writes when the store becomes available again. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`recordDecision`](../scripts/lib/learning/decision-logger.mjs#L218) | function | `scripts/lib/learning/decision-logger.mjs` | 218-252 | Records a learning decision to a per-type bounded queue, dropping oldest entry when cap is reached. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`resolveQueueCap`](../scripts/lib/learning/decision-logger.mjs#L27) | function | `scripts/lib/learning/decision-logger.mjs` | 27-38 | Parses and validates LEARNING_QUEUE_CAP_PER_TYPE env var with fallback default. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`retryWithBackoff`](../scripts/lib/learning/decision-logger.mjs#L435) | function | `scripts/lib/learning/decision-logger.mjs` | 435-452 | Retries a function with exponential backoff (3 attempts in CI, 1 in local) and treats truthy or {ok:true} as success. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`throttledWarn`](../scripts/lib/learning/decision-logger.mjs#L94) | function | `scripts/lib/learning/decision-logger.mjs` | 94-101 | Logs a warning to stderr at most once per throttle interval. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`tryWrite`](../scripts/lib/learning/decision-logger.mjs#L417) | function | `scripts/lib/learning/decision-logger.mjs` | 417-433 | Attempts to write a decision entry to cloud store with retry logic, branching on outcome-only vs regular paths. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`validateInput`](../scripts/lib/learning/decision-logger.mjs#L113) | function | `scripts/lib/learning/decision-logger.mjs` | 113-148 | Validates a decision-logger input object against required types and audit-key constraints. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`writeOutbox`](../scripts/lib/learning/decision-logger.mjs#L454) | function | `scripts/lib/learning/decision-logger.mjs` | 454-465 | Atomically writes a decision entry to the local outbox directory with timestamp-keyed filename. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/neighbourhood-query.mjs`, `scripts/openai-audit.mjs` |
-| [`aggregateDecisions`](../scripts/lib/learning/quickfix-stats.mjs#L199) | function | `scripts/lib/learning/quickfix-stats.mjs` | 199-224 | Computes Beta-posterior acceptance rates per quickfix pattern from decision records using alpha/beta counters. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`cliMain`](../scripts/lib/learning/quickfix-stats.mjs#L277) | function | `scripts/lib/learning/quickfix-stats.mjs` | 277-330 | CLI entry point for quickfix-stats with --stats, --rebuild, --bootstrap, --reset, and --format flags. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`computeWatermark`](../scripts/lib/learning/quickfix-stats.mjs#L226) | function | `scripts/lib/learning/quickfix-stats.mjs` | 226-233 | Extracts the maximum outcome_at timestamp and total row count from decision records for cache watermarking. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`loadStats`](../scripts/lib/learning/quickfix-stats.mjs#L54) | function | `scripts/lib/learning/quickfix-stats.mjs` | 54-64 | Loads cached quickfix pattern statistics from disk, returning empty object on missing file or parse error. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`readQuickfixDecisions`](../scripts/lib/learning/quickfix-stats.mjs#L240) | function | `scripts/lib/learning/quickfix-stats.mjs` | 240-258 | Reads quickfix hit decisions from cloud store via paginated RPC, gracefully returning empty on cloud-off. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`rebuildFromBootstrap`](../scripts/lib/learning/quickfix-stats.mjs#L139) | function | `scripts/lib/learning/quickfix-stats.mjs` | 139-183 | Rebuilds quickfix statistics from a bootstrap JSONL log with synthesized neutral outcomes (no user feedback yet). | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`rebuildFromCloud`](../scripts/lib/learning/quickfix-stats.mjs#L97) | function | `scripts/lib/learning/quickfix-stats.mjs` | 97-122 | Rebuilds quickfix statistics from cloud learning store and writes aggregated stats to cache. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`shouldSkipPattern`](../scripts/lib/learning/quickfix-stats.mjs#L77) | function | `scripts/lib/learning/quickfix-stats.mjs` | 77-83 | Checks if a quickfix pattern should be skipped based on low acceptance rate and minimum hit threshold. | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`writeAtomic`](../scripts/lib/learning/quickfix-stats.mjs#L264) | function | `scripts/lib/learning/quickfix-stats.mjs` | 264-266 | Atomically writes content to a target file path (thin wrapper around atomicWriteFileSync). | `scripts/cross-skill.mjs`, `scripts/learning/backfill-outcomes.mjs` |
-| [`archMemoryBandReward`](../scripts/lib/learning/replay.mjs#L292) | function | `scripts/lib/learning/replay.mjs` | 292-301 | Scores architectural-memory reuse decisions (+1 correct, -1 fork, 0 neutral). | `scripts/learning/replay.mjs` |
-| [`convergencePredictReward`](../scripts/lib/learning/replay.mjs#L269) | function | `scripts/lib/learning/replay.mjs` | 269-284 | Scores whether a stop/continue choice correctly predicted the audit convergence round. | `scripts/learning/replay.mjs` |
-| [`distSummary`](../scripts/lib/learning/replay.mjs#L154) | function | `scripts/lib/learning/replay.mjs` | 154-163 | Computes mean, median, 90th percentile, and sum of a numeric array. | `scripts/learning/replay.mjs` |
-| [`emptyDist`](../scripts/lib/learning/replay.mjs#L165) | function | `scripts/lib/learning/replay.mjs` | 165-165 | Returns a zero-valued distribution summary for empty data. | `scripts/learning/replay.mjs` |
-| [`historicalBaseline`](../scripts/lib/learning/replay.mjs#L228) | function | `scripts/lib/learning/replay.mjs` | 228-228 | Baseline policy that always returns the recorded choice (pure replay without learning). | `scripts/learning/replay.mjs` |
-| [`neutralBaseline`](../scripts/lib/learning/replay.mjs#L231) | function | `scripts/lib/learning/replay.mjs` | 231-231 | Baseline policy that returns a neutral/no-op choice for comparison. | `scripts/learning/replay.mjs` |
-| [`passSelectionReward`](../scripts/lib/learning/replay.mjs#L250) | function | `scripts/lib/learning/replay.mjs` | 250-261 | Scores a pass-selection outcome based on findings kept, cost, persona hits, and false-positive dismissals. | `scripts/learning/replay.mjs` |
-| [`percentile`](../scripts/lib/learning/replay.mjs#L167) | function | `scripts/lib/learning/replay.mjs` | 167-176 | Computes linear-interpolated percentile from a sorted array. | `scripts/learning/replay.mjs` |
-| [`readDecisionsForType`](../scripts/lib/learning/replay.mjs#L193) | function | `scripts/lib/learning/replay.mjs` | 193-220 | Queries the learning store for historical decisions of a type since a time threshold. | `scripts/learning/replay.mjs` |
-| [`replay`](../scripts/lib/learning/replay.mjs#L62) | function | `scripts/lib/learning/replay.mjs` | 62-121 | Replays historical learning decisions through a candidate policy to measure improvement over baseline. | `scripts/learning/replay.mjs` |
-| [`safeReward`](../scripts/lib/learning/replay.mjs#L139) | function | `scripts/lib/learning/replay.mjs` | 139-145 | Evaluates a reward function safely, returning 0 on error or non-finite result. | `scripts/learning/replay.mjs` |
-| [`validateInput`](../scripts/lib/learning/replay.mjs#L125) | function | `scripts/lib/learning/replay.mjs` | 125-135 | Type-checks replay inputs: decisionType, candidatePolicy function, and rewardFn function. | `scripts/learning/replay.mjs` |
-| [`getLearningStats`](../scripts/lib/learning/stats.mjs#L33) | function | `scripts/lib/learning/stats.mjs` | 33-68 | Fetches learning metrics (triage/no-brainer/stale-cluster counts) from cloud store by repo name. | `scripts/cross-skill.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs` |
 | [`batchWriteLedger`](../scripts/lib/ledger.mjs#L226) | function | `scripts/lib/ledger.mjs` | 226-250 | Batch-upserts ledger entries and updates associated metadata. | `scripts/gemini-review.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/llm-helpers.mjs`, +8 more |
 | [`buildR2SystemPrompt`](../scripts/lib/ledger.mjs#L648) | function | `scripts/lib/ledger.mjs` | 648-650 | Assembles R2+ system prompt from round modifier, rulings block, and pass rubric. | `scripts/gemini-review.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/llm-helpers.mjs`, +8 more |
 | [`buildRulingsBlock`](../scripts/lib/ledger.mjs#L499) | function | `scripts/lib/ledger.mjs` | 499-618 | Formats prior rulings (dismissed/adjusted/fixed) as a system-prompt block for R2+. | `scripts/gemini-review.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/lib/audit/llm-helpers.mjs`, +8 more |
@@ -2955,72 +3526,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`qualMult`](../scripts/lib/model-ab-decision.mjs#L83) | function | `scripts/lib/model-ab-decision.mjs` | 83-86 | Calculates quality multiplier based on remediation state and quick-fix classification. | `scripts/cross-skill.mjs`, `scripts/lib/audit/cost-budget.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs`, +1 more |
 | [`round4`](../scripts/lib/model-ab-decision.mjs#L365) | function | `scripts/lib/model-ab-decision.mjs` | 365-367 | Rounds a number to 4 decimal places, preserving non-finite values. | `scripts/cross-skill.mjs`, `scripts/lib/audit/cost-budget.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs`, +1 more |
 | [`sevW`](../scripts/lib/model-ab-decision.mjs#L74) | function | `scripts/lib/model-ab-decision.mjs` | 74-76 | Returns the weight multiplier for a given severity level. | `scripts/cross-skill.mjs`, `scripts/lib/audit/cost-budget.mjs`, `scripts/lib/dashboard/collect-telemetry.mjs`, +1 more |
-| [`buildGenericPlanContent`](../scripts/lib/model-eval/arm-generation.mjs#L65) | function | `scripts/lib/model-eval/arm-generation.mjs` | 65-68 | Combines generic plan instructions with a formatted list of changed files. | `scripts/model-eval-auditor.mjs` |
-| [`resolveGenerationClient`](../scripts/lib/model-eval/arm-generation.mjs#L90) | function | `scripts/lib/model-eval/arm-generation.mjs` | 90-109 | Resolves and returns an OpenAI-compatible client and model ID based on the generation spec (sentinel/OSS/Azure). | `scripts/model-eval-auditor.mjs` |
-| [`runAuditGenerationArm`](../scripts/lib/model-eval/arm-generation.mjs#L118) | function | `scripts/lib/model-eval/arm-generation.mjs` | 118-251 | Runs a code-audit generation through the multipass audit pipeline and returns findings with token usage. | `scripts/model-eval-auditor.mjs` |
-| [`UnsupportedGenerationTransport`](../scripts/lib/model-eval/arm-generation.mjs#L29) | class | `scripts/lib/model-eval/arm-generation.mjs` | 29-35 | <no body> | `scripts/model-eval-auditor.mjs` |
-| [`appendJudgeBatch`](../scripts/lib/model-eval/blind-judge.mjs#L150) | function | `scripts/lib/model-eval/blind-judge.mjs` | 150-173 | Inserts a judge batch into Supabase, handling duplicate-key collisions by fetching the existing row. | `scripts/model-eval-auditor.mjs` |
-| [`assertJudgePayloadSafe`](../scripts/lib/model-eval/blind-judge.mjs#L126) | function | `scripts/lib/model-eval/blind-judge.mjs` | 126-132 | Validates that a judge payload contains no egress-unsafe content or sensitive path mentions. | `scripts/model-eval-auditor.mjs` |
-| [`blindFindings`](../scripts/lib/model-eval/blind-judge.mjs#L102) | function | `scripts/lib/model-eval/blind-judge.mjs` | 102-122 | Shuffles candidate and baseline findings together with random IDs and returns the blinded list plus a decryption map. | `scripts/model-eval-auditor.mjs` |
-| [`getJudgeBatchesForRun`](../scripts/lib/model-eval/blind-judge.mjs#L183) | function | `scripts/lib/model-eval/blind-judge.mjs` | 183-190 | Queries Supabase for all judge batches associated with an audit run. | `scripts/model-eval-auditor.mjs` |
-| [`MalformedJudgeOutputError`](../scripts/lib/model-eval/blind-judge.mjs#L40) | class | `scripts/lib/model-eval/blind-judge.mjs` | 40-42 | <no body> | `scripts/model-eval-auditor.mjs` |
-| [`runBlindJudgeProtocol`](../scripts/lib/model-eval/blind-judge.mjs#L202) | function | `scripts/lib/model-eval/blind-judge.mjs` | 202-278 | Runs a blinded judge protocol comparing candidate vs baseline findings, optionally resuming from prior state. | `scripts/model-eval-auditor.mjs` |
-| [`parseThresholdConfig`](../scripts/lib/model-eval/config/schema.mjs#L109) | function | `scripts/lib/model-eval/config/schema.mjs` | 109-113 | Safely parses and validates a threshold config, returning success/error result. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`tierSchema`](../scripts/lib/model-eval/config/schema.mjs#L54) | function | `scripts/lib/model-eval/config/schema.mjs` | 54-84 | Returns a Zod schema for evaluation tier configuration with mandatory thresholds validation. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`assembleCostRows`](../scripts/lib/model-eval/cost.mjs#L168) | function | `scripts/lib/model-eval/cost.mjs` | 168-214 | Aggregates raw usage events into cost rows by run/role/arm/candidate with per-phase breakdown. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`buildUsageEvent`](../scripts/lib/model-eval/cost.mjs#L109) | function | `scripts/lib/model-eval/cost.mjs` | 109-158 | Builds a usage event record from LLM response metadata with cost pricing and availability checking. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`basename`](../scripts/lib/model-eval/deterministic-scorer.mjs#L84) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 84-86 | Extracts the final filename component from a file path. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`matchScore`](../scripts/lib/model-eval/deterministic-scorer.mjs#L103) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 103-132 | Scores a candidate finding against expected rubric by file and description match (exact or fuzzy). | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`normalize`](../scripts/lib/model-eval/deterministic-scorer.mjs#L80) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 80-82 | Lowercases and collapses whitespace in a string. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`scoreBinaryClassification`](../scripts/lib/model-eval/deterministic-scorer.mjs#L23) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 23-58 | Computes precision, recall, F1, and false-positive rate from binary predictions vs ground truth labels. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`scoreDefectLocalization`](../scripts/lib/model-eval/deterministic-scorer.mjs#L145) | function | `scripts/lib/model-eval/deterministic-scorer.mjs` | 145-227 | Scores all candidate findings against expected rubrics with configurable match mode and threshold validation. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`EgressGateError`](../scripts/lib/model-eval/egress-path-scan.mjs#L22) | class | `scripts/lib/model-eval/egress-path-scan.mjs` | 22-24 | <no body> | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
-| [`findSensitivePathMentions`](../scripts/lib/model-eval/egress-path-scan.mjs#L108) | function | `scripts/lib/model-eval/egress-path-scan.mjs` | 108-113 | Tokenizes text and returns only the sensitive path strings found within it. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
-| [`looksLikeRealPath`](../scripts/lib/model-eval/egress-path-scan.mjs#L52) | function | `scripts/lib/model-eval/egress-path-scan.mjs` | 52-60 | Heuristically detects whether a token string looks like a real filesystem path. | `scripts/lib/model-eval/arm-generation.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/known-defect-corpus.mjs`, +3 more |
-| [`appendModelEvalShadowObservation`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L61) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 61-71 | Inserts a shadow evaluation observation into Supabase with idempotency handling. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
-| [`finalizeShadowEval`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L206) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 206-249 | Computes final shadow evaluation metrics from terminal observations and returns a verdict or collection progress. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
-| [`getShadowObservationsForEvalRun`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L79) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 79-90 | Queries Supabase for all shadow observations linked to a model-eval run. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
-| [`getTerminalShadowObservations`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L108) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 108-133 | Filters shadow observations to only those whose all findings have terminal user-action labels. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
-| [`ShadowObservationRepoMismatchError`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L46) | class | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 46-51 | <no body> | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
-| [`toBinaryRows`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L167) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 167-183 | Converts terminal shadow observations into binary classification prediction and label rows. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
-| [`toMetrics`](../scripts/lib/model-eval/finalize-shadow-eval.mjs#L185) | function | `scripts/lib/model-eval/finalize-shadow-eval.mjs` | 185-187 | Extracts recall, false-positive rate, and F1 from a scored binary classification result. | `scripts/gemini-review.mjs`, `scripts/model-eval-adjudicator.mjs` |
-| [`CorpusCaseUnavailable`](../scripts/lib/model-eval/known-defect-corpus.mjs#L35) | class | `scripts/lib/model-eval/known-defect-corpus.mjs` | 35-42 | <no body> | `scripts/model-eval-auditor.mjs` |
-| [`git`](../scripts/lib/model-eval/known-defect-corpus.mjs#L58) | function | `scripts/lib/model-eval/known-defect-corpus.mjs` | 58-63 | Executes a git command in a repo root with large output buffer and pager suppression. | `scripts/model-eval-auditor.mjs` |
-| [`loadCorpusCase`](../scripts/lib/model-eval/known-defect-corpus.mjs#L112) | function | `scripts/lib/model-eval/known-defect-corpus.mjs` | 112-211 | Loads a known-defect corpus case by extracting the buggy commit's diff from a git repo. | `scripts/model-eval-auditor.mjs` |
-| [`resolveRepoRoot`](../scripts/lib/model-eval/known-defect-corpus.mjs#L89) | function | `scripts/lib/model-eval/known-defect-corpus.mjs` | 89-95 | Finds a repo root directory by matching its basename against a candidate paths list. | `scripts/model-eval-auditor.mjs` |
-| [`tryGit`](../scripts/lib/model-eval/known-defect-corpus.mjs#L72) | function | `scripts/lib/model-eval/known-defect-corpus.mjs` | 72-75 | Wraps a git command execution in a success/error result tuple. | `scripts/model-eval-auditor.mjs` |
-| [`invokeNativeAnthropic`](../scripts/lib/model-eval/provider-adapter.mjs#L128) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 128-156 | Invokes the Anthropic API with structured output via JSON schema. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
-| [`invokeNativeGemini`](../scripts/lib/model-eval/provider-adapter.mjs#L158) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 158-200 | Invokes the Gemini API with structured output via responseSchema. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
-| [`invokeOpenAICompatible`](../scripts/lib/model-eval/provider-adapter.mjs#L83) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 83-126 | Invokes an OpenAI-compatible provider (public/OSS/Azure) with structured output response. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
-| [`invokeStructured`](../scripts/lib/model-eval/provider-adapter.mjs#L46) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 46-81 | Invokes a provider with structured output by egress-gating the message payload and dispatching to transport. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
-| [`MalformedProviderOutputError`](../scripts/lib/model-eval/provider-adapter.mjs#L31) | class | `scripts/lib/model-eval/provider-adapter.mjs` | 31-33 | <no body> | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
-| [`resolveOssClientConfig`](../scripts/lib/model-eval/provider-adapter.mjs#L210) | function | `scripts/lib/model-eval/provider-adapter.mjs` | 210-216 | Returns the OpenRouter base URL and API key from configuration. | `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/structured-extractor.mjs` |
-| [`assertAzureTransportSupported`](../scripts/lib/model-eval/route-catalog.mjs#L271) | function | `scripts/lib/model-eval/route-catalog.mjs` | 271-275 | Validates that an Azure-hosted transport is supported, rejecting unsupported provider combinations. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`azureTransportProvider`](../scripts/lib/model-eval/route-catalog.mjs#L279) | function | `scripts/lib/model-eval/route-catalog.mjs` | 279-287 | Resolves the HTTP transport mechanism (client type) for an Azure-hosted LLM based on the model's lineage family. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`buildComparisonEvidenceFromRoutes`](../scripts/lib/model-eval/route-catalog.mjs#L357) | function | `scripts/lib/model-eval/route-catalog.mjs` | 357-366 | Assembles complete comparison evidence from three route objects, computing independence checks and the computed evaluation tier. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`lineageForProvider`](../scripts/lib/model-eval/route-catalog.mjs#L112) | function | `scripts/lib/model-eval/route-catalog.mjs` | 112-114 | Constructs a model lineage identifier from provider and optional tier/variant/role suffix. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`loadAzureRoutes`](../scripts/lib/model-eval/route-catalog.mjs#L79) | function | `scripts/lib/model-eval/route-catalog.mjs` | 79-99 | Loads and caches Azure deployment routes from a JSON config file with validation. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`resolveCandidateRoute`](../scripts/lib/model-eval/route-catalog.mjs#L125) | function | `scripts/lib/model-eval/route-catalog.mjs` | 125-257 | Resolves a candidate model spec into a fully-qualified route with provider, model, lineage, and pricing info. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`resolveEvaluationTier`](../scripts/lib/model-eval/route-catalog.mjs#L305) | function | `scripts/lib/model-eval/route-catalog.mjs` | 305-333 | Determines the evaluation tier (A, B, or C) by checking if candidate, baseline, and judge routes are known and mutually independent. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`RouteResolutionError`](../scripts/lib/model-eval/route-catalog.mjs#L70) | class | `scripts/lib/model-eval/route-catalog.mjs` | 70-76 | Custom error class for route resolution failures, tracking whether the error occurred during preflight validation. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`toRouteEvidence`](../scripts/lib/model-eval/route-catalog.mjs#L338) | function | `scripts/lib/model-eval/route-catalog.mjs` | 338-343 | Extracts trust-relevant fields (tier, lineage status, independence eligibility, source) from a resolved route object. | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`transportForProvider`](../scripts/lib/model-eval/route-catalog.mjs#L103) | function | `scripts/lib/model-eval/route-catalog.mjs` | 103-108 | Maps a provider name to its transport implementation (openai-compatible, native-anthropic, native-gemini). | `scripts/gemini-review.mjs`, `scripts/lib/model-eval/blind-judge.mjs`, `scripts/lib/model-eval/finalize-shadow-eval.mjs`, +2 more |
-| [`buildAdjudicatorPrompt`](../scripts/lib/model-eval/structured-extractor.mjs#L215) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 215-220 | Constructs the system+user message pair for the adjudicator role, providing a finding and its severity for verification. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`buildAuditorPrompt`](../scripts/lib/model-eval/structured-extractor.mjs#L208) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 208-213 | Constructs the system+user message pair for the auditor role, providing diff context and file list. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`extractDiffHeaderPaths`](../scripts/lib/model-eval/structured-extractor.mjs#L124) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 124-146 | Parses all file paths from git diff headers (diff --git, ---, +++, rename, copy), handling C-quoted paths correctly. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`ExtractionInvocationError`](../scripts/lib/model-eval/structured-extractor.mjs#L42) | class | `scripts/lib/model-eval/structured-extractor.mjs` | 42-50 | Custom error for LLM invocation failures, tracking HTTP status, error code, and whether retry is possible. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`extractStructured`](../scripts/lib/model-eval/structured-extractor.mjs#L236) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 236-295 | Parses structured extraction output from an LLM, handling both auditor and adjudicator roles with automatic retries on malformed output. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`InvalidEvaluationInputError`](../scripts/lib/model-eval/structured-extractor.mjs#L33) | class | `scripts/lib/model-eval/structured-extractor.mjs` | 33-35 | Custom error for invalid inputs to the extraction pipeline (missing required context fields). | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`isRetryableMalformedOutput`](../scripts/lib/model-eval/structured-extractor.mjs#L56) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 56-58 | Checks if an error is a type that warrants retrying extraction (Zod validation, JSON parse, or malformed provider output). | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`nonBlankString`](../scripts/lib/model-eval/structured-extractor.mjs#L66) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 66-69 | Returns a Zod schema for a non-empty trimmed string with optional max length. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`prepareModelEvalPayloadForEgress`](../scripts/lib/model-eval/structured-extractor.mjs#L154) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 154-206 | Validates and sanitizes a model-eval payload before LLM egress, blocking sensitive file paths and redacting secrets. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`unquoteDiffPath`](../scripts/lib/model-eval/structured-extractor.mjs#L112) | function | `scripts/lib/model-eval/structured-extractor.mjs` | 112-118 | Unquotes a C-style escaped git diff path, removing outer quotes and unescaping internal quotes and backslashes. | `scripts/model-eval-adjudicator.mjs`, `scripts/model-eval-auditor.mjs` |
-| [`allRoutesIndependentlyTrusted`](../scripts/lib/model-eval/verdict.mjs#L360) | function | `scripts/lib/model-eval/verdict.mjs` | 360-363 | Checks if all non-null routes in comparison evidence have verified or reviewed-pool lineage sources. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
-| [`computeRawVerdict`](../scripts/lib/model-eval/verdict.mjs#L278) | function | `scripts/lib/model-eval/verdict.mjs` | 278-352 | Evaluates all floor thresholds for a verdict input, returning verdict, floors-met status, and reasons. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
-| [`computeVerdict`](../scripts/lib/model-eval/verdict.mjs#L365) | function | `scripts/lib/model-eval/verdict.mjs` | 365-404 | Applies verdict thresholds and structural rules to produce a final verdict and next action. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
-| [`findTableRow`](../scripts/lib/model-eval/verdict.mjs#L244) | function | `scripts/lib/model-eval/verdict.mjs` | 244-247 | Looks up a decision-table row matching a mode, tier, and optionally a role. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
-| [`ratioWithinBound`](../scripts/lib/model-eval/verdict.mjs#L270) | function | `scripts/lib/model-eval/verdict.mjs` | 270-276 | Checks whether a candidate-to-baseline ratio stays within a threshold, handling zero-baseline edge cases. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
-| [`requiredMetric`](../scripts/lib/model-eval/verdict.mjs#L252) | function | `scripts/lib/model-eval/verdict.mjs` | 252-258 | Fetches a finite numeric metric from the metrics object, throwing if missing or invalid. | `scripts/lib/model-eval/finalize-shadow-eval.mjs`, `scripts/lib/store/model-eval.mjs`, `scripts/model-eval-adjudicator.mjs`, +1 more |
 | [`costForBudget`](../scripts/lib/model-pricing.mjs#L163) | function | `scripts/lib/model-pricing.mjs` | 163-184 | Calculates cost with special handling for unmeterable usage and fallback pricing estimates. | `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/usage-event.mjs`, `scripts/lib/model-ab-decision.mjs`, +2 more |
 | [`costFromUsage`](../scripts/lib/model-pricing.mjs#L128) | function | `scripts/lib/model-pricing.mjs` | 128-149 | Calculates USD cost breakdown (input, output, total) from token usage. | `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/usage-event.mjs`, `scripts/lib/model-ab-decision.mjs`, +2 more |
 | [`isPriced`](../scripts/lib/model-pricing.mjs#L113) | function | `scripts/lib/model-pricing.mjs` | 113-115 | Checks whether a model has a known price. | `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/usage-event.mjs`, `scripts/lib/model-ab-decision.mjs`, +2 more |
@@ -3062,21 +3567,9 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`publicExports`](../scripts/lib/module-graph.mjs#L205) | function | `scripts/lib/module-graph.mjs` | 205-223 | Extracts public export names (functions, classes, variables, re-exports) from a module. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-context.mjs`, `scripts/lib/requirements/context.mjs`, +2 more |
 | [`resolveSpecifier`](../scripts/lib/module-graph.mjs#L48) | function | `scripts/lib/module-graph.mjs` | 48-92 | Resolves an import specifier to a repo file or classifies it as external/unresolvable. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-context.mjs`, `scripts/lib/requirements/context.mjs`, +2 more |
 | [`stripComments`](../scripts/lib/module-graph.mjs#L100) | function | `scripts/lib/module-graph.mjs` | 100-104 | Strips single-line (//) and multi-line (/* */) comments from JavaScript source. | `scripts/lib/audit/finding-verification.mjs`, `scripts/lib/repo-context.mjs`, `scripts/lib/requirements/context.mjs`, +2 more |
-| [`cacheKey`](../scripts/lib/neighbourhood-query.mjs#L31) | function | `scripts/lib/neighbourhood-query.mjs` | 31-37 | Generates short SHA256-based cache key from intent description, model, and embedding dimension. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
-| [`generateIntentEmbedding`](../scripts/lib/neighbourhood-query.mjs#L83) | function | `scripts/lib/neighbourhood-query.mjs` | 83-126 | Generates text embedding for an intent while guarding against embedding provider/vector-space mismatches. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
-| [`getCached`](../scripts/lib/neighbourhood-query.mjs#L56) | function | `scripts/lib/neighbourhood-query.mjs` | 56-62 | Retrieves cached embedding if exists and hasn't exceeded TTL. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
-| [`getIncidentNeighbourhoodForIntent`](../scripts/lib/neighbourhood-query.mjs#L325) | function | `scripts/lib/neighbourhood-query.mjs` | 325-475 | Queries security incident index for related past incidents matching an intent. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
-| [`getNeighbourhoodForIntent`](../scripts/lib/neighbourhood-query.mjs#L139) | function | `scripts/lib/neighbourhood-query.mjs` | 139-297 | Queries symbol index for architecturally-similar symbols matching an intent description. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
-| [`loadCache`](../scripts/lib/neighbourhood-query.mjs#L39) | function | `scripts/lib/neighbourhood-query.mjs` | 39-47 | Loads embedding cache from disk, returning empty structure if missing or corrupt. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
-| [`putCached`](../scripts/lib/neighbourhood-query.mjs#L64) | function | `scripts/lib/neighbourhood-query.mjs` | 64-68 | Stores embedding in cache with current timestamp for TTL expiration tracking. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
-| [`saveCache`](../scripts/lib/neighbourhood-query.mjs#L49) | function | `scripts/lib/neighbourhood-query.mjs` | 49-54 | Writes embedding cache to disk with atomic file write. | `scripts/cross-skill.mjs`, `scripts/lib/audit/duplication-detector.mjs` |
 | [`enumerateNpmRunRefs`](../scripts/lib/npm-script-enumerator.mjs#L33) | function | `scripts/lib/npm-script-enumerator.mjs` | 33-41 | Extracts all `npm run <script>` references from text using regex. | `scripts/lib/sync-isolation-verify.mjs` |
 | [`findSyncedMarkdownFiles`](../scripts/lib/npm-script-enumerator.mjs#L43) | function | `scripts/lib/npm-script-enumerator.mjs` | 43-58 | Locates synced markdown files in consumer repo by parsing the sync manifest. | `scripts/lib/sync-isolation-verify.mjs` |
 | [`main`](../scripts/lib/npm-script-enumerator.mjs#L60) | function | `scripts/lib/npm-script-enumerator.mjs` | 60-97 | CLI entry point enumerating npm script references across synced consumer markdown files with failure reporting. | `scripts/lib/sync-isolation-verify.mjs` |
-| [`computeDomainMapDigest`](../scripts/lib/observed-deps.mjs#L43) | function | `scripts/lib/observed-deps.mjs` | 43-50 | Hashes domain-mapping rules into SHA256 digest for change detection. | `scripts/lib/dashboard/collect-reference.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
-| [`computeObservedDomainDeps`](../scripts/lib/observed-deps.mjs#L64) | function | `scripts/lib/observed-deps.mjs` | 64-90 | Computes domain-level dependencies from import edges using fast precompiled regex tagging. | `scripts/lib/dashboard/collect-reference.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
-| [`flattenMergedDeps`](../scripts/lib/observed-deps.mjs#L153) | function | `scripts/lib/observed-deps.mjs` | 153-162 | Converts merged domain dependencies into flat per-domain target lists. | `scripts/lib/dashboard/collect-reference.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
-| [`mergeDomainDeps`](../scripts/lib/observed-deps.mjs#L110) | function | `scripts/lib/observed-deps.mjs` | 110-144 | Merges observed and manual domain dependencies with source attribution and dangerous-key filtering. | `scripts/lib/dashboard/collect-reference.mjs`, `scripts/symbol-index/render-mermaid.mjs` |
 | [`azureBaseUrl`](../scripts/lib/openai-client.mjs#L69) | function | `scripts/lib/openai-client.mjs` | 69-79 | Constructs Azure OpenAI base URL, routing foundry-claude requests separately from standard endpoints. | `scripts/azure-limits.mjs`, `scripts/cheap-triager-validate.mjs`, `scripts/gemini-review.mjs`, +10 more |
 | [`createOpenAIClient`](../scripts/lib/openai-client.mjs#L91) | function | `scripts/lib/openai-client.mjs` | 91-160 | Factory function creating and caching OpenAI client with support for public, Azure, and OSS (OpenRouter) providers. | `scripts/azure-limits.mjs`, `scripts/cheap-triager-validate.mjs`, `scripts/gemini-review.mjs`, +10 more |
 | [`keyDigest`](../scripts/lib/openai-client.mjs#L60) | function | `scripts/lib/openai-client.mjs` | 60-62 | Generates 16-character SHA256 digest of API key for cache/logging purposes. | `scripts/azure-limits.mjs`, `scripts/cheap-triager-validate.mjs`, `scripts/gemini-review.mjs`, +10 more |
@@ -3092,35 +3585,19 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`ossStructuredCall`](../scripts/lib/oss-structured-output.mjs#L179) | function | `scripts/lib/oss-structured-output.mjs` | 179-343 | Orchestrates LLM calls with structured JSON output, retry logic, and timeouts. | `scripts/cheap-triager-validate.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
 | [`sanitizeSchemaName`](../scripts/lib/oss-structured-output.mjs#L108) | function | `scripts/lib/oss-structured-output.mjs` | 108-111 | Cleans schema names to alphanumeric/dash, max 64 chars. | `scripts/cheap-triager-validate.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
 | [`stripJsonMarkdownFence`](../scripts/lib/oss-structured-output.mjs#L90) | function | `scripts/lib/oss-structured-output.mjs` | 90-93 | Strips markdown code fences from JSON strings. | `scripts/cheap-triager-validate.mjs`, `scripts/lib/audit-shadow.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +2 more |
-| [`computeOutcomeReward`](../scripts/lib/outcome-sync.mjs#L238) | function | `scripts/lib/outcome-sync.mjs` | 238-244 | Computes reward value from finding severity and adjudication outcome | `scripts/lib/finalize-outcomes.mjs` |
-| [`computePassCounts`](../scripts/lib/outcome-sync.mjs#L114) | function | `scripts/lib/outcome-sync.mjs` | 114-126 | Tallies adjudication outcome counts grouped by audit pass name | `scripts/lib/finalize-outcomes.mjs` |
-| [`dbRuling`](../scripts/lib/outcome-sync.mjs#L139) | function | `scripts/lib/outcome-sync.mjs` | 139-144 | Maps finding adjudication outcome to database ruling type | `scripts/lib/finalize-outcomes.mjs` |
-| [`enrichFindings`](../scripts/lib/outcome-sync.mjs#L92) | function | `scripts/lib/outcome-sync.mjs` | 92-107 | Enriches findings with ledger-sourced adjudication and remediation state | `scripts/lib/finalize-outcomes.mjs` |
-| [`readFinalizedKeys`](../scripts/lib/outcome-sync.mjs#L30) | function | `scripts/lib/outcome-sync.mjs` | 30-35 | Reads finalized outcome IDs from JSON file into a Set | `scripts/lib/finalize-outcomes.mjs` |
-| [`recordTriageOutcomes`](../scripts/lib/outcome-sync.mjs#L202) | function | `scripts/lib/outcome-sync.mjs` | 202-229 | Orchestrates enriching and writing audit outcomes to both local and cloud | `scripts/lib/finalize-outcomes.mjs` |
-| [`writeCloudOutcomes`](../scripts/lib/outcome-sync.mjs#L155) | function | `scripts/lib/outcome-sync.mjs` | 155-188 | Persists adjudicated findings and pass stats to Supabase learning store | `scripts/lib/finalize-outcomes.mjs` |
-| [`writeLocalOutcomesOnce`](../scripts/lib/outcome-sync.mjs#L48) | function | `scripts/lib/outcome-sync.mjs` | 48-84 | Writes findings as outcomes to local file with idempotent marker-based dedup | `scripts/lib/finalize-outcomes.mjs` |
+| [`computeOutcomeReward`](../scripts/lib/outcome-sync.mjs#L238) | function | `scripts/lib/outcome-sync.mjs` | 238-244 | Computes reward points based on finding severity and outcome. | `scripts/lib/finalize-outcomes.mjs` |
+| [`computePassCounts`](../scripts/lib/outcome-sync.mjs#L114) | function | `scripts/lib/outcome-sync.mjs` | 114-126 | Tallies findings by pass and adjudication outcome status. | `scripts/lib/finalize-outcomes.mjs` |
+| [`dbRuling`](../scripts/lib/outcome-sync.mjs#L139) | function | `scripts/lib/outcome-sync.mjs` | 139-144 | Maps an adjudication outcome to its database ruling code. | `scripts/lib/finalize-outcomes.mjs` |
+| [`enrichFindings`](../scripts/lib/outcome-sync.mjs#L92) | function | `scripts/lib/outcome-sync.mjs` | 92-107 | Decorates findings with adjudication state from a ledger. | `scripts/lib/finalize-outcomes.mjs` |
+| [`readFinalizedKeys`](../scripts/lib/outcome-sync.mjs#L30) | function | `scripts/lib/outcome-sync.mjs` | 30-35 | Loads the set of finalized outcome keys from disk. | `scripts/lib/finalize-outcomes.mjs` |
+| [`recordTriageOutcomes`](../scripts/lib/outcome-sync.mjs#L202) | function | `scripts/lib/outcome-sync.mjs` | 202-229 | Records adjudication outcomes to both cloud and local storage. | `scripts/lib/finalize-outcomes.mjs` |
+| [`writeCloudOutcomes`](../scripts/lib/outcome-sync.mjs#L155) | function | `scripts/lib/outcome-sync.mjs` | 155-188 | Persists adjudication events and pass statistics to the cloud store. | `scripts/lib/finalize-outcomes.mjs` |
+| [`writeLocalOutcomesOnce`](../scripts/lib/outcome-sync.mjs#L48) | function | `scripts/lib/outcome-sync.mjs` | 48-84 | Appends adjudication outcomes to the local file once per key. | `scripts/lib/finalize-outcomes.mjs` |
 | [`_resetCache`](../scripts/lib/owner-resolver.mjs#L75) | function | `scripts/lib/owner-resolver.mjs` | 75-78 | Clears CODEOWNERS file cache (test-only export) | `scripts/lib/debt-capture.mjs`, `scripts/shared.mjs` |
 | [`findCodeownersFile`](../scripts/lib/owner-resolver.mjs#L38) | function | `scripts/lib/owner-resolver.mjs` | 38-44 | Finds CODEOWNERS file in candidate locations within repo | `scripts/lib/debt-capture.mjs`, `scripts/shared.mjs` |
 | [`loadCodeownersEntries`](../scripts/lib/owner-resolver.mjs#L51) | function | `scripts/lib/owner-resolver.mjs` | 51-69 | Loads and caches parsed CODEOWNERS file entries | `scripts/lib/debt-capture.mjs`, `scripts/shared.mjs` |
 | [`resolveOwner`](../scripts/lib/owner-resolver.mjs#L90) | function | `scripts/lib/owner-resolver.mjs` | 90-106 | Resolves file owner using CODEOWNERS pattern matching | `scripts/lib/debt-capture.mjs`, `scripts/shared.mjs` |
 | [`resolveOwners`](../scripts/lib/owner-resolver.mjs#L114) | function | `scripts/lib/owner-resolver.mjs` | 114-120 | Batch-resolves owners for multiple files, returns Map | `scripts/lib/debt-capture.mjs`, `scripts/shared.mjs` |
-| [`auditFilePathTokens`](../scripts/lib/persona/audit-correlator.mjs#L136) | function | `scripts/lib/persona/audit-correlator.mjs` | 136-138 | Extracts tokens from an audit finding's primary_file path. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`auditKeywordTokens`](../scripts/lib/persona/audit-correlator.mjs#L140) | function | `scripts/lib/persona/audit-correlator.mjs` | 140-142 | Extracts tokens from audit finding's detail and category. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`buildStepUrlLookup`](../scripts/lib/persona/audit-correlator.mjs#L236) | function | `scripts/lib/persona/audit-correlator.mjs` | 236-245 | Creates a map from step number to sanitized URL from click path data. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`decideCorrelations`](../scripts/lib/persona/audit-correlator.mjs#L264) | function | `scripts/lib/persona/audit-correlator.mjs` | 264-324 | Matches P0/P1 persona findings to audit findings and emits correlation records. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`isMalformedFinding`](../scripts/lib/persona/audit-correlator.mjs#L83) | function | `scripts/lib/persona/audit-correlator.mjs` | 83-86 | Detects if a finding is missing required element or observed fields. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`isNewerOrHigherSeverity`](../scripts/lib/persona/audit-correlator.mjs#L218) | function | `scripts/lib/persona/audit-correlator.mjs` | 218-223 | Compares two findings by creation timestamp, then by severity rank. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`isP0OrP1`](../scripts/lib/persona/audit-correlator.mjs#L70) | function | `scripts/lib/persona/audit-correlator.mjs` | 70-72 | Checks if a finding has severity code P0 or P1. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`isSeverityUnderstated`](../scripts/lib/persona/audit-correlator.mjs#L226) | function | `scripts/lib/persona/audit-correlator.mjs` | 226-228 | Checks if a P0 persona finding maps to a LOW or MEDIUM audit finding. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`matchFinding`](../scripts/lib/persona/audit-correlator.mjs#L183) | function | `scripts/lib/persona/audit-correlator.mjs` | 183-212 | Finds the best matching audit finding for a persona finding via exact or fuzzy matching. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`overlapCoefficient`](../scripts/lib/persona/audit-correlator.mjs#L112) | function | `scripts/lib/persona/audit-correlator.mjs` | 112-119 | Calculates Jaccard similarity ratio between two token sets. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`personaFilePathTokens`](../scripts/lib/persona/audit-correlator.mjs#L126) | function | `scripts/lib/persona/audit-correlator.mjs` | 126-129 | Extracts tokens from a finding's element and step URL. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`personaFindingHash`](../scripts/lib/persona/audit-correlator.mjs#L62) | function | `scripts/lib/persona/audit-correlator.mjs` | 62-67 | Creates a unique hash for a persona finding based on element, code, and observed details. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`personaKeywordTokens`](../scripts/lib/persona/audit-correlator.mjs#L131) | function | `scripts/lib/persona/audit-correlator.mjs` | 131-133 | Extracts tokens from a finding's observed issue description. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`pickBest`](../scripts/lib/persona/audit-correlator.mjs#L214) | function | `scripts/lib/persona/audit-correlator.mjs` | 214-216 | Selects the newest or highest-severity row from a list. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`scoreMatch`](../scripts/lib/persona/audit-correlator.mjs#L153) | function | `scripts/lib/persona/audit-correlator.mjs` | 153-163 | Scores a persona-to-audit finding match on file path and keyword similarity. | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
-| [`tokenize`](../scripts/lib/persona/audit-correlator.mjs#L94) | function | `scripts/lib/persona/audit-correlator.mjs` | 94-101 | Splits text into lowercase alphanumeric tokens (min length 3). | `scripts/cross-skill.mjs`, `scripts/lib/store/persona-outcomes.mjs` |
 | [`exitCodeForStatus`](../scripts/lib/playwright-runner.mjs#L55) | function | `scripts/lib/playwright-runner.mjs` | 55-63 | Maps Playwright run status to process exit code. | `scripts/ux-lock-run.mjs` |
 | [`flattenReport`](../scripts/lib/playwright-runner.mjs#L192) | function | `scripts/lib/playwright-runner.mjs` | 192-216 | Flattens nested Playwright JSON report into array of test results with metadata. | `scripts/ux-lock-run.mjs` |
 | [`looksLikePlaywrightMissing`](../scripts/lib/playwright-runner.mjs#L66) | function | `scripts/lib/playwright-runner.mjs` | 66-70 | Detects if stderr indicates Playwright is not installed. | `scripts/ux-lock-run.mjs` |
@@ -3177,29 +3654,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`detectRepoStack`](../scripts/lib/repo-stack.mjs#L41) | function | `scripts/lib/repo-stack.mjs` | 41-86 | Detects programming language stack (JS/Python/Java/Postgres) from file markers and dependency content. | `scripts/arch-intent-bootstrap.mjs`, `scripts/cross-skill.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +3 more |
 | [`hasJavaSources`](../scripts/lib/repo-stack.mjs#L156) | function | `scripts/lib/repo-stack.mjs` | 156-172 | Checks for .java files via git ls-files (with 64 MiB buffer for large monorepos). | `scripts/arch-intent-bootstrap.mjs`, `scripts/cross-skill.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +3 more |
 | [`hasPostgresSources`](../scripts/lib/repo-stack.mjs#L110) | function | `scripts/lib/repo-stack.mjs` | 110-140 | Checks for Postgres SQL files and distinctive Postgres syntax patterns (bounded file/byte sample). | `scripts/arch-intent-bootstrap.mjs`, `scripts/cross-skill.mjs`, `scripts/lib/audit/legacy-production-audit.mjs`, +3 more |
-| [`estimateTokens`](../scripts/lib/requirements/_shared.mjs#L11) | function | `scripts/lib/requirements/_shared.mjs` | 11-11 | Estimates token count by dividing string length by four. | _(internal)_ |
-| [`changedSince`](../scripts/lib/requirements/context.mjs#L33) | function | `scripts/lib/requirements/context.mjs` | 33-42 | Gets the set of files changed since a given git SHA. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`getPlanRequirementsRubric`](../scripts/lib/requirements/context.mjs#L166) | function | `scripts/lib/requirements/context.mjs` | 166-170 | Extracts plan file paths and builds a requirements context for them. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`getRequirementsContext`](../scripts/lib/requirements/context.mjs#L54) | function | `scripts/lib/requirements/context.mjs` | 54-134 | Assembles a requirements rubric context block for in-scope code invariants. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`globMatch`](../scripts/lib/requirements/context.mjs#L23) | function | `scripts/lib/requirements/context.mjs` | 23-30 | Matches a file path against a glob pattern. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/openai-audit.mjs` |
-| [`assignId`](../scripts/lib/requirements/extract.mjs#L59) | function | `scripts/lib/requirements/extract.mjs` | 59-65 | Creates a deterministic ID for a requirement based on its kind, assertion, and provenance files. | `scripts/requirements.mjs` |
-| [`batchFiles`](../scripts/lib/requirements/extract.mjs#L113) | function | `scripts/lib/requirements/extract.mjs` | 113-125 | Splits files into token-budget-aware batches for LLM processing. | `scripts/requirements.mjs` |
-| [`extractOneRun`](../scripts/lib/requirements/extract.mjs#L134) | function | `scripts/lib/requirements/extract.mjs` | 134-186 | Runs a single extraction pass over file batches to extract requirements via LLM. | `scripts/requirements.mjs` |
-| [`extractRequirements`](../scripts/lib/requirements/extract.mjs#L198) | function | `scripts/lib/requirements/extract.mjs` | 198-281 | Orchestrates requirement extraction with egress safety and symlink guards. | `scripts/requirements.mjs` |
-| [`mergeRequirements`](../scripts/lib/requirements/extract.mjs#L77) | function | `scripts/lib/requirements/extract.mjs` | 77-110 | Clusters similar extracted requirements across runs and deduplicates them. | `scripts/requirements.mjs` |
-| [`normalizeAssertion`](../scripts/lib/requirements/extract.mjs#L54) | function | `scripts/lib/requirements/extract.mjs` | 54-56 | Lowercases, trims whitespace, and removes trailing punctuation from a requirement assertion. | `scripts/requirements.mjs` |
-| [`classifyGaps`](../scripts/lib/requirements/gap-challenge.mjs#L45) | function | `scripts/lib/requirements/gap-challenge.mjs` | 45-115 | Analyzes requirement candidates for gaps and contradictions via LLM with graceful degradation on failure. | `scripts/requirements.mjs` |
-| [`deriveIndex`](../scripts/lib/requirements/ledger.mjs#L54) | function | `scripts/lib/requirements/ledger.mjs` | 54-58 | Maps ledger requirements to a simplified index of id, assertion, kind, and status. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
-| [`loadLedger`](../scripts/lib/requirements/ledger.mjs#L25) | function | `scripts/lib/requirements/ledger.mjs` | 25-37 | Loads and parses the requirements ledger JSON, returning empty object if missing or invalid. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
-| [`norm`](../scripts/lib/requirements/ledger.mjs#L22) | function | `scripts/lib/requirements/ledger.mjs` | 22-22 | Normalizes a string by lowercasing, collapsing whitespace, and trimming trailing punctuation. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
-| [`reconcile`](../scripts/lib/requirements/ledger.mjs#L83) | function | `scripts/lib/requirements/ledger.mjs` | 83-176 | Reconciles extracted requirement candidates with prior ledger via identity aliasing and gap assessment. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
-| [`statusFor`](../scripts/lib/requirements/ledger.mjs#L60) | function | `scripts/lib/requirements/ledger.mjs` | 60-68 | Determines requirement status based on overrides, ambiguity, detected gaps, and run count. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
-| [`writeLedger`](../scripts/lib/requirements/ledger.mjs#L40) | function | `scripts/lib/requirements/ledger.mjs` | 40-51 | Validates and atomically writes the requirements ledger to disk. | `scripts/lib/requirements/context.mjs`, `scripts/requirements.mjs` |
-| [`parseLlmJson`](../scripts/lib/requirements/llm-json.mjs#L25) | function | `scripts/lib/requirements/llm-json.mjs` | 25-29 | Extracts JSON from text by handling markdown code fences as fallback. | `scripts/lib/requirements/extract.mjs`, `scripts/lib/requirements/gap-challenge.mjs` |
-| [`cell`](../scripts/lib/requirements/render.mjs#L22) | function | `scripts/lib/requirements/render.mjs` | 22-22 | Escapes markdown table cell content by handling newlines and pipe characters. | `scripts/requirements.mjs` |
-| [`provFiles`](../scripts/lib/requirements/render.mjs#L25) | function | `scripts/lib/requirements/render.mjs` | 25-25 | Extracts unique files from a requirement's provenance list. | `scripts/requirements.mjs` |
-| [`renderRequirementsMap`](../scripts/lib/requirements/render.mjs#L34) | function | `scripts/lib/requirements/render.mjs` | 34-121 | Generates a markdown report of the requirements ledger with statistics and breakdowns. | `scripts/requirements.mjs` |
-| [`uniqueIds`](../scripts/lib/requirements/schema.mjs#L110) | function | `scripts/lib/requirements/schema.mjs` | 110-110 | Returns a predicate that checks if all array elements have unique keys. | `scripts/lib/requirements/extract.mjs`, `scripts/lib/requirements/gap-challenge.mjs`, `scripts/lib/requirements/ledger.mjs`, +2 more |
 | [`blockingSleep`](../scripts/lib/retry-transient-fs.mjs#L14) | function | `scripts/lib/retry-transient-fs.mjs` | 14-18 | Blocks the current thread for a specified duration using `Atomics.wait`. | `scripts/archive-completed-plans.mjs`, `scripts/audit-clean.mjs`, `scripts/learning/backfill-outcomes.mjs`, +3 more |
 | [`isFiniteNonNegative`](../scripts/lib/retry-transient-fs.mjs#L32) | function | `scripts/lib/retry-transient-fs.mjs` | 32-34 | Validates that a value is a finite, non-negative number. | `scripts/archive-completed-plans.mjs`, `scripts/audit-clean.mjs`, `scripts/learning/backfill-outcomes.mjs`, +3 more |
 | [`isNonNegativeInteger`](../scripts/lib/retry-transient-fs.mjs#L36) | function | `scripts/lib/retry-transient-fs.mjs` | 36-38 | Validates that a value is a non-negative integer. | `scripts/archive-completed-plans.mjs`, `scripts/audit-clean.mjs`, `scripts/learning/backfill-outcomes.mjs`, +3 more |
@@ -3236,9 +3690,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`redactWithPatterns`](../scripts/lib/secret-patterns.mjs#L147) | function | `scripts/lib/secret-patterns.mjs` | 147-179 | Redacts matched secret patterns in text by replacing them with `[REDACTED:name]` markers while preserving newlines. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
 | [`resolveRedactionSpan`](../scripts/lib/secret-patterns.mjs#L112) | function | `scripts/lib/secret-patterns.mjs` | 112-115 | Resolves the start/end indices for redaction from regex match.indices, preferring a specified capture group. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
 | [`scanForSecrets`](../scripts/lib/secret-patterns.mjs#L73) | function | `scripts/lib/secret-patterns.mjs` | 73-87 | Tests if text contains any matched secret patterns from the SECRET_PATTERNS list. | `scripts/brainstorm-round.mjs`, `scripts/learning/backfill-outcomes.mjs`, `scripts/lib/anthropic-client.mjs`, +20 more |
-| [`classifySecrets`](../scripts/lib/security/secret-classifier.mjs#L61) | function | `scripts/lib/security/secret-classifier.mjs` | 61-76 | Categorizes detected secrets as high or low confidence. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
-| [`maskSample`](../scripts/lib/security/secret-classifier.mjs#L139) | function | `scripts/lib/security/secret-classifier.mjs` | 139-141 | Truncates a string sample to first 6 characters plus ellipsis. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
-| [`preWriteSecretGate`](../scripts/lib/security/secret-classifier.mjs#L89) | function | `scripts/lib/security/secret-classifier.mjs` | 89-136 | Refuses high-confidence secrets, auto-redacts low-confidence PII before storage. | `scripts/lib/friction/commands.mjs`, `scripts/security-memory/refresh-incidents.mjs` |
 | [`assertEgressSafe`](../scripts/lib/sensitive-egress-gate.mjs#L151) | function | `scripts/lib/sensitive-egress-gate.mjs` | 151-161 | Throws if payload contains secrets; gates before sending to external providers. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +18 more |
 | [`containsSecrets`](../scripts/lib/sensitive-egress-gate.mjs#L58) | function | `scripts/lib/sensitive-egress-gate.mjs` | 58-68 | Detects if text body contains secret patterns. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +18 more |
 | [`gateSymbolForEgress`](../scripts/lib/sensitive-egress-gate.mjs#L190) | function | `scripts/lib/sensitive-egress-gate.mjs` | 190-241 | Determines whether a file symbol is safe for LLM egress, checking symlink escapes and sensitivity. | `scripts/lib/arm-eval/judge.mjs`, `scripts/lib/arm-eval/producers/brainstorm.mjs`, `scripts/lib/arm-eval/producers/plan.mjs`, +18 more |
@@ -3284,30 +3735,6 @@ _Domain has 952 symbols (>50). Diagram shows top-15 by file order; see flat tabl
 | [`locateReferenceSection`](../scripts/lib/skill-refs-parser.mjs#L31) | function | `scripts/lib/skill-refs-parser.mjs` | 31-44 | Locates the "## Reference files" section start and end lines in SKILL.md markdown. | `scripts/check-skill-refs.mjs` |
 | [`parseReferenceFrontmatter`](../scripts/lib/skill-refs-parser.mjs#L112) | function | `scripts/lib/skill-refs-parser.mjs` | 112-130 | Extracts and validates the `summary:` YAML frontmatter value from a reference file. | `scripts/check-skill-refs.mjs` |
 | [`parseReferenceTable`](../scripts/lib/skill-refs-parser.mjs#L56) | function | `scripts/lib/skill-refs-parser.mjs` | 56-105 | Extracts File/Summary/Read-when rows from a reference-files markdown table with validation. | `scripts/check-skill-refs.mjs` |
-| [`buildContrarianStratifiedWorksheet`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L263) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 263-312 | Stratifies findings into buckets (contrarian, known-defect, high-dismissal, omission-dismissal) for manual review. | `scripts/cheap-triager-validate.mjs` |
-| [`computeDatasetHash`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L396) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 396-398 | Creates a SHA256 hash of Claude and blind-map CSV texts for dataset identity. | `scripts/cheap-triager-validate.mjs` |
-| [`computeTwoJudgeConsensus`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L178) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 178-208 | Merges two judges' blind-ID gradings into consensus tiers (valid/dismissed/no-consensus). | `scripts/cheap-triager-validate.mjs` |
-| [`computeValidationManifest`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L341) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 341-367 | Validates false-dismissal rates against thresholds and generates a summary manifest. | `scripts/cheap-triager-validate.mjs` |
-| [`labelTier`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L152) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 152-155 | Classifies a label as 'valid' or 'dismissed' based on a factors lookup. | `scripts/cheap-triager-validate.mjs` |
-| [`parseBlindCsv`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L109) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 109-142 | Parses complete CSV text into rows, validating headers and field counts. | `scripts/cheap-triager-validate.mjs` |
-| [`parseCsvRecord`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L57) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 57-85 | Parses one CSV record from text, handling quoted fields and escaped quotes. | `scripts/cheap-triager-validate.mjs` |
-| [`renderValidationMarkdown`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L371) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 371-390 | Formats a validation manifest as a markdown table report. | `scripts/cheap-triager-validate.mjs` |
-| [`retrofitEvidenceType`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L232) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 232-235 | Classifies a finding as omission or commission based on signal text. | `scripts/cheap-triager-validate.mjs` |
-| [`runCandidateTriage`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L415) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 415-427 | Runs a triage adapter over rows and returns verdicts keyed by blind ID. | `scripts/cheap-triager-validate.mjs` |
-| [`wilsonScoreInterval`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L322) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 322-329 | Computes a 95% Wilson score confidence interval for a success rate. | `scripts/cheap-triager-validate.mjs` |
-| [`dupHash`](../scripts/lib/solo-control/cluster-propose.mjs#L46) | function | `scripts/lib/solo-control/cluster-propose.mjs` | 46-49 | Generates a 10-character hash of a finding's category, file, and detail for deduplication. | `scripts/solo-control-audit.mjs` |
-| [`dupHashClusters`](../scripts/lib/solo-control/cluster-propose.mjs#L53) | function | `scripts/lib/solo-control/cluster-propose.mjs` | 53-60 | Groups row indices by their deduplication hash to identify clusters of potential duplicate findings. | `scripts/solo-control-audit.mjs` |
-| [`proposeChunk`](../scripts/lib/solo-control/cluster-propose.mjs#L87) | function | `scripts/lib/solo-control/cluster-propose.mjs` | 87-138 | Attempts to cluster a batch of findings via LLM with graceful degradation to hash-based clustering on failure. | `scripts/solo-control-audit.mjs` |
-| [`proposeClusters`](../scripts/lib/solo-control/cluster-propose.mjs#L150) | function | `scripts/lib/solo-control/cluster-propose.mjs` | 150-182 | Partitions findings by sensitivity, sends non-sensitive ones to LLM for clustering, hash-clusters sensitive rows in-house. | `scripts/solo-control-audit.mjs` |
-| [`bestLabel`](../scripts/lib/solo-control/scoring.mjs#L28) | function | `scripts/lib/solo-control/scoring.mjs` | 28-28 | Returns whichever label has higher priority rank. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
-| [`bootstrapCI`](../scripts/lib/solo-control/scoring.mjs#L137) | function | `scripts/lib/solo-control/scoring.mjs` | 137-150 | Estimates a 95% confidence interval for acceptance rate via bootstrap resampling. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
-| [`costPerKnownDefect`](../scripts/lib/solo-control/scoring.mjs#L196) | function | `scripts/lib/solo-control/scoring.mjs` | 196-204 | Divides total cost by matched known-defects count, handling null states gracefully. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
-| [`htAcceptedRate`](../scripts/lib/solo-control/scoring.mjs#L127) | function | `scripts/lib/solo-control/scoring.mjs` | 127-135 | Calculates Horvitz-Thompson weighted acceptance rate for sampled findings. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
-| [`scoreArms`](../scripts/lib/solo-control/scoring.mjs#L39) | function | `scripts/lib/solo-control/scoring.mjs` | 39-112 | Computes per-arm metrics (acceptance rate, value, known-defect matches) from clustered findings. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
-| [`scoreMediumSampleWeighted`](../scripts/lib/solo-control/scoring.mjs#L162) | function | `scripts/lib/solo-control/scoring.mjs` | 162-175 | Estimates per-arm acceptance rates with bootstrap CIs from a stratified sample. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
-| [`sevWeight`](../scripts/lib/solo-control/scoring.mjs#L22) | function | `scripts/lib/solo-control/scoring.mjs` | 22-22 | Returns numeric weight for a severity level (HIGH/MEDIUM/LOW/etc.). | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
-| [`matchesKnownDefect`](../scripts/lib/solo-control/stratified-sample.mjs#L34) | function | `scripts/lib/solo-control/stratified-sample.mjs` | 34-44 | Checks if a finding's file matches any file in a known-defect record. | `scripts/solo-control-audit.mjs` |
-| [`stratifiedMediumSample`](../scripts/lib/solo-control/stratified-sample.mjs#L61) | function | `scripts/lib/solo-control/stratified-sample.mjs` | 61-134 | Samples clusters proportionally by commit with per-commit caps and rebalancing to exact target. | `scripts/solo-control-audit.mjs` |
 | [`runJsonLinesAsync`](../scripts/lib/subprocess.mjs#L56) | function | `scripts/lib/subprocess.mjs` | 56-128 | Spawns a subprocess, streams JSON-lines output, parses lines with error tracking. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/symbol-index/refresh.mjs` |
 | [`runJsonLinesAsyncStrict`](../scripts/lib/subprocess.mjs#L149) | function | `scripts/lib/subprocess.mjs` | 149-208 | Wraps runJsonLinesAsync to enforce strict exit code, signal, and parse-error contracts. | `scripts/lib/audit/duplication-detector.mjs`, `scripts/symbol-index/refresh.mjs` |
 | [`applyCloudFpSuppression`](../scripts/lib/suppression-policy.mjs#L292) | function | `scripts/lib/suppression-policy.mjs` | 292-316 | Filters findings through a cloud FP policy, returning kept findings and suppression records. | `scripts/lib/audit/legacy-production-audit.mjs`, `scripts/shared.mjs` |
@@ -3430,48 +3857,65 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 
 ---
 
-## stores
+## solo-control
 
-> Persists architectural metadata (domain summaries, symbol embeddings, file-import edges) to Postgres and exposes queries for symbol-index reconstruction, import-graph traversal, and semantic symbol similarity via RPC.
+> Validates audit findings via dual-judge blind grading: merges independent judge verdicts from CSV files, computes statistical confidence intervals on false-dismissal rates, and stratifies findings into contrarian/known-defect/high-dismissal buckets for manual review.
 
 ```mermaid
 flowchart TB
-subgraph dom_stores ["stores"]
-  file_scripts_lib_store_arch__shared_mjs["scripts/lib/store/arch/_shared.mjs"]:::component
-  sym_scripts_lib_store_arch__shared_mjs_chunk["chunk"]:::symbol
-  file_scripts_lib_store_arch__shared_mjs --> sym_scripts_lib_store_arch__shared_mjs_chunk
-  file_scripts_lib_store_arch_domain_summaries_["scripts/lib/store/arch/domain-summaries.mjs"]:::component
-  sym_scripts_lib_store_arch_domain_summaries_["getDomainSummaries"]:::symbol
-  file_scripts_lib_store_arch_domain_summaries_ --> sym_scripts_lib_store_arch_domain_summaries_
-  sym_scripts_lib_store_arch_domain_summaries_["upsertDomainSummary"]:::symbol
-  file_scripts_lib_store_arch_domain_summaries_ --> sym_scripts_lib_store_arch_domain_summaries_
-  file_scripts_lib_store_arch_imports_mjs["scripts/lib/store/arch/imports.mjs"]:::component
-  sym_scripts_lib_store_arch_imports_mjs_copyF["copyForwardImports"]:::symbol
-  file_scripts_lib_store_arch_imports_mjs --> sym_scripts_lib_store_arch_imports_mjs_copyF
-  sym_scripts_lib_store_arch_imports_mjs_getIm["getImportersForFiles"]:::symbol
-  file_scripts_lib_store_arch_imports_mjs --> sym_scripts_lib_store_arch_imports_mjs_getIm
-  sym_scripts_lib_store_arch_imports_mjs_getIm["getImportGraphPopulated"]:::symbol
-  file_scripts_lib_store_arch_imports_mjs --> sym_scripts_lib_store_arch_imports_mjs_getIm
-  sym_scripts_lib_store_arch_imports_mjs_listF["listFileImportsForSnapshot"]:::symbol
-  file_scripts_lib_store_arch_imports_mjs --> sym_scripts_lib_store_arch_imports_mjs_listF
-  sym_scripts_lib_store_arch_imports_mjs_markI["markImportGraphPopulated"]:::symbol
-  file_scripts_lib_store_arch_imports_mjs --> sym_scripts_lib_store_arch_imports_mjs_markI
-  sym_scripts_lib_store_arch_imports_mjs_recor["recordSymbolFileImports"]:::symbol
-  file_scripts_lib_store_arch_imports_mjs --> sym_scripts_lib_store_arch_imports_mjs_recor
-  file_scripts_lib_store_arch_neighbourhood_mjs["scripts/lib/store/arch/neighbourhood.mjs"]:::component
-  sym_scripts_lib_store_arch_neighbourhood_mjs["callNeighbourhoodRpc"]:::symbol
-  file_scripts_lib_store_arch_neighbourhood_mjs --> sym_scripts_lib_store_arch_neighbourhood_mjs
-  sym_scripts_lib_store_arch_neighbourhood_mjs["computeDriftScore"]:::symbol
-  file_scripts_lib_store_arch_neighbourhood_mjs --> sym_scripts_lib_store_arch_neighbourhood_mjs
-  sym_scripts_lib_store_arch_neighbourhood_mjs["getTopDuplicateClusters"]:::symbol
-  file_scripts_lib_store_arch_neighbourhood_mjs --> sym_scripts_lib_store_arch_neighbourhood_mjs
-  file_scripts_lib_store_arch_refresh_runs_mjs["scripts/lib/store/arch/refresh-runs.mjs"]:::component
-  sym_scripts_lib_store_arch_refresh_runs_mjs_["abortRefreshRun"]:::symbol
-  file_scripts_lib_store_arch_refresh_runs_mjs --> sym_scripts_lib_store_arch_refresh_runs_mjs_
-  sym_scripts_lib_store_arch_refresh_runs_mjs_["deleteRefreshRuns"]:::symbol
-  file_scripts_lib_store_arch_refresh_runs_mjs --> sym_scripts_lib_store_arch_refresh_runs_mjs_
-  sym_scripts_lib_store_arch_refresh_runs_mjs_["demoteRefreshRuns"]:::symbol
-  file_scripts_lib_store_arch_refresh_runs_mjs --> sym_scripts_lib_store_arch_refresh_runs_mjs_
+subgraph dom_solo_control ["solo-control"]
+  file_scripts_lib_solo_control_cheap_triager_v["scripts/lib/solo-control/cheap-triager-validate.mjs"]:::component
+  sym_scripts_lib_solo_control_cheap_triager_v["buildContrarianStratifiedWorksheet"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["computeDatasetHash"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["computeTwoJudgeConsensus"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["computeValidationManifest"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["labelTier"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["parseBlindCsv"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["parseCsvRecord"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["renderValidationMarkdown"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["retrofitEvidenceType"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["runCandidateTriage"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  sym_scripts_lib_solo_control_cheap_triager_v["wilsonScoreInterval"]:::symbol
+  file_scripts_lib_solo_control_cheap_triager_v --> sym_scripts_lib_solo_control_cheap_triager_v
+  file_scripts_lib_solo_control_cluster_propose["scripts/lib/solo-control/cluster-propose.mjs"]:::component
+  sym_scripts_lib_solo_control_cluster_propose["dupHash"]:::symbol
+  file_scripts_lib_solo_control_cluster_propose --> sym_scripts_lib_solo_control_cluster_propose
+  sym_scripts_lib_solo_control_cluster_propose["dupHashClusters"]:::symbol
+  file_scripts_lib_solo_control_cluster_propose --> sym_scripts_lib_solo_control_cluster_propose
+  sym_scripts_lib_solo_control_cluster_propose["proposeChunk"]:::symbol
+  file_scripts_lib_solo_control_cluster_propose --> sym_scripts_lib_solo_control_cluster_propose
+  sym_scripts_lib_solo_control_cluster_propose["proposeClusters"]:::symbol
+  file_scripts_lib_solo_control_cluster_propose --> sym_scripts_lib_solo_control_cluster_propose
+  file_scripts_lib_solo_control_scoring_mjs["scripts/lib/solo-control/scoring.mjs"]:::component
+  sym_scripts_lib_solo_control_scoring_mjs_bes["bestLabel"]:::symbol
+  file_scripts_lib_solo_control_scoring_mjs --> sym_scripts_lib_solo_control_scoring_mjs_bes
+  sym_scripts_lib_solo_control_scoring_mjs_boo["bootstrapCI"]:::symbol
+  file_scripts_lib_solo_control_scoring_mjs --> sym_scripts_lib_solo_control_scoring_mjs_boo
+  sym_scripts_lib_solo_control_scoring_mjs_cos["costPerKnownDefect"]:::symbol
+  file_scripts_lib_solo_control_scoring_mjs --> sym_scripts_lib_solo_control_scoring_mjs_cos
+  sym_scripts_lib_solo_control_scoring_mjs_htA["htAcceptedRate"]:::symbol
+  file_scripts_lib_solo_control_scoring_mjs --> sym_scripts_lib_solo_control_scoring_mjs_htA
+  sym_scripts_lib_solo_control_scoring_mjs_sco["scoreArms"]:::symbol
+  file_scripts_lib_solo_control_scoring_mjs --> sym_scripts_lib_solo_control_scoring_mjs_sco
+  sym_scripts_lib_solo_control_scoring_mjs_sco["scoreMediumSampleWeighted"]:::symbol
+  file_scripts_lib_solo_control_scoring_mjs --> sym_scripts_lib_solo_control_scoring_mjs_sco
+  sym_scripts_lib_solo_control_scoring_mjs_sev["sevWeight"]:::symbol
+  file_scripts_lib_solo_control_scoring_mjs --> sym_scripts_lib_solo_control_scoring_mjs_sev
+  file_scripts_lib_solo_control_stratified_samp["scripts/lib/solo-control/stratified-sample.mjs"]:::component
+  sym_scripts_lib_solo_control_stratified_samp["matchesKnownDefect"]:::symbol
+  file_scripts_lib_solo_control_stratified_samp --> sym_scripts_lib_solo_control_stratified_samp
+  sym_scripts_lib_solo_control_stratified_samp["stratifiedMediumSample"]:::symbol
+  file_scripts_lib_solo_control_stratified_samp --> sym_scripts_lib_solo_control_stratified_samp
 end
 classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
 classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
@@ -3480,12 +3924,133 @@ classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
 classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ```
 
-_Domain has 213 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
+### Symbols in this domain
+
+| Symbol | Kind | Path | Lines | Purpose | File imported by |
+|---|---|---|---|---|---|
+| [`buildContrarianStratifiedWorksheet`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L263) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 263-312 | Stratifies findings into buckets (contrarian, known-defect, high-dismissal, omission-dismissal) for manual review. | `scripts/cheap-triager-validate.mjs` |
+| [`computeDatasetHash`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L396) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 396-398 | Creates a SHA256 hash of Claude and blind-map CSV texts for dataset identity. | `scripts/cheap-triager-validate.mjs` |
+| [`computeTwoJudgeConsensus`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L178) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 178-208 | Merges two judges' blind-ID gradings into consensus tiers (valid/dismissed/no-consensus). | `scripts/cheap-triager-validate.mjs` |
+| [`computeValidationManifest`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L341) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 341-367 | Validates false-dismissal rates against thresholds and generates a summary manifest. | `scripts/cheap-triager-validate.mjs` |
+| [`labelTier`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L152) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 152-155 | Classifies a label as 'valid' or 'dismissed' based on a factors lookup. | `scripts/cheap-triager-validate.mjs` |
+| [`parseBlindCsv`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L109) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 109-142 | Parses complete CSV text into rows, validating headers and field counts. | `scripts/cheap-triager-validate.mjs` |
+| [`parseCsvRecord`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L57) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 57-85 | Parses one CSV record from text, handling quoted fields and escaped quotes. | `scripts/cheap-triager-validate.mjs` |
+| [`renderValidationMarkdown`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L371) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 371-390 | Formats a validation manifest as a markdown table report. | `scripts/cheap-triager-validate.mjs` |
+| [`retrofitEvidenceType`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L232) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 232-235 | Classifies a finding as omission or commission based on signal text. | `scripts/cheap-triager-validate.mjs` |
+| [`runCandidateTriage`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L415) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 415-427 | Runs a triage adapter over rows and returns verdicts keyed by blind ID. | `scripts/cheap-triager-validate.mjs` |
+| [`wilsonScoreInterval`](../scripts/lib/solo-control/cheap-triager-validate.mjs#L322) | function | `scripts/lib/solo-control/cheap-triager-validate.mjs` | 322-329 | Computes a 95% Wilson score confidence interval for a success rate. | `scripts/cheap-triager-validate.mjs` |
+| [`dupHash`](../scripts/lib/solo-control/cluster-propose.mjs#L46) | function | `scripts/lib/solo-control/cluster-propose.mjs` | 46-49 | Generates a 10-character hash of a finding's category, file, and detail for deduplication. | `scripts/solo-control-audit.mjs` |
+| [`dupHashClusters`](../scripts/lib/solo-control/cluster-propose.mjs#L53) | function | `scripts/lib/solo-control/cluster-propose.mjs` | 53-60 | Groups row indices by their deduplication hash to identify clusters of potential duplicate findings. | `scripts/solo-control-audit.mjs` |
+| [`proposeChunk`](../scripts/lib/solo-control/cluster-propose.mjs#L87) | function | `scripts/lib/solo-control/cluster-propose.mjs` | 87-138 | Attempts to cluster a batch of findings via LLM with graceful degradation to hash-based clustering on failure. | `scripts/solo-control-audit.mjs` |
+| [`proposeClusters`](../scripts/lib/solo-control/cluster-propose.mjs#L150) | function | `scripts/lib/solo-control/cluster-propose.mjs` | 150-182 | Partitions findings by sensitivity, sends non-sensitive ones to LLM for clustering, hash-clusters sensitive rows in-house. | `scripts/solo-control-audit.mjs` |
+| [`bestLabel`](../scripts/lib/solo-control/scoring.mjs#L28) | function | `scripts/lib/solo-control/scoring.mjs` | 28-28 | Returns whichever label has higher priority rank. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
+| [`bootstrapCI`](../scripts/lib/solo-control/scoring.mjs#L137) | function | `scripts/lib/solo-control/scoring.mjs` | 137-150 | Estimates a 95% confidence interval for acceptance rate via bootstrap resampling. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
+| [`costPerKnownDefect`](../scripts/lib/solo-control/scoring.mjs#L196) | function | `scripts/lib/solo-control/scoring.mjs` | 196-204 | Divides total cost by matched known-defects count, handling null states gracefully. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
+| [`htAcceptedRate`](../scripts/lib/solo-control/scoring.mjs#L127) | function | `scripts/lib/solo-control/scoring.mjs` | 127-135 | Calculates Horvitz-Thompson weighted acceptance rate for sampled findings. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
+| [`scoreArms`](../scripts/lib/solo-control/scoring.mjs#L39) | function | `scripts/lib/solo-control/scoring.mjs` | 39-112 | Computes per-arm metrics (acceptance rate, value, known-defect matches) from clustered findings. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
+| [`scoreMediumSampleWeighted`](../scripts/lib/solo-control/scoring.mjs#L162) | function | `scripts/lib/solo-control/scoring.mjs` | 162-175 | Estimates per-arm acceptance rates with bootstrap CIs from a stratified sample. | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
+| [`sevWeight`](../scripts/lib/solo-control/scoring.mjs#L22) | function | `scripts/lib/solo-control/scoring.mjs` | 22-22 | Returns numeric weight for a severity level (HIGH/MEDIUM/LOW/etc.). | `scripts/lib/solo-control/cheap-triager-validate.mjs`, `scripts/solo-control-audit.mjs` |
+| [`matchesKnownDefect`](../scripts/lib/solo-control/stratified-sample.mjs#L34) | function | `scripts/lib/solo-control/stratified-sample.mjs` | 34-44 | Checks if a finding's file matches any file in a known-defect record. | `scripts/solo-control-audit.mjs` |
+| [`stratifiedMediumSample`](../scripts/lib/solo-control/stratified-sample.mjs#L61) | function | `scripts/lib/solo-control/stratified-sample.mjs` | 61-134 | Samples clusters proportionally by commit with per-commit caps and rebalancing to exact target. | `scripts/solo-control-audit.mjs` |
+
+---
+
+## stores
+
+> Manages Postgres connection pooling, validates safe DSN configuration (rejecting transaction poolers and production endpoints), and tracks transaction context via AsyncLocalStorage for the audit-loop Supabase store.
+
+```mermaid
+flowchart TB
+subgraph dom_stores ["stores"]
+  file_scripts_lib_db_client_mjs["scripts/lib/db/client.mjs"]:::component
+  sym_scripts_lib_db_client_mjs__resetForTest["_resetForTest"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs__resetForTest
+  sym_scripts_lib_db_client_mjs_assertDisposab["assertDisposableDbUrl"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_assertDisposab
+  sym_scripts_lib_db_client_mjs_assertPublicSc["assertPublicSchema"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_assertPublicSc
+  sym_scripts_lib_db_client_mjs_assertSafeDsn["assertSafeDsn"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_assertSafeDsn
+  sym_scripts_lib_db_client_mjs_buildPoolConfi["buildPoolConfig"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_buildPoolConfi
+  sym_scripts_lib_db_client_mjs_closePool["closePool"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_closePool
+  sym_scripts_lib_db_client_mjs_getActiveTxCli["getActiveTxClient"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_getActiveTxCli
+  sym_scripts_lib_db_client_mjs_getPool["getPool"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_getPool
+  sym_scripts_lib_db_client_mjs_resolveDbUrl["resolveDbUrl"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_resolveDbUrl
+  sym_scripts_lib_db_client_mjs_warnAliasOnce["warnAliasOnce"]:::symbol
+  file_scripts_lib_db_client_mjs --> sym_scripts_lib_db_client_mjs_warnAliasOnce
+  file_scripts_lib_db_errors_mjs["scripts/lib/db/errors.mjs"]:::component
+  sym_scripts_lib_db_errors_mjs_isConnectionEx["isConnectionExceptionSqlstate"]:::symbol
+  file_scripts_lib_db_errors_mjs --> sym_scripts_lib_db_errors_mjs_isConnectionEx
+  sym_scripts_lib_db_errors_mjs_normalizePostg["normalizePostgresError"]:::symbol
+  file_scripts_lib_db_errors_mjs --> sym_scripts_lib_db_errors_mjs_normalizePostg
+  file_scripts_lib_db_query_mjs["scripts/lib/db/query.mjs"]:::component
+  sym_scripts_lib_db_query_mjs__exec["_exec"]:::symbol
+  file_scripts_lib_db_query_mjs --> sym_scripts_lib_db_query_mjs__exec
+  sym_scripts_lib_db_query_mjs_buildDelete["buildDelete"]:::symbol
+  file_scripts_lib_db_query_mjs --> sym_scripts_lib_db_query_mjs_buildDelete
+  sym_scripts_lib_db_query_mjs_buildInsert["buildInsert"]:::symbol
+  file_scripts_lib_db_query_mjs --> sym_scripts_lib_db_query_mjs_buildInsert
+end
+classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
+classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
+classDef symbol fill:#fff,stroke:#999,color:#444
+classDef dup fill:#ffe8d8,stroke:#c0392b,stroke-width:2px,color:#000
+classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
+```
+
+_Domain has 255 symbols (>50). Diagram shows top-15 by file order; see flat table below for the full list._
 
 ### Symbols in this domain
 
 | Symbol | Kind | Path | Lines | Purpose | File imported by |
 |---|---|---|---|---|---|
+| [`_resetForTest`](../scripts/lib/db/client.mjs#L421) | function | `scripts/lib/db/client.mjs` | 421-423 | Closes the database connection pool for test cleanup. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`assertDisposableDbUrl`](../scripts/lib/db/client.mjs#L108) | function | `scripts/lib/db/client.mjs` | 108-129 | Ensures AUDIT_DB_TEST_URL is a disposable test database, not Supabase-hosted or production. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`assertPublicSchema`](../scripts/lib/db/client.mjs#L230) | function | `scripts/lib/db/client.mjs` | 230-239 | Ensures AUDIT_DB_SCHEMA is unset or 'public' (arbitrary schemas not supported). | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`assertSafeDsn`](../scripts/lib/db/client.mjs#L60) | function | `scripts/lib/db/client.mjs` | 60-80 | Validates AUDIT_DB_URL is a valid postgresql:// DSN, rejecting the Supabase Transaction pooler. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`buildPoolConfig`](../scripts/lib/db/client.mjs#L257) | function | `scripts/lib/db/client.mjs` | 257-319 | Constructs a pg.Pool configuration with SSL mode, pool size, custom type parsers, and search_path options. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`closePool`](../scripts/lib/db/client.mjs#L399) | function | `scripts/lib/db/client.mjs` | 399-412 | Gracefully closes the singleton pg.Pool and nulls the reference. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`getActiveTxClient`](../scripts/lib/db/client.mjs#L148) | function | `scripts/lib/db/client.mjs` | 148-151 | Returns the active transaction client from AsyncLocalStorage context, or null if none active. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`getPool`](../scripts/lib/db/client.mjs#L335) | function | `scripts/lib/db/client.mjs` | 335-387 | Lazily initializes and returns a singleton pg.Pool instance with idempotent shared-env loading. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`resolveDbUrl`](../scripts/lib/db/client.mjs#L182) | function | `scripts/lib/db/client.mjs` | 182-222 | Resolves AUDIT_DB_URL (or legacy alias) from environment, validates preconditions, and returns the connection string. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`warnAliasOnce`](../scripts/lib/db/client.mjs#L168) | function | `scripts/lib/db/client.mjs` | 168-175 | Warns once per alias that a deprecated environment variable is being used. | `scripts/audit-metrics.mjs`, `scripts/check-rls.mjs`, `scripts/lib/db/query.mjs`, +8 more |
+| [`isConnectionExceptionSqlstate`](../scripts/lib/db/errors.mjs#L31) | function | `scripts/lib/db/errors.mjs` | 31-33 | Checks if an error code is a Postgres connection exception (SQLSTATE class 08). | `scripts/lib/db/query.mjs` |
+| [`normalizePostgresError`](../scripts/lib/db/errors.mjs#L82) | function | `scripts/lib/db/errors.mjs` | 82-194 | Classifies a Postgres error as retryable, transient, misconfigured, or fatal. | `scripts/lib/db/query.mjs` |
+| [`_exec`](../scripts/lib/db/query.mjs#L420) | function | `scripts/lib/db/query.mjs` | 420-440 | Executes SQL via active transaction or connection pool with error normalization. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`buildDelete`](../scripts/lib/db/query.mjs#L400) | function | `scripts/lib/db/query.mjs` | 400-405 | Generates DELETE SQL with WHERE condition and optional RETURNING. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`buildInsert`](../scripts/lib/db/query.mjs#L193) | function | `scripts/lib/db/query.mjs` | 193-207 | Generates INSERT SQL with parameterized values and optional RETURNING clause. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`buildUpdate`](../scripts/lib/db/query.mjs#L374) | function | `scripts/lib/db/query.mjs` | 374-394 | Generates UPDATE SQL with SET clauses, WHERE condition, and optional RETURNING. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`buildUpsert`](../scripts/lib/db/query.mjs#L236) | function | `scripts/lib/db/query.mjs` | 236-324 | Generates INSERT ... ON CONFLICT UPDATE SQL for batch upserts with uniform column shapes. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`deleteWhere`](../scripts/lib/db/query.mjs#L543) | function | `scripts/lib/db/query.mjs` | 543-548 | Deletes rows matching a WHERE condition and returns deleted rows if requested. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`flattenWhere`](../scripts/lib/db/query.mjs#L341) | function | `scripts/lib/db/query.mjs` | 341-365 | Flattens a WHERE condition object into SQL clauses and parameter values. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`insertReturning`](../scripts/lib/db/query.mjs#L492) | function | `scripts/lib/db/query.mjs` | 492-500 | Inserts a row and returns the inserted row if a RETURNING clause was specified. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`many`](../scripts/lib/db/query.mjs#L479) | function | `scripts/lib/db/query.mjs` | 479-482 | Executes SQL and returns all rows. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`normalizeConflictTarget`](../scripts/lib/db/query.mjs#L130) | function | `scripts/lib/db/query.mjs` | 130-157 | Parses ON CONFLICT target into column list or constraint-name syntax. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`normalizeReturning`](../scripts/lib/db/query.mjs#L107) | function | `scripts/lib/db/query.mjs` | 107-116 | Normalizes the RETURNING clause to a SQL fragment ('*' or quoted column list). | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`one`](../scripts/lib/db/query.mjs#L462) | function | `scripts/lib/db/query.mjs` | 462-469 | Executes SQL and returns the first row, or null if no rows found. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`pgArray`](../scripts/lib/db/query.mjs#L55) | function | `scripts/lib/db/query.mjs` | 55-58 | Marks a value to bypass JSON serialization and store as a Postgres array literal. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`query`](../scripts/lib/db/query.mjs#L449) | function | `scripts/lib/db/query.mjs` | 449-451 | Executes raw SQL and returns the complete query result. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`quoteIdent`](../scripts/lib/db/query.mjs#L78) | function | `scripts/lib/db/query.mjs` | 78-86 | Escapes SQL identifiers with double quotes and validates against special characters. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`serializeWriteParam`](../scripts/lib/db/query.mjs#L62) | function | `scripts/lib/db/query.mjs` | 62-66 | Converts JavaScript values to database-safe forms, encoding arrays as JSON strings. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`updateWhere`](../scripts/lib/db/query.mjs#L529) | function | `scripts/lib/db/query.mjs` | 529-534 | Updates rows matching a WHERE condition and returns affected rows if requested. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`upsert`](../scripts/lib/db/query.mjs#L514) | function | `scripts/lib/db/query.mjs` | 514-519 | Inserts multiple rows with ON CONFLICT resolution and optional RETURNING. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`withTx`](../scripts/lib/db/query.mjs#L566) | function | `scripts/lib/db/query.mjs` | 566-614 | Executes a callback function within a transaction, supporting nested savepoints. | `scripts/audit-metrics.mjs`, `scripts/cache-hitrate-check.mjs`, `scripts/check-setup.mjs`, +30 more |
+| [`deferFinding`](../scripts/lib/db/rpc.mjs#L96) | function | `scripts/lib/db/rpc.mjs` | 96-104 | Calls the defer_finding stored procedure to dismiss an audit finding. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`driftScore`](../scripts/lib/db/rpc.mjs#L140) | function | `scripts/lib/db/rpc.mjs` | 140-146 | Computes a drift score via stored procedure using embedding similarities. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`frictionNeighbourhood`](../scripts/lib/db/rpc.mjs#L320) | function | `scripts/lib/db/rpc.mjs` | 320-330 | Finds friction issues related to a prompt via similarity search. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`frictionRecurrence`](../scripts/lib/db/rpc.mjs#L307) | function | `scripts/lib/db/rpc.mjs` | 307-313 | Measures how frequently findings recur across runs in a window. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`incidentNeighbourhood`](../scripts/lib/db/rpc.mjs#L254) | function | `scripts/lib/db/rpc.mjs` | 254-267 | Finds related security incidents via vector search on an intent embedding. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`markFindingNeedsTriage`](../scripts/lib/db/rpc.mjs#L122) | function | `scripts/lib/db/rpc.mjs` | 122-129 | Calls mark_finding_needs_triage to flag a finding for manual review. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`memoryHealthMetrics`](../scripts/lib/db/rpc.mjs#L172) | function | `scripts/lib/db/rpc.mjs` | 172-185 | Retrieves memory-health metrics (fuzzy re-raise, cluster density, recurrence rates). | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`publishRefreshRun`](../scripts/lib/db/rpc.mjs#L283) | function | `scripts/lib/db/rpc.mjs` | 283-298 | Publishes a completed symbol-index refresh run to make it queryable. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`symbolNeighbourhood`](../scripts/lib/db/rpc.mjs#L225) | function | `scripts/lib/db/rpc.mjs` | 225-239 | Finds similar symbols via vector search on an intent embedding. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`topDuplicateClusters`](../scripts/lib/db/rpc.mjs#L202) | function | `scripts/lib/db/rpc.mjs` | 202-207 | Finds the top duplicate symbol clusters in a repo. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
+| [`vectorLiteral`](../scripts/lib/db/rpc.mjs#L59) | function | `scripts/lib/db/rpc.mjs` | 59-76 | Validates and formats an embedding vector as a Postgres literal. | `scripts/lib/store/arch/neighbourhood.mjs`, `scripts/lib/store/arch/refresh-runs.mjs`, `scripts/lib/store/friction.mjs`, +3 more |
 | [`chunk`](../scripts/lib/store/arch/_shared.mjs#L21) | function | `scripts/lib/store/arch/_shared.mjs` | 21-25 | Splits an array into chunks of size n. | `scripts/lib/store/arch/imports.mjs`, `scripts/lib/store/arch/symbols.mjs`, `scripts/lib/store/security.mjs` |
 | [`getDomainSummaries`](../scripts/lib/store/arch/domain-summaries.mjs#L32) | function | `scripts/lib/store/arch/domain-summaries.mjs` | 32-55 | Retrieves all cached domain summaries for a repo, indexed by domain tag. | `scripts/lib/store/arch-memory.mjs` |
 | [`upsertDomainSummary`](../scripts/lib/store/arch/domain-summaries.mjs#L14) | function | `scripts/lib/store/arch/domain-summaries.mjs` | 14-30 | Inserts or updates a domain summary with composition metadata and LLM provenance. | `scripts/lib/store/arch-memory.mjs` |

@@ -21,7 +21,7 @@ import crypto from 'node:crypto';
 import yaml from 'yaml';
 import { atomicWriteFileSync } from '../file-io.mjs';
 import { InsightFrontmatterSchema } from './schemas.mjs';
-import { withFileLock } from './file-lock.mjs';
+import { withFileLock } from '../file-lock.mjs';
 import { validateSid } from './id-validator.mjs';
 import { ensureDir } from '../cli-io.mjs';
 
