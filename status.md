@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-07-17 — evidence-anchor Cluster B: gate round 2 findings resolved (G1/G3 + a real cross-cluster seam bug)
+
+### Changes
+- **G1 (HIGH, from the consolidated Gemini gate)**: `verify-anchor-contract.mjs`'s acceptance grader graded `discoveryMalformedRaw === 0` on a *single* run — the exact per-run zero the plan had already been corrected away from (D6: the enum is a funnel, not a trust boundary; occasional provider variance ≠ a broken contract). Reworked to the plan's rate rule: `--runs` (default 3), a new pure `gradeGeneratorRuns` seam requiring `stage0Verified > 0` on every run, `sum(malformedRaw)/sum(rawFindings) < 0.34` aggregate (divide-by-zero guarded), `stage0MalformedTripwire === 0`; `contradicted` reported, never gates. Hermetic-tested via injected multi-run counter arrays (no provider mocked).
+- **Finding 1 (HIGH — the round earned its keep): a real defect at the seam between this plan's own two clusters.** Cluster A built the `comparedRuns` contract-failure exclusion keyed on `stage0MalformedTripwire`; Cluster B moved our-schema rejections *upstream* to `discoveryMalformedRaw` (before Stage 0), making the tripwire 0 by construction on the V3 path — so the exclusion went **dead** for exactly the run it exists to catch. A fully-voided V3 run (enum ate every candidate) would have escaped exclusion and polluted `comparedRuns` as a false 0%-overlap recall failure — the vacuity class memory records firing four times. Fixed: `isContractFailure` now fires on EITHER signal (tripwire OR producer-boundary), `tieredDiscoveryMalformedRaw` is hoisted into the shadow record so `summarize()` can see it, and a regression test reproduces the V3 vacuity and asserts exclusion (verified to bite). Each cluster was correct alone; the gap lived only at their join — which is precisely why a *consolidated* union gate exists.
+- **G3 (LOW)**: refinement walker extended to `ZodIntersection` (`left`/`right`) + `ZodTuple` (`rest`); a Zod-3-ism in Gemini's own recommendation (`ZodPromise.type`) was verified-and-declined (Zod 4 uses `innerType`, already walked). Fixture tests pin all branches.
+- **Finding 2 (LOW)**: `model-eval-discovery.mjs` telemetry now records `preparedContradicted` alongside `preparedMalformed` — the model's evidence failures kept in a separate column from our contract's, never blended (the plan's attribution, applied to the eval column).
+
+### Notes
+- **G2 was refuted, not fixed**: Gemini claimed `shouldSkipForIndexing` realpaths and fails-closed on deleted files; it's purely lexical (`sensitive-paths.mjs:294`) — verified against source. Fourth confident-but-wrong reviewer *mechanism* this session; the instinct is often right while the mechanism isn't, so each was run to ground rather than accepted or dismissed on prose.
+- **Consolidated gate at the 2-round cap; stopped.** Finding 1's fix is deterministic and self-verified with a biting test — no round 3 needed to validate an implementation fix.
+- **Self-inflicted, caught fast**: importing `model-eval-discovery.mjs` to "check it loads" triggered a live paid eval run (the module has top-level executable code + no `import.meta.url` guard — pre-existing; it's a run-only script). Killed within seconds; syntax verified via `node --check` instead. Latent footgun worth a guard someday, out of scope here.
+- Full suite: unchanged 15 failures, ALL in the parallel session's uncommitted `anthropic-client` edits — none in this work.
+
 ## 2026-07-17 — evidence-anchor-path-contract Cluster B: the diff-path map + provider-enforceable producer contract (Phases 3–7)
 
 ### Changes

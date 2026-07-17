@@ -146,13 +146,30 @@ export function summarize(records) {
   // A run whose candidates were destroyed by OUR OWN schema is a contract
   // failure, not a tiered-vs-legacy comparison: counting it would repeat the
   // exact class of false-green this metric has already produced four times.
-  // `typeof === 'number'` (never truthiness): a historical row predating this
-  // field reads `undefined` = insufficient data, NOT "zero malformed
-  // confirmed" — the same shape-check `hasComparablePopulation` uses above.
-  const isContractFailure = (c) =>
-    typeof c.tieredStage0MalformedTripwire === 'number'
-    && c.tieredStage0MalformedTripwire > 0
-    && c.tieredStage0Verified === 0;
+  //
+  // TWO signals, because the contract can break at TWO layers (found by the
+  // consolidated union gate, 2026-07-17 — a seam between this plan's clusters):
+  //   - `stage0MalformedTripwire` (envelope) — the V2 path, where a raw model
+  //     anchor reached Stage 0 and failed `EvidenceAnchorSchema` there.
+  //   - `discoveryMalformedRaw` (raw) — the V3 producer boundary. Under the
+  //     enum contract, `prepareCandidates` rejects an our-schema failure BEFORE
+  //     Stage 0, so it NEVER creates an envelope and the tripwire is 0 by
+  //     construction (§9a). Keying the exclusion only on the tripwire left this
+  //     exclusion DEAD for the V3 path: a run where our enum ate every
+  //     candidate (verified 0, discoveryMalformedRaw N) escaped exclusion and,
+  //     with any legacy findings, polluted comparedRuns as a false 0%-overlap
+  //     recall failure — the precise vacuity this whole plan exists to kill.
+  // Either signal, with nothing verified, is a contract failure.
+  //
+  // `typeof === 'number'` (never truthiness): a historical row predating a
+  // field reads `undefined` = insufficient data, NOT "zero confirmed" — the
+  // same shape-check `hasComparablePopulation` uses above.
+  const isContractFailure = (c) => {
+    if (typeof c.tieredStage0Verified !== 'number' || c.tieredStage0Verified !== 0) return false;
+    const tripwire = typeof c.tieredStage0MalformedTripwire === 'number' && c.tieredStage0MalformedTripwire > 0;
+    const producerBoundary = typeof c.tieredDiscoveryMalformedRaw === 'number' && c.tieredDiscoveryMalformedRaw > 0;
+    return tripwire || producerBoundary;
+  };
   // Excluded BEFORE the population check: its tiered side is empty because our
   // schema ate the candidates, so a legacy-only population would otherwise let
   // it count as a legitimate 0%-overlap "recall failure" — attributing OUR bug

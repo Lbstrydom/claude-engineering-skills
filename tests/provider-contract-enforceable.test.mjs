@@ -101,6 +101,19 @@ function isDroppedRefinement(check) {
  * DROPPED refinement. Recurses object shapes, array elements, union options,
  * and optional/nullable/default inners — a root-only check is not sufficient
  * (see the nested fixture above).
+ *
+ * The single-node key set covers every Zod-4 wrapper that hangs a child schema
+ * off `_def`:
+ *   element/innerType/valueType/keyType — array / optional·nullable·default /
+ *     record value / map key (`innerType` ALSO carries ZodPromise's inner —
+ *     Zod 4 names it `innerType`, NOT `type`; `_def.type` is the string
+ *     discriminator, so hunting for a `type` child finds a string, never a
+ *     schema).
+ *   left/right — ZodIntersection's two branches.
+ *   rest — ZodTuple's rest element (its fixed `items` are walked as an array).
+ * The last three closed a known walker hole: no provider schema uses an
+ * intersection or tuple-rest today, but the walker is the safety net, and a net
+ * with a known gap is the exact thing it exists to prevent.
  */
 function findRefinements(schema, cursor = '(root)', seen = new Set()) {
   if (!schema || typeof schema !== 'object' || seen.has(schema)) return [];
@@ -116,7 +129,7 @@ function findRefinements(schema, cursor = '(root)', seen = new Set()) {
   } else if (schema.shape) {
     for (const [k, v] of Object.entries(schema.shape)) hits.push(...findRefinements(v, `${cursor}.${k}`, seen));
   }
-  for (const key of ['element', 'innerType', 'valueType', 'keyType']) {
+  for (const key of ['element', 'innerType', 'valueType', 'keyType', 'left', 'right', 'rest']) {
     if (def[key]) hits.push(...findRefinements(def[key], `${cursor}<${key}>`, seen));
   }
   for (const key of ['options', 'items']) {
@@ -147,6 +160,29 @@ describe('every provider-facing schema is refinement-free (the PROPERTY)', () =>
   it('the guard actually catches a refinement (a lint that cannot fail is theatre)', () => {
     assert.deepEqual(findRefinements(z.object({ a: z.string() }).superRefine(() => {})), ['(root)']);
     assert.deepEqual(findRefinements(z.object({ a: z.string().refine(() => true) })), ['(root).a'], 'must catch it NESTED too');
+  });
+
+  it('catches a refinement inside a ZodIntersection branch (left/right), and does NOT flag a clean one', () => {
+    // The closed walker hole: an intersection hangs its two branches off
+    // `_def.left`/`_def.right`, which the walker did not visit before G3.
+    const clean = z.intersection(z.object({ a: z.string() }), z.object({ b: z.number() }));
+    assert.deepEqual(findRefinements(clean), [], 'a refinement-free intersection must NOT be flagged');
+
+    const dirtyLeft = z.intersection(z.object({ a: z.string() }).superRefine(() => {}), z.object({ b: z.number() }));
+    const dirtyRight = z.intersection(z.object({ a: z.string() }), z.object({ b: z.number() }).superRefine(() => {}));
+    assert.ok(findRefinements(dirtyLeft).some((p) => p.includes('left')), `a superRefine on the LEFT branch must be caught (got ${JSON.stringify(findRefinements(dirtyLeft))})`);
+    assert.ok(findRefinements(dirtyRight).some((p) => p.includes('right')), `a superRefine on the RIGHT branch must be caught (got ${JSON.stringify(findRefinements(dirtyRight))})`);
+    // NESTED inside a branch too — the walk must not stop at the branch node.
+    const nested = z.intersection(z.object({ a: z.string().refine(() => true) }), z.object({ b: z.number() }));
+    assert.ok(findRefinements(nested).some((p) => p.includes('left') && p.endsWith('.a')), 'a refinement nested inside a branch must be caught');
+  });
+
+  it('catches a refinement in a ZodTuple rest element and a ZodPromise inner (the other two closed gaps)', () => {
+    // Tuple `rest` was unvisited before G3; ZodPromise's inner is `innerType`
+    // (already walked) — pinned here so a future reader does not "fix" it to a
+    // non-existent `_def.type` schema child.
+    assert.ok(findRefinements(z.tuple([z.string()], z.number().superRefine(() => {}))).some((p) => p.includes('rest')), 'tuple rest element must be caught');
+    assert.ok(findRefinements(z.promise(z.string().superRefine(() => {}))).some((p) => p.includes('innerType')), 'promise inner (innerType, NOT type) must be caught');
   });
 
   it('discriminatedUnion expresses the commission/omission rule ENFORCEABLY (the V2 superRefine it replaces)', () => {

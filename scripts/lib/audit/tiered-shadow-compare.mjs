@@ -326,6 +326,13 @@ export function compareAuditRunResults(legacyResult, tieredResult, opts = undefi
     // confirmed" (the same absent≠zero rule summarize() already applies to the
     // eligible counts).
     tieredStage0MalformedTripwire: tieredResult._stageBreakdown?.stage0MalformedTripwire ?? null,
+    // Hoisted for the SAME reason (found by the union gate, 2026-07-17): under
+    // the V3 enum contract our-schema rejections land HERE (raw, at the
+    // producer boundary) rather than at the Stage-0 tripwire, so `summarize()`'s
+    // §7c contract-failure exclusion must be able to see this counter or it is
+    // dead for the V3 path. `?? null`, never `?? 0` — a historical row predating
+    // this field is insufficient data, not "zero malformed confirmed".
+    tieredDiscoveryMalformedRaw: tieredResult._stageBreakdown?.discoveryMalformedRaw ?? null,
     // Decision #9: per-fingerprint reasons for any pre_existing_independent
     // candidate whose debt-routing FAILED (restored to the Stage-1 pool
     // instead) — a silent restore would make the debt-routing path's own

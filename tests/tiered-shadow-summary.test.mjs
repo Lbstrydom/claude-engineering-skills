@@ -253,6 +253,45 @@ describe('contract-failure runs (malformed anchors) are excluded and named (§7c
     assert.equal(summary.comparedRuns, 1);
     assert.equal(summary.excludedMalformedAnchors, 0);
   });
+
+  // ── The V3 producer-boundary path (union-gate finding, 2026-07-17) ──────────
+  // Under the enum contract, an our-schema rejection lands at prepareCandidates
+  // as `discoveryMalformedRaw` and NEVER reaches the Stage-0 tripwire, so
+  // `tieredStage0MalformedTripwire` is 0 by construction. Keying the exclusion
+  // only on the tripwire left it DEAD for exactly the run it exists to catch.
+  test('V3 vacuity: our enum ate every candidate at the producer boundary → EXCLUDED, tripwire is 0', () => {
+    const v3ContractFailure = {
+      ...BASE,
+      legacyFindingCount: 8, overlapCount: 0, onlyTieredCount: 0,
+      legacyEligibleCount: 8, tieredEligibleCount: 0,
+      tieredStage0Verified: 0,
+      tieredStage0MalformedTripwire: 0,   // 0 by construction on the V3 path
+      tieredDiscoveryMalformedRaw: 8,     // the real "our schema ate it" signal
+    };
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: v3ContractFailure }]);
+    assert.equal(summary.comparedRuns, 0, 'a run our own enum voided must NOT count as a recall comparison');
+    assert.equal(summary.excludedMalformedAnchors, 1, 'and it is named — via the producer-boundary counter, not just the tripwire');
+  });
+
+  test('V3 partial: producer-boundary malformed but Stage 0 still verified some → real comparison', () => {
+    const partial = {
+      ...BASE, legacyEligibleCount: 3, tieredEligibleCount: 2,
+      tieredStage0Verified: 2, tieredStage0MalformedTripwire: 0, tieredDiscoveryMalformedRaw: 1,
+    };
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: partial }]);
+    assert.equal(summary.comparedRuns, 1, 'verified candidates are genuine evidence — only a total wipe voids');
+    assert.equal(summary.excludedMalformedAnchors, 0);
+  });
+
+  test('absent tieredDiscoveryMalformedRaw (historical row) is insufficient data, never a contract failure', () => {
+    const historical = {
+      ...BASE, legacyEligibleCount: 2, tieredEligibleCount: 2, tieredStage0Verified: 2,
+    };
+    assert.equal(historical.tieredDiscoveryMalformedRaw, undefined, 'precondition');
+    const summary = summarize([{ legacyOk: true, shadowOk: true, comparison: historical }]);
+    assert.equal(summary.comparedRuns, 1);
+    assert.equal(summary.excludedMalformedAnchors, 0);
+  });
 });
 
 // ── shadowFailureReasons — the live cause breakdown ───────────────────────

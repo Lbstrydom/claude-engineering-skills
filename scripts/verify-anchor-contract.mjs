@@ -45,7 +45,16 @@
  *
  * Usage:
  *   node scripts/verify-anchor-contract.mjs [--rev <sha>] [--generator sonnet|glm|all]
- *                                           [--json] [--out <file>]
+ *                                           [--runs <n>] [--json] [--out <file>]
+ *
+ * ACCEPTANCE IS A RATE, NOT A ZERO (§9a, corrected 2026-07-17): each generator
+ * is probed `--runs` times (default 3) and graded on the AGGREGATE — a single
+ * provider-emitted DTO our Zod rejects is expected variance (D6: the enum is a
+ * funnel, not a trust boundary), so a per-run `=== 0` recreates the flake this
+ * correction removed. The gated criteria are `stage0Verified > 0` on every run,
+ * `sum(malformedRaw)/sum(rawFindings) < 0.34` aggregate, and
+ * `sum(malformedTripwire) === 0`. `discoveryContradictedRaw` is reported, never
+ * gated (the model's evidence error, working as designed).
  *
  * `--out` has no default on purpose: the evidence artefact is Category A
  * (derived from live provider state, carries timestamps) and must land on a
@@ -88,18 +97,51 @@ const DEFAULT_FIXTURE_REV = 'cee4448';
 const GENERATORS = Object.freeze(['sonnet', 'glm']);
 
 /**
- * The three acceptance criteria, named so the evidence file records WHICH one
- * failed rather than just that something did.
+ * The acceptance criteria — a RATE, not a zero (§9a, "corrected 2026-07-17, by
+ * running it"). The draft's per-run `discoveryMalformedRaw === 0` was refuted
+ * empirically: the same fixture flaked 1-raw/1-malformed (exit 1) then
+ * 5-raw/0-malformed (exit 0). D6 says the enum is a funnel, not a trust
+ * boundary, so an occasional provider-emitted DTO our Zod rejects is *expected
+ * variance*, not a contract break. A per-run `=== 0` recreates that flake.
  *
- * `discoveryContradictedRaw` is deliberately absent: a claim the diff
+ * So the grade is AGGREGATE across n runs (default 3):
+ *   - `stage0Verified > 0` — required on EVERY run (the literal 1-of-62 defect;
+ *     a run that verified nothing is the failure this whole plan exists to catch).
+ *   - `sum(discoveryMalformedRaw) / sum(discoveryRawFindings) < 0.34` — aggregate;
+ *     catches a SYSTEMATIC break (the real bug was ~100%) while tolerating
+ *     single-field variance. Divide-by-zero is impossible-by-construction here:
+ *     total raw 0 ⇒ nothing verified ⇒ the per-run `stage0Verified > 0` check
+ *     already fails, so the rate is never computed on 0/0 (0/0 is NOT "clean").
+ *   - `sum(stage0MalformedTripwire) === 0` — post-hydration this class is
+ *     unreachable by construction; a non-zero means hydration regressed —
+ *     genuinely binary.
+ *
+ * `discoveryContradictedRaw` is deliberately NOT graded: a claim the diff
  * disproves is the MODEL's evidence failure, working as designed — billing it
  * to our contract would be this plan's own misattribution running backwards.
  */
-const ACCEPTANCE_CRITERIA = Object.freeze([
-  { counter: 'stage0Verified', test: (n) => n > 0, expectation: '> 0' },
-  { counter: 'discoveryMalformedRaw', test: (n) => n === 0, expectation: '=== 0' },
-  { counter: 'stage0MalformedTripwire', test: (n) => n === 0, expectation: '=== 0' },
+const MALFORMED_RATE_CEILING = 0.34;
+
+/**
+ * Counters that MUST be finite on a usable run. An absent/non-numeric one makes
+ * the whole generator `could_not_run` (never a silent 0) — the anti-green rule.
+ * `discoveryRawFindings` is here (not gated on its own) because the aggregate
+ * rate's denominator needs it.
+ */
+const REQUIRED_COUNTERS = Object.freeze([
+  'stage0Verified', 'discoveryRawFindings', 'discoveryMalformedRaw', 'stage0MalformedTripwire',
 ]);
+
+/** Human-readable rendering of the criteria for the evidence file. */
+const ACCEPTANCE_CRITERIA_DESC = Object.freeze([
+  'stage0Verified > 0 (every run)',
+  `sum(discoveryMalformedRaw) / sum(discoveryRawFindings) < ${MALFORMED_RATE_CEILING} (aggregate)`,
+  'sum(stage0MalformedTripwire) === 0 (aggregate)',
+]);
+
+/** §9a: the rate criterion needs "n ≥ 3 runs" to distinguish a systematic break
+ *  from single-field variance. 3 is the default sample size. */
+const DEFAULT_RUNS = 3;
 
 /** @param {string} name @param {string|null} dflt */
 function argOption(name, dflt = null) {
@@ -111,57 +153,132 @@ function argOption(name, dflt = null) {
 // ── Acceptance grading (pure — the seam the hermetic tests drive) ──────────
 
 /**
- * Grade ONE generator's probe outcome against §9a's criteria.
+ * Reduce ONE probe run to a decision-grade summary: usable (with finite
+ * counters) or not-usable (with the reason it cannot be graded).
  *
- * An absent or non-numeric counter is `could_not_run`, NEVER a silent 0 — a
- * missing counter reading as "0 malformed, therefore clean" is precisely the
- * anti-green class this plan exists to kill.
+ * A non-`ok` status, absent counters, or any REQUIRED counter that is
+ * absent/non-numeric all make the run unusable — an unread counter must NEVER
+ * grade as a silent 0. A single unusable run makes the whole generator
+ * `could_not_run`: you cannot compute an aggregate rate from a run that did
+ * not happen, and a partial sample must never read as `accepted`.
  *
- * @param {{generator: string, status: string, counters?: object|null, reason?: string}} result
- * @returns {{generator: string, outcome: 'accepted'|'failed'|'could_not_run', reason?: string, failedCriteria?: string[], counters?: object|null}}
+ * @param {{status?: string, counters?: object|null, reason?: string}} run
+ * @param {number} index
+ * @returns {{index: number, usable: boolean, counters?: object, status?: string, reason?: string}}
  */
-export function gradeGeneratorResult(result) {
-  const generator = result?.generator ?? 'unknown';
-  if (result?.status !== 'ok') {
-    return { generator, outcome: 'could_not_run', reason: result?.reason || 'unknown reason', counters: result?.counters ?? null };
+function summariseRun(run, index) {
+  const status = run?.status ?? 'unknown';
+  if (status !== 'ok') {
+    return { index, usable: false, status, reason: run?.reason || `run ${index}: status=${status}`, counters: run?.counters ?? null };
   }
-  const counters = result.counters;
+  const counters = run?.counters;
   if (!counters || typeof counters !== 'object') {
-    return { generator, outcome: 'could_not_run', reason: 'counters_absent: the run reported no _stageBreakdown', counters: null };
+    return { index, usable: false, status, reason: `run ${index}: counters_absent — the run reported no _stageBreakdown`, counters: null };
   }
-  const missing = ACCEPTANCE_CRITERIA
-    .filter((c) => !Number.isFinite(counters[c.counter]))
-    .map((c) => c.counter);
+  const missing = REQUIRED_COUNTERS.filter((c) => !Number.isFinite(counters[c]));
   if (missing.length > 0) {
+    return { index, usable: false, status, reason: `run ${index}: counters_incomplete: ${missing.join(', ')} absent or non-numeric — an unread counter must never grade as 0`, counters };
+  }
+  return { index, usable: true, status, counters };
+}
+
+/**
+ * Grade ONE generator's n probe runs against §9a's RATE-not-a-zero table.
+ *
+ * This is the pure, hermetic-test seam. It takes the array of per-run results
+ * (each `{status, counters, reason}` from `probeGenerator`) and applies the
+ * aggregate criteria; the hermetic tests inject fake multi-run counter arrays
+ * here rather than mocking a provider (AGENTS.md Tier-2).
+ *
+ * @param {string} generator
+ * @param {Array<{status?: string, counters?: object|null, reason?: string}>} runs
+ * @returns {{generator: string, outcome: 'accepted'|'failed'|'could_not_run', reason?: string, failedCriteria?: string[], aggregate?: object, runs: object[]}}
+ */
+export function gradeGeneratorRuns(generator, runs) {
+  const gen = generator ?? 'unknown';
+  const runList = Array.isArray(runs) ? runs : [];
+  if (runList.length === 0) {
+    return { generator: gen, outcome: 'could_not_run', reason: 'no_runs: the generator was requested but never executed', runs: [] };
+  }
+
+  const perRun = runList.map(summariseRun);
+  const notUsable = perRun.filter((r) => !r.usable);
+  if (notUsable.length > 0) {
+    // Any un-gradeable run sinks the whole generator to could_not_run — never
+    // a vacuous pass on a partial sample.
     return {
-      generator,
+      generator: gen,
       outcome: 'could_not_run',
-      reason: `counters_incomplete: ${missing.join(', ')} absent or non-numeric — an unread counter must never grade as 0`,
-      counters,
+      reason: `${notUsable.length}/${perRun.length} run(s) not gradeable — ${notUsable[0].reason}`,
+      runs: perRun,
     };
   }
-  const failedCriteria = ACCEPTANCE_CRITERIA
-    .filter((c) => !c.test(counters[c.counter]))
-    .map((c) => `${c.counter} ${c.expectation} (was ${counters[c.counter]})`);
+
+  const totalRaw = perRun.reduce((s, r) => s + r.counters.discoveryRawFindings, 0);
+  const totalMalformed = perRun.reduce((s, r) => s + r.counters.discoveryMalformedRaw, 0);
+  const totalTripwire = perRun.reduce((s, r) => s + r.counters.stage0MalformedTripwire, 0);
+  const totalVerified = perRun.reduce((s, r) => s + r.counters.stage0Verified, 0);
+  const totalContradicted = perRun.reduce((s, r) => s + (Number(r.counters.discoveryContradictedRaw) || 0), 0);
+
+  const failedCriteria = [];
+
+  // 1. stage0Verified > 0 on EVERY run (the literal 1-of-62 defect).
+  const zeroVerified = perRun.filter((r) => !(r.counters.stage0Verified > 0)).map((r) => r.index);
+  if (zeroVerified.length > 0) {
+    failedCriteria.push(`stage0Verified > 0 required every run (was 0 on run(s): ${zeroVerified.join(', ')})`);
+  }
+
+  // 2. Aggregate malformed RATE < ceiling. Divide-by-zero guard: total raw 0
+  //    means nothing could have verified, so criterion (1) already carries the
+  //    failure — DO NOT divide, and never let 0/0 read as a clean rate.
+  let malformedRate = null;
+  if (totalRaw > 0) {
+    malformedRate = totalMalformed / totalRaw;
+    if (!(malformedRate < MALFORMED_RATE_CEILING)) {
+      failedCriteria.push(`sum(discoveryMalformedRaw)/sum(discoveryRawFindings) < ${MALFORMED_RATE_CEILING} (was ${totalMalformed}/${totalRaw} = ${malformedRate.toFixed(3)})`);
+    }
+  }
+
+  // 3. Aggregate tripwire sum === 0 — a hydration regression signal, binary.
+  if (totalTripwire !== 0) {
+    failedCriteria.push(`sum(stage0MalformedTripwire) === 0 (was ${totalTripwire})`);
+  }
+
+  const aggregate = {
+    runs: perRun.length,
+    totalRawFindings: totalRaw,
+    totalMalformedRaw: totalMalformed,
+    malformedRate,                 // null when totalRaw === 0 (see divide-by-zero guard)
+    malformedRateCeiling: MALFORMED_RATE_CEILING,
+    totalStage0Verified: totalVerified,
+    totalStage0MalformedTripwire: totalTripwire,
+    totalContradictedRaw: totalContradicted, // reported, never gates
+  };
+
   return failedCriteria.length === 0
-    ? { generator, outcome: 'accepted', counters }
-    : { generator, outcome: 'failed', failedCriteria, counters };
+    ? { generator: gen, outcome: 'accepted', aggregate, runs: perRun }
+    : { generator: gen, outcome: 'failed', failedCriteria, aggregate, runs: perRun };
 }
 
 /**
  * The three-way exit contract over every requested generator.
  *
+ * Input is grouped by generator — `[{generator, runs: [...]}, …]` — because
+ * §9a's malformed criterion is an AGGREGATE across a generator's runs, not a
+ * per-run test. Each group is graded by `gradeGeneratorRuns`.
+ *
  * Precedence — a definite FAILURE (1) outranks a COULD-NOT-RUN (2): both are
  * non-zero (the anti-green rule holds either way), and a real, actionable
- * contract violation is the more useful signal to surface. Zero requires
- * every requested generator to be `accepted`; an empty request list is
+ * contract violation is the more useful signal to surface. Zero requires every
+ * requested generator to be `accepted`; an empty request list is
  * `could_not_run`, never a vacuous pass.
  *
- * @param {Array<{generator: string, status: string, counters?: object|null, reason?: string}>} results
+ * @param {Array<{generator: string, runs: Array<object>}>} generatorRuns
  * @returns {{exitCode: 0|1|2, verdict: 'accepted'|'failed'|'could_not_run', perGenerator: Array<object>}}
  */
-export function evaluateAcceptance(results) {
-  const perGenerator = (Array.isArray(results) ? results : []).map(gradeGeneratorResult);
+export function evaluateAcceptance(generatorRuns) {
+  const groups = Array.isArray(generatorRuns) ? generatorRuns : [];
+  const perGenerator = groups.map((g) => gradeGeneratorRuns(g?.generator, g?.runs));
   if (perGenerator.length === 0) {
     return { exitCode: 2, verdict: 'could_not_run', perGenerator };
   }
@@ -184,6 +301,24 @@ export function parseGeneratorArg(raw) {
   if (value === 'all') return { ok: true, generators: [...GENERATORS] };
   if (GENERATORS.includes(value)) return { ok: true, generators: [value] };
   return { ok: false, message: `--generator must be one of: ${[...GENERATORS, 'all'].join(' | ') } (got ${JSON.stringify(value)})` };
+}
+
+/**
+ * Resolve `--runs` to a positive integer. §9a's aggregate malformed rate needs
+ * n ≥ 3 runs to tell a systematic contract break from single-field variance, so
+ * 3 is the default. A smaller value is permitted (a deliberate cheap live
+ * smoke) rather than rejected — the evidence records the count, so a 1-run
+ * "pass" is legible as the weak sample it is.
+ *
+ * @param {string|null} raw
+ * @returns {{ok: true, runs: number} | {ok: false, message: string}}
+ */
+export function parseRunsArg(raw) {
+  const value = (raw ?? String(DEFAULT_RUNS)).trim();
+  if (!/^\d+$/.test(value)) return { ok: false, message: `--runs must be a positive integer (got ${JSON.stringify(value)})` };
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) return { ok: false, message: `--runs must be >= 1 (got ${JSON.stringify(value)})` };
+  return { ok: true, runs: n };
 }
 
 // ── The committed fixture ─────────────────────────────────────────────────
@@ -453,15 +588,23 @@ async function probeGenerator(generator, fixture) {
 
 function renderHuman(evaluation, evidence) {
   const lines = [];
-  lines.push(`Anchor-contract acceptance probe — rev ${evidence.rev} (${evidence.headSha.slice(0, 8)})`);
+  lines.push(`Anchor-contract acceptance probe — rev ${evidence.rev} (${evidence.headSha.slice(0, 8)}), ${evidence.runsPerGenerator} run(s)/generator`);
   for (const g of evaluation.perGenerator) {
-    const run = evidence.runs.find((r) => r.generator === g.generator) || {};
-    const head = `  ${g.generator} (${run.modelUnderTest ?? 'unresolved'}): ${g.outcome.toUpperCase()}`;
-    lines.push(head);
-    if (g.counters) {
-      lines.push(`    raw=${g.counters.discoveryRawFindings} malformedRaw=${g.counters.discoveryMalformedRaw} `
-        + `contradictedRaw=${g.counters.discoveryContradictedRaw} stage0Verified=${g.counters.stage0Verified} `
-        + `stage0MalformedTripwire=${g.counters.stage0MalformedTripwire}`);
+    const gen = (evidence.generators || []).find((e) => e.generator === g.generator) || {};
+    lines.push(`  ${g.generator} (${gen.modelUnderTest ?? 'unresolved'}): ${g.outcome.toUpperCase()}`);
+    for (const run of (gen.runs || [])) {
+      if (run.counters) {
+        lines.push(`    run ${run.index}: raw=${run.counters.discoveryRawFindings} malformedRaw=${run.counters.discoveryMalformedRaw} `
+          + `contradictedRaw=${run.counters.discoveryContradictedRaw} stage0Verified=${run.counters.stage0Verified} `
+          + `stage0MalformedTripwire=${run.counters.stage0MalformedTripwire}`);
+      } else {
+        lines.push(`    run ${run.index}: ${run.status}${run.reason ? ` — ${run.reason}` : ''}`);
+      }
+    }
+    if (g.aggregate) {
+      const rate = g.aggregate.malformedRate === null ? 'n/a (0 raw)' : g.aggregate.malformedRate.toFixed(3);
+      lines.push(`    aggregate: malformedRate=${rate} (${g.aggregate.totalMalformedRaw}/${g.aggregate.totalRawFindings}, ceiling ${g.aggregate.malformedRateCeiling}) `
+        + `verified=${g.aggregate.totalStage0Verified} tripwire=${g.aggregate.totalStage0MalformedTripwire} contradicted=${g.aggregate.totalContradictedRaw}`);
     }
     if (g.failedCriteria) lines.push(`    unmet: ${g.failedCriteria.join('; ')}`);
     if (g.reason) lines.push(`    reason: ${g.reason}`);
@@ -484,6 +627,13 @@ async function main() {
     process.exit(2); // could not run — never a pass
   }
 
+  const runsArg = parseRunsArg(argOption('runs', String(DEFAULT_RUNS)));
+  if (!runsArg.ok) {
+    process.stderr.write(`${runsArg.message}\n`);
+    process.exit(2); // could not run — never a pass
+  }
+  const runsPerGenerator = runsArg.runs;
+
   if (!isSafeGitRevision(rev)) {
     process.stderr.write(`refusing unsafe --rev: ${JSON.stringify(rev).slice(0, 80)}\n`);
     process.exit(2);
@@ -501,10 +651,11 @@ async function main() {
     process.stderr.write(`could not load fixture ${rev}: [${code}] ${message}\n`);
     if (outFile) {
       atomicWriteFileSync(outFile, JSON.stringify({
-        schemaVersion: 1, generatedAt: new Date().toISOString(), rev,
+        schemaVersion: 2, generatedAt: new Date().toISOString(), rev,
+        runsPerGenerator,
         verdict: 'could_not_run', exitCode: 2,
         fixtureError: { code, message, vcsExitCodeFor: exitCodeFor(code) },
-        runs: [],
+        generators: [],
       }, null, 2));
     }
     process.exit(2);
@@ -513,44 +664,61 @@ async function main() {
   const { fixture } = fixtureResult;
   for (const line of formatSkipLog(fixture.skipped, { logger: 'anchor-probe-fixture' })) process.stderr.write(`  ${line}\n`);
   process.stderr.write(`  [anchor-probe] fixture ${rev} → ${fixture.headSha.slice(0, 8)} (base ${fixture.baseSha.slice(0, 8)}), `
-    + `${fixture.changedFiles.length} changed file(s), generators: ${generatorArg.generators.join(', ')}\n`);
+    + `${fixture.changedFiles.length} changed file(s), generators: ${generatorArg.generators.join(', ')}, ${runsPerGenerator} run(s) each\n`);
 
-  const results = [];
+  // Grouped by generator: §9a's malformed criterion is an AGGREGATE across a
+  // generator's n runs, so each generator's runs must stay together.
+  const groups = [];
   for (const generator of generatorArg.generators) {
-    process.stderr.write(`  [anchor-probe] probing ${generator}…\n`);
-    // Sequential, not Promise.all: two concurrent runs interleave their
-    // stderr contract-bug reports, which are the human-readable half of this
-    // probe's evidence.
-    results.push(await probeGenerator(generator, fixture));
+    const runs = [];
+    for (let i = 0; i < runsPerGenerator; i += 1) {
+      process.stderr.write(`  [anchor-probe] probing ${generator} (run ${i + 1}/${runsPerGenerator})…\n`);
+      // Sequential, not Promise.all: two concurrent runs interleave their
+      // stderr contract-bug reports, which are the human-readable half of this
+      // probe's evidence.
+      const r = await probeGenerator(generator, fixture);
+      runs.push({ ...r, index: i });
+    }
+    groups.push({ generator, modelUnderTest: runs[0]?.modelUnderTest ?? null, models: runs[0]?.models ?? null, runs });
   }
 
-  const evaluation = evaluateAcceptance(results);
+  const evaluation = evaluateAcceptance(groups);
   const evidence = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     rev: fixture.rev,
     headSha: fixture.headSha,
     baseSha: fixture.baseSha,
     changedFiles: fixture.changedFiles,
-    criteria: ACCEPTANCE_CRITERIA.map((c) => `${c.counter} ${c.expectation}`),
+    runsPerGenerator,
+    criteria: [...ACCEPTANCE_CRITERIA_DESC],
     // Recorded so the acceptance claim names the model that made it — a
     // sentinel that resolves elsewhere tomorrow must not silently inherit
     // today's verdict.
-    resolvedModels: results.length > 0 ? results[0].models : null,
+    resolvedModels: groups.length > 0 ? groups[0].models : null,
     notExercised: ['stage1_triage', 'stage2_adjudication'],
     verdict: evaluation.verdict,
     exitCode: evaluation.exitCode,
-    runs: results.map((r) => ({
-      generator: r.generator,
-      modelUnderTest: r.modelUnderTest,
-      status: r.status,
-      runStatus: r.runStatus ?? null,
-      reason: r.reason ?? null,
-      counters: r.counters ?? null,
-      generatorOutcomes: r.generatorOutcomes ?? [],
-      otherGeneratorSilenced: GENERATORS.filter((g) => g !== r.generator),
-    })),
-    perGenerator: evaluation.perGenerator,
+    generators: evaluation.perGenerator.map((g) => {
+      const group = groups.find((gr) => gr.generator === g.generator) || {};
+      return {
+        generator: g.generator,
+        modelUnderTest: group.modelUnderTest ?? null,
+        outcome: g.outcome,
+        failedCriteria: g.failedCriteria ?? null,
+        reason: g.reason ?? null,
+        aggregate: g.aggregate ?? null,
+        otherGeneratorSilenced: GENERATORS.filter((x) => x !== g.generator),
+        runs: (group.runs || []).map((r) => ({
+          index: r.index,
+          status: r.status,
+          runStatus: r.runStatus ?? null,
+          reason: r.reason ?? null,
+          counters: r.counters ?? null,
+          generatorOutcomes: r.generatorOutcomes ?? [],
+        })),
+      };
+    }),
   };
 
   if (outFile) atomicWriteFileSync(outFile, JSON.stringify(evidence, null, 2));

@@ -3,12 +3,14 @@
  * acceptance probe (docs/plans/evidence-anchor-path-contract.md §9a, Phase 7).
  *
  * NO live provider calls, no network, no git fixture. Per AGENTS.md's Tier-2
- * doctrine, the exit semantics are driven by injecting fake counter objects
- * into the exported pure graders — mocking a whole provider to assert
- * orchestration order would test the mock, not the contract.
+ * doctrine, the exit semantics are driven by injecting fake per-run counter
+ * arrays into the exported pure grader (`gradeGeneratorRuns`) — mocking a whole
+ * provider to assert orchestration order would test the mock, not the contract.
  *
  * The thing a live provider honouring the enum can only be PROVEN by is the
- * probe itself; these tests prove the probe cannot lie about the answer.
+ * probe itself; these tests prove the probe cannot lie about the answer — and,
+ * post-§9a-correction, that it grades a RATE across n runs rather than a
+ * per-run zero that flakes on expected single-field variance.
  */
 
 import { test } from 'node:test';
@@ -21,8 +23,9 @@ import { fileURLToPath } from 'node:url';
 
 import {
   evaluateAcceptance,
-  gradeGeneratorResult,
+  gradeGeneratorRuns,
   parseGeneratorArg,
+  parseRunsArg,
 } from '../scripts/verify-anchor-contract.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'verify-anchor-contract.mjs');
@@ -30,7 +33,7 @@ const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'sc
 /** A counter set that MEETS every §9a criterion. `discoveryContradictedRaw` is
  *  non-zero on purpose: a model claim the diff disproves is the model's error,
  *  and must never fail OUR contract's acceptance. */
-const acceptingCounters = Object.freeze({
+const baseCounters = Object.freeze({
   discoveryRawFindings: 6,
   discoveryMalformedRaw: 0,
   discoveryContradictedRaw: 2,
@@ -39,7 +42,12 @@ const acceptingCounters = Object.freeze({
   stage0MalformedTripwire: 0,
 });
 
-const ok = (generator, counters = acceptingCounters) => ({ generator, status: 'ok', counters });
+/** One `ok` run with `over` merged into its counters. */
+const run = (over = {}) => ({ status: 'ok', counters: { ...baseCounters, ...over } });
+/** n identical accepting runs. */
+const okRuns = (n = 3) => Array.from({ length: n }, () => run());
+/** A generator group for evaluateAcceptance. */
+const group = (generator, runs = okRuns()) => ({ generator, runs });
 
 // ── Relocation smoke ──────────────────────────────────────────────────────
 
@@ -56,7 +64,7 @@ test('importing the module does not execute main()', () => {
   // spawned git and (with keys present) called a provider. Reaching this
   // assertion at all is the proof — the import happened at the top of file.
   assert.equal(typeof evaluateAcceptance, 'function');
-  assert.equal(typeof gradeGeneratorResult, 'function');
+  assert.equal(typeof gradeGeneratorRuns, 'function');
 });
 
 // ── Arg parsing ───────────────────────────────────────────────────────────
@@ -81,6 +89,23 @@ test('--generator rejects an unknown value rather than silently defaulting', () 
   assert.match(r.message, /sonnet \| glm \| all/);
 });
 
+test('--runs defaults to 3 — the n≥3 sample §9a\'s rate criterion needs', () => {
+  assert.deepEqual(parseRunsArg(null), { ok: true, runs: 3 });
+  assert.deepEqual(parseRunsArg(undefined), { ok: true, runs: 3 });
+});
+
+test('--runs accepts any positive integer (1 = a deliberate cheap live smoke)', () => {
+  assert.equal(parseRunsArg('5').runs, 5);
+  assert.equal(parseRunsArg('1').runs, 1);
+});
+
+test('--runs rejects zero, negatives and non-integers (a bad sample is could-not-run)', () => {
+  assert.equal(parseRunsArg('0').ok, false);
+  assert.equal(parseRunsArg('-2').ok, false);
+  assert.equal(parseRunsArg('abc').ok, false);
+  assert.equal(parseRunsArg('2.5').ok, false);
+});
+
 test('an unsafe --rev is refused with exit 2 (could-not-run), never a pass', () => {
   // NOT `--rev --upload-pack=evil`: argOption's repo-wide convention ignores a
   // value starting with `--` and falls back to the default, so that spelling
@@ -101,99 +126,144 @@ test('an unknown --generator exits 2 before any provider is constructed', () => 
   assert.match(r.stderr || '', /--generator must be one of/);
 });
 
-// ── Per-generator grading ─────────────────────────────────────────────────
-
-test('grade: all three criteria met → accepted', () => {
-  assert.equal(gradeGeneratorResult(ok('sonnet')).outcome, 'accepted');
+test('an invalid --runs exits 2 before any provider is constructed', () => {
+  const r = spawnSync(process.execPath, [SCRIPT, '--runs', '0'], {
+    encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr || '', /--runs must be/);
 });
 
-test('grade: contradictedRaw > 0 alone does NOT fail acceptance (the model\'s error, not ours)', () => {
-  const g = gradeGeneratorResult(ok('glm', { ...acceptingCounters, discoveryContradictedRaw: 9 }));
+// ── Per-generator AGGREGATE grading (the RATE-not-a-zero rule) ─────────────
+
+test('grade: all runs meet every criterion → accepted', () => {
+  assert.equal(gradeGeneratorRuns('sonnet', okRuns()).outcome, 'accepted');
+});
+
+test('grade: a per-run 50%-malformed run does NOT fail if the AGGREGATE is under ceiling (the flake fix)', () => {
+  // §9a's exact scenario: Sonnet returned 1 raw / 1 malformed (per-run 100%),
+  // then 5 raw / 0 malformed — same code, opposite verdicts under `=== 0`. The
+  // aggregate absorbs it.
+  const g = gradeGeneratorRuns('sonnet', [
+    run({ discoveryRawFindings: 2, discoveryMalformedRaw: 1 }), // 0.5 ALONE
+    run({ discoveryRawFindings: 10, discoveryMalformedRaw: 0 }),
+    run({ discoveryRawFindings: 10, discoveryMalformedRaw: 0 }),
+  ]);
+  assert.equal(g.outcome, 'accepted'); // 1/22 = 0.045 < 0.34
+  assert.ok(g.aggregate.malformedRate < 0.34);
+});
+
+test('grade: a SYSTEMATIC malformed rate (>= 0.34 aggregate) fails, even with verified > 0', () => {
+  const g = gradeGeneratorRuns('glm', [
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 }),
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 }),
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 }),
+  ]);
+  assert.equal(g.outcome, 'failed'); // 12/18 = 0.667
+  assert.ok(g.failedCriteria.some((c) => /sum\(discoveryMalformedRaw\)/.test(c)), g.failedCriteria.join(' | '));
+});
+
+test('grade: total raw 0 does NOT divide — zero-verified carries the failure, rate stays null (0/0 is not clean)', () => {
+  const g = gradeGeneratorRuns('sonnet', [
+    run({ discoveryRawFindings: 0, discoveryMalformedRaw: 0, stage0Verified: 0 }),
+    run({ discoveryRawFindings: 0, discoveryMalformedRaw: 0, stage0Verified: 0 }),
+    run({ discoveryRawFindings: 0, discoveryMalformedRaw: 0, stage0Verified: 0 }),
+  ]);
+  assert.equal(g.outcome, 'failed');
+  assert.equal(g.aggregate.malformedRate, null);
+  assert.ok(g.failedCriteria.some((c) => /stage0Verified/.test(c)));
+});
+
+test('grade: stage0Verified === 0 on even ONE run fails (the literal 1-of-62 defect, required every run)', () => {
+  const g = gradeGeneratorRuns('sonnet', [run(), run({ stage0Verified: 0 }), run()]);
+  assert.equal(g.outcome, 'failed');
+  assert.ok(g.failedCriteria.some((c) => /every run/.test(c)), g.failedCriteria.join(' | '));
+});
+
+test('grade: stage0MalformedTripwire aggregate != 0 fails (a hydration regression signal, binary)', () => {
+  const g = gradeGeneratorRuns('glm', [run(), run({ stage0MalformedTripwire: 1 }), run()]);
+  assert.equal(g.outcome, 'failed');
+  assert.ok(g.failedCriteria.some((c) => /stage0MalformedTripwire/.test(c)));
+});
+
+test('grade: contradictedRaw > 0 never fails acceptance (the model\'s error, not ours)', () => {
+  const g = gradeGeneratorRuns('glm', [
+    run({ discoveryContradictedRaw: 9 }), run({ discoveryContradictedRaw: 9 }), run({ discoveryContradictedRaw: 9 }),
+  ]);
   assert.equal(g.outcome, 'accepted');
+  assert.equal(g.aggregate.totalContradictedRaw, 27); // reported, not gated
 });
 
-test('grade: stage0Verified === 0 fails — a run that verified nothing is not acceptance', () => {
-  const g = gradeGeneratorResult(ok('sonnet', { ...acceptingCounters, stage0Verified: 0 }));
-  assert.equal(g.outcome, 'failed');
-  assert.deepEqual(g.failedCriteria, ['stage0Verified > 0 (was 0)']);
-});
-
-test('grade: discoveryMalformedRaw > 0 fails — OUR contract could not parse the claim', () => {
-  const g = gradeGeneratorResult(ok('glm', { ...acceptingCounters, discoveryMalformedRaw: 3 }));
-  assert.equal(g.outcome, 'failed');
-  assert.deepEqual(g.failedCriteria, ['discoveryMalformedRaw === 0 (was 3)']);
-});
-
-test('grade: stage0MalformedTripwire > 0 fails — the tripwire is a regression signal', () => {
-  const g = gradeGeneratorResult(ok('sonnet', { ...acceptingCounters, stage0MalformedTripwire: 1 }));
-  assert.equal(g.outcome, 'failed');
-  assert.deepEqual(g.failedCriteria, ['stage0MalformedTripwire === 0 (was 1)']);
-});
-
-test('grade: every unmet criterion is named, not just the first', () => {
-  const g = gradeGeneratorResult(ok('glm', {
-    ...acceptingCounters, stage0Verified: 0, discoveryMalformedRaw: 2, stage0MalformedTripwire: 5,
-  }));
-  assert.equal(g.failedCriteria.length, 3);
-});
-
-test('grade: a non-ok status is could_not_run and carries its reason', () => {
-  const g = gradeGeneratorResult({ generator: 'glm', status: 'could_not_run', reason: 'provider_unavailable: no key' });
+test('grade: any non-ok run sinks the whole generator to could_not_run, never accepted', () => {
+  const g = gradeGeneratorRuns('glm', [run(), { status: 'could_not_run', reason: 'provider_unavailable: no key' }, run()]);
   assert.equal(g.outcome, 'could_not_run');
   assert.match(g.reason, /provider_unavailable/);
 });
 
-test('grade: absent counters are could_not_run, NOT a vacuous pass', () => {
-  // The anti-green rule: "no _stageBreakdown" must never read as "0 malformed,
-  // therefore clean".
-  assert.equal(gradeGeneratorResult({ generator: 'sonnet', status: 'ok', counters: null }).outcome, 'could_not_run');
-  assert.equal(gradeGeneratorResult({ generator: 'sonnet', status: 'ok' }).outcome, 'could_not_run');
-});
-
-test('grade: a missing or non-numeric criterion counter is could_not_run, never 0', () => {
-  const missing = { ...acceptingCounters };
+test('grade: an absent or non-numeric counter on any run is could_not_run, never a silent 0', () => {
+  const missing = { ...baseCounters };
   delete missing.stage0MalformedTripwire;
-  const g = gradeGeneratorResult({ generator: 'sonnet', status: 'ok', counters: missing });
+  const g = gradeGeneratorRuns('sonnet', [run(), { status: 'ok', counters: missing }, run()]);
   assert.equal(g.outcome, 'could_not_run');
   assert.match(g.reason, /counters_incomplete: stage0MalformedTripwire/);
 
-  const nan = gradeGeneratorResult({ generator: 'sonnet', status: 'ok', counters: { ...acceptingCounters, stage0Verified: null } });
+  const nan = gradeGeneratorRuns('sonnet', [{ status: 'ok', counters: { ...baseCounters, stage0Verified: null } }]);
   assert.equal(nan.outcome, 'could_not_run');
   assert.match(nan.reason, /stage0Verified/);
 });
 
-// ── The three-way exit mapping ────────────────────────────────────────────
+test('grade: an absent counters object is could_not_run, NOT a vacuous pass', () => {
+  assert.equal(gradeGeneratorRuns('sonnet', [{ status: 'ok', counters: null }]).outcome, 'could_not_run');
+  assert.equal(gradeGeneratorRuns('sonnet', [{ status: 'ok' }]).outcome, 'could_not_run');
+});
+
+test('grade: an empty (or nullish) runs array is could_not_run — a generator never executed', () => {
+  assert.equal(gradeGeneratorRuns('sonnet', []).outcome, 'could_not_run');
+  assert.equal(gradeGeneratorRuns('sonnet', null).outcome, 'could_not_run');
+});
+
+test('grade: every unmet criterion is named, not just the first', () => {
+  const bad = { discoveryRawFindings: 6, discoveryMalformedRaw: 5, stage0Verified: 0, stage0MalformedTripwire: 2 };
+  const g = gradeGeneratorRuns('glm', [run(bad), run(bad), run(bad)]);
+  assert.equal(g.outcome, 'failed');
+  assert.equal(g.failedCriteria.length, 3); // verified, rate, tripwire
+});
+
+// ── The three-way exit mapping (grouped by generator) ──────────────────────
 
 test('exit 0: acceptance MET for every requested generator', () => {
-  const e = evaluateAcceptance([ok('sonnet'), ok('glm')]);
+  const e = evaluateAcceptance([group('sonnet'), group('glm')]);
   assert.equal(e.exitCode, 0);
   assert.equal(e.verdict, 'accepted');
 });
 
-test('exit 1: acceptance FAILED — counters present, criteria unmet', () => {
-  const e = evaluateAcceptance([ok('sonnet'), ok('glm', { ...acceptingCounters, discoveryMalformedRaw: 1 })]);
+test('exit 1: acceptance FAILED — aggregate criteria unmet', () => {
+  const failing = [run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 }),
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 }),
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 })];
+  const e = evaluateAcceptance([group('sonnet'), group('glm', failing)]);
   assert.equal(e.exitCode, 1);
   assert.equal(e.verdict, 'failed');
 });
 
 test('exit 1: a Sonnet pass beside a GLM failure is NOT acceptance (R1/H4)', () => {
-  const e = evaluateAcceptance([ok('sonnet'), ok('glm', { ...acceptingCounters, stage0Verified: 0 })]);
+  const e = evaluateAcceptance([group('sonnet'), group('glm', [run(), run({ stage0Verified: 0 }), run()])]);
   assert.equal(e.exitCode, 1);
 });
 
 test('exit 2: could-not-run is never conflated with a pass', () => {
-  const e = evaluateAcceptance([ok('sonnet'), { generator: 'glm', status: 'could_not_run', reason: 'provider_unavailable' }]);
+  const e = evaluateAcceptance([group('sonnet'), { generator: 'glm', runs: [{ status: 'could_not_run', reason: 'provider_unavailable' }] }]);
   assert.equal(e.exitCode, 2);
   assert.equal(e.verdict, 'could_not_run');
   assert.notEqual(e.exitCode, 0);
 });
 
 test('exit 2: an incomplete run cannot pass on its zeroed counters', () => {
-  // runStatus !== 'complete' reports zeros because nothing happened, not
-  // because nothing was wrong — the vacuous-"met" reading that has burned this
+  // status could_not_run reports zeros because nothing happened, not because
+  // nothing was wrong — the vacuous-"met" reading that has burned this
   // pipeline's shadow window three times.
-  const zeroed = { ...acceptingCounters, discoveryRawFindings: 0, discoveryContradictedRaw: 0, stage0Verified: 0 };
-  const e = evaluateAcceptance([{ generator: 'sonnet', status: 'could_not_run', reason: 'run_incomplete: runStatus=skipped_no_eligible_files', counters: zeroed }]);
+  const zeroed = { ...baseCounters, discoveryRawFindings: 0, discoveryContradictedRaw: 0, stage0Verified: 0 };
+  const e = evaluateAcceptance([{ generator: 'sonnet', runs: [{ status: 'could_not_run', reason: 'run_incomplete: runStatus=skipped_no_eligible_files', counters: zeroed }] }]);
   assert.equal(e.exitCode, 2);
 });
 
@@ -203,15 +273,18 @@ test('exit 2: an empty request list is could-not-run, not a vacuous 0', () => {
 });
 
 test('a definite failure outranks a could-not-run — both are non-zero, the actionable one wins', () => {
+  const failing = [run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 }),
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 }),
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 4 })];
   const e = evaluateAcceptance([
-    ok('sonnet', { ...acceptingCounters, discoveryMalformedRaw: 4 }),
-    { generator: 'glm', status: 'could_not_run', reason: 'provider_unavailable' },
+    group('sonnet', failing),
+    { generator: 'glm', runs: [{ status: 'could_not_run', reason: 'provider_unavailable' }] },
   ]);
   assert.equal(e.exitCode, 1);
 });
 
 test('every requested generator appears in perGenerator, so a silent drop is visible', () => {
-  const e = evaluateAcceptance([ok('sonnet'), ok('glm')]);
+  const e = evaluateAcceptance([group('sonnet'), group('glm')]);
   assert.deepEqual(e.perGenerator.map((g) => g.generator), ['sonnet', 'glm']);
 });
 
@@ -235,7 +308,8 @@ test('--out writes an evidence file even when the fixture could not load', () =>
     // deliberately NOT the process exit — vcs's 1/4/5/127 map collides with
     // this script's three-way contract.
     assert.equal(evidence.fixtureError.vcsExitCodeFor, 4);
-    assert.deepEqual(evidence.runs, []);
+    assert.deepEqual(evidence.generators, []);
+    assert.equal(evidence.runsPerGenerator, 3); // recorded even on the error path
   } finally {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   }

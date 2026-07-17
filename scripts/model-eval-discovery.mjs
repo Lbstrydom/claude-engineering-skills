@@ -200,6 +200,9 @@ function summarizeArm(label, records) {
     preparedReady: records.reduce((s, r) => s + (r.preparedReady ?? 0), 0),
     preparedMalformed: records.reduce((s, r) => s + (r.preparedMalformed ?? 0), 0),
     preparedMalformedReasons: [...new Set(records.flatMap((r) => r.preparedMalformedReasons ?? []))],
+    // The model's own evidence failures (diff-disproved side claims), kept in a
+    // separate column from `preparedMalformed` (our contract) — never blended.
+    preparedContradicted: records.reduce((s, r) => s + (r.preparedContradicted ?? 0), 0),
     measuredCostUsd: Number(measuredCost.toFixed(4)),
     errors: [...new Set(records.filter((r) => r.outcome !== 'ok').map((r) => String(r.error || '').slice(0, 140)))].slice(0, 6),
   };
@@ -263,6 +266,12 @@ async function runArm(arm) {
         preparedReady: prepared.filter((p) => p.kind === 'ready').length,
         preparedMalformed: prepared.filter((p) => p.kind === 'malformed').length,
         preparedMalformedReasons: [...new Set(prepared.filter((p) => p.kind === 'malformed').map((p) => p.reasonCode))],
+        // Distinct from malformed (union-gate finding, 2026-07-17): a
+        // `contradicted` candidate is the MODEL's evidence failure (the diff
+        // disproved its side claim), NOT our contract failing to parse it.
+        // Dropping it from the telemetry blended the two owners — the exact
+        // misattribution this plan exists to fix, in the eval column.
+        preparedContradicted: prepared.filter((p) => p.kind === 'contradicted').length,
       };
       rec.outcome = classifyOutcome(r);
       records.push(rec);
