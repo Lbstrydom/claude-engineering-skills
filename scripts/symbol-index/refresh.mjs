@@ -27,6 +27,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import * as vcs from '../lib/vcs.mjs';
 import { runJsonLinesAsyncStrict, SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
 import { filterDiffFiles, formatSkipLog } from '../lib/sensitive-paths.mjs';
@@ -56,6 +57,7 @@ import {
 } from '../learning-store.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from '../lib/repo-identity.mjs';
 import { resolveModel } from '../lib/model-resolver.mjs';
+import { resolveEmbedProfile } from '../lib/embed-text.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules } from '../lib/symbol-index/domain-tagger.mjs';
@@ -69,6 +71,22 @@ import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP
 // MODULE_NOT_FOUND there. refresh.mjs and its pipeline scripts are always
 // siblings, so import.meta.dirname is correct in both layouts.
 const sibling = (name) => path.join(import.meta.dirname, name);
+
+/**
+ * D3/H4 promotion predicate — pure + exported for tests. An incremental refresh
+ * re-embeds only touched files but publishes new provenance unconditionally, so
+ * when the vector-space identity we're about to publish differs from the prior
+ * active snapshot's, an incremental run would leave a MIXED index. Promote to a
+ * full re-embed in that case. Only a REAL prior identity triggers it (a first-ever
+ * refresh with no prior is handled by the existing anchor-less promotion).
+ *
+ * @param {{activeEmbeddingModel?: string|null}|null|undefined} prior
+ * @param {string} nextProvenanceId
+ * @returns {boolean}
+ */
+export function provenanceRequiresFullReembed(prior, nextProvenanceId) {
+  return Boolean(prior?.activeEmbeddingModel) && prior.activeEmbeddingModel !== nextProvenanceId;
+}
 
 function parseArgs(argv) {
   const args = { full: false, sinceCommit: null, force: false, includeDelegates: false };
@@ -150,8 +168,12 @@ async function main() {
   const identity = resolveRepoIdentity(repoRoot);
   persistRepoIdentity(identity.repoUuid, repoRoot);
 
-  // 2. Resolve embedding model NOW (per Gemini G2: persist concrete id)
+  // 2. Resolve embedding model NOW (per Gemini G2: persist concrete id).
+  //    The ONE shared profile (embed-text.mjs) — the same resolver embed.mjs uses,
+  //    so what we PUBLISH as provenance can never disagree with what made the
+  //    vectors (D2/H3). `provenanceId` is endpoint-qualified under Azure (H8).
   const concreteEmbedModel = resolveModel(symbolIndexConfig.embedModel);
+  const embedProfile = resolveEmbedProfile({ concreteModel: concreteEmbedModel });
   const embedDim = symbolIndexConfig.embedDim;
 
   // 3. Upsert repo + open refresh_run
@@ -172,28 +194,12 @@ async function main() {
   let walkStartCommit = shaResult.ok ? shaResult.sha : null;
   let sinceCommit = args.sinceCommit;
 
-  // R1 audit M7: when running incremental WITHOUT an explicit --since-commit,
-  // derive the anchor from the prior active snapshot. If no prior snapshot
-  // exists yet (first refresh ever for this repo), promote to full mode
-  // automatically rather than running a "no diff" loop that still walks the
-  // whole repo and re-embeds everything.
-  if (mode === 'incremental' && !sinceCommit) {
-    const prior = await getActiveSnapshot(repoId);
-    if (prior?.refreshId) {
-      // Look up the prior run's walk commit so we have a concrete anchor.
-      // Best-effort — if the lookup fails we fall through to full mode below.
-      try {
-        const priorRun = await getRefreshRun(prior.refreshId, {
-          select: ['walk_start_commit', 'walk_end_commit'],
-        });
-        sinceCommit = priorRun?.walk_end_commit || priorRun?.walk_start_commit || null;
-      } catch { /* fall through */ }
-    }
-    if (!sinceCommit) {
-      logOk(`no prior snapshot anchor — promoting to --full for this run`);
-      mode = 'full';
-    }
-  }
+  // NOTE: the incremental-vs-full decision (anchor derivation + the D3/H4
+  // provenance-change safety gate) is deliberately made AFTER openRefreshRun
+  // below — see the "Finalize scope under the running lock (H4)" block. Reading
+  // the prior snapshot here, BEFORE the lock, would let a concurrent refresh
+  // publish between the read and the lock and leave the decision acting on a
+  // stale snapshot. `walkStartCommit` is lock-independent, so it stays here.
 
   let refreshId, cancellationToken;
   try {
@@ -230,7 +236,46 @@ async function main() {
       throw err;
     }
   }
-  logOk(`opened refresh_run ${refreshId} (mode=${mode})`);
+  logOk(`opened refresh_run ${refreshId} (requested mode=${mode})`);
+
+  // Finalize scope UNDER the running lock (H4). openRefreshRun holds the
+  // per-repo running lock (partial-unique on status='running'), so from here
+  // getActiveSnapshot reflects the last COMPLETED publish and cannot be
+  // superseded by a concurrent refresh mid-decision — closing the stale-read
+  // race. The decision can only ESCALATE incremental→full (the safe direction);
+  // the row's recorded mode stays the user's request, the log records escalation.
+  if (mode === 'incremental') {
+    const prior = await getActiveSnapshot(repoId);
+    // Provenance-change guard (D3/H4): an incremental run re-embeds only touched
+    // files but publishes new provenance unconditionally. If the identity we're
+    // about to publish differs from the prior snapshot's, an incremental run
+    // would leave a MIXED index — touched symbols in the new space, untouched in
+    // the old — that the read-side guard can't catch (the published id would
+    // "match"). Force a full re-embed whenever provenance changes.
+    if (provenanceRequiresFullReembed(prior, embedProfile.provenanceId)) {
+      logOk(
+        `embedding provenance changed (${prior.activeEmbeddingModel} → ${embedProfile.provenanceId}) ` +
+        `— promoting to --full to avoid a mixed vector space`,
+      );
+      mode = 'full';
+    } else if (!sinceCommit) {
+      // R1 audit M7: derive the incremental anchor from the prior snapshot; no
+      // usable anchor ⇒ promote to full rather than walk the whole repo as a
+      // "no diff" incremental.
+      if (prior?.refreshId) {
+        try {
+          const priorRun = await getRefreshRun(prior.refreshId, {
+            select: ['walk_start_commit', 'walk_end_commit'],
+          });
+          sinceCommit = priorRun?.walk_end_commit || priorRun?.walk_start_commit || null;
+        } catch { /* fall through */ }
+      }
+      if (!sinceCommit) {
+        logOk(`no prior snapshot anchor — promoting to --full for this run`);
+        mode = 'full';
+      }
+    }
+  }
 
   try {
     await runWithHeartbeat(refreshId, 15_000, async () => {
@@ -346,7 +391,9 @@ async function main() {
         if (!definitionId) continue;
         await recordSymbolEmbedding({
           definitionId,
-          embeddingModel: concreteEmbedModel,
+          // Same endpoint-qualified provenance published as the snapshot's active
+          // model, so per-symbol rows and the snapshot never disagree (D2/H8).
+          embeddingModel: embedProfile.provenanceId,
           dimension: s.embeddingDim,
           vector: s.embedding,
           signatureHash: s.signatureHash,
@@ -456,7 +503,10 @@ async function main() {
       await publishRefreshRun({
         repoId,
         refreshId,
-        activeEmbeddingModel: concreteEmbedModel,
+        // Publish the SHARED profile's provenance id (endpoint-qualified under
+        // Azure), NOT the bare Gemini-only `concreteEmbedModel` — that stale name
+        // was the D2 bug that made every Azure query fail the read-side guard.
+        activeEmbeddingModel: embedProfile.provenanceId,
         activeEmbeddingDim: embedDim,
       });
       logOk(`published refresh ${refreshId} as active`);
@@ -472,7 +522,7 @@ async function main() {
           embedded: embeddedCount,
           violations: violations.length,
         },
-        embeddingModel: concreteEmbedModel,
+        embeddingModel: embedProfile.provenanceId,
         embeddingDim: embedDim,
       }) + '\n');
     });
@@ -518,7 +568,13 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  process.stderr.write(`refresh: fatal: ${err.stack || err.message}\n`);
-  process.exit(2);
-});
+// Run as a CLI only — importing this module (e.g. from tests, to exercise the
+// pure `provenanceRequiresFullReembed` seam) must NOT kick off the whole pipeline.
+const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
+const thisPath = fileURLToPath(import.meta.url);
+if (invokedPath === thisPath) {
+  main().catch(err => {
+    process.stderr.write(`refresh: fatal: ${err.stack || err.message}\n`);
+    process.exit(2);
+  });
+}

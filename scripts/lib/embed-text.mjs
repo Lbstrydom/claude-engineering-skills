@@ -54,6 +54,60 @@ export function providerTag(opts = {}) {
 }
 
 /**
+ * The endpoint-qualified vector-space identity for the ACTIVE Azure resource.
+ *
+ * A bare deployment name is NOT a unique vector space: the same alias (e.g.
+ * `text-embedding-3-large`) on a different `AZURE_OPENAI_ENDPOINT` can map to a
+ * different underlying model / dimension. Qualifying with the endpoint origin
+ * makes the identity actually identify the space, so the refresh promotion
+ * check and the query guard can detect a resource switch that keeps the alias.
+ * The origin is normalized (lower-cased, path/query stripped) so trailing-slash
+ * or case noise doesn't spuriously invalidate an index.
+ *
+ * @param {typeof azureConfig} azure - an active Azure config snapshot
+ * @returns {string} e.g. `https://gd-ai-dev-aif.openai.azure.com::text-embedding-3-large`
+ */
+export function azureProvenanceId(azure) {
+  return `${new URL(azure.openaiEndpoint).origin.toLowerCase()}::${azure.embedDeployment}`;
+}
+
+/**
+ * Resolve the ONE embedding profile every consumer must share — the fix for the
+ * three-way divergence (embed.mjs, refresh.mjs, and providerTag each resolved
+ * "which model built this index" independently and disagreed under Azure).
+ *
+ * Returns three distinct fields because they are NOT interchangeable:
+ *   - `requestModel`  — what to send to the provider API (bare Azure deployment,
+ *                        or the concrete Gemini model id).
+ *   - `provenanceId`  — what to PERSIST as the index's vector-space identity and
+ *                        COMPARE on the read side. Endpoint-qualified for Azure.
+ *   - `kind`          — provider family, for display/log tags only.
+ *
+ * Off-Azure the caller MUST pass the concrete model it will actually embed with;
+ * re-defaulting here would let refresh publish a default id while the vectors
+ * were made by a non-default model (the H3 mismatch). Falling back is a bug.
+ *
+ * @param {{azure?: typeof azureConfig, concreteModel?: string}} [opts]
+ * @returns {{kind: 'azure-openai'|'gemini', requestModel: string, provenanceId: string}}
+ */
+export function resolveEmbedProfile({ azure = azureConfig, concreteModel } = {}) {
+  if (azure.active) {
+    return {
+      kind: 'azure-openai',
+      requestModel: azure.embedDeployment,
+      provenanceId: azureProvenanceId(azure),
+    };
+  }
+  if (!concreteModel) {
+    throw new Error(
+      'resolveEmbedProfile: concreteModel is required off-Azure — the caller must pass the ' +
+      'concrete embedding model it will use (re-defaulting here would let a stale id be published).',
+    );
+  }
+  return { kind: 'gemini', requestModel: concreteModel, provenanceId: concreteModel };
+}
+
+/**
  * Is ANY embedding provider configured? Distinguishes provider-ABSENT (a
  * deterministic config state — callers should degrade gracefully, the same
  * way they already do for cloud-disabled) from provider-ERROR (a real call
@@ -156,4 +210,4 @@ function validateVector(vec, dim, model) {
   }
 }
 
-export const _internals = { validateVector, DEFAULT_GEMINI_EMBED_MODEL };
+export const _internals = { validateVector, DEFAULT_GEMINI_EMBED_MODEL, resolveEmbedProfile, azureProvenanceId };

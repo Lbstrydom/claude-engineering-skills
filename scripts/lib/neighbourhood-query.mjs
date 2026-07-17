@@ -23,7 +23,7 @@ import {
 import { recommendationFromSimilarity } from './symbol-index.mjs';
 import { symbolIndexConfig, azureConfig } from './config.mjs';
 import { redactSecrets } from './secret-patterns.mjs';
-import { embedText } from './embed-text.mjs';
+import { embedText, azureProvenanceId } from './embed-text.mjs';
 
 const CACHE_REL = '.audit-loop/cache/intent-embeddings.json';
 const CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
@@ -100,19 +100,25 @@ export async function generateIntentEmbedding(intentDescription, activeModel, ac
     err.code = 'EMBEDDING_MISMATCH';
     throw err;
   }
-  // Intra-Azure guard (consolidated-gate R2-H): under Azure, embedText embeds
-  // with `azureConfig.embedDeployment` and ignores `activeModel`. Two different
-  // Azure embedding deployments can share dim 768 yet occupy different vector
-  // spaces, which the provider + dim guards both miss. Refuse when the index's
-  // model doesn't match the deployment now in use.
-  if (azureConfig.active && String(activeModel) !== azureConfig.embedDeployment) {
-    const err = new Error(
-      `Embedding deployment mismatch: index built with "${activeModel}" but the active Azure embed ` +
-      `deployment is "${azureConfig.embedDeployment}". Re-run \`npm run arch:refresh\` to rebuild the ` +
-      `index with the current deployment.`,
-    );
-    err.code = 'EMBEDDING_MISMATCH';
-    throw err;
+  // Intra-Azure guard (consolidated-gate R2-H; endpoint-qualified per H8): under
+  // Azure, embedText embeds with `azureConfig.embedDeployment` and ignores
+  // `activeModel`. Two different Azure embedding deployments — OR the SAME
+  // deployment alias on a different endpoint/resource — can share dim 768 yet
+  // occupy different vector spaces, which the provider + dim guards both miss.
+  // Compare against the endpoint-qualified provenance id the index now publishes;
+  // a legacy bare-name index (`text-embedding-3-large`) also correctly mismatches
+  // the qualified form and forces the one rebuild that finally clears it.
+  if (azureConfig.active) {
+    const activeProvenance = azureProvenanceId(azureConfig);
+    if (String(activeModel) !== activeProvenance) {
+      const err = new Error(
+        `Embedding provenance mismatch: index built with "${activeModel}" but the active Azure embed ` +
+        `provenance is "${activeProvenance}". Re-run \`npm run arch:refresh -- --full\` to rebuild the ` +
+        `index in the current vector space.`,
+      );
+      err.code = 'EMBEDDING_MISMATCH';
+      throw err;
+    }
   }
   // embedText routes to the active provider, redacts at the boundary
   // (defense-in-depth; idempotent with any caller pre-redaction), validates the

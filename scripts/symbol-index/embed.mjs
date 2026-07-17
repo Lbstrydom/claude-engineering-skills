@@ -14,7 +14,7 @@ import readline from 'node:readline';
 import { symbolIndexConfig, azureConfig } from '../lib/config.mjs';
 import { chunkBatches, compose } from '../lib/symbol-index.mjs';
 import { emit } from '../lib/cli-io.mjs';
-import { embedText } from '../lib/embed-text.mjs';
+import { embedText, resolveEmbedProfile } from '../lib/embed-text.mjs';
 
 function logProgress(s) { process.stderr.write(`  [embed] ${s}\n`); }
 
@@ -69,15 +69,17 @@ async function embedBatch(texts, modelId) {
 }
 
 async function main() {
-  // Concrete model ID: caller passes via env so refresh.mjs can resolve sentinels once
-  // and persist + propagate the concrete ID. Default falls back to symbolIndexConfig.embedModel.
-  // Provenance: the persisted `embeddingModel` MUST name the provider that
-  // actually produced the vectors, so the read-side guard (neighbourhood-query)
-  // matches. Under the Azure profile, embed-text uses the Azure deployment
-  // regardless of the Gemini default — so record THAT, not a stale Gemini name.
-  const concreteModel = azureConfig.active
-    ? azureConfig.embedDeployment
-    : (process.env.ARCH_INDEX_EMBED_CONCRETE || symbolIndexConfig.embedModel);
+  // The ONE shared resolver (embed-text.mjs) — same object refresh.mjs publishes,
+  // so the vectors and the stored provenance can never disagree (the D2/H3 fix).
+  // `requestModel` is what we send to the provider (bare Azure deployment or the
+  // concrete Gemini id); `provenanceId` is the endpoint-qualified identity we
+  // PERSIST as `embeddingModel`, so the read-side guard matches what actually
+  // built the vectors under any Azure resource, not just a bare deployment name.
+  const embedProfile = resolveEmbedProfile({
+    concreteModel: process.env.ARCH_INDEX_EMBED_CONCRETE || symbolIndexConfig.embedModel,
+  });
+  const requestModel = embedProfile.requestModel;
+  const provenanceId = embedProfile.provenanceId;
 
   const rl = readline.createInterface({ input: process.stdin });
   const records = [];
@@ -92,30 +94,30 @@ async function main() {
   for (const r of passthrough) emit(r);
 
   if (symbols.length === 0) {
-    emit({ type: 'summary', counts: { embedded: 0, model: concreteModel, dim: symbolIndexConfig.embedDim } });
+    emit({ type: 'summary', counts: { embedded: 0, model: provenanceId, dim: symbolIndexConfig.embedDim } });
     return;
   }
 
   const batches = chunkBatches(symbols, Math.min(symbolIndexConfig.batchSize, 25));
-  logProgress(`${symbols.length} symbols → ${batches.length} embed batches (model=${concreteModel})`);
+  logProgress(`${symbols.length} symbols → ${batches.length} embed batches (model=${requestModel}, provenance=${provenanceId})`);
   let embedded = 0;
   let dim = symbolIndexConfig.embedDim;
   for (const batch of batches) {
-    const { vectors, dim: batchDim } = await embedBatch(batch.map(compose), concreteModel);
+    const { vectors, dim: batchDim } = await embedBatch(batch.map(compose), requestModel);
     if (batchDim) dim = batchDim;
     for (let i = 0; i < batch.length; i++) {
       const v = vectors[i];
       emit({
         ...batch[i],
         embedding: v,
-        embeddingModel: concreteModel,
+        embeddingModel: provenanceId,
         embeddingDim: v ? v.length : null,
       });
       if (v) embedded++;
     }
   }
-  emit({ type: 'summary', counts: { embedded, model: concreteModel, dim } });
-  logProgress(`done — embedded=${embedded}/${symbols.length} model=${concreteModel} dim=${dim}`);
+  emit({ type: 'summary', counts: { embedded, model: provenanceId, dim } });
+  logProgress(`done — embedded=${embedded}/${symbols.length} model=${requestModel} provenance=${provenanceId} dim=${dim}`);
 }
 
 main().catch(err => {
