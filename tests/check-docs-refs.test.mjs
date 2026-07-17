@@ -41,6 +41,17 @@ describe('check-docs-refs / extractRefs — grammar', () => {
     ['mdx is not md', 'docs/plans/a.mdx', []],
     ['stem continues', 'docs/plans/a.mdfoo', []],
 
+    // ── R2-H4: a `.md` that is the PREFIX of a longer token must not extract.
+    // The real token is `.md.bak` (a backup file) or `.md/obsolete` (a path
+    // INTO the file) — neither is a `.md` citation, so extracting `real.md`
+    // would mis-resolve. The guard must NOT fire on a sentence period, though.
+    ['md.bak is not a citation', 'docs/plans/real.md.bak', []],
+    ['md/obsolete is not a citation', '[p](docs/plans/real.md/obsolete)', []],
+    ['sentence period still terminates', 'See docs/plans/real.md. Next.', [{ target: 'docs/plans/real.md', kind: 'concrete' }]],
+
+    // ── R2-H3: a CommonMark angle-bracket link destination is a real citation.
+    ['angle-bracket link destination', '[missing](<docs/plans/missing.md>)', [{ target: 'docs/plans/missing.md', kind: 'concrete' }]],
+
     // ── leading lookbehind: cross-repo is structurally invisible ─────────
     ['cross-repo prefix', 'Plan: wine-cellar-app/docs/plans/a.md', []],
     ['path-prefixed', 'some/docs/plans/a.md', []],

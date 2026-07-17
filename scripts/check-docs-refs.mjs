@@ -60,12 +60,24 @@ const STEM   = '[A-Za-z0-9._-]+';
 const PHSTEM = '(?:<[A-Za-z0-9._-]+>|[A-Za-z0-9._*-]*\\*[A-Za-z0-9._*-]*)';
 const TOKEN  = `docs/(?:${SEG}/)*(?:${PHSTEM}|${STEM})\\.md`;
 
-// Leading class includes `<>*` so a placeholder isn't truncated at `<`, and
-// `/` so a cross-repo path (`wine-cellar-app/docs/plans/a.md`) is structurally
-// invisible — no exclusion rule needed for it.
-// Trailing is a negative LOOKAHEAD, not a boundary-class member, so `.mdx`
-// correctly does not match.
-const REF_RE = new RegExp(`(?<![A-Za-z0-9._/<>*-])(${TOKEN})(?![A-Za-z0-9_-])`, 'g');
+// Leading lookbehind excludes `/` so a cross-repo path
+// (`wine-cellar-app/docs/plans/a.md`) is structurally invisible — no exclusion
+// rule needed for it. It does NOT exclude `<`: a CommonMark angle-bracket link
+// destination `[x](<docs/plans/a.md>)` is a real citation, and excluding `<`
+// silently dropped it (a false NEGATIVE — a broken ref goes uncaught). The
+// placeholder `<` lives INSIDE the token (after `docs/plans/`), consumed by
+// PHSTEM, so it never needed to be in the leading class.
+//
+// Trailing is TWO negative lookaheads, not a boundary-class member:
+//   (?![A-Za-z0-9_-])   — `.mdx`, `real.md-foo` are not this token
+//   (?![./][A-Za-z0-9_]) — a `.` or `/` that CONTINUES into a longer token is
+//                          not a terminator: `docs/plans/real.md.bak` and
+//                          `docs/plans/real.md/obsolete` must NOT yield
+//                          `real.md`. But a `.` followed by end/space/punct IS
+//                          a sentence period (`See docs/plans/a.md.`) and still
+//                          terminates — the second char after `.` must be a
+//                          word char for the guard to fire.
+const REF_RE = new RegExp(`(?<![A-Za-z0-9._/*-])(${TOKEN})(?![A-Za-z0-9_-])(?![./][A-Za-z0-9_])`, 'g');
 
 // `(planned)` binds to its OWN token only: immediately following, separated by
 // at most one space, or by a single closing backtick/paren then one space.
