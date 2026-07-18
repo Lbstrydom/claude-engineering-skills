@@ -86,7 +86,7 @@ export function parsePlanStatus(content) {
 
 /** A plan is selectable iff it is a docs/plans/*.md that is not an audit-summary. */
 function isSelectableName(name) {
-  return name.endsWith('.md') && !/-audit-summary(?:-\w+)?\.md$/.test(name);
+  return name.endsWith('.md') && !/-audit-summary(?:-[\w-]+)?\.md$/.test(name);
 }
 
 /**

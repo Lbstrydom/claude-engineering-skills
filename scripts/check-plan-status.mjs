@@ -23,7 +23,9 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
 
 // `*-audit-summary.md` is exempt from the vocabulary lint — docs/README.md
 // mandates its free-text convergence sentence ("Audit-complete. 17 fixes applied.").
-const isAuditSummary = name => /-audit-summary(?:-\w+)?\.md$/.test(name);
+// `[\w-]+` (not `\w+`) so a hyphenated suffix (`…-audit-summary-phase-1.md`) is
+// still exempted (consolidated Gemini gate round-2 G2).
+const isAuditSummary = name => /-audit-summary(?:-[\w-]+)?\.md$/.test(name);
 
 function selectMode(dir) {
   const abs = path.resolve(dir);
@@ -46,7 +48,11 @@ function lintMode(jsonOut) {
   const flagged = [];
   for (const name of names) {
     if (isAuditSummary(name)) continue;                 // exempt
-    const content = fs.readFileSync(path.join(dir, name), 'utf8');
+    const abs = path.join(dir, name);
+    // A subdirectory named `*.md` would EISDIR on readFileSync (G1) — skip
+    // non-files. Shallow, like selection.
+    try { if (!fs.statSync(abs).isFile()) continue; } catch { continue; }
+    const content = fs.readFileSync(abs, 'utf8');
     const s = parsePlanStatus(content);
     if (s.ok) continue;
     if (s.reason === 'absent') continue;                // not a plan; not a failure
