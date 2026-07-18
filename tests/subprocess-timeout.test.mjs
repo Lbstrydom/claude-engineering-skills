@@ -14,10 +14,20 @@ import {
   runJsonLinesAsync, runJsonLinesAsyncStrict, SUBPROC_ERROR_CODES,
 } from '../scripts/lib/subprocess.mjs';
 
-/** A child that emits one record then wedges its event loop synchronously. */
+/**
+ * A child that emits one record then wedges its event loop synchronously.
+ *
+ * The wedge is bounded at 5s, not 60s, deliberately. A busy-wait pins a CPU
+ * core, and if a kill ever regressed, a 60s burner × several tests would
+ * destabilise timing-sensitive tests elsewhere in the suite — observed as an
+ * intermittent unrelated failure while building this. A test that can flake
+ * the rest of the suite is a bad test regardless of what it proves. 5s is
+ * still ~20× the 200-300ms timeouts asserted below, so the wedge is
+ * unambiguous while its worst case stays survivable.
+ */
 const WEDGE = `
   process.stdout.write(JSON.stringify({type:'hello'}) + '\\n');
-  const until = Date.now() + 60000;
+  const until = Date.now() + 5000;
   while (Date.now() < until) {}   // synchronous — no timer in here can fire
 `;
 
@@ -44,8 +54,9 @@ describe('runJsonLinesAsync — optional timeout', () => {
       timeoutMs: 300, killGraceMs: 200,
     });
     assert.equal(r.timedOut, true);
-    // The wedge would run 60s; we must be back far sooner.
-    assert.ok(Date.now() - started < 20_000, 'must not wait out the wedged child');
+    // The wedge would run 5s; being back well inside that proves we killed it
+    // rather than waited it out.
+    assert.ok(Date.now() - started < 3_000, 'must not wait out the wedged child');
     // Output produced BEFORE the kill is still returned — a timeout degrades
     // the measurement, it does not discard what was already observed.
     assert.deepEqual(r.records, [{ type: 'hello' }]);

@@ -46,7 +46,7 @@
     "models:check": "node scripts/check-model-freshness.mjs --strict",
     "maintenance:run": "node scripts/maintenance-checks.mjs",
     "maintenance:status": "node scripts/maintenance-checks.mjs --status",
-    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run plans:status && npm run plans:index:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm test",
+    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run plans:status && npm run plans:index:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm test",
     "docs:refs:gate": "node scripts/check-docs-refs.mjs --gating",
     "on-conflict:check": "node scripts/on-conflict-lint.mjs",
     "on-conflict:all": "node scripts/on-conflict-lint.mjs --all",
@@ -117,7 +117,8 @@
     "parity:check-coupling": "node scripts/postgres-parity/check-non-core-references.mjs --schema-coupling --strict",
     "parity:expected-schema": "node scripts/postgres-parity/generate-expected-schema.mjs",
     "audit:clean": "node scripts/audit-clean.mjs",
-    "audit:clean:apply": "node scripts/audit-clean.mjs --apply"
+    "audit:clean:apply": "node scripts/audit-clean.mjs --apply",
+    "arch:coverage-gate": "node scripts/arch-coverage-gate.mjs"
   },
   "keywords": [
     "claude",

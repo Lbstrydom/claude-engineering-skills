@@ -286,6 +286,10 @@
       "description": "Render docs/architecture-map.md from the symbol index.",
       "category": "arch"
     },
+    "arch:coverage-gate": {
+      "description": "Gate on observed-graph coverage: fails when the import graph is too lossy to be an authority. Runs downstream of arch:render so it can never abort the dashboard build.",
+      "category": "arch"
+    },
     "arch:drift": {
       "description": "Detect drift between code and the architectural memory snapshot.",
       "category": "arch"

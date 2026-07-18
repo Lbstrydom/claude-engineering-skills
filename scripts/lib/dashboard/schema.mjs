@@ -220,6 +220,16 @@ export const ReferenceDataSchema = z.object({
         manual: z.number().int().nonnegative(),
         both: z.number().int().nonnegative(),
       }),
+      // Observed-graph coverage (docs/plans/observed-graph-coverage-honesty.md).
+      // Optional + nullable so pre-feature snapshots still validate; `.passthrough()`
+      // keeps the extraction/attribution detail without duplicating the full
+      // §2.1.6b shape here — the renderer reads verdict + a few counts.
+      coverage: z.object({
+        verdict: z.object({
+          status: z.enum(['verified', 'degraded', 'unverified', 'unknown']),
+          reason: z.string().nullable(),
+        }),
+      }).passthrough().nullable().optional(),
     }),
     mapPath: z.string().nullable(),
     // v2 Part 2 — inverse edge {domainId: [{id,label}]} for Architecture→Purpose

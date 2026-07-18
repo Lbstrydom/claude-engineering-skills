@@ -288,6 +288,12 @@ export function readDomainDeps(root) {
     observedGeneratedAt: envelope?.generatedAt || null,
     manualKeyCount: Object.keys(manual).length,
     edgeCounts,
+    // An envelope with no `coverage` block predates the feature — `unknown`,
+    // never `verified`. Absence of a measurement is not evidence of a clean
+    // one, and this is the single place that default is applied for the UI.
+    coverage: envelope
+      ? (envelope.coverage ?? { verdict: { status: 'unknown', reason: 'not_measured' } })
+      : null,
   };
   return { deps: flat, mergedDeps: merged, depsSource };
 }

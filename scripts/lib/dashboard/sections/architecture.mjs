@@ -45,6 +45,49 @@ function archTiers(domains, deps) {
   return tier;
 }
 
+/**
+ * The coverage banner — the surface that must NEVER read green on an
+ * unmeasured or lossy graph.
+ *
+ * Mirrors nav-audit's and visual-audit's capture-status banners (🟡 for a
+ * degraded capture, ⚪ for "not measured"). The load-bearing rule: `unknown`
+ * gets its own neutral icon and is never collapsed into the verified branch.
+ * Absence of a measurement is not evidence of a clean one — that conflation is
+ * the entire bug class this feature exists to end.
+ */
+function formatCoverageBanner(coverage, ui) {
+  if (!coverage) return '';
+  const status = coverage.verdict?.status || 'unknown';
+  const reason = coverage.verdict?.reason || null;
+  const LABEL = {
+    verified:   ['🟢', 'coverage verified'],
+    degraded:   ['🟡', 'coverage degraded'],
+    unverified: ['🟡', 'coverage unverified — this graph is not an authority'],
+    unknown:    ['⚪', 'coverage not measured'],
+  };
+  const [icon, text] = LABEL[status] || ['⚪', 'coverage unknown'];
+  const cls = status === 'verified' ? 'section-note' : 'section-note section-warn';
+
+  const e = coverage.extraction;
+  const a = coverage.attribution;
+  const bits = [];
+  if (e && Number.isFinite(e.cruised) && Number.isFinite(e.eligible)) {
+    bits.push(`${e.cruised}/${e.eligible} eligible files cruised`);
+  } else if (status !== 'verified') {
+    // Explicitly say the numbers are absent rather than omitting the clause —
+    // a missing count must not read as a zero-drop clean run.
+    bits.push('no extraction measurement');
+  }
+  if (a && Number.isFinite(a.attributed) && Number.isFinite(a.attributable)) {
+    bits.push(`${a.attributed}/${a.attributable} attributable edges`);
+  }
+  if (coverage.stale === true) bits.push('copied forward — not measured this run');
+
+  const detail = bits.length ? ` · ${ui.escapeHtml(bits.join(' · '))}` : '';
+  const why = reason ? ` (${ui.escapeHtml(reason)})` : '';
+  return `<p class="${cls}">${icon} <strong>${ui.escapeHtml(text)}</strong>${why}${detail}</p>`;
+}
+
 function formatDepsSourceLine(ds, ui) {
   if (!ds) return '';
   const { observed = 0, manual = 0, both = 0 } = ds.edgeCounts || {};
@@ -123,9 +166,14 @@ export default function sectionArchitecture({ src, architecture }, ui) {
   }
   const mp = mapPath ? ui.escapeHtml(mapPath) : 'docs/architecture-map.md';
   const depsLine = formatDepsSourceLine(depsSource, ui);
+  // Coverage banner goes ABOVE the edge counts on purpose: the reader must
+  // learn whether this graph can be believed BEFORE reading numbers derived
+  // from it.
+  const coverageLine = formatCoverageBanner(depsSource?.coverage, ui);
   return `<p class="section-note">${ui.escapeHtml(domains.length)} domains · `
     + `${ui.escapeHtml(tierCount)} dependency tiers (top-level → foundation) · `
     + `bar width &prop; symbol count · full map: <code>${mp}</code></p>
+    ${coverageLine}
     ${depsLine}
     <div class="arch-graph">${bands}</div>`;
 }

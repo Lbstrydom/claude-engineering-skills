@@ -33,13 +33,18 @@ import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { renderArchitectureMap } from '../lib/arch-render.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
-import { loadDomainRules } from '../lib/symbol-index/domain-tagger.mjs';
+import { loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
+import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
+import {
+  assessAttributionCoverage, assertAttributionExhaustive,
+} from '../lib/symbol-index/graph-coverage.mjs';
+import { getGraphCoverage } from '../lib/store/arch/coverage.mjs';
 import {
   OBSERVED_FILE,
   OBSERVED_VERSION,
   ObservedDepsSchema,
   computeDomainMapDigest,
-  computeObservedDomainDeps,
+  computeObservedDomainDepsWithCoverage,
 } from '../lib/observed-deps.mjs';
 
 function parseArgs(argv) {
@@ -257,13 +262,51 @@ async function main() {
     if (snap.importGraphPopulated === true) {
       const edges = await listFileImportsForSnapshot(snap.refreshId);
       const rules = loadDomainRules(repoRoot);
-      const deps = computeObservedDomainDeps(edges, rules);
+      const coverageConfig = loadCoverageConfig(repoRoot);
+      // The attribution layer is measured HERE because this is where domain
+      // rules meet persisted edges — those buckets cannot exist upstream.
+      // The extraction layer travels from the DB because its buckets
+      // (external/selfEdge/escaping) are dropped before the DB write and are
+      // not recomputable downstream (§2.1.2).
+      const { deps, buckets, untaggedSamples } = computeObservedDomainDepsWithCoverage(
+        edges, rules, { sampleCap: coverageConfig.sampleCap },
+      );
+      const attribution = assessAttributionCoverage({
+        buckets, sampleCap: coverageConfig.sampleCap, untaggedSamples,
+      });
+      const exhaustive = assertAttributionExhaustive(attribution, edges.length);
+      if (!exhaustive.ok) {
+        process.stderr.write(`arch:render: WARNING attribution buckets do not account for `
+          + `every persisted edge (counted ${exhaustive.actual}, persisted ${exhaustive.expected}) `
+          + `— a drop site was added without a bucket\n`);
+      }
+
+      // Extraction coverage was measured by a DIFFERENT process (extract.mjs,
+      // via refresh.mjs). A missing row means we do not know — which maps to
+      // `unknown`/`not_measured`, never to `verified`. Absence is not evidence
+      // of cleanliness.
+      const persisted = await getGraphCoverage(snap.refreshId);
+      const extraction = persisted?.extraction ?? null;
+      const stale = persisted?.stale === true;
+      const verdict = graphVerdict({ extraction, attribution, stale, config: coverageConfig });
+
       const envelope = {
         version: OBSERVED_VERSION,
         refreshId: snap.refreshId,
         domainMapDigest: computeDomainMapDigest(rules),
         generatedAt: new Date().toISOString(),
         deps,
+        coverage: {
+          schemaVersion: 1,
+          verdict,
+          // Provenance stays with the run that MEASURED it, which is not this
+          // refresh when the row was copied forward.
+          measuredAt: persisted?.measuredAt ?? new Date().toISOString(),
+          refreshId: persisted?.refreshId ?? snap.refreshId,
+          stale,
+          extraction,
+          attribution,
+        },
       };
       // R4-M2: validate at write time too. If computeObservedDomainDeps ever
       // produces a malformed shape, fail loudly before persisting; the reader
@@ -274,7 +317,22 @@ async function main() {
       fs.mkdirSync(path.dirname(observedPath), { recursive: true });
       atomicWriteFileSync(observedPath, JSON.stringify(envelope, null, 2) + '\n');
       const edgeCount = Object.values(deps).reduce((n, l) => n + l.length, 0);
-      process.stderr.write(`arch:render: wrote ${OBSERVED_FILE} — ${Object.keys(deps).length} domains, ${edgeCount} edges\n`);
+      // This line used to report ONLY what survived — `N domains, M edges` —
+      // which is the false-authority surface this whole feature exists to end.
+      // It now leads with the verdict and names what was dropped.
+      const dropped = attribution.edges;
+      const untagged = dropped.untaggedFrom + dropped.untaggedTo + dropped.untaggedBoth;
+      process.stderr.write(
+        `arch:render: wrote ${OBSERVED_FILE} — coverage ${verdict.status.toUpperCase()}`
+        + `${verdict.reason ? ` (${verdict.reason})` : ''}`
+        + `${stale ? ' [copied forward]' : ''}\n`
+      );
+      process.stderr.write(
+        `arch:render:   surviving: ${Object.keys(deps).length} domains, ${edgeCount} edges`
+        + ` · dropped: ${untagged} untagged, ${dropped.sameDomain} same-domain`
+        + `${dropped.malformed ? `, ${dropped.malformed} malformed` : ''}`
+        + `${extraction ? ` · extraction ${extraction.cruised}/${extraction.eligible}` : ' · extraction NOT MEASURED'}\n`
+      );
     } else if (fs.existsSync(observedPath)) {
       fs.unlinkSync(observedPath);
       process.stderr.write(`arch:render: removed stale ${OBSERVED_FILE} (snapshot import graph not populated)\n`);
