@@ -42,15 +42,26 @@ export const SUBPROC_ERROR_CODES = Object.freeze({
  * ALWAYS resolves — the caller switches on `exitCode`/`signal`. Use
  * `runJsonLinesAsyncStrict` if you want exception-based control flow.
  *
+ * `timeoutMs` (optional, default OFF) kills the child after that long:
+ * SIGTERM, then SIGKILL after `killGraceMs`. It is default-off so every
+ * existing call site is byte-identical in behaviour (#20 Backward Compat).
+ *
+ * This works only because the timer runs in the PARENT. A child doing
+ * substantial synchronous work blocks its own event loop, so no in-child
+ * timer could ever fire — a process boundary is the only thing that actually
+ * interrupts it, and callers like `refresh.mjs` already have one.
+ *
  * @param {string} cmd
  * @param {string[]} args
- * @param {{cwd?: string, input?: string, env?: Record<string,string>, stage?: string}} [opts]
+ * @param {{cwd?: string, input?: string, env?: Record<string,string>, stage?: string,
+ *          timeoutMs?: number, killGraceMs?: number}} [opts]
  * @returns {Promise<{
  *   records: object[],
  *   parseErrors: {lineNo: number, line: string, message: string}[],
  *   exitCode: number | null,
  *   signal: string | null,
  *   spawnError: Error | null,
+ *   timedOut: boolean,
  * }>}
  */
 export function runJsonLinesAsync(cmd, args, opts = {}) {
@@ -68,6 +79,31 @@ export function runJsonLinesAsync(cmd, args, opts = {}) {
     let stdoutBuf = '';
     let spawnError = null;
     let settled = false;
+    let timedOut = false;
+    let termTimer = null;
+    let killTimer = null;
+
+    if (Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0) {
+      const graceMs = Number.isFinite(opts.killGraceMs) && opts.killGraceMs >= 0
+        ? opts.killGraceMs : 5000;
+      termTimer = setTimeout(() => {
+        timedOut = true;
+        try { child.kill('SIGTERM'); } catch { /* already gone */ }
+        // SIGTERM is a request. A child wedged in synchronous work may never
+        // service it, so escalate — otherwise the "timeout" would hand back a
+        // verdict while leaving a live process behind.
+        killTimer = setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* already gone */ }
+        }, graceMs);
+        killTimer.unref?.();
+      }, opts.timeoutMs);
+      termTimer.unref?.();
+    }
+
+    const clearTimers = () => {
+      if (termTimer) clearTimeout(termTimer);
+      if (killTimer) clearTimeout(killTimer);
+    };
 
     function flushLine(line) {
       lineNo++;
@@ -113,9 +149,10 @@ export function runJsonLinesAsync(cmd, args, opts = {}) {
     child.on('close', (exitCode, signal) => {
       if (settled) return;
       settled = true;
+      clearTimers();
       // Flush any trailing line without a final \n.
       if (stdoutBuf.length > 0) flushLine(stdoutBuf);
-      resolve({ records, parseErrors, exitCode, signal, spawnError });
+      resolve({ records, parseErrors, exitCode, signal, spawnError, timedOut });
     });
 
     if (opts.input !== undefined) {
@@ -160,6 +197,28 @@ export async function runJsonLinesAsyncStrict(cmd, args, opts = {}) {
     err.code = SUBPROC_ERROR_CODES.SPAWN_FAILED;
     err.stage = stage ?? null;
     err.cause = result;
+    throw err;
+  }
+
+  // Timed out — classified BEFORE the signal check on purpose. A child killed
+  // by the timeout does not reliably report a signal on every platform
+  // (Windows commonly surfaces an exit code instead), and a timeout that
+  // silently downgraded to EXIT_NONZERO there would be indistinguishable from
+  // an ordinary crash — so the caller could not synthesise `extraction_timeout`.
+  // Surfaced as a THROW with `cause.timedOut`, never as a flag on the success
+  // return: this wrapper returns only `records` on success, so a result flag
+  // would be unreachable by construction.
+  if (result.timedOut) {
+    const stageTag = stage ? `stage=${stage} ` : '';
+    const err = new Error(
+      `subprocess timed out after ${opts.timeoutMs}ms: ${stageTag}cmd=${cmd}`
+      + `${result.signal ? ` signal=${result.signal}` : ''}`
+    );
+    err.code = SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL;
+    err.stage = stage ?? null;
+    err.signal = result.signal;
+    err.timedOut = true;
+    err.cause = result;   // carries cause.timedOut === true
     throw err;
   }
 

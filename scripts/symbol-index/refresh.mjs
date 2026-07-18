@@ -60,7 +60,10 @@ import { resolveModel } from '../lib/model-resolver.mjs';
 import { resolveEmbedProfile } from '../lib/embed-text.mjs';
 import { symbolIndexConfig } from '../lib/config.mjs';
 import { detectRepoStack } from '../lib/repo-stack.mjs';
-import { tagDomain, loadDomainRules } from '../lib/symbol-index/domain-tagger.mjs';
+import { tagDomain, loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
+import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
+import { assessExtractionCoverage } from '../lib/symbol-index/graph-coverage.mjs';
+import { recordGraphCoverage, copyForwardCoverage } from '../lib/store/arch/coverage.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP_LINES } from '../lib/duplicate-justification-pragma.mjs';
 
@@ -143,6 +146,7 @@ async function main() {
   const args = parseArgs(process.argv);
   const repoRoot = path.resolve(process.cwd());
   const domainRules = loadDomainRules(repoRoot);
+  const coverageConfig = loadCoverageConfig(repoRoot);
   if (domainRules.length === 0) {
     process.stderr.write(`  [refresh] no domain rules found at .audit-loop/domain-map.json — symbols will all tag as _other\n`);
   } else {
@@ -334,8 +338,28 @@ async function main() {
       }
       logOk(`extracting symbols...`);
       let extracted;
+      // A timeout here is a DEGRADED MEASUREMENT, not a failed refresh: the
+      // symbol index is independently valuable (#16), so we synthesise the
+      // coverage record and continue. Any OTHER abnormal death keeps today's
+      // failure behaviour — an unexplained kill is still an error. The child
+      // cannot report its own death, which is exactly why the parent owns this
+      // (§2.1.8); a timer inside a child wedged in synchronous cruise work
+      // could never fire.
+      let extractionTimedOut = false;
       try {
-        extracted = await runJsonLinesAsyncStrict('node', extractArgs, { stage: 'extract' });
+        extracted = await runJsonLinesAsyncStrict('node', extractArgs, {
+          stage: 'extract',
+          timeoutMs: coverageConfig.hardTimeoutMs,
+        });
+      } catch (err) {
+        if (err.code === SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL && err.cause?.timedOut) {
+          extractionTimedOut = true;
+          extracted = err.cause.records || [];
+          logOk(`WARNING: extract timed out after ${coverageConfig.hardTimeoutMs}ms — `
+            + `coverage will report extraction_timeout; the symbol index still publishes`);
+        } else {
+          throw err;
+        }
       } finally {
         if (filesManifest) {
           try { fs.unlinkSync(filesManifest); } catch { /* best-effort cleanup */ }
@@ -344,6 +368,7 @@ async function main() {
       const symbolsRaw = extracted.filter(r => r.type === 'symbol');
       const violations = extracted.filter(r => r.type === 'violation');
       const importEdges = extracted.filter(r => r.type === 'import');
+      const coverageLine = extracted.find(r => r.type === 'coverage') || null;
       logOk(`extracted ${symbolsRaw.length} symbols, ${violations.length} violations, ${importEdges.length} internal import edges`);
 
       // 7. Summarise (only non-redacted)
@@ -455,6 +480,43 @@ async function main() {
         logOk(`recorded ${r.inserted} file-import edges`);
       }
 
+      // 12c. Persist the coverage measurement (§2.1.7). Without this the
+      // measurement is computed in the extract SUBPROCESS and then dropped on
+      // the floor — it is consumed by a DIFFERENT process (render-mermaid.mjs)
+      // reading from the DB, so the table IS the route between them.
+      //
+      // Keyed on the refreshId this run already owns, so coverage can never be
+      // attributed to the wrong snapshot. The attribution layer is NOT filled
+      // here: those buckets need domain rules applied to persisted edges, which
+      // is render's job — this records extraction only, and render merges.
+      if (mode === 'full') {
+        const extraction = extractionTimedOut
+          ? assessExtractionCoverage({
+              outcome: 'timedOut', elapsedMs: coverageConfig.hardTimeoutMs,
+            })
+          : (coverageLine?.extraction ?? null);
+
+        if (extraction) {
+          const record = {
+            schemaVersion: 1,
+            verdict: graphVerdict({ extraction, attribution: null, config: coverageConfig }),
+            measuredAt: new Date().toISOString(),
+            refreshId,
+            stale: false,
+            extraction,
+            attribution: null,
+          };
+          const res = await recordGraphCoverage(refreshId, record);
+          logOk(`coverage: ${record.verdict.status}`
+            + `${record.verdict.reason ? ` (${record.verdict.reason})` : ''}`
+            + `${res.recorded ? '' : ` — NOT persisted: ${res.reason}`}`);
+        } else {
+          // A full run that produced no coverage line is itself a signal —
+          // silence here is what the whole feature exists to stop.
+          logOk('WARNING: full refresh produced no coverage line; the graph will read `unknown`');
+        }
+      }
+
       // 13. Incremental: copy-forward untouched-file symbols + imports
       // from prior snapshot. Symbol copy-forward already proven; imports
       // copy-forward keys on importer_path (R1-H1) so dropped edges from
@@ -480,6 +542,18 @@ async function main() {
             touchedFileSet: touchedSet,
           });
           if (imp.copied > 0) logOk(`copy-forward ${imp.copied} untouched-file import edges`);
+          // Coverage is a FULL-RUN measurement (§2.1.3 row 4). An incremental
+          // run inherits the NUMBERS for display but never the VERDICT — file
+          // content can change (adding edges, making them untagged) while the
+          // file LIST stays byte-identical, so any digest-based freshness check
+          // would be false comfort. Categorical beats heuristic here.
+          const cov = await copyForwardCoverage({
+            fromRefreshId: prior.refreshId,
+            toRefreshId: refreshId,
+          });
+          logOk(cov.copied
+            ? `copy-forward coverage from ${prior.refreshId} (stale — reports \`unknown\`)`
+            : `no prior coverage to copy forward (${cov.reason}); graph reads \`unknown\``);
           priorImportGraphPopulated = await getImportGraphPopulated(prior.refreshId);
         }
       }

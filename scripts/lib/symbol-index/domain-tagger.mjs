@@ -18,6 +18,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseCoverageConfig } from './graph-verdict.mjs';
 
 const DOMAIN_MAP_RELATIVE = '.audit-loop/domain-map.json';
 const VALID_DOMAIN_RE = /^[a-z][a-z0-9_-]{0,49}$/;
@@ -178,6 +179,38 @@ export function computeTargetDomains(targetPaths, rules) {
  * @param {string} repoRoot - absolute path to repo root
  * @returns {Array<{pattern: string, domain: string}>}
  */
+/**
+ * Load + normalize the `coverage` block of `.audit-loop/domain-map.json`.
+ *
+ * A sibling of `loadDomainRules` rather than a change to its return shape —
+ * this module stays the single owner of the FILE (§2.1.4) without breaking
+ * every existing caller of a function that returns an array.
+ *
+ * Defaulting is delegated to `parseCoverageConfig`, which is the ONLY
+ * defaulting site: two would let the CLI and the dashboard drift to different
+ * thresholds while both looking correct.
+ *
+ * Never throws — a malformed domain-map must not take down `arch:refresh`
+ * (#16). Note that `arch-coverage-gate` deliberately does NOT inherit that
+ * leniency: see §2.1.4 "BINDING ON PHASE 4".
+ *
+ * @param {string} repoRoot
+ * @param {(msg: string) => void} [warn]
+ * @returns {object} fully-defaulted coverage config
+ */
+export function loadCoverageConfig(repoRoot, warn) {
+  const emit = warn || ((m) => process.stderr.write(`  [domain-tagger] ${m}\n`));
+  const file = path.join(repoRoot, DOMAIN_MAP_RELATIVE);
+  if (!fs.existsSync(file)) return parseCoverageConfig(undefined, emit);
+  try {
+    const raw = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    return parseCoverageConfig(raw?.coverage, emit);
+  } catch (err) {
+    emit(`WARN: ${file} is invalid JSON (${err.message}); using coverage defaults`);
+    return parseCoverageConfig(undefined, emit);
+  }
+}
+
 export function loadDomainRules(repoRoot) {
   const file = path.join(repoRoot, DOMAIN_MAP_RELATIVE);
   if (!fs.existsSync(file)) return [];
