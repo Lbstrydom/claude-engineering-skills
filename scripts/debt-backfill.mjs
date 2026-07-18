@@ -35,6 +35,33 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseSummaryFiles } from './lib/backfill-parser.mjs';
 import { writeDebtEntries, DEFAULT_DEBT_LEDGER_PATH } from './lib/debt-ledger.mjs';
+import { persistDebtEntries, selectEventSource } from './lib/debt-memory.mjs';
+import { resolveRepoForStore, initLearningStore, isCloudEnabled } from './learning-store.mjs';
+import { generateRepoProfile } from './lib/context.mjs';
+
+/**
+ * Resolve the debt event source (cloud when configured + the repo resolves,
+ * else local). Mirrors the resolution `legacy-production-audit.mjs` already
+ * does for `debt_events` — same `selectEventSource` contract, same
+ * "non-null repoId proves cloud is on" invariant — so the two debt surfaces
+ * cannot disagree about where this repo's debt lives.
+ *
+ * Fail-soft by design: ANY failure to reach the store degrades to a LOCAL
+ * context, which still performs the full local write. A backfill must never
+ * fail because the cloud is unreachable.
+ */
+async function resolveDebtContext() {
+  try {
+    if (!await isCloudEnabled()) return selectEventSource({ cloudEnabled: false });
+    await initLearningStore();
+    const ref = await resolveRepoForStore({ profile: generateRepoProfile() });
+    const repoId = ref?.repoRowId ?? null;
+    return selectEventSource({ repoId, cloudEnabled: repoId != null });
+  } catch (err) {
+    process.stderr.write(`  [backfill] cloud identity unresolved (${err.name}) — local-only debt write\n`);
+    return selectEventSource({ cloudEnabled: false });
+  }
+}
 
 // ── CLI arg parsing ─────────────────────────────────────────────────────────
 
@@ -239,8 +266,19 @@ async function runPromote(opts) {
     return 2;
   }
 
-  const result = await writeDebtEntries(entries, { ledgerPath: opts.ledgerPath });
+  // Write through `persistDebtEntries` (local-first, then cloud mirror) rather
+  // than the raw `writeDebtEntries`. The facade existed for exactly this and
+  // had ZERO callers, so `debt_entries` sat empty in the store while
+  // `.audit/tech-debt.json` accumulated 343 local entries — a severed mirror,
+  // not an unused feature. `debt_summary` (which reads the cloud table) was
+  // therefore empty too, and the local ledger was invisible to every
+  // cross-repo/dashboard view. Local write semantics are unchanged: the facade
+  // calls the SAME `writeDebtEntries` first and returns its result, then
+  // mirrors; a cloud failure is logged and never blocks the local write.
+  const debtContext = await resolveDebtContext();
+  const result = await persistDebtEntries(debtContext, entries, { ledgerPath: opts.ledgerPath });
   process.stderr.write(`  [backfill] wrote to ${opts.ledgerPath}: ${result.inserted} new, ${result.updated} updated, ${result.total} total\n`);
+  process.stderr.write(`  [backfill] cloud mirror: ${result.cloudMirrored ? 'ok' : (debtContext.source === 'cloud' ? 'FAILED (local write kept)' : 'skipped (cloud not configured)')}\n`);
   if (result.rejected.length > 0) {
     process.stderr.write(`  [backfill] ${result.rejected.length} entries rejected by schema:\n`);
     for (const r of result.rejected.slice(0, 5)) {
