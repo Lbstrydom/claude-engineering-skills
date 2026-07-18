@@ -1,7 +1,12 @@
 # Plan: Observed-Graph Discovery Unification (evidence-layer architecture)
 
 - **Date**: 2026-07-17
-- **Status**: Draft — blocked on two measurements (see §3). Do NOT start building until they're answered.
+- **Status**: Draft — §3 measurement #1 ANSWERED 2026-07-18 (yes, design (e) is
+  feasible — 0 semantic diffs on 2 repos; see §3.1). **Still blocked on #2**: the
+  root-cruise cost is measured only on two small repos (0.95s / 4.06s), NOT on
+  the ~40k-file monorepo §3 names as the adversarial case, and the scaling
+  observed (2.7× modules → 4.3× time, ~50× peak memory) is the open risk. Do NOT
+  start building until #2 has a real measurement.
 - **Author**: Claude + Louis
 - **Scope**: backend (`scripts/symbol-index/extract.mjs` discovery seam; syncs to consumer repos)
 
@@ -81,8 +86,8 @@ having. The observed graph exists to CONTRADICT declared intent.
 
 ## 3. Blocking unknowns — measure BEFORE building
 
-Neither is answered. (e) is unimplementable if #1 fails and unaffordable if #2
-is bad.
+**#1 is ANSWERED (2026-07-18): yes. #2 is partially measured and still open.**
+(e) is unimplementable if #1 fails and unaffordable if #2 is bad.
 
 1. **Does dep-cruiser cleanly accept an explicit file list of ~3,000 paths?**
    Make-or-break for (e); a ~10-minute spike answers it. If it doesn't, the
@@ -92,6 +97,45 @@ is bad.
    plan's **1.1s is measured on THIS repo — the one repo where the allowlist
    happens to work.** A 40k-file `packages/` tree is not 1.1s. Needs a real
    consumer measurement before anything ships.
+
+### 3.1 Spike results (2026-07-18)
+
+Measured by [`scripts/spikes/observed-graph-discovery-spike.mjs`](../../scripts/spikes/observed-graph-discovery-spike.mjs)
+(read-only; builds nothing). Re-run with `--repo <path>` for a new target.
+
+**#1 was mis-framed, and the correction matters.** `extract.mjs` calls the
+dependency-cruiser **JS API** (`cruise(targets, opts)`), not the CLI — an
+in-process call takes a JS array, so the failure mode that "~3,000 paths"
+implies (argv / command-line length) **cannot occur**. The real question is
+whether explicit-file mode changes **resolution semantics**, which "did it
+throw?" cannot answer.
+
+| Target | M1 semantic diffs | M2 root cruise | Coverage delta |
+|---|---|---|---|
+| claude-engineering-skills | **0** | 0.95s · 921 modules · +2MB | 22 / 891 invisible |
+| wine-cellar-app (consumer) | **0** | 4.06s · 2530 modules · +117MB | 23 / 2426 invisible |
+
+- **#1 → YES, (e) is feasible.** Zero semantic differences on both repos: every
+  edge derived from a file *both* runs saw is identical. The handful of
+  differing edges are **input-set** differences (the symbol walker's `SKIP_DIRS`
+  excludes `.claude/`, so those files were never in the explicit list) — which
+  is this plan's own thesis, i.e. evidence FOR the design, not an obstacle.
+  > Recorded because it nearly went the other way: the spike's first version
+  > counted every differing edge as semantic and reported **"not equivalent —
+  > (e) blocked"**. That would have manufactured a blocker that does not exist.
+  > Any future re-measurement must keep the semantic-vs-input partition.
+- **#2 → still open, deliberately unverdicted.** The spike prints the number and
+  refuses a pass/fail, because this plan sets no numeric threshold
+  ("unaffordable if bad") and **neither repo measured resembles the ~40k-file
+  `packages/` tree §3 names as the adversarial case.** The scaling is the part
+  to weigh: 2.7× the modules cost **4.3×** the time and ~50× the peak memory.
+  Extrapolating that curve to 40k files is the open risk. **Do not treat #2 as
+  answered by these two data points.**
+- **§4 quantified.** The "observed but unclassified" problem is real and
+  measurable today: 22 files here and 23 in the consumer are symbol-indexed but
+  contribute **zero** observed edges with nothing warning — including that
+  consumer's entire `extension/` tree (a browser-extension subsystem invisible
+  to the import layer, because `extension` is not in `COMMON_SOURCE_DIRS`).
 
 ## 4. Independent first step — null-domain accounting
 
