@@ -32,12 +32,66 @@ export const OBSERVED_VERSION = 1;
 // Schema is the on-disk envelope contract. Tightened per R1-L3:
 // - generatedAt must be ISO-8601 (datetime, not arbitrary string)
 // - domainMapDigest fixed to lowercase-hex sha256 (already 64 chars)
+/**
+ * Coverage block — §2.1.6b of the coverage-honesty plan.
+ *
+ * OPTIONAL by design. Every envelope written before this feature lacks it, and
+ * those must keep parsing; the reader maps an absent block to
+ * `unknown`/`not_measured`, never to `verified` (absence is not evidence of
+ * cleanliness). `schemaVersion` is present from day one so a future shape
+ * change is a version bump rather than a guess at the reader.
+ *
+ * Counts are `.nullable()` because a failed or timed-out extraction has NO
+ * measurement — null, not 0. Zero is a measurement; conflating the two is how
+ * a failed cruise reads as an empty repo.
+ */
+export const CoverageSchema = z.object({
+  schemaVersion: z.literal(1),
+  verdict: z.object({
+    status: z.enum(['verified', 'degraded', 'unverified', 'unknown']),
+    reason: z.string().nullable(),
+  }),
+  measuredAt: z.iso.datetime(),
+  refreshId: z.string().min(1),
+  stale: z.boolean(),
+  extraction: z.object({
+    outcome: z.enum(['ok', 'failed', 'timedOut']),
+    eligible: z.number().int().nonnegative().nullable(),
+    cruised: z.number().int().nonnegative().nullable(),
+    ratio: z.number().min(0).max(1).nullable(),
+    elapsedMs: z.number().nonnegative().nullable(),
+    edges: z.object({
+      external: z.number().int().nonnegative(),
+      selfEdge: z.number().int().nonnegative(),
+      escaping: z.number().int().nonnegative(),
+      persisted: z.number().int().nonnegative(),
+    }).nullable(),
+    samples: z.object({ uncruised: z.array(z.string()) }),
+  }).nullable(),
+  attribution: z.object({
+    candidates: z.number().int().nonnegative(),
+    attributed: z.number().int().nonnegative(),
+    attributable: z.number().int().nonnegative(),
+    ratio: z.number().min(0).max(1).nullable(),
+    edges: z.object({
+      malformed: z.number().int().nonnegative(),
+      untaggedFrom: z.number().int().nonnegative(),
+      untaggedTo: z.number().int().nonnegative(),
+      untaggedBoth: z.number().int().nonnegative(),
+      sameDomain: z.number().int().nonnegative(),
+      attributed: z.number().int().nonnegative(),
+    }),
+    samples: z.object({ untagged: z.array(z.string()) }),
+  }).nullable(),
+});
+
 export const ObservedDepsSchema = z.object({
   version: z.literal(OBSERVED_VERSION),
   refreshId: z.string().min(1),
   domainMapDigest: z.string().regex(/^[0-9a-f]{64}$/),
   generatedAt: z.iso.datetime(),
   deps: z.record(z.string(), z.array(z.string())),
+  coverage: CoverageSchema.optional(),
 });
 
 export function computeDomainMapDigest(rules) {
@@ -62,19 +116,61 @@ export function computeDomainMapDigest(rules) {
  * @returns {Object<string, string[]>} `{[fromDomain]: [toDomain, ...sorted, unique]}`
  */
 export function computeObservedDomainDeps(edges, rules) {
+  return computeObservedDomainDepsWithCoverage(edges, rules).deps;
+}
+
+/**
+ * Same computation, but ALSO returns why each dropped edge was dropped.
+ *
+ * `computeObservedDomainDeps` above silently skipped untagged edges — the
+ * docstring even declared it intended — and the only stderr line downstream
+ * reported what SURVIVED (`N domains, M edges`). On one consumer that made 68%
+ * of files invisible with nothing warning. The skip itself is correct and
+ * unchanged; what changes is that it is now countable.
+ *
+ * Buckets are mutually exclusive and exhaustive. `malformed` and `sameDomain`
+ * exist because the loop genuinely drops those cases too — omitting them (as
+ * the first design did) would break the exhaustivity assertion on live data.
+ *
+ * @param {Array<{importer: string, imported: string}>} edges
+ * @param {Array<{pattern: string, domain: string}>} rules
+ * @param {{sampleCap?: number}} [opts]
+ * @returns {{deps: Object<string,string[]>, buckets: object, untaggedSamples: string[]}}
+ */
+export function computeObservedDomainDepsWithCoverage(edges, rules, { sampleCap = 20 } = {}) {
+  const buckets = {
+    malformed: 0, untaggedFrom: 0, untaggedTo: 0,
+    untaggedBoth: 0, sameDomain: 0, attributed: 0,
+  };
+  const untaggedSamples = [];
+  const cap = Number.isFinite(sampleCap) ? Math.max(0, Math.min(100, Math.trunc(sampleCap))) : 20;
+  const sample = (p) => {
+    if (untaggedSamples.length < cap && !untaggedSamples.includes(p)) untaggedSamples.push(p);
+  };
+
   const out = new Map();
-  if (!Array.isArray(edges) || !Array.isArray(rules)) return {};
+  if (!Array.isArray(edges) || !Array.isArray(rules)) {
+    return { deps: {}, buckets, untaggedSamples };
+  }
   // Gemini-R3-G1: matchGlob() rebuilds a RegExp per call. With ~2000 edges
   // × 47 rules × 2 endpoints = ~190K compilations per render, that's the
   // hot path. Precompile each rule's regex ONCE outside the edge loop, then
   // do plain re.test() inside. ~50× faster on this repo; scales linearly.
   const fastTag = makeFastTagger(rules);
   for (const e of edges) {
-    if (!e || typeof e.importer !== 'string' || typeof e.imported !== 'string') continue;
+    if (!e || typeof e.importer !== 'string' || typeof e.imported !== 'string') {
+      buckets.malformed++;
+      continue;
+    }
     const fromDomain = fastTag(e.importer);
     const toDomain = fastTag(e.imported);
-    if (!fromDomain || !toDomain) continue;
-    if (fromDomain === toDomain) continue;
+    if (!fromDomain && !toDomain) {
+      buckets.untaggedBoth++; sample(e.importer); sample(e.imported); continue;
+    }
+    if (!fromDomain) { buckets.untaggedFrom++; sample(e.importer); continue; }
+    if (!toDomain) { buckets.untaggedTo++; sample(e.imported); continue; }
+    if (fromDomain === toDomain) { buckets.sameDomain++; continue; }
+    buckets.attributed++;
     if (!out.has(fromDomain)) out.set(fromDomain, new Set());
     out.get(fromDomain).add(toDomain);
   }
@@ -86,7 +182,8 @@ export function computeObservedDomainDeps(edges, rules) {
   for (const from of sortedFroms) {
     result[from] = Array.from(out.get(from)).sort((a, b) => a.localeCompare(b));
   }
-  return result;
+  untaggedSamples.sort();
+  return { deps: result, buckets, untaggedSamples };
 }
 
 /**
