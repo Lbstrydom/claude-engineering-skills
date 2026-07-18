@@ -1,5 +1,88 @@
 # Project Status Log
 
+## 2026-07-18 — Telemetry-capture audit: the store was best-effort all the way down
+
+### The question
+"Are we actually capturing what the pending plans need?" The answer was no — and
+the reason nobody had noticed is structural: **the store layer is best-effort by
+design, so none of these ever threw.** Every one of them was a silent write loss.
+
+Three of the seven fixes are literally the same bug class — *one atomic UPDATE
+silently discarding an entire payload*:
+
+| Mechanism | Symptom | Commit |
+|---|---|---|
+| Un-awaited write raced `allowExitOnIdle` | all 25 code runs `rounds:0 / findings:0 / duration:NULL` while findings landed fine | `eefc5a2` |
+| A `CHECK` too narrow for a legal value | `CONCERNS_REMAINING` rejected | `5a68573` |
+| Five columns absent from the table the writer always wrote | whole row payload dropped | `64403e8` |
+
+The write that *partially* succeeds is the dangerous shape: findings arrived, so
+every dashboard read looked alive while the run-level telemetry was empty.
+
+### Changes (all on `origin/main`)
+- **`eefc5a2`** `fix(store)` — code-run finalisation lost to an un-awaited write.
+  `recordRunComplete` raced `allowExitOnIdle`.
+- **`5a68573`** `fix(final-review)` — **nothing ever wrote `gemini_verdict`**. NULL
+  on all 42 rows; no writer existed. Widened the CHECK for `CONCERNS_REMAINING`;
+  threaded `--run-id` through `audit-loop` / `audit-full`.
+- **`1dae98c`** `fix(sync)` — `oss-call-policy.json` never shipped to consumers.
+- **`1892838`** `feat(telemetry)` — per-generator `durationMs`, so the 120s
+  discovery timeout gets calibrated with evidence instead of a guess.
+- **`f79a721`** `fix(debt)` — restored the severed `debt_entries` cloud mirror
+  (343 local entries, 0 cloud rows).
+- **`aa05e61`** `feat(spike)` — observed-graph discovery measurements.
+- **`64403e8`** `fix(store)` — `audit_runs` was missing five columns the writer
+  always wrote.
+
+Migrations `20260718160000` + `20260718180000` are applied to the live DB.
+
+### Verification — the empirical run is what found the second bug
+A **real `/audit-code`** was run to verify the finalisation fix. It did two things:
+proved the fix works, **and surfaced the missing-columns bug the race had been
+masking** — that bug was only ever visible because a real run exercised the path.
+This is the pre-ship-empirical-verify doctrine paying out on a non-browser seam.
+
+First-ever finalised code run:
+
+```
+rounds                = 1
+total_findings        = 31
+total_duration_ms     = 316971
+cache_hit_rate        = 0.0000
+session_cache_hit     = false
+round_converged_after = NULL   ← CORRECT
+```
+
+`round_converged_after` is NULL because the run's verdict was
+`SIGNIFICANT_ISSUES`, which does not converge. So **`AI-Gate: passed` is now
+REACHABLE but not yet EARNED** — the previously-recorded "unreachable" state
+(one un-awaited write) is fixed, but no run has legitimately converged yet.
+
+That is **1 of 32 code runs finalised**. The other 31 are historically
+unrecoverable — the data was never written, not written-then-lost.
+
+### Plans — deliberately NOT marked complete
+- `observed-graph-discovery-unification.md` stays **Draft**. §3.1 now records the
+  spike: measurement #1 is ANSWERED (design (e) feasible, 0 semantic diffs across
+  2 repos); **#2 is still OPEN** — cost was measured on two small repos, not the
+  ~40k-file monorepo the plan itself names as the adversarial case. Half-answered
+  is not complete.
+- `evidence-anchor-path-contract.md` was already Complete (parallel session).
+
+### Consumer
+`wine-cellar-app` sync bookkeeping committed there as `818010b3` (unpushed,
+deliberately — no ship run in that repo).
+
+### Lesson
+A best-effort store layer converts every schema/await/constraint mistake into a
+**silent** one. The three bugs above are indistinguishable from healthy operation
+at the call site. The only thing that surfaced them was reading the rows and
+asking whether they matched what the writer claims to write — and then running the
+real path. Neither static review nor a green test suite would have caught any of
+the three.
+
+---
+
 ## 2026-07-18 — One status parser, not two — a plan rendered "Complete" under "Active"
 
 ### Root cause (this repo's own root cause, one layer down)
