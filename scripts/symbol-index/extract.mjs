@@ -20,6 +20,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { Project } from 'ts-morph';
 import { cruise } from 'dependency-cruiser';
 import { signatureHash } from '../lib/symbol-index.mjs';
@@ -398,7 +399,15 @@ const SKIP_DIRS = new Set([
 // rarely exceed 100KB; 500KB is a generous cap that preserves all real code.
 const MAX_FILE_BYTES = 500 * 1024;
 
-function enumerateFiles(repoRoot, restrictFiles) {
+// Exported for MEASUREMENT ONLY (2026-07-18) — `scripts/spikes/observed-graph-
+// discovery-spike.mjs` must measure the REAL symbol-layer enumerator, because
+// the whole question it answers is whether this walker's inventory can be fed
+// to dep-cruiser. Measuring a re-implementation would reproduce the exact
+// layers-disagree bug the spike exists to investigate. Exporting a pure,
+// side-effect-free walker is not an implementation of
+// docs/plans/observed-graph-discovery-unification.md design (e) — that plan
+// remains blocked on the measurements this export enables.
+export function enumerateFiles(repoRoot, restrictFiles) {
   if (restrictFiles && restrictFiles.length > 0) {
     return restrictFiles.map(f => path.isAbsolute(f) ? f : path.join(repoRoot, f));
   }
@@ -432,7 +441,18 @@ async function main() {
   emitProgress(`done — symbols=${stats.symbolCount} violations=${graphStats.violationCount} skipped-path=${stats.skippedPath} skipped-ext=${stats.skippedExt} skipped-size=${stats.skippedSize} skipped-delegate=${stats.skippedDelegate} redacted=${stats.redacted}`);
 }
 
-main().catch(err => {
-  process.stderr.write(`extract: fatal: ${err.stack || err.message}\n`);
-  process.exit(1);
-});
+// CLI-only entry guard (2026-07-18). `main()` used to run unconditionally at
+// module scope, so ANY `import` of this file kicked off a full symbol
+// extraction — minutes of work, plus JSON-lines spraying onto the importer's
+// stdout. That made the module effectively un-importable, which is very likely
+// why `enumerateFiles` had no export and no direct test despite being a pure,
+// obviously-testable walker. Found while writing
+// `scripts/spikes/observed-graph-discovery-spike.mjs`, which needs the real
+// enumerator. Same idiom as gemini-review.mjs / cache-hitrate-check.mjs;
+// `node scripts/symbol-index/extract.mjs ...` behaves exactly as before.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch(err => {
+    process.stderr.write(`extract: fatal: ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
+}
