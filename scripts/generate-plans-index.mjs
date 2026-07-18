@@ -1,0 +1,243 @@
+#!/usr/bin/env node
+/**
+ * @fileoverview Generates `docs/plans/README.md` — a status-bucketed index of
+ * every plan, so the 150+-file plans directory is navigable without moving
+ * files.
+ *
+ * ## Why an index instead of an archive directory
+ *
+ * `docs/plans/` → `docs/completed/` archiving was deleted by
+ * `docs/plans/reference-integrity-gate.md` Cluster C: moving a completed plan
+ * silently broke every inbound reference to it (including references from
+ * source comments, which no docs linter sees).
+ *
+ * The underlying rule is narrower than "never organise": a path is an
+ * **identity**, `Status:` is a **fact that changes**. Encoding a mutable fact
+ * in an immutable identifier is what broke. Deriving a *view* from that fact
+ * costs nothing and breaks nothing — so navigability is solved by generating
+ * this index, not by relocating files.
+ *
+ * ## Contract
+ *
+ * - Status parsing is delegated to `lib/plan-status.mjs` (`parsePlanStatus`) —
+ *   the single source of truth, shared with the `plans:status` lint. Nothing
+ *   here re-implements the parse (same R1-H2 rule that module documents).
+ * - Output is a **category-B generated artefact** per AGENTS.md: a pure,
+ *   deterministic function of committed source, committed to git, and
+ *   freshness-verified in the pre-push `check`. It therefore contains **no
+ *   clock, no git sha, no machine-specific path** — two regenerations on the
+ *   same commit are byte-identical.
+ *
+ * Usage:
+ *   node scripts/generate-plans-index.mjs           # write docs/plans/README.md
+ *   node scripts/generate-plans-index.mjs --check   # exit 1 if stale (CI/pre-push)
+ *
+ * @module scripts/generate-plans-index
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { parsePlanStatus } from './lib/plan-status.mjs';
+
+const PLANS_DIR = 'docs/plans';
+const INDEX_NAME = 'README.md';
+const G = '\x1b[32m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
+
+const isAuditSummary = name => /-audit-summary(?:-[\w-]+)?\.md$/.test(name);
+
+/** First `# ` heading, minus a leading `Plan: ` prefix. Falls back to the filename. */
+function extractTitle(content, name) {
+  const m = content.match(/^#\s+(.+?)\s*$/m);
+  if (!m) return name.replace(/\.md$/, '');
+  return m[1].replace(/^Plan:\s*/i, '').trim();
+}
+
+/**
+ * The remainder of the Status line after the vocabulary token — the "why" a
+ * human wants in the index (e.g. "Cluster B pending"). Trimmed of leading
+ * separators and markdown emphasis, clipped so the table stays readable.
+ */
+function extractStatusDetail(content, token) {
+  const firstH2 = content.search(/^## /m);
+  const header = firstH2 >= 0 ? content.slice(0, firstH2) : content;
+  const m = header.match(/^- \*\*Status\*\*:\s*(.+)$/m);
+  if (!m) return '';
+  let rest = m[1].replace(/\*\*|__/g, '').trim().slice(token.length);
+  rest = rest.replace(/^[\s—–(:,.;-]+/, '').replace(/\)\s*$/, '').trim();
+  rest = rest.replace(/\s+/g, ' ').replace(/\|/g, '\\|');
+  return rest.length > 110 ? `${rest.slice(0, 107)}…` : rest;
+}
+
+/**
+ * The plan filenames to index — **git-tracked files only**, via `git ls-files`.
+ *
+ * Load-bearing (not a stylistic choice): this artefact is committed and
+ * freshness-gated, so it must be a function of *committed* source. Enumerating
+ * with `fs.readdirSync` would fold in the working tree — an untracked local
+ * draft would get baked into the committed index, giving every other clone a
+ * broken link AND a failing `plans:index:check` they cannot fix (they
+ * regenerate without that file and get a mismatch). Tracked-only enumeration
+ * makes the output reproducible from any clone at the same commit.
+ */
+function trackedPlanNames(dir) {
+  const out = execFileSync('git', ['ls-files', '-z', '--', `${PLANS_DIR}/*.md`], {
+    cwd: path.resolve(dir, '..', '..'), encoding: 'utf-8', maxBuffer: 32 * 1024 * 1024,
+  });
+  return out.split('\0')
+    .filter(Boolean)
+    .map(p => path.basename(p.trim()))
+    // Shallow, like the status lint: `docs/plans/security/PLAN.md` is not a
+    // top-level plan, and basename() would collide it with a real one.
+    .filter((n, i, a) => a.indexOf(n) === i)
+    .filter(n => n.endsWith('.md') && n !== INDEX_NAME);
+}
+
+/** Read every tracked plan file and classify it. Sorted by name for determinism. */
+export function collectPlans(dir) {
+  const tracked = new Set(trackedPlanNames(dir));
+  const names = fs.readdirSync(dir)
+    .filter(n => n.endsWith('.md') && n !== INDEX_NAME && tracked.has(n))
+    .sort();
+
+  const rows = [];
+  for (const name of names) {
+    const abs = path.join(dir, name);
+    try { if (!fs.statSync(abs).isFile()) continue; } catch { continue; }
+    const content = fs.readFileSync(abs, 'utf8');
+    const title = extractTitle(content, name);
+
+    if (isAuditSummary(name)) {
+      rows.push({ name, title, bucket: 'audit-summary', token: '', detail: '' });
+      continue;
+    }
+    const s = parsePlanStatus(content);
+    if (!s.ok) {
+      // `absent` = not a plan document (a reference//note that lives here).
+      rows.push({
+        name, title, token: '', detail: '',
+        bucket: s.reason === 'absent' ? 'unstatused' : 'malformed',
+      });
+      continue;
+    }
+    rows.push({
+      name, title, token: s.token, bucket: s.kind,
+      detail: extractStatusDetail(content, s.token),
+    });
+  }
+  return rows;
+}
+
+function table(rows, { showStatus = true } = {}) {
+  const head = showStatus
+    ? '| Plan | Status | Notes |\n|---|---|---|\n'
+    : '| Plan | Notes |\n|---|---|\n';
+  return head + rows.map(r => showStatus
+    ? `| [${r.title}](./${r.name}) | \`${r.token}\` | ${r.detail} |`
+    : `| [${r.title}](./${r.name}) | ${r.detail} |`
+  ).join('\n') + '\n';
+}
+
+export function renderIndex(rows) {
+  const active = rows.filter(r => r.bucket === 'active');
+  const terminal = rows.filter(r => r.bucket === 'terminal');
+  const summaries = rows.filter(r => r.bucket === 'audit-summary');
+  const unstatused = rows.filter(r => r.bucket === 'unstatused');
+  const malformed = rows.filter(r => r.bucket === 'malformed');
+
+  let out = '';
+  out += '# Plans index\n\n';
+  out += '> **Generated file — do not edit.** Regenerate with `npm run plans:index`.\n';
+  out += '> Freshness is enforced by `npm run plans:index:check` in the pre-push `check`.\n\n';
+  out += 'Plans are indexed by their `Status:` line, **not** by directory. A plan keeps\n';
+  out += 'the same path for its whole lifecycle — moving completed plans into an archive\n';
+  out += 'directory silently broke every inbound reference to them, which is why the\n';
+  out += 'archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate.md)\n';
+  out += 'Cluster C). A path is an identity; status is a fact that changes. This index is\n';
+  out += 'the derived view that makes status navigable without touching identity.\n\n';
+  out += `**${active.length} active · ${terminal.length} terminal · ${summaries.length} audit summaries`;
+  out += `${unstatused.length ? ` · ${unstatused.length} reference docs` : ''}`;
+  out += `${malformed.length ? ` · ${malformed.length} malformed` : ''}**\n\n`;
+
+  out += '---\n\n## Active\n\n';
+  out += 'Work that is not finished — `Draft`, `Approved`, or `In Progress`.\n';
+  out += 'This is the list to read when asking "what is in flight?".\n\n';
+  out += active.length ? table(active) : '_None — every plan is in a terminal state._\n';
+
+  if (malformed.length) {
+    out += '\n## ⚠️ Malformed status\n\n';
+    out += 'These have a `Status:` line the closed vocabulary does not recognise.\n';
+    out += '`npm run plans:status` fails on these — fix the status line.\n\n';
+    out += table(malformed, { showStatus: false });
+  }
+
+  const superseded = terminal.filter(r => r.token === 'Superseded');
+  const complete = terminal.filter(r => r.token !== 'Superseded');
+
+  if (superseded.length) {
+    out += '\n## Superseded / abandoned\n\n';
+    out += 'Decided against, replaced, or overtaken — these did **not** ship as written.\n';
+    out += 'Listed openly (not collapsed) because "why did we not do this?" is asked far\n';
+    out += 'more often than "how did this ship?", and the answer is usually here.\n\n';
+    out += table(superseded, { showStatus: false });
+  }
+
+  out += '\n## Complete\n\n';
+  out += 'Shipped. Kept in place so every inbound reference — including the ones in\n';
+  out += 'source comments that no docs linter sees — stays valid.\n\n';
+  out += '<details>\n<summary>Show all ' + complete.length + ' completed plans</summary>\n\n';
+  out += table(complete);
+  out += '\n</details>\n';
+
+  if (summaries.length) {
+    out += '\n## Audit summaries\n\n';
+    out += 'Companion `*-audit-summary.md` records. Exempt from the status vocabulary\n';
+    out += '(they carry a free-text convergence sentence by convention).\n\n';
+    out += '<details>\n<summary>Show all ' + summaries.length + ' audit summaries</summary>\n\n';
+    out += table(summaries, { showStatus: false });
+    out += '\n</details>\n';
+  }
+
+  if (unstatused.length) {
+    out += '\n## Reference documents\n\n';
+    out += 'Files in `docs/plans/` with no `Status:` line — contract matrices,\n';
+    out += 'inventories, and notes rather than plans.\n\n';
+    out += '<details>\n<summary>Show all ' + unstatused.length + ' reference documents</summary>\n\n';
+    out += table(unstatused, { showStatus: false });
+    out += '\n</details>\n';
+  }
+
+  return out;
+}
+
+function main() {
+  if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
+
+  const dir = path.resolve(PLANS_DIR);
+  const target = path.join(dir, INDEX_NAME);
+  const rendered = renderIndex(collectPlans(dir));
+  const check = process.argv.includes('--check');
+
+  if (check) {
+    let current = null;
+    try { current = fs.readFileSync(target, 'utf8'); } catch { /* missing */ }
+    if (current === rendered) {
+      console.log(`${G}✓${X} plans:index — ${PLANS_DIR}/${INDEX_NAME} is up to date.`);
+      process.exit(0);
+    }
+    console.error(`\n${R}${B}✗ plans:index${X} — ${PLANS_DIR}/${INDEX_NAME} is ${current === null ? 'missing' : 'stale'}.`);
+    console.error(`${D}  A plan's Status line changed (or a plan was added) without regenerating.`);
+    console.error(`  Fix: npm run plans:index${X}\n`);
+    process.exit(1);
+  }
+
+  fs.writeFileSync(target, rendered, 'utf8');
+  console.log(`${G}✓${X} plans:index — wrote ${PLANS_DIR}/${INDEX_NAME}`);
+}
+
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+if (isMain) main();

@@ -362,6 +362,14 @@
       "description": "plans:status as JSON — the flagged non-conforming Status lines with reasons.",
       "category": "diagnostic"
     },
+    "plans:index": {
+      "description": "Regenerates docs/plans/README.md — a status-bucketed index (Active / Superseded / Complete) of every plan. Makes the 150+-file plans directory navigable WITHOUT moving files, because a path is an identity and Status is a fact that changes; the docs/plans → docs/completed archiver was deleted for silently breaking inbound references (reference-integrity-gate.md Cluster C). Status parsing is delegated to lib/plan-status.mjs — nothing re-implements the parse.",
+      "category": "maintenance"
+    },
+    "plans:index:check": {
+      "description": "Fails if docs/plans/README.md is stale or missing — the freshness gate that makes the committed index a category-B generated artefact (deterministic, no clock/sha, byte-identical on regeneration). Runs in the pre-push check.",
+      "category": "diagnostic"
+    },
     "docs:check:json": {
       "description": "Machine-readable docs/ root placement report ({ok, checked, unexpected, staleAllowlistEntries}).",
       "category": "diagnostic"
@@ -404,10 +412,6 @@
     },
     "parity:expected-schema": {
       "description": "Postgres-parity: print the expected schema (drift baseline).",
-      "category": "parity"
-    },
-    "parity:record-fixtures": {
-      "description": "Postgres-parity: record golden fixtures (run once after schema changes).",
       "category": "parity"
     },
     "nav:audit": {

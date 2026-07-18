@@ -1,14 +1,29 @@
 # Postgres-Parity — Contract Matrix (M0 #5)
 
-- **Plan**: [`docs/plans/postgres-parity.md`](./postgres-parity.md) §0 prereq #5, §9 "Golden-fixture contract model"
-- **Source of truth**: [`scripts/learning-store.mjs`](../../scripts/learning-store.mjs)
-  exports — frozen at SHA <recorded by the snapshot generator; see below>.
-- **Generated fixture target**: `tests/fixtures/contract/<function>.json`.
-  These are produced once, **off-CI**, by running the frozen-supabase-js path
-  ([`tests/fixtures/learning-store.legacy.mjs`](../../tests/fixtures/learning-store.legacy.mjs))
-  against a **local `supabase start` stack** (never the production project).
-  Recording is driven by
-  [`scripts/postgres-parity/record-golden-fixtures.mjs`](../../scripts/postgres-parity/record-golden-fixtures.mjs).
+- **Plan**: [`docs/plans/postgres-parity.md`](./postgres-parity.md) §0 prereq #5, §12
+- **Source of truth**: [`scripts/learning-store.mjs`](../../scripts/learning-store.mjs) exports.
+- **Enforced by**: [`tests/learning-store-contract.test.mjs`](../../tests/learning-store-contract.test.mjs)
+  — asserts every function below is still reachable through the barrel.
+
+> **This is a reference document, not a work queue.** It records the frozen
+> 93-function public surface the M3 domain-module split promised its 18 caller
+> files, plus each function's table access, return shape, and ordering
+> semantics. It is useful when changing a store function (does this alter a
+> documented return shape?) and when reviewing whether a new export belongs on
+> the public surface.
+
+> **Retired: the golden-fixture apparatus (2026-07-18).** Every row's Status
+> column used to read `fixture-pending`, pointing at an off-CI recorder that
+> replayed a frozen `@supabase/supabase-js` snapshot to capture per-function
+> `(return, mutations)` fixtures. **That work was retired, not completed** —
+> its purpose was the R1 mitigation (diff the new pg path against the legacy
+> path), and M4 deleted the legacy path, dropped `@supabase/supabase-js` from
+> the dependency tree, leaving nothing to record from. The recorder's
+> mutation-capture step was also never implemented. The Status column is gone;
+> the columns that describe the *contract* remain, because those are what the
+> document is for. Forward regression coverage for the pg path lives in the
+> DB-backed integration suites (`db-setup`, `db-withtx`, `db-query`, `store-*`).
+> Full rationale: plan [§12](./postgres-parity.md#12-completion-notes-2026-05-21).
 
 ## How to read the columns
 
@@ -19,8 +34,7 @@
 | Tables (W) | Tables the function mutates. |
 | Tables (R) | Tables the function reads (or RPC return-shape source). |
 | Return | `null` / `id` / `{...}` / `[...]` / `rowCount`. |
-| Order | `n/a` (single-row / void), `pk` (sort by primary key), `contract:<ORDER BY>` (function emits an explicit ORDER BY — fixture is order-sensitive), `insensitive` (fixture comparator sorts both sides by a canonical key). |
-| Status | `fixture-pending` until the off-CI recording runs and lands JSON in `tests/fixtures/contract/`. |
+| Order | `n/a` (single-row / void), `pk` (sort by primary key), `contract:<ORDER BY>` (function emits an explicit ORDER BY — callers may rely on it), `insensitive` (no ordering guarantee; sort by the named canonical key before comparing). |
 
 > **Counting**: 96 exports in `learning-store.mjs`. 2 are internal client
 > accessors (`getReadClient`, `getWriteClient` — removed in M3 per plan
@@ -31,203 +45,152 @@
 
 ## repo (lifecycle + identity)
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `initLearningStore` | — | `audit_repos` (ping) | `boolean` | n/a | fixture-pending |
-| `isCloudEnabled` | — | — | `boolean` (in-memory) | n/a | n/a (pure JS) |
-| `upsertRepo` | `audit_repos` | — | `id` (uuid) | n/a | fixture-pending |
-| `getRepoIdByUuid` | — | `audit_repos` | `id \| null` | n/a | fixture-pending |
-| `upsertRepoByUuid` | `audit_repos` | — | `id` | n/a | fixture-pending |
-| `getRepoIdByName` | — | `audit_repos` | `id \| null` | n/a | fixture-pending |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `initLearningStore` | — | `audit_repos` (ping) | `boolean` | n/a |
+| `isCloudEnabled` | — | — | `boolean` (in-memory) | n/a |
+| `upsertRepo` | `audit_repos` | — | `id` (uuid) | n/a |
+| `getRepoIdByUuid` | — | `audit_repos` | `id \| null` | n/a |
+| `upsertRepoByUuid` | `audit_repos` | — | `id` | n/a |
+| `getRepoIdByName` | — | `audit_repos` | `id \| null` | n/a |
 
 ## runs-findings (audit runs + adjudication)
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `recordRunStart` | `audit_runs` | — | `id` | n/a | fixture-pending |
-| `recordRunComplete` | `audit_runs` | — | `void` | n/a | fixture-pending |
-| `updateRunMeta` | `audit_runs` | — | `void` | n/a | fixture-pending |
-| `recordFindings` | `audit_findings` | — | `void` | n/a | fixture-pending |
-| `recordPassStats` | `audit_pass_stats` | — | `void` | n/a | fixture-pending |
-| `updatePassStatsPostDeliberation` | `audit_pass_stats` | — | `void` | n/a | fixture-pending |
-| `getPassTimings` | — | `audit_pass_stats` | `[{pass_name, p50, p95, mean}]` | `contract:pass_name ASC` | fixture-pending |
-| `recordSuppressionEvents` | `suppression_events` | — | `void` | n/a | fixture-pending |
-| `recordAdjudicationEvent` | `finding_adjudication_events` | — | `void` | n/a | fixture-pending |
-| `getMostRecentAuditRunIdForRepo` | — | `audit_runs` | `id \| null` | `contract:created_at DESC LIMIT 1` | fixture-pending |
-| `recordDiffComplexity` | `audit_runs` | — | `void` | n/a | fixture-pending |
-| `recordConvergenceState` | `audit_runs` | — | `void` | n/a | fixture-pending |
-| `recordFindingResolution` | `audit_findings` | — | `{ok, error?}` | n/a | fixture-pending |
-| `_resetClassificationColumnCache` | — | — | `void` (in-memory) | n/a | n/a (test helper) |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `recordRunStart` | `audit_runs` | — | `id` | n/a |
+| `recordRunComplete` | `audit_runs` | — | `void` | n/a |
+| `updateRunMeta` | `audit_runs` | — | `void` | n/a |
+| `recordFindings` | `audit_findings` | — | `void` | n/a |
+| `recordPassStats` | `audit_pass_stats` | — | `void` | n/a |
+| `updatePassStatsPostDeliberation` | `audit_pass_stats` | — | `void` | n/a |
+| `getPassTimings` | — | `audit_pass_stats` | `[{pass_name, p50, p95, mean}]` | `contract:pass_name ASC` |
+| `recordSuppressionEvents` | `suppression_events` | — | `void` | n/a |
+| `recordAdjudicationEvent` | `finding_adjudication_events` | — | `void` | n/a |
+| `getMostRecentAuditRunIdForRepo` | — | `audit_runs` | `id \| null` | `contract:created_at DESC LIMIT 1` |
+| `recordDiffComplexity` | `audit_runs` | — | `void` | n/a |
+| `recordConvergenceState` | `audit_runs` | — | `void` | n/a |
+| `recordFindingResolution` | `audit_findings` | — | `{ok, error?}` | n/a |
+| `_resetClassificationColumnCache` | — | — | `void` (in-memory) | n/a |
 
 ## debt (out-of-scope finding ledger)
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `upsertDebtEntries` | `debt_entries` | — | `{upserted}` | n/a | fixture-pending |
-| `readDebtEntriesCloud` | — | `debt_entries` | `[{topicId, ...}]` | `contract:created_at DESC` | fixture-pending |
-| `removeDebtEntryCloud` | `debt_entries` | — | `void` | n/a | fixture-pending |
-| `appendDebtEventsCloud` | `debt_events` | — | `void` | n/a | fixture-pending |
-| `readDebtEventsCloud` | — | `debt_events` | `[{eventType, ...}]` | `contract:created_at ASC` | fixture-pending |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `upsertDebtEntries` | `debt_entries` | — | `{upserted}` | n/a |
+| `readDebtEntriesCloud` | — | `debt_entries` | `[{topicId, ...}]` | `contract:created_at DESC` |
+| `removeDebtEntryCloud` | `debt_entries` | — | `void` | n/a |
+| `appendDebtEventsCloud` | `debt_events` | — | `void` | n/a |
+| `readDebtEventsCloud` | — | `debt_events` | `[{eventType, ...}]` | `contract:created_at ASC` |
 
 ## bandit-fp (Thompson Sampling + false-positive learning)
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `syncBanditArms` | `bandit_arms` | — | `{synced}` | n/a | fixture-pending |
-| `loadBanditArms` | — | `bandit_arms` | `[{passName, variantId, alpha, beta, ...}]` | insensitive (sort by `(passName, variantId)`) | fixture-pending |
-| `upsertPromptVariant` | `prompt_variants` | — | `void` | n/a | fixture-pending |
-| `syncFalsePositivePatterns` | `false_positive_patterns` | — | `{synced}` | n/a | fixture-pending |
-| `buildFpPatternRows` | — (pure row builder for the sync above; repo_id never null — sentinel fallback) | — | `[{repo_id, pattern_value, ...}]` | n/a | `tests/store-bandit-fp.test.mjs` |
-| `fpPatternReadColumns` | — (returns the pinned reader column list; migration-backed, schema-guard-tested) | — | `string[]` | n/a | `tests/store-bandit-fp.test.mjs` |
-| `buildFpReadQuery` | — (pure query builder for the read below; bounded `LIMIT n+1`, deterministic `ORDER BY decayed_dismissed DESC, pattern_value ASC`. **Repo scope carries NO `auto_suppress` predicate** — that flag is false for every hierarchy *blocker*, so filtering on it would delete the rows the scope walk depends on; global keeps it, safe because global is the last scope) | — | `{sql, params}` | n/a | `tests/store-bandit-fp.test.mjs` |
-| `loadFalsePositivePatterns` | — | `false_positive_patterns` | **per-scope status envelope** `{repo, global}` where each is `{status: ok\|failed\|skipped, patterns, atLimit, errorName?}` — an empty array cannot distinguish "no patterns" from "the read failed", and that difference gates whether global may suppress | deterministic (`decayed_dismissed DESC, pattern_value ASC`) | `tests/store-bandit-fp.test.mjs` |
-| `getFalsePositivePatterns` | — | `false_positive_patterns` | `[{...}]` (filtered) | insensitive (sort by `patternKey`) | fixture-pending |
-| `syncExperiments` | `prompt_experiments` | — | `{synced}` | n/a | fixture-pending |
-| `syncPromptRevision` | `prompt_revisions` | — | `void` | n/a | fixture-pending |
-| `getPassEffectiveness` | — | `audit_pass_stats` | `[{passName, accepted, dismissed, ewr}]` | insensitive (sort by `passName`) | fixture-pending |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `syncBanditArms` | `bandit_arms` | — | `{synced}` | n/a |
+| `loadBanditArms` | — | `bandit_arms` | `[{passName, variantId, alpha, beta, ...}]` | insensitive (sort by `(passName, variantId)`) |
+| `upsertPromptVariant` | `prompt_variants` | — | `void` | n/a |
+| `syncFalsePositivePatterns` | `false_positive_patterns` | — | `{synced}` | n/a |
+| `buildFpPatternRows` | — (pure row builder for the sync above; repo_id never null — sentinel fallback) | — | `[{repo_id, pattern_value, ...}]` | n/a |
+| `fpPatternReadColumns` | — (returns the pinned reader column list; migration-backed, schema-guard-tested) | — | `string[]` | n/a |
+| `buildFpReadQuery` | — (pure query builder for the read below; bounded `LIMIT n+1`, deterministic `ORDER BY decayed_dismissed DESC, pattern_value ASC`. **Repo scope carries NO `auto_suppress` predicate** — that flag is false for every hierarchy *blocker*, so filtering on it would delete the rows the scope walk depends on; global keeps it, safe because global is the last scope) | — | `{sql, params}` | n/a |
+| `loadFalsePositivePatterns` | — | `false_positive_patterns` | **per-scope status envelope** `{repo, global}` where each is `{status: ok\|failed\|skipped, patterns, atLimit, errorName?}` — an empty array cannot distinguish "no patterns" from "the read failed", and that difference gates whether global may suppress | deterministic (`decayed_dismissed DESC, pattern_value ASC`) |
+| `getFalsePositivePatterns` | — | `false_positive_patterns` | `[{...}]` (filtered) | insensitive (sort by `patternKey`) |
+| `syncExperiments` | `prompt_experiments` | — | `{synced}` | n/a |
+| `syncPromptRevision` | `prompt_revisions` | — | `void` | n/a |
+| `getPassEffectiveness` | — | `audit_pass_stats` | `[{passName, accepted, dismissed, ewr}]` | insensitive (sort by `passName`) |
 
 ## plans-ship (plans + verify + ship-event log)
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `upsertPlan` | `plans` | — | `{planId}` | n/a | fixture-pending |
-| `updatePlanStatus` | `plans` | — | `void` | n/a | fixture-pending |
-| `recordRegressionSpec` | `regression_specs` | — | `{specId}` | n/a | fixture-pending |
-| `listConsistencyCandidates` | — | `regression_specs` | `[{specId, ...}]` | `contract:created_at DESC` | fixture-pending |
-| `promoteRegressionSpec` | `regression_specs` | — | `void` | n/a | fixture-pending |
-| `recordRegressionSpecRun` | `regression_spec_runs` | — | `void` | n/a | fixture-pending |
-| `getUnlockedFixes` | — | `unlocked_fixes` (view) | `[{commitSha, ...}]` | `contract:committed_at DESC` | fixture-pending |
-| `recordPlanVerificationRun` | `plan_verification_runs` | — | `{runId}` | n/a | fixture-pending |
-| `recordPlanVerificationItems` | `plan_verification_items` | — | `{inserted}` | n/a | fixture-pending |
-| `readPlanSatisfaction` | — | `plan_satisfaction` (view) | `{...} \| null` | n/a | fixture-pending |
-| `readPersistentPlanFailures` | — | `persistent_plan_failures` (view) | `[{criterionHash, ...}]` | `contract:consecutive_failures DESC` | fixture-pending |
-| `recordShipEvent` | `ship_events` | — | `void` | n/a | fixture-pending |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `upsertPlan` | `plans` | — | `{planId}` | n/a |
+| `updatePlanStatus` | `plans` | — | `void` | n/a |
+| `recordRegressionSpec` | `regression_specs` | — | `{specId}` | n/a |
+| `listConsistencyCandidates` | — | `regression_specs` | `[{specId, ...}]` | `contract:created_at DESC` |
+| `promoteRegressionSpec` | `regression_specs` | — | `void` | n/a |
+| `recordRegressionSpecRun` | `regression_spec_runs` | — | `void` | n/a |
+| `getUnlockedFixes` | — | `unlocked_fixes` (view) | `[{commitSha, ...}]` | `contract:committed_at DESC` |
+| `recordPlanVerificationRun` | `plan_verification_runs` | — | `{runId}` | n/a |
+| `recordPlanVerificationItems` | `plan_verification_items` | — | `{inserted}` | n/a |
+| `readPlanSatisfaction` | — | `plan_satisfaction` (view) | `{...} \| null` | n/a |
+| `readPersistentPlanFailures` | — | `persistent_plan_failures` (view) | `[{criterionHash, ...}]` | `contract:consecutive_failures DESC` |
+| `recordShipEvent` | `ship_events` | — | `void` | n/a |
 
 ## persona (persona-test sessions + correlations)
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `isPersonaCloudEnabled` | — | — | `boolean` (in-memory) | n/a | n/a (pure JS) |
-| `listPersonasForApp` | — | `personas` | `[{name, description, ...}]` | `contract:name ASC` | fixture-pending |
-| `upsertPersona` | `personas` | — | `id` | n/a | fixture-pending |
-| `recordPersonaSession` | `persona_test_sessions` | — | `{sessionId}` | n/a | fixture-pending |
-| `getPersonaSessionsByRepo` | — | `persona_test_sessions` | `[{...}]` | `contract:created_at DESC LIMIT N` | fixture-pending |
-| `getPersonaSessionsByUrl` | — | `persona_test_sessions` | `[{...}]` | `contract:created_at DESC LIMIT N` | fixture-pending |
-| `recordPersonaAuditCorrelation` | `persona_audit_correlations` | — | `void` | n/a | fixture-pending |
-| `readCorrelationsForRun` | — | `persona_audit_correlations` | `[{...}]` | insensitive | fixture-pending |
-| `readCorrelationsForFinding` | — | `persona_audit_correlations` | `[{...}]` | insensitive | fixture-pending |
-| `readAuditEffectiveness` | — | `audit_effectiveness` (view) | `{...} \| null` | n/a | fixture-pending |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `isPersonaCloudEnabled` | — | — | `boolean` (in-memory) | n/a |
+| `listPersonasForApp` | — | `personas` | `[{name, description, ...}]` | `contract:name ASC` |
+| `upsertPersona` | `personas` | — | `id` | n/a |
+| `recordPersonaSession` | `persona_test_sessions` | — | `{sessionId}` | n/a |
+| `getPersonaSessionsByRepo` | — | `persona_test_sessions` | `[{...}]` | `contract:created_at DESC LIMIT N` |
+| `getPersonaSessionsByUrl` | — | `persona_test_sessions` | `[{...}]` | `contract:created_at DESC LIMIT N` |
+| `recordPersonaAuditCorrelation` | `persona_audit_correlations` | — | `void` | n/a |
+| `readCorrelationsForRun` | — | `persona_audit_correlations` | `[{...}]` | insensitive |
+| `readCorrelationsForFinding` | — | `persona_audit_correlations` | `[{...}]` | insensitive |
+| `readAuditEffectiveness` | — | `audit_effectiveness` (view) | `{...} \| null` | n/a |
 
 ## arch-memory / symbol-index
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `openRefreshRun` | `refresh_runs` | — | `{refreshId, cancellationToken}` | n/a | fixture-pending |
-| `publishRefreshRun` (RPC) | `refresh_runs` + `audit_repos` (atomic) | — | `JSONB` | n/a | fixture-pending |
-| `abortRefreshRun` | `refresh_runs` | — | `void` | n/a | fixture-pending |
-| `heartbeatRefreshRun` | `refresh_runs` | — | `void` | n/a | fixture-pending |
-| `getActiveSnapshot` | — | `audit_repos` + `refresh_runs` | `{refreshId, activeEmbeddingModel, activeEmbeddingDim, importGraphPopulated} \| null` | n/a | fixture-pending |
-| `recordSymbolDefinitions` | `symbol_definitions` | — | `{upserted}` | n/a | fixture-pending |
-| `recordSymbolIndex` | `symbol_index` | — | `{upserted}` | n/a | fixture-pending |
-| `recordSymbolEmbedding` | `symbol_embeddings` | — | `void` | n/a | fixture-pending |
-| `recordLayeringViolations` | `symbol_layering_violations` | — | `{inserted}` | n/a | fixture-pending |
-| `setActiveEmbeddingModel` | `audit_repos` | — | `void` | n/a | fixture-pending |
-| `getActiveEmbeddingModel` | — | `audit_repos` | `{model, dim} \| null` | n/a | fixture-pending |
-| `callNeighbourhoodRpc` (RPC `symbol_neighbourhood`) | — | `symbol_index` etc. | `[{...}]` | `contract:cosine_score DESC LIMIT k` | fixture-pending |
-| `computeDriftScore` (RPC `drift_score`) | — | `symbol_index`, `symbol_layering_violations` | `{score, dupPairs, ...}` (JSONB) | n/a | fixture-pending |
-| `recordSymbolFileImports` | `symbol_file_imports` | — | `{inserted}` | n/a | fixture-pending |
-| `copyForwardImports` | `symbol_file_imports` | `symbol_file_imports` (prior refresh) | `{copied}` | n/a | fixture-pending |
-| `markImportGraphPopulated` | `refresh_runs` | — | `void` | n/a | fixture-pending |
-| `getImportGraphPopulated` | — | `refresh_runs` | `boolean` | n/a | fixture-pending |
-| `getImportersForFiles` | — | `symbol_file_imports` | `[{importer}]` | insensitive | fixture-pending |
-| `upsertDomainSummary` | `domain_summaries` | — | `void` | n/a | fixture-pending |
-| `getDomainSummaries` | — | `domain_summaries` | `[{domainTag, summary, ...}]` | insensitive (sort by `domainTag`) | fixture-pending |
-| `getTopDuplicateClusters` (RPC `top_duplicate_clusters`) | — | `symbol_index` | `[{signatureHash, fileCount, ...}]` | `contract: fileCount DESC LIMIT N` | fixture-pending |
-| `listSymbolsForSnapshot` | — | `symbol_index` JOIN `symbol_definitions` | `[{...}]` | `contract: file_path ASC, start_line ASC` | fixture-pending |
-| `listLayeringViolationsForSnapshot` | — | `symbol_layering_violations` | `[{...}]` | `contract: rule_name ASC` | fixture-pending |
-| `copyForwardUntouchedFiles` | `symbol_definitions`, `symbol_index` | prior refresh rows | `{copied}` | n/a | fixture-pending |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `openRefreshRun` | `refresh_runs` | — | `{refreshId, cancellationToken}` | n/a |
+| `publishRefreshRun` (RPC) | `refresh_runs` + `audit_repos` (atomic) | — | `JSONB` | n/a |
+| `abortRefreshRun` | `refresh_runs` | — | `void` | n/a |
+| `heartbeatRefreshRun` | `refresh_runs` | — | `void` | n/a |
+| `getActiveSnapshot` | — | `audit_repos` + `refresh_runs` | `{refreshId, activeEmbeddingModel, activeEmbeddingDim, importGraphPopulated} \| null` | n/a |
+| `recordSymbolDefinitions` | `symbol_definitions` | — | `{upserted}` | n/a |
+| `recordSymbolIndex` | `symbol_index` | — | `{upserted}` | n/a |
+| `recordSymbolEmbedding` | `symbol_embeddings` | — | `void` | n/a |
+| `recordLayeringViolations` | `symbol_layering_violations` | — | `{inserted}` | n/a |
+| `setActiveEmbeddingModel` | `audit_repos` | — | `void` | n/a |
+| `getActiveEmbeddingModel` | — | `audit_repos` | `{model, dim} \| null` | n/a |
+| `callNeighbourhoodRpc` (RPC `symbol_neighbourhood`) | — | `symbol_index` etc. | `[{...}]` | `contract:cosine_score DESC LIMIT k` |
+| `computeDriftScore` (RPC `drift_score`) | — | `symbol_index`, `symbol_layering_violations` | `{score, dupPairs, ...}` (JSONB) | n/a |
+| `recordSymbolFileImports` | `symbol_file_imports` | — | `{inserted}` | n/a |
+| `copyForwardImports` | `symbol_file_imports` | `symbol_file_imports` (prior refresh) | `{copied}` | n/a |
+| `markImportGraphPopulated` | `refresh_runs` | — | `void` | n/a |
+| `getImportGraphPopulated` | — | `refresh_runs` | `boolean` | n/a |
+| `getImportersForFiles` | — | `symbol_file_imports` | `[{importer}]` | insensitive |
+| `upsertDomainSummary` | `domain_summaries` | — | `void` | n/a |
+| `getDomainSummaries` | — | `domain_summaries` | `[{domainTag, summary, ...}]` | insensitive (sort by `domainTag`) |
+| `getTopDuplicateClusters` (RPC `top_duplicate_clusters`) | — | `symbol_index` | `[{signatureHash, fileCount, ...}]` | `contract: fileCount DESC LIMIT N` |
+| `listSymbolsForSnapshot` | — | `symbol_index` JOIN `symbol_definitions` | `[{...}]` | `contract: file_path ASC, start_line ASC` |
+| `listLayeringViolationsForSnapshot` | — | `symbol_layering_violations` | `[{...}]` | `contract: rule_name ASC` |
+| `copyForwardUntouchedFiles` | `symbol_definitions`, `symbol_index` | prior refresh rows | `{copied}` | n/a |
 
 ## security (incidents)
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `recordSecurityIncidents` | `security_incidents` | — | `{upserted}` | n/a | fixture-pending |
-| `getSecurityIncidentsByRepo` | — | `security_incidents` | `[{...}]` | insensitive (sort by `incident_id`) | fixture-pending |
-| `markIncidentsHistorical` | `security_incidents` | — | `{marked}` | n/a | fixture-pending |
-| `getMaxIncidentRefreshAt` | — | `security_incidents` | `string \| null` (max `updated_at`) | n/a | fixture-pending |
-| `callIncidentNeighbourhoodRpc` (RPC `incident_neighbourhood`) | — | `security_incidents` | `[{...}]` | `contract: composite-score DESC LIMIT k` (client re-sorts; fixture order-insensitive) | fixture-pending |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `recordSecurityIncidents` | `security_incidents` | — | `{upserted}` | n/a |
+| `getSecurityIncidentsByRepo` | — | `security_incidents` | `[{...}]` | insensitive (sort by `incident_id`) |
+| `markIncidentsHistorical` | `security_incidents` | — | `{marked}` | n/a |
+| `getMaxIncidentRefreshAt` | — | `security_incidents` | `string \| null` (max `updated_at`) | n/a |
+| `callIncidentNeighbourhoodRpc` (RPC `incident_neighbourhood`) | — | `security_incidents` | `[{...}]` | `contract: composite-score DESC LIMIT k` (client re-sorts; fixture order-insensitive) |
 
 ## learning-decisions (telemetry + RPC bridges)
 
-| Function | Tables (W) | Tables (R) | Return | Order | Status |
-|---|---|---|---|---|---|
-| `insertLearningDecision` | `learning_decisions` | — | `void` | n/a | fixture-pending |
-| `backfillLearningOutcome` | `learning_decisions` | — | `void` | n/a | fixture-pending |
-| `callDeferFinding` (RPC `defer_finding`) | `audit_findings`, `recurring_finding_clusters`, `learning_decisions` | — | `{ok, error?}` | n/a | fixture-pending |
-| `callMarkFindingNeedsTriage` (RPC `mark_finding_needs_triage`) | `audit_findings`, `learning_decisions` | — | `{ok, error?}` | n/a | fixture-pending |
-| `readPendingTriageFindings` | — | `pending_triage_findings` (view) | `[{...}]` | `contract:LIMIT N` (view's own ORDER BY) | fixture-pending |
-| `readNoBrainerRecommendations` | — | `no_brainer_recommendations` (view) | `[{...}]` | `contract: view ORDER BY` | fixture-pending |
-| `readStaleClusters` | — | `recurring_finding_clusters` | `[{...}]` | `contract:last_seen ASC LIMIT N` | fixture-pending |
-| `insertFrictionNote` | `friction_notes` | — | `{id}` | n/a | fixture-pending |
-| `readRecentFriction` | — | `friction_notes` | `[{...}]` | `contract:created_at DESC LIMIT N` | fixture-pending |
+| Function | Tables (W) | Tables (R) | Return | Order |
+|---|---|---|---|---|
+| `insertLearningDecision` | `learning_decisions` | — | `void` | n/a |
+| `backfillLearningOutcome` | `learning_decisions` | — | `void` | n/a |
+| `callDeferFinding` (RPC `defer_finding`) | `audit_findings`, `recurring_finding_clusters`, `learning_decisions` | — | `{ok, error?}` | n/a |
+| `callMarkFindingNeedsTriage` (RPC `mark_finding_needs_triage`) | `audit_findings`, `learning_decisions` | — | `{ok, error?}` | n/a |
+| `readPendingTriageFindings` | — | `pending_triage_findings` (view) | `[{...}]` | `contract:LIMIT N` (view's own ORDER BY) |
+| `readNoBrainerRecommendations` | — | `no_brainer_recommendations` (view) | `[{...}]` | `contract: view ORDER BY` |
+| `readStaleClusters` | — | `recurring_finding_clusters` | `[{...}]` | `contract:last_seen ASC LIMIT N` |
+| `insertFrictionNote` | `friction_notes` | — | `{id}` | n/a |
+| `readRecentFriction` | — | `friction_notes` | `[{...}]` | `contract:created_at DESC LIMIT N` |
 
 ## Internal client accessors (NOT in the public contract — removed in M3)
 
 | Symbol | Reason |
 |---|---|
-| `getWriteClient` | Internal — abstraction breach; the M3 split closes it. Not a fixture. |
-| `getReadClient` | Same. Not a fixture. |
+| `getWriteClient` | Internal — abstraction breach; the M3 split closes it. |
+| `getReadClient` | Same. |
 | `getPersonaSupabase` | Already module-internal (not exported); deleted outright in M3. |
 
 ---
-
-## Fixture format
-
-Each fixture file `tests/fixtures/contract/<function>.json` is structured:
-
-```json
-{
-  "function": "upsertRepo",
-  "input": { "profile": { "repoFingerprint": "…", "…": "…" }, "repoName": "demo" },
-  "expected": {
-    "return": { "id": "<UUID-NORMALISED>" },
-    "mutations": [
-      {
-        "table": "audit_repos",
-        "where": { "fingerprint": "…" },
-        "rowSnapshot": { "name": "demo", "…": "…" }
-      }
-    ]
-  },
-  "frozenAtSha": "<source SHA of learning-store.mjs at recording time>"
-}
-```
-
-UUIDs and `now()` timestamps are normalised by the comparator (plan §9
-"Determinism"). Per-test isolation uses `TRUNCATE … RESTART IDENTITY
-CASCADE` + deterministic re-seed (plan §9 "Isolation").
-
-## Recording the fixtures
-
-```bash
-# Prereq: Docker running + `supabase start` stack up locally.
-# Never against the production Supabase project.
-node scripts/postgres-parity/record-golden-fixtures.mjs \
-  --legacy tests/fixtures/learning-store.legacy.mjs \
-  --supabase-url http://127.0.0.1:54321 \
-  --service-role-key <local-anon-or-service-key> \
-  --out tests/fixtures/contract/
-```
-
-The script seeds deterministic inputs, calls the frozen legacy path
-per matrix row, captures `(return, table mutations)`, normalises
-UUIDs / `now()`, and writes one JSON file per row. Re-running is
-idempotent.
-
-## Coverage gate
-
-Plan §9 "Coverage": the contract suite **fails** if any function in
-this matrix has no recorded fixture. The CI lint
-[`scripts/postgres-parity/check-non-core-references.mjs`](../../scripts/postgres-parity/check-non-core-references.mjs)
-cross-checks function count against this matrix on every PR (the lint
-script does double duty — see §M0 #1 doc).

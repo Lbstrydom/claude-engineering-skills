@@ -26,7 +26,6 @@ on:
       - 'tests/learning-store-*.test.mjs'
       - 'tests/sync-packaging.test.mjs'
       - 'tests/fixtures/expected-schema.json'
-      - 'tests/fixtures/contract/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/postgres-parity.yml'
@@ -45,7 +44,6 @@ on:
       - 'tests/learning-store-*.test.mjs'
       - 'tests/sync-packaging.test.mjs'
       - 'tests/fixtures/expected-schema.json'
-      - 'tests/fixtures/contract/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/postgres-parity.yml'
@@ -205,13 +203,11 @@ jobs:
             tests/db-withtx.test.mjs \
             tests/db-setup.test.mjs
 
-      - name: Contract suite — structural assertions
-        # Per-function parity checks are gated on the fixture directory
-        # having content; structural checks always run (and are source-level
-        # — no DB queries today, AUDIT_DB_URL only feeds the HAS_DB gate).
-        # NOTE for when golden fixtures land (M3-followup): db-setup.test.mjs
-        # leaves the container's public schema EMPTIED, not re-migrated — a
-        # real parity run here will need a `setup-postgres --migrate` first.
-        env:
-          AUDIT_DB_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      - name: Contract suite — public-surface assertions
+        # Source-level only: asserts the 93-function contract surface is
+        # still reachable through the learning-store barrel. No DB access —
+        # it runs here purely to keep the parity gates in one job. The
+        # golden-fixture parity half was retired (see the suite's header
+        # comment); forward pg-path regression coverage is the db-* and
+        # store-* suites above.
         run: node --test tests/learning-store-contract.test.mjs

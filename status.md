@@ -1918,7 +1918,7 @@ in the pass/fail path). Two-part fix:
 ## 2026-06-08 — Azure work profile: refresh deployment selection as Foundry quota expanded
 
 ### Changes
-- The `gd-ai-dev-aif` Foundry project grew from 2 usable models to 13. Refreshed
+- The `contoso-ai-dev` Foundry project grew from 2 usable models to 13. Refreshed
   the bundle's deployment choices to match the new quota landscape:
   - **Final reviewer**: `claude-opus-4-6` → **`claude-opus-4-7`**. The real driver
     is quota, not version — the reviewer takes the full audit transcript (10–30K

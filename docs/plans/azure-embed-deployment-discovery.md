@@ -1,7 +1,7 @@
 # Plan: Azure Embedding-Deployment Discovery + Provenance Truth
 
 - **Date**: 2026-07-17
-- **Status**: Complete (2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate **APPROVE** (0 findings); live-verified against `gd-ai-dev-aif`. Cluster A shipped; B+C committed (`89560a5`, `3ed3084`), pending final push. Plan approved via GPT 3 rounds + Gemini APPROVE; per-cluster audits fixed 8 findings (A: H4/M4; B: H1/H2/H3/H4/M1).
+- **Status**: Complete (2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate **APPROVE** (0 findings); live-verified against `contoso-ai-dev`. Cluster A shipped; B+C committed (`89560a5`, `3ed3084`), pending final push. Plan approved via GPT 3 rounds + Gemini APPROVE; per-cluster audits fixed 8 findings (A: H4/M4; B: H1/H2/H3/H4/M1).
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend  ← Phase 0 (explicit `--scope=backend`; no UI surface)
 - **Stack**: `js-ts` (detect-stack: `["js-ts","postgres"]`, from package.json)
@@ -36,7 +36,7 @@ shipped template, so the fallback path is the **normal** path, not an edge case.
 ### Code Trace (the evidence Phase 1 actually happened)
 
 The failure and its blast radius were traced end-to-end, and **live-probed**
-against the real resource (`gd-ai-dev-aif`) — not inferred:
+against the real resource (`contoso-ai-dev`) — not inferred:
 
 ```
 config.mjs:624  buildAzureConfig() → embedDeployment = env.AZURE_OPENAI_EMBED_DEPLOYMENT
@@ -58,7 +58,7 @@ neighbourhood-query.mjs:92-102   guard 1: storedIsGemini = /gemini|^models\//.te
 neighbourhood-query.mjs:108-116  guard 2: activeModel !== azureConfig.embedDeployment → MISMATCH
 ```
 
-Live probe results against `gd-ai-dev-aif` (2026-07-17):
+Live probe results against `contoso-ai-dev` (2026-07-17):
 
 | Deployment | Result |
 |---|---|
@@ -162,7 +162,7 @@ export function resolveEmbedProfile({ azure = azureConfig, concreteModel } = {})
 // identity must include the resource. Normalize the endpoint to its origin so
 // trailing-slash / case noise doesn't spuriously invalidate an index.
 export function azureProvenanceId(azure) {
-  const origin = new URL(azure.openaiEndpoint).origin.toLowerCase();  // https://gd-ai-dev-aif.openai.azure.com
+  const origin = new URL(azure.openaiEndpoint).origin.toLowerCase();  // https://contoso-ai-dev.openai.azure.com
   return `${origin}::${azure.embedDeployment}`;
 }
 // providerTag is a DISPLAY/log string ONLY — never persisted, never compared.

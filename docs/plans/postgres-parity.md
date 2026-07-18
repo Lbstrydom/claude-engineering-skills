@@ -1,7 +1,8 @@
 # Plan: Postgres Parity — One Postgres Code Path for the Audit-Loop Store
 
 - **Date**: 2026-05-19 (implementation 2026-05-19 → 2026-05-21)
-- **Status**: Complete (fixtures deferred — see §12 Completion Notes)
+- **Status**: Complete (2026-07-18 — the one deferred follow-up was **retired**, not
+  built; see §12 "Follow-up retired". No open work remains.)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Audit**: R1 GPT-5.4 (9) + R2 (6) + R3 (6) + Gemini ×2 (3 + 4) — 28 findings,
@@ -381,6 +382,11 @@ return shapes (#18) are *genuinely* preserved:
 
 ### Golden-fixture contract model (R2/H1)
 
+> **⚠️ RETIRED 2026-07-18 — historical record.** This section describes the
+> apparatus as designed; it was never completed and has been removed. What
+> survives is the structural half of `tests/learning-store-contract.test.mjs`.
+> Read §12 "Follow-up retired" before acting on anything below.
+
 The legacy path is `@supabase/supabase-js` (PostgREST) and **cannot talk to a plain
 Postgres container** — it needs a full Supabase stack (PostgREST + the project's
 REST endpoint). So: fixtures are **generated once, off-CI**. Two equivalent paths:
@@ -570,48 +576,52 @@ audit-metrics --days 7                       → 144 runs (live audit flow
                                                 end-to-end through pg path)
 ```
 
-### One follow-up deferred — fixture recording
+### Follow-up retired — fixture recording (2026-07-18)
 
-Two related items remain open by design (user decision 2026-05-21):
+The two items left open on 2026-05-21 (provision a sandbox Supabase project;
+fill out `INPUT_FACTORY[]` for the 90 unseeded functions) were **retired
+rather than completed**. Revisiting them found the task was not merely
+low-urgency but *unexecutable as specified*, for three independent reasons —
+any one of them fatal:
 
-1. **Provision a sandbox Supabase project** for fixture recording.
-2. **Fill out `INPUT_FACTORY[]`** for the 90 remaining functions in
-   `scripts/postgres-parity/record-golden-fixtures.mjs` (3 of 93 seeded
-   today as proof of runner).
+1. **Nothing left to record from.** The fixtures' purpose was the R1
+   mitigation: diff the new pg path against the frozen legacy supabase-js
+   path. M4 deleted the legacy path. This was already noted in the original
+   deferral; what follows is what that note missed.
+2. **The frozen snapshot could no longer be imported.** M4 also dropped
+   `@supabase/supabase-js` from `package.json`. `tests/fixtures/learning-store.legacy.mjs`
+   did `await import('@supabase/supabase-js')` in three places, so the
+   documented recipe failed at its first import — it had been dead since M4.
+3. **The recorder was never finished.** `captureTableSnapshot` in
+   `record-golden-fixtures.mjs` returned a literal
+   `{ __TODO__: 'wire to supabase-js SELECT' }` sentinel. Mutation capture —
+   half the fixture format — was unimplemented, so no fixture could be
+   produced even with the other two blockers solved. The 2026-05-21 note's
+   claim that "the infrastructure is ready when this work is picked up" was
+   not accurate.
 
-**Why deferred**: the original §9 contract suite was the R1-mitigation
-gate — diff the new pg path against the legacy supabase-js path. M4
-deleted the legacy path, so recording fixtures today doesn't verify
-parity-vs-legacy (there's nothing left to compare against). It would
-serve as a **regression baseline** for the pg path going forward, but
-that's a lower-urgency follow-up, not a missing correctness gate.
+**What was removed** (~3,100 lines of unexecutable code):
 
-The infrastructure is ready when this work is picked up:
+- `tests/fixtures/learning-store.legacy.mjs` (2,847-line frozen snapshot)
+- `scripts/postgres-parity/record-golden-fixtures.mjs` (297-line stubbed recorder)
+- `tests/fixtures/contract/` + its README (recording recipes for a dead path)
+- the `parity:record-fixtures` npm script
+- the permanently-skipped parity half of `tests/learning-store-contract.test.mjs`,
+  and the `tests/fixtures/contract/**` CI path filters
 
-- [`scripts/postgres-parity/record-golden-fixtures.mjs`](../../scripts/postgres-parity/record-golden-fixtures.mjs)
-  has the `--allow-remote <project-ref>` flag with 3 safety guards
-  (verified live).
-- [`tests/fixtures/contract/README.md`](../../tests/fixtures/contract/README.md)
-  has the path-A recipe (sandbox Supabase) + path-B recipe (Docker).
-- [`tests/learning-store-contract.test.mjs`](../../tests/learning-store-contract.test.mjs)
-  is wired to flip from "structural-only" to full parity assertions
-  as soon as fixtures land in the directory.
+**What was kept — no gate was lost.** `tests/learning-store-contract.test.mjs`
+retains its structural half, which asserts all 93 contract-matrix functions are
+reachable through the barrel; that is the real invariant M3 owes its 18 caller
+files, and it now reports 3 passing assertions instead of 1 pass + 1 vacuous
+skip. Forward regression coverage for the pg path is the DB-backed integration
+suites (`db-setup`, `db-withtx`, `db-query`, `store-*`) against a disposable
+postgres+pgvector container — which is where a *pg-path* baseline belongs
+anyway, since fixtures recorded from a deleted PostgREST path never described
+the driver we actually run.
 
-When ready, the workflow per
-[`tests/fixtures/contract/README.md`](../../tests/fixtures/contract/README.md):
-
-```bash
-supabase projects create postgres-parity-fixtures --org-id ywppwklfyycfsenshsij
-supabase link --project-ref <new-ref>
-supabase db push
-# Fill in INPUT_FACTORY for the 90 unseeded functions
-node scripts/postgres-parity/record-golden-fixtures.mjs \
-  --legacy tests/fixtures/learning-store.legacy.mjs \
-  --supabase-url "https://<new-ref>.supabase.co" \
-  --allow-remote <new-ref> \
-  --anon-key <key> --service-role-key <key> \
-  --out tests/fixtures/contract/
-```
+**If this is ever reopened**, the requirement to state first is what the db-*
+and store-* suites cannot already cover. Rebuilding a snapshot harness without
+that answer would be over-engineering — an artefact no current requirement needs.
 
 ### Decision log — items that didn't make the cut
 
@@ -621,4 +631,4 @@ node scripts/postgres-parity/record-golden-fixtures.mjs \
 | Managed Postgres without `CREATEROLE` | §10 Out of Scope | Compat-bootstrap needs `CREATEROLE` for the stub-role creation. setup-postgres.mjs preflights + aborts with a precise message. |
 | sqlite / github / noop store backends | Removed in M4 | User-confirmed feature drop. "No DB" path survives as learning-store null-guards. |
 | Realtime / Storage / Auth (Supabase products) | Never in scope | Audit-loop never used them. |
-| Live-DB fixture recording | Deferred (M3+M4 follow-up) | Legacy path is gone → R1 mitigation is moot; deferred as regression-baseline follow-up. |
+| Live-DB fixture recording | **Retired 2026-07-18** (was: deferred) | Unexecutable as specified — legacy path deleted (R1 moot), `@supabase/supabase-js` dropped so the frozen snapshot couldn't import, and the recorder's mutation capture was never implemented. See §12 "Follow-up retired". |

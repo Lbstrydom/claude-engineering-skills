@@ -65,7 +65,7 @@ export function providerTag(opts = {}) {
  * or case noise doesn't spuriously invalidate an index.
  *
  * @param {typeof azureConfig} azure - an active Azure config snapshot
- * @returns {string} e.g. `https://gd-ai-dev-aif.openai.azure.com::text-embedding-3-large`
+ * @returns {string} e.g. `https://contoso-ai-dev.openai.azure.com::text-embedding-3-large`
  */
 export function azureProvenanceId(azure) {
   return `${new URL(azure.openaiEndpoint).origin.toLowerCase()}::${azure.embedDeployment}`;

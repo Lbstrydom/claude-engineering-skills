@@ -12,8 +12,8 @@ import assert from 'node:assert/strict';
 import { provenanceRequiresFullReembed } from '../scripts/symbol-index/refresh.mjs';
 
 describe('provenanceRequiresFullReembed (D3/H4)', () => {
-  const AZ_LARGE = 'https://gd-ai-dev-aif.openai.azure.com::text-embedding-3-large';
-  const AZ_SMALL = 'https://gd-ai-dev-aif.openai.azure.com::text-embedding-3-small';
+  const AZ_LARGE = 'https://contoso-ai-dev.openai.azure.com::text-embedding-3-large';
+  const AZ_SMALL = 'https://contoso-ai-dev.openai.azure.com::text-embedding-3-small';
   const AZ_OTHER_RESOURCE = 'https://other.openai.azure.com::text-embedding-3-large';
 
   test('provenance changed (different deployment) → promote to full', () => {

@@ -63,8 +63,8 @@
 > - **B — a pure, deterministic function of committed source → committed AND
 >   freshness-verified in the pre-push `check`.** Regeneration must be byte-
 >   identical (no clocks/shas/network). Example: `.claude/skills/**` (regen by
->   `skills:regenerate`, enforced by `skills:check`). `docs/architecture-map.md`
->   is committed because it's structural-from-source.
+>   `skills:regenerate`, enforced by `skills:check`); `docs/architecture-map.md`
+>   (structural-from-source); `docs/plans/README.md`, the status-bucketed plans index (`plans:index` / `plans:index:check`).
 >
 > The test for a tracked generated file: *would two regenerations on the same
 > commit be byte-identical, and does a check enforce it?* If no → it belongs in

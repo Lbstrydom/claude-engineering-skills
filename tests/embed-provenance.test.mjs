@@ -17,7 +17,7 @@ const src = (rel) => readFileSync(path.join(repoRoot, rel), 'utf8');
 
 const AZURE = Object.freeze({
   active: true,
-  openaiEndpoint: 'https://gd-ai-dev-aif.openai.azure.com',
+  openaiEndpoint: 'https://contoso-ai-dev.openai.azure.com',
   embedDeployment: 'text-embedding-3-large',
 });
 const AZURE_OTHER_ENDPOINT = Object.freeze({
@@ -32,7 +32,7 @@ describe('resolveEmbedProfile — one shared identity', () => {
     const p = resolveEmbedProfile({ azure: AZURE });
     assert.equal(p.kind, 'azure-openai');
     assert.equal(p.requestModel, 'text-embedding-3-large', 'the API needs the bare deployment name');
-    assert.equal(p.provenanceId, 'https://gd-ai-dev-aif.openai.azure.com::text-embedding-3-large');
+    assert.equal(p.provenanceId, 'https://contoso-ai-dev.openai.azure.com::text-embedding-3-large');
   });
 
   test('public: requestModel and provenanceId are BOTH the caller-supplied concrete model', () => {
@@ -57,8 +57,8 @@ describe('resolveEmbedProfile — one shared identity', () => {
 describe('azureProvenanceId — endpoint qualifies the identity (H8)', () => {
   test('normalizes the origin (lower-case, path/query stripped)', () => {
     assert.equal(
-      azureProvenanceId({ openaiEndpoint: 'https://GD-AI-DEV-AIF.openai.azure.com/openai/', embedDeployment: 'e' }),
-      'https://gd-ai-dev-aif.openai.azure.com::e',
+      azureProvenanceId({ openaiEndpoint: 'https://CONTOSO-AI-DEV.openai.azure.com/openai/', embedDeployment: 'e' }),
+      'https://contoso-ai-dev.openai.azure.com::e',
     );
   });
 

@@ -256,7 +256,7 @@ deployment quota — not per-token cost — is the binding constraint.
 command if missing (never auto-installs), then chains `--migrate`.
 
 **Rate limits**: fresh Azure deployments often ship tiny default quotas; the
-`gd-ai-dev-aif` workhorses sit at **100K TPM / 100 RPM** (`gpt-5.5`, `claude-opus-4-7`),
+`contoso-ai-dev` workhorses sit at **100K TPM / 100 RPM** (`gpt-5.5`, `claude-opus-4-7`),
 `claude-sonnet-4-6` at 200K/200, `text-embedding-3-small` at 100K/600. `npm run
 azure:limits` probes each deployment's live TPM/RPM + reset window. Management (opt-in,
 no-op on the public path): a global in-flight concurrency cap
