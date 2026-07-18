@@ -35,6 +35,9 @@ import { resolveModel } from '../model-resolver.mjs';
  * @property {'required'|'optional'|'exploratory'} role
  * @property {'succeeded'|'failed'|'skipped'} status
  * @property {number} findingCount
+ * @property {number} [durationMs] - wall-clock for this generator's call,
+ *   recorded on success AND failure. Absent on `skipped` (nothing ran) and on
+ *   rows written before 2026-07-18 — treat as unknown, never as 0.
  * @property {string} [errorMessage]
  * @property {string|null} [category] - classifyLlmError category (timeout/network/
  *   http-4xx/permanent), when the underlying error was classified. Threaded from
@@ -55,6 +58,18 @@ import { resolveModel } from '../model-resolver.mjs';
  * @returns {Promise<Array<object>>} findings produced (empty array on failure/skip)
  */
 async function runOneGenerator(generator, generatorOutcomes) {
+  // Wall-clock per generator. Recorded on BOTH paths (2026-07-18) because
+  // `oss-call-policy.json`'s own calibrationNote says to recalibrate "if either
+  // operation still times out routinely" — and it does: GLM discovery was the
+  // dominant tiered-shadow failure, every timeout row sitting at ~240.8s, i.e.
+  // the 120s `discovery_generation` budget exhausted TWICE (attempt + 1 retry).
+  // But GLM also succeeds on other runs, and nothing recorded how long a
+  // SUCCESSFUL call takes — so there was no distribution to calibrate the
+  // budget against, only the failures. Recording the duration on success is
+  // what makes the next change to that timeout evidence-based instead of a
+  // guess; the failure duration confirms whether a budget was actually
+  // exhausted or the call died early for another reason.
+  const startedAt = Date.now();
   try {
     const findings = await generator.call();
     // audit fix H5, round 2: a non-array return (object, null, undefined) was
@@ -64,7 +79,10 @@ async function runOneGenerator(generator, generatorOutcomes) {
     if (!Array.isArray(findings)) {
       throw new Error(`generator.call() returned a non-array value (${typeof findings}) — expected Array<object>`);
     }
-    generatorOutcomes.push({ model: generator.model, role: generator.role, status: 'succeeded', findingCount: findings.length });
+    generatorOutcomes.push({
+      model: generator.model, role: generator.role, status: 'succeeded',
+      findingCount: findings.length, durationMs: Date.now() - startedAt,
+    });
     return findings;
   } catch (err) {
     // audit fix M3, round 2: surface err.status alongside the message (AGENTS.md
@@ -73,6 +91,7 @@ async function runOneGenerator(generator, generatorOutcomes) {
     // auth/timeout failures from a genuine malformed-response bug.
     generatorOutcomes.push({
       model: generator.model, role: generator.role, status: 'failed', findingCount: 0,
+      durationMs: Date.now() - startedAt,
       errorMessage: err?.message || String(err),
       errorStatus: err?.status ?? null,
       category: err?.category ?? null,
