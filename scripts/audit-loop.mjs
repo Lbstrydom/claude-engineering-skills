@@ -484,6 +484,13 @@ async function main() {
         args.planFile, transcriptFile,
         '--out', geminiOutFile,
         '--provider', provider,
+        // `--run-id` is what ARMS the final reviewer's cloud write: without it
+        // `runShadowAndPersist` returns early and silently, so gemini_verdict,
+        // final_review_model and the shadow token/latency telemetry are all
+        // simply never recorded. This orchestrator already passes the same id
+        // to the GPT audit above (auditRunId is the audit_runs.id), so omitting
+        // it here left the run row half-written for every automated audit.
+        '--run-id', auditRunId,
       ];
 
       try {

@@ -427,14 +427,27 @@ export async function recordFindings(runId, findings, passName, round, opts = {}
  *     shadowInputTokens?: number|null, shadowOutputTokens?: number|null,
  *     shadowLatencyMs?: number|null,
  *   },
+ *   verdict?: string|null,  // the PRIMARY reviewer's Step-7 verdict. Must be
+ *                           // one of the audit_runs.gemini_verdict CHECK
+ *                           // values (migration 20260718160000). The shadow's
+ *                           // verdict is deliberately NOT written here — it is
+ *                           // observation-only and must never gate a build.
  * }} payload
  */
-export async function recordFinalReviewFindings(runId, { primary = [], shadow = [], models = {} } = {}) {
+export async function recordFinalReviewFindings(runId, { primary = [], shadow = [], models = {}, verdict = null } = {}) {
   if (!runId || !await isCloudEnabled()) return;
   // (a) Run metadata — overwrite-idempotent, so it's fine outside the findings
   // tx. Null shadow fields are simply not written (updateRunMeta guards on
   // `!= null`), which is correct when the shadow didn't run.
   await updateRunMeta(runId, {
+    // The Step-7 verdict. Written HERE, by the final reviewer that produced it
+    // — `recordRunComplete` runs before Step 7 and has always hardcoded null
+    // with a comment claiming this function would fill it in. Nothing did, so
+    // `gemini_verdict` was NULL on every run ever recorded, which in turn made
+    // "did the final gate approve this?" unanswerable from the store.
+    // `updateRunMeta` skips null, so a reviewer that produced no verdict still
+    // leaves the column honestly empty rather than writing a fake value.
+    geminiVerdict: verdict ?? null,
     finalReviewModel: models.primaryModel,
     finalReviewShadowModel: models.shadowModel,
     finalReviewShadowInputTokens: models.shadowInputTokens,

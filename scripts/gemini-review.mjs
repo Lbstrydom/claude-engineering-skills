@@ -1271,6 +1271,11 @@ async function runShadowAndPersist(result, primaryModel, runId, { planContent, t
       shadowOutputTokens: result._shadow.usage?.output_tokens ?? null,
       shadowLatencyMs: result._shadow.usage?.latency_ms ?? null,
     },
+    // The PRIMARY reviewer's verdict — the thing Step 7 exists to produce, and
+    // until 2026-07-18 the one part of it that was never persisted. Explicitly
+    // NOT `result._shadow.verdict`: the shadow is observation-only and must
+    // never reach a column anything gates on.
+    verdict: result.verdict ?? null,
   });
 
   // Phase 4 — append a model_eval_shadow_observations row when a Tier A/B

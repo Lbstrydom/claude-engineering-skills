@@ -100,11 +100,30 @@ function main() {
   }
 
   const geminiOut = tmpFile(`${sid}-gemini.json`);
+
+  // Thread the cloud run id into the final review. `--run-id` is what ARMS the
+  // reviewer's store write — without it `runShadowAndPersist` returns early and
+  // silently, leaving gemini_verdict, final_review_model and the shadow
+  // token/latency telemetry unrecorded for every audit run through this script.
+  // Unlike audit-loop.mjs (which mints the id itself), this script doesn't know
+  // the id until the GPT audit reports it, so read it back off the result JSON
+  // the same way skills/audit-code/SKILL.md instructs a human to. Best-effort:
+  // a malformed or cloud-disabled result simply means no id to pass, which is
+  // exactly the pre-existing behaviour rather than a new failure mode.
+  let cloudRunId = null;
+  try {
+    cloudRunId = JSON.parse(fs.readFileSync(transcriptPath, 'utf-8'))?._cloudRunId ?? null;
+  } catch { /* unreadable/unparseable result — proceed without run-id */ }
+  if (!cloudRunId) {
+    process.stderr.write('  [audit-full] no _cloudRunId in GPT result — final-review telemetry will not be recorded.\n');
+  }
+
   process.stderr.write(`\n══ audit-full: Gemini final review ══\n`);
   const gemini = run('node', [
     path.join(ROOT, 'scripts/gemini-review.mjs'), 'review',
     planFile, transcriptPath,
     '--out', geminiOut,
+    ...(cloudRunId ? ['--run-id', cloudRunId] : []),
   ]);
   if (gemini.code !== 0) {
     process.stderr.write(`audit-full: Gemini review exited with ${gemini.code}\n`);

@@ -101,7 +101,11 @@ export async function completePlanAuditRun(cloudRunId, result, { round = 1, dura
       process.stderr.write(`  [learning] plan-run findings persist failed (non-blocking): ${err.message}\n`);
     });
     // NOTE: gemini_verdict is deliberately NOT set here — that column belongs
-    // to the Step-7 final gate (gemini-review.mjs --run-id writes it); the
+    // to the Step-7 final gate. `gemini-review.mjs --run-id` genuinely writes
+    // it as of 2026-07-18 (via `recordFinalReviewFindings`); before that this
+    // comment described an intended design, not a real writer, and the column
+    // was NULL on every run. Note `--run-id` is what arms the write, and the
+    // automated orchestrators only started threading it the same day; the
     // GPT plan verdict lives on the findings/result artifact. Undefined stats
     // fields are omitted by the db seam's undefined contract, not nulled.
     await recordRunComplete(cloudRunId, {
