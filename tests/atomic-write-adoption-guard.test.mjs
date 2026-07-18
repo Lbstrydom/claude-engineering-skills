@@ -190,10 +190,12 @@ describe('atomic-write-adoption guard — Rule 1: Shape-A delegation', () => {
 });
 
 // ── Rule 2 — every renameSync/unlinkSync site found is retrySync-wrapped ──
-// Applies to: archive-completed-plans.mjs (whole file), persona-consistency-promote.mjs
-// (whole file), and backfill-outcomes.mjs scoped to drainFrictionFallback only
-// (the other 6 Shape-A files have zero renameSync/unlinkSync remaining, which
-// Rule 1 already proves by locating the real write path).
+// Applies to: persona-consistency-promote.mjs (whole file) and
+// backfill-outcomes.mjs scoped to drainFrictionFallback only (the other Shape-A
+// files have zero renameSync/unlinkSync remaining, which Rule 1 already proves by
+// locating the real write path). archive-completed-plans.mjs was removed here by
+// docs/plans/reference-integrity-gate.md Cluster C (Phase 5) — the archiver is
+// deleted, so its Rule-2 assertion went with it.
 
 function assertAllSitesRetrySyncWrapped(fileRel, { scopeToFunction } = {}) {
   const fileAbsPath = abs(fileRel);
@@ -220,11 +222,6 @@ function assertAllSitesRetrySyncWrapped(fileRel, { scopeToFunction } = {}) {
 }
 
 describe('atomic-write-adoption guard — Rule 2: retrySync wrapping', () => {
-  it('archive-completed-plans.mjs — exactly 2 sites (1 rename + 1 unlink), all wrapped', () => {
-    const count = assertAllSitesRetrySyncWrapped('scripts/archive-completed-plans.mjs');
-    assert.equal(count, 2);
-  });
-
   it('persona-consistency-promote.mjs — exactly 12 sites (3 rename + 9 unlink), all wrapped', () => {
     const count = assertAllSitesRetrySyncWrapped('scripts/persona-consistency-promote.mjs');
     assert.equal(count, 12);

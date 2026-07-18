@@ -33,6 +33,13 @@ import { CONSUMER_REPOS, resolveTargets } from './lib/consumer-repos.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 
 const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush-hook.mjs';
+// Bump when the generated body changes in a way a consumer must re-install to
+// pick up. v2 (reference-integrity-gate Cluster C): plan selection moved from
+// `ls -t docs/plans/*.md | head -1` to the Status-aware `check-plan-status.mjs
+// --select`, so a Complete plan is never re-audited. A stale v1 body is
+// detectable by the ABSENCE of this line; `hooks:install` rewrites it.
+const HOOK_VERSION    = 2;
+const HOOK_VERSION_MARKER = `# hook-version: ${HOOK_VERSION}`;
 // Accept the legacy marker too so existing installs (pre-rename) can be
 // upgraded in place by `npm run hooks:install` without manual cleanup.
 const LEGACY_MARKERS  = [
@@ -45,6 +52,7 @@ function isManagedHook(content) {
 }
 const HOOK_BODY = `#!/bin/sh
 ${HOOK_MARKER}
+${HOOK_VERSION_MARKER}
 #
 # Auto-runs /audit-code on any draft plan in docs/plans/ before the push.
 # Non-blocking by default: prints findings to stderr, never aborts the
@@ -89,20 +97,14 @@ fi
 PLANS_DIR="docs/plans"
 [ ! -d "$PLANS_DIR" ] && exit 0
 
-# Find the newest plan (most recently modified) — typical convention is
-# one active plan at a time.  If multiple exist, audit the freshest.
-PLAN_FILE=$(ls -t "$PLANS_DIR"/*.md 2>/dev/null | head -1)
-[ -z "$PLAN_FILE" ] && exit 0
-
-# Locate the audit-loop install — rename-resilient discovery.  Search order:
+# Locate the audit-loop install FIRST — plan selection now runs through the
+# SOURCE repo's Status-aware CLI (check-plan-status.mjs), so discovery must
+# precede selection (reference-integrity-gate Cluster C, R1-H2/R3-H5).
+# Search order:
 #   1. \$CLAUDE_AUDIT_LOOP_DIR — explicit env override (manual escape hatch)
 #   2. Sibling-dir scan: any ../<dir>/ that contains scripts/sync-to-repos.mjs.
-#      Gemini-r3 G1 fix: aligned with the JS resolveSourceRepo's
-#      single-deterministic-sentinel approach — sync-to-repos.mjs is
-#      source-exclusive (never synced to consumer repos), so its mere
-#      presence is sufficient proof of source-repo identity. The old
-#      dual-file check (openai-audit.mjs + install-prepush-hook.mjs)
-#      false-matched consumer repos that had both synced.
+#      sync-to-repos.mjs is source-exclusive (never synced to consumers), so its
+#      mere presence is sufficient proof of source-repo identity.
 #   3. (No fallback) — print warning + skip.  Never aborts the push.
 AUDIT_LOOP_DIR="$CLAUDE_AUDIT_LOOP_DIR"
 if [ -z "$AUDIT_LOOP_DIR" ]; then
@@ -115,10 +117,20 @@ if [ -z "$AUDIT_LOOP_DIR" ]; then
 fi
 
 AUDIT_SCRIPT="$AUDIT_LOOP_DIR/scripts/openai-audit.mjs"
+STATUS_CLI="$AUDIT_LOOP_DIR/scripts/check-plan-status.mjs"
 if [ -z "$AUDIT_LOOP_DIR" ] || [ ! -f "$AUDIT_SCRIPT" ]; then
   echo "[prepush-hook] audit-loop not found in any sibling dir (set CLAUDE_AUDIT_LOOP_DIR to override) — skipping audit" >&2
   exit 0
 fi
+
+# Select the ONE in-flight plan to audit via the Status-aware CLI — NOT
+# \`ls -t | head -1\`, which selected any newest .md regardless of its Status
+# and would re-audit a Complete plan. The CLI writes ONLY the chosen path to
+# stdout (or nothing); diagnostics + the >1-active-plan ambiguity go to stderr.
+# \`|| true\` + empty-check: a malformed/absent Status must never abort the push
+# (fail-closed for the gate, fail-open for the push — R3-H5).
+PLAN_FILE=$(node "$STATUS_CLI" --select "$PLANS_DIR" 2>/dev/null || true)
+[ -z "$PLAN_FILE" ] && exit 0
 
 echo "[prepush-hook] auditing $PLAN_FILE via $AUDIT_LOOP_DIR (--scope diff)..." >&2
 # AUDIT_ALLOW_FOREIGN_CWD=1: this runs the SOURCE repo's openai-audit.mjs against
@@ -250,4 +262,13 @@ function main() {
   process.exit(ok ? 0 : 1);
 }
 
-main();
+// Test-only surface (mirrors the file-io/shared.mjs `_internals` pattern).
+export const _internals = { HOOK_BODY, HOOK_VERSION_MARKER, isManagedHook, installInRepo };
+
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+if (isMain) main();

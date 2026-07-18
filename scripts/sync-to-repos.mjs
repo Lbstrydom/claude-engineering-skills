@@ -1043,6 +1043,15 @@ async function main() {
       console.log(`${G}Sync complete${X}`);
     }
     console.log(`  Created: ${totalNew}  Updated: ${totalUpdated}  Unchanged: ${totalUnchanged}  Errors: ${totalErrors}`);
+    // Hook-refresh reminder (reference-integrity-gate Cluster C, R2-H3/R16): the
+    // pre-push audit hook is versioned and refreshes on `hooks:install`, but sync
+    // does not re-install git hooks (opt-in, per-consumer). A consumer running an
+    // older hook body picks up the v2 Status-aware plan selection only after a
+    // re-install — a strict improvement, never a regression (worst case = today's
+    // behaviour). Surfaced, not auto-run, so we never clobber an operator hook.
+    if (!DRY_RUN) {
+      console.log(`  ${D}If a consumer uses the pre-push audit hook, re-run \`npm run hooks:install --target <name>\` to pick up bundle hook changes.${X}`);
+    }
   }
 
   // D2b — sync-time shared-cloud-config trigger. Skip on dry-run, errors,

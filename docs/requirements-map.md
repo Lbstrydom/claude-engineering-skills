@@ -1,6 +1,6 @@
-# Requirements Map — claude-engineering-skills
+# Requirements Map — clusterB
 
-_Generated from `.requirements/ledger.json` — 193 requirement(s) across 25 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
+_Generated from `.requirements/ledger.json` — 189 requirement(s) across 24 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
 
 ## At a glance
 
@@ -17,7 +17,7 @@ pie title Active invariants by kind
 |---|---|
 | 🟢 active — enforced by /audit-code | 23 |
 | 🟡 needs-review — awaiting your call | 13 |
-| ⚪ inferred-only — refine backlog | 157 |
+| ⚪ inferred-only — refine backlog | 153 |
 
 ## 🟡 Needs review (13)
 
@@ -91,7 +91,6 @@ pie title Active invariants by kind
 
 | File | 🟢 | 🟡 | ⚪ |
 |---|--:|--:|--:|
-| `scripts/archive-completed-plans.mjs` | 0 | 0 | 4 |
 | `scripts/learning/backfill-outcomes.mjs` | 1 | 1 | 15 |
 | `scripts/lib/audit/finding-verification.mjs` | 0 | 2 | 18 |
 | `scripts/lib/audit/prompt-builder.mjs` | 0 | 1 | 2 |

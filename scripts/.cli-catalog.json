@@ -338,14 +338,6 @@
       "description": "Replay-evaluate a candidate policy against historical decisions (counterfactual).",
       "category": "learning"
     },
-    "plans:archive": {
-      "description": "Move completed plans into docs/completed/ (with deferred items preserved).",
-      "category": "plans"
-    },
-    "plans:archive:dry": {
-      "description": "Preview which plans would be archived (no file moves).",
-      "category": "plans"
-    },
     "docs:check": {
       "description": "Enforce docs/ root placement: root holds only allowlisted generated artefacts + live ledgers; hand-written docs belong in a bucket (reference/, runbooks/, plans/, research/). Runs as part of `npm run check`. Decision rule: docs/README.md.",
       "category": "diagnostic"

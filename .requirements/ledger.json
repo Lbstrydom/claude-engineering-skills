@@ -3,7 +3,6 @@
   "commitSha": "cd877196e9f2aac0144cf662007a701f2ed3dc28",
   "extractionSourceSha": "cd877196e9f2aac0144cf662007a701f2ed3dc28",
   "coveredFiles": [
-    "scripts/archive-completed-plans.mjs",
     "scripts/learning/backfill-outcomes.mjs",
     "scripts/lib/audit/finding-verification.mjs",
     "scripts/lib/audit/prompt-builder.mjs",
@@ -1478,87 +1477,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This appears to be an intended discovery invariant but has no linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-59594319",
-      "assertion": "Plan archival must move only Markdown files whose Status metadata value begins with the word Complete, case-insensitively, and must not treat other statuses as complete.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/archive-completed-plans.mjs",
-          "anchor": "parseStatus"
-        },
-        {
-          "file": "scripts/archive-completed-plans.mjs",
-          "anchor": "isComplete"
-        },
-        {
-          "file": "scripts/archive-completed-plans.mjs",
-          "anchor": "runArchive"
-        }
-      ],
-      "appliesTo": [
-        "scripts/archive-completed-plans.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/archive-completed-plans.mjs#parseStatus",
-          "scripts/archive-completed-plans.mjs#isComplete",
-          "scripts/archive-completed-plans.mjs#runArchive"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-59594319",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This is a sound complete-status archival invariant with no linked test."
-      }
-    },
-    {
-      "id": "REQ-correctness-59c40724",
-      "assertion": "Only Markdown files whose metadata Status value begins with \"Complete\" case-insensitively are eligible for plan archival.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/archive-completed-plans.mjs",
-          "anchor": "parseStatus"
-        },
-        {
-          "file": "scripts/archive-completed-plans.mjs",
-          "anchor": "isComplete"
-        },
-        {
-          "file": "scripts/archive-completed-plans.mjs",
-          "anchor": "runArchive"
-        }
-      ],
-      "appliesTo": [
-        "scripts/archive-completed-plans.mjs",
-        "docs/plans/*.md"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/archive-completed-plans.mjs#parseStatus",
-          "scripts/archive-completed-plans.mjs#isComplete",
-          "scripts/archive-completed-plans.mjs#runArchive"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-59c40724",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This is a sound plan-archival eligibility invariant with no linked test."
       }
     },
     {
@@ -3652,38 +3570,6 @@
       }
     },
     {
-      "id": "REQ-persistence-c1fd4cfe",
-      "assertion": "Archiving must not overwrite an existing destination file unless the force option is enabled.",
-      "kind": "persistence",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/archive-completed-plans.mjs",
-          "anchor": "runArchive"
-        }
-      ],
-      "appliesTo": [
-        "scripts/archive-completed-plans.mjs",
-        "docs/plans/*.md",
-        "docs/completed/*.md"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/archive-completed-plans.mjs#runArchive"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-persistence-c1fd4cfe",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This is a sound archival overwrite-protection invariant with no linked test."
-      }
-    },
-    {
       "id": "REQ-persistence-c61d7430",
       "assertion": "Quickfix-hit records are inserted into learning decisions with a deterministic `quickfix_hit:<hit_id>` key so replaying a JSONL record does not create a distinct decision.",
       "kind": "persistence",
@@ -4606,36 +4492,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended malformed-ledger backup invariant but no linked test is present."
-      }
-    },
-    {
-      "id": "REQ-safety-5ac5ec02",
-      "assertion": "Plan archival must not overwrite an existing destination file unless force is enabled, and a dry run must report intended moves without modifying the filesystem.",
-      "kind": "safety",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/archive-completed-plans.mjs",
-          "anchor": "runArchive"
-        }
-      ],
-      "appliesTo": [
-        "scripts/archive-completed-plans.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/archive-completed-plans.mjs#runArchive"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-safety-5ac5ec02",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "This is a sound archival overwrite and dry-run safety invariant with no linked test."
       }
     },
     {

@@ -199,6 +199,29 @@ imports. Re-sync to pick this up, and run `setup-postgres --migrate` for the
 to warn, so legacy structural-selector suites keep running unchanged;
 `--strict-selectors` is opt-in per run (recommended for newly generated specs).
 
+### Pre-push audit-hook refresh (2026-07)
+
+If you installed the optional pre-push audit hook (`npm run hooks:install
+--target <your-alias>`), **re-run it after a bundle update** to pick up the v2
+plan-selection behaviour:
+
+```bash
+cd /path/to/claude-engineering-skills
+npm run hooks:install -- --target <your-alias>
+```
+
+The hook is **version-stamped** (`# hook-version: N`) and the installer is
+idempotent: a managed body is refreshed in place, an unmanaged (operator-authored)
+pre-push hook is **refused, never clobbered**, and an already-current body is a
+no-op. `npm run sync` does *not* auto-install git hooks (opt-in, per-consumer), so
+this is a separate one-liner — surfaced as a reminder at the end of every sync.
+
+**What v2 fixes**: the old body selected the newest `docs/plans/*.md` regardless
+of its `Status:`, so it could re-audit a `Complete` plan on every push. v2 selects
+via `check-plan-status.mjs --select` — only an *active* plan
+(`Draft`/`Approved`/`In Progress`) is ever audited. A consumer that never
+re-installs keeps the old behaviour — a strict improvement, never a regression.
+
 ---
 
 ## Fresh-clone workflow

@@ -54,42 +54,31 @@ matching "**Design:**" half is the plan in `completed/`.
 > Named for the subsystem, not `<x>-runbook.md` — the folder already says
 > "runbook".
 
-## `docs/plans/` — in-flight plans
+## `docs/plans/` — ALL plans (status is metadata, never a path)
 
-Plans produced by `/plan` for work **not yet shipped**. Transient: one file =
-one plan, `# Plan: …` header with a `Status:` line. Normally small.
+Every plan lives here for its **whole lifecycle** — `Draft` → `Approved` →
+`In Progress` → `Complete`/`Superseded`. One file = one plan, with a `Status:`
+line; each plan's paired `*-audit-summary.md` (the `/audit-code` convergence
+record) sits beside it. **A plan does not move when it completes** — its `Status:`
+line changes, and nothing else. This mirrors `research/`'s rule ("a status change
+never means a file move") and exists because moving a completed plan silently
+broke every reference to it — the failure `docs/plans/reference-integrity-gate.md`
+was written to kill.
 
-## `docs/completed/` — plan archive
+- **Selection**: the pre-push hook audits the one plan whose `Status:` is *active*
+  (`Draft`/`Approved`/`In Progress`), via `scripts/lib/plan-status.mjs`
+  (`npm run plans:status` lints the vocabulary). A `Complete` plan is never
+  re-audited. A doc with **no** `Status:` line is not a plan (the documented
+  "a plan is a unit of work with a Status line" rule) — not selectable, not linted.
+- **`*-audit-summary.md` is exempt** from the vocabulary lint: its `Status:` is a
+  free-text convergence sentence (`Audit-complete. N fixes applied.`), by design.
 
-Where `npm run plans:archive` (via `/ship`) moves a plan once its `Status:` is
-`Complete`. Also holds each plan's paired `*-audit-summary.md` (the
-`/audit-code` convergence record) — kept next to its plan on purpose so the pair
-sorts adjacently. Expected to grow unbounded.
-
-**This is the plan archive, not a junk drawer.** It's mechanically written and
-everything in it is assumed to be a plan — don't park reference docs here to get
-them out of the way; they belong in `reference/` or `runbooks/`.
-
-**Two Status conventions** live here side by side and that's by design:
-
-| File shape | Status semantic | Typical value |
-|---|---|---|
-| `<plan-name>.md` | implementation status | `Complete` / `Superseded` |
-| `<plan-name>-audit-summary.md` | audit-cycle status | `Audit-complete. N fixes applied. M remaining HIGHs documented as known limitations.` |
-
-A plan and its summary track different facts: the plan tracks whether the work
-shipped; the summary tracks whether the audit cycle converged. Don't normalise
-the summary lines to `Complete` — the audit-summary's status IS the convergence
-sentence; that's the artefact's whole purpose.
-
-> **Historical note**: pre-`/ship` plans were bulk-moved here by chore commits
-> `f5cb283` + `190406d` before the Status-gate existed. A systematic 2026-05-23
-> audit corrected 25 stale plan statuses across six themed batches (arch-memory,
-> brainstorm, learning, Phase D-I, singletons, plus the earlier multi-language
-> Phase A/B/C set). Two Phase G subplans (SQLite + GitHub adapter) reclassified
-> as `Superseded` since the project went Postgres-only via
-> `completed/postgres-parity.md`. Audit-summary `Status:` lines were left as-is
-> per the convention above.
+> **`docs/completed/` is retired.** Cluster B of the reference-integrity plan
+> consolidated its 145 archived plans back into `docs/plans/` (git-rename, history
+> preserved), and Cluster C deleted the `plans:archive` mover. External links to
+> old `docs/completed/<name>.md` paths are broken once (symmetric with the stale
+> `docs/plans/<name>.md` links they replace) — the `docs:refs` gate keeps new ones
+> from accruing.
 
 ## `docs/research/` — the audit-effectiveness research arc
 

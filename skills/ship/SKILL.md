@@ -9,7 +9,6 @@ description: |
   Usage: /ship --no-tests             — skip pre-push tests (override; logged in ship_event)
   Usage: /ship --ignore-p0            — push despite an unresolved persona-test P0 finding
   Usage: /ship --skip-ux-lock         — push despite an unlocked recent UI fix
-  Usage: /ship --no-archive           — keep Complete-status plans in docs/plans/ (rare)
   Usage: /ship --no-promote           — keep consistency candidates pending; don't materialise locks this ship
   Triggers on: "ship it", "commit and push", "push my changes", "ready to ship".
   IMPORTANT: This command runs autonomously — no confirmation prompts. The user invoking
@@ -295,51 +294,19 @@ Only when `$ARGUMENTS` contains a plan file path:
 
 ---
 
-## Step 5.5 — Archive Completed Plans (always, unless `--no-archive`)
+## Step 5.5 — Plans no longer move on completion (removed)
 
-After Step 5 may have flipped a plan's `Status` to `Complete`, sweep
-`docs/plans/` and move any completed plans (plus their sibling
-`*-audit-summary*.md` files left by `/audit-code` Step 6) into
-`docs/completed/`.  Run this BEFORE Step 6 commit so the move is part
-of the shipped commit — no dangling working-tree changes after `/ship`.
+**There is no archive step.** Plans live in `docs/plans/` for their whole
+lifecycle; a completed plan simply carries `Status: Complete`. The
+`docs/plans/` → `docs/completed/` archiver was deleted by
+`docs/plans/reference-integrity-gate.md` Cluster C — moving a completed plan
+silently broke every reference to it (the failure that plan exists to kill).
+Status is metadata, never a path; the dashboard rebuild at Step 0.5d is
+sufficient (no post-archive rebuild is needed because nothing moves).
 
-```bash
-npm run plans:archive
-```
-
-Idempotent + silent when nothing matches.  Skip with `--no-archive`
-flag to keep a `Complete`-status plan in `docs/plans/` (rare — usually a
-v2 draft that shouldn't move yet).  Preview with
-`npm run plans:archive:dry`.
-
-If anything moves, include the renamed paths in the Step 6 stage list
-(git tracks them as renames automatically).
-
-### Step 5.5b — Rebuild the dashboard AFTER archiving (source-repo only)
-
-The reference dashboard's Plans tab buckets by **directory** (`docs/plans/`
-= active, `docs/completed/` = completed). The archive move above changes
-that split, so the **authoritative** dashboard rebuild must run HERE, after
-the move — not at Step 0.5d (which runs before the archive and would commit
-a page showing the just-completed plan still in the Active list, lagging one
-ship cycle).
-
-Source-repo-gated (`package.json.name === "claude-engineering-skills"`); skip
-silently in consumer repos. Run WITHOUT `|| true` — the exit code is the
-staging signal:
-
-```bash
-node scripts/build-dashboard.mjs reference 2>&1
-```
-
-- Exit 0 → stage `dashboard/index.html` in the Step 6 list.
-- Exit non-zero (degraded build) → do NOT stage it; print a one-line
-  heads-up; ship continues.
-
-This supersedes the Step 0.5d rebuild whenever a ship reaches this step
-(i.e. unless `--no-archive` AND the source-repo gate both skip it). When
-0.5d already built a clean page and nothing archived, re-running here is
-idempotent (same inputs → same `sourceHash` → byte-identical page).
+*(The dashboard's Plans tab historically bucketed by directory; bucketing by
+`Status:` instead is a small follow-up, tracked separately — out of this
+plan's scope.)*
 
 ---
 
