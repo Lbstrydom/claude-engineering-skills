@@ -153,8 +153,8 @@ graph TD
   end
   PG[(Postgres — Supabase-hosted OR self-hosted<br/>same 29 migrations · 9 RPCs · 12 views · pgvector)]
 
-  Callers --> Barrel --> Domains --> Q
-  Domains --> RP
+  A --> BR --> D1 --> Q
+  D1 --> RP
   Q --> CL
   RP --> CL
   Q --> ER
