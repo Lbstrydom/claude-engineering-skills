@@ -16,6 +16,25 @@
   fourth round. Remaining risk is concentrated in Phase 6 (an investigation
   deliberately off the critical path, §7c) and in the `..`-artifact caveat (§8),
   both explicitly flagged rather than resolved.
+- **Cluster A code-audit (2026-07-18, CLOSED)**: Phases 1-2 shipped
+  (`ff9f4aa`, `65091b8`, `528156c`, `5e8041d`). GPT R1 H:3 M:12 L:2 → 3
+  substantive fixes; Gemini gate REJECT → CONCERNS over 2 rounds, stopped at
+  the cap with its sole remaining finding refuted.
+  **Fixed**: `normalizeRepoPath` resolved against `repoRoot` while documenting
+  that dep-cruiser emits CWD-relative paths — right answer by layout
+  coincidence, not construction (now takes an explicit `base`); `eligibleFiles`
+  was missing §2.1.1's `size <= MAX_FILE_BYTES` clause; the stat-failure
+  fallback silently *raised* the ratio by shrinking the denominator.
+  **Refuted with evidence**: a claimed `MAX_FILE_BYTES` TDZ error (module-scope
+  const, used at call time — and 3309 symbols extracted, impossible if it
+  threw); a claim that `removeSourceFile` is never called (`extract.mjs:255`);
+  a claim that `z.iso.datetime()` is hallucinated (exists in Zod 4.4.3 — Zod-3
+  knowledge applied to a Zod-4 repo, the trap AGENTS.md flags); a duplication
+  finding against a function that is already a one-line delegate.
+  **Deferred as independent**: `--files-from` trim/split lossiness and the
+  pre-existing `statSync` skip — coverage reads `args.files` only for the
+  `isFullRun` boolean and never consumes parsed filenames.
+  Structure-pass findings for Phases 3-5 are Cluster B by construction.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (detected `--scope=backend`; stack `js-ts` + `postgres`)
 - **Target domain(s)**: `arch-memory`, `dashboard`, `scripts`
