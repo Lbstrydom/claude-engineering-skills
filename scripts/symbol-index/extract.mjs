@@ -543,10 +543,27 @@ async function main() {
   // against the denominator. An unreadable file is excluded for the same
   // reason — it is not a coverage failure, and failing closed here would
   // understate coverage on precisely the repos with generated monsters.
+  //
+  // A file whose size cannot be read is excluded too — but note the direction:
+  // excluding SHRINKS the denominator and RAISES the reported ratio. That is
+  // the optimistic direction, so it must never be silent (final-gate M6). It
+  // is counted and warned about; a repo where this fires often is a repo whose
+  // coverage number deserves suspicion.
+  let statFailures = 0;
   const isTooLarge = (abs) => {
-    try { return fs.statSync(abs).size > MAX_FILE_BYTES; } catch { return true; }
+    try {
+      return fs.statSync(abs).size > MAX_FILE_BYTES;
+    } catch {
+      statFailures++;
+      return true;
+    }
   };
   const eligible = isFullRun ? eligibleFiles(files, { repoRoot, isTooLarge }) : null;
+  if (statFailures > 0) {
+    emitProgress(`WARNING: ${statFailures} file(s) excluded from the coverage `
+      + `denominator because their size could not be read — the reported ratio `
+      + `is optimistic by that much.`);
+  }
   const graphStats = await extractGraphAndViolations(repoRoot, { eligible });
   // `coverage` travels on its own `{type:'coverage'}` line, not inside
   // `counts` — that field is a flat scalar bag and consumers treat it as one.
