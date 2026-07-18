@@ -1,10 +1,12 @@
 # Plan: Repo-Wide Reference-Integrity Gate
 
 - **Date**: 2026-07-17
-- **Status**: In Progress — all three clusters implemented, converged, and
-  final-gated (A 2026-07-17 merged to main; B + C 2026-07-18 on branch `clusterB`,
-  consolidated Gemini gate **APPROVE**). Only the B+C merge to a quiet `main`
-  remains. Plan approved (3 GPT + 2 Gemini rounds). **Cluster A** (Phase 1,
+- **Status**: Complete — all three clusters implemented, converged, final-gated
+  (consolidated Gemini **APPROVE**), and **landed on `main`** (2026-07-18). A
+  merged 2026-07-17; B + C fast-forwarded as a unit after the obsolete azure-embed
+  archive-move was discarded (plans no longer move — it stays in `docs/plans/`).
+  Both gates live in `npm run check` (`docs:refs:gate` drift-only, `plans:status`);
+  full suite 7080 pass. Plan approved (3 GPT + 2 Gemini rounds). **Cluster A** (Phase 1,
   the lint): test-first, code-audited 5 GPT + 2 Gemini rounds, **merged to main**.
   **Cluster B** (Phases 2-3, the 145-file consolidation + 163-ref rewrite +
   drift-gate-framed Phase 3): built in an isolated worktree, fix-gate audit (GPT
