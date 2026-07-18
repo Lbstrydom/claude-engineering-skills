@@ -35,6 +35,12 @@ import {
 } from '../lib/sensitive-egress-gate.mjs';
 import { shouldSkipForIndexing, formatSkipLog, resolveAndClassify } from '../lib/sensitive-paths.mjs';
 import { isThinDelegate } from '../lib/symbol-index/thin-delegate.mjs';
+import {
+  eligibleFiles,
+  assessExtractionCoverage,
+  assertExtractionExhaustive,
+} from '../lib/symbol-index/graph-coverage.mjs';
+import { COVERAGE_DEFAULTS } from '../lib/symbol-index/graph-verdict.mjs';
 import { emit } from '../lib/cli-io.mjs';
 
 function parseArgs(argv) {
@@ -260,8 +266,25 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
  * Walk the file-to-file graph + emit any layering violations.
  * Violations come from `.dependency-cruiser.cjs` config if present in repo,
  * else default heuristics.
+ *
+ * Also MEASURES its own blindness (plan §2.1, Phase 2). This is the only place
+ * that holds both layers' views of the repo — `enumerateFiles`' whole-repo
+ * inventory and the cruise result — so it is the only place the two can be
+ * compared without re-deriving one of them and reintroducing the very
+ * disagreement being measured.
+ *
+ * @param {string} repoRoot
+ * @param {{eligible?: string[]|null, sampleCap?: number}} [opts]
+ *   opts.eligible — the coverage DENOMINATOR (§2.1.1). `null` on an incremental
+ *   run: coverage is a full-run measurement, so a partial run emits no coverage
+ *   line at all and `refresh.mjs` copies the prior row forward as stale (§2.1.3
+ *   row 4) rather than choosing between a fresh partial number and a stale
+ *   whole one.
+ * @returns {{violationCount: number, importCount?: number, coverage?: object}}
  */
-async function extractGraphAndViolations(repoRoot) {
+async function extractGraphAndViolations(repoRoot, opts = {}) {
+  const { eligible = null, sampleCap = COVERAGE_DEFAULTS.sampleCap } = opts;
+  const measure = Array.isArray(eligible);
   // R1 audit Gemini-G1: don't hardcode ['scripts', 'src'] — many repos use
   // lib/, app/, components/, pages/, api/, etc. Auto-detect any top-level
   // source-looking directory, then fall back to repo root if nothing matches.
@@ -281,14 +304,19 @@ async function extractGraphAndViolations(repoRoot) {
   // KNOWN LIMITATION — this allowlist is a silent-blindness generator. The
   // `targets.length === 0` fallback below only fires when a repo matches
   // NOTHING here, so a repo using a dir name absent from this list gets a
-  // SMALLER import graph that still reads as authoritative — no warning. That
-  // is exactly how `tests/` went unseen: only `scripts/` matched, so the
-  // largest domain in this repo (380 files) produced zero observed edges for
-  // months while being fully symbol-indexed by enumerateFiles(), which walks
-  // the whole repo. Two layers of one pipeline disagreeing about what the repo
-  // contains. Adding 'tests' fixes the instance, NOT the generator — the fix
-  // is unified discovery + a coverage invariant:
-  // docs/plans/observed-graph-discovery-unification.md
+  // SMALLER import graph. That is exactly how `tests/` went unseen: only
+  // `scripts/` matched, so the largest domain in this repo (380 files)
+  // produced zero observed edges for months while being fully symbol-indexed
+  // by enumerateFiles(), which walks the whole repo. Two layers of one
+  // pipeline disagreeing about what the repo contains.
+  //
+  // It is no longer SILENT (2026-07-18, plan §2.1.1): the coverage measurement
+  // below holds the cruise result against the whole-repo eligible universe, so
+  // an unlisted layout now surfaces as a number and a `degraded` verdict. The
+  // allowlist deliberately still selects targets unchanged — measuring the
+  // blindness is this plan's scope; removing it is unified discovery, which
+  // stays out of scope precisely because it cannot fix a resolution defect:
+  // docs/plans/observed-graph-discovery-unification.md §3.1
   const COMMON_SOURCE_DIRS = [
     'scripts', 'src', 'lib', 'app', 'apps', 'packages',
     'components', 'pages', 'server', 'api', 'routes',
@@ -301,12 +329,27 @@ async function extractGraphAndViolations(repoRoot) {
   if (targets.length === 0) targets = [repoRoot];
 
   let result;
+  const startedAt = Date.now();
   try {
     result = await cruise(targets, cruiseOpts);
   } catch (err) {
     emitProgress(`dep-cruiser failed: ${err.message}`);
+    // A failed cruise used to be indistinguishable from a repo with no
+    // imports — same `{violationCount: 0}`, `importCount` undefined. Now it
+    // says so: `outcome: 'failed'` carries null counts (NOT zero; zero is a
+    // measurement, null is the absence of one) and the verdict oracle maps it
+    // to `unverified` / `extraction_failed` at precedence row 1.
+    if (measure) {
+      const coverage = assessExtractionCoverage({
+        outcome: 'failed', elapsedMs: Date.now() - startedAt,
+      });
+      emitCoverage(coverage);
+      emitProgress('coverage: unverified (extraction_failed)');
+      return { violationCount: 0, coverage };
+    }
     return { violationCount: 0 };
   }
+  const elapsedMs = Date.now() - startedAt;
 
   const violations = (result.output?.summary?.violations || []);
   for (const v of violations) {
@@ -325,21 +368,71 @@ async function extractGraphAndViolations(repoRoot) {
   // cruiser-emitted metadata (Gemini-R1-G3, Gemini-R2-G1).
   const modules = result.output?.modules || [];
   let importCount = 0;
+  // Every dependency the cruise offered lands in exactly ONE bucket. Each of
+  // these three drops is individually defensible and none was ever counted —
+  // that silence is the defect (plan §2.1.2). `cruisedEdges` is the total the
+  // exhaustivity assertion holds them to.
+  const edges = { external: 0, selfEdge: 0, escaping: 0, persisted: 0 };
+  let cruisedEdges = 0;
   for (const m of modules) {
     if (!m.source) continue;
     const importer = path.relative(repoRoot, m.source).replace(/\\/g, '/');
     for (const d of (m.dependencies || [])) {
-      if (!isInternalEdge(d)) continue;
+      cruisedEdges++;
+      if (!isInternalEdge(d)) { edges.external++; continue; }
       const imported = path.relative(repoRoot, d.resolved).replace(/\\/g, '/');
       // Skip self-edges and edges that escape the repo (..)
-      if (imported === importer) continue;
-      if (imported.startsWith('..')) continue;
+      if (imported === importer) { edges.selfEdge++; continue; }
+      if (imported.startsWith('..')) { edges.escaping++; continue; }
       emit({ type: 'import', importer, imported });
+      edges.persisted++;
       importCount++;
     }
   }
 
-  return { violationCount: violations.length, importCount };
+  if (!measure) return { violationCount: violations.length, importCount };
+
+  const coverage = assessExtractionCoverage({
+    outcome: 'ok',
+    eligible,
+    cruisedSources: modules.map(m => m.source).filter(Boolean),
+    repoRoot,
+    elapsedMs,
+    edges,
+    sampleCap,
+  });
+
+  const exhaustive = assertExtractionExhaustive(coverage, cruisedEdges);
+  if (!exhaustive.ok) {
+    // Loud, but never fatal (#16): a bucket that stops adding up is a NEW
+    // silent loss site, which is worth shouting about — and is still better
+    // information than a failed refresh.
+    emitProgress(`WARNING: edge buckets do not account for every cruised edge `
+      + `(counted ${exhaustive.actual}, cruise offered ${exhaustive.expected}). `
+      + `A filter was likely added without a bucket — see plan §2.1.2.`);
+  }
+
+  emitCoverage(coverage);
+  const pct = coverage.ratio == null ? 'n/a' : `${(coverage.ratio * 100).toFixed(1)}%`;
+  emitProgress(`coverage: ${coverage.cruised}/${coverage.eligible} eligible source files `
+    + `cruised (${pct}) in ${elapsedMs}ms — edges: ${edges.persisted} persisted, `
+    + `${edges.external} external, ${edges.selfEdge} self, ${edges.escaping} escaping`);
+
+  return { violationCount: violations.length, importCount, coverage };
+}
+
+/**
+ * Emit the extraction-layer coverage record for `refresh.mjs` to persist
+ * (plan §2.1.7). Extract owns ONLY the extraction layer — the verdict,
+ * `measuredAt`, and the `refreshId` it is keyed on all belong to the parent
+ * process, which is the one that knows the snapshot identity. Emitting a
+ * verdict here would create a second oracle.
+ *
+ * `schemaVersion` ships from day one so a future shape change is a version
+ * bump rather than a guess at the reader.
+ */
+function emitCoverage(extraction) {
+  emit({ type: 'coverage', schemaVersion: 1, extraction });
 }
 
 /**
@@ -436,8 +529,18 @@ async function main() {
   }
   emitProgress(`scanning ${files.length} files (mode=${args.mode})`);
   const stats = extractSymbols(files, repoRoot, { includeDelegates: args.includeDelegates });
-  const graphStats = await extractGraphAndViolations(repoRoot);
-  emit({ type: 'summary', counts: { ...stats, ...graphStats } });
+  // Coverage is a FULL-RUN measurement (plan §2.1.3 row 4). On an incremental
+  // run `files` is the caller's restricted list, not the repo's universe, so
+  // measuring against it would produce a real-looking ratio computed from the
+  // wrong denominator. Pass null and let refresh.mjs copy the prior row
+  // forward as stale instead.
+  const isFullRun = !args.files || args.files.length === 0;
+  const eligible = isFullRun ? eligibleFiles(files, { repoRoot }) : null;
+  const graphStats = await extractGraphAndViolations(repoRoot, { eligible });
+  // `coverage` travels on its own `{type:'coverage'}` line, not inside
+  // `counts` — that field is a flat scalar bag and consumers treat it as one.
+  const { coverage: _coverage, ...graphCounts } = graphStats;
+  emit({ type: 'summary', counts: { ...stats, ...graphCounts } });
   emitProgress(`done — symbols=${stats.symbolCount} violations=${graphStats.violationCount} skipped-path=${stats.skippedPath} skipped-ext=${stats.skippedExt} skipped-size=${stats.skippedSize} skipped-delegate=${stats.skippedDelegate} redacted=${stats.redacted}`);
 }
 

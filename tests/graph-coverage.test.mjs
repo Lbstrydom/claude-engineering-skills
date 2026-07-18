@@ -15,6 +15,7 @@ import path from 'node:path';
 import {
   CRUISABLE_EXTENSIONS, normalizeRepoPath, eligibleFiles,
   assessExtractionCoverage, assessAttributionCoverage, assertAttributionExhaustive,
+  assertExtractionExhaustive,
 } from '../scripts/lib/symbol-index/graph-coverage.mjs';
 import {
   graphVerdict, parseCoverageConfig, coverageGateExitCode,
@@ -265,5 +266,38 @@ describe('parseCoverageConfig', () => {
     const cfg = parseCoverageConfig({ futureKey: 1 }, (m) => warnings.push(m));
     assert.deepEqual(cfg, COVERAGE_DEFAULTS);
     assert.ok(warnings.some((w) => w.includes('futureKey')));
+  });
+});
+
+describe('assertExtractionExhaustive (Phase 2 — the drop-site guard)', () => {
+  const cov = (edges) => ({ edges });
+
+  it('passes when every cruised edge landed in exactly one bucket', () => {
+    const r = assertExtractionExhaustive(
+      cov({ external: 20, selfEdge: 0, escaping: 3, persisted: 1672 }), 1695);
+    assert.deepEqual(r, { ok: true, expected: 1695, actual: 1695 });
+  });
+
+  it('FAILS when a filter drops edges without a bucket — the regression this guards', () => {
+    // The scenario: someone adds a fourth `continue` to extract.mjs's edge loop
+    // and forgets the counter. The edges vanish, every ratio still looks fine,
+    // and the graph is silently lossy again. That is the original bug, reborn.
+    const r = assertExtractionExhaustive(
+      cov({ external: 20, selfEdge: 0, escaping: 3, persisted: 1600 }), 1695);
+    assert.equal(r.ok, false);
+    assert.equal(r.actual, 1623);
+    assert.equal(r.expected, 1695);
+  });
+
+  it('does not fault a failed extraction, which has no counts to account for', () => {
+    const failed = assessExtractionCoverage({ outcome: 'failed' });
+    assert.equal(failed.edges, null);
+    assert.equal(assertExtractionExhaustive(failed, 0).ok, true);
+  });
+
+  it('treats a non-finite cruised total as zero rather than throwing', () => {
+    const r = assertExtractionExhaustive(
+      cov({ external: 0, selfEdge: 0, escaping: 0, persisted: 0 }), undefined);
+    assert.deepEqual(r, { ok: true, expected: 0, actual: 0 });
   });
 });

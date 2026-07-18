@@ -192,6 +192,30 @@ export function assessAttributionCoverage({
 }
 
 /**
+ * Exhaustivity assertion for the EXTRACTION buckets.
+ *
+ * `external + selfEdge + escaping + persisted == cruisedEdges`. Trivially true
+ * the day it is written — every dependency in `extract.mjs`'s loop lands in
+ * exactly one bucket by construction. It exists for the day after: a fourth
+ * filter added without a fourth bucket is a new silent loss site, which is the
+ * entire bug class this module exists to end. Enforced in code rather than
+ * described in prose for the same reason.
+ *
+ * @param {{edges?: object|null}} extraction - an `assessExtractionCoverage` result
+ * @param {number} cruisedEdges - total dependency edges the cruise offered
+ * @returns {{ok: boolean, expected: number, actual: number}}
+ */
+export function assertExtractionExhaustive(extraction, cruisedEdges) {
+  const e = extraction?.edges;
+  const expected = Number.isFinite(cruisedEdges) ? cruisedEdges : 0;
+  // A failed/timedOut extraction has null counts by design — there is no
+  // measurement to hold to account, so it cannot fail the assertion.
+  if (!e) return { ok: true, expected, actual: expected };
+  const actual = e.external + e.selfEdge + e.escaping + e.persisted;
+  return { ok: actual === expected, expected, actual };
+}
+
+/**
  * Exhaustivity assertion for the attribution buckets — enforced in code rather
  * than described in prose, because a silently-unaccounted-for drop is precisely
  * the class of bug this module exists to end.
