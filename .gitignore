@@ -23,74 +23,18 @@ scripts/lib/consumer-repos.local.json
 .claude/scheduled_tasks.lock
 
 # Audit-loop operational state (local to each machine)
-.audit/local/
-.audit/staging/
-.audit/quarantine/
-.audit/**/*.lock
-.audit/outcomes.jsonl
-.audit/experiments.jsonl
-.audit/experiment-manifests/
-.audit/prompt-revisions/
-.audit/bandit-state.json
-.audit/fp-tracker.json
-.audit/remediation-tasks.jsonl
-.audit/pipeline-state.json
-.audit/session-ledger.json
-.audit/meta-assessments.jsonl
-.audit/session-audit-*.json
-.audit/quickfix-hits.jsonl
-# Phase 1+2+3 + friction-log adaptive-learning local state
-.audit/learning-outbox/
-.audit/learning-failed-writes.jsonl
-.audit/friction-log.jsonl
-.audit/friction-injected.jsonl
-.audit/quickfix-pattern-stats.json
-.audit/quickfix-hits.drained-offset
-
+# ALL of it. `.audit/` is our directory — only audit-loop tooling writes
+# there, and every skill run adds new `--out .audit/<session>-…` artifacts
+# (transcripts, ledgers, patches, stderr logs). This was 50 filename
+# patterns and STILL lost the race: `.audit/.audit-cache-*/` was nagging
+# as untracked when this was consolidated. Enumerating a set that grows
+# on every run is a treadmill you lose silently. Nothing under .audit/ is
+# tracked (verified: `git ls-files .audit/` is empty), so the directory
+# rule is both correct and complete. Mirrors the consumer managed block
+# (scripts/sync-to-repos.mjs MANAGED_IGNORE_PATTERNS).
+.audit/
 # Brainstorm session ledger + saved insights (per-machine state)
 .brainstorm/
-
-# Per-run audit artifacts (results, transcripts, rebuttals). The `*` before
-# `.json`/`.md` (not a trailing anchor) also covers versioned re-review
-# artifacts (`-result-v2.json`, `-transcript-v2.json`, …) — narrower patterns
-# kept re-drifting out of sync with the `-v<N>` re-run naming convention.
-.audit/*-result*.json
-.audit/*-stderr*.log
-.audit/*-transcript*.json
-.audit/*-rebuttal*.md
-.audit/*-resolution*.json
-.audit/*-debt-review*.md
-.audit/*-meta-assessment*.md
-.audit/*-ledger*.json
-.audit/gemini-result.json
-.audit/mab.json
-.audit/plan-fp-patterns.json
-.audit/stats.json
-# Runtime state + per-cycle working files that had drifted out of this list
-# (they made `git status` show a noisy `?? .audit/`). Prune the transient ones
-# with `npm run audit:clean`.
-.audit/cache-metrics.jsonl
-.audit/cycle-cluster-state.json
-.audit/.outcomes-finalized
-.audit/last-audit-run.json
-.audit/spot-check/
-.audit/*.patch
-.audit/*.log
-.audit/burnin*
-.audit/cluster*
-.audit/*worksheet*.md
-
-# model-swap-eval-harness (Phase 3) — intermediate run/corpus artifacts.
-# Category A: derived from external git history, no freshness check —
-# the persisted model_eval_runs row is the sole canonical result.
-.audit/tmp/model-eval/
-
-# tiered-recall pipeline shadow-validation log (Close-out) — Category A,
-# non-deterministic runtime output from real production audit runs; a
-# temporary, bounded artifact for the Phase-14 decision, not a permanent record.
-# Now local-fallback only (authoritative aggregation moved to Supabase,
-# 2026-07-13); *.jsonl covers the archived pre-incident-test-noise file too.
-.audit/tiered-shadow-log*.jsonl
 
 # Human adjudication worksheets — regenerated on every queue listing
 # (Category-A volatile state; discoverable next to the session archives)
@@ -106,10 +50,6 @@ docs/arm-eval/worksheets/
 # same Category-A artefacts a consumer does — gitignore.mjs adds this pattern to
 # CONSUMER repos, but this repo's own .gitignore is hand-maintained and missed it.
 .audit-loop-install-txn.json.lock
-
-# Author-private self-audit artefacts (this repo auditing itself)
-.audit/tech-debt.json
-.audit/vendoring-provenance.json
 
 # Stale artifact from early development
 --db-path
@@ -168,8 +108,6 @@ scripts/.sync-manifest.json
 
 # Brainstorm temp files: topic stdin + malformed-payload debug JSONs (0o600).
 .claude/tmp/
-.audit/orphan-metrics.jsonl
-.audit/cache-metrics.jsonl
 
 # Requirements layer — extraction intermediates are regenerable; the
 # reconciled ledger + hand-curated overrides ARE committed (shared rubric).
