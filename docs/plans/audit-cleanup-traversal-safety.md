@@ -186,7 +186,7 @@ Those Dirents are indistinguishable from real in-tree files, so they'd flow
 straight to the `rmSync` sink. Worse, the draft's test only covered
 `cache/link -> outside`, never `cache -> outside` — so it would have gone
 **green on a fix that misses the primary scenario**. That is the
-false-green shape `docs/pre-ship-empirical-verify.md` §"audit your success
+false-green shape `docs/runbooks/pre-ship-empirical-verify.md` §"audit your success
 paths" exists to catch, and it is the second time on this plan that the
 test and the fix shared the same blind spot.
 
@@ -406,7 +406,7 @@ threshold for phasing.
 
 **Pre-implementation empirical check — EXECUTED 2026-07-17, non-finding
 STANDS.** Run before writing any fix, per the repo's
-pre-ship-empirical-verify doctrine (`docs/pre-ship-empirical-verify.md`)
+pre-ship-empirical-verify doctrine (`docs/runbooks/pre-ship-empirical-verify.md`)
 and the "verify surprising findings against source-of-truth" rule. Result
 on `win32`:
 
@@ -522,7 +522,7 @@ contract — all four required:
 Symlink creation on Windows needs Developer Mode or elevation; if
 `fs.symlinkSync` throws `EPERM`, the traversal tests **skip with a loud
 reason** rather than passing vacuously — a green that proves nothing is
-the failure mode `docs/pre-ship-empirical-verify.md` §"audit your success
+the failure mode `docs/runbooks/pre-ship-empirical-verify.md` §"audit your success
 paths" names explicitly. CI (Linux) always runs them for real.
 
 Plus `npm test` (full suite) before ship.

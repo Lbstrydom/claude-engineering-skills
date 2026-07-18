@@ -710,9 +710,37 @@ text-like file **cannot** produce an unqualified green scan.
     reviewed 28-item inventory. **Not "0 actionable"**: GONE is Phase 3's. Plus
     `skills:check` green (R1-M2). The two tools are checked against each other; only
     the migration tool ever says "moved".
-- **Phase 3 — Triage the 28 GONE**. Manual, not scripted — each is a judgement
-  (delete the ref / create the doc / mark `(planned)`). **Acceptance: 0 actionable
-  across all non-excluded surfaces** — the Cluster-B exit condition. Files: ~20 (modify).
+- **Phase 3 — Triage the GONE (reframed by a multi-LLM design review, 2026-07-18)**.
+  The report-only gate, pointed at the whole repo for the first time, surfaced
+  **118** GONE — but ~90 were **false-positive CLASSES**, not stale refs the plan's
+  "~28 manual triage" anticipated. OpenAI + Gemini independently converged: a
+  path-shaped token is not a citation; the durable answer is **baseline + drift-gate**
+  (fail CI only on a ref that *newly* breaks in the changed surface, never on the
+  standing GONE total), plus **structural subtree exclusions** for non-authored
+  surfaces. So Phase 3 acceptance is **not "0 GONE"** (unreachable without
+  over-excluding — the noise-then-bypass spiral) but **"false-positive classes
+  structurally handled + genuine refs fixed + a recorded, drift-clean baseline."**
+  - **Two structural exclusions added** (`check-docs-refs.mjs`): `FIXTURE`
+    (`tests/**` — tests construct synthetic doc paths as data; a stale test-comment
+    ref is acceptable decay) and `TOOL_OWNED` (`docs/arm-eval/**` — tool-written
+    runtime archives per `docs/README.md`, same class as HISTORICAL). Cleared 73.
+  - **35 genuine fixes**: 10 reorg-victim path fixes (`docs/pre-ship-empirical-verify.md`
+    → `docs/runbooks/…`, targets verified), 23 usage-example placeholders → `<name>.md`,
+    2 forward-refs → `(planned)`.
+  - **Acceptance: 10 residual GONE, recorded as the accepted BASELINE** — all
+    write-targets / never-produced artifacts / generated outputs / an illustrative
+    comment / a cross-repo ref, none with a correct mechanical fix. The drift-gate
+    (Phase 6) fires only on *net-new* breakage, so this baseline is free. Baseline
+    list: `architecture-intent-framework-audit-summary.md` (never-produced summary);
+    `phase1-ledger-decomposition.md`×4 + `phase5-decision.md` + `experiments/…/README.md`
+    (generated `--out` outputs, incl. `package.json:24`); `model-ab-adjudication-worksheet.md`
+    (tool-owned output); `docs/auth.md` (illustrative comment); `persona-test-consistency-phase3.md`
+    (cross-repo). Files: ~14 (modify), `check-docs-refs.mjs` + its test + contract (modify).
+  - **NOT scripted as pure codemod**: the fixups were deterministic (a Category-A
+    scratchpad script for the regular replacements) but the *classification* (which
+    class each GONE belongs to) was the judgement — exactly the plan's "scripted iff
+    regular AND verifiable" split. The `.claude/skills/**` mirror was regenerated,
+    never hand-edited (R1-M2).
   - **`compat-bootstrap.sql:5` is NOT in this phase (G2)** — it cites
     `docs/plans/postgres-parity-non-core-inventory.md`, and that file is one of the
     140 moving **into** `docs/plans/` in Phase 2, so the reference **heals for free**,

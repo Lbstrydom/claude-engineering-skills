@@ -222,7 +222,7 @@ crash-safety state machine. Redesigned as 7 fixes:
      `success:true` **with a non-empty `degradations`** — asserting the
      warning path exists rather than trusting prose. This is the
      "audit your success paths" rule from
-     `docs/pre-ship-empirical-verify.md`: a degraded install that reports
+     `docs/runbooks/pre-ship-empirical-verify.md`: a degraded install that reports
      clean is exactly the false-green that doctrine names.
 2. **Concurrent-instance locking + pre-existing-journal check** (R1-H4/H5
    combined; **the lock parameterisation was factually wrong until R2-M1**):
@@ -1150,7 +1150,7 @@ Still below the Gate-1 threshold for phasing — one sitting of work.
     `degraded`; `executeTransaction` surfaces `degradations[]`; the CLI
     renders it) and a test asserting a degraded install reports
     `success:true` **with a non-empty `degradations`** — the false-green
-    that `docs/pre-ship-empirical-verify.md` §"audit your success paths"
+    that `docs/runbooks/pre-ship-empirical-verify.md` §"audit your success paths"
     exists to catch.
   - **M2** (accepted, and it improved the design): `_testHoldMsAfterLock`
     was a production-reachable stall added at R2-M1 purely for test

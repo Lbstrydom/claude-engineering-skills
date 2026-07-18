@@ -759,7 +759,7 @@ const SEV_ORDER = { HIGH: 0, MEDIUM: 1, LOW: 2 };  // Severity sort order
 
 Run a real audit with default ledger auto-write:
 ```bash
-node scripts/openai-audit.mjs code docs/plans/test.md --out /tmp/test-result.json
+node scripts/openai-audit.mjs code docs/plans/<name>.md --out /tmp/test-result.json
 ```
 Then verify:
 1. `/tmp/test-ledger.json` auto-created alongside output

@@ -317,6 +317,18 @@ describe('check-docs-refs / exclusions', () => {
     assert.equal(isExcluded('status.md')?.id, 'HISTORICAL');
   });
 
+  it('excludes the test surface (FIXTURE) — tests construct synthetic doc paths as data', () => {
+    assert.equal(isExcluded('tests/arch-memory-followups.test.mjs')?.id, 'FIXTURE');
+    assert.equal(isExcluded('tests/claudemd/fixtures/clean/CLAUDE.md')?.id, 'FIXTURE');
+    // but the gate's OWN test stays under SPEC (more specific intent), not FIXTURE
+    assert.equal(isExcluded('tests/check-docs-refs.test.mjs')?.id, 'SPEC');
+  });
+
+  it('excludes tool-owned runtime archives (TOOL_OWNED)', () => {
+    assert.equal(isExcluded('docs/arm-eval/sessions/20260704-x.md')?.id, 'TOOL_OWNED');
+    assert.equal(isExcluded('docs/arm-eval/worksheets/queue.md')?.id, 'TOOL_OWNED');
+  });
+
   it('excludes the grammar\'s own SPEC (use vs mention)', () => {
     // A doc that defines the notation must show the notation; those tokens are
     // mentions, not claims. Same class as egress-path-scan.mjs's own security

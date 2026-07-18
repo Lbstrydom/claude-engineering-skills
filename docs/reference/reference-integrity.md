@@ -160,9 +160,21 @@ read).
 | `docs/experiments/**/known-defects*.json` | **CORPUS.** Other repos' plan paths, mined from commits across three repos. Not citations at all. |
 | `docs/plans/security/files/**` | **VENDORED.** A portable kit, path-mirrored on purpose. |
 | `status.md` | **HISTORICAL.** An append-only session log; a past entry was true when written. Rewriting it falsifies the record. |
+| `tests/**` | **FIXTURE.** Test files are not documentation — they construct synthetic doc paths as *data* (`docs/plans/a.md` written into a temp dir), not citations of real files. Structural subtree scope, not a per-token allowlist. Accepted trade-off: a stale docs ref inside a test comment goes unchecked (acceptable decay under the drift-gate). |
+| `docs/arm-eval/**` | **TOOL_OWNED.** Append-only runtime export archives, tool-written (listed in `docs/README.md` under "Tool-owned directories"). Same class as HISTORICAL. |
 
 Cross-repo references need no exclusion — they are structurally invisible to the
 parser (the leading lookbehind includes `/`).
+
+> **Design note (multi-LLM review, 2026-07-18).** An exclusion list is only safe
+> because the gate is **drift-only**: CI fails on a ref that *newly* breaks in the
+> changed surface, never on the standing GONE total. That makes a noisy **baseline**
+> free — write-target `--out` paths, never-produced generated artifacts, and
+> illustrative comments sit in the baseline and never fire, so they need no
+> exclusion and no fix. The alternative (chase every GONE to zero) is the
+> noise-then-bypass spiral this gate exists to avoid. Exclusions are for whole
+> *surfaces* that are not authored reference prose; the baseline absorbs individual
+> non-citation path literals.
 
 ---
 
@@ -174,7 +186,8 @@ parser (the leading lookbehind includes `/`).
 | The doc never existed / was deleted | Delete the claim, or write the doc. |
 | It's an example, not a claim | Mark it: `docs/plans/<name>.md`. |
 | It's a real forward-reference | Mark it: `docs/plans/thing.md (planned)`. |
-| It's a genuinely new exempt surface | Add it to the exclusion table **with its reason** — never to silence a real finding. |
+| It's a write-target / generated output / illustrative example | **Leave it** — it belongs in the drift-gate baseline, not a fix. Marking a real `--out` path as a `<placeholder>` would be wrong. |
+| It's a genuinely new exempt *surface* (a whole subtree of non-authored prose) | Add it to the exclusion table **with its reason** — never to silence an individual finding. |
 
 **Do not** add a bare filename to an allowlist to make the gate pass. An allowlist
 of bare filenames silently absolves real typos; that is why legacy literals

@@ -69,7 +69,7 @@ closed alongside.
   - Model Swap-In Evaluation Harness → `docs/runbooks/model-eval-harness.md` (new)
   - Pre-ship empirical verify worked detail → `docs/runbooks/pre-ship-empirical-verify.md` (new)
   - Tiered-recall shadow wiring history → appended to
-    `docs/completed/tiered-recall-audit-pipeline.md` (addendum)
+    `docs/plans/tiered-recall-audit-pipeline.md` (addendum)
   - Consumer-sync mechanics (why-isolated, what-sync-writes table,
     key modules) → `docs/runbooks/consumer-adoption.md` §"Sync internals"
   - Inline `scripts/` tree in Architecture DELETED as stale duplication

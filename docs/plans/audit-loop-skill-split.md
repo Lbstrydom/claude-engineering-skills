@@ -335,7 +335,7 @@ Must pass. Includes Phase E's `skill-refs-parser` checks.
 
 ### 4.4 Smoke test
 
-In a test consumer repo: invoke `/audit-plan docs/plans/some-test-plan.md`. Verify:
+In a test consumer repo: invoke `/audit-plan docs/plans/<name>.md`. Verify:
 - GPT call fires with `plan` subcommand, not `code`.
 - No `--scope`/`--diff` flags in invocation.
 - Triage rules apply correctly.
@@ -385,7 +385,7 @@ Four references. Each reference-index row matches the `summary:` frontmatter.
 
 ### 5.4 Smoke test
 
-In a test consumer repo with a recent diff: invoke `/audit-code docs/plans/some-test-plan.md`. Verify:
+In a test consumer repo with a recent diff: invoke `/audit-code docs/plans/<name>.md`. Verify:
 - GPT call fires with `code` subcommand.
 - `--scope diff` defaults; `git diff` plumbing works.
 - Multi-pass parallelism (5 passes) executes.
@@ -532,11 +532,11 @@ Search for any GH Action that calls `audit-loop` directly. Update to call the sp
 
 | Invocation | Expected behavior | Verify |
 |---|---|---|
-| `/audit-plan docs/plans/X.md` | Direct plan audit | New skill fires, plan-only flow |
-| `/audit-code docs/plans/X.md` | Direct code audit | New skill fires, code-only flow |
-| `/audit-loop plan docs/plans/X.md` | Orchestrator → /audit-plan | Same as direct, via dispatch |
-| `/audit-loop code docs/plans/X.md` | Orchestrator → /audit-code | Same as direct, via dispatch |
-| `/audit-loop docs/plans/X.md` (shorthand) | Orchestrator → /audit-code | Defaults to code via shorthand path detection |
+| `/audit-plan docs/plans/<name>.md` | Direct plan audit | New skill fires, plan-only flow |
+| `/audit-code docs/plans/<name>.md` | Direct code audit | New skill fires, code-only flow |
+| `/audit-loop plan docs/plans/<name>.md` | Orchestrator → /audit-plan | Same as direct, via dispatch |
+| `/audit-loop code docs/plans/<name>.md` | Orchestrator → /audit-code | Same as direct, via dispatch |
+| `/audit-loop docs/plans/<name>.md` (shorthand) | Orchestrator → /audit-code | Defaults to code via shorthand path detection |
 | `/audit-loop full <task>` | Plan then code | Both phases run, plan converges before code starts |
 | `/audit-loop <task>` (no path) | PLAN_CYCLE → /audit-plan | Plan-cycle behavior unchanged |
 | Consumer-repo install fresh | All 3 skills present | `bootstrap.mjs install` ships them |

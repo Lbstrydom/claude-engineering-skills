@@ -5,7 +5,7 @@ description: |
   Updates status.md (session log), syncs CLAUDE.md to AGENTS.md, and handles git workflow.
   Use when the user is ready to commit and push their work.
   Usage: /ship — sync docs + commit + push
-  Usage: /ship docs/plans/feature.md — also update the plan before committing
+  Usage: /ship docs/plans/<name>.md — also update the plan before committing
   Usage: /ship --no-tests             — skip pre-push tests (override; logged in ship_event)
   Usage: /ship --ignore-p0            — push despite an unresolved persona-test P0 finding
   Usage: /ship --skip-ux-lock         — push despite an unlocked recent UI fix
@@ -22,7 +22,7 @@ A single command that ensures all project documentation is current, then
 commits and pushes. Follow every step in order.
 
 **Arguments**: `$ARGUMENTS` — optional path to a plan file to update
-(e.g., `docs/plans/feature.md`).
+(e.g., `docs/plans/<name>.md`).
 
 ---
 
@@ -574,7 +574,7 @@ prints `{"ok":true,"cloud":false}` and returns 0.
 | Syntax | What happens |
 |---|---|
 | `/ship` | Update status.md → sync CLAUDE.md/AGENTS.md → commit → push |
-| `/ship docs/plans/feature.md` | All of the above + update the plan file |
+| `/ship docs/plans/<name>.md` | All of the above + update the plan file |
 
 ## Reminders
 

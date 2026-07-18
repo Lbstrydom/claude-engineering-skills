@@ -292,6 +292,31 @@ export const EXCLUSIONS = [
       rel === 'tests/check-docs-refs.test.mjs'
     ),
   },
+  {
+    id: 'FIXTURE',
+    reason:
+      'test files are not documentation — they are private scratchpads. They CONSTRUCT synthetic ' +
+      'doc paths as DATA (`docs/plans/a.md`, `docs/plans/zeta.md`, `docs/gone.md` written into temp ' +
+      'dirs), not as citations of real files, so there is no real target to "fix". This is the same ' +
+      'use-vs-mention class as SPEC, at subtree scale rather than per-file. STRUCTURAL scope, not a ' +
+      'growing per-token allowlist (multi-LLM design review, 2026-07-18: OpenAI + Gemini both '+
+      'independently recommended excluding the test surface wholesale — "test files are not ' +
+      'documentation" — to eliminate ~65 false positives with one coherent semantic rule). ACCEPTED ' +
+      'TRADE-OFF: a genuinely-stale docs citation inside a test comment goes unchecked. Tolerable ' +
+      'under the drift-gate (a stale test comment breaks no one — "acceptable decay"), and the '+
+      'gate\'s VALUE is protecting authored reference prose in docs/code, not test data.',
+    test: rel => rel.startsWith('tests/'),
+  },
+  {
+    id: 'TOOL_OWNED',
+    reason:
+      'append-only RUNTIME EXPORT archives, tool-written, not authored reference prose. ' +
+      '`docs/arm-eval/**` is listed in docs/README.md under "Tool-owned directories — don\'t ' +
+      'reorganise these" (an *output* of the arm-eval capture). Same class as HISTORICAL (status.md): ' +
+      'a session export was true when written; editing it to keep a link green falsifies the record. ' +
+      'Scoped to the declared tool-owned subtree, per docs/README.md.',
+    test: rel => rel.startsWith('docs/arm-eval/'),
+  },
 ];
 
 /** @returns {{id:string, reason:string}|null} */

@@ -224,11 +224,11 @@ ${B}═════════════════════════�
   ✓ Installed!
 ══════════════════════════════════════════════════${X}
 
-  ${D}Audit:${X}         /audit-loop plan docs/plans/X.md
+  ${D}Audit:${X}         /audit-loop plan docs/plans/<name>.md
   ${D}Persona test:${X}  /persona-test "first-time user" https://myapp.railway.app
   ${D}List personas:${X} /persona-test list
   ${D}Ship:${X}          /ship (includes UX P0 gate)
-  ${D}Terminal:${X}      node scripts/openai-audit.mjs code docs/plans/X.md
+  ${D}Terminal:${X}      node scripts/openai-audit.mjs code docs/plans/<name>.md
   ${D}Sync skills:${X}   node scripts/sync-to-repos.mjs (also runs on git push)
   ${D}Bandit:${X}        node scripts/bandit.mjs stats
   ${D}Phase 7:${X}       node scripts/phase7-check.mjs

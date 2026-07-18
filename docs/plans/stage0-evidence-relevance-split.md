@@ -547,7 +547,7 @@ new coupling introduced by this design.
   `debt-resolve.mjs` already offers), the existing debt-capture
   infrastructure already supports that — no schema change needed to route
   more volume through it.
-- **Pattern for future discovery-model swap-ins** (`docs/model-eval-harness.md`):
+- **Pattern for future discovery-model swap-ins** (`docs/runbooks/model-eval-harness.md`):
   every future candidate model reuses this exact Gate A/B split unmodified —
   the fix generalizes by construction, since nothing in Gate A or Gate B is
   GLM-specific.

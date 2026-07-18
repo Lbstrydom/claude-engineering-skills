@@ -506,7 +506,7 @@ Display in kickoff card:
 ```
 ═══════════════════════════════════════
   AUDIT LOOP — CODE_AUDIT — Starting
-  Plan: docs/plans/X.md | Passes: 3/5
+  Plan: docs/plans/<name>.md | Passes: 3/5
   Estimated: ~$0.12 | ~8 min | ~15K tokens
 ═══════════════════════════════════════
 ```

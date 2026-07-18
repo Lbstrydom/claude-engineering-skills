@@ -18,13 +18,13 @@ variable first — never paste free-form values inline into the JS string
 commands can't even be pasted):
 
 ```bash
-export PLAN=docs/plans/cellar-grid-redesign.md
+export PLAN=docs/plans/<name>.md
 node --input-type=module -e "
 import { readFileSync } from 'node:fs';
 import { parseAcceptanceCriteria } from './scripts/lib/plan-criteria-parser.mjs';
 const md = readFileSync(process.env.PLAN, 'utf8');
 console.log(JSON.stringify(parseAcceptanceCriteria(md), null, 2));
-" # PowerShell: $env:PLAN='docs/plans/cellar-grid-redesign.md' first
+" # PowerShell: $env:PLAN='docs/plans/<name>.md' first
 ```
 
 Returns `{ criteria: [...], errors: [...], found: boolean }`.

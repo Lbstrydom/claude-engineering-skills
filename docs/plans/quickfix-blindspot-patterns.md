@@ -8,7 +8,7 @@
 ## Context Summary
 
 Implements Follow-on Phase 13 of the (now-archived, complete)
-`docs/completed/tiered-recall-audit-pipeline.md` plan: "the five named
+`docs/plans/tiered-recall-audit-pipeline.md` plan: "the five named
 Claude blind-spot classes (Phase 2) get their regex-detectable subset added
 to the PostToolUse quickfix hook's `PATTERNS` matrix... edit-time nudges,
 complementing Phase 2's LLM-prompt layer." The five classes (from that

@@ -16,7 +16,7 @@ description: |
     /ux-lock "modal closes before retry"
     /ux-lock abc1234
     /ux-lock "role=list on wine grid" --url https://myapp.railway.app
-    /ux-lock verify docs/plans/cellar-grid-redesign.md --url https://myapp.railway.app
+    /ux-lock verify docs/plans/<name>.md --url https://myapp.railway.app
 ---
 
 # UX Lock — Playwright Spec Generator & Plan Verifier

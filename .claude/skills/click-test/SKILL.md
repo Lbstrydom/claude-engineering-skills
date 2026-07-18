@@ -579,8 +579,8 @@ Why deferred:
 `record-click-test` subcommand with Zod-validated payload, decide table
 strategy (new `click_test_runs` table vs reusing `regression_specs` with
 a discriminator), update `/ship` to surface unresolved P0s, add tests.
-Tracked in [docs/plans/click-test-v2-persistence.md] (file to be created
-when v2 starts; not a v1 blocker).
+Tracked in docs/plans/click-test-v2-persistence.md (planned) — file to be
+created when v2 starts; not a v1 blocker.
 
 ---
 
