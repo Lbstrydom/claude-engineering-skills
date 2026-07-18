@@ -1,5 +1,17 @@
 # Project Status Log
 
+## 2026-07-18 — Reference-integrity gate: consolidate plans, delete the archiver, drift-gate (A+B+C landed)
+
+### Changes
+- **The whole `docs/plans/` vs `docs/completed/` split was a denormalized cache of the `Status:` line, and nothing invalidated it.** `/ship` archived a completed plan `docs/plans/X.md → docs/completed/X.md`, silently breaking every reference to it. Fixed by **eliminating the cache**: all 145 archived plans consolidated back into `docs/plans/` (git-rename, history preserved), the archiver deleted, `Status:` made the single source of truth. Full plan: `docs/plans/reference-integrity-gate.md` (3 GPT + 2 Gemini plan-audit rounds → APPROVE).
+- **Cluster A — the reference-integrity lint** (`scripts/check-docs-refs.mjs`, report-only→gating): resolves every `docs/**.md` citation against the git index (case-exact, platform-stable); marked placeholders (`<name>.md`) + `(planned)` forward-refs; declared per-surface exclusions (FROZEN migrations, CORPUS, VENDORED, HISTORICAL, SPEC, FIXTURE tests, TOOL_OWNED arm-eval). 5 GPT + 2 Gemini rounds; it caught 3 live archive-move regressions + a cross-repo `CLI_SMOKE_SET` bug on contact.
+- **Cluster B — consolidate + the drift-gate reframe**: 145-file `git mv` + 163-ref rewrite. A multi-LLM design review (OpenAI+Gemini, `/brainstorm`) reframed the 118 surfaced GONE as **baseline + drift-gate**: gate on NET-NEW breakage, never the standing total, so a noisy baseline of write-targets/never-produced/illustrative refs is free. 73 cleared by structural exclusions, 36 genuine fixes, **9 recorded baseline**.
+- **Cluster C — the status contract + turn gates on**: `scripts/lib/plan-status.mjs` (the one parser the shell hook must not re-implement) + `check-plan-status.mjs` (`--select` for the hook, vocabulary lint). Reconciled the **third status vocabulary** (a DB CHECK) via migration (live-verified: `upsert status=approved` now works). Deleted `archive-completed-plans.mjs`; the pre-push hook now selects the active plan via Status (never re-audits a `Complete` plan) and is version-stamped + refresh-on-mismatch. `npm run check` now runs `docs:refs:gate` (drift-only, self-cleaning baseline) + `plans:status`.
+
+### Verification
+- Consolidated Gemini gate over the B+C union: round 1 CONCERNS (2 regex edge-case fixes) → round 2 **APPROVE**. Every GPT finding fixed or adjudicated with cause; 0 wrongly-dismissed across all Gemini rounds.
+- Landed on `main` as a unit (A merged 07-17; B+C fast-forwarded after discarding the obsolete azure-embed archive-move). Both gates green; **full suite 7080 pass / 0 fail**; `docs:refs:gate` 0 net-new drift; `plans:status` clean (155 files).
+
 ## 2026-07-18 — Final-review gate: background-safe termination + provider-agnostic
 
 ### Changes

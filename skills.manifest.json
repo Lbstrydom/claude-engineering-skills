@@ -1,9 +1,9 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "ccbdead0b30098b9",
+  "bundleVersion": "3a8bdd43c396d6bc",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
-  "updatedAt": "2026-07-18T06:59:29.795Z",
+  "updatedAt": "2026-07-18T08:41:28.981Z",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
@@ -66,13 +66,13 @@
         },
         {
           "relPath": "references/debt-capture.md",
-          "sha": "82adfb670836",
-          "size": 4657
+          "sha": "3f531a3c3c7b",
+          "size": 4775
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "222c1fee521b",
-          "size": 8918
+          "sha": "76b56c059b14",
+          "size": 9104
         },
         {
           "relPath": "references/ledger-format.md",
@@ -81,8 +81,8 @@
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "0708da436ddc",
-          "size": 5472
+          "sha": "ba0df9b4a385",
+          "size": 5594
         }
       ]
     },
@@ -99,8 +99,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "222c1fee521b",
-          "size": 8918
+          "sha": "76b56c059b14",
+          "size": 9104
         },
         {
           "relPath": "references/ledger-format.md",
@@ -217,8 +217,8 @@
         },
         {
           "relPath": "examples/report-and-debrief.md",
-          "sha": "d0ce9fdffb6c",
-          "size": 6661
+          "sha": "ee7510886849",
+          "size": 6797
         },
         {
           "relPath": "references/audit-correlation.md",
@@ -227,8 +227,8 @@
         },
         {
           "relPath": "references/browser-tool-detection.md",
-          "sha": "3bfd5de2c7d4",
-          "size": 3377
+          "sha": "33700fa2d34b",
+          "size": 3460
         },
         {
           "relPath": "references/consistency-mode.md",
@@ -237,18 +237,18 @@
         },
         {
           "relPath": "references/interop.md",
-          "sha": "9cbe9dc0254c",
-          "size": 3575
+          "sha": "d3022c7f9ab7",
+          "size": 3677
         },
         {
           "relPath": "references/persona-debrief-format.md",
-          "sha": "2437807d742d",
-          "size": 3258
+          "sha": "921b8b405660",
+          "size": 3341
         },
         {
           "relPath": "references/session-history.md",
-          "sha": "6eb292e0b432",
-          "size": 2334
+          "sha": "04f6b5a2c8a6",
+          "size": 2407
         }
       ]
     },
@@ -270,28 +270,28 @@
         },
         {
           "relPath": "references/engineering-principles.md",
-          "sha": "08bd33ecb879",
-          "size": 3180
+          "sha": "bb2c6b3f1f64",
+          "size": 3234
         },
         {
           "relPath": "references/python-backend-profile.md",
-          "sha": "800c414577d2",
-          "size": 2159
+          "sha": "8d1f9c9f7325",
+          "size": 2210
         },
         {
           "relPath": "references/python-frontend-profile.md",
-          "sha": "33d7d66170a5",
-          "size": 2196
+          "sha": "e1c3c084bdc5",
+          "size": 2240
         },
         {
           "relPath": "references/technical-principles.md",
-          "sha": "fc0920faba68",
-          "size": 3442
+          "sha": "ab4587550303",
+          "size": 3503
         },
         {
           "relPath": "references/ux-principles.md",
-          "sha": "d65b7989e42c",
-          "size": 4294
+          "sha": "54b3df671271",
+          "size": 4369
         }
       ]
     },
@@ -321,13 +321,13 @@
         },
         {
           "relPath": "references/python-environment-discovery.md",
-          "sha": "3b3016df54a0",
-          "size": 2662
+          "sha": "ddf0c4303aab",
+          "size": 2737
         },
         {
           "relPath": "references/status-md-format.md",
-          "sha": "823b3e52c5c3",
-          "size": 2588
+          "sha": "8a1051d33067",
+          "size": 2681
         }
       ]
     },
