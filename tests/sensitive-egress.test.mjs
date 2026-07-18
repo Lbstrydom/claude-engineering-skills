@@ -417,3 +417,58 @@ describe('buildRulingsBlock — rationale redaction (expanded 100→300 payload)
     assert.doesNotMatch(block, /REDACTED/, 'no false-positive redaction of ordinary code citations');
   });
 });
+
+// ── Containment-adjacency wave: a NEW egress route ─────────────────────────
+// Plan: docs/plans/adjacency-check-containment.md §Security (Cluster C).
+// Registered in the repo-wide egress gate because AGENTS.md makes sensitive-path
+// egress one of two HARD test-first seams — and this wave ships code excerpts to
+// a provider that no pass sent before: specifically, STATEMENTS THE AUTHOR DID
+// NOT WRITE (the other contents of a conditional they changed inside). A
+// module-level test proves the module behaves; only this file proves the route
+// is constrained by the same policy as every other provider payload.
+describe('adjacency wave — evidence carrier egress contract', () => {
+  it('a sensitive source file is never read, and its existence is never disclosed', async () => {
+    const { runAdjacencyAnalysis } = await import('../scripts/lib/audit/adjacency-detector.mjs');
+    let reads = 0;
+    const r = await runAdjacencyAnalysis({
+      repoRoot: process.cwd(),
+      auditBaseCommit: 'HEAD',
+      bounds: { maxChangedFiles: 50, maxChangedLines: 20000, maxDiffBytes: 2e6, maxSourceFileBytes: 1e6, maxContainers: 20, maxStatementsPerContainer: 40, maxCandidates: 25, maxExcerptChars: 3000 },
+      adapters: {
+        numstat: () => ({ ok: true, files: [{ path: '.env.local.mjs', added: 1, deleted: 0, binary: false }], totalChangedLines: 1 }),
+        unifiedDiff: () => ({ ok: true, truncated: false, diffText: 'diff --git a/.env.local.mjs b/.env.local.mjs\n@@ -1,0 +2,1 @@\n+  x();\n' }),
+        classifyPath: () => ({ category: 'sensitive' }),
+        readFile: () => { reads += 1; return 'if (a) { leak(); }'; },
+      },
+    });
+    assert.equal(reads, 0, 'a sensitive path must be gated BEFORE any read');
+    assert.equal(r.candidates.length, 0);
+    assert.equal(JSON.stringify(r).includes('.env.local'), false, 'no record may disclose the path');
+  });
+
+  it('a secret-shaped statement is withheld at CONSTRUCTION — no raw text in the carrier', async () => {
+    const { runAdjacencyAnalysis } = await import('../scripts/lib/audit/adjacency-detector.mjs');
+    const SECRET = 'postgresql://user:hunter2@host.example.com/db';
+    const src = `function f(){\n  const outer = [];\n  if (cond) {\n    call("${SECRET}");\n  }\n}\n`;
+    const r = await runAdjacencyAnalysis({
+      repoRoot: process.cwd(),
+      auditBaseCommit: 'HEAD',
+      bounds: { maxChangedFiles: 50, maxChangedLines: 20000, maxDiffBytes: 2e6, maxSourceFileBytes: 1e6, maxContainers: 20, maxStatementsPerContainer: 40, maxCandidates: 25, maxExcerptChars: 3000 },
+      adapters: {
+        numstat: () => ({ ok: true, files: [{ path: 'a.mjs', added: 1, deleted: 0, binary: false }], totalChangedLines: 1 }),
+        unifiedDiff: () => ({ ok: true, truncated: false, diffText: 'diff --git a/a.mjs b/a.mjs\n@@ -3,0 +4,1 @@\n+    call("x");\n' }),
+        classifyPath: () => ({ category: null }),
+        statSize: () => src.length,
+        readFile: () => src,
+      },
+    });
+    // The scan runs before the evidence object exists, so there is no field for
+    // the secret to occupy anywhere downstream (cache, --out, composed result).
+    assert.equal(JSON.stringify(r).includes('hunter2'), false, 'the secret must never enter the carrier');
+    const withheld = r.candidates.filter((c) => c.payload?.safe === false);
+    if (withheld.length > 0) {
+      for (const c of withheld) assert.equal('statementText' in c.payload, false, 'a withheld payload has no text field');
+      assert.ok(r.incompleteness.length > 0, 'refusal must stay visible as coverage loss, never silent');
+    }
+  });
+});

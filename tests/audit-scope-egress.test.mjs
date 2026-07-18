@@ -211,3 +211,55 @@ test('full chain: readFilesAsContext (default redact) → assertEgressSafe does 
 
   assert.doesNotThrow(() => assertEgressSafe(out, { label: 'test' }));
 });
+
+// ── Containment-adjacency wave: the ASSEMBLY path a real audit takes ───────
+// Plan: docs/plans/adjacency-check-containment.md §Security (Cluster C).
+// The companion to tests/sensitive-egress.test.mjs's unit-level route
+// registration: this asserts the composed, PERSISTED shape — what actually
+// reaches cachePassResult and the `--out` JSON — carries no raw secret. A test
+// that only inspected the prompt would pass against a design that leaked here.
+test('adjacency: the composed+serialised result carries no withheld statement text', async () => {
+  const { composeAdjacencyResult } = await import('../scripts/lib/audit/adjacency-compose.mjs');
+  const SECRET = 'postgresql://user:hunter2@host.example.com/db';
+
+  const composed = composeAdjacencyResult({
+    analysis: {
+      coverage: { containersEnumerated: 1, statementsJudged: 4 },
+      candidates: [{
+        id: 'adj-a_mjs-12',
+        canonicalPath: 'a.mjs',
+        egressClassification: { category: null },
+        span: { startLine: 12, endLine: 12 },
+        conditionSpan: { startLine: 10, endLine: 10 },
+        containerLine: 10,
+        // Withheld at construction — there is no text field to leak.
+        payload: { safe: false, reason: 'payload-tripped-egress-scan' },
+        dependence: 'independent',
+      }],
+      incompleteness: [{ kind: 'excerpt-unresolvable', scope: 'a.mjs', detail: 'statement withheld — content tripped the egress scan' }],
+      threw: null,
+    },
+    bouncer: null,
+  });
+
+  const serialised = JSON.stringify(composed);
+  assert.ok(!serialised.includes('hunter2'), 'no secret may reach the persisted result');
+  assert.ok(!serialised.includes(SECRET));
+  assert.ok(!serialised.includes('statementText'), 'a withheld payload has no text field at all');
+  // …and the refusal is still REPORTED, so coverage loss is never silent.
+  assert.ok(composed.findings.some((f) => /coverage incomplete/.test(f.category)));
+  assert.ok(composed.findings.every((f) => f.is_quick_fix === true), 'control findings must block convergence');
+});
+
+test('adjacency: a clean composed result is byte-stable and leaks nothing', () => {
+  // MIRROR — without this, the assertions above could pass on an always-empty result.
+  return import('../scripts/lib/audit/adjacency-compose.mjs').then(({ composeAdjacencyResult }) => {
+    const composed = composeAdjacencyResult({
+      analysis: { coverage: { containersEnumerated: 3, statementsJudged: 11 }, candidates: [], incompleteness: [], threw: null },
+      bouncer: null,
+    });
+    assert.equal(composed.findings.length, 0);
+    assert.equal(composed.result.state, 'clean');
+    assert.ok(composed.result.coverage.containersEnumerated > 0, 'clean must be earned by real coverage');
+  });
+});

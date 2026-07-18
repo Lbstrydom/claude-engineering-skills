@@ -1,8 +1,10 @@
 # Plan: Containment-Adjacency Check — a mechanical wave that asks "what else is in this branch?"
 
 - **Date**: 2026-07-17
-- **Status**: Approved (design) — implementation not started; **blocked on the
-  evidence-anchor working set landing first** (§11 prerequisite gate)
+- **Status**: Complete — all three clusters implemented, tested and gated
+  (`/cycle --autonomous`, 2026-07-17). The §11 prerequisite cleared before the
+  run: the evidence-anchor working set landed, so `parseAllDiffSections` was
+  **consumed** rather than a third diff parser written.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 - **Sign-off (2026-07-17)**: the three design decisions carrying real cost were
@@ -470,6 +472,42 @@ statements**:
 **Of six statements, exactly one is mechanically independent — and it is WS-C,
 the defect 8 rounds missed. Precision 1-of-6 with zero LLM involvement.**
 
+> ⚠ **CORRECTED AT IMPLEMENTATION (Cluster B, 2026-07-17) — the table above was
+> hand-analysis and it was wrong in two ways. Measured, not re-derived:**
+>
+> 1. **The branch has 26 top-level statements, not 6.** The table listed the six
+>    landmark ones; it was never the full enumeration. Any precision figure
+>    quoted from it is therefore not a precision figure.
+> 2. **The naive rule misclassified WS-C itself.** Running the real detector
+>    against the frozen fixture put `for (const f of allFindings)
+>    populateFindingMetadata(f, …)` in `consumes-in-branch` — because it declares
+>    its own loop variable `f` in-branch and then reads it. **The single
+>    statement this entire wave exists to find was the one the first
+>    implementation got wrong.** Fix: a statement's *own* bindings are not branch
+>    dependencies (depending on a local you introduced yourself is not depending
+>    on the branch). Without that rule every loop and every statement with a
+>    local reads as condition-dependent — the false-negative direction, which
+>    hides trapped statements silently.
+> 3. **A second class needed a second rule.** With the fix, 11 of 26 were
+>    `independent` — 6 of them declarations (`const debtEvents = []`,
+>    `const surfacedTopics = new Map()`, …) that read nothing in-branch but whose
+>    *consumers* are in-branch. They are the setup half of branch machinery, not
+>    trapped statements. New verdict **`produces-for-branch`**, computed from
+>    `binding.referencePaths` (which Babel already produced, so it costs nothing)
+>    rather than spending an LLM call on the largest FP class.
+>
+> **Measured final distribution on the real branch**: `independent` **5**,
+> `produces-for-branch` 6, `consumes-in-branch` 13, `references-condition` 2 — of
+> 26. WS-C is among the 5. The other 4 are three `process.stderr.write` log lines
+> and `allFindings.length = 0` — i.e. **exactly the "bare log line" false-positive
+> class D5 named as the bouncer's reason to exist**, which is the one prediction
+> in this section that held.
+>
+> **So the honest headline is "1 true positive in 5 mechanical candidates per
+> container", not "1 of 6".** Recall is what the mechanical stage carries (WS-C
+> is found); the bouncer is genuinely load-bearing for precision, not a nicety.
+> Both regressions above are pinned by tests that fail if either rule is removed.
+
 Note what this proves about the two classes: the thing the apparatus **could
 not** find is the *mechanically certain* one; the thing it **did** find (WS-B) is
 the ambiguous one needing judgment. The mechanical core is not a cheap
@@ -827,6 +865,18 @@ shape-adjacency engine to catch it is the over-engineering cliff (§Right-sizing
 - **Why**: closes the pre-existing `shared-lib → nav-audit` forbidden edge (D6).
   One line; the reason it is in this plan at all is impact-not-authorship.
 
+#### `scripts/lib/lint/on-conflict.mjs` (modify — `shared-lib`)
+- Repoint `import { parseSource }` from `../nav/ast.mjs` → `../ast.mjs`.
+- **Why — discovered at implementation, amended into scope rather than done
+  silently** (Cluster A, 2026-07-17). D6's survey found **one** forbidden edge
+  (`efficacy-lints`); enumerating *every* importer of `nav/ast.mjs` before
+  touching it found a **second** `shared-lib` consumer. Both are the same
+  violation and the same one-line fix, so leaving this one would have closed the
+  edge the plan happened to notice while leaving its twin open — which is
+  precisely the sibling-path failure this entire wave exists to prevent. Recorded
+  here because §11's reconciliation rule requires an out-of-scope edit to be
+  amended into the plan, never absorbed quietly.
+
 ### The mechanical core
 
 #### `scripts/lib/audit/evidence-triage.mjs` (modify — `audit-orchestration`)
@@ -946,10 +996,17 @@ shape-adjacency engine to catch it is the over-engineering cliff (§Right-sizing
   references only**; property keys, labels, and declaration identifiers excluded;
   shorthand and destructuring handled by the binding resolver, not by hand.
 - `classifyStatementDependence(statementPath, {conditionNode, branchPath})` →
-  `'independent' | 'consumes-in-branch' | 'references-condition'` — the D4 rule,
-  built on `collectReadBindings`. A binding declared earlier in the branch counts
-  **only if read**; `var` is function-scoped and therefore not in-branch (D4a) —
-  and `binding.scope` gives that for free rather than by a hand-written rule.
+  `'independent' | 'consumes-in-branch' | 'produces-for-branch' | 'references-condition'`
+  — the D4 rule, built on `collectReadBindings`. A binding declared earlier in the
+  branch counts **only if read**; `var` is function-scoped and therefore not
+  in-branch (D4a) — `binding.scope` gives that for free rather than by a
+  hand-written rule. Two rules were added at implementation, each because the
+  real fixture proved the rule without it was wrong (see §1's correction box):
+  **(a)** a statement's own bindings (loop variables, its own locals) are not
+  branch dependencies — without this, WS-C itself misclassifies; **(b)**
+  `produces-for-branch` — a declaration whose binding is referenced by a later
+  in-branch statement is branch machinery, not a trapped statement, computed from
+  `binding.referencePaths`.
 - `runAdjacencyAnalysis({repoRoot, auditBaseCommit, bounds, adapters})` →
   **`{coverage, candidates: AdjacencyCandidateEvidence[], incompleteness[]}` —
   FACTS, not a state** (D9a). Derives the diff internally (D1a); enforces the
@@ -1523,6 +1580,43 @@ landed in a branch.
 > not skippable. **B must precede C**: C's wave block calls the detector B builds.
 > A's `fix-gate: yes` is therefore both about A's own atomicity and about B/C's
 > dependency on it.
+
+---
+
+## Implementation Trail (`/cycle --autonomous`, 2026-07-17)
+
+| Cluster | Scope | Outcome |
+|---|---|---|
+| **A** | shared AST primitive + `@babel/traverse` | Landed. Closed **two** forbidden `shared-lib → nav-audit` edges — the plan had found one; enumerating every importer before touching the module found `lint/on-conflict.mjs` as well, and it was **amended into §7** rather than absorbed silently. |
+| **B** | state factory, detector, config bounds | Landed. The flagship pin passes: from `59f196f`'s real hunk anchor it resolves the branch at 2366-2505 and classifies `populateFindingMetadata` as `independent`. |
+| **C** | report, bouncer, composer, Wave 6 wiring | Landed. Convergence inherited via `is_quick_fix`; no `convergence.mjs` change; no `gate-contract.json` entry. |
+
+**Consolidated Gemini gate: `APPROVE`** (round 2; round 1 `CONCERNS` — G1 accepted
+and fixed, G2 refuted with evidence). 0 wrongly-dismissed across both rounds.
+
+**Verification**: 7102 → 7206 tests (+104), failures **15 → 15, identical by
+name** (pre-existing `anthropic-client` cli-backend, baselined before any edit).
+All 9 non-test pre-push gates pass; `npm run check` exits 1 solely on those same
+pre-existing failures, which fail at baseline too.
+
+### Five defects found by RUNNING the code, not reading it
+
+The repo's pre-ship-empirical-verify doctrine earned its keep here — none of
+these was visible to static review, and two were invisible to a green unit suite:
+
+| # | Defect | How it surfaced |
+|---|---|---|
+| 1 | **The naive scope rule misclassified WS-C itself** — the one statement the wave exists to find — because the `for…of` declares its own loop variable in-branch | First run against the frozen fixture |
+| 2 | **A seam mismatch 47 passing unit tests missed**: detector returned `{coverage:{…}}` nested, factory destructured flat → "0 containers alongside 2 candidates" | First live end-to-end run |
+| 3 | **Guard clauses were false positives** (`if (!m) continue;`) | Pointing the detector at its own newly-written code |
+| 4 | **Adding `adjacency` to `PASS_PROMPTS` silently enrolled the wave in the model-A/B/C shadow's *paid generator* comparison** (5 gen passes/arm → 6) | The existing spend-cap test |
+| 5 | **A bouncer completeness violation degraded silently** — fallback findings emitted, nothing recorded that judgement had failed | Consolidated Gemini gate (G1) |
+
+Defects 2 and 5 are the plan's own thesis turned on itself: each arose only
+where two individually-correct pieces met, and each produced *plausible output
+while reporting nothing wrong*. Fix 4 also renamed the exclusion into a
+`MECHANICAL_WAVES` set, so the next wave's author has one obvious place to look
+instead of an unnamed inline filter.
 
 ---
 

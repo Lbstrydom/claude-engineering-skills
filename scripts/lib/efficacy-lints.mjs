@@ -11,7 +11,7 @@
  * `unable-to-prove` (yellow), never a fake green — the doctrine applied to our own lint.
  *
  * Detection (plan §2a, Gemini-gate HIGH — AST OR stripped-regex, NEVER both on one file):
- *   - JS/TS → `@babel/parser` AST walk (reuses nav/ast.mjs). The AST distinguishes code from
+ *   - JS/TS → `@babel/parser` AST walk (reuses the shared lib/ast.mjs). The AST distinguishes code from
  *     comments/strings structurally, so regex-literal and quote-in-comment false matches can't occur.
  *   - non-JS, OR a JS parse failure → the cruder fallback: a LANGUAGE-AWARE comment/string strip
  *     (`//`/`/* *​/` for JS-like, `#` for py/sh/yaml, `<!-- -->` for html) then regex. The fallback's
@@ -34,7 +34,7 @@ import { pricingKey } from './model-resolver.mjs';
 import { globMatch } from './audit/glob-match.mjs';
 import { classifyPath } from './sensitive-paths.mjs';
 import { semanticId } from './findings.mjs';
-import { parseSource, walk } from './nav/ast.mjs';
+import { parseSource, walk } from './ast.mjs';
 
 /** Per-request-varying signatures (audited built-in, NOT user config) — a `cache_control`
  *  block whose text derives from any of these caches nothing on turn 2+. */

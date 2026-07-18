@@ -232,6 +232,105 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit) {
  * @param {string} filePath - repo-relative path, forward-slash form
  * @returns {{ok: true, content: string} | {ok: false, error: VcsError}}
  */
+/**
+ * Cheap changed-line census: `git diff --numstat <base>` → one
+ * `added\tdeleted\tpath` row per file. **Run this BEFORE materialising a
+ * unified diff**, which is the whole point of its existence.
+ *
+ * Why it exists (adjacency plan R3-H1): a bound applied to a string you have
+ * already built does not bound building it. `gitUnifiedDiffWithWorkingTree`
+ * returns a fully-materialised string, so by the time a `maxBytes` check can
+ * run, a 40MB diff has already been generated, buffered across the
+ * child-process boundary, decoded and retained. Numstat is the preflight that
+ * makes the bound real — measured at ~50 bytes vs ~10.7KB of unified diff for
+ * the same single-file commit, and the ratio widens sharply with diff size.
+ *
+ * Binary files report `-` for both counts; they are reported as `binary:true`
+ * with zero counts rather than being silently dropped, so a caller can decide.
+ *
+ * @param {string} cwd
+ * @param {string} sinceCommit - MUST pass isSafeGitRevision
+ * @returns {{ok:true, files:{path:string, added:number, deleted:number, binary:boolean}[],
+ *            totalChangedLines:number} | {ok:false, error:VcsError}}
+ */
+export function gitNumstatWithWorkingTree(cwd, sinceCommit) {
+  if (!isSafeGitRevision(sinceCommit)) {
+    return {
+      ok: false,
+      error: { code: 'BAD_REVISION', message: `refusing unsafe revision: ${JSON.stringify(String(sinceCommit)).slice(0, 80)}` },
+    };
+  }
+  let res;
+  try {
+    res = spawnSync('git', ['diff', '--numstat', sinceCommit], {
+      cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    return { ok: false, error: classifyChildError(err, { wantedRev: sinceCommit }) };
+  }
+  if (res.error) return { ok: false, error: classifyChildError(res.error, { wantedRev: sinceCommit }) };
+  if (res.status !== 0) {
+    const synth = { stderr: res.stderr, status: res.status, signal: res.signal };
+    return { ok: false, error: classifyChildError(synth, { wantedRev: sinceCommit }) };
+  }
+
+  const files = [];
+  let totalChangedLines = 0;
+  for (const line of (res.stdout || '').split('\n')) {
+    const m = line.match(/^(\d+|-)\t(\d+|-)\t(.+)$/);
+    if (!m) continue;
+    const binary = m[1] === '-' || m[2] === '-';
+    const added = binary ? 0 : Number(m[1]);
+    const deleted = binary ? 0 : Number(m[2]);
+    totalChangedLines += added + deleted;
+    files.push({ path: m[3], added, deleted, binary });
+  }
+  return { ok: true, files, totalChangedLines };
+}
+
+/**
+ * The unified diff of `sinceCommit` → **working tree**, with ZERO context lines.
+ *
+ * `--unified=0` is deliberate, not a micro-optimisation: with no context, a
+ * hunk's `+` lines ARE its changes, so mapping a hunk to the set of new-side
+ * lines it touches is exact rather than approximate. It is also the smallest
+ * payload and the least to mis-parse.
+ *
+ * Base→working-tree (not base→HEAD) so new-side hunk coordinates index the
+ * files actually on disk — the same snapshot a caller will parse. That
+ * correspondence is what makes a hunk line number meaningful as an AST anchor.
+ *
+ * @param {string} cwd
+ * @param {string} sinceCommit - MUST pass isSafeGitRevision
+ * @param {{maxBytes?: number}} [opts] - belt-and-braces cap; the real bound is the numstat preflight
+ * @returns {{ok:true, diffText:string, truncated:false} | {ok:false, error:VcsError}}
+ */
+export function gitUnifiedDiffWithWorkingTree(cwd, sinceCommit, { maxBytes = null } = {}) {
+  if (!isSafeGitRevision(sinceCommit)) {
+    return {
+      ok: false,
+      error: { code: 'BAD_REVISION', message: `refusing unsafe revision: ${JSON.stringify(String(sinceCommit)).slice(0, 80)}` },
+    };
+  }
+  let res;
+  try {
+    res = spawnSync('git', ['diff', '--unified=0', sinceCommit], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(Number.isFinite(maxBytes) && maxBytes > 0 ? { maxBuffer: maxBytes } : {}),
+    });
+  } catch (err) {
+    return { ok: false, error: classifyChildError(err, { wantedRev: sinceCommit }) };
+  }
+  if (res.error) return { ok: false, error: classifyChildError(res.error, { wantedRev: sinceCommit }) };
+  if (res.status !== 0) {
+    const synth = { stderr: res.stderr, status: res.status, signal: res.signal };
+    return { ok: false, error: classifyChildError(synth, { wantedRev: sinceCommit }) };
+  }
+  return { ok: true, diffText: res.stdout || '', truncated: false };
+}
+
 export function gitShowFileAtRevision(cwd, revision, filePath) {
   if (!isSafeGitRevision(revision)) {
     return {

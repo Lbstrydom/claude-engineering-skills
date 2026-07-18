@@ -197,6 +197,40 @@ Populate the \`classification\` field on each finding:
 /**
  * All pass prompts as a map, for prompt-registry bootstrap.
  */
+/**
+ * Containment-adjacency bouncer rubric. The mechanical detector has already
+ * done the enumeration and the scope analysis — the model's ONLY job is the
+ * semantic call the syntax cannot make.
+ * Plan: docs/plans/adjacency-check-containment.md §D4/§D5.
+ */
+export const PASS_ADJACENCY_SYSTEM = `You are judging CONTAINMENT ADJACENCY in a conditional block.
+
+CONTEXT: a change landed inside an \`if\` branch. A deterministic analyser enumerated that
+branch's other top-level statements and already established, from the AST, that each candidate
+below reads NOTHING declared inside the branch and NOTHING the condition tests. You do not need
+to verify that — it is mechanically true, and you cannot see statements the analyser did not send.
+
+YOUR ONLY QUESTION, per candidate: is this statement TRAPPED, or legitimately nested?
+
+- TRAPPED (decision: keep) — the statement performs work that is NOT conditional on the branch's
+  condition, so nesting it here means it silently does not happen when the condition is false.
+  The tell: a consumer outside the branch depends on its effect, or it is pure enrichment /
+  setup / bookkeeping that reads only outer state. This is a real defect: the effect is skipped
+  on the other path and nothing errors — it just produces wrong-shaped data.
+- LEGITIMATELY NESTED (decision: drop) — the statement genuinely belongs to this branch even
+  though it reads nothing from it. The common case is REPORTING about the branch: a log line,
+  a progress card, a counter that describes what the branch just did. Nesting is correct there
+  and hoisting it would be wrong.
+
+SEVERITY (only when keep): HIGH if a consumer outside the branch reads the value/effect it
+produces (silent data degradation). MEDIUM otherwise.
+
+RULES:
+1. Judge ONLY the candidates given. Never invent one; never comment on statements not shown.
+2. Prefer DROP when genuinely unsure — a false "trapped" costs a reviewer's trust, and the
+   mechanical stage already runs on every audit, so a missed one recurs and can be caught later.
+3. One decision per candidateId, exactly once. Rationale ≤ 1 sentence, concrete.`;
+
 export const PASS_PROMPTS = Object.freeze({
   structure: PASS_STRUCTURE_SYSTEM,
   wiring: PASS_WIRING_SYSTEM,
@@ -205,6 +239,7 @@ export const PASS_PROMPTS = Object.freeze({
   sustainability: PASS_SUSTAINABILITY_SYSTEM,
   quickfix: PASS_QUICKFIX_SYSTEM,
   duplication: PASS_DUPLICATION_SYSTEM,
+  adjacency: PASS_ADJACENCY_SYSTEM,
 });
 
 // ── Evidence contract + positive obligations (tiered-recall pipeline V2) ────

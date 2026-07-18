@@ -41,12 +41,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { z } from 'zod';
-import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
+import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema, DuplicationBouncerResponseSchema } from '../schemas.mjs';
 import { gitDiffWithWorkingTree } from '../vcs.mjs';
 import { runDuplicationAnalysis } from './duplication-detector.mjs';
-import { runAdjacencyAnalysis } from './adjacency-detector.mjs';
-import { runAdjacencyBouncer, buildAdjacencyFailedFinding } from './adjacency-report.mjs';
-import { composeAdjacencyResult } from './adjacency-compose.mjs';
 import {
   isDuplicationReportClean, formatCandidatesForPrompt, mapBouncerDecisionsToFindings,
   deriveFindingsFromDuplicationReport, buildDetectorFailedFinding, finalizeDeterministicFindings,
@@ -66,7 +63,7 @@ import {
   buildDependencyGraph, REDUCE_SYSTEM_PROMPT, measureContextChars
 } from '../code-analysis.mjs';
 import { semanticId, formatFindings, appendOutcome, loadOutcomes, FalsePositiveTracker } from '../findings.mjs';
-import { estimateStablePrefixTokens } from './prompt-builder.mjs';
+import { buildAuditPassPrompt, estimateStablePrefixTokens } from './prompt-builder.mjs';
 import { runArchIntentAnalysis, isArchIntentReportClean, deriveArchState } from '../arch-intent/adapter-contract.mjs';
 import { loadArchIntentConfig } from '../arch-intent/load-config.mjs';
 import { parseIntentDoc } from '../arch-intent/intent-doc-parser.mjs';
@@ -93,13 +90,13 @@ import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from '../debt-memory.mjs';
 import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from '../../learning-store.mjs';
-import { buildCloudFpPolicy, runSuppressionPasses } from '../suppression-policy.mjs';
+import { buildCloudFpPolicy, runCloudFpPass } from '../suppression-policy.mjs';
 import { finalizePriorRoundOutcomes } from '../finalize-outcomes.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from '../learning/decision-logger.mjs';
 import { deriveSignals as _deriveTierSignals, buildAuthorTierObservation as _buildAuthorTierObservation } from '../learning/author-tier-observation.mjs';
 import { loadDomainRules as _loadDomainRules, computeTargetDomains as _computeTargetDomains } from '../symbol-index/domain-tagger.mjs';
 import { PromptBandit, computeReward, buildContext } from '../../bandit.mjs';
-import { openaiConfig, PASS_NAMES, modelPricing, azureConfig, tieredAuditConfig, auditRuntimeConfig, adjacencyConfig } from '../config.mjs';
+import { openaiConfig, PASS_NAMES, modelPricing, azureConfig, tieredAuditConfig, auditRuntimeConfig } from '../config.mjs';
 import { supportsReasoningEffort, refreshModelCatalog, resolveModel, pricingKey } from '../model-resolver.mjs';
 import { createOpenAIClient } from '../openai-client.mjs';
 import { createAnthropicClient } from '../anthropic-client.mjs';
@@ -199,7 +196,7 @@ const PASS_BACKEND_SYSTEM = getPassPrompt('backend');
 const PASS_FRONTEND_SYSTEM = getPassPrompt('frontend');
 const PASS_SUSTAINABILITY_SYSTEM = getPassPrompt('sustainability');
 // Architecture-intent system prompt — the LLM-bouncer rubric.  See
-// docs/plans/architecture-intent-framework.md §9.  Static (never
+// docs/completed/architecture-intent-framework.md §9.  Static (never
 // varies across rounds) so safe to be in `system` prompt for cache-stability.
 const PASS_ARCH_INTENT_SYSTEM = `You are auditing PR diffs against the repo's declared architectural intent. The mechanical analyser has already flagged candidate violations — your job is to classify SEVERITY and filter false positives.
 
@@ -371,7 +368,7 @@ let _runSeedUsed = false;
 // envelope { seedEligible, seedUsed, seedSkipReason, seedUnitIdx, seedUnitTokens }
 // so the audit-pass telemetry can record which mode ran.
 function decideSeed(units, passName, buildPromptForUnit) {
-  // Default-ON since 2026-07-14 (PR-6 flip; docs/plans/openai-prefix-cache.md §8).
+  // Default-ON since 2026-07-14 (PR-6 flip; docs/completed/openai-prefix-cache.md §8).
   // Opt out per-run with AUDIT_CACHE_SEED=0. The cache-hitrate-check routine
   // validates the flip empirically from the seed-ON cohort in audit_runs.
   const envFlag = process.env.AUDIT_CACHE_SEED !== '0';
@@ -693,7 +690,7 @@ async function runArchitecturePass({ openai, repoRoot, focusBlock, planContent, 
               category: '[Architecture] Invalid domain-map.json',
               detail: err.message,
               risk: 'Architecture checks cannot run at all until this config is fixed — cross-domain boundary violations elsewhere in the repo go undetected in the meantime.',
-              recommendation: 'Fix the config file at .audit-loop/domain-map.json. See docs/plans/architecture-intent-framework.md §2 decision 5.',
+              recommendation: 'Fix the config file at .audit-loop/domain-map.json. See docs/completed/architecture-intent-framework.md §2 decision 5.',
               section: '.audit-loop/domain-map.json',
               affectedFiles: ['.audit-loop/domain-map.json'],
               affectedPrinciples: ['#5 SSoT'],
@@ -838,7 +835,7 @@ function orphanToStandardFinding(raw, idx) {
  * @param {object|null} args.ledger - parsed adjudication ledger (R2+ only)
  * @returns {Promise<{state: string, result: object}>}
  */
-async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef, runId, planContent, ledger, learningWritesAllowed = true }) {
+async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef, runId, planContent, ledger }) {
   const emptyResult = {
     result: { pass_name: 'orphan-introduced', findings: [], summary: '' },
     usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
@@ -873,14 +870,9 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
 
   // Short-circuit states from the resolver.
   if (scope.state === 'SKIPPED_NO_BASELINE' || scope.state === 'SKIPPED_PATCH_ONLY_MODE') {
-    // Gated (audit R1-H1): the metrics file is durable local learning
-    // telemetry (.audit/orphan-metrics.jsonl) shared with the real run — an
-    // observation-only shadow appending to it double-counts the same commit.
-    if (learningWritesAllowed) {
-      await emitOrphanRunMetrics({
-        runId, passState: scope.state, rawFindings: [], survivors: [], suppressed: [], _meta: {}, repoPath: repoRoot,
-      });
-    }
+    await emitOrphanRunMetrics({
+      runId, passState: scope.state, rawFindings: [], survivors: [], suppressed: [], _meta: {}, repoPath: repoRoot,
+    });
     return { state: scope.state, result: emptyResult };
   }
 
@@ -898,19 +890,15 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
   });
 
   // Emit telemetry (per-pass orchestration responsibility — Gemini-R4/H1).
-  // Gated on learningWritesAllowed (audit R1-H1) — see the short-circuit
-  // emit above for why an observation-only run must not append here.
-  if (learningWritesAllowed) {
-    await emitOrphanRunMetrics({
-      runId,
-      passState: detector.state,
-      rawFindings: detector.rawFindings,
-      survivors,
-      suppressed,
-      _meta: detector._meta,
-      repoPath: repoRoot,
-    });
-  }
+  await emitOrphanRunMetrics({
+    runId,
+    passState: detector.state,
+    rawFindings: detector.rawFindings,
+    survivors,
+    suppressed,
+    _meta: detector._meta,
+    repoPath: repoRoot,
+  });
 
   const findings = survivors.map((f, i) => orphanToStandardFinding(f, i));
   const summary = findings.length === 0
@@ -1102,11 +1090,7 @@ function deriveFindingsFromReport(report) {
  * @returns {Promise<import('../schemas.mjs').AuditRunResult>}
  */
 export async function runLegacyProductionAudit(ctx) {
-  // `let`, not `const` (plan deviation, noted): the observation-mode view swap
-  // below reassigns `bandit`, and a const destructure would throw. The local
-  // binding is the function's complete use surface for it (verified: addArm,
-  // flush, syncBanditArms — no helper receives `bandit`, no ctx.bandit re-read).
-  let {
+  const {
     planContent, projectContext, historyContext = '',
     passFilter = null, fileFilter = null, round = 1, ledgerFile = null, diffFile = null,
     changedFiles = [], auditBaseCommit = null, repoProfile = null, bandit = null, fpTracker = null, noLedger = false,
@@ -1116,20 +1100,6 @@ export async function runLegacyProductionAudit(ctx) {
     outFile = null, providers = {}, noCloudRecording = false,
   } = ctx;
   const { openai } = providers;
-
-  // May THIS run write learning state (cloud or local)? One policy, one place.
-  // noCloudRecording marks an observation-only run (tiered shadow /
-  // verify-anchor-contract): it must be able to READ bandit/fpTracker so its
-  // suppression behaviour stays faithful to the real audit, but must never
-  // persist — the real, concurrent gating audit is the only writer. This
-  // boolean closes the CLOUD channel at the tail's sync sites; the view swap
-  // below closes the LOCAL channel (addArm._save / flush on a shared
-  // instance). Both are needed: the tail's arms sync reads the map directly,
-  // regardless of which store the bandit carries.
-  const learningWritesAllowed = !noCloudRecording;
-  // Swap BEFORE any use — the local's complete in-function use surface is
-  // the arm registration, the tail flush, and the tail arms sync.
-  if (!learningWritesAllowed && bandit) bandit = bandit.nonPersistingView();
   const totalStart = Date.now();
   _runSeedUsed = false; // reset run-scoped cache-seed flag (CLI = one run/process)
 
@@ -1672,7 +1642,6 @@ export async function runLegacyProductionAudit(ctx) {
       runId: debtRunId,
       planContent,
       ledger: ledgerForOrphan,
-      learningWritesAllowed,
     });
     orphanState = orphanOut.state;
     orphanResult = orphanOut.result;
@@ -2039,7 +2008,7 @@ export async function runLegacyProductionAudit(ctx) {
   cachePassResult('quickfix', quickfixResult);
 
   // 4.6 Wave 5: Duplication detector (mechanical detection + low-reasoning LLM bouncer)
-  // Plan: docs/plans/audit-code-duplication-wave.md. Mirrors runArchitecturePass's
+  // Plan: docs/completed/audit-code-duplication-wave.md. Mirrors runArchitecturePass's
   // two-stage shape (mechanical report → LLM bouncer → deterministic fallback).
   // Attribution is pure Git (no DB dependency) — see duplication-detector.mjs's
   // module docblock for the Gemini-round-3 decoupling this design is built on.
@@ -2148,101 +2117,6 @@ export async function runLegacyProductionAudit(ctx) {
   }
   cachePassResult('duplication', duplicationResult);
 
-  // ── Wave 6: Containment adjacency ──────────────────────────────────────
-  // Plan: docs/plans/adjacency-check-containment.md. Mechanical (no LLM in the
-  // enumeration), mirroring Wave 5's two-stage shape: a deterministic detector
-  // finds what exists, an LLM bouncer only judges what it is handed.
-  //
-  // Trigger is the FIX DIFF, not a finding — `section` is free prose (measured:
-  // a line number in 6 of 1764 stored findings) and the enrichment regex
-  // discards line numbers even when present, so a finding cannot carry an
-  // anchor. A diff hunk always can, and a diff-driven trigger additionally
-  // cannot self-trigger, so this wave can never churn on its own output.
-  let adjacencyResult;
-  const EMPTY_ADJACENCY = { pass_name: 'adjacency', findings: [], summary: 'Pass skipped.' };
-  const runAdjacency = shouldRunPass('adjacency');
-  if (runAdjacency) {
-    const adjStart = Date.now();
-    let adjFindings = [];
-    let adjSummary = '';
-    try {
-      // No diff contract → NOT-APPLICABLE, not a failure. The wave is
-      // diff-triggered by construction (§D1), so on a `--scope full` or
-      // base-less run there is nothing it could ever have been asked. Skipping
-      // the detector entirely is what keeps that honest: running it would
-      // record "no safe auditBaseCommit" as INPUT_BOUND incompleteness, which
-      // emits a control finding — turning honest absence into a reported
-      // coverage failure, the exact conflation R1-H3 split apart.
-      // The test seam wins over Git resolution (mirroring Wave 5's), so a
-      // hermetic test can exercise this whole path without faking a commit.
-      const analysis = ctx.__runAdjacencyAnalysis
-        ? await ctx.__runAdjacencyAnalysis({ repoRoot: process.cwd(), auditBaseCommit, bounds: adjacencyConfig })
-        : !auditBaseCommit
-          ? { coverage: { containersEnumerated: 0, statementsJudged: 0 }, candidates: [], incompleteness: [], threw: null }
-          : await runAdjacencyAnalysis({ repoRoot: process.cwd(), auditBaseCommit, bounds: adjacencyConfig });
-
-      // The bouncer runs only when there is something to judge. Zero eligible
-      // candidates short-circuits without a model call.
-      let bouncer = null;
-      const eligible = (analysis.candidates ?? []).filter((c) => c.payload?.safe);
-      if (eligible.length > 0) {
-        bouncer = await runAdjacencyBouncer(analysis.candidates, {
-          bounds: adjacencyConfig,
-          rubric: getPassPrompt('adjacency'),
-          callLlm: async ({ prompt, rubric }) => {
-            const adjLimits = computePassLimits(prompt.length, 'low');
-            const res = await safeCallGPT(openai, {
-              ...passPrompt({
-                rubric,
-                focusBlock,
-                passName: 'adjacency',
-                planContent,
-                ledgerFile: isR2Plus ? ledgerFile : null,
-                impactSet,
-                isR2Plus,
-                historyBlock,
-                codeHeader: `## Adjacency candidates (${eligible.length})`,
-                code: prompt,
-              }),
-              schema: AdjacencyBouncerResponseSchema,
-              schemaName: 'adjacency_bouncer',
-              reasoning: 'low',
-              ...adjLimits,
-              passName: 'adjacency',
-            }, null);
-            return res?.result ?? null;
-          },
-        });
-      }
-
-      // ONE composition point — the sole buildAdjacencyState call site.
-      const composed = composeAdjacencyResult({
-        analysis,
-        bouncer,
-        selected: true,
-        diffContractAvailable: Boolean(auditBaseCommit) || Boolean(ctx.__runAdjacencyAnalysis),
-      });
-      adjFindings = composed.findings;
-      const { state, coverage } = composed.result;
-      adjSummary = `Adjacency: ${state} — ${coverage.containersEnumerated} container(s), `
-        + `${coverage.statementsJudged} statement(s) judged, ${composed.result.candidates.length} candidate(s).`;
-      process.stderr.write(`  ${adjSummary}\n`);
-    } catch (err) {
-      process.stderr.write(`  Adjacency: unexpected error — ${err.message}\n`);
-      adjFindings = [buildAdjacencyFailedFinding(err.message)];
-      adjSummary = 'Adjacency: unexpected error — see finding.';
-    }
-    adjacencyResult = {
-      result: { pass_name: 'adjacency', findings: adjFindings, summary: adjSummary },
-      usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 },
-      latencyMs: Date.now() - adjStart,
-    };
-  } else {
-    process.stderr.write(`\n── Adjacency SKIPPED (--passes) ──\n`);
-    adjacencyResult = { result: EMPTY_ADJACENCY, usage: { input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, latency_ms: 0 }, latencyMs: 0 };
-  }
-  cachePassResult('adjacency', adjacencyResult);
-
   // 5. Merge all pass results with semantic dedup
   const totalLatency = Date.now() - totalStart;
 
@@ -2287,7 +2161,6 @@ export async function runLegacyProductionAudit(ctx) {
     { name: 'sustainability', ran: runSustainability, result: sustainResult, displayPrefix: 'Sustainability' },
     { name: 'quickfix', ran: runQuickfix, result: quickfixResult, displayPrefix: 'Quickfix' },
     { name: 'duplication', ran: runDuplication, result: duplicationResult, displayPrefix: 'Duplication' },
-    { name: 'adjacency', ran: runAdjacency, result: adjacencyResult, displayPrefix: 'Adjacency' },
     { name: 'architecture', ran: archState !== 'SKIPPED_PASS_FILTER', result: archResult, displayPrefix: 'Architecture' },
     { name: 'orphan-introduced', ran: orphanState !== 'SKIPPED_PASS_FILTER', result: orphanResult, displayPrefix: 'Orphan' },
   ].map(({ name, ran, result, displayPrefix }) => {
@@ -2490,25 +2363,12 @@ export async function runLegacyProductionAudit(ctx) {
   // when it didn't, which is correct (nothing was reopened).
   let reopenedSet = new Set();
 
-  // Enrich findings with structured metadata — HOISTED out of the ledger branch.
-  // This is pure enrichment derived from `section` with ZERO ledger dependency,
-  // and it is the ONLY producer of `_primaryFile`/`affectedFiles` (the LLM
-  // contract, FindingBase, carries neither; addFindings sets `_hash` but not
-  // these). Nested in the branch it was skipped whenever the merged ledger was
-  // empty, and two consumers OUTSIDE the branch read the gap: `.audit/outcomes.jsonl`
-  // (the local bandit reward signal) and cloud `audit_findings.primary_file`.
-  // Both do `f._primaryFile || f.section`, so they silently recorded the RAW
-  // SECTION STRING where a normalized path belongs, and `affectedFiles: []` —
-  // no error, no crash, just wrong-shaped data that looks fine.
-  //
-  // Slot is constrained on both sides: AFTER addFindings (which builds
-  // allFindings and sets `_hash`) and BEFORE suppressReRaises (which reads
-  // `_primaryFile`/`affectedFiles` for its impact-set narrowing).
-  for (const f of allFindings) {
-    populateFindingMetadata(f, f._pass);
-  }
-
   if (mergedLedger.entries.length > 0) {
+    // Enrich findings with structured metadata
+    for (const f of allFindings) {
+      populateFindingMetadata(f, f._pass);
+    }
+
     let { kept, suppressed, reopened } = suppressReRaises(allFindings, mergedLedger, { changedFiles, impactSet });
 
     process.stderr.write(`\n═══════════════════════════════════════\n`);
@@ -2521,12 +2381,23 @@ export async function runLegacyProductionAudit(ctx) {
     }
     process.stderr.write(`═══════════════════════════════════════\n\n`);
 
-    // The local FP-tracker loop LIVED HERE and has moved out — it is now
-    // `runLocalFpPass`, called unconditionally below alongside the cloud pass.
-    // Nested here it was skipped entirely whenever the merged ledger was empty
-    // (no session ledger AND no debt entries), so the historically-noisy
-    // patterns the tracker had learned were simply not applied — the identical
-    // defect the cloud pass was lifted out to avoid.
+    // Phase 4: FP tracker — suppress patterns with historically high dismiss rates
+    let fpSuppressed = [];
+    if (fpTracker) {
+      const finalKept = [];
+      for (const f of kept) {
+        if (fpTracker.shouldSuppress(f)) {
+          fpSuppressed.push(f);
+          process.stderr.write(`    [fp-tracker] Auto-suppressed: ${f.category?.slice(0, 60)} (EMA < 0.15)\n`);
+        } else {
+          finalKept.push(f);
+        }
+      }
+      if (fpSuppressed.length > 0) {
+        process.stderr.write(`  [fp-tracker] Suppressed ${fpSuppressed.length} historically noisy findings\n`);
+        kept = finalKept;
+      }
+    }
 
     // Replace findings with kept + reopened only
     reopenedSet = new Set(reopened);
@@ -2541,7 +2412,7 @@ export async function runLegacyProductionAudit(ctx) {
       keptCount: kept.length,
       suppressedCount: suppressed.length,
       reopenedCount: reopened.length,
-      fpSuppressedCount: 0,   // set by runSuppressionPasses — the local pass moved out
+      fpSuppressedCount: fpSuppressed.length
     };
 
     // Phase D: emit debt events for matches against debt-ledger entries.
@@ -2633,32 +2504,69 @@ export async function runLegacyProductionAudit(ctx) {
     };
   }
 
-  // ── Post-output suppression passes (local FP tracker, then cloud FP policy) ──
+  // ── Layer 3: cloud FP-pattern suppression ────────────────────────────────
   // Position is LOAD-BEARING and must stay here:
-  //   * AFTER the ledger branch above — nesting either pass inside makes it
-  //     conditional on unrelated local ledger state. A run with an empty merged
-  //     ledger is exactly the case each pass exists to serve (a pattern the
-  //     tracker learned; a pattern another machine learned), and nesting is what
-  //     silently disabled the local one for years.
+  //   * AFTER the ledger branch above — nesting it inside would make the whole
+  //     cross-machine read loop conditional on unrelated local ledger state, so
+  //     a run with an empty ledger (exactly the case a pattern learned on
+  //     another machine serves) would load the policy and suppress nothing.
   //   * BEFORE the auto-write ledger block below, which reads allFindings.
-  // ONE unconditional call: runSuppressionPasses is a no-op with a null tracker
-  // AND a null policy, and always returns a NEW array — so there is no branch
-  // here to get wrong, and the clear-then-push can never empty its own source.
-  // All decision logic (ordering, counters, the union, the no-ledger synthesis)
-  // lives in the seam, not here.
-  const passes = runSuppressionPasses(allFindings, {
-    fpTracker,
-    cloudPolicy: cloudFpPolicy,
+  // The call is UNCONDITIONAL: runCloudFpPass is a no-op on a null policy and
+  // always returns a NEW array, so there is no branch here to get wrong and the
+  // clear-then-push below can never empty its own source.
+  const cloudPass = runCloudFpPass(allFindings, {
+    policy: cloudFpPolicy,
     exempt: reopenedSet,
-    suppressionData: typeof _suppressionData !== 'undefined' ? _suppressionData : null,
-    cloudEnabled: cloudRepoId != null,
     log: (line) => process.stderr.write(line),
   });
   allFindings.length = 0;
-  allFindings.push(...passes.findings);
-  // Legal here because `_suppressionData` is `var` (function-scoped); reading
-  // it inside the ledger branch instead would hit the TDZ on `passes`.
-  _suppressionData = passes.suppressionData ?? undefined;
+  allFindings.push(...cloudPass.findings);
+  // Cloud-off runs must gain NO new serialized key (--out byte-identity).
+  // Legal here because _suppressionData is `var` (function-scoped) — reading it
+  // inside the ledger branch instead would hit the TDZ on `cloudPass`.
+  if (cloudRepoId != null) {
+    if (_suppressionData) {
+      _suppressionData.cloudFpSuppressedCount = cloudPass.suppressedCount;
+      // Cloud suppressions must reach recordSuppressionEvents in the
+      // BOTH-ACTIVE case too. `suppressed` is the union — the recorder treats
+      // every entry identically (all carry matchedTopic/matchScore/reason), so
+      // a count alone would leave cloud decisions unpersisted while ledger ones
+      // were recorded: the same accountability gap as the no-ledger branch
+      // below, just on the other side. The per-source COUNTS stay separate
+      // (`suppressedCount` = ledger path, `fpSuppressedCount` = local tracker,
+      // `cloudFpSuppressedCount` = cloud), so the array length is deliberately
+      // the union total rather than equal to any single count.
+      if (cloudPass.suppressed.length > 0) {
+        _suppressionData.suppressed = [..._suppressionData.suppressed, ...cloudPass.suppressed];
+      }
+      // keptCount was computed from the LEDGER pass's `kept`, before this cloud
+      // pass removed more; left stale it breaks finding conservation
+      // (keptCount + suppressedCount + reopenedCount == total raised).
+      // Subtract rather than re-measure `allFindings`: keptCount means "kept,
+      // EXCLUDING reopened", while allFindings is kept+reopened — re-measuring
+      // would silently redefine the field. The subtraction is exact because
+      // `reopened` is exempt from the cloud pass, so every cloud suppression
+      // necessarily came out of `kept`.
+      _suppressionData.keptCount -= cloudPass.suppressedCount;
+    } else if (cloudPass.suppressedCount > 0) {
+      // The ledger branch never ran, but the cloud pass DID suppress — the exact
+      // case this layer exists to serve (a pattern learned on another machine,
+      // no local ledger). Without this, that suppression leaves no provenance:
+      // _suppression is never attached, so recordSuppressionEvents never fires
+      // and findings vanish with only an stderr line to show for it. Synthesize
+      // the envelope so the cloud path is as accountable as the ledger path.
+      // Guarded on cloudRepoId, so a cloud-off run's --out stays byte-identical.
+      _suppressionData = {
+        suppressed: cloudPass.suppressed,
+        reopened: [],
+        keptCount: allFindings.length,
+        suppressedCount: 0,          // ledger-path suppressions — none ran
+        reopenedCount: 0,
+        fpSuppressedCount: 0,        // local-tracker suppressions — none ran
+        cloudFpSuppressedCount: cloudPass.suppressedCount,
+      };
+    }
+  }
 
   // Auto-write ledger (default-on when ledgerFile resolved)
   if (ledgerFile && !noLedger) {
@@ -2853,11 +2761,7 @@ export async function runLegacyProductionAudit(ctx) {
 
   // Phase 3-4: Record initial findings for learning (pre-triage — accepted is null).
   // Actual triage outcomes are written by outcome-sync.mjs AFTER deliberation.
-  // Gated (audit R2-H1): outcomes.jsonl is the LOCAL bandit reward stream — an
-  // observation-only shadow appending its findings here trains the real
-  // bandit on data from a run that must be invisible. Same class as the tail
-  // syncs, one write site over.
-  if (learningWritesAllowed) for (const f of allFindings) {
+  for (const f of allFindings) {
     const revId = getActiveRevisionId(f._pass) || 'default';
     appendOutcome('.audit/outcomes.jsonl', {
       findingId: f.id,
@@ -2899,12 +2803,13 @@ export async function runLegacyProductionAudit(ctx) {
       }, round).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
 
-    // Record suppression events if R2+ — OR whenever a suppression PASS fired.
-    // The isR2Plus gate encodes "ledger suppression is an R2+ concept", true for
-    // the ledger path but NOT for the local/cloud passes: both are unconditional
-    // and can suppress on round 1, where the bare gate would silently drop their
-    // provenance. A suppression on R1 is no less accountable than one on R2.
-    if ((isR2Plus || passes.suppressedCount > 0) && mergedResult._suppression) {
+    // Record suppression events if R2+ — OR whenever the cloud FP layer
+    // suppressed anything. The isR2Plus gate encodes "ledger suppression is an
+    // R2+ concept", which is true for the ledger path but NOT for the cloud
+    // layer: runCloudFpPass is unconditional and can suppress on round 1, where
+    // the bare gate would silently drop its provenance. A suppression that
+    // happens on R1 is no less accountable than one on R2.
+    if ((isR2Plus || cloudPass.suppressedCount > 0) && mergedResult._suppression) {
       recordSuppressionEvents(cloudRunId, mergedResult._suppression).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
     }
   }
@@ -2956,32 +2861,21 @@ export async function runLegacyProductionAudit(ctx) {
   // skill reads `_cloudRunId` from the audit --out JSON and forwards it to
   // gemini-review.mjs as `--run-id`, which keys the final-review (+ shadow A/B)
   // per-finding cloud persistence to this run. Absent when cloud is off →
-  // gemini-review runs local-only (docs/plans/final-review-shadow-reviewer.md).
+  // gemini-review runs local-only (docs/completed/final-review-shadow-reviewer.md).
   if (cloudRunId) mergedResult._cloudRunId = cloudRunId;
 
   // Phase C: surface tool-pre-pass capability state
   mergedResult._toolCapability = toolCapability;
 
-  // Phase 5: Flush bandit state + sync learning systems to cloud.
-  // BOTH sites are gated on learningWritesAllowed — these were the two cloud
-  // writes NOT transitively covered by the `if (cloudRunId)` key (audit H1,
-  // 2026-07-18): syncBanditArms takes no repoId, so an observation-only
-  // shadow run was mutating the shared bandit_arms table whenever cloud was
-  // on, contaminating the very data the tiered-recall window measures. The
-  // local flush() is gated too: an observation run persisting the shared
-  // bandit file is the same contamination class, one channel over.
-  if (bandit && learningWritesAllowed) {
+  // Phase 5: Flush bandit state + sync learning systems to cloud
+  if (bandit) {
     bandit.flush();
     syncBanditArms(bandit.arms).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
   }
-  if (fpTracker && learningWritesAllowed) {
+  if (fpTracker) {
     // cloudRepoId is the audit_repos row UUID (null → GLOBAL sentinel inside
     // the sync). Dirty subset only — syncing the whole map rewrote thousands
-    // of unchanged rows per run (2026-07-17 Disk IO incident). The
-    // isSyncableRepoId refusal inside the sync stays as defence-in-depth for
-    // a DIFFERENT failure (unresolved repo identity on a real run) — before
-    // this gate, that coincidence was the only thing keeping shadow runs
-    // from writing FP patterns.
+    // of unchanged rows per run (2026-07-17 Disk IO incident).
     syncFalsePositivePatterns(cloudRepoId, fpTracker.dirtyPatterns()).catch(e => process.stderr.write(`  [learning] ${e.message}\n`));
   }
 
@@ -3015,7 +2909,7 @@ export async function runLegacyProductionAudit(ctx) {
     } catch { /* validation failure — best-effort telemetry */ }
   }
 
-  // model-tier-observation (docs/plans/model-tier-observation.md) — author_tier
+  // model-tier-observation (docs/completed/model-tier-observation.md) — author_tier
   // telemetry.  Observation-ONLY: records aggregates-only scope signals × the
   // heuristic suggested tier × the (optional) declared author tier + ladder
   // partition key × this round's converged outcome.  NOTHING reads these to
@@ -3249,7 +3143,7 @@ export async function buildAuditRunContext(cliArgs) {
     noTools = false, strictLint = false, noDebtLedger = false, readOnlyDebt = false,
     debtLedgerPath = undefined, debtEventsPath = undefined, escalateRecurring = null,
     sessionCacheHit = null, scopeMode = null, planFile = null, runId = null, allowInfraScope = false,
-    outFile = null, model = null, allowTiered = false, __runDuplicationAnalysis = null, __runAdjacencyAnalysis = null,
+    outFile = null, model = null, allowTiered = false, __runDuplicationAnalysis = null,
     // docs/plans/stage0-evidence-relevance-split.md decision #5: the tiered
     // pipeline's Stage 0 blame/impact adapters need the current HEAD sha
     // (import-graph freshness validation) and dirty-tree status (both
@@ -3353,7 +3247,7 @@ export async function buildAuditRunContext(cliArgs) {
 
   return {
     planContent, projectContext, historyContext,
-    passFilter, fileFilter, round, ledgerFile, diffFile, diffText, changedFiles, auditBaseCommit, __runDuplicationAnalysis, __runAdjacencyAnalysis, repoProfile, bandit, fpTracker,
+    passFilter, fileFilter, round, ledgerFile, diffFile, diffText, changedFiles, auditBaseCommit, __runDuplicationAnalysis, repoProfile, bandit, fpTracker,
     noLedger, noTools, strictLint, noDebtLedger, readOnlyDebt, debtLedgerPath, debtEventsPath,
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
     outFile, model, sessionCacheHit, allowTiered, commitSha, workingTreeDirty,

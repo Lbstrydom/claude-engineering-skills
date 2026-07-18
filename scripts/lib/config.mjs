@@ -452,6 +452,51 @@ export const modelPricing = Object.freeze({
 // ── Architectural Memory Config ─────────────────────────────────────────────
 // Per docs/plans/architectural-memory.md §5 file-level plan.
 
+/**
+ * Range-validated bound for the adjacency wave. Clamp-and-warn, NOT bare
+ * `safeInt`/`parseFloat` — the sibling waves' knobs are parsed but unvalidated,
+ * so `ARCH_DUPLICATION_MAX_FILES=999999` sails through and
+ * `ARCH_DRIFT_SIM_DUP=abc` yields NaN, silently zeroing every candidate. By the
+ * cloud-FP reader's own rule, "a bound that a typo can disable is not a bound".
+ */
+export function clampAdjacencyBound(value, { min, max, dflt, name }, warn = (m) => process.stderr.write(m)) {
+  const n = safeInt(value, dflt);
+  if (!Number.isFinite(n)) return dflt;
+  if (n < min) { warn(`  [adjacency] ${name}=${n} below minimum — clamped to ${min}\n`); return min; }
+  if (n > max) { warn(`  [adjacency] ${name}=${n} above maximum — clamped to ${max}\n`); return max; }
+  return n;
+}
+
+/**
+ * Containment-adjacency wave bounds. Deliberately NOT filed under
+ * `symbolIndexConfig`: the duplication wave legitimately uses the symbol index
+ * (snapshot, embeddings, RPC), but this detector provably does not — zero DB,
+ * zero network, pure syntax. Filing audit-wave policy under an unrelated
+ * subsystem is accidental coupling that teaches every future reader a false
+ * relationship.
+ *
+ * Three families, and the ORDER matters: input bounds gate whether the
+ * expensive work happens at all; enumeration and payload bounds shape it once
+ * it does.
+ */
+export const adjacencyConfig = Object.freeze({
+  // ── Input preflight — enforced against `git diff --numstat` BEFORE the
+  //    unified diff is materialised. A bound applied to a string you already
+  //    built does not bound building it.
+  maxChangedFiles: clampAdjacencyBound(process.env.ADJACENCY_MAX_CHANGED_FILES, { min: 1, max: 2000, dflt: 60, name: 'maxChangedFiles' }),
+  maxChangedLines: clampAdjacencyBound(process.env.ADJACENCY_MAX_CHANGED_LINES, { min: 1, max: 500000, dflt: 20000, name: 'maxChangedLines' }),
+  maxDiffBytes: clampAdjacencyBound(process.env.ADJACENCY_MAX_DIFF_BYTES, { min: 1024, max: 200_000_000, dflt: 2_000_000, name: 'maxDiffBytes' }),
+  maxSourceFileBytes: clampAdjacencyBound(process.env.ADJACENCY_MAX_SOURCE_FILE_BYTES, { min: 1024, max: 50_000_000, dflt: 1_000_000, name: 'maxSourceFileBytes' }),
+  // ── Enumeration
+  maxContainers: clampAdjacencyBound(process.env.ADJACENCY_MAX_CONTAINERS, { min: 1, max: 500, dflt: 20, name: 'maxContainers' }),
+  maxStatementsPerContainer: clampAdjacencyBound(process.env.ADJACENCY_MAX_STATEMENTS, { min: 1, max: 500, dflt: 40, name: 'maxStatementsPerContainer' }),
+  maxCandidates: clampAdjacencyBound(process.env.ADJACENCY_MAX_CANDIDATES, { min: 1, max: 200, dflt: 25, name: 'maxCandidates' }),
+  // ── Payload (bytes leaving the process)
+  maxExcerptChars: clampAdjacencyBound(process.env.ADJACENCY_MAX_EXCERPT_CHARS, { min: 200, max: 20000, dflt: 3000, name: 'maxExcerptChars' }),
+  maxCandidateChars: clampAdjacencyBound(process.env.ADJACENCY_MAX_CANDIDATE_CHARS, { min: 400, max: 40000, dflt: 8000, name: 'maxCandidateChars' }),
+  maxPromptChars: clampAdjacencyBound(process.env.ADJACENCY_MAX_PROMPT_CHARS, { min: 1000, max: 400000, dflt: 60000, name: 'maxPromptChars' }),
+});
+
 export const symbolIndexConfig = Object.freeze({
   summariseModel:        resolveModel(process.env.ARCH_INDEX_SUMMARY_MODEL || 'latest-haiku'),
   // embedModel default kept loose — concrete provider id resolved + persisted at refresh time (Gemini G2)

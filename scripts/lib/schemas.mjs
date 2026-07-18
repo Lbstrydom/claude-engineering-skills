@@ -82,6 +82,37 @@ export const DuplicationBouncerResponseSchema = z.object({
 });
 
 /**
+ * AdjacencyBouncerResponseSchema — the containment-adjacency wave's LLM
+ * judgement contract. Deliberately the SAME narrow shape as
+ * `DuplicationBouncerResponseSchema`, and for the same reason recorded above:
+ * a model that can author `is_quick_fix`/`is_mechanical` on a full finding
+ * object can silently defeat convergence by omitting or misreporting the flag.
+ * This schema exposes ONLY a keep/drop decision per candidate id; the
+ * orchestration-side mapper (`mapDecisionsToFindings`,
+ * scripts/lib/audit/adjacency-report.mjs) constructs the finding and hardcodes
+ * those flags as literals the model cannot influence.
+ *
+ * The bouncer's job here is narrow by design (plan §D5): the mechanical stage
+ * has ALREADY enumerated the container and computed scope-dependence — the
+ * model never decides what exists, only whether a mechanically-independent
+ * statement is genuinely trapped or is a legitimate-but-nested one (a bare log
+ * line being the named residual class). `decisions.length` is validated in code
+ * against the detector's own `maxCandidates` bound rather than a Zod `.max()`,
+ * because that cap is operator-configurable and baking a number in here would
+ * drift from `adjacencyConfig` silently.
+ *
+ * Plan: docs/plans/adjacency-check-containment.md §D5.
+ */
+export const AdjacencyBouncerResponseSchema = z.object({
+  decisions: z.array(z.object({
+    candidateId: z.string().max(80),
+    decision: z.enum(['keep', 'drop']),
+    severity: z.enum(['MEDIUM', 'HIGH']),
+    rationale: z.string().max(300),
+  })),
+});
+
+/**
  * FindingVerificationSchema — metadata the deterministic finding-verification
  * gate (scripts/lib/audit/finding-verification.mjs) attaches to a finding
  * AFTER the LLM produced it. The model's own fields stay immutable; the

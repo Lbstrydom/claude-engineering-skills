@@ -136,7 +136,7 @@ export function parseAllDiffSections(diffText) {
  * @param {string} line
  * @returns {{baseStart:number, baseCount:number, headStart:number, headCount:number} | null}
  */
-function parseHunkHeader(line) {
+export function parseHunkHeader(line) {
   const m = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
   if (!m) return null;
   return {

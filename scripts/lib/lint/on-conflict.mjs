@@ -49,7 +49,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseSource } from '../nav/ast.mjs';
+import { parseSource } from '../ast.mjs';
 
 /** Tenancy/scope columns whose omission from a conflict target is a
  *  cross-scope-overwrite bug. Deliberately small + explicit — a broad

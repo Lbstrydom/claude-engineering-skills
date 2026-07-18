@@ -1,5 +1,23 @@
 # Project Status Log
 
+## 2026-07-18 — Containment-adjacency wave: "what else is in this branch?" as a mechanism (A+B+C landed)
+
+### Why
+Three defects in two days shared one meta-failure: **a fix scoped to the instance that hurt, not the class.** The decisive one — `populateFindingMetadata` trapped inside `if (mergedLedger.entries.length > 0)` — was **never reported by any audit**: 5 GPT + 3 Gemini rounds across two model families examined that exact file and found its *sibling* defect in the same 139-line branch, but **not one round asked what else was in the branch**. A hand-sweep found it in minutes. That is a question problem, not an attention problem, so the fix is a mechanism. Plan: `docs/plans/adjacency-check-containment.md` (3 GPT + 2 Gemini plan-audit rounds; 21 of 24 findings valid, 1 refuted).
+
+### Changes
+- **Wave 6 `/audit-code`** — mechanical detector + narrow LLM bouncer, mirroring the duplication wave. Trigger is the **fix diff**, not a finding: `section` is free prose (measured — a line number in **6 of 1764** stored findings) and the enrichment regex discards line numbers even when present, so a finding cannot carry an anchor; a hunk always can. A diff-driven trigger also **cannot self-trigger**, so the wave can never churn on its own output.
+- **Enumeration is never the LLM's job** (`adjacency-detector.mjs`): `--numstat` preflight *before* materialising the diff, `--unified=0`, per-hunk `anchorLines` with a pure-deletion fallback, nearest-enclosing-`IfStatement`-branch resolution (unbraced branches + test-expression exclusion), `@babel/traverse`-owned walk, and a read-once evidence carrier whose egress scan runs **at construction** so unsafe text never enters the object.
+- **Honesty is structural, not documentary** (`adjacency-state.mjs` + `adjacency-compose.mjs`): a frozen 7-state enum where `clean` is *unconstructable* without non-zero coverage AND empty incompleteness; the state label **never gates emission** (candidates and incompleteness pass through untouched); `buildAdjacencyState` is called from **exactly one place**, grep-guarded by a test.
+- **Cluster A**: promoted `parseSource`/`walk` to a shared-lib `scripts/lib/ast.mjs`, closing **two** pre-existing forbidden `shared-lib → nav-audit` edges (the plan found one; enumerating every importer found `lint/on-conflict.mjs` too — amended into the plan, not absorbed silently). Added `@babel/traverse` (Babel's `Scope` only exists on a `NodePath`).
+- Convergence inherited via `is_quick_fix`; **no `convergence.mjs` change, no new gate contract**.
+
+### Verification
+- **The pin**: against a frozen full-file fixture at `59f196f`, from that commit's *real* hunk anchor 2403, the detector resolves the branch at 2366-2505 and classifies `populateFindingMetadata` as `independent` — it finds the defect 8 rounds missed — while `suppressReRaises` and the `fpTracker` loop stay correctly dependent, so the suite cannot pass by flagging everything. Live on this repo's own diff: `clean` with **10 containers / 14 statements** of real coverage.
+- Consolidated Gemini gate: round 1 CONCERNS (G1 fixed, G2 refuted with a live else-if repro + a hallucinated-citation catch) → round 2 **APPROVE**, 0 wrongly-dismissed across both rounds.
+- **7102 → 7206 tests (+104); failures 15 → 15, identical by name** (pre-existing `anthropic-client` cli-backend, baselined before any edit). All 9 non-test pre-push gates pass.
+- **Five defects found by RUNNING the code, not reading it** — incl. the naive rule misclassifying the target defect itself; a detector↔factory seam mismatch that 47 passing unit tests missed (reported "0 containers alongside 2 candidates"); and adding `adjacency` to `PASS_PROMPTS` silently enrolling the wave in the model-A/B/C shadow's **paid** generator comparison (caught by the existing spend-cap test, fixed by naming a `MECHANICAL_WAVES` set).
+
 ## 2026-07-18 — Reference-integrity gate: consolidate plans, delete the archiver, drift-gate (A+B+C landed)
 
 ### Changes

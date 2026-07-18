@@ -78,13 +78,26 @@ function dedupByHash(findings) {
   return out;
 }
 
-/** The generation passes an arm runs — DERIVED from PASS_PROMPTS (minus quickfix
- * and duplication) so the shadow's decomposition can't drift from the baseline
- * pass set (R2 M2). `duplication` is excluded for the same reason `quickfix`
- * already is: it's a mechanical-detection + narrow-bouncer pass (docs/plans/
- * audit-code-duplication-wave.md), not a full "read code, generate findings"
- * generator pass comparable across model arms. */
-export const SHADOW_PASSES = Object.freeze(Object.keys(PASS_PROMPTS).filter((p) => p !== 'quickfix' && p !== 'duplication'));
+/**
+ * Waves that are NOT generator passes: a mechanical detector plus a narrow
+ * keep/drop bouncer, rather than "read the code and generate findings". They
+ * are excluded from the arm comparison because comparing model arms on a
+ * bouncer's yes/no is meaningless — and because each one enrolled here costs a
+ * real model call per arm per shadow run.
+ *
+ * **Named as a set rather than a chain of `!==` (2026-07-17).** Adding
+ * `adjacency` to `PASS_PROMPTS` silently enrolled it here and broke the
+ * spend-cap test — 5 gen passes per arm became 6. The failure was loud (a test
+ * caught it), but the *reason* it was easy to miss is that the exclusion lived
+ * as an inline filter with no name to look for. A future wave author now has
+ * one obvious place to declare their wave's shape.
+ */
+export const MECHANICAL_WAVES = Object.freeze(['quickfix', 'duplication', 'adjacency']);
+
+/** The generation passes an arm runs — DERIVED from PASS_PROMPTS (minus the
+ * mechanical waves) so the shadow's decomposition can't drift from the baseline
+ * pass set (R2 M2). */
+export const SHADOW_PASSES = Object.freeze(Object.keys(PASS_PROMPTS).filter((p) => !MECHANICAL_WAVES.includes(p)));
 
 /** Reservation TTL — orphaned reservations older than this are released on
  * startup. Config-driven (audit R3 M4). */
