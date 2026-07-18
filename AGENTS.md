@@ -43,9 +43,9 @@
 > add architectural intent the import graph misses. The reader Zod-
 > validates the observed envelope and rejects it as stale when the
 > domain-map rules digest changes without a fresh `arch:render`.
-> Only AGENTS.md describes this — [CLAUDE.md](CLAUDE.md) intentionally
-> stays a thin Claude-Code-only addendum via `@./AGENTS.md`, so this
-> single-file change is the canonical surface.
+> **Coverage honesty**: the envelope also carries a `coverage` verdict counting what
+> the graph DROPPED; absent reads `unknown`, never clean. `npm run arch:coverage-gate`
+> owns the exit code — in `check`, NOT `dashboard:setup`. [Design](docs/plans/observed-graph-coverage-honesty.md)
 
 > **Generated-artifact policy (invariant — avoid the "messy middle").** Every
 > generated file lands in exactly ONE of two categories; never tracked-but-

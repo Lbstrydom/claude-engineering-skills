@@ -1,5 +1,69 @@
 # Project Status Log
 
+## 2026-07-18 (evening) — Observed-graph coverage honesty: the graph now says what it dropped
+
+### The question
+The observed import graph reported what SURVIVED and never what it dropped, across
+three independent loss sites. A repo could be missing most of its edges while every
+surface read authoritative. Measured: 2% of files invisible here, 1% on one
+consumer, **68% on another** — with nothing warning, on the graph that
+`get-neighbourhood`, the `/audit-code` duplication wave, and the dashboard all read.
+
+### What shipped (Phases 1-6, Clusters A-C, all audited)
+`arch:render` used to print `31 domains, 135 edges` — survivors only. It now prints:
+
+```
+coverage VERIFIED
+surviving: 31 domains, 133 edges · dropped: 1 untagged, 496 same-domain
+extraction 878/900
+```
+
+- **Measurement** (`graph-coverage.mjs`, `graph-verdict.mjs`) — pure, Tier-1, with
+  vacuity guards: a cruise that returned nothing can never read `verified`.
+- **Persistence** (`symbol_refresh_coverage`) — measured in a subprocess, consumed
+  by a different process; without the table the number was computed and dropped.
+  A CHECK makes a contradictory record (`degraded` with no reason) unstorable.
+- **Timeout** — `subprocess.mjs` gained an optional `timeoutMs` enforced at the
+  parent process boundary, because a child wedged in synchronous cruise work can
+  never fire its own timer.
+- **Gate** — `arch:coverage-gate` in `check`, deliberately NOT `dashboard:setup`:
+  a failing gate must never abort the build of the artifact that shows the problem.
+- **Dashboard** — 🟡 degraded/unverified, ⚪ unknown; never green on an unmeasured graph.
+
+### What the audits caught that I did not
+| Finding | Why it mattered |
+|---|---|
+| `normalizeRepoPath` resolved against `repoRoot` while documenting CWD-relative input | Right answer by layout coincidence only |
+| Stale envelope surviving a failed render | It now carries a VERDICT — could report `verified` for a run that measured nothing |
+| Gate treated the forward-compat `unknown key` warning as fatal | Would have failed every consumer's CI on the next schema key |
+| `await import(bareAbsolutePath)` | Throws on Windows; killed extract for any consumer with a `.dependency-cruiser.cjs` |
+| Domain-map widening | Band-aid — root fix was routing through the `learning-store` facade and tagging files correctly |
+
+**Three findings were refuted with evidence**, not accepted: a TDZ claim about a
+module-scope const used at call time, a claim `removeSourceFile` is never called,
+and `z.iso.datetime()` called hallucinated when it exists in Zod 4.4.3 (Zod-3
+knowledge applied to a Zod-4 repo — the trap AGENTS.md flags in its dependency table).
+
+**And one I got wrong myself**: I "fixed" a glob edge case both models flagged, and
+broke a deliberate bash-semantics test that had asserted the opposite all along.
+Both models reasoned from a stale comment; I followed them. Reverted — code is
+byte-identical, only the comment changed. The test was the contract the whole time.
+
+### Also
+- Backfilled adjudication outcomes for both audits (32/32 findings labelled;
+  Step 3.5 had been skipped, so the learning store had no ground truth from either).
+- Recorded a `/tmp` path-ambiguity gotcha to memory: on Windows, `/tmp` in a Bash
+  argv and `/tmp` inside Node resolve to **different directories**, which caused a
+  full mis-triage against a stale same-named file.
+
+### Known gaps (not introduced here)
+- No adjudication path exists for **primary** final-review findings —
+  `final-review-adjudicate` filters on `bucket: 'shadow-only'` and returns
+  `{ok: true, updated: 0}` for anything else (a silent no-op worth fixing).
+- (e) unified discovery remains blocked on extensionless TS resolution (#1), now
+  the only blocker after Phase 6 replaced the unsatisfiable cost gate (#2).
+
+
 ## 2026-07-18 — Telemetry-capture audit: the store was best-effort all the way down
 
 ### The question
