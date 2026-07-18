@@ -22,7 +22,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
-| [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | §3 measurement #1 ANSWERED 2026-07-18 (yes, design (e) is |
+| [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
 ## Superseded / abandoned
