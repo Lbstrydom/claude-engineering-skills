@@ -250,3 +250,45 @@ describe('ruleUnquotedSpecialCharsInLabel (portability)', () => {
     assert.equal(issues[0].lineNo, 52, 'should be 50 (offset) + 2 (intra-block)');
   });
 });
+
+// ── Anti-blindness regressions ────────────────────────────────────────────
+//
+// An adversarial review (2026-07-18) found that two "false-positive fixes" had
+// made this rule BLIND on real defects — strictly worse than the noise they
+// removed. Both suppressions were per-line heuristics; both are replaced by
+// diagram-type scoping. These tests exist so neither can come back silently.
+
+describe('ruleUnquotedSpecialCharsInLabel — must NOT go blind', () => {
+  const warn = (body) => ruleUnquotedSpecialCharsInLabel(body, 0);
+
+  it('still flags an unquoted label on a line that ALSO has an arrow and a colon', () => {
+    // The reverted guard skipped any `-->` line with a colon anywhere — but a
+    // colon inside a flowchart label is ordinary (a URL, a timestamp, `Step 1:`).
+    for (const line of [
+      'A --> B[Phase 2: rebuild — index]',
+      'A --> B[see https://x — docs]',
+      'A --> B[at 12:00 — daily]',
+      'A --> B[Step 1:<br/>go]',
+    ]) {
+      assert.equal(warn(`graph TD\n  ${line}\n`).length, 1, `must still warn: ${line}`);
+    }
+  });
+
+  it('still flags an unquoted SUBGRAPH title', () => {
+    // `subgraph X ["..."]` is valid Mermaid and IS the portable form this rule
+    // asks for, so the unquoted spaced form is a genuine finding. The reverted
+    // guard skipped the whole line, leaving 117 subgraph declarations unscanned.
+    const issues = warn('graph TD\n  subgraph SG1 [Phase 1 — build]\n  end\n');
+    assert.equal(issues.length, 1);
+    assert.match(issues[0].message, /SG1/);
+  });
+
+  it('a correctly-quoted subgraph title is silent', () => {
+    assert.equal(warn('graph TD\n  subgraph SG1 ["Phase 1 — build"]\n  end\n').length, 0);
+  });
+
+  it('a correctly-quoted cylinder is silent, an unquoted one still warns', () => {
+    assert.equal(warn('graph TD\n  DB[("Postgres — store")]\n').length, 0, 'quoted cylinder is fine');
+    assert.equal(warn('graph TD\n  DB[(Postgres — store)]\n').length, 1, 'unquoted cylinder still warns');
+  });
+});

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**3 active · 125 terminal · 22 audit summaries · 5 reference docs**
+**3 active · 126 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,7 +22,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
-| [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | blocked on two measurements (see §3). Do NOT start building until they're answered. |
+| [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | §3 measurement #1 ANSWERED 2026-07-18 (yes, design (e) is |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
 ## Superseded / abandoned
@@ -43,7 +43,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 122 completed plans</summary>
+<summary>Show all 123 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -73,6 +73,7 @@ source comments that no docs linter sees — stays valid.
 | [Split `/audit-loop` into `/audit-plan` + `/audit-code`](./audit-loop-skill-split.md) | `Complete` | all 6 phases shipped 2026-04-27 |
 | [Claude Audit Loop v1.0](./audit-loop-v1.md) | `Complete` |  |
 | [Audit Orchestrator Hardening](./audit-orchestrator-hardening.md) | `Complete` | implemented (9 phases, 5 clusters), audit-code |
+| [Plan — Consumer-side audit-tool staleness check (Option A)](./audit-tool-staleness-check.md) | `Complete` |  |
 | [Azure Embedding-Deployment Discovery + Provenance Truth](./azure-embed-deployment-discovery.md) | `Complete` | 2026-07-17) — all 3 clusters implemented + audited; consolidated Gemini gate APPROVE (0 findings); live-ver… |
 | [Azure AI Foundry Work Profile](./azure-work-profile.md) | `Complete` |  |
 | [/brainstorm Skill + Architecture-Map Discoverability + VS Code Mermaid](./brainstorm-and-arch-discoverability.md) | `Complete` | shipped — `/brainstorm` skill + `scripts/brainstorm-round.mjs` + 7 modules under `scripts/lib/brainstorm/` … |
@@ -213,11 +214,10 @@ Files in `docs/plans/` with no `Status:` line — contract matrices,
 inventories, and notes rather than plans.
 
 <details>
-<summary>Show all 5 reference documents</summary>
+<summary>Show all 4 reference documents</summary>
 
 | Plan | Notes |
 |---|---|
-| [Plan — Consumer-side audit-tool staleness check (Option A)](./audit-tool-staleness-check.md) |  |
 | [Browser MCP Tooling + Skill Sync Improvements](./browser-mcp-and-tooling.md) |  |
 | [Postgres-Parity — Contract Matrix (M0 #5)](./postgres-parity-contract-matrix.md) |  |
 | [Postgres-Parity — Non-core Dependency Inventory (M0 #1)](./postgres-parity-non-core-inventory.md) |  |

@@ -202,36 +202,41 @@ function main() {
   // `node scripts/build-manifest.mjs` — the thing every error message tells you
   // to run — would no longer fix it. Any difference at all rewrites. An
   // unreadable/corrupt existing file falls through to a rewrite.
-  const existing = readManifestOrNull();
-  if (existing && sameManifest(existing, manifest)) {
+  //
+  // The comparison is on the EXACT BYTES to be written, not on parsed JSON.
+  // Parsed equality would call a file "unchanged" whose content is right but
+  // whose FORMATTING is not (re-indented, key-reordered, CRLF, missing trailing
+  // newline) — so the canonicaliser would decline to canonicalise, and the
+  // committed artifact could sit in a form that a fresh regeneration does not
+  // reproduce. That is exactly the byte-identity property this artifact's
+  // Category-B status rests on.
+  const nextText = JSON.stringify(manifest, null, 2) + '\n';
+  const existingText = readManifestTextOrNull();
+  if (existingText === nextText) {
     console.log(`skills.manifest.json already fresh: v${manifest.schemaVersion}, bundle ${manifest.bundleVersion} (unchanged)`);
     return;
   }
 
-  fs.writeFileSync(MANIFEST_PATH, JSON.stringify(manifest, null, 2) + '\n');
+  fs.writeFileSync(MANIFEST_PATH, nextText);
   const totalFiles = Object.values(manifest.skills).reduce((sum, s) => sum + (s.files?.length ?? 1), 0);
   console.log(`skills.manifest.json updated: v${manifest.schemaVersion}, ${Object.keys(manifest.skills).length} skills, ${totalFiles} files, bundle ${manifest.bundleVersion}`);
 }
 
-function readManifestOrNull() {
+/**
+ * The manifest file's RAW TEXT, or null if absent/unreadable.
+ *
+ * Deliberately not parsed: the skip-if-unchanged check compares bytes, so a
+ * difference ANYWHERE — a per-file sha, a dropped skill, a reordered key, or
+ * merely different whitespace — counts and forces a rewrite. Erring toward
+ * rewriting is the safe direction; the alternative is a manifest the rebuild
+ * command silently refuses to repair. An unreadable file returns null and so
+ * always rewrites.
+ */
+function readManifestTextOrNull() {
   try {
     if (!fs.existsSync(MANIFEST_PATH)) return null;
-    return JSON.parse(fs.readFileSync(MANIFEST_PATH, 'utf-8'));
+    return fs.readFileSync(MANIFEST_PATH, 'utf-8');
   } catch { return null; }
-}
-
-/**
- * Are two manifests identical?
- *
- * Serialised comparison, so a difference ANYWHERE — a per-file sha, a dropped
- * skill, a reordered key — counts and forces a rewrite. Erring toward rewriting
- * is the safe direction: the alternative is a corrupt manifest that the rebuild
- * command silently refuses to repair. (Previously `sameIgnoringTimestamp`, which
- * had to strip the volatile `updatedAt`; that field is gone, so this is a plain
- * equality.)
- */
-function sameManifest(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 main();

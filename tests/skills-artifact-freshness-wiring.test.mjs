@@ -25,6 +25,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { buildManifest } from '../scripts/build-manifest.mjs';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
 const regenerate = pkg.scripts['skills:regenerate'];
@@ -71,26 +72,20 @@ describe('build-manifest is deterministic — a true Category-B artifact', () =>
     // two regenerations on the same commit be byte-identical?" Until the volatile
     // `updatedAt` was removed, the answer was NO — the manifest sat in the
     // forbidden "messy middle" (committed AND freshness-checked, yet not a pure
-    // function of source). This asserts the property directly rather than
-    // working around it.
-    const manifestPath = path.join(process.cwd(), 'skills.manifest.json');
-    const original = fs.readFileSync(manifestPath, 'utf-8');
-    try {
-      fs.rmSync(manifestPath, { recursive: true, maxRetries: 3, retryDelay: 50 });
-      const a = spawnSync(process.execPath, ['scripts/build-manifest.mjs'], { cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000 });
-      assert.equal(a.status, 0, `first build must succeed: ${a.stderr}`);
-      const first = fs.readFileSync(manifestPath, 'utf-8');
-
-      fs.rmSync(manifestPath, { recursive: true, maxRetries: 3, retryDelay: 50 });
-      const b = spawnSync(process.execPath, ['scripts/build-manifest.mjs'], { cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000 });
-      assert.equal(b.status, 0, `second build must succeed: ${b.stderr}`);
-      const second = fs.readFileSync(manifestPath, 'utf-8');
-
-      assert.equal(first, second, 'two from-scratch regenerations must be byte-identical');
-      assert.doesNotMatch(first, /updatedAt/, 'no volatile provenance may reappear');
-    } finally {
-      fs.writeFileSync(manifestPath, original); // always restore the committed file
-    }
+    // function of source).
+    //
+    // `buildManifest()` is exported and PURE, so the property is asserted
+    // directly on it. An earlier version of this test deleted the real
+    // skills.manifest.json, spawned two builds and restored it in `finally` —
+    // a Ctrl-C or a killed runner inside that window left the repo's COMMITTED
+    // manifest deleted, and `node --test` runs files in parallel, so a
+    // concurrent child could read it mid-flight. Never mutate a tracked file to
+    // test a pure function.
+    const a = buildManifest();
+    const b = buildManifest();
+    assert.deepEqual(a, b, 'two regenerations must be identical');
+    assert.equal(JSON.stringify(a), JSON.stringify(b), 'and byte-identical once serialised');
+    assert.ok(!('updatedAt' in a), 'no volatile provenance may reappear');
   });
 
   it('rebuilding an already-fresh manifest does not rewrite the file', () => {

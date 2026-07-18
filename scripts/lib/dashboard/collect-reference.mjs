@@ -96,7 +96,6 @@ export function discoverPlans(root = process.cwd()) {
       // mistaken for metadata.
       const header = raw.split(/\n##\s/)[0];
       const dateM = header.match(/^-?\s*\*\*?Date\*\*?:\s*(.+)$/m) || header.match(/^Date:\s*(.+)$/m);
-      const statusM = header.match(/^-?\s*\*\*?Status\*\*?:\s*(.+)$/m) || header.match(/^Status:\s*(.+)$/m);
 
       const firstH1 = raw.match(FIRST_H1_RE);
       const h1Text = firstH1 ? firstH1[1].trim() : null;
@@ -105,14 +104,21 @@ export function discoverPlans(root = process.cwd()) {
 
       // Inclusion is the UNION of the two signals, deliberately:
       //   • a `Status:` line — the documented rule ("docs/plans/ — a unit of work
-      //     with a Status: line"), which recovers the 8 real plans whose H1 is
+      //     with a Status: line"), which recovers the real plans whose H1 is
       //     free-form; OR
       //   • a `# Plan:` H1 — so a plan that is MISSING its metadata still shows
       //     up (flagged `malformed`) instead of silently vanishing. Hiding a
       //     half-written plan is the silent-skip failure this dashboard exists to
       //     avoid; surfacing it is what gets it fixed.
       // Neither signal ⇒ genuinely not a plan.
-      if (!statusM && !parsed.ok && !planH1) continue;
+      //
+      // `parsed.raw` (not a local regex) is the ONLY status reader here. An
+      // earlier revision kept a second, looser `statusM` pattern for display
+      // while bucketing on `parsed` — so a plan whose Status line the two
+      // disagreed about rendered under "Active" with the text "Complete".
+      // One contract, one parser.
+      const hasStatusLine = parsed.raw != null;
+      if (!hasStatusLine && !planH1) continue;
 
       // Bucket by STATUS, never by directory. An unrecognized/absent status
       // sorts to `active` deliberately — it is work needing attention, and
@@ -133,7 +139,7 @@ export function discoverPlans(root = process.cwd()) {
       out[bucket].push({
         title: planTitle,
         path: `${rel}/${name}`,
-        status: statusM ? statusM[1].trim() : null,
+        status: parsed.raw ?? null,
         date,
         malformed,
         // Full body for inline render in the dashboard's Plans tab.

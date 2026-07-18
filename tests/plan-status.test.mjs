@@ -43,7 +43,7 @@ describe('plan-status / parsePlanStatus — grammar', () => {
       '- **Status**: GPT-round audit complete (prose)',
       '- **Status**: plan-audit complete (prose)',
     ].join('\n');
-    assert.deepEqual(parsePlanStatus(md), { ok: true, token: 'Complete', kind: 'terminal' });
+    assert.deepEqual(parsePlanStatus(md), { ok: true, token: 'Complete', kind: 'terminal', raw: 'Complete — shipped' });
   });
 
   it('two Status lines WITHIN the metadata block → still duplicate', () => {
@@ -52,18 +52,51 @@ describe('plan-status / parsePlanStatus — grammar', () => {
   });
 });
 
+describe('plan-status / parsePlanStatus — the leading bullet is optional', () => {
+  // The metadata block is conventionally a bullet list, but the corpus has a
+  // plan (docs/plans/audit-tool-staleness-check.md) whose Status line is a bare
+  // `**Status**: …`. Requiring `- ` made that plan unparseable here while the
+  // dashboard's own looser regex still displayed its text — so it rendered
+  // under "Active" showing the word "Complete". One contract, one parser.
+  it('parses a bare **Status**: line with no bullet', () => {
+    const r = parsePlanStatus('# Plan\n**Status**: Complete — shipped 2026-05-13.\n\n## Body\n');
+    assert.equal(r.ok, true);
+    assert.equal(r.token, 'Complete');
+    assert.equal(r.kind, 'terminal');
+    assert.equal(r.raw, 'Complete — shipped 2026-05-13.');
+  });
+
+  it('and still parses the conventional bulleted form identically', () => {
+    const bare = parsePlanStatus('**Status**: Draft\n');
+    const bullet = parsePlanStatus('- **Status**: Draft\n');
+    assert.deepEqual(bare, bullet);
+  });
+
+  it('exposes `raw` whenever a Status line exists — even an unrecognized one', () => {
+    // The dashboard's inclusion test is `parsed.raw != null`, so a plan with a
+    // malformed status must still be DISCOVERABLE (flagged), never invisible.
+    const r = parsePlanStatus('- **Status**: Wibble\n');
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'unrecognized');
+    assert.equal(r.raw, 'Wibble');
+  });
+});
+
 describe('plan-status / parsePlanStatus — vocabulary', () => {
   const V = (line) => parsePlanStatus(`- **Status**: ${line}\n`);
 
   it('terminal: Complete, Superseded', () => {
-    assert.deepEqual(V('Complete'), { ok: true, token: 'Complete', kind: 'terminal' });
-    assert.deepEqual(V('Superseded'), { ok: true, token: 'Superseded', kind: 'terminal' });
+    // `raw` echoes the status text as authored — it is part of the contract
+    // (the dashboard renders it instead of re-implementing the regex), so the
+    // full return shape is asserted, not just the token.
+    assert.deepEqual(V('Complete'), { ok: true, token: 'Complete', kind: 'terminal', raw: 'Complete' });
+    assert.deepEqual(V('Superseded'), { ok: true, token: 'Superseded', kind: 'terminal', raw: 'Superseded' });
   });
 
   it('active: Draft, Approved, In Progress', () => {
     assert.equal(V('Draft').kind, 'active');
     assert.equal(V('Approved').kind, 'active');
-    assert.deepEqual(V('In Progress'), { ok: true, token: 'In Progress', kind: 'active' });
+    assert.deepEqual(V('In Progress'), { ok: true, token: 'In Progress', kind: 'active', raw: 'In Progress' });
   });
 
   it('separators: token is a prefix followed by end/space/em-dash/paren/colon/comma/semicolon', () => {

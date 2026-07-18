@@ -173,8 +173,13 @@ export function ruleUnquotedSpecialCharsInLabel(blockBody, fileLineOffset) {
   const issues = [];
   // Match opening bracket + first non-bracket char to check for quote.
   // `[...]`, `(...)`, `{...}` are the three Mermaid node-shape syntaxes.
-  // We deliberately ignore subgraph-bracket-labels (already handled by
-  // the `subgraph SG["..."]` form being valid + common).
+  //
+  // Subgraph TITLES are scanned too, deliberately. An older comment here
+  // claimed they were "already handled by the `subgraph SG["..."]` form being
+  // valid + common" — but that IS the portable form this rule asks for, so an
+  // unquoted `subgraph SG [Phase 1 — build]` is a genuine finding, not noise.
+  // (Suppressing them was tried and reverted: skipping the whole line left 117
+  // subgraph declarations permanently unscanned to silence 3 real warnings.)
   const lines = blockBody.split('\n');
   // Patterns we consider risky if found inside an UNQUOTED bracket label.
   const RISKY_CONTENT = /<br|[^\x00-\x7F]/;
@@ -187,13 +192,6 @@ export function ruleUnquotedSpecialCharsInLabel(blockBody, fileLineOffset) {
     // Strip %% comments.
     const commentAt = line.indexOf('%%');
     const cleaned = commentAt === -1 ? line : line.slice(0, commentAt);
-    // Skip the WHOLE line for constructs that aren't node-shape labels. The
-    // negative lookbehind above only catches `subgraph X["..."]`; the equally
-    // valid spaced form `subgraph X [label]` slipped through and produced a
-    // permanent false WARN. Same for stateDiagram transitions (`A --> B: text`),
-    // whose `:` label is prose, not a bracket label.
-    if (/^\s*subgraph\b/.test(cleaned)) return;
-    if (/-->.*:/.test(cleaned) && !/[\[({]/.test(cleaned.split('-->')[0])) return;
     let m;
     BRACKET_RE.lastIndex = 0;
     while ((m = BRACKET_RE.exec(cleaned)) !== null) {
@@ -224,9 +222,20 @@ export function lintFile(filePath) {
   const allIssues = [];
   for (const block of blocks) {
     const parsed = parseGraphBlock(block.body);
-    // R2 runs on raw block body — applies to any diagram type with
-    // node-shape brackets (graph, flowchart, classDiagram, …).
-    const r2 = ruleUnquotedSpecialCharsInLabel(block.body, block.startLine);
+    // R2 applies to diagram types with node-shape brackets (graph, flowchart,
+    // classDiagram, …) but NOT to stateDiagram, whose `A --> B: text`
+    // transition labels are prose after a colon — parenthesised prose there is
+    // not a bracket label and produced permanent false WARNs.
+    //
+    // Discriminate by DIAGRAM TYPE, never per-line. An earlier attempt skipped
+    // any line matching `/-->.*:/` with a bare left-hand side, which silenced
+    // ordinary flowchart labels that merely CONTAIN a colon — a URL, a
+    // timestamp, `Step 1:` — e.g. `A --> B[Phase 2: rebuild — index]` went from
+    // WARN to silent, with 54 such lines in the corpus. A lint that goes blind
+    // is strictly worse than one that is noisy; this scopes the exemption to the
+    // construct that actually warrants it.
+    const isStateDiagram = /^\s*stateDiagram(-v2)?\b/m.test(block.body);
+    const r2 = isStateDiagram ? [] : ruleUnquotedSpecialCharsInLabel(block.body, block.startLine);
     for (const i of r2) i.file = path.relative(REPO_ROOT, filePath).replace(/\\/g, '/');
     allIssues.push(...r2);
     if (!parsed) continue; // not a graph block; only R2 applies

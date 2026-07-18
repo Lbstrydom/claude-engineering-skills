@@ -28,7 +28,13 @@ const TOKENS = [
   ...PLAN_STATUS_VOCABULARY.active.map(t => ({ token: t, kind: 'active' })),
 ].sort((a, b) => b.token.length - a.token.length);
 
-const STATUS_LINE_RE = /^- \*\*Status\*\*:\s*(.+)$/gm;
+// The leading `- ` is OPTIONAL. The metadata block is conventionally a bullet
+// list, but the corpus has a plan whose Status line is a bare `**Status**: …`
+// (docs/plans/audit-tool-staleness-check.md). Requiring the bullet made that
+// plan invisible to this parser while the dashboard's own looser regex still
+// displayed its text — the exact "two implementations of one contract" drift
+// this module exists to prevent. The corpus is the truth; the parser widens.
+const STATUS_LINE_RE = /^-?\s*\*\*Status\*\*:\s*(.+)$/gm;
 
 // A token is a prefix of the trimmed value followed by end-of-string or a
 // separator. The separator class deliberately EXCLUDES the hyphen (so
@@ -39,8 +45,10 @@ const SEPARATOR = /[\s—–(:,.;]/;
 /**
  * Parse a plan document's Status line.
  * @param {string} content
- * @returns {{ok:true, token:string, kind:'terminal'|'active'}
- *          | {ok:false, reason:'absent'|'duplicate'|'implemented'|'unrecognized', message?:string}}
+ * @returns {{ok:true, token:string, kind:'terminal'|'active', raw:string}
+ *          | {ok:false, reason:'absent'|'duplicate'|'implemented'|'unrecognized', raw?:string, message?:string}}
+ *   `raw` is the status text as authored (present whenever a Status line was
+ *   found) so display surfaces need no second regex.
  */
 export function parsePlanStatus(content) {
   if (typeof content !== 'string') return { ok: false, reason: 'absent' };
@@ -57,11 +65,18 @@ export function parsePlanStatus(content) {
   if (matches.length === 0) return { ok: false, reason: 'absent' };
   if (matches.length > 1) return { ok: false, reason: 'duplicate' };
 
+  // `raw` is the status text exactly as written (minus surrounding whitespace).
+  // Returned so a display surface — the dashboard — can show what the author
+  // wrote WITHOUT re-implementing this regex. That second implementation is
+  // precisely how the dashboard drifted into showing "Complete" on a plan it had
+  // bucketed as active.
+  const raw = matches[0][1].trim();
+
   // Strip markdown emphasis markers, then trim. The real corpus form bolds the
   // TOKEN, not the whole value (`**Approved** — 3 GPT rounds`), so stripping only
   // whole-value wrappers misses it; `**`/`__` are never part of a status token,
   // so removing every occurrence is safe.
-  let value = matches[0][1].replace(/\*\*|__/g, '').trim();
+  const value = raw.replace(/\*\*|__/g, '').trim();
 
   // `Implemented` is rejected with a disambiguating message — it means "done" in
   // some corpus files and "partially done" in others, so it can never be aliased.
@@ -69,6 +84,7 @@ export function parsePlanStatus(content) {
     return {
       ok: false,
       reason: 'implemented',
+      raw,
       message: '"Implemented" is ambiguous — use "Complete" (done) or "In Progress" (partially done).',
     };
   }
@@ -78,10 +94,10 @@ export function parsePlanStatus(content) {
     if (value.slice(0, token.length).toLowerCase() !== token.toLowerCase()) continue;
     const next = value.slice(token.length);
     if (next.length === 0 || SEPARATOR.test(next[0])) {
-      return { ok: true, token, kind };
+      return { ok: true, token, kind, raw };
     }
   }
-  return { ok: false, reason: 'unrecognized' };
+  return { ok: false, reason: 'unrecognized', raw };
 }
 
 /** A plan is selectable iff it is a docs/plans/*.md that is not an audit-summary. */
