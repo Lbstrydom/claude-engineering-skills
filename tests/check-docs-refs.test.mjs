@@ -442,6 +442,15 @@ describe('check-docs-refs / drift-gate', () => {
       assert.match(key, /→docs\/.+\.md$/, `baseline key must end in a docs path: ${key}`);
     }
   });
+
+  it('a STALE baseline entry (its target now resolves) is drift — the baseline self-cleans (M3)', () => {
+    fs.writeFileSync(path.join(dir, 'note.md'), 'See docs/plans/real.md');
+    const baseline = new Set(['note.md→docs/plans/real.md']);
+    // real.md now EXISTS in the index → the baseline entry is stale.
+    const r = runCheck({ repoRoot: dir, files: ['note.md'], index: new Set(['docs/plans/real.md']), gating: true, baseline });
+    assert.equal(r.ok, false, 'a stale baseline entry must fail the gate');
+    assert.deepEqual(r.staleBaseline, ['note.md→docs/plans/real.md']);
+  });
 });
 
 // ── lintFile ──────────────────────────────────────────────────────────────

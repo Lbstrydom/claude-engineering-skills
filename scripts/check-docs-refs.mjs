@@ -463,12 +463,23 @@ export function runCheck({ repoRoot, files, index, gating = false, baseline = BA
   const findings = sites.filter(s => FINDING_CLASSES.has(s.class));
   // Drift = findings NOT in the baseline. Under --gating, only drift fails.
   const drift = findings.filter(f => !baseline.has(baselineKey(f)));
+
+  // Self-cleaning baseline (M3): a BASELINE entry whose target now RESOLVES is
+  // STALE — the suppression outlived its reason (same doctrine as
+  // stale-planned-marker). It must be removed from BASELINE, so it is drift-
+  // failing under --gating. Without this, a baselined ref that gets fixed and
+  // later regresses would be silently re-accepted.
+  const resolvingSites = new Set(sites.filter(s => s.class === 'RESOLVES').map(baselineKey));
+  const staleBaseline = [...baseline].filter(k => resolvingSites.has(k));
+  for (const k of staleBaseline) drift.push({ class: 'stale-baseline-entry', key: k });
+
   return {
     ok: failures.length === 0 && (!gating || drift.length === 0),
     failures,
     findings,
     drift,
-    baselined: findings.length - drift.length,
+    staleBaseline,
+    baselined: findings.length - findings.filter(f => !baseline.has(baselineKey(f))).length,
     sites,
     scanned,
   };
