@@ -55,9 +55,24 @@ function globToRegexBody(pat) {
   while (i < pat.length) {
     const ch = pat[i];
     if (ch === '*' && pat[i + 1] === '*') {
-      // `**` → match any chars including slashes (zero or more)
-      // Strip a following slash so `prefix/**` matches `prefix` itself
-      // AND `prefix/anything`.
+      // `**` → match any chars including slashes (zero or more).
+      //
+      // The two forms are deliberately NOT symmetric:
+      //   LEADING  `**/x`      → the slash FOLLOWS and is made optional, so
+      //                          this matches both `x` and `deep/x`.
+      //   TRAILING `prefix/**` → compiles to `prefix/.*`, which does NOT
+      //                          match a bare `prefix`. That is INTENTIONAL:
+      //                          it matches bash + gitignore semantics, and
+      //                          `tagDomain` is only ever handed FILE paths,
+      //                          never bare directories. Asserted in
+      //                          tests/domain-tagger.test.mjs.
+      //
+      // A round-1 LOW and a final-gate MEDIUM both read the previous comment
+      // here — which described the LEADING form and implied it covered the
+      // trailing one — and concluded the trailing form was broken. It is not;
+      // the comment was. "Fixing" the code to match those findings broke the
+      // existing bash-semantics test, which is how the mistake surfaced. Do
+      // not change this again without changing that test first, deliberately.
       if (pat[i + 2] === '/') {
         out += '(?:.*\\/)?';
         i += 3;

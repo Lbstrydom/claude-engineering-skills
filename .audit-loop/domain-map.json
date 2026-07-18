@@ -54,6 +54,14 @@
       "domain": "visual-audit"
     },
     {
+      "pattern": "scripts/arch-coverage-gate.mjs",
+      "domain": "arch-memory"
+    },
+    {
+      "pattern": "scripts/spikes/observed-graph-*.mjs",
+      "domain": "arch-memory"
+    },
+    {
       "pattern": "scripts/symbol-index/**",
       "domain": "arch-memory"
     },
@@ -277,8 +285,7 @@
     ],
     "arch-memory": [
       "learning-store",
-      "shared-lib",
-      "stores"
+      "shared-lib"
     ],
     "arm-eval": [
       "shared-lib",
@@ -389,7 +396,6 @@
     "root-scripts": [],
     "scripts": [
       "arch-intent",
-      "arch-memory",
       "arm-eval",
       "audit-orchestration",
       "claudemd-management",

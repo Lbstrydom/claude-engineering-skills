@@ -4,7 +4,7 @@
  * Plan: docs/plans/sustainability-cleanup-batch.md (WS1 §6 / §8).
  *
  * Three layers:
- *   1. EXPECTED_EXPORTS manifest — exact 33 public functions, all
+ *   1. EXPECTED_EXPORTS manifest — exact 36 public functions, all
  *      resolved through the barrel as `typeof === 'function'`.
  *   2. Per-module behavioral path — cloud-disabled neutral value matrix.
  *   3. Cross-module separation — no sub-module imports a sibling.
@@ -55,6 +55,10 @@ const EXPECTED_EXPORTS = [
   'getImportGraphPopulated',
   'getImportersForFiles',
   'getFreshImportersOrNull',
+  // arch/coverage.mjs — 3 fns (observed-graph coverage honesty)
+  'recordGraphCoverage',
+  'getGraphCoverage',
+  'copyForwardCoverage',
   // arch/domain-summaries.mjs — 2 fns
   'upsertDomainSummary',
   'getDomainSummaries',
@@ -65,8 +69,8 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 33 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 33);
+  test(`exactly 36 public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 36);
   });
 
   test('every name resolves through the barrel as a function', async () => {

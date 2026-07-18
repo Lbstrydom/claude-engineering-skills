@@ -57,5 +57,6 @@ export * from './arch/refresh-runs.mjs';
 export * from './arch/snapshots.mjs';
 export * from './arch/symbols.mjs';
 export * from './arch/imports.mjs';
+export * from './arch/coverage.mjs';
 export * from './arch/domain-summaries.mjs';
 export * from './arch/neighbourhood.mjs';

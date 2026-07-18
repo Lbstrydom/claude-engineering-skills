@@ -49,6 +49,8 @@ import {
   copyForwardImports,
   markImportGraphPopulated,
   getImportGraphPopulated,
+  recordGraphCoverage,
+  copyForwardCoverage,
   setActiveEmbeddingModel,
   copyForwardUntouchedFiles,
   getActiveSnapshot,
@@ -63,7 +65,6 @@ import { detectRepoStack } from '../lib/repo-stack.mjs';
 import { tagDomain, loadDomainRules, loadCoverageConfig } from '../lib/symbol-index/domain-tagger.mjs';
 import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
 import { assessExtractionCoverage } from '../lib/symbol-index/graph-coverage.mjs';
-import { recordGraphCoverage, copyForwardCoverage } from '../lib/store/arch/coverage.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
 import { findRepoPragmas, resolvePragmasToDefinitions, PRAGMA_RESOLUTION_MAX_GAP_LINES } from '../lib/duplicate-justification-pragma.mjs';
 

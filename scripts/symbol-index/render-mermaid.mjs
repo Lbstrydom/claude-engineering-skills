@@ -28,6 +28,7 @@ import {
   computeDriftScore,
   getImportersForFiles,
   listFileImportsForSnapshot,
+  getGraphCoverage,
 } from '../learning-store.mjs';
 import { resolveRepoIdentity } from '../lib/repo-identity.mjs';
 import { renderArchitectureMap } from '../lib/arch-render.mjs';
@@ -38,7 +39,6 @@ import { graphVerdict } from '../lib/symbol-index/graph-verdict.mjs';
 import {
   assessAttributionCoverage, assertAttributionExhaustive,
 } from '../lib/symbol-index/graph-coverage.mjs';
-import { getGraphCoverage } from '../lib/store/arch/coverage.mjs';
 import {
   OBSERVED_FILE,
   OBSERVED_VERSION,
