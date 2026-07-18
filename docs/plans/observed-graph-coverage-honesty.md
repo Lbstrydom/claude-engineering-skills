@@ -59,6 +59,27 @@
   (`extract.mjs` uses dep-cruiser in-process), so the limitation is documented
   at the seam and the overclaiming test renamed rather than building Windows
   process-tree killing for a case that does not exist.
+- **Cluster C + consolidated final gate (2026-07-18, CLOSED — Gemini APPROVE)**:
+  Phase 6 rewrote the sibling plan's blocking-unknown #2 from an unsatisfiable
+  pre-measurement gate into a runtime budget stated in the metric Clusters A-B
+  shipped, and marked that plan's §4 delivered. The consolidated gate over
+  Clusters A-C returned CONCERNS_REMAINING → **APPROVE** (0 findings,
+  "coherence: Strong", no over-engineering flags).
+  **Root-fixed after the gate called it a band-aid**: the previous commit had
+  declared `scripts → arch-memory` and `arch-memory → stores` in `allowedDeps`
+  to legalise a misplacement. Reverted both — coverage now routes through the
+  `learning-store.mjs` facade like every other store call, and
+  `arch-coverage-gate.mjs` + the observed-graph spike are tagged `arch-memory`,
+  which is what they are. Verified by re-tag + re-render: both introduced edges
+  gone; the 2 remaining repo-wide violations pre-date this work.
+  **Refuted and reverted (my own error)**: a round-1 LOW and a final-gate
+  MEDIUM both claimed `prefix/**` failing to match a bare `prefix` was a bug.
+  It is the intended bash/gitignore semantics, asserted in
+  `tests/domain-tagger.test.mjs` since before this plan. Both models reasoned
+  from a stale comment describing the *leading* `**/x` form; I followed them,
+  broke the existing test, and my first attempt also sliced 2 chars where the
+  emitted `/` is 1 — silently un-matching every file under the prefix. Code
+  restored byte-identical; only the comment changed.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (detected `--scope=backend`; stack `js-ts` + `postgres`)
 - **Target domain(s)**: `arch-memory`, `dashboard`, `scripts`
