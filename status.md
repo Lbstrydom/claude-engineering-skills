@@ -1,5 +1,62 @@
 # Project Status Log
 
+## 2026-07-18 — One status parser, not two — a plan rendered "Complete" under "Active"
+
+### Root cause (this repo's own root cause, one layer down)
+`reference-integrity-gate.md` killed the denormalized-status defect at the *path*
+layer (`docs/plans/` vs `docs/completed/` encoded mutable status in an identity).
+The same shape survived inside the dashboard: `collect-reference.mjs` **bucketed**
+plans with `parsePlanStatus` but **rendered** the status text from its own looser
+`statusM` regex. Two implementations of one contract, drifting silently — exactly
+what `lib/plan-status.mjs` was extracted to prevent.
+
+Where they disagreed, `docs/plans/audit-tool-staleness-check.md` sat under the
+**Active** heading displaying the word **"Complete"**. Cause: its Status line is a
+bare `**Status**:` with no leading bullet, which the strict parser rejected while
+the loose regex happily matched. Regenerating `docs/plans/README.md` proved the
+misfiling was **not** dashboard-local — the generated index had filed the same
+plan under *"reference documents (no `Status:` line)"*. One fix corrected both.
+
+### Changes
+- **`scripts/lib/plan-status.mjs`** — the leading `- ` is now OPTIONAL (the corpus
+  is the truth; the parser widens to meet it), and the parse returns **`raw`** —
+  the status text as authored — so a display surface has no reason to write a
+  second regex. That was the actual defect generator, not the strictness.
+- **`scripts/lib/dashboard/collect-reference.mjs`** — `parsed.raw` is the only
+  status reader; the competing regex is deleted. Inclusion keys off
+  `parsed.raw != null`, so a malformed plan stays **discoverable-and-flagged**
+  rather than invisible.
+- **`scripts/build-manifest.mjs`** — skip-if-unchanged compares the exact **bytes**
+  to be written, not parsed JSON. Parsed equality called a file "unchanged" whose
+  content was right but whose *formatting* was not, so the canonicaliser declined
+  to canonicalise — against the byte-identity property this Category-B artifact's
+  status rests on.
+- **`tests/skills-artifact-freshness-wiring.test.mjs`** — the determinism test now
+  asserts on the pure exported `buildManifest()`. It used to delete the committed
+  manifest and restore it in `finally`; a Ctrl-C inside that window left the
+  tracked file deleted, and `node --test` runs files in parallel.
+- **`scripts/lint-plan-mermaid.mjs`** — two "false-positive fixes" from earlier in
+  the session had **blinded the linter** (a per-line guard silenced any arrow line
+  containing a colon — 54 corpus lines; a subgraph skip blinded 117 more, and the
+  3 "false positives" were genuine). Replaced with diagram-type scoping; the 3 real
+  subgraph titles are quoted in `green-not-realized.md`.
+
+### Verification
+- Regression pins for the exact defect: the bullet-less Status line, bare-vs-bulleted
+  equivalence, and `raw` present on an *unrecognized* status (the discoverability
+  invariant). Plus 4 anti-blindness tests on the mermaid linter.
+- Full suite **7245 pass / 0 fail**; `npm run check` all gates green;
+  **drift-gate 0 net-new** over the 9-finding baseline.
+- `arch:refresh` + `arch:render` cleared the stale `sameIgnoringTimestamp` /
+  `readManifestOrNull` entries the map still indexed.
+
+### Note
+Shipped `AI-Gate: not-run` with `--no-run-id`. A fresh `.audit/last-audit-run.json`
+existed (from the sibling session's work above), but that audit was **not** of these
+changes — these went through an adversarial review, `/audit-code` having correctly
+declined (files outside any plan's declared scope). Claiming its evidence would have
+been a false provenance record.
+
 ## 2026-07-18 — AI-Gate: passed is now reachable — TWO missing writers, not one
 
 ### Root cause (the task named one half; the class had a sibling)
