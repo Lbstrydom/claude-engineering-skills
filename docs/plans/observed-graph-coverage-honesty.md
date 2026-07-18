@@ -1,7 +1,11 @@
 # Plan: Observed-Graph Coverage Honesty
 
 - **Date**: 2026-07-18
-- **Status**: Draft — audited, gate closed by decision (see Audit Trail)
+- **Status**: Complete — Phases 1-6 shipped and audited (Clusters A, B, C).
+  §7c's follow-on investigation (the ai-organiser TS-resolution defect) is
+  deliberately outside the phase set and remains open; it is safe to leave open
+  precisely because that repo now reports its own blindness rather than hiding
+  it, which was the point.
 - **Audit trail**: GPT plan-audit R1 (H:3 M:3 L:1) → R2 (H:2 M:3) → R3 (H:4 M:2);
   **all 18 findings folded in**. GPT loop stopped at the max-3 cap: HIGH went
   3→2→4, and the R3 rise was concrete defects *introduced by the R2 fixes*, not

@@ -11,10 +11,17 @@
   follow-on. #2 is unanswerable as written (cost does not track repo size, the
   measurement carries ~60% run-to-run spread, and the adversarial repo does not
   exist) — it needs a stated threshold, not a bigger repo.
-  **Recommended next step is §4, not (e)**: it is independent, it is now the
-  best-evidenced part of this plan (ai-organiser is **68% invisible** to the
-  import layer), and it is the reporting channel an honest-degradation design
-  needs.
+  **Updated 2026-07-18 (evening)**: the two recommendations below were both
+  acted on by [observed-graph-coverage-honesty.md](observed-graph-coverage-honesty.md),
+  which shipped Phases 1-5 (Gemini APPROVE).
+  - **§4 null-domain accounting — DONE.** The silent skip is now a counted,
+    bucketed, surfaced drop. It was indeed higher value per unit of risk than
+    (e), and it shipped while (e) remains blocked.
+  - **#2 — SUPERSEDED by a runtime budget (§3.2)**, exactly the "stated
+    threshold, not a bigger repo" this status called for. No longer a blocker.
+  - **#1 — still the blocker, and now the ONLY one.** Extensionless TS
+    resolution failure is unfixed; diagnosing it is that plan's §7c,
+    deliberately off its critical path. (e) stays blocked on it.
 - **Author**: Claude + Louis
 - **Scope**: backend (`scripts/symbol-index/extract.mjs` discovery seam; syncs to consumer repos)
 
@@ -94,17 +101,24 @@ having. The observed graph exists to CONTRADICT declared intent.
 
 ## 3. Blocking unknowns — measure BEFORE building
 
-**#1 is ANSWERED (2026-07-18): yes. #2 is partially measured and still open.**
-(e) is unimplementable if #1 fails and unaffordable if #2 is bad.
+**#1 is NOT answered — it was refuted at n=3 (see §3.1). #2 is SUPERSEDED by a
+runtime budget (§3.2), and is no longer a blocker.** (e) is unimplementable if
+#1 fails and unaffordable if #2 is bad.
+
+> The "#1 is ANSWERED: yes" that stood at the top of this section was written
+> when two repos agreed. The third refuted it. The header is corrected here
+> rather than quietly, because a stale green summary above an accurate body is
+> how a refuted conclusion gets re-adopted by whoever reads only the heading.
 
 1. **Does dep-cruiser cleanly accept an explicit file list of ~3,000 paths?**
    Make-or-break for (e); a ~10-minute spike answers it. If it doesn't, the
    practical equivalent is cruising `repoRoot` with exclusions delegated to a
    real `.gitignore` parser rather than a hardcoded array.
-2. **What does a root/full cruise cost on a consumer monorepo?** The parent
-   plan's **1.1s is measured on THIS repo — the one repo where the allowlist
-   happens to work.** A 40k-file `packages/` tree is not 1.1s. Needs a real
-   consumer measurement before anything ships.
+2. ~~**What does a root/full cruise cost on a consumer monorepo?**~~
+   **SUPERSEDED 2026-07-18 — replaced by a runtime budget (see §3.2).** The
+   original framing required measuring a repo that does not exist, so it could
+   never be satisfied. It is now a decidable gate, because the coverage
+   contract that makes it decidable has shipped.
 
 ### 3.1 Spike results (2026-07-18)
 
@@ -199,7 +213,61 @@ throw?" cannot answer.
   consumer's entire `extension/` tree (a browser-extension subsystem invisible
   to the import layer, because `extension` is not in `COMMON_SOURCE_DIRS`).
 
+### 3.2 #2 restated as a runtime budget (2026-07-18 — the replacement)
+
+Owned and delivered by [`observed-graph-coverage-honesty.md`](observed-graph-coverage-honesty.md)
+Phase 6. §3.1 established that #2 as written is unanswerable: cost does not
+track repo size, the measurement carries a ~60% spread, and the adversarial
+40k-file consumer does not exist. Three findings, all pointing the same way —
+**the missing pass threshold, not the missing repo, was the blocker.**
+
+The replacement is the one §3.1 itself argued for: *for a tool that ships to
+repos we will never see, the durable answer is runtime honesty rather than
+pre-measurement.* That is now built, not aspirational:
+
+| Was | Is |
+|---|---|
+| "measure a hypothetical monorepo before shipping" | `maxCruiseMs` (soft, default 120s) → verdict `degraded` / `budget_exceeded` |
+| an unstated pass threshold | `coverage.floor` (default 0.90) → `degraded` / `below_floor` |
+| a cruise that never returns | `hardTimeoutMs` (default 300s), enforced at the `refresh.mjs` process boundary → `unverified` / `extraction_timeout` |
+| a smaller graph that reads authoritative | `arch:coverage-gate` exit 2; dashboard 🟡; never green |
+
+**#2's gate condition, stated so it can be checked:** a cruise on the largest
+ACTUAL consumer must complete inside `hardTimeoutMs` **over repeated runs**
+(≥3, because §3.1 measured a ~60% spread and a single number is not
+reproducible enough to gate on), and report `verified`. Both current consumers
+already satisfy this by a wide margin — the slowest observed root cruise was
+11.2s against a 300s hard timeout, ~27× headroom.
+
+**Why this is not merely deferring the question.** The original #2 asked "will
+(e) be affordable on a repo we have not seen?" — unanswerable by construction.
+The runtime budget answers the question that actually matters on that repo:
+*if it is not affordable there, does the tool say so, or does it quietly emit a
+smaller graph?* It now says so, on that repo, at run time, with a named reason.
+A budget overrun degrades the verdict; it does not silently shrink the graph.
+
+**What this does NOT unblock.** (e) remains blocked on **#1**, which §3.1
+refuted at n=3: TS resolution fails upstream of discovery, so feeding more
+files to the resolver would raise the module count while leaving the edges
+wrong. Diagnosing that is
+[`observed-graph-coverage-honesty.md`](observed-graph-coverage-honesty.md) §7c,
+deliberately off that plan's critical path. **Removing #2 as a blocker does not
+make (e) ready — it removes an unsatisfiable gate so the real blocker is the
+only one left.**
+
 ## 4. Independent first step — null-domain accounting
+
+> **DELIVERED 2026-07-18** by [`observed-graph-coverage-honesty.md`](observed-graph-coverage-honesty.md)
+> (Phases 1-5, Clusters A-B, Gemini APPROVE). The silent skip at
+> `observed-deps.mjs` is now a counted, bucketed drop — `untaggedFrom` /
+> `untaggedTo` / `untaggedBoth`, exhaustively reconciled against the persisted
+> edge count, surfaced in the envelope, on stderr, in the dashboard, and in the
+> gate. The prediction below held: this was higher value per unit of risk than
+> (e), and it shipped while (e) is still blocked on #1.
+>
+> Live on this repo: `31 domains, 135 edges · dropped: 1 untagged, 489
+> same-domain · extraction 876/898`. The section is kept for its reasoning, not
+> as outstanding work.
 
 **Do this first; it does not depend on §2 or §3.** Files resolving to a null
 domain are currently *skipped silently* when the observed graph is built. So a
