@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-07-18 — Test-env hermeticity: scrub ambient provider ROUTING at the runner, not per suite
+
+### Root cause (and a refuted premise)
+Follow-up to the `ANTHROPIC_BASE_URL` fix — the class question ("who else?") applied to the whole suite. The task's premise was that `tests/openai-client.test.mjs` needed the anthropic-style `beforeEach` scrub. **Investigation refuted both halves**: those suites were already immune (every Azure test injects `buildAzureConfig(fakeEnv)` — the designed seam — and the OSS branch short-circuits before config), and a `beforeEach` scrub is **structurally impossible** for this class anyway — `azureConfig` is a module-load-time snapshot (`buildAzureConfig(process.env)`), frozen before any test hook runs. A hostile-env sweep of the FULL suite found the real victims elsewhere: **3 verdicts flip** under an ambient `AZURE_OPENAI_ENDPOINT` — the audit-plan/rebuttal smoke tests (they spread `{...process.env}` into their own child processes) and `model-ab-egress`'s public-path assertion (consumes the load-time snapshot directly).
+
+### Changes
+- **`scripts/run-tests.mjs`** — `npm test` now spawns `node --test` with the ambient provider-**routing** env scrubbed from the child environment. One choke point, every test process inherits a clean baseline by construction. Probed-then-rejected alternatives are documented in the module header: `--import` preload does **not** propagate to the test-runner's per-file child processes (verified empirically on Node 22.19), and per-file scrub imports are per-file discipline — the exact scrub-list-vs-resolution-list drift that already bit twice this week.
+- **The trust boundary**: dotenv loads transitively (model-resolver → config) *inside each child, after the scrub* — so `.env` / `~/.audit-loop.env` values **survive** (trusted repo config) while shell/harness-injected values **die**. Locally `CLAUDE_BACKEND=cli` resurrects from `.env`; the harness's injections don't.
+- **Selectors only, never credentials**: scrubbing keys would break CI secret injection; a key with no routing selector is inert for verdicts. The 12-var list is enumerated from source (all of `buildAzureConfig`'s reads minus the credential, + `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `CLAUDE_BACKEND`).
+- **`tests/test-env-hermeticity.test.mjs`** — 8 pins incl. both adversarial mirrors (the hostile env *provably activates* the profile unscrubbed — without that direction the scrub test is vacuous) and a **drift guard**: every `env.AZURE_*` config.mjs reads must be scrubbed or a documented credential, and every scrubbed `AZURE_*` must still be read (a rename can't silently open a hole).
+
+### Verification
+- Full suite under hostile ambient Azure env: **3 fail → 0 fail** (7201 pass). Clean env: 7201 / 0 — no regression. `npm test -- <file>` forwarding intact.
+
 ## 2026-07-18 — Harness-injected ANTHROPIC_BASE_URL: the canonical default is semantically absent
 
 ### Root cause
