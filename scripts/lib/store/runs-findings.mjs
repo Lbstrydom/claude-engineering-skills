@@ -22,7 +22,7 @@
  * @module scripts/lib/store/runs-findings
  */
 
-import { many, one, insertReturning, updateWhere, deleteWhere, withTx, pgArray } from '../db/query.mjs';
+import { many, one, query, insertReturning, updateWhere, deleteWhere, withTx, pgArray } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 
@@ -475,38 +475,100 @@ export async function recordFinalReviewFindings(runId, { primary = [], shadow = 
 }
 
 /**
- * Human-adjudication writeback for a shadow-only final-review finding (plan
- * D6). Sets `audit_findings.user_action`, mapping the user-facing verb to the
- * existing CHECK enum (20260508120000): accepted → 'accepted-permanent',
- * dismissed → 'dismissed'. Scoped to the shadow-only bucket so the fingerprint
- * disambiguates (R2 M2); returns the affected row count so the CLI can report
- * a multi-match.
+ * Human-adjudication writeback for a final-review finding (plan D6).
+ *
+ * Maps the user-facing verb to the existing CHECK enum (20260508120000):
+ * accepted → 'accepted-permanent', dismissed → 'dismissed'.
+ *
+ * **Bucket is RESOLVED, not hardcoded.** The original scoped every update to
+ * `bucket = 'shadow-only'` so a fingerprint present in two buckets could not be
+ * ambiguously matched (R2 M2 — a real hazard worth keeping). But the CLI is
+ * named generically, so that hardcode silently made every PRIMARY final-review
+ * finding unadjudicable: the update matched nothing and still reported success.
+ * Found 2026-07-18 trying to label a refuted Gemini finding — `{ok: true,
+ * updated: 0}`, the same unverified-write-success class this codebase treats as
+ * HIGH elsewhere. So instead:
+ *
+ *   - explicit `bucket` (including `null` for primary) → scope to exactly that
+ *   - omitted + exactly one bucket matches → adjudicate it (the common case;
+ *     identical behaviour to before for the shadow queue)
+ *   - omitted + several buckets match → REFUSE and name them, preserving the
+ *     R2-M2 disambiguation intent without pretending to know which was meant
+ *   - nothing matches → `ok: false` with a reason, never a silent success
+ *
+ * Also writes `adjudication_outcome` + `decided_at` alongside `user_action`,
+ * mirroring the model-A/B sibling (`setFindingOutcome`). Writing only
+ * `user_action` left an adjudicated finding invisible to every ground-truth
+ * query that keys on those columns — labelled to a human, unlabelled to the
+ * learner.
  *
  * @param {string} runId
- * @param {string} fingerprint  finding_fingerprint of the shadow-only finding
+ * @param {string} fingerprint  finding_fingerprint of the finding
  * @param {'accepted'|'dismissed'} action
- * @returns {Promise<{ok: boolean, updated: number, cloud: boolean}>}
+ * @param {{bucket?: string|null}} [opts] - omit to auto-resolve; pass explicitly to disambiguate
+ * @returns {Promise<{ok: boolean, updated: number, cloud: boolean, reason?: string, buckets?: Array<string|null>}>}
  */
-export async function adjudicateFinalReviewFinding(runId, fingerprint, action) {
-  if (!await isCloudEnabled()) return { ok: false, updated: 0, cloud: false };
+export async function adjudicateFinalReviewFinding(runId, fingerprint, action, opts = {}) {
+  if (!await isCloudEnabled()) return { ok: false, updated: 0, cloud: false, reason: 'cloud-disabled' };
   const userAction = action === 'accepted' ? 'accepted-permanent'
     : action === 'dismissed' ? 'dismissed'
     : null;
   if (!userAction) throw new Error(`adjudicateFinalReviewFinding: action must be 'accepted' or 'dismissed', got '${action}'`);
+  const outcome = action === 'accepted' ? 'accepted' : 'dismissed';
   if (!await columnExists('audit_findings', 'bucket', many, isCloudEnabled)) {
     process.stderr.write('  [learning] adjudicate: bucket column absent — run migration 20260610120000\n');
-    return { ok: false, updated: 0, cloud: true };
+    return { ok: false, updated: 0, cloud: true, reason: 'bucket-column-absent' };
   }
+  const bucketGiven = Object.prototype.hasOwnProperty.call(opts, 'bucket');
   try {
-    const res = await updateWhere(
-      'audit_findings',
-      { user_action: userAction },
-      { run_id: runId, finding_fingerprint: fingerprint, bucket: 'shadow-only' }
+    const candidates = await many(
+      `SELECT DISTINCT bucket FROM audit_findings
+        WHERE run_id = $1 AND finding_fingerprint = $2`,
+      [runId, fingerprint]
     );
-    return { ok: true, updated: res.rowCount ?? 0, cloud: true };
+    if (candidates.length === 0) {
+      return { ok: false, updated: 0, cloud: true, reason: 'no-match' };
+    }
+    let bucket;
+    if (bucketGiven) {
+      bucket = opts.bucket;
+      const known = candidates.some((c) => c.bucket === bucket);
+      if (!known) {
+        return {
+          ok: false, updated: 0, cloud: true, reason: 'no-match-in-bucket',
+          buckets: candidates.map((c) => c.bucket),
+        };
+      }
+    } else if (candidates.length > 1) {
+      // Do NOT guess. Two buckets sharing a fingerprint are two independent
+      // observations (primary vs shadow) — collapsing them would corrupt the
+      // A/B comparison the shadow experiment exists to make.
+      return {
+        ok: false, updated: 0, cloud: true, reason: 'ambiguous-bucket',
+        buckets: candidates.map((c) => c.bucket),
+      };
+    } else {
+      bucket = candidates[0].bucket;
+    }
+    // `bucket` may legitimately be null (a primary finding), which updateWhere
+    // renders as `IS NULL` — the reason this uses a raw predicate rather than
+    // an equality object.
+    const res = await query(
+      `UPDATE audit_findings
+          SET user_action = $3, adjudication_outcome = $4, decided_at = NOW()
+        WHERE run_id = $1 AND finding_fingerprint = $2
+          AND bucket IS NOT DISTINCT FROM $5`,
+      [runId, fingerprint, userAction, outcome, bucket]
+    );
+    const updated = res.rowCount ?? 0;
+    if (updated === 0) {
+      // Reachable only on a concurrent delete between the probe and the write.
+      return { ok: false, updated: 0, cloud: true, reason: 'no-rows-affected' };
+    }
+    return { ok: true, updated, cloud: true, bucket };
   } catch (err) {
     process.stderr.write(`  [learning] adjudicateFinalReviewFinding failed: ${err.message}\n`);
-    return { ok: false, updated: 0, cloud: true };
+    return { ok: false, updated: 0, cloud: true, reason: `db-error: ${err.message}` };
   }
 }
 

@@ -614,7 +614,11 @@ async function cmdFinalReviewStats() {
         category: f.category, file: f.primary_file, detail: f.detail_snapshot,
       })),
       actions: ['accepted', 'dismissed'],
-      commandFor: (it, a) => `node scripts/cross-skill.mjs final-review-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a}`,
+      // `--bucket shadow-only` is explicit, not implied: this queue is
+      // shadow-only by construction, and stating it means the documented
+      // operator flow can never hit the ambiguous-bucket refusal if the same
+      // fingerprint later also appears as a primary finding.
+      commandFor: (it, a) => `node scripts/cross-skill.mjs final-review-adjudicate --run-id ${it.runId} --fingerprint ${it.fingerprint} --action ${a} --bucket shadow-only`,
       generatedAt: new Date().toISOString(),
     });
     const dir = existsSync('docs/arm-eval') ? 'docs/arm-eval/worksheets' : '.audit';
@@ -639,7 +643,26 @@ async function cmdFinalReviewAdjudicate() {
   if (action !== 'accepted' && action !== 'dismissed') {
     return emitError('BAD_INPUT', `--action must be 'accepted' or 'dismissed', got '${action}'`);
   }
-  const res = await adjudicateFinalReviewFinding(runId, fingerprint, action);
+  // --bucket is optional. Omitted → the store resolves it, refusing rather than
+  // guessing when a fingerprint spans several buckets. `primary` / `none` name
+  // the NULL bucket, which is what a non-shadow final-review finding carries.
+  const rawBucket = argOption('bucket');
+  const opts = rawBucket === undefined ? {}
+    : { bucket: (rawBucket === 'primary' || rawBucket === 'none') ? null : rawBucket };
+  const res = await adjudicateFinalReviewFinding(runId, fingerprint, action, opts);
+  // A 0-row adjudication is a FAILURE, not a quiet success. Reporting ok:true
+  // there is how a hardcoded bucket filter went unnoticed: every primary
+  // finding "adjudicated" fine and nothing changed.
+  if (!res.ok) {
+    const hint = res.reason === 'ambiguous-bucket'
+      ? ` — fingerprint spans buckets [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]; re-run with --bucket <name>`
+      : res.reason === 'no-match-in-bucket'
+        ? ` — no row in that bucket; present in [${(res.buckets || []).map((b) => b ?? 'primary').join(', ')}]`
+        : '';
+    return emitError('ADJUDICATION_FAILED', `${res.reason || 'unknown'}${hint}`, {
+      updated: 0, cloud: res.cloud, buckets: res.buckets,
+    });
+  }
   emit(res);
 }
 
