@@ -613,8 +613,9 @@ is prioritised on evidence rather than on this plan's schedule.
 **Diagnose the ai-organiser resolution defect.** Bounded protocol (R1 M3):
 - **Pinned**: the `dependency-cruiser` version in `package-lock.json` at the time
   of the run, the ai-organiser commit sha, and the exact invocation
-  (`cwd == repoRoot`, `--root <repoRoot>`) — the spike ran with `cwd != repoRoot`,
-  which is itself a variable to eliminate first (§8).
+  (`cwd == repoRoot`, `--root <repoRoot>`). The cwd variable is already
+  eliminated — re-measured 2026-07-18, figures unchanged (§8) — so this phase
+  starts from a confirmed 945/1389 rather than a suspect one.
 - **Required evidence**: the eligible-universe count (§2.1.1), the normalized
   cruised-source list, their set difference bucketed by top-level dir, and a
   minimal reproducer — the smallest file set that reproduces `deps == 0` for a
@@ -650,16 +651,25 @@ is prioritised on evidence rather than on this plan's schedule.
   resolver that still cannot resolve them. Re-evaluate only after Phases 1-5. This
   is a scope boundary, not a band-aid: (e)'s value is *unmeasurable* until coverage
   is reportable, which is exactly what this plan builds.
-- **The `..`-prefixed path artifact is a Phase-6 variable, not deferred debt.**
-  The spike observed 453/485 module paths prefixed `..` when cwd ≠ repo root.
-  Production is unaffected (`refresh.mjs:144` sets `repoRoot = process.cwd()`),
-  but `extract.mjs:336` drops `..`-prefixed edges — so **the spike's own
-  ai-organiser numbers were taken under a path spelling production never
-  uses.** Phase 6 therefore re-measures with `cwd == repoRoot` FIRST, before
-  concluding anything about a resolution defect. §2.1.1's `normalizeRepoPath`
-  removes the variable permanently. Flagged prominently because it could
-  otherwise invalidate the 68% figure that motivates this plan — the figure is
-  strong evidence of *a* problem, but its precise size is not yet trustworthy.
+- **The `..`-prefixed path artifact — RESOLVED 2026-07-18, figures confirmed.**
+  The spike originally ran with cwd ≠ repo root, producing `..`-prefixed module
+  paths; since `extract.mjs:336` drops `..`-prefixed edges, this raised a real
+  risk that the headline numbers were measured under a path spelling production
+  never uses. **Re-measured with `cwd == repoRoot` on both consumers — every
+  figure is unchanged:**
+
+  | Repo | invisible (cwd ≠ root) | invisible (cwd == root) |
+  |---|---|---|
+  | wine-cellar-app | 23 / 2426 | **23 / 2427** |
+  | ai-organiser | 945 / 1389 | **945 / 1389 (68%)** |
+
+  Module paths are now clean (`src/services/…` rather than `../ai-organiser/src/…`),
+  confirming the prefix never reached the coverage arithmetic — `path.resolve`
+  normalised it away. M1's verdicts also survive unchanged: 0 semantic diffs on
+  this repo and wine-cellar, 10 on ai-organiser. So the 68% is **evidence, not
+  an artifact**, and Phase 6 starts from a confirmed baseline rather than a
+  suspect one. §2.1.1's `normalizeRepoPath` is retained regardless — it removes
+  the variable permanently rather than relying on callers to set cwd correctly.
 - **Trade-off**: counting drops costs a `Set` and a bounded sample per render.
   Negligible against a multi-second cruise, and it buys the only signal that
   distinguishes "no edges" from "no visibility".

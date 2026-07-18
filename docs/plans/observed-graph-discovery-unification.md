@@ -121,8 +121,17 @@ throw?" cannot answer.
 | Target | M1 semantic diffs | M2 root cruise | Coverage delta |
 |---|---|---|---|
 | claude-engineering-skills | 0 | 0.95s · 921 modules · +2MB | 22 / 891 invisible (2%) |
-| wine-cellar-app (consumer) | 0 | 4.06s · 2530 modules · +117MB | 23 / 2426 invisible (1%) |
+| wine-cellar-app (consumer) | 0 | 4.1–5.6s · 2531 modules · +79–117MB | 23 / 2427 invisible (1%) |
 | ai-organiser (consumer) | **10** | 6.9–11.2s · **485** modules · +215–309MB | **945 / 1389 invisible (68%)** |
+
+> **Confirmed under `cwd == repoRoot` (2026-07-18).** The first measurements ran
+> the spike from this repo with `--repo <other>`, which makes dep-cruiser emit
+> cwd-relative (`../ai-organiser/src/…`) module paths — and `extract.mjs:336`
+> drops `..`-prefixed edges, so the figures could have been artifacts. Re-run
+> from inside each consumer: **every coverage number and every M1 verdict is
+> byte-identical** (945/1389 and 23/2427). `path.resolve` had normalised the
+> prefix away before the arithmetic. The timing spread widened slightly on the
+> re-runs, which only reinforces #2 below.
 
 - **#1 → NOT ANSWERED. An n=2 "yes" did not survive n=3.** The first two repos
   agreed, and this section previously recorded "#1 answered: yes, (e) is
@@ -163,9 +172,12 @@ throw?" cannot answer.
      costs *more* than wine-cellar-app's **2530** (6.9–11.2s vs 4.06s;
      215–309MB vs 117MB). Extrapolating by file or module count is invalid, so
      a 40k-file measurement would not generalise either.
-  2. **The measurement is noisy.** Two consecutive root cruises of the same
-     unchanged repo: 6.9s/+215MB and 11.2s/+309MB — ~60% spread. Any threshold
-     must be stated over repeated runs, not a single number.
+  2. **The measurement is noisy.** Root cruises of the same unchanged repo:
+     ai-organiser 6.9s / 7.7s / 11.2s (+215 to +309MB), wine-cellar-app 4.1s /
+     5.6s (+79 to +117MB) — a ~60% spread on ai-organiser and ~37% on
+     wine-cellar, with peak memory varying by a similar factor. Any threshold
+     must be stated over repeated runs; a single number is not reproducible
+     enough to gate on.
   3. **The adversarial case is not reachable.** There are exactly two consumers
      (`sync-to-repos.mjs`): wine-cellar-app and ai-organiser. Both are now
      measured. The "~40k-file `packages/` tree" is hypothetical — so "needs a
