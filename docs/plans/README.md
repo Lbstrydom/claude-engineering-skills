@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 124 terminal · 22 audit summaries · 5 reference docs**
+**3 active · 125 terminal · 22 audit summaries · 5 reference docs**
 
 ---
 
@@ -22,7 +22,6 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
-| [Evidence-Anchor Path Contract — stop Stage 0 discarding valid findings as fabricated](./evidence-anchor-path-contract.md) | `In Progress` | Cluster A shipped + gate-clear; Cluster B (Phases 3–7) pending |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | blocked on two measurements (see §3). Do NOT start building until they're answered. |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
@@ -44,7 +43,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 121 completed plans</summary>
+<summary>Show all 122 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -94,6 +93,7 @@ source comments that no docs linter sees — stays valid.
 | [Discovery-Portfolio Secret-Redaction Gap](./discovery-portfolio-secret-redaction.md) | `Complete` | implemented, `/audit-code` converged over 5 rounds (18 dogfooding-artifact findings dismissed via GPT rebut… |
 | [Dogfooding Ergonomics v1](./dogfooding-ergonomics-v1.md) | `Complete` | shipped 2026-05-09; archive auto-moves this file via `/ship` Step 5.5 |
 | [Domain-Map Reconciliation (architecture-intent backlog)](./domain-map-reconciliation.md) | `Complete` | Phases A/B (`f94371c`) + C (`144be83`, `500f3aa`), 2026-07-17. Gemini final gate: APPROVE. |
+| [Evidence-Anchor Path Contract — stop Stage 0 discarding valid findings as fabricated](./evidence-anchor-path-contract.md) | `Complete` | both clusters shipped + gate-clear (consolidated Gemini APPROVE). |
 | [Plan-Declared Execution Clustering Across the Skill Chain](./execution-clustering-skill-chain.md) | `Complete` |  |
 | [Background-safe & provider-agnostic final-review gate](./final-review-background-safe-provider-agnostic.md) | `Complete` |  |
 | [Shadow Final-Review Reviewer (A/B test final-gate effectiveness)](./final-review-shadow-reviewer.md) | `Complete` | verified built; status corrected from Approved during archive triage 2026-06-27 |

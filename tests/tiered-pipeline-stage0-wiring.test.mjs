@@ -31,8 +31,96 @@ const {
   collectCandidateAnchorFiles, buildStage0RelevanceContext,
   makeHeadContentAdapter, makeImpactAdapter, makeBlameAdapter,
   extractCanonicalAnchorFile, buildPreExistingDebtEntry, routePreExistingIndependent,
-  resolveEligibleDiffPathMap,
+  resolveEligibleDiffPathMap, stripMaxLengthFor,
 } = __testExports;
+
+/**
+ * The discovery generators clamp over-long producer strings rather than
+ * destroying the finding — but `quote` is exempt, because Gate A matches it
+ * VERBATIM and a truncated quote turns our own repair into a false "the model's
+ * evidence was wrong" verdict (the plan's central misattribution, one layer
+ * down). Found 2026-07-18 by the §9a acceptance probe.
+ */
+describe('stripMaxLengthFor — quote is never clamped, everything else still is', () => {
+  const schema = {
+    type: 'object',
+    properties: {
+      findings: {
+        type: 'array',
+        maxItems: 15,
+        items: {
+          type: 'object',
+          properties: {
+            detail: { type: 'string', maxLength: 600 },
+            anchor: {
+              anyOf: [
+                { type: 'object', properties: { quote: { type: 'string', maxLength: 1000 }, side: { type: 'string', enum: ['base', 'head'] } } },
+                { type: 'null' },
+              ],
+            },
+          },
+        },
+      },
+    },
+  };
+
+  it('removes maxLength from quote at any depth, including inside an anyOf branch', () => {
+    const out = stripMaxLengthFor(schema, 'quote');
+    const anchor = out.properties.findings.items.properties.anchor.anyOf[0];
+    assert.equal(anchor.properties.quote.maxLength, undefined);
+    // The rest of the quote schema survives — we drop the cap, not the field.
+    assert.equal(anchor.properties.quote.type, 'string');
+  });
+
+  it('leaves every OTHER capped field clamped — this must not become a blanket opt-out', () => {
+    const out = stripMaxLengthFor(schema, 'quote');
+    assert.equal(out.properties.findings.items.properties.detail.maxLength, 600);
+    assert.equal(out.properties.findings.maxItems, 15);
+  });
+
+  it('does not mutate the input (the strict schema is shared with the GLM path)', () => {
+    stripMaxLengthFor(schema, 'quote');
+    assert.equal(schema.properties.findings.items.properties.anchor.anyOf[0].properties.quote.maxLength, 1000);
+  });
+
+  // Against the REAL schema, not a synthetic one. Consolidated-gate G3 (2026-07-18)
+  // argued a shallow walk would make the exemption a silent no-op, because
+  // ProducerFindingV3Schema is a discriminatedUnion and therefore compiles to
+  // `oneOf` — so `quote` sits at items -> oneOf[n] -> properties -> anchor ->
+  // properties -> quote. The mechanism was refuted (the walk is generic over all
+  // object values), but the test it asked for is the right one and it surfaced a
+  // second capped site: the OMISSION branch's `triggerAnchor.quote`.
+  it('strips BOTH quote caps in the real V3 schema — anchor AND triggerAnchor, through oneOf', async () => {
+    const { z } = await import('zod');
+    const { makeProducerFindingV3Schema } = await import('../scripts/lib/schemas.mjs');
+    const real = z.toJSONSchema(z.object({ findings: z.array(makeProducerFindingV3Schema(['f0001'])).max(15) }));
+
+    const quoteCaps = (node) => {
+      let n = 0;
+      const walk = (x) => {
+        if (x == null || typeof x !== 'object') return;
+        if (Array.isArray(x)) return x.forEach(walk);
+        for (const [k, v] of Object.entries(x)) {
+          if (k === 'properties' && v && typeof v === 'object') {
+            for (const [p, ps] of Object.entries(v)) {
+              if (p === 'quote' && ps?.maxLength != null) n += 1;
+              walk(ps);
+            }
+          } else walk(v);
+        }
+      };
+      walk(node);
+      return n;
+    };
+
+    // The premise: the union really is `oneOf`, and both branches cap `quote`.
+    assert.ok(Array.isArray(real.properties.findings.items.oneOf), 'V3 must compile to oneOf');
+    assert.equal(quoteCaps(real), 2, 'anchor (commission) and triggerAnchor (omission) both cap quote');
+    assert.equal(quoteCaps(stripMaxLengthFor(real, 'quote')), 0, 'the exemption must not be a silent no-op through oneOf');
+    // Control: the exemption is surgical, not a blanket un-capping.
+    assert.match(JSON.stringify(stripMaxLengthFor(real, 'quote')), /"detail":\{[^}]*"maxLength":600/);
+  });
+});
 
 // @duplicate-justification: target=tests/vcs-blame.test.mjs:mkdtemp reason=a 2-line temp-dir helper duplicated across test files matching this repo's established per-file local-helper convention (AGENTS.md: "three similar lines is better than a premature abstraction") — a shared fixture module for one trivial helper is the over-engineered extreme, not the right-sized one.
 function mkdtemp() {
@@ -585,7 +673,24 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
 
   it('the retired anchor-mirror is gone but the maxLength/maxItems clamp is RETAINED', () => {
     assert.equal(/normalizeModifiedAnchorPaths/.test(src.replace(/RETIRED[\s\S]*?\*\//, '')), false, 'the normalizer must be fully retired');
-    assert.match(src, /\(v\) => clampToJsonSchemaLimits\(v, glmResponseJsonSchema\)/, 'OSS routers still ignore maxLength/maxItems — the clamp stays');
+    assert.match(src, /\(v\) => clampToJsonSchemaLimits\(v, producerResponseJsonSchema\)/, 'OSS routers still ignore maxLength/maxItems — the clamp stays');
+  });
+
+  // 2026-07-18: the Sonnet path had NO clamp, so Sonnet-5's verbose `detail`
+  // (>600 chars) made 60-77% of its GENUINE findings read as
+  // `producer_dto_invalid` — our contract blaming itself for prose length and
+  // destroying real findings. Measured by the §9a acceptance probe.
+  it('BOTH generators clamp — the Sonnet path is not exempt', () => {
+    assert.match(
+      src,
+      /clampToJsonSchemaLimits\(\{ findings: toolUse\.input\.findings \}, unclampedQuoteSchema\)/,
+      'Anthropic tool-use validates shape but not maxLength — the Sonnet response needs the same clamp as GLM',
+    );
+  });
+
+  it('the Sonnet clamp exempts `quote` — clamping it would fake a model evidence failure', () => {
+    assert.match(src, /stripMaxLengthFor\(producerResponseJsonSchema, 'quote'\)/,
+      'Gate A matches `quote` VERBATIM: a truncated quote is destroyed as `unsupported`, blaming the model for OUR truncation');
   });
 });
 

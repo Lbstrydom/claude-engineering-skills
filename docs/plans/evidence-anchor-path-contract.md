@@ -1,7 +1,11 @@
 # Plan: Evidence-Anchor Path Contract — stop Stage 0 discarding valid findings as fabricated
 
 - **Date**: 2026-07-17
-- **Status**: In Progress — Cluster A shipped + gate-clear; Cluster B (Phases 3–7) pending
+- **Status**: Complete — both clusters shipped + gate-clear (consolidated Gemini APPROVE).
+  One residual, declared not hidden: §9 acceptance is met for the **Sonnet** generator
+  (0/17 malformed, 16 verified) and **unverified for GLM**, blocked by the
+  `discovery_generation` 120s timeout that §8 / Out-of-Scope item 1 already declare
+  independent of this plan's correctness.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (detected: `--scope=backend`; stack `js-ts` + `postgres`)
 - **Target domain(s)**: `audit-orchestration`, `shared-lib`
@@ -921,6 +925,63 @@ record: CONCERNS, adjudicated — 3/3 accepted and fixed, 0 dismissed.** Not re-
      forbidden.
 - **Audit**: GPT R1 `H:5 M:13 L:1` raw → 0 in-scope Cluster A defects after impact triage.
   19/19 outcomes labelled (run `605de4b9`). Full suite 6701 pass / 0 fail.
+
+### 2026-07-18 — Cluster B (Phases 3–7) — the acceptance probe earns its keep
+
+Cluster B's body shipped 2026-07-17 (`46c3c71` → consolidated Gemini gate → `2dbefc1`
+→ `3b51321` → `4100ae9`), but the plan header was never updated and **Phase 7's "run it
+for real" was never redone after `2dbefc1` reworked the grader to the rate rule.** Running
+it closed that gap and immediately found two real defects — vindicating §9's own warning
+that "a green suite is not sufficient evidence here" (the suite was 7236-green throughout).
+
+- **The probe's first honest run was a false alarm, and that was itself a bug.** Against
+  the pinned fixture (`cee4448`, a hardening commit) Sonnet-5 **and** GLM-5.2 both returned
+  **0 findings, 3/3**. The payload was verified healthy offline (63KB diff, 24KB code, map
+  `ready`, 3 entries) and the fixture files are byte-identical since that rev — so the
+  commit is simply clean. But the grader mapped `discoveryRawFindings === 0` to **`failed`**
+  ("our contract is broken") when it means the contract was **never exercised**. That is
+  this plan's own misattribution living inside its own acceptance gate, and it would have
+  sent the next engineer hunting a defect that does not exist. Now `contract_not_exercised`
+  → **`could_not_run`** (exit 2 — still non-zero, so "couldn't check" can never read clean).
+- **THE REAL DEFECT — the Sonnet path never got the lenient clamp** (found by re-running
+  against `d3c6269`, a fixture with real findings). The GLM path has clamped since GLM's
+  `principle` overflow; Anthropic tool-use validates *shape* provider-side but **not
+  `maxLength`**, so Sonnet-5's verbose `detail` (>600 chars) failed the producer DTO and
+  **60–77% of its GENUINE findings were destroyed as `producer_dto_invalid`** — our
+  contract blaming itself for prose length. One run additionally **threw**, killing the
+  whole batch and violating D6. Measured: `5/7` and `5/6` malformed with one throw →
+  **`0/17` malformed, 16 verified, tripwire 0, probe exit 0 ACCEPTED**.
+- **`quote` is exempt from that clamp, and this is load-bearing.** Gate A matches `quote`
+  VERBATIM, so truncating it would silently break the match and destroy the finding as
+  `unsupported` — a *model* evidence failure manufactured entirely by *our* truncation, a
+  fresh instance of the exact misattribution this plan exists to kill, one layer down. New
+  pure `stripMaxLengthFor` strips only that cap, so an over-long quote lands in `malformed`
+  (ours, loud, correct). Both outcomes lose the finding; only one tells the truth about why.
+  **Pre-existing debt recorded, not silently changed**: the GLM path has clamped `quote`
+  since the DeepSeek fix and still does.
+- **Diagnosability**: the `CONTRACT BUG` line now aggregates `reasonDetail` beside
+  `reasonCode` — every DTO rejection shares one code, so the code alone forced a live repro
+  to diagnose, which is precisely what this session had to do.
+- **Consolidated Gemini gate**: round 1 `CONCERNS` (3) → round 2 **`APPROVE`** (0 new).
+  G3 (MEDIUM, "the walker may not traverse `oneOf`") — **mechanism refuted, test accepted**:
+  verified against the real V3 schema (2 quote caps → 0, `detail` still 600), and the
+  requested test surfaced a second capped site the synthetic one missed, `triggerAnchor.quote`.
+  G1 (HIGH, "make `stage0Verified > 0` aggregate") — **refuted on the data**: applied to this
+  session's pre-fix runs it evaluates `2 > 0` → **PASS**, hiding the very bug just fixed;
+  the per-run rule caught it. Also the probe is deliberately not in CI. G2 (HIGH, "exit-code
+  contradiction") — **mechanism refuted** (`--generator all` *did* return exit 2; the exit 0
+  came from an explicit `--generator sonnet`), **reporting duty accepted** and honoured in
+  the Status line. Its `--allow-timeouts=glm` recommendation was **rejected on principle**:
+  letting a timeout read as a legal exit 0 is the anti-green class.
+- **Residual (declared)**: the **GLM acceptance arm is unverified** — repeated
+  `discovery_generation` 120s timeouts (10 min wall). Independence per §8 / Out-of-Scope 1:
+  a transport failure, not an anchor-contract one; GLM's enum capability was separately
+  confirmed live in Phase 3, and this increment's clamp is Sonnet-only by construction
+  (GLM already clamped), so GLM's contract behaviour is unchanged by it. **A Sonnet-only
+  pass is not full §9 acceptance and is not claimed as one.**
+- **Verification**: full suite **7236 pass / 0 fail**; `npm run check` exit 0. Two earlier
+  failures were flaky timing — `hook latency` confirmed **pre-existing** by stashing these
+  changes and reproducing on clean HEAD.
 
 ### 2026-07-17 — runStatus enum tension adjudicated; import footgun closed
 

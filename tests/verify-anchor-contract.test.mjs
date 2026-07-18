@@ -163,15 +163,38 @@ test('grade: a SYSTEMATIC malformed rate (>= 0.34 aggregate) fails, even with ve
   assert.ok(g.failedCriteria.some((c) => /sum\(discoveryMalformedRaw\)/.test(c)), g.failedCriteria.join(' | '));
 });
 
-test('grade: total raw 0 does NOT divide — zero-verified carries the failure, rate stays null (0/0 is not clean)', () => {
+// Corrected 2026-07-18 BY RUNNING IT: this previously asserted `failed`. Both
+// Sonnet-5 and GLM-5.2 returned 0 findings 3/3 on the pinned fixture (a clean
+// hardening commit; payload verified healthy), and grading that `failed` would
+// blame OUR contract for a property of the model + fixture — the plan's own
+// central misattribution, pointed the other way. The invariant the test really
+// guards (0/0 must never read as clean) is PRESERVED: `could_not_run` is exit
+// 2, non-zero.
+test('grade: 0 raw findings is could_not_run (contract never exercised), NOT failed — and 0/0 still never reads clean', () => {
   const g = gradeGeneratorRuns('sonnet', [
     run({ discoveryRawFindings: 0, discoveryMalformedRaw: 0, stage0Verified: 0 }),
     run({ discoveryRawFindings: 0, discoveryMalformedRaw: 0, stage0Verified: 0 }),
     run({ discoveryRawFindings: 0, discoveryMalformedRaw: 0, stage0Verified: 0 }),
   ]);
+  assert.equal(g.outcome, 'could_not_run');
+  assert.match(g.reason, /contract_not_exercised/);
+  // Never silently clean: the outcome is non-accepted, so exit stays non-zero.
+  assert.notEqual(g.outcome, 'accepted');
+});
+
+test('grade: a zero-finding run mixed with real runs sinks the generator to could_not_run, never accepted', () => {
+  const g = gradeGeneratorRuns('sonnet', [run(), run({ discoveryRawFindings: 0, stage0Verified: 0 }), run()]);
+  assert.equal(g.outcome, 'could_not_run');
+  assert.match(g.reason, /contract_not_exercised/);
+});
+
+test('grade: a REAL contract break (malformed rate) still fails — could_not_run must not swallow it', () => {
+  const g = gradeGeneratorRuns('sonnet', [
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 6, stage0Verified: 1 }),
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 6, stage0Verified: 1 }),
+    run({ discoveryRawFindings: 6, discoveryMalformedRaw: 6, stage0Verified: 1 }),
+  ]);
   assert.equal(g.outcome, 'failed');
-  assert.equal(g.aggregate.malformedRate, null);
-  assert.ok(g.failedCriteria.some((c) => /stage0Verified/.test(c)));
 });
 
 test('grade: stage0Verified === 0 on even ONE run fails (the literal 1-of-62 defect, required every run)', () => {

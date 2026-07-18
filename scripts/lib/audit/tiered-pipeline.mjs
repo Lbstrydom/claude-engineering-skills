@@ -154,6 +154,51 @@ export class TieredUnavailableError extends Error {
  * @param {string|null|undefined} diffText - the run's unified diff (ctx.diffText)
  * @returns {{map: ReturnType<typeof buildDiffPathMap>, skipped: Array<object>}}
  */
+/**
+ * Return a deep copy of `jsonSchema` with `maxLength` removed from every
+ * property named `fieldName`, at any depth.
+ *
+ * The one consumer is the discovery generators' lenient clamping: clamping is a
+ * length-only repair that saves a verbose-but-genuine finding, but it must not
+ * touch a field whose VALUE is semantically checked downstream. `quote` is the
+ * only such field — Gate A matches it verbatim — so truncating it converts our
+ * own repair into a false "the model's evidence was wrong" verdict.
+ *
+ * Derived from the schema rather than a hardcoded prose-field allowlist, so a
+ * new capped field is clamped automatically and cannot drift.
+ *
+ * Pure; never mutates the input (the strict schema is shared with the GLM path).
+ *
+ * @param {object} jsonSchema
+ * @param {string} fieldName
+ * @returns {object}
+ */
+function stripMaxLengthFor(jsonSchema, fieldName) {
+  if (jsonSchema == null || typeof jsonSchema !== 'object') return jsonSchema;
+  if (Array.isArray(jsonSchema)) return jsonSchema.map((s) => stripMaxLengthFor(s, fieldName));
+  const out = {};
+  for (const [key, value] of Object.entries(jsonSchema)) {
+    if (key === 'properties' && value && typeof value === 'object') {
+      const props = {};
+      for (const [propName, propSchema] of Object.entries(value)) {
+        const walked = stripMaxLengthFor(propSchema, fieldName);
+        if (propName === fieldName && walked && typeof walked === 'object' && !Array.isArray(walked)) {
+          const { maxLength, ...rest } = walked;
+          props[propName] = rest;
+        } else {
+          props[propName] = walked;
+        }
+      }
+      out[key] = props;
+    } else if (value && typeof value === 'object') {
+      out[key] = stripMaxLengthFor(value, fieldName);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 function resolveEligibleDiffPathMap(diffText) {
   const map = buildDiffPathMap(diffText);
   if (map.kind !== 'ready') return { map, skipped: [] };
@@ -768,7 +813,25 @@ export async function runTieredAuditPipeline(ctx) {
   // asserts and which a real capability probe confirmed both Anthropic tool-use
   // and OpenRouter/GLM honour (3/3 anchors each, 0 outside the enum).
   const glmStrictSchema = z.object({ findings: z.array(producerFindingSchema).max(15) });
-  const glmResponseJsonSchema = z.toJSONSchema(glmStrictSchema);
+  // Named for the CONTRACT, not one generator: both generators emit the same
+  // `{findings: [...]}` producer shape and both need the same lenient clamping
+  // (see `sonnetCall`), so a `glm`-prefixed name here would misdescribe it.
+  const producerResponseJsonSchema = z.toJSONSchema(glmStrictSchema);
+
+  // `quote` must NEVER be clamped (2026-07-18). Every other capped field is
+  // prose with no downstream semantic check, so truncating its tail costs a few
+  // words and SAVES the finding. `quote` is different in kind: Gate A verifies
+  // it VERBATIM against the real diff section, so a truncated quote silently
+  // stops matching and the finding is destroyed as `unsupported` — a "the model
+  // made an evidence error" verdict caused entirely by OUR truncation. That is a
+  // fresh instance of the exact misattribution this plan exists to eliminate,
+  // just one layer down.
+  //
+  // Stripping the cap here means an over-long quote instead fails `safeParse` at
+  // `prepareCandidates` and is counted as `malformed` — OUR contract rejecting
+  // it, loudly and correctly attributed. Both outcomes lose the finding; only
+  // one of them tells the truth about why.
+  const unclampedQuoteSchema = stripMaxLengthFor(producerResponseJsonSchema, 'quote');
   const glmLenientSchema = z.preprocess(
     // Lenient ingestion, now down to its ONE remaining job: OSS routers accept
     // our JSON Schema without enforcing maxLength/maxItems (GLM emitted
@@ -778,7 +841,7 @@ export async function runTieredAuditPipeline(ctx) {
     // (enums, missing fields) still fail loud. z.toJSONSchema on the preprocess
     // pipe resolves to the inner schema, so the provider-facing JSON Schema is
     // unchanged.
-    (v) => clampToJsonSchemaLimits(v, glmResponseJsonSchema),
+    (v) => clampToJsonSchemaLimits(v, producerResponseJsonSchema),
     glmStrictSchema,
   );
   const glmCall = providers.ossCall
@@ -899,7 +962,23 @@ export async function runTieredAuditPipeline(ctx) {
           // diagnosable from the thrown/logged message alone.
           throw new Error(`sonnetCall: response did not contain a report_findings tool call with a findings array (stop_reason: ${resp?.stop_reason ?? 'unknown'})`);
         }
-        return toolUse.input.findings;
+        // The SAME lenient clamping the GLM path has had since GLM's `principle`
+        // overflow — the Sonnet path never got it, and that asymmetry was a live
+        // instance of this plan's own bug class (found 2026-07-18 by the §9a
+        // acceptance probe, the first time it ran against a fixture with real
+        // findings): Sonnet-5 writes `detail` longer than the 600-char cap, so
+        // 60-77% of its GENUINE findings were rejected as `producer_dto_invalid`
+        // — "our contract couldn't parse it" — and destroyed. Anthropic tool-use
+        // validates SHAPE provider-side but does not enforce maxLength, exactly
+        // as OpenRouter doesn't.
+        //
+        // Clamping is length-only and pre-validation: over-limit strings/arrays
+        // are truncated, while genuinely semantic violations (enums, missing
+        // fields, unknown ids) still fail loud at `prepareCandidates`. Losing the
+        // tail of a verbose `detail` is strictly better than destroying the
+        // finding — and `quote` is capped well above any real anchor, so Gate A's
+        // verbatim content check is unaffected.
+        return clampToJsonSchemaLimits({ findings: toolUse.input.findings }, unclampedQuoteSchema).findings;
       }
     : async () => { throw new Error('discovery portfolio: providers.anthropicClient unavailable'); };
 
@@ -946,9 +1025,20 @@ export async function runTieredAuditPipeline(ctx) {
       acc[m.reasonCode] = (acc[m.reasonCode] || 0) + 1;
       return acc;
     }, {});
+    // Aggregate the FIELD-level detail too, not just the reasonCode. Every DTO
+    // rejection shares one code (`producer_dto_invalid`), so the code alone says
+    // "our contract broke" without saying WHERE — which forces a live repro to
+    // diagnose, the exact cost §7c's loud rule exists to remove. Found
+    // 2026-07-18 by the acceptance probe: 5/7 candidates rejected, and the code
+    // alone could not distinguish a length-cap overflow from a genuine shape bug.
+    const byDetail = malformedRaw.reduce((acc, m) => {
+      const key = m.reasonDetail || '(no detail)';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
     process.stderr.write(
       `  [discovery] CONTRACT BUG — ${malformedRaw.length}/${rawFindings.length} RAW candidate(s) rejected at the producer boundary, not by evidence. `
-      + `These are not model fabrications. Reasons: ${JSON.stringify(byReason)}\n`,
+      + `These are not model fabrications. Reasons: ${JSON.stringify(byReason)} Detail: ${JSON.stringify(byDetail)}\n`,
     );
   }
   if (contradictedRaw.length > 0) {
@@ -1114,7 +1204,10 @@ export async function runTieredAuditPipeline(ctx) {
 
   // ── overall_reasoning — deterministic accounting summary, no LLM call ──
   const generatorSummary = (ctx.generatorOutcomes || [])
-    .map((o) => `${o.model} (${o.role}): ${o.status}${o.findingCount != null ? ` — ${o.findingCount} findings` : ''}`)
+    // durationMs is what makes a timeout diagnosable at a glance ("did it
+    // exhaust the budget, or die early?") — omitted when absent rather than
+    // rendered as 0, which would read as an instant call.
+    .map((o) => `${o.model} (${o.role}): ${o.status}${o.findingCount != null ? ` — ${o.findingCount} findings` : ''}${o.durationMs != null ? ` [${(o.durationMs / 1000).toFixed(1)}s]` : ''}`)
     .join('\n');
   const overall_reasoning = [
     `**Discovery portfolio**:\n${generatorSummary || 'n/a'}`,
@@ -1260,6 +1353,6 @@ export const __testExports = process.env.AUDIT_EXPORTS_FOR_TESTS === '1'
       collectCandidateAnchorFiles, buildStage0RelevanceContext,
       makeHeadContentAdapter, makeImpactAdapter, makeBlameAdapter,
       extractCanonicalAnchorFile, buildPreExistingDebtEntry, routePreExistingIndependent,
-      resolveEligibleDiffPathMap,
+      resolveEligibleDiffPathMap, stripMaxLengthFor,
     }
   : undefined;

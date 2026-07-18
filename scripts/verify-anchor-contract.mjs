@@ -179,6 +179,24 @@ function summariseRun(run, index) {
   if (missing.length > 0) {
     return { index, usable: false, status, reason: `run ${index}: counters_incomplete: ${missing.join(', ')} absent or non-numeric — an unread counter must never grade as 0`, counters };
   }
+  // A run that produced NO findings never exercised the contract, so it cannot
+  // grade it either way (corrected 2026-07-18, by running it: Sonnet-5 AND
+  // GLM-5.2 both returned 0 findings 3/3 on the pinned fixture — a hardening
+  // commit that is simply clean; payload verified healthy at 63KB diff / 24KB
+  // code / map `ready`).
+  //
+  // Grading that as `failed` would assert "our contract is broken" from an
+  // outcome that is a property of the MODEL and the FIXTURE — the exact
+  // misattribution this whole plan exists to eliminate (§1: `fabricated`
+  // silently absorbing every contract mismatch), merely pointed the other way.
+  // It would send a future engineer hunting a defect that does not exist.
+  //
+  // `could_not_run` is the honest bucket and is still EXIT 2 — non-zero, so
+  // "couldn't check" can never read as clean (§9a's anti-green rule). The
+  // no-findings case is un-exercised, not unclean.
+  if (counters.discoveryRawFindings === 0) {
+    return { index, usable: false, status, counters, reason: `run ${index}: contract_not_exercised — the generator produced 0 findings on this fixture, so the anchor contract was never exercised (not a contract failure; pick a fixture with known findable defects)` };
+  }
   return { index, usable: true, status, counters };
 }
 
@@ -228,9 +246,10 @@ export function gradeGeneratorRuns(generator, runs) {
     failedCriteria.push(`stage0Verified > 0 required every run (was 0 on run(s): ${zeroVerified.join(', ')})`);
   }
 
-  // 2. Aggregate malformed RATE < ceiling. Divide-by-zero guard: total raw 0
-  //    means nothing could have verified, so criterion (1) already carries the
-  //    failure — DO NOT divide, and never let 0/0 read as a clean rate.
+  // 2. Aggregate malformed RATE < ceiling. Divide-by-zero guard RETAINED as
+  //    defence in depth: a zero-raw run is now un-gradeable upstream
+  //    (`contract_not_exercised`), so totalRaw === 0 is unreachable here — but
+  //    if that ever regresses, 0/0 must still never read as a clean rate.
   let malformedRate = null;
   if (totalRaw > 0) {
     malformedRate = totalMalformed / totalRaw;
