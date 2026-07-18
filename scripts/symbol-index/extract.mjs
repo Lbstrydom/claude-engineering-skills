@@ -397,6 +397,10 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
     eligible,
     cruisedSources: modules.map(m => m.source).filter(Boolean),
     repoRoot,
+    // dep-cruiser emits `source` relative to ITS process CWD, which is not
+    // necessarily repoRoot. Resolving against repoRoot is correct only when
+    // the two coincide — the assumption normalizeRepoPath exists to remove.
+    cruisedBase: process.cwd(),
     elapsedMs,
     edges,
     sampleCap,
@@ -535,7 +539,14 @@ async function main() {
   // wrong denominator. Pass null and let refresh.mjs copy the prior row
   // forward as stale instead.
   const isFullRun = !args.files || args.files.length === 0;
-  const eligible = isFullRun ? eligibleFiles(files, { repoRoot }) : null;
+  // §2.1.1's third clause: a file this pipeline refuses to read must not count
+  // against the denominator. An unreadable file is excluded for the same
+  // reason — it is not a coverage failure, and failing closed here would
+  // understate coverage on precisely the repos with generated monsters.
+  const isTooLarge = (abs) => {
+    try { return fs.statSync(abs).size > MAX_FILE_BYTES; } catch { return true; }
+  };
+  const eligible = isFullRun ? eligibleFiles(files, { repoRoot, isTooLarge }) : null;
   const graphStats = await extractGraphAndViolations(repoRoot, { eligible });
   // `coverage` travels on its own `{type:'coverage'}` line, not inside
   // `counts` — that field is a flat scalar bag and consumers treat it as one.

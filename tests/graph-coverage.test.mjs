@@ -301,3 +301,58 @@ describe('assertExtractionExhaustive (Phase 2 — the drop-site guard)', () => {
     assert.deepEqual(r, { ok: true, expected: 0, actual: 0 });
   });
 });
+
+describe('normalizeRepoPath — base is not always repoRoot (r1 audit, be-services)', () => {
+  it('resolves a cruiser-relative path against the CWD it was emitted from', () => {
+    // dep-cruiser emits `source` relative to ITS process CWD. Run from a
+    // sibling directory it emits `../repo/src/a.ts`; run from a PARENT it
+    // emits `repo/src/a.ts` — and that second spelling resolved against
+    // repoRoot yields `repo/src/a.ts` (a path inside the repo that does not
+    // exist), silently missing every file from the numerator.
+    const parent = process.platform === 'win32' ? 'C:/' : '/';
+    assert.equal(normalizeRepoPath('repo/src/a.ts', ROOT, { base: parent }), rel('src/a.ts'));
+    // Resolved against repoRoot instead, the same input lands somewhere else
+    // entirely — this is the bug the `base` parameter removes.
+    assert.notEqual(normalizeRepoPath('repo/src/a.ts', ROOT), rel('src/a.ts'));
+  });
+
+  it('defaults base to repoRoot, so repo-relative callers are unchanged', () => {
+    assert.equal(normalizeRepoPath('src/a.ts', ROOT), rel('src/a.ts'));
+  });
+
+  it('ignores base for absolute paths', () => {
+    const other = process.platform === 'win32' ? 'C:/elsewhere' : '/elsewhere';
+    assert.equal(normalizeRepoPath(path.join(ROOT, 'src/a.ts'), ROOT, { base: other }),
+      rel('src/a.ts'));
+  });
+
+  it('threads through assessExtractionCoverage as cruisedBase', () => {
+    const parent = process.platform === 'win32' ? 'C:/' : '/';
+    const r = assessExtractionCoverage({
+      eligible: [rel('src/a.ts')],
+      cruisedSources: ['repo/src/a.ts'],
+      repoRoot: ROOT,
+      cruisedBase: parent,
+    });
+    assert.equal(r.cruised, 1, 'a correctly-based cruiser path must count');
+  });
+});
+
+describe('eligibleFiles — the size clause (§2.1.1, contract gap)', () => {
+  it('excludes files the pipeline refuses to read', () => {
+    // MAX_FILE_BYTES is OUR cap, not dep-cruiser's. A file we never read
+    // cannot be "uncruised coverage" — counting it understates coverage on
+    // exactly the repos carrying generated/bundled monsters.
+    const files = ['src/small.ts', 'src/huge.ts'].map((f) => path.join(ROOT, f));
+    const r = eligibleFiles(files, {
+      repoRoot: ROOT,
+      isTooLarge: (f) => f.includes('huge'),
+    });
+    assert.deepEqual(r, [rel('src/small.ts')]);
+  });
+
+  it('is optional — omitting it keeps the prior behaviour', () => {
+    const files = [path.join(ROOT, 'src/a.ts')];
+    assert.deepEqual(eligibleFiles(files, { repoRoot: ROOT }), [rel('src/a.ts')]);
+  });
+});

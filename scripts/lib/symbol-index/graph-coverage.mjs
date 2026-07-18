@@ -42,13 +42,24 @@ const CRUISABLE_SET = new Set(CRUISABLE_EXTENSIONS);
  * coincide today; relying on that is an implicit contract, and this function is
  * how we stop relying on it.
  *
- * @param {string} p - absolute, or relative to `repoRoot`
+ * `base` is what a RELATIVE `p` is resolved against, and it is not always
+ * `repoRoot` (round-1 audit, be-services MEDIUM). dep-cruiser emits paths
+ * relative to the process CWD, so resolving its output against `repoRoot` is
+ * only correct when the two coincide — the very assumption this function
+ * exists to remove. It happened to produce the right answer for the measured
+ * `../<repo>/src/x.ts` spelling because that path walks back INTO the repo,
+ * but that is a coincidence of layout, not a property. Callers holding
+ * cruiser output pass `{base: process.cwd()}`; `base` defaults to `repoRoot`
+ * for callers holding already-repo-relative or absolute paths.
+ *
+ * @param {string} p - absolute, or relative to `base`
  * @param {string} repoRoot
+ * @param {{base?: string}} [opts]
  * @returns {string} repo-relative, forward-slash, lower-cased on Windows
  */
-export function normalizeRepoPath(p, repoRoot) {
+export function normalizeRepoPath(p, repoRoot, { base } = {}) {
   if (typeof p !== 'string' || p.length === 0) return '';
-  const abs = path.resolve(repoRoot, p);
+  const abs = path.resolve(base || repoRoot, p);
   let rel = path.relative(repoRoot, abs).split(path.sep).join('/');
   // Windows filesystems are case-insensitive; `normalizePath()` elsewhere in
   // this repo lower-cases for the same reason (see AGENTS.md accepted debt).
@@ -66,16 +77,24 @@ export function normalizeRepoPath(p, repoRoot) {
  * allowlist's blindness surfaces as a number rather than a silent behaviour
  * change.
  *
+ * `isTooLarge` supplies §2.1.1's third clause, `size <= MAX_FILE_BYTES`. It is
+ * injected rather than statted here so this module stays pure (Tier 1) — the
+ * caller already holds `fs` and, in `extract.mjs`'s case, already stats every
+ * file. Omitting it entirely was a real contract gap: a file the pipeline
+ * refuses to read still counted against the denominator, understating coverage
+ * on exactly the repos most likely to have generated monsters.
+ *
  * @param {string[]} files - whole-repo inventory (SKIP_DIRS already applied)
- * @param {{repoRoot: string}} opts
+ * @param {{repoRoot: string, isTooLarge?: (absPath: string) => boolean}} opts
  * @returns {string[]} sorted, de-duplicated, normalized repo-relative paths
  */
-export function eligibleFiles(files, { repoRoot } = {}) {
+export function eligibleFiles(files, { repoRoot, isTooLarge } = {}) {
   if (!Array.isArray(files) || typeof repoRoot !== 'string') return [];
   const out = new Set();
   for (const f of files) {
     if (typeof f !== 'string' || f.length === 0) continue;
     if (!CRUISABLE_SET.has(path.extname(f).toLowerCase())) continue;
+    if (typeof isTooLarge === 'function' && isTooLarge(f)) continue;
     const rel = normalizeRepoPath(f, repoRoot);
     // A path that escapes the repo is not part of this repo's universe.
     if (rel === '' || rel.startsWith('../')) continue;
@@ -94,13 +113,16 @@ export function eligibleFiles(files, { repoRoot } = {}) {
  * repo (the live bug at `extract.mjs:307`, which returns `{violationCount: 0}`
  * with `importCount` undefined).
  *
+ * `cruisedBase` is the directory dep-cruiser's relative `source` values are
+ * relative to — its process CWD, not necessarily `repoRoot`.
+ *
  * @param {{outcome?: 'ok'|'failed'|'timedOut', eligible?: string[],
- *          cruisedSources?: string[], repoRoot?: string, elapsedMs?: number,
- *          edges?: object, sampleCap?: number}} input
+ *          cruisedSources?: string[], repoRoot?: string, cruisedBase?: string,
+ *          elapsedMs?: number, edges?: object, sampleCap?: number}} input
  */
 export function assessExtractionCoverage({
   outcome = 'ok', eligible = [], cruisedSources = [], repoRoot = '',
-  elapsedMs = null, edges = {}, sampleCap = 20,
+  cruisedBase = undefined, elapsedMs = null, edges = {}, sampleCap = 20,
 } = {}) {
   if (outcome !== 'ok') {
     return {
@@ -111,7 +133,7 @@ export function assessExtractionCoverage({
   const eligibleSet = new Set(eligible);
   const seen = new Set();
   for (const s of cruisedSources) {
-    const rel = normalizeRepoPath(s, repoRoot);
+    const rel = normalizeRepoPath(s, repoRoot, { base: cruisedBase });
     // Only modules inside the eligible universe count. dep-cruiser's module
     // list also contains node builtins and npm packages — measured on one
     // consumer, ~20 of 485 "modules" were `crypto`, `fs`, `@babel`, `eslint`.

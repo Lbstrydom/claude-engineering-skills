@@ -336,6 +336,24 @@ call sites would drift. Invalid/out-of-range → log once, use the default, neve
 throw (#16). Absent `coverage` key → all defaults. Unknown keys → ignored with
 one warning (forward-compat for consumers on an older sync).
 
+**BINDING ON PHASE 4 — graceful degradation must not silently disable the gate
+(Cluster A round-1 audit, Quickfix HIGH).** The rule above is right for
+`arch:render`: a malformed domain-map must not take down the artifact that
+displays the problem. But applied to the *gate* it is a hole of exactly the
+kind this plan exists to close — `enforce: "true"` (a string) parses as
+invalid, falls back to `enforce: false`, and the operator gets a gate that
+reports success while enforcing nothing. Green without having checked
+anything, one typo away.
+
+`parseCoverageConfig` already carries the mechanism: it takes a `warn`
+callback, so a caller can observe that defaulting occurred. Phase 4's
+`arch-coverage-gate.mjs` MUST therefore collect those warnings and exit
+non-zero (`2`) when the config it was asked to enforce did not parse cleanly —
+never fall back to permissive defaults *silently* in the enforcing path. The
+`enforce` key specifically must be all-or-nothing: unparseable means the gate
+fails loudly, not that enforcement quietly evaporates. `arch:render` keeps
+today's lenient behaviour unchanged.
+
 #### 2.1.8 Cruise timeout — needs a process boundary, not a timer (R3 H1)
 
 Timing the cruise *after it returns* cannot classify a run that never returns.
