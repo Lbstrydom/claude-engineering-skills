@@ -45,7 +45,7 @@ export async function recordGraphCoverage(refreshId, coverage) {
   if (!status) return { recorded: false, reason: 'missing-verdict' };
 
   try {
-    await upsert('symbol_refresh_coverage', [{
+    const res = await upsert('symbol_refresh_coverage', [{
       refresh_id: refreshId,
       status,
       reason,
@@ -57,6 +57,16 @@ export async function recordGraphCoverage(refreshId, coverage) {
       measured_refresh_id: coverage.refreshId || refreshId,
       payload: coverage,
     }], { onConflict: ['refresh_id'], update: 'all' });
+    // A non-throwing upsert is NOT proof of persistence — an RLS policy or a
+    // no-op conflict resolution can return zero rows without error. Claiming
+    // `recorded: true` on that basis is the unverified-write-success class
+    // AGENTS.md rates HIGH, and here it would mean the render later reads no
+    // coverage and renders `unknown` while the refresh logged success.
+    const rowCount = res?.rowCount ?? 0;
+    if (rowCount === 0) {
+      process.stderr.write('  [coverage] upsert affected 0 rows — coverage NOT persisted\n');
+      return { recorded: false, reason: 'zero-rows-affected' };
+    }
     return { recorded: true };
   } catch (err) {
     // Loud on stderr, never thrown: the symbol index still publishes.

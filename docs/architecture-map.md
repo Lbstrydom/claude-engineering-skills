@@ -1,7 +1,7 @@
 <!-- audit-loop:architectural-map -->
 # Architecture Map — Lbstrydom/claude-engineering-skills
 
-- Generated: 2026-07-18T19:42:49.972Z   commit: 5844299f0546   refresh_id: 2d8fa615-f9a8-4f56-994b-6f286b5146f9
+- Generated: 2026-07-18T20:18:18.701Z   commit: 7f0119e5261c   refresh_id: 2d8fa615-f9a8-4f56-994b-6f286b5146f9
 - Drift score: 28 / threshold 20   status: `RED`
 - Domains: 33   Symbols: 3313   Layering violations: 0
 
@@ -2870,6 +2870,8 @@ classDef violation fill:#ffd6d6,stroke:#c0392b,stroke-width:2px,color:#000
 ---
 
 ## scripts
+
+> Entry points for AI-assisted code skills (plan, audit-code, persona-test, ux-lock, ship) plus libraries for multi-LLM orchestration, Postgres learning-store persistence, code indexing, and cloud configuration.
 
 ```mermaid
 flowchart TB

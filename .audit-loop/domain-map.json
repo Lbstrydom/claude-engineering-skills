@@ -277,7 +277,8 @@
     ],
     "arch-memory": [
       "learning-store",
-      "shared-lib"
+      "shared-lib",
+      "stores"
     ],
     "arm-eval": [
       "shared-lib",
@@ -388,6 +389,7 @@
     "root-scripts": [],
     "scripts": [
       "arch-intent",
+      "arch-memory",
       "arm-eval",
       "audit-orchestration",
       "claudemd-management",

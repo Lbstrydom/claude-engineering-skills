@@ -51,6 +51,15 @@ export const SUBPROC_ERROR_CODES = Object.freeze({
  * timer could ever fire — a process boundary is the only thing that actually
  * interrupts it, and callers like `refresh.mjs` already have one.
  *
+ * LIMITATION — kills the direct child only, not its descendants. The child is
+ * not spawned detached into its own process group, so a grandchild it spawned
+ * can outlive the kill. Every current caller runs a leaf process (`extract.mjs`
+ * calls dep-cruiser in-process as a library, `summarise`/`embed` make network
+ * calls), so no descendant exists to orphan today. If you add a caller whose
+ * child spawns its OWN subprocesses, this needs a process-group kill first
+ * (`detached: true` + `process.kill(-pid)` on POSIX, `taskkill /T /F` on
+ * Windows) — do not assume the timeout cleans up a process tree.
+ *
  * @param {string} cmd
  * @param {string[]} args
  * @param {{cwd?: string, input?: string, env?: Record<string,string>, stage?: string,

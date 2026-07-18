@@ -79,9 +79,54 @@ function cleanupStaleObservedDeps(repoRoot) {
       fs.unlinkSync(observedPath);
       process.stderr.write(`arch:render: cleared stale ${OBSERVED_FILE} (render aborted before observed-deps step)\n`);
     }
+    return true;
   } catch (err) {
     process.stderr.write(`arch:render: failed to clear ${OBSERVED_FILE} — ${err.message}\n`);
+    // Logging the failure and returning was survivable when this file held
+    // only `deps`. It is not now: the envelope carries a COVERAGE VERDICT, so
+    // a surviving stale file can report `verified` for a render that failed
+    // before measuring anything — green without having checked, which is the
+    // exact class this feature exists to end (round-1 Cluster B audit, HIGH).
+    //
+    // If the file cannot be removed, NEUTRALISE it: overwrite with content the
+    // reader rejects. `readObservedEnvelope` classifies a schema failure as
+    // `schema-invalid` → observedAvailable:false → manual-only + a warning,
+    // which is precisely the fail-safe deletion was there to achieve. Writing
+    // a well-formed envelope instead would require fabricating a refreshId and
+    // a digest — inventing provenance to express "we have none".
+    try {
+      fs.writeFileSync(observedPath,
+        JSON.stringify({
+          __invalidated: true,
+          reason: 'arch:render aborted before the observed-deps step and could not remove this file',
+          invalidatedAt: new Date().toISOString(),
+        }, null, 2) + '\n');
+      process.stderr.write(`arch:render: could not delete ${OBSERVED_FILE}; invalidated it in place instead\n`);
+      return true;
+    } catch (err2) {
+      process.stderr.write(
+        `arch:render: FATAL — ${OBSERVED_FILE} is stale, undeletable AND unwritable (${err2.message}). `
+        + `Downstream readers would consume a stale coverage verdict; refusing to exit 0.\n`
+      );
+      return false;
+    }
   }
+}
+
+/**
+ * Cleanup, or die trying.
+ *
+ * Every caller's exit-0 is conditional on the stale envelope being gone or
+ * neutralised. Exiting 0 with a readable stale coverage verdict on disk is
+ * worse than failing the command: the dashboard and the gate would both
+ * consume it as current. §2.1.6 reserves non-zero for a genuine tool error,
+ * and "cannot invalidate a stale artifact" is exactly that — it is not a
+ * coverage verdict, so it does not violate the never-abort-the-chain rule
+ * (which exists so a DEGRADED graph still renders, not so an unwritable disk
+ * passes silently).
+ */
+function cleanupOrFail(repoRoot) {
+  if (!cleanupStaleObservedDeps(repoRoot)) process.exit(1);
 }
 
 /**
@@ -124,7 +169,7 @@ async function main() {
     // stub. If the stub write throws, the stale envelope is already gone —
     // the dashboard can't accidentally consume both the old observed file
     // AND the new cloud-disabled stub.
-    cleanupStaleObservedDeps(repoRoot);
+    cleanupOrFail(repoRoot);
     writeAbortStub(outPath, identity.name, 'cloud-disabled — run `npm run arch:refresh` to populate',
       'Architectural memory cloud store is not configured for this repo.\n' +
       'Set `AUDIT_DB_URL` (Supabase Dashboard → Connect → Session pooler)\n' +
@@ -136,7 +181,7 @@ async function main() {
 
   const repo = await getRepoIdByUuid(identity.repoUuid);
   if (!repo) {
-    cleanupStaleObservedDeps(repoRoot);
+    cleanupOrFail(repoRoot);
     writeAbortStub(outPath, identity.name, 'repo-not-registered',
       'Repo not found in architectural-memory store. Run `npm run arch:refresh` first.');
     process.stderr.write(`arch:render: repo not found in store — wrote stub, run \`npm run arch:refresh\` first\n`);
@@ -144,7 +189,7 @@ async function main() {
   }
   const snap = await getActiveSnapshot(repo.id);
   if (!snap?.refreshId) {
-    cleanupStaleObservedDeps(repoRoot);
+    cleanupOrFail(repoRoot);
     writeAbortStub(outPath, identity.name, 'no-active-snapshot',
       'Repo is registered but has no active snapshot. Run `npm run arch:refresh` first.');
     process.stderr.write(`arch:render: no active snapshot — wrote stub, run \`npm run arch:refresh\` first\n`);
@@ -344,7 +389,7 @@ async function main() {
     // on disk that the dashboard would consume as current. Best-effort
     // cleanup of any prior file so the reader falls back to manual-only.
     process.stderr.write(`arch:render: observed deps failed — ${err.message}; clearing any stale envelope\n`);
-    cleanupStaleObservedDeps(repoRoot);
+    cleanupOrFail(repoRoot);
   }
 }
 

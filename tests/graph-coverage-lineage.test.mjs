@@ -230,3 +230,38 @@ describe('lineage — snapshot identity survives a copy-forward', () => {
     assert.equal(v.reason, 'stale_measurement');
   });
 });
+
+describe('lineage — a stale envelope can never outlive a failed render', () => {
+  it('an undeletable envelope is INVALIDATED in place, not left readable', async () => {
+    // Round-1 Cluster B audit, HIGH. This was survivable when the envelope
+    // held only `deps`; it is not now that it carries a coverage verdict —
+    // a surviving file can report `verified` for a render that measured
+    // nothing. The reader must reject whatever is left behind.
+    const dir = fixtureRepo({ coverage: coverageBlock() });
+    const envPath = path.join(dir, '.audit-loop', 'domain-deps-observed.json');
+
+    // Simulate the post-invalidation state the renderer writes when unlink fails.
+    fs.writeFileSync(envPath, JSON.stringify({
+      __invalidated: true,
+      reason: 'arch:render aborted before the observed-deps step and could not remove this file',
+      invalidatedAt: new Date().toISOString(),
+    }, null, 2));
+
+    const { depsSource } = readDomainDeps(dir);
+    assert.equal(depsSource.observedAvailable, false,
+      'an invalidated envelope must not be consumed as current');
+    assert.equal(depsSource.coverage, null,
+      'and must carry NO coverage verdict — stale green is the failure mode');
+  });
+
+  it('the gate does not read a verdict out of an invalidated envelope', () => {
+    const dir = fixtureRepo({ coverage: coverageBlock(), enforce: true });
+    fs.writeFileSync(path.join(dir, '.audit-loop', 'domain-deps-observed.json'),
+      JSON.stringify({ __invalidated: true }));
+    const { code, out } = runGate(dir);
+    // Schema parse fails → tool error (exit 1), NOT a silent pass and
+    // certainly not an inherited `verified`.
+    assert.equal(code, 1);
+    assert.doesNotMatch(out, /VERIFIED/);
+  });
+});

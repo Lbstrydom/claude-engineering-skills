@@ -62,10 +62,16 @@ describe('runJsonLinesAsync — optional timeout', () => {
     assert.deepEqual(r.records, [{ type: 'hello' }]);
   });
 
-  it('LEAVES NO CHILD ALIVE — SIGTERM escalates to SIGKILL', async () => {
+  it('leaves no DIRECT child alive — SIGTERM escalates to SIGKILL', async () => {
     // Without this, the timeout could report success while a wedged process
     // keeps burning a core. SIGTERM is only a request; a synchronously-wedged
     // child never services it, so the escalation is what actually ends it.
+    //
+    // Scoped to the DIRECT child deliberately (round-1 Cluster B audit, HIGH):
+    // the child is not spawned into its own process group, so a grandchild
+    // would survive. No current caller spawns one — see the LIMITATION note in
+    // subprocess.mjs. Naming this "no child alive" would overclaim, and an
+    // overclaiming test is worse than a missing one.
     const r = await runJsonLinesAsync(process.execPath, ['-e', WEDGE], {
       timeoutMs: 200, killGraceMs: 150,
     });
