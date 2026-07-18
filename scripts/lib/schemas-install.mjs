@@ -39,7 +39,9 @@ export const ManifestSchema = z.object({
   bundleVersion: z.string(),
   repoUrl: z.string(),
   rawUrlBase: z.string(),
-  updatedAt: z.string(),
+  // NO `updatedAt` — the manifest carries no volatile provenance (see
+  // build-manifest.mjs). The schema is non-strict, so an OLD manifest that still
+  // has the field parses fine (Zod strips unknown keys) — backward-compatible.
   skills: z.record(z.string(), SkillEntrySchema),
 });
 

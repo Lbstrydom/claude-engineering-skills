@@ -47,7 +47,7 @@ flowchart LR
     SK["skills/&lt;name&gt;/SKILL.md<br/>node scripts/X.mjs"]:::asis
     SCR["scripts/X.mjs<br/>scripts/lib/Y.mjs"]:::asis
     MF["scripts/.sync-manifest.json<br/>{layout: 'isolated'}"]:::artifact
-    SYNC[sync-to-repos.mjs<br/>main loop]:::svc
+    SYNC["sync-to-repos.mjs<br/>main loop"]:::svc
     REMAP{{sourceRelToDestRel}}:::svc
     REW{{rewriteCommandSurface}}:::svc
     GIM{{updateGitignoreBlock}}:::svc

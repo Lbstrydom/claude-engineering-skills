@@ -212,7 +212,7 @@ graph LR
   HumanQ --> Rulings
   Ledger --> Rulings
 
-  CostBudget["Cost-budget tracker\n(UsageEvent per call →\neuros + operator-minutes\nper accepted-HIGH)"] -.observes.-> GLM
+  CostBudget["Cost-budget tracker\n("UsageEvent per call →\neuros + operator-minutes\nper accepted-HIGH")"] -.observes.-> GLM
   CostBudget -.observes.-> CheapTriage
   CostBudget -.observes.-> Gemini
 ```

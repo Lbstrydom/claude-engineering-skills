@@ -52,21 +52,21 @@ Three independent workstreams, mapped to proof type (the synthesis table):
 ```mermaid
 graph TD
   subgraph Deterministic [Cluster A — deterministic efficacy lints]
-    EL[lib/efficacy-lints.mjs<br/>cache-inertness · cache-instability · canary-no-test]
-    CFG1[config.mjs<br/>efficacyLints: model-min table,<br/>canaryPattern, promptGlobs]
-    WIRE[phase7-check.mjs<br/>+ /audit-code surfacing]
+    EL["lib/efficacy-lints.mjs<br/>cache-inertness · cache-instability · canary-no-test"]
+    CFG1["config.mjs<br/>efficacyLints: model-min table,<br/>canaryPattern, promptGlobs"]
+    WIRE["phase7-check.mjs<br/>+ /audit-code surfacing"]
     EL --> WIRE
     CFG1 --> EL
   end
   subgraph Runtime [Cluster B — runtime-truth audit rules]
-    BR[prompt-seeds.mjs<br/>derived-state-parity rule + freeze-semantics]
-    AP[audit-plan rubric<br/>test-premise lint #6]
-    DOC[consistency-contract.md<br/>parity-probe = data-engine-claim REUSE]
+    BR["prompt-seeds.mjs<br/>derived-state-parity rule + freeze-semantics"]
+    AP["audit-plan rubric<br/>test-premise lint #6"]
+    DOC["consistency-contract.md<br/>parity-probe = data-engine-claim REUSE"]
     BR --> DOC
   end
   subgraph Topology [Cluster C — topology honesty]
-    CFG2[config.mjs<br/>previewGateMode enum]
-    CYC[cycle SKILL Step 5<br/>halt-for-preview / loud warn]
+    CFG2["config.mjs<br/>previewGateMode enum"]
+    CYC["cycle SKILL Step 5<br/>halt-for-preview / loud warn"]
     CFG2 --> CYC
   end
 ```

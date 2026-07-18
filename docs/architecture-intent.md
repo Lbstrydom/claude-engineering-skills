@@ -18,20 +18,20 @@
 
 ```mermaid
 graph TB
-  user[👤 Operator: /audit-code, /ship, /cycle]
-  consumer[Consumer Repos<br/>wine-cellar, ai-organiser, ...]
+  user["👤 Operator: /audit-code, /ship, /cycle"]
+  consumer["Consumer Repos<br/>wine-cellar, ai-organiser, ..."]
 
   subgraph "audit-orchestration"
-    openai[openai-audit.mjs<br/>multi-pass audit loop]
-    gemini[gemini-review.mjs<br/>final-gate]
+    openai["openai-audit.mjs<br/>multi-pass audit loop"]
+    gemini["gemini-review.mjs<br/>final-gate"]
     cycle[cycle / audit-loop dispatchers]
   end
 
   subgraph "shared-lib"
-    schemas[schemas.mjs<br/>Zod contracts]
-    ledger[ledger.mjs<br/>R2+ rulings]
-    findings[findings*.mjs<br/>tracker + format]
-    archintent[arch-intent/<br/>NEW — this PR]
+    schemas["schemas.mjs<br/>Zod contracts"]
+    ledger["ledger.mjs<br/>R2+ rulings"]
+    findings["findings*.mjs<br/>tracker + format"]
+    archintent["arch-intent/<br/>NEW — this PR"]
     promptbuilder[audit/prompt-builder.mjs]
   end
 
@@ -41,12 +41,12 @@ graph TB
   end
 
   subgraph "learning-store"
-    ls[learning-store.mjs<br/>Supabase writer]
+    ls["learning-store.mjs<br/>Supabase writer"]
     bandit[bandit.mjs]
   end
 
   subgraph "cross-skill-bridge"
-    cs[cross-skill.mjs<br/>CLI facade]
+    cs["cross-skill.mjs<br/>CLI facade"]
   end
 
   subgraph "install"

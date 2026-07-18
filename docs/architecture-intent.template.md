@@ -18,7 +18,7 @@
 ```mermaid
 graph TB
   %% Replace this template with your real components
-  user[👤 User / CLI]
+  user["👤 User / CLI"]
 
   subgraph "App"
     api[API layer]

@@ -68,11 +68,11 @@ SELECT version(); -- PostgreSQL 17.9 on x86_64-windows
 ```mermaid
 flowchart LR
   SM[docs/security-strategy.md\nmarkdown source of truth]:::doc
-  P[parse-strategy.mjs\nHTML-comment-bounded → incidents/threats]:::pure
+  P["parse-strategy.mjs\nHTML-comment-bounded → incidents/threats"]:::pure
   RI[refresh-incidents.mjs\nnpm run security:refresh]:::cli
   IS[incident-status.mjs\nsemgrep per mitigation_ref]:::pure
   AE[Azure OpenAI Embedding\ntext-embedding-3-small @ dim=768]:::svc
-  SCH[Schema: security_incidents\n+ security_strategy_events\n+ incident_quarantine when branch≠main]:::db
+  SCH["Schema: security_incidents\n+ security_strategy_events\n+ incident_quarantine when branch≠main"]:::db
   RPC[Postgres function:\nincident_neighbourhood/4]:::db
   XS[cross-skill.mjs\nget-incident-neighbourhood]:::cli
   PLAN[/plan Phase 0.5c\nthreat-relevant incidents]:::skill

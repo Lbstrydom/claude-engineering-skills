@@ -232,7 +232,7 @@ flowchart TB
     Envelopes --> GateA{"Gate A: resolveAnchorLocation<br/>(new — verifyAnchor itself unchanged)"}
     GateA -->|quote in hunk| InHunk["in_hunk → relevanceStatus=change_related<br/>(Gate B skipped — already directly touched)"]
     GateA -->|quote in HEAD, not in hunk| GateB
-    GateA -->|quote nowhere in HEAD| Fabricated[fabricated → rejected, local telemetry only]
+    GateA -->|quote nowhere in HEAD| Fabricated["fabricated → rejected, local telemetry only"]
     GateA -->|file not in diff at all| Unverifiable["unverifiable → stage1-eligible, unchanged from today"]
 
     GateB{"Gate B: tagPreExisting(cachedBlameAdapter, cachedImpactAdapter)"}

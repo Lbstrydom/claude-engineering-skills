@@ -87,7 +87,7 @@ flowchart TB
     bouncer["LLM bouncer\n(reasoning: low)\nPASS_DUPLICATION_SYSTEM\n(redaction-gated prompt)"]
     fallback["deriveFindingsFromDuplicationReport()\n(deterministic fallback, MEDIUM cap)"]
     merge["merge into allFindings\n(existing pass-result registry)"]
-    conv["convergence check\n(unchanged — is_quick_fix already gates)"]
+    conv["convergence check\n("unchanged — is_quick_fix already gates")"]
   end
   subgraph git["Git (pure attribution — no DB involved)"]
     curside["extractSymbols() on current working-tree files\n(existing, scripts/symbol-index/extract.mjs)"]

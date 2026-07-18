@@ -137,22 +137,22 @@ P0 inventory + manifests + golden fixtures → P1 db layer → P2 setup CLI
 ```mermaid
 graph TD
   subgraph Callers["18 caller files — public API UNCHANGED"]
-    A[openai-audit.mjs · cross-skill.mjs · symbol-index/* · learning/*]
+    A["openai-audit.mjs · cross-skill.mjs · symbol-index/* · learning/*"]
   end
   subgraph Barrel["scripts/learning-store.mjs — thin barrel, 94-fn API UNCHANGED"]
     BR[re-exports from domain modules]
   end
   subgraph Domains["scripts/lib/store/ — domain modules (M1 split)"]
-    D1[runs-findings · debt · bandit-fp · plans-ship]
-    D2[persona · arch-memory · security · learning-decisions · symbol-index · repo]
+    D1["runs-findings · debt · bandit-fp · plans-ship"]
+    D2["persona · arch-memory · security · learning-decisions · symbol-index · repo"]
   end
   subgraph DB["scripts/lib/db/ — thin pg layer"]
-    Q[query.mjs — query/one/many/insert/upsert/updateWhere/deleteWhere/withTx]
-    RP[rpc.mjs — 8 explicit per-RPC wrappers]
-    CL[client.mjs — single pg.Pool + config resolver]
-    ER[errors.mjs — normalizePostgresError]
+    Q["query.mjs — query/one/many/insert/upsert/updateWhere/deleteWhere/withTx"]
+    RP["rpc.mjs — 8 explicit per-RPC wrappers"]
+    CL["client.mjs — single pg.Pool + config resolver"]
+    ER["errors.mjs — normalizePostgresError"]
   end
-  PG[(Postgres — Supabase-hosted OR self-hosted<br/>same 29 migrations · 9 RPCs · 12 views · pgvector)]
+  PG[("Postgres — Supabase-hosted OR self-hosted<br/>same 29 migrations · 9 RPCs · 12 views · pgvector")]
 
   A --> BR --> D1 --> Q
   D1 --> RP

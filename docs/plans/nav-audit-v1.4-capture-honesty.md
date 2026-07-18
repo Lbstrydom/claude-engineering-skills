@@ -38,7 +38,7 @@ graph TD
   subgraph A["Cluster A — capture honesty"]
     SETTLE["settle race (unchanged)"] --> PROBE["per-state probe: each declared selector present? + which produced placements"]
     PROBE --> AGG["captured = produced ≥1 placement; layer unverifiable iff ANY container empty (stall) OR ALL absent"]
-    AGG --> MERGE["mergeScorecard(rows, attr, {…, unverifiableLayers}) → UNVERIFIED for an uncapturable required layer"]
+    AGG --> MERGE["mergeScorecard("rows, attr, {…, unverifiableLayers}") → UNVERIFIED for an uncapturable required layer"]
     AGG --> WARN["stateWarning: 'primary capture incomplete — unreliable (#primary-nav)'"]
   end
   subgraph B["Cluster B — activation efficiency"]

@@ -63,10 +63,10 @@ graph LR
     EXP[tests/fixtures/expected-schema.json]
   end
   subgraph SP["scripts/setup-postgres.mjs (extended)"]
-    MODE_M[--migrate<br/>unchanged: applies pending]
-    MODE_A[--adopt<br/>unchanged: strict full-schema diff]
-    MODE_C[--check-drift<br/>NEW mode: read-only<br/>JSON + strict exit]
-    LEDGER[(audit_loop_migrations<br/>ledger table)]
+    MODE_M["--migrate<br/>unchanged: applies pending"]
+    MODE_A["--adopt<br/>unchanged: strict full-schema diff"]
+    MODE_C["--check-drift<br/>NEW mode: read-only<br/>JSON + strict exit"]
+    LEDGER[("audit_loop_migrations<br/>ledger table")]
     MODE_M --> LEDGER
     MODE_A --> LEDGER
     MODE_C -.reads.-> LEDGER
@@ -75,15 +75,15 @@ graph LR
     EXP --> MODE_A
   end
   subgraph Wire["wiring (npm + CI)"]
-    NPM[npm run db:check-drift<br/>NEW script + catalog entry]
-    PP[.git/hooks/pre-push<br/>conditional on AUDIT_DB_URL]
-    CI[.github/workflows/migration-drift.yml<br/>NEW weekly + sticky issue]
+    NPM["npm run db:check-drift<br/>NEW script + catalog entry"]
+    PP[".git/hooks/pre-push<br/>conditional on AUDIT_DB_URL"]
+    CI[".github/workflows/migration-drift.yml<br/>NEW weekly + sticky issue"]
     NPM --> MODE_C
     PP --> NPM
     CI --> NPM
   end
   subgraph Op["operator runbook (one-time bootstrap)"]
-    R1[Step 1: manually apply pending<br/>migrations via dashboard]
+    R1["Step 1: manually apply pending<br/>migrations via dashboard"]
     R2[Step 2: --adopt seeds the ledger]
     R3[Step 3: --check-drift confirms clean]
     R1 --> R2 --> R3

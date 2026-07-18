@@ -114,34 +114,34 @@ No prior security incidents matched these paths. No `untaggedPaths`. The archite
 ```mermaid
 graph LR
   subgraph WS1["WS1 — store split (arch-memory domain)"]
-    A1[scripts/lib/store/arch-memory.mjs<br/>= thin barrel re-export]
-    A1 --> B1[arch/refresh-runs.mjs<br/>10 fns + 1 const]
-    A1 --> B2[arch/snapshots.mjs<br/>3 fns — active + embedding-model]
-    A1 --> B3[arch/symbols.mjs<br/>7 fns — defs + index + embed + violations]
-    A1 --> B4[arch/imports.mjs<br/>6 fns — file-import edges]
-    A1 --> B5[arch/domain-summaries.mjs<br/>2 fns — Haiku cache]
-    A1 --> B6[arch/neighbourhood.mjs<br/>3 fns — RPC adapters]
-    A1 --> SH[arch/_shared.mjs<br/>private chunk + constants]
+    A1["scripts/lib/store/arch-memory.mjs<br/>= thin barrel re-export"]
+    A1 --> B1["arch/refresh-runs.mjs<br/>10 fns + 1 const"]
+    A1 --> B2["arch/snapshots.mjs<br/>3 fns — active + embedding-model"]
+    A1 --> B3["arch/symbols.mjs<br/>7 fns — defs + index + embed + violations"]
+    A1 --> B4["arch/imports.mjs<br/>6 fns — file-import edges"]
+    A1 --> B5["arch/domain-summaries.mjs<br/>2 fns — Haiku cache"]
+    A1 --> B6["arch/neighbourhood.mjs<br/>3 fns — RPC adapters"]
+    A1 --> SH["arch/_shared.mjs<br/>private chunk + constants"]
   end
   subgraph WS2["WS2 — renderer decomp (dashboard domain)"]
-    R1[scripts/lib/dashboard/render.mjs<br/>orchestrator + freshness + nav]
-    H[scripts/lib/dashboard/helpers.mjs<br/>escapeHtml + jsonScriptSafe + panels]
+    R1["scripts/lib/dashboard/render.mjs<br/>orchestrator + freshness + nav"]
+    H["scripts/lib/dashboard/helpers.mjs<br/>escapeHtml + jsonScriptSafe + panels"]
     R1 --> H
     R1 --> S1[sections/skills.mjs]
     R1 --> S2[sections/cli.mjs]
     R1 --> S3[sections/flows.mjs]
-    R1 --> S4[sections/architecture.mjs<br/>incl. formatDepsSourceLine + archTiers]
+    R1 --> S4["sections/architecture.mjs<br/>incl. formatDepsSourceLine + archTiers"]
     R1 --> S5[sections/plans.mjs]
     R1 --> S6[sections/audit-runs.mjs]
     R1 --> S7[sections/requirements.mjs]
     R1 --> S8[sections/learning.mjs]
   end
-  note1[ui injected by render.mjs;<br/>sections do NOT import helpers.mjs directly]
+  note1["ui injected by render.mjs;<br/>sections do NOT import helpers.mjs directly"]
   R1 -.- note1
   subgraph WS3["WS3 — refresh.mjs hardening (arch-memory domain)"]
-    C1[scripts/symbol-index/refresh.mjs<br/>main + CLI]
-    C1 --> V1[lib/vcs.mjs<br/>structured VCS helpers]
-    C1 --> P1[lib/sensitive-paths.mjs<br/>allowlist filter applied at discovery]
+    C1["scripts/symbol-index/refresh.mjs<br/>main + CLI"]
+    C1 --> V1["lib/vcs.mjs<br/>structured VCS helpers"]
+    C1 --> P1["lib/sensitive-paths.mjs<br/>allowlist filter applied at discovery"]
   end
 ```
 

@@ -149,12 +149,19 @@ export function buildManifest() {
   const pairs = artifactParts.sort().join('\n');
   const bundleVersion = crypto.createHash('sha256').update(pairs).digest('hex').slice(0, 16);
 
+  // NO volatile fields. `bundleVersion` (a pure content hash of the committed
+  // skill sources) answers "did it change"; git answers "when". A wall-clock
+  // `updatedAt` used to live here and was the ONLY thing making a from-scratch
+  // regeneration non-byte-identical — i.e. the one field that kept this
+  // committed-and-freshness-checked artifact in the "messy middle" the
+  // generated-artifact policy (AGENTS.md) forbids. No consumer ever read it
+  // (install-skills / check-skill-updates read `bundleVersion` only), so it was
+  // removed rather than managed.
   const manifest = {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     bundleVersion,
     repoUrl: REPO_URL,
     rawUrlBase: RAW_URL_BASE,
-    updatedAt: new Date().toISOString(),
     skills,
   };
 
@@ -184,24 +191,19 @@ function main() {
     process.exit(1);
   }
 
-  // Idempotent write. `updatedAt` is the only non-deterministic field, so
-  // rewriting unconditionally makes every `skills:regenerate` dirty the manifest
-  // with a diff that carries NO information — churn, not a reference (see the
-  // generated-artifact policy in AGENTS.md). That matters more now that
-  // `skills:regenerate` always rebuilds it.
+  // Skip-if-identical is now a plain whole-body comparison — with no volatile
+  // field a rewrite would be byte-identical anyway, so this is pure UX (report
+  // "unchanged" instead of silently re-touching the file), not churn control.
   //
-  // Preserving the existing timestamp also makes the field mean "when the bundle
-  // last CHANGED" rather than "when the command last ran" — the question anyone
-  // reading it is actually asking. An unreadable/corrupt existing file falls
-  // through to a rewrite.
-  // Compare the WHOLE body (minus the timestamp), not just `bundleVersion`.
-  // Skipping the write on a bundleVersion match alone would break the remedy
-  // this command IS: a hand-edited manifest (a tampered per-file `sha` with
-  // bundleVersion left intact) passes --check AND would survive the rebuild, so
+  // Compare the WHOLE body, not just `bundleVersion`. Skipping on a
+  // bundleVersion match alone would break the remedy this command IS: a
+  // hand-edited manifest (a tampered per-file `sha` with bundleVersion left
+  // intact) passes --check AND would survive the rebuild, so
   // `node scripts/build-manifest.mjs` — the thing every error message tells you
-  // to run — would no longer fix it. Any difference at all rewrites.
+  // to run — would no longer fix it. Any difference at all rewrites. An
+  // unreadable/corrupt existing file falls through to a rewrite.
   const existing = readManifestOrNull();
-  if (existing && sameIgnoringTimestamp(existing, manifest)) {
+  if (existing && sameManifest(existing, manifest)) {
     console.log(`skills.manifest.json already fresh: v${manifest.schemaVersion}, bundle ${manifest.bundleVersion} (unchanged)`);
     return;
   }
@@ -219,16 +221,17 @@ function readManifestOrNull() {
 }
 
 /**
- * Are two manifests identical apart from `updatedAt`?
+ * Are two manifests identical?
  *
  * Serialised comparison, so a difference ANYWHERE — a per-file sha, a dropped
  * skill, a reordered key — counts and forces a rewrite. Erring toward rewriting
- * is the safe direction: the cost is one timestamp diff, the alternative is a
- * corrupt manifest that the rebuild command silently refuses to repair.
+ * is the safe direction: the alternative is a corrupt manifest that the rebuild
+ * command silently refuses to repair. (Previously `sameIgnoringTimestamp`, which
+ * had to strip the volatile `updatedAt`; that field is gone, so this is a plain
+ * equality.)
  */
-function sameIgnoringTimestamp(a, b) {
-  const strip = (m) => JSON.stringify({ ...m, updatedAt: null });
-  return strip(a) === strip(b);
+function sameManifest(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 main();

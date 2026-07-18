@@ -187,12 +187,23 @@ export function ruleUnquotedSpecialCharsInLabel(blockBody, fileLineOffset) {
     // Strip %% comments.
     const commentAt = line.indexOf('%%');
     const cleaned = commentAt === -1 ? line : line.slice(0, commentAt);
+    // Skip the WHOLE line for constructs that aren't node-shape labels. The
+    // negative lookbehind above only catches `subgraph X["..."]`; the equally
+    // valid spaced form `subgraph X [label]` slipped through and produced a
+    // permanent false WARN. Same for stateDiagram transitions (`A --> B: text`),
+    // whose `:` label is prose, not a bracket label.
+    if (/^\s*subgraph\b/.test(cleaned)) return;
+    if (/-->.*:/.test(cleaned) && !/[\[({]/.test(cleaned.split('-->')[0])) return;
     let m;
     BRACKET_RE.lastIndex = 0;
     while ((m = BRACKET_RE.exec(cleaned)) !== null) {
       const [, id, open, content] = m;
       if (id === 'subgraph') continue;            // skip subgraph declarations
       if (content.startsWith('"')) continue;      // already quoted
+      // Cylinder `ID[("...")]`: the regex's content stops at the first `)`, so a
+      // CORRECTLY-quoted cylinder reads as content `("...` — starting with `(`,
+      // not `"`. Look past a leading `(` before deciding it's unquoted.
+      if (open === '[' && content.startsWith('("')) continue;
       if (!RISKY_CONTENT.test(content)) continue; // ASCII-only, safe unquoted
       issues.push({
         rule: 'unquoted-special-chars-in-label',

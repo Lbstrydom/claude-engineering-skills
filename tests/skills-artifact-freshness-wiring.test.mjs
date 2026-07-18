@@ -65,13 +65,38 @@ describe('skills:regenerate and skills:check cover the same artifacts', () => {
   });
 });
 
-describe('build-manifest is idempotent — no timestamp churn', () => {
+describe('build-manifest is deterministic — a true Category-B artifact', () => {
+  it('a from-scratch regeneration is BYTE-IDENTICAL (no volatile provenance)', () => {
+    // The policy's literal test (AGENTS.md generated-artifact invariant): "would
+    // two regenerations on the same commit be byte-identical?" Until the volatile
+    // `updatedAt` was removed, the answer was NO — the manifest sat in the
+    // forbidden "messy middle" (committed AND freshness-checked, yet not a pure
+    // function of source). This asserts the property directly rather than
+    // working around it.
+    const manifestPath = path.join(process.cwd(), 'skills.manifest.json');
+    const original = fs.readFileSync(manifestPath, 'utf-8');
+    try {
+      fs.rmSync(manifestPath, { recursive: true, maxRetries: 3, retryDelay: 50 });
+      const a = spawnSync(process.execPath, ['scripts/build-manifest.mjs'], { cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000 });
+      assert.equal(a.status, 0, `first build must succeed: ${a.stderr}`);
+      const first = fs.readFileSync(manifestPath, 'utf-8');
+
+      fs.rmSync(manifestPath, { recursive: true, maxRetries: 3, retryDelay: 50 });
+      const b = spawnSync(process.execPath, ['scripts/build-manifest.mjs'], { cwd: process.cwd(), encoding: 'utf-8', timeout: 60_000 });
+      assert.equal(b.status, 0, `second build must succeed: ${b.stderr}`);
+      const second = fs.readFileSync(manifestPath, 'utf-8');
+
+      assert.equal(first, second, 'two from-scratch regenerations must be byte-identical');
+      assert.doesNotMatch(first, /updatedAt/, 'no volatile provenance may reappear');
+    } finally {
+      fs.writeFileSync(manifestPath, original); // always restore the committed file
+    }
+  });
+
   it('rebuilding an already-fresh manifest does not rewrite the file', () => {
-    // `updatedAt` is the manifest's only non-deterministic field. Rewriting it
-    // unconditionally meant every `skills:regenerate` produced a diff carrying
-    // no information — and now that regenerate ALWAYS rebuilds the manifest,
-    // that churn would land on every skills edit. A committed artifact whose
-    // dirtiness carries no information is churn, not a reference (AGENTS.md).
+    // Skip-if-identical is now pure UX (report "unchanged" rather than silently
+    // re-touching); with no volatile field a rewrite would be byte-identical
+    // anyway. Kept because a needless touch still reads as activity.
     //
     // Safe to run here: skills:check keeps the committed manifest fresh, so the
     // no-write path is the one under test. If it were stale this fails loudly —
@@ -110,19 +135,17 @@ describe('build-manifest is idempotent — no timestamp churn', () => {
 
       assert.equal(r.status, 0, `rebuild must succeed: ${r.stderr}`);
 
-      // Compare ignoring `updatedAt`: a genuine rewrite legitimately refreshes
-      // the timestamp, so byte-identity with the pristine file is the WRONG
-      // assertion here — it would fail for the very behaviour under test.
+      // With no volatile field, the repaired manifest must equal the pristine
+      // one EXACTLY — the strongest available assertion. (This used to have to
+      // null out `updatedAt` before comparing, because a rewrite refreshed the
+      // timestamp; removing the field made byte-identity the right test.)
       const after = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
       const expected = JSON.parse(pristine);
       assert.equal(
         after.skills[firstSkill].sha, expected.skills[firstSkill].sha,
         'the rebuild must repair the tampered sha, not skip the file as "unchanged"',
       );
-      assert.deepEqual(
-        { ...after, updatedAt: null }, { ...expected, updatedAt: null },
-        'and restore the rest of the manifest exactly',
-      );
+      assert.deepEqual(after, expected, 'and restore the rest of the manifest exactly');
       assert.doesNotMatch(r.stdout, /unchanged/, 'a tampered manifest is NOT unchanged');
     } finally {
       // Never leave the repo's committed manifest mangled by a test.
