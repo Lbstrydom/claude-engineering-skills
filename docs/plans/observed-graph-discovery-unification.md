@@ -1,12 +1,20 @@
 # Plan: Observed-Graph Discovery Unification (evidence-layer architecture)
 
 - **Date**: 2026-07-17
-- **Status**: Draft — §3 measurement #1 ANSWERED 2026-07-18 (yes, design (e) is
-  feasible — 0 semantic diffs on 2 repos; see §3.1). **Still blocked on #2**: the
-  root-cruise cost is measured only on two small repos (0.95s / 4.06s), NOT on
-  the ~40k-file monorepo §3 names as the adversarial case, and the scaling
-  observed (2.7× modules → 4.3× time, ~50× peak memory) is the open risk. Do NOT
-  start building until #2 has a real measurement.
+- **Status**: Draft — measured 2026-07-18 across all three repos (§3.1), and the
+  results **moved the plan's premise**, not just its unknowns. #1 is **NOT**
+  answered: an n=2 "yes" was refuted by ai-organiser (10 semantic diffs). The
+  cause is bigger than (e) — **extensionless TypeScript imports resolve in
+  NEITHER mode**, a second silent-blindness generator upstream of the
+  `COMMON_SOURCE_DIRS` one this plan was written to fix. Design (e) cannot fix a
+  resolution defect; fixing TS resolution is now a **prerequisite**, not a
+  follow-on. #2 is unanswerable as written (cost does not track repo size, the
+  measurement carries ~60% run-to-run spread, and the adversarial repo does not
+  exist) — it needs a stated threshold, not a bigger repo.
+  **Recommended next step is §4, not (e)**: it is independent, it is now the
+  best-evidenced part of this plan (ai-organiser is **68% invisible** to the
+  import layer), and it is the reporting channel an honest-degradation design
+  needs.
 - **Author**: Claude + Louis
 - **Scope**: backend (`scripts/symbol-index/extract.mjs` discovery seam; syncs to consumer repos)
 
@@ -112,25 +120,67 @@ throw?" cannot answer.
 
 | Target | M1 semantic diffs | M2 root cruise | Coverage delta |
 |---|---|---|---|
-| claude-engineering-skills | **0** | 0.95s · 921 modules · +2MB | 22 / 891 invisible |
-| wine-cellar-app (consumer) | **0** | 4.06s · 2530 modules · +117MB | 23 / 2426 invisible |
+| claude-engineering-skills | 0 | 0.95s · 921 modules · +2MB | 22 / 891 invisible (2%) |
+| wine-cellar-app (consumer) | 0 | 4.06s · 2530 modules · +117MB | 23 / 2426 invisible (1%) |
+| ai-organiser (consumer) | **10** | 6.9–11.2s · **485** modules · +215–309MB | **945 / 1389 invisible (68%)** |
 
-- **#1 → YES, (e) is feasible.** Zero semantic differences on both repos: every
-  edge derived from a file *both* runs saw is identical. The handful of
-  differing edges are **input-set** differences (the symbol walker's `SKIP_DIRS`
-  excludes `.claude/`, so those files were never in the explicit list) — which
-  is this plan's own thesis, i.e. evidence FOR the design, not an obstacle.
-  > Recorded because it nearly went the other way: the spike's first version
-  > counted every differing edge as semantic and reported **"not equivalent —
-  > (e) blocked"**. That would have manufactured a blocker that does not exist.
-  > Any future re-measurement must keep the semantic-vs-input partition.
-- **#2 → still open, deliberately unverdicted.** The spike prints the number and
-  refuses a pass/fail, because this plan sets no numeric threshold
-  ("unaffordable if bad") and **neither repo measured resembles the ~40k-file
-  `packages/` tree §3 names as the adversarial case.** The scaling is the part
-  to weigh: 2.7× the modules cost **4.3×** the time and ~50× the peak memory.
-  Extrapolating that curve to 40k files is the open risk. **Do not treat #2 as
-  answered by these two data points.**
+- **#1 → NOT ANSWERED. An n=2 "yes" did not survive n=3.** The first two repos
+  agreed, and this section previously recorded "#1 answered: yes, (e) is
+  feasible" on that basis. **ai-organiser refutes it.** Do not restore that
+  conclusion without re-measuring across all three.
+- **The disagreement is NOT explicit-vs-directory — it is that resolution
+  itself is failing.** Probed directly on `src/services/presentationIr/irToHtml.ts`
+  (both the file and every import target are present in the explicit input list,
+  and the repo has no tsconfig `paths` aliases):
+
+  | mode | result |
+  |---|---|
+  | explicit file list | 10 deps, every relative TS import `couldNotResolve: true` |
+  | root cruise | **0 deps for the same file** |
+
+  Extensionless TypeScript relative imports (`../../core/result` →
+  `src/core/result.ts`) resolve in neither mode. `cruiseOpts` in `extract.mjs`
+  passes no `tsConfig` and no TS-aware `enhancedResolveOptions`, so a TS repo
+  with extensionless imports under-resolves silently. This repo is `.mjs` with
+  explicit extensions and never hits it.
+- **Consequence for this plan's premise.** §1 diagnoses ONE silent-blindness
+  generator (the `COMMON_SOURCE_DIRS` allowlist). There is a **second, upstream
+  of it**: even for files the cruiser *is* handed, TS resolution fails. Design
+  (e) feeds MORE files to a resolver that still cannot resolve them — it would
+  raise ai-organiser's module count while leaving the edges wrong. **Unified
+  discovery does not fix, and cannot fix, a resolution defect.** Fixing TS
+  resolution is a prerequisite for (e) being worth building, not a follow-on.
+  > Methodology note, twice-earned: the spike's first version counted every
+  > differing edge as semantic and would have manufactured a blocker on repos 1-2;
+  > corrected to partition semantic-vs-input by the edge's SOURCE file. That
+  > partition is still incomplete — it does not classify by TARGET resolvability,
+  > which is what this ai-organiser case turned out to be. Any re-measurement
+  > must check `couldNotResolve` on both sides, not just edge-set equality.
+- **#2 → still open, and now known to be UNANSWERABLE AS WRITTEN.** Three
+  findings, each of which independently breaks the "measure a big consumer"
+  framing:
+  1. **Cost does not track repo size.** ai-organiser has **485** modules and
+     costs *more* than wine-cellar-app's **2530** (6.9–11.2s vs 4.06s;
+     215–309MB vs 117MB). Extrapolating by file or module count is invalid, so
+     a 40k-file measurement would not generalise either.
+  2. **The measurement is noisy.** Two consecutive root cruises of the same
+     unchanged repo: 6.9s/+215MB and 11.2s/+309MB — ~60% spread. Any threshold
+     must be stated over repeated runs, not a single number.
+  3. **The adversarial case is not reachable.** There are exactly two consumers
+     (`sync-to-repos.mjs`): wine-cellar-app and ai-organiser. Both are now
+     measured. The "~40k-file `packages/` tree" is hypothetical — so "needs a
+     real consumer measurement" cannot be satisfied, and gating on it blocks
+     the plan indefinitely on a repo that does not exist.
+
+  **The missing pass threshold, not the missing repo, is the real blocker** —
+  and it is the one that can actually be fixed. Replace #2's framing with a
+  stated budget over repeated runs on the largest ACTUAL consumer (plus an
+  `arch:refresh` wall-clock regression budget), and #2 becomes decidable today.
+  For a tool that ships to repos we will never see, the durable answer is
+  runtime honesty rather than pre-measurement: a cruise that exceeds budget
+  should report the graph as `unverified` (the capture-honesty pattern
+  nav-audit v1.4 / visual-audit already use), never emit a smaller graph that
+  reads as authoritative. §4 is the reporting channel that makes this possible.
 - **§4 quantified.** The "observed but unclassified" problem is real and
   measurable today: 22 files here and 23 in the consumer are symbol-indexed but
   contribute **zero** observed edges with nothing warning — including that
