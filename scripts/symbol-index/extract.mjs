@@ -295,7 +295,23 @@ async function extractGraphAndViolations(repoRoot, opts = {}) {
     exclude: { path: '(^|/)(node_modules|\\.git|\\.audit-loop|dist|build|coverage|out|\\.next|\\.nuxt|\\.cache)(/|$)' },
   };
   if (fs.existsSync(localConfig)) {
-    cruiseOpts.ruleSet = (await import(localConfig)).default;
+    // pathToFileURL, not a bare path: `await import('C:\repo\.dependency-
+    // cruiser.cjs')` throws ERR_UNSUPPORTED_ESM_URL_SCHEME on Windows, and a
+    // hand-built `file://${p}` is malformed there too (backslashes). This repo
+    // has no local config so the branch never fired here — but a CONSUMER with
+    // one would have died before the cruise, and this ships to adopter repos we
+    // never see. Found by following a final-gate LOW about the sibling spike.
+    //
+    // Wrapped because this sits OUTSIDE the cruise try/catch: an unreadable or
+    // malformed local config used to kill extract outright, taking the symbol
+    // index with it. Degrade to the default ruleset instead (#16) — a missing
+    // layering ruleset costs violations, not the whole index.
+    try {
+      cruiseOpts.ruleSet = (await import(pathToFileURL(localConfig).href)).default;
+    } catch (err) {
+      emitProgress(`WARNING: could not load .dependency-cruiser.cjs (${err.message}); `
+        + `continuing with default rules — layering violations will not be reported`);
+    }
   }
 
   // Common JS/TS source-dir conventions, plus a fallback to the repo root

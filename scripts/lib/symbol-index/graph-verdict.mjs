@@ -53,21 +53,31 @@ export const COVERAGE_DEFAULTS = Object.freeze({
  * Never throws: an invalid value logs once and falls back (#16 Graceful
  * Degradation). A malformed domain-map must not take down `arch:render`.
  *
+ * The `warn` callback receives `(msg, kind)` where kind is:
+ *   'invalid' — a key we ACT on had a bad type/range, so the effective policy
+ *               is not the one that was written. A gate must treat this as
+ *               fatal (§2.1.4 binding).
+ *   'unknown' — a key we do not recognise. This is the forward-compat path: a
+ *               consumer on an older sync may carry keys from a newer schema.
+ *               It must NOT be fatal, or the compat mechanism becomes the
+ *               breakage it exists to prevent (Cluster B final gate, HIGH).
+ * Existing callers that take only `msg` are unaffected.
+ *
  * @param {object|undefined} raw - the `coverage` key, if present
- * @param {(msg: string) => void} [warn]
+ * @param {(msg: string, kind?: 'invalid'|'unknown') => void} [warn]
  */
 export function parseCoverageConfig(raw, warn = () => {}) {
   const out = { ...COVERAGE_DEFAULTS };
   if (raw == null) return out;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    warn('[coverage] `coverage` in domain-map.json is not an object — using defaults');
+    warn('[coverage] `coverage` in domain-map.json is not an object — using defaults', 'invalid');
     return out;
   }
   const ratio = (k) => {
     const v = raw[k];
     if (v === undefined) return;
     if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) {
-      warn(`[coverage] \`${k}\` must be a number in [0,1] — using default ${out[k]}`);
+      warn(`[coverage] \`${k}\` must be a number in [0,1] — using default ${out[k]}`, 'invalid');
       return;
     }
     out[k] = v;
@@ -76,7 +86,7 @@ export function parseCoverageConfig(raw, warn = () => {}) {
     const v = raw[k];
     if (v === undefined) return;
     if (!Number.isInteger(v) || v <= 0) {
-      warn(`[coverage] \`${k}\` must be a positive integer — using default ${out[k]}`);
+      warn(`[coverage] \`${k}\` must be a positive integer — using default ${out[k]}`, 'invalid');
       return;
     }
     out[k] = v;
@@ -87,27 +97,27 @@ export function parseCoverageConfig(raw, warn = () => {}) {
   positiveInt('hardTimeoutMs');
   if (raw.enforce !== undefined) {
     if (typeof raw.enforce !== 'boolean') {
-      warn('[coverage] `enforce` must be a boolean — using default false');
+      warn('[coverage] `enforce` must be a boolean — using default false', 'invalid');
     } else {
       out.enforce = raw.enforce;
     }
   }
   if (raw.sampleCap !== undefined) {
     if (!Number.isInteger(raw.sampleCap) || raw.sampleCap < 0 || raw.sampleCap > 100) {
-      warn('[coverage] `sampleCap` must be an integer in [0,100] — using default 20');
+      warn('[coverage] `sampleCap` must be an integer in [0,100] — using default 20', 'invalid');
     } else {
       out.sampleCap = raw.sampleCap;
     }
   }
   // Forward-compat: a consumer on an older sync may carry keys we don't know.
   for (const k of Object.keys(raw)) {
-    if (!(k in COVERAGE_DEFAULTS)) warn(`[coverage] ignoring unknown key \`${k}\``);
+    if (!(k in COVERAGE_DEFAULTS)) warn(`[coverage] ignoring unknown key \`${k}\``, 'unknown');
   }
   // A hard timeout at or below the soft budget means the soft budget can never
   // report — the run is always killed first. Repair rather than reject.
   if (out.hardTimeoutMs <= out.maxCruiseMs) {
     warn(`[coverage] hardTimeoutMs (${out.hardTimeoutMs}) must exceed maxCruiseMs `
-      + `(${out.maxCruiseMs}) or the soft budget can never fire — using ${out.maxCruiseMs * 2}`);
+      + `(${out.maxCruiseMs}) or the soft budget can never fire — using ${out.maxCruiseMs * 2}`, 'invalid');
     out.hardTimeoutMs = out.maxCruiseMs * 2;
   }
   return out;

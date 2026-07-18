@@ -265,3 +265,40 @@ describe('lineage — a stale envelope can never outlive a failed render', () =>
     assert.doesNotMatch(out, /VERIFIED/);
   });
 });
+
+describe('lineage — forward-compat must not become the breakage it prevents', () => {
+  it('an UNKNOWN config key does not fail the gate', () => {
+    // Cluster B final gate, HIGH. parseCoverageConfig warns on unknown keys
+    // specifically so a consumer on an older sync survives a newer schema.
+    // An earlier gate treated every warning as fatal, which would fail every
+    // consumer's CI the moment a key was added upstream — turning the
+    // compat mechanism into the outage it exists to prevent.
+    const dir = fixtureRepo({ coverage: coverageBlock() });
+    fs.writeFileSync(path.join(dir, '.audit-loop', 'domain-map.json'),
+      JSON.stringify({ rules: [], coverage: { enforce: true, futureKeyFromNewerSync: 42 } }));
+    const { code, out } = runGate(dir);
+    assert.equal(code, 0, 'an unknown key is forward-compat, not a failure');
+    assert.match(out, /forward-compat; not fatal/);
+    assert.match(out, /VERIFIED/);
+  });
+
+  it('an INVALID value for a key we act on still fails the gate', () => {
+    // The distinction that matters: unknown = we do not recognise it, so we
+    // ignore it. Invalid = we DO act on it and the effective policy is not
+    // what was written. Only the second can silently disable enforcement.
+    const dir = fixtureRepo({ coverage: coverageBlock() });
+    fs.writeFileSync(path.join(dir, '.audit-loop', 'domain-map.json'),
+      JSON.stringify({ rules: [], coverage: { enforce: 'true' } }));
+    const { code, out } = runGate(dir);
+    assert.equal(code, 2);
+    assert.match(out, /did not parse cleanly/);
+  });
+
+  it('both together: the unknown key is tolerated, the invalid one still fails', () => {
+    const dir = fixtureRepo({ coverage: coverageBlock() });
+    fs.writeFileSync(path.join(dir, '.audit-loop', 'domain-map.json'),
+      JSON.stringify({ rules: [], coverage: { enforce: 'true', futureKey: 1 } }));
+    const { code } = runGate(dir);
+    assert.equal(code, 2, 'a tolerated unknown key must not mask an invalid one');
+  });
+});

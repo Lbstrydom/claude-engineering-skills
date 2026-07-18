@@ -51,8 +51,17 @@ function main() {
   // gate that reports success while enforcing nothing. Green without having
   // checked anything, one typo away. So the gate refuses to run on a config
   // it could not parse cleanly.
+  //
+  // But ONLY on `invalid` warnings (Cluster B final gate, HIGH). `unknown`
+  // exists precisely so a consumer on an older sync survives a newer schema
+  // key; treating it as fatal would turn the forward-compat mechanism into
+  // the breakage it was built to prevent — every consumer's CI failing the
+  // moment someone adds a key upstream.
   const configWarnings = [];
-  const config = loadCoverageConfig(repoRoot, (m) => configWarnings.push(m));
+  const config = loadCoverageConfig(repoRoot, (m, kind) => {
+    if (kind === 'unknown') log(`arch:coverage-gate: note — ${m} (forward-compat; not fatal)`);
+    else configWarnings.push(m);
+  });
   if (configWarnings.length > 0) {
     log('arch:coverage-gate: FAILED — the coverage config did not parse cleanly.');
     log('  A gate cannot enforce a policy it had to guess at. Fix these, then re-run:');

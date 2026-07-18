@@ -46,6 +46,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { cruise } from 'dependency-cruiser';
 import { enumerateFiles } from '../symbol-index/extract.mjs';
 
@@ -149,7 +150,9 @@ async function main() {
   }
 
   const { opts, localConfig } = buildCruiseOpts(repoRoot);
-  if (localConfig) opts.ruleSet = (await import(`file://${localConfig}`)).default;
+  // pathToFileURL, not `file://${p}` — the latter is malformed on Windows,
+  // where an absolute path carries backslashes and a drive letter.
+  if (localConfig) opts.ruleSet = (await import(pathToFileURL(localConfig).href)).default;
 
   process.stderr.write(`\n═══ observed-graph discovery spike ═══\nrepo: ${repoRoot}\n`);
   if (localConfig) process.stderr.write(`using local .dependency-cruiser.cjs\n`);
