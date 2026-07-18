@@ -350,6 +350,10 @@
       "description": "docs:refs as JSON — the citation census by class (RESOLVES/GONE/PLACEHOLDER/PLANNED) plus any scanner failures.",
       "category": "diagnostic"
     },
+    "docs:refs:gate": {
+      "description": "The DRIFT-gate form of docs:refs (part of `npm run check`): fails only on a citation that NEWLY breaks — a GONE not in the accepted BASELINE — never on the standing total. A resolved baseline entry is stale and also fails (self-cleaning).",
+      "category": "diagnostic"
+    },
     "plans:status": {
       "description": "Vocabulary lint for plan Status lines: terminal Complete/Superseded · active Draft/Approved/In Progress. Rejects Implemented (ambiguous) + malformed/duplicate; a Status-less doc is not a plan (not a failure); *-audit-summary.md exempt. The single source of truth is scripts/lib/plan-status.mjs, which the pre-push hook also uses to select which plan to audit (--select).",
       "category": "diagnostic"

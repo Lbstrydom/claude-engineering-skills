@@ -64,12 +64,15 @@ const PHSTEM = '(?:<[A-Za-z0-9._-]+>|[A-Za-z0-9._*-]*\\*[A-Za-z0-9._*-]*)';
 const TOKEN  = `docs/(?:${SEG}/)*(?:${PHSTEM}|${STEM})\\.md`;
 
 // Leading lookbehind excludes `/` so a cross-repo path
-// (`wine-cellar-app/docs/plans/a.md`) is structurally invisible — no exclusion
-// rule needed for it. It does NOT exclude `<`: a CommonMark angle-bracket link
-// destination `[x](<docs/plans/a.md>)` is a real citation, and excluding `<`
-// silently dropped it (a false NEGATIVE — a broken ref goes uncaught). The
-// placeholder `<` lives INSIDE the token (after `docs/plans/`), consumed by
-// PHSTEM, so it never needed to be in the leading class.
+// (`wine-cellar-app/docs/plans/a.md`) is structurally invisible, and alnum/`.`/`-`
+// so a token that is the SUFFIX of a longer path-word (`worddocs/…`) doesn't
+// match mid-word. It does NOT exclude `*` or `_`: those are Markdown emphasis
+// markers, and excluding them made a bold/italic-wrapped citation
+// (`**docs/plans/a.md**`, `_docs/plans/a.md_`) invisible — a false NEGATIVE
+// (consolidated Gemini gate G1). It does NOT exclude `<` either: a CommonMark
+// angle-bracket link destination `[x](<docs/plans/a.md>)` is a real citation.
+// The placeholder `<`/glob `*` live INSIDE the token (after `docs/plans/`),
+// consumed by PHSTEM, so neither belongs in the leading class.
 //
 // Trailing is TWO negative lookaheads, not a boundary-class member:
 //   (?![A-Za-z0-9_-])   — `.mdx`, `real.md-foo` are not this token
@@ -87,7 +90,7 @@ const TOKEN  = `docs/(?:${SEG}/)*(?:${PHSTEM}|${STEM})\\.md`;
 //                          to fire. (A real longer `.md` file like
 //                          `a.md.v2.md` still matches whole — it is a valid
 //                          STEM + `.md`.)
-const REF_RE = new RegExp(`(?<![A-Za-z0-9._/*-])(${TOKEN})(?![A-Za-z0-9_-])(?![./][A-Za-z0-9._-])`, 'g');
+const REF_RE = new RegExp(`(?<![A-Za-z0-9./-])(${TOKEN})(?![A-Za-z0-9_-])(?![./][A-Za-z0-9._-])`, 'g');
 
 // `(planned)` binds to its OWN token only: immediately following, separated by
 // at most one space, or by a single closing backtick/paren then one space.
@@ -122,7 +125,11 @@ const REF_RE = new RegExp(`(?<![A-Za-z0-9._/*-])(${TOKEN})(?![A-Za-z0-9_-])(?![.
 //                        so without this the label alone would be an
 //                        un-suppressible GONE while the destination is planned —
 //                        breaking the contract's "both resolve identically".
-const PLANNED_RE = /^(?:[#?][^\s`)]*)?(?:\]\([^)]+\))?(?:[`)] |[ ])?\(planned\)/;
+//   (?:[ \t]+"[^"]*")?  — an optional Markdown link TITLE after a destination
+//                        (`[x](docs/plans/a.md "Title") (planned)`); without it
+//                        the ` "Title"` blocked the marker (consolidated Gemini
+//                        gate G2).
+const PLANNED_RE = /^(?:[#?][^\s`)]*)?(?:[ \t]+"[^"]*")?(?:\]\([^)]+\))?(?:[`)] |[ ])?\(planned\)/;
 
 /**
  * Extract every citation site from a chunk of text.

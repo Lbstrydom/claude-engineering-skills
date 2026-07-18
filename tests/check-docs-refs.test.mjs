@@ -61,6 +61,18 @@ describe('check-docs-refs / extractRefs — grammar', () => {
     // ── leading lookbehind: cross-repo is structurally invisible ─────────
     ['cross-repo prefix', 'Plan: wine-cellar-app/docs/plans/a.md', []],
     ['path-prefixed', 'some/docs/plans/a.md', []],
+    ['mid-word (worddocs)', 'worddocs/plans/a.md', []],
+
+    // ── G1: a bold-wrapped citation must be VISIBLE (was a false negative —
+    // the leading lookbehind excluded `*`). Also the common `**path**` — one
+    // side markered, the other prose.
+    ['bold-wrapped', '**docs/plans/a.md**', [{ target: 'docs/plans/a.md', kind: 'concrete' }]],
+    ['bold in prose', 'See **docs/plans/a.md** now', [{ target: 'docs/plans/a.md', kind: 'concrete' }]],
+    // Italic's LEADING `_` is now allowed too; a trailing `_` immediately after
+    // `.md` stays ambiguous with a filename char (`real.md_v2`) and does not
+    // terminate — a documented limitation (italic wrapping a path is rare; bold
+    // is the common form and fully works).
+    ['italic leading, spaced close', '_ docs/plans/a.md _', [{ target: 'docs/plans/a.md', kind: 'concrete' }]],
 
     // ── placeholders ─────────────────────────────────────────────────────
     ['bracketed stem', 'docs/plans/<name>.md', [{ target: 'docs/plans/<name>.md', kind: 'placeholder' }]],
@@ -175,6 +187,10 @@ describe('check-docs-refs / (planned) marker', () => {
 
   it('binds across a query string', () => {
     assert.equal(extractRefs('docs/plans/a.md?v=2 (planned)')[0].planned, true);
+  });
+
+  it('binds across a Markdown link title (G2)', () => {
+    assert.equal(extractRefs('[Plan](docs/plans/a.md "Title") (planned)')[0].planned, true);
   });
 
   it('a fragment without a marker still does NOT bind', () => {
