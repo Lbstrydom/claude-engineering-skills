@@ -1,7 +1,7 @@
 # Plan: Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)
 
 - **Date**: 2026-07-16
-- **Status**: **Phase 1 IMPLEMENTED** (2026-07-17) — `buildRulingsBlock`
+- **Status**: In Progress — Phase 1 implemented 2026-07-17 (`buildRulingsBlock`
   rewritten; `tests/rulings-block-guard.test.mjs` +
   `tests/sensitive-egress.test.mjs` extended (written test-first: confirmed RED
   against the old implementation, then GREEN). Full suite 6545 pass / 0 fail.

@@ -1,8 +1,8 @@
 # Plan: Repo-Wide Reference-Integrity Gate
 
 - **Date**: 2026-07-17
-- **Status**: **Clusters A + B implemented + converged** (A 2026-07-17, B
-  2026-07-18). Plan approved (3 GPT + 2 Gemini rounds). **Cluster A** (Phase 1,
+- **Status**: In Progress — Clusters A + B implemented + converged (A 2026-07-17,
+  B 2026-07-18), Cluster C in progress. Plan approved (3 GPT + 2 Gemini rounds). **Cluster A** (Phase 1,
   the lint): test-first, code-audited 5 GPT + 2 Gemini rounds, **merged to main**.
   **Cluster B** (Phases 2-3, the 145-file consolidation + 163-ref rewrite +
   drift-gate-framed Phase 3): built in an isolated worktree, fix-gate audit (GPT

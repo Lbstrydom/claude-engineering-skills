@@ -1,7 +1,7 @@
 # Plan: Remove the legacy fallback from the tiered-SHADOW path
 
 - **Date**: 2026-07-17
-- **Status**: Implemented (2026-07-17) via `/cycle --autonomous`. Plan-audit: 3 GPT rounds (7 findings, all fixed) + Gemini gate APPROVE ("watertight", 0 findings). Code-audit: 2 rounds (18 → 5; 13 suppressed), one real bug found and fixed (M2 shared-mutable-state), one HIGH refuted by live reproduction (H1), the recurring `diffText` HIGH dismissed with mechanical independence (5th recurrence). Consolidated Gemini gate: CONCERNS → **APPROVE** after G1 (a claimed timer leak) was refuted both statically and empirically. Pre-ship empirical verify: 14/14.
+- **Status**: Complete — implemented 2026-07-17 via `/cycle --autonomous`. Plan-audit: 3 GPT rounds (7 findings, all fixed) + Gemini gate APPROVE ("watertight", 0 findings). Code-audit: 2 rounds (18 → 5; 13 suppressed), one real bug found and fixed (M2 shared-mutable-state), one HIGH refuted by live reproduction (H1), the recurring `diffText` HIGH dismissed with mechanical independence (5th recurrence). Consolidated Gemini gate: CONCERNS → **APPROVE** after G1 (a claimed timer leak) was refuted both statically and empirically. Pre-ship empirical verify: 14/14.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 

@@ -52,6 +52,8 @@
     "docs:check": "node scripts/check-docs-placement.mjs",
     "docs:refs": "node scripts/check-docs-refs.mjs",
     "docs:refs:json": "node scripts/check-docs-refs.mjs --format json",
+    "plans:status": "node scripts/check-plan-status.mjs",
+    "plans:status:json": "node scripts/check-plan-status.mjs --format json",
     "docs:check:json": "node scripts/check-docs-placement.mjs --format json",
     "efficacy:check": "node scripts/efficacy-lints-check.mjs",
     "check:integration": "node scripts/symbol-index/refresh.mjs --full && node scripts/setup-postgres.mjs --check-drift",

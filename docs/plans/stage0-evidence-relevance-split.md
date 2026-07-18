@@ -1,7 +1,7 @@
 # Plan: Stage 0 Evidence-Relevance Split (Tiered-Recall Audit Pipeline)
 
 - **Date**: 2026-07-16
-- **Status**: Implemented (2026-07-16) — all 3 clusters landed via `/cycle --autonomous`. Plan-audit: 3 GPT rounds + 2 Gemini rounds. Code-audit: Clusters A+B converged over 3 GPT rounds + interim Gemini APPROVE (0 new findings); Cluster C 1 round (fix-gate: final) + consolidated Gemini gate. The 3 deferred implementation-completeness items were all verified at code-audit (exact `contentExistsAtMappedRange` signature carries the quote; `Stage0RelevanceContext` per-run caching spy-tested; `scopeBucket` resolution has a single call site in `tiered-pipeline.mjs`'s findings union).
+- **Status**: Complete — implemented 2026-07-16; all 3 clusters landed via `/cycle --autonomous`. Plan-audit: 3 GPT rounds + 2 Gemini rounds. Code-audit: Clusters A+B converged over 3 GPT rounds + interim Gemini APPROVE (0 new findings); Cluster C 1 round (fix-gate: final) + consolidated Gemini gate. The 3 deferred implementation-completeness items were all verified at code-audit (exact `contentExistsAtMappedRange` signature carries the quote; `Stage0RelevanceContext` per-run caching spy-tested; `scopeBucket` resolution has a single call site in `tiered-pipeline.mjs`'s findings union).
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 

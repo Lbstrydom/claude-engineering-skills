@@ -574,7 +574,7 @@ needed. Metadata header:
 ```markdown
 # Plan: <Feature Name>
 - **Date**: <today's date>
-- **Status**: Draft | Approved | In Progress | Complete
+- **Status**: Draft | Approved | In Progress | Complete | Superseded
 - **Author**: Claude + <user>
 - **Scope**: backend | frontend | full-stack   ← from Phase 0
 ```

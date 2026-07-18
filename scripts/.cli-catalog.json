@@ -358,6 +358,14 @@
       "description": "docs:refs as JSON — the citation census by class (RESOLVES/GONE/PLACEHOLDER/PLANNED) plus any scanner failures.",
       "category": "diagnostic"
     },
+    "plans:status": {
+      "description": "Vocabulary lint for plan Status lines: terminal Complete/Superseded · active Draft/Approved/In Progress. Rejects Implemented (ambiguous) + malformed/duplicate; a Status-less doc is not a plan (not a failure); *-audit-summary.md exempt. The single source of truth is scripts/lib/plan-status.mjs, which the pre-push hook also uses to select which plan to audit (--select).",
+      "category": "diagnostic"
+    },
+    "plans:status:json": {
+      "description": "plans:status as JSON — the flagged non-conforming Status lines with reasons.",
+      "category": "diagnostic"
+    },
     "docs:check:json": {
       "description": "Machine-readable docs/ root placement report ({ok, checked, unexpected, staleAllowlistEntries}).",
       "category": "diagnostic"

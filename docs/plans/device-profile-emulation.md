@@ -1,7 +1,7 @@
 # Plan: Device-profile emulation for persona-driven + structural browser tests
 
 - **Date**: 2026-05-29
-- **Status**: Implemented (in this repo); shareable brief for porting elsewhere
+- **Status**: Complete — implemented in this repo; shareable brief for porting elsewhere
 - **Author**: Claude + Louis
 - **Scope**: testing infrastructure (skill spec + small shared lib)
 - **Reference implementation**: this repo's [scripts/lib/device-presets.mjs](../../scripts/lib/device-presets.mjs), [skills/persona-test/SKILL.md](../../skills/persona-test/SKILL.md), [skills/click-test/SKILL.md](../../skills/click-test/SKILL.md)

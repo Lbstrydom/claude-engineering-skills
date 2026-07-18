@@ -1,7 +1,7 @@
 # Plan: Local Weekly Maintenance Checks (opt-in)
 
 - **Date**: 2026-07-15
-- **Status**: Implemented (retroactive plan — written after implementation, for /audit-code)
+- **Status**: Complete — implemented (retroactive plan — written after implementation, for /audit-code)
 - **Author**: Claude + Louis
 - **Scope**: backend (tooling)
 
