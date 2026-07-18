@@ -1,5 +1,5 @@
 /**
- * @fileoverview Selector-policy lint tests (plan: docs/completed/ux-lock-selector-policy.md).
+ * @fileoverview Selector-policy lint tests (plan: docs/plans/ux-lock-selector-policy.md).
  *
  * Covers the plan §3E fixture matrix: allowlist-semantics classification
  * (deny-by-default), marker grammar (mandatory reason, one-line attachment,

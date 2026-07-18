@@ -3,7 +3,7 @@
 - **Date**: 2026-07-01
 - **Status**: Complete — built 2026-07-02 via `/cycle code --autonomous` (2 clusters). Audit-plan converged (GPT R1–R3 plateau; Gemini R1→R2→R3, genuine defects fixed each round → 0 HIGH). Code build: Cluster A GPT R1(H:8)→R2(H:6), 9 genuine bugs fixed → converged; Cluster B (fix-gate final); consolidated Gemini gate R1(2H/1M)→R2(2H/1M/1L)→**R3 APPROVE**, 7 genuine defects fixed across rounds. 62 arm-eval tests; full suite 4185/4165 pass/0 fail; migration applied, no drift. See Implementation Log below.
 - **Author**: Claude + Louis
-- **Scope**: backend (`js-ts` + postgres; `node --test`). Generalises the shipped auditor harness (`docs/completed/model-ab-harness-v2.md`) into ONE evaluation framework that three experiments plug into.
+- **Scope**: backend (`js-ts` + postgres; `node --test`). Generalises the shipped auditor harness (`docs/plans/model-ab-harness-v2.md`) into ONE evaluation framework that three experiments plug into.
 - **Origin**: operator insight — the auditor harness already uses Claude as a **blinded, human-verifiable judge** (it adjudicates GPT/OSS/Gemini findings; the human verifies/overrides). Extend that exact pattern to two more experiments (plan authoring, brainstorm) so all three test ONE principle under ONE rigorous method.
 
 ---

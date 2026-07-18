@@ -1,7 +1,7 @@
 # Audit Summary — Architecture-Intent PR-B (Python & Java Adapters)
 
 - **Date**: 2026-05-15
-- **Plan**: [docs/completed/arch-intent-pr-b-python-java-adapters.md](arch-intent-pr-b-python-java-adapters.md)
+- **Plan**: [docs/plans/arch-intent-pr-b-python-java-adapters.md](arch-intent-pr-b-python-java-adapters.md)
 - **Cycle**: `/cycle` FULL mode — plan → audit-plan → implement → audit-code → ship
 - **Final verdict**: Gemini **APPROVE** (architectural coherence "Strong")
 

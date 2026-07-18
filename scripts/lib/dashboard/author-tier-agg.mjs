@@ -2,7 +2,7 @@
  * @fileoverview Pure aggregator for the author-tier observation panel.
  *
  * Shapes raw grouped `learning_decisions` rows (decision_type='author_tier',
- * see docs/completed/model-tier-observation.md) into the dashboard view: suggested
+ * see docs/plans/model-tier-observation.md) into the dashboard view: suggested
  * tier × converged, the declared ladder partition keys, and the cross-model-bias
  * DIVERSITY gate (≥3 distinct provider ladders) the deferred routing phase waits
  * on. No I/O — unit-testable in isolation.

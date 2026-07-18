@@ -7,7 +7,7 @@
  * repos, so every query filters `repo_id = $1`. `count(*)::int` keeps node-pg
  * from returning a bigint STRING that would crash the Zod number boundary.
  *
- * Plan: docs/completed/dashboard-purpose-view-v2.md §2 Part 3.
+ * Plan: docs/plans/dashboard-purpose-view-v2.md §2 Part 3.
  *
  * @module scripts/lib/store/purpose-health
  */

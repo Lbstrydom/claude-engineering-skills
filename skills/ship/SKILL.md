@@ -54,7 +54,7 @@ is accurate. Best-effort — if a query fails, log and proceed.
 ### 0.5a — Recent persona-test P0s for this repo
 
 If `PERSONA_TEST_REPO_NAME` is set, the PRIMARY source (WS4,
-`docs/completed/persona-nav-feedback-recovery.md`) joins the latest
+`docs/plans/persona-nav-feedback-recovery.md`) joins the latest
 session's raw P0/P1 findings against the durable per-repo outcome ledger —
 a finding labeled `dismissed`/`wont_fix` no longer counts as open, but one
 labeled `fixed` that STILL appears in the latest session correctly
@@ -500,7 +500,7 @@ bootstrap on every push; that's noise).
 
 ## Step 6.6 — Friction closure (after successful push, advisory)
 
-Completes the friction-feedback loop (plan: `docs/completed/friction-feedback-loop.md`
+Completes the friction-feedback loop (plan: `docs/plans/friction-feedback-loop.md`
 C10). The `UserPromptSubmit` hook injects `> Relevant prior friction` callouts and
 records a breadcrumb; this step surfaces notes that the just-pushed commit may have
 resolved, so a recurring papercut gets marked closed instead of recurring forever.

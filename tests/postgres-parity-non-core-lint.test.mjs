@@ -86,7 +86,7 @@ describe('the schema-coupling baseline accepts LINES, not the rule', () => {
   it('pins the baseline contents — an addition must be a deliberate, reviewed act', () => {
     // Baselining is accepted debt. Growing this set silently is how the debt
     // stops being accounted for, so the count is pinned: update it knowingly,
-    // with the docs/completed/postgres-parity-schema-coupling.md §1 addendum.
+    // with the docs/plans/postgres-parity-schema-coupling.md §1 addendum.
     assert.equal(SCHEMA_COUPLING_BASELINE.size, 7, 'baseline size changed — was that deliberate?');
     for (const entry of SCHEMA_COUPLING_BASELINE) {
       assert.match(entry, /^\d{14}_[\w-]+\.sql:\d+$/, `malformed baseline entry: ${entry}`);

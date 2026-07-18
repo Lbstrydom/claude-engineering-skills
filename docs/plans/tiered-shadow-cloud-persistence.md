@@ -5,7 +5,7 @@ Date: 2026-07-13
 
 ## Context
 
-Following the `allowTiered` fix (docs/completed/allow-tiered-callsite-gate.md),
+Following the `allowTiered` fix (docs/plans/allow-tiered-callsite-gate.md),
 the user asked to verify Supabase wiring and how progress toward the
 plan's pre-registered 10-15-run shadow-validation window would be tracked
 across the 3 local repos. This surfaced two things:

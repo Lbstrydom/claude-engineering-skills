@@ -218,7 +218,7 @@ export function gitDiffWithWorkingTree(cwd, sinceCommit) {
 
 /**
  * Read a file's content at a specific revision — `git show <revision>:<filePath>`.
- * Used by the duplication-detector (docs/completed/audit-code-duplication-wave.md
+ * Used by the duplication-detector (docs/plans/audit-code-duplication-wave.md
  * §2) to diff a changed symbol's base-revision content without touching the
  * architectural-memory DB snapshot at all (Gemini-round-3 decoupling — see
  * the plan's §8 Audit Trail).

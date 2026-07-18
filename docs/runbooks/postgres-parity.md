@@ -2,7 +2,7 @@
 
 > Operational detail for the `pg`-direct cloud learning store. The **design**
 > rationale (the no-adapter decision, schema scope, privilege model, file plan)
-> lives in [`docs/completed/postgres-parity.md`](../completed/postgres-parity.md);
+> lives in [`docs/plans/postgres-parity.md`](../completed/postgres-parity.md);
 > this file is the how-to. Stubbed from AGENTS.md to keep that file an invariant
 > ledger, not a runbook.
 
@@ -262,7 +262,7 @@ the file lives in `os.homedir()`, never in any git tree.
 ## Why the schema is `public`-only
 
 v1 hard-wires `public`. Plan §2 "Schema scope" + the audit at
-[`docs/completed/postgres-parity-schema-coupling.md`](../completed/postgres-parity-schema-coupling.md):
+[`docs/plans/postgres-parity-schema-coupling.md`](../completed/postgres-parity-schema-coupling.md):
 4 migrations qualify `public.<table>` inside `publish_refresh_run` and 11
 `SECURITY DEFINER` functions pin `search_path = pg_catalog, public`. Arbitrary-schema
 support is §10 Out of Scope until that audit pass is re-run.

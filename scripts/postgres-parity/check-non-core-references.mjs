@@ -5,9 +5,9 @@
  * accepted yet. Doubles as a schema-coupling check: any `<schema>.<table>`
  * qualification outside the allowlisted pair (`public`, `auth`) is flagged.
  *
- * Plan: docs/completed/postgres-parity.md §0 #2 ("CI lint re-runs the inventory").
- * Inventory: docs/completed/postgres-parity-non-core-inventory.md
- * Schema-coupling baseline: docs/completed/postgres-parity-schema-coupling.md §1
+ * Plan: docs/plans/postgres-parity.md §0 #2 ("CI lint re-runs the inventory").
+ * Inventory: docs/plans/postgres-parity-non-core-inventory.md
+ * Schema-coupling baseline: docs/plans/postgres-parity-schema-coupling.md §1
  *
  * Both `--strict` forms run in `npm run check` (pre-push). Until 2026-07-17 this
  * lint was reachable only by hand — no workflow, no hook, absent from the check
@@ -50,7 +50,7 @@ const ALLOWED_ROLES = new Set(['anon', 'authenticated', 'service_role']);
 
 const ALLOWED_EXTENSIONS = new Set(['pg_trgm', 'vector', 'pgcrypto']);
 
-// The schema-coupling baseline (docs/completed/postgres-parity-schema-coupling.md §1).
+// The schema-coupling baseline (docs/plans/postgres-parity-schema-coupling.md §1).
 // Each entry is `<filename>:<line>` we ACCEPT as legacy `public.` qualification;
 // a new occurrence outside this set fails --schema-coupling.
 //
@@ -210,7 +210,7 @@ function formatHumanReport(findings, schemaCoupling) {
     '      the ledger pins a per-file sha256 and setup-postgres.mjs refuses to\n' +
     '      re-apply on a mismatch — add it to the compat-bootstrap inventory AND\n' +
     '      this script\'s allowlist. Both: an allowlist edit alone is silencing.\n' +
-    'See docs/completed/postgres-parity-non-core-inventory.md.\n';
+    'See docs/plans/postgres-parity-non-core-inventory.md.\n';
 }
 
 // ── CLI ────────────────────────────────────────────────────────────────────

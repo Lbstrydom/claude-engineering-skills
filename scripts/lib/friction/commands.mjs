@@ -1,6 +1,6 @@
 /**
  * @fileoverview The `quality` friction-feedback command implementations + the
- * single named egress choke-point. Plan: docs/completed/friction-feedback-loop.md
+ * single named egress choke-point. Plan: docs/plans/friction-feedback-loop.md
  * (C0–C10, §2b). Keeps `cross-skill.mjs` a thin dispatcher (R1-MED) — every
  * command here returns a plain C8 JSON shape (`{ok, cloud, …, warnings?}`) and is
  * unit-testable without the CLI shell (deps are injectable).

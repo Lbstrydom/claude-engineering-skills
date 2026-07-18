@@ -1,7 +1,7 @@
 /**
  * @fileoverview The friction injection breadcrumb — the ONLY reader/writer of the
  * SINGLE rolling `.audit/friction-injected.jsonl` (gitignored). Plan:
- * docs/completed/friction-feedback-loop.md (C8, Phase 3).
+ * docs/plans/friction-feedback-loop.md (C8, Phase 3).
  *
  * The UserPromptSubmit hook envelope is `{hook_event_name, prompt}` — it carries
  * NO session id (Gemini-MED), so this is a single rolling log, NOT per-session.

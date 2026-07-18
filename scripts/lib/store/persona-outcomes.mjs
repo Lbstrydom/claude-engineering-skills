@@ -1,6 +1,6 @@
 /**
  * @fileoverview Durable persona-finding outcome labels — WS4 of
- * docs/completed/persona-nav-feedback-recovery.md. REPO-scoped (not
+ * docs/plans/persona-nav-feedback-recovery.md. REPO-scoped (not
  * session-scoped): a `dismissed`/`wont_fix` label must survive across
  * persona-test runs, or the ship gate re-flags the same false positive
  * every session — the "don't ask the user the same thing twice" failure

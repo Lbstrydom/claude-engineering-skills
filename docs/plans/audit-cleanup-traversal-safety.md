@@ -27,7 +27,7 @@
 > `lstatSync`, and why the "only one recursive walker" claim is gone.
 
 Track B's second half. The Track-A plan
-(`docs/completed/atomic-write-adoption-remaining-sites.md`) deferred a
+(`docs/plans/atomic-write-adoption-remaining-sites.md`) deferred a
 traversal-safety question in two `audit-orchestration` scripts. Having now
 read both, **only one of the two carries a real defect** — the honest
 scoping is below, and it is materially smaller than the deferral note

@@ -3,7 +3,7 @@
 Operator guide for the funded (~€200–400) empirical burn-in that picks
 **audit-pipeline configs from real human-adjudication data**, not model
 self-opinion. Design + audit trail: [`docs/plans/model-ab-harness-v2.md`](../../completed/model-ab-harness-v2.md)
-(v2 delta) over [`docs/completed/model-ab-experiment-harness.md`](../../completed/model-ab-experiment-harness.md) (v1).
+(v2 delta) over [`docs/plans/model-ab-experiment-harness.md`](../../completed/model-ab-experiment-harness.md) (v1).
 
 > **What it is**: an observation-only *generation shadow* that generalizes the
 > final-review shadow to the AUDIT GENERATION passes. When enabled it runs the

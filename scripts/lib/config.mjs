@@ -178,7 +178,7 @@ export const finalReviewConfig = Object.freeze({
 // ── Shadow Final-Review Config (A/B test — observation-only) ─────────────────
 //
 // Opt-in second reviewer that runs blind-parallel with the primary final
-// review (plan: docs/completed/final-review-shadow-reviewer.md). Deliberately
+// review (plan: docs/plans/final-review-shadow-reviewer.md). Deliberately
 // PERMISSIVE — raw strings, NO allow-list validation, NO resolveModel() here,
 // NO injected default model. An unknown/garbage provider must never throw at
 // import (it would break the MANDATORY audit path for an OPTIONAL feature);
@@ -333,7 +333,7 @@ export const cycleConfig = Object.freeze({
 
 // ── Friction-feedback loop (GREEN ≠ REALIZED sibling) ────────────────────────
 // Recurrence × cost ranking thresholds + the protected-scope gate set + the
-// breadcrumb TTL. Plan: docs/completed/friction-feedback-loop.md.
+// breadcrumb TTL. Plan: docs/plans/friction-feedback-loop.md.
 export const frictionConfig = Object.freeze({
   // Recurrence alarm: a cluster recurring >= recurrenceAlarmCount and older than
   // recurrenceAlarmAgeDays with no mitigation is the graveyard alarm.
@@ -468,7 +468,7 @@ export const symbolIndexConfig = Object.freeze({
   auditFullTopN:         safeInt(process.env.ARCH_AUDIT_FULL_TOPN, 200),
   intentEmbedCacheTtlMs: safeInt(process.env.ARCH_INTENT_EMBED_CACHE_TTL_MS, 24 * 60 * 60 * 1000),
   refreshIncrementalDefault: process.env.ARCH_REFRESH_INCREMENTAL_DEFAULT !== 'false',
-  // Duplication audit wave (docs/completed/audit-code-duplication-wave.md §2) —
+  // Duplication audit wave (docs/plans/audit-code-duplication-wave.md §2) —
   // cheap preflight bound (checked before any Git extraction happens) and
   // the post-extraction candidate-count cap. Both return `unavailable`
   // rather than silently truncating when exceeded.

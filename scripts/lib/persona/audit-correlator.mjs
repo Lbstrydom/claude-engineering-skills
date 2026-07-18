@@ -1,6 +1,6 @@
 /**
  * @fileoverview Deterministic persona<->audit correlator — WS1 of
- * docs/completed/persona-nav-feedback-recovery.md. Replaces the
+ * docs/plans/persona-nav-feedback-recovery.md. Replaces the
  * agent-discretionary manual `record-correlation` emission (which ran for
  * ~5 weeks and produced zero rows) with a correlator that runs
  * automatically inside `cross-skill.mjs record-persona-session`,

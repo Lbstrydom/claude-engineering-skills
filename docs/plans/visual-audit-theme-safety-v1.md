@@ -5,7 +5,7 @@
 - **Author**: Claude + Louis
 - **Scope**: backend (CLI tooling / skill extension — `js-ts`, `node --test`)
 - **Target domain(s)**: `visual-audit` (single domain; no cross-domain, no untagged paths — `compute-target-domains` ruleCount=52)
-- **Origin / brainstorm**: [`docs/completed/theme-parity-contrast-delta.md`](theme-parity-contrast-delta.md)
+- **Origin / brainstorm**: [`docs/plans/theme-parity-contrast-delta.md`](theme-parity-contrast-delta.md)
   (problem statement + the full multi-LLM brainstorm: OpenAI/Gemini/Claude converged on
   *home = visual-audit, advisory-first, delta is the general net*). This plan is the
   **smallest grounded v1** derived from that synthesis.

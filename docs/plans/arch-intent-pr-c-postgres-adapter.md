@@ -1,7 +1,7 @@
 # Plan: Architecture-Intent PR-C — Postgres Adapter
 
 - **Date**: 2026-05-15
-- **Status**: Complete (implemented + audited via /cycle; /audit-code 2 GPT + 2 Gemini rounds 2026-05-15, all findings fixed, Gemini coherence "Strong"; see audit summary at docs/completed/arch-intent-pr-c-audit-summary.md)
+- **Status**: Complete (implemented + audited via /cycle; /audit-code 2 GPT + 2 Gemini rounds 2026-05-15, all findings fixed, Gemini coherence "Strong"; see audit summary at docs/plans/arch-intent-pr-c-audit-summary.md)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib` (the `arch-intent/` module tree), `audit-orchestration` (stack detection)

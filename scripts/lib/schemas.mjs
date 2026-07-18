@@ -70,7 +70,7 @@ export const ProducerFindingSchema = z.object({
  * `.max()` here — the cap is operator-configurable (env var), so baking a
  * fixed number into the schema would drift from `symbolIndexConfig` silently.
  *
- * Plan: docs/completed/audit-code-duplication-wave.md §2 / §4 Phase 3 (round-3 H2).
+ * Plan: docs/plans/audit-code-duplication-wave.md §2 / §4 Phase 3 (round-3 H2).
  */
 export const DuplicationBouncerResponseSchema = z.object({
   decisions: z.array(z.object({
@@ -1243,7 +1243,7 @@ export const OrphanIntroducedFindingSchema = z.object({
   rationale: z.string(),
 });
 
-// ── persona-clickpath → nav reachability seeding (plan: docs/completed/persona-clickpath-nav-seeding.md) ──
+// ── persona-clickpath → nav reachability seeding (plan: docs/plans/persona-clickpath-nav-seeding.md) ──
 
 /**
  * One step of the path a persona walked. `.strict()` is a SECURITY control

@@ -16,7 +16,7 @@ describe('extractPhaseTag', () => {
   test('extracts phase-a/b/c from filename', () => {
     assert.equal(extractPhaseTag('phase-a-language-aware-analysis-audit-summary.md'), 'phase-a');
     assert.equal(extractPhaseTag('phase-b-sonarqube-classification-audit-summary.md'), 'phase-b');
-    assert.equal(extractPhaseTag('docs/completed/phase-c-linter-pre-pass-audit-summary.md'), 'phase-c');
+    assert.equal(extractPhaseTag('docs/plans/phase-c-linter-pre-pass-audit-summary.md'), 'phase-c');
   });
 
   test('falls back to basename-minus-suffix for non-phase files', () => {

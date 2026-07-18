@@ -339,7 +339,7 @@ function gitIsDirty(root) {
 }
 
 /**
- * WS2 (docs/completed/persona-nav-feedback-recovery.md) — best-effort nav-audit
+ * WS2 (docs/plans/persona-nav-feedback-recovery.md) — best-effort nav-audit
  * run telemetry, STATIC PATH ONLY (the `--verify` live path produces a
  * structurally different finding shape — no `drift_keys` — and is out of
  * scope here). Fires only against a CLEAN working tree: `headSha` is only a

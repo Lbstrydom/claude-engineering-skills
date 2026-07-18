@@ -1,6 +1,6 @@
 # Experiment 3 — Model Swap-In Evaluation: GLM-5.2 vs GPT-5.6 (Auditor Role)
 
-First real end-to-end use of the model-swap-eval-harness (`docs/completed/model-swap-eval-harness.md`)
+First real end-to-end use of the model-swap-eval-harness (`docs/plans/model-swap-eval-harness.md`)
 for its intended purpose: deciding whether an OSS candidate should replace the
 production GPT auditor. Run 2026-07-12/13, across three of the user's own repos
 — this one (claude-engineering-skills), ai-organiser, and a private commercial

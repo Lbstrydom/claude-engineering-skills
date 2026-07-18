@@ -468,7 +468,7 @@
       "shared-lib"
     ]
   },
-  "_comment_purposes": "Outcome/purpose taxonomy + domain->purpose edges for the dashboard Purpose tab (docs/completed/dashboard-purpose-view.md). purposes: curated outcome nodes (7); kind=skill-chain when backed by flows.json node ids, else curated. domainPurposes: manual domain->purpose edges; a domain may serve several purposes (rendered with an 'also serves N' badge). Unmapped domains + domains absent from the architecture map surface as hygiene warnings in the tab.",
+  "_comment_purposes": "Outcome/purpose taxonomy + domain->purpose edges for the dashboard Purpose tab (docs/plans/dashboard-purpose-view.md). purposes: curated outcome nodes (7); kind=skill-chain when backed by flows.json node ids, else curated. domainPurposes: manual domain->purpose edges; a domain may serve several purposes (rendered with an 'also serves N' badge). Unmapped domains + domains absent from the architecture map surface as hygiene warnings in the tab.",
   "purposes": [
     {
       "id": "plan-and-design",

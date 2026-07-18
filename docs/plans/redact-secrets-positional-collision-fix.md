@@ -8,7 +8,7 @@
 - ⚠ **Cross-domain work** — touches >1 domain; the normal lib+test pair for
   a bug fix, intentional.
 
-> **Origin**: found while auditing `docs/completed/local-db-test-container.md`
+> **Origin**: found while auditing `docs/plans/local-db-test-container.md`
 > — `/audit-code` flagged `scripts/db-test-container.mjs`'s `buildDsn()` as
 > "returns a broken connection string" across 4 consecutive rounds. The
 > function was correct; the string GPT *received* was corrupted by this

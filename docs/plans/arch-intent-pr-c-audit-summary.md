@@ -1,7 +1,7 @@
 # Audit Summary — Architecture-Intent PR-C (Postgres Adapter)
 
 - **Date**: 2026-05-15
-- **Plan**: [docs/completed/arch-intent-pr-c-postgres-adapter.md](arch-intent-pr-c-postgres-adapter.md)
+- **Plan**: [docs/plans/arch-intent-pr-c-postgres-adapter.md](arch-intent-pr-c-postgres-adapter.md)
 - **Cycle**: `/cycle` FULL mode — plan → audit-plan → implement → audit-code → ship
 - **Final**: Gemini CONCERNS at the round-2 cap; the single residual finding was concrete and fixed. Coherence "Strong" every round; 0 wrongly-dismissed every round.
 

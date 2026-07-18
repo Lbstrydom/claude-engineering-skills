@@ -1,7 +1,7 @@
 /**
  * @fileoverview Purpose tab — collector join correctness, hygiene universe,
  * config validation, escaping/XSS, a11y markup, and determinism. All pure
- * (no cloud). Plan: docs/completed/dashboard-purpose-view.md §9.
+ * (no cloud). Plan: docs/plans/dashboard-purpose-view.md §9.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

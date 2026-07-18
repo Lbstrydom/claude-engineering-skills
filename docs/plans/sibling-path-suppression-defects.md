@@ -119,7 +119,7 @@ bias detected.
 ## Provenance
 
 Both items were **deferred from the cloud-FP-suppression code audit**
-(2026-07-17, `docs/completed/cloud-fp-suppression-read-loop.md`) with named
+(2026-07-17, `docs/plans/cloud-fp-suppression-read-loop.md`) with named
 independence, and spawned as tasks rather than buried:
 
 | Item | Found as | Why deferred there |

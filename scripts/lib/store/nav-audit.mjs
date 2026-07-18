@@ -1,6 +1,6 @@
 /**
  * @fileoverview Persistence for nav-audit v2 run history — WS2 of
- * docs/completed/persona-nav-feedback-recovery.md. The deferred
+ * docs/plans/persona-nav-feedback-recovery.md. The deferred
  * `record-nav-audit-run` command has been a no-op stub, so drift aging
  * (the >14-day governance smell) has had no cloud data source at all —
  * this module is what closes that gap.

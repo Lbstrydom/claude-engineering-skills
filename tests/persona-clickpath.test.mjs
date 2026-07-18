@@ -1,6 +1,6 @@
 /**
  * @fileoverview Tier-1 tests for persona-clickpath → nav reachability seeding
- * (plan: docs/completed/persona-clickpath-nav-seeding.md). Covers the security
+ * (plan: docs/plans/persona-clickpath-nav-seeding.md). Covers the security
  * controls (schema strictness, URL sanitization, cap/drop), the reader unnest, the
  * evidence→personaIntents mapping, and the bootstrap-ranking #5 fix — all pure, no DB.
  */

@@ -1,7 +1,7 @@
 /**
  * @fileoverview Tests for scripts/lib/persona/audit-correlator.mjs — the
  * WS1 deterministic persona<->audit correlator
- * (docs/completed/persona-nav-feedback-recovery.md). Pure-function tests
+ * (docs/plans/persona-nav-feedback-recovery.md). Pure-function tests
  * only (Tier 1 — deterministic seam); the store/write side is exercised
  * by the empirical-verify doctrine on a real session, not mocked here.
  */

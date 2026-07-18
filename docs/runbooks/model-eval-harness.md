@@ -3,7 +3,7 @@
 > Moved from AGENTS.md (2026-07-13 sprawl trim) — this holds the full
 > operational depth; AGENTS.md keeps the invariants + pointer, per the
 > progressive-disclosure policy. Design + prior-art trace:
-> [`docs/completed/model-swap-eval-harness.md`](../completed/model-swap-eval-harness.md).
+> [`docs/plans/model-swap-eval-harness.md`](../completed/model-swap-eval-harness.md).
 > First real verdict:
 > [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](../research/experiment-3-model-swap-glm-vs-gpt.md).
 

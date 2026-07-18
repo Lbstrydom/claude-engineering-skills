@@ -21,12 +21,12 @@
 > decisions, state map, Playwright acceptance criteria) and are intentionally omitted for this
 > backend-scope plan. Present sections: §1, §2, §2a (node contract), §6–9, §11.
 
-> Predecessor: [`docs/completed/visual-audit-theme-safety-v1.md`](../completed/visual-audit-theme-safety-v1.md)
+> Predecessor: [`docs/plans/visual-audit-theme-safety-v1.md`](../completed/visual-audit-theme-safety-v1.md)
 > (shipped 2026-07-01; origin-based `unadapted-color.mjs` + `interactive-color-lint.mjs`, both
 > advisory). v1's origin signal was **empirically confirmed** firing on the real `.mpc-add-btn`
 > dark-mode bug on 2026-07-01 (faithful ground-truth render, both themes, `source:'live'`). That
 > pre-ship empirical gate is what unblocks v2. Origin brainstorm:
-> [`docs/completed/theme-parity-contrast-delta.md`](theme-parity-contrast-delta.md) (Superseded note).
+> [`docs/plans/theme-parity-contrast-delta.md`](theme-parity-contrast-delta.md) (Superseded note).
 
 ---
 

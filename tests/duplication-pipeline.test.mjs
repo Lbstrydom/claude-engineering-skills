@@ -16,7 +16,7 @@
  * actually reach `allFindings`/flip `converged`, since a real detector run
  * needs a live symbol-index snapshot this hermetic suite doesn't have.
  *
- * Plan: docs/completed/audit-code-duplication-wave.md §4 Phase 4.
+ * Plan: docs/plans/audit-code-duplication-wave.md §4 Phase 4.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';

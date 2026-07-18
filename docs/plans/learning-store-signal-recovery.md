@@ -3,7 +3,7 @@
 - **Date**: 2026-06-03
 - **Status**: **Complete** (Clusters A–D landed 2026-06-03/04 with their own
   2-round Gemini gate; the sole remaining tail — the two determinism follow-ups
-  — shipped 2026-06-22 as `docs/completed/determinism-follow-ups.md`: WS1
+  — shipped 2026-06-22 as `docs/plans/determinism-follow-ups.md`: WS1
   run-unification + finalize-outcomes `8248429`, WS2 deterministic ux-lock
   runners `b691717`). Two follow-ups remain tracked but OUT OF SCOPE here — see
   the close-out note below.
@@ -486,7 +486,7 @@ symbol index + dashboard, run the suite.
 
 All seven breaks (B1–B7) are addressed and shipped. The plan's remaining tail —
 the two determinism follow-ups carved out into
-`docs/completed/determinism-follow-ups.md` — landed today:
+`docs/plans/determinism-follow-ups.md` — landed today:
 
 - **WS1** (`8248429`) — one unified `run_id` across audit rounds +
   `finalize-outcomes` deterministic capture (closes B2's *deterministic*

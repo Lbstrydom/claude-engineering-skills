@@ -196,7 +196,7 @@ const PASS_BACKEND_SYSTEM = getPassPrompt('backend');
 const PASS_FRONTEND_SYSTEM = getPassPrompt('frontend');
 const PASS_SUSTAINABILITY_SYSTEM = getPassPrompt('sustainability');
 // Architecture-intent system prompt — the LLM-bouncer rubric.  See
-// docs/completed/architecture-intent-framework.md §9.  Static (never
+// docs/plans/architecture-intent-framework.md §9.  Static (never
 // varies across rounds) so safe to be in `system` prompt for cache-stability.
 const PASS_ARCH_INTENT_SYSTEM = `You are auditing PR diffs against the repo's declared architectural intent. The mechanical analyser has already flagged candidate violations — your job is to classify SEVERITY and filter false positives.
 
@@ -368,7 +368,7 @@ let _runSeedUsed = false;
 // envelope { seedEligible, seedUsed, seedSkipReason, seedUnitIdx, seedUnitTokens }
 // so the audit-pass telemetry can record which mode ran.
 function decideSeed(units, passName, buildPromptForUnit) {
-  // Default-ON since 2026-07-14 (PR-6 flip; docs/completed/openai-prefix-cache.md §8).
+  // Default-ON since 2026-07-14 (PR-6 flip; docs/plans/openai-prefix-cache.md §8).
   // Opt out per-run with AUDIT_CACHE_SEED=0. The cache-hitrate-check routine
   // validates the flip empirically from the seed-ON cohort in audit_runs.
   const envFlag = process.env.AUDIT_CACHE_SEED !== '0';
@@ -690,7 +690,7 @@ async function runArchitecturePass({ openai, repoRoot, focusBlock, planContent, 
               category: '[Architecture] Invalid domain-map.json',
               detail: err.message,
               risk: 'Architecture checks cannot run at all until this config is fixed — cross-domain boundary violations elsewhere in the repo go undetected in the meantime.',
-              recommendation: 'Fix the config file at .audit-loop/domain-map.json. See docs/completed/architecture-intent-framework.md §2 decision 5.',
+              recommendation: 'Fix the config file at .audit-loop/domain-map.json. See docs/plans/architecture-intent-framework.md §2 decision 5.',
               section: '.audit-loop/domain-map.json',
               affectedFiles: ['.audit-loop/domain-map.json'],
               affectedPrinciples: ['#5 SSoT'],
@@ -2036,7 +2036,7 @@ export async function runLegacyProductionAudit(ctx) {
   cachePassResult('quickfix', quickfixResult);
 
   // 4.6 Wave 5: Duplication detector (mechanical detection + low-reasoning LLM bouncer)
-  // Plan: docs/completed/audit-code-duplication-wave.md. Mirrors runArchitecturePass's
+  // Plan: docs/plans/audit-code-duplication-wave.md. Mirrors runArchitecturePass's
   // two-stage shape (mechanical report → LLM bouncer → deterministic fallback).
   // Attribution is pure Git (no DB dependency) — see duplication-detector.mjs's
   // module docblock for the Gemini-round-3 decoupling this design is built on.
@@ -2857,7 +2857,7 @@ export async function runLegacyProductionAudit(ctx) {
   // skill reads `_cloudRunId` from the audit --out JSON and forwards it to
   // gemini-review.mjs as `--run-id`, which keys the final-review (+ shadow A/B)
   // per-finding cloud persistence to this run. Absent when cloud is off →
-  // gemini-review runs local-only (docs/completed/final-review-shadow-reviewer.md).
+  // gemini-review runs local-only (docs/plans/final-review-shadow-reviewer.md).
   if (cloudRunId) mergedResult._cloudRunId = cloudRunId;
 
   // Phase C: surface tool-pre-pass capability state
@@ -2916,7 +2916,7 @@ export async function runLegacyProductionAudit(ctx) {
     } catch { /* validation failure — best-effort telemetry */ }
   }
 
-  // model-tier-observation (docs/completed/model-tier-observation.md) — author_tier
+  // model-tier-observation (docs/plans/model-tier-observation.md) — author_tier
   // telemetry.  Observation-ONLY: records aggregates-only scope signals × the
   // heuristic suggested tier × the (optional) declared author tier + ladder
   // partition key × this round's converged outcome.  NOTHING reads these to

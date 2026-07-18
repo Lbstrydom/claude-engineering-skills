@@ -266,7 +266,7 @@ function emptyPersonaTests() {
 
 /**
  * Collect the "Persona Tests" telemetry panel — WS3 of
- * docs/completed/persona-nav-feedback-recovery.md. Turns WS1's correlator
+ * docs/plans/persona-nav-feedback-recovery.md. Turns WS1's correlator
  * output into a visible surface (it had been invisible for the ~5 weeks
  * the correlation table sat empty) and surfaces session staleness
  * honestly ("latest session: N days ago" — the exact signal a 7-week gap

@@ -81,7 +81,7 @@ import {
   upsertPersonaTestCandidate,
   listPersonaTestCandidates,
   markPersonaTestCandidateProposed,
-  // Shadow final-review A/B (docs/completed/final-review-shadow-reviewer.md)
+  // Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md)
   getFinalReviewStats,
   adjudicateFinalReviewFinding,
   // Determinism follow-ups WS1 — deterministic outcome finalize
@@ -507,7 +507,7 @@ async function cmdPlanSatisfaction() {
 const NAV_AUDIT_RUN_SCOPES = ['full', 'diff'];
 
 async function cmdRecordNavAuditRun() {
-  // /nav-audit run telemetry (WS2, docs/completed/persona-nav-feedback-recovery.md).
+  // /nav-audit run telemetry (WS2, docs/plans/persona-nav-feedback-recovery.md).
   // Idempotent by (repoId, headSha, scope) — see scripts/lib/store/nav-audit.mjs.
   const p = parsePayload();
   if (!p.headSha) return emitError('BAD_INPUT', 'headSha is required');
@@ -590,7 +590,7 @@ async function cmdAuditEffectiveness() {
   emit({ ok: true, cloud: true, row });
 }
 
-// ── Shadow final-review A/B (docs/completed/final-review-shadow-reviewer.md) ──────
+// ── Shadow final-review A/B (docs/plans/final-review-shadow-reviewer.md) ──────
 
 async function cmdFinalReviewStats() {
   await initLearningStore();
@@ -1150,7 +1150,7 @@ async function cmdRecordPersonaSession() {
  * step). ALWAYS returns a structured summary (never throws to the caller,
  * never silently no-ops) so `attempted: false` + a `reason` and
  * `attempted: true` + a real failure are both externally visible, per
- * docs/completed/persona-nav-feedback-recovery.md WS1.
+ * docs/plans/persona-nav-feedback-recovery.md WS1.
  * @returns {Promise<object>} correlationSummary
  */
 async function runAutoCorrelate(data, sessionId) {
@@ -1224,7 +1224,7 @@ async function runAutoCorrelate(data, sessionId) {
 }
 
 // ── WS4 — durable persona-finding outcome labels ───────────────────────────
-// docs/completed/persona-nav-feedback-recovery.md. Single subcommand, three
+// docs/plans/persona-nav-feedback-recovery.md. Single subcommand, three
 // modes (summary | label | --worksheet), mirroring the `quality <verb>`
 // dispatch pattern already established in this CLI.
 

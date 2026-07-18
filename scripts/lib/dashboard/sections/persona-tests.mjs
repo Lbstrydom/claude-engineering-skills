@@ -1,6 +1,6 @@
 /**
  * @fileoverview Persona Tests telemetry tab — WS3 of
- * docs/completed/persona-nav-feedback-recovery.md. Turns WS1's correlator
+ * docs/plans/persona-nav-feedback-recovery.md. Turns WS1's correlator
  * output into a visible surface and shows session staleness honestly
  * ("latest session: N days ago" — the exact signal a 7-week testing gap
  * would have caught).

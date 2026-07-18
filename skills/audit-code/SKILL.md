@@ -150,7 +150,7 @@ the rest as an index. No flag needed — ledger absent → audit is
 unaffected. A stale ledger (in-scope files changed since extraction) or
 uncovered target files surface as a `[requirements]` stderr line; if you
 see `[stale]`, run `node scripts/requirements.mjs extract --files <…>`
-then `reconcile` to refresh it. See `docs/completed/requirements-layer.md`.
+then `reconcile` to refresh it. See `docs/plans/requirements-layer.md`.
 
 ### Duplication wave (Wave 5, automatic)
 
@@ -189,7 +189,7 @@ Opt out for a single run with `--passes <csv>` omitting `duplication`
 silent, non-blocking `unavailable` state when the architectural-memory
 store isn't configured for this repo.
 
-Plan: `docs/completed/audit-code-duplication-wave.md`.
+Plan: `docs/plans/audit-code-duplication-wave.md`.
 
 ### Handle results
 
@@ -550,7 +550,7 @@ Gemini. `REJECT` → present to user.
 (e.g. `claude-opus`) to run a second blind reviewer in parallel with the
 primary — it never gates the build, attributes findings per `source_model`, and
 persists the diff for `final-review-stats`. No-op when unset or under an Azure
-profile. See `docs/completed/final-review-shadow-reviewer.md`.
+profile. See `docs/plans/final-review-shadow-reviewer.md`.
 
 Full transcript-building, verdict routing, Step 7.1 deliberation protocol,
 and category-error handling: `references/gemini-gate.md`.

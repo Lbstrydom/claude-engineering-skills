@@ -189,7 +189,7 @@ function redactWithPatterns(text, patterns, { dFlagSupported }) {
  * (`hasIndices`), not a nested string search (which could hit an earlier,
  * unrelated occurrence of the same value elsewhere in the match — e.g. a
  * password equal to the DSN's scheme name or username; see
- * docs/completed/redact-secrets-positional-collision-fix.md).
+ * docs/plans/redact-secrets-positional-collision-fix.md).
  *
  * **Line-count-preserving** (found reviewing `docs/plans/discovery-portfolio-secret-redaction.md`):
  * a whole-match replacement (the non-`captureGroup` path) appends trailing

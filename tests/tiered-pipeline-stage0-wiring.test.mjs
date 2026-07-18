@@ -597,7 +597,7 @@ describe('static pins — producer-contract wiring (evidence-anchor-path-contrac
 // gate at the OSS adapter boundary then correctly refused the payload:
 //   [egress-gate] refusing to send oss:discovery-glm payload ...
 //   secret pattern(s) detected: pem-private-key, dsn-password
-// which is exactly what docs/completed/discovery-portfolio-secret-redaction.md
+// which is exactly what docs/plans/discovery-portfolio-secret-redaction.md
 // (the plan FOR the redaction feature — it necessarily quotes the secret
 // shapes it redacts) contains.
 describe('discovery payload — planContent redaction (egress-gate root cause, 2026-07-16)', () => {
@@ -622,7 +622,7 @@ describe('discovery payload — planContent redaction (egress-gate root cause, 2
   it('the real plan that caused the live egress blocks now passes the real gate', async () => {
     const { scanEgressPayload } = await import('../scripts/lib/sensitive-egress-gate.mjs');
     const { redactSecrets } = await import('../scripts/lib/sensitive-egress-gate.mjs');
-    const offender = 'docs/completed/discovery-portfolio-secret-redaction.md';
+    const offender = 'docs/plans/discovery-portfolio-secret-redaction.md';
     if (!fs.existsSync(offender)) return; // doc archived/renamed — pin below still holds
     const raw = fs.readFileSync(offender, 'utf8');
 

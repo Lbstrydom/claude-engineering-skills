@@ -1,7 +1,7 @@
 /**
  * @fileoverview DB-free tests for the nav-audit run-history store seam
  * (scripts/lib/store/nav-audit.mjs) — WS2 of
- * docs/completed/persona-nav-feedback-recovery.md. Per this repo's testing
+ * docs/plans/persona-nav-feedback-recovery.md. Per this repo's testing
  * doctrine, the actual INSERT/SELECT round trip is DB-side and covered by
  * the empirical verify doctrine, not asserted here against a mock. What IS
  * asserted, DB-free: schema validation catches malformed input before any

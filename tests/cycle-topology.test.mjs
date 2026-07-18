@@ -1,6 +1,6 @@
 /**
  * @fileoverview Tier-1 unit test for the deploy-topology seam (GREEN ≠ REALIZED Cluster C,
- * plan: docs/completed/green-not-realized.md Phase 7). Pure — no /cycle run needed. Pins the
+ * plan: docs/plans/green-not-realized.md Phase 7). Pure — no /cycle run needed. Pins the
  * mode→action→message mapping the cycle SKILL Step 5 depends on, incl. the safe degrade for
  * unknown / missing config (opt-in default).
  */

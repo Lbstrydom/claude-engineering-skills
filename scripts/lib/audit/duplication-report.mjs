@@ -3,7 +3,7 @@
  * prompt construction (egress-gated), the narrow-contract decision mapper,
  * the deterministic fallback, and D-prefixed finding-id assignment.
  *
- * Plan: docs/completed/audit-code-duplication-wave.md §2/§4 Phase 2.
+ * Plan: docs/plans/audit-code-duplication-wave.md §2/§4 Phase 2.
  * Mirrors `deriveFindingsFromReport` (legacy-production-audit.mjs) — the
  * one existing precedent for "mechanical report → LLM bouncer → deterministic
  * fallback" in this codebase.

@@ -10,7 +10,7 @@
   plan, `docs/plans/audit-cleanup-traversal-safety.md`, since it's a
   different domain — `audit-orchestration` — with zero shared code).
 
-> **Origin**: deferred by `docs/completed/windows-fs-transient-error-hardening.md`'s
+> **Origin**: deferred by `docs/plans/windows-fs-transient-error-hardening.md`'s
 > code-audit (rounds 1-3) as genuinely out-of-scope for that narrower
 > retry-hardening plan — this file's `renameSync`/`unlinkSync` calls are
 > already retry-hardened; these are separate, deeper gaps in the WAL's

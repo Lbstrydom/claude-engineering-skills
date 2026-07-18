@@ -339,7 +339,7 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
       // AND "confirmed" for the same finding, double-counting in the
       // bandit reward / audit_effectiveness). Harmless no-op when no such
       // row exists (a fresh manual correlation, or one repairing a
-      // manual-only row). Plan: docs/completed/persona-nav-feedback-recovery.md
+      // manual-only row). Plan: docs/plans/persona-nav-feedback-recovery.md
       // WS1 (Gemini gate round-2 finding).
       const row = {
         persona_session_id: personaSessionId,

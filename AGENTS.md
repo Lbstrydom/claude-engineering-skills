@@ -70,7 +70,7 @@
 > commit be byte-identical, and does a check enforce it?* If no → it belongs in
 > A (gitignore it), not committed. A committed artifact whose dirtiness carries
 > no information is churn, not a reference. (The dashboard reference page lived
-> in the messy middle until 2026-06 — see `docs/completed/local-dashboard.md` §2.1.)
+> in the messy middle until 2026-06 — see `docs/plans/local-dashboard.md` §2.1.)
 <!-- arch-map-discoverability:end -->
 
 > **Design right-sizing — the simplest structurally-honest solution.** At any
@@ -151,15 +151,15 @@ failed) — `npm run skills:check`/`gates:check` validate it; details:
 Each skill is a sibling — they share env vars and Supabase stores but have distinct scopes:
 - **plan**: code that doesn't exist yet. Unified planner (auto-detects backend/frontend/full-stack); the frontend/full-stack path produces a machine-parseable "Acceptance Criteria" section that `/ux-lock verify` consumes.
 - **audit-plan**: refines plans before implementation (max 3 rounds, rigor-pressure stop). Single-file edits.
-- **audit-code**: code that was just written (5-pass parallel static analysis + LLM audit + R2+ suppression). Always also runs a mechanical **duplication** wave (pure-Git diff attribution against the architectural-memory index, read-only) — suppress an intentional duplicate with a `// @duplicate-justification: target=<file>:<symbol> reason=<why>` pragma above the declaration; see `skills/audit-code/SKILL.md` and `docs/completed/audit-code-duplication-wave.md`.
-- **ux-lock**: code that was just fixed (Playwright e2e regression lock). **Verify mode** (`/ux-lock verify <plan.md>`) grades a `/plan` plan against its live implementation — each criterion becomes a Playwright test case; results populate `plan_verification_runs` + `plan_verification_items`. **Selector policy (2026-07)**: generated specs LOCATE via the semantic ladder (`getByRole` → `getByLabel`/`getByPlaceholder` → `getByText` → `getByTestId` → justified-structural CSS carrying `// selector-policy: structural — <reason>`); `ux-lock-run.mjs` lints every spec it runs plus its local-helper import closure (unmarked structural selectors, `app-module-import` — specs must never import app source; drive the UI). Warn by default, `--strict-selectors` exits 6; unjustified counts persist per run row (`selector_policy_violations`, migration `20260703200000`). [`scripts/lib/ux-lock/selector-policy.mjs`](scripts/lib/ux-lock/selector-policy.mjs) `classifySelector` is the single policy oracle — `candidate-spec.mjs` reuses it so consistency-candidate promotion emits the same markers. Plan: `docs/completed/ux-lock-selector-policy.md`.
+- **audit-code**: code that was just written (5-pass parallel static analysis + LLM audit + R2+ suppression). Always also runs a mechanical **duplication** wave (pure-Git diff attribution against the architectural-memory index, read-only) — suppress an intentional duplicate with a `// @duplicate-justification: target=<file>:<symbol> reason=<why>` pragma above the declaration; see `skills/audit-code/SKILL.md` and `docs/plans/audit-code-duplication-wave.md`.
+- **ux-lock**: code that was just fixed (Playwright e2e regression lock). **Verify mode** (`/ux-lock verify <plan.md>`) grades a `/plan` plan against its live implementation — each criterion becomes a Playwright test case; results populate `plan_verification_runs` + `plan_verification_items`. **Selector policy (2026-07)**: generated specs LOCATE via the semantic ladder (`getByRole` → `getByLabel`/`getByPlaceholder` → `getByText` → `getByTestId` → justified-structural CSS carrying `// selector-policy: structural — <reason>`); `ux-lock-run.mjs` lints every spec it runs plus its local-helper import closure (unmarked structural selectors, `app-module-import` — specs must never import app source; drive the UI). Warn by default, `--strict-selectors` exits 6; unjustified counts persist per run row (`selector_policy_violations`, migration `20260703200000`). [`scripts/lib/ux-lock/selector-policy.mjs`](scripts/lib/ux-lock/selector-policy.mjs) `classifySelector` is the single policy oracle — `candidate-spec.mjs` reuses it so consistency-candidate promotion emits the same markers. Plan: `docs/plans/ux-lock-selector-policy.md`.
 - **persona-test**: deployed app, narrative QA. Three execution modes:
   - **Exploratory** (default, MCP-driven): persona walks the app via Playwright MCP, finds UX issues, writes a P0-P3 report + debrief.
   - **Pair** (`--pair "<p1>" "<p2>" <url>`): runs two opposed-expertise personas back-to-back, diffs findings into CONSENSUS / A-ONLY / B-ONLY buckets. Use when coverage matters more than speed — empirically ~92% disjoint findings.
   - **Consistency mode** (`--mode consistency --canary <name>`, code-driven Playwright): deterministic runner against a canary journey + a `surfaces.json` manifest declaring `data-engine-claim` HTML attributes. Detects cross-step UI/state contradictions (DOM-vs-network-truth, stale-projection, undeclared-engine-claim, missing-surface). Emits `regression_specs` candidates with full witness snapshots; `/ship` Step 5.6 promotes them to locked Playwright specs. See `docs/reference/consistency-contract.md` for the HTML attribute contract.
 - **click-test**: deployed app, structural DOM audit. Mechanical complement to persona-test — walks every interactive element, asserts semantic-HTML contracts (duplicate IDs, orphan labels, inputs without names, ARIA misuse, heading hierarchy, missing alt, undersized touch targets). Catches issues personas never trigger because there's no narrative reason to notice them. Optional `--with-modals` opens each modal/dropdown and re-scans the live DOM. Cache-busts service workers before scanning.
-- **nav-audit**: the **system-level** third UX lens (persona-test = journey-first, click-test = page-first, nav-audit = system-first). Static, code-derived audit of the WHOLE navigation graph — extracts every entry point × destination via `@babel/parser` AST (+ a string/template scan so vanilla template-HTML apps work), attributes anchors by render-containment, and runs a 10-class taxonomy (orphan, coverage-gap, redundancy, competing-models, anchor-regression, …) asking "is what's OFFERED what's NEEDED?" grounded in the persona registry. Two-artifact split: route-owned facts colocate in code (`navMeta`/`@nav` docblock); product intent lives in a tiny committed `nav-contract.json`; the observed graph is gitignored + regenerated. CI gate is **drift-only** (hard-fails only on a declared-intent regression on the changed surface). `--verify <url>` drives headless Chromium to reconcile static-vs-live (confirmed / static-only / runtime-only), attribute each live destination to its DOM-container layer → per-persona scorecard (pass/misplaced/missing), and ALSO run the layer-attribution finding classes over the **live** evidence ("Live findings", `source:'live'` — competing-models/over-exposure/sequencing fire on data-driven apps the static taxonomy can't model; state-scoped so responsive duplication isn't a false competing-model). A bounded **activation pass** opens collapsed menus/hamburgers and re-snapshots so behind-menu destinations aren't mislabeled "missing" (`--no-activate` to disable). The persisted verify-result is keyed on the contract digest (incl. `exclude`) + `NAV_VERIFY_TOOL_VERSION` (the live-result semantics version, decoupled from the observed-envelope `NAV_TOOL_VERSION`); the dashboard surfaces live evidence independently of the static observed envelope (live-only mode). **Capture honesty (v1.4)**: when a declared nav container is *visible-but-empty* (a stall, e.g. under a cold-init rate-limit storm) or never observable, that layer is `unverifiable` and the scorecard/live-findings degrade to `unverified` + a warning rather than emit an authoritative `misplaced`/`missing` — a `display:none` responsive container is a legitimate variant, not a stall. The activation pass adaptively aborts after 3 consecutive unactionable triggers so it can't amplify a degraded app's storm. Dashboard "Nav Audit" tab (REGISTRY.reference): Per-Persona Reachability Scorecard + Nav Drift + Live findings. Plans: `docs/completed/nav-audit-skill.md`, `nav-audit-v1.3-live-findings.md`, `nav-audit-debt-digest-decouple.md`, `nav-audit-v1.4-capture-honesty.md`.
-- **visual-audit**: the **paint-level** fourth UX lens (persona=journey, click=page, nav=system, **visual=paint**). Math-first, deterministic visual-contract auditor — drives Playwright + `getComputedStyle` + `getBoundingClientRect` + CDP `forcePseudoState` to assert what the page *paints*, with a VLM advisory-only (`--explain`, never gates). **Verify-primary** (unlike static-primary nav-audit): paint can't be asserted without rendering, so the static run only parses declared token sources → allowed-set + a source-coherence lint and emits NO paint findings (banner says so); `--verify <url>` runs the four tiers. **Tiers**: (1) declared-token reconciliation — a rendered value must be on the declared scale OR set by a token-referencing winning declaration (cascade-resolved), else `token_violation`; token-less apps get a report-only inferred-cluster fallback; (2) theme parity — MUST-MATCH in-flow geometry (only for nodes rendered in *both* themes, so a `display:none`-in-one-theme element isn't false-flagged) + may-differ-if-tokened colors (untokened literal identical across themes → `theme_unmapped_token`) + contrast over the in-browser-resolved opaque backdrop; (3) layout physics — overflow / silent clipping / overlap (ancestor-descendant containment excluded) / image distortion; (4) signifier matrix — `missing_visible_focus` (any indicator: outline/ring/border/bg), `state_has_no_visual_delta`, `disabled_not_signified`, read via CDP forced-pseudo-state after freezing transitions (no flaky actuation). Two-artifact split: committed `visual-contract.json` (surfaces + sourceGlobs + tokenSources + themes + globalStyleGlobs); gitignored `.audit-loop/visual-{observed,verify-result,drift-ledger}.json`. CI gate is **drift-only** via the canonical `ChangedScopeResolver` (changed-scope.mjs) — blocks a gate-eligible finding only when its surface's sourceGlobs, a changed token source, a contract edit, or a `globalStyleGlobs` cascade touches the change. Capture honesty: an absent/empty-skeleton surface or unresolvable backdrop degrades to `unverified`, never a false authoritative finding. The scope firewall (in SKILL.md verbatim): *"include a check only if you can assert it on a computed style without knowing what the page is FOR"* — signifiers in, affordance judgments out (those are persona-test's). Dashboard "Visual Audit" tab (REGISTRY.reference): Contracted-Surface Scorecard + Visual Findings. Plan: `docs/completed/visual-audit-skill.md`.
+- **nav-audit**: the **system-level** third UX lens (persona-test = journey-first, click-test = page-first, nav-audit = system-first). Static, code-derived audit of the WHOLE navigation graph — extracts every entry point × destination via `@babel/parser` AST (+ a string/template scan so vanilla template-HTML apps work), attributes anchors by render-containment, and runs a 10-class taxonomy (orphan, coverage-gap, redundancy, competing-models, anchor-regression, …) asking "is what's OFFERED what's NEEDED?" grounded in the persona registry. Two-artifact split: route-owned facts colocate in code (`navMeta`/`@nav` docblock); product intent lives in a tiny committed `nav-contract.json`; the observed graph is gitignored + regenerated. CI gate is **drift-only** (hard-fails only on a declared-intent regression on the changed surface). `--verify <url>` drives headless Chromium to reconcile static-vs-live (confirmed / static-only / runtime-only), attribute each live destination to its DOM-container layer → per-persona scorecard (pass/misplaced/missing), and ALSO run the layer-attribution finding classes over the **live** evidence ("Live findings", `source:'live'` — competing-models/over-exposure/sequencing fire on data-driven apps the static taxonomy can't model; state-scoped so responsive duplication isn't a false competing-model). A bounded **activation pass** opens collapsed menus/hamburgers and re-snapshots so behind-menu destinations aren't mislabeled "missing" (`--no-activate` to disable). The persisted verify-result is keyed on the contract digest (incl. `exclude`) + `NAV_VERIFY_TOOL_VERSION` (the live-result semantics version, decoupled from the observed-envelope `NAV_TOOL_VERSION`); the dashboard surfaces live evidence independently of the static observed envelope (live-only mode). **Capture honesty (v1.4)**: when a declared nav container is *visible-but-empty* (a stall, e.g. under a cold-init rate-limit storm) or never observable, that layer is `unverifiable` and the scorecard/live-findings degrade to `unverified` + a warning rather than emit an authoritative `misplaced`/`missing` — a `display:none` responsive container is a legitimate variant, not a stall. The activation pass adaptively aborts after 3 consecutive unactionable triggers so it can't amplify a degraded app's storm. Dashboard "Nav Audit" tab (REGISTRY.reference): Per-Persona Reachability Scorecard + Nav Drift + Live findings. Plans: `docs/plans/nav-audit-skill.md`, `nav-audit-v1.3-live-findings.md`, `nav-audit-debt-digest-decouple.md`, `nav-audit-v1.4-capture-honesty.md`.
+- **visual-audit**: the **paint-level** fourth UX lens (persona=journey, click=page, nav=system, **visual=paint**). Math-first, deterministic visual-contract auditor — drives Playwright + `getComputedStyle` + `getBoundingClientRect` + CDP `forcePseudoState` to assert what the page *paints*, with a VLM advisory-only (`--explain`, never gates). **Verify-primary** (unlike static-primary nav-audit): paint can't be asserted without rendering, so the static run only parses declared token sources → allowed-set + a source-coherence lint and emits NO paint findings (banner says so); `--verify <url>` runs the four tiers. **Tiers**: (1) declared-token reconciliation — a rendered value must be on the declared scale OR set by a token-referencing winning declaration (cascade-resolved), else `token_violation`; token-less apps get a report-only inferred-cluster fallback; (2) theme parity — MUST-MATCH in-flow geometry (only for nodes rendered in *both* themes, so a `display:none`-in-one-theme element isn't false-flagged) + may-differ-if-tokened colors (untokened literal identical across themes → `theme_unmapped_token`) + contrast over the in-browser-resolved opaque backdrop; (3) layout physics — overflow / silent clipping / overlap (ancestor-descendant containment excluded) / image distortion; (4) signifier matrix — `missing_visible_focus` (any indicator: outline/ring/border/bg), `state_has_no_visual_delta`, `disabled_not_signified`, read via CDP forced-pseudo-state after freezing transitions (no flaky actuation). Two-artifact split: committed `visual-contract.json` (surfaces + sourceGlobs + tokenSources + themes + globalStyleGlobs); gitignored `.audit-loop/visual-{observed,verify-result,drift-ledger}.json`. CI gate is **drift-only** via the canonical `ChangedScopeResolver` (changed-scope.mjs) — blocks a gate-eligible finding only when its surface's sourceGlobs, a changed token source, a contract edit, or a `globalStyleGlobs` cascade touches the change. Capture honesty: an absent/empty-skeleton surface or unresolvable backdrop degrades to `unverified`, never a false authoritative finding. The scope firewall (in SKILL.md verbatim): *"include a check only if you can assert it on a computed style without knowing what the page is FOR"* — signifiers in, affordance judgments out (those are persona-test's). Dashboard "Visual Audit" tab (REGISTRY.reference): Contracted-Surface Scorecard + Visual Findings. Plan: `docs/plans/visual-audit-skill.md`.
 - **ship**: packaging and delivery (now includes Step 5.6 candidate promotion when consistency mode is adopted)
 
 > **Skill naming convention (two families — don't "fix" by forcing a uniform prefix).**
@@ -466,7 +466,7 @@ decision points to live learners. **Load-bearing**:
 → **Operations** (CLI `npm run learning:*`, weekly review, quickfix-learner hit
 lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
 [`docs/runbooks/learning-system.md`](docs/runbooks/learning-system.md).
-→ **Design**: master plan [`docs/completed/adaptive-learning-v1.md`](docs/completed/adaptive-learning-v1.md)
+→ **Design**: master plan [`docs/plans/adaptive-learning-v1.md`](docs/plans/adaptive-learning-v1.md)
 + per-phase `adaptive-learning-phase-{1,2,3}-*.md`.
 
 ## Environment Variables
@@ -504,7 +504,7 @@ lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
 | `LEARNING_DISABLE` | No | — | Set to `1` to disable all adaptive-learning live behaviour and telemetry recording (single env-var kill switch). |
 | `LEARNING_REPO_NAME` | Required for weekly-review | — | Per-repo gate for `weekly-review.mjs`. Aborts if missing — prevents cross-tenant data leakage in the digest issue body. |
 | `LEARNING_QUEUE_CAP_PER_TYPE` | No | `64` | Per-`decision_type` bounded sub-queue cap. Increase for high-throughput audits. |
-| `AUDIT_AUTHOR_TIER_HINT` | No | — | **Observation-only** (never routes). Optional author-model hint (concrete id e.g. `claude-sonnet-4-6`, or a logical tier `economy\|standard\|frontier`) read by the `author_tier` recorder in `openai-audit.mjs` to capture actual-vs-suggested tier + the ladder partition key. A concrete id populates the partition key; a bare logical tier leaves it null. See `docs/completed/model-tier-observation.md`. |
+| `AUDIT_AUTHOR_TIER_HINT` | No | — | **Observation-only** (never routes). Optional author-model hint (concrete id e.g. `claude-sonnet-4-6`, or a logical tier `economy\|standard\|frontier`) read by the `author_tier` recorder in `openai-audit.mjs` to capture actual-vs-suggested tier + the ladder partition key. A concrete id populates the partition key; a bare logical tier leaves it null. See `docs/plans/model-tier-observation.md`. |
 
 ## Postgres-Parity Store (M1–M4)
 
@@ -545,7 +545,7 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
   in the `db-setup`/`db-withtx` integration suites, rejecting a Supabase-hosted or
   production-identical test URL — closes a 2026-07-14 wipe incident. Detail: [postgres-parity-runbook.md](docs/runbooks/postgres-parity.md) §Incident.
 
-→ **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/completed/postgres-parity.md`](docs/completed/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/completed/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
+→ **Design** (no-adapter `pg`-direct decision, schema scope, privilege model, file plan): [`docs/plans/postgres-parity.md`](docs/plans/postgres-parity.md) + [`postgres-parity-schema-coupling.md`](docs/plans/postgres-parity-schema-coupling.md). **Operations** (setup recipe, migration-drift CLI + exit codes, pre-push snippet, break-glass atomic-apply, shared-cloud-config, prerequisites): [`docs/runbooks/postgres-parity.md`](docs/runbooks/postgres-parity.md).
 
 ## Anthropic Backend Routing
 
@@ -626,7 +626,7 @@ whichever backend the env resolves to.
 
 ## Shadow Final-Review A/B
 
-Plan: [`docs/completed/final-review-shadow-reviewer.md`](docs/completed/final-review-shadow-reviewer.md).
+Plan: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
 An **opt-in, observation-only** second final reviewer that runs **blind** (same
 audit transcript, never sees the primary's output) in parallel with the primary
 final review, to empirically test whether a second final gate is worth keeping.
@@ -654,7 +654,7 @@ final review, to empirically test whether a second final gate is worth keeping.
   catches something" with effectiveness.
 
 → Attribution schema (`source_model`, `bucket`, idempotent-replace persistence) +
-the full stopping-rule rationale: [`docs/completed/final-review-shadow-reviewer.md`](docs/completed/final-review-shadow-reviewer.md).
+the full stopping-rule rationale: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
 
 ## Tiered-Recall Audit Pipeline
 
@@ -752,7 +752,7 @@ below):
   (real Tier A, $1.87; FP-rate drove it; the recall column is untrustworthy
   per the ceiling above).
 
-→ **Operational reference**: [`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md) · **Design + prior-art trace**: [`docs/completed/model-swap-eval-harness.md`](docs/completed/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
+→ **Operational reference**: [`docs/runbooks/model-eval-harness.md`](docs/runbooks/model-eval-harness.md) · **Design + prior-art trace**: [`docs/plans/model-swap-eval-harness.md`](docs/plans/model-swap-eval-harness.md) · **First real verdict write-up**: [`docs/research/experiment-3-model-swap-glm-vs-gpt.md`](docs/research/experiment-3-model-swap-glm-vs-gpt.md).
 
 ## Local Weekly Maintenance Checks (opt-in)
 
@@ -767,7 +767,7 @@ or `AUDIT_LOOP_WEEKLY_MAINTENANCE=1`. Detail: [`docs/runbooks/local-maintenance-
 Run the **same** bundle in a corporate Azure environment (restricted models)
 without drifting from the public-profile repo. Full guide:
 [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md); plan +
-audit trail: [`docs/completed/azure-work-profile.md`](docs/completed/azure-work-profile.md).
+audit trail: [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.md).
 
 > **Opt-in invariant (load-bearing).** The Azure path activates **only** when
 > `AZURE_OPENAI_ENDPOINT` is set. With no Azure env vars, client construction and
@@ -802,7 +802,7 @@ stay logical sentinels (dodges the `gpt-5.3 → latest-gpt` remap footgun);
 
 → **Setup, env-var reference, provider-precedence detail, Foundry-Anthropic API shape,
 deployment quotas, rate-limits + throttling, rollback**: [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md)
-(guide) + [`docs/completed/azure-work-profile.md`](docs/completed/azure-work-profile.md)
+(guide) + [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.md)
 (plan/audit). Template: [`defaults/work-profile.env.example`](defaults/work-profile.env.example).
 
 ## Cross-Skill Data Loop
@@ -822,7 +822,7 @@ between the skills. Every skill writes to a shared learning store via
 | `ship_events` | `/ship` | Dashboards | Outcome log: shipped / blocked / warned / overridden / aborted |
 | `plan_verification_runs` | `/ux-lock verify` | `/ship`, dashboards | One row per verify invocation; totals for satisfaction % |
 | `plan_verification_items` | `/ux-lock verify` | `/ship`, meta-assess | Per-criterion pass/fail with stable `criterion_hash` for time-series |
-| `nav_audit_runs` | `/nav-audit` (static path) | dashboard drift aging | Run-history for `firstSeenFromHistory` — the >14-day governance smell needed real history, not just a gitignored local cache (`docs/completed/persona-nav-feedback-recovery.md` WS2) |
+| `nav_audit_runs` | `/nav-audit` (static path) | dashboard drift aging | Run-history for `firstSeenFromHistory` — the >14-day governance smell needed real history, not just a gitignored local cache (`docs/plans/persona-nav-feedback-recovery.md` WS2) |
 | `persona_finding_outcomes` | `cross-skill.mjs persona-outcomes label` | `/ship` UX gate, dashboard | Durable REPO-scoped (not session-scoped) fixed/dismissed/wont_fix/stale labels — `dismissed`/`wont_fix` close a finding across sessions; `fixed` that reappears re-flags as a regression (WS4) |
 
 ### Added columns
@@ -888,7 +888,7 @@ Two-axis state model: `adjudicationOutcome` (dismissed/accepted/severity_adjuste
 
 ## Architectural Memory — Pre-fix Consultation (MANDATORY)
 
-The architectural-memory feature (`docs/completed/architectural-memory.md`)
+The architectural-memory feature (`docs/plans/architectural-memory.md`)
 indexes every symbol in this repo into Supabase, with embeddings, so we
 can find near-duplicates before writing new code. The `/plan` skill
 consults it automatically. **But ad-hoc fixes in Claude Code or Copilot
@@ -1002,7 +1002,7 @@ the bottom of `tests/hook-arch-memory-check.test.mjs`):
 
 ## Quick-fix detection — two-layer architecture
 
-Plan: `docs/completed/brainstorm-quickfix-v1.md` Feature B.
+Plan: `docs/plans/brainstorm-quickfix-v1.md` Feature B.
 
 **Philosophy**: nudge, not gate. Root cause beats shortcut, but explicit
 acceptance beats silent shortcut. The system surfaces shortcuts so the
@@ -1025,11 +1025,11 @@ returns, tests asserting non-failure, masked root causes). Findings emit
 
 Two layers because neither covers the other's axis: mechanical-at-edit-time
 vs semantic-at-review-time. Full spec:
-`docs/completed/brainstorm-quickfix-v1.md` §B.
+`docs/plans/brainstorm-quickfix-v1.md` §B.
 
 ## Requirements Layer — de-facto invariant ledger
 
-Plan: `docs/completed/requirements-layer.md`. A materialized view of the
+Plan: `docs/plans/requirements-layer.md`. A materialized view of the
 codebase's de-facto requirements — the behavioural / safety / security /
 correctness / persistence invariants the code already enforces.
 

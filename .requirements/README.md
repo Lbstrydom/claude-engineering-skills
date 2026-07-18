@@ -3,7 +3,7 @@
 A **materialized view** of the codebase's de-facto requirements
 (behavioural / safety / security / correctness / persistence invariants).
 Generated + reconciled by `scripts/requirements.mjs`; do not hand-edit the
-generated files. Plan: [`docs/completed/requirements-layer.md`](../docs/completed/requirements-layer.md).
+generated files. Plan: [`docs/plans/requirements-layer.md`](../docs/completed/requirements-layer.md).
 
 | File | Origin | Committed? | Purpose |
 |---|---|---|---|

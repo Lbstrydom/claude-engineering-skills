@@ -1,4 +1,4 @@
-// Cluster A of docs/completed/model-tier-observation.md — the logical-tier
+// Cluster A of docs/plans/model-tier-observation.md — the logical-tier
 // abstraction (model-resolver) + the observation builder (pure, no I/O, no
 // routing). Provider-agnostic; bias-partition key; aggregates-only egress.
 

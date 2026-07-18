@@ -237,7 +237,7 @@ describe('_internals', () => {
   });
 });
 
-// ── selector-policy markers (plan: docs/completed/ux-lock-selector-policy.md) ───
+// ── selector-policy markers (plan: docs/plans/ux-lock-selector-policy.md) ───
 
 describe('renderCandidateSpec — selector-policy markers', () => {
   it('structural contradiction selector gets the fixed-reason marker on the locator line', () => {

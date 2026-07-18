@@ -1,7 +1,7 @@
 /**
  * @fileoverview Selector-policy lint for generated Playwright specs.
  *
- * Plan: docs/completed/ux-lock-selector-policy.md. The /ux-lock DOM-contract rule
+ * Plan: docs/plans/ux-lock-selector-policy.md. The /ux-lock DOM-contract rule
  * constrains how specs LOCATE elements, not just what they assert. This module
  * is the single policy oracle:
  *

@@ -231,7 +231,7 @@ describe('ux-lock-run CLI — arg validation', () => {
   });
 });
 
-// ── selector-policy wiring (plan: docs/completed/ux-lock-selector-policy.md) ────
+// ── selector-policy wiring (plan: docs/plans/ux-lock-selector-policy.md) ────
 
 import os from 'node:os';
 import { insertRunRowWithPolicyFallback } from '../scripts/lib/store/plans-ship.mjs';

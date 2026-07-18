@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parse } from '@babel/parser';
 
-// AST-based wiring-proof guard for docs/completed/atomic-write-adoption-remaining-sites.md.
+// AST-based wiring-proof guard for docs/plans/atomic-write-adoption-remaining-sites.md.
 // A regex/text check can be satisfied by an unrelated call, a shadowed local, a
 // comment, or a rename outside the intended callback — none of which prove the
 // actual wiring landed. This does real import-binding resolution instead,
-// reusing the same technique docs/completed/windows-fs-transient-error-hardening.md's
+// reusing the same technique docs/plans/windows-fs-transient-error-hardening.md's
 // find-rmsync-sites.mjs established. Inlined locally (not a shared production
 // module) because the 9-file target set here is fixed and stated below, not
 // discovered — no separate discovery step is needed the way rmSync's repo-wide

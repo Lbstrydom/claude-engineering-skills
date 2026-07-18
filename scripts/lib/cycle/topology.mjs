@@ -1,6 +1,6 @@
 /**
  * @fileoverview Deploy-topology honesty seam for `/cycle` (GREEN ≠ REALIZED, Cluster C —
- * plan: docs/completed/green-not-realized.md §2a/#7). The failure it addresses: when a repo deploys
+ * plan: docs/plans/green-not-realized.md §2a/#7). The failure it addresses: when a repo deploys
  * from main with no preview environment, `/cycle` Step 5's persona-test can only run POST-merge,
  * so it cannot PREVENT a bad UX from reaching prod — yet the green cycle reads as if it gated.
  *

@@ -1,6 +1,6 @@
 /**
  * @fileoverview Pure mapping: persona reachability evidence → nav personaIntents
- * (plan: docs/completed/persona-clickpath-nav-seeding.md). Extracted from
+ * (plan: docs/plans/persona-clickpath-nav-seeding.md). Extracted from
  * nav-audit.mjs so the mapping is testable without running the CLI (its `main()`
  * is unguarded). The evidence FETCH (cross-skill subprocess) stays in nav-audit;
  * this is the pure transform. No browser, no I/O.

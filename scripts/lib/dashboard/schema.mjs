@@ -103,7 +103,7 @@ const CliEntrySchema = z.object({
 
 // ── Purpose view (outcome map) ───────────────────────────────────────────
 //
-// docs/completed/dashboard-purpose-view.md. Two schemas:
+// docs/plans/dashboard-purpose-view.md. Two schemas:
 //   PurposeConfigSchema — validates the hand-edited `.audit-loop/domain-map.json`
 //     {purposes, domainPurposes} blocks at the collector boundary (H1).
 //   PurposesSchema — the single discriminated COLLECTOR OUTPUT contract shared
@@ -232,7 +232,7 @@ export const ReferenceDataSchema = z.object({
   flows: FlowManifestSchema.nullable(),
   cli: z.array(CliEntrySchema),
   // Optional so reference snapshots captured before the Purpose tab existed
-  // still validate (docs/completed/dashboard-purpose-view.md).
+  // still validate (docs/plans/dashboard-purpose-view.md).
   purposes: PurposesSchema.optional(),
 });
 
@@ -348,7 +348,7 @@ export const TelemetryDataSchema = z.object({
       createdAt: z.string(),
     })),
   }).optional(),
-  // Persona-tests telemetry — WS3 (docs/completed/persona-nav-feedback-recovery.md).
+  // Persona-tests telemetry — WS3 (docs/plans/persona-nav-feedback-recovery.md).
   // Optional (back-compat, same convention as every other telemetry block).
   personaTests: z.object({
     cloud: z.boolean(),

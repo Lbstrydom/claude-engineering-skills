@@ -270,7 +270,7 @@ const LEARNING_ENTRY = [
 ];
 
 /**
- * Architectural-memory entry points (per docs/completed/architectural-memory.md):
+ * Architectural-memory entry points (per docs/plans/architectural-memory.md):
  * ts-morph symbol extraction, dep-cruiser layering, Haiku summaries, Gemini
  * embeddings, drift sweep, retention prune, plus security-incident memory.
  *
@@ -1067,7 +1067,7 @@ async function main() {
   // re-dirtied a tracked file that the hook never committed — perpetual churn
   // for an artifact nobody reads from git. It's now a local-only build (Category
   // A, gitignored), rebuilt on demand by `npm run dashboard` (serve rebuilds
-  // both pages). No pre-push rebuild needed. See docs/completed/local-dashboard.md
+  // both pages). No pre-push rebuild needed. See docs/plans/local-dashboard.md
   // §2.1 addendum + .gitignore.
 
   process.exit(totalErrors > 0 ? 1 : 0);

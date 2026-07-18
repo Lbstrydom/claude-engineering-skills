@@ -1,6 +1,6 @@
 /**
  * @fileoverview Store seam for the friction-feedback mirror (`memory_friction`).
- * Plan: docs/completed/friction-feedback-loop.md (Cluster A). The memory file is the
+ * Plan: docs/plans/friction-feedback-loop.md (Cluster A). The memory file is the
  * source of truth; these are the DB-mirror writes/reads. All graceful-cloud-off
  * (no-op when AUDIT_DB_URL is unset), exactly like the other store modules.
  *

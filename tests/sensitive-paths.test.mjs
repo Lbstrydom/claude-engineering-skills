@@ -171,7 +171,7 @@ describe('shouldSkipForIndexing', () => {
   });
 
   it('DRIFT_EXEMPT_PATTERNS does not match unrelated docs/plans paths', () => {
-    assert.equal(shouldSkipForIndexing('docs/completed/audit-code-duplication-wave.md', ['driftExempt']).skip, false);
+    assert.equal(shouldSkipForIndexing('docs/plans/audit-code-duplication-wave.md', ['driftExempt']).skip, false);
   });
 });
 

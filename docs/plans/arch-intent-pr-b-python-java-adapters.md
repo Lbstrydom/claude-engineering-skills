@@ -1,7 +1,7 @@
 # Plan: Architecture-Intent PR-B — Python & Java Adapters
 
 - **Date**: 2026-05-15
-- **Status**: Complete (implemented + audited via /cycle; /audit-code → Gemini APPROVE 2026-05-15; see audit summary at docs/completed/arch-intent-pr-b-audit-summary.md)
+- **Status**: Complete (implemented + audited via /cycle; /audit-code → Gemini APPROVE 2026-05-15; see audit summary at docs/plans/arch-intent-pr-b-audit-summary.md)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Target domain(s)**: `shared-lib` (the `arch-intent/` module tree), `audit-orchestration` (stack detection)

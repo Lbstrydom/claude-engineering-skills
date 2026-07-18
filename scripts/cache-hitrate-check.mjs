@@ -12,7 +12,7 @@
  * runs reported 0% due to the bug regardless of actual cache behaviour),
  * and computes the median.
  *
- * Decision rule (per docs/completed/openai-prefix-cache.md §8 PR-6):
+ * Decision rule (per docs/plans/openai-prefix-cache.md §8 PR-6):
  *   - N >= 5 R2+ audit runs AND median hit-rate > 30% → recommend flip
  *   - N < 5 → "insufficient data, keep collecting"
  *   - N >= 5 but median <= 30% → "cache is not paying off, hold or investigate"

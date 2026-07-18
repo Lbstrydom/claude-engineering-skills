@@ -1,6 +1,6 @@
 /**
  * @fileoverview Deterministic "efficacy lints" — the GREEN ≠ REALIZED gap, Cluster A
- * (plan: docs/completed/green-not-realized.md). Three recognizers for statically-provable
+ * (plan: docs/plans/green-not-realized.md). Three recognizers for statically-provable
  * "the marker is present but the mechanism is inert" failures:
  *   - cache-inertness   — `cache_control` on a prefix below the model's minimum cacheable length
  *   - cache-instability — `cache_control` on a block whose text derives from per-request input

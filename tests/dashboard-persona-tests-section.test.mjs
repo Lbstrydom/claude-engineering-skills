@@ -1,6 +1,6 @@
 /**
  * @fileoverview Regression coverage for scripts/lib/dashboard/sections/persona-tests.mjs
- * (WS3, docs/completed/persona-nav-feedback-recovery.md) — code-audit M1/L1
+ * (WS3, docs/plans/persona-nav-feedback-recovery.md) — code-audit M1/L1
  * fix: a malformed telemetry shape or an unparseable timestamp used to
  * throw / render "NaN days ago" instead of degrading honestly.
  */

@@ -66,7 +66,7 @@ async function resolveRepoId() {
   return ref?.repoRowId ?? null;
 }
 
-// ── selector-policy lint (plan: docs/completed/ux-lock-selector-policy.md) ──────
+// ── selector-policy lint (plan: docs/plans/ux-lock-selector-policy.md) ──────
 
 /**
  * Scan spec files (plus their local-helper import closure) for selector-policy

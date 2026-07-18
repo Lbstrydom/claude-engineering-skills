@@ -671,7 +671,7 @@ export async function runTieredAuditPipeline(ctx) {
   //
   // Root-caused 2026-07-16 by scanning every committed doc with the gate's own
   // scanner: 7 plans trip it, and the exact pattern pair the gate reported
-  // matches `docs/completed/discovery-portfolio-secret-redaction.md` — the plan
+  // matches `docs/plans/discovery-portfolio-secret-redaction.md` — the plan
   // FOR the secret-redaction feature, which necessarily quotes the secret shapes
   // it exists to redact. A plan is prose (its secret-shaped content is
   // illustrative, never a live credential), so redacting it costs the generator

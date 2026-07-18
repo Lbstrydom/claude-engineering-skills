@@ -3,7 +3,7 @@
 - **Date**: 2026-07-01
 - **Status**: Complete — built 2026-07-01 via `/cycle code --autonomous` (2 clusters). Audit-plan: GPT R1–R3 H:7→4→4 plateau; Gemini R1 4 design fixes → R2 CONCERNS (completeness) stopped at cap. Code-audit: Cluster A GPT R1–R3 (H:12→7→11 rigor-pressure plateau, genuine v2 bugs fixed each round); consolidated Gemini gate R1 CONCERNS (1 empirically-refuted Zod-4 category error) → R2 APPROVE. Full suite 4120 tests green. See §3–§7 for the plan audit trail + Implementation Log below.
 - **Author**: Claude + Louis
-- **Scope**: backend (`js-ts` + postgres; `node --test`) — a **delta** on the shipped v1 (`docs/completed/model-ab-experiment-harness.md`)
+- **Scope**: backend (`js-ts` + postgres; `node --test`) — a **delta** on the shipped v1 (`docs/plans/model-ab-experiment-harness.md`)
 - **Origin**: operator review of v1 + independent GPT-5.5 + Gemini-pro critique. v1 built the machinery (shadow, spend ledger, scorer view, adjudication queue, decision rule) and the mandatory consolidated Gemini gate caught 5 budget-safety bugs. v2 corrects the **arm compositions**, the **scoring model**, and the **scientific-validity controls** — most of the v1 plumbing is reused unchanged.
 
 ---

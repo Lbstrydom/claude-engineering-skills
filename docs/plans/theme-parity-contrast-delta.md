@@ -2,7 +2,7 @@
 
 - **Status**: **Superseded** (historical brainstorm note — not a live to-do). The smallest
   grounded slice was planned, built, and shipped as
-  [`docs/completed/visual-audit-theme-safety-v1.md`](./visual-audit-theme-safety-v1.md)
+  [`docs/plans/visual-audit-theme-safety-v1.md`](./visual-audit-theme-safety-v1.md)
   (2026-07-01, via `/cycle code --autonomous`). The remainder is tracked as v1.1/v2 there,
   not here. Kept as the origin record; do **not** treat as pending work.
 - **Origin**: A real wine-cellar-app bug — a bare `<button>`/`<select>` inside a modal

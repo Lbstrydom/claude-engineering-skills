@@ -1,7 +1,7 @@
 /**
  * @fileoverview Fixture tests for duplication-detector.mjs's runDuplicationAnalysis,
  * driven entirely by injected fake adapters — no live Git/embedding/RPC calls.
- * Plan: docs/completed/audit-code-duplication-wave.md §4 Phase 4.
+ * Plan: docs/plans/audit-code-duplication-wave.md §4 Phase 4.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';

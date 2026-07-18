@@ -7,7 +7,7 @@
 - **Target domain(s)**: `arch-memory`, `brainstorm`, `claudemd-management`, `memory-health`, `persona-test`, `scripts`, `shared-lib`
 - ⚠ **Cross-domain work** — touches 7 domains; each site is an independent, narrow fix (no shared abstraction crosses domains), so the crossing is incidental to "many small fixes across the repo," not a coupling concern.
 
-> **Origin**: deferred by `docs/completed/windows-fs-transient-error-hardening.md`'s
+> **Origin**: deferred by `docs/plans/windows-fs-transient-error-hardening.md`'s
 > Gemini plan-audit round 3 (Gemini-R3-G1) as "9 further production scripts
 > with their own raw, unretried `fs.renameSync`" — independent of that
 > plan's two evidence-linked incidents, so correctly out of scope there.
@@ -122,7 +122,7 @@ three) — this plan adds minimal coverage for those three, not just
 **Patterns reused vs new**: zero new abstractions. Shape A reuses
 `atomicWriteFileSync` (already exists, already hardened). Shapes B/C
 reuse `retrySync` (already exists, already hardened) — both built by
-`docs/completed/windows-fs-transient-error-hardening.md`.
+`docs/plans/windows-fs-transient-error-hardening.md`.
 
 **Neighbourhood considered**: the architectural-memory query's top 4
 hits (similarity 0.75-0.86) were exactly the 4 local `atomicWrite`/
@@ -215,7 +215,7 @@ just "run the command")**:
    — the 9 production files being modified. **Test files are
    deliberately excluded** from extraction, per this repo's own
    established convention (stated explicitly in
-   `docs/completed/windows-fs-transient-error-hardening.md`'s Phase-1
+   `docs/plans/windows-fs-transient-error-hardening.md`'s Phase-1
    step: "requirements extraction is for production invariants, not test
    code") — not an oversight, the same rule applied consistently.
 2. **Then run `node scripts/requirements.mjs reconcile`** (no
