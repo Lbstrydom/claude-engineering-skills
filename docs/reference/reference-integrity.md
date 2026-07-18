@@ -166,13 +166,16 @@ read).
 Cross-repo references need no exclusion — they are structurally invisible to the
 parser (the leading lookbehind includes `/`).
 
-> **Design note (multi-LLM review, 2026-07-18).** An exclusion list is only safe
-> because the gate is **drift-only**: CI fails on a ref that *newly* breaks in the
-> changed surface, never on the standing GONE total. That makes a noisy **baseline**
-> free — write-target `--out` paths, never-produced generated artifacts, and
-> illustrative comments sit in the baseline and never fire, so they need no
-> exclusion and no fix. The alternative (chase every GONE to zero) is the
-> noise-then-bypass spiral this gate exists to avoid. Exclusions are for whole
+> **Design note (multi-LLM review, 2026-07-18) — LIVE since Cluster C.** An
+> exclusion list is only safe because the gate is **drift-only**: under `--gating`
+> (wired into `npm run check` as `docs:refs:gate`) it fails on a ref that is NOT in
+> the accepted **baseline** — i.e. one that *newly* broke — never on the standing
+> GONE total. That makes a noisy baseline free: write-target `--out` paths,
+> never-produced generated artifacts, and illustrative comments sit in the baseline
+> (`BASELINE` in `scripts/check-docs-refs.mjs`, keyed `<file>→<target>`) and never
+> fire. Shrinking the baseline (a baselined ref that later resolves) is always fine;
+> a GONE not in it is drift and fails. The alternative (chase every GONE to zero) is
+> the noise-then-bypass spiral this gate exists to avoid. Exclusions are for whole
 > *surfaces* that are not authored reference prose; the baseline absorbs individual
 > non-citation path literals.
 

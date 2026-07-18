@@ -25,9 +25,12 @@
  * placeholders are MARKED, never guessed.
  *
  * Usage:
- *   node scripts/check-docs-refs.mjs                 # human output
+ *   node scripts/check-docs-refs.mjs                 # human census (report-only)
  *   node scripts/check-docs-refs.mjs --format json
- *   node scripts/check-docs-refs.mjs --gating        # findings also fail the run
+ *   node scripts/check-docs-refs.mjs --gating        # DRIFT-gate: fail on a ref
+ *                                                    # NOT in BASELINE (net-new).
+ *                                                    # Wired into `npm run check`
+ *                                                    # as `docs:refs:gate`.
  *
  * Exit codes:
  *   0 = scan completed (report-only: findings do not fail; --gating: they do)
@@ -185,6 +188,33 @@ export function classifyRef(ref, index) {
 
 /** Classes that are findings (everything else is informational). */
 const FINDING_CLASSES = new Set(['GONE', 'traversal', 'stale-planned-marker']);
+
+// ── Drift-gate baseline ─────────────────────────────────────────────────────
+//
+// The gate is DRIFT-ONLY (multi-LLM design review, 2026-07-18): under `--gating`
+// it fails on a ref that NEWLY breaks, never on the standing total. That makes a
+// noisy baseline free — write-target `--out` paths, never-produced generated
+// artifacts, and illustrative comments sit here and never fire. Each entry is a
+// real `docs/**.md` target absent from the index with NO correct mechanical fix
+// (marking a real output path as a `<placeholder>` would be wrong). Key is
+// `<file>→<target>`, line-independent. Shrinking this list (a baselined ref that
+// later resolves) is always fine; a GONE NOT in it is drift and fails.
+export const BASELINE = new Set([
+  // never-produced audit-summary, cited in an archived plan
+  'docs/plans/architecture-intent-framework.md→docs/completed/architecture-intent-framework-audit-summary.md',
+  // generated `--out` / never-produced experiment docs
+  'docs/plans/audit-effectiveness-experiment.md→docs/experiments/.../phase1-ledger.md',
+  'docs/plans/audit-effectiveness-experiment.md→docs/experiments/audit-effectiveness/phase1-ledger-decomposition.md',
+  'docs/plans/audit-effectiveness-experiment.md→docs/experiments/audit-effectiveness/phase5-decision.md',
+  'docs/plans/audit-effectiveness-experiment.md→docs/experiments/audit-effectiveness/README.md',
+  'package.json→docs/experiments/audit-effectiveness/phase1-ledger-decomposition.md',
+  // tool-owned output cited from a runbook
+  'docs/research/runbooks/model-ab-experiment.md→docs/arm-eval/worksheets/model-ab-adjudication-worksheet.md',
+  // illustrative `// auth (docs/auth.md, …)` comment
+  'scripts/lib/learning/author-tier-observation.mjs→docs/auth.md',
+]);
+
+const baselineKey = f => `${f.file}→${f.target}`;
 
 // ── Scan policy ────────────────────────────────────────────────────────────
 //
@@ -352,9 +382,11 @@ export function lintFile(abs, { repoRoot, index, rel } = {}) {
  *
  * Fail-closed throughout (INC-001's lesson: canonicalise before deciding; never
  * "I couldn't classify it, so I'll allow it"). `ok` reflects SCANNER health, not
- * findings — Phase 1 ships report-only; `gating` makes findings fail too.
+ * findings unless `gating`. Under `gating` the gate is DRIFT-ONLY: a finding whose
+ * `<file>→<target>` key is in the BASELINE does not fail the run — only NET-NEW
+ * breakage does. `baseline` defaults to BASELINE; pass an empty Set for absolute.
  */
-export function runCheck({ repoRoot, files, index, gating = false } = {}) {
+export function runCheck({ repoRoot, files, index, gating = false, baseline = BASELINE } = {}) {
   const failures = [];
   const sites = [];
   const scanned = [];
@@ -364,7 +396,7 @@ export function runCheck({ repoRoot, files, index, gating = false } = {}) {
   // discovery broke.
   if (!files || files.length === 0) {
     failures.push({ rule: 'scan/empty-scan-set', message: 'no files to scan — discovery returned nothing; refusing to report a green' });
-    return { ok: false, failures, findings: [], sites, scanned };
+    return { ok: false, failures, findings: [], drift: [], baselined: 0, sites, scanned };
   }
 
   const rootReal = (() => {
@@ -429,10 +461,14 @@ export function runCheck({ repoRoot, files, index, gating = false } = {}) {
   }
 
   const findings = sites.filter(s => FINDING_CLASSES.has(s.class));
+  // Drift = findings NOT in the baseline. Under --gating, only drift fails.
+  const drift = findings.filter(f => !baseline.has(baselineKey(f)));
   return {
-    ok: failures.length === 0 && (!gating || findings.length === 0),
+    ok: failures.length === 0 && (!gating || drift.length === 0),
     failures,
     findings,
+    drift,
+    baselined: findings.length - drift.length,
     sites,
     scanned,
   };
@@ -481,6 +517,8 @@ function main() {
       filesScanned: r.scanned.length,
       sites: r.sites.length,
       byClass,
+      baselined: r.baselined,
+      drift: r.drift,
       failures: r.failures,
       findings: r.findings,
     }, null, 2));
@@ -509,8 +547,16 @@ function main() {
     for (const f of r.failures) console.error(`  ${R}${f.rule}${X} ${f.file ?? ''} — ${f.message}`);
   }
 
-  if (!gating && r.findings.length > 0) {
-    console.log(`\n${Y}report-only${X} — findings do not fail the run yet (see the plan's Phase 6).`);
+  if (gating) {
+    if (r.drift.length > 0) {
+      console.error(`\n${R}${B}DRIFT${X} (${r.drift.length}) — ref(s) that newly broke (not in the baseline):`);
+      for (const f of r.drift.slice(0, 40)) console.error(`  ${f.file}:${f.line}  ${R}${f.class}${X}  ${f.target}`);
+      console.error(`\n${D}Fix the ref, mark it (planned)/<placeholder>, or (a real new exempt surface) add an exclusion. Baseline: BASELINE in scripts/check-docs-refs.mjs.${X}`);
+    } else {
+      console.log(`\n${G}drift-gate: clean${X} — ${r.baselined} finding(s) in the accepted baseline, 0 net-new.`);
+    }
+  } else if (r.findings.length > 0) {
+    console.log(`\n${Y}report-only${X} — findings do not fail the run (pass --gating for the drift-gate).`);
   }
   process.exit(r.ok ? 0 : 1);
 }

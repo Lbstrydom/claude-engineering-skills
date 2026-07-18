@@ -11,6 +11,7 @@ import {
   scanPolicy,
   isExcluded,
   EXCLUSIONS,
+  BASELINE,
   lintFile,
   runCheck,
   gitIndexFiles,
@@ -406,6 +407,40 @@ describe('check-docs-refs / runCheck — scanner safety', () => {
     assert.equal(r.ok, true);
     assert.equal(r.findings.length, 0);
     assert.equal(r.sites.length, 1);
+  });
+});
+
+// ── drift-gate (the durable design from the 2026-07-18 multi-LLM review) ────
+
+describe('check-docs-refs / drift-gate', () => {
+  let dir;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'refs-drift-')); });
+  afterEach(() => {
+    try { fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* ignore */ }
+  });
+
+  it('under --gating, a BASELINED GONE does NOT fail — only net-new drift does', () => {
+    fs.writeFileSync(path.join(dir, 'note.md'), 'See docs/plans/ghost.md');
+    const baseline = new Set(['note.md→docs/plans/ghost.md']);
+    const r = runCheck({ repoRoot: dir, files: ['note.md'], index: new Set(), gating: true, baseline });
+    assert.equal(r.ok, true, 'a baselined GONE must not fail the drift-gate');
+    assert.equal(r.findings.length, 1);
+    assert.equal(r.drift.length, 0);
+    assert.equal(r.baselined, 1);
+  });
+
+  it('under --gating, a NET-NEW GONE (not in baseline) FAILS', () => {
+    fs.writeFileSync(path.join(dir, 'note.md'), 'See docs/plans/newlybroken.md');
+    const r = runCheck({ repoRoot: dir, files: ['note.md'], index: new Set(), gating: true, baseline: new Set() });
+    assert.equal(r.ok, false);
+    assert.equal(r.drift.length, 1);
+  });
+
+  it('the real BASELINE is a set of `<file>→<target>` keys, each a docs/**.md target', () => {
+    assert.ok(BASELINE.size > 0);
+    for (const key of BASELINE) {
+      assert.match(key, /→docs\/.+\.md$/, `baseline key must end in a docs path: ${key}`);
+    }
   });
 });
 
