@@ -26,6 +26,7 @@ import {
 } from '../observed-deps.mjs';
 import { loadDomainRules } from '../symbol-index/domain-tagger.mjs';
 import { collectPurposes } from './collect-purposes.mjs';
+import { parsePlanStatus } from '../plan-status.mjs';
 
 const FLOWS_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'flows.json');
 
@@ -37,18 +38,38 @@ const FIRST_H1_RE = /^#\s+(.+)$/m;
 const PLAN_TITLE_RE = /^Plan:\s*(.+)$/;
 
 /**
- * Discover plan documents under `docs/plans/` (active) and `docs/completed/`
- * (completed). Inclusion: first `#` heading matches `# Plan:`. Exclusion:
- * `*-audit-summary*.md`. See docs/plans/local-dashboard.md §7.2.
+ * Discover plan documents and bucket them by **`Status:`**, not by directory.
+ *
+ * Two assumptions this used to make were both refuted by the corpus and by the
+ * reference-integrity consolidation (docs/plans/reference-integrity-gate.md):
+ *
+ * 1. **Directory ⇒ status.** `docs/plans/` meant active and `docs/completed/`
+ *    meant completed. Cluster B consolidated every archived plan back into
+ *    `docs/plans/` and Cluster C deleted the archiver — plans no longer move, so
+ *    a directory says nothing about status. Every plan would now render as
+ *    "Active". Bucketing now reads the `Status:` line via `parsePlanStatus`, the
+ *    single source of truth (terminal `Complete`/`Superseded` → completed;
+ *    active `Draft`/`Approved`/`In Progress` → active).
+ * 2. **A plan has a `# Plan:` H1.** Measured across the real corpus, 8 plans
+ *    carry a free-form H1 (`# allowTiered — …`, `# Mega-Plan: …`, `# Proposal: …`,
+ *    `# Plan —` with an em-dash) and were silently missing from the dashboard.
+ *    Inclusion now uses the documented rule instead — `check-docs-placement.mjs`:
+ *    *"docs/plans/ — a unit of work with a Status: line"* — so a doc with no
+ *    `Status:` is not a plan, and nothing else is required of its shape.
+ *
+ * Both directories are still scanned so a consumer or legacy checkout that still
+ * has `docs/completed/` keeps working; only the BUCKETING changed.
+ * Exclusion: `*-audit-summary*.md` (their `Status:` is a free-text convergence
+ * sentence by design — see docs/README.md).
  *
  * @param {string} [root] repo root
  * @returns {{active: object[], completed: object[], anyMalformed: boolean, readErrors: string[]}}
  */
 export function discoverPlans(root = process.cwd()) {
-  const buckets = { active: 'docs/plans', completed: 'docs/completed' };
+  const scanDirs = ['docs/plans', 'docs/completed'];
   const out = { active: [], completed: [], anyMalformed: false, readErrors: [] };
 
-  for (const [bucket, rel] of Object.entries(buckets)) {
+  for (const rel of scanDirs) {
     const dir = path.join(root, rel);
     let entries;
     try { entries = fs.readdirSync(dir); }
@@ -70,26 +91,47 @@ export function discoverPlans(root = process.cwd()) {
         if (err.code !== 'ENOENT') out.readErrors.push(`${rel}/${name}: ${err.code || err.message}`);
         continue;
       }
-      // Inclusion is decided by the FIRST H1 only — a `# Plan:` heading
-      // appearing lower in a non-plan document must not qualify it.
-      const firstH1 = raw.match(FIRST_H1_RE);
-      if (!firstH1) continue;
-      const heading = firstH1[1].match(PLAN_TITLE_RE);
-      if (!heading) continue; // first heading is not `Plan: …` → not a plan
       // Metadata is front-matter — only the header (before the first H2)
       // is scanned, so a `Date:`-shaped line in the plan body is not
       // mistaken for metadata.
       const header = raw.split(/\n##\s/)[0];
       const dateM = header.match(/^-?\s*\*\*?Date\*\*?:\s*(.+)$/m) || header.match(/^Date:\s*(.+)$/m);
       const statusM = header.match(/^-?\s*\*\*?Status\*\*?:\s*(.+)$/m) || header.match(/^Status:\s*(.+)$/m);
+
+      const firstH1 = raw.match(FIRST_H1_RE);
+      const h1Text = firstH1 ? firstH1[1].trim() : null;
+      const planH1 = h1Text ? h1Text.match(PLAN_TITLE_RE) : null;
+      const parsed = parsePlanStatus(raw);
+
+      // Inclusion is the UNION of the two signals, deliberately:
+      //   • a `Status:` line — the documented rule ("docs/plans/ — a unit of work
+      //     with a Status: line"), which recovers the 8 real plans whose H1 is
+      //     free-form; OR
+      //   • a `# Plan:` H1 — so a plan that is MISSING its metadata still shows
+      //     up (flagged `malformed`) instead of silently vanishing. Hiding a
+      //     half-written plan is the silent-skip failure this dashboard exists to
+      //     avoid; surfacing it is what gets it fixed.
+      // Neither signal ⇒ genuinely not a plan.
+      if (!statusM && !parsed.ok && !planH1) continue;
+
+      // Bucket by STATUS, never by directory. An unrecognized/absent status
+      // sorts to `active` deliberately — it is work needing attention, and
+      // hiding it under "completed" would bury it.
+      const bucket = parsed.ok && parsed.kind === 'terminal' ? 'completed' : 'active';
+
+      // Title: prefer the `# Plan: X` form, else the raw first H1, else the
+      // filename — free-form H1s are real and must not cost a plan its title.
+      const planTitle = planH1 ? planH1[1].trim() : (h1Text ?? name.replace(/\.md$/, ''));
+
       const date = dateM ? dateM[1].trim() : null;
-      // A plan is malformed if Date/Status is missing OR the date value is
-      // present but unparseable (documented + tested contract, §9).
+      // A plan is malformed if Date is missing/unparseable OR its Status does
+      // not conform to the closed vocabulary (the same call `plans:status` gates
+      // on) — so the dashboard and the lint agree on what "malformed" means.
       const dateParseable = date != null && !Number.isNaN(Date.parse(date));
-      const malformed = !dateM || !statusM || !dateParseable;
+      const malformed = !dateM || !parsed.ok || !dateParseable;
       if (malformed) out.anyMalformed = true;
       out[bucket].push({
-        title: heading[1].trim(),
+        title: planTitle,
         path: `${rel}/${name}`,
         status: statusM ? statusM[1].trim() : null,
         date,

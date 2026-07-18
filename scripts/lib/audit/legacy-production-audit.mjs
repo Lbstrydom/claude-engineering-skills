@@ -3100,14 +3100,30 @@ export async function runLegacyProductionAudit(ctx) {
   }
 
   // Phase 5b: Finalise cloud run record with counts + run metadata
+  //
+  // MUST be awaited (2026-07-18). This was fire-and-forget, and the pool runs
+  // with `allowExitOnIdle: true` (db/client.mjs) — so once the audit's last
+  // awaited query completed and the connections went idle, Node exited and
+  // killed this UPDATE in flight. Result: every `mode='code'` run in the store
+  // was left at its `recordRunStart` INSERT values (`rounds: 0`,
+  // `total_findings: 0`, `total_duration_ms: NULL`) while its findings — which
+  // ARE written on an awaited path — landed normally. 25/25 live code runs were
+  // in that state; plan mode was unaffected precisely because
+  // `plan-audit-cloud.mjs` awaits its call. The `.catch()` stays: this is still
+  // best-effort telemetry that must never fail an audit. Awaiting only
+  // guarantees it gets the chance to finish.
   if (cloudRunId) {
-    recordRunComplete(cloudRunId, {
+    await recordRunComplete(cloudRunId, {
       rounds: round,
       totalFindings: allFindings.length,
       accepted: allFindings.filter(f => f.adjudicationOutcome === 'accepted').length,
       dismissed: allFindings.filter(f => f.adjudicationOutcome === 'dismissed').length,
       fixed: allFindings.filter(f => f.remediationState === 'fixed').length,
-      geminiVerdict: null, // updated by gemini-review after Step 7
+      // Genuinely null here: this runs BEFORE Step 7, so no verdict exists yet.
+      // `gemini-review.mjs` fills it in afterwards via `recordFinalReviewFindings`
+      // — which it only started actually doing on 2026-07-18. This comment used
+      // to assert that as fact while no such write existed anywhere.
+      geminiVerdict: null,
       durationMs: totalLatency,
       diffLinesChanged,
       diffFilesChanged,

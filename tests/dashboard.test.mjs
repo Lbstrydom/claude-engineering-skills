@@ -204,12 +204,17 @@ test('schema accepts well-formed objects', () => {
 
 // ── Plan discovery ──────────────────────────────────────────────────────
 
-test('discoverPlans includes only # Plan: files, excludes audit-summaries', () => {
+test('discoverPlans buckets by Status (not directory) and excludes audit-summaries', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dash-plans-'));
   fs.mkdirSync(path.join(root, 'docs/plans'), { recursive: true });
   fs.mkdirSync(path.join(root, 'docs/completed'), { recursive: true });
   fs.writeFileSync(path.join(root, 'docs/plans/good.md'),
     '# Plan: Good\n- **Date**: 2026-05-19\n- **Status**: Draft\n');
+  // Lives in docs/plans/ but is COMPLETE — post-consolidation this is the norm
+  // (plans never move), and it must bucket as completed on its Status alone.
+  fs.writeFileSync(path.join(root, 'docs/plans/shipped.md'),
+    '# Plan: Shipped\n- **Date**: 2026-03-03\n- **Status**: Complete — landed\n');
+  // Legacy docs/completed/ is still scanned, but its bucket comes from Status too.
   fs.writeFileSync(path.join(root, 'docs/completed/done.md'),
     '# Plan: Done\n- **Date**: 2026-01-01\n- **Status**: Complete\n');
   fs.writeFileSync(path.join(root, 'docs/completed/x-audit-summary.md'),
@@ -218,14 +223,20 @@ test('discoverPlans includes only # Plan: files, excludes audit-summaries', () =
   fs.writeFileSync(path.join(root, 'docs/plans/loose.md'), '# Plan: Loose\nno metadata here\n');
   fs.writeFileSync(path.join(root, 'docs/plans/baddate.md'),
     '# Plan: BadDate\n- **Date**: not-a-date\n- **Status**: Draft\n');
+  // A REAL corpus shape: free-form H1, but it has a Status line — it is a plan.
+  fs.writeFileSync(path.join(root, 'docs/plans/freeform.md'),
+    '# allowTiered — a per-call gate\n- **Date**: 2026-04-04\n- **Status**: In Progress\n');
 
   const out = discoverPlans(root);
-  assert.deepEqual(out.active.map((p) => p.title).sort(), ['BadDate', 'Good', 'Loose']);
-  assert.deepEqual(out.completed.map((p) => p.title), ['Done']);
+  assert.deepEqual(out.active.map((p) => p.title).sort(),
+    ['BadDate', 'Good', 'Loose', 'allowTiered — a per-call gate'],
+    'active = non-terminal Status, regardless of directory; free-form H1 included');
+  assert.deepEqual(out.completed.map((p) => p.title).sort(), ['Done', 'Shipped'],
+    'completed = terminal Status — including one living in docs/plans/');
   assert.ok(!JSON.stringify(out).includes('Sneaky'), 'audit-summary excluded');
   assert.ok(!JSON.stringify(out).includes('Just a note'), 'non-plan excluded');
   assert.equal(out.active.find((p) => p.title === 'Loose').malformed, true,
-    'metadata-less plan flagged malformed');
+    'a `# Plan:` doc with no Status is SHOWN (flagged), never silently dropped');
   assert.equal(out.active.find((p) => p.title === 'BadDate').malformed, true,
     'plan with an unparseable Date flagged malformed');
   assert.deepEqual(out.readErrors, [], 'no read errors on a clean fixture');
