@@ -727,15 +727,23 @@ text-like file **cannot** produce an unqualified green scan.
   - **35 genuine fixes**: 10 reorg-victim path fixes (`docs/pre-ship-empirical-verify.md`
     → `docs/runbooks/…`, targets verified), 23 usage-example placeholders → `<name>.md`,
     2 forward-refs → `(planned)`.
-  - **Acceptance: 10 residual GONE, recorded as the accepted BASELINE** — all
+  - **Acceptance: 9 residual GONE, recorded as the accepted BASELINE** — all
     write-targets / never-produced artifacts / generated outputs / an illustrative
-    comment / a cross-repo ref, none with a correct mechanical fix. The drift-gate
-    (Phase 6) fires only on *net-new* breakage, so this baseline is free. Baseline
-    list: `architecture-intent-framework-audit-summary.md` (never-produced summary);
-    `phase1-ledger-decomposition.md`×4 + `phase5-decision.md` + `experiments/…/README.md`
-    (generated `--out` outputs, incl. `package.json:24`); `model-ab-adjudication-worksheet.md`
-    (tool-owned output); `docs/auth.md` (illustrative comment); `persona-test-consistency-phase3.md`
-    (cross-repo). Files: ~14 (modify), `check-docs-refs.mjs` + its test + contract (modify).
+    comment, none with a correct mechanical fix. The drift-gate (Phase 6) fires
+    only on *net-new* breakage, so this baseline is free. Baseline list (each a
+    real `docs/**.md` target absent from the index):
+    `docs/completed/architecture-intent-framework-audit-summary.md` (never-produced
+    audit-summary, cited in an archived plan); `docs/experiments/audit-effectiveness/`
+    `phase1-ledger-decomposition.md`×4 (a generated `--out` output, incl.
+    `package.json:24`) + `phase5-decision.md` + `README.md` + a `…/phase1-ledger.md`
+    shorthand (never-produced experiment docs); `docs/arm-eval/worksheets/`
+    `model-ab-adjudication-worksheet.md` (tool-owned output cited from a runbook);
+    `docs/auth.md` (an illustrative `// auth (docs/auth.md, …)` comment). *(The
+    10th, `persona-test-consistency-phase3.md`, was NOT baseline — the consolidated
+    Gemini gate correctly flagged it as a wine-cellar plan cited in local form; its
+    code comment now carries the `wine-cellar-app/` prefix, so it is structurally
+    invisible and no longer GONE.)* Files: ~15 (modify), `check-docs-refs.mjs` + its
+    test + contract (modify).
   - **NOT scripted as pure codemod**: the fixups were deterministic (a Category-A
     scratchpad script for the regular replacements) but the *classification* (which
     class each GONE belongs to) was the judgement — exactly the plan's "scripted iff

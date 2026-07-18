@@ -3,7 +3,7 @@
  * (migration 139). Phase 3 WS-PIPE1 closes the loop from canary findings
  * → aggregated candidates → /ship-promoted UX-lock spec stubs.
  *
- * Plan: docs/plans/persona-test-consistency-phase3.md — WS-PIPE1.
+ * Plan: wine-cellar-app/docs/plans/persona-test-consistency-phase3.md — WS-PIPE1.
  *
  * ## Why a separate domain module
  *
