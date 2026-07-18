@@ -35,6 +35,26 @@
   pre-existing `statSync` skip — coverage reads `args.files` only for the
   `isFullRun` boolean and never consumes parsed filenames.
   Structure-pass findings for Phases 3-5 are Cluster B by construction.
+- **Cluster B code-audit (2026-07-18, CLOSED — Gemini APPROVE)**: Phases 3-5
+  shipped (`5844299`, `7f0119e`, `25087c2`, `88644da`). GPT R1 H:4 M:9 L:2;
+  Gemini gate CONCERNS → **APPROVE** (0 findings, "architectural coherence:
+  Strong", no over-engineering flags).
+  **Fixed**: a stale envelope surviving a failed render could report `verified`
+  for a run that measured nothing (pre-existing code, but load-bearing — the
+  envelope now carries a verdict, so impact rather than authorship decided
+  scope); `recordGraphCoverage` treated any non-throwing upsert as persisted
+  (RLS/0-row); the gate treated the forward-compat `unknown key` warning as
+  fatal, which would have failed every consumer's CI the moment a key was
+  added upstream; `await import()` of a bare absolute path threw
+  `ERR_UNSUPPORTED_ESM_URL_SCHEME` on Windows, outside the cruise try/catch,
+  killing extract on any consumer with a `.dependency-cruiser.cjs`.
+  **Declared, not violated**: `scripts → arch-memory` and `arch-memory →
+  stores`, both genuinely new edges this work introduced.
+  **Scoped with independence named**: the subprocess timeout kills the direct
+  child, not a process tree — no current caller spawns a grandchild
+  (`extract.mjs` uses dep-cruiser in-process), so the limitation is documented
+  at the seam and the overclaiming test renamed rather than building Windows
+  process-tree killing for a case that does not exist.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend (detected `--scope=backend`; stack `js-ts` + `postgres`)
 - **Target domain(s)**: `arch-memory`, `dashboard`, `scripts`
