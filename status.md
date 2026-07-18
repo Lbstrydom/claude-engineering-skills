@@ -1,5 +1,20 @@
 # Project Status Log
 
+## 2026-07-18 — AI-Gate: passed is now reachable — TWO missing writers, not one
+
+### Root cause (the task named one half; the class had a sibling)
+`AI-Gate: passed` had never been emittable — 11/11 commits `not-run`, including ones behind a converged multi-round GPT audit **and** a consolidated Gemini APPROVE. The known cause was that `.audit/last-audit-run.json` had four readers and zero writers (on-disk file six weeks stale). **Investigation found a second missing writer**: `audit_runs.round_converged_after` — `recordConvergenceState` existed with **zero callers**, leaving the column NULL on all 39 live rows (verified by direct query). `evaluateGateVerification` requires **both**, so shipping only the marker would have been **worse than the bug**: fresh evidence forbids `not-run` while a missing verdict still refuses `passed`, stranding every converged audit on `waived`.
+
+### Changes
+- **`scripts/lib/audit/gate-evidence.mjs`** (new) — `writeGateEvidence` + a pure `buildGateEvidence`, schema-matched to `resolveEvidence` exactly (`runId` per `RUN_ID_RE`, `Date.parse`-able `ts`). Writes for every completed **cloud-backed code audit, converged or not** — "ran and did not converge" is honest evidence that correctly yields `waived`-or-fix. Plan audits write nothing (the gate asserts the shipped *code* was audited); no cloud runId writes nothing (an unresolvable id reads `fresh` while `passed` is refused — a confusing half-state). Write failure degrades to `not-run`, never fails the audit.
+- **Both writers wired at the run-finalisation seam** in `legacy-production-audit.mjs`, gated on `!noCloudRecording` so observation-only shadow runs can't forge evidence. `converged` is recomputed from the canonical `evaluateConvergence` rather than reused from the adjacent telemetry block, which is scoped to runs with changed files and would have silently skipped the write.
+- **Docs + memory corrected** — `docs/reference/commit-provenance.md` now carries the two-producer table and the "never hand-write the marker; it is a receipt, not a switch" rule; the memory note's prescribed fix (marker only) is marked as the half-fix that would have made things worse.
+
+### Verification
+- **14/14 pins** (`tests/gate-evidence.test.mjs`), all asserting through the **real** validator rather than a restated schema — a restated copy could drift and re-hide the hole, which is how the original went unnoticed. Includes the reachability pin (fresh marker + converged row → `passed` accepted, previously unreachable by any input) and its three refusal mirrors (non-converged, cloud-off, marker-alone).
+- E2E against the live store: writer → validator reads `fresh` with a matching real `runId`. The probe marker was then **restored to its pre-probe state** — leaving it would have let this very commit claim evidence it hadn't earned, so this commit honestly ships `not-run`.
+- Full suite **7217 pass / 0 fail**; all 9 non-test gates PASS.
+
 ## 2026-07-18 — Test-env hermeticity: scrub ambient provider ROUTING at the runner, not per suite
 
 ### Root cause (and a refuted premise)

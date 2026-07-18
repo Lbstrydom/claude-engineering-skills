@@ -3049,6 +3049,56 @@ export async function runLegacyProductionAudit(ctx) {
     } catch { /* validation/record failure — best-effort telemetry */ }
   }
 
+  // ── Commit-provenance gate evidence (2026-07-18) ────────────────────────
+  // Two writes that make `AI-Gate: passed` REACHABLE. Both were missing, and
+  // the pair is the point: `ship-commit.mjs` requires (a) a fresh local marker
+  // proving an audit ran after HEAD, AND (b) the store's convergence verdict
+  // for that same runId proving it passed. Neither existed — `resolveEvidence`
+  // read a marker nothing wrote, and `recordConvergenceState` had zero callers,
+  // leaving `round_converged_after` NULL on all 39 live rows. So every commit
+  // shipped `not-run`, understating changes that had cleared a full multi-round
+  // GPT audit plus a consolidated Gemini gate.
+  //
+  // Fixing only the marker (the obvious half) would have produced a WORSE
+  // state than before: `resolveEvidence` would report `fresh`, forbidding
+  // `not-run`, while `evaluateGateVerification` still refused `passed` for want
+  // of a verdict — leaving `waived` as the only legal value on a genuinely
+  // converged audit. The two writers ship together or not at all.
+  if (cloudRunId && !noCloudRecording) {
+    // (a) The local marker — proves an audit RAN after HEAD. Never proves it
+    //     passed; that is deliberately the store's job, because a local file
+    //     is not evidence anyone should be able to hand-author.
+    const { writeGateEvidence } = await import('./gate-evidence.mjs');
+    writeGateEvidence({
+      repoRoot: process.cwd(),
+      runId: cloudRunId,
+      mode: 'code',
+      sid: debtRunId ?? null,   // the session's stable `audit-<ts>` id (declared above)
+      round: round || 1,
+    });
+
+    // (b) The store verdict — the ONLY thing that can license `passed`.
+    //     `converged` uses the same canonical threshold /audit-code gates on
+    //     (convergence.mjs), recomputed here rather than reused from the
+    //     telemetry block above, which is scoped to runs with changed files
+    //     and would silently skip this write on a plan-scoped audit.
+    //     `round_converged_after` stays NULL when the round did not converge —
+    //     that is the honest value, and it is what makes `passed` refuse.
+    try {
+      const { recordConvergenceState } = await import('../store/learning-decisions.mjs');
+      const convergedNow = evaluateConvergence({
+        high: allFindings.filter((f) => f.severity === 'HIGH').length,
+        medium: allFindings.filter((f) => f.severity === 'MEDIUM').length,
+        quickFix: allFindings.filter((f) => f.is_quick_fix).length,
+      });
+      if (convergedNow) {
+        await recordConvergenceState(cloudRunId, { round_converged_after: round || 1 });
+      }
+    } catch (e) {
+      process.stderr.write(`  [gate-evidence] convergence record failed: ${e.message}\n`);
+    }
+  }
+
   // Phase 5b: Finalise cloud run record with counts + run metadata
   if (cloudRunId) {
     recordRunComplete(cloudRunId, {

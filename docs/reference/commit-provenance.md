@@ -29,6 +29,39 @@ The `AI-*` namespace is **reserved**: a commit-message file containing any
 `AI-*` trailer is rejected (`reserved-trailer`) — the helper is the only
 writer, so a malformed or hand-typed block can never enter history.
 
+### Who writes the evidence (and why `passed` was unreachable until 2026-07-18)
+
+The gate reads **two** pieces of evidence, written by **two** producers — both
+inside the audit pipeline, never by the shipper:
+
+| Evidence | Written by | Proves |
+|---|---|---|
+| `.audit/last-audit-run.json` (gitignored) | `writeGateEvidence` ([`scripts/lib/audit/gate-evidence.mjs`](../../scripts/lib/audit/gate-evidence.mjs)), called at run-finalisation in `legacy-production-audit.mjs` | an audit **ran** after HEAD |
+| `audit_runs.round_converged_after` | `recordConvergenceState` ([`store/learning-decisions.mjs`](../../scripts/lib/store/learning-decisions.mjs)), called from the same seam when the round meets the canonical threshold | the audit **passed** |
+
+**Both were missing until 2026-07-18**, which made `passed` structurally
+unreachable: the marker had four readers and zero writers (the on-disk file was
+six weeks stale), and `recordConvergenceState` had zero callers, leaving
+`round_converged_after` NULL on all 39 live rows. Every commit therefore shipped
+`not-run`, including commits behind a converged multi-round GPT audit plus a
+consolidated Gemini APPROVE — the trailer understating the rigor it exists to
+record.
+
+The split is deliberate, not incidental: the marker is a local file, so it can
+only ever be **necessary** evidence. Sufficiency requires the store's verdict
+for that same `runId`, which the shipper cannot author. Consequently the writer
+emits a marker for every completed cloud-backed **code** audit — converged or
+not — because "an audit ran and did not converge" is honest evidence that
+correctly yields `waived`-or-fix rather than `passed`. Plan audits are excluded
+(the gate asserts the shipped *code* was audited), and a run with no cloud id
+writes nothing (an unresolvable `runId` would read `fresh` while `passed` was
+refused — a confusing half-state).
+
+**Never hand-write the marker.** It is not a switch for turning `passed` on; it
+is a receipt the pipeline emits. Regression pins: [`tests/gate-evidence.test.mjs`](../../tests/gate-evidence.test.mjs)
+(which validates the writer's output through the *real* validator, never a
+restated copy of its schema).
+
 ## Adoption boundary
 
 The convention applies **from the annotated tag `provenance-v1` forward**
