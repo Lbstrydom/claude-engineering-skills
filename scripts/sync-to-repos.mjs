@@ -31,16 +31,35 @@ import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mj
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 
-// Audit-loop / nav-audit / visual-audit runtime outputs — Category-A derived
-// state that must never be committed. These were missing from the managed
-// gitignore block, so consumers running audits / `--verify` saw them churn as
-// perpetually-modified (or untracked-nag). Precise (our `.audit/` filename +
-// our `.audit-loop/` filename shapes) so a consumer's OWN files are never
-// swept, and `.audit-loop/migrations/*.sql` (tracked in consumers) is not
-// matched. This list is also the allow-list for the post-sync untrack step.
-const AUDIT_RUNTIME_IGNORES = [
-  '.audit/cache-metrics.jsonl',       // openai-audit.mjs cache hit-rate log
-  '.audit/tiered-shadow-log.jsonl',   // tiered-recall Close-out shadow-validation log (tiered-shadow-compare.mjs)
+// `.audit/` is OURS, entirely — the directory name is our invention and only
+// our tooling writes there (~30 distinct named paths, plus every skill
+// invocation's `--out .audit/<session>-…` artifacts: transcripts, ledgers,
+// patches, stderr logs). So the honest rule is the DIRECTORY, not a list of
+// filenames.
+//
+// It used to be a filename enumeration, and that could not work: this repo's
+// OWN `.gitignore` had grown to ~44 `.audit/…` patterns while the consumer
+// block carried 2 — two divergent, both-incomplete descriptions of one set.
+// Consumers nagged about whichever artifact nobody had thought to add yet
+// (`plan-fp-patterns.json` was the one that surfaced it). Enumerating a set
+// that grows every time a skill writes a new output file is a treadmill, and
+// losing that race is silent.
+//
+// Contrast `.audit-loop/`, which stays PRECISE below: consumers legitimately
+// TRACK `.audit-loop/migrations/*.sql`, so a blanket dir there would be wrong.
+// The asymmetry is the point — `.audit/` has no tracked-artifact contract.
+const MANAGED_IGNORE_PATTERNS = [
+  // Generated ephemera our synced tooling produces in consumers (Category A;
+  // never committed). Precise paths — NOT blanket dirs — because `dashboard/`
+  // and `logs/` are names a consumer plausibly owns too. `.audit/` below is the
+  // opposite case and is treated accordingly.
+  'dashboard/index.html',
+  'dashboard/telemetry.html',
+  '.brainstorm/',
+  '.skills-fit-check.json',
+  'logs/mcp-*.log',
+  'logs/mcp-*.log.gz',
+  '.audit/',                          // ALL audit-loop runtime output (see above)
   '.audit-loop/*-observed.json',      // domain-deps / nav-graph / visual observed envelopes
   '.audit-loop/*-verify-result.json', // nav-audit / visual-audit --verify results
   '.audit-loop/*-drift-ledger.json',  // nav / visual local drift caches
@@ -54,6 +73,42 @@ const AUDIT_RUNTIME_IGNORES = [
   // they must be ignored or they nag as untracked. Flat-file globs (files are
   // timestamp-named directly under each dir) so git AND the untrack matcher — which
   // supports single-segment `*` only, no trailing-`/` dir markers — both handle them.
+  'docs/arm-eval/sessions/*',
+  'docs/arm-eval/worksheets/*',
+];
+
+// The allow-list for the post-sync self-heal, which runs `git rm --cached`.
+// DELIBERATELY NARROW, and deliberately NOT the same list as the ignore block
+// above — they are two different contracts that merely used to share a value:
+//
+//   ignore  = "don't nag about this"        — safe to be broad; a .gitignore
+//             rule has no effect on an already-tracked file, so widening it
+//             can't destroy anything.
+//   untrack = "remove this from the index"  — DESTRUCTIVE, and it acts on
+//             exactly the already-tracked files the ignore rule cannot touch.
+//
+// Widening them together is what makes broadening dangerous. Verified: a
+// consumer TRACKS 8 committed files under `.audit/` (persona session captures,
+// `tech-debt.json`) — deliberately kept records, not runtime churn. Had this
+// list inherited the blanket `.audit/`, the next sync would have silently
+// `git rm --cached`-ed all 8. Untracking someone's committed data is not sync
+// bookkeeping; it needs an explicit human decision, per-file.
+//
+// So: add an entry here ONLY for an artifact that is unambiguously ours AND
+// was demonstrably committed by mistake. Never mirror the ignore list.
+const UNTRACK_PATTERNS = [
+  '.audit/cache-metrics.jsonl',       // openai-audit.mjs cache hit-rate log
+  '.audit/tiered-shadow-log.jsonl',   // tiered-recall shadow-validation log
+  '.audit-loop/*-observed.json',
+  '.audit-loop/*-verify-result.json',
+  '.audit-loop/*-drift-ledger.json',
+  '.audit-loop/arm-eval-toggle.json',
+  '.audit-loop/last-maintenance.json',
+  '.audit-loop/last-maintenance.log',
+  '.audit-loop/.maintenance.lock',
+  'dashboard/index.html',
+  'dashboard/telemetry.html',
+  '.skills-fit-check.json',
   'docs/arm-eval/sessions/*',
   'docs/arm-eval/worksheets/*',
 ];
@@ -642,18 +697,13 @@ async function main() {
     const giPreview = updateManagedBlock(
       priorGitignore,
       [
+        // The tooling dir is layout-derived, so it stays here; everything else
+        // is in MANAGED_IGNORE_PATTERNS. The block's contents used to be split
+        // between that constant and an inline list right here — so "what does
+        // the managed block ignore?" had no single answer, and a guard test
+        // comparing the untrack allow-list against it read half the truth.
         LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR + '/',
-        // Generated ephemera our synced tooling produces in consumers — ignored
-        // so they don't nag as untracked (Category A artifacts; never committed).
-        // consumer-deployment-hardening. Precise paths (not blanket dirs) so a
-        // consumer's own dashboard/ or logs/ isn't swept.
-        'dashboard/index.html',
-        'dashboard/telemetry.html',
-        '.brainstorm/',
-        '.skills-fit-check.json',
-        'logs/mcp-*.log',
-        'logs/mcp-*.log.gz',
-        ...AUDIT_RUNTIME_IGNORES,
+        ...MANAGED_IGNORE_PATTERNS,
       ],
     );
     if (giPreview.action === 'abort') {
@@ -878,10 +928,30 @@ async function main() {
     // Compute set diff: priorFiles' isolated keys MINUS intendedWrites.
     const intendedDests = new Set(intendedWrites.keys());
     const gcDeletions = [];
+    // Orphans OUTSIDE the tooling dir. We sync a few files to real, TRACKED
+    // consumer paths (e.g. docs/reference/consistency-contract.md). When such a
+    // file is renamed upstream, GC must not delete the old copy — deleting a
+    // tracked file is a commit in someone's repo, not sync bookkeeping, and the
+    // consumer may have edited it. But saying NOTHING leaves a stale duplicate
+    // sitting next to the live one indefinitely, silently authoritative-looking.
+    // (The consistency contract survived a move into `docs/reference/` this way:
+    // its pre-move copy went stale on 2026-06-29 while the real file kept
+    // syncing. Naming that dead path literally here is what broke the
+    // reference-integrity gate on 2026-07-18 — the note is history, not a
+    // `(planned)` ref, so it is phrased without the path rather than exempted.)
+    // So: advise, never act.
+    const orphanedTracked = [];
     for (const priorDestRel of Object.keys(priorFiles)) {
-      if (!priorDestRel.startsWith(`${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/`)) continue;
       if (intendedDests.has(priorDestRel)) continue;
-      gcDeletions.push(priorDestRel);
+      if (priorDestRel.startsWith(`${LAYOUT_CONSTANTS.CONSUMER_TOOLING_DIR}/`)) {
+        gcDeletions.push(priorDestRel);   // gitignored + regenerable ⇒ safe to delete
+      } else if (fs.existsSync(path.join(repo.path, priorDestRel))) {
+        orphanedTracked.push(priorDestRel);
+      }
+    }
+    if (orphanedTracked.length) {
+      console.log(`  ${Y}↳ ${orphanedTracked.length} file(s) we no longer sync are still present${X} ${D}(likely renamed upstream; review + \`git rm\` in the consumer if stale — sync will NOT delete a tracked file):${X}`);
+      for (const f of orphanedTracked.slice(0, 8)) console.log(`    ${D}${f}${X}`);
     }
     if (gcDeletions.length) {
       if (DRY_RUN) {
@@ -948,12 +1018,14 @@ async function main() {
     // ── Self-heal: untrack files now covered by a managed runtime-output
     // pattern. A .gitignore rule never untracks an already-committed file, so a
     // runtime output committed before its pattern existed would churn forever.
-    // Scoped STRICTLY to AUDIT_RUNTIME_IGNORES — all OUR Category-A artifacts —
+    // Scoped STRICTLY to UNTRACK_PATTERNS — deliberately NARROWER than the
+    // ignore block (see the constant's note: ignoring is safe to broaden,
+    // untracking is destructive and acts on committed files) —
     // and each candidate is re-confirmed via `git check-ignore`, so a
     // consumer's own file can never be swept. Idempotent + best-effort (a git
     // failure must never abort the sync). Honoured in dry-run (logs only).
     try {
-      const untracked = untrackNewlyIgnored(repo.path, AUDIT_RUNTIME_IGNORES, { dryRun: DRY_RUN });
+      const untracked = untrackNewlyIgnored(repo.path, UNTRACK_PATTERNS, { dryRun: DRY_RUN });
       if (untracked.length) {
         const verb = DRY_RUN ? 'would untrack' : 'untracked';
         console.log(`  ${Y}↳ ${verb} ${untracked.length} now-ignored runtime file(s)${X} ${D}(git rm --cached; commit in the consumer to finish):${X}`);
