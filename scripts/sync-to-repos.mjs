@@ -225,6 +225,15 @@ const CORE_ASSETS = [
   // Referenced by skills/persona-test/SKILL.md Phase 3b + references/consistency-mode.md;
   // consumer-app frontend devs read it to author their data-engine-* annotations.
   'docs/reference/consistency-contract.md',
+  // Tiered-pipeline OSS call budgets. `lib/oss-call-policy.mjs` reads this via
+  // `new URL('./oss-call-policy.json', import.meta.url)` — a module-relative fs
+  // read, so the import walker never sees it and it did not ship. The reader
+  // deliberately THROWS rather than falling back to a default budget, so in a
+  // consumer the tiered shadow died with
+  // `[oss-call-policy] failed to read .../scripts/.claude-skills/lib/oss-call-policy.json: ENOENT`
+  // and every affected run recorded `fallback_legacy` — 15 wasted observations
+  // in the Phase-14 window before the cause was traced (2026-07-18).
+  'scripts/lib/oss-call-policy.json',
   // postgres-parity M4 — setup-postgres.mjs reads compat-bootstrap.sql via
   // fs (the import-graph walker can't follow fs reads). Migrations are
   // similarly fs-read; ship the whole directory so `--migrate` works on
