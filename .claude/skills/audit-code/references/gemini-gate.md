@@ -70,9 +70,20 @@ node scripts/gemini-review.mjs review <plan-file> /tmp/$SID-transcript.json \
   --out /tmp/$SID-gemini-result.json 2>/tmp/$SID-gemini-stderr.log
 ```
 
-Provider auto-selection order:
+`--out` writes a durable artifact + a one-line stdout summary; use it for a
+readable result. Termination is guaranteed **with or without** it (idempotent
+`finishAndExit` + hard-deadline watchdog) — a background run can't hang on a
+lingering provider socket either way.
+
+Provider auto-selection order (first-party only):
 1. Gemini (when `GEMINI_API_KEY` is set)
-2. Claude Opus fallback (when `ANTHROPIC_API_KEY` is set)
+2. Azure Foundry Claude (when the Azure profile is active)
+3. Claude Opus fallback (when `ANTHROPIC_API_KEY` is set)
+
+Provider-agnostic routes — **explicit selection only** (`--provider` /
+`FINAL_REVIEW_PROVIDER`, never auto-detect): `openai-compatible` and `openrouter`
+(any OpenAI-shaped gateway: OpenRouter/Together/Fireworks/Groq/vLLM/Ollama/LM
+Studio). See `docs/runbooks/azure-work-profile.md` §Provider-agnostic final review.
 
 ## Process the verdict
 

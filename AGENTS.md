@@ -294,7 +294,7 @@ backwards-compatible barrel); `tests/` is the Node built-in test-runner suite;
 
 - **lib/*.mjs**: Focused modules — import directly from `./lib/<module>.mjs` for explicit deps, or from `./shared.mjs` barrel for convenience. Schemas (`lib/schemas.mjs`) are the single source of truth (JSON Schemas derived via `zodToGeminiSchema()`).
 - **openai-audit.mjs**: 5-pass parallel code audit (structure, wiring, backend, frontend, sustainability). Plan audit. Rebuttal deliberation. Uses GPT with `responses.parse()` + Zod schemas. Integrates bandit reward updates + Supabase cloud sync.
-- **gemini-review.mjs**: Independent final review (MANDATORY — not gated by convergence). Receives full audit transcript. Detects bias, false consensus, missed issues. Uses Gemini 3.1 Pro (16K thinking budget), with Claude Opus fallback. Claude deliberates on CONCERNS, then Gemini re-verifies.
+- **gemini-review.mjs**: Independent final review (MANDATORY — not gated by convergence). Receives full audit transcript. Detects bias, false consensus, missed issues. Default Gemini 3.1 Pro (16K thinking budget); **provider-agnostic** via one abort-correct `callReviewer` seam + a `PROVIDERS` descriptor catalog — gemini / claude-opus / azure-claude (both shapes) / `openai-compatible` / `openrouter` (recipe: [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md) §Provider-agnostic final review). Background-safe: guaranteed process termination (idempotent `finishAndExit` + hard-deadline watchdog), so a detached run can't hang on a lingering SDK socket. Claude deliberates on CONCERNS, then the reviewer re-verifies.
 - **learning-store.mjs**: Cloud persistence via Supabase — repos, runs, findings, pass stats, bandit arms, FP patterns, adjudication events. Graceful fallback to local-only mode.
 
 ### Key Patterns
@@ -484,7 +484,7 @@ lifecycle, Phase-3 replay framework + promotion recipe, outbox detail):
 | `CLAUDE_BIN` | No | `claude` | Path/name of the `claude` CLI (cli backend only) |
 | `CLAUDE_FINAL_REVIEW_MODEL` | No | `latest-opus` | Claude Opus override (Step 7 fallback) |
 | `FINAL_REVIEW_SHADOW` | No | — | Opt-in **shadow** final reviewer (observation-only A/B): `claude-opus` \| `anthropic` \| `gemini`. Runs a second blind reviewer in parallel with the primary; never gates the build. No-op when unset or under an Azure profile. See "Shadow final-review A/B" below. |
-| `FINAL_REVIEW_SHADOW_MODEL` | No | per-provider | Concrete model / sentinel for the shadow reviewer. Unset → derived from the provider (`claude-opus`→`latest-opus`, `gemini`→`latest-pro`). A family mismatch is a logged no-op. |
+| `FINAL_REVIEW_SHADOW_MODEL` | No | per-provider | Concrete model / sentinel for the shadow reviewer. Unset → derived from the provider (`claude-opus`→`latest-opus`, `gemini`→`latest-pro`). A family mismatch is a logged no-op. `FINAL_REVIEW_{BASE_URL,API_KEY,MODEL,HARD_DEADLINE_MS}` (provider-agnostic gateway + termination watchdog) are documented in the [azure-work-profile runbook](docs/runbooks/azure-work-profile.md) §Provider-agnostic final review. |
 | `BRIEF_MODEL_GEMINI` | No | `latest-flash` | Brief-generation Gemini model |
 | `BRIEF_MODEL_CLAUDE` | No | `latest-haiku` | Brief-generation Claude model |
 | `META_ASSESS_MODEL` | No | `latest-flash` | Meta-assessment Gemini model |

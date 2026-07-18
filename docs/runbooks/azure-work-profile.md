@@ -118,11 +118,13 @@ deployment selection refreshed 2026-06-08 as the Foundry quota expanded):
 
 Deterministic, top wins:
 
-1. Explicit `--provider <gemini|anthropic|azure-claude>` CLI flag (per-invocation).
+1. Explicit `--provider <gemini|anthropic|azure-claude|openai-compatible|openrouter>` CLI flag (per-invocation).
 2. **`FINAL_REVIEW_PROVIDER`** persistent per-repo setting (the work-repo lever).
 3. `GEMINI_API_KEY` present → **Gemini** (the default reviewer).
 4. Azure work profile active → **azure-claude**.
 5. `ANTHROPIC_API_KEY` present → public Claude Opus.
+
+The two gateway routes (`openai-compatible`, `openrouter`) are **explicit-selection-only** — they are never chosen by auto-detect (steps 3–5), so a globally-scoped `OPENROUTER_API_KEY` used by other skills can't silently route code egress to a third-party gateway.
 
 > **Why Gemini outranks an active Azure profile (changed 2026-06-09).** The
 > per-repo default stack is "GPT auditor + Gemini reviewer". A *configured* Azure
@@ -138,6 +140,59 @@ Deterministic, top wins:
 > This writes `FINAL_REVIEW_PROVIDER=azure-claude` to the repo `.env`, so it wins
 > regardless of whether a Gemini key leaks in via `~/.audit-loop.env`.
 > `set-provider default` clears it.
+
+## Provider-agnostic final review
+
+The final-review gate is not Gemini-only. One abort-correct `callReviewer` seam +
+a `PROVIDERS` descriptor catalog in [`scripts/gemini-review.mjs`](../../scripts/gemini-review.mjs)
+back five providers over three transports (`gemini` / `anthropic` / `openai`);
+adding another is a small descriptor + (only if a new wire shape) one adapter.
+
+| Provider | Transport | Client | Model source |
+|---|---|---|---|
+| `gemini` | gemini | GoogleGenAI | `GEMINI_REVIEW_MODEL` |
+| `claude-opus` | anthropic | public Anthropic | `CLAUDE_FINAL_REVIEW_MODEL` |
+| `azure-claude` | anthropic **or** openai (per `AZURE_CLAUDE_API_SHAPE`) | Foundry | `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` |
+| `openai-compatible` | openai | `createOpenAIClient({oss})` | `FINAL_REVIEW_MODEL` (verbatim) |
+| `openrouter` | openai | `createOpenAIClient({oss})` (baseURL preset) | `FINAL_REVIEW_MODEL` (verbatim) |
+
+**Point the gate at any OpenAI-compatible gateway** (OpenRouter / Together /
+Fireworks / Groq / vLLM / Ollama / LM Studio — e.g. a corporate profile that runs
+its own model for the reviewer role):
+
+```bash
+# Generic OpenAI-compatible endpoint
+export FINAL_REVIEW_BASE_URL="https://your-gateway/v1"
+export FINAL_REVIEW_API_KEY="..."
+export FINAL_REVIEW_MODEL="your/model-id"     # passed to the gateway verbatim (no sentinel remap)
+node scripts/gemini-review.mjs set-provider openai-compatible
+
+# OpenRouter preset (baseURL prefilled; key may come from the shared OPENROUTER_API_KEY)
+export FINAL_REVIEW_MODEL="anthropic/claude-opus-4"
+node scripts/gemini-review.mjs set-provider openrouter
+```
+
+Env vars (all optional; validated per-provider at selection, never at import):
+
+| Var | Default | Purpose |
+|---|---|---|
+| `FINAL_REVIEW_BASE_URL` | — | Gateway base URL (`openai-compatible`; overrides the OpenRouter preset if set). |
+| `FINAL_REVIEW_API_KEY` | — | Gateway key. For `openrouter`, falls back to `OPENROUTER_API_KEY` **only after** an explicit `openrouter` selection. |
+| `FINAL_REVIEW_MODEL` | — | Concrete gateway model id, passed verbatim (no `latest-*` sentinel resolution). Required for both gateway routes. |
+| `FINAL_REVIEW_HARD_DEADLINE_MS` | `600000` | Process-level watchdog that guarantees the review CLI terminates even if a provider wedges. Clamped `[60000, 3600000]`; raised to a floor of `2×GEMINI_REVIEW_TIMEOUT_MS + 60000`. |
+
+**Background-safe termination** (why the watchdog exists): the review CLI now
+force-terminates through one idempotent `finishAndExit` (flush → clear watchdog →
+`process.exit`) plus a hard-deadline watchdog that aborts the in-flight review
+first. Previously the success path relied on natural event-loop drain, so a
+lingering LLM-SDK keep-alive socket blocked exit — invisible foreground (an outer
+timeout reaped it) but an indefinite hang in a **detached/background** run. Runs
+are now bounded regardless of provider.
+
+**Secure defaults / egress**: the review payload is assembled once (sensitive-path
+filtered) and every transport receives only that envelope, so selecting a gateway
+sends the same already-filtered transcript+code you'd send Gemini/OpenAI — an
+explicit operator choice, never an auto-fallback.
 
 ## Env-var reference
 

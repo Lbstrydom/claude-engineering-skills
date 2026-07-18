@@ -138,6 +138,43 @@ export const claudeConfig = Object.freeze({
   finalReviewModel: resolveModel(process.env.CLAUDE_FINAL_REVIEW_MODEL || 'latest-opus'),
 });
 
+// ── Final-Review Provider + Lifecycle Config ────────────────────────────────
+//
+// Provider-neutral (deliberately NOT tucked into geminiConfig — final review is
+// no longer Gemini-only; plan §M3). The gateway fields are RAW strings with NO
+// resolveModel() and NO per-provider validation here — they are validated at
+// selectProvider() by the chosen provider's descriptor, mirroring
+// shadowReviewConfig's permissive discipline (an unset/garbage value must never
+// throw at import and break the MANDATORY audit path).
+//
+// `hardDeadlineMs` is the process-level watchdog bound that guarantees
+// background-safe termination (the harness gives detached runs no reaper). It
+// must be able to contain a full run: MAX_ATTEMPTS(2) per-attempt timeouts +
+// shadow + cloud slack. A value below that floor is raised (never silently
+// accepted — a too-small deadline would kill legitimate runs).
+function computeFinalReviewHardDeadline() {
+  const FLOOR = 2 * geminiConfig.timeoutMs + 60000;
+  const v = clampConfigNumber(process.env.FINAL_REVIEW_HARD_DEADLINE_MS, {
+    fallback: 600000, min: 60000, max: 3600000,
+    parser: Number.parseInt, envVar: 'FINAL_REVIEW_HARD_DEADLINE_MS',
+  });
+  if (v < FLOOR) {
+    process.stderr.write(
+      `  [config] FINAL_REVIEW_HARD_DEADLINE_MS=${v}ms is below the safe floor ${FLOOR}ms ` +
+      `(2×${geminiConfig.timeoutMs} per-attempt + 60000 slack) — raising to the floor.\n`,
+    );
+    return FLOOR;
+  }
+  return v;
+}
+
+export const finalReviewConfig = Object.freeze({
+  baseUrl: (process.env.FINAL_REVIEW_BASE_URL || '').trim() || null,
+  apiKey: (process.env.FINAL_REVIEW_API_KEY || '').trim() || null,
+  model: (process.env.FINAL_REVIEW_MODEL || '').trim() || null,
+  hardDeadlineMs: computeFinalReviewHardDeadline(),
+});
+
 // ── Shadow Final-Review Config (A/B test — observation-only) ─────────────────
 //
 // Opt-in second reviewer that runs blind-parallel with the primary final

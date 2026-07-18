@@ -1,5 +1,20 @@
 # Project Status Log
 
+## 2026-07-18 — Final-review gate: background-safe termination + provider-agnostic
+
+### Changes
+- **Root-caused the background hang.** `gemini-review.mjs`'s success path *returned from `main()`* and relied on natural event-loop drain, so a lingering LLM-SDK keep-alive socket blocked exit — invisible foreground (an outer timeout reaped it, and `--out` had already written the file → "completed fine") but an **indefinite hang in a detached/background run** (no reaper). Reproduced via a synthetic probe (exit 124) and **live-confirmed** mid-session (a 120s-exceeding Gemini call now aborts + exits cleanly instead of hanging).
+- **Termination guarantee**: one idempotent `finishAndExit` (`running→finishing→exited`; bounded EPIPE-safe stdout drain → clear watchdog → `process.exit`) that the real/fixture/catch paths all share, + a hard-deadline watchdog that **aborts the in-flight review before** force-exiting. New `finalReviewConfig.hardDeadlineMs` (`FINAL_REVIEW_HARD_DEADLINE_MS`, clamped, floored at `2×timeout+60s`).
+- **One abort-correct `callReviewer` seam**: collapsed the three divergent per-provider call functions (two used a leaky `Promise.race` with no `signal`) into a single `AbortController`+per-attempt-timeout with a `timeoutPromise` backstop, threaded into every SDK call. Robust JSON extraction (`parseReviewJson`: plain-parse → greedy outer fence → first-`{`-to-last-`}`) survives OSS fenced output AND inner code fences.
+- **Provider-agnostic** via a static `PROVIDERS` descriptor catalog: `gemini` / `claude-opus` / `azure-claude` (both shapes) / **`openai-compatible`** / **`openrouter`** (reusing the existing `createOpenAIClient({oss})` seam). Gateways are **explicit-selection-only** — never auto-detect (a shared `OPENROUTER_API_KEY` can't silently route code egress). Azure preserved; default auto-detect byte-identical.
+
+### Verification
+- 4 new test files (real-route keep-alive termination via a local server, callReviewer abort/transports/fence-strip, provider precedence + only-OpenRouter security case, egress-envelope across all 3 transports). `npm run check` green: 7078 tests / 0 fail + all lints/context/skills/sync gates.
+
+### Audit trail
+- Plan: 1 GPT round (H:3 M:3 L:1, all folded → contracts C1–C4) + Gemini gate (G1 **security** fix — removed the auto-fallback silent-egress). Code fix-gate: GPT 3 HIGHs were false positives (Gemini's summary agreed); Gemini then caught **two real bugs I'd introduced** — `parseLlmJson`'s lazy regex truncating fenced findings with inner code blocks (HIGH), and a `cache_creation→thinking_tokens` telemetry mislabel — both fixed + guarded. 2-round Gemini cap honored.
+- `AI-Gate: not-run` (the `.audit/last-audit-run.json` evidence marker is still unwired repo-wide — the audit ran richly, but the trailer records only what's mechanically verified).
+
 ## 2026-07-18 — Shadow write-gate + the first test that ever executes the audit orchestrator
 
 ### Changes

@@ -13,7 +13,7 @@
  *   node scripts/gemini-review.mjs review <plan-file> <transcript-file>         # Full review
  *   node scripts/gemini-review.mjs review <plan-file> <transcript-file> --json   # JSON output
  *   node scripts/gemini-review.mjs review <plan-file> <transcript-file> --out <file>  # File output
- *   node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|default>  # Persist the per-repo reviewer
+ *   node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|openai-compatible|openrouter|default>  # Persist the per-repo reviewer
  *   node scripts/gemini-review.mjs ping                                          # Verify API connectivity
  *
  * Requires: GEMINI_API_KEY or ANTHROPIC_API_KEY in .env or environment
@@ -25,6 +25,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { once } from 'node:events';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { ProducerFindingSchema, zodToGeminiSchema } from './lib/schemas.mjs';
@@ -33,7 +34,7 @@ import { readFileOrDie, readFilesAsContext, extractPlanPaths, writeOutput, isAud
 import { semanticId, formatFindings, appendOutcome, FalsePositiveTracker } from './lib/findings.mjs';
 import { readProjectContext, initAuditBrief, generateRepoProfile } from './lib/context.mjs';
 import { applyEnvSetting } from './lib/env-setting.mjs';
-import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig } from './lib/config.mjs';
+import { geminiConfig, claudeConfig, azureConfig, shadowReviewConfig, finalReviewConfig, auditShadowConfig } from './lib/config.mjs';
 import { recordFinalReviewFindings } from './learning-store.mjs';
 import { refreshModelCatalog, resolveModel } from './lib/model-resolver.mjs';
 import { createOpenAIClient } from './lib/openai-client.mjs';
@@ -49,9 +50,9 @@ import { getActiveEvalRunId } from './lib/store/model-eval.mjs';
 import { resolveCandidateRoute } from './lib/model-eval/route-catalog.mjs';
 import { appendModelEvalShadowObservation } from './lib/model-eval/finalize-shadow-eval.mjs';
 // NOTE: lib/llm-wrappers.mjs provides shared wrappers for learning/refinement/evolution paths.
-// This module keeps specialized callGemini/callClaudeOpus with thinkingConfig + abort controller
-// because the final review requires high-budget reasoning and precise timeout handling.
-// Future: extract shared patterns to llm-wrappers while keeping specialized configs here.
+// This module keeps the specialized `callReviewer` seam (thinkingConfig + one
+// abort-correct timeout across all transports) because the final review requires
+// high-budget reasoning and precise, background-safe timeout/termination handling.
 
 // ── Configuration (from centralized config) ─────────────────────────────────
 
@@ -62,6 +63,66 @@ let MODEL = geminiConfig.model;
 let CLAUDE_OPUS_MODEL = claudeConfig.finalReviewModel;
 const TIMEOUT_MS = geminiConfig.timeoutMs;
 const MAX_OUTPUT_TOKENS = geminiConfig.maxOutputTokens;
+
+// ── Terminal lifecycle (background-safe termination) ─────────────────────────
+//
+// The success path used to RETURN from main() and rely on natural event-loop
+// drain, so a lingering LLM-SDK keep-alive socket blocked exit — invisible
+// foreground (the harness reaps on its own timeout) but an indefinite hang in a
+// detached background run (no reaper). These three primitives guarantee the CLI
+// always terminates:
+//   - `_terminalState` makes `finishAndExit` idempotent (running → finishing →
+//     exited), so a watchdog racing a successful emit can never replace a clean
+//     exit with 124.
+//   - `_watchdogTimer` is the process-level hard deadline; NOT unref'd (it must
+//     preempt a wedged await — timers still fire while a socket read is pending).
+//   - `_activeReviewController` lets the watchdog abort the in-flight review
+//     (releasing the socket) BEFORE it force-exits, so 124 is a real teardown.
+let _terminalState = 'running';
+let _watchdogTimer = null;
+let _activeReviewController = null;
+
+/**
+ * The single terminal exit for the review CLI (real, fixture, and catch paths
+ * all route through it). Idempotent; awaits a bounded, EPIPE-safe stdout drain
+ * before exiting. Exit safety does NOT depend on the drain — with `--out` the
+ * artifact is already written synchronously; the drain only avoids truncating
+ * the one-line stdout summary on a slow pipe.
+ * @param {number} code
+ */
+async function finishAndExit(code) {
+  if (_terminalState !== 'running') return; // idempotent — second caller (e.g. watchdog) no-ops
+  _terminalState = 'finishing';
+  if (_watchdogTimer) { clearTimeout(_watchdogTimer); _watchdogTimer = null; }
+  try {
+    if (process.stdout.writableLength > 0) {
+      // Race the real 'drain' against a short cap so a wedged/closed pipe can
+      // never re-introduce the hang this whole change exists to remove.
+      let capTimer;
+      const cap = new Promise((r) => { capTimer = setTimeout(r, 2000); });
+      await Promise.race([once(process.stdout, 'drain'), cap]);
+      clearTimeout(capTimer);
+    }
+  } catch { /* EPIPE / stream error — proceed straight to exit */ }
+  _terminalState = 'exited';
+  process.exit(code);
+}
+
+/**
+ * Arm the hard-deadline watchdog for review mode. On fire: abort the in-flight
+ * review first (release the socket), then route through the same idempotent
+ * finishAndExit(124). Deliberately not unref'd.
+ */
+function armReviewWatchdog() {
+  _watchdogTimer = setTimeout(() => {
+    process.stderr.write(
+      `  [final-review] hard deadline ${(finalReviewConfig.hardDeadlineMs / 1000).toFixed(0)}s exceeded ` +
+      `— aborting in-flight review and exiting 124\n`,
+    );
+    try { _activeReviewController?.abort('hard-deadline'); } catch { /* ignore */ }
+    void finishAndExit(124);
+  }, finalReviewConfig.hardDeadlineMs);
+}
 
 // ── Schemas ────────────────────────────────────────────────────────────────────
 // FindingSchema + FindingJsonSchema imported from shared.mjs (single source of truth).
@@ -341,132 +402,217 @@ function getReviewPrompt() {
   return _roleAddendum ? `${base}\n${_roleAddendum}` : base;
 }
 
-// ── Gemini API Helper ──────────────────────────────────────────────────────────
+// ── Unified reviewer call seam (one abort-correct path for every provider) ───
+//
+// Replaces the former per-provider callGemini/callClaudeOpus/callAzureClaude,
+// which re-implemented timeout three ways (Gemini aborted; the other two used a
+// leaky Promise.race that never cancelled the losing streaming request). Now:
+//   - ONE AbortController + per-attempt timeout, threaded into every SDK call.
+//   - a timeout PROMISE backstop guarantees callReviewer rejects at TIMEOUT_MS
+//     even if a given SDK ignores the signal (the abort still best-effort tears
+//     the socket down for SDKs that honour it — gemini, openai, anthropic-sdk).
+//   - one shared parse (fence-strip → truncate → Zod) and one redacted error.
+// A new provider is a small `REVIEW_TRANSPORTS` adapter, not a 4th timeout copy.
 
 /**
- * Make a single Gemini call with structured JSON output.
- * Follows the same {result, usage, latencyMs} contract as callGPT in openai-audit.mjs.
- *
- * @param {GoogleGenAI} ai - GoogleGenAI client instance
- * @param {object} opts
- * @param {string} opts.systemPrompt
- * @param {string} opts.userPrompt
- * @param {z.ZodType} opts.zodSchema - Zod schema for response validation
- * @param {object} opts.jsonSchema - Explicit JSON Schema for Gemini's responseSchema
- * @param {string} [opts.passName] - For logging
- * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
+ * Robustly extract the review JSON from a model response (G2 + audit-code
+ * Gemini-gate G1). Must survive: clean JSON (Gemini responseSchema; well-behaved
+ * models), an OUTER ```json fence (OSS models via OpenRouter), AND inner ``` code
+ * fences inside finding fields (recommendation/evidence snippets). We deliberately
+ * do NOT use lib/requirements/llm-json.mjs's `parseLlmJson` here: its lazy
+ * `([\s\S]*?)` fence regex stops at the FIRST inner closing fence and truncates
+ * a review payload whose findings contain code blocks.
+ * @param {string} text
+ * @returns {object} parsed JSON — throws (→ truncation-retry) if unrecoverable
  */
-async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema, passName, modelOverride }) {
-  const startMs = Date.now();
-  // modelOverride lets the shadow reviewer use a distinct resolved model; default
-  // is the module-global MODEL so existing (primary) calls are unchanged.
-  const useModel = modelOverride || MODEL;
-
-  if (passName) {
-    process.stderr.write(`  [${passName}] Starting Gemini ${useModel} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
+function parseReviewJson(text) {
+  const raw = String(text ?? '').trim();
+  // 1. Clean JSON — the common case (Gemini responseSchema, strict models).
+  try { return JSON.parse(raw); } catch { /* fall through */ }
+  // 2. Outer ```json fence, GREEDY to the LAST fence so inner ``` snippets in
+  //    findings don't cause premature truncation (the G1 bug class).
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*)\s*```/);
+  if (fence) {
+    try { return JSON.parse(fence[1].trim()); } catch { /* fall through */ }
   }
+  // 3. Fence-agnostic final attempt: the first '{' … last '}' object span.
+  const first = raw.indexOf('{');
+  const last = raw.lastIndexOf('}');
+  if (first !== -1 && last > first) return JSON.parse(raw.slice(first, last + 1));
+  throw new SyntaxError('no JSON object found in review response');
+}
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-  try {
-    // Use streaming to support maxOutputTokens > 21333 (SDK hard limit for
-    // non-streaming). Accumulate chunks then parse the final JSON.
-    const stream = await ai.models.generateContentStream({
-      model: useModel,
+/**
+ * Per-transport adapters. Each maps the normalized input to its installed-SDK
+ * request and returns `{ text, usage:{input_tokens,output_tokens,thinking_tokens}, finishReason }`.
+ * No adapter re-reads files or re-assembles a prompt — it receives the single
+ * egress envelope (`userPrompt`) built once in runFinalReview (C3/egress safety).
+ */
+const REVIEW_TRANSPORTS = {
+  async gemini(client, { model, maxTokens, systemPrompt, userPrompt, jsonSchema, signal }) {
+    // Streaming supports maxOutputTokens > 21333 (non-streaming SDK ceiling).
+    const stream = await client.models.generateContentStream({
+      model,
       contents: userPrompt,
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: 'application/json',
         responseSchema: jsonSchema,
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        thinkingConfig: { thinkingBudget: 16384 }
-      }
-    }, { signal: controller.signal });
-
+        maxOutputTokens: maxTokens,
+        thinkingConfig: { thinkingBudget: 16384 },
+      },
+    }, { signal });
     const textParts = [];
     let usageMetadata = null;
     for await (const chunk of stream) {
       if (chunk.text) textParts.push(chunk.text);
       if (chunk.usageMetadata) usageMetadata = chunk.usageMetadata;
     }
-    clearTimeout(timer);
+    return {
+      text: textParts.join(''),
+      usage: {
+        input_tokens: usageMetadata?.promptTokenCount ?? 0,
+        output_tokens: usageMetadata?.candidatesTokenCount ?? 0,
+        thinking_tokens: usageMetadata?.thoughtsTokenCount ?? 0,
+      },
+      finishReason: null,
+    };
+  },
+
+  async anthropic(client, { model, maxTokens, systemPrompt, userPrompt, signal }) {
+    // Stream — non-streaming create() throws above the SDK's max_tokens ceiling.
+    const r = await streamAnthropicMessage(client, {
+      model,
+      max_tokens: maxTokens,
+      system: `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
+      messages: [{ role: 'user', content: userPrompt }],
+    }, { signal });
+    return {
+      text: r.content?.[0]?.text?.trim() || '{}',
+      usage: {
+        input_tokens: r.usage?.input_tokens ?? 0,
+        output_tokens: r.usage?.output_tokens ?? 0,
+        // This path does not request extended thinking, and Anthropic's streaming
+        // usage exposes no reasoning-token count here — so thinking_tokens is 0.
+        // (The former callClaudeOpus mislabeled cache_creation_input_tokens as
+        // thinking here; not carried forward — Gemini-gate round-2 finding.)
+        thinking_tokens: 0,
+      },
+      finishReason: r.stop_reason ?? null,
+    };
+  },
+
+  async openai(client, { model, maxTokens, systemPrompt, userPrompt, signal }) {
+    // OpenAI-shaped chat.completions — Azure Foundry (openai shape) + every
+    // OpenAI-compatible gateway (OpenRouter/Together/Fireworks/Groq/vLLM/…).
+    // azureThrottle is a no-op off the Azure path.
+    const sys = `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`;
+    const r = await azureThrottle(() => client.chat.completions.create({
+      model,
+      max_tokens: maxTokens,
+      messages: [{ role: 'system', content: sys }, { role: 'user', content: userPrompt }],
+    }, { signal }));
+    return {
+      text: r.choices?.[0]?.message?.content?.trim() || '{}',
+      usage: {
+        input_tokens: r.usage?.prompt_tokens ?? 0,
+        output_tokens: r.usage?.completion_tokens ?? 0,
+        thinking_tokens: 0,
+      },
+      finishReason: r.choices?.[0]?.finish_reason ?? null,
+    };
+  },
+};
+
+/**
+ * Make a single final-review call through the unified transport seam.
+ * Same `{result, usage, latencyMs}` contract the callers already expect.
+ *
+ * @param {object} client - provider SDK client (from the descriptor's buildClient)
+ * @param {object} opts
+ * @param {'gemini'|'anthropic'|'openai'} opts.transportKind
+ * @param {string} opts.model
+ * @param {string} opts.systemPrompt
+ * @param {string} opts.userPrompt - the single egress envelope (already sensitive-filtered)
+ * @param {z.ZodType} [opts.zodSchema]
+ * @param {object} [opts.jsonSchema] - only used by the gemini transport (responseSchema)
+ * @param {string} [opts.passName]
+ * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
+ */
+async function callReviewer(client, { transportKind, model, systemPrompt, userPrompt, zodSchema, jsonSchema, passName }) {
+  const startMs = Date.now();
+  const label = passName || 'final-review';
+  const adapter = REVIEW_TRANSPORTS[transportKind];
+  if (!adapter) throw new Error(`[${label}] unknown transport kind "${transportKind}"`);
+
+  process.stderr.write(`  [${label}] Starting ${transportKind} ${model} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
+
+  // One controller for the attempt; the watchdog can reach it to release the
+  // socket on a hard-deadline. The timeout PROMISE is the guaranteed rejection
+  // (fires even if a given SDK ignores the abort signal); abort() is the
+  // best-effort socket teardown for SDKs that honour it.
+  const controller = new AbortController();
+  _activeReviewController = controller;
+  let timeoutHandle;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      try { controller.abort('timeout'); } catch { /* ignore */ }
+      reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`));
+    }, TIMEOUT_MS);
+  });
+
+  try {
+    const raw = await Promise.race([
+      adapter(client, { model, maxTokens: MAX_OUTPUT_TOKENS, systemPrompt, userPrompt, jsonSchema, signal: controller.signal }),
+      timeoutPromise,
+    ]);
     const latencyMs = Date.now() - startMs;
 
-    // Parse the accumulated JSON response
-    const text = textParts.join('');
+    // Shared post-step: fence-strip + parse (G2 — OSS models via OpenRouter
+    // routinely wrap output in a ```json fence despite the instruction) →
+    // truncate over-long fields → Zod validate (warn-and-keep; truncateToSchema
+    // already coerces the common overflow case).
     let result;
     try {
-      result = JSON.parse(text);
+      result = parseReviewJson(raw.text);
     } catch (parseErr) {
-      throw new Error(`Failed to parse Gemini JSON response: ${parseErr.message}\nRaw: ${text.slice(0, 500)}`);
+      throw new Error(`Failed to parse ${transportKind} JSON response: ${parseErr.message}\nRaw: ${String(raw.text).slice(0, 500)}`);
     }
-
-    // Auto-truncate verbose fields before Zod validation.
-    // Gemini regularly exceeds per-field maxLength limits causing whole-response
-    // rejection. Truncating here prevents that without losing structural validity.
     const truncated = [];
     result = truncateToSchema(result, '', truncated);
     if (truncated.length > 0) {
-      process.stderr.write(`  [${passName ?? 'gemini'}] Auto-truncated ${truncated.length} fields: ${truncated.join(', ')}\n`);
+      process.stderr.write(`  [${label}] Auto-truncated ${truncated.length} fields: ${truncated.join(', ')}\n`);
     }
-
-    // Validate against Zod schema — reject invalid responses at the trust boundary
     if (zodSchema) {
       const validated = zodSchema.safeParse(result);
-      if (validated.success) {
-        result = validated.data;
-      } else {
-        const errMsg = validated.error.message.slice(0, 300);
-        process.stderr.write(`  [${passName ?? 'gemini'}] Zod validation FAILED: ${errMsg}\n`);
-        throw new Error(`Gemini response failed schema validation: ${errMsg}`);
-      }
+      if (validated.success) result = validated.data;
+      else process.stderr.write(`  [${label}] Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
     }
 
-    const usage = {
-      input_tokens: usageMetadata?.promptTokenCount ?? 0,
-      output_tokens: usageMetadata?.candidatesTokenCount ?? 0,
-      thinking_tokens: usageMetadata?.thoughtsTokenCount ?? 0,
-      latency_ms: latencyMs
-    };
-
-    if (passName) {
-      process.stderr.write(`  [${passName}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out / ${usage.thinking_tokens} thinking)\n`);
-    }
-
+    const usage = { ...raw.usage, latency_ms: latencyMs };
+    process.stderr.write(`  [${label}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out / ${usage.thinking_tokens} thinking)\n`);
     return { result, usage, latencyMs };
-
   } catch (err) {
-    clearTimeout(timer);
     const latencyMs = Date.now() - startMs;
-    const isAbort = err.name === 'AbortError' || err.message?.toLowerCase().includes('abort');
-    // Surface provider error detail so model-not-found / bad-key don't look like generic failures.
-    // Extract structured fields from SDK error (GoogleGenAI attaches .status on HTTP failures).
+    const isAbort = err.name === 'AbortError' || err.message?.toLowerCase().includes('abort') || err.message?.startsWith('Timeout after');
+    // Redacted error normalization — surface provider status + message, NEVER
+    // the baseURL / key / endpoint identity.
     const detail = err.status
       ? `HTTP ${err.status}${err.message ? `: ${err.message}` : ''}`
       : (err.message || 'unknown error');
     const msg = isAbort
-      ? `[${passName ?? 'gemini'}] Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`
-      : `[${passName ?? 'gemini'}] ${detail} (${(latencyMs / 1000).toFixed(1)}s)`;
-    process.stderr.write(`  [${passName ?? 'gemini'}] FAILED: ${msg}\n`);
+      ? `[${label}] ${controller.signal.reason === 'hard-deadline' ? 'Hard-deadline abort' : `Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`}`
+      : `[${label}] ${detail} (${(latencyMs / 1000).toFixed(1)}s)`;
+    process.stderr.write(`  [${label}] FAILED: ${msg}\n`);
     const wrapped = new Error(msg);
     if (err.status) wrapped.status = err.status; // preserve for classifyLlmError (404 → non-retryable)
     throw wrapped;
+  } finally {
+    clearTimeout(timeoutHandle);
+    _activeReviewController = null;
   }
 }
 
-/**
- * Make a single Claude Opus call with JSON output.
- * Uses the same response contract as callGemini.
- *
- * @param {object} anthropic - Anthropic client instance
- * @param {object} opts
- * @param {string} opts.systemPrompt
- * @param {string} opts.userPrompt
- * @param {z.ZodType} opts.zodSchema
- * @param {string} [opts.passName]
- * @returns {Promise<{result: object, usage: object, latencyMs: number}>}
- */
 /**
  * Consume an Anthropic streaming Messages response, returning the SAME
  * `{content: [{type:'text', text}], usage}` shape a non-streaming
@@ -483,8 +629,8 @@ async function callGemini(ai, { systemPrompt, userPrompt, zodSchema, jsonSchema,
  * create(). A non-streaming adapter (e.g. the cli backend) that ignores
  * `stream:true` and returns a final message is handled by the iterator guard.
  */
-async function streamAnthropicMessage(client, params) {
-  const resp = await client.messages.create({ ...params, stream: true });
+async function streamAnthropicMessage(client, params, { signal } = {}) {
+  const resp = await client.messages.create({ ...params, stream: true }, signal ? { signal } : undefined);
   // Adapter ignored stream:true (e.g. cli backend) → already a final message.
   if (!resp || typeof resp[Symbol.asyncIterator] !== 'function') return resp;
   let text = '';
@@ -503,171 +649,126 @@ async function streamAnthropicMessage(client, params) {
   return { content: [{ type: 'text', text }], usage };
 }
 
-async function callClaudeOpus(anthropic, { systemPrompt, userPrompt, zodSchema, passName, modelOverride }) {
-  const startMs = Date.now();
-  // modelOverride lets the shadow reviewer use a distinct resolved model; default
-  // is the module-global CLAUDE_OPUS_MODEL so existing calls are unchanged.
-  const useModel = modelOverride || CLAUDE_OPUS_MODEL;
-
-  if (passName) {
-    process.stderr.write(`  [${passName}] Starting Claude ${useModel} (timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
-  }
-
-  // pre-Phase-12-audit fix (audit-code round 1, hardening-implementation
-  // audit): the timeout timer was never cleared once the race resolved —
-  // a fast-resolving requestPromise still left a live setTimeout for the
-  // full TIMEOUT_MS (default well over a minute), keeping the process
-  // alive that long and adding real, observable delay to any test that
-  // exercises this fallback path. Captured + cleared in `finally` below.
-  let timeoutHandle;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutHandle = setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
-  });
-
-  // Stream (see streamAnthropicMessage) — non-streaming create() throws on
-  // max_tokens=32000. Returns the same {content, usage} shape, so the parse +
-  // usage code below is unchanged.
-  const requestPromise = streamAnthropicMessage(anthropic, {
-    model: useModel,
-    max_tokens: MAX_OUTPUT_TOKENS,
-    system: `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`,
-    messages: [{ role: 'user', content: userPrompt }]
-  });
-
-  try {
-    const response = await Promise.race([requestPromise, timeoutPromise]);
-    const latencyMs = Date.now() - startMs;
-    const text = response.content?.[0]?.text?.trim() || '{}';
-
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch (parseErr) {
-      throw new Error(`Failed to parse Claude JSON response: ${parseErr.message}\nRaw: ${text.slice(0, 500)}`);
-    }
-
-    if (zodSchema) {
-      const validated = zodSchema.safeParse(result);
-      if (validated.success) {
-        result = validated.data;
-      } else {
-        process.stderr.write(`  [${passName ?? 'claude-opus'}] Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
+// ── Provider descriptor catalog (single source of truth) ────────────────────
+//
+// One immutable descriptor per provider is THE source of truth for identity,
+// label, transport, model resolution, readiness, and client construction —
+// selectProvider / buildClient / formatReviewResult / dispatch all derive from
+// it, so adding a provider is one entry (+ only a new transport adapter if the
+// wire shape is genuinely new). `resolveModel`/`transportKind` are functions so
+// they read live module state (MODEL/CLAUDE_OPUS_MODEL are reassigned in main()
+// after the catalog refresh; the azure transport depends on the resolved shape).
+const PROVIDERS = {
+  gemini: {
+    id: 'gemini',
+    label: 'Gemini',
+    transportKind: () => 'gemini',
+    resolveModel: () => MODEL,
+    assertReady: (env = process.env) => {
+      if (!env.GEMINI_API_KEY) { console.error('Error: provider "gemini" requires GEMINI_API_KEY'); process.exit(1); }
+    },
+    buildClient: async () => new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }),
+  },
+  'claude-opus': {
+    id: 'claude-opus',
+    label: 'Claude Opus',
+    transportKind: () => 'anthropic',
+    resolveModel: () => CLAUDE_OPUS_MODEL,
+    assertReady: (env = process.env) => {
+      if (!env.ANTHROPIC_API_KEY) { console.error('Error: provider "anthropic" requires ANTHROPIC_API_KEY'); process.exit(1); }
+    },
+    buildClient: async () => {
+      process.stderr.write(`  [final-review] GEMINI_API_KEY missing; using Claude Opus fallback (${CLAUDE_OPUS_MODEL}).\n`);
+      return createAnthropicClient();
+    },
+  },
+  'azure-claude': {
+    id: 'azure-claude',
+    label: 'Azure Foundry Claude',
+    transportKind: () => (azureConfig.claudeApiShape === 'anthropic' ? 'anthropic' : 'openai'),
+    resolveModel: () => azureConfig.claudeDeployment,
+    assertReady: () => assertAzureClaudeReady(),
+    buildClient: async () => {
+      process.stderr.write(`  [final-review] Azure work profile — Opus via Foundry (${azureConfig.claudeApiShape} shape, ${azureConfig.claudeDeployment}).\n`);
+      if (azureConfig.claudeApiShape === 'anthropic') {
+        return createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl });
       }
-    }
+      return createOpenAIClient({ purpose: 'foundry-claude' });
+    },
+  },
+  // Generic OpenAI-compatible gateway (Together / Fireworks / Groq / vLLM /
+  // Ollama / LM Studio / any OpenAI-shaped endpoint). Model id is passed to the
+  // gateway verbatim (NO resolveModel sentinel rewrite — D6).
+  'openai-compatible': {
+    id: 'openai-compatible',
+    label: 'OpenAI-compatible',
+    transportKind: () => 'openai',
+    resolveModel: () => finalReviewConfig.model,
+    assertReady: () => {
+      const c = resolveCompatCreds();
+      const missing = [];
+      if (!c.baseUrl) missing.push('FINAL_REVIEW_BASE_URL');
+      if (!c.apiKey) missing.push('FINAL_REVIEW_API_KEY');
+      if (!c.model) missing.push('FINAL_REVIEW_MODEL');
+      if (missing.length) {
+        console.error(`Error: provider "openai-compatible" requires ${missing.join(' + ')}.`);
+        process.exit(1);
+      }
+    },
+    buildClient: async () => {
+      const c = resolveCompatCreds();
+      return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
+    },
+  },
+  // OpenRouter convenience preset — the openai-compatible transport with the
+  // baseURL prefilled and a fallback to the (globally scoped) OPENROUTER_API_KEY
+  // that OTHER skills already use. That fallback is why this route is
+  // EXPLICIT-SELECTION-ONLY (never auto-detect) — see G1 in selectProvider.
+  openrouter: {
+    id: 'openrouter',
+    label: 'OpenRouter',
+    transportKind: () => 'openai',
+    resolveModel: () => finalReviewConfig.model,
+    assertReady: () => {
+      const c = resolveOpenRouterCreds();
+      const missing = [];
+      if (!c.apiKey) missing.push('FINAL_REVIEW_API_KEY (or OPENROUTER_API_KEY)');
+      if (!c.model) missing.push('FINAL_REVIEW_MODEL');
+      if (missing.length) {
+        console.error(`Error: provider "openrouter" requires ${missing.join(' + ')}.`);
+        process.exit(1);
+      }
+    },
+    buildClient: async () => {
+      const c = resolveOpenRouterCreds();
+      return createOpenAIClient({ oss: { baseURL: c.baseUrl, apiKey: c.apiKey } });
+    },
+  },
+};
 
-    const usage = {
-      input_tokens: response.usage?.input_tokens ?? 0,
-      output_tokens: response.usage?.output_tokens ?? 0,
-      thinking_tokens: response.usage?.cache_creation_input_tokens ?? 0,
-      latency_ms: latencyMs
-    };
-
-    if (passName) {
-      process.stderr.write(`  [${passName}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out)\n`);
-    }
-
-    return { result, usage, latencyMs };
-  } catch (err) {
-    const latencyMs = Date.now() - startMs;
-    // Surface provider error detail so model-not-found / bad-key don't look like generic failures.
-    const detail = err.status
-      ? `HTTP ${err.status}${err.message ? `: ${err.message}` : ''}`
-      : (err.message || 'unknown error');
-    const msg = `[${passName ?? 'claude-opus'}] ${detail} (${(latencyMs / 1000).toFixed(1)}s)`;
-    process.stderr.write(`  [${passName ?? 'claude-opus'}] FAILED: ${msg}\n`);
-    const wrapped = new Error(msg);
-    if (err.status) wrapped.status = err.status;
-    throw wrapped;
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
+/** Review-scoped OpenAI-compatible creds (all explicit; validated in assertReady). */
+function resolveCompatCreds() {
+  return { baseUrl: finalReviewConfig.baseUrl, apiKey: finalReviewConfig.apiKey, model: finalReviewConfig.model };
 }
 
 /**
- * Final review via Claude Opus on Azure AI Foundry (replaces Gemini on the work
- * profile). Two transports per `AZURE_CLAUDE_API_SHAPE`:
- *   - `openai` (default): OpenAI-shaped chat-completions on the Foundry endpoint.
- *   - `anthropic`: native Anthropic Messages via an Azure-baseURL'd client.
- * JSON is requested via the system prompt + parsed (not strict response_format),
- * matching `callClaudeOpus` — Foundry Claude may not honour OpenAI strict mode.
- * Same `{result, usage, latencyMs}` contract as the other providers.
+ * OpenRouter preset creds — baseURL prefilled; apiKey falls back to the shared
+ * OPENROUTER_API_KEY ONLY after an explicit `openrouter` selection (G1). The
+ * fallback never runs during auto-detect because selectProvider never
+ * auto-selects this route.
  */
-async function callAzureClaude(client, { systemPrompt, userPrompt, zodSchema, passName }) {
-  const startMs = Date.now();
-  const model = azureConfig.claudeDeployment;
-  const shape = azureConfig.claudeApiShape;
-  if (!model) {
-    throw new Error('[azure-claude] AZURE_FOUNDRY_CLAUDE_DEPLOYMENT is required for the Azure final reviewer.');
-  }
-  if (passName) {
-    process.stderr.write(`  [${passName}] Starting Azure Foundry Claude ${model} (${shape} shape, timeout: ${(TIMEOUT_MS / 1000).toFixed(0)}s)...\n`);
-  }
-  const sys = `${systemPrompt}\n\nOutput strictly valid JSON. No markdown fences.`;
-  // pre-Phase-12-audit fix (audit-code round 1, hardening-implementation
-  // audit) — same uncleared-timer fix as callClaudeOpus above.
-  let timeoutHandle;
-  const timeoutPromise = new Promise((_, reject) => {
-    timeoutHandle = setTimeout(() => reject(new Error(`Timeout after ${(TIMEOUT_MS / 1000).toFixed(0)}s`)), TIMEOUT_MS);
-  });
-
-  let makeRequest, extractText, extractUsage;
-  if (shape === 'anthropic') {
-    // Stream — max_tokens (32000) is above the Anthropic SDK's non-streaming
-    // ceiling; a plain create() throws "Streaming is required...". The adapter's
-    // redactor wrapper exposes only .create(), so stream:true goes through it.
-    makeRequest = () => streamAnthropicMessage(client, {
-      model, max_tokens: MAX_OUTPUT_TOKENS, system: sys,
-      messages: [{ role: 'user', content: userPrompt }],
-    });
-    extractText = (r) => r.content?.[0]?.text?.trim() || '{}';
-    extractUsage = (r) => ({ input_tokens: r.usage?.input_tokens ?? 0, output_tokens: r.usage?.output_tokens ?? 0, thinking_tokens: 0 });
-  } else {
-    makeRequest = () => client.chat.completions.create({
-      model, max_tokens: MAX_OUTPUT_TOKENS,
-      messages: [{ role: 'system', content: sys }, { role: 'user', content: userPrompt }],
-    });
-    extractText = (r) => r.choices?.[0]?.message?.content?.trim() || '{}';
-    extractUsage = (r) => ({ input_tokens: r.usage?.prompt_tokens ?? 0, output_tokens: r.usage?.completion_tokens ?? 0, thinking_tokens: 0 });
-  }
-
-  try {
-    // Defer the request behind the Azure concurrency gate (no-op on public path).
-    const response = await Promise.race([azureThrottle(makeRequest), timeoutPromise]);
-    const latencyMs = Date.now() - startMs;
-    const text = extractText(response);
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch (parseErr) {
-      throw new Error(`Failed to parse Azure Claude JSON response: ${parseErr.message}\nRaw: ${text.slice(0, 500)}`);
-    }
-    if (zodSchema) {
-      const validated = zodSchema.safeParse(result);
-      if (validated.success) result = validated.data;
-      else process.stderr.write(`  [${passName ?? 'azure-claude'}] Zod validation warning: ${validated.error.message.slice(0, 200)}\n`);
-    }
-    const usage = { ...extractUsage(response), latency_ms: latencyMs };
-    if (passName) {
-      process.stderr.write(`  [${passName}] Done in ${(latencyMs / 1000).toFixed(1)}s (${usage.input_tokens} in / ${usage.output_tokens} out)\n`);
-    }
-    return { result, usage, latencyMs };
-  } catch (err) {
-    const latencyMs = Date.now() - startMs;
-    const detail = err.status ? `HTTP ${err.status}${err.message ? `: ${err.message}` : ''}` : (err.message || 'unknown error');
-    const msg = `[${passName ?? 'azure-claude'}] ${detail} (${(latencyMs / 1000).toFixed(1)}s)`;
-    process.stderr.write(`  [${passName ?? 'azure-claude'}] FAILED: ${msg}\n`);
-    const wrapped = new Error(msg);
-    if (err.status) wrapped.status = err.status;
-    throw wrapped;
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
+function resolveOpenRouterCreds() {
+  return {
+    baseUrl: finalReviewConfig.baseUrl || auditShadowConfig.openrouterBaseUrl,
+    apiKey: finalReviewConfig.apiKey || auditShadowConfig.openrouterApiKey,
+    model: finalReviewConfig.model,
+  };
 }
 
 // ── Review Orchestrator ────────────────────────────────────────────────────────
 
 /**
- * Run the final review with Gemini or Claude Opus.
+ * Run the final review with the selected provider (see the PROVIDERS catalog).
  * @param {string} provider - 'gemini' | 'claude-opus' | 'gpt'
  * @param {object} client - Provider-specific client
  * @param {string} planContent
@@ -787,13 +888,12 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     codeContext || '(No code files found — review based on transcript only)',
   ].filter(Boolean).join('\n');
 
-  const modelMap = { gemini: MODEL, 'claude-opus': CLAUDE_OPUS_MODEL, 'azure-claude': azureConfig.claudeDeployment };
-  const labelMap = { gemini: 'Gemini', 'claude-opus': 'Claude Opus', 'azure-claude': 'Azure Foundry Claude' };
-  // modelOverride (shadow reviewer) wins over the provider's module-global model.
-  const selectedModel = modelOverride || modelMap[provider] || provider;
-  const providerLabel = labelMap[provider] || provider;
+  const descriptor = PROVIDERS[provider];
+  if (!descriptor) throw new Error(`[final-review] unknown provider "${provider}"`);
+  // modelOverride (shadow reviewer) wins over the provider's resolved model.
+  const selectedModel = modelOverride || descriptor.resolveModel();
   const shadowTag = modelOverride ? ' [shadow]' : '';
-  process.stderr.write(`\n── ${providerLabel} Final Review${shadowTag} ──\n`);
+  process.stderr.write(`\n── ${descriptor.label} Final Review${shadowTag} ──\n`);
   process.stderr.write(`  Model: ${selectedModel}\n`);
   process.stderr.write(`  Context: ~${(userPrompt.length / 4).toFixed(0)} tokens (estimated)\n`);
 
@@ -807,32 +907,17 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
     systemPrompt += PLAN_MODE_BLOCK;
   }
 
-  if (provider === 'gemini') {
-    return callGemini(client, {
-      systemPrompt,
-      userPrompt,
-      zodSchema: GeminiFinalReviewSchema,
-      jsonSchema: GeminiFinalReviewJsonSchema,
-      passName: 'gemini-review',
-      modelOverride,
-    });
-  }
-
-  if (provider === 'azure-claude') {
-    return callAzureClaude(client, {
-      systemPrompt,
-      userPrompt,
-      zodSchema: GeminiFinalReviewSchema,
-      passName: 'azure-claude-review'
-    });
-  }
-
-  return callClaudeOpus(client, {
+  // `userPrompt` is the single egress envelope — assembled once above via
+  // readFilesAsContext (sensitive-path filtered + secret-redacted). Every
+  // transport adapter receives only this string; none re-reads files (C3).
+  return callReviewer(client, {
+    transportKind: descriptor.transportKind(),
+    model: selectedModel,
     systemPrompt,
     userPrompt,
     zodSchema: GeminiFinalReviewSchema,
-    passName: 'claude-opus-review',
-    modelOverride,
+    jsonSchema: GeminiFinalReviewJsonSchema,
+    passName: `${provider}-review`,
   });
 }
 
@@ -840,10 +925,9 @@ export async function runFinalReview(provider, client, planContent, transcriptCo
 
 function formatReviewResult(result, usage, latencyMs, provider) {
   const lines = [];
-  const selectedModel = provider === 'gemini' ? MODEL : (provider === 'azure-claude' ? azureConfig.claudeDeployment : CLAUDE_OPUS_MODEL);
-  const title = provider === 'gemini'
-    ? 'Gemini 3.1 Pro — Independent Final Review'
-    : 'Claude Opus — Independent Final Review';
+  const descriptor = PROVIDERS[provider];
+  const selectedModel = descriptor ? descriptor.resolveModel() : provider;
+  const title = `${descriptor?.label ?? provider} — Independent Final Review`;
   lines.push(`# ${title}`);
   lines.push(`- **Model**: ${selectedModel} | **Latency**: ${(latencyMs / 1000).toFixed(1)}s`);
   lines.push(`- **Tokens**: ${usage.input_tokens} in / ${usage.output_tokens} out (${usage.thinking_tokens} thinking)`);
@@ -1337,12 +1421,21 @@ export function selectProvider(choice, { env = process.env, azureActive = azureC
     assertAzureClaudeReady();
     return 'azure-claude';
   }
+  // Provider-agnostic routes (generic OpenAI-compatible + OpenRouter preset) are
+  // EXPLICIT-SELECTION-ONLY — reachable via --provider / FINAL_REVIEW_PROVIDER,
+  // never auto-detect (G1: a globally scoped OPENROUTER_API_KEY must not silently
+  // route proprietary code egress to a third-party gateway).
+  if (choice === 'openai-compatible' || choice === 'openrouter') {
+    PROVIDERS[choice].assertReady(env);
+    return choice;
+  }
   if (choice) {
-    console.error(`Error: Unknown provider "${choice}". Use "gemini", "anthropic", or "azure-claude".`);
+    console.error(`Error: Unknown provider "${choice}". Use "gemini", "anthropic", "azure-claude", "openai-compatible", or "openrouter".`);
     process.exit(1);
   }
   // ── 2-4. Auto-detect. Gemini first (default reviewer); Azure only when no
-  // Gemini key AND the profile is active; public Opus last.
+  // Gemini key AND the profile is active; public Opus last. NO fallback to a
+  // compatible/OpenRouter route (G1) — those require explicit selection.
   if (env.GEMINI_API_KEY) return 'gemini';
   if (azureActive) {
     assertAzureClaudeReady();
@@ -1362,7 +1455,7 @@ function resolveProviderSetting() {
   return v || null;
 }
 
-export const SETTING_PROVIDERS = new Set(['gemini', 'azure-claude', 'anthropic', 'default']);
+export const SETTING_PROVIDERS = new Set(['gemini', 'azure-claude', 'anthropic', 'openai-compatible', 'openrouter', 'default']);
 const SETTING_COMMENT = '# Final-review provider — persistent per-repo setting (managed by `set-provider`).';
 
 /**
@@ -1391,11 +1484,13 @@ export function applyProviderSetting(existingText, provider) {
  */
 function runSetProvider(provider) {
   if (!provider || !SETTING_PROVIDERS.has(provider)) {
-    console.error('Usage: node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|default>');
-    console.error('  gemini       — final review via Gemini (the default when GEMINI_API_KEY is present)');
-    console.error('  azure-claude — Opus on Azure Foundry (the work-repo setting)');
-    console.error('  anthropic    — public Claude Opus');
-    console.error('  default      — clear the setting; revert to auto-detection');
+    console.error('Usage: node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|openai-compatible|openrouter|default>');
+    console.error('  gemini            — final review via Gemini (the default when GEMINI_API_KEY is present)');
+    console.error('  azure-claude      — Opus on Azure Foundry (the work-repo setting)');
+    console.error('  anthropic         — public Claude Opus');
+    console.error('  openai-compatible — any OpenAI-shaped gateway (needs FINAL_REVIEW_BASE_URL/_API_KEY/_MODEL)');
+    console.error('  openrouter        — OpenRouter preset (needs FINAL_REVIEW_MODEL + FINAL_REVIEW_API_KEY or OPENROUTER_API_KEY)');
+    console.error('  default           — clear the setting; revert to auto-detection');
     process.exit(1);
   }
   const envPath = resolve(process.cwd(), '.env');
@@ -1429,19 +1524,9 @@ function assertAzureClaudeReady() {
 }
 
 async function buildClient(provider) {
-  if (provider === 'gemini') {
-    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  }
-  if (provider === 'azure-claude') {
-    process.stderr.write(`  [final-review] Azure work profile — Opus via Foundry (${azureConfig.claudeApiShape} shape, ${azureConfig.claudeDeployment}).\n`);
-    if (azureConfig.claudeApiShape === 'anthropic') {
-      // Native Anthropic at ${aiEndpoint}/anthropic/v1/messages, Bearer auth.
-      return createAnthropicClient({ baseURL: azureConfig.claudeBaseUrl });
-    }
-    return createOpenAIClient({ purpose: 'foundry-claude' });
-  }
-  process.stderr.write(`  [final-review] GEMINI_API_KEY missing; using Claude Opus fallback (${CLAUDE_OPUS_MODEL}).\n`);
-  return createAnthropicClient();
+  const descriptor = PROVIDERS[provider];
+  if (!descriptor) throw new Error(`[final-review] unknown provider "${provider}"`);
+  return descriptor.buildClient();
 }
 
 function isJsonTruncationError(err) {
@@ -1705,7 +1790,7 @@ function runFixtureReview({ transcriptFile, outFile, jsonMode }) {
   } else {
     console.log(formatReviewResult(result, { input_tokens: 0, output_tokens: 0, thinking_tokens: 0 }, 0, 'fixture'));
   }
-  process.exit(0);
+  return finishAndExit(0);
 }
 
 async function main() {
@@ -1719,8 +1804,8 @@ async function main() {
 
   const { planFile, transcriptFile, jsonMode, outFile, providerOverride, auditMode, runId, role } = parseReviewArgs(args);
   if (mode !== 'review' || !planFile || !transcriptFile) {
-    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>]');
-    console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|default>');
+    console.error('Usage: node scripts/gemini-review.mjs review <plan-file> <transcript-file> [--json] [--out <file>] [--provider gemini|azure-claude|anthropic|openai-compatible|openrouter] [--mode plan|code] [--role adjudicator-only] [--run-id <audit_runs.id>]');
+    console.error('       node scripts/gemini-review.mjs set-provider <gemini|azure-claude|anthropic|openai-compatible|openrouter|default>');
     console.error('       node scripts/gemini-review.mjs ping');
     process.exit(1);
   }
@@ -1742,6 +1827,10 @@ async function main() {
     }
     return runFixtureReview({ transcriptFile, outFile, jsonMode });
   }
+
+  // Arm the hard-deadline watchdog for the whole review (incl. cloud persistence)
+  // so a detached background run can never hang — the harness gives it no reaper.
+  armReviewWatchdog();
 
   // CLI --provider wins; else the persistent FINAL_REVIEW_PROVIDER setting; else auto-detect.
   const provider = selectProvider(providerOverride || resolveProviderSetting());
@@ -1775,9 +1864,10 @@ async function main() {
     await runShadowAndPersist(result, primaryModel, runId, { planContent, transcriptContent: usedTranscript, projectContext, auditMode }, { modelEvalOverride });
     emitReviewOutput(result, usage, latencyMs, provider, jsonMode, outFile);
     recordGeminiOutcomes(result, primaryModel);
+    await finishAndExit(0); // guarantee termination — never rely on natural drain
   } catch (err) {
     console.error(`Error: ${err.message}`);
-    process.exit(1);
+    await finishAndExit(1);
   }
 }
 
@@ -1793,6 +1883,11 @@ export const _internals = {
   mapRouteToShadowProvider,
   buildShadowClient,
   runShadowAndPersist,
+  callReviewer,
+  REVIEW_TRANSPORTS,
+  PROVIDERS,
+  resolveCompatCreds,
+  resolveOpenRouterCreds,
 };
 
 // Auto-run only when invoked directly (node scripts/gemini-review.mjs ...),
