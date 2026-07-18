@@ -151,6 +151,41 @@ export function isClaudeAvailable() {
   return resolveBackend() === 'cli' || Boolean(process.env.ANTHROPIC_API_KEY);
 }
 
+/**
+ * The SDK's own default endpoint. A baseURL that normalises to this value is
+ * semantically ABSENT — it expresses no custom-endpoint intent, because it
+ * names exactly the service every backend targets when no baseURL is set.
+ *
+ * Why this matters (found 2026-07-18, root-caused from 15 test failures):
+ * **agent harnesses inject this value ambiently.** Claude Code desktop sets
+ * `ANTHROPIC_BASE_URL=https://api.anthropic.com` in every shell it spawns —
+ * it is in no dotfile, no settings.json, and cannot be unset "at the source"
+ * because the source is the harness itself, outside this repo's control (and
+ * dotenv never overrides an existing var, so `.env` can't fix it either).
+ * Treating that injected default as a *custom-endpoint intent* had three
+ * distinct bad consequences, all downstream of `effectiveBaseURL`:
+ *   1. explicit `backend:'cli'` + injected default → the contradiction throw
+ *      (every cli-adapter test failed inside the harness, passed outside it);
+ *   2. ambient `CLAUDE_BACKEND=cli` + injected default → silent coercion to
+ *      the sdk backend, billing the API key instead of the Agent SDK credit;
+ *   3. a truthy baseURL flips the Azure-key precedence, so an ambient
+ *      `AZURE_OPENAI_API_KEY` would have been sent to PUBLIC api.anthropic.com.
+ * Normalising at the single resolution point fixes all three consumers at
+ * once. A GENUINELY custom URL (corporate gateway, LiteLLM, Foundry) keeps
+ * today's exact semantics — including the loud cli contradiction, which is
+ * correct: silently ignoring a real gateway URL would misroute a corporate
+ * payload to the public endpoint.
+ */
+const CANONICAL_ANTHROPIC_URL = 'https://api.anthropic.com';
+
+/** '' when `url` is empty OR the canonical default (case-insensitive, trailing
+ *  slashes ignored); the trimmed original otherwise. */
+function normalizeBaseUrl(url) {
+  const trimmed = String(url || '').trim();
+  const comparable = trimmed.replace(/\/+$/, '').toLowerCase();
+  return comparable === CANONICAL_ANTHROPIC_URL ? '' : trimmed;
+}
+
 /** Once-per-session tracking so the baseURL→sdk coercion warns but doesn't spam. */
 let _warnedBaseUrlForcedSdk = false;
 
@@ -231,7 +266,11 @@ export async function createAnthropicClient(options = {}) {
   // api.anthropic.com (today's behaviour, unchanged). When a baseURL is set
   // AND an Azure key is present, the Foundry endpoint authenticates via the
   // `api-key` header (the SDK's default `x-api-key` is insufficient there).
-  const effectiveBaseURL = options.baseURL || process.env.ANTHROPIC_BASE_URL || '';
+  // Normalised: the canonical default (harness-injected by e.g. Claude Code
+  // desktop) reads as ABSENT — see CANONICAL_ANTHROPIC_URL above for the three
+  // downstream consumers this protects (cli guard, backend coercion, Azure-key
+  // precedence).
+  const effectiveBaseURL = normalizeBaseUrl(options.baseURL || process.env.ANTHROPIC_BASE_URL || '');
   // A baseURL is unhonourable by the cli backend — reconcile before the cache
   // key is built, so a coerced call can never share an entry with a cli client.
   const backend = reconcileBackendWithBaseUrl(
@@ -817,6 +856,7 @@ export const _internals = {
   buildPromptFromMessages,
   normaliseCliOutput,
   createCliAdapter,
+  normalizeBaseUrl,
   quoteWinArg,
   getDefaultRedactor,
   wrapSdkClient,

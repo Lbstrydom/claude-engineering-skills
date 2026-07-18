@@ -1,5 +1,19 @@
 # Project Status Log
 
+## 2026-07-18 — Harness-injected ANTHROPIC_BASE_URL: the canonical default is semantically absent
+
+### Root cause
+The 15 pre-existing `anthropic-client` test failures (and the pre-push block the adjacency ship hit) were traced to their true source: **the Claude Code desktop harness injects `ANTHROPIC_BASE_URL=https://api.anthropic.com` into every shell it spawns**. It lives in no dotfile, no registry entry, no settings.json — the harness is the source, so it cannot be unset "at the source", and dotenv never overrides an existing var, so `.env` can't fix it either. The client factory treated *any* truthy baseURL as custom-endpoint intent, which had **three** distinct consequences: (1) explicit `backend:'cli'` + the injected default → the contradiction throw — the suite failed inside the harness and passed outside it; (2) ambient `CLAUDE_BACKEND=cli` + the default → **silent coercion to sdk, billing the API meter instead of the Agent SDK credit** since whenever the harness began injecting; (3) a truthy baseURL flips the Azure-key precedence, so an ambient `AZURE_OPENAI_API_KEY` would have been sent to public api.anthropic.com.
+
+### Changes
+- **`normalizeBaseUrl` at the single resolution point** (`anthropic-client.mjs`): a baseURL that normalises to the canonical default (case-insensitive, trailing slashes) is semantically **absent** — it names the endpoint every backend already targets and carries no routing intent. One fix point corrects all three consumers. **Gateway semantics unsoftened**: a genuinely custom URL (LiteLLM, corporate proxy, Foundry) keeps the loud cli contradiction — silently ignoring a real gateway URL would misroute a corporate payload to the public endpoint. No prefix matching (`api.anthropic.com.evil.example` is not the default).
+- **Suite-level hermeticity**: the test suite now scrubs the full `AMBIENT_PROVIDER_ENV` set (`CLAUDE_BACKEND`, `CLAUDE_BIN`, `ANTHROPIC_API_KEY`, **`ANTHROPIC_BASE_URL`**) in `beforeEach` — the old block saved three of the four resolution inputs and missed the sibling, the exact scrub-list-vs-resolution-list drift the adjacency wave catches in code. Suite verdict is now a function of the repo, never the operator's shell — which matters because the operator's shell is not always their own.
+
+### Verification
+- **56/56** in the anthropic-client suite *with the var still injected* (was 36/51); full suite **7191 pass / 0 fail** in the same hostile shell — the 15 "pre-existing environment failures" are gone at their root, not worked around.
+- Live: `anthropic:ping` from a harness shell reports **`backend=cli`** — the Agent SDK credit is genuinely in use again.
+- New pins: the harness repro, the billing coercion, the custom-URL mirrors (×2), and a `normalizeBaseUrl` truth table incl. the near-miss domain case.
+
 ## 2026-07-18 — Containment-adjacency wave: "what else is in this branch?" as a mechanism (A+B+C landed)
 
 ### Why

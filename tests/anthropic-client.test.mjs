@@ -28,24 +28,34 @@ const { buildPromptFromMessages, normaliseCliOutput, quoteWinArg } = _internals;
 let tmpDir;
 let savedEnv;
 
+// Every env var `createAnthropicClient` resolves ambiently. The suite SCRUBS
+// these before each test (not merely saves them): the suite's verdict must be
+// a function of the repo, never of the operator's shell — and the operator's
+// shell is not always the operator's own. Claude Code desktop injects
+// `ANTHROPIC_BASE_URL=https://api.anthropic.com` into every child shell, which
+// made these 15 tests fail inside the harness and pass outside it (2026-07-18).
+// The original hygiene block saved three of the four resolution inputs and
+// missed the sibling — the exact scrub-list-vs-resolution-list drift the
+// containment-adjacency wave exists to catch in code. A test that NEEDS one of
+// these sets it explicitly via `withEnv`.
+const AMBIENT_PROVIDER_ENV = ['CLAUDE_BACKEND', 'CLAUDE_BIN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'];
+
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'anthropic-client-'));
-  savedEnv = {
-    CLAUDE_BACKEND: process.env.CLAUDE_BACKEND,
-    CLAUDE_BIN: process.env.CLAUDE_BIN,
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-  };
+  savedEnv = {};
+  for (const k of AMBIENT_PROVIDER_ENV) {
+    savedEnv[k] = process.env[k];
+    delete process.env[k];
+  }
   _resetClientCache();
 });
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
-  process.env.CLAUDE_BACKEND = savedEnv.CLAUDE_BACKEND;
-  process.env.CLAUDE_BIN = savedEnv.CLAUDE_BIN;
-  process.env.ANTHROPIC_API_KEY = savedEnv.ANTHROPIC_API_KEY;
-  if (savedEnv.CLAUDE_BACKEND === undefined) delete process.env.CLAUDE_BACKEND;
-  if (savedEnv.CLAUDE_BIN === undefined) delete process.env.CLAUDE_BIN;
-  if (savedEnv.ANTHROPIC_API_KEY === undefined) delete process.env.ANTHROPIC_API_KEY;
+  for (const k of AMBIENT_PROVIDER_ENV) {
+    if (savedEnv[k] === undefined) delete process.env[k];
+    else process.env[k] = savedEnv[k];
+  }
   _resetClientCache();
 });
 
@@ -658,6 +668,66 @@ describe('createAnthropicClient: baseURL vs cli backend', () => {
       () => createAnthropicClient({ backend: 'cli', baseURL: 'https://x.azure.com', fresh: true }),
       /cannot honour baseURL/,
     );
+  });
+
+  // ── The canonical default is semantically ABSENT (harness-injected env) ──
+  //
+  // Claude Code desktop injects ANTHROPIC_BASE_URL=https://api.anthropic.com
+  // into every child shell. It names exactly the endpoint every backend
+  // already targets, so it carries no custom-endpoint intent — yet before the
+  // normalisation it (1) made explicit-cli clients throw (these very tests
+  // failed inside the harness and passed outside it), (2) coerced ambient-cli
+  // to sdk, silently billing the API key instead of the Agent SDK credit, and
+  // (3) flipped the Azure-key precedence toward sending AZURE_OPENAI_API_KEY
+  // to the public endpoint. The custom-URL mirrors below prove the loud
+  // gateway semantics did NOT soften.
+  it('HARNESS PIN: explicit backend:cli + the canonical default URL constructs a cli client', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await withEnv({ ANTHROPIC_BASE_URL: 'https://api.anthropic.com' }, async () => {
+      const client = await createAnthropicClient({ backend: 'cli', fresh: true });
+      assert.equal(client.baseURL, undefined, 'cli adapter constructed — the default URL is not a contradiction');
+    });
+  });
+
+  it('the canonical default tolerates a trailing slash and case', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await withEnv({ ANTHROPIC_BASE_URL: 'https://API.anthropic.com/' }, async () => {
+      const client = await createAnthropicClient({ backend: 'cli', fresh: true });
+      assert.equal(client.baseURL, undefined);
+    });
+  });
+
+  it('BILLING PIN: ambient cli + the canonical default stays on the cli backend (no sdk coercion)', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await withEnv({ CLAUDE_BACKEND: 'cli', ANTHROPIC_BASE_URL: 'https://api.anthropic.com' }, async () => {
+      const client = await createAnthropicClient({ fresh: true });
+      assert.equal(client.baseURL, undefined, 'must remain the cli adapter — coercion here silently moves spend from the Agent SDK credit to the API meter');
+    });
+  });
+
+  it('MIRROR: a genuinely custom URL + explicit cli still throws (gateway semantics unsoftened)', async () => {
+    const { createAnthropicClient } = await import('../scripts/lib/anthropic-client.mjs');
+    await withEnv({ ANTHROPIC_BASE_URL: 'https://litellm.corp.example.com' }, async () => {
+      await assert.rejects(
+        () => createAnthropicClient({ backend: 'cli', fresh: true }),
+        /cannot honour baseURL/,
+        'a real gateway URL must stay a loud contradiction — silently ignoring it misroutes a corporate payload to the public endpoint',
+      );
+    });
+  });
+
+  it('normalizeBaseUrl: the unit truth table', async () => {
+    const { _internals } = await import('../scripts/lib/anthropic-client.mjs');
+    const n = _internals.normalizeBaseUrl;
+    assert.equal(n('https://api.anthropic.com'), '');
+    assert.equal(n('https://api.anthropic.com/'), '');
+    assert.equal(n('HTTPS://API.ANTHROPIC.COM//'), '');
+    assert.equal(n(''), '');
+    assert.equal(n(undefined), '');
+    // Custom endpoints pass through byte-preserved (paths can be case-sensitive).
+    assert.equal(n('https://x.Azure.com/v1'), 'https://x.Azure.com/v1');
+    // Near-misses are NOT the canonical default — no prefix matching.
+    assert.equal(n('https://api.anthropic.com.evil.example'), 'https://api.anthropic.com.evil.example');
   });
 });
 
