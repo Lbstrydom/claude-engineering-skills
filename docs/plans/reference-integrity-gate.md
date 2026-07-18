@@ -1,12 +1,18 @@
 # Plan: Repo-Wide Reference-Integrity Gate
 
 - **Date**: 2026-07-17
-- **Status**: **Cluster A implemented + converged** (2026-07-17). Plan approved
-  (3 GPT + 2 Gemini rounds). **Cluster A** (Phase 1, the reference-integrity
-  lint) built test-first, code-audited to convergence (5 GPT rounds + 2 Gemini
-  rounds), merged to main. **Clusters B and C remain unbuilt** — B (the 140-file
-  move + ~181-ref rewrite) needs an exclusive main and was deliberately deferred
-  while parallel sessions held the tree.
+- **Status**: **Clusters A + B implemented + converged** (A 2026-07-17, B
+  2026-07-18). Plan approved (3 GPT + 2 Gemini rounds). **Cluster A** (Phase 1,
+  the lint): test-first, code-audited 5 GPT + 2 Gemini rounds, **merged to main**.
+  **Cluster B** (Phases 2-3, the 145-file consolidation + 163-ref rewrite +
+  drift-gate-framed Phase 3): built in an isolated worktree, fix-gate audit (GPT
+  round 1 — all findings out-of-cluster/pre-existing/marker-long-tail, 0 in-cluster
+  fixes) + consolidated Gemini gate (round 1 CONCERNS → 1 real fix + 1 refuted →
+  round 2 **APPROVE**). **NOT yet merged** — deferred until the shared `main` is
+  quiet AND Cluster C lands close behind (Cluster B empties `docs/completed/` but
+  does not delete the archiver, which would re-populate it on the next `/ship`
+  until Cluster C removes it). **Cluster C** (Phases 4-6: the status contract,
+  archiver deletion, turn the gate live) remains unbuilt.
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 
