@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**3 active · 126 terminal · 22 audit summaries · 4 reference docs**
+**4 active · 126 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,6 +22,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
+| [Observed-Graph Coverage Honesty](./observed-graph-coverage-honesty.md) | `Draft` | audited, gate closed by decision (see Audit Trail |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
