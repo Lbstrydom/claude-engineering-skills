@@ -13,6 +13,9 @@
  */
 
 import { execSync, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 /**
  * @typedef {'GIT_BINARY_MISSING'
@@ -143,6 +146,89 @@ export function gitCommitSha(cwd) {
     return { ok: true, sha };
   } catch (err) {
     return { ok: false, error: classifyChildError(err, { wantedRev: 'HEAD' }) };
+  }
+}
+
+/**
+ * Hash the **worktree's** content identity as a git tree object (WS-E / E1).
+ *
+ * This is the subject an audit actually read, and it is what `AI-Gate: passed`
+ * binds its claim to. Two things about it are load-bearing:
+ *
+ * 1. **It hashes the WORKTREE, not the index.** A plain `git write-tree` hashes
+ *    the index, but a code audit reads the files on disk, and the two diverge
+ *    routinely (unstaged edits). If the index held a broken version while the
+ *    worktree held the fix, the audit would evaluate the good content while the
+ *    recorded identity named the broken index — and committing the index would
+ *    then satisfy the equality check, re-opening the false-pass hole one level
+ *    down. So we stage the worktree into a THROWAWAY index via `GIT_INDEX_FILE`
+ *    and hash that. The repo's real index is never touched.
+ * 2. **A commit SHA cannot substitute for it.** `ship-commit` validates trailers
+ *    *before* the new commit exists, so HEAD is still the parent: audit a clean
+ *    tree at A → pass → edit → commit compares `A === A` and succeeds while the
+ *    claim it encodes is false. Only content identity survives a post-audit edit.
+ *
+ * `git add -A` honours `.gitignore`, so ignored paths (node_modules, `.audit/`)
+ * are excluded — matching what an audit reads and keeping the hash stable.
+ *
+ * @param {string} cwd
+ * @returns {{ok: true, tree: string} | {ok: false, error: VcsError}}
+ */
+export function gitWorktreeTree(cwd) {
+  let tmpIndex;
+  try {
+    tmpIndex = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-tree-'));
+  } catch (err) {
+    return { ok: false, error: { code: 'EXEC_FAILED', message: `cannot create temp index dir: ${err?.code || 'unknown'}`, cause: err } };
+  }
+  const indexFile = path.join(tmpIndex, 'index');
+  // Inherit the caller's env so git still sees GIT_DIR/credentials/etc; only
+  // GIT_INDEX_FILE is overridden, which is what keeps the real index pristine.
+  const env = { ...process.env, GIT_INDEX_FILE: indexFile };
+  try {
+    // `read-tree HEAD` seeds the temp index so `add -A` records deletions
+    // relative to HEAD rather than starting from an empty tree. A repo with no
+    // commits yet has no HEAD — that is fine, the empty-index start is correct.
+    try {
+      execSync('git read-tree HEAD', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch { /* no HEAD yet (fresh repo) — empty index is the right base */ }
+    execSync('git add -A', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const tree = execSync('git write-tree', { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+      .toString().trim();
+    if (!/^[0-9a-f]{40}$/.test(tree)) {
+      return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `git write-tree returned an unexpected object id: ${tree.slice(0, 60)}` } };
+    }
+    return { ok: true, tree };
+  } catch (err) {
+    return { ok: false, error: classifyChildError(err) };
+  } finally {
+    try { fs.rmSync(tmpIndex, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 }); } catch { /* temp cleanup is best-effort */ }
+  }
+}
+
+/**
+ * Hash the tree that a commit right now WOULD produce — i.e. the current index.
+ *
+ * This is the verifier's side of the E1 equality. It deliberately reads the
+ * INDEX (not the worktree), because that is precisely what `git commit` will
+ * turn into a tree. The asymmetry with {@link gitWorktreeTree} is intentional
+ * and is the whole check: staging only a SUBSET of an audited worktree yields a
+ * different tree and correctly degrades the gate to `not-run`, because a
+ * whole-worktree audit does not cover a partial commit.
+ *
+ * @param {string} cwd
+ * @returns {{ok: true, tree: string} | {ok: false, error: VcsError}}
+ */
+export function gitIndexTree(cwd) {
+  try {
+    const tree = execSync('git write-tree', { cwd, stdio: ['ignore', 'pipe', 'pipe'] })
+      .toString().trim();
+    if (!/^[0-9a-f]{40}$/.test(tree)) {
+      return { ok: false, error: { code: 'WORKING_TREE_UNREADABLE', message: `git write-tree returned an unexpected object id: ${tree.slice(0, 60)}` } };
+    }
+    return { ok: true, tree };
+  } catch (err) {
+    return { ok: false, error: classifyChildError(err) };
   }
 }
 

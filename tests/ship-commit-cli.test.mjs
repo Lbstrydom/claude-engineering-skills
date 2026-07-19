@@ -119,8 +119,22 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'not-run']);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: an audit ran after HEAD/);
-    // fresh evidence + passed WITHOUT verifiable store verdict: refused
-    // fail-closed (R1 H3/H5) — freshness proves an audit ran, not that it passed
+    // fresh evidence + passed, but the marker predates E1 (no audited-tree):
+    // refused on IDENTITY before the store is even consulted.
+    r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed']);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /recorded no audited-tree identity/);
+
+    // Now give the marker the identity of the tree this commit will actually
+    // produce, so the run gets PAST the identity leg and reaches the store leg
+    // this row is really about. Without this the assertion below would silently
+    // start testing the E1 refusal instead of the fail-closed verdict refusal.
+    fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'),
+      JSON.stringify({
+        runId: 'ecae388d-c176-4182-9d27-0210b919b844',
+        ts: new Date(Date.now() + 60_000).toISOString(),
+        auditedTree: git(['write-tree']).trim(),
+      }));
     r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed']);
     assert.equal(r.status, 2);
     assert.match(r.stderr, /AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ecae388d-c176-4182-9d27-0210b919b844 but verification is unavailable \(AUDIT_DB_URL unset\)/);
@@ -302,5 +316,60 @@ describe('ship-commit CLI — §F1.4 taxonomy', () => {
     assert.equal(r.status, 0);
     assert.equal(r.stdout.trim(), 'OK');
     assert.equal(commitCount(), before);
+  });
+});
+
+// ── E1: the false-pass attack, driven through the REAL CLI ─────────────────
+// The unit-level proof lives in tests/gate-evidence-tree-identity.test.mjs.
+// This is the end-to-end one: it exercises the actual binary, so it also pins
+// the WIRING (ship-commit resolving the committed tree and handing it to the
+// verifier) — the piece a unit test cannot see.
+describe('ship-commit CLI — E1 audited-target identity', () => {
+  const freshMarker = (extra) => {
+    fs.mkdirSync(path.join(repo, '.audit'), { recursive: true });
+    fs.writeFileSync(path.join(repo, '.audit', 'last-audit-run.json'), JSON.stringify({
+      runId: 'ecae388d-c176-4182-9d27-0210b919b844',
+      ts: new Date(Date.now() + 60_000).toISOString(),
+      ...extra,
+    }));
+  };
+
+  it('audit clean tree -> edit -> commit is REFUSED (the whole point of E1)', () => {
+    const mf = arrange();
+    const before = commitCount();
+    // The audit ran against the tree as it stands now.
+    freshMarker({ auditedTree: git(['write-tree']).trim() });
+
+    // ...then the author edits and stages more. Freshness still passes — the
+    // marker is newer than HEAD — but the content is no longer what was audited.
+    fs.writeFileSync(path.join(repo, 'sneaked-in.txt'), 'never audited\n');
+    git(['add', 'sneaked-in.txt']);
+
+    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'passed']);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /is not what run .* audited/);
+    assert.equal(commitCount(), before, 'the false-pass commit must not land');
+  });
+
+  it('--path (partial commit) cannot claim passed even when the index matches', () => {
+    // The index tree can equal the audited tree while --path commits only a
+    // subset, so trusting the index here would be a false pass.
+    const mf = arrange();
+    fs.writeFileSync(path.join(repo, 'other.txt'), 'also changed\n');
+    git(['add', 'other.txt']);
+    freshMarker({ auditedTree: git(['write-tree']).trim() });
+
+    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude',
+      '--gate', 'passed', '--path', 'other.txt']);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /cannot resolve the tree being committed|is not what run .* audited/);
+  });
+
+  it('waived is still reachable on a mismatched tree (the identity check only gates passed)', () => {
+    const mf = arrange();
+    freshMarker({ auditedTree: 'a'.repeat(40) });   // deliberately not our tree
+    const r = runCli(['--message-file', mf, '--skill', 'ship', '--models', 'claude', '--gate', 'waived']);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(git(['log', '-1', '--format=%B']), /AI-Gate: waived/);
   });
 });

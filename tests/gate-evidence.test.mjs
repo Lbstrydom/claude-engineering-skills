@@ -25,6 +25,11 @@ import { buildGateEvidence, writeGateEvidence, GATE_EVIDENCE_RELPATH } from '../
 import { resolveEvidence, evaluateGateVerification, validateTrailerInput } from '../scripts/lib/commit-trailers.mjs';
 
 const RUN_ID = '9f3c1d2e-4b5a-4c6d-8e7f-0a1b2c3d4e5f';   // a real UUID shape
+// E1 added a third leg to `passed`: committed tree === audited tree. This file
+// pins the marker/verdict pair, so it supplies a matching identity to reach the
+// leg under test. The identity leg has its own file
+// (tests/gate-evidence-tree-identity.test.mjs) — including the false-pass attack.
+const AUDITED_TREE = 'a'.repeat(40);
 const HEAD_TS = Math.floor(Date.parse('2026-07-18T10:00:00.000Z') / 1000);
 
 /** An in-memory fs stub exposing only what `resolveEvidence` uses. */
@@ -41,7 +46,7 @@ function fsStub(contents) {
 
 describe('the marker the writer produces is ACCEPTED by the real validator', () => {
   test('a fresh marker resolves as fresh, carrying the runId through', () => {
-    const payload = buildGateEvidence({ runId: RUN_ID, sid: 'audit-123', round: 2, nowIso: '2026-07-18T11:00:00.000Z' });
+    const payload = buildGateEvidence({ runId: RUN_ID, sid: 'audit-123', round: 2, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z' });
     const ev = resolveEvidence({
       auditRunPath: '/repo/.audit/last-audit-run.json',
       headCommitTs: HEAD_TS,
@@ -52,7 +57,7 @@ describe('the marker the writer produces is ACCEPTED by the real validator', () 
   });
 
   test('the payload satisfies RUN_ID_RE and a parseable ts (via the validator, not a restated rule)', () => {
-    const payload = buildGateEvidence({ runId: RUN_ID, nowIso: '2026-07-18T11:00:00.000Z' });
+    const payload = buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z' });
     const ev = resolveEvidence({
       auditRunPath: '/m.json', headCommitTs: HEAD_TS,
       fsMod: fsStub({ '/m.json': JSON.stringify(payload) }),
@@ -63,7 +68,7 @@ describe('the marker the writer produces is ACCEPTED by the real validator', () 
   test('MIRROR: a marker written BEFORE HEAD reads as stale, not fresh', () => {
     // Without this the freshness assertion above could pass on a writer that
     // stamped a constant far-future ts.
-    const payload = buildGateEvidence({ runId: RUN_ID, nowIso: '2026-07-18T09:00:00.000Z' });
+    const payload = buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T09:00:00.000Z' });
     const ev = resolveEvidence({
       auditRunPath: '/m.json', headCommitTs: HEAD_TS,
       fsMod: fsStub({ '/m.json': JSON.stringify(payload) }),
@@ -75,7 +80,7 @@ describe('the marker the writer produces is ACCEPTED by the real validator', () 
 describe('THE REACHABILITY PIN: passed is now attainable, and only with both halves', () => {
   const freshEv = () => resolveEvidence({
     auditRunPath: '/m.json', headCommitTs: HEAD_TS,
-    fsMod: fsStub({ '/m.json': JSON.stringify(buildGateEvidence({ runId: RUN_ID, nowIso: '2026-07-18T11:00:00.000Z' })) }),
+    fsMod: fsStub({ '/m.json': JSON.stringify(buildGateEvidence({ runId: RUN_ID, auditedTree: AUDITED_TREE, nowIso: '2026-07-18T11:00:00.000Z' })) }),
   });
 
   test('fresh marker + a converged store row → passed is ACCEPTED', () => {
@@ -85,6 +90,7 @@ describe('THE REACHABILITY PIN: passed is now attainable, and only with both hal
       evidence: freshEv(),
       cloudEnabled: true,
       convergence: { roundConvergedAfter: 2 },
+      committedTree: AUDITED_TREE,
     });
     assert.equal(err, null, 'a converged, cloud-verified audit must be able to say passed');
   });
@@ -93,13 +99,14 @@ describe('THE REACHABILITY PIN: passed is now attainable, and only with both hal
     const err = evaluateGateVerification({
       gate: 'passed', evidence: freshEv(), cloudEnabled: true,
       convergence: { roundConvergedAfter: null },   // the state ALL 39 live rows were in
+      committedTree: AUDITED_TREE,
     });
     assert.ok(err, 'a marker proves an audit RAN, never that it PASSED');
     assert.match(err.custom, /did not converge/);
   });
 
   test('fresh marker + cloud off → passed refused (unverifiable ≠ verified)', () => {
-    const err = evaluateGateVerification({ gate: 'passed', evidence: freshEv(), cloudEnabled: false, convergence: null });
+    const err = evaluateGateVerification({ gate: 'passed', evidence: freshEv(), cloudEnabled: false, convergence: null, committedTree: AUDITED_TREE });
     assert.ok(err);
     assert.match(err.custom, /verification is unavailable/);
   });
@@ -134,7 +141,7 @@ describe('writeGateEvidence — when it writes, and when it stays silent', () =>
 
   test('writes for a cloud-backed CODE audit', () => {
     const { writes, adapters } = capture();
-    const r = writeGateEvidence({ repoRoot: '/repo', runId: RUN_ID, mode: 'code', round: 1, adapters });
+    const r = writeGateEvidence({ repoRoot: '/repo', runId: RUN_ID, mode: 'code', round: 1, auditedTree: AUDITED_TREE, adapters });
     assert.equal(r.written, true);
     assert.equal(writes.length, 1);
     assert.ok(writes[0].p.endsWith(GATE_EVIDENCE_RELPATH), `unexpected path ${writes[0].p}`);
@@ -162,7 +169,7 @@ describe('writeGateEvidence — when it writes, and when it stays silent', () =>
   test('a write failure degrades to not-run rather than failing the audit', () => {
     const logs = [];
     const r = writeGateEvidence({
-      repoRoot: '/repo', runId: RUN_ID, mode: 'code',
+      repoRoot: '/repo', runId: RUN_ID, mode: 'code', auditedTree: AUDITED_TREE,
       log: (m) => logs.push(m),
       adapters: { atomicWriteFileSync: () => { const e = new Error('EACCES'); e.code = 'EACCES'; throw e; } },
     });

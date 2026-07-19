@@ -3069,6 +3069,9 @@ export async function runLegacyProductionAudit(ctx) {
     // (a) The local marker — proves an audit RAN after HEAD. Never proves it
     //     passed; that is deliberately the store's job, because a local file
     //     is not evidence anyone should be able to hand-author.
+    //     The audited-target identity (E1 hop 3) is carried from ctx, captured
+    //     BEFORE input collection — never re-derived here, which would hash the
+    //     tree as it looks now rather than as the audit read it.
     const { writeGateEvidence } = await import('./gate-evidence.mjs');
     writeGateEvidence({
       repoRoot: process.cwd(),
@@ -3076,6 +3079,8 @@ export async function runLegacyProductionAudit(ctx) {
       mode: 'code',
       sid: debtRunId ?? null,   // the session's stable `audit-<ts>` id (declared above)
       round: round || 1,
+      auditedSha: ctx.auditedSha ?? null,
+      auditedTree: ctx.auditedTree ?? null,
     });
 
     // (b) The store verdict — the ONLY thing that can license `passed`.
@@ -3092,9 +3097,16 @@ export async function runLegacyProductionAudit(ctx) {
         medium: allFindings.filter((f) => f.severity === 'MEDIUM').length,
         quickFix: allFindings.filter((f) => f.is_quick_fix).length,
       });
-      if (convergedNow) {
-        await recordConvergenceState(cloudRunId, { round_converged_after: round || 1 });
-      }
+      // The SUBJECT is recorded whether or not the run converged (E1 hop 2):
+      // "what was audited" is a fact of the run, independent of its verdict, and
+      // binding it here is what lets the store contradict a forged local marker.
+      // `round_converged_after` stays NULL on a non-converged round — the honest
+      // value, and the one that makes `passed` refuse.
+      await recordConvergenceState(cloudRunId, {
+        audited_sha: ctx.auditedSha ?? null,
+        audited_tree: ctx.auditedTree ?? null,
+        ...(convergedNow ? { round_converged_after: round || 1 } : {}),
+      });
     } catch (e) {
       process.stderr.write(`  [gate-evidence] convergence record failed: ${e.message}\n`);
     }

@@ -259,7 +259,34 @@ async function main() {
         // "AUDIT_DB_URL unset" (R2 M3). convergence stays null (fail-closed).
       }
     }
-    const ver = evaluateGateVerification({ gate: values.gate, evidence, cloudEnabled, convergence });
+    // ---- E1: resolve the tree this commit will actually produce -----------
+    // `passed` binds to WHAT was audited, not just to when, so the verifier
+    // needs the committed content's identity. Two cases, and the second is a
+    // deliberate refusal rather than an omission:
+    //
+    //   default (commit the index) → `git write-tree` IS the tree git is about
+    //     to record, so it is exactly the right comparand.
+    //   --path (commit only named paths) → the resulting tree is HEAD's tree
+    //     with those paths overlaid, NOT the index tree. Comparing the index
+    //     here would be a FALSE PASS: an operator could stage the whole audited
+    //     worktree (index tree matches), then commit a subset via --path and
+    //     still be told the content was audited. A whole-worktree audit does
+    //     not cover a partial commit, so leave the comparand null and let
+    //     evaluateGateVerification refuse — the honest answer.
+    //
+    // Adjacency decision (audit R1 HIGH, resolved): this resolution is
+    // deliberately INSIDE the `passed && fresh` branch, not hoisted. The value
+    // is consumed only by evaluateGateVerification, which no-ops unless the
+    // gate is `passed` and the evidence is `fresh` — the very condition above.
+    // Hoisting would spawn a `git write-tree` subprocess on every commit,
+    // including docs-only `not-run` ships, for a value nothing else reads.
+    let committedTree = null;
+    if (opts.paths.length === 0) {
+      const { gitIndexTree } = await import('./lib/vcs.mjs');
+      const treeRes = gitIndexTree(repoRoot);
+      committedTree = treeRes.ok ? treeRes.tree : null;
+    }
+    const ver = evaluateGateVerification({ gate: values.gate, evidence, cloudEnabled, convergence, committedTree });
     if (ver) {
       for (const line of renderAgentFixLines([ver])) err(line);
       process.exit(2);

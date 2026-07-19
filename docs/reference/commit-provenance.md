@@ -22,8 +22,37 @@ AI-Run-ID: ecae388d-c176-4182-9d27-0210b919b844
 |---|---|---|
 | `AI-Skill` | lowercase kebab-case, must name a `skills/` (or consumer `.claude/skills/`) directory | which skill workflow produced the commit |
 | `AI-Models` | comma-separated tokens `^[a-z][a-z0-9.-]*$`, deduplicated, sorted alphabetically | **declared** lineup of models that participated. Grammar-validated but not evidence-bound (same honesty tier as a `Co-authored-by` line) — receipt-derived binding is a v2 item |
-| `AI-Gate` | `passed` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, or run not converged all refuse `passed`, fail-closed. Scope of the verified claim: **GPT-loop convergence only** — the Gemini final-review disposition is not yet store-verifiable per run; binding it is part of the V2 ship-evidence receipt. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
-| `AI-Run-ID` | `[A-Za-z0-9-]{8,64}`, conditional | injected by the helper from `.audit/last-audit-run.json` when fresh — never typed by an agent. A best-effort correlation hint into the `audit_runs` store, not proof. `--no-run-id` omits it (declares the audit unrelated) and forces `--gate not-run` |
+| `AI-Gate` | `passed` \| `waived` \| `not-run` | **evidence- and verdict-bound**: `passed`/`waived` require `.audit/last-audit-run.json` fresher than `HEAD` (an audit ran this cycle); `not-run` requires its absence. `passed` additionally requires (a) the **audited-target identity** to match — the marker's `auditedTree` must equal the tree being committed (see below), checked first and locally — and (b) the run's **convergence verdict verified against the cloud store** (`audit_runs` row via `getAuditRunConvergence`) — cloud off, run not found, run not converged, or a tree mismatch all refuse `passed`, fail-closed. Scope of the verified claim: **GPT-loop convergence only** — the Gemini final-review disposition is not yet store-verifiable per run; binding it is part of the V2 ship-evidence receipt. `waived` is the declared, unverified disposition (gate override OR verification unavailable); the accompanying `AI-Run-ID` keeps it forensically resolvable |
+| `AI-Run-ID` | `[A-Za-z0-9-]{8,64}`, conditional | injected by the helper from `.audit/last-audit-run.json` when fresh — never typed by an agent. Since E1 this is **more than a correlation hint on a `passed` commit**: `passed` additionally requires the marker's `auditedTree` to equal the tree being committed, so the id names a run whose *subject* was verified. On `waived` it remains a best-effort hint. `--no-run-id` omits it (declares the audit unrelated) and forces `--gate not-run` |
+
+### The audited-target identity (E1)
+
+`passed` binds to **what was audited**, not merely to when. The marker carries
+`auditedTree` — the git tree object id of the worktree the audit read — and
+`ship-commit` refuses `passed` unless the tree being committed equals it.
+
+Why a timestamp alone was not enough: a run started against commit **A** can
+terminate *after* commit **B**'s timestamp, so freshness reads true and `passed`
+attaches to **B — a commit that was never audited**. And why a commit sha alone
+was not enough either: trailer validation runs *before* the new commit exists,
+so `HEAD` is still the parent, and `auditedSha === HEAD` compares `A === A` and
+succeeds by construction while the claim it encodes is false. Content identity
+is the only one of the three checks a post-audit edit cannot satisfy.
+
+Consequences worth knowing before they surprise you:
+
+- **A partial commit of an audited worktree refuses `passed`.** Staging a subset
+  produces a different tree. This is correct — a whole-worktree audit does not
+  cover a subset — but it means "audit everything, then commit some of it" needs
+  `waived`, not `passed`.
+- **Unstaged edits count.** The captured identity hashes files on disk, not the
+  index, because that is what the audit read.
+- **Pre-E1 markers and rows never verify.** `auditedTree` is nullable and is
+  never backfilled; a run without one is *unverifiable → `not-run`*, never a
+  pass. Backfilling a guessed value would retroactively legitimise exactly the
+  unbound evidence the field exists to reject.
+- **A failed VCS capture makes the run evidence-less** — no marker is written at
+  all, rather than one that cannot support its own claim.
 
 The `AI-*` namespace is **reserved**: a commit-message file containing any
 `AI-*` trailer is rejected (`reserved-trailer`) — the helper is the only

@@ -431,6 +431,27 @@ export async function runMultiPassCodeAudit(openai, planContent, projectContext,
     openai, planContent, projectContext, historyContext, outFile, model: MODEL, ...opts,
   });
 
+  // ── E1 hop 1: capture the audit TARGET identity, before any input is read ──
+  // This must happen here, ahead of both pipelines, because the identity has to
+  // name the bytes the audit actually read. Capturing at the completion seam
+  // instead would hash whatever the tree looks like when the run finishes — a
+  // moving target if the operator edits during a multi-minute audit, which is
+  // exactly the race that makes timestamp freshness insufficient.
+  //
+  // A failed capture is NOT fatal and is NOT guessed around: it leaves both
+  // fields null, `writeGateEvidence` then declines to write a marker, and the
+  // commit honestly reads `not-run`.
+  {
+    const { gitWorktreeTree, gitCommitSha } = await import('./lib/vcs.mjs');
+    const treeRes = gitWorktreeTree(process.cwd());
+    const shaRes = gitCommitSha(process.cwd());
+    ctx.auditedTree = treeRes.ok ? treeRes.tree : null;
+    ctx.auditedSha = shaRes.ok ? shaRes.sha : null;
+    if (!treeRes.ok) {
+      process.stderr.write(`  [gate-evidence] audit-target capture failed (${treeRes.error?.code || 'UNKNOWN'}) — this run will be evidence-less\n`);
+    }
+  }
+
   // `ctx.allowTiered` (shadow-flip incident fix, 2026-07-13): env flags are
   // operator intent, global to every Node process (tests included, via the
   // shared ~/.audit-loop.env); EXECUTION eligibility is per-call, asserted

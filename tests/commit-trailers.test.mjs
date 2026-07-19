@@ -220,7 +220,14 @@ test('fresh evidence + passed → ok, runId injected; opted-out + not-run → ok
 
 import { evaluateGateVerification } from '../scripts/lib/commit-trailers.mjs';
 
-const FRESH = { state: 'fresh', runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: '2026-07-14T09:41:00Z' };
+// E1 added a THIRD leg to `passed`: the committed tree must equal the audited
+// tree. These tests target the store-verdict leg, so they supply a matching
+// identity to get past it — otherwise they would silently start asserting the
+// identity refusal instead of the verdict refusal they were written for.
+// The identity leg itself is covered in tests/gate-evidence-tree-identity.test.mjs.
+const AUDITED_TREE = 'a'.repeat(40);
+const FRESH = { state: 'fresh', runId: 'ecae388d-c176-4182-9d27-0210b919b844', ts: '2026-07-14T09:41:00Z', auditedTree: AUDITED_TREE, auditedSha: AUDITED_TREE };
+const TREE = { committedTree: AUDITED_TREE };
 
 test('gate verification: only fires for passed + fresh (waived/not-run/stale never verified)', () => {
   assert.equal(evaluateGateVerification({ gate: 'waived', evidence: FRESH, cloudEnabled: false, convergence: null }), null);
@@ -229,7 +236,7 @@ test('gate verification: only fires for passed + fresh (waived/not-run/stale nev
 });
 
 test('gate verification: cloud off → passed refused with the pinned unavailable line', () => {
-  const e = evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: false, convergence: null });
+  const e = evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: false, convergence: null, ...TREE });
   assert.equal(
     e.custom,
     'AGENT FIX: gate-evidence: "passed" requires a verified verdict for run ecae388d-c176-4182-9d27-0210b919b844 but verification is unavailable (AUDIT_DB_URL unset); use --gate waived (declared, unverified) or fix connectivity. Example: --gate waived',
@@ -237,12 +244,12 @@ test('gate verification: cloud off → passed refused with the pinned unavailabl
 });
 
 test('gate verification: run not found / query failed → passed refused (fail-closed)', () => {
-  const e = evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: null });
+  const e = evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: null, ...TREE });
   assert.match(e.custom, /verification is unavailable \(run not found in the store, or the query failed\); use --gate waived/);
 });
 
 test('gate verification: run recorded but NOT converged → passed refused (the sustained-HIGH scenario)', () => {
-  const e = evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: { roundConvergedAfter: null, rounds: 3 } });
+  const e = evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: { roundConvergedAfter: null, rounds: 3 }, ...TREE });
   assert.equal(
     e.custom,
     'AGENT FIX: gate-evidence: run ecae388d-c176-4182-9d27-0210b919b844 did not converge (verdict recorded in the store); "passed" is not available — --gate waived declares shipping past the gate. Example: --gate waived',
@@ -251,7 +258,7 @@ test('gate verification: run recorded but NOT converged → passed refused (the 
 
 test('gate verification: converged run → passed allowed', () => {
   assert.equal(
-    evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: { roundConvergedAfter: 2, rounds: 3 } }),
+    evaluateGateVerification({ gate: 'passed', evidence: FRESH, cloudEnabled: true, convergence: { roundConvergedAfter: 2, rounds: 3 }, ...TREE }),
     null,
   );
 });

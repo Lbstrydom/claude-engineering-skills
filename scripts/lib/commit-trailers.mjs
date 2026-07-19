@@ -19,6 +19,13 @@ import { resolveAndClassify } from './sensitive-paths.mjs';
 export const GATE_VALUES = Object.freeze(['passed', 'waived', 'not-run']);
 export const MODEL_TOKEN_RE = /^[a-z][a-z0-9.-]*$/;
 export const RUN_ID_RE = /^[A-Za-z0-9-]{8,64}$/;
+
+/**
+ * A git object id (sha-1 tree/commit). Validated rather than trusted so a
+ * malformed `auditedTree` degrades to "no identity" → `passed` refused, instead
+ * of being compared as an opaque string that could never match anyway.
+ */
+export const TREE_ID_RE = /^[0-9a-f]{40}$/;
 export const SKILL_NAME_RE = /^[a-z][a-z0-9-]*$/;
 export const RESERVED_TRAILER_RE = /^AI-[A-Za-z0-9-]*\s*:/i;
 
@@ -118,8 +125,15 @@ export function resolveEvidence({ auditRunPath, headCommitTs, noRunId = false, f
   if (!runId || !RUN_ID_RE.test(runId) || Number.isNaN(evidenceMs)) {
     return { state: 'malformed', runId: null, ts };
   }
+  // The audited-target identity (E1). Surfaced but NOT required for a valid
+  // marker: a pre-E1 pointer is well-formed evidence that an audit ran, and
+  // still legitimately supports `not-run`/`waived`. It simply cannot support
+  // `passed` — that refusal lives in evaluateGateVerification, so introducing
+  // the field can never retroactively legitimise unbound historical evidence.
+  const auditedTree = TREE_ID_RE.test(parsed?.auditedTree ?? '') ? parsed.auditedTree : null;
+  const auditedSha = TREE_ID_RE.test(parsed?.auditedSha ?? '') ? parsed.auditedSha : null;
   const fresh = evidenceMs > headCommitTs * 1000;
-  return { state: fresh ? 'fresh' : 'stale', runId, ts };
+  return { state: fresh ? 'fresh' : 'stale', runId, ts, auditedTree, auditedSha };
 }
 
 /**
@@ -238,9 +252,38 @@ export function validateTrailerInput(input, { skillNames }) {
  * @param {{roundConvergedAfter: number|null}|null} opts.convergence — store row for evidence.runId
  * @returns {null | {field: string, custom: string}}
  */
-export function evaluateGateVerification({ gate, evidence, cloudEnabled, convergence }) {
+export function evaluateGateVerification({ gate, evidence, cloudEnabled, convergence, committedTree = null }) {
   if (!evidence || evidence.state !== 'fresh' || gate !== 'passed') return null;
   const runId = evidence.runId;
+
+  // ── E1: content identity, checked BEFORE the store lookups ────────────────
+  // Freshness answers "when", never "what". A run started against commit A can
+  // terminate after commit B's timestamp, so `fresh` is satisfiable by a commit
+  // the audit never saw. This is the only one of the three checks that a
+  // post-audit edit cannot satisfy, so it is the primary — and it is local and
+  // free, so it runs first and gives the clearest refusal even with cloud off.
+  if (!evidence.auditedTree) {
+    return {
+      field: 'gate-evidence',
+      custom: `AGENT FIX: gate-evidence: run ${runId} recorded no audited-tree identity, so "passed" cannot be verified against what you are committing (pre-E1 or evidence-less run); use --gate waived. Example: --gate waived`,
+    };
+  }
+  if (!committedTree) {
+    return {
+      field: 'gate-evidence',
+      custom: `AGENT FIX: gate-evidence: cannot resolve the tree being committed, so "passed" cannot be verified against run ${runId}'s audited tree; use --gate waived. Example: --gate waived`,
+    };
+  }
+  if (committedTree !== evidence.auditedTree) {
+    // The honest reading: what you are committing is not what was audited.
+    // Note this also fires for a PARTIAL commit of an audited worktree, and
+    // that is correct — a whole-worktree audit does not cover a subset.
+    return {
+      field: 'gate-evidence',
+      custom: `AGENT FIX: gate-evidence: what you are committing is not what run ${runId} audited (audited tree ${evidence.auditedTree.slice(0, 12)}, committing ${committedTree.slice(0, 12)}) — re-audit, or use --gate waived. Note a partial commit of an audited worktree also differs. Example: --gate waived`,
+    };
+  }
+
   if (!cloudEnabled) {
     return {
       field: 'gate-evidence',

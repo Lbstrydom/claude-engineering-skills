@@ -45,14 +45,23 @@ export const GATE_EVIDENCE_RELPATH = path.join('.audit', 'last-audit-run.json');
  * Build the marker payload. Pure, so the schema contract is unit-testable
  * against the real validator without touching a filesystem.
  *
- * @param {{runId: string, sid?: string|null, round?: number|null, nowIso?: string}} input
- * @returns {{runId: string, sid: string|null, round: number|null, ts: string}}
+ * `auditedTree` / `auditedSha` name the SUBJECT the audit read (E1, R2-H1).
+ * Timestamp freshness alone is not identity: a run started against commit A can
+ * terminate after commit B's timestamp, so `ts > headCommitTs` reads fresh and
+ * `passed` attaches to B — a commit that was never audited. Freshness answers
+ * "when", never "what". `auditedTree` is the only one of the three checks a
+ * post-audit edit cannot satisfy.
+ *
+ * @param {{runId: string, sid?: string|null, round?: number|null, auditedSha?: string|null, auditedTree?: string|null, nowIso?: string}} input
+ * @returns {{runId: string, sid: string|null, round: number|null, auditedSha: string|null, auditedTree: string|null, ts: string}}
  */
-export function buildGateEvidence({ runId, sid = null, round = null, nowIso }) {
+export function buildGateEvidence({ runId, sid = null, round = null, auditedSha = null, auditedTree = null, nowIso }) {
   return {
     runId,
     sid: sid ?? null,
     round: Number.isFinite(round) ? round : null,
+    auditedSha: auditedSha ?? null,
+    auditedTree: auditedTree ?? null,
     ts: nowIso ?? new Date().toISOString(),
   };
 }
@@ -71,6 +80,8 @@ export function buildGateEvidence({ runId, sid = null, round = null, nowIso }) {
  * @param {'code'|'plan'} [opts.mode='code']
  * @param {string|null} [opts.sid]
  * @param {number|null} [opts.round]
+ * @param {string|null} [opts.auditedSha] — HEAD at capture time (cheap secondary)
+ * @param {string|null} [opts.auditedTree] — worktree content identity; REQUIRED
  * @param {(msg: string) => void} [opts.log]
  * @param {{atomicWriteFileSync?: Function}} [opts.adapters] — injected for tests
  * @returns {{written: boolean, reason?: string, payload?: object, filePath?: string}}
@@ -81,6 +92,8 @@ export function writeGateEvidence({
   mode = 'code',
   sid = null,
   round = null,
+  auditedSha = null,
+  auditedTree = null,
   log = (m) => process.stderr.write(m),
   adapters = {},
 } = {}) {
@@ -98,7 +111,20 @@ export function writeGateEvidence({
   // discriminate on, so the discrimination must happen here, at the writer.)
   if (mode !== 'code') return { written: false, reason: `mode-not-code:${mode}` };
 
-  const payload = buildGateEvidence({ runId, sid, round });
+  // No content identity → the run is EVIDENCE-LESS, not merely under-described
+  // (E1, hop 1). A marker without `auditedTree` can only ever be verified by
+  // freshness, which is exactly the false-pass hole this field exists to close:
+  // it would let `passed` attach to a commit whose content was never audited.
+  // Writing nothing degrades to `not-run` — the honest reading — whereas writing
+  // a tree-less marker would manufacture evidence that cannot support its claim.
+  // This is also what makes the field's introduction fail-closed for legacy
+  // pointers: they simply never verify.
+  if (!auditedTree) {
+    log('  [gate-evidence] no audited-tree identity (VCS capture failed) — writing no marker; commit will read as not-run\n');
+    return { written: false, reason: 'no-audited-tree' };
+  }
+
+  const payload = buildGateEvidence({ runId, sid, round, auditedSha, auditedTree });
   const filePath = path.join(repoRoot, GATE_EVIDENCE_RELPATH);
   try {
     write(filePath, JSON.stringify(payload, null, 2));

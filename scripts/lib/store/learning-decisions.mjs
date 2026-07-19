@@ -97,6 +97,13 @@ export async function recordConvergenceState(runId, state) {
   const patch = {};
   if (state.round_converged_after !== undefined) patch.round_converged_after = state.round_converged_after;
   if (state.rigor_pressure_round  !== undefined) patch.rigor_pressure_round  = state.rigor_pressure_round;
+  // E1 hop 2 — bind the verdict to a SUBJECT, not just a time. The local
+  // `.audit/last-audit-run.json` marker is a file anyone could hand-author, so
+  // it can only ever be necessary evidence; the store's copy is written by the
+  // pipeline and is what makes a forged marker detectable (a hand-written
+  // `auditedTree` would disagree with the row for the same runId).
+  if (state.audited_sha  !== undefined) patch.audited_sha  = state.audited_sha;
+  if (state.audited_tree !== undefined) patch.audited_tree = state.audited_tree;
   if (Object.keys(patch).length === 0) return { ok: true };
   return safeWrite(() => updateWhere('audit_runs', patch, { id: runId }));
 }
