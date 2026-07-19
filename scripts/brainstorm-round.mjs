@@ -19,9 +19,10 @@ import { BrainstormEnvelopeWriteSchema } from './lib/brainstorm/schemas.mjs';
 import { callOpenAI } from './lib/brainstorm/openai-adapter.mjs';
 import { callGemini } from './lib/brainstorm/gemini-adapter.mjs';
 import { preflightEstimateUsd } from './lib/brainstorm/pricing.mjs';
-import { resolveDepth, DEPTH_TOKENS } from './lib/brainstorm/depth-config.mjs';
+import { resolveOutputBudget, DEPTH_TOKENS } from './lib/brainstorm/depth-config.mjs';
 import { assembleResumeContext } from './lib/brainstorm/resume-context.mjs';
 import { loadArchSection, shouldAttachArch } from './lib/brainstorm/arch-context.mjs';
+import { buildBrainstormSystemPrompt, DEFAULT_WORD_TARGET } from './lib/brainstorm/prompt.mjs';
 import { loadArtifacts } from './lib/brainstorm/artifact-context.mjs';
 import { loadPolicyPack } from './lib/brainstorm/policy-context.mjs';
 import { buildDebatePrompt } from './lib/brainstorm/debate-prompt.mjs';
@@ -53,8 +54,11 @@ FLAGS — brainstorm-round mode
   --no-gemini            Drop gemini — OpenAI only (alias: --openai-only)
   --openai-model <id>    OpenAI model sentinel or concrete ID (default: latest-gpt)
   --gemini-model <id>    Gemini model sentinel or concrete ID (default: latest-pro)
-  --max-tokens <n>       Per-provider output cap (overrides --depth if both given)
-  --depth <tier>         shallow|standard|deep — maps to maxTokens (default: standard=1500)
+  --max-tokens <n>       Per-provider output CEILING. Overrides only the ceiling —
+                         --depth still sets the prose length asked for.
+  --depth <tier>         shallow|standard|deep — sets the prose length asked for
+                         (150–250 / 250–500 / 600–1000 words) and the output
+                         ceiling that holds it plus reasoning headroom
   --debate               Run a second round where each model reacts to the other's response
   --continue-from <sid>  Resume from prior session id (loads prior rounds as context)
   --with-context "<txt>" Additional context (repeatable, max 8000 chars per flag, 24000 total)
@@ -331,20 +335,40 @@ async function runBrainstormMode(args) {
   if (args.models.includes('openai')) resolvedModels.openai = resolveModel(args.openaiModel);
   if (args.models.includes('gemini')) resolvedModels.gemini = resolveModel(args.geminiModel);
 
-  // Resolve maxTokens — explicit --max-tokens wins over --depth (with WARN)
-  let maxTokens;
-  let reasoningEffort = null; // per-depth OpenAI hint (shallow → 'low'); null = model default
-  if (args.explicitMaxTokens) {
-    maxTokens = args.maxTokens;
-    if (args.depth) {
-      process.stderr.write(`  [brainstorm] WARN: --max-tokens overrides --depth (used max=${maxTokens}, ignored depth=${args.depth})\n`);
-    }
-  } else {
-    const dep = resolveDepth({ explicitDepth: args.depth, topic });
-    maxTokens = dep.maxTokens;
-    reasoningEffort = dep.reasoningEffort ?? null;
-    if (dep.autoPromoted) {
-      process.stderr.write(`  [brainstorm] auto-promoted depth → ${dep.depth} (${maxTokens} tokens)\n`);
+  // Depth ALWAYS resolves; `--max-tokens` overrides only the CEILING.
+  //
+  // Depth's real lever is the prose length asked for in the system prompt
+  // (plus the reasoning-effort hint and topic auto-promotion). Those are
+  // properties of the tier, not of the ceiling — so resolving them inside an
+  // `else` meant any `--max-tokens` invocation silently reverted to the
+  // default 250–500 word ask with reasoningEffort null and auto-promotion
+  // dead, i.e. `--depth deep --max-tokens N` behaved like standard. The
+  // ceiling is the one thing `--max-tokens` legitimately owns.
+  const dep = resolveOutputBudget({
+    explicitDepth: args.depth,
+    topic,
+    explicitMaxTokens: args.explicitMaxTokens,
+    maxTokens: args.maxTokens,
+  });
+  const { maxTokens, reasoningEffort: depEffort, wordTarget: depWordTarget } = dep;
+  const reasoningEffort = depEffort ?? null;
+  const wordTarget = depWordTarget ?? DEFAULT_WORD_TARGET;
+
+  if (dep.autoPromoted) {
+    process.stderr.write(`  [brainstorm] auto-promoted depth → ${dep.depth} (${dep.tierMaxTokens} tokens)\n`);
+  }
+  if (dep.ceilingOverridden) {
+    process.stderr.write(
+      `  [brainstorm] --max-tokens overrides the ${dep.depth} ceiling ` +
+      `(${dep.tierMaxTokens} → ${maxTokens}); depth still sets the ${dep.wordTarget} target\n`
+    );
+    // Say it up front rather than leaving the adapter's `state:'truncated'`
+    // to explain it after the spend.
+    if (dep.ceilingBelowProseBudget) {
+      process.stderr.write(
+        `  [brainstorm] WARN: max-tokens ${maxTokens} is below the ${dep.depth} prose budget ` +
+        `(${dep.visibleTokens}) — the response will very likely be truncated\n`
+      );
     }
   }
 
@@ -468,7 +492,7 @@ async function runBrainstormMode(args) {
     provider: p,
     topic: composedTopic,
     systemPreface: composedSystemPreface,
-    args: { ...args, maxTokens, reasoningEffort },
+    args: { ...args, maxTokens, reasoningEffort, wordTarget },
     resolvedModels,
   }));
   const settled = await Promise.all(tasks);
@@ -479,7 +503,7 @@ async function runBrainstormMode(args) {
     debateResults = await runDebateRound({
       providers: args.models,
       round1: settled,
-      args: { ...args, maxTokens, reasoningEffort },
+      args: { ...args, maxTokens, reasoningEffort, wordTarget },
       resolvedModels,
       assembledContext,
       withContextText: assembledContext.withContextEffective,
@@ -707,6 +731,10 @@ async function dispatchProvider({ provider, topic, systemPreface = '', args, res
     model,
     maxTokens: args.maxTokens,
     timeoutMs: args.timeoutMs,
+    // Depth's real lever: the prose length the prompt asks for. Without
+    // this, every tier requested the same 250–500 words and `--depth`
+    // only moved where truncation landed.
+    systemPrompt: buildBrainstormSystemPrompt({ wordTarget: args.wordTarget ?? DEFAULT_WORD_TARGET }),
     // OpenAI-only depth hint; callGemini's destructuring ignores it.
     reasoningEffort: args.reasoningEffort ?? null,
   });

@@ -37,7 +37,7 @@ function wireModel(model) {
  *   when null. A model that rejects the param (400) is retried once without.
  * @returns {Promise<ProviderResult>}
  */
-export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, reasoningEffort = null }) {
+export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, reasoningEffort = null, systemPrompt = BRAINSTORM_SYSTEM_PROMPT }) {
   const startMs = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -45,7 +45,7 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
   const payload = {
     model: wireModel(model),
     messages: [
-      { role: 'system', content: BRAINSTORM_SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       { role: 'user', content: topic },
     ],
     max_completion_tokens: maxTokens,
@@ -83,37 +83,9 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
       outputTokens: usage.outputTokens,
     });
 
-    if (finishReason === 'content_filter') {
-      return {
-        provider: 'openai',
-        state: 'blocked',
-        text: null,
-        errorMessage: 'Content blocked by safety filter',
-        httpStatus: null,
-        usage,
-        latencyMs,
-        estimatedCostUsd,
-      };
-    }
-
-    if (!text || text.trim().length === 0) {
-      return {
-        provider: 'openai',
-        state: 'empty',
-        text: null,
-        errorMessage: `Empty response (finish_reason: ${finishReason ?? 'unknown'})`,
-        httpStatus: null,
-        usage,
-        latencyMs,
-        estimatedCostUsd,
-      };
-    }
-
     return {
       provider: 'openai',
-      state: 'success',
-      text,
-      errorMessage: null,
+      ..._classifyCompletion({ text, finishReason }),
       httpStatus: null,
       usage,
       latencyMs,
@@ -124,6 +96,34 @@ export async function callOpenAI({ topic, model, maxTokens, timeoutMs = 60000, r
     const latencyMs = Date.now() - startMs;
     return classifyError({ err, latencyMs });
   }
+}
+
+/**
+ * Map (text, finish_reason) → {state, text, errorMessage}. Mirror of the
+ * Gemini adapter's classifier; see that file for the full rationale.
+ *
+ * Order is load-bearing: `blocked` first, then no-text `empty`, then a
+ * `length` finish WITH text is `truncated` — never `success`. The partial
+ * text is kept; only the label was wrong.
+ *
+ * @param {{text: string|null, finishReason: string|null}} args
+ * @returns {{state: string, text: string|null, errorMessage: string|null}}
+ */
+export function _classifyCompletion({ text, finishReason }) {
+  if (finishReason === 'content_filter') {
+    return { state: 'blocked', text: null, errorMessage: 'Content blocked by safety filter' };
+  }
+  if (!text || text.trim().length === 0) {
+    return { state: 'empty', text: null, errorMessage: `Empty response (finish_reason: ${finishReason ?? 'unknown'})` };
+  }
+  if (finishReason === 'length') {
+    return {
+      state: 'truncated',
+      text,
+      errorMessage: 'Response hit the output-token ceiling and is incomplete — raise --depth for a full answer.',
+    };
+  }
+  return { state: 'success', text, errorMessage: null };
 }
 
 function classifyError({ err, latencyMs }) {

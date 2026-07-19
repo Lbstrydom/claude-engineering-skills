@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "1e0c29ce13455e44",
+  "bundleVersion": "ae580f73b6fe345c",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -110,14 +110,14 @@
     },
     "brainstorm": {
       "path": "skills/brainstorm/SKILL.md",
-      "sha": "9ad130cf49ae",
-      "size": 17498,
+      "sha": "f9f4736303e0",
+      "size": 18198,
       "summary": "Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "9ad130cf49ae",
-          "size": 17498
+          "sha": "f9f4736303e0",
+          "size": 18198
         }
       ]
     },

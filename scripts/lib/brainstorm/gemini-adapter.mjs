@@ -13,7 +13,7 @@ function client() {
  * Always returns a ProviderResult — never throws to the caller (Plan v6
  * §2.1 / R2-H4 total output contract).
  */
-export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000 }) {
+export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000, systemPrompt = BRAINSTORM_SYSTEM_PROMPT }) {
   const startMs = Date.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -24,7 +24,7 @@ export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000 })
         model,
         contents: topic,
         config: {
-          systemInstruction: BRAINSTORM_SYSTEM_PROMPT,
+          systemInstruction: systemPrompt,
           maxOutputTokens: maxTokens,
         },
       },
@@ -45,38 +45,9 @@ export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000 })
     });
 
     const finishReason = response?.candidates?.[0]?.finishReason ?? null;
-    const blockedReasons = new Set(['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'IMAGE_SAFETY']);
-    if (finishReason && blockedReasons.has(finishReason)) {
-      return {
-        provider: 'gemini',
-        state: 'blocked',
-        text: null,
-        errorMessage: `Blocked by safety filter: ${finishReason}`,
-        httpStatus: null,
-        usage,
-        latencyMs,
-        estimatedCostUsd,
-      };
-    }
-
-    if (!text || text.trim().length === 0) {
-      return {
-        provider: 'gemini',
-        state: 'empty',
-        text: null,
-        errorMessage: `Empty response (finish_reason: ${finishReason ?? 'unknown'})`,
-        httpStatus: null,
-        usage,
-        latencyMs,
-        estimatedCostUsd,
-      };
-    }
-
     return {
       provider: 'gemini',
-      state: 'success',
-      text,
-      errorMessage: null,
+      ..._classifyCompletion({ text, finishReason }),
       httpStatus: null,
       usage,
       latencyMs,
@@ -87,6 +58,43 @@ export async function callGemini({ topic, model, maxTokens, timeoutMs = 60000 })
     const latencyMs = Date.now() - startMs;
     return classifyError({ err, latencyMs });
   }
+}
+
+/** Gemini finish reasons that mean the content was withheld, not produced. */
+const BLOCKED_REASONS = new Set(['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'IMAGE_SAFETY']);
+
+/**
+ * Map (text, finishReason) → {state, text, errorMessage}.
+ *
+ * Exported for test (`_` prefix = internal, mirrors the project pattern):
+ * the truncation rule is the kind of success-path branch that must be
+ * verifiable without a live provider.
+ *
+ * Order is load-bearing: `blocked` outranks everything (withheld content
+ * must never surface), then no-text is `empty`, then a length-capped finish
+ * WITH text is `truncated` — never `success`. A fragment rendered beside a
+ * complete answer reads as a finished peer view; it is not one. The partial
+ * text is KEPT because it is still worth reading — the bug was the label,
+ * not the content.
+ *
+ * @param {{text: string|null, finishReason: string|null}} args
+ * @returns {{state: string, text: string|null, errorMessage: string|null}}
+ */
+export function _classifyCompletion({ text, finishReason }) {
+  if (finishReason && BLOCKED_REASONS.has(finishReason)) {
+    return { state: 'blocked', text: null, errorMessage: `Blocked by safety filter: ${finishReason}` };
+  }
+  if (!text || text.trim().length === 0) {
+    return { state: 'empty', text: null, errorMessage: `Empty response (finish_reason: ${finishReason ?? 'unknown'})` };
+  }
+  if (finishReason === 'MAX_TOKENS') {
+    return {
+      state: 'truncated',
+      text,
+      errorMessage: 'Response hit the output-token ceiling and is incomplete — raise --depth for a full answer.',
+    };
+  }
+  return { state: 'success', text, errorMessage: null };
 }
 
 function classifyError({ err, latencyMs }) {

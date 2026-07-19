@@ -23,6 +23,10 @@ export const PROVIDER_STATES = [
   'empty',
   'malformed',
   'blocked',
+  // A response that hit the output-token ceiling mid-answer. Distinct from
+  // `success` (it is incomplete and must be labelled as such to the reader)
+  // and from `empty` (there IS usable text, which is still worth showing).
+  'truncated',
 ];
 
 export const ProviderResultSchema = z.object({

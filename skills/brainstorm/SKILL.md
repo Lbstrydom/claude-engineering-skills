@@ -48,7 +48,7 @@ SAVE MODE (jump to §Step 5 below). Otherwise BRAINSTORM-ROUND mode.
 | `--openai-model <id>` | `latest-gpt` | OpenAI sentinel or concrete ID |
 | `--gemini-model <id>` | `latest-pro` | Gemini sentinel or concrete ID |
 | `--debate` | off | Run a SECOND round where each model reacts to the other's response. Doubles cost (~$0.05) and ~10s. Only meaningful when 2 providers AND both succeed in round 1. |
-| `--depth <tier>` | auto | `shallow` (~500 tok) / `standard` (~1500) / `deep` (~4000). Auto-promote to `deep` when topic mentions architecture/schema/migration/refactor/design/"how should we structure"/"what's the best approach". |
+| `--depth <tier>` | auto | Prose length asked for: `shallow` (150–250 words) / `standard` (250–500) / `deep` (600–1000). The output ceiling is derived from that plus reasoning headroom. Auto-promote to `deep` when topic mentions architecture/schema/migration/refactor/design/"how should we structure"/"what's the best approach". |
 | `--continue-from <sid>` | — | Resume from prior session id (assembles prior rounds as context per token budget). |
 | `--with-context "<text>"` | — | Additional context (repeatable; max 8000 chars per flag, 24000 total). |
 | `--with-arch` | auto | Force-attach the repo's `AGENTS.md` `## Architecture` section so the external LLMs share Claude's codebase grounding. |
@@ -204,6 +204,7 @@ provider):
 | `timeout` | `### <Provider> (<resolved-model>)`<br>`⚠ Timeout after <latencyMs>ms. Try again or lower --max-tokens.` |
 | `http_error` | `### <Provider> (<resolved-model>)`<br>`⚠ HTTP <httpStatus>: <errorMessage>` |
 | `empty` | `### <Provider> (<resolved-model>)`<br>`⚠ Empty response (<errorMessage>).` |
+| `truncated` | `### <Provider> (<resolved-model>)`<br>`⚠ INCOMPLETE — hit the output-token ceiling; retry with a higher --depth.`<br>then the partial `<text>` verbatim. **Render the warning ABOVE the text, never below** — a fragment read as a finished view is the bug this state exists to prevent. Treat it as a partial view in any synthesis, and say so. |
 | `malformed` | `### <Provider> (<resolved-model>)`<br>`⚠ Malformed response: <errorMessage>` (path is in errorMessage) |
 | `blocked` | `### <Provider> (<resolved-model>)`<br>`⚠ Blocked by safety filter: <errorMessage>` |
 
@@ -234,8 +235,11 @@ Example:
 
 > ⚠ Gemini errored: HTTP 404 unknown-model — proceeding with OpenAI only.
 
-Then render only the providers that returned `success`. If BOTH failed,
-render the two error lines and STOP (no Claude take, no synthesis prompt).
+Then render the providers that returned `success` **or `truncated`** — a
+truncated response is a partial view, not a failure, so it gets a full block
+(with its warning line) rather than being collapsed into a one-liner. If
+BOTH genuinely failed, render the two error lines and STOP (no Claude take,
+no synthesis prompt); `truncated` does NOT count as a failure for that test.
 
 ### Debate block (only when JSON has non-empty `debate` array)
 
