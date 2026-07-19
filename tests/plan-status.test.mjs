@@ -190,13 +190,71 @@ describe('plan-status / selectAuditPlan', () => {
     assert.equal(path.basename(sel.path ?? sel), 'good.md');
   });
 
-  it('>1 active: picks one deterministically and reports ambiguity', () => {
+  // CONTRACT CHANGE (2026-07-19): this used to assert ">1 active picks the
+  // newest mtime". That heuristic was field-confirmed harmful — it selected a
+  // plan unrelated to the push, the audit's A1 guard then aborted with "0
+  // implementation files reached the prompt", and the shadow comparison (which
+  // the chooser starts in PARALLEL with the legacy promise) still made paid LLM
+  // calls and recorded an observation with comparison:null. Refusing to guess
+  // is now the contract; the operator binds it explicitly instead.
+  it('>1 active with no change signal: refuses to pick by mtime and says why', () => {
     write('a.md', 'Draft', 1000000);
-    write('b.md', 'Approved', 2000000); // newer
+    write('b.md', 'Approved', 2000000); // newer — must NOT win any more
     const warnings = [];
     const sel = selectAuditPlan(plans, { warn: m => warnings.push(m) });
-    assert.equal(path.basename(sel.path ?? sel), 'b.md'); // newest mtime
-    assert.ok(warnings.some(w => /ambigu|>1|multiple/i.test(w)), 'must report the ambiguity');
+    assert.equal(sel?.path ?? sel, null, 'must not guess when nothing binds the push to a plan');
+    assert.ok(warnings.some(w => /mtime/i.test(w) && /AUDIT_PREPUSH_PLAN/.test(w)),
+      'must name the refused heuristic and the explicit override');
+  });
+
+  it('binds to the active plan changed in this push, ignoring a newer unrelated one', () => {
+    write('implemented.md', 'In Progress', 1000000);
+    write('unrelated.md', 'Draft', 9000000); // newer — the old mtime winner
+    const sel = selectAuditPlan(plans, { changedFiles: ['docs/plans/implemented.md', 'src/thing.mjs'] });
+    assert.equal(path.basename(sel.path), 'implemented.md');
+    assert.equal(sel.boundBy, 'changed-file');
+  });
+
+  it('>1 active plan changed in one push: refuses rather than guessing', () => {
+    write('a.md', 'Draft');
+    write('b.md', 'Approved');
+    const warnings = [];
+    const sel = selectAuditPlan(plans, {
+      changedFiles: ['docs/plans/a.md', 'docs/plans/b.md'],
+      warn: m => warnings.push(m),
+    });
+    assert.equal(sel?.path ?? sel, null);
+    assert.ok(warnings.some(w => /refusing to guess/i.test(w)));
+  });
+
+  it('a sole active plan is still selected when the push changed no plan at all', () => {
+    write('only.md', 'Draft');
+    const sel = selectAuditPlan(plans, { changedFiles: ['src/thing.mjs'] });
+    assert.equal(path.basename(sel.path), 'only.md');
+    assert.equal(sel.boundBy, 'sole-active-plan', 'one active plan needs no guess');
+  });
+
+  it('distinguishes "no change signal" (null) from "this push changed nothing" ([])', () => {
+    write('a.md', 'Draft');
+    write('b.md', 'Draft');
+    // Both must refuse, but neither may throw — the empty list is a real answer,
+    // not a missing one, and both land in the >1-active refusal.
+    assert.equal(selectAuditPlan(plans, { changedFiles: [] })?.path ?? null, null);
+    assert.equal(selectAuditPlan(plans, { changedFiles: undefined })?.path ?? null, null);
+  });
+
+  it('matches changed paths regardless of separator or depth', () => {
+    write('target.md', 'Draft');
+    write('other.md', 'Draft');
+    const sel = selectAuditPlan(plans, { changedFiles: ['docs\\plans\\target.md'] });
+    assert.equal(path.basename(sel.path), 'target.md', 'a Windows-separator path must still bind');
+  });
+
+  it('a changed *-audit-summary.md never binds (it is not a selectable plan)', () => {
+    write('a.md', 'Draft');
+    write('b.md', 'Draft');
+    const sel = selectAuditPlan(plans, { changedFiles: ['docs/plans/a-audit-summary.md'] });
+    assert.equal(sel?.path ?? sel, null, 'summary files are excluded from selection, so they cannot bind');
   });
 
   it('is shallow — a nested plan is not discovered', () => {

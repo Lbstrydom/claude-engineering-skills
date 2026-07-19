@@ -138,10 +138,59 @@ export function selectAuditPlan(plansDir, opts = {}) {
   }
   if (actives.length === 0) return null;
 
-  actives.sort((a, b) => (b.mtimeMs - a.mtimeMs) || a.name.localeCompare(b.name));
-  const chosen = actives[0];
-  if (actives.length > 1) {
-    warn(`>1 active plan (${actives.length}); auditing the newest — ${path.basename(chosen.path)} — mtime is a heuristic, not the contract. Others: ${actives.slice(1).map(a => a.name).join(', ')}`);
+  // ── Bind the selection to the CHANGE, not to the clock ────────────────────
+  // mtime answers "which plan did I touch last", which is not "which plan does
+  // this push implement". When they diverge the audit runs against an unrelated
+  // plan, its own A1 integrity guard aborts with "0 implementation files reached
+  // the prompt", and — because the chooser starts the shadow comparison in
+  // PARALLEL with the legacy promise — a paid shadow run still happens and
+  // records an observation with comparison:null. Every such push spent money to
+  // produce a structurally uncountable row (field-confirmed 2026-07-19).
+  //
+  // `changedFiles` (paths changed in the range being pushed) is the binding
+  // signal: /ship updates a plan's Status + implementation log in the same push
+  // that implements it, so the implemented plan is normally IN the diff.
+  const changed = normalizeChangedPlanNames(opts.changedFiles);
+  if (changed !== null) {
+    const bound = actives.filter(a => changed.has(a.name));
+    if (bound.length === 1) return { path: bound[0].path, boundBy: 'changed-file' };
+    if (bound.length > 1) {
+      // Genuinely ambiguous. Refuse rather than guess — picking by mtime here is
+      // the exact coin-flip this block exists to remove.
+      warn(`${bound.length} active plans changed in this push (${bound.map(a => a.name).join(', ')}); refusing to guess which one this change implements. Audit explicitly, or set AUDIT_PREPUSH_PLAN=<path>.`);
+      return null;
+    }
+    // bound.length === 0 — nothing in this push touches an active plan. Fall
+    // through: a SINGLE active plan is still unambiguous (no guess required).
   }
-  return { path: chosen.path };
+
+  if (actives.length === 1) return { path: actives[0].path, boundBy: 'sole-active-plan' };
+
+  actives.sort((a, b) => (b.mtimeMs - a.mtimeMs) || a.name.localeCompare(b.name));
+  warn(`>1 active plan (${actives.length}) and none of them changed in this push (${actives.map(a => a.name).join(', ')}); refusing to pick by mtime — it is a heuristic, not the contract. Audit explicitly, or set AUDIT_PREPUSH_PLAN=<path>.`);
+  return null;
+}
+
+/**
+ * Reduce a caller-supplied changed-path list to a Set of plan BASENAMES.
+ *
+ * Accepts absolute or repo-relative paths with either separator (the hook feeds
+ * `git diff --name-only`, which always emits POSIX separators, while callers on
+ * Windows may pass native ones). Returns `null` — meaning "no change signal
+ * available", distinct from an empty Set meaning "the push changed no plans" —
+ * when the caller passed nothing, so an absent signal can never be read as
+ * "nothing matched".
+ *
+ * @param {string[]|null|undefined} changedFiles
+ * @returns {Set<string>|null}
+ */
+function normalizeChangedPlanNames(changedFiles) {
+  if (!Array.isArray(changedFiles)) return null;
+  const names = new Set();
+  for (const raw of changedFiles) {
+    if (typeof raw !== 'string' || raw.length === 0) continue;
+    const base = raw.split(/[\\/]/).pop();
+    if (base && isSelectableName(base)) names.add(base);
+  }
+  return names;
 }

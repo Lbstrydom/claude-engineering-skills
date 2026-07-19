@@ -16,6 +16,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { parsePlanStatus, selectAuditPlan } from './lib/plan-status.mjs';
 
 const PLANS_DIR = 'docs/plans';
@@ -27,11 +28,58 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
 // still exempted (consolidated Gemini gate round-2 G2).
 const isAuditSummary = name => /-audit-summary(?:-[\w-]+)?\.md$/.test(name);
 
+/**
+ * Files changed in the range about to be pushed, or `null` when git can't tell
+ * us (no upstream, detached HEAD, not a repo, git missing). `null` is the
+ * "no signal" value and must stay distinct from `[]` ("this push changed
+ * nothing") — selectAuditPlan reads an empty list as a real answer.
+ *
+ * Deliberately tolerant: this only SHARPENS selection. A git hiccup must never
+ * abort a push, so every failure degrades to `null` (unbound selection).
+ *
+ * @returns {string[]|null}
+ */
+function changedFilesForPush() {
+  const rev = (args) => {
+    const r = spawnSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+    return r.status === 0 ? r.stdout.trim() : null;
+  };
+  // Prefer the actual push range; fall back to the last commit. `@{upstream}`
+  // is absent on a brand-new branch, which is exactly when HEAD~1 is right.
+  const base = rev(['rev-parse', '--verify', '--quiet', '@{upstream}'])
+    ?? rev(['rev-parse', '--verify', '--quiet', 'HEAD~1']);
+  if (!base) return null;
+  const out = rev(['diff', '--name-only', `${base}..HEAD`]);
+  if (out === null) return null;
+  return out.split('\n').map(s => s.trim()).filter(Boolean);
+}
+
 function selectMode(dir) {
   const abs = path.resolve(dir);
-  const sel = selectAuditPlan(abs, { warn: m => process.stderr.write(`  [plan-status] ${m}\n`) });
-  if (sel) process.stdout.write(path.relative(process.cwd(), sel.path).replace(/\\/g, '/') + '\n');
-  else process.stderr.write('  [plan-status] no active plan to audit\n');
+
+  // Explicit operator override always wins — the escape hatch for "I know which
+  // plan this implements and the heuristics can't see it".
+  const override = (process.env.AUDIT_PREPUSH_PLAN ?? '').trim();
+  if (override) {
+    if (!fs.existsSync(override)) {
+      process.stderr.write(`  [plan-status] AUDIT_PREPUSH_PLAN=${override} does not exist — selecting nothing\n`);
+      process.exit(0);
+    }
+    process.stdout.write(path.relative(process.cwd(), path.resolve(override)).replace(/\\/g, '/') + '\n');
+    process.exit(0);
+  }
+
+  const changedFiles = changedFilesForPush();
+  const sel = selectAuditPlan(abs, {
+    warn: m => process.stderr.write(`  [plan-status] ${m}\n`),
+    changedFiles,
+  });
+  if (sel) {
+    if (sel.boundBy) process.stderr.write(`  [plan-status] selected via ${sel.boundBy}\n`);
+    process.stdout.write(path.relative(process.cwd(), sel.path).replace(/\\/g, '/') + '\n');
+  } else {
+    process.stderr.write('  [plan-status] no active plan to audit\n');
+  }
   process.exit(0); // selected or not, both normal
 }
 
