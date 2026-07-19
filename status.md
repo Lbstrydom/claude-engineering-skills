@@ -1,5 +1,51 @@
 # Project Status Log
 
+## 2026-07-19 — `/brainstorm --depth` asks for a length instead of just cutting one
+
+Follow-on from the entry below, which found the bug and deliberately left it.
+`--depth shallow` returned nothing from OpenAI and a mid-sentence fragment from
+Gemini. Four compounding defects, one root cause: **depth changed only the token
+ceiling and never reached the model.**
+
+1. The system prompt hardcoded "250–500 words" at *every* tier, so `--depth deep`
+   requested exactly what `--depth shallow` did and only moved the truncation
+   point. The flag was largely inert on the thing users care about.
+2. That target is ~335–670 tokens, so shallow's 500-token ceiling sat *below the
+   prompt's own ask*. Truncation was guaranteed by construction, before any
+   reasoning overhead existed.
+3. Reasoning/thinking tokens are drawn from `max_completion_tokens` /
+   `maxOutputTokens` FIRST, turning a marginal overrun into a total one.
+4. A length-capped finish WITH partial text fell through to `state: 'success'`,
+   so a fragment rendered beside a complete answer as a finished peer view.
+
+Depth now drives the prompt's word target (150–250 / 250–500 / 600–1000) and the
+ceiling is derived from it plus explicit reasoning headroom. The headroom is
+generous on purpose: **a ceiling is a limit, not a reservation** — unused room
+costs nothing, while too little silently destroys the response. Length is
+governed by the instruction; the ceiling's only job is to never be what cuts.
+
+`reasoning_effort: low` was already in the tree as the 2026-07-03 fix for this
+exact class (wine-cellar-app, gpt-5.5). Reaching for it again would have been the
+band-aid: it proved insufficient on gpt-5.6 *with the flag set*, and it is
+OpenAI-only so Gemini was never covered. `REASONING_HEADROOM_TOKENS` is
+provider-agnostic; `reasoning_effort` stays as a cost hint only.
+
+New `truncated` provider state keeps the partial text but labels it, via a pure
+`_classifyCompletion` extracted from both adapters so the rule is testable
+without a live provider. SKILL.md's render contract requires the warning ABOVE
+the text and treats it as a partial view in synthesis.
+
+The literal `500/1500/4000` pins in the existing depth test were **removed, not
+retuned** — they encoded the defect, and "standard must stay 1500 to preserve
+prior behaviour" was the most harmful of them, since the prior behaviour is what
+broke. `resolveOutputBudget()` now resolves tier and ceiling in one tested seam,
+because the "else `--max-tokens`" branch had silently reverted the word target
+twice.
+
+Verified on the failing invocation: shallow returns 185 and 201 words, both
+complete; deep returns 511 and 830 on the same topic — the tier is a real lever
+rather than a truncation point. Suite 7,466 pass / 0 fail.
+
 ## 2026-07-19 — `/brainstorm --with-artifact`: the focal object, not a paraphrase of it
 
 ### The failure, and what actually caused it
@@ -67,10 +113,11 @@ independently recovered the TOCTOU rule as `REQ-security-9967f76c` — *"Artifac
 content must be read from the canonical path approved by the sensitivity gate
 rather than from the user-visible path"* — so it now governs that file mechanically.
 
-**Known, not fixed (pre-existing, out of scope):** `--depth shallow` (500 output
+**Found here, fixed in the next entry above:** `--depth shallow` (500 output
 tokens) is consumed by reasoning before any text is emitted — OpenAI returns
-`empty (finish_reason: length)` and Gemini a mid-sentence fragment. Unrelated to
-this change; flagged rather than scope-crept.
+`empty (finish_reason: length)` and Gemini a mid-sentence fragment. Pre-existing
+and unrelated to this change, so it was flagged rather than scope-crept, and
+fixed as its own commit immediately after.
 
 ## 2026-07-19 — `/brainstorm` calls both models by default; pre-push gets a consumer-owned extension point
 
