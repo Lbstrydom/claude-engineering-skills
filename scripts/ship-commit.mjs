@@ -50,7 +50,7 @@ import {
 } from './lib/commit-trailers.mjs';
 
 const KNOWN_FLAGS = new Set(['--message-file', '--skill', '--models', '--gate', '--path']);
-const KNOWN_BOOLEAN_FLAGS = new Set(['--no-run-id', '--selfcheck-relocation']);
+const KNOWN_BOOLEAN_FLAGS = new Set(['--no-run-id', '--no-tests', '--selfcheck-relocation']);
 
 function err(line) { process.stderr.write(`${line}\n`); }
 
@@ -96,11 +96,12 @@ async function main() {
 
   // ---- arg parse (unknown flag = taxonomy row 1) -------------------------
   const argv = process.argv.slice(2);
-  const opts = { noRunId: false, paths: [] };
+  const opts = { noRunId: false, noTests: false, paths: [] };
   const inputErrors = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--no-run-id') { opts.noRunId = true; continue; }
+    if (a === '--no-tests') { opts.noTests = true; continue; }
     if (KNOWN_FLAGS.has(a)) {
       const v = argv[i + 1];
       if (v === undefined || v.startsWith('--')) {
@@ -119,7 +120,7 @@ async function main() {
     if (!KNOWN_BOOLEAN_FLAGS.has(a)) {
       inputErrors.push({
         field: a,
-        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--no-run-id. Example: --gate passed`,
+        custom: `AGENT FIX: ${a}: unknown flag; expected one of --message-file|--skill|--models|--gate|--path|--no-run-id|--no-tests. Example: --gate passed`,
       });
     }
   }
@@ -196,6 +197,26 @@ async function main() {
     // `not-run` while an audit record sits unreadable on disk).
     err(`ship-commit: audit evidence unreadable (${evidence.errno}): ${auditRunPath} (fix permissions or pass --no-run-id)`);
     process.exit(1);
+  }
+
+  // ---- --no-tests: the sanctioned override (feedback 2026-07-19 item 5) ---
+  // The skill documented this flag but the parser rejected it and the commit
+  // carried no `--no-verify`, so the escape hatch could not actually be taken.
+  // That is worse than having no override: an operator who has verified a
+  // failure is environmental is left with "retry until lucky" or "move the hook
+  // aside" — i.e. a gate with no sanctioned override manufactures gate-tampering.
+  //
+  // An auditable override beats one people route around, so this is deliberately
+  // LOUD and it can only ever DOWNGRADE the gate claim. It never forces `waived`
+  // unconditionally: `waived` means "a verdict existed and I shipped past it",
+  // which requires fresh evidence. Skipping hooks does not manufacture a verdict
+  // to waive — with no evidence the truthful label is `not-run`.
+  if (opts.noTests) {
+    const capped = evidence.state === 'fresh' ? 'waived' : 'not-run';
+    if (opts.gate && opts.gate !== capped) {
+      err(`ship-commit: --no-tests caps AI-Gate at "${capped}" (was: ${opts.gate}) — hooks are being skipped, so a stronger verdict cannot be claimed`);
+    }
+    opts.gate = capped;
   }
 
   // ---- semantic validation (rows 2-5, 8) ----------------------------------
@@ -344,6 +365,8 @@ async function main() {
     // working tree keeps its staged work, both out of this commit and still
     // staged afterwards.
     const commitArgs = ['commit', '-F', finalPath, '--cleanup=whitespace'];
+    // Sanctioned hook bypass — the whole point of --no-tests (see above).
+    if (opts.noTests) commitArgs.push('--no-verify');
     if (usePathspec) commitArgs.push('--', ...pathspec);
     const commit = git(commitArgs, repoRoot);
     if (commit.error) { err('ship-commit: git spawn failed'); exitCode = 1; }
