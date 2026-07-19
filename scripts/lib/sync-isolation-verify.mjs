@@ -54,8 +54,6 @@ const CLI_SMOKE_SET = [
   'visual-audit.mjs',// /visual-audit CLI orchestrator
   'setup-postgres.mjs', // layout-aware repo-root resolution — must survive the scripts/.claude-skills relocation
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
-  'model-eval-auditor.mjs', // model-swap-eval-harness Phase 3 auditor-role CLI
-  'model-eval-adjudicator.mjs', // model-swap-eval-harness Phase 4 adjudicator-role CLI
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
@@ -67,6 +65,21 @@ const CLI_SMOKE_SET = [
   // also a source-repo ship gate probing live providers against a sha pinned
   // HERE; a consumer has no reason to own it. It keeps its
   // `--selfcheck-relocation` handler regardless (free, and correct).
+  //
+  // `model-eval-auditor.mjs` / `model-eval-adjudicator.mjs` are NOT here for the
+  // same reason, removed 2026-07-19 after the predicted failure actually
+  // happened. Commit 8999636 added them to this set without declaring them in
+  // sync-to-repos.mjs, so gate 4 failed in every consumer for months while this
+  // repo stayed green — exactly the trap the paragraph above describes.
+  //
+  // Removal (not declaring them in sync) is the right correction: both CLIs read
+  // `docs/experiments/audit-effectiveness/known-defects.json`, a corpus graded on
+  // THIS repo's finding distribution and deliberately never synced. Shipping the
+  // CLIs without it would deliver tools that cannot run.
+  //
+  // The membership rule is now mechanically enforced by
+  // tests/cli-smoke-set-sync-parity.test.mjs — a future entry that isn't in a
+  // sync bundle fails HERE, at authoring time, instead of silently in consumers.
 ];
 
 const LIB_IMPORT_SET = [
