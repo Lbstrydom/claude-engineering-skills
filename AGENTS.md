@@ -199,7 +199,7 @@ isn't tracked — fresh clones of a consumer repo need to re-run
 > differs from source; the synced `sync-isolation-verify` hash-checks a
 > consumer's tree against its manifest. This is the band-aid-vs-root-cause rule
 > at the consumer/upstream seam — the local edit is the band-aid; the upstream
-> fix is the root.
+> fix is the root. Repo-specific **push gates** have a sanctioned home — the committed, never-rewritten `.githooks/pre-push.local` ([recipe](docs/runbooks/consumer-adoption.md)), never an edit to the managed hook.
 >
 > **Upstream bug, but you're blocked? Source patch = forbidden; a labelled
 > runtime/env workaround is OK and must reconcile.** Editing upstream-owned

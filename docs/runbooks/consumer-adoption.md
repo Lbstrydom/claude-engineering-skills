@@ -421,3 +421,41 @@ previews it.
 - `scripts/lib/sync-isolation-verify.mjs` — CLI verifier consumers run during migration (`--gates 1,2A,2B,3,4,5,6,7`).
 - `scripts/lib/remove-legacy-synced.mjs` — migration helper. Reads the legacy manifest, hash-verifies each file (skips on mismatch — won't destroy locally-modified content), preflight-blocks on dirty tracked files unless `--force-dirty`.
 - `scripts/lib/npm-script-enumerator.mjs` — extracts `npm run X` references from synced skill `.md` so the consumer's `package.json` scripts can be reconciled.
+
+## Repo-specific push gates — `.githooks/pre-push.local`
+
+`install-prepush-hook.mjs` regenerates `.git/hooks/pre-push` **wholesale** on
+every run: it writes a single `HOOK_BODY` constant and preserves nothing. A
+repo-specific gate appended to that file therefore works until the next sync
+and is then silently gone — the "your fix is lost, and it's invisible to
+review because the hook isn't tracked" failure mode, applied to hooks.
+
+The managed hook's last step is the sanctioned extension point:
+
+```sh
+LOCAL_HOOK=".githooks/pre-push.local"
+if [ "$PREPUSH_LOCAL_DISABLE" != "1" ] && [ -f "$LOCAL_HOOK" ]; then
+  sh "$LOCAL_HOOK" || exit $?
+fi
+```
+
+Properties that make this the right seam:
+
+- **Committed and reviewable.** Unlike `.git/hooks/*`, `.githooks/` is tracked,
+  so a push gate is visible in review and survives a fresh clone.
+- **Consumer-owned.** The installer never reads or writes it. Re-running
+  `install-prepush-hook.mjs` (or a full `npm run sync`) leaves it untouched.
+- **Genuinely blocking.** `|| exit $?` propagates the exit code, so a repo can
+  express a hard gate — its own test suite, a schema check — without forking
+  upstream tooling.
+- **Bypassable the same way as everything else**: `PREPUSH_LOCAL_DISABLE=1`, or
+  `git push --no-verify` for the whole chain.
+
+Make it executable (`chmod +x`) and keep it `sh`-compatible — it is invoked via
+`sh`, not bash, so it runs identically under Git Bash on Windows.
+
+**Adopted example** — `wine-cellar-app` uses it to hold the full unit suite,
+moved off `pre-commit` (which now lints staged files only). Worth copying if
+your repo auto-deploys from `main`: push is the last boundary before code
+leaves the machine, and it fires far less often than commit, so the gate stays
+cheap enough that routing around it never becomes the rational move.

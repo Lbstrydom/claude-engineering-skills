@@ -167,6 +167,22 @@ if [ "$SURFACES_DRIFT_DISABLE" != "1" ] && [ -f "$SURFACES_BUILDER" ] && [ -d ".
     exit 1
   fi
 fi
+
+# ── Repo-local extension (UNMANAGED — the consumer owns this file) ──────────
+# This installer rewrites the whole hook body on every run, so repo-specific
+# push gates appended HERE would be silently wiped on the next sync. Put them
+# in .githooks/pre-push.local instead: it is committed, reviewable, owned by
+# the consumer repo, and this installer never touches it.
+#
+# Its exit code is authoritative — a non-zero exit aborts the push, so a repo
+# can express a genuinely blocking gate (e.g. its own test suite) without
+# forking upstream tooling.
+#
+# Bypass: PREPUSH_LOCAL_DISABLE=1 or \`git push --no-verify\`.
+LOCAL_HOOK=".githooks/pre-push.local"
+if [ "$PREPUSH_LOCAL_DISABLE" != "1" ] && [ -f "$LOCAL_HOOK" ]; then
+  sh "$LOCAL_HOOK" || exit $?
+fi
 exit 0
 `;
 

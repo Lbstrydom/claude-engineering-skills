@@ -1,5 +1,39 @@
 # Project Status Log
 
+## 2026-07-19 — `/brainstorm` calls both models by default; pre-push gets a consumer-owned extension point
+
+### `/brainstorm` default flipped to OpenAI + Gemini
+The point of the skill is comparing *independent* perspectives, so one-model was
+the wrong default and `--with-gemini` was friction on every invocation.
+`models` now defaults to `['openai','gemini']`; `--no-gemini` / `--openai-only`
+opt out; `--with-gemini` stays as a back-compat no-op so existing scripts and doc
+examples keep working. Safe by construction — a missing `GEMINI_API_KEY` already
+degrades that provider to `state:'misconfigured'` rather than failing the run
+(`dispatchProvider`), so this cannot break a consumer without a Gemini key.
+
+### `.githooks/pre-push.local` — where repo-specific push gates belong
+`install-prepush-hook.mjs` regenerates the whole hook body on every run and
+preserves nothing, so a repo-specific gate appended to `.git/hooks/pre-push`
+works until the next sync and is then silently gone — the "your fix is lost and
+it's invisible to review" failure mode, applied to hooks. The managed hook now
+ends by running `.githooks/pre-push.local` if present and propagating its exit
+code: committed, reviewable, consumer-owned, never rewritten by the installer.
+Bypass `PREPUSH_LOCAL_DISABLE=1`.
+
+Verified rather than assumed — the extension survives a re-install, a failing
+local hook aborts the push (exit 1), and the disable flag bypasses (exit 0).
+Installed across both consumers; ai-organiser has no local hook, so it is a pure
+no-op there.
+
+AGENTS.md was at 1199/1200 lines, so this landed as a one-line pointer with the
+detail in `docs/runbooks/consumer-adoption.md` — the file's own
+progressive-disclosure rule, rather than raising the cap.
+
+### First consumer adopter: wine-cellar-app
+Used it to move the full unit suite off `pre-commit` (which had started blocking
+legitimate commits on a load flake) onto `pre-push`. See that repo's status entry
+for the root cause.
+
 ## 2026-07-18 (evening) — Observed-graph coverage honesty: the graph now says what it dropped
 
 ### The question

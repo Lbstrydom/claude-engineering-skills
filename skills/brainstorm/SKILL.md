@@ -8,8 +8,8 @@ description: |
   Triggers on: "brainstorm", "let's think about", "get other LLMs on this",
   "what would Gemini/GPT say", "/brainstorm".
   Usage:
-    /brainstorm <topic>                          # OpenAI only (default)
-    /brainstorm --with-gemini <topic>            # both
+    /brainstorm <topic>                          # OpenAI + Gemini (default)
+    /brainstorm --no-gemini <topic>              # OpenAI only (alias: --openai-only)
     /brainstorm --models openai,gemini <topic>   # explicit
     /brainstorm --with-arch <topic>              # force-attach repo architecture context
     /brainstorm --no-arch <topic>                # force-skip architecture context (default: auto-attach on arch topics)
@@ -41,8 +41,9 @@ SAVE MODE (jump to §Step 5 below). Otherwise BRAINSTORM-ROUND mode.
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--with-gemini` | off | Add Gemini alongside OpenAI |
-| `--models <csv>` | `openai` | Explicit list (e.g. `openai,gemini`); overrides `--with-gemini` |
+| `--with-gemini` | — | No-op (Gemini is on by default); kept so older invocations still work |
+| `--no-gemini` / `--openai-only` | off | Drop Gemini — OpenAI only |
+| `--models <csv>` | `openai,gemini` | Explicit list; a later `--no-gemini` still subtracts from it |
 | `--openai-model <id>` | `latest-gpt` | OpenAI sentinel or concrete ID |
 | `--gemini-model <id>` | `latest-pro` | Gemini sentinel or concrete ID |
 | `--debate` | off | Run a SECOND round where each model reacts to the other's response. Doubles cost (~$0.05) and ~10s. Only meaningful when 2 providers AND both succeed in round 1. |
@@ -119,7 +120,8 @@ risks (Plan v6 §2.1, Gemini-G1 v1+v2).
    node scripts/brainstorm-round.mjs \
      --topic-stdin \
      --sid <SID> \
-     --models openai[,gemini] \
+     [--models openai,gemini]        # omit to get the default (both) \
+     [--no-gemini]                   # OpenAI only \
      [--openai-model <id>] [--gemini-model <id>] \
      [--depth shallow|standard|deep] \
      [--debate] \

@@ -46,8 +46,9 @@ USAGE — save mode (positional 'save' first arg)
 FLAGS — brainstorm-round mode
   --topic <text>         User topic
   --topic-stdin          Read topic from stdin
-  --models <csv>         Providers to call (default: openai). Options: openai, gemini
-  --with-gemini          Convenience: add gemini to --models (equivalent to --models openai,gemini)
+  --models <csv>         Providers to call (default: openai,gemini). Options: openai, gemini
+  --with-gemini          No-op on the default path (gemini is already included); kept for back-compat
+  --no-gemini            Drop gemini — OpenAI only (alias: --openai-only)
   --openai-model <id>    OpenAI model sentinel or concrete ID (default: latest-gpt)
   --gemini-model <id>    Gemini model sentinel or concrete ID (default: latest-pro)
   --max-tokens <n>       Per-provider output cap (overrides --depth if both given)
@@ -101,7 +102,11 @@ function parseBrainstormArgs(argv) {
     mode: 'brainstorm',
     topic: null,
     topicStdin: false,
-    models: ['openai'],
+    // Default is BOTH providers — the whole point of /brainstorm is comparing
+    // independent perspectives, so one-model was the wrong default. A missing
+    // GEMINI_API_KEY degrades to state:'misconfigured' (see dispatchProvider),
+    // it does not fail the run. Drop gemini with --no-gemini / --openai-only.
+    models: ['openai', 'gemini'],
     openaiModel: 'latest-gpt',
     geminiModel: 'latest-pro',
     maxTokens: null,         // null = derived from --depth (or default standard)
@@ -131,7 +136,13 @@ function parseBrainstormArgs(argv) {
       case '--with-gemini':
         // Audit R1-H16: convenience shortcut for --models openai,gemini
         // (documented in SKILL.md). Last-flag-wins if --models also passed.
+        // Now a no-op on the default path (gemini is already in), retained so
+        // existing scripts/docs that pass it keep working.
         if (!args.models.includes('gemini')) args.models = [...new Set([...args.models, 'gemini'])];
+        break;
+      case '--no-gemini':
+      case '--openai-only':
+        args.models = args.models.filter(m => m !== 'gemini');
         break;
       case '--openai-model': args.openaiModel = requireValue(); break;
       case '--gemini-model': args.geminiModel = requireValue(); break;
