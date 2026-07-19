@@ -176,16 +176,15 @@ describe('hook output shape (cloud-off)', () => {
       'and must name the command that enables it');
   });
 
-  it('stays well under the spawn timeout now that it makes no network call', () => {
-    // The flake was a ~4.5s live embed+RPC against a 10s timeout, tipping over
-    // under parallel suite load. This pins the isolation itself: if a future
-    // edit lets the hook reach a real store again, the latency regresses here
-    // rather than intermittently in CI.
-    const r = runHook(['--prompt', 'add a retry wrapper around fetch']);
-    assert.equal(r.exit, 0);
-    assert.ok(r.latencyMs < 5000,
-      `cloud-off hook should not approach the 10s spawn timeout; took ${r.latencyMs}ms`);
-  });
+  // A wall-clock latency guard was added here and then REMOVED, deliberately.
+  // It asserted `latencyMs < 5000` to pin the isolation — and promptly failed in
+  // a full-suite run (14s for this file under parallel load) while passing in
+  // isolation. That is the load-sensitive-assertion trap: the measurement scales
+  // with machine load, not with the logic under test, so it trades one flake for
+  // another. It was also redundant — mutation-testing showed the `Cloud store
+  // offline` assertion above already fails when the hermetic env is removed, so
+  // the timing check added no detection power. Assert the state, not its
+  // timing proxy.
 });
 
 // ── C. Graceful failure ─────────────────────────────────────────────────────

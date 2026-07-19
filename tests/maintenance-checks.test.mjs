@@ -350,18 +350,32 @@ describe('maintenance-checks — CLI: manual mode on lock contention (round-3 au
   // main()'s manual-vs-opportunistic messaging branch is observable —
   // pre-seeding and cleaning up the lock file within the test.
   const repoRoot = path.resolve(import.meta.dirname, '..');
-  const lockPath = path.join(repoRoot, '.audit-loop', '.maintenance.lock');
   const scriptPath = path.join(repoRoot, 'scripts', 'maintenance-checks.mjs');
+  let stateDir, lockPath;
+
+  // Per-test state dir, injected via AUDIT_LOOP_STATE_DIR. This used to seed
+  // and unlinkSync the REAL repo lock, which is unsafe in two directions:
+  // concurrent test processes deleted each other's fixture (the CLI then saw no
+  // lock, ran the real checks, and blew the 15s timeout — the batch flake), and
+  // an unlink could release a lock held by a genuine maintenance run, letting a
+  // second one start. Isolating the path fixes both and touches no real state.
+  beforeEach(() => {
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'maintenance-cli-'));
+    lockPath = path.join(stateDir, '.maintenance.lock');
+  });
 
   afterEach(() => {
-    try { fs.unlinkSync(lockPath); } catch { /* not present */ }
+    fs.rmSync(stateDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
   it('prints a loud message and exits cleanly instead of running checks, when the lock is held', () => {
-    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, token: 'held-by-test', acquiredAt: new Date().toISOString() }), { flag: 'wx' });
 
-    const r = spawnSync(process.execPath, [scriptPath], { encoding: 'utf-8', timeout: 15_000 });
+    const r = spawnSync(process.execPath, [scriptPath], {
+      encoding: 'utf-8',
+      timeout: 15_000,
+      env: { ...process.env, AUDIT_LOOP_STATE_DIR: stateDir },
+    });
     assert.equal(r.status, 0, `stderr=${r.stderr}`);
     assert.match(r.stdout, /already in progress/);
     // Must NOT have run any real checks — the heartbeat's mtime should be

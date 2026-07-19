@@ -72,8 +72,26 @@ if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); proces
 
 const REPO_ROOT = findRepoRootFromScript(import.meta.url);
 const SCRIPTS_DIR = import.meta.dirname;
-const HEARTBEAT_PATH = path.join(REPO_ROOT, '.audit-loop', 'last-maintenance.json');
-const LOCK_PATH = path.join(REPO_ROOT, '.audit-loop', '.maintenance.lock');
+/**
+ * Where the heartbeat + lock live. Overridable so a test driving the real CLI
+ * as a SUBPROCESS can point it at a throwaway directory.
+ *
+ * This is the process-boundary form of a seam that already exists: every pure
+ * function here (`loadHeartbeat`, `writeHeartbeat`, `runExclusive`) takes its
+ * path as a parameter, which is exactly how the unit tests isolate. A spawned
+ * CLI cannot be given a parameter, and before this override the CLI test wrote
+ * its lock fixture to — and `unlinkSync`'d — the REAL repo lock. That is worse
+ * than flaky: unlinking the live lock would release it out from under a genuine
+ * concurrent maintenance run and let a second one start, defeating the single-
+ * instance guard the test exists to verify. Concurrent test processes also
+ * deleted each other's fixture, so the CLI under test saw no lock and ran the
+ * real checks until it hit the harness timeout.
+ *
+ * Unset (the normal case) → the repo path, byte-identical to previous behaviour.
+ */
+const STATE_DIR = process.env.AUDIT_LOOP_STATE_DIR || path.join(REPO_ROOT, '.audit-loop');
+const HEARTBEAT_PATH = path.join(STATE_DIR, 'last-maintenance.json');
+const LOCK_PATH = path.join(STATE_DIR, '.maintenance.lock');
 const DEFAULT_INTERVAL_DAYS = 7;
 
 /**
