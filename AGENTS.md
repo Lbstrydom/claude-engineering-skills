@@ -636,25 +636,19 @@ final review, to empirically test whether a second final gate is worth keeping.
   active Azure profile** — Claude/Fable/Mythos aren't on Foundry (load-bearing
   guard). The shadow **never gates the build** — its verdict is logged to the
   `--out` `_shadow` block but never touches `gemini_verdict`.
-- **Measure** (operator how-to): `node scripts/cross-skill.mjs final-review-stats
-  --repo REPO_NAME` → per-`source_model` × `bucket` × `severity` DISTINCT-fingerprint
-  counts + the shadow-only spot-check queue + shadow token/latency cost. **Human
-  adjudication is worksheet-first**: add `--worksheet` to render the pending queue as
-  markdown with paste-ready `final-review-adjudicate` commands (real ids baked in;
-  actions `accepted|dismissed`). Same surface as `model-ab-adjudicate --worksheet`;
-  shared renderer [`scripts/lib/adjudication-worksheet.mjs`](scripts/lib/adjudication-worksheet.mjs).
-  **Doc convention (recurrence guard)**: operator CLI examples use real values or
-  PowerShell variables, never `<angle-bracket>` placeholders — PowerShell reserves
-  `<`, so a placeholder command can't even be pasted, and a raw-JSON queue is not a
-  human review surface.
 - **Pre-registered stopping rule** (load-bearing — decided before data collection):
   collect `N ≥ 20` runs per fixed (primary, shadow) model pair; **KEEP** iff
   human-accepted shadow-only HIGH/MEDIUM ≥ 1 per 5 runs AND cost in tolerance;
   **DROP** if shadow-only is predominantly dismissed/LOW. Don't conflate "always
   catches something" with effectiveness.
+- **Operator-doc convention (repo-wide recurrence guard, bit twice pre-2026-07-02)**:
+  CLI examples use real values or PowerShell variables, **never `<angle-bracket>`
+  placeholders** (PowerShell reserves `<` — the command can't be pasted), and a
+  raw-JSON queue is not a human review surface — render a `--worksheet`.
 
-→ Attribution schema (`source_model`, `bucket`, idempotent-replace persistence) +
-the full stopping-rule rationale: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
+→ Measurement how-to (`final-review-stats --worksheet`), attribution schema
+(`source_model`, `bucket`, idempotent-replace persistence), and the full
+stopping-rule rationale: [`docs/plans/final-review-shadow-reviewer.md`](docs/plans/final-review-shadow-reviewer.md).
 
 ## Tiered-Recall Audit Pipeline
 
@@ -665,61 +659,35 @@ implemented and tested. `openai-audit.mjs`'s chooser
 (`tieredAuditConfig.pipelineEnabled`, env `AUDIT_TIERED_PIPELINE_ENABLED`)
 defaults **off** — production runs the legacy path today.
 
-- **Stage 1 triager model** resolves via `scripts/lib/audit/stage1-triager-
-  resolver.mjs`: an explicit `AUDIT_STAGE1_MODEL` operator pin wins if set;
-  else the validated `docs/experiments/audit-effectiveness/cheap-triager-
-  validation.json` manifest's `candidateModel` (GLM, passed 2026-07-12) is
-  used; else GPT-5.5 (the safe default), always with a loud, named fallback
-  reason — never a silent default.
-- **Close-out shadow validation** (`tieredAuditConfig.shadowEnabled`, env
-  `AUDIT_TIERED_SHADOW_ENABLED`, independent of `pipelineEnabled`): runs the
-  tiered pipeline as an observation-only comparison alongside the real
-  legacy run. Observations go to the local gitignored
-  `.audit/tiered-shadow-log.jsonl` (fallback) AND, when `AUDIT_DB_URL` is
-  set, the Supabase `tiered_shadow_observations` table (cross-repo totals);
-  `getTieredShadowObservations` takes an explicit `repoIds` list only —
-  never an ambient "all repos" scan. Progress check:
-  `npm run audit:tiered-shadow-report` (cloud-first, `--repos <path,...>`
-  for siblings, `--log <path>` forces local-only); the telemetry
-  dashboard's **Tiered Shadow** tab is the visual progress surface for the
-  Phase-14 window (same `summarize()` — they cannot disagree; the CLI stays
-  authoritative). Deliberately NOT a 4th
-  arm on the model-A/B/C shadow infra — different execution shape (whole-run
-  vs per-pass substitution); rationale in the plan doc.
-- **Execution eligibility is per-call, not env-global** (`allowTiered` —
-  the 2026-07-13 incident fix): the env flags express "the window is open";
-  only `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests
-  and library callers can never spend. Both must hold before any provider
-  is constructed.
-- **Cross-repo behavior**: the flag lives in `~/.audit-loop.env` (shared
-  loader, no allowlist), so one line flips every local repo. In consumers,
-  Stage 1 falls back to GPT-5.5 with a loud named reason — the GLM
-  validation manifest was graded on THIS repo's finding distribution and is
-  deliberately NOT synced.
-- **2026-07-14 incident, fixed**: the window read as "met" (20 runs across
-  two repos) while every single run was `fallback_legacy` — two compounding
-  bugs. Root cause: the Sonnet discovery generator needs forced
-  `tool_choice`, which the ambient `CLAUDE_BACKEND=cli` silently can't do
-  (see the Anthropic Backend Routing gotcha above) — every round's required
-  generator failed, every round fell back. Reporting bug: `comparedRuns`
-  counted a `fallback_legacy` run as a real comparison merely because a
-  `comparison` object existed, letting the fake "met" reading through. Both
-  fixed: the tiered pipeline's `anthropicClient` now forces
-  `{backend:'sdk'}`; `comparedRuns` now requires `tieredRunStatus ===
-  'complete'`; `tieredFallbackReason` is now persisted so a future all-
-  fallback state is diagnosable from the DB/dashboard, not a live repro. The
-  old 20 rows are void — the window restarts from zero.
-- **Not yet done**: the shadow-validation window itself (10-15 real commits with
-  the flag on, now genuinely collecting from zero) and Phase 14 (the production-
-  flip decision gate). **Also check at Phase 14**: the model-swap-eval-harness's
-  adjudicator-role eval has never run (Stage 2 here uses Gemini) — see
-  [model-eval-harness.md](docs/runbooks/model-eval-harness.md) §"Adjudicator role — not yet run".
+**Load-bearing invariants** (mechanics, model-resolution rules, cross-repo
+behaviour, CLI/dashboard surfaces, and the full incident history live in the
+plan doc — see the pointer below):
 
-→ Full plan, phase-by-phase spec, Stage-2 adapter wiring history (the
-two-handle design, module-relative resolution for consumer layouts), and
-audit trail: [`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md)
-(still in `docs/plans/`, not `docs/completed/` — Phase 14 is pending on the
-shadow-validation window, which has not started collecting).
+- **Execution eligibility is per-call, not env-global** (`allowTiered` — the
+  2026-07-13 incident fix): the env flags only express "the window is open";
+  only `openai-audit.mjs`'s `main()` passes `allowTiered: true`, so tests and
+  library callers can never spend. Both must hold before any provider is
+  constructed.
+- **The discovery generator needs forced `tool_choice`, so it pins
+  `{backend:'sdk'}` explicitly** — never the ambient `CLAUDE_BACKEND` (see
+  the Anthropic Backend Routing gotcha above). This silently produced 20
+  all-`fallback_legacy` runs before 2026-07-14.
+- **A "window met" reading is not self-evidencing.**
+  `comparedRuns` counts only `tieredRunStatus === 'complete'` runs — a
+  `fallback_legacy` run is not a comparison. Any future "met" must also be
+  checked against the rows (`tieredStage0Verified > 0`,
+  `excludedMalformedAnchors === 0`). Pre-2026-07-17 rows are void; the window
+  restarts from zero.
+- **Not yet done**: the shadow-validation window (10–15 real commits) and
+  Phase 14 (the production-flip gate). **Also check at Phase 14**: the
+  model-swap-eval-harness's adjudicator-role eval has never run (Stage 2 uses
+  Gemini) — [model-eval-harness.md](docs/runbooks/model-eval-harness.md)
+  §"Adjudicator role — not yet run".
+
+→ Full plan, phase spec, Stage-1 triager resolution, shadow-validation
+mechanics + CLI/dashboard surfaces, Stage-2 adapter wiring, and the audit
+trail: [`docs/plans/tiered-recall-audit-pipeline.md`](docs/plans/tiered-recall-audit-pipeline.md)
+(still in `docs/plans/` — Phase 14 pends the shadow window).
 
 ## Model Swap-In Evaluation Harness
 

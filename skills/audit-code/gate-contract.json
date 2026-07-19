@@ -18,7 +18,7 @@
       "kind": "executable",
       "oracle": "tiered-shadow-window",
       "statedIn": "AGENTS.md",
-      "stated": "comparedRuns` now requires `tieredRunStatus ===\n  'complete'`",
+      "stated": "`comparedRuns` counts only `tieredRunStatus === 'complete'` runs",
       "implementation": "scripts/lib/audit/tiered-shadow-summary.mjs",
       "tests": ["tests/gate-honesty.test.mjs"],
       "fixture": {

@@ -29,6 +29,7 @@
  * @module scripts/setup-postgres
  */
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -67,7 +68,7 @@ const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0
 
 function parseArgs(argv) {
   const args = {
-    mode: null,       // 'migrate' | 'adopt' | 'check-drift'
+    mode: null,       // 'migrate' | 'adopt' | 'check-drift' | 'repair-eol'
     preflightOnly: false,
     bootstrapOnly: false,
     dryRun: false,
@@ -77,13 +78,23 @@ function parseArgs(argv) {
   // iterator via `++i` (plan migration-drift-detector R3-audit + Gemini-R2-H1).
   // The existing flag set is bare-toggle-only, so this refactor is behaviour-
   // preserving for every flag except the new `--format`.
+  // Modes are MUTUALLY EXCLUSIVE. Assigning `args.mode` per flag would let the
+  // last one silently win, so `--migrate --adopt` would run adopt and
+  // `--adopt --migrate` would replay migrations — materially different
+  // persistence behaviour selected by argument order. Collect and reject
+  // instead. (`--repair-eol` joining the set is what made this reachable with
+  // a ledger-WRITING mode on either side.)
+  const modes = [];
+  const setMode = (m) => { args.mode = m; if (!modes.includes(m)) modes.push(m); };
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     switch (a) {
-      case '--migrate':         args.mode = 'migrate'; break;
-      case '--adopt':           args.mode = 'adopt'; break;
-      case '--ensure-local':    args.mode = 'ensure-local'; break;
-      case '--check-drift':     args.mode = 'check-drift'; break;
+      case '--migrate':         setMode('migrate'); break;
+      case '--adopt':           setMode('adopt'); break;
+      case '--ensure-local':    setMode('ensure-local'); break;
+      case '--check-drift':     setMode('check-drift'); break;
+      case '--repair-eol':      setMode('repair-eol'); break;
       case '--preflight-only':  args.preflightOnly = true; break;
       case '--bootstrap-only':  args.bootstrapOnly = true; break;
       case '--dry-run':         args.dryRun = true; break;
@@ -95,9 +106,16 @@ function parseArgs(argv) {
         }
     }
   }
+  if (modes.length > 1) {
+    process.stderr.write(
+      `${R}error${X}: mode flags are mutually exclusive — got ${modes.map((m) => `--${m}`).join(' ')}.\n` +
+      `   Pick exactly one; argument order must never decide which one runs.\n`
+    );
+    process.exit(2);
+  }
   if (!args.mode && !args.preflightOnly && !args.bootstrapOnly) {
     process.stderr.write(
-      `usage: setup-postgres.mjs --migrate | --adopt | --ensure-local | --check-drift [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
+      `usage: setup-postgres.mjs --migrate | --adopt | --ensure-local | --check-drift | --repair-eol [--format human|json] [--dry-run | --preflight-only | --bootstrap-only]\n`
     );
     process.exit(2);
   }
@@ -251,10 +269,109 @@ async function listMigrations(dir = MIGRATIONS_DIR) {
   return entries.filter((e) => e.endsWith('.sql')).sort();
 }
 
-async function sha256(filePath) {
-  const crypto = await import('node:crypto');
-  const buf = await fs.promises.readFile(filePath);
+// ── Migration content hashing (EOL-invariant) ──────────────────────────────
+//
+// WHY: the ledger hash is a tamper guard ("was this committed migration edited
+// after it was applied?"). Hashing RAW bytes made it also a *checkout-mode*
+// guard, which it was never meant to be: a migration applied from a CRLF
+// working tree records a CRLF hash, while any LF checkout of the identical
+// committed file hashes differently → a false "edited after apply" abort on
+// every clean clone. (Observed 2026-07-14 on
+// `20260521120000_persona_test_candidates.sql`; the `.gitattributes eol=lf`
+// pin landed AFTER that file was first checked out.)
+//
+// Canonicalizing at this seam makes checkout mode permanently irrelevant while
+// leaving the tamper guard exactly as strict for real content edits.
+//
+// Plan: docs/plans/debt-burndown-workstreams.md §3 WS-A.
+
+/**
+ * Canonicalize migration bytes for hashing: replace ONLY the byte sequence
+ * `0x0D 0x0A` (CRLF) with `0x0A` (LF).
+ *
+ * Byte-level by contract. Every other byte passes through untouched — a lone
+ * `CR`, a BOM, UTF-8 multibyte sequences, and even non-UTF-8 bytes. We do NOT
+ * decode to a string first: `Buffer` has no `.replace`, and decoding would
+ * silently rewrite malformed UTF-8, widening a tamper guard into a normalizer.
+ *
+ * @param {Buffer} buf
+ * @returns {Buffer} a new Buffer (never the input) with CRLF folded to LF
+ */
+export function canonicalizeMigrationBytes(buf) {
+  const out = Buffer.allocUnsafe(buf.length);
+  let w = 0;
+  for (let r = 0; r < buf.length; r++) {
+    // Fold CR only when it is immediately followed by LF; a lone CR survives.
+    if (buf[r] === 0x0d && r + 1 < buf.length && buf[r + 1] === 0x0a) continue;
+    out[w++] = buf[r];
+  }
+  return out.subarray(0, w);
+}
+
+/**
+ * Reconstruct the historical all-CRLF representation of a migration — the
+ * bytes a pre-`eol=lf` Windows checkout would have produced.
+ *
+ * Canonicalize first, then expand EVERY remaining `0x0A` to `0x0D 0x0A`,
+ * preserving all other bytes (lone `CR` included). This yields exactly ONE
+ * legacy representation, deliberately: a historical file with MIXED endings
+ * cannot match it and is therefore classified `shaMismatch` for manual
+ * investigation rather than auto-repaired. "Some other byte pattern also
+ * hashes to the stored value" is indistinguishable from tampering.
+ *
+ * @param {Buffer} buf
+ * @returns {Buffer}
+ */
+export function legacyCrlfBytes(buf) {
+  const canonical = canonicalizeMigrationBytes(buf);
+  let lfCount = 0;
+  for (let i = 0; i < canonical.length; i++) if (canonical[i] === 0x0a) lfCount++;
+  const out = Buffer.allocUnsafe(canonical.length + lfCount);
+  let w = 0;
+  for (let i = 0; i < canonical.length; i++) {
+    if (canonical[i] === 0x0a) out[w++] = 0x0d;
+    out[w++] = canonical[i];
+  }
+  return out;
+}
+
+/**
+ * THE hash for all current apply / verify / ledger comparisons.
+ * @param {Buffer} buf
+ * @returns {string} hex sha256 of the canonicalized bytes
+ */
+export function hashCanonicalMigrationBytes(buf) {
+  return crypto.createHash('sha256').update(canonicalizeMigrationBytes(buf)).digest('hex');
+}
+
+/**
+ * Raw-byte sha256 — NOT canonicalized. Used for exactly one purpose: testing a
+ * ledger row against the reconstructed historical representation during
+ * `eol-legacy` classification. It is NEVER written to the ledger.
+ *
+ * These two primitives are deliberately non-interchangeable: passing
+ * reconstructed CRLF bytes through the canonicalizing hash would return the
+ * canonical LF hash and no legacy row could ever be identified.
+ *
+ * @param {Buffer} buf
+ * @returns {string} hex sha256 of the bytes as given
+ */
+export function hashRawBytes(buf) {
   return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+/**
+ * Canonical hash of a migration file on disk.
+ *
+ * @duplicate-justification: target=scripts/sync-to-repos.mjs:sha256 reason=deliberate
+ * divergence, not duplication. sync-to-repos hashes RAW bytes to prove a synced
+ * file is byte-identical in a consumer repo — EOL normalization there would hide
+ * a real transfer corruption. This one hashes CANONICALIZED bytes so a migration's
+ * tamper guard is invariant to checkout mode. Unifying them would break one of the
+ * two invariants; they must stay separate.
+ */
+async function sha256(filePath) {
+  return hashCanonicalMigrationBytes(await fs.promises.readFile(filePath));
 }
 
 async function applyMigration(pool, filename, dryRun) {
@@ -490,6 +607,18 @@ async function runMigrate(pool, { dryRun }) {
       continue;
     }
     if (ledger.has(f) && ledger.get(f) !== expectedHash) {
+      // Distinguish the benign, mechanically-repairable EOL-legacy case from a
+      // real content edit — pointing an operator at a manual ledger UPDATE for
+      // a CRLF artifact is how a tamper guard gets routinely overridden.
+      const legacySha = hashRawBytes(legacyCrlfBytes(await fs.promises.readFile(fullPath)));
+      if (ledger.get(f) === legacySha) {
+        process.stderr.write(
+          `\n${R}error${X}: ${f} carries a pre-canonicalization CRLF hash (eol-legacy).\n` +
+          `   The committed content is UNCHANGED — this is a line-ending artifact.\n` +
+          `   Repair the ledger, then re-run: node scripts/setup-postgres.mjs --repair-eol\n`
+        );
+        throw new Error(`migration ${f} eol-legacy ledger hash — run --repair-eol`);
+      }
       process.stderr.write(
         `\n${R}error${X}: ${f} previously applied with a different SHA256.\n` +
         `   Migrations must be append-only; do not edit a committed migration.\n` +
@@ -504,6 +633,140 @@ async function runMigrate(pool, { dryRun }) {
   }
 
   process.stderr.write(`\n${G}Done${X}: applied ${applied}, skipped ${skipped}, total ${files.length}.\n`);
+}
+
+// ── EOL-legacy ledger repair ───────────────────────────────────────────────
+//
+// Rewrites ONLY `eol-legacy` ledger rows (same committed content, historical
+// CRLF hash) to the canonical hash. Never touches a true `shaMismatch`.
+//
+// Safety properties, all load-bearing:
+//   - advisory lock, so a concurrent --migrate cannot interleave;
+//   - ONE transaction — partial repair is not a reachable state;
+//   - compare-and-swap per row (`WHERE filename=$1 AND sha256=$2`): if a row
+//     changed between classification and write, 0 rows update and the whole
+//     transaction aborts rather than overwriting a hash we never inspected;
+//   - idempotent — a second run classifies nothing and writes nothing.
+//
+// Plan: docs/plans/debt-burndown-workstreams.md §3 WS-A leg 3.
+
+/** Advisory-lock key shared by --migrate and --repair-eol (arbitrary, fixed). */
+const MIGRATION_LOCK_KEY = 4152026071801n;
+
+/**
+ * Run `fn` while holding the migration advisory lock on a dedicated client.
+ * Session-scoped (not xact-scoped) so it can wrap `runMigrate`, which applies
+ * each migration in its own implicit transaction and must NOT be forced into
+ * one (e.g. `CREATE INDEX CONCURRENTLY` cannot run inside a transaction).
+ */
+async function withMigrationLock(pool, fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock($1)', [String(MIGRATION_LOCK_KEY)]);
+    return await fn();
+  } finally {
+    try { await client.query('SELECT pg_advisory_unlock($1)', [String(MIGRATION_LOCK_KEY)]); }
+    catch { /* connection already gone — the lock dies with the session anyway */ }
+    client.release();
+  }
+}
+
+export async function runRepairEol(pool, { dryRun = false, migrationsDir = MIGRATIONS_DIR } = {}) {
+  process.stderr.write(`\n${G}── EOL-legacy ledger repair ──${X}\n`);
+
+  const ledgerExists = await pool.query(`SELECT to_regclass('public.audit_loop_migrations') AS t`);
+  if (!ledgerExists.rows[0].t) {
+    process.stderr.write(`  ${R}error${X}: audit_loop_migrations table missing — nothing to repair.\n`);
+    return { repaired: [], exitCode: 3 };
+  }
+
+  // Classify with the same logic --check-drift uses (one definition, not two).
+  const drift = await runCheckDrift(pool, {
+    format: 'json', migrationsDir,
+    stdout: { write() {} }, stderr: { write() {} },   // classification only; no report
+  });
+  const candidates = drift.drift?.eolLegacy ?? [];
+
+  if (candidates.length === 0) {
+    process.stderr.write(`  ${G}✓${X} no eol-legacy rows — nothing to repair\n`);
+    return { repaired: [], exitCode: 0 };
+  }
+
+  process.stderr.write(`  ${candidates.length} eol-legacy row(s) to repair:\n`);
+  for (const c of candidates) {
+    process.stderr.write(`    ~ ${c.filename}\n      ${c.ledgerSha.slice(0, 12)}… (CRLF) → ${c.sourceSha.slice(0, 12)}… (canonical)\n`);
+  }
+  if (dryRun) {
+    process.stderr.write(`\n  ${D}(dry-run)${X} no rows written\n`);
+    return { repaired: [], dryRun: true, exitCode: 0 };
+  }
+
+  // ONE client for the lock AND the transaction. `pg_advisory_xact_lock` is
+  // transaction-scoped, so it is released by COMMIT/ROLLBACK automatically —
+  // a session lock taken on a different client (or via the ambient-pool
+  // `withTx`) could outlive a failure, and would not even be the same
+  // connection the UPDATEs run on.
+  const client = await pool.connect();
+  let repaired;
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [String(MIGRATION_LOCK_KEY)]);
+    const done = [];
+    for (const c of candidates) {
+      // `applied_at` is deliberately NOT touched: this repair corrects a hash
+      // representation, it does not re-apply anything. Stamping now() would
+      // destroy the historical record of when the migration was actually
+      // deployed — the ledger's whole evidentiary value.
+      const res = await client.query(
+        `UPDATE audit_loop_migrations
+            SET sha256 = $3
+          WHERE filename = $1 AND sha256 = $2`,
+        [c.filename, c.ledgerSha, c.sourceSha]
+      );
+      if (res.rowCount !== 1) {
+        // The row moved under us between classification and write. Abort
+        // everything — never write a hash we did not inspect, and never leave
+        // a half-repaired ledger.
+        throw new Error(
+          `repair-eol: concurrent modification of '${c.filename}' ` +
+          `(expected 1 row updated, got ${res.rowCount}) — transaction rolled back, nothing changed`
+        );
+      }
+      done.push({ filename: c.filename, from: c.ledgerSha, to: c.sourceSha });
+    }
+    await client.query('COMMIT');
+    repaired = done;
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* original error wins */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  process.stderr.write(`\n  ${G}repaired${X} ${repaired.length} row(s)\n`);
+  return { repaired, exitCode: 0 };
+}
+
+/**
+ * Seed ledger rows for migrations that have NO row yet — and only those.
+ *
+ * Load-bearing: `recordApplied` upserts, so seeding every file would overwrite
+ * the stored hash of an **already-ledgered** migration with whatever is on disk
+ * now. That silently rubber-stamps a tampered migration (destroying the
+ * `shaMismatch` evidence the guard exists to produce) and would quietly rewrite
+ * an `eol-legacy` row to the canonical hash — doing `--repair-eol`'s job
+ * without its advisory lock, compare-and-swap, or classification.
+ *
+ * On a fresh adopt (empty ledger) this is identical to seeding everything.
+ *
+ * @returns {Promise<string[]>} the filenames actually recorded
+ */
+export async function seedUnledgeredMigrations(pool, { files, existing, migrationsDir }) {
+  const newly = files.filter((f) => !existing.has(f));
+  for (const f of newly) {
+    await recordApplied(pool, f, await sha256(path.join(migrationsDir, f)));
+  }
+  return newly;
 }
 
 async function runAdopt(pool) {
@@ -528,11 +791,25 @@ async function runAdopt(pool) {
     process.stderr.write(`\n${G}── Seeding ledger ──${X}\n`);
     await ensureLedger(pool);
     const files = await listMigrations();
-    for (const f of files) {
-      const hash = await sha256(path.join(MIGRATIONS_DIR, f));
-      await recordApplied(pool, f, hash);
+
+    // Adopt is a WHOLE-DB ledger seed: every unledgered migration is recorded
+    // as applied. That is correct only when the live schema really does
+    // contain them all — which the manifest diff above just proved. Name the
+    // rows being newly recorded anyway: "seeded 69 rows" hides whether this
+    // adopted one known-live migration or silently marked a genuinely
+    // unapplied one as done. Plan: WS-A leg 4.
+    const existing = await readLedger(pool);
+    // The "which rows are new" filter lives in seedUnledgeredMigrations (one
+    // definition, and a testable one) — log from its return, never recompute.
+    const seeded = await seedUnledgeredMigrations(pool, { files, existing, migrationsDir: MIGRATIONS_DIR });
+    if (seeded.length) {
+      process.stderr.write(`  recorded ${seeded.length} previously-unledgered migration(s) as applied:\n`);
+      for (const f of seeded) process.stderr.write(`    + ${f}\n`);
     }
-    process.stderr.write(`  ${G}seeded${X} ${files.length} migration rows (no DDL replayed)\n`);
+    process.stderr.write(
+      `  ${G}seeded${X} ${seeded.length} new migration row(s); ` +
+      `${files.length - seeded.length} already ledgered and left untouched (no DDL replayed)\n`
+    );
     return;
   }
 
@@ -576,7 +853,7 @@ async function runAdopt(pool) {
 //
 // Plan: docs/plans/migration-drift-detector.md §6 Addition 1.
 
-async function runCheckDrift(pool, {
+export async function runCheckDrift(pool, {
   format        = 'human',
   migrationsDir = MIGRATIONS_DIR,
   stdout        = process.stdout,
@@ -601,19 +878,34 @@ async function runCheckDrift(pool, {
   const files = await listMigrations(migrationsDir);          // sorted string[]
 
   const sourceHashes = new Map();
+  const legacyHashes = new Map();
   for (const f of files) {
-    sourceHashes.set(f, await sha256(path.join(migrationsDir, f)));
+    const buf = await fs.promises.readFile(path.join(migrationsDir, f));
+    sourceHashes.set(f, hashCanonicalMigrationBytes(buf));
+    // The historical all-CRLF representation, hashed RAW (see hashRawBytes).
+    legacyHashes.set(f, hashRawBytes(legacyCrlfBytes(buf)));
   }
 
   const unapplied = files.filter((f) => !ledger.has(f));
-  const shaMismatch = files
-    .filter((f) => ledger.has(f) && ledger.get(f) !== sourceHashes.get(f))
-    .map((f) => ({ filename: f, ledgerSha: ledger.get(f), sourceSha: sourceHashes.get(f) }));
+
+  // A mismatching row is one of two very different things, and conflating them
+  // is what made the tamper guard fire on clean checkouts:
+  //   eol-legacy  — the row records the pre-canonicalization CRLF hash of the
+  //                 SAME committed content. Benign, mechanically repairable.
+  //   shaMismatch — anything else. The real guard; still a hard failure.
+  const eolLegacy = [];
+  const shaMismatch = [];
+  for (const f of files) {
+    if (!ledger.has(f) || ledger.get(f) === sourceHashes.get(f)) continue;
+    const entry = { filename: f, ledgerSha: ledger.get(f), sourceSha: sourceHashes.get(f) };
+    if (ledger.get(f) === legacyHashes.get(f)) eolLegacy.push(entry);
+    else shaMismatch.push(entry);
+  }
   const orphanLedger = [...ledger.keys()].filter((f) => !sourceHashes.has(f));
 
-  const hasDrift = unapplied.length + shaMismatch.length + orphanLedger.length > 0;
+  const hasDrift = unapplied.length + eolLegacy.length + shaMismatch.length + orphanLedger.length > 0;
   const result = {
-    drift: { unapplied, shaMismatch, orphanLedger },
+    drift: { unapplied, eolLegacy, shaMismatch, orphanLedger },
     applied: ledger.size,
     sourceTotal: files.length,
     hasDrift,
@@ -639,6 +931,12 @@ function renderHumanDriftReport({ drift, applied, sourceTotal, hasDrift }, stder
   if (drift.unapplied.length) {
     stderr.write(`\n  ${Y}unapplied${X} (${drift.unapplied.length}) — run \`node scripts/setup-postgres.mjs --migrate\`:\n`);
     for (const f of drift.unapplied) stderr.write(`    + ${f}\n`);
+  }
+  if (drift.eolLegacy?.length) {
+    stderr.write(`\n  ${Y}eol-legacy${X} (${drift.eolLegacy.length}) — same content, pre-canonicalization CRLF hash; repair with \`node scripts/setup-postgres.mjs --repair-eol\`:\n`);
+    for (const m of drift.eolLegacy) {
+      stderr.write(`    ~ ${m.filename}\n      ledger: ${m.ledgerSha.slice(0, 12)}… (CRLF)  canonical: ${m.sourceSha.slice(0, 12)}…\n`);
+    }
   }
   if (drift.shaMismatch.length) {
     stderr.write(`\n  ${R}sha-mismatch${X} (${drift.shaMismatch.length}) — committed migration edited after apply:\n`);
@@ -761,6 +1059,13 @@ async function main() {
       process.exit(r.exitCode);
     }
 
+    // Ledger-only repair: no schema preflight needed (it writes exactly one
+    // column on already-existing rows and replays no DDL).
+    if (args.mode === 'repair-eol') {
+      const r = await runRepairEol(pool, { dryRun: args.dryRun });
+      process.exit(r.exitCode);
+    }
+
     const pre = await preflight(pool);
     const strict = args.mode === 'migrate' && !args.dryRun && !await isSupabaseManaged(pool);
     if (!reportPreflight(pre, { strict })) {
@@ -775,7 +1080,8 @@ async function main() {
     }
 
     if (args.mode === 'migrate') {
-      await runMigrate(pool, { dryRun: args.dryRun });
+      // Serialize against a concurrent --repair-eol (shared advisory lock).
+      await withMigrationLock(pool, () => runMigrate(pool, { dryRun: args.dryRun }));
     } else if (args.mode === 'adopt') {
       await runAdopt(pool);
     }

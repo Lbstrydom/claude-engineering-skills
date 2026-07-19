@@ -127,6 +127,49 @@ AUDIT_DB_URL=… node scripts/setup-postgres.mjs --check-drift --format json # C
 Exit codes: `0` clean (no drift OR `AUDIT_DB_URL` unset), `1` drift, `2` hard error,
 `3` needs bootstrap (ledger table missing).
 
+### Drift categories — `eol-legacy` vs `shaMismatch`
+
+A ledger hash that doesn't match its source file is one of two very different
+things, and the report separates them:
+
+| Category | Meaning | Fix |
+|---|---|---|
+| `eol-legacy` | The row holds the **pre-canonicalization CRLF hash of the same committed content**. Benign line-ending artifact, not an edit. | `--repair-eol` (below) |
+| `shaMismatch` | Anything else — a committed migration really was edited after apply. | Hard failure. Investigate; migrations are append-only. |
+
+**Why this split exists.** Migration hashes are computed over
+**LF-canonicalized bytes** (`canonicalizeMigrationBytes` — folds `0x0D 0x0A` to
+`0x0A`, touching no other byte, not even a lone `CR`). Before that, hashing raw
+bytes made the tamper guard *also* a checkout-mode guard: a migration applied
+from a CRLF working tree recorded a CRLF hash, so **every clean LF clone
+false-aborted** with "previously applied with a different SHA256". Observed
+2026-07-14 on `20260521120000_persona_test_candidates.sql`, whose file was
+never edited — the `.gitattributes eol=lf` pin simply landed after it was first
+checked out. Canonicalizing makes checkout mode permanently irrelevant while
+leaving the guard exactly as strict for real content edits.
+
+A historical file with **mixed** endings cannot be reconstructed to the single
+all-CRLF representation and is therefore classified `shaMismatch`, requiring
+manual investigation — deliberately fail-closed.
+
+### Repairing `eol-legacy` rows
+
+```
+AUDIT_DB_URL=… node scripts/setup-postgres.mjs --repair-eol --dry-run   # list candidates
+AUDIT_DB_URL=… node scripts/setup-postgres.mjs --repair-eol             # rewrite them
+```
+
+Rewrites **only** `eol-legacy` rows to the canonical hash. Safety properties:
+holds the migration advisory lock (a concurrent `--migrate` cannot interleave);
+runs in **one transaction**; each row is a **compare-and-swap** on the exact hash
+observed at classification, so a row that changed underneath aborts the whole
+transaction rather than overwriting a hash the tool never inspected; idempotent.
+A true `shaMismatch` is never touched.
+
+> This replaces the old advice to hand-`UPDATE audit_loop_migrations.sha256` for
+> this class. A manual UPDATE cannot distinguish a line-ending artifact from a
+> real edit, so it trained operators to override the tamper guard by reflex.
+
 Surfaced two ways:
 
 - **Weekly CI + push-on-migration** (`.github/workflows/migration-drift.yml`): cron

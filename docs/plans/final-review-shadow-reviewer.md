@@ -575,3 +575,27 @@ data collection so it can't be rationalised post-hoc).**
     union diff. Derived scope = Phase 3 `Files:`.
 - **Final gate**: one consolidated Gemini review over the union diff of A+B, mandatory
   regardless of per-cluster convergence.
+
+---
+
+## Operator surface — worksheet-first adjudication
+
+*(Moved here from `AGENTS.md` 2026-07-18 during the WS-0 context-headroom
+condense — the invariant stays in AGENTS.md as a one-line convention; the
+mechanics live here.)*
+
+**Human adjudication is worksheet-first.** `node scripts/cross-skill.mjs
+final-review-stats --repo REPO_NAME` reports per-`source_model` × `bucket` ×
+`severity` DISTINCT-fingerprint counts, the shadow-only spot-check queue, and
+shadow token/latency cost. Add **`--worksheet`** to render the pending queue as
+markdown with paste-ready `final-review-adjudicate` commands — real ids baked
+in, actions `accepted|dismissed`. Same surface as `model-ab-adjudicate
+--worksheet`; shared renderer
+[`scripts/lib/adjudication-worksheet.mjs`](../../scripts/lib/adjudication-worksheet.mjs).
+
+**Doc convention (recurrence guard — this bit twice before the 2026-07-02
+fix).** Operator CLI examples use real values or PowerShell variables, **never
+`<angle-bracket>` placeholders**: PowerShell reserves `<`, so a placeholder
+command cannot even be pasted. And a raw-JSON queue is not a human review
+surface — render a worksheet. Applies to every operator-facing CLI example in
+this repo, not just this feature.
