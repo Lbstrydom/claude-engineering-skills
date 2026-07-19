@@ -147,7 +147,47 @@ describe('allowTiered call-site gate (shadow-flip incident regression, 2026-07-1
   // hangs the suite for the full 20-minute default timeout); (b) a static
   // source assertion pinning the exact gate expressions, independent of
   // runtime behavior.
-  test('end-to-end: runMultiPassCodeAudit (the real chooser) with no allowTiered opt stays legacy-only and fast, even with the shadow flag forced on', () => {
+  test('end-to-end: runMultiPassCodeAudit (the real chooser) with no allowTiered opt enters NEITHER route, even with both flags forced on', () => {
+    // ROUTE EVIDENCE, NOT WALL CLOCK (2026-07-19).
+    //
+    // This assertion used to be `elapsedMs < 10000`. Timing is not the
+    // contract, and this suite runs in parallel: measured 3896ms for this
+    // file in isolation vs 15767ms under full-suite load — a ~4x
+    // load-degradation that puts the threshold INSIDE the noise band, so it
+    // failed a push on a green tree. (Same class as the vitest oversubscription
+    // flake: import-heavy work under many parallel workers, where the clock
+    // measures machine contention rather than behaviour.) Both routes now
+    // assert on a positive marker of entry instead:
+    //
+    //   SHADOW branch — runTieredShadowComparison ALWAYS ends in
+    //   recordObservation(), on both its paths, INCLUDING when the shadow
+    //   pipeline itself fails on a missing key (it records shadowOk:false).
+    //   recordObservation stamps each line with ctx.runId, so this probe
+    //   passes a unique runId and asserts NO shadow-log line carries it.
+    //
+    //   The discriminator must be the runId, NOT the file's size or line
+    //   count: .audit/tiered-shadow-log.jsonl is global mutable state and
+    //   the suite runs in parallel, so a CONCURRENT test's legitimate
+    //   allowTiered audit appends to the same file. A size-delta assertion
+    //   passes in isolation and fails under load — which is the very class
+    //   of bug this rewrite exists to remove, so don't reintroduce it.
+    //
+    //   PIPELINE branch — runTieredAuditPipeline fails fast and loudly when
+    //   providers.geminiReviewCall / geminiCleanRegionCall are absent, and
+    //   without allowTiered buildAuditRunContext never constructs them. So a
+    //   regressed gate throws inside the subprocess → non-zero exit →
+    //   execFileSync throws → this test fails with that error, not a timeout.
+    //
+    // Both flags are now pinned ON (the old probe pinned pipeline OFF, which
+    // made the pipeline gate unreachable at runtime and left it covered only
+    // by the static pin below). Pinning both explicitly keeps the isolation
+    // the R1-M1 note asked for while actually exercising both conditions.
+    //
+    // The execFileSync `timeout` below stays, but it is a HANG guard, not an
+    // assertion — a wrongly-entered route must not stall the suite for the
+    // shadow's 20-minute default. Nothing asserts on how long this takes.
+    const shadowLog = path.resolve('.audit', 'tiered-shadow-log.jsonl');
+    const probeRunId = `route-probe-${process.pid}-${Date.now()}`;
     const script = `
       process.env.AUDIT_EXPORTS_FOR_TESTS = '1';
       const audit = await import(${JSON.stringify(new URL('../scripts/openai-audit.mjs', import.meta.url).href)});
@@ -156,29 +196,42 @@ describe('allowTiered call-site gate (shadow-flip incident regression, 2026-07-1
       // than crashing, so this still lets the run COMPLETE; content is
       // irrelevant here, only "did it stay on the fast legacy path" matters.
       const stubOpenai = { responses: { parse: async () => { throw new Error('stub: no real calls expected'); } } };
-      const start = Date.now();
       // Must reference a real, on-disk file — the legacy path's own
       // unrelated preflight guard refuses to run over zero resolved
       // implementation files, before this test's own gate is ever reached.
       const result = await runMultiPassCodeAudit(stubOpenai, '# plan\\n\\nImplement \`tests/fixtures/harness-plan/src/service.mjs\`.\\n', '', false, null, '', {
         passFilter: ['structure'], noTools: true, noDebtLedger: true, noLedger: true,
+        runId: ${JSON.stringify(probeRunId)},
       });
-      console.log(JSON.stringify({ elapsedMs: Date.now() - start, runStatus: result.runStatus ?? null }));
+      // Proves the legacy path actually COMPLETED — without this the route
+      // assertions could pass vacuously on a run that returned nothing.
+      console.log(JSON.stringify({ completed: result !== null && typeof result === 'object' }));
     `;
     const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], {
       encoding: 'utf8', timeout: 60000,
       env: {
         ...process.env, AUDIT_LOOP_DISABLE_SHARED: '1',
-        AUDIT_TIERED_SHADOW_ENABLED: 'true', AUDIT_TIERED_PIPELINE_ENABLED: 'false',
+        AUDIT_TIERED_SHADOW_ENABLED: 'true', AUDIT_TIERED_PIPELINE_ENABLED: 'true',
         // If the fix ever regresses and a no-opt call wrongly reaches the
         // tiered/shadow path, missing keys make that fail in milliseconds
-        // (a clear assertion failure below) instead of hanging for the
-        // shadow's real 20-minute default timeout.
+        // instead of hanging for the shadow's real 20-minute default timeout.
         OPENROUTER_API_KEY: '', ANTHROPIC_API_KEY: '', GEMINI_API_KEY: '',
       },
     });
-    const { elapsedMs } = JSON.parse(out.trim().split('\n').pop());
-    assert.ok(elapsedMs < 10000, `expected a fast legacy-only completion, took ${elapsedMs}ms — the chooser likely routed into tiered/shadow`);
+    const { completed } = JSON.parse(out.trim().split('\n').pop());
+    assert.equal(completed, true, 'the legacy path must have run to completion (guards against a vacuous pass)');
+
+    const shadowLines = fs.existsSync(shadowLog)
+      ? fs.readFileSync(shadowLog, 'utf8').split('\n').filter(Boolean)
+      : [];
+    const ourObservations = shadowLines.filter((line) => line.includes(probeRunId));
+    assert.equal(
+      ourObservations.length, 0,
+      `the shadow route was entered: ${ourObservations.length} observation(s) in ${shadowLog} ` +
+      `carry this probe's runId (${probeRunId}). runTieredShadowComparison records an observation ` +
+      'on every path, so a line stamped with our runId means the chooser ran the shadow for a call ' +
+      `that never passed allowTiered. First: ${ourObservations[0] ?? '(none)'}`,
+    );
   });
 
   test('static pin: the chooser\'s tiered-pipeline AND shadow conditions both require ctx.allowTiered', () => {
