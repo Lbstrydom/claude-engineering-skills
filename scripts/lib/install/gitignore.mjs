@@ -166,6 +166,63 @@ function hasPattern(gi, pattern) {
 }
 
 /**
+ * Is `pattern` already made redundant by an existing IGNORED DIRECTORY rule?
+ *
+ * `hasPattern` is exact-line, so a repo whose .gitignore has a bare `.audit/`
+ * still reports every `.audit/<thing>` pattern "missing" and we append the lot —
+ * pure churn, since git already ignores all of it (2026-07-19: this is what the
+ * source repo's post-merge hook kept re-adding).
+ *
+ * This deliberately reasons about ONE narrow, safe case, because the whole
+ * point of `hasPattern`'s design note is that over-reporting presence is the
+ * dangerous direction (it would skip adding a real `.env` protection). The
+ * bounds, each of which fails CLOSED to "not covered":
+ *
+ *   - the required pattern must be directory-scoped (contain `/`), so a bare
+ *     filename rule like `.env` can never be claimed as covered by anything;
+ *   - the covering line must be a literal directory rule (ends `/`, no `*`,
+ *     `?` or `[`) — no glob semantics are inferred;
+ *   - a negation (`!…`) is never treated as covering;
+ *   - matching is on a `<dir>/` prefix, so `.audit/` covers `.audit/local/` but
+ *     NOT `.audit-loop/x` (the strict-superstring trap `hasPattern` warns about).
+ *
+ * Git guarantees the containment here: "it is not possible to re-include a file
+ * if a parent directory of that file is excluded", so an ignored directory
+ * cannot be punctured by a later negation — which is why this narrow case is
+ * safe when general glob reasoning would not be.
+ *
+ * @param {string} gi - full .gitignore content
+ * @param {string} pattern
+ * @returns {boolean}
+ */
+function isCoveredByIgnoredDirectory(gi, pattern) {
+  if (!pattern.includes('/')) return false;
+  const needle = pattern.replace(/^\//, '');
+  for (const raw of gi.split(/\r?\n/)) {
+    const line = raw.replace(/\s+$/, '');
+    if (!line || line.startsWith('#') || line.startsWith('!')) continue;
+    if (!line.endsWith('/')) continue;
+    if (/[*?[]/.test(line)) continue;
+    const dir = line.replace(/^\//, '');
+    if (dir !== '/' && needle.startsWith(dir)) return true;
+  }
+  return false;
+}
+
+/**
+ * Presence test shared by the writer and the checker so the two can never
+ * disagree about what still needs adding: literally present, OR already
+ * covered by an ignored parent directory.
+ *
+ * @param {string} gi
+ * @param {string} pattern
+ * @returns {boolean}
+ */
+function isPatternSatisfied(gi, pattern) {
+  return hasPattern(gi, pattern) || isCoveredByIgnoredDirectory(gi, pattern);
+}
+
+/**
  * Header comment prepended when adding the audit-loop block.
  */
 const BLOCK_HEADER = '\n# Audit-loop — operational state + synced bundle (auto-managed, do not edit by hand)\n';
@@ -199,16 +256,18 @@ export function ensureAuditGitignore(repoRoot, { dryRun = false, quiet = false }
   const alreadyPresent = [];
 
   for (const pattern of patterns) {
-    if (hasPattern(gi, pattern)) {
+    if (isPatternSatisfied(gi, pattern)) {
       alreadyPresent.push(pattern);
     } else {
       added.push(pattern);
     }
   }
 
-  // Also handle legacy broad pattern — if .audit/ is already present,
-  // the fine-grained patterns are redundant but we still add them
-  // for clarity when .audit/ gets removed in favour of selective ignores.
+  // (Was: "if .audit/ is already present the fine-grained patterns are redundant
+  // but we still add them for clarity when .audit/ gets removed." That traded a
+  // speculative future edit for guaranteed churn now — the source repo's
+  // post-merge hook re-proposed the whole redundant block on every pull.
+  // isPatternSatisfied treats an ignored parent directory as satisfying them.)
 
   if (added.length > 0 && !dryRun) {
     const block = BLOCK_HEADER + added.join('\n') + '\n';
@@ -246,7 +305,7 @@ export function checkAuditGitignore(repoRoot) {
   const present = [];
 
   for (const pattern of patterns) {
-    if (hasPattern(gi, pattern)) {
+    if (isPatternSatisfied(gi, pattern)) {
       present.push(pattern);
     } else {
       missing.push(pattern);
@@ -255,3 +314,11 @@ export function checkAuditGitignore(repoRoot) {
 
   return { missing, present, exists: true };
 }
+
+/**
+ * Test-only surface for the pure presence predicates (mirrors the
+ * `_internals` convention in file-io.mjs / anthropic-client.mjs). These are
+ * safety-critical enough — an over-reported "present" silently skips a real
+ * protection — to deserve direct coverage rather than only end-to-end tests.
+ */
+export const _internals = Object.freeze({ hasPattern, isCoveredByIgnoredDirectory, isPatternSatisfied });
