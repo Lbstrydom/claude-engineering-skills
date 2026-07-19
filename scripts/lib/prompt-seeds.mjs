@@ -20,7 +20,8 @@ FOCUS ONLY on these files: routes, services, DB queries, config, schemas.
 Be ruthlessly honest about finding REAL issues that will cause bugs or technical debt.`;
 
 const PASS_BACKEND_RUBRIC = `Check: SOLID (all 5), DRY, async/await correctness, error handling, input validation,
-transaction safety, cellar_id scoping on ALL queries, auth middleware, N+1 queries,
+transaction safety, tenant/owner scoping on ALL row-scoped queries (reads AND writes filtered
+by the repo's tenant key), auth middleware, N+1 queries,
 hardcoded values, dead code, single source of truth.
 PERSISTENCE CONTRACT (DB writes — silent failures here are HIGH, they masquerade as success):
 - Silent error-swallow: a write that catches a DB error and returns a SUCCESS-SHAPED value
