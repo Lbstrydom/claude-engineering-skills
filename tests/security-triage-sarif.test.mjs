@@ -214,6 +214,41 @@ describe('resolveArtifactUri', () => {
     }
   });
 
+  /**
+   * H2 — the fail-open. Stripping the `file://` prefix by string replacement
+   * turns the URI's AUTHORITY into a leading path segment, so a REMOTE host
+   * becomes the innocuous-looking relative path `evil-host/share/x.js` and is
+   * then treated as a repo artifact. SARIF is untrusted input that names the
+   * paths we make security decisions about — this is the input SC1 exists to
+   * distrust.
+   */
+  test('a file:// URI with a remote authority is unresolvable, not flattened into a repo path', () => {
+    for (const uri of [
+      'file://evil-host/share/x.js',
+      'file://192.168.1.5/share/x.js',
+      'file://attacker.example.com/a/b.js',
+    ]) {
+      const d = [];
+      const got = resolveArtifactUri({ uri }, run, d);
+      assert.equal(got, null, `${uri} must not resolve (got ${got})`);
+      assert.ok(d.includes('uri-remote-authority'), `${uri}: ${JSON.stringify(d)}`);
+    }
+  });
+
+  test('a localhost file:// authority is still absolute, hence unresolvable here', () => {
+    const d = [];
+    assert.equal(resolveArtifactUri({ uri: 'file://localhost/etc/passwd' }, run, d), null);
+    assert.ok(d.includes('uri-absolute'));
+  });
+
+  // L1 — the escape test is on the `..` SEGMENT, not the `..` PREFIX. A file
+  // whose name merely begins with two dots is a legitimate repo path.
+  test('a filename beginning with two dots is not mistaken for traversal', () => {
+    const d = [];
+    assert.equal(resolveArtifactUri({ uri: '..reports/tests/x.js' }, run, d), '..reports/tests/x.js');
+    assert.deepEqual(d, []);
+  });
+
   test('a traversal that escapes the frame is unresolvable, not normalised into a guess', () => {
     const d = [];
     assert.equal(resolveArtifactUri({ uri: '../../etc/passwd' }, run, d), null);

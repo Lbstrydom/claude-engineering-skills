@@ -9,7 +9,7 @@
  * to `A` for a human. A predicate that cannot parse what it was asked about
  * must not pretend to have evaluated it.
  */
-import { globMatch } from '../visual/changed-scope.mjs';
+import { globMatch } from '../glob-match.mjs';
 
 export const PREDICATE_KINDS = Object.freeze([
   'path-scope',
@@ -50,6 +50,7 @@ export function maskCommentsAndStrings(text) {
   let state = 'code';
   let i = 0;
   let lastCode = ''; // last significant code char, for the regex/division call
+  let wordBuf = ''; // identifier ending at lastCode, so keywords are visible
 
   const put = (idx, ch) => { out[idx] = ch; };
   const blank = (idx) => { out[idx] = src[idx] === '\n' ? '\n' : ' '; };
@@ -61,10 +62,10 @@ export function maskCommentsAndStrings(text) {
     if (state === 'code') {
       if (ch === '/' && next === '/') { state = 'line-comment'; blank(i); blank(i + 1); i += 2; continue; }
       if (ch === '/' && next === '*') { state = 'block-comment'; blank(i); blank(i + 1); i += 2; continue; }
-      if (ch === '"') { state = 'dq'; put(i, ch); i++; continue; }
-      if (ch === "'") { state = 'sq'; put(i, ch); i++; continue; }
-      if (ch === '`') { stack.push({ kind: 'tpl', braces: 0 }); state = 'tpl'; put(i, ch); i++; continue; }
-      if (ch === '/' && isRegexStart(lastCode)) {
+      if (ch === '"') { state = 'dq'; put(i, ch); lastCode = '"'; wordBuf = ''; i++; continue; }
+      if (ch === "'") { state = 'sq'; put(i, ch); lastCode = "'"; wordBuf = ''; i++; continue; }
+      if (ch === '`') { stack.push({ kind: 'tpl', braces: 0 }); state = 'tpl'; put(i, ch); lastCode = '`'; wordBuf = ''; i++; continue; }
+      if (ch === '/' && isRegexStart(lastCode, wordBuf)) {
         const end = skipRegex(src, i);
         if (end > i) { for (let k = i; k < end; k++) blank(k); i = end; continue; }
       }
@@ -74,12 +75,14 @@ export function maskCommentsAndStrings(text) {
       if (top && top.kind === 'interp') {
         if (ch === '{') top.braces++;
         else if (ch === '}') {
-          if (top.braces === 0) { stack.pop(); state = 'tpl'; put(i, ch); i++; lastCode = '}'; continue; }
+          if (top.braces === 0) { stack.pop(); state = 'tpl'; put(i, ch); i++; lastCode = '}'; wordBuf = ''; continue; }
           top.braces--;
         }
       }
       put(i, ch);
-      if (!/\s/.test(ch)) lastCode = ch;
+      // Whitespace updates NEITHER, so `return /re/` still sees the keyword.
+      if (/[A-Za-z0-9_$]/.test(ch)) { wordBuf += ch; lastCode = ch; }
+      else if (!/\s/.test(ch)) { wordBuf = ''; lastCode = ch; }
       i++;
       continue;
     }
@@ -110,11 +113,11 @@ export function maskCommentsAndStrings(text) {
         stack.push({ kind: 'interp', braces: 0 });
         state = 'code';
         put(i, '$'); put(i + 1, '{');
-        lastCode = '{';
+        lastCode = '{'; wordBuf = '';
         i += 2;
         continue;
       }
-      if (ch === '`') { stack.pop(); state = stackTopIsInterp(stack) ? 'code' : (stack.length ? 'tpl' : 'code'); put(i, ch); lastCode = '`'; i++; continue; }
+      if (ch === '`') { stack.pop(); state = stackTopIsInterp(stack) ? 'code' : (stack.length ? 'tpl' : 'code'); put(i, ch); lastCode = '`'; wordBuf = ''; i++; continue; }
       blank(i); i++; continue;
     }
 
@@ -131,8 +134,41 @@ function stackTopIsInterp(stack) {
   return !!top && top.kind === 'interp';
 }
 
-function isRegexStart(lastCode) {
-  return lastCode === '' || '(,=:[!&|?{};+-*%~^<>'.includes(lastCode);
+/**
+ * Keywords after which a `/` begins a REGEX, not a division.
+ *
+ * A single trailing character cannot decide this: in `return /re/.test(s)` the
+ * last significant char is `n`, which reads as an identifier and therefore as
+ * division — leaving the regex body unmasked. That matters here specifically
+ * because an unmasked regex containing a backtick and `${…}` synthesises a
+ * template literal that never existed in the code, and if it is the window's
+ * only candidate the predicate DEMOTES on it. Same failure class as D3a2, via
+ * a different door.
+ */
+const REGEX_PRECEDING_KEYWORDS = new Set([
+  'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void',
+  'throw', 'case', 'do', 'else', 'yield', 'await',
+]);
+
+/**
+ * `)` and `]` are included even though they are genuinely AMBIGUOUS — `if (a)
+ * /re/.test(b)` is a regex, `(a + b) / 2` is division, and no single-token
+ * lookbehind separates them (that needs a parser, which §7c rules out).
+ *
+ * They are included because the two errors are not symmetric. Guessing
+ * "regex" over-masks: the extra text disappears, candidate expressions are
+ * lost, and the predicate returns no match → `A`. Guessing "division" leaves
+ * regex contents live, and a backtick inside one synthesises a template that
+ * does not exist in the code — which can DEMOTE. Over-masking costs rank;
+ * under-masking costs safety, so the tie breaks toward over-masking.
+ *
+ * A mis-guess is also self-limiting: `skipRegex` refuses to span a newline, so
+ * an unterminated guess falls back to ordinary handling.
+ */
+function isRegexStart(lastCode, lastWord) {
+  if (lastCode === '') return true;
+  if (/[A-Za-z0-9_$]/.test(lastCode)) return REGEX_PRECEDING_KEYWORDS.has(lastWord);
+  return '(,=:[!&|?{};+-*%~^<>)]'.includes(lastCode);
 }
 
 /** Return the index just past a regex literal starting at `start`, or -1. */
@@ -168,9 +204,8 @@ const CHAIN_RE = new RegExp(`(${IDENT}(?:\\.${IDENT})*)$`);
  * silently truncating it would let the predicate demote a finding on the basis
  * of source it never saw.
  */
-export function sinkWindow(finding, maxSinkLines) {
+export function sinkWindow(finding, maxSinkLines, lines) {
   const region = finding?.sinkLocation?.region;
-  const lines = finding?.sourceLines;
   if (!region || !Array.isArray(lines)) return null;
   const startLine = region.startLine;
   const endLine = Math.max(region.endLine ?? startLine, startLine);
@@ -189,12 +224,32 @@ function rangeOffsets(lines, startLine, endLine) {
 }
 
 /** Mask the whole prefix, then hand back just the window's masked text. */
-function maskedWindow(finding, window) {
-  const lines = finding.sourceLines;
+function maskedWindow(lines, window) {
   const { masked, terminated } = maskCommentsAndStrings(lines.join('\n'));
   if (!terminated) return null; // D3a2: ambiguous stripping → no match
   const { start, end } = rangeOffsets(lines, window.startLine, window.endLine);
   return { text: masked.slice(start, end), offset: start, full: masked };
+}
+
+/**
+ * Source lines for a finding's SINK file, looked up per file.
+ *
+ * The source is deliberately NOT carried on the finding: 108 findings in one
+ * file would each hold a reference to the same array, and the router's
+ * per-finding schema validation would deep-copy every one of them. The plan's
+ * read strategy is already one bounded scan per FILE (§2c) — the in-memory
+ * shape should match it rather than undo it.
+ *
+ * Keyed on the SINK's repo-relative path, which is a different file from the
+ * primary location in 17.5% of the real corpus.
+ *
+ * @returns {string[]|null} lines from line 1 through the last line needed.
+ */
+function sourceForSink(finding, ctx) {
+  const key = finding?.sinkLocation?.repoRelativePath;
+  if (!key || typeof ctx?.getSource !== 'function') return null;
+  const lines = ctx.getSource(key);
+  return Array.isArray(lines) ? lines : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -310,23 +365,25 @@ function splitCallee(chain) {
   return { chain, name: parts[parts.length - 1] };
 }
 
-export function sinkMismatch(finding, config, bounds) {
+export function sinkMismatch(finding, config, ctx) {
   const pairs = config?.sinkMismatch?.pairs || [];
   if (pairs.length === 0) return null;
 
-  const window = sinkWindow(finding, bounds.maxSinkLines);
+  const lines = sourceForSink(finding, ctx);
+  if (!lines) return null;
+  const window = sinkWindow(finding, ctx.bounds.maxSinkLines, lines);
   if (!window) return null;
-  const masked = maskedWindow(finding, window);
+  const masked = maskedWindow(lines, window);
   if (!masked) return null;
 
   const region = finding.sinkLocation.region;
-  const regionText = extractRegionText(finding.sourceLines, region);
+  const regionText = extractRegionText(lines, region);
   if (!regionText) return null;
 
   // Absolute offset of the region within the window, so form 3 walks back from
   // the RIGHT occurrence rather than the first textual match.
   const regionAbs =
-    rangeOffsets(finding.sourceLines, region.startLine, region.startLine).start +
+    rangeOffsets(lines, region.startLine, region.startLine).start +
     (region.startColumn ? region.startColumn - 1 : 0);
   const regionStart = regionAbs - masked.offset;
 
@@ -372,13 +429,15 @@ function extractRegionText(lines, region) {
  * `+`-concatenation. §7c constraint 2 — more than one candidate expression in
  * the clamped window returns **no match** rather than choosing between them.
  */
-export function sanitizerWrapped(finding, config, bounds) {
+export function sanitizerWrapped(finding, config, ctx) {
   const sanitizers = config?.sanitizerWrapped?.sanitizers || [];
   if (sanitizers.length === 0) return null;
 
-  const window = sinkWindow(finding, bounds.maxSinkLines);
+  const lines = sourceForSink(finding, ctx);
+  if (!lines) return null;
+  const window = sinkWindow(finding, ctx.bounds.maxSinkLines, lines);
   if (!window) return null;
-  const masked = maskedWindow(finding, window);
+  const masked = maskedWindow(lines, window);
   if (!masked) return null;
 
   const templates = findTemplateLiterals(masked.text);

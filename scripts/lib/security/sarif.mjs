@@ -115,7 +115,30 @@ export const FindingLocationSchema = z
 
 export const SINK_RESOLUTIONS = Object.freeze(['codeflow', 'single', 'unresolved']);
 
-export const NormalizedFindingSchema = z
+/**
+ * `sinkResolution` and `sinkLocation` are two views of ONE fact, so they are
+ * checked against each other rather than independently. Without this, a
+ * finding could claim `sinkResolution: 'codeflow'` while carrying
+ * `sinkLocation: null` — and the source-reading predicates would decline while
+ * the router's `sink-unresolved` guard never fired, leaving a
+ * location-dependent decision made with no location.
+ */
+export function assertSinkConsistency(finding, ctx) {
+  const claimsUnresolved = finding.sinkResolution === 'unresolved';
+  const hasNoSink = finding.sinkLocation === null || finding.sinkLocation === undefined;
+  if (claimsUnresolved !== hasNoSink) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['sinkResolution'],
+      message:
+        `sinkResolution=${finding.sinkResolution} disagrees with sinkLocation=` +
+        `${hasNoSink ? 'null' : 'present'}; the two must agree`,
+    });
+  }
+}
+
+/** Extendable base — the refined export below is not `.extend()`-able. */
+export const NormalizedFindingShape = z
   .object({
     findingId: z.string().min(1),
     occurrenceIndex: z.number().int().nonnegative(),
@@ -140,7 +163,44 @@ export const NormalizedFindingSchema = z
   })
   .strict();
 
+export const NormalizedFindingSchema =
+  NormalizedFindingShape.superRefine(assertSinkConsistency);
+
 export const BUCKETS = Object.freeze(['A', 'C', 'D']);
+
+/**
+ * A location after the Phase-3 adapter has canonicalized it. Lives here rather
+ * than in the router so every seam schema stays in one module (§2c) and the
+ * report schema below can reference the routed shape without a cycle.
+ */
+export const RoutableLocationSchema = FindingLocationSchema.extend({
+  canonicalPath: z.string(),
+  repoRelativePath: z.string(),
+  pathClassification: z.enum(['ok', 'sensitive', 'unresolved', 'escaped']),
+});
+
+export const PredicateMatchSchema = z
+  .object({
+    predicate: z.string(),
+    matched: z.boolean(),
+    reason: z.string(),
+    bucket: z.enum(['A', 'C', 'D']).optional(),
+  })
+  .strict();
+
+/**
+ * The report's core payload, typed.
+ *
+ * This was `z.array(z.any())`, which meant the ONE schema whose job is to stop
+ * render and logic diverging validated nothing about the findings it carried —
+ * a versioned contract that could not detect its own breach.
+ */
+export const RoutedFindingSchema = NormalizedFindingShape.extend({
+  location: RoutableLocationSchema.nullable(),
+  sinkLocation: RoutableLocationSchema.nullable(),
+  bucket: z.enum(['A', 'C', 'D']),
+  matches: z.array(PredicateMatchSchema),
+}).superRefine(assertSinkConsistency);
 
 export const TriageReportSchema = z
   .object({
@@ -161,7 +221,7 @@ export const TriageReportSchema = z
         D: z.number().int().nonnegative(),
       })
       .strict(),
-    findings: z.array(z.any()),
+    findings: z.array(RoutedFindingSchema),
     unusedPredicates: z.array(z.string()),
     diagnostics: z.array(z.string()),
   })
@@ -208,16 +268,32 @@ export function resolveArtifactUri(artifactLocation, run, diagnostics) {
       diagnostics.push(`uri-unsupported-scheme:${scheme[1]}`);
       return null;
     }
-    // `file://` is absolute; without a repoRoot to compare against lexically we
-    // cannot prove containment here, so Phase 3's canonicalization owns it.
-    // We keep the path portion and let containment be decided there.
+    // Parse rather than string-strip the `file://` prefix. Stripping it turns
+    // the URI's AUTHORITY into a leading path segment — `file://evil-host/x.js`
+    // becomes the innocuous-looking RELATIVE path `evil-host/x.js`, which then
+    // passes every check below and is treated as a repo artifact. That is a
+    // fail-open on the exact input SC1 exists to distrust.
+    let parsed;
     try {
-      candidate = decodeURIComponent(uri.replace(/^file:\/\//i, ''));
+      parsed = new URL(uri);
+    } catch {
+      diagnostics.push('uri-unparseable');
+      return null;
+    }
+    if (parsed.host && parsed.host.toLowerCase() !== 'localhost') {
+      diagnostics.push('uri-remote-authority');
+      return null;
+    }
+    try {
+      candidate = decodeURIComponent(parsed.pathname);
     } catch {
       diagnostics.push('uri-undecodable');
       return null;
     }
     candidate = candidate.replace(/^\/([a-zA-Z]:)/, '$1'); // /C:/x -> C:/x
+    // A `file:` pathname is always absolute, and Phase 1 has no repoRoot to
+    // prove containment against — so it is unresolvable here BY CONSTRUCTION
+    // rather than guessed at. Routing to `A` is the honest outcome.
     if (path.isAbsolute(candidate) || /^[a-zA-Z]:/.test(candidate)) {
       diagnostics.push('uri-absolute');
       return null;
@@ -257,8 +333,12 @@ export function resolveArtifactUri(artifactLocation, run, diagnostics) {
 
   // Lexical containment: `..` that escapes the frame is never resolved to a
   // guess. `path.posix.normalize` collapses interior `..` honestly.
+  //
+  // The test is on the `..` SEGMENT, not the `..` prefix: `startsWith('..')`
+  // also rejects legitimate names like `..reports/x.js`, sending a real
+  // finding to `A` for a filename that merely begins with two dots.
   const normalised = path.posix.normalize(joined);
-  if (normalised.startsWith('..') || normalised === '.') {
+  if (normalised === '..' || normalised.startsWith('../') || normalised === '.') {
     diagnostics.push('uri-escapes-root');
     return null;
   }

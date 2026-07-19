@@ -13,11 +13,13 @@
  */
 import { z } from 'zod';
 import {
-  NormalizedFindingSchema,
-  FindingLocationSchema,
+  NormalizedFindingShape,
+  assertSinkConsistency,
+  RoutableLocationSchema,
   BOUND_DEFAULTS,
   BUCKETS,
 } from './sarif.mjs';
+import { redactSecrets } from '../secret-patterns.mjs';
 import { PREDICATE_KINDS, PREDICATES } from './predicates.mjs';
 
 /**
@@ -28,45 +30,57 @@ import { PREDICATE_KINDS, PREDICATES } from './predicates.mjs';
  */
 export const BUCKET_RESTRICTIVENESS = Object.freeze({ A: 0, C: 1, D: 2 });
 
-const RoutableLocationSchema = FindingLocationSchema.extend({
-  canonicalPath: z.string(),
-  repoRelativePath: z.string(),
-  pathClassification: z.enum(['ok', 'sensitive', 'unresolved', 'escaped']),
-});
-
 /**
  * The router's entry contract. Distinct from `NormalizedFinding` because the
  * three adapter-supplied fields are filesystem-derived: keeping them in one
  * schema would let a caller assume Phase 1 had produced them.
  *
- * `sourceLines` is source from **line 1** through the last line any finding in
- * that file needs — not just the window — because whether the window opens
- * inside a block comment or template is undecidable from the window alone
- * (D3a2). It is stripped from the report.
+ * Two DIFFERENT source-shaped things, deliberately not conflated:
+ *
+ *  - **`sourceLines`** — the raw, unredacted file prefix the predicates read.
+ *    Not a field at all. It is supplied per FILE via `opts.getSource`, because
+ *    carrying it per finding would give 108 findings in one file 108 references
+ *    that this schema then deep-copies, undoing the plan's
+ *    one-bounded-scan-per-file read strategy (§2c). It never reaches the report.
+ *  - **`sourceContext`** — the bounded, REDACTED snippet inherited from
+ *    `NormalizedFinding`. This one is *supposed* to reach the report (plan SC2:
+ *    redacted at Phase 3, immediately after the read). Its safety is the
+ *    adapter's obligation, discharged by Cluster B's redaction test — not by
+ *    this schema, which cannot tell a redacted string from an unredacted one.
  */
-export const RoutableFindingSchema = NormalizedFindingSchema.extend({
+export const RoutableFindingSchema = NormalizedFindingShape.extend({
   location: RoutableLocationSchema.nullable(),
   sinkLocation: RoutableLocationSchema.nullable(),
-  sourceLines: z.array(z.string()).nullable().optional(),
-});
+}).superRefine(assertSinkConsistency);
 
 /**
  * Route every finding into exactly one bucket.
  *
  * @param {object[]} findings adapter-enriched findings
  * @param {object} config validated `ConfigSchema`
- * @param {{bounds?: object}} [opts]
+ * @param {{bounds?: object, getSource?: (repoRelativePath: string) => string[]|null}} [opts]
  * @returns {{findings: object[], counts: {A:number,C:number,D:number},
  *            unusedPredicates: string[], diagnostics: string[]}}
  */
 export function routeFindings(findings, config, opts = {}) {
+  // NOT `findings || []`. A null/undefined collection means the ingestion or
+  // enrichment adapter failed or was miswired; coercing it to empty would
+  // return `{counts:{A:0,C:0,D:0}}` — a clean, successful-looking "nothing to
+  // review" for a run that reviewed nothing. That is the exact shape of a
+  // green-that-means-the-check-stopped-looking.
+  if (!Array.isArray(findings)) {
+    throw new TypeError(
+      `routeFindings: findings must be an array, received ${findings === null ? 'null' : typeof findings}`,
+    );
+  }
   const bounds = opts.bounds || BOUND_DEFAULTS;
+  const ctx = { bounds, getSource: opts.getSource };
   const diagnostics = [];
   const matchedKinds = new Set();
   const counts = { A: 0, C: 0, D: 0 };
   const out = [];
 
-  for (const raw of findings || []) {
+  for (const raw of findings) {
     // A shape violation here is an adapter bug, not untrusted input. Throwing
     // is the honest response: silently routing a malformed finding would let a
     // missing `pathClassification` read as a successful evaluation.
@@ -97,11 +111,18 @@ export function routeFindings(findings, config, opts = {}) {
     for (const kind of PREDICATE_KINDS) {
       let result = null;
       try {
-        result = PREDICATES[kind](finding, config, bounds);
+        result = PREDICATES[kind](finding, config, ctx);
       } catch (err) {
         // A predicate that throws has not evaluated anything; it must not be
         // able to take the run down, and it must not demote.
-        diagnostics.push(`predicate-error:${kind}:${finding.findingId}:${err.message}`);
+        //
+        // The message is redacted and length-capped before it lands in the
+        // report: an exception raised while handling source can quote the very
+        // line under review, and this report is pasted into issues, PRs, and
+        // chat. Same reasoning as the SC2 message/rawLocation redaction — the
+        // boundary is wherever externally-influenced text first enters the DTO.
+        const safe = redactSecrets(String(err?.message ?? 'unknown')).text.slice(0, 200);
+        diagnostics.push(`predicate-error:${kind}:${finding.findingId}:${safe}`);
         result = null;
       }
       if (!result) {
@@ -162,13 +183,18 @@ function sensitivityBlock(finding) {
   if (finding.sinkLocation && finding.sinkLocation.pathClassification !== 'ok') {
     return `sink-path-${finding.sinkLocation.pathClassification}`;
   }
+  // D3a0 rule 3, stated literally: when the sink cannot be identified, "the
+  // finding routes to `A` with reason `sink-unresolved`". The source-reading
+  // predicates already decline (no sink → no window), but `path-scope` reads
+  // the PRIMARY path and would happily demote to `D` on its own — leaving a
+  // finding whose claimed sink was never located sitting in the bottom bucket.
+  // Blocking here keeps the unresolved case conservative across all three.
+  if (finding.sinkResolution === 'unresolved') return 'sink-unresolved';
   return null;
 }
 
 function emit(finding, bucket, matches) {
-  // `sourceLines` is predicate input, never report output — it is unredacted
-  // file content and the report gets pasted into issues, PRs, and chat.
-  const { sourceLines, ...rest } = finding;
+  const rest = finding;
   if (!BUCKETS.includes(bucket)) {
     /* c8 ignore next 2 -- guarded by selectBucket's closed domain */
     throw new RangeError(`routeFindings: illegal bucket ${bucket}`);

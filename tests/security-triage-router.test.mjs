@@ -5,7 +5,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { BOUND_DEFAULTS, BUCKETS } from '../scripts/lib/security/sarif.mjs';
+import { BOUND_DEFAULTS, BUCKETS, TriageReportSchema } from '../scripts/lib/security/sarif.mjs';
 import {
   routeFindings,
   selectBucket,
@@ -63,12 +63,36 @@ function routable(over = {}) {
     messageTruncated: false,
     level: 'warning',
     diagnostics: [],
-    sourceLines: source ? source.split('\n') : null,
+    _source: source ? source.split('\n') : null,
   };
 }
 
-const route = (findings, config = CONFIG) =>
-  routeFindings(findings, config, { bounds: BOUND_DEFAULTS });
+/**
+ * Strip the test-only `_source` carrier and hand it to the router as a
+ * per-FILE lookup, mirroring how the Phase-3 adapter supplies it.
+ */
+function route(findings, config = CONFIG) {
+  const byPath = new Map();
+  const clean = findings.map((f) => {
+    const { _source, ...rest } = f;
+    const key = rest.sinkLocation?.repoRelativePath;
+    if (_source && key) byPath.set(key, _source);
+    return rest;
+  });
+  return routeFindings(clean, config, {
+    bounds: BOUND_DEFAULTS,
+    getSource: (k) => byPath.get(k) ?? null,
+  });
+}
+
+/** Predicate-level ctx for the direct (non-router) predicate tests. */
+function ctxFor(finding, bounds = BOUND_DEFAULTS) {
+  return {
+    bounds,
+    getSource: (k) =>
+      (k === finding.sinkLocation?.repoRelativePath ? finding._source : null),
+  };
+}
 
 // ---------------------------------------------------------------------------
 
@@ -92,6 +116,38 @@ describe('D1 — predicates route, never delete', () => {
     for (const f of r.findings) assert.ok(BUCKETS.includes(f.bucket), f.bucket);
   });
 
+  // The report schema is what stops render and logic diverging, so it has to
+  // actually validate the payload. As `z.array(z.any())` it was a versioned
+  // contract incapable of detecting its own breach.
+  test('the router output validates against the typed TriageReportSchema', () => {
+    const r = route([
+      routable(),
+      routable({ p: 'tests/x.js', ruleId: 'javascript/PT/test' }),
+      routable({ noLocation: true }),
+    ]);
+    const report = {
+      schemaVersion: 1,
+      runStatus: 'needs_review',
+      exitCode: 3,
+      counts: r.counts,
+      findings: r.findings,
+      unusedPredicates: r.unusedPredicates,
+      diagnostics: r.diagnostics,
+    };
+    const parsed = TriageReportSchema.safeParse(report);
+    assert.equal(parsed.success, true, JSON.stringify(parsed.error?.issues?.slice(0, 3)));
+  });
+
+  test('the report schema REJECTS a finding with a bucket outside {A,C,D}', () => {
+    const r = route([routable()]);
+    const report = {
+      schemaVersion: 1, runStatus: 'needs_review', exitCode: 3, counts: r.counts,
+      findings: [{ ...r.findings[0], bucket: 'B' }],
+      unusedPredicates: [], diagnostics: [],
+    };
+    assert.equal(TriageReportSchema.safeParse(report).success, false);
+  });
+
   test('every finding carries a machine-readable reason for each predicate', () => {
     const r = route([routable()]);
     const kinds = r.findings[0].matches.map((m) => m.predicate);
@@ -99,9 +155,12 @@ describe('D1 — predicates route, never delete', () => {
     assert.ok(r.findings[0].matches.every((m) => typeof m.reason === 'string'));
   });
 
-  test('sourceLines never reaches the report — it is unredacted file content', () => {
-    const r = route([routable({ source: 'const secret = 1;' })]);
+  test('no source content reaches the report — it is unredacted file content', () => {
+    const r = route([routable({ source: 'const apiKey = "hunter2-not-a-real-key";' })]);
+    const serialized = JSON.stringify(r.findings[0]);
+    assert.ok(!serialized.includes('hunter2'), 'source text must not appear anywhere in the report');
     assert.equal('sourceLines' in r.findings[0], false);
+    assert.equal('_source' in r.findings[0], false);
   });
 
   test('a finding whose shape violates the routable contract throws, never mis-routes', () => {
@@ -110,11 +169,74 @@ describe('D1 — predicates route, never delete', () => {
     assert.throws(() => route([bad]), /RoutableFindingSchema/);
   });
 
-  test('a throwing predicate is recorded and demotes nothing', () => {
-    // A getter that throws when a predicate reads the rule id.
-    const f = routable();
-    Object.defineProperty(f, 'ruleId', { get() { throw new Error('boom'); }, enumerable: true });
-    assert.throws(() => route([f])); // schema parse reads it first — still loud
+  /**
+   * The predicate must throw DURING evaluation, after schema validation has
+   * already passed. An earlier version of this test made `ruleId` throw via a
+   * getter, but `safeParse` reads `ruleId` before any predicate runs — so it
+   * asserted schema-parse failure while claiming to cover predicate-exception
+   * handling. Vacuous in exactly the way the negative-control doctrine warns
+   * about: green, and testing nothing it named.
+   *
+   * A getter on `nonReachableGlobs` throws only when `pathScope` reaches in.
+   */
+  test('a predicate that throws mid-evaluation is recorded, and demotes nothing', () => {
+    const boobyTrapped = {
+      ...CONFIG,
+      pathScope: {
+        get nonReachableGlobs() { throw new Error('boom'); },
+      },
+    };
+    const f = routable({ p: 'tests/x.js', ruleId: 'javascript/PT/test' });
+    const r = route([f], boobyTrapped);
+
+    assert.equal(r.findings.length, 1, 'the run survives');
+    assert.equal(r.findings[0].bucket, 'A', 'a thrown predicate must never demote');
+    assert.ok(
+      r.diagnostics.some((d) => d.startsWith('predicate-error:path-scope:') && d.includes('boom')),
+      `expected a predicate-error diagnostic, got ${JSON.stringify(r.diagnostics)}`,
+    );
+  });
+
+  // `sinkResolution` and `sinkLocation` are two views of ONE fact. Validated
+  // independently, a finding could claim a resolved sink while carrying none —
+  // and the `sink-unresolved` guard would never fire for it.
+  test('sinkResolution and sinkLocation must agree, in both directions', () => {
+    const claimsResolvedButHasNone = routable({ noSink: true });
+    claimsResolvedButHasNone.sinkResolution = 'codeflow';
+    assert.throws(() => route([claimsResolvedButHasNone]), /disagrees with sinkLocation/);
+
+    const claimsUnresolvedButHasOne = routable();
+    claimsUnresolvedButHasOne.sinkResolution = 'unresolved';
+    assert.throws(() => route([claimsUnresolvedButHasOne]), /disagrees with sinkLocation/);
+  });
+
+  // The report is pasted into issues, PRs and chat, and an exception raised
+  // while handling source can quote the line under review.
+  test('a predicate exception message is redacted before it enters the report', () => {
+    const secret = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    const boobyTrapped = {
+      ...CONFIG,
+      pathScope: {
+        get nonReachableGlobs() { throw new Error(`leaked ${secret} here`); },
+      },
+    };
+    const r = route([routable({ p: 'tests/x.js', ruleId: 'javascript/PT/test' })], boobyTrapped);
+    const serialized = JSON.stringify(r);
+    assert.ok(!serialized.includes(secret), 'secret must not survive into the report');
+    assert.ok(r.diagnostics.some((d) => d.startsWith('predicate-error:path-scope:')));
+  });
+
+  // H5 — a null collection means the adapter failed. Coercing it to empty
+  // would return a clean-looking "nothing to review" for a run that reviewed
+  // nothing.
+  test('a non-array findings collection throws rather than reporting an empty clean run', () => {
+    for (const bad of [null, undefined, {}, 'x']) {
+      assert.throws(
+        () => routeFindings(bad, CONFIG, { bounds: BOUND_DEFAULTS }),
+        /findings must be an array/,
+        String(bad),
+      );
+    }
   });
 });
 
@@ -188,6 +310,25 @@ describe('SC1/SC2/G1 — sensitivity is checked BEFORE any predicate', () => {
     const r = route([routable({ noLocation: true })]);
     assert.equal(r.findings[0].bucket, 'A');
     assert.ok(r.findings[0].matches.some((m) => m.reason === 'location-null'));
+  });
+
+  // D3a0 rule 3, stated literally. `path-scope` reads the PRIMARY path, so
+  // without this guard a finding whose claimed sink was never located could
+  // still be demoted to the bottom bucket on the strength of its filename.
+  test('an unresolved sink routes to A even when path-scope would demote it', () => {
+    const f = routable({ p: 'tests/x.js', ruleId: 'javascript/PT/test', noSink: true });
+    assert.equal(pathScope(f, CONFIG).bucket, 'D', 'sanity: path-scope alone would demote');
+    const r = route([f]);
+    assert.equal(r.findings[0].bucket, 'A');
+    assert.ok(r.findings[0].matches.some((m) => m.reason === 'sink-unresolved'));
+  });
+
+  // The redacted snippet is a DELIBERATE report field (plan SC2); only the raw
+  // prefix is barred. Pinning this stops a future reader "fixing" the wrong side.
+  test('sourceContext is allowed through to the report — its redaction is Phase 3\'s job', () => {
+    const f = { ...routable(), sourceContext: 'el.innerHTML = x;' };
+    const r = route([f]);
+    assert.equal(r.findings[0].sourceContext, 'el.innerHTML = x;');
   });
 });
 
@@ -275,6 +416,36 @@ describe('D3a2 — comments and string literals are stripped first', () => {
     assert.ok(!masked.includes('`'));
   });
 
+  /**
+   * H4. A `/` after a KEYWORD starts a regex, but the last significant
+   * character there is a letter — which reads as an identifier, i.e. division.
+   * The regex body then goes unmasked, and a backtick inside it synthesises a
+   * template literal that does not exist in the code. If that phantom is the
+   * window's only candidate, the predicate demotes on it: the D3a2 failure
+   * reached through a different door.
+   */
+  test('a regex after a keyword is masked, not read as division', () => {
+    for (const kw of ['return', 'typeof', 'case', 'in', 'of', 'await', 'yield']) {
+      const { masked, terminated } = maskCommentsAndStrings(`${kw} /\`/.test(x);`);
+      assert.equal(terminated, true, kw);
+      assert.ok(!masked.includes('`'), `${kw}: backtick inside the regex must be masked`);
+    }
+  });
+
+  test('division after an identifier is still division, not a regex', () => {
+    const { masked, terminated } = maskCommentsAndStrings('const r = total / count;');
+    assert.equal(terminated, true);
+    assert.ok(masked.includes('/'), 'the division operator must survive');
+  });
+
+  test('a keyword-prefixed regex cannot fabricate a sanitized template', () => {
+    // The real sink is a bare identifier. The only `${esc(…)}` in the window
+    // lives inside a regex following `return` — it must not demote.
+    const f = routable({ source: 'el.innerHTML = someVar; return /`${esc(x)}`/.test(s);' });
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
+    assert.equal(route([f]).findings[0].bucket, 'A');
+  });
+
   test('nested templates inside interpolations are tracked, not mis-nested', () => {
     assert.equal(maskCommentsAndStrings('`a${`b${c}`}d`').terminated, true);
   });
@@ -295,7 +466,7 @@ describe('D3a2 — comments and string literals are stripped first', () => {
   test('a sanitizer quoted inside a COMMENT cannot demote an unsanitized sink', () => {
     const source = 'el.innerHTML = someVar; // built from `${esc(x)}`';
     const f = routable({ source });
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS), null);
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
     assert.equal(route([f]).findings[0].bucket, 'A');
   });
 
@@ -305,7 +476,7 @@ describe('D3a2 — comments and string literals are stripped first', () => {
       source,
       region: { startLine: 2, startColumn: null, endLine: 2, endColumn: null },
     });
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS).bucket, 'C');
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)).bucket, 'C');
   });
 
   test('a window opening inside a block comment is judged from line 1, not the window', () => {
@@ -315,7 +486,7 @@ describe('D3a2 — comments and string literals are stripped first', () => {
       source,
       region: { startLine: 3, startColumn: null, endLine: 3, endColumn: null },
     });
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS), null);
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
   });
 });
 
@@ -325,12 +496,12 @@ describe('sanitizer-wrapped — D3a', () => {
 
   test('every interpolation wrapped by a declared sanitizer → C', () => {
     const f = at('el.innerHTML = `<b>${esc(a)}</b><i>${escapeHtml(b)}</i>`;');
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS).bucket, 'C');
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)).bucket, 'C');
   });
 
   test('a member-expression sanitizer is matched by its declared dotted form', () => {
     const f = at('el.innerHTML = `<b>${DOMPurify.sanitize(a)}</b>`;');
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS).bucket, 'C');
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)).bucket, 'C');
   });
 
   /**
@@ -340,7 +511,7 @@ describe('sanitizer-wrapped — D3a', () => {
    */
   test('one raw interpolation beside a sanitized one → NO match (the known-real finding)', () => {
     const f = at('el.innerHTML = `<b>${esc(r.wineName)}</b><i>${r.reason}</i>`;');
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS), null);
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
     assert.equal(route([f]).findings[0].bucket, 'A');
   });
 
@@ -366,17 +537,17 @@ describe('sanitizer-wrapped — D3a', () => {
   // §7c constraint 2 — ambiguity resolves to A, never to a demotion.
   test('more than one candidate template in the window → NO match', () => {
     const f = at('const a = `${esc(x)}`; const b = `${esc(y)}`;');
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS), null);
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
   });
 
   test('nesting depth greater than 1 is unsupported → no match', () => {
     const f = at('el.innerHTML = `<b>${`${esc(a)}`}</b>`;');
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS), null);
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
   });
 
   test('a template with zero interpolations cannot explain the finding → no match', () => {
     const f = at('el.innerHTML = `<b>static</b>`;');
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS), null);
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
   });
 
   // D3a: a region EXCEEDING the clamp yields no match — silently truncating
@@ -387,21 +558,23 @@ describe('sanitizer-wrapped — D3a', () => {
       source,
       region: { startLine: 1, startColumn: null, endLine: 30, endColumn: null },
     });
-    assert.equal(sanitizerWrapped(f, CONFIG, { ...BOUND_DEFAULTS, maxSinkLines: 12 }), null);
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f, { ...BOUND_DEFAULTS, maxSinkLines: 12 })), null);
   });
 
   test('no source available → no match (never a demotion on absent evidence)', () => {
-    assert.equal(sanitizerWrapped(routable(), CONFIG, BOUND_DEFAULTS), null);
+    assert.equal(sanitizerWrapped(routable(), CONFIG, { bounds: BOUND_DEFAULTS, getSource: () => null }), null);
   });
 
   test('an empty sanitizers list makes the predicate inert', () => {
     const cfg = { ...CONFIG, sanitizerWrapped: { sanitizers: [] } };
-    assert.equal(sanitizerWrapped(at('`${esc(a)}`'), cfg, BOUND_DEFAULTS), null);
+    const f = at('el.innerHTML = `<b>${esc(a)}</b>`;');
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)).bucket, 'C', 'sanity: matches when declared');
+    assert.equal(sanitizerWrapped(f, cfg, ctxFor(f)), null);
   });
 
   test('sanitizer-wrapped can only ever yield C, never D', () => {
     const f = at('el.innerHTML = `<b>${esc(a)}</b>`;');
-    assert.equal(sanitizerWrapped(f, CONFIG, BOUND_DEFAULTS).bucket, 'C');
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)).bucket, 'C');
   });
 });
 
@@ -412,19 +585,19 @@ describe('sink-mismatch — §7c constraint 1, three accepted region forms', () 
   test('form 1: the region IS the call expression', () => {
     const src = 'const hit = caches.match(req);';
     const f = reDos(src, { startLine: 1, startColumn: 13, endLine: 1, endColumn: 30 });
-    assert.equal(sinkMismatch(f, CONFIG, BOUND_DEFAULTS).bucket, 'D');
+    assert.equal(sinkMismatch(f, CONFIG, ctxFor(f)).bucket, 'D');
   });
 
   test('form 2: the region IS the callee', () => {
     const src = 'const hit = caches.match(req);';
     const f = reDos(src, { startLine: 1, startColumn: 13, endLine: 1, endColumn: 25 });
-    assert.equal(sinkMismatch(f, CONFIG, BOUND_DEFAULTS).bucket, 'D');
+    assert.equal(sinkMismatch(f, CONFIG, ctxFor(f)).bucket, 'D');
   });
 
   test('form 3: the region is enclosed by the argument list', () => {
     const src = 'const hit = caches.match(req);';
     const f = reDos(src, { startLine: 1, startColumn: 26, endLine: 1, endColumn: 29 });
-    assert.equal(sinkMismatch(f, CONFIG, BOUND_DEFAULTS).bucket, 'D');
+    assert.equal(sinkMismatch(f, CONFIG, ctxFor(f)).bucket, 'D');
   });
 
   test('a callee identifier NOT followed by a call is not form 2', () => {
@@ -439,19 +612,19 @@ describe('sink-mismatch — §7c constraint 1, three accepted region forms', () 
       region: { startLine: 1, startColumn: 13, endLine: 1, endColumn: 30 },
       sinkRegion: { startLine: 1, startColumn: 13, endLine: 1, endColumn: 30 },
     });
-    assert.equal(sinkMismatch(f, CONFIG, BOUND_DEFAULTS), null);
+    assert.equal(sinkMismatch(f, CONFIG, ctxFor(f)), null);
   });
 
   test('the last segment of a dotted chain also satisfies a declared sinkFunction', () => {
     const cfg = { ...CONFIG, sinkMismatch: { pairs: [{ ruleId: 'javascript/reDOS', sinkFunction: 'match' }] } };
     const f = reDos('const hit = caches.match(req);', { startLine: 1, startColumn: 13, endLine: 1, endColumn: 30 });
-    assert.equal(sinkMismatch(f, cfg, BOUND_DEFAULTS).bucket, 'D');
+    assert.equal(sinkMismatch(f, cfg, ctxFor(f)).bucket, 'D');
   });
 
   test('an empty pair list makes the predicate inert', () => {
     const cfg = { ...CONFIG, sinkMismatch: { pairs: [] } };
     const f = reDos('const hit = caches.match(req);', { startLine: 1, startColumn: 13, endLine: 1, endColumn: 30 });
-    assert.equal(sinkMismatch(f, cfg, BOUND_DEFAULTS), null);
+    assert.equal(sinkMismatch(f, cfg, ctxFor(f)), null);
   });
 });
 

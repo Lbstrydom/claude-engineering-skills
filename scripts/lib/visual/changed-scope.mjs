@@ -17,6 +17,7 @@
  * @module scripts/lib/visual/changed-scope
  */
 import { TOKEN_FAMILIES } from './schema.mjs';
+import { globMatch } from '../glob-match.mjs';
 
 /** Map an audited property/family to its token family for rule (c). */
 function familyOfFinding(finding) {
@@ -78,16 +79,9 @@ export function resolveChangedScope({
   });
 }
 
-/** Minimal glob matcher supporting `**`, `*`, `?` (no brace expansion). */
-export function globMatch(glob, filePath) {
-  const g = String(glob).replace(/\\/g, '/');
-  const p = String(filePath).replace(/\\/g, '/');
-  const DSTAR = '\x00'; // sentinel for ** so the single-* pass doesn't touch it
-  const body = g
-    .replace(/[.+^${}()|[\]]/g, '\\$&')
-    .replace(/\*\*/g, DSTAR)
-    .replace(/\*/g, '[^/]*')
-    .replace(/\?/g, '[^/]')
-    .split(DSTAR).join('.*');
-  return new RegExp(`^${body}$`).test(p);
-}
+// Re-exported so existing importers are unaffected. The implementation moved
+// out of `visual/` when `security/` began routing on it — a shared decision
+// primitive should not live inside one of its two consumers. Note this is an
+// import+export, not a bare `export … from`: the two call sites above need the
+// binding in local scope.
+export { globMatch };
