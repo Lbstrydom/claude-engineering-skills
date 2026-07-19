@@ -11,17 +11,52 @@
  * real DML exposure if the project anon key ever leaks. This script is
  * how we audit "did anything regress?" after a migration.
  *
+ * Two modes, because "RLS is off" and "RLS is off AND anon can read it" are
+ * different severities and only the second is a breach:
+ *
+ *   DIAGNOSTIC (default) — exit 1 on ANY table without RLS. Use when auditing
+ *     after a migration; every no-RLS table is worth knowing about.
+ *   GATE (`--gate`)      — exit 1 ONLY on *exploitable* exposure: a no-RLS
+ *     table that also carries an anon/authenticated grant. Advisory-only
+ *     no-RLS tables are printed and do not block.
+ *
+ * Why the gate ranks by exploitability rather than by lint level: a consumer's
+ * 2026-07-19 Supabase audit produced 121 advisories, of which 91
+ * `rls_enabled_no_policy` INFO rows were default-deny working exactly as
+ * designed — while 3 ERROR rows were a live unauthenticated cross-tenant leak
+ * (242 rows of drinking history readable with the public anon key). Ranking by
+ * lint level would have buried the real one under the noise. A gate that cries
+ * wolf gets bypassed, and a bypassed gate protects nothing.
+ *
  * Exit codes:
- *   0  all public tables have RLS, or AUDIT_DB_URL unset (cloud-off)
- *   1  one or more tables without RLS
+ *   0  no blocking condition for the active mode, or AUDIT_DB_URL unset (cloud-off)
+ *   1  blocking condition (see modes above)
  *   2  config / connectivity error
  *
  * Usage:
  *   AUDIT_DB_URL=postgres://… node scripts/check-rls.mjs
+ *   AUDIT_DB_URL=postgres://… node scripts/check-rls.mjs --gate
  *   AUDIT_DB_URL=postgres://… node scripts/check-rls.mjs --format json
  *
  * @module scripts/check-rls
  */
+
+/** Gate mode: block only on exploitable exposure (no-RLS + anon/authenticated grant). */
+const GATE_MODE = process.argv.includes('--gate');
+
+/**
+ * The blocking decision, extracted pure so the two modes' semantics are unit-
+ * testable without a live database (testing-doctrine Tier 1 — this is a
+ * security gate, and "does it block on the right thing" is exactly the
+ * property that must not silently regress).
+ *
+ * @param {{gateMode: boolean, noRlsCount: number, exposedGrantCount: number}} a
+ * @returns {0|1} process exit code
+ */
+export function decideRlsExit({ gateMode, noRlsCount, exposedGrantCount }) {
+  if (gateMode) return exposedGrantCount > 0 ? 1 : 0;
+  return noRlsCount > 0 ? 1 : 0;
+}
 
 const FORMAT_JSON = process.argv.includes('--format=json') ||
   (process.argv.includes('--format') && process.argv[process.argv.indexOf('--format') + 1] === 'json');
@@ -129,7 +164,23 @@ async function main() {
       }
     }
 
-    process.exit(noRls.length > 0 ? 1 : 0);
+    // Gate blocks on practical exposure only; diagnostic blocks on any no-RLS
+    // table. `grants` is already scoped to no-RLS tables by the query above.
+    if (GATE_MODE) {
+      if (grants.length === 0 && noRls.length > 0 && !FORMAT_JSON) {
+        process.stderr.write(
+          `
+${D}gate: not blocking — ${noRls.length} no-RLS table(s) carry no anon/authenticated grant ` +
+          `(advisory). Run without --gate for the full diagnostic.${X}
+`
+        );
+      }
+    }
+    process.exit(decideRlsExit({
+      gateMode: GATE_MODE,
+      noRlsCount: noRls.length,
+      exposedGrantCount: grants.length,
+    }));
   } catch (err) {
     if (FORMAT_JSON) {
       process.stdout.write(JSON.stringify({
@@ -144,7 +195,22 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  process.stderr.write(`${R}fatal${X}: ${err?.stack || err?.message || err}\n`);
-  process.exit(2);
-});
+// Only self-execute as a CLI. Without this guard, importing the module (e.g.
+// to unit-test `decideRlsExit`) opens a live DB connection and calls
+// process.exit — which is how the gate-semantics test first "failed" while
+// every one of its assertions passed. Mirrors the isMain pattern already used
+// by ship-commit.mjs and install-prepush-hook.mjs.
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    if (!argv1) return false;
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+
+if (isMain) {
+  main().catch((err) => {
+    process.stderr.write(`${R}fatal${X}: ${err?.stack || err?.message || err}\n`);
+    process.exit(2);
+  });
+}

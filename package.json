@@ -46,7 +46,7 @@
     "models:check": "node scripts/check-model-freshness.mjs --strict",
     "maintenance:run": "node scripts/maintenance-checks.mjs",
     "maintenance:status": "node scripts/maintenance-checks.mjs --status",
-    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run plans:status && npm run plans:index:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm test",
+    "check": "npm run context:check && npm run docs:check && npm run docs:refs:gate && npm run plans:status && npm run plans:index:check && npm run skills:check && npm run plans:lint && npm run parity:check-coupling && npm run efficacy:check && npm run on-conflict:check && npm run arch:coverage-gate && npm run db:check-rls:gate && npm test",
     "docs:refs:gate": "node scripts/check-docs-refs.mjs --gating",
     "on-conflict:check": "node scripts/on-conflict-lint.mjs",
     "on-conflict:all": "node scripts/on-conflict-lint.mjs --all",
@@ -77,7 +77,7 @@
     "sync:check": "node scripts/check-sync.mjs",
     "sync:version-check": "node scripts/check-audit-tool-version.mjs",
     "skills:regenerate": "node scripts/sync-shared-audit-refs.mjs && node scripts/regenerate-skill-copies.mjs && node scripts/build-manifest.mjs",
-    "skills:check": "node scripts/check-skill-refs.mjs && node scripts/sync-shared-audit-refs.mjs --check && node scripts/regenerate-skill-copies.mjs --check && node scripts/build-manifest.mjs --check && node scripts/check-gate-contracts.mjs",
+    "skills:check": "node scripts/check-skill-refs.mjs && node scripts/sync-shared-audit-refs.mjs --check && node scripts/regenerate-skill-copies.mjs --check && node scripts/build-manifest.mjs --check && node scripts/check-gate-contracts.mjs && node scripts/check-stale-skill-surface.mjs --gate",
     "gates:check": "node scripts/check-gate-contracts.mjs",
     "audit:sync-shared-refs": "node scripts/sync-shared-audit-refs.mjs",
     "skills:manifest": "node scripts/build-manifest.mjs",
@@ -118,7 +118,9 @@
     "parity:expected-schema": "node scripts/postgres-parity/generate-expected-schema.mjs",
     "audit:clean": "node scripts/audit-clean.mjs",
     "audit:clean:apply": "node scripts/audit-clean.mjs --apply",
-    "arch:coverage-gate": "node scripts/arch-coverage-gate.mjs"
+    "arch:coverage-gate": "node scripts/arch-coverage-gate.mjs",
+    "db:check-rls:gate": "node scripts/check-rls.mjs --gate",
+    "skills:check-surface": "node scripts/check-stale-skill-surface.mjs --gate"
   },
   "keywords": [
     "claude",
