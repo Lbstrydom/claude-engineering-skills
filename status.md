@@ -1,5 +1,88 @@
 # Project Status Log
 
+## 2026-07-19 — E1 closes a live gate hole; two more findings shrank under inspection
+
+Continuation of the WS-C2 session below. Four pieces landed: E1 (`caf2621`), the
+disclosure-bucket handling (`7d52756`, `11697a2`), the remaining WS packages
+(`df472ba`), and a correction to my own mis-grading (`1017d74`).
+
+**E1 — `AI-Gate: passed` was reachable for a commit whose content was never
+audited.** `resolveEvidence` verified recency only (`evidenceMs > headCommitTs *
+1000`), and `auditedTree`/`auditedSha` returned zero hits repo-wide. So "audit a
+clean tree → edit → commit" passed: the marker is newer than HEAD, freshness
+holds, and the trailer attaches to content no audit read. Because the marker
+*writer* had already shipped, this was worse than the honest `not-run` it
+replaced.
+
+Two design points, both places where a plausible implementation re-opens the hole:
+
+- **Capture hashes the WORKTREE, not the index** — staged into a throwaway
+  `GIT_INDEX_FILE` so the repo's real index is never touched (asserted by test).
+  An audit reads files on disk; hashing the index would let a broken *staged*
+  version satisfy the check while the audit evaluated the good *on-disk* content.
+- **`--path` partial commits refuse `passed`** — the index tree can equal the
+  audited tree while `--path` commits only a subset, so trusting the index there
+  would itself be a false pass. The comparand is left null and the verifier
+  refuses.
+
+Pre-E1 markers and rows are unverifiable rather than backfilled: a guessed
+backfill would retroactively legitimise exactly the unbound evidence the field
+rejects. Live migration applied (73/73, no drift); all **83 historical
+`audit_runs` rows carry NULL `audited_tree`**, as intended.
+
+**The audit earned its keep.** R1 flagged that my first-cut 48-bit suffix was a
+*probabilistic* guarantee where `crypto.randomUUID()` costs the same — correct,
+and my "negligible at this write rate" reasoning was arithmetically right but
+beside the point when the failure mode is silent overwrite. It also flagged an
+injectable `entropy()` seam that, on inspection, **no test ever used** — dead
+surface that could emit malformed ids, so it was deleted rather than validated.
+
+**Then the plan's own status labels turned out to be wrong.** With WS-C closed I
+stamped the master plan Complete on the strength of §9, then verified those
+labels against the code instead of trusting them. WS-D and WS-E were both
+mislabelled. E1 was the real defect; the rest shrank:
+
+- **WS-D item 1 was overstated — by me.** I wrote that a duplicate-`Status:` plan
+  is "silently excluded from the dashboard". Reading the collector refutes it:
+  the exclusion is `if (!hasStatusLine && !planH1) continue` (both must be false)
+  and `malformed` raises the badge off `parsed.ok`. Corrected in `1017d74`.
+- **B-sweep's premise was wrong.** The plan feared unbounded LLM siblings could
+  hang an audit, naming `generateRepoProfile`. It is a synchronous file
+  inventory — no provider call. Same for `getRequirementsContext`; arch-memory
+  queries aren't invoked from any audit entry point. Closed by measurement.
+- **D-scope resolved the other way.** Deleting the `docs/completed/` scan looked
+  tidy, but it is deliberate *consumer* back-compat with ENOENT already handled —
+  deleting it trades a zero-cost no-op here for silent plan loss there. The code
+  was right; the stale acceptance criterion was amended instead.
+
+That is three findings in one session that softened or inverted under direct
+inspection, and in every case the claim had been **relayed rather than checked**.
+
+**E2b was the one genuine defect left.** `tiered-shadow-compare.mjs:349` has
+always read `_stageBreakdown.discoveryMalformedReasons`; nothing ever wrote it
+(grep: exactly one hit, the read). The fix is the **three-state contract**, not
+the plumbing — `null` = nothing wrote it, `[]` = measured with zero malformed,
+`[..]` = measured with reasons; the never-ran fallback omits the key rather than
+writing `[]`, because a zero there claims a measurement that never happened. A
+change restoring the value while collapsing `null` and `[]` would not have fixed
+it, so the contract is mutation-tested. D-raw also turned out to be a real bug,
+not presentation: `hasStatusLine` derives from `parsed.raw != null` under a
+documented UNION rule, so a plan with **two** Status lines was failing the very
+signal it satisfies twice over.
+
+**Disclosure buckets.** `docs/upstream-issues/` and `docs/personal/` are now
+default-deny and both existing files untracked. Stated precisely because it
+invites the opposite reading: this does **not** rewrite history — both remain in
+the pushed commits that introduced them and are still retrievable from the public
+remote. A purge would need `filter-repo` + force-push, considered and
+deliberately not done.
+
+**Process note worth keeping.** `f29f740` accidentally swept an in-flight file
+into an unrelated commit: the index already held it, and I printed the staged
+list without reading it. Fixed by soft-reset and re-commit before pushing. The
+repo's stage-by-name rule only works if the verification step is actually
+performed.
+
 ## 2026-07-19 — WS-C2: measuring the store refuted the migration it was supposed to need
 
 WS-C2 of `docs/plans/debt-burndown-workstreams.md`. The brief prescribed
