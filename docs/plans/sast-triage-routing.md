@@ -18,8 +18,9 @@
 
 ### The problem this solves
 
-A consumer repo's Snyk Code run produced **157 findings**, of which **~8–10 were
-genuinely actionable** — a ~6% signal rate. The bottleneck was never detection;
+A consumer repo's Snyk Code run produced **240 results** (a hand-transcribed walk
+of the web UI captured only 157 of them — see §2b), of which **~8–10 were
+genuinely actionable** — a signal rate under 5%. The bottleneck was never detection;
 it was that a human spent hours converting 157 rows into 10 decisions by opening
 one data-flow modal at a time in a web UI with no export. Meanwhile every
 false-positive *class* had a crisp, mechanically-checkable predicate:
@@ -66,8 +67,9 @@ Patterns **new**: SARIF ingestion; predicate-driven routing.
 
 ### Field evidence incorporated
 
-`wine-cellar-app/docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md`
-— written from the same 266-finding engagement, every item reproduced in practice.
+`docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md` (authored
+in the consumer, copied here — this repo is the one it is about) — written from the
+same engagement, every item reproduced in practice.
 Folded in here: **item 1** (comment-blinded scanner → D3a2), **item 7** (negative
 control as a procedure → §9), **item 8** (walk-based test timeouts → §9), and the
 **Meta** note confirming Snyk's REST/CLI emits SARIF with full data flow even
@@ -124,7 +126,7 @@ is INC-002 again.
 **D2 — Buckets are ordered by review priority, not by confidence.**
 (#5 SSoT, mirrors `SCOPE_BUCKET_RESTRICTIVENESS`)
 
-| Bucket | Meaning | Expected n (from the 157) |
+| Bucket | Meaning | Indicative n *(from the superseded 157-item prose walk — see §2b; authoritative counts live in `corpus.expected.json`)* |
 |---|---|---|
 | `A unexplained` | No predicate matched. **Review first.** | ~12 |
 | `C likely-mitigated` | Heuristic predicate matched — **spot-check, do not trust**. | ~93 |
@@ -153,8 +155,11 @@ SARIF location plus the source at that location.** (#4 No Hardcoding, #20 Flexib
 No taint analysis, no AST, no expression language — a closed set parameterized by
 config, which is *not* a policy DSL:
 
-1. `path-scope` — canonicalized file path matches a declared non-reachable glob
-   → `D`. Decidable from the path alone. Covers secrets 14 + traversal 8.
+1. `path-scope` — **two independent signals that must agree** (see §2b): the
+   producer's own test-context classification (Snyk encodes it as a `/test` rule-ID
+   suffix; 39.6% of the real corpus) AND the canonicalized path matching a declared
+   non-reachable glob. Both agree → `D`; they disagree → `A`. Decidable without
+   reading source.
 2. `sink-mismatch` — `(ruleId, sinkFunction)` pair is on a declared
    known-mislabel list → `D`. Covers ReDoS 1 + blob-download 2.
 3. `sanitizer-wrapped` — every interpolation in the sink region matches a
@@ -204,8 +209,7 @@ load-bearing predicate, so its boundary is spelled out rather than implied):
 
 **D3a2 — Comments and string-literal contents are stripped from the sink window
 BEFORE any extraction, and this is a first-class requirement, not a detail.**
-(Field evidence: `docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md`
-item 1.) A consumer's `innerHTML` contract scanner located its template by
+(Field evidence: `docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md` item 1.) A consumer's `innerHTML` contract scanner located its template by
 index-scanning for the first backtick in a 60-line window. An explanatory **code
 comment** that quoted an identifier in backticks won the scan; the scanner hashed
 a fragment of the comment and the real unescaped sink **disappeared from detection
@@ -345,6 +349,47 @@ config entry in this tool that can mark it acceptable. With bucket `B` removed
 finding is to fix it or to record it in the existing security-incident memory.
 
 ---
+
+## 2b. Measured Against the Real Corpus (2026-07-19)
+
+Everything above was designed against a **hand-transcribed prose summary** of the
+consumer's Snyk findings. A real `snyk code test --sarif` run has since been
+produced (`wine-cellar-app/.audit/snyk-code.sarif`, SnykCode 1.1306.1, SARIF
+2.1.0). Measuring the design's assumptions against it changed three of them.
+**These are measurements, not estimates — re-measure rather than trust this table
+if the producer version changes.**
+
+| Assumption | Measured | Verdict |
+|---|---|---|
+| ~157 findings | **240** results in one run | The hand-walk missed 83, including an entire 75-finding `DisablePoweredBy/test` class never seen in the UI. Prose lost a third of the corpus. |
+| Primary location may not be the sink (D3a0) | **42 of 240 (17.5%)** have the terminal code-flow step in a **different file** from `locations[0]` | **Validated and load-bearing.** The pre-D3a0 draft would have read the wrong file for 42 findings — and matched sanitizers there, i.e. a false `C` demotion. Dangerous direction. |
+| Cross-file sink is unresolvable (pre-R3-M3 draft) | 42 cross-file cases are all normal source→sink flows | The R3-M3 fix was necessary; the earlier rule would have wrongly forced 17.5% of the corpus to `A`. |
+| Multiple codeFlows/threadFlows need reconciling (R3-M3) | **0** results have >1 codeFlow or >1 threadFlow | Unexercised by Snyk. Keep as producer-agnostic insurance, but it is not load-bearing here — do not spend implementation effort perfecting it. |
+| D3a0 rule 2 (single unambiguous location) | All 240 have exactly 1 location **and** a codeFlow, so rule 1 always wins | Rule 2 is dead code against Snyk. Keep for other producers; do not assume it is tested by this corpus. |
+
+**New signal found in the data — the producer already classifies test context.**
+Snyk encodes it in the **rule ID suffix**: `javascript/HardcodedNonCryptoSecret/test`,
+`javascript/PT/test`, etc. Measured: **95 findings (39.6%) carry `/test`, and all
+95 are `note` level.** Cross-tabulated against a path glob:
+
+- 92 `/test`-rule findings are in a test path — both signals agree.
+- 3 are **not** (`public/js/browserTests.js`, `scripts/vivino-audit/run-test.mjs` ×2)
+  — and inspection shows Snyk is **right**: these are genuine test files that
+  simply do not live under `tests/`. The producer's classification beat our glob.
+- **0** non-`/test` rules landed in a test path.
+
+So `path-scope` becomes a **two-signal predicate requiring agreement**, not a glob
+alone: demote to `D` only when the producer's rule suffix *and* the canonical path
+glob agree. Disagreement → `A`. This costs 3 findings a human glance and buys
+independence — two detectors that can fail differently, rather than one inference
+we made up. (It stays 3 predicates; this is a second input to an existing one, not
+a fourth kind.)
+
+**The expected bucket counts in D2 were derived from the 157-item prose walk and
+are now stale.** They are illustrative only. The authoritative counts come from
+running the router over `corpus.sarif` and are recorded in
+`corpus.expected.json` — which is the artifact the manifest exists to make
+reviewable.
 
 ## 2c. Boundary Contracts and Bounds
 
