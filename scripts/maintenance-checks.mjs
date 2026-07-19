@@ -131,7 +131,16 @@ export const CHECKS = [
     key: 'learning-weekly-review', // .github/workflows/learning-weekly-review.yml
     label: 'Learning-system weekly review',
     requiredEnv: ['AUDIT_DB_URL', 'LEARNING_REPO_NAME'],
-    steps: [{ script: 'cross-skill.mjs', args: ['learning-weekly-review'] }],
+    // Mirrors the workflow's TWO steps, in its order: backfill drains
+    // .audit/quickfix-hits.jsonl + resolves >30min-old outcomes, THEN the
+    // review reads the resulting stats. The local replica previously ran only
+    // the review — and since the JSONL is gitignored, the runner-side backfill
+    // could never see it either. Net effect: the outcome resolver had no
+    // reachable caller on any schedule, and 1815/1838 decisions sat unresolved.
+    steps: [
+      { script: 'cross-skill.mjs', args: ['learning-backfill-outcomes', '--rebuild-stats'] },
+      { script: 'cross-skill.mjs', args: ['learning-weekly-review'] },
+    ],
   },
   {
     key: 'cache-hitrate', // ad hoc weekly routine (no dedicated workflow file)

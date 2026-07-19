@@ -26,7 +26,14 @@ const HOOK_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HOOK_DIR, '..', '..');
 const PATTERNS_MOD_URL = pathToFileURL(path.join(REPO_ROOT, 'scripts', 'lib', 'quickfix-patterns.mjs')).href;
 
-const TELEMETRY_PATH = path.join(REPO_ROOT, '.audit', 'quickfix-hits.jsonl');
+// Overridable so the hook's OWN integration tests (which spawn this file as a
+// subprocess against the real repo root) write to a throwaway path instead of
+// the live telemetry log. Without this the suite appends a hit per test run per
+// fixture: 4,386 of the first 4,548 recorded hits (96%) were three fixture
+// paths, which would have resolved to fabricated `accept/file-deleted`
+// outcomes and poisoned the quickfix pattern posteriors.
+const TELEMETRY_PATH = process.env.QUICKFIX_TELEMETRY_PATH
+  || path.join(REPO_ROOT, '.audit', 'quickfix-hits.jsonl');
 const SKIP_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.svg', '.pdf', '.zip', '.tar', '.gz', '.lock', '.bin']);
 
 async function readStdin() {

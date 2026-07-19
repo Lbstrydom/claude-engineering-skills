@@ -8,6 +8,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,10 +17,18 @@ import { fileURLToPath } from 'node:url';
 const TEST_DIR = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(TEST_DIR, '..', '.claude', 'hooks', 'quickfix-scan.mjs');
 
+// The hook resolves its telemetry path from REPO_ROOT, so spawning it here
+// appended a real hit per fixture per run to .audit/quickfix-hits.jsonl —
+// 96% of the recorded corpus was this suite. Redirect to a temp file.
+const TMP_TELEMETRY = path.join(
+  fs.mkdtempSync(path.join(os.tmpdir(), 'quickfix-hook-test-')),
+  'quickfix-hits.jsonl',
+);
+
 function runHook(stdinJson, env = {}) {
   const r = spawnSync('node', [HOOK], {
     input: JSON.stringify(stdinJson),
-    env: { ...process.env, ...env },
+    env: { ...process.env, QUICKFIX_TELEMETRY_PATH: TMP_TELEMETRY, ...env },
     encoding: 'utf-8',
     timeout: 5000,
   });

@@ -577,24 +577,42 @@ export async function computeArchMemoryBandOutcome(row, deps = {}) {
   }
 
   const execGit = deps.execGit || defaultExecGit;
-  const sinceWindow = '30.minutes.ago';
-  const decisionTs  = row.created_at;
+  const decisionTs = row.created_at;
 
-  // Look at commits in the cited file's directory within 30 min after the
+  // Look at commits in the cited file's directory within 30 min AFTER the
   // decision — proxies "did the user act on the recommendation?"
+  //
+  // The window must run FORWARD from the decision. It previously read
+  // `--since=30.minutes.ago --until=<decisionTs>`, i.e. since=~now against
+  // until=a timestamp at least STALENESS_MS old (rows are only selected once
+  // they are >30min old). since > until always, so git returned nothing for
+  // every row ever resolved, pinning commitsTouched=0 and making `reuse`
+  // unconditionally emit `reuse-correct` — a green that never checked
+  // anything. Bounds are now both derived from decisionTs.
+  const decisionMs = Date.parse(decisionTs);
+  if (!Number.isFinite(decisionMs)) {
+    return { action: 'uncertain', evidence: 'unparseable-decision-timestamp' };
+  }
+  const windowEnd = new Date(decisionMs + STALENESS_MS).toISOString();
+
   let commitsTouched = 0;
   try {
     const dir = path.posix.dirname(String(filePath).replace(/\\/g, '/'));
     const argLog = ['log',
-      `--since=${sinceWindow}`,
-      `--until=${decisionTs}`,
+      `--since=${decisionTs}`,
+      `--until=${windowEnd}`,
       '--pretty=format:%H',
       '--', dir];
     const out1 = execGit(argLog, { cwd: process.cwd() });
     if (typeof out1 === 'string' && out1.trim().length > 0) {
       commitsTouched = out1.trim().split('\n').filter(Boolean).length;
     }
-  } catch { /* best effort */ }
+  } catch {
+    // Git unavailable/failed — we observed NOTHING. Emitting the
+    // commitsTouched=0 branch here would convert an error into a positive
+    // `reuse-correct` label. Degrade to uncertain instead.
+    return { action: 'uncertain', evidence: 'git-probe-failed' };
+  }
 
   if (band === 'reuse') {
     return commitsTouched === 0
