@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 127 terminal · 22 audit summaries · 4 reference docs**
+**7 active · 127 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -24,6 +24,7 @@ This is the list to read when asking "what is in flight?".
 | [Arch-Memory Consultation — Close the Query/Index Asymmetry](./arch-memory-band-recalibration.md) | `Draft` |  |
 | [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `In Progress` | WS-0, WS-A, WS-B, WS-C Complete; WS-E/E1 Complete (2026-07-19). WS-D and WS-E/E2(b) remain open (verified a… |
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
+| [Migration ↔ compat-bootstrap coupling — assert the surface, don't relocate the DDL](./migration-bootstrap-coupling.md) | `Draft` |  |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
 | [SAST Triage — Route, Never Suppress](./sast-triage-routing.md) | `Approved` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
