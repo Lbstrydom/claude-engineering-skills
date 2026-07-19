@@ -26,7 +26,7 @@ import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
 import { rewriteCommandSurface, buildOwnedSourceTails } from './lib/sync-rewriter.mjs';
-import { injectUpstreamBanner } from './lib/sync-banner.mjs';
+import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
@@ -116,6 +116,20 @@ const UNTRACK_PATTERNS = [
 const DRY_RUN = process.argv.includes('--dry-run');
 const KEEP_GITHUB_SKILLS = process.argv.includes('--keep-github-skills');
 const NO_PROMPT = process.argv.includes('--no-prompt');
+// Recovery escape hatch for orphaned ownership records: adopt files that sit at
+// a destination we intend to write but are absent from the consumer's manifest.
+// Deliberately opt-in and never default — the collision guard it relaxes is the
+// only thing standing between a sync and a consumer's own file. See the ABORT
+// branch below for why an orphan can exist at all.
+const ADOPT_ORPHANS = process.argv.includes('--adopt-orphans');
+
+// The single banner line used as an ownership fingerprint when adopting
+// orphans. `BANNER_BODY` is an ARRAY of lines — passing it straight to
+// `String.includes` coerces it to a comma-joined string that never matches, so
+// every synced file would falsely report "no banner". A safety signal that
+// fails toward "suspicious" is still a lying diagnostic; normalise here and
+// pin it in tests/sync-ownership-recording.test.mjs.
+const BANNER_MARKER = Array.isArray(BANNER_BODY) ? BANNER_BODY[0] : String(BANNER_BODY);
 const targetFilter = (() => {
   const idx = process.argv.indexOf('--target');
   return idx === -1 ? null : process.argv[idx + 1];
@@ -806,10 +820,38 @@ async function main() {
     if (inventoryOwned.length && !DRY_RUN) {
       console.log(`  ${Y}note${X}  ${inventoryOwned.length} managed-surface file(s) not in prior manifest — treating as owned (legacy manifest predates skill/prompt tracking).`);
     }
+    if (collisions.length && ADOPT_ORPHANS) {
+      // Operator override. Each orphan is reported with whether its on-disk
+      // content still matches what we are about to write, because that is the
+      // difference between "re-record a file we already produced" and
+      // "discard whatever is there". Never inferred — the operator is told.
+      console.log(`  ${Y}adopt${X}  ${collisions.length} orphan(s) — recording as owned (--adopt-orphans):`);
+      for (const dstRel of collisions) {
+        // Report EVIDENCE of provenance, not a content diff. Comparing against
+        // raw source is useless here: outbound content is banner-injected, so
+        // every relocated file would read "differs" and the operator would
+        // learn to ignore the line. Our banner is the discriminating signal —
+        // a consumer-authored file cannot carry it.
+        let status;
+        try {
+          const onDisk = fs.readFileSync(path.join(repo.path, dstRel), 'utf-8');
+          status = onDisk.includes(BANNER_MARKER)
+            ? 'carries our upstream-owned banner — provably ours'
+            : `${R}NO banner — inspect before adopting${X}${D}`;
+        } catch { status = 'unreadable'; }
+        console.log(`    ${Y}orphan${X}  ${dstRel} ${D}(${status})${X}`);
+      }
+      collisions.length = 0;   // adopted: fall through to the normal write path
+    }
     if (collisions.length && !DRY_RUN) {
       console.log(`  ${R}ABORT${X}  ${collisions.length} unowned collision(s); will not overwrite.`);
       for (const c of collisions.slice(0, 10)) console.log(`    ${R}collide${X}  ${c}`);
       if (collisions.length > 10) console.log(`    ${D}... ${collisions.length - 10} more${X}`);
+      // An orphan is usually OUR file whose ownership record was lost, not a
+      // consumer's — most often because a previous run's manifest write failed
+      // (see the commit point below). Re-run with --adopt-orphans to re-record
+      // them after checking the reported paths.
+      console.log(`    ${D}if these are ours, re-run with --adopt-orphans to re-record them${X}`);
       totalErrors++;
       console.log('');
       continue;
@@ -1001,6 +1043,13 @@ async function main() {
     }
 
     // ── Commit point: write per-consumer manifest with layout: 'isolated' ──
+    //
+    // This is the OWNERSHIP RECORD, not bookkeeping. Files are already on disk
+    // by now; if this write does not land, they exist with nobody claiming
+    // them — and the next run classifies each as an unowned collision and
+    // aborts the WHOLE target, so the consumer silently stops receiving every
+    // future update. A failure here is therefore a failed sync, not a warning.
+    let manifestWritten = false;
     if (!DRY_RUN) {
       try {
         // For consumer-side: compute hashes of the actual DESTINATION files
@@ -1022,8 +1071,12 @@ async function main() {
           layout: 'isolated',
         };
         atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
+        manifestWritten = true;
       } catch (err) {
-        console.log(`  ${R}manifest write failed${X}: ${err.message?.slice(0, 120)}`);
+        console.log(`  ${R}manifest write FAILED${X}: ${err.message?.slice(0, 120)}`);
+        console.log(`    ${D}files were written but are now unowned; the in-progress journal is`);
+        console.log(`    kept so the next run adopts them. Re-run sync to reconcile.${X}`);
+        repoErrors++; totalErrors++;
       }
     }
 
@@ -1065,8 +1118,17 @@ async function main() {
       console.log(`  ${Y}↳ untrack-newly-ignored skipped${X}: ${err.message?.slice(0, 100)}`);
     }
 
-    // ── Last step: delete the in-progress journal (sync complete) ──────────
-    if (!DRY_RUN) {
+    // ── Last step: delete the in-progress journal — ONLY if the ownership
+    // record actually landed.
+    //
+    // The journal IS the recovery mechanism: next run treats its destinations
+    // as `ownedByInterruptedRun`, so a sync that copied files but never
+    // recorded them self-heals. Deleting it unconditionally destroyed that
+    // evidence precisely when it was needed, turning a transient write failure
+    // into a permanent unowned-collision that aborts every subsequent sync to
+    // that consumer. Keeping it costs one stale file; deleting it early costs
+    // the consumer every future update.
+    if (!DRY_RUN && manifestWritten) {
       try { fs.unlinkSync(inProgressJournalPath); }
       catch (err) { if (err.code !== 'ENOENT') { /* leave dangling — next run will reconcile */ } }
     }
