@@ -42,6 +42,7 @@ async function safeWrite(fn) {
  */
 export async function insertLearningDecision(entry) {
   if (!await isCloudEnabled()) return { ok: true };
+  // @on-conflict-ok: decision_key is GLOBALLY unique by construction — buildDecisionKey emits either `<audit_run_id uuid>:<type>:r<n>:s<n>` or `<type>:<external_id>`, so the scope is already carried inside the key text. Adding repo_id would WEAKEN this: UNIQUE(repo_id, decision_key) starts permitting the same decision_key under two repos, and repo_id is nullable — reintroducing the NULL-distinct bug WS-C exists to close. Measured 2026-07-19: 1876 rows, 0 NULL repo_id, 2 distinct repos, no key collisions (WS-C2).
   return safeWrite(() => upsert(
     'learning_decisions',
     [{

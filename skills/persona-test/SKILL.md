@@ -519,13 +519,17 @@ Full tone rules, structure, and wrapper: `references/persona-debrief-format.md`.
 
 Skip if `memory_enabled = false`. Output `[Session not saved — memory disabled]` and stop.
 
-Build the session ID: `SID = persona-test-<unix timestamp>`.
+**Do NOT build a session ID yourself.** Omit `sessionId` and the CLI mints a
+collision-resistant one (`buildPersonaSessionId` — unix seconds + a
+`crypto.randomUUID()` suffix) and returns it as `sessionKey`. The old hand-built
+`persona-test-<unix timestamp>` shape collided across repos in the same second
+and silently overwrote the other repo's session. Pass `sessionId` explicitly
+ONLY to re-post an existing session (it is the idempotency key).
 
 Record the session + trigger secondary persona stats update in one call:
 
 ```bash
 node scripts/cross-skill.mjs record-persona-session --json '{
-  "sessionId": "<SID>",
   "persona": "<persona>",
   "url": "<url>",
   "focus": "<focus or null>",
@@ -568,8 +572,12 @@ from. Each entry:
 - The store caps the stored path at 40 steps and drops malformed entries; you don't
   need to pre-trim, but keep it to the meaningful navigation steps.
 
-Response `{"ok": true, "cloud": ..., "sessionId": "<uuid>", "existed": bool,
-"statsUpdated": bool, "correlationSummary": {...}}`. If `statsUpdated: false`,
+Response `{"ok": true, "cloud": ..., "sessionId": "<uuid>", "sessionKey":
+"<persona-test-…>", "existed": bool, "statsUpdated": bool,
+"correlationSummary": {...}}`. `sessionId` is the row's uuid PK — that is the
+one later phases pass as `personaSessionId`. `sessionKey` is the minted
+`session_id` text, needed only to re-post this same session.
+If `statsUpdated: false`,
 log a stderr warning — session is preserved; stats self-heal on the next
 reconciler run.
 

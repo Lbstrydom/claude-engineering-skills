@@ -89,6 +89,7 @@ export async function recordSymbolIndex(refreshId, repoId, rows) {
   let total = 0;
   for (const slice of chunk(payload, UPSERT_CHUNK_SIZE)) {
     try {
+      // @on-conflict-ok: repo_id is functionally determined by refresh_id — refresh_id is NOT NULL FK to refresh_runs, whose repo_id is NOT NULL, so adding repo_id cannot change which rows conflict. Measured 2026-07-19: 0 of 223,623 rows have symbol_index.repo_id <> refresh_runs.repo_id. Widening would rebuild a 223k-row unique index for zero semantic gain (WS-C2).
       await upsert('symbol_index', slice, {
         onConflict: ['refresh_id', 'definition_id'],
         update: 'all',
@@ -137,6 +138,7 @@ export async function recordLayeringViolations(refreshId, repoId, violations) {
   let total = 0;
   for (const slice of chunk(payload, UPSERT_CHUNK_SIZE)) {
     try {
+      // @on-conflict-ok: repo_id is functionally determined by refresh_id — refresh_id is NOT NULL FK to refresh_runs, whose repo_id is NOT NULL, so adding repo_id cannot change which rows conflict. Measured 2026-07-19: 0 rows have symbol_layering_violations.repo_id <> refresh_runs.repo_id. Same FD as symbol_index above (WS-C2).
       await upsert('symbol_layering_violations', slice, {
         onConflict: ['refresh_id', 'rule_name', 'from_path', 'to_path'],
         update: 'all',

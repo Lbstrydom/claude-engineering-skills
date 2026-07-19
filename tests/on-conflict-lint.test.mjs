@@ -235,6 +235,27 @@ test('a reasoned @on-conflict-ok pragma moves a finding to suppressed, not gatin
   assert.match(suppressed[0].suppressionReason, /globally unique/);
 });
 
+test('a pragma suppresses on a CRLF source exactly as it does on LF', () => {
+  // Regression guard. The extractor used to split on '\n', leaving a trailing
+  // '\r' on every line of a CRLF checkout; SUPPRESSION_RE's `(.*)$` cannot match
+  // that ('\r' is a JS line terminator, so `.` won't consume it and a
+  // non-multiline `$` won't match before it). Result: every @on-conflict-ok
+  // silently stopped suppressing on Windows while still working on Linux — a
+  // platform-dependent gate. Assert both endings behave identically.
+  const lf = `
+    // @on-conflict-ok: session_id is globally unique; repo_id is metadata
+    upsert('persona_test_sessions', [{ session_id: s, repo_id: r }], { onConflict: ['session_id'] });`;
+  const crlf = lf.replace(/\n/g, '\r\n');
+
+  for (const [label, src] of [['LF', lf], ['CRLF', crlf]]) {
+    const { findings, suppressed } = lintSource('x.mjs', src);
+    assert.equal(findings.length, 0, `${label}: pragma must suppress the finding`);
+    assert.equal(suppressed.length, 1, `${label}: exactly one suppressed finding`);
+    assert.match(suppressed[0].suppressionReason, /globally unique/,
+      `${label}: the reason must survive the split (no stray \\r)`);
+  }
+});
+
 test('a reasonless @on-conflict-ok is itself flagged (indistinguishable from hiding the bug)', () => {
   const src = `
     // @on-conflict-ok:

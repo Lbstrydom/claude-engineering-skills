@@ -1,5 +1,94 @@
 # Project Status Log
 
+## 2026-07-19 — WS-C2: measuring the store refuted the migration it was supposed to need
+
+WS-C2 of `docs/plans/debt-burndown-workstreams.md`. The brief prescribed
+a nullable→total migration (backfill → `SET NOT NULL` → widen the UNIQUE
+constraint → update `onConflict`) across 6 `omitted-scope-identity` findings, with
+a load-bearing ordering constraint so that widening a constraint with a nullable
+column wouldn't reintroduce the NULL-distinct bug. That ordering was right. It
+just turned out to apply to **zero tables** once each column's role was measured
+instead of inferred from the lint's shape-level signal. **No DDL was applied.**
+
+The C0 matrix had never covered three of the four tables, so by the plan's own
+rule their fixes were unspecified. Measuring them changed all six verdicts:
+
+- `symbol_index.repo_id` / `symbol_layering_violations.repo_id` — functionally
+  determined by `refresh_id` (NOT NULL FK → `refresh_runs.repo_id` NOT NULL).
+  **0 of 223,623** rows violate the equality. Adding `repo_id` cannot change which
+  rows conflict; it would rebuild a 223k-row unique index for nothing.
+- `learning_decisions.repo_id` — **the prescribed fix was actively harmful.**
+  `decision_key` is *globally* unique by construction, so widening to
+  `UNIQUE(repo_id, decision_key)` would start permitting one key under two repos
+  and, `repo_id` being nullable, reintroduce exactly the bug WS-C exists to close.
+- `personas.repo_name` — a persona is scoped to the **app**, not the repo
+  (`unique (name, app_url)`, `personas_app_url_idx`, `listPersonasForApp` reads by
+  `app_url` alone). Adding it fragments one app's persona into per-repo copies.
+- `persona_test_sessions` — a real defect, but widening is a **band-aid**:
+  `repo_id` is legitimately NULL when persona-test runs against a deployed URL
+  from outside a resolvable repo, so `(repo_id, session_id)` needs a sentinel
+  bucket in which two same-second sessions still collide.
+
+Root cause of that last one was the id itself — `persona-test-<unix seconds>`,
+authored by the LLM from a SKILL.md instruction, no scope, one-second resolution.
+Now minted in code by `buildPersonaSessionId()`
+(`scripts/lib/persona-test/session-id.mjs`) as
+`persona-test-<unix>-<crypto.randomUUID()>`; `record-persona-session` mints when
+`sessionId` is omitted and returns it as `sessionKey`, while an explicit id still
+passes through so the documented idempotent re-post path is unchanged.
+
+All five sites carry reasoned `@on-conflict-ok` pragmas. Because a pragma is only
+worth the claim it rests on, `tests/on-conflict-scope-identity.test.mjs`
+mechanically verifies every claim — the FK + NOT NULL chain, `UNIQUE(decision_key)`
+being global and *not* repo-composite, `UNIQUE(name, app_url)`, `UNIQUE(session_id)`
+— plus behavioural proof against **disposable** Postgres that a second scope
+INSERTs rather than overwriting and that re-upserting the same key still UPDATEs.
+
+**A latent lint bug this flushed out.** `extractUpsertSites` split on `'\n'`, so on
+a CRLF working tree every line kept a trailing `\r` — which `SUPPRESSION_RE`'s
+`(.*)$` cannot match, since JS treats `\r` as a line terminator. Every
+`@on-conflict-ok` pragma was silently dead on Windows checkouts while working on
+LF ones: a platform-dependent quality gate, invisible to review. It only surfaced
+because a file rewrite normalised line endings. Fixed at the splitting layer
+(`split(/\r?\n/)`), with a regression test verified **non-vacuous by mutation**.
+
+Audit: R1 H:2 M:5 L:4 → R2 H:0 M:3 L:1 (all four remaining are pre-existing
+architecture/domain-map items, deferred as independent). R1 correctly caught that
+the first-cut 48-bit suffix was a probabilistic guarantee where `crypto.randomUUID()`
+costs the same, and an injectable `entropy()` seam that no test ever used — deleted
+rather than validated. Gemini final gate: **APPROVE**, 0 new, 0 wrongly dismissed.
+
+Verification: `on-conflict:all` → 0 gating (8 suppressed, 1 unresolved = C3, already
+reviewed); live `setup-postgres --check-drift` → 72/72, no drift, unchanged;
+integration tests against the disposable container only, never `AUDIT_DB_URL`.
+
+**The plan is NOT complete, and I briefly said it was.** With WS-C closed I stamped
+the master plan Complete on the strength of §9's existing labels, then verified
+those labels against the code instead of trusting them — the repo has a documented
+history of stale plan statuses, and two of them were stale here. Corrected:
+
+- **WS-D INCOMPLETE.** The parser swap landed, but the `duplicate` presentation
+  contract does not exist, and the consequence is worse than cosmetic: because
+  `collect-reference.mjs:120` sets `hasStatusLine = parsed.raw != null` while
+  `parsePlanStatus` returns `duplicate` with no `raw`, a plan with duplicate
+  `Status:` lines is **silently excluded from the dashboard** — the exact opposite
+  of the promised Active + `malformed` badge. Also `docs/completed/` is still
+  scanned, and the promised source-scan pin protecting the regex delete is absent.
+- **WS-E INCOMPLETE, and E1 materially so.** `auditedTree`/`auditedSha` return
+  **zero hits repo-wide**; `resolveEvidence` still checks recency only
+  (`commit-trailers.mjs:121`), never `committedTree === auditedTree`. So
+  `AI-Gate: passed` is reachable for a commit whose content was never audited —
+  audit a clean tree, edit, commit, and freshness passes. The plan itself calls
+  this worse than an honest `not-run` now that the writer half ships. E2 leg (b)
+  is a dead read: `tiered-shadow-compare.mjs:349` consumes
+  `discoveryMalformedReasons`, which nothing writes, so the Phase-14 shadow
+  surface is permanently `null` and `?? null` hides it as "absent".
+- **WS-0** headroom re-measured: 33, not 35 (AGENTS.md drifted to 1167 lines) —
+  about 5 lines from this plan's own revisit trigger.
+- **WS-B** is complete in code, but B1's required sibling sweep (enumerate every
+  inline-awaited optional LLM enrichment and assert each bounded) was never
+  recorded; only `_llmCondense` was actually bounded.
+
 ## 2026-07-19 — `/brainstorm --depth` asks for a length instead of just cutting one
 
 Follow-on from the entry below, which found the bug and deliberately left it.

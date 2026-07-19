@@ -22,7 +22,7 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Arch-Memory Consultation — Close the Query/Index Asymmetry](./arch-memory-band-recalibration.md) | `Draft` |  |
-| [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `In Progress` | WS-0, WS-A, WS-B, WS-D, WS-E Complete. WS-C partially complete (C1 proved a false alarm; C2 needs a nullabl… |
+| [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `In Progress` | WS-0, WS-A, WS-B, WS-C Complete. WS-D and WS-E are NOT complete (verified against the code 2026-07-19; thei… |
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |

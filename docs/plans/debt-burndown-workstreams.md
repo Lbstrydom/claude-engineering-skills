@@ -1,6 +1,6 @@
 # Plan: Debt Burndown — Workstreams A–E (master)
 
-- **Status**: In Progress — WS-0, WS-A, WS-B, WS-D, WS-E Complete. WS-C partially complete (C1 proved a false alarm; C2 needs a nullable→total migration).
+- **Status**: In Progress — WS-0, WS-A, WS-B, WS-C Complete. **WS-D and WS-E are NOT complete** (verified against the code 2026-07-19; their prior "Complete" labels were wrong — see §9). WS-C2 closed 2026-07-19: measurement refuted the prescribed nullable→total migration; resolved with a root-cause identity fix + five evidenced pragmas, no DDL.
 - **Date**: 2026-07-18
 - **Origin**: Cross-session deferred-items investigation (4 parallel read-only agents at HEAD) + `/brainstorm --with-gemini` prioritisation (session `1784380501405`; GPT-5.6 + Gemini-pro + Claude synthesis).
 - **Shape**: One master plan, five workstreams. Each WS is sized for its own `/plan`-refinement + `/audit-plan` + implementation cycle; this document is the stable spine and gets updated (per-WS detail deepened, statuses stamped) as each WS starts. Do not implement from this file alone once a WS has its refined section — the refined section wins.
@@ -626,6 +626,76 @@ git history is the archive; `upsertPromptVariant` precedent). Remove
 functions + barrel entries + any tests pinning them. Table drops deferred
 to the migration-domain cleanup (M4's territory), not this WS.
 
+#### C2 — RESOLVED 2026-07-19. Measurement refuted the prescribed migration.
+
+The C0 matrix above never covered `symbol_index`,
+`symbol_layering_violations` or `learning_decisions` — so per this section's
+own rule those three fixes were unspecified. Measuring them first (live,
+read-only) changed the answer for **all six** findings. **No DDL was applied,
+and none should be**: the section's default ("include the scope column NOW")
+is right in general but wrong on this evidence, and the escape hatch it
+defines — scope "is not part of the entity's identity at all" — is what
+actually applies.
+
+| Writer | Measurement (2026-07-19, live) | Verdict |
+|---|---|---|
+| `symbol_index.repo_id` | `refresh_id` NOT NULL FK → `refresh_runs.repo_id` NOT NULL. **0 of 223,623** rows have `symbol_index.repo_id <> refresh_runs.repo_id` | **FD-redundant.** Adding `repo_id` cannot change which rows conflict; it would rebuild a 223k-row unique index for zero semantic gain. Pragma. |
+| `symbol_layering_violations.repo_id` | Same FD; 0 violating rows; NOT NULL | **FD-redundant.** Pragma. |
+| `learning_decisions.repo_id` | `decision_key` globally unique by construction (`<audit_run_id uuid>:…` \| `<type>:<external_id>`); 1876 rows, **0 NULL** `repo_id`, 2 repos | **The prescribed fix was actively harmful.** `UNIQUE(repo_id, decision_key)` *weakens* the constraint (permits one key under two repos) and, `repo_id` being nullable, reintroduces the exact NULL-distinct bug WS-C exists to close. Pragma. |
+| `personas.repo_name` | 1 row, `repo_name` NULL. `unique (name, app_url)` = "Unique per app"; `personas_app_url_idx`; `listPersonasForApp` reads by `app_url` alone | **Scope is the APP, not the repo.** Adding `repo_name` would fragment one app's persona into per-repo copies and break that reader. Evidence-backed omission, not a deferral. Pragma. |
+| `persona_test_sessions.repo_name` + `repo_id` | 1 row; `session_id` = `persona-test-<unix seconds>`, LLM-authored per SKILL.md, no repo component | **Real defect — but widening is a band-aid.** `repo_id` is legitimately NULL when persona-test runs against a deployed URL from outside a resolvable repo, so `(repo_id, session_id)` needs a sentinel bucket in which two same-second sessions **still collide**. Root-cause fixed instead. |
+
+**The one real defect, fixed at its root**: `session_id` is now minted in code
+by `buildPersonaSessionId()` ([`scripts/lib/persona-test/session-id.mjs`](../../scripts/lib/persona-test/session-id.mjs))
+— unix seconds (legibility) + a `crypto.randomUUID()` suffix (the actual
+uniqueness mechanism; 122 random bits). `record-persona-session` mints when `sessionId` is omitted and
+returns it as `sessionKey`; an explicitly-passed id still flows through
+verbatim, so re-posting (the documented idempotency path) is unchanged.
+SKILL.md Phase 6 now tells the skill *not* to build one. A session is a
+globally-unique **event**; `repo_id`/`repo_name` are annotations on it.
+
+**Migration applied: none.** The ordering constraint the brief specified
+(backfill → `SET NOT NULL` → widen constraint → update `onConflict`) is
+correct as stated and was the right thing to guard against — it simply turned
+out to apply to zero tables once each column's role was measured rather than
+inferred from the lint's shape-level signal.
+
+**Pragmas are load-bearing claims, so they are mechanically verified**:
+[`tests/on-conflict-scope-identity.test.mjs`](../../tests/on-conflict-scope-identity.test.mjs)
+asserts every claim each pragma rests on — the `refresh_id` FK + NOT NULL
+chain, `UNIQUE (decision_key)` being global (and *not* repo-composite),
+`UNIQUE (name, app_url)`, `UNIQUE (session_id)`, plus behavioural proof
+against disposable Postgres that a second scope **INSERTs rather than
+overwriting** and that re-upserting the same key still **UPDATEs in place**.
+If a future migration falsifies a pragma, the suite fails instead of the
+pragma quietly becoming a lie.
+
+**Verification**: `on-conflict:all` → 0 gating (8 suppressed, 1 unresolved =
+C3, reviewed); `npm run check` exit 0 (7582 tests) at the time WS-C2 landed;
+live `setup-postgres --check-drift` → `72 applied / 72 source files, no drift`
+(unchanged — no migration added). Schema/behaviour tests ran against the
+disposable container (`db-test-container.mjs`), never `AUDIT_DB_URL`.
+`/audit-code` R1 (H:2 M:5 L:4) → R2 (H:0 M:3 L:1, all 4 pre-existing
+architecture/domain-map items, deferred as independent); Gemini final gate
+**APPROVE**, 0 new findings, 0 wrongly dismissed, 0 over-engineering flags.
+
+#### A latent lint bug this workstream flushed out (in-scope by impact)
+
+`extractUpsertSites` split its source on `'\n'`, so on a **CRLF** working tree
+every line kept a trailing `'\r'` — and `SUPPRESSION_RE`'s `(.*)$` cannot match
+that, because JS treats `\r` as a line terminator (`.` won't consume it, and a
+non-multiline `$` won't match before it). Every `@on-conflict-ok` pragma
+therefore **silently stopped suppressing on Windows checkouts** while still
+working on LF ones: a platform-dependent quality gate. The five WS-C2 pragmas
+ride entirely on this path, so it was in-scope by the impact test despite being
+pre-existing. Fixed at the line-splitting layer (`split(/\r?\n/)`), not by
+patching the regex. The regression test in
+[`tests/on-conflict-lint.test.mjs`](../../tests/on-conflict-lint.test.mjs) was
+verified **non-vacuous by mutation** — reverting the split makes it fail.
+
+This is why the pragmas got their own verification suite: the bug was invisible
+to review and only surfaced because a file rewrite normalised line endings.
+
 **Acceptance**: every C1/C2 writer has a C0 row citing its measurement;
 **`npm run on-conflict:all`** → 0 findings, or each remaining finding
 carries an in-code suppression with a written verdict; each schema change
@@ -973,7 +1043,7 @@ exist.
 
 | WS | Status | Notes |
 |---|---|---|
-| WS-0 | **Complete** (2026-07-18) | 1199 → 1165 lines (35 headroom > the measured 28-line max). Two sections condensed, target-doc coverage verified first — which caught that the worksheet/PowerShell recurrence guard was NOT in the target doc and had to be moved rather than cut. |
+| WS-0 | **Complete** (2026-07-18) | 1199 → 1165 lines (35 headroom > the measured 28-line max). **Re-measured 2026-07-19: AGENTS.md is now 1167 lines, so headroom is 33, not 35 — ~5 lines from this plan's own revisit trigger (<28).** Two sections condensed, target-doc coverage verified first — which caught that the worksheet/PowerShell recurrence guard was NOT in the target doc and had to be moved rather than cut. |
 | WS-A | **Complete** (2026-07-19) | EOL-invariant hashing + `eol-legacy` classification + guarded `--repair-eol` + mode-exclusivity guard, shipped with 27 hermetic + 10 real-Postgres tests. Live repair executed against production: `✓ no drift`, `applied_at` preserved, `--migrate` unblocked. The `--adopt` consumer-distribution defect found during the audit is fixed in the same workstream. |
 
 ### WS-0 + WS-A implementation audit trail (`/cycle --autonomous`, 2026-07-18)
@@ -1006,7 +1076,7 @@ test now asserts the race actually fired.
 **Spun off, not silently deferred**: `--adopt` unusable in consumer repos
 (`tests/fixtures/expected-schema.json` is never synced); `--max-tokens`
 bypassing `resolveDepth()` in `brainstorm-round.mjs`.
-| WS-B | **Complete** (2026-07-19) | B1 bounded brief-gen (total+per-attempt deadline, abort on both legs); B2 `provider-readiness.mjs` classifier with redaction boundary; B3 `shadowFailureReasonsAll`; B4 shared `provider-env` helper. GPT R1 (H:3 M:11 L:1) + Gemini ×2 → 3+2 findings, all fixed. |
-| WS-C | **C1/C3/C4 complete; C2 remains** (2026-07-19) | C0 measured (no live corruption). C1: both findings proved false positives → reasoned `@on-conflict-ok` pragmas (flow-sensitivity, not a lint gap worth AST flow analysis). C3: `regression_specs` reviewed by hand — correct on both branches, verdict recorded in code. C4: dead writers deleted (`syncExperiments` targeted a table that does not exist). **C2 (6 omitted-scope writers) is the only open item** — needs the nullable→total migration FIRST. |
-| WS-D | **Complete** (2026-07-19) | Bucketing by `parsePlanStatus` kind landed via parallel work; verified no `docs/completed` bucket and no inline-regex authority remain. Stale Plans-tab copy fixed here. |
-| WS-E | **Complete** (2026-07-19) | E1 landed via parallel work (`gate-evidence.mjs`). E2: bounded malformed-anchor diagnostics in the eval record + shadow comparison — the Phase-14 blocker is now diagnosable from stored rows. |
+| WS-B | **Complete** (2026-07-19) | B1 bounded brief-gen (total+per-attempt deadline, abort on both legs); B2 `provider-readiness.mjs` classifier with redaction boundary; B3 `shadowFailureReasonsAll`; B4 shared `provider-env` helper. GPT R1 (H:3 M:11 L:1) + Gemini ×2 → 3+2 findings, all fixed. **One non-code deliverable outstanding (2026-07-19)**: B1's *sibling sweep* — the required grep-driven checklist enumerating every optional LLM enrichment awaited inline in an audit entry point (`initAuditBrief`, `generateRepoProfile`, arch-memory queries), each asserted bounded — was never recorded. Only `_llmCondense` was actually bounded; the siblings were never enumerated, so an unbounded sibling would still hang an audit. |
+| WS-C | **Complete** (2026-07-19) | C0 measured (no live corruption). C1: both findings proved false positives → reasoned `@on-conflict-ok` pragmas (flow-sensitivity, not a lint gap worth AST flow analysis). C3: `regression_specs` reviewed by hand — correct on both branches, verdict recorded in code. C4: dead writers deleted (`syncExperiments` targeted a table that does not exist). **C2: measured, and the measurement killed the prescribed migration** — all 6 findings resolved with **no DDL at all** (see §5 C2 log). `on-conflict:all` → 0 gating. |
+| WS-D | **INCOMPLETE** — label corrected 2026-07-19 | The core swap DID land: `collect-reference.mjs:29` imports `parsePlanStatus`, buckets on `parsed.kind === 'terminal'` (`:126`), and the inline line-84 regex is deleted with the two-parser hazard documented (`:115-119`). **Not done**: (1) the `duplicate` typed presentation contract (R3-L1) does not exist — `parsePlanStatus` returns `{ok:false, reason:'duplicate'}` with **no `raw`** (`plan-status.mjs:66`), and `rawStatusValues`/`displayStatus` appear nowhere; because `collect-reference.mjs:120` sets `hasStatusLine = parsed.raw != null`, a duplicate-`Status:` plan is **silently excluded from the dashboard**, the opposite of the promised Active + `malformed` badge. (2) `docs/completed/` is still scanned (`:69`) vs design item 1's "scans **only** `docs/plans/`". (3) The promised source-scan pin ("collector holds no `Status` regex of its own") does not exist — `tests/dashboard.test.mjs:207-243` is behavioural only, so the correct delete is unprotected against reintroduction. (4) No `duplicate`/`unrecognized` fixtures. |
+| WS-E | **INCOMPLETE** — label corrected 2026-07-19 | **E1's load-bearing content-identity contract is entirely absent.** `auditedTree`/`auditedSha`/`audited_tree`/`audited_sha` return **zero hits** across `scripts/`, `tests/`, `supabase/`, `docs/reference/`. `buildGateEvidence` (`gate-evidence.mjs:51`) emits only `{runId, sid, round, ts}`; `resolveEvidence` (`commit-trailers.mjs:96-122`) still verifies **recency only** — `const fresh = evidenceMs > headCommitTs * 1000` (`:121`) — with no `committedTree === auditedTree` check. So `AI-Gate: passed` is reachable for a commit whose content was never audited (audit a clean tree → edit → commit; freshness passes). Per this plan's own words that is **worse than the previous honest `not-run`**, because the writer half now ships. **E2 leg (a) is genuinely done** (`boundMalformedDetails`, `model-eval-discovery.mjs:276`, both budgets + redaction-before-truncation, tested). **Leg (b) is a dead read**: `tiered-shadow-compare.mjs:349` reads `_stageBreakdown?.discoveryMalformedReasons`, but nothing anywhere writes that key (both producers at `tiered-pipeline.mjs:641`/`:1288` emit `discoveryMalformedRaw`/`discoveryContradictedRaw`). It is permanently `null`, and `?? null` makes that indistinguishable from "absent" — so the "diagnosable from stored rows" claim holds for the eval record but **not** for the shadow comparison, which is the surface the Phase-14 window actually reads. |

@@ -361,7 +361,13 @@ export function extractUpsertSites(source) {
   const { ast, error } = parseSource(source);
   if (!ast) return { sites: [], diagnostics: [], parseError: error };
   const program = ast.type === 'File' ? ast.program : ast;
-  const sourceLines = source.split('\n');
+  // Split on \r?\n, NOT '\n'. On a CRLF working tree a bare-'\n' split leaves a
+  // trailing '\r' on every line, and SUPPRESSION_RE's `(.*)$` cannot match it —
+  // JS treats '\r' as a line terminator, so `.` won't consume it and a
+  // non-multiline `$` won't match before it. Every @on-conflict-ok pragma then
+  // silently stops suppressing on Windows checkouts while still working on LF
+  // ones, making the gate platform-dependent (found while landing WS-C2).
+  const sourceLines = source.split(/\r?\n/);
 
   // Module frame: all top-level declarations INCLUDING builder functions (whose
   // bodies we DO want to resolve into). crossFunctions:true so `export function

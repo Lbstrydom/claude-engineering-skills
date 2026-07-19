@@ -111,6 +111,7 @@ import { recommendSkills, renderRecommendationCard } from './lib/skill-recommend
 import { resolvePreviewGate } from './lib/cycle/topology.mjs';
 import { cycleConfig } from './lib/config.mjs';
 import { decideCorrelations, MATCHER_VERSION, personaFindingHash } from './lib/persona/audit-correlator.mjs';
+import { buildPersonaSessionId } from './lib/persona-test/session-id.mjs';
 import { recordNavAuditRun, listNavAuditRunHistory } from './lib/store/nav-audit.mjs';
 import { upsertPersonaFindingOutcome, getPersonaOutcomesSummary, getActionablePersonaOutcomeItems, resolveLabelTarget } from './lib/store/persona-outcomes.mjs';
 import { firstSeenFromHistory } from './lib/nav/drift.mjs';
@@ -1107,7 +1108,11 @@ async function cmdAddPersona() {
 }
 
 const RecordPersonaSessionRequestSchema = z.object({
-  sessionId: z.string().min(1),
+  // OPTIONAL since WS-C2 — omit it and the CLI mints a collision-resistant id
+  // via buildPersonaSessionId (the single oracle). Pass one explicitly ONLY to
+  // re-post an existing session: session_id is the idempotency key, so a
+  // supplied value is honoured verbatim, legacy weak ids included.
+  sessionId: z.string().min(1).optional(),
   persona: z.string().min(1),
   url: z.url(),
   focus: z.string().optional(),
@@ -1156,6 +1161,11 @@ async function cmdRecordPersonaSession() {
   // legitimate identity writer). Best-effort: a resolution failure leaves repo_id
   // null and the session still records by name.
   const data = { ...parsed.data };
+  // WS-C2: mint the session_id in code when the caller omitted it. Keeps the
+  // weak `persona-test-<unix>` shape the LLM used to author out of the identity
+  // path entirely, without breaking re-posts (an explicit id passes through).
+  const mintedSessionId = data.sessionId ? null : buildPersonaSessionId();
+  if (mintedSessionId) data.sessionId = mintedSessionId;
   if (!data.repoId) {
     const ref = await resolveRepoForStore({}).catch(() => null);
     if (ref?.repoRowId) data.repoId = ref.repoRowId;
@@ -1163,7 +1173,10 @@ async function cmdRecordPersonaSession() {
 
   const result = await recordPersonaSession(data);
   const correlationSummary = await runAutoCorrelate(data, result.sessionId);
-  emit({ ok: !!result.sessionId, cloud: true, ...result, correlationSummary });
+  // `sessionKey` is the persona_test_sessions.session_id TEXT (the idempotency
+  // key); `sessionId` is the row's uuid PK, which is what downstream correlation
+  // calls take. Surfacing the key lets a caller re-post the same session.
+  emit({ ok: !!result.sessionId, cloud: true, ...result, sessionKey: data.sessionId, correlationSummary });
 }
 
 /**

@@ -205,6 +205,7 @@ export async function upsertPersona(persona) {
     );
     const existed = !!existing?.id;
 
+    // @on-conflict-ok: a persona is scoped to the APP, not the repo — the table declares `unique (name, app_url)` ("Unique per app"), carries personas_app_url_idx, and listPersonasForApp reads by app_url alone. Adding repo_name would fragment one app's persona into per-repo copies and break that reader; repo_name is an annotation for cross-referencing audit findings, not identity. Evidence-backed omission per the WS-C2 escape hatch, not a deferral.
     const rows = await upsert('personas', [{
       name: persona.name,
       description: persona.description,
@@ -267,6 +268,7 @@ export async function recordPersonaSession(session) {
       clickPathMeta = buildSanitizedClickPath(session.clickPath);
       row.click_path = clickPathMeta.steps;   // jsonb — serialized by the db-layer seam
     }
+    // @on-conflict-ok: a session is a globally-unique EVENT whose identity is its own id; repo_id/repo_name are annotations on it. session_id is now collision-resistant by construction (buildPersonaSessionId — unix seconds + a full crypto.randomUUID suffix), which is the root-cause fix for the weak `persona-test-<unix>` shape. Widening to (repo_id, session_id) was measured and REJECTED as a band-aid: repo_id is legitimately NULL when persona-test runs against a deployed URL from outside a resolvable repo, so it needs a sentinel bucket in which two same-second sessions still collide (WS-C2).
     const rows = await upsert('persona_test_sessions', [row],
       { onConflict: 'session_id', update: 'all', returning: ['id'] });
     sessionId = rows[0]?.id || null;
