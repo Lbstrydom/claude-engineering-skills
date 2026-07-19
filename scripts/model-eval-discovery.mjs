@@ -121,6 +121,18 @@ function buildPayload() {
   const commit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
   const files = execFileSync('git', ['diff-tree', '--no-commit-id', '--name-only', '-r', FIXTURE_REV], { encoding: 'utf8' })
     .trim().split('\n').filter((f) => f && fs.existsSync(f));
+  // Egress: `readFilesAsContext` (audit-scope.mjs) is the guarantee for the
+  // CODE bodies — it skips sensitive paths AND redacts each body by default
+  // (`redact = true`), redacting BEFORE truncating so a cut cannot leave an
+  // un-matchable secret fragment. This is the same helper the production audit
+  // uses, which is what "production parity" means here.
+  //
+  // The plan below needs its OWN `redactSecrets` precisely because it does not
+  // go through that helper — a bare `readFileSync` carries no such guarantee.
+  // The asymmetry is deliberate, not an oversight; it read as one to
+  // /audit-code (R1-H1, 2026-07-19), so it is pinned by
+  // tests/model-eval-discovery-egress.test.mjs rather than left to be
+  // re-litigated.
   const discoveryCode = readFilesAsContext(files, { maxPerFile: 8000, maxTotal: 100000 });
   const discoveryPlan = redactSecrets(fs.readFileSync('docs/plans/shadow-no-legacy-fallback.md', 'utf8'));
 
