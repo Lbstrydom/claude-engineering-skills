@@ -1,7 +1,15 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, afterEach, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createOpenAIClient, _resetClientCache, _internals } from '../scripts/lib/openai-client.mjs';
 import { buildAzureConfig } from '../scripts/lib/config.mjs';
+import { providerEnvHooks } from './helpers/provider-env.mjs';
+
+// This suite references AZURE_OPENAI_ENDPOINT but previously only reset the
+// client cache — an AMBIENT Azure endpoint (corporate machine, work profile,
+// harness) silently activated the Azure path inside tests asserting on the
+// PUBLIC one. Same class as the ANTHROPIC_BASE_URL harness failure; one shared
+// env-family list so the two suites cannot drift apart.
+const providerEnv = providerEnvHooks();
 
 const INACTIVE = buildAzureConfig({}); // no AZURE_OPENAI_ENDPOINT → inactive
 
@@ -14,7 +22,8 @@ const AZURE_ENV = {
 };
 
 describe('createOpenAIClient — opt-in / byte-identical (the load-bearing invariant)', () => {
-  beforeEach(() => _resetClientCache());
+  beforeEach(() => { providerEnv.beforeEach(); _resetClientCache(); });
+  afterEach(() => { providerEnv.afterEach(); _resetClientCache(); });
 
   it('with no Azure env, constructs a public client with the OpenAI default baseURL', async () => {
     const client = await createOpenAIClient({ azure: INACTIVE, apiKey: 'sk-test', fresh: true });
@@ -32,7 +41,8 @@ describe('createOpenAIClient — opt-in / byte-identical (the load-bearing invar
 });
 
 describe('createOpenAIClient — Azure routing', () => {
-  beforeEach(() => _resetClientCache());
+  beforeEach(() => { providerEnv.beforeEach(); _resetClientCache(); });
+  afterEach(() => { providerEnv.afterEach(); _resetClientCache(); });
 
   it('gpt purpose targets AZURE_OPENAI_ENDPOINT /openai/v1 with api-key + api-version', async () => {
     const cfg = buildAzureConfig(AZURE_ENV);
@@ -80,7 +90,8 @@ describe('azureBaseUrl helper', () => {
 });
 
 describe('createOpenAIClient — OSS path caching (consolidated Gemini gate fix G3)', () => {
-  beforeEach(() => _resetClientCache());
+  beforeEach(() => { providerEnv.beforeEach(); _resetClientCache(); });
+  afterEach(() => { providerEnv.afterEach(); _resetClientCache(); });
 
   it('caches by baseURL+apiKey when no headers are supplied', async () => {
     const a = await createOpenAIClient({ oss: { baseURL: 'https://openrouter.ai/api/v1', apiKey: 'sk-oss' } });

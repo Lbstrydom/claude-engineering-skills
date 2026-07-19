@@ -980,7 +980,17 @@ export async function runTieredAuditPipeline(ctx) {
         // verbatim content check is unaffected.
         return clampToJsonSchemaLimits({ findings: toolUse.input.findings }, unclampedQuoteSchema).findings;
       }
-    : async () => { throw new Error('discovery portfolio: providers.anthropicClient unavailable'); };
+    // No client. Name WHY, from the readiness record the context carries —
+    // `anthropicClient === null` alone conflates a keyless run with a broken
+    // one, and reporting both as a bare "unavailable" is how a single keyless
+    // session read as two days of intermittent failures (WS-B2).
+    : async () => {
+      const r = ctx.providers?.anthropicReadiness;
+      const detail = r?.state
+        ? `${r.state}${r.message ? `: ${r.message}` : ''}`
+        : 'unavailable (no readiness record)';
+      throw new Error(`discovery portfolio: providers.anthropicClient ${detail}`);
+    };
 
   const discoveryAdapters = { glmCall, sonnetCall, gptCall: null };
   const { findings: rawFindings, requiredGeneratorFailed } = await runDiscoveryPortfolio(ctx, discoveryAdapters, triggerDecision);

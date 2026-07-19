@@ -44,6 +44,7 @@ import { z } from 'zod';
 import { FindingSchema, ProducerFindingSchema, WiringIssueSchema, LedgerEntrySchema, ReduceStatus, ExecutionMetaSchema, DuplicationBouncerResponseSchema, AdjacencyBouncerResponseSchema } from '../schemas.mjs';
 import { gitDiffWithWorkingTree } from '../vcs.mjs';
 import { runDuplicationAnalysis } from './duplication-detector.mjs';
+import { classifyProviderReadiness } from './provider-readiness.mjs';
 import { runAdjacencyAnalysis } from './adjacency-detector.mjs';
 import { runAdjacencyBouncer, buildAdjacencyFailedFinding } from './adjacency-report.mjs';
 import { composeAdjacencyResult } from './adjacency-compose.mjs';
@@ -3352,6 +3353,10 @@ export async function buildAuditRunContext(cliArgs) {
   // callers (tests, model-eval generation arms) default false and stay
   // hermetic regardless of env.
   let anthropicClient = null;
+  // Why the client was (or wasn't) constructed — see the catch below. Absent
+  // construction attempt (tiered off) stays `not-attempted`, distinct from a
+  // failure: "we never tried" must never render as "it broke".
+  let anthropicReadiness = { state: 'not-attempted', message: 'tiered pipeline/shadow disabled' };
   let ossCall = null;
   let geminiReviewCall = null;
   let geminiCleanRegionCall = null;
@@ -3371,8 +3376,22 @@ export async function buildAuditRunContext(cliArgs) {
       // handle needs the real Messages API tool-calling surface regardless
       // of what the rest of the process is configured to use.
       anthropicClient = await createAnthropicClient({ backend: 'sdk' });
+      anthropicReadiness = { state: 'available' };
     } catch (err) {
-      process.stderr.write(`  [ctx] anthropicClient unavailable (non-blocking — only the tiered pipeline's Sonnet generator needs it): ${err.message}\n`);
+      // Construction stays NON-BLOCKING — the legacy audit does not need this
+      // client, and hard-failing here would break every keyless legacy run.
+      // But `null` alone conflates four different causes: credentials missing,
+      // malformed configuration, transport/SDK init failure, and a future
+      // regression in construction. The tiered shadow then reported all of
+      // them as one generic "providers.anthropicClient unavailable", which is
+      // how 51 records from a single keyless session read as intermittent
+      // flakiness for two days. Classify instead — a diagnostic that lies is
+      // worse than none (see tiered-shadow-summary.mjs's own note).
+      anthropicReadiness = classifyProviderReadiness(err);
+      process.stderr.write(
+        `  [ctx] anthropicClient unavailable [${anthropicReadiness.state}] ` +
+        `(non-blocking — only the tiered pipeline's Sonnet generator needs it): ${anthropicReadiness.message}\n`
+      );
     }
     try {
       const ossClient = await createOpenAIClient({
@@ -3424,7 +3443,10 @@ export async function buildAuditRunContext(cliArgs) {
     escalateRecurring, scopeMode, planFile, runId, allowInfraScope,
     outFile, model, sessionCacheHit, allowTiered, commitSha, workingTreeDirty,
     generatorOutcomes: [],
-    providers: { openai, anthropicClient, ossCall, geminiReviewCall, geminiCleanRegionCall },
+    // `anthropicReadiness` travels WITH the client so a downstream consumer can
+    // tell a routine keyless skip from a real construction defect, instead of
+    // inferring one meaning from `anthropicClient === null` (WS-B2).
+    providers: { openai, anthropicClient, anthropicReadiness, ossCall, geminiReviewCall, geminiCleanRegionCall },
   };
 }
 

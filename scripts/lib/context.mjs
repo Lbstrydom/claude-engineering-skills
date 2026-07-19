@@ -150,7 +150,7 @@ List every dependency with its EXACT version and any API-breaking notes (e.g., "
 
 ### Architecture
 - How modules interact (1-2 sentences)
-- Key invariants (e.g., "all queries must include cellar_id")
+- Key invariants (e.g., "all row-scoped queries must filter by the tenant key")
 
 ### Naming Conventions
 - File, variable, function, CSS naming rules (one line each)
@@ -165,10 +165,41 @@ List every dependency with its EXACT version and any API-breaking notes (e.g., "
 - No code examples — just the rules/patterns
 - Target 800-1200 characters`;
 
+// ── Brief-generation budget (WS-B1) ─────────────────────────────────────────
+//
+// Brief generation is OPTIONAL context enrichment: its failure costs a slightly
+// worse audit prompt, and the regex-only brief is a complete fallback. It must
+// therefore never be able to block an audit — but it could. `initAuditBrief()`
+// is awaited inline by `openai-audit.mjs` with no watchdog of its own (unlike
+// `gemini-review.mjs`, which at least has a 600s hard deadline), so a hung
+// provider hung the whole GPT audit. Observed as an exit-143 in a harness
+// environment; the `.catch(() => {})` at one call site catches a rejection,
+// which a hang is not.
+//
+// The transports can already be bounded — `messages.create(params, {timeoutMs})`
+// is honoured by both backends, and the cli path additionally kills the process
+// tree (taskkill /T /F on Windows) with SIGTERM→force escalation. What was
+// missing is a budget at THIS seam: the cli default is 120s (sized for real
+// generation work, far too long for optional enrichment), and the Gemini leg
+// had no bound at all.
+//
+// Contract:
+//   - ONE wall-clock deadline for the whole step, started once.
+//   - Each attempt gets min(perAttempt, remaining); below a floor the next
+//     provider is SKIPPED rather than started with no room to succeed.
+//   - Timeout is a one-line note plus fallback, never an error.
+
+const BRIEF_TOTAL_TIMEOUT_MS = Number(process.env.BRIEF_TOTAL_TIMEOUT_MS) || 30_000;
+const BRIEF_ATTEMPT_TIMEOUT_MS = Number(process.env.BRIEF_ATTEMPT_TIMEOUT_MS) || 20_000;
+const BRIEF_MIN_ATTEMPT_MS = 2_000;
+
 /**
  * Phase B: LLM condensation of CLAUDE.md into audit-relevant facts.
- * Fallback chain: Claude Haiku -> Gemini Flash -> null.
+ * Fallback chain: Claude Haiku -> Gemini Flash -> null (regex-only).
  * Haiku is primary (better quality, captures all constraints).
+ *
+ * Bounded by a total deadline — see the budget note above. Never throws.
+ *
  * @param {string} content - Raw CLAUDE.md content (will be truncated)
  * @returns {Promise<string|null>} LLM-generated brief, or null on failure
  */
@@ -176,51 +207,104 @@ async function _llmCondense(content) {
   const truncated = content.slice(0, 48000); // ~12K tokens, fits Haiku/Flash comfortably
   const userContent = `Extract an audit brief from this developer guidelines document:\n\n${truncated}`;
 
+  const deadlineAt = Date.now() + BRIEF_TOTAL_TIMEOUT_MS;
+  const remaining = () => deadlineAt - Date.now();
+  /** Budget for the next attempt, or null when there is no useful room left. */
+  const budgetFor = (label) => {
+    const left = remaining();
+    if (left < BRIEF_MIN_ATTEMPT_MS) {
+      process.stderr.write(`  [brief] skipping ${label} — ${(left / 1000).toFixed(1)}s left of the ${BRIEF_TOTAL_TIMEOUT_MS / 1000}s budget\n`);
+      return null;
+    }
+    return Math.min(BRIEF_ATTEMPT_TIMEOUT_MS, left);
+  };
+
+  /**
+   * Race a provider call against the attempt budget. The underlying call is
+   * ALSO given the budget (so the transport aborts its own request/child); the
+   * race is the backstop for a transport that ignores it. A raced-out promise
+   * gets a `.catch` attached at race time so a late rejection can never surface
+   * as an unhandled rejection after we have moved on.
+   */
+  const withBudget = async (promise, ms, label) => {
+    let timer;
+    const guard = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} exceeded its ${(ms / 1000).toFixed(0)}s brief budget`)), ms);
+    });
+    promise.catch(() => {});           // consume a late rejection
+    try {
+      return await Promise.race([promise, guard]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   // Try Claude Haiku first (better quality — captures all constraints)
   // `cli` backend (CLAUDE_BACKEND=cli) routes via `claude -p` so this draws
   // from the Max 20x Agent SDK credit instead of the raw-API meter.
   if (process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_BACKEND === 'cli') {
-    try {
-      const { createAnthropicClient } = await import('./anthropic-client.mjs');
-      const anthropic = await createAnthropicClient();
-      const model = briefConfig.claudeModel;
-      process.stderr.write(`  [brief] Generating via ${model}...\n`);
-      const startMs = Date.now();
-      const response = await anthropic.messages.create({
-        model,
-        max_tokens: 2000,
-        system: BRIEF_SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userContent }]
-      });
-      const text = response.content?.[0]?.text?.trim();
-      process.stderr.write(`  [brief] ${model} done in ${((Date.now() - startMs) / 1000).toFixed(1)}s (${text?.length ?? 0} chars)\n`);
-      if (text && text.length > 100) return text.slice(0, 3000); // Cap at 3000 chars
-    } catch (err) {
-      process.stderr.write(`  [brief] Claude Haiku failed: ${err.message} — trying Gemini Flash\n`);
+    const budget = budgetFor('Claude');
+    if (budget) {
+      try {
+        const { createAnthropicClient } = await import('./anthropic-client.mjs');
+        const anthropic = await createAnthropicClient();
+        const model = briefConfig.claudeModel;
+        process.stderr.write(`  [brief] Generating via ${model}...\n`);
+        const startMs = Date.now();
+        // The guard and the transport share a budget, so the guard can fire
+        // first on event-loop timing — leaving the request running while we
+        // fall through to Gemini. Abort explicitly on race-loss, symmetric
+        // with the Gemini leg below.
+        const controller = new AbortController();
+        const response = await withBudget(
+          anthropic.messages.create({
+            model,
+            max_tokens: 2000,
+            system: BRIEF_SYSTEM_PROMPT,
+            messages: [{ role: 'user', content: userContent }]
+          }, { timeoutMs: budget, signal: controller.signal }),
+          budget,
+          model,
+        ).catch((err) => { controller.abort(); throw err; });
+        const text = response.content?.[0]?.text?.trim();
+        process.stderr.write(`  [brief] ${model} done in ${((Date.now() - startMs) / 1000).toFixed(1)}s (${text?.length ?? 0} chars)\n`);
+        if (text && text.length > 100) return text.slice(0, 3000); // Cap at 3000 chars
+      } catch (err) {
+        process.stderr.write(`  [brief] Claude Haiku failed: ${err.message} — trying Gemini Flash\n`);
+      }
     }
   }
 
   // Fallback: Gemini Flash
   if (process.env.GEMINI_API_KEY) {
-    try {
-      const { GoogleGenAI } = await import('@google/genai');
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const model = briefConfig.geminiModel;
-      process.stderr.write(`  [brief] Generating via ${model}...\n`);
-      const startMs = Date.now();
-      const response = await ai.models.generateContent({
-        model,
-        contents: userContent,
-        config: {
-          systemInstruction: BRIEF_SYSTEM_PROMPT,
-          maxOutputTokens: 4000
-        }
-      });
-      const text = response.text?.trim();
-      process.stderr.write(`  [brief] ${model} done in ${((Date.now() - startMs) / 1000).toFixed(1)}s (${text?.length ?? 0} chars)\n`);
-      if (text && text.length > 100) return text.slice(0, 3000);
-    } catch (err) {
-      process.stderr.write(`  [brief] Gemini Flash failed: ${err.message}\n`);
+    const budget = budgetFor('Gemini');
+    if (budget) {
+      try {
+        const { GoogleGenAI } = await import('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        const model = briefConfig.geminiModel;
+        process.stderr.write(`  [brief] Generating via ${model}...\n`);
+        const startMs = Date.now();
+        const controller = new AbortController();
+        const response = await withBudget(
+          ai.models.generateContent({
+            model,
+            contents: userContent,
+            config: {
+              systemInstruction: BRIEF_SYSTEM_PROMPT,
+              maxOutputTokens: 4000,
+              abortSignal: controller.signal,
+            }
+          }),
+          budget,
+          model,
+        ).catch((err) => { controller.abort(); throw err; });
+        const text = response.text?.trim();
+        process.stderr.write(`  [brief] ${model} done in ${((Date.now() - startMs) / 1000).toFixed(1)}s (${text?.length ?? 0} chars)\n`);
+        if (text && text.length > 100) return text.slice(0, 3000);
+      } catch (err) {
+        process.stderr.write(`  [brief] Gemini Flash failed: ${err.message}\n`);
+      }
     }
   }
 

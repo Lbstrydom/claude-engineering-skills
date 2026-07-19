@@ -1,6 +1,6 @@
 # Plan: Debt Burndown — Workstreams A–E (master)
 
-- **Status**: In Progress — WS-0 and WS-A Complete (live repair executed 2026-07-19). WS-B–E pending.
+- **Status**: In Progress — WS-0, WS-A, WS-B Complete; WS-E1 landed via parallel work. WS-C, WS-D, WS-E2 pending.
 - **Date**: 2026-07-18
 - **Origin**: Cross-session deferred-items investigation (4 parallel read-only agents at HEAD) + `/brainstorm --with-gemini` prioritisation (session `1784380501405`; GPT-5.6 + Gemini-pro + Claude synthesis).
 - **Shape**: One master plan, five workstreams. Each WS is sized for its own `/plan`-refinement + `/audit-plan` + implementation cycle; this document is the stable spine and gets updated (per-WS detail deepened, statuses stamped) as each WS starts. Do not implement from this file alone once a WS has its refined section — the refined section wins.
@@ -458,6 +458,19 @@ not enough:
 unset-vs-empty round-trip; nested scopes; plus the hostile-shell proof — the
 suite passes green with `AZURE_OPENAI_ENDPOINT` injected (the same standard
 the `normalizeBaseUrl` fix was held to).
+
+### File-level plan
+
+| File | Change |
+|---|---|
+| `scripts/lib/context.mjs` | B1 — total/per-attempt brief budget; pass `timeoutMs` to the Claude leg; `abortSignal` for the previously-unbounded Gemini leg; late-rejection consumed |
+| `scripts/lib/audit/provider-readiness.mjs` (new) | B2 — `classifyProviderReadiness` + `isBenignUnavailability`, with the redaction boundary |
+| `scripts/lib/audit/legacy-production-audit.mjs` | B2 — classify at the swallow site; carry `anthropicReadiness` in `providers` |
+| `scripts/lib/audit/tiered-pipeline.mjs` | B2 — the stub names the readiness state instead of a bare "unavailable" |
+| `scripts/lib/audit/tiered-shadow-summary.mjs` | B3 — additive `shadowFailureReasonsAll` |
+| `scripts/tiered-shadow-report.mjs` | B3 — print only the reasons the gated line cannot show |
+| `tests/helpers/provider-env.mjs` (new) | B4 — one env-family list; snapshot/restore; serialised scopes |
+| `tests/openai-client.test.mjs` | B4 — adopt the scrub (it reset the cache but never the env) |
 
 ### Tests
 
@@ -939,7 +952,7 @@ test now asserts the race actually fired.
 **Spun off, not silently deferred**: `--adopt` unusable in consumer repos
 (`tests/fixtures/expected-schema.json` is never synced); `--max-tokens`
 bypassing `resolveDepth()` in `brainstorm-round.mjs`.
-| WS-B | pending | — |
+| WS-B | **Complete** (2026-07-19) | B1 bounded brief-gen (total+per-attempt deadline, abort on both legs); B2 `provider-readiness.mjs` classifier with redaction boundary; B3 `shadowFailureReasonsAll`; B4 shared `provider-env` helper. GPT R1 (H:3 M:11 L:1) + Gemini ×2 → 3+2 findings, all fixed. |
 | WS-C | pending | — |
 | WS-D | pending | — |
 | WS-E | pending | — |

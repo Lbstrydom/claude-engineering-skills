@@ -182,6 +182,23 @@ function reportRows(records, jsonMode, { source, logPath, repoLabels, repoCount,
   if (Object.keys(summary.shadowFailureReasons).length > 0) {
     console.log(`  shadow failure reasons (live): ${JSON.stringify(summary.shadowFailureReasons)}`);
   }
+  // Reasons the line above cannot show: a record where the LEGACY run also
+  // failed is excluded there by design, so its shadow reason survived only as
+  // an anonymous `legacyFailures` tally. Printed only when it adds something,
+  // so the common case stays quiet.
+  // Subtract COUNTS, don't filter keys. A reason that occurred both when legacy
+  // succeeded and when it failed exists in the visible map, so a key-existence
+  // filter would drop its legacy-failure occurrences entirely — under-reporting
+  // exactly the records this line was added to surface.
+  const allReasons = summary.shadowFailureReasonsAll ?? {};
+  const hidden = {};
+  for (const [reason, total] of Object.entries(allReasons)) {
+    const visible = summary.shadowFailureReasons[reason] || 0;
+    if (total - visible > 0) hidden[reason] = total - visible;
+  }
+  if (Object.keys(hidden).length > 0) {
+    console.log(`  shadow failure reasons (also failing legacy — hidden from the line above): ${JSON.stringify(hidden)}`);
+  }
   // Gated on comparedRuns (decision-grade data points), NOT totalRuns — a
   // run whose shadow attempt failed outright contributes no cost/latency/
   // overlap information, so it can't count toward "ready to decide" even

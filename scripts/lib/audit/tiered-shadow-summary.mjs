@@ -251,6 +251,26 @@ export function summarize(records) {
         acc[reason] = (acc[reason] || 0) + 1;
         return acc;
       }, {}),
+
+    // Every shadow failure by reason, INDEPENDENT of legacyOk (WS-B3).
+    //
+    // The reducer above requires `legacyOk`, and `legacyFailures`/`shadowFailures`
+    // are a deliberate non-overlapping precedence — correct for COUNTS. But it
+    // means a record where BOTH pipelines failed loses its shadow reason into an
+    // anonymous `legacyFailures` tally, and when both fail the shadow reason is
+    // precisely the diagnostic signal. 51 records reading
+    // `providers.anthropicClient unavailable` were invisible this way, and the
+    // window was misread as intermittent flakiness rather than one keyless
+    // 14-hour session (2026-07-16/17).
+    //
+    // Additive: the precedence above is untouched, so no existing metric moves.
+    shadowFailureReasonsAll: records
+      .filter((r) => !r.shadowOk && r.shadowError)
+      .reduce((acc, r) => {
+        const reason = r.shadowError || 'unknown';
+        acc[reason] = (acc[reason] || 0) + 1;
+        return acc;
+      }, {}),
   };
 }
 
