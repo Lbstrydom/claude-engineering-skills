@@ -11,9 +11,26 @@ import { AsyncLocalStorage } from 'node:async_hooks';
  * scrubbed the env, so an ambient Azure endpoint silently activated the Azure
  * path inside tests that believed they were exercising the public one.
  *
- * ONE list, so a provider added to the resolution path cannot be added to one
- * suite's scrub list and forgotten in another — the scrub-list-vs-resolution-
- * list drift that caused the original bug.
+ * ONE list per LAYER, and there are deliberately two layers — do not "unify"
+ * them:
+ *
+ *   `SCRUBBED_ROUTING_ENV` (scripts/run-tests.mjs) is the RUNNER layer. It
+ *   scrubs the ambient shell once before spawning the test children, and it
+ *   scrubs ROUTING SELECTORS ONLY, never credentials: CI injects API keys by
+ *   env, and a key with no routing selector is inert for verdicts. Scrubbing
+ *   keys there would break real CI.
+ *
+ *   `PROVIDER_ENV_VARS` (here) is the PER-TEST layer. It may also scrub
+ *   credentials, because a test asserting "no key → misconfigured" needs them
+ *   absent for its own duration only.
+ *
+ * So the lists differ on purpose. What must NOT differ is the routing half:
+ * every selector the runner knows about must also be scrubbed here, or a test
+ * that sets up its own env could still be steered by one this layer missed.
+ * `tests/provider-env-helper.test.mjs` asserts that containment — it caught
+ * four selectors missing from this list when the two layers were compared
+ * (AZURE_FOUNDRY_SUMMARY_DEPLOYMENT, AZURE_OPENAI_API_VERSION,
+ * AZURE_CLAUDE_API_SHAPE, AZURE_FOUNDRY_API_PATH).
  *
  * SNAPSHOT-AND-RESTORE, not delete: a test that throws must not leak state into
  * the next one, so restoration runs in `finally`. "Was unset" is preserved as
@@ -38,6 +55,10 @@ export const PROVIDER_ENV_VARS = Object.freeze([
   'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_GPT_DEPLOYMENT',
   'AZURE_OPENAI_EMBED_DEPLOYMENT', 'AZURE_AI_ENDPOINT', 'AZURE_AI_API_KEY',
   'AZURE_FOUNDRY_CLAUDE_DEPLOYMENT',
+  // Routing selectors the runner layer already scrubs — kept in sync by the
+  // containment assertion in tests/provider-env-helper.test.mjs.
+  'AZURE_FOUNDRY_SUMMARY_DEPLOYMENT', 'AZURE_OPENAI_API_VERSION',
+  'AZURE_CLAUDE_API_SHAPE', 'AZURE_FOUNDRY_API_PATH',
   // Gemini
   'GEMINI_API_KEY',
   // Final-review routing

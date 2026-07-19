@@ -93,3 +93,24 @@ describe('withScrubbedProviderEnv', () => {
     delete process.env[K];
   });
 });
+
+describe('the two scrub layers stay in sync', () => {
+  it('every ROUTING selector the runner scrubs is also scrubbed per-test', async () => {
+    // The layers differ on purpose — the runner never scrubs credentials
+    // (CI injects keys by env; a key with no routing selector is inert), while
+    // this helper may. What must NOT drift is the routing half: a selector the
+    // runner knows about but this list misses could still steer a test that
+    // sets up its own env. Comparing the two lists is what found four missing.
+    const { SCRUBBED_ROUTING_ENV } = await import('../scripts/run-tests.mjs');
+    const missing = SCRUBBED_ROUTING_ENV.filter((k) => !PROVIDER_ENV_VARS.includes(k));
+    assert.deepEqual(missing, [],
+      `routing selectors scrubbed by run-tests.mjs but not by PROVIDER_ENV_VARS: ${missing.join(', ')}`);
+  });
+
+  it('does NOT require the runner to scrub credentials (that would break CI)', async () => {
+    const { SCRUBBED_ROUTING_ENV } = await import('../scripts/run-tests.mjs');
+    const creds = SCRUBBED_ROUTING_ENV.filter((k) => /API_KEY/.test(k));
+    assert.deepEqual(creds, [],
+      'the runner layer must stay routing-only — CI legitimately injects API keys by env');
+  });
+});
