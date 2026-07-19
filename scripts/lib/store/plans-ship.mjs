@@ -31,6 +31,10 @@ export async function upsertPlan(repoId, plan) {
     return null;
   }
   try {
+    // The `|| null` below is defensive residue that reads as nullable to the lint;
+    // the early return above makes it unreachable. Left in place rather than dropped
+    // so the column's real DB nullability stays honest at the call site.
+    // @on-conflict-ok: repoId is provably non-null — the early return above rejects a falsy repoId, naming this exact defect class; detecting that needs flow analysis.
     const rows = await upsert('plans', [{
       repo_id: repoId || null,
       path: plan.path,
@@ -150,6 +154,16 @@ export async function recordRegressionSpec(repoId, spec) {
     redaction_count: redactionCount,
     updated_at: new Date().toISOString(),
   };
+  // WS-C3 manual review (2026-07-19) — the lint reports this target as
+  // `unresolved-conflict-target` because the ternary is not statically
+  // readable. Reviewed by hand and CORRECT on both branches:
+  //   - candidate     → (repo_id, candidate_fingerprint), arbitrated by the
+  //     partial index via the `conflictWhere` below;
+  //   - non-candidate → (repo_id, spec_path), a full unique constraint.
+  // `repo_id` is provably non-null on BOTH paths — each branch above returns
+  // early on a falsy repoId, naming the duplicate-row consequence. No scope
+  // column is stored-but-omitted. Left dynamic: collapsing it to a literal
+  // would need two upsert call sites for one logical write.
   const onConflict = isCandidate ? ['repo_id', 'candidate_fingerprint'] : ['repo_id', 'spec_path'];
   // The candidate arbiter is a PARTIAL unique index
   // (idx_regression_specs_candidate_fingerprint, migration 20260520120000);
@@ -362,6 +376,11 @@ export async function recordPersonaAuditCorrelation(personaSessionId, correlatio
         // Real match: the 3-column unique constraint is the correct
         // conflict target (audit_finding_id is non-null here, so
         // Postgres's normal NOT-DISTINCT equality applies).
+        // The lint reads the row builder's `audit_finding_id: null` DEFAULT, which this
+        // branch overwrites. The null shape is handled by the else branch's partial index
+        // (`conflictWhere: audit_finding_id IS NULL`) — the correct Postgres remedy for
+        // NULL-distinct, not an instance of the 403k-row bug.
+        // @on-conflict-ok: audit_finding_id is provably non-null on this branch — it is the `if (correlation.auditFindingId)` guard condition; detecting that needs flow analysis.
         await upsert('persona_audit_correlations', [row],
           { onConflict: ['persona_session_id', 'persona_finding_hash', 'audit_finding_id'], update: 'all' });
       } else {

@@ -53,8 +53,7 @@ const CONTRACT_FUNCTIONS = [
   // bandit-fp
   'syncBanditArms', 'loadBanditArms',
   'syncFalsePositivePatterns', 'loadFalsePositivePatterns',
-  'getFalsePositivePatterns', 'syncExperiments', 'syncPromptRevision',
-  'getPassEffectiveness',
+  'getFalsePositivePatterns', 'getPassEffectiveness',
   // plans-ship
   'upsertPlan', 'updatePlanStatus', 'recordRegressionSpec',
   'listConsistencyCandidates', 'promoteRegressionSpec',
@@ -100,8 +99,10 @@ describe('learning-store / contract suite — structural checks', () => {
     assert.deepEqual(missing, [], `barrel missing contract functions: ${missing.join(', ')}`);
   });
 
-  it('the contract function count matches the matrix (93)', () => {
-    assert.equal(CONTRACT_FUNCTIONS.length, 93);
+  it('the contract function count matches the matrix (91)', () => {
+    // 93 → 91: syncExperiments + syncPromptRevision deleted 2026-07-19 (dead
+    // writers; syncExperiments targeted a table that does not exist).
+    assert.equal(CONTRACT_FUNCTIONS.length, 91);
   });
 
   it('the list has no duplicate entries', () => {

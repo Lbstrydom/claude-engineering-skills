@@ -408,58 +408,6 @@ export async function getFalsePositivePatterns(repoId) {
 
 // ── Experiments + revisions ────────────────────────────────────────────────
 
-/**
- * Sync prompt-experiment records. Idempotent on `experiment_id`.
- */
-export async function syncExperiments(experiments) {
-  if (!await isCloudEnabled()) return;
-  const rows = experiments.map((e) => ({
-    experiment_id: e.experimentId,
-    pass_name: e.pass,
-    revision_id: e.revisionId,
-    parent_revision_id: e.parentRevisionId,
-    parent_ewr: e.parentEWR,
-    parent_confidence: e.parentConfidence,
-    parent_effective_sample_size: e.parentEffectiveSampleSize,
-    rationale: e.rationale,
-    status: e.status,
-    final_ewr: e.finalEWR || null,
-    final_confidence: e.finalConfidence || null,
-    total_pulls: e.totalPulls || 0,
-  }));
-  if (rows.length === 0) return;
-  try {
-    await upsert('prompt_experiments', rows, {
-      onConflict: 'experiment_id',
-      update: 'all',
-    });
-    process.stderr.write(`  [learning] Synced ${rows.length} experiments to cloud\n`);
-  } catch (err) {
-    process.stderr.write(`  [learning] syncExperiments failed: ${err.message}\n`);
-  }
-}
-
-/**
- * Sync one promoted prompt revision to cloud. Idempotent on
- * `(pass_name, revision_id)`. Computes sha256 checksum client-side so
- * the cloud-stored row carries it.
- */
-export async function syncPromptRevision(passName, revisionId, promptText) {
-  if (!await isCloudEnabled()) return;
-  const { createHash } = await import('node:crypto');
-  const checksum = createHash('sha256').update(promptText).digest('hex');
-  try {
-    await upsert('prompt_revisions', [{
-      pass_name: passName,
-      revision_id: revisionId,
-      prompt_text: promptText,
-      checksum,
-      promoted_at: new Date().toISOString(),
-    }], { onConflict: ['pass_name', 'revision_id'], update: 'all' });
-  } catch (err) {
-    process.stderr.write(`  [learning] syncPromptRevision failed: ${err.message}\n`);
-  }
-}
 
 // ── Pass-effectiveness analytics ───────────────────────────────────────────
 

@@ -88,9 +88,7 @@ const EXPECTED_EXPORTS = [
   'loadBanditArms',
   'loadFalsePositivePatterns',
   'syncBanditArms',
-  'syncExperiments',
   'syncFalsePositivePatterns',
-  'syncPromptRevision',
   // plans-ship (21 — 17 + 3 WS1 + 1 WS3 persona-nav-feedback-recovery additions)
   'getCandidateAuditFindings', // WS1 — auto-correlator candidate read (temporally bounded)
   'getExistingCorrelationHashesForSession', // WS1 — first-hit-wins existence check
@@ -273,6 +271,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // The single authoritative number is this assertion + the EXPECTED_EXPORTS
     // list above; the per-domain section comments are descriptive only and not
     // a second source of truth (their historical sub-counts are not summed here).
-    assert.equal(EXPECTED_EXPORTS.length, 163);
+    // 163 → 161: syncExperiments + syncPromptRevision deleted 2026-07-19.
+    // Both were dead (no callers, no readers) and syncExperiments wrote to an
+    // `experiments` table that does not exist — it would have thrown if ever
+    // called. Git history is the archive.
+    assert.equal(EXPECTED_EXPORTS.length, 161);
   });
 });
