@@ -1,5 +1,59 @@
 # Project Status Log
 
+## 2026-07-19 — batch-contention flakes: one real bug, one unreproducible, one non-issue
+
+Three loose ends from the flake work, resolved in different directions — which is
+the point of the entry.
+
+**1. `maintenance-checks` — a real bug, and worse than flaky.** The CLI-contention
+test seeded its lock fixture at the **real repo path**
+(`.audit-loop/.maintenance.lock`) and `unlinkSync`'d it in `afterEach`. Concurrent
+test processes deleted each other's fixture, so the CLI under test saw no lock and
+ran the **real maintenance checks** until it blew the 15s `spawnSync` timeout —
+hence `status: null`, not an assertion mismatch. Reproduced deterministically at
+4-way concurrency: **3 of 4 failed**.
+
+The sharper problem was not the flake: unlinking that path could release a lock
+held by a **genuine** maintenance run and let a second one start, defeating the
+single-instance guard the test exists to verify. Fixed with
+`AUDIT_LOOP_STATE_DIR` — the process-boundary form of a seam that already existed
+(every pure function here takes its path as a parameter; a spawned CLI cannot be
+handed one). 8/8 at 8-way concurrency, mutation-tested.
+
+**2. A latency guard I added the previous commit — removed.** It asserted
+wall-clock `< 5000ms` on the arch-memory hook test to pin the isolation, then
+failed in a full-suite run (14s for that file under parallel load) while passing
+in isolation. I had traded one flake for another: the measurement scales with
+machine load, not with the logic — item 8 of the inbound consumer feedback,
+committed the same day, describes exactly this trap. It was also redundant, since
+mutation-testing showed the `Cloud store offline` content assertion already fails
+when the hermetic env is removed. **Assert the state, not its timing proxy.**
+
+**3. `ux-lock-capture` / `captureWitness` — could NOT reproduce, so made
+self-diagnosing instead of guessed at.** Failed once in ~2000 suites with a bare
+`0 !== 1`. It survived 6-way self-contention, 8-suite background load, and
+squeezing `capMs` from 10 to 2 — so the wall-clock-cap hypothesis was **refuted**,
+not confirmed. The reason the failure carried no information: `attachNetworkListener`
+routes every handler error to `opts.onError`, `matchResponseAgainstManifest`
+fail-softs to `[]`, and the test supplied no sink — so a thrown error and a genuine
+no-match both present as an empty store. Added an error sink asserted **before**
+the claim counts. A simulated transient now reports *"the network listener
+swallowed an error — an empty store here is a masked failure, not a no-match"*
+with the cause attached. The underlying transient remains unidentified and is
+recorded as such.
+
+**4. The stale `.audit-loop/.maintenance.lock` — a non-issue, but only after being
+checked twice.** First test suggested it permanently wedges maintenance ("already
+in progress", `maxWaitMs: 0` never retries). That test was **invalid**: `cp` reset
+the file's mtime, so the copy looked newer than the 60s stale threshold and
+recovery could not apply. Re-run with `cp -p`, `withFileLock` force-releases it
+(`pid 100984 dead`) and acquires. Left in place — it is gitignored, self-healing,
+and hand-deleting locks is the anti-pattern fixed in item 1.
+
+Pattern across all four: the instinct to "fix the flake" was right once. Twice the
+honest answer was to remove masking or to leave working code alone, and once the
+flake was one I had just introduced.
+
 ## 2026-07-19 — a "cloud-off" test that was never cloud-off, and the sweep that found no siblings
 
 `tests/hook-arch-memory-check.test.mjs` failed intermittently in the pre-push

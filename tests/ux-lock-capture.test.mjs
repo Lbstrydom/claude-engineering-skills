@@ -51,6 +51,31 @@ function createFakePage({ domClaims = [], evalScript = null } = {}) {
   };
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Swallowed-error trap.
+//
+// `attachNetworkListener`'s handler catches everything and routes it to
+// `opts.onError`, and `matchResponseAgainstManifest` fail-softs to `[]` when a
+// body cannot be read. Both are correct in production — a response body really
+// can vanish after navigation — but with no `onError` supplied they make a
+// thrown error indistinguishable from a genuine no-match: the store just stays
+// empty. That is exactly how a rare CI failure here surfaced as a bare
+// `0 !== 1` with nothing to diagnose from.
+//
+// These tests therefore always pass an onError sink and assert it stayed empty
+// BEFORE asserting on claim counts, so the next occurrence names its own cause
+// instead of looking like an assertion mismatch.
+function errorSink() {
+  const errors = [];
+  return {
+    opts: { onError: (e) => errors.push(e) },
+    assertClean() {
+      assert.deepEqual(errors.map((e) => e?.message ?? String(e)), [],
+        'the network listener swallowed an error — an empty store here is a masked failure, not a no-match');
+    },
+  };
+}
+
 function fakeResponse({ url, status = 200, method = 'GET', body, postData = null, operationName }) {
   return {
     url() { return url; },
@@ -252,7 +277,8 @@ describe('matchResponseAgainstManifest', () => {
 describe('attachNetworkListener', () => {
   it('upserts matching responses into the store', async () => {
     const page = createFakePage();
-    const { store, removeListener } = attachNetworkListener(page, SINGLETON_MANIFEST);
+    const sink = errorSink();
+    const { store, removeListener } = attachNetworkListener(page, SINGLETON_MANIFEST, sink.opts);
     await page.fireResponse(fakeResponse({ url: '/api/cellar', body: { cellarOrganised: true } }));
     const got = store.findFor('status-chip', 'cellarOrganised', null, null);
     assert.ok(got);
@@ -365,9 +391,11 @@ describe('captureWitness', () => {
         }];
       },
     });
-    const { store, removeListener } = attachNetworkListener(page, SINGLETON_MANIFEST);
+    const sink = errorSink();
+    const { store, removeListener } = attachNetworkListener(page, SINGLETON_MANIFEST, sink.opts);
     await page.fireResponse(fakeResponse({ url: '/api/cellar', body: { cellarOrganised: true } }));
     const witness = await captureWitness(page, SINGLETON_MANIFEST, { store }, { pollMs: 1, capMs: 10, stepIndex: 3 });
+    sink.assertClean();
     assert.equal(witness.stepIndex, 3);
     assert.equal(witness.domClaims.length, 1);
     assert.equal(witness.networkClaims.length, 1);
@@ -386,9 +414,12 @@ describe('captureWitness', () => {
         }];
       },
     });
-    const { store } = attachNetworkListener(page, SINGLETON_MANIFEST);
-    // Never fire a response → store is empty.
+    const sink = errorSink();
+    const { store } = attachNetworkListener(page, SINGLETON_MANIFEST, sink.opts);
+    // Never fire a response → store is empty. The sink still guards the DOM
+    // side: partialCapture must come from "nothing fired", not a swallowed throw.
     const witness = await captureWitness(page, SINGLETON_MANIFEST, { store }, { pollMs: 1, capMs: 50 });
+    sink.assertClean();
     assert.equal(witness.domClaims.length, 1, 'extract should have produced one DOM claim');
     assert.equal(witness.networkClaims.length, 0);
     assert.equal(witness.partialCapture, true);
