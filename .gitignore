@@ -146,3 +146,31 @@ dashboard/audit-runs/
 .persona-test/semantic-egress.log
 .persona-test/semantic-egress.log.*
 .persona-test/promotion-journal/
+
+# Disclosure-sensitive doc buckets — default-DENY, opt in per file.
+#
+# This repo is PUBLIC. Two buckets accumulate material that is about a private
+# consumer, a named third party, or the author personally, and neither is
+# something a contributor should be able to publish by reflex with `git add`:
+#
+#   docs/upstream-issues/ — inbound feedback copied from consumer repos. Real
+#     ones have named a private commercial app and described a production
+#     security incident in reproducible detail (row counts, leaked column
+#     names, the request sequence). Legitimate engineering signal, but
+#     publishing it is a decision, not a default.
+#   docs/personal/ — career/portfolio evidence naming real employers.
+#
+# Ignoring a DIRECTORY does not untrack what is already in it, and it does not
+# retract anything already pushed — these entries only stop the NEXT file from
+# landing by accident. The two files below predate this rule and are already
+# public; they stay tracked deliberately (docs/plans/sast-triage-routing.md
+# cites the feedback doc at :70 and :212, so untracking it would break the
+# docs-ref gate). They are re-included explicitly so that intent is legible
+# rather than looking like an oversight.
+#
+# To publish a new file in either bucket, force-add it AND say why in the
+# commit message: `git add -f docs/upstream-issues/<name>.md`
+docs/upstream-issues/
+docs/personal/
+!docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md
+!docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md
