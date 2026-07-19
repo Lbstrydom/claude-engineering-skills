@@ -341,6 +341,12 @@ export function compareAuditRunResults(legacyResult, tieredResult, opts = undefi
     // dead for the V3 path. `?? null`, never `?? 0` — a historical row predating
     // this field is insufficient data, not "zero malformed confirmed".
     tieredDiscoveryMalformedRaw: tieredResult._stageBreakdown?.discoveryMalformedRaw ?? null,
+    // The COUNT above says how many; it cannot say which SHAPE, so a malformed
+    // window could never be diagnosed from stored telemetry — only from a live
+    // repro, which is exactly what the 2026-07-14 incident cost. The bounded
+    // reason breakdown makes the sub-case readable from the row. Same
+    // `?? null` discipline: absent is insufficient data, never "zero".
+    tieredDiscoveryMalformedReasons: tieredResult._stageBreakdown?.discoveryMalformedReasons ?? null,
     // Decision #9: per-fingerprint reasons for any pre_existing_independent
     // candidate whose debt-routing FAILED (restored to the Stage-1 pool
     // instead) — a silent restore would make the debt-routing path's own

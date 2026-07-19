@@ -1,6 +1,6 @@
 # Plan: Debt Burndown — Workstreams A–E (master)
 
-- **Status**: In Progress — WS-0, WS-A, WS-B Complete; WS-E1 landed via parallel work. WS-C, WS-D, WS-E2 pending.
+- **Status**: In Progress — WS-0, WS-A, WS-B, WS-D, WS-E Complete. WS-C partially complete (C1 proved a false alarm; C2 needs a nullable→total migration).
 - **Date**: 2026-07-18
 - **Origin**: Cross-session deferred-items investigation (4 parallel read-only agents at HEAD) + `/brainstorm --with-gemini` prioritisation (session `1784380501405`; GPT-5.6 + Gemini-pro + Claude synthesis).
 - **Shape**: One master plan, five workstreams. Each WS is sized for its own `/plan`-refinement + `/audit-plan` + implementation cycle; this document is the stable spine and gets updated (per-WS detail deepened, statuses stamped) as each WS starts. Do not implement from this file alone once a WS has its refined section — the refined section wins.
@@ -498,6 +498,52 @@ not by shape).
 > Phase C0 below produces the artifact that makes it implementable. Do not
 > write DDL before C0 exists — that is the whole point of measure-first.
 
+### C0 measurements (2026-07-19) — measure-first, and it changed the plan
+
+Live store, read-only:
+
+| Table | Rows | Scope-column state | Constraint |
+|---|---|---|---|
+| `plans` | 38 | `repo_id` nullable, **0 NULLs** | `UNIQUE (repo_id, path)` |
+| `persona_audit_correlations` | **0** | `audit_finding_id` nullable | `UNIQUE (persona_session_id, persona_finding_hash, audit_finding_id)` |
+| `personas` | 1 | `repo_name` nullable, NULL on the row | `UNIQUE (name, app_url)` — scope absent |
+| `persona_test_sessions` | 1 | `repo_name`/`repo_id` nullable | `UNIQUE (session_id)` — scope absent |
+
+**No live corruption anywhere** — no duplicate clusters, no backfill needed,
+no duplicate-resolution policy required. The exposure is latent, so every fix
+below is preventive.
+
+#### C1 is ALREADY CORRECTLY DEFENDED — the two lint findings are false positives
+
+Both "nullable-conflict-key" sites were traced to code, not assumed:
+
+- **`plans-ship.mjs:34`** — `upsertPlan` early-returns when `!repoId`, with a
+  comment naming this exact defect class ("a NULL here INSERTs a duplicate plan
+  row on every call instead of updating… Refuse."). The nullable expression the
+  lint sees is unreachable with a null.
+- **`plans-ship.mjs:365`** — the `audit_missed` shape (null `audit_finding_id`)
+  is written through a **partial unique index** (`uq_correlations_missed`,
+  `conflictWhere: 'audit_finding_id IS NULL'`), which is the correct Postgres
+  answer to NULL-distinct. The 3-column target is used only on the branch where
+  the id is non-null.
+
+So the item the plan called "highest priority — the literal 403k-row shape" is
+already solved. **The remaining work is in the LINT, not the code**: it reads
+the value expression without seeing the guard or the partial-index branch, and
+a linter that cries wolf on correct code trains people to ignore it. Either
+teach it those two shapes or suppress them with a written justification.
+
+#### C2's fix has a prerequisite the plan missed
+
+Gemini-G2's "add the scope column to the constraint now" **cannot be applied
+naively here**: `personas.repo_name` and `persona_test_sessions.repo_name`/
+`repo_id` are **nullable**, and adding a nullable column to a unique constraint
+reintroduces C1 exactly — NULLs are distinct, so rows with a null scope would
+never conflict and would insert unboundedly. Making the column total
+(backfill + `SET NOT NULL`, or a sentinel) is a **precondition**, not a
+follow-up. With 1 row per table the backfill is trivial, but the ordering is
+load-bearing and must be stated in the migration.
+
 #### C0 — Identity matrix (required first deliverable, blocks C1/C2)
 
 One row per affected writer, appended to the WS-C log in this doc. Until a
@@ -872,6 +918,14 @@ retirement) and never via the two rejected band-aids (generator
 `required→optional` demotion at `discovery-portfolio.mjs:112`; relaxing
 `schemas.mjs:203`).
 
+### E2 file-level plan
+
+| File | Change |
+|---|---|
+| `scripts/model-eval-discovery.mjs` | `preparedMalformedDetails` via `boundMalformedDetails` — two budgets (buckets AND exemplars), validated `rawIndex`, capped key/detail/anchor, deterministic ordering, counts over the full population |
+| `scripts/lib/audit/tiered-shadow-compare.mjs` | `tieredDiscoveryMalformedReasons` beside the existing raw count, same `?? null` absent≠zero discipline |
+| `scripts/lib/dashboard/render.mjs` | WS-D residue: the Plans-tab description still claimed done plans live in `docs/completed/` |
+
 **Tests**: malformed candidate's persisted record carries detail + raw
 anchor tied by `rawIndex`; shadow field absent≠zero semantics; the
 existing retirement pin stays green.
@@ -953,6 +1007,6 @@ test now asserts the race actually fired.
 (`tests/fixtures/expected-schema.json` is never synced); `--max-tokens`
 bypassing `resolveDepth()` in `brainstorm-round.mjs`.
 | WS-B | **Complete** (2026-07-19) | B1 bounded brief-gen (total+per-attempt deadline, abort on both legs); B2 `provider-readiness.mjs` classifier with redaction boundary; B3 `shadowFailureReasonsAll`; B4 shared `provider-env` helper. GPT R1 (H:3 M:11 L:1) + Gemini ×2 → 3+2 findings, all fixed. |
-| WS-C | pending | — |
-| WS-D | pending | — |
-| WS-E | pending | — |
+| WS-C | **Partially complete** (2026-07-19) | C0 measured: no live corruption. **C1 found already-defended — the 2 lint findings are false positives** (guard + partial unique index). C2 blocked on a prerequisite the plan missed (nullable scope column must be made total FIRST). Remaining: teach/suppress the lint; C2 migration; C3 review; C4 dead-writer deletion. |
+| WS-D | **Complete** (2026-07-19) | Bucketing by `parsePlanStatus` kind landed via parallel work; verified no `docs/completed` bucket and no inline-regex authority remain. Stale Plans-tab copy fixed here. |
+| WS-E | **Complete** (2026-07-19) | E1 landed via parallel work (`gate-evidence.mjs`). E2: bounded malformed-anchor diagnostics in the eval record + shadow comparison — the Phase-14 blocker is now diagnosable from stored rows. |

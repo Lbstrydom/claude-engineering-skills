@@ -98,7 +98,7 @@ const REGISTRY = {
     { id: 'purpose',      title: 'Purpose',        group: 'Design & plans', build: sectionPurpose,      slice: SLICERS.purpose,
       desc: 'Why each subsystem exists — the product purposes, mapped to the domains and invariants that serve them.' },
     { id: 'plans',        title: 'Plans',          group: 'Design & plans', build: sectionPlans,        slice: SLICERS.plans,
-      desc: 'Design documents: what’s actively being built (docs/plans/) and what’s done (docs/completed/).' },
+      desc: 'Design documents in docs/plans/, bucketed by their Status: line — plans no longer move directories.' },
     { id: 'navAudit',     title: 'Nav Audit',      group: 'UX quality lenses', build: sectionNavAudit,     slice: SLICERS.navAudit,
       desc: 'Navigation audit of a target app — can every kind of user actually reach the things they need?' },
     { id: 'visualAudit',  title: 'Visual Audit',   group: 'UX quality lenses', build: sectionVisualAudit,  slice: SLICERS.visualAudit,
