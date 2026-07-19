@@ -21,7 +21,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `In Progress` | WS-0 Complete, WS-A code-complete (one operator step outstanding: `--repair-eol` against the live store). W… |
+| [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `In Progress` | WS-0 and WS-A Complete (live repair executed 2026-07-19). WS-B–E pending. |
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |

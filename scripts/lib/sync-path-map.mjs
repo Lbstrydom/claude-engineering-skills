@@ -22,6 +22,15 @@ export const LAYOUT_CONSTANTS = Object.freeze({
   CONSUMER_TOOLING_DIR: 'scripts/.claude-skills',
   MIGRATIONS_SRC_PREFIX: 'supabase/migrations/',
   MIGRATIONS_DEST_PREFIX: '.audit-loop/migrations/',
+  // The `--adopt` schema contract. Lives under `tests/fixtures/` in this repo
+  // because that is where it is generated and asserted, but it is a RUNTIME
+  // asset for consumers — `runAdopt` hard-aborts without it, so `--adopt` (the
+  // documented one-time bootstrap for a pre-provisioned DB) was structurally
+  // unavailable in every consumer repo: `tests/` is not in the sync closure.
+  // Lands beside the migrations, audit-loop-private, for the same reason they
+  // do — a consumer's own `supabase/` must not absorb audit-loop assets.
+  EXPECTED_SCHEMA_SRC: 'tests/fixtures/expected-schema.json',
+  EXPECTED_SCHEMA_DEST: '.audit-loop/expected-schema.json',
   MANIFEST_PATH: 'scripts/.sync-manifest.json',
   MARKER_BEGIN: '# managed-by:claude-engineering-skills-sync — DO NOT EDIT INSIDE',
   MARKER_END: '# /managed-by:claude-engineering-skills-sync',
@@ -87,6 +96,10 @@ export function sourceRelToDestRel(sourceRel) {
 
   if (isExplicitException(p)) return p;
 
+  if (p === LAYOUT_CONSTANTS.EXPECTED_SCHEMA_SRC) {
+    return LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST;
+  }
+
   if (p.startsWith(LAYOUT_CONSTANTS.MIGRATIONS_SRC_PREFIX)) {
     return LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX +
       p.slice(LAYOUT_CONSTANTS.MIGRATIONS_SRC_PREFIX.length);
@@ -114,6 +127,12 @@ export function destRelToSourceRel(destRel) {
   const p = normalise(destRel);
 
   if (isExplicitException(p)) return p;
+
+  // Checked BEFORE the migrations prefix: both live under `.audit-loop/`, and
+  // this is an exact path, not a prefix — order keeps the round-trip total.
+  if (p === LAYOUT_CONSTANTS.EXPECTED_SCHEMA_DEST) {
+    return LAYOUT_CONSTANTS.EXPECTED_SCHEMA_SRC;
+  }
 
   if (p.startsWith(LAYOUT_CONSTANTS.MIGRATIONS_DEST_PREFIX)) {
     return LAYOUT_CONSTANTS.MIGRATIONS_SRC_PREFIX +

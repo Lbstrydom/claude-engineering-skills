@@ -60,7 +60,18 @@ const MIGRATIONS_DIR = fs.existsSync(MIGRATIONS_DIR_PRIVATE)
 // compat-bootstrap.sql is synced ALONGSIDE this script (lib/db/ sits next to it in
 // both layouts), so resolve it script-relative, not repo-relative.
 const BOOTSTRAP_SQL = path.join(__dirname, 'lib', 'db', 'compat-bootstrap.sql');
-const EXPECTED_SCHEMA_PATH = path.join(REPO_ROOT, 'tests', 'fixtures', 'expected-schema.json');
+// `--adopt`'s schema contract. Resolved consumer-first for exactly the reason
+// MIGRATIONS_DIR is (above): in a consumer repo the audit-loop's runtime assets
+// live under `.audit-loop/`, and `tests/fixtures/` is never synced there. Before
+// this fallback existed, `runAdopt` hard-aborted at its entrypoint in every
+// consumer — so the documented one-time bootstrap path could not be run at all.
+// The source path remains authoritative in THIS repo, where the manifest is
+// generated (`npm run parity:expected-schema`) and asserted by tests.
+const EXPECTED_SCHEMA_PRIVATE = path.join(REPO_ROOT, '.audit-loop', 'expected-schema.json');
+const EXPECTED_SCHEMA_LEGACY = path.join(REPO_ROOT, 'tests', 'fixtures', 'expected-schema.json');
+const EXPECTED_SCHEMA_PATH = fs.existsSync(EXPECTED_SCHEMA_PRIVATE)
+  ? EXPECTED_SCHEMA_PRIVATE
+  : EXPECTED_SCHEMA_LEGACY;
 
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m';
 

@@ -294,6 +294,14 @@ const CORE_ASSETS = [
   // similarly fs-read; ship the whole directory so `--migrate` works on
   // consumer repos without them needing this repo cloned.
   'scripts/lib/db/compat-bootstrap.sql',
+  // `--adopt`'s schema contract. Same fs-read blind spot as the two above, but
+  // it failed differently: `runAdopt` hard-aborts at its entrypoint when the
+  // manifest is missing, so `--adopt` — the documented one-time bootstrap for a
+  // pre-provisioned DB — could not run in ANY consumer repo. It lives under
+  // `tests/fixtures/` here because that is where it is generated and asserted;
+  // for a consumer it is pure runtime. The sync loop remaps it to
+  // `.audit-loop/expected-schema.json` via sync-path-map.
+  'tests/fixtures/expected-schema.json',
   ...syncMigrations(),
 ];
 

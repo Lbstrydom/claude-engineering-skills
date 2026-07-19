@@ -1,6 +1,6 @@
 # Plan: Debt Burndown — Workstreams A–E (master)
 
-- **Status**: In Progress — WS-0 Complete, WS-A code-complete (one operator step outstanding: `--repair-eol` against the live store). WS-B–E pending.
+- **Status**: In Progress — WS-0 and WS-A Complete (live repair executed 2026-07-19). WS-B–E pending.
 - **Date**: 2026-07-18
 - **Origin**: Cross-session deferred-items investigation (4 parallel read-only agents at HEAD) + `/brainstorm --with-gemini` prioritisation (session `1784380501405`; GPT-5.6 + Gemini-pro + Claude synthesis).
 - **Shape**: One master plan, five workstreams. Each WS is sized for its own `/plan`-refinement + `/audit-plan` + implementation cycle; this document is the stable spine and gets updated (per-WS detail deepened, statuses stamped) as each WS starts. Do not implement from this file alone once a WS has its refined section — the refined section wins.
@@ -293,11 +293,24 @@ legacy-CRLF row, and one true-mismatch row, then assert:
 - Final `--check-drift` exits 0; a renormalized fresh-clone simulation also
   exits 0.
 
-**Live status at implementation (2026-07-18)** — `--check-drift` reports
-`applied: 72 / 72`, `unapplied: []`, `shaMismatch: 0`, and exactly **one**
-`eol-legacy` row (`20260521120000_persona_test_candidates.sql`), whose two
-hashes match the investigation's recorded values byte-for-byte. The only
-remaining live step is the operator running `--repair-eol`.
+**Live status — DONE (2026-07-19, run against the production store with
+explicit authorization).**
+
+| Step | Result |
+|---|---|
+| Pre-state | `applied: 72 / 72`, `unapplied: []`, `shaMismatch: 0`, exactly **one** `eol-legacy` row (`20260521120000_persona_test_candidates.sql`), hashes matching the investigation byte-for-byte |
+| `--repair-eol --dry-run` | named the single candidate, wrote nothing |
+| `--repair-eol` | `repaired 1 row(s)` — `7b4a4963…` → `2c46651d…` |
+| `--check-drift` | **`✓ no drift`, exit 0** |
+| `applied_at` | **`2026-07-14 19:47:23+00` — preserved.** The Gemini-G1 fix verified on production data: a hash correction did not rewrite deployment history |
+| `--migrate` | `applied 0, skipped 72` — the original failure is gone |
+| Fresh-clone simulation | worktree refreshed to `w/lf`; `--check-drift` still exits **0** |
+
+**The renormalize step (leg 5) turned out to be unnecessary** — `git add
+--renormalize supabase/migrations/` staged nothing, because canonical hashing
+makes the worktree's line endings irrelevant to the ledger. The fix removed
+the need for its own workaround, which is the strongest evidence it was cut
+at the right seam.
 
 ### Safety
 
@@ -894,7 +907,7 @@ exist.
 | WS | Status | Notes |
 |---|---|---|
 | WS-0 | **Complete** (2026-07-18) | 1199 → 1165 lines (35 headroom > the measured 28-line max). Two sections condensed, target-doc coverage verified first — which caught that the worksheet/PowerShell recurrence guard was NOT in the target doc and had to be moved rather than cut. |
-| WS-A | **Code complete** (2026-07-18); ONE operator step outstanding | EOL-invariant hashing + `eol-legacy` classification + guarded `--repair-eol` + mode-exclusivity guard, shipped with 27 hermetic + 10 real-Postgres tests. **Operator must still run `--repair-eol` against the live store** (the only remaining live step; adopt leg proved moot). |
+| WS-A | **Complete** (2026-07-19) | EOL-invariant hashing + `eol-legacy` classification + guarded `--repair-eol` + mode-exclusivity guard, shipped with 27 hermetic + 10 real-Postgres tests. Live repair executed against production: `✓ no drift`, `applied_at` preserved, `--migrate` unblocked. The `--adopt` consumer-distribution defect found during the audit is fixed in the same workstream. |
 
 ### WS-0 + WS-A implementation audit trail (`/cycle --autonomous`, 2026-07-18)
 
