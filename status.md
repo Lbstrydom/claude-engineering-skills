@@ -1,5 +1,77 @@
 # Project Status Log
 
+## 2026-07-19 — `/brainstorm --with-artifact`: the focal object, not a paraphrase of it
+
+### The failure, and what actually caused it
+Recurring complaint: the external models produce plausible but repo-blind advice
+— "both models are reasoning about a repo neither has read" — so the divergence
+the skill exists to harvest is mostly an information gap rather than genuine
+perspective difference.
+
+The obvious theory was "`--with-arch` attaches the wrong section; attach a denser
+one". That theory is **measurably wrong**. In the round that prompted this work,
+`--with-arch` fired and attached 7,664 chars of `## Architecture`, and both
+models were still generic. Architecture describes what *exists*; it does not
+describe the decision under debate, and more of it does not help. (A `--debate`
+round put this evidence to both models; both conceded the point, and Gemini
+withdrew its "feed it `architecture-map.md` instead" proposal.)
+
+What was missing is the **object under discussion**. In every past half-brainstorm
+the topic concerned a thing that already existed — a plan, a diff, one module —
+and the models received Claude's *paraphrase* of it. They were reviewing a
+description, and it showed. The counterexample was in the same session: ~500
+words of hand-written specifics visibly sharpened both replies. That was a manual
+`--with-context`; this change automates it.
+
+### What shipped
+`--with-artifact <path>` (repeatable) attaches the focal artifact verbatim, and
+auto-attaches a **policy pack** so a model can't optimise the local object while
+breaking a global rule it was never shown.
+
+- `lib/brainstorm/artifact-context.mjs` — verbatim read, 3,000-token absolute cap.
+- `lib/brainstorm/policy-context.mjs` — 2,000-token cap. Authors **no new prose**:
+  a manifest of 5 `AGENTS.md` H2 headings resolved at call time, plus the ledger.
+
+Deliberately NOT retrieval. The operator already knows what the topic is about,
+so a vector store guessing at it is strictly worse than letting them say it — and
+retrieval feeds the model the status quo, which anchors toward incrementalism.
+
+**A pointer, not a copy.** A hand-maintained `brainstorm-invariants.md` would have
+been a third copy of the rules that drifts with nothing to detect it — exactly the
+"messy middle" the generated-artifact policy forbids. Editing the rule in AGENTS.md
+changes what the next round sends, with no sync step.
+
+**Reuse over rewrite**: `getRequirementsContext` already glob-matched
+`appliesTo`/`provenance` against target paths with budget degradation, so the
+ledger half is one call. It gained one optional `intro` param — its hardcoded
+"Verify the diff violates NONE of these" is wrong framing for a brainstorm with no
+diff, and telling a model to check a diff it never received invites it to invent one.
+
+### Verification
+`--with-artifact` is a **Tier 3 egress seam** — an operator-supplied path whose
+contents go to OpenAI and Gemini — so the 9 gate tests were written before the
+module: `.env` refused, an innocently-named symlink resolving to `~/.ssh/id_rsa`
+refused, repo-escape refused, missing-file reported as `missing` not `sensitive`,
+in-file secrets redacted, one refusal never aborting the rest. Symlinks are
+`fs`-injected so the contract verifies without Windows elevation.
+
+Per the pre-ship empirical-verify doctrine, the **banned-pattern test** ran against
+live providers ($0.025): asked both models to add an `--include-env` flag. Both
+refused, quoting the AGENTS.md rule verbatim and naming real functions from the
+attached file (`resolveAndClassify`, `redactSecrets`, `resolveArtifact`); Gemini
+cited "your own Tier 3 egress doctrine". Neither could have produced that from the
+topic text. Full suite 7,391 pass / 0 fail; `npm run check` exit 0.
+
+Ledger re-extracted afterwards (189 → 215 requirements). The extractor
+independently recovered the TOCTOU rule as `REQ-security-9967f76c` — *"Artifact
+content must be read from the canonical path approved by the sensitivity gate
+rather than from the user-visible path"* — so it now governs that file mechanically.
+
+**Known, not fixed (pre-existing, out of scope):** `--depth shallow` (500 output
+tokens) is consumed by reasoning before any text is emitted — OpenAI returns
+`empty (finish_reason: length)` and Gemini a mid-sentence fragment. Unrelated to
+this change; flagged rather than scope-crept.
+
 ## 2026-07-19 — `/brainstorm` calls both models by default; pre-push gets a consumer-owned extension point
 
 ### `/brainstorm` default flipped to OpenAI + Gemini

@@ -72,10 +72,17 @@ const RESERVED_FOR_R1_PROMPT = 0.4;  // remaining 40% covers round-1 prompt + co
  * @returns {{systemPreface: string, userPrefix: string, includedRounds: Array, droppedRounds: Array, withContextEffective: string, archContextEffective: string, archContextTokens: number, estimatedTokens: number, budgetTokens: number, drivenBy: object}}
  * @throws {Error} with code BUDGET_EXCEEDED when total exceeds provider ceiling
  */
-export function assembleResumeContext({ sid = null, withContextText = '', archContextText = '', providers, opts = {} }) {
+export function assembleResumeContext({ sid = null, withContextText = '', archContextText = '', extraPrefaceBlocks = [], providers, opts = {} }) {
   if (!Array.isArray(providers) || providers.length === 0) {
     throw new Error('assembleResumeContext: providers array required');
   }
+
+  // Pre-built, pre-capped blocks (focal artifacts, policy pack). Each owns
+  // an ABSOLUTE token cap in its own module rather than a fraction of the
+  // provider ceiling, so they are admitted here as-is and their measured
+  // size is added to the allowance below — never silently re-truncated.
+  const extraPrefaceText = (extraPrefaceBlocks || []).filter(Boolean).join('\n\n');
+  const extraPrefaceTokens = estimateTokens(extraPrefaceText);
 
   const { ceilingTokens, drivenBy } = smallestCeilingTokens(providers);
   const resumeBudgetTokens = Math.floor(ceilingTokens * RESUME_BUDGET_FRACTION);
@@ -116,17 +123,18 @@ export function assembleResumeContext({ sid = null, withContextText = '', archCo
       // Session missing or empty — silent fallthrough; caller logs WARN.
       // Audit R1-H7: return ALL three budget fields with consistent
       // semantics so callers don't have to branch on which is populated.
+      const earlyPreface = [extraPrefaceText, archContextEffective].filter(Boolean).join('\n\n');
       return {
-        systemPreface: archContextEffective,
+        systemPreface: earlyPreface,
         userPrefix: '',
         includedRounds: [],
         droppedRounds: [],
         withContextEffective,
         archContextEffective,
         archContextTokens: estimateTokens(archContextEffective),
-        estimatedTokens: estimateTokens(archContextEffective) + estimateTokens(withContextEffective),
+        estimatedTokens: estimateTokens(earlyPreface) + estimateTokens(withContextEffective),
         configuredBudgetTokens: resumeBudgetTokens,
-        consumedBudgetTokens: estimateTokens(archContextEffective),
+        consumedBudgetTokens: estimateTokens(earlyPreface),
         providerCeilingTokens: ceilingTokens,
         budgetTokens: resumeBudgetTokens,  // back-compat alias = configured budget
         drivenBy,
@@ -184,12 +192,15 @@ export function assembleResumeContext({ sid = null, withContextText = '', archCo
   const resumePreface = (summaryBlock || verbatimBlock)
     ? `Conversation so far:\n${summaryBlock}${verbatimBlock}`
     : '';
-  // systemPreface order: arch block FIRST (stable → cache-friendly prefix),
-  // then resume blocks. buildDebatePrompt reuses systemPreface verbatim, so
-  // the debate round inherits the arch block for free (plan §2 / Gemini-H2).
-  const systemPreface = archContextEffective
-    ? (resumePreface ? `${archContextEffective}\n\n${resumePreface}` : archContextEffective)
-    : resumePreface;
+  // systemPreface order: focal artifacts + policy FIRST, then the arch
+  // block, then resume blocks. Artifacts lead deliberately — they are the
+  // object under discussion, and burying them behind repo prose reproduces
+  // the failure this whole path exists to fix. All of it is a stable
+  // prefix (cache-friendly), and buildDebatePrompt reuses systemPreface
+  // verbatim, so the debate round inherits every block for free.
+  const systemPreface = [extraPrefaceText, archContextEffective, resumePreface]
+    .filter(Boolean)
+    .join('\n\n');
   const userPrefix = '';  // resume content lives in systemPreface; userPrefix is for future use
 
   // --- Audit R1-H8: budget enforcement on FINAL serialised output ---
@@ -205,7 +216,11 @@ export function assembleResumeContext({ sid = null, withContextText = '', archCo
   // No 5% fudge — that hid real overruns. If we got here over-budget, our truncation
   // logic above failed; abort cleanly so the caller sees BUDGET_EXCEEDED instead of
   // silently sending a too-large prompt.
-  const totalAllowedTokens = Math.floor(ceilingTokens * (RESUME_BUDGET_FRACTION + WITH_CONTEXT_FRACTION + ARCH_CONTEXT_FRACTION));
+  // The extra blocks carry their own absolute caps, so their measured size
+  // is added to the fractional allowance rather than competing with it —
+  // otherwise attaching a plan file could evict resume history at random.
+  const totalAllowedTokens = Math.floor(ceilingTokens * (RESUME_BUDGET_FRACTION + WITH_CONTEXT_FRACTION + ARCH_CONTEXT_FRACTION))
+    + extraPrefaceTokens;
   if (totalEstimatedTokens > totalAllowedTokens) {
     const err = new Error(`assembled context (${totalEstimatedTokens} tokens, post-construction) exceeds combined budget (${totalAllowedTokens} tokens) for provider ${drivenBy.provider}/${drivenBy.model}`);
     err.code = 'BUDGET_EXCEEDED';

@@ -101,6 +101,24 @@ export const BrainstormEnvelopeV2Schema = BrainstormEnvelopeV1Schema.extend({
   archContextAttached: z.boolean().optional(),
   archContextChars: z.number().int().nonnegative().optional(),
   archContextWarning: z.string().nullable().optional(),
+  // Focal-artifact context (`--with-artifact`). Nullable-and-optional, NOT
+  // promoted to required on write: unlike the arch fields this block is
+  // absent for every round that didn't request an artifact, so `null` is a
+  // real value meaning "not requested" — distinct from an object whose
+  // `attached` is empty, which means "requested and all refused".
+  artifactContext: z.object({
+    requested: z.number().int().nonnegative(),
+    attached: z.array(z.object({
+      path: z.string(),
+      bytes: z.number().int().nonnegative(),
+      truncated: z.boolean(),
+    })),
+    refused: z.array(z.object({
+      path: z.string(),
+      reason: z.string().nullable(),
+    })),
+    policyAttached: z.boolean(),
+  }).nullable().optional(),
 });
 
 /**

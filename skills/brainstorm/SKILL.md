@@ -17,6 +17,7 @@ description: |
     /brainstorm --depth shallow|standard|deep <topic>  # token budget per response
     /brainstorm --continue-from <sid> <topic>    # resume a prior session
     /brainstorm --with-context "<text>" <topic>  # attach extra context (repeatable)
+    /brainstorm --with-artifact <path> <topic>   # attach the focal artifact verbatim (repeatable)
     /brainstorm save <sid> <round> "<insight>"   # record a keeper insight from a prior round
 ---
 
@@ -52,6 +53,8 @@ SAVE MODE (jump to §Step 5 below). Otherwise BRAINSTORM-ROUND mode.
 | `--with-context "<text>"` | — | Additional context (repeatable; max 8000 chars per flag, 24000 total). |
 | `--with-arch` | auto | Force-attach the repo's `AGENTS.md` `## Architecture` section so the external LLMs share Claude's codebase grounding. |
 | `--no-arch` | auto | Force-skip architecture context — unanchored greenfield ideation. |
+| `--with-artifact <path>` | — | Attach the **focal artifact** verbatim — the plan/diff/module the topic is actually about. Repeatable. Auto-attaches the policy pack. Sensitive paths are refused, never sent. |
+| `--no-policy` | off | Suppress the auto-attached policy pack (artifact only). |
 
 **Architecture context (`--with-arch` / `--no-arch`)**: by default the
 helper **auto-attaches** the repo's `## Architecture` section whenever the
@@ -61,6 +64,40 @@ asymmetry where Claude's take is codebase-grounded but the external models
 saw only the topic. `--with-arch` forces it on for any topic; `--no-arch`
 forces it off when you want an unanchored outside view. The flags are
 mutually exclusive (helper errors if both are passed).
+
+**Focal artifact (`--with-artifact`) — reach for this first.** Architecture
+context describes what *exists*; it does not describe the decision under
+debate, and attaching more of it does not help. That was measured, not
+assumed: a round with 7,664 chars of `## Architecture` attached still
+produced generic answers from both models. The thing that was missing was
+the **object under discussion** — and in the failure cases it always
+existed as a file (a plan, a diff, one module) that the models only ever
+received as Claude's *paraphrase*. They were reviewing a description, and
+it showed.
+
+So: **whenever the topic concerns something that already exists, pass
+`--with-artifact <path>`.** Do not paraphrase it into the topic; point at
+it. This is the single highest-value flag in the skill.
+
+Attaching an artifact also auto-attaches a **policy pack** — the repo's
+standing constraints, so a model can't optimise the local object while
+breaking a global rule it was never shown. Two sources, both canonical, no
+new prose to maintain: `.requirements/ledger.json` filtered to invariants
+governing the artifact's path, plus a fixed manifest of `AGENTS.md` H2
+sections (`POLICY_SECTIONS` in `lib/brainstorm/policy-context.mjs`). Both
+are resolved at call time — editing the rule in AGENTS.md changes what the
+next round sends, with no copy to sync.
+
+Budgets are absolute, not fractions of the provider ceiling: 3,000 tokens
+for artifacts (split across them), 2,000 for policy. The binding constraint
+is signal density, not window space.
+
+`--with-artifact` is an **egress seam** — it reads an operator-supplied
+path and sends it to OpenAI and Gemini. Sensitive paths, symlinks resolving
+to sensitive targets, and symlinks escaping the repo are refused and
+reported, never sent; secrets inside a permitted file are redacted. A
+refusal never aborts the round — the other artifacts still go, and the
+refusal is surfaced (contract: `tests/brainstorm-artifact-context.test.mjs`).
 
 ### Save mode (§Step 5)
 
@@ -128,6 +165,8 @@ risks (Plan v6 §2.1, Gemini-G1 v1+v2).
      [--continue-from <prev-sid>] \
      [--with-context "<text>"]   # repeatable \
      [--with-arch | --no-arch] \
+     [--with-artifact <path>]    # repeatable; the focal object \
+     [--no-policy] \
      --out .claude/tmp/brainstorm-<SID>.json \
      < .claude/tmp/brainstorm-<SID>.txt
    ```
@@ -176,6 +215,13 @@ inspect argv):
 - If `archContextAttached` is `true`, prepend an info line above the blocks:
   > ℹ Sent the repo's architecture summary (`archContextChars` chars) to the
   > external models — pass `--no-arch` for an unanchored view.
+- If `artifactContext` is non-null, prepend one info line naming what the
+  models actually saw:
+  > ℹ Focal artifact(s) sent verbatim: `<paths>`[ + repo policy pack].
+- If `artifactContext.refused` is non-empty, prepend a WARNING line per
+  refusal. **Never silently drop one** — the user must not believe the
+  models saw a file that was withheld:
+  > ⚠ Artifact refused (`<reason>`): `<path>` — NOT sent to the providers.
 - If `archContextWarning` is non-null, prepend it as a prominent warning
   line (this fires only when the user explicitly passed `--with-arch` but
   the section was unavailable):

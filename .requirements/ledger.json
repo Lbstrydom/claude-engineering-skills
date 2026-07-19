@@ -1,16 +1,20 @@
 {
-  "generatedAt": "2026-07-16T16:25:17.842Z",
-  "commitSha": "cd877196e9f2aac0144cf662007a701f2ed3dc28",
-  "extractionSourceSha": "cd877196e9f2aac0144cf662007a701f2ed3dc28",
+  "generatedAt": "2026-07-19T09:22:31.538Z",
+  "commitSha": "807a407cea611f6be7b7cf14dc3829303bee0c89",
+  "extractionSourceSha": "807a407cea611f6be7b7cf14dc3829303bee0c89",
   "coveredFiles": [
+    "scripts/brainstorm-round.mjs",
     "scripts/learning/backfill-outcomes.mjs",
     "scripts/lib/audit/finding-verification.mjs",
     "scripts/lib/audit/prompt-builder.mjs",
-    "scripts/lib/file-lock.mjs",
+    "scripts/lib/brainstorm/artifact-context.mjs",
+    "scripts/lib/brainstorm/policy-context.mjs",
+    "scripts/lib/brainstorm/resume-context.mjs",
     "scripts/lib/brainstorm/session-store.mjs",
     "scripts/lib/claudemd/autofix.mjs",
     "scripts/lib/duplicate-justification-pragma.mjs",
     "scripts/lib/file-io.mjs",
+    "scripts/lib/file-lock.mjs",
     "scripts/lib/learning/decision-logger.mjs",
     "scripts/lib/learning/quickfix-stats.mjs",
     "scripts/lib/ledger.mjs",
@@ -117,6 +121,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound drift-band classification invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-behavioural-182bec46",
+      "assertion": "A policy pack must report unavailable or budget-dropped named policy sections through missingSections rather than silently treating them as absent.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/policy-context.mjs",
+          "anchor": "missingSections.push"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/policy-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/policy-context.mjs:loadPolicyPack"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-182bec46",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This policy missingSections behavior has no linked test evidence."
       }
     },
     {
@@ -282,41 +316,6 @@
       }
     },
     {
-      "id": "REQ-behavioural-33e61587",
-      "assertion": "Requirements context must enforce only active requirements that directly govern target files or govern files imported by target files.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/requirements/context.mjs",
-          "anchor": "inScopeActive"
-        },
-        {
-          "file": "scripts/lib/requirements/context.mjs",
-          "anchor": "direct OR forward-transitive"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/requirements/context.mjs",
-        "scripts/lib/audit/**/*.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/requirements/context.mjs:getRequirementsContext"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-33e61587",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Intended context scoping invariant but no linked test is present."
-      }
-    },
-    {
       "id": "REQ-behavioural-3f059da6",
       "assertion": "For an eligible quickfix decision, a missing target file or missing snippet probe must resolve as accept, while a still-present probe resolves as suppress only when the quickfix-hook:ignore marker is ",
       "kind": "behavioural",
@@ -347,36 +346,6 @@
       }
     },
     {
-      "id": "REQ-behavioural-4c08004f",
-      "assertion": "Requirements context must include only `active` in-scope requirements in the enforced rubric while listing non-enforced active or known requirements only in the index section.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/requirements/context.mjs",
-          "anchor": "inScopeActive and indexLines"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/requirements/context.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/requirements/context.mjs:getRequirementsContext"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-4c08004f",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Intended enforced-context filtering invariant but no linked test is present."
-      }
-    },
-    {
       "id": "REQ-behavioural-4fa50243",
       "assertion": "Rulings blocks must return an empty string for missing or unparsable ledgers, include only entries for the requested pass, group dismissed, severity-adjusted, and fixed-or-verified entries, and cap th",
       "kind": "behavioural",
@@ -404,6 +373,36 @@
         "gap": "observed-but-unintended",
         "conflictsWith": [],
         "rationale": "The assertion is visibly truncated and looks like an extraction artifact rather than a stable invariant."
+      }
+    },
+    {
+      "id": "REQ-behavioural-5903639b",
+      "assertion": "When --with-artifact is used, the output envelope must distinguish an unrequested artifact context from a requested context whose artifacts were all refused by emitting null only when the option was n",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "artifactContext: artifactSummary"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-5903639b",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This artifact-context envelope distinction has no linked test evidence."
       }
     },
     {
@@ -694,6 +693,36 @@
       }
     },
     {
+      "id": "REQ-behavioural-ccf69ea1",
+      "assertion": "A missing provider API key must produce a per-provider misconfigured result instead of aborting the entire round.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "dispatchProvider"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs:dispatchProvider"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-ccf69ea1",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This per-provider configuration failure behavior has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-behavioural-d217e438",
       "assertion": "The drift sweep must exit with code 1 only for RED drift status and must treat unavailable cloud configuration, an unknown repository, or a missing active snapshot as a successful skip.",
       "kind": "behavioural",
@@ -817,6 +846,38 @@
       }
     },
     {
+      "id": "REQ-behavioural-e4e1bdd9",
+      "assertion": "A refused, missing, unreadable, or empty artifact must not prevent other successfully loaded artifacts from being attached, and every non-attached result must be returned in the refused collection.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "loadArtifacts"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs",
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs",
+          "scripts/brainstorm-round.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-e4e1bdd9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This partial artifact-loading behavior has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-behavioural-e9b9e905",
       "assertion": "Existence-claim verification only modifies findings whose category, section, or detail matches one of the configured existence-claim signal regexes.",
       "kind": "behavioural",
@@ -853,36 +914,6 @@
       }
     },
     {
-      "id": "REQ-behavioural-eb5cc3f4",
-      "assertion": "Requirements context must report any target path absent from ledger `coveredFiles` as an uncovered target.",
-      "kind": "behavioural",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/requirements/context.mjs",
-          "anchor": "Coverage"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/requirements/context.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/requirements/context.mjs:getRequirementsContext"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-behavioural-eb5cc3f4",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Intended uncovered-target reporting invariant but no linked test is present."
-      }
-    },
-    {
       "id": "REQ-behavioural-ebfb7527",
       "assertion": "The rulings block includes only ledger entries for the requested pass and truncates the rendered prompt block to approximately 1500 characters with an explicit truncation notice.",
       "kind": "behavioural",
@@ -910,6 +941,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended rulings-block filtering invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-behavioural-ef349519",
+      "assertion": "Refusing or failing to load one requested artifact must not prevent successfully loaded artifacts from being included, and every non-attached artifact must be returned to the caller as refused.",
+      "kind": "behavioural",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "loadArtifacts"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs:loadArtifacts"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-behavioural-ef349519",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This partial artifact failure behavior has no linked test evidence."
       }
     },
     {
@@ -1128,37 +1189,6 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended Jaccard calculation invariant but no linked test is present."
-      }
-    },
-    {
-      "id": "REQ-correctness-22065e5c",
-      "assertion": "A requirement is in scope for audit context when a target file directly matches its `appliesTo` or provenance file, or when the target imports that governed file through a resolved repo import.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/requirements/context.mjs",
-          "anchor": "In-scope direct OR forward-transitive"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/requirements/context.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/requirements/context.mjs:getRequirementsContext",
-          "scripts/lib/requirements/context.mjs:globMatch"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-22065e5c",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Intended audit-context scoping invariant but no linked test is present."
       }
     },
     {
@@ -1611,6 +1641,36 @@
       }
     },
     {
+      "id": "REQ-correctness-6985dafb",
+      "assertion": "Only active ledger requirements may be emitted as enforceable in-scope invariants; non-active requirements may appear only in the informational index.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "const inScopeActive = ledger.requirements.filter((r) => r.status === 'active' && isInScope(r))"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-6985dafb",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This active-requirement emission invariant has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-correctness-69a52f11",
       "assertion": "A `contradictory` gap assessment must include at least one valid requirement id in `conflictsWith`.",
       "kind": "correctness",
@@ -1672,6 +1732,38 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended missing-file refutation invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-correctness-6f5b3a9f",
+      "assertion": "Policy context for focal artifacts must include only active ledger requirements that are directly governed by a target path or by a file imported by a target path.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "const inScopeActive = ledger.requirements.filter((r) => r.status === 'active' && isInScope(r))"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs",
+        "scripts/lib/brainstorm/policy-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs:getRequirementsContext",
+          "scripts/lib/brainstorm/policy-context.mjs:loadPolicyPack"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-6f5b3a9f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This focal-artifact policy scoping invariant has no linked test evidence."
       }
     },
     {
@@ -1737,6 +1829,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound quickfix-statistics aggregation invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-77f54a4d",
+      "assertion": "Before output or persistence, the brainstorm envelope must validate against BrainstormEnvelopeWriteSchema, and schema validation failure must terminate without emitting a normal envelope.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "const parsed = BrainstormEnvelopeWriteSchema.safeParse(envelope)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs:runBrainstormMode"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-77f54a4d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This envelope schema-validation invariant has no linked test evidence."
       }
     },
     {
@@ -1913,6 +2035,36 @@
       }
     },
     {
+      "id": "REQ-correctness-9c11d0da",
+      "assertion": "A debate round must execute only when exactly two providers were selected and both produced successful first-round responses.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "runDebateRound"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs:runDebateRound"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-9c11d0da",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This debate execution precondition has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-correctness-9d0be1e6",
       "assertion": "A repo-root-relative missing-file claim may be confirmed only when the normalized path is absent from repoFiles and inventoryComplete is true.",
       "kind": "correctness",
@@ -1943,14 +2095,14 @@
       }
     },
     {
-      "id": "REQ-correctness-9d920329",
-      "assertion": "Requirements context must report targets absent from `ledger.coveredFiles` as uncovered and mark the ledger stale when any covered file changed since `extractionSourceSha`.",
+      "id": "REQ-correctness-a0df0861",
+      "assertion": "Requirements with statuses other than active must not be included in the enforced in-scope invariants section of the requirements rubric.",
       "kind": "correctness",
       "checkable": true,
       "provenance": [
         {
           "file": "scripts/lib/requirements/context.mjs",
-          "anchor": "Coverage and Freshness"
+          "anchor": "const inScopeActive = ledger.requirements.filter((r) => r.status === 'active' && isInScope(r))"
         }
       ],
       "appliesTo": [
@@ -1958,8 +2110,7 @@
       ],
       "evidence": {
         "code": [
-          "scripts/lib/requirements/context.mjs:getRequirementsContext",
-          "scripts/lib/requirements/context.mjs:changedSince"
+          "scripts/lib/requirements/context.mjs:getRequirementsContext"
         ],
         "tests": []
       },
@@ -1967,10 +2118,10 @@
       "confidence": "low",
       "status": "inferred-only",
       "gap": {
-        "requirementId": "REQ-correctness-9d920329",
+        "requirementId": "REQ-correctness-a0df0861",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "Intended uncovered-and-stale reporting invariant but no linked test is present."
+        "rationale": "This active-status enforcement invariant has no linked test evidence."
       }
     },
     {
@@ -2267,37 +2418,6 @@
       }
     },
     {
-      "id": "REQ-correctness-c405ab74",
-      "assertion": "Requirements context must mark the ledger stale when any covered file changed between `extractionSourceSha` and HEAD.",
-      "kind": "correctness",
-      "checkable": true,
-      "provenance": [
-        {
-          "file": "scripts/lib/requirements/context.mjs",
-          "anchor": "Freshness"
-        }
-      ],
-      "appliesTo": [
-        "scripts/lib/requirements/context.mjs"
-      ],
-      "evidence": {
-        "code": [
-          "scripts/lib/requirements/context.mjs:changedSince",
-          "scripts/lib/requirements/context.mjs:getRequirementsContext"
-        ],
-        "tests": []
-      },
-      "seenInRuns": 1,
-      "confidence": "low",
-      "status": "inferred-only",
-      "gap": {
-        "requirementId": "REQ-correctness-c405ab74",
-        "gap": "untested",
-        "conflictsWith": [],
-        "rationale": "Intended stale-ledger detection invariant but no linked test is present."
-      }
-    },
-    {
       "id": "REQ-correctness-c5303755",
       "assertion": "Gap classification must discard hallucinated conflict ids and self-conflicts, keeping only ids belonging to peer candidates.",
       "kind": "correctness",
@@ -2513,6 +2633,36 @@
       }
     },
     {
+      "id": "REQ-correctness-d4ef1e16",
+      "assertion": "When multiple artifacts are requested, their per-artifact token allowance must be derived by dividing the total artifact budget among requested references, with a minimum allocation of 200 tokens.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "const perArtifact = Math.max(200, Math.floor(maxTokens / list.length))"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d4ef1e16",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This per-artifact budget allocation invariant has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-correctness-d6e2938f",
       "assertion": "The memory-health process must exit with code 2 when its required database configuration is absent or the memory-health RPC cannot provide metrics.",
       "kind": "correctness",
@@ -2545,6 +2695,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound configuration and RPC failure-code invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-correctness-d9c65f14",
+      "assertion": "Policy-pack ledger requirements must be scoped to attached artifact paths, while configured AGENTS.md policy sections must be considered regardless of artifact-path scope.",
+      "kind": "correctness",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/policy-context.mjs",
+          "anchor": "loadPolicyPack"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/policy-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/policy-context.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-correctness-d9c65f14",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This policy-pack scoping invariant has no linked test evidence."
       }
     },
     {
@@ -3470,6 +3650,46 @@
       }
     },
     {
+      "id": "REQ-persistence-95ab6a1f",
+      "assertion": "Save mode must reject saving an insight unless the specified session exists and contains the specified round.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "const session = loadSession(args.sid)"
+        },
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "const matchingRound = session.rounds.find(r => r.round === args.round)"
+        },
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "runSaveMode"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs",
+        "scripts/lib/brainstorm/insight-store.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs",
+          "scripts/brainstorm-round.mjs:runSaveMode"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-persistence-95ab6a1f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This save-mode session validation invariant has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-persistence-9c23f3e5",
       "assertion": "A persona-consistency promotion must durably journal its intended file and candidate transition before writing the temporary spec file or requesting the database candidate-to-locked transition.",
       "kind": "persistence",
@@ -3774,6 +3994,37 @@
       }
     },
     {
+      "id": "REQ-persistence-e2d0034c",
+      "assertion": "A brainstorm round with no successful provider response must not be appended to the session ledger and must emit round 0 in its envelope.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "if (successCount === 0)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs",
+        "scripts/lib/brainstorm/session-store.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-e2d0034c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This failed-round ledger behavior has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-persistence-f1fdcaf0",
       "assertion": "A persona-consistency spec must not be finalized at its target path unless the candidate-to-locked persistence transition succeeds and reports at least one affected row.",
       "kind": "persistence",
@@ -3897,6 +4148,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound drain-cursor durability invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-persistence-f9fa3d31",
+      "assertion": "A brainstorm envelope must not be appended to the session ledger when no first-round provider response succeeded.",
+      "kind": "persistence",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "if (successCount === 0)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs:runBrainstormMode"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-persistence-f9fa3d31",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This failed-round ledger invariant has no linked test evidence."
       }
     },
     {
@@ -4062,6 +4343,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "This is a sound ambiguity-preserving drift-scoring invariant with no linked test."
+      }
+    },
+    {
+      "id": "REQ-safety-1eef0492",
+      "assertion": "Policy sections that cannot be loaded or cannot fit within the policy token budget must be recorded in missingSections rather than silently omitted.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/policy-context.mjs",
+          "anchor": "missingSections.push(`${heading} (dropped: budget)`)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/policy-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/policy-context.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-1eef0492",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This missing policy-section reporting invariant has no linked test evidence."
       }
     },
     {
@@ -4375,6 +4686,38 @@
       }
     },
     {
+      "id": "REQ-safety-53f121b9",
+      "assertion": "If final serialized prompt context exceeds the combined provider-derived allowance plus the measured extra-preface allowance, assembly must throw an error with code BUDGET_EXCEEDED rather than send an",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/resume-context.mjs",
+          "anchor": "if (totalEstimatedTokens > totalAllowedTokens)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/resume-context.mjs",
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/resume-context.mjs",
+          "scripts/brainstorm-round.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-53f121b9",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This final prompt budget failure invariant has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-safety-548d0892",
       "assertion": "Missing, malformed, or structurally invalid quickfix statistics caches must degrade to an empty pattern set rather than causing pattern skipping or throwing an error.",
       "kind": "safety",
@@ -4432,6 +4775,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended incomplete-inventory safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-565d294d",
+      "assertion": "Each attached artifact must be capped at its allocated token budget and include a truncation marker when its redacted content exceeds that budget.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "if (estimateTokens(text) > maxTokens)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-565d294d",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This artifact truncation invariant has no linked test evidence."
       }
     },
     {
@@ -4522,6 +4895,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended single atomic batch-write invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-5d5cb3f6",
+      "assertion": "Each attached artifact must be limited to its allocated token budget and marked as truncated when its redacted content exceeds that budget.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "if (estimateTokens(text) > maxTokens)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs:resolveArtifact"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-5d5cb3f6",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This artifact token-limit invariant has no linked test evidence."
       }
     },
     {
@@ -4782,6 +5185,40 @@
       }
     },
     {
+      "id": "REQ-safety-832365fe",
+      "assertion": "User-supplied --with-context values must be rejected when any value exceeds 8000 characters or their combined size exceeds 24000 characters.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "WITH_CONTEXT_PER_FLAG_MAX"
+        },
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "WITH_CONTEXT_TOTAL_MAX"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs:parseBrainstormArgs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-832365fe",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This with-context size-limit invariant has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-safety-843d772a",
       "assertion": "Extraction must fail fast when any single input file exceeds the configured extraction token budget instead of attempting to batch it.",
       "kind": "safety",
@@ -4810,6 +5247,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended token-budget fail-fast invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-88a6cb61",
+      "assertion": "When multiple artifacts are requested, their shared artifact token ceiling must be divided among requested references so no individual artifact receives more than the calculated per-artifact allocatio",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "const perArtifact = Math.max(200, Math.floor(maxTokens / list.length))"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs:loadArtifacts"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-88a6cb61",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This shared artifact-budget allocation invariant has no linked test evidence."
       }
     },
     {
@@ -5302,6 +5769,38 @@
       }
     },
     {
+      "id": "REQ-safety-c16635dd",
+      "assertion": "The final serialized assembled context must not exceed the combined provider-derived resume, with-context, and architecture budgets plus the measured size of independently capped extra preface blocks,",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/resume-context.mjs",
+          "anchor": "if (totalEstimatedTokens > totalAllowedTokens)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/resume-context.mjs",
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/resume-context.mjs:assembleResumeContext",
+          "scripts/brainstorm-round.mjs:runBrainstormMode"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-c16635dd",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This assembled-context budget invariant has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-safety-ca1e0c13",
       "assertion": "Gap challenge must return exactly one schema-valid assessment per candidate and degrade to `gap:\"none\"` for every candidate on LLM failure, malformed top-level response, or missing individual assessme",
       "kind": "safety",
@@ -5333,6 +5832,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended gap-challenge fallback invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-safety-ce4f2b04",
+      "assertion": "Requirements context must preserve full in-scope active invariants under token pressure, degrading the out-of-scope index before truncating the overall block.",
+      "kind": "safety",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/requirements/context.mjs",
+          "anchor": "Degradation: in-scope full text is never dropped; the index is added only while it fits"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/requirements/context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/requirements/context.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-safety-ce4f2b04",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This requirements-context degradation order has no linked test evidence."
       }
     },
     {
@@ -5662,22 +6191,22 @@
       }
     },
     {
-      "id": "REQ-safety-f901aa95",
-      "assertion": "When the requirements context exceeds the token budget, it must preserve the in-scope invariant section before summarising or truncating the remaining index.",
-      "kind": "safety",
+      "id": "REQ-security-07c679f2",
+      "assertion": "Malformed provider payloads written for debugging must be secret-redacted and stored under .claude/tmp with file mode 0600.",
+      "kind": "security",
       "checkable": true,
       "provenance": [
         {
-          "file": "scripts/lib/requirements/context.mjs",
-          "anchor": "Assemble, respecting the budget"
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "if (result.state === 'malformed' && result.errorMessage)"
         }
       ],
       "appliesTo": [
-        "scripts/lib/requirements/context.mjs"
+        "scripts/brainstorm-round.mjs"
       ],
       "evidence": {
         "code": [
-          "scripts/lib/requirements/context.mjs:getRequirementsContext"
+          "scripts/brainstorm-round.mjs:dispatchProvider"
         ],
         "tests": []
       },
@@ -5685,10 +6214,46 @@
       "confidence": "low",
       "status": "inferred-only",
       "gap": {
-        "requirementId": "REQ-safety-f901aa95",
+        "requirementId": "REQ-security-07c679f2",
         "gap": "untested",
         "conflictsWith": [],
-        "rationale": "Intended token-budget preservation invariant but no linked test is present."
+        "rationale": "This debug payload redaction and permission invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-security-0da9dbd5",
+      "assertion": "Resume context, user-supplied --with-context, and architecture context must be secret-redacted before being included in assembled prompts.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/resume-context.mjs",
+          "anchor": "const archRedacted = archContextText ? redactSecrets(archContextText).text : ''"
+        },
+        {
+          "file": "scripts/lib/brainstorm/resume-context.mjs",
+          "anchor": "const wcRedacted = withContextText ? redactSecrets(withContextText).text : ''"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/resume-context.mjs",
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/resume-context.mjs",
+          "scripts/brainstorm-round.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-0da9dbd5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This prompt-context redaction invariant has no linked test evidence."
       }
     },
     {
@@ -5753,6 +6318,129 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended conservative verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-8f067c59",
+      "assertion": "A brainstorm topic must be secret-redacted before any provider dispatch, with no command-line option that bypasses this redaction.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "const redaction = redactSecrets(rawTopic)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-8f067c59",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This topic-redaction invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-security-9967f76c",
+      "assertion": "Artifact content must be read from the canonical path approved by the sensitivity gate rather than from the user-visible path.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "const readFrom = verdict.canonical || path.resolve(repoRoot, rel)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs",
+          "scripts/lib/brainstorm/artifact-context.mjs:resolveArtifact"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 2,
+      "confidence": "high",
+      "status": "active",
+      "gap": {
+        "requirementId": "REQ-security-9967f76c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This canonical-path invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-security-9aff158c",
+      "assertion": "Attached artifact text must be secret-redacted before it is returned for prompt assembly, and its reported redaction count must reflect the redaction result.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "const red = redactSecrets(raw)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs",
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs",
+          "scripts/brainstorm-round.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-9aff158c",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This redaction and count invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-security-b00f3fec",
+      "assertion": "Artifact text sent to external models must have detected secrets redacted before it is returned as an attached artifact.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "const red = redactSecrets(raw)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs:resolveArtifact"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-b00f3fec",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This external artifact redaction invariant has no linked test evidence."
       }
     },
     {
@@ -5896,6 +6584,70 @@
       }
     },
     {
+      "id": "REQ-security-c9e95ae5",
+      "assertion": "Artifact paths supplied for external brainstorming must be classified by resolveAndClassify before reading, and paths classified as sensitive, escaping the repository, or unresolvable must not have th",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "resolveArtifact"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs:resolveArtifact"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-c9e95ae5",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This external artifact classification invariant has no linked test evidence."
+      }
+    },
+    {
+      "id": "REQ-security-d30f2394",
+      "assertion": "Architecture context and --with-context text must be secret-redacted before being incorporated into prompts sent to providers.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/resume-context.mjs",
+          "anchor": "const archRedacted = archContextText ? redactSecrets(archContextText).text : ''"
+        },
+        {
+          "file": "scripts/lib/brainstorm/resume-context.mjs",
+          "anchor": "const wcRedacted = withContextText ? redactSecrets(withContextText).text : ''"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/resume-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/resume-context.mjs:assembleResumeContext"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-d30f2394",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This prompt-context redaction invariant has no linked test evidence."
+      }
+    },
+    {
       "id": "REQ-security-d55680e9",
       "assertion": "Extraction must reject any requested file path that escapes the repo root before reading or sending file content.",
       "kind": "security",
@@ -5927,6 +6679,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended repo-root path-safety invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-d7f7b2c7",
+      "assertion": "The brainstorm topic must be secret-redacted before it is included in any provider request, with no command-line option to bypass redaction.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/brainstorm-round.mjs",
+          "anchor": "const redaction = redactSecrets(rawTopic)"
+        }
+      ],
+      "appliesTo": [
+        "scripts/brainstorm-round.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/brainstorm-round.mjs:runBrainstormMode"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-d7f7b2c7",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This topic-redaction invariant has no linked test evidence."
       }
     },
     {
@@ -6017,6 +6799,36 @@
         "gap": "untested",
         "conflictsWith": [],
         "rationale": "Intended inventory-only verification invariant but no linked test is present."
+      }
+    },
+    {
+      "id": "REQ-security-e7443b6f",
+      "assertion": "Every --with-artifact file read for external-model context must be approved by resolveAndClassify, and paths that escape the repository or are classified as sensitive must not be read or attached.",
+      "kind": "security",
+      "checkable": true,
+      "provenance": [
+        {
+          "file": "scripts/lib/brainstorm/artifact-context.mjs",
+          "anchor": "resolveArtifact"
+        }
+      ],
+      "appliesTo": [
+        "scripts/lib/brainstorm/artifact-context.mjs"
+      ],
+      "evidence": {
+        "code": [
+          "scripts/lib/brainstorm/artifact-context.mjs"
+        ],
+        "tests": []
+      },
+      "seenInRuns": 1,
+      "confidence": "low",
+      "status": "inferred-only",
+      "gap": {
+        "requirementId": "REQ-security-e7443b6f",
+        "gap": "untested",
+        "conflictsWith": [],
+        "rationale": "This security invariant has no linked test evidence."
       }
     },
     {

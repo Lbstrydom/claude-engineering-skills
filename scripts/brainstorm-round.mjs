@@ -22,6 +22,8 @@ import { preflightEstimateUsd } from './lib/brainstorm/pricing.mjs';
 import { resolveDepth, DEPTH_TOKENS } from './lib/brainstorm/depth-config.mjs';
 import { assembleResumeContext } from './lib/brainstorm/resume-context.mjs';
 import { loadArchSection, shouldAttachArch } from './lib/brainstorm/arch-context.mjs';
+import { loadArtifacts } from './lib/brainstorm/artifact-context.mjs';
+import { loadPolicyPack } from './lib/brainstorm/policy-context.mjs';
 import { buildDebatePrompt } from './lib/brainstorm/debate-prompt.mjs';
 import { appendSession, pruneOldSessions, loadSession } from './lib/brainstorm/session-store.mjs';
 import { saveInsight } from './lib/brainstorm/insight-store.mjs';
@@ -58,6 +60,10 @@ FLAGS — brainstorm-round mode
   --with-context "<txt>" Additional context (repeatable, max 8000 chars per flag, 24000 total)
   --with-arch            Force-attach the repo's AGENTS.md '## Architecture' section as context
   --no-arch              Force-skip architecture context (unanchored ideation)
+  --with-artifact <path> Attach the focal artifact verbatim (plan/diff/module).
+                         Repeatable. Auto-attaches the repo policy pack.
+                         Sensitive paths are refused, never sent.
+  --no-policy            Suppress the auto-attached policy pack
                          Default: auto-attach when the topic shows architecture intent
   --out <path>           Write JSON output to file (default: stdout)
   --timeout-ms <n>       Per-provider timeout (default: 60000)
@@ -117,6 +123,8 @@ function parseBrainstormArgs(argv) {
     withContext: [],         // collected per-flag, validated below
     withArch: false,         // --with-arch — force-attach architecture context
     noArch: false,           // --no-arch — force-skip architecture context
+    withArtifact: [],        // --with-artifact <path> — focal object(s), repeatable
+    noPolicy: false,         // --no-policy — suppress the auto-attached policy pack
     sid: null,               // explicit override (else auto-generated)
     out: null,
     timeoutMs: 60000,
@@ -153,6 +161,8 @@ function parseBrainstormArgs(argv) {
       case '--with-context': args.withContext.push(requireValue()); break;
       case '--with-arch': args.withArch = true; break;
       case '--no-arch': args.noArch = true; break;
+      case '--with-artifact': args.withArtifact.push(requireValue()); break;
+      case '--no-policy': args.noPolicy = true; break;
       case '--sid': args.sid = requireValue(); break;
       case '--out': args.out = requireValue(); break;
       case '--timeout-ms': args.timeoutMs = Number(requireValue()); break;
@@ -365,6 +375,38 @@ async function runBrainstormMode(args) {
     }
   }
 
+  // ── Focal artifacts + policy pack (--with-artifact) ──
+  // The empirical fix for repo-blind external takes: attach the OBJECT
+  // under discussion verbatim, plus the standing rules a recommendation
+  // must not break. Attaching denser architecture prose was tried and
+  // measured — it did not work (see the module header).
+  let artifactBlock = '';
+  let policyBlock = '';
+  let artifactSummary = null;
+  if (args.withArtifact.length > 0) {
+    const loaded = loadArtifacts(args.withArtifact, { repoRoot: process.cwd() });
+    artifactBlock = loaded.text;
+    for (const r of loaded.refused) {
+      process.stderr.write(`  [brainstorm] ⚠ artifact REFUSED (${r.reason}): ${r.path}\n`);
+    }
+    if (loaded.attached.length > 0) {
+      process.stderr.write(`  [brainstorm] attached ${loaded.attached.length} focal artifact(s), ~${loaded.totalTokens} tokens${loaded.redactionCount > 0 ? ` (${loaded.redactionCount} secret(s) redacted)` : ''}\n`);
+    }
+    if (!args.noPolicy && loaded.attached.length > 0) {
+      const pack = loadPolicyPack({ artifactPaths: loaded.attached.map(a => a.path) });
+      policyBlock = pack.text;
+      if (pack.text) {
+        process.stderr.write(`  [brainstorm] attached policy pack: ${pack.requirementCount} in-scope invariant(s), ${pack.sectionsIncluded.length} doc section(s), ~${pack.totalTokens} tokens${pack.ledgerStale ? ' (⚠ ledger may be stale)' : ''}\n`);
+      }
+    }
+    artifactSummary = {
+      requested: args.withArtifact.length,
+      attached: loaded.attached.map(a => ({ path: a.path, bytes: a.bytes, truncated: a.truncated })),
+      refused: loaded.refused.map(r => ({ path: r.path, reason: r.reason })),
+      policyAttached: policyBlock.length > 0,
+    };
+  }
+
   // Assemble resume context + --with-context (BEFORE preflight per §13.C)
   const providersForBudget = args.models.map(p => ({
     provider: p,
@@ -379,6 +421,7 @@ async function runBrainstormMode(args) {
       sid: args.continueFrom,
       withContextText: wcCombined,
       archContextText,
+      extraPrefaceBlocks: [artifactBlock, policyBlock],
       providers: providersForBudget,
     });
   } catch (err) {
@@ -465,6 +508,9 @@ async function runBrainstormMode(args) {
     archContextAttached: (assembledContext.archContextEffective || '').length > 0,
     archContextChars: (assembledContext.archContextEffective || '').length,
     archContextWarning,
+    // Focal-artifact fields — null when --with-artifact was not used, so a
+    // consumer can distinguish "not requested" from "requested, all refused".
+    artifactContext: artifactSummary,
   };
 
   // Both providers failed — DO NOT append to session ledger (§10.F)
