@@ -3,6 +3,11 @@
  * @fileoverview Thin CLI over lib/plan-status.mjs. Two modes:
  *   --select <dir>  — print the one plan the pre-push hook should audit (or nothing).
  *   (default)       — the vocabulary lint: fail on any non-conforming Status line.
+ *   --drift         — lint, but gate ONLY on plans changed in the push range;
+ *                     pre-existing violations are reported, never blocking
+ *                     (on-conflict-lint.mjs's convention). This is what the
+ *                     consumer pre-push hook runs, so turning the gate on in a
+ *                     repo that already has violations cannot break its next push.
  *
  * It does NO parsing of its own (R1-H2 — one contract, one implementation).
  * Contract: docs/plans/reference-integrity-gate.md §2.
@@ -83,7 +88,25 @@ function selectMode(dir) {
   process.exit(0); // selected or not, both normal
 }
 
-function lintMode(jsonOut) {
+/**
+ * Lint the Status vocabulary.
+ *
+ * `drift` mode (the pre-push default) gates ONLY on plans changed in the range
+ * being pushed, matching on-conflict-lint.mjs's convention: a pre-existing bad
+ * Status never blocks, a newly authored or edited one does. That distinction is
+ * what makes this safe to turn on in a repo that already has violations — and
+ * it keeps the gate proportional, so it can't decay into wallpaper the way an
+ * always-red whole-tree warning would.
+ *
+ * Pre-existing violations are still REPORTED (advisory), because they are not
+ * cosmetic: a non-conforming Status makes a plan invisible to `--select`, so it
+ * can never be audited. That is exactly how a consumer's in-flight plan went
+ * unauditable while two stale ones won the old mtime tiebreak (2026-07-19).
+ *
+ * @param {boolean} jsonOut
+ * @param {boolean} drift gate on changed plans only
+ */
+function lintMode(jsonOut, drift = false) {
   const dir = path.resolve(PLANS_DIR);
   let names;
   try { names = fs.readdirSync(dir).filter(n => n.endsWith('.md')); }
@@ -107,20 +130,53 @@ function lintMode(jsonOut) {
     flagged.push({ file: `${PLANS_DIR}/${name}`, reason: s.reason, message: s.message });
   }
 
-  if (jsonOut) {
-    console.log(JSON.stringify({ ok: flagged.length === 0, checked: names.length, flagged }, null, 2));
-    process.exit(flagged.length === 0 ? 0 : 1);
+  // Split into what GATES and what is merely reported. In whole-tree mode every
+  // finding gates (the source repo's `npm run check` contract is unchanged).
+  // `changedFilesForPush()` returns null when git can't tell us; a missing
+  // signal must never silently widen the gate to the whole tree, so drift mode
+  // degrades to gating on NOTHING and says so.
+  let gating = flagged, preExisting = [], driftBaseKnown = true;
+  if (drift) {
+    const changed = changedFilesForPush();
+    if (changed === null) {
+      driftBaseKnown = false;
+      gating = [];
+      preExisting = flagged;
+    } else {
+      const changedBases = new Set(changed.map(p => p.split(/[\\/]/).pop()));
+      gating = flagged.filter(f => changedBases.has(f.file.split('/').pop()));
+      preExisting = flagged.filter(f => !changedBases.has(f.file.split('/').pop()));
+    }
   }
 
-  if (flagged.length === 0) {
-    console.log(`${G}✓${X} plans:status — ${names.length} file(s), all Status lines conform (or are exempt).`);
+  if (jsonOut) {
+    console.log(JSON.stringify({
+      ok: gating.length === 0, mode: drift ? 'drift' : 'all',
+      checked: names.length, flagged, gating, preExisting, driftBaseKnown,
+    }, null, 2));
+    process.exit(gating.length === 0 ? 0 : 1);
+  }
+
+  // Advisory: pre-existing violations are real (those plans can never be
+  // audited) but they are not this push's fault, so they inform without gating.
+  if (preExisting.length > 0) {
+    console.error(`  ${Y}○${X} plans:status — ${preExisting.length} pre-existing non-conforming Status line(s), not gating this push: ${preExisting.map(f => f.file.split('/').pop()).join(', ')}`);
+    console.error(`    ${D}Each is INVISIBLE to plan selection, so it can never be audited. Fix when you next touch it.${X}`);
+  }
+  if (drift && !driftBaseKnown) {
+    console.error(`  ${Y}○${X} plans:status — no git range available; gating on nothing this run (reported ${flagged.length} finding(s) above).`);
+  }
+
+  if (gating.length === 0) {
+    if (!drift) console.log(`${G}✓${X} plans:status — ${names.length} file(s), all Status lines conform (or are exempt).`);
     process.exit(0);
   }
-  console.error(`\n${R}${B}✗ plans:status${X} — ${flagged.length} non-conforming Status line(s):\n`);
-  for (const f of flagged) {
+  console.error(`\n${R}${B}✗ plans:status${X} — ${gating.length} non-conforming Status line(s)${drift ? ' in this push' : ''}:\n`);
+  for (const f of gating) {
     console.error(`  ${R}${f.file}${X}  (${f.reason})${f.message ? `\n    ${D}${f.message}${X}` : ''}`);
   }
   console.error(`\n${D}Vocabulary: terminal Complete/Superseded · active Draft/Approved/In Progress.`);
+  console.error(`A non-conforming Status makes the plan invisible to selection — it can never be audited.`);
   console.error(`Contract: docs/reference/reference-integrity.md / the plan's §2 status table.${X}\n`);
   process.exit(1);
 }
@@ -133,7 +189,10 @@ function main() {
   const argv = process.argv.slice(2);
   const selIdx = argv.indexOf('--select');
   if (selIdx >= 0) return selectMode(argv[selIdx + 1] ?? PLANS_DIR);
-  lintMode(argv.includes('--format') && argv[argv.indexOf('--format') + 1] === 'json');
+  lintMode(
+    argv.includes('--format') && argv[argv.indexOf('--format') + 1] === 'json',
+    argv.includes('--drift'),
+  );
 }
 
 const isMain = (() => {

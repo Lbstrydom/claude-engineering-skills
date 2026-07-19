@@ -129,6 +129,22 @@ fi
 # stdout (or nothing); diagnostics + the >1-active-plan ambiguity go to stderr.
 # \`|| true\` + empty-check: a malformed/absent Status must never abort the push
 # (fail-closed for the gate, fail-open for the push — R3-H5).
+# ── Plan Status vocabulary (drift-gated) ───────────────────────────────────
+# A non-conforming Status line makes a plan INVISIBLE to the selector below, so
+# it can never be audited — silently. That is how a consumer ended up with six
+# unauditable plans while the pre-push audit produced a verdict zero times
+# (2026-07-19). This runs the same lint the source repo gates on, but in
+# \`--drift\` mode: only a plan CHANGED in this push can block, so switching it
+# on cannot break a repo that already has violations. Pre-existing ones are
+# printed as advisory context.
+# Bypass: PLAN_STATUS_DISABLE=1 or \`git push --no-verify\`.
+if [ "$PLAN_STATUS_DISABLE" != "1" ]; then
+  if ! node "$STATUS_CLI" --drift >&2; then
+    echo "[prepush-hook] a plan changed in this push has a non-conforming Status — fix it or set PLAN_STATUS_DISABLE=1" >&2
+    exit 1
+  fi
+fi
+
 PLAN_FILE=$(node "$STATUS_CLI" --select "$PLANS_DIR" 2>/dev/null || true)
 [ -z "$PLAN_FILE" ] && exit 0
 
