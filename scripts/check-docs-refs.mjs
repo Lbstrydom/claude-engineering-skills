@@ -219,6 +219,16 @@ export const BASELINE = new Set([
   'docs/research/runbooks/model-ab-experiment.md→docs/arm-eval/worksheets/model-ab-adjudication-worksheet.md',
   // illustrative `// auth (docs/auth.md, …)` comment
   'scripts/lib/learning/author-tier-observation.mjs→docs/auth.md',
+  // Deliberately-unpublished doc buckets (docs/upstream-issues/, docs/personal/).
+  // These targets exist on the author's disk but are gitignored and untracked, so
+  // they are absent from a fresh clone — the reference is intentional provenance,
+  // not rot. Distinct from every other entry here: the others cite something never
+  // produced or tool-generated; these cite something that EXISTS and is withheld.
+  // Removing the citation would be worse than the dangling ref, because the claim
+  // it supports ("this came from real field evidence") would lose its attribution.
+  'docs/plans/sast-triage-routing.md→docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md',
+  'docs/plans/provenance-trailers-and-gate-honesty.md→docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md',
+  'status.md→docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md',
 ]);
 
 const baselineKey = f => `${f.file}→${f.target}`;

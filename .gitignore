@@ -160,17 +160,20 @@ dashboard/audit-runs/
 #     publishing it is a decision, not a default.
 #   docs/personal/ — career/portfolio evidence naming real employers.
 #
-# Ignoring a DIRECTORY does not untrack what is already in it, and it does not
-# retract anything already pushed — these entries only stop the NEXT file from
-# landing by accident. The two files below predate this rule and are already
-# public; they stay tracked deliberately (docs/plans/sast-triage-routing.md
-# cites the feedback doc at :70 and :212, so untracking it would break the
-# docs-ref gate). They are re-included explicitly so that intent is legible
-# rather than looking like an oversight.
+# Both buckets are fully ignored: the two files that previously lived here were
+# untracked (`git rm --cached`, content kept on disk) so the working tree stops
+# carrying them forward. Read the limit precisely — untracking removes them from
+# FUTURE commits only. It does NOT rewrite history: both remain in the pushed
+# commits that introduced them (1b28f64 and 2a4e613) and are still retrievable
+# from the public remote. Purging that would need a history rewrite + force-push,
+# which was considered and deliberately not done.
+#
+# Consequence: inbound references to these paths now point at files absent from a
+# fresh clone, so four of them carry entries in check-docs-refs.mjs BASELINE
+# (2 from sast-triage-routing.md, 1 from provenance-trailers-and-gate-honesty.md,
+# 1 from status.md) marking them intentionally-unpublished rather than broken.
 #
 # To publish a new file in either bucket, force-add it AND say why in the
 # commit message: `git add -f docs/upstream-issues/<name>.md`
 docs/upstream-issues/
 docs/personal/
-!docs/upstream-issues/claude-engineering-skills-feedback-2026-07-19.md
-!docs/personal/ibm-fs-breadth-evidence-claude-engineering-skills.md
