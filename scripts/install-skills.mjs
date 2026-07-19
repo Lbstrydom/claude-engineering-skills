@@ -244,11 +244,15 @@ function maybeWarnGithubSkillsDeprecation(args, repoRoot) {
   const stale = path.join(repoRoot, '.github', 'skills');
   if (args.keepGithubSkills || !fs.existsSync(stale)) return;
   process.stderr.write(
-    `${Y}[install] DEPRECATION:${X} .github/skills/ is no longer maintained ` +
-    '(no documented tool reads it).\n' +
+    `${Y}[install] SHADOWING RISK:${X} .github/skills/ exists and is no longer maintained.\n` +
+    '  Copilot Agent Skills reads BOTH .github/skills/ and .claude/skills/, and\n' +
+    '  .github/skills/ WINS on a name collision — so every stale copy there silently\n' +
+    '  shadows the fresh one this install just wrote. (Observed in a consumer repo\n' +
+    '  2026-07-19: 6 skills shadowed, ship 366 lines behind, and its telemetry step\n' +
+    '  simply absent — so ship events never recorded and nothing surfaced an error.)\n' +
     `  Existing files at ${path.relative(repoRoot, stale)} are not deleted by this install.\n` +
-    '  To preserve them and keep installing into that path, pass --keep-github-skills.\n' +
-    '  Once confirmed unused, delete the directory manually.\n',
+    '  Inspect: node scripts/check-stale-skill-surface.mjs --repo <repo>\n' +
+    '  Fix: delete the directory. To keep installing into it instead, pass --keep-github-skills.\n',
   );
 }
 
