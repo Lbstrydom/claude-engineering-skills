@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,6 +23,34 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.resolve(__dirname, '..', '.claude', 'hooks', 'arch-memory-check.sh');
 
+/**
+ * Hermetic store isolation — the reason this suite used to flake.
+ *
+ * The cloud-off test blanked `SUPABASE_AUDIT_URL` / `SUPABASE_AUDIT_ANON_KEY`,
+ * but those were **sunset in M4**: the store reads `AUDIT_DB_URL` (plus its
+ * aliases), which `...process.env` inherited and which `~/.audit-loop.env`
+ * re-injects through config.mjs. So a test whose comment said "cloud-off path —
+ * no real Supabase needed" hit the live store on every run: ~4.5s of embed +
+ * RPC against a 10s `timeout`, which under parallel suite load intermittently
+ * blew it (observed: a 10009ms failure). Hermetic, it is ~1.8s and passes
+ * deterministically.
+ *
+ * Blanking the vars is not sufficient on its own — HOME/USERPROFILE are
+ * redirected too, or the shared cloud config puts a real DSN straight back.
+ * Same idiom as tests/ship-commit-cli.test.mjs.
+ */
+const STORE_ENV_KEYS = [
+  'AUDIT_DB_URL', 'AUDIT_POSTGRES_URL', 'AUDIT_STORE',
+  'AUDIT_DB_SSL_MODE', 'AUDIT_POSTGRES_SSL_MODE',
+  // Sunset in M4, still consulted by client.mjs's "is cloud configured" probe.
+  'SUPABASE_AUDIT_URL', 'SUPABASE_AUDIT_ANON_KEY',
+];
+
+function hermeticStoreEnv() {
+  const blanked = Object.fromEntries(STORE_ENV_KEYS.map((k) => [k, '']));
+  return { ...blanked, HOME: os.tmpdir(), USERPROFILE: os.tmpdir() };
+}
+
 function runHook(args = [], opts = {}) {
   const start = Date.now();
   let stdout = '', exit = 0;
@@ -30,7 +59,15 @@ function runHook(args = [], opts = {}) {
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf-8',
       timeout: 10000,
-      env: { ...process.env, ARCH_MEMORY_HOOK_DISABLE: '0', ...(opts.env || {}) },
+      // Hermetic by DEFAULT, not per-test: every spawn in this file is a unit
+      // test of the hook's own logic, and none of them should be able to reach
+      // a real store. A caller can still override via opts.env.
+      env: {
+        ...process.env,
+        ARCH_MEMORY_HOOK_DISABLE: '0',
+        ...hermeticStoreEnv(),
+        ...(opts.env || {}),
+      },
     });
   } catch (err) {
     exit = err.status ?? 1;
@@ -121,14 +158,33 @@ describe('hook intent detection — mixed-case + punctuation', () => {
 
 describe('hook output shape (cloud-off)', () => {
   it('produces a Markdown callout when triggered + cloud is off', () => {
-    const r = runHook(['--prompt', 'add a function that summarises wine pairings'], {
-      env: { SUPABASE_AUDIT_URL: '', SUPABASE_AUDIT_ANON_KEY: '' },
-    });
+    // runHook is hermetic by default, so this genuinely exercises the cloud-off
+    // path. It previously did not — see the STORE_ENV_KEYS note above.
+    const r = runHook(['--prompt', 'add a function that summarises wine pairings']);
     assert.equal(r.exit, 0, `hook should exit 0 even in cloud-off mode, got ${r.exit}`);
-    // Either: empty (intent triggered but cross-skill returned non-cloud no-op
-    //   that we then short-circuit on), OR a markdown block with consultation
-    assert.ok(r.stdout.length === 0 || r.stdout.includes('Architectural-memory consultation'),
-      `cloud-off output should be either empty or include the consultation block; got: ${r.stdout.slice(0, 200)}`);
+
+    // Asserted, not permitted. The old assertion was
+    // `length === 0 || includes(...)`, which passes on BOTH outcomes and so
+    // could not fail for the right reason — a hook that silently emitted
+    // nothing satisfied it just as well as one that emitted the callout. With
+    // real isolation the output is deterministic, so assert what it must be.
+    assert.match(r.stdout, /\*\*Architectural-memory consultation\*\*/,
+      `cloud-off must still emit the consultation block; got: ${r.stdout.slice(0, 200)}`);
+    assert.match(r.stdout, /Cloud store offline/,
+      'and must say WHY no neighbourhood was returned, rather than looking like a clean lookup');
+    assert.match(r.stdout, /arch:refresh/,
+      'and must name the command that enables it');
+  });
+
+  it('stays well under the spawn timeout now that it makes no network call', () => {
+    // The flake was a ~4.5s live embed+RPC against a 10s timeout, tipping over
+    // under parallel suite load. This pins the isolation itself: if a future
+    // edit lets the hook reach a real store again, the latency regresses here
+    // rather than intermittently in CI.
+    const r = runHook(['--prompt', 'add a retry wrapper around fetch']);
+    assert.equal(r.exit, 0);
+    assert.ok(r.latencyMs < 5000,
+      `cloud-off hook should not approach the 10s spawn timeout; took ${r.latencyMs}ms`);
   });
 });
 
