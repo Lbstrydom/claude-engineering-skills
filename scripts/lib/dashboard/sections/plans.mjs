@@ -190,7 +190,7 @@ function planList(plans, ui) {
     return `<details class="row plan">
     <summary><strong>${ui.escapeHtml(p.title)}</strong>${shortStatus ? ` &mdash; ${ui.escapeHtml(shortStatus)}` : ''}</summary>
     <div class="plan-body">
-      <div class="plan-meta">${p.date ? `Date: ${ui.escapeHtml(p.date)} &middot; ` : ''}${statusBled ? `Status: ${ui.escapeHtml(p.status)} &middot; ` : ''}<code>${ui.escapeHtml(p.path)}</code>${p.malformed ? ' <span class="lock">(metadata unparsed)</span>' : ''}</div>
+      <div class="plan-meta">${p.date ? `Date: ${ui.escapeHtml(p.date)} &middot; ` : ''}${statusBled ? `Status: ${ui.escapeHtml(p.status)} &middot; ` : ''}<code>${ui.escapeHtml(p.path)}</code>${p.malformed ? ` <span class="lock">(metadata unparsed${p.statusConflict ? `: conflicting Status — ${ui.escapeHtml(p.statusConflict.join(' vs '))}` : ''})</span>` : ''}</div>
       <div class="plan-content">${body}</div>
     </div>
   </details>`;

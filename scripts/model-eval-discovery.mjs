@@ -58,6 +58,7 @@ import { buildDiffPathMap, renderDiffPathTable, prepareCandidates } from './lib/
 import { readFilesAsContext } from './lib/file-io.mjs';
 import { redactSecrets } from './lib/sensitive-egress-gate.mjs';
 import { shouldSkipForIndexing } from './lib/sensitive-paths.mjs';
+import { boundMalformedDetails } from './lib/audit/malformed-details.mjs';
 
 // ── args ────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -223,103 +224,10 @@ function summarizeArm(label, records) {
 
 // ── Bounded malformed-anchor diagnostics (WS-E2) ────────────────────────────
 //
-// Two budgets, not one. Bounding exemplars PER reason code leaves the NUMBER of
-// reason codes unbounded — a model emitting thousands of distinct strings would
-// yield thousands of one-element buckets. So: cap the key, cap the buckets, cap
-// the exemplars, and fold the rest into a counted `__other`.
-//
-// Deterministic throughout (first-N by rawIndex; buckets by count desc then key
-// asc) so two runs over the same input produce identical records.
-const MALFORMED_MAX_BUCKETS = 20;
-const MALFORMED_MAX_EXEMPLARS = 5;
-const MALFORMED_MAX_KEY_BYTES = 120;
-const MALFORMED_MAX_DETAIL_BYTES = 500;
-const MALFORMED_MAX_ANCHOR_BYTES = 2000;
-// Sentinel for the folded long tail. Prefixed so a model emitting this exact
-// string natively cannot occupy the same key and produce two buckets that
-// disagree — the payload is untrusted, including its keys.
-const MALFORMED_OTHER_KEY = '__other (aggregated by harness)';
-
-// Redact THEN clip. These strings are model-produced echoes of the code payload
-// and they are now PERSISTED — before this field they were discarded, so
-// storing them widens the blast radius of anything sensitive that reached the
-// prompt. Bounding alone is not an egress control (audit R1-H1).
-const clip = (v, max) => {
-  // Absent stays ABSENT. `JSON.stringify(null)` yields the 4-char string
-  // "null", so an unconditional clip turned a missing detail into a literal
-  // that reads like data — the absent-vs-value confusion this telemetry is
-  // supposed to avoid.
-  if (v === null || v === undefined) return null;
-  const raw = typeof v === 'string' ? v : JSON.stringify(v);
-  if (typeof raw !== 'string') return raw;
-  let safe;
-  try {
-    const out = redactSecrets(raw);
-    safe = typeof out === 'string' ? out : (out?.text ?? raw);
-  } catch {
-    // Fail closed: a redactor failure must not emit the raw text.
-    return '[REDACTED:redaction-failed]';
-  }
-  if (safe.length <= max) return safe;
-  // Truncate on a CODE POINT boundary. `.slice` cuts UTF-16 code units, so a
-  // cap landing mid-surrogate emits a lone half — malformed Unicode in a
-  // persisted, rendered field.
-  const cut = safe.slice(0, max);
-  const last = cut.charCodeAt(cut.length - 1);
-  return (last >= 0xd800 && last <= 0xdbff) ? cut.slice(0, -1) : cut;
-};
-
-/**
- * @param {Array<{rawIndex:number, reasonCode:string, reasonDetail?:string}>} malformed
- * @param {Array<object>} rawFindings the round's findings, for anchor lookup
- */
-function boundMalformedDetails(malformed, rawFindings) {
-  const byReason = new Map();
-  for (const m of malformed) {
-    const key = clip(m.reasonCode ?? 'unknown', MALFORMED_MAX_KEY_BYTES) || 'reason_code_invalid';
-    if (!byReason.has(key)) byReason.set(key, []);
-    byReason.get(key).push(m);
-  }
-  const ordered = [...byReason.entries()]
-    .sort((a, b) => (b[1].length - a[1].length) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  const kept = ordered.slice(0, MALFORMED_MAX_BUCKETS);
-  const dropped = ordered.slice(MALFORMED_MAX_BUCKETS);
-
-  const buckets = kept.map(([reasonCode, items]) => {
-    const sorted = [...items].sort((a, b) => (a.rawIndex ?? 0) - (b.rawIndex ?? 0));
-    const exemplars = sorted.slice(0, MALFORMED_MAX_EXEMPLARS).map((m) => {
-      // Validate rawIndex before using it — an out-of-range value records the
-      // reason with a null anchor rather than indexing garbage or throwing.
-      const idx = Number.isInteger(m.rawIndex) && m.rawIndex >= 0 && m.rawIndex < rawFindings.length
-        ? m.rawIndex : null;
-      const anchor = idx === null ? null : (rawFindings[idx]?.anchor ?? rawFindings[idx]?.triggerAnchor ?? null);
-      return {
-        rawIndex: idx,
-        reasonDetail: clip(m.reasonDetail ?? null, MALFORMED_MAX_DETAIL_BYTES),
-        rawAnchor: anchor === null ? null : clip(anchor, MALFORMED_MAX_ANCHOR_BYTES),
-      };
-    });
-    return {
-      reasonCode,
-      count: items.length,                       // count is over ALL, not the exemplars
-      exemplars,
-      truncated: items.length > exemplars.length,
-      omittedCount: items.length - exemplars.length,
-    };
-  });
-
-  if (dropped.length > 0) {
-    buckets.push({
-      reasonCode: MALFORMED_OTHER_KEY,
-      count: dropped.reduce((n, [, items]) => n + items.length, 0),
-      exemplars: [],
-      truncated: true,
-      omittedCount: dropped.reduce((n, [, items]) => n + items.length, 0),
-      distinctReasonCodes: dropped.length,
-    });
-  }
-  return buckets;
-}
+// Extracted to scripts/lib/audit/malformed-details.mjs so the tiered pipeline
+// can produce the SAME breakdown for `_stageBreakdown.discoveryMalformedReasons`
+// without importing this CLI. One bounding policy, not two free to drift — the
+// field's whole contract is that identical input yields identical records.
 
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
@@ -438,4 +346,4 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 // Exported plainly: a pure, side-effect-free helper with nothing to gate. The
 // earlier __testExports wrapper sat directly above an unconditional export of
 // the same symbol, so it asserted a restriction it did not impose.
-export { boundMalformedDetails };
+export { boundMalformedDetails };   // re-exported: canonical home is lib/audit/malformed-details.mjs

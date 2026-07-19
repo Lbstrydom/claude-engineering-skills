@@ -140,6 +140,11 @@ export function discoverPlans(root = process.cwd()) {
         title: planTitle,
         path: `${rel}/${name}`,
         status: parsed.raw ?? null,
+        // Present ONLY when the Status line is duplicated, so a surface can name
+        // the conflicting values instead of showing a bare "malformed" badge the
+        // operator has to open the file to interpret. Absent on every healthy
+        // plan, so no renderer has to special-case the normal path.
+        statusConflict: parsed.rawStatusValues ?? null,
         date,
         malformed,
         // Full body for inline render in the dashboard's Plans tab.

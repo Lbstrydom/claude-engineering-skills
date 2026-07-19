@@ -57,6 +57,7 @@ import { readFilesAsContext, safeReadFile } from '../file-io.mjs';
 import { redactSecrets } from '../sensitive-egress-gate.mjs';
 import { shouldSkipForIndexing, formatSkipLog, normalisePath } from '../sensitive-paths.mjs';
 import { buildDiffPathMap, renderDiffPathTable, prepareCandidates } from './diff-path-map.mjs';
+import { boundMalformedDetails } from './malformed-details.mjs';
 import { processFindings, computeAuditVerdict } from './findings-pipeline.mjs';
 import { mergeIntoEnvelopes, flattenEnvelopeToFinding } from './candidate-envelope.mjs';
 import { runStage0EvidenceTriage, resolveScopeBucketForFinding } from './evidence-triage.mjs';
@@ -1300,6 +1301,23 @@ export async function runTieredAuditPipeline(ctx) {
       // Raw-level invariant: discoveryMalformedRaw + discoveryContradictedRaw +
       // (raw findings contributing to envelopes) === discoveryRawFindings.
       discoveryMalformedRaw: malformedRaw.length,
+      // WS-E2 leg (b). The COUNT above says how many; it cannot say which SHAPE,
+      // so until now a malformed window could only be diagnosed from a live
+      // repro — which is precisely what the 2026-07-14 incident cost. The
+      // consumer (`tiered-shadow-compare.mjs`) has always READ this key; nothing
+      // ever wrote it, so the field the Phase-14 window reads was permanently
+      // null and `?? null` made "never written" indistinguishable from "absent
+      // this run".
+      //
+      // Three states, and keeping them distinct IS the fix:
+      //   null → nothing wrote it (pre-field row, or a run that never got here)
+      //   []   → this run WAS measured and had no malformed anchors
+      //   [..] → measured, and these are the bounded reasons
+      // So this writes `[]` rather than omitting on the zero case. The
+      // never-ran fallback path deliberately does NOT set the key at all (see
+      // the early-return `_stageBreakdown`), because there a zero would claim a
+      // measurement that never happened.
+      discoveryMalformedReasons: boundMalformedDetails(malformedRaw, rawFindings),
       // A model claim the diff DISPROVES — the model's error, NOT our contract
       // bug. Reported separately for the same reason `malformed` was split out
       // of `rejected` in the first place: blending the two owners is what let a

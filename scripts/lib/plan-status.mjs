@@ -46,9 +46,12 @@ const SEPARATOR = /[\s—–(:,.;]/;
  * Parse a plan document's Status line.
  * @param {string} content
  * @returns {{ok:true, token:string, kind:'terminal'|'active', raw:string}
- *          | {ok:false, reason:'absent'|'duplicate'|'implemented'|'unrecognized', raw?:string, message?:string}}
+ *          | {ok:false, reason:'absent'|'duplicate'|'implemented'|'unrecognized', raw?:string, rawStatusValues?:string[], message?:string}}
  *   `raw` is the status text as authored (present whenever a Status line was
- *   found) so display surfaces need no second regex.
+ *   found) so display surfaces need no second regex. On `duplicate`, `raw` is
+ *   the FIRST value and `rawStatusValues` carries all conflicting values in
+ *   document order — so a surface can name what disagrees, not merely that
+ *   something does.
  */
 export function parsePlanStatus(content) {
   if (typeof content !== 'string') return { ok: false, reason: 'absent' };
@@ -63,7 +66,23 @@ export function parsePlanStatus(content) {
   STATUS_LINE_RE.lastIndex = 0;
   const matches = [...header.matchAll(STATUS_LINE_RE)];
   if (matches.length === 0) return { ok: false, reason: 'absent' };
-  if (matches.length > 1) return { ok: false, reason: 'duplicate' };
+  if (matches.length > 1) {
+    // Carry the conflicting values (WS-D R3-L1). Two reasons, and the second is
+    // a real bug this closes:
+    //  1. Display: without them the dashboard can say "malformed" but not WHICH
+    //     values disagree, so the operator has to open the file to learn
+    //     anything — and this function's own docstring already promises `raw` is
+    //     "present whenever a Status line was found".
+    //  2. Inclusion: `collect-reference.mjs` derives `hasStatusLine` from
+    //     `parsed.raw != null`, and its documented rule is a UNION — a plan is
+    //     included if it has a Status line OR a `# Plan:` H1. A plan with TWO
+    //     Status lines self-evidently HAS one, so returning no `raw` made it
+    //     fail the very signal it satisfies twice over.
+    // `raw` is the first value (so single-value consumers keep working);
+    // `rawStatusValues` is the full conflicting set, in document order.
+    const values = matches.map((m) => (m[1] ?? '').trim());
+    return { ok: false, reason: 'duplicate', raw: values[0], rawStatusValues: values };
+  }
 
   // `raw` is the status text exactly as written (minus surrounding whitespace).
   // Returned so a display surface — the dashboard — can show what the author
