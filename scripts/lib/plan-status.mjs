@@ -124,6 +124,7 @@ export function selectAuditPlan(plansDir, opts = {}) {
   catch { return null; }
 
   const actives = [];
+  const unparseable = [];
   for (const e of entries) {
     if (!e.isFile() || !isSelectableName(e.name)) continue;
     const abs = path.join(plansDir, e.name);
@@ -134,7 +135,24 @@ export function selectAuditPlan(plansDir, opts = {}) {
       let mtimeMs = 0;
       try { mtimeMs = fs.statSync(abs).mtimeMs; } catch { /* keep 0 */ }
       actives.push({ path: abs, name: e.name, mtimeMs });
+    } else if (!s.ok) {
+      // A plan whose Status prose doesn't match the vocabulary is INVISIBLE to
+      // selection. Silently skipping it makes "no active plan to audit" a lie by
+      // omission: the honest statement is "I could not read N candidates".
+      // Field case (2026-07-19): a consumer's in-flight plan carried a free-text
+      // Status ("Cluster 1 SHIPPED · Clusters 2c/2d/3 BLOCKED…"), so the plan
+      // actually being implemented could never be selected, while two stale
+      // active plans sat around winning the old mtime tiebreak. That is why the
+      // pre-push audit had produced a verdict zero times.
+      unparseable.push(e.name);
     }
+  }
+  // Report unreadable candidates whatever the outcome — it explains BOTH "nothing
+  // selected" and "selected something surprising". The vocabulary lint
+  // (`check-plan-status.mjs` with no --select) is the enforcing gate; consumers
+  // that don't run it get this as the standing hint.
+  if (unparseable.length > 0) {
+    warn(`${unparseable.length} plan(s) have a non-conforming Status and are INVISIBLE to selection: ${unparseable.join(', ')}. Fix the Status line (active: Draft/Approved/In Progress · terminal: Complete/Superseded) or they can never be audited.`);
   }
   if (actives.length === 0) return null;
 

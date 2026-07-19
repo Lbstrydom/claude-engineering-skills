@@ -250,6 +250,29 @@ describe('plan-status / selectAuditPlan', () => {
     assert.equal(path.basename(sel.path), 'target.md', 'a Windows-separator path must still bind');
   });
 
+  it('reports plans whose Status is non-conforming — they are invisible to selection', () => {
+    // "no active plan to audit" while silently discarding unreadable candidates
+    // is a lie by omission, and it is exactly why a consumer's pre-push audit
+    // produced a verdict zero times (2026-07-19).
+    write('freetext.md', 'Cluster 1 SHIPPED · Cluster 3 BLOCKED');
+    const warnings = [];
+    const sel = selectAuditPlan(plans, { warn: m => warnings.push(m) });
+    assert.equal(sel?.path ?? sel, null);
+    assert.ok(warnings.some(w => /non-conforming Status/.test(w) && /freetext\.md/.test(w)),
+      'must name the unreadable plan, not just report nothing to do');
+  });
+
+  it('reports unreadable candidates even when a different plan IS selected', () => {
+    // The hint must not be conditional on failure — an unreadable plan alongside
+    // a selectable one is how you end up auditing the wrong thing and not knowing.
+    write('good.md', 'Draft');
+    write('freetext.md', 'mostly done I think');
+    const warnings = [];
+    const sel = selectAuditPlan(plans, { warn: m => warnings.push(m) });
+    assert.equal(path.basename(sel.path), 'good.md');
+    assert.ok(warnings.some(w => /non-conforming Status/.test(w)), 'hint must fire on the success path too');
+  });
+
   it('a changed *-audit-summary.md never binds (it is not a selectable plan)', () => {
     write('a.md', 'Draft');
     write('b.md', 'Draft');

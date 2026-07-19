@@ -525,8 +525,33 @@ function main() {
     managedFiles, manifest, args, repoReceiptPath, globalReceiptPath,
     { repo: prevRepoReceipt, global: prevGlobalReceipt },
   );
-  ensureAuditGitignore(repoRoot, { dryRun: args.dryRun });
-  ensureAuditDeps(repoRoot, { dryRun: args.dryRun });
+  // ── Repo-scope maintenance — gated on the SAME authority the delete-pruner
+  // uses, so the two can't drift about what a `--surface` selection owns.
+  //
+  // `--surface claude` writes only global files (this module's own docstring
+  // above says exactly that, and authoritativeScopesFor encodes it), so it must
+  // not mutate REPO files either. Both calls below do: ensureAuditGitignore
+  // rewrites .gitignore, ensureAuditDeps rewrites package.json and shells out to
+  // npm install.
+  //
+  // Why this mattered (2026-07-19): the source repo's own post-merge hook runs
+  // `install-skills.mjs --local --surface claude --force` after EVERY git pull,
+  // so a global skill refresh was silently appending a consumer-shaped managed
+  // block to the source repo's .gitignore — every pattern of it already covered
+  // by the existing bare `.audit/` rule, i.e. pure churn. Same shape as the
+  // 2026-07-15 bundle-pattern incident that gitignore.mjs's source-repo filter
+  // was added for; that filter caught the BUNDLE patterns but not the
+  // operational-state ones, because the real defect is a global-surface run
+  // touching repo scope at all.
+  //
+  // Consumers are unaffected: their managed gitignore block is owned by
+  // `npm run sync` (sync-gitignore.mjs::updateManagedBlock), and a full
+  // `--surface both` install still maintains both of these.
+  const repoScopeAuthority = authoritativeScopesFor(args.surface);
+  if (repoScopeAuthority === null || repoScopeAuthority.has('repo')) {
+    ensureAuditGitignore(repoRoot, { dryRun: args.dryRun });
+    ensureAuditDeps(repoRoot, { dryRun: args.dryRun });
+  }
 
   console.log(`\n${G}Installed ${result.written} files${X}${result.deleted ? `, deleted ${result.deleted}` : ''}`);
   console.log(`  Bundle version: ${manifest.bundleVersion}`);
