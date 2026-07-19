@@ -1,5 +1,63 @@
 # Project Status Log
 
+## 2026-07-19 — a "cloud-off" test that was never cloud-off, and the sweep that found no siblings
+
+`tests/hook-arch-memory-check.test.mjs` failed intermittently in the pre-push
+gate (`5163f97`). Not a timing problem.
+
+**Root cause: the isolation named a variable that no longer exists.** The test
+blanked `SUPABASE_AUDIT_URL` / `SUPABASE_AUDIT_ANON_KEY` to force cloud-off, but
+those were **sunset in M4**. The store reads `AUDIT_DB_URL` and its aliases,
+inherited through `...process.env` and re-injected from `~/.audit-loop.env` by
+`config.mjs`. So a test whose own comment read *"cloud-off path — no real
+Supabase needed"* performed a live embed + RPC on every run: **4.5s measured
+against a 10s spawn timeout**, which under parallel suite load intermittently
+blew it (the observed failure was exactly 10009ms). Hermetic it is ~1.8s.
+
+Blanking the vars alone would not have fixed it — `HOME`/`USERPROFILE` must be
+redirected too or the shared cloud config restores the DSN. Applied in `runHook`
+rather than the single test: every spawn in that file is a unit test of the hook,
+and none should be able to reach a store.
+
+**The assertion was also unfalsifiable.** It read
+`length === 0 || includes('Architectural-memory consultation')` — true on *both*
+outcomes, so a hook silently emitting nothing satisfied it exactly as well as one
+emitting the callout. With real isolation the output is deterministic, so it now
+asserts the callout, the reason (`Cloud store offline`), and the remedy. A latency
+guard pins the isolation itself. 5/5 clean runs; mutation-tested.
+
+### The sweep: one bug, not a class
+
+Swept for sibling suites with the same stale-isolation shape. **55 suites probed,
+zero other leaks.**
+
+The method matters more than the result. The first probe was timing-based (A/B
+with `HOME` redirected); validating it against the known-bad case showed only a
+**~1.2s delta**, too close to the noise floor to trust — and it produced one
+false positive (`hook-snippet-behaviour`, 1023ms) that vanished on re-run as a
+cold-start artifact. Replaced with a decisive probe: **a poisoned
+`~/.audit-loop.env` pointing `AUDIT_DB_URL` at an unroutable DSN**, so any suite
+that actually connects errors out. Validated in both directions first — it fails
+the reverted fix and passes the fixed one.
+
+| Population | Suites | Leaking |
+|---|---|---|
+| Subprocess tests blanking `AUDIT_DB_URL` but not redirecting `HOME` | 17 | 0 |
+| Subprocess tests with no store isolation at all | 38 | 0 |
+
+The static gap is real in principle but not hit in practice: those suites either
+never construct a pool or degrade cleanly when the DSN is unusable. The one that
+broke was specifically a test spawning a **hook** that calls `cross-skill.mjs`,
+which does the embed + RPC — a narrow shape, not a systemic one. **Deliberately
+did not "fix" the other 55**: changing suites that demonstrably do not leak is
+churn, and it would dilute the one real fix.
+
+Reusable if this recurs: poison the shared config rather than timing the suite,
+and validate the probe against a known positive before trusting a clean sweep.
+Also observed, not chased: `maintenance-checks` failed once inside a parallel
+batch and passed 5 subsequent runs — a second intermittent failure today in an
+unrelated suite, so there may be a general contention flake under batch runs.
+
 ## 2026-07-19 — E1 closes a live gate hole; two more findings shrank under inspection
 
 Continuation of the WS-C2 session below. Four pieces landed: E1 (`caf2621`), the
