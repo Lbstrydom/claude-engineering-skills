@@ -1080,3 +1080,82 @@ bypassing `resolveDepth()` in `brainstorm-round.mjs`.
 | WS-C | **Complete** (2026-07-19) | C0 measured (no live corruption). C1: both findings proved false positives → reasoned `@on-conflict-ok` pragmas (flow-sensitivity, not a lint gap worth AST flow analysis). C3: `regression_specs` reviewed by hand — correct on both branches, verdict recorded in code. C4: dead writers deleted (`syncExperiments` targeted a table that does not exist). **C2: measured, and the measurement killed the prescribed migration** — all 6 findings resolved with **no DDL at all** (see §5 C2 log). `on-conflict:all` → 0 gating. |
 | WS-D | **INCOMPLETE** — label corrected 2026-07-19 | The core swap DID land: `collect-reference.mjs:29` imports `parsePlanStatus`, buckets on `parsed.kind === 'terminal'` (`:126`), and the inline line-84 regex is deleted with the two-parser hazard documented (`:115-119`). **Not done**: (1) the `duplicate` typed presentation contract (R3-L1) does not exist — `parsePlanStatus` returns `{ok:false, reason:'duplicate'}` with **no `raw`** (`plan-status.mjs:66`), and `rawStatusValues`/`displayStatus` appear nowhere. **Severity corrected 2026-07-19** (an earlier revision of this row claimed such a plan is "silently excluded from the dashboard" — that was wrong, and re-reading the collector refuted it): the exclusion at `collect-reference.mjs:121` is `if (!hasStatusLine && !planH1) continue`, which skips only when **both** are false, and `malformed = !dateM || !parsed.ok || !dateParseable` (`:137`) raises the badge off `parsed.ok`. So a duplicate-`Status:` plan carrying a `Plan:` H1 **is** rendered Active with the `malformed` badge, as promised. The real, narrower gap: with no `raw` on the duplicate branch the dashboard cannot **show which conflicting values** were found, so the operator sees "malformed" without the evidence. Worth fixing, but it is a presentation-completeness gap, not a disappearing plan. (2) `docs/completed/` is still scanned (`:69`) vs design item 1's "scans **only** `docs/plans/`". (3) The promised source-scan pin ("collector holds no `Status` regex of its own") does not exist — `tests/dashboard.test.mjs:207-243` is behavioural only, so the correct delete is unprotected against reintroduction. (4) No `duplicate`/`unrecognized` fixtures. |
 | WS-E | **E1 Complete** (2026-07-19); **E2 leg (b) still open** | **E1 landed 2026-07-19** — all four hops. Hop 1: `gitWorktreeTree()` + `gitIndexTree()` ([`vcs.mjs`](../../scripts/lib/vcs.mjs)), captured in [`openai-audit.mjs`](../../scripts/openai-audit.mjs) **before** input collection so the identity names the bytes the audit read, not the tree at completion. The worktree is staged into a throwaway `GIT_INDEX_FILE` (never the repo's index) because an audit reads files on disk and the two diverge on unstaged edits. Hop 2: `audited_sha`/`audited_tree` via `recordConvergenceState`, migration `20260719120000` — the subject is recorded whether or not the run converged, since what was audited is a fact of the run independent of its verdict, and the store copy is what lets a forged local marker be contradicted. Hop 3: `writeGateEvidence` **refuses to write at all** without an identity (evidence-less > evidence that cannot support its claim). Hop 4: `evaluateGateVerification` checks `committedTree === auditedTree` **first** — it is local, free, and the only one of the three checks a post-audit edit cannot satisfy. `--path` partial commits deliberately leave the comparand null and refuse, because the index tree can match while a subset is committed (that would be a false pass). Legacy markers/rows are unverifiable → `not-run`, never backfilled. Proven by the attack itself, end-to-end through the real CLI (`ship-commit-cli.test.mjs` "audit clean tree → edit → commit is REFUSED"), with the wiring mutation-tested. **Still open — E2 leg (b) is a dead read**: `tiered-shadow-compare.mjs:349` reads `_stageBreakdown?.discoveryMalformedReasons`, but nothing anywhere writes that key (both producers at `tiered-pipeline.mjs:641`/`:1288` emit `discoveryMalformedRaw`/`discoveryContradictedRaw`). It is permanently `null`, and `?? null` makes that indistinguishable from "absent" — so "diagnosable from stored rows" holds for the eval record but **not** for the shadow comparison, which is the surface the Phase-14 window actually reads. **E2 leg (a) is done** (`boundMalformedDetails`, `model-eval-discovery.mjs:276`, both budgets + redaction-before-truncation, tested). *Superseded detail follows:* **E1's contract was entirely absent** until this date — `auditedTree`/`auditedSha`/`audited_tree`/`audited_sha` return **zero hits** across `scripts/`, `tests/`, `supabase/`, `docs/reference/`. `buildGateEvidence` (`gate-evidence.mjs:51`) emits only `{runId, sid, round, ts}`; `resolveEvidence` (`commit-trailers.mjs:96-122`) still verifies **recency only** — `const fresh = evidenceMs > headCommitTs * 1000` (`:121`) — with no `committedTree === auditedTree` check. So `AI-Gate: passed` is reachable for a commit whose content was never audited (audit a clean tree → edit → commit; freshness passes). Per this plan's own words that is **worse than the previous honest `not-run`**, because the writer half now ships. **E2 leg (a) is genuinely done** (`boundMalformedDetails`, `model-eval-discovery.mjs:276`, both budgets + redaction-before-truncation, tested). **Leg (b) is a dead read**: `tiered-shadow-compare.mjs:349` reads `_stageBreakdown?.discoveryMalformedReasons`, but nothing anywhere writes that key (both producers at `tiered-pipeline.mjs:641`/`:1288` emit `discoveryMalformedRaw`/`discoveryContradictedRaw`). It is permanently `null`, and `?? null` makes that indistinguishable from "absent" — so the "diagnosable from stored rows" claim holds for the eval record but **not** for the shadow comparison, which is the surface the Phase-14 window actually reads. |
+
+## 11. Remaining clusters (declared 2026-07-19 for `/cycle --autonomous`)
+
+Every item below was **re-verified against the code** on 2026-07-19 before being
+declared — no cluster rests on a relayed finding. That mattered: WS-D item 1's
+severity was overstated in §10 and had to be corrected first (see the WS-D row),
+and the same pass is why C1's "highest priority" items turned out to be false
+positives. Clusters are ordered by real severity, not by workstream letter.
+
+### Cluster E2b — the dead read (only genuine correctness defect left)
+
+- **Verified**: `grep -rn discoveryMalformedReasons scripts/` returns exactly **1**
+  hit — the *read* at `tiered-shadow-compare.mjs:349`. Both `_stageBreakdown`
+  producers (`tiered-pipeline.mjs:641`, `:1288`) emit `discoveryMalformedRaw` /
+  `discoveryContradictedRaw`. Nothing writes the key.
+- **Why it matters**: the field is permanently `null`, and the `?? null` idiom
+  makes "never written" indistinguishable from "absent this run". The Phase-14
+  shadow-validation window reads this surface, so the E2 claim "the blocker is
+  diagnosable from stored rows" is true of the eval record and false here.
+- **Scope**: `scripts/lib/audit/tiered-pipeline.mjs`,
+  `scripts/lib/audit/tiered-shadow-compare.mjs`.
+- **Acceptance**: the producer writes the bounded reasons (reusing
+  `boundMalformedDetails` — leg (a) is already built and tested, do NOT
+  reimplement); a test asserts a non-null value survives producer → comparison;
+  and **absent must be distinguishable from empty** — a run that genuinely had no
+  malformed anchors must not read the same as a run where nothing wrote the key.
+  That distinction is the whole finding; a fix that restores the value but keeps
+  the ambiguity has not fixed it.
+
+### Cluster D-pin — protect the correct delete (highest WS-D value)
+
+- **Verified**: no test reads `collect-reference.mjs` as source; the closest
+  (`tests/arch-memory-followups.test.mjs`) exercises `discoverPlans` behaviourally.
+- **Why it matters**: WS-D's real achievement was *deleting* the collector's
+  second `Status:` regex so one parser owns the contract. Nothing prevents its
+  reintroduction, and a behavioural test cannot catch a second parser that happens
+  to agree today.
+- **Acceptance**: a source-scan test asserting the collector holds no `Status`
+  regex of its own, plus `duplicate` / `unrecognized` fixtures for `discoverPlans`
+  (currently absent — `grep duplicate tests/dashboard.test.mjs` is empty).
+  The test must fail if the regex is pasted back.
+
+### Cluster D-scope — `docs/completed/` still scanned
+
+- **Verified**: `collect-reference.mjs:69` — `const scanDirs = ['docs/plans',
+  'docs/completed']`.
+- **Tension to resolve, not paper over**: design item 1 says "scans **only**
+  `docs/plans/`", but the archiver was deleted and this is documented back-compat.
+  Decide **one** way and make code and doc agree: either drop the directory (and
+  say what happens to any file still there), or amend the acceptance criterion to
+  say the second dir is retained deliberately. Do not leave the plan asserting one
+  thing while the code does another.
+
+### Cluster D-raw — `duplicate` presentation contract (LOW)
+
+- **Verified**: `plan-status.mjs:66` returns `{ok:false, reason:'duplicate'}` with
+  no `raw`; `rawStatusValues` / `displayStatus` appear nowhere.
+- **Correctly sized**: the dashboard already renders such plans Active with the
+  `malformed` badge (see the WS-D row). The gap is only that it cannot show *which*
+  values conflicted. Presentation completeness, not a disappearing plan.
+- **Acceptance**: the duplicate branch carries the conflicting values; the
+  dashboard shows them; a fixture covers it. Resist widening this into a
+  status-vocabulary refactor — the parser contract is otherwise sound.
+
+### Cluster B-sweep — the sibling sweep (non-code)
+
+- **Verified**: no such checklist exists in this document; only `_llmCondense` was
+  ever bounded.
+- **Acceptance**: a grep-driven enumeration of every optional LLM enrichment
+  awaited inline in an audit entry point (`initAuditBrief`, `generateRepoProfile`,
+  arch-memory queries), each recorded as bounded or not, appended to the WS-B log.
+  An unbounded sibling can still hang an audit, which is the failure B1 fixed for
+  exactly one call site.
+
+**Not in scope for these clusters**: the four `[Architecture]` domain-map findings
+(`prompt-seeds.mjs` brainstorm→requirements, dashboard/install→plan-status,
+migration→bootstrap coupling, `check-plan-status.mjs` placement). They recurred in
+three separate audits this session and were each deferred as independent under the
+impact test. They deserve their own plan, not a silent fold-in here.
