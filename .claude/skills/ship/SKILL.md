@@ -423,6 +423,25 @@ node scripts/ship-commit.mjs \
 git push origin <current-branch>
 ```
 
+**Shared working tree — use `--path`.** If `git status` shows staged changes
+that are NOT yours (another agent or a parallel session working in the same
+checkout), do NOT commit the index: that bundles their in-flight work into
+your commit and corrupts blame for both. Add one `--path <file>` per file you
+are shipping:
+
+```bash
+node scripts/ship-commit.mjs \
+  --message-file .claude/tmp/ship-commit-msg-<epoch>.txt \
+  --skill ship --models <csv> --gate <value> \
+  --path scripts/foo.mjs --path tests/foo.test.mjs
+```
+
+This commits those paths' worktree contents and leaves every other index
+entry staged and untouched. Untracked paths are handled (marked
+intent-to-add, rolled back if the run is rejected). Do **not** fall back to a
+bare `git commit -- <paths>` — it scopes correctly but drops the `AI-*`
+provenance trailers, which is exactly what this helper exists to prevent.
+
 (Consumer repos: the synced copy of this file already carries the
 rewritten `scripts/.claude-skills/ship-commit.mjs` path.)
 
