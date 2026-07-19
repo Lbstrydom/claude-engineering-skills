@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 127 terminal · 22 audit summaries · 4 reference docs**
+**5 active · 127 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,6 +21,7 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
+| [Arch-Memory Consultation — Close the Query/Index Asymmetry](./arch-memory-band-recalibration.md) | `Draft` |  |
 | [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `In Progress` | WS-0 and WS-A Complete (live repair executed 2026-07-19). WS-B–E pending. |
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
