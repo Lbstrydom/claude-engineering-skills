@@ -950,8 +950,30 @@ async function main() {
       }
     }
     if (orphanedTracked.length) {
-      console.log(`  ${Y}↳ ${orphanedTracked.length} file(s) we no longer sync are still present${X} ${D}(likely renamed upstream; review + \`git rm\` in the consumer if stale — sync will NOT delete a tracked file):${X}`);
-      for (const f of orphanedTracked.slice(0, 8)) console.log(`    ${D}${f}${X}`);
+      console.log(`  ${Y}↳ ${orphanedTracked.length} file(s) we no longer sync are still present${X} ${D}(likely renamed upstream; sync will NOT delete a tracked file):${X}`);
+      for (const f of orphanedTracked.slice(0, 8)) {
+        // Count what still CITES the orphan before suggesting its removal.
+        // Naming the path alone is a trap: the first real case (the
+        // consistency-contract doc, before it moved under docs/reference/) had
+        // 7 inbound citations including live source comments in a consumer, so
+        // a bare `git rm` would have traded a stale
+        // duplicate for 7 dangling references — the exact failure the
+        // reference-integrity gate exists to prevent. Generated surfaces
+        // (.gitattributes) self-heal on a rename because they're derived from
+        // the sync file list; hand-written prose and code comments do not.
+        // So: count them here, and let the operator decide.
+        let citations = 0;
+        try {
+          const out = execSync(`git grep -l -F -- "${f}"`, {
+            cwd: repo.path, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'],
+          });
+          citations = out.split('\n').filter(l => l.trim() && l.trim() !== f).length;
+        } catch { /* exit 1 = no matches; any git failure ⇒ report 0, never block */ }
+        const hint = citations > 0
+          ? `${Y}— ${citations} file(s) still cite it; repoint before removing${X}`
+          : `${D}— no inbound citations${X}`;
+        console.log(`    ${D}${f}${X} ${hint}`);
+      }
     }
     if (gcDeletions.length) {
       if (DRY_RUN) {
