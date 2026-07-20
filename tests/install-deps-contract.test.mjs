@@ -17,7 +17,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { bundleDeps, requiredDeps, OPTIONAL_DEPS, findMissingDeps } from '../scripts/lib/install/deps.mjs';
+import { execFileSync } from 'node:child_process';
+
+import { bundleDeps, requiredDeps, OPTIONAL_DEPS, findMissingDeps, npmInvocation } from '../scripts/lib/install/deps.mjs';
 import { packageNameFromSpecifier, collectImportClosure } from '../scripts/lib/module-graph.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -72,6 +74,30 @@ describe('consumer dependency contract', () => {
     const res = findMissingDeps(path.join(REPO_ROOT, 'tests', '__no_such_repo__'));
     assert.equal(res.hasPackageJson, false);
     assert.deepEqual(res.missing, []);
+  });
+});
+
+describe('npmInvocation', () => {
+  it('actually spawns npm without a shell', () => {
+    // The regression: execFileSync('npm', …) is ENOENT on Windows (npm is
+    // npm.cmd) and 'npm.cmd' is EINVAL under Node >= 22.19's .cmd hardening,
+    // so consumer dep auto-install silently never ran there. Asserting on the
+    // returned shape alone would not have caught that — only executing does.
+    const { bin, prefix } = npmInvocation();
+    const out = execFileSync(bin, [...prefix, '--version'], {
+      encoding: 'utf-8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    assert.match(out.trim(), /^\d+\.\d+\.\d+/, `expected an npm version, got: ${out.trim()}`);
+  });
+
+  it('never routes through a shell', () => {
+    // shell:true would fix the spawn and reopen quoting pitfalls on argv that
+    // carries package names. The contract is: no shell, ever.
+    const { bin } = npmInvocation();
+    if (process.platform === 'win32') {
+      assert.ok(!/\.cmd$/i.test(bin) || bin === 'npm.cmd', 'win32 must prefer node + npm-cli.js');
+    }
+    assert.ok(typeof bin === 'string' && bin.length > 0);
   });
 });
 

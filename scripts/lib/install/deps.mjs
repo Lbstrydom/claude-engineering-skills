@@ -103,6 +103,39 @@ export function requiredDeps() {
 const G = '\x1b[32m', Y = '\x1b[33m', X = '\x1b[0m', D = '\x1b[2m';
 
 /**
+ * Argv prefix that runs npm without a shell.
+ *
+ * **Why not just `execFileSync('npm', …)`.** On Windows the npm on PATH is
+ * `npm.cmd`, and Node >= 22.19 refuses to spawn `.cmd` without `shell: true`
+ * (CVE-2024-27980 hardening) — bare `'npm'` fails ENOENT, `'npm.cmd'` fails
+ * EINVAL. So dependency auto-install had never once run on Windows: every
+ * sync printed "Installing required audit-loop deps", failed ENOENT, and
+ * fell through to the manual-command hint. That silence is why the
+ * REQUIRED_DEPS drift in upstream#57 stayed invisible for so long — the
+ * mechanism meant to repair it was itself dead.
+ *
+ * `shell: true` would fix the spawn and reopen quoting pitfalls on
+ * caller-influenced argv. Instead run npm's own JS entry point under the
+ * CURRENT node binary — no shell, no `.cmd`, no quoting. Same pattern as
+ * `lib/playwright-runner.mjs`.
+ *
+ * @returns {{bin: string, prefix: string[]}}
+ */
+export function npmInvocation() {
+  const candidates = [
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ];
+  for (const cli of candidates) {
+    if (fs.existsSync(cli)) return { bin: process.execPath, prefix: [cli] };
+  }
+  // No bundled npm-cli.js (unusual layout). Fall back to the PATH lookup,
+  // which still works on POSIX; Windows will report the spawn error rather
+  // than pretend the install happened.
+  return { bin: process.platform === 'win32' ? 'npm.cmd' : 'npm', prefix: [] };
+}
+
+/**
  * Check which REQUIRED/OPTIONAL deps are missing in a target repo.
  *
  * @param {string} repoRoot — absolute path to consumer repo root
@@ -170,7 +203,8 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
   if (missing.length > 0) {
     process.stderr.write(`  ${D}Installing required audit-loop deps in ${path.basename(repoRoot)}: ${missing.join(', ')}${X}\n`);
     try {
-      execFileSync('npm', ['install', '--save-dev', '--legacy-peer-deps', ...missing], {
+      const { bin, prefix } = npmInvocation();
+      execFileSync(bin, [...prefix, 'install', '--save-dev', '--legacy-peer-deps', ...missing], {
         cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: timeoutMs,
       });
       installed.push(...missing);
@@ -186,7 +220,8 @@ export function ensureAuditDeps(repoRoot, { dryRun = false, quiet = false, timeo
   if (missingOptional.length > 0) {
     process.stderr.write(`  ${D}Installing optional audit-loop deps in ${path.basename(repoRoot)}: ${missingOptional.join(', ')}${X}\n`);
     try {
-      execFileSync('npm', ['install', '--save-dev', '--legacy-peer-deps', ...missingOptional], {
+      const { bin, prefix } = npmInvocation();
+      execFileSync(bin, [...prefix, 'install', '--save-dev', '--legacy-peer-deps', ...missingOptional], {
         cwd: repoRoot, stdio: ['pipe', 'pipe', 'pipe'], timeout: timeoutMs,
       });
       installedOptional.push(...missingOptional);
