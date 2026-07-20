@@ -31,17 +31,46 @@ pre-ship-empirical-verify lesson again. A guard was added to that same file in
 this pass; had we only added the guard and never exercised `--dry-run`, it would
 have looked fixed.
 
-Also flagged, not actioned (each is a separate change):
-- `build-manifest.mjs` calls `main()` at module scope while a test imports it.
-  Harmless today (a test child's argv is empty, so the guard no-ops), but it is
-  latent coupling — the sibling `generate-plans-index.mjs` has an `isMain` guard
-  and this one should too.
-- `sync-to-repos.mjs` prints `npm run hooks:install --target <name>`. npm
-  swallows `--target` as its own config unless `--` precedes it, so that
-  documented command silently installs to ALL consumer repos rather than one.
-- `cross-skill.mjs --paths` / `--since` are documented in plans but no handler
-  reads them; `backfill-outcomes.mjs` reads `--repo` while `cross-skill.mjs`
-  passes `--repo-id` for the same concept.
+## 2026-07-20 — three more "known flag, wrong plumbing" — one silently unscoped a write
+
+Follow-ups to the guard sweep. All four were the #41 shape rather than the #57
+shape: the flag is *known*, so no unknown-flag guard could ever have caught
+them. That is now three instances of that class in one session, one below this
+repo's stated bar for building a detector — worth watching.
+
+**`cross-skill.mjs learning-backfill-outcomes --repo X` ran UNSCOPED.** The
+bridge read `--repo-id`; the standalone `backfill-outcomes.mjs` reads `--repo`.
+Two entry points to the same `runBackfill`, two spellings. Because `--repo` is
+globally allowlisted here for other subcommands, it passed the flag guard,
+resolved to `null`, and backfilled without a repo filter — a silently wrong
+scope on a command that writes to the shared store. Reproduced before the fix
+and confirmed after: `resolve.examined` goes **500 → 0** once the scope is
+honoured. The bridge now accepts both, matching the sibling entry point rather
+than inventing a third convention.
+
+**`--paths` was allowlisted so it could be silently dropped.** It was added to
+`KNOWN_FLAGS` reasoning that a doc-following caller shouldn't break. That was
+backwards: `arch-memory-planning-anchor.md` R3-M1 fixed every cross-skill
+subcommand on a single `--json` payload ("No `--paths` csv form"), so
+allowlisting it made the CLI *accept and ignore* it — the exact defect the guard
+exists to stop, with no signal to the caller. Now rejected (exit 2), and the two
+stale plan docs that showed the argv form are corrected. `--since` stays: it is
+real for `learning-replay`, phantom only for `list-consistency-candidates`,
+whose doc is likewise fixed.
+
+**`sync-to-repos.mjs` printed a command that hits every consumer.** It told
+operators `npm run hooks:install --target <name>`; npm eats `--target` as its
+own config unless `--` precedes it and forwards the value as a bare positional
+the script ignores. Verified: the no-`--` form reports both wine-cellar-app and
+ai-organiser, the `--` form only the named repo. The runbook already had it
+right; only this line was wrong.
+
+**`build-manifest.mjs` now has an `isMain` guard.** It called `main()` at module
+scope while a test imports it for `buildManifest`/`canonicaliseForHash` — so
+importing the module also regenerated the manifest, and after the flag guard
+landed, asserted against the test runner's argv. Benign only by accident (a
+`node --test` child has an empty `argv.slice(2)`). Matches the sibling
+`generate-plans-index.mjs`.
 
 ## 2026-07-20 — the DB seam had no coverage anywhere, for two days
 

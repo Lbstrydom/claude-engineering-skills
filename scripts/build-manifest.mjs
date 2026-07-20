@@ -280,13 +280,30 @@ function readManifestTextOrNull() {
   } catch { return null; }
 }
 
-try {
-  main();
-} catch (err) {
-  // A usage mistake is not a crash: print the diagnostic alone, no stack.
-  if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
-    console.error(err.message);
-    process.exit(2);
+// Only run when invoked as a script. `main()` used to run unconditionally at
+// module scope while tests/skills-artifact-freshness-wiring.test.mjs imports
+// `buildManifest`/`canonicaliseForHash` from here — so importing for the
+// exports also REGENERATED the manifest, and (after the flag guard landed)
+// asserted against the test runner's argv. That was benign only by accident: a
+// `node --test` child gets an empty argv.slice(2), so the guard no-ops. Anyone
+// forwarding flags into per-file test children would have made the import
+// throw. Matches the sibling generate-plans-index.mjs.
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+
+if (isMain) {
+  try {
+    main();
+  } catch (err) {
+    // A usage mistake is not a crash: print the diagnostic alone, no stack.
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      console.error(err.message);
+      process.exit(2);
+    }
+    throw err;
   }
-  throw err;
 }

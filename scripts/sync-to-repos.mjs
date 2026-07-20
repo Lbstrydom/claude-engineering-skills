@@ -1457,7 +1457,15 @@ async function main() {
     // re-install — a strict improvement, never a regression (worst case = today's
     // behaviour). Surfaced, not auto-run, so we never clobber an operator hook.
     if (!DRY_RUN) {
-      console.log(`  ${D}If a consumer uses the pre-push audit hook, re-run \`npm run hooks:install --target <name>\` to pick up bundle hook changes.${X}`);
+      // The `--` before `--target` is load-bearing, not style. Without it npm
+      // eats `--target` as its own config and forwards the VALUE as a bare
+      // positional, which this script ignores — so `npm run hooks:install
+      // --target wine` silently installs into EVERY consumer repo instead of
+      // one. Verified 2026-07-20: the no-`--` form reports both wine-cellar-app
+      // and ai-organiser; the `--` form reports only the named repo. Same
+      // "silently did more than you asked" family as the unknown-flag gate,
+      // which cannot catch it because the flag never reaches argv at all.
+      console.log(`  ${D}If a consumer uses the pre-push audit hook, re-run \`npm run hooks:install -- --target <name>\` to pick up bundle hook changes.${X}`);
     }
   }
 

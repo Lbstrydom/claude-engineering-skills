@@ -179,10 +179,14 @@ const KNOWN_FLAGS = [
   '--memory', '--kind', '--ref', '--window-hours',
   // ── get-friction-neighbourhood / get-incident-neighbourhood ───────────────
   '--prompt', '--k',
-  // `--paths` is documented in docs/plans/security-memory-v1.md's acceptance
-  // criteria for get-incident-neighbourhood but is read from the JSON payload,
-  // not argv. Accepted (not rejected) so a doc-following caller is not broken.
-  '--paths',
+  // `--paths` is deliberately NOT here. An older acceptance criterion
+  // (docs/plans/security/PLAN.md) shows `get-incident-neighbourhood --paths a,b`,
+  // but `arch-memory-planning-anchor.md` R3-M1 later fixed the interface as
+  // `--json '{"targetPaths":[…]}'` — "No `--paths` csv form" — and the handler
+  // reads the payload. Allowlisting it would make the CLI ACCEPT the flag and
+  // silently drop it: precisely the defect this guard exists to stop, and worse
+  // than rejecting it, because the doc-following caller gets no signal. The
+  // stale criterion has been corrected instead.
   // ── learning-backfill-outcomes ────────────────────────────────────────────
   '--dry-run', '--skip-drain', '--skip-resolve', '--rebuild-stats',
   // ── learning-quickfix-stats ───────────────────────────────────────────────
@@ -2210,7 +2214,17 @@ async function cmdLearningWeeklyReview() {
 async function cmdLearningBackfillOutcomes() {
   const { runBackfill } = await import('./learning/backfill-outcomes.mjs');
   const result = await runBackfill({
-    repoId:       argOption('repo-id') || null,
+    // `--repo` is accepted as well as `--repo-id`: the two entry points to
+    // runBackfill disagreed on the spelling, and `--repo` is globally
+    // allowlisted here for other subcommands — so
+    // `learning-backfill-outcomes --repo X` passed the flag guard, resolved to
+    // null, and ran the backfill UNSCOPED. Silently wrong scope on a mutating
+    // command, which is the failure this file's guard is meant to prevent and
+    // could not: the flag is known, just read under a different name.
+    // Reproduced 2026-07-20 before the fix. The standalone
+    // backfill-outcomes.mjs has always mapped `--repo` to repoId, so this makes
+    // the two agree rather than inventing a third convention.
+    repoId:       argOption('repo-id') || argOption('repo') || null,
     dryRun:       rest.includes('--dry-run'),
     skipDrain:    rest.includes('--skip-drain'),
     skipResolve:  rest.includes('--skip-resolve'),
