@@ -58,7 +58,15 @@ function runHook(args = [], opts = {}) {
     stdout = execFileSync('bash', [HOOK, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
       encoding: 'utf-8',
-      timeout: 10000,
+      // A HANG guard, not a latency assertion. At 10s this was the same
+      // load-sensitive-assertion trap the latency guard below was deleted for:
+      // the hermetic hook runs ~1.8s alone, but a full parallel suite pushed a
+      // spawn past 10s and failed the run (observed 10019ms in a pre-push
+      // sandbox, and 10009ms historically). Latency is asserted separately by
+      // the 'hook latency' suite; this bound exists only so a genuinely hung
+      // hook cannot wedge the suite forever, so it should be far above any
+      // plausible load-induced delay.
+      timeout: 60000,
       // Hermetic by DEFAULT, not per-test: every spawn in this file is a unit
       // test of the hook's own logic, and none of them should be able to reach
       // a real store. A caller can still override via opts.env.
