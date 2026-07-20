@@ -136,6 +136,14 @@ export function shouldTrack(file, content, parseStatus) {
     if (status.ok && status.kind === 'terminal') {
       return { tracked: false, reason: `terminal plan (${status.token}) — a historical record` };
     }
+    // Parked is untracked for a DIFFERENT reason than terminal: the work can
+    // still resume, so it is not a historical record — but staleness measures
+    // "is in-flight work going stale?", and consciously-shelved work has no
+    // progress to chase. Nagging about it teaches operators to ignore the
+    // staleness signal, which costs more than the missed reminder.
+    if (status.ok && status.kind === 'parked') {
+      return { tracked: false, reason: `parked plan — deliberately shelved, not in flight` };
+    }
   }
   return { tracked: true, reason: 'live' };
 }

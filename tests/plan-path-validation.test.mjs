@@ -12,6 +12,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import fs from 'node:fs';
 
 import { validatePlanPath } from '../scripts/lib/store/plans-ship.mjs';
 import { PLAN_STATUS_VOCABULARY, DB_PLAN_STATUSES, toDbPlanStatus } from '../scripts/lib/plan-status.mjs';
@@ -95,9 +96,34 @@ test('every markdown status spelling normalises into the DB vocabulary', () => {
 test('DB status vocabulary is derived from the markdown vocabulary', () => {
   // Guards the drift that migration 20260718120000 exists to kill: one
   // vocabulary must not acquire a second hand-maintained definition.
-  // Matches the live plans_status_check CHECK constraint exactly.
   assert.deepEqual(
     [...DB_PLAN_STATUSES].sort(),
-    ['abandoned', 'approved', 'complete', 'draft', 'in_progress', 'superseded'],
+    ['abandoned', 'approved', 'complete', 'draft', 'in_progress', 'parked', 'superseded'],
+  );
+});
+
+test('DB status vocabulary matches the live plans_status_check constraint', () => {
+  // The list above previously CLAIMED to "match the live CHECK constraint
+  // exactly" while nothing enforced it — a hand-maintained second definition
+  // of the vocabulary, which is the very drift 20260718120000 exists to kill.
+  // Read the constraint from the newest migration that defines it, so widening
+  // the vocabulary without a migration (or vice versa) fails here.
+  const dir = new URL('../supabase/migrations/', import.meta.url);
+  const defining = fs.readdirSync(dir)
+    .filter(f => f.endsWith('.sql'))
+    .filter(f => /ADD CONSTRAINT plans_status_check/i.test(fs.readFileSync(new URL(f, dir), 'utf8')))
+    .sort();
+  assert.ok(defining.length > 0, 'no migration defines plans_status_check');
+
+  const sql = fs.readFileSync(new URL(defining[defining.length - 1], dir), 'utf8');
+  const m = sql.match(/ADD CONSTRAINT plans_status_check\s+CHECK\s*\(\s*status IN \(([^)]*)\)/i);
+  assert.ok(m, `could not parse the CHECK in ${defining[defining.length - 1]}`);
+  const constraintValues = [...m[1].matchAll(/'([^']+)'/g)].map(x => x[1]).sort();
+
+  assert.deepEqual(
+    [...DB_PLAN_STATUSES].sort(),
+    constraintValues,
+    `plan-status.mjs and ${defining[defining.length - 1]} disagree — a status valid in `
+    + 'markdown but rejected by the store (or the reverse) is silent until a write fails',
   );
 });

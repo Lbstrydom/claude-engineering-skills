@@ -15,10 +15,30 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-/** The CLOSED status vocabulary. Anything else is `unrecognized`. */
+/**
+ * The CLOSED status vocabulary. Anything else is `unrecognized`.
+ *
+ * Three kinds, because deliberately-shelved work is neither of the other two
+ * (consumer report, 2026-07-20). `Parked` was previously unrepresentable, and
+ * the three available spellings were all wrong: `Draft` is false (it is not
+ * being drafted), `Superseded` is false (nothing replaced it), and leaving it
+ * non-conforming makes the plan INVISIBLE to selection — so it can never be
+ * audited, which is the precise failure this vocabulary exists to prevent.
+ *
+ * `parked` is deliberately NOT folded into `active` (the report's own fallback
+ * suggestion): an audit must not chase parked work for progress, and `active`
+ * is exactly the bucket that gets chased. It is not `terminal` either — parked
+ * work can resume, and filing it as finished would lose that.
+ *
+ * Adding a kind is not free: `generate-plans-index.mjs` derives its bucket
+ * straight from `kind`, so a kind with no rendering branch silently vanishes
+ * from the index — the same invisibility, one layer along. Any new kind needs
+ * a section there and a decision in `context-staleness.mjs`.
+ */
 export const PLAN_STATUS_VOCABULARY = Object.freeze({
   terminal: ['Complete', 'Superseded'],
   active: ['Draft', 'Approved', 'In Progress'],
+  parked: ['Parked'],
 });
 
 /**
@@ -43,16 +63,19 @@ export function toDbPlanStatus(token) {
  * the three-definitions-one-vocabulary drift that migration exists to kill.
  */
 export const DB_PLAN_STATUSES = Object.freeze([
-  ...[...PLAN_STATUS_VOCABULARY.terminal, ...PLAN_STATUS_VOCABULARY.active].map(toDbPlanStatus),
+  // Derived from EVERY kind, not an enumerated subset — a new kind that the
+  // CHECK constraint rejects would make its plans unwritable to the store
+  // while reading as valid in markdown.
+  ...Object.values(PLAN_STATUS_VOCABULARY).flat().map(toDbPlanStatus),
   'abandoned',
 ]);
 
 // Longest-token-first so `In Progress` matches before `In`. Each entry carries
-// its kind.
-const TOKENS = [
-  ...PLAN_STATUS_VOCABULARY.terminal.map(t => ({ token: t, kind: 'terminal' })),
-  ...PLAN_STATUS_VOCABULARY.active.map(t => ({ token: t, kind: 'active' })),
-].sort((a, b) => b.token.length - a.token.length);
+// its kind. Derived from the vocabulary object so adding a kind above cannot
+// leave its tokens unparseable here.
+const TOKENS = Object.entries(PLAN_STATUS_VOCABULARY)
+  .flatMap(([kind, tokens]) => tokens.map(token => ({ token, kind })))
+  .sort((a, b) => b.token.length - a.token.length);
 
 // The leading `- ` is OPTIONAL. The metadata block is conventionally a bullet
 // list, but the corpus has a plan whose Status line is a bare `**Status**: …`

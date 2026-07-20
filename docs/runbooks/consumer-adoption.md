@@ -133,6 +133,41 @@ The skill `.md` files reference scripts via `node scripts/.claude-skills/X.mjs`
 (the rewriter handles that on sync). Your `.vscode/mcp.json` is deep-merged,
 not overwritten, so your custom MCP server registrations survive.
 
+### May your own code `import` from `scripts/.claude-skills/`?
+
+**No. Treat the synced tree as a process boundary, not a library.** Call it with
+`execFileSync` / `spawn`; do not `import` from it in code you own.
+
+Asked by a consumer (2026-07-20) who wanted `assertKnownFlags` from the synced
+`lib/cli-io.mjs` and instead wrote a local copy with the same signature, worried
+that a re-sync could break a DB-mutating operator script. **That instinct is
+right**, and the reasoning generalises:
+
+- **The tree is gitignored and overwritten wholesale.** An `import` from it is a
+  dependency on a file your repo does not track, that no reviewer sees in a diff,
+  and that the next `npm run sync` can change or remove. A rename upstream
+  becomes a runtime failure in *your* script, and the GC pass deletes files that
+  leave our payload.
+- **It is absent on a fresh clone.** Nothing under `scripts/.claude-skills/` is
+  committed, so a teammate who clones and runs your script gets
+  `ERR_MODULE_NOT_FOUND` until they re-run sync from the source repo. A
+  process-boundary call fails the same way but *loudly and locally*, at the call
+  site, rather than at module load.
+- **We do not version it as an API.** The synced modules are internal to the
+  skills. They carry no deprecation policy, and we change signatures freely
+  because the only supported callers are our own CLIs.
+
+So: **copy the small helper, don't link it.** A forked copy is the intended
+outcome here, not a workaround — it is tracked, reviewable, and stable across
+syncs. Where a copy must stay behaviour-compatible with ours, the coupling that
+matters is the *detector*, not the implementation: our `check-cli-flags.mjs`
+recognises a guard by the name `assertKnownFlags`, so keeping that name is what
+keeps a local copy compatible.
+
+The reverse direction is unchanged and stricter: **never edit the synced copy
+itself** — that is an upstream bug, fixed upstream and re-synced (see the
+governance note in [AGENTS.md](../../AGENTS.md)).
+
 ---
 
 ## One-time migration recipe

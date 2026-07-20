@@ -140,6 +140,10 @@ function table(rows, { showStatus = true } = {}) {
 export function renderIndex(rows) {
   const active = rows.filter(r => r.bucket === 'active');
   const terminal = rows.filter(r => r.bucket === 'terminal');
+  // `bucket` IS `kind` (see collect above), so a vocabulary kind with no
+  // section here would be silently dropped from the index — the same
+  // invisibility a non-conforming Status line causes, one layer along.
+  const parked = rows.filter(r => r.bucket === 'parked');
   const summaries = rows.filter(r => r.bucket === 'audit-summary');
   const unstatused = rows.filter(r => r.bucket === 'unstatused');
   const malformed = rows.filter(r => r.bucket === 'malformed');
@@ -155,6 +159,7 @@ export function renderIndex(rows) {
   out += 'Cluster C). A path is an identity; status is a fact that changes. This index is\n';
   out += 'the derived view that makes status navigable without touching identity.\n\n';
   out += `**${active.length} active · ${terminal.length} terminal · ${summaries.length} audit summaries`;
+  out += `${parked.length ? ` · ${parked.length} parked` : ''}`;
   out += `${unstatused.length ? ` · ${unstatused.length} reference docs` : ''}`;
   out += `${malformed.length ? ` · ${malformed.length} malformed` : ''}**\n\n`;
 
@@ -162,6 +167,15 @@ export function renderIndex(rows) {
   out += 'Work that is not finished — `Draft`, `Approved`, or `In Progress`.\n';
   out += 'This is the list to read when asking "what is in flight?".\n\n';
   out += active.length ? table(active) : '_None — every plan is in a terminal state._\n';
+
+  if (parked.length) {
+    out += '\n## Parked\n\n';
+    out += 'Consciously shelved — not abandoned, not superseded, and not in flight.\n';
+    out += 'Deliberately listed SEPARATELY from Active: parked work should not be\n';
+    out += 'chased for progress, but filing it as terminal would lose that it can\n';
+    out += 'resume. Read this list when asking "what did we decide to defer?".\n\n';
+    out += table(parked);
+  }
 
   if (malformed.length) {
     out += '\n## ⚠️ Malformed status\n\n';
