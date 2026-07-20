@@ -161,6 +161,9 @@ const EXPECTED_EXPORTS = [
   'copyForwardImports',
   'copyForwardUntouchedFiles',
   'getActiveEmbeddingModel',
+  'getBandCalibration',
+  'recordBandCalibration',
+  'sampleSnapshotEmbeddings',
   'getActiveSnapshot',
   'getDomainSummaries',
   'getFreshImportersOrNull', // docs/plans/stage0-evidence-relevance-split.md decision #5/#9 — Stage 0 impactAdapter's bounded-BFS import-graph query
@@ -280,6 +283,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 161 → 163: listFilesNeedingSummaryRetry + recordSummaryOutcomes added
     // 2026-07-20 for the bounded null-summary re-queue (plan §2.1 C9). The
     // cap constant is deliberately NOT exported — this surface is functions.
-    assert.equal(EXPECTED_EXPORTS.length, 163);
+    assert.equal(EXPECTED_EXPORTS.length, 166);
   });
 });

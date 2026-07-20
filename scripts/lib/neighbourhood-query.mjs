@@ -292,8 +292,44 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     // about. Preserve the null all the way to the band.
     similarityScore: rawSimilarity(r),
     scored:          rawSimilarity(r) !== null,
-    recommendation:  recommendationFromSimilarity(rawSimilarity(r)),
+    // Band is assigned below, once the whole ranked set is known — the cliff
+    // test needs the runner-up, which a per-row map cannot see.
+    recommendation:  'review',
   }));
+
+  // Band the result set against THIS REPO'S calibration (plan §2.1 C4/C7-REVISED).
+  //
+  // Not a shipped constant: config.mjs and symbol-index.mjs both sync to
+  // consumers, so a threshold written there would carry our corpus statistics
+  // into a repo with different vocabulary and symbol density — the same defect
+  // class as the original unreachable 0.90/0.85/0.75.
+  //
+  // An UNCALIBRATED repo bands `review` only. That is honest (we have not
+  // established what a meaningful score is here) and identical to the tool's
+  // behaviour before this work, so a fresh consumer sees an accurate label
+  // rather than a regression.
+  //
+  // Only the TOP row can earn `precedent` — the cliff test is about whether the
+  // best match stands out from the rest, so it is meaningless for row 3.
+  try {
+    const { bandTopResult } = await import('./arch-memory/background-calibration.mjs');
+    const calibration = adapters.getBandCalibration
+      ? await adapters.getBandCalibration(repoRow.id)
+      : null;
+    const verdict = bandTopResult(records, { floor: calibration?.floor ?? null });
+    if (records.length > 0) {
+      records[0].recommendation = verdict.band;
+      records[0].bandReason = verdict.reason;
+      records[0].cliff = verdict.cliff;
+      records[0].cluster = verdict.cluster;
+    }
+    for (let i = 1; i < records.length; i++) {
+      records[i].recommendation = records[i].scored ? 'review' : 'unscored';
+    }
+  } catch (err) {
+    // Banding must never break the consultation — degrade to review-only.
+    process.stderr.write(`  [neighbourhood] banding unavailable (${err.message}) — review-only\n`);
+  }
 
   // Phase 3 — adaptive-learning arch_memory_band telemetry.  One decision
   // per record so the reconciler can later resolve outcome (reuse-correct,

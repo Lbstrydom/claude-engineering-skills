@@ -50,7 +50,19 @@ export const ScoredSymbolRecordSchema = SymbolRecordSchema.extend({
   // `scored` lets a consumer distinguish absence from a low score without
   // having to probe for null.
   scored:          z.boolean().optional(),
-  recommendation:  z.enum(['unscored', 'reuse', 'extend', 'justify-divergence', 'review']),
+  // Why the band came out as it did — `uncalibrated-repo`, `below-noise-floor`,
+  // `not-distinctive`, `above-floor-and-distinctive`, `no-embedding`. Without
+  // this a `review` is unattributable, and "the repo has no calibration" looks
+  // identical to "we compared and it was weak".
+  bandReason:      z.string().optional(),
+  // Gap to the runner-up. The floor alone is fragile under hubness; this is
+  // what says the top hit is DISTINCTIVE rather than merely above a number.
+  cliff:           z.number().nullable().optional(),
+  // `reuse` / `extend` retired (C7-REVISED): the derived cutoffs were 0.01
+  // apart against ~0.008 run-to-run variance, and the reuse-vs-extend choice
+  // depends on dependency direction, API shape and ownership — none of which a
+  // cosine distance expresses. `precedent` = "existing code merits a look".
+  recommendation:  z.enum(['unscored', 'review', 'precedent', 'justify-divergence']),
 });
 
 // ── Query args ──────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ import {
   bandTopResult,
   cosineSimilarity,
   DEFAULT_K,
-  MIN_CLIFF_DELTA,
+  CLIFF_REPORTING_THRESHOLD,
 } from '../scripts/lib/arch-memory/background-calibration.mjs';
 
 /** Deterministic pseudo-random vectors — no Math.random, so runs are stable. */
@@ -95,18 +95,23 @@ describe('background-calibration / banding is two-state', () => {
     assert.match(out.reason, /below-noise-floor/);
   });
 
-  it('above the floor AND distinctive → precedent', () => {
+  it('above the floor and a standout → precedent', () => {
     const out = bandTopResult([r(0.82), r(0.70)], cal);
     assert.equal(out.band, 'precedent');
-    assert.ok(out.cliff > MIN_CLIFF_DELTA);
+    assert.equal(out.cluster, false);
+    assert.match(out.reason, /standout/);
   });
 
-  it('above the floor but NOT distinctive → review (hubness guard)', () => {
-    // Everything scoring alike means the corpus vocabulary is doing the work,
-    // not the match. An absolute floor alone cannot catch this.
+  it('a TIGHT CLUSTER above the floor is still precedent — it is the strongest signal', () => {
+    // Falsified in the live run: gating on the cliff rejected 0.8480 / 0.8370 /
+    // 0.8086 — three genuinely related symbols — as `not-distinctive`, because
+    // the runner-up was 0.011 behind. For a DUPLICATION detector a cluster is
+    // the MOST actionable case, not the least: several existing symbols occupy
+    // this space, so the argument for reusing one of them is stronger.
     const out = bandTopResult([r(0.74), r(0.735), r(0.73)], cal);
-    assert.equal(out.band, 'review');
-    assert.match(out.reason, /not-distinctive/);
+    assert.equal(out.band, 'precedent');
+    assert.equal(out.cluster, true);
+    assert.match(out.reason, /cluster/);
   });
 
   it('a lone result cannot fail the cliff test vacuously', () => {

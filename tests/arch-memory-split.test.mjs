@@ -38,6 +38,10 @@ const EXPECTED_EXPORTS = [
   'getActiveSnapshot',
   'setActiveEmbeddingModel',
   'getActiveEmbeddingModel',
+  // Per-repo band calibration (plan §2.1 C4-REVISED) — arch/snapshots.mjs.
+  'recordBandCalibration',
+  'getBandCalibration',
+  'sampleSnapshotEmbeddings',
   // arch/symbols.mjs — 8 fns
   'recordSymbolDefinitions',
   'recordSymbolIndex',
@@ -72,8 +76,8 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 38 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 38);
+  test(`exactly 41 public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 41);
   });
 
   // Every public member is a FUNCTION. `SUMMARY_RETRY_CAP` was briefly exported

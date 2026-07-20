@@ -49,15 +49,30 @@ export const DEFAULT_K = 3;
 export const DEFAULT_SAMPLE_SIZE = 120;
 
 /**
- * A match must also be DISTINCTIVE, not merely above the floor.
+ * The gap between the best and second-best hit. REPORTED, NOT GATED.
  *
- * Cosine similarity in high-dimensional space suffers hubness and clustering:
- * in a repo where every symbol mentions "wine", an absolute 0.72 may be
- * background rather than signal. The gap between the best and second-best hit
- * measures uniqueness against the repo's OWN vocabulary, which ports across
- * corpora in a way an absolute number does not.
+ * It was originally a second gate: a match had to be above the floor AND
+ * distinctive, on the reasoning that cosine suffers hubness — in a repo where
+ * every symbol says "wine", an absolute 0.72 may be background.
+ *
+ * THE LIVE RUN FALSIFIED THAT for this application. Querying "add a function
+ * that finds similar existing symbols" returned 0.8480 / 0.8370 / 0.8086 —
+ * three genuinely related symbols — and the cliff test rejected the top hit as
+ * `not-distinctive` because the runner-up was 0.011 behind.
+ *
+ * That inverts the use case. This is a DUPLICATION DETECTOR: several similar
+ * symbols existing is the STRONGEST reuse signal, not the weakest. A cliff
+ * gate systematically suppresses exactly the clusters the tool exists to find.
+ *
+ * The hubness concern it was meant to address is already covered by the floor:
+ * when everything in a corpus is similar, μ rises and μ+kσ rises with it. The
+ * floor IS the hubness guard, making the cliff redundant as well as harmful.
+ *
+ * Retained as reported metadata because it is genuinely informative to a
+ * reader — a lone standout and a tight cluster are different situations, even
+ * though both are actionable.
  */
-export const MIN_CLIFF_DELTA = 0.03;
+export const CLIFF_REPORTING_THRESHOLD = 0.03;
 
 export function cosineSimilarity(a, b) {
   if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.length === 0) return null;
@@ -146,15 +161,21 @@ export function bandTopResult(ranked, calibration) {
 
   const second = rows.find((r, i) => i > 0 && Number.isFinite(r?.similarityScore));
   const cliff = second ? top.similarityScore - second.similarityScore : null;
-  const minCliff = Number.isFinite(calibration?.minCliffDelta) ? calibration.minCliffDelta : MIN_CLIFF_DELTA;
 
   if (top.similarityScore < floor) {
-    return { band: 'review', reason: 'below-noise-floor', cliff };
+    return { band: 'review', reason: 'below-noise-floor', cliff, cluster: false };
   }
-  // A single result clears the cliff test vacuously — there is nothing it could
-  // fail to be distinctive against.
-  if (cliff !== null && cliff <= minCliff) {
-    return { band: 'review', reason: 'not-distinctive', cliff };
-  }
-  return { band: 'precedent', reason: 'above-floor-and-distinctive', cliff };
+
+  // The floor is the ONLY gate. The cliff is reported, never gating — see
+  // CLIFF_REPORTING_THRESHOLD for why gating on it suppressed the very
+  // duplicate-clusters this tool exists to surface.
+  const cluster = cliff !== null && cliff <= CLIFF_REPORTING_THRESHOLD;
+  return {
+    band: 'precedent',
+    // A tight cluster is MORE actionable, not less: several existing symbols
+    // occupy this space, so the case for reusing one of them is stronger.
+    reason: cluster ? 'above-floor-cluster' : 'above-floor-standout',
+    cliff,
+    cluster,
+  };
 }

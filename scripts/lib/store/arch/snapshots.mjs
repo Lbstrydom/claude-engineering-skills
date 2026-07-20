@@ -14,7 +14,7 @@
  * @module scripts/lib/store/arch/snapshots
  */
 
-import { one, updateWhere } from '../../db/query.mjs';
+import { one, many, updateWhere } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
 
 /**
@@ -79,4 +79,78 @@ export async function getActiveEmbeddingModel(repoId) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Persist a per-repo band calibration (plan §2.1 C4-REVISED).
+ *
+ * The floor is a MEASUREMENT of this repo's own embedding background, not a
+ * setting — which is why it lives in the store rather than in synced config.
+ * See the migration comment for why the whole record is one jsonb value.
+ *
+ * jsonb-safe write seam (AGENTS.md): the value is passed RAW. The db layer's
+ * `serializeWriteParam` JSON-serialises plain objects/arrays bound to write
+ * params; hand-stringifying here would double-encode.
+ *
+ * @param {string} repoId
+ * @param {object|null} calibration - null clears it (back to uncalibrated)
+ */
+export async function recordBandCalibration(repoId, calibration) {
+  if (!await isCloudEnabled()) return { ok: false, cloud: false };
+  if (!repoId) return { ok: false, reason: 'no-repo-id' };
+  await updateWhere('audit_repos', { band_calibration: calibration }, { id: repoId });
+  return { ok: true, cloud: true };
+}
+
+/**
+ * Read a repo's band calibration.
+ *
+ * Returns `null` for uncalibrated, and the caller MUST treat that as "band
+ * `review` only" rather than substituting a default. A borrowed threshold is
+ * precisely the defect this design removes.
+ *
+ * @returns {Promise<object|null>}
+ */
+export async function getBandCalibration(repoId) {
+  if (!await isCloudEnabled()) return null;
+  if (!repoId) return null;
+  const row = await one(`SELECT band_calibration FROM audit_repos WHERE id = $1 LIMIT 1`, [repoId]);
+  return row?.band_calibration ?? null;
+}
+
+/**
+ * Random sample of embedding vectors from a published snapshot, for computing
+ * the repo's background similarity distribution (plan §2.1 C4-REVISED).
+ *
+ * Samples from the DB rather than from the in-flight embed output on purpose:
+ * an INCREMENTAL refresh only embeds touched files, so sampling the run's own
+ * output would measure the background of whatever the developer happened to be
+ * editing. The floor must describe the corpus, not the changeset.
+ *
+ * @param {string} refreshId
+ * @param {number} limit
+ * @returns {Promise<number[][]>}
+ */
+export async function sampleSnapshotEmbeddings(refreshId, limit = 120) {
+  if (!await isCloudEnabled()) return [];
+  if (!refreshId) return [];
+  const rows = await many(
+    `SELECT se.embedding::text AS emb
+       FROM symbol_index si
+       JOIN symbol_definitions sd ON sd.id = si.definition_id
+       JOIN symbol_embeddings se ON se.definition_id = sd.id
+                                AND se.signature_hash = si.signature_hash
+      WHERE si.refresh_id = $1
+      ORDER BY random()
+      LIMIT $2`,
+    [refreshId, limit],
+  );
+  const out = [];
+  for (const r of rows || []) {
+    try {
+      const v = JSON.parse(r.emb);
+      if (Array.isArray(v) && v.length > 0) out.push(v);
+    } catch { /* skip an unparseable vector rather than abort calibration */ }
+  }
+  return out;
 }

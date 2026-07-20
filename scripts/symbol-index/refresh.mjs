@@ -57,6 +57,8 @@ import {
   setActiveEmbeddingModel,
   copyForwardUntouchedFiles,
   getActiveSnapshot,
+  recordBandCalibration,
+  sampleSnapshotEmbeddings,
   getRefreshRun,
   findStaleRunningRefresh,
 } from '../learning-store.mjs';
@@ -276,8 +278,12 @@ async function main() {
   // superseded by a concurrent refresh mid-decision — closing the stale-read
   // race. The decision can only ESCALATE incremental→full (the safe direction);
   // the row's recorded mode stays the user's request, the log records escalation.
+  // Hoisted: the null-summary re-queue (plan §2.1 C9) needs the prior snapshot
+  // id from inside the runWithHeartbeat closure below, which is a different
+  // scope from this block.
+  let prior = null;
   if (mode === 'incremental') {
-    const prior = await getActiveSnapshot(repoId);
+    prior = await getActiveSnapshot(repoId);
     // Provenance-change guard (D3/H4): an incremental run re-embeds only touched
     // files but publishes new provenance unconditionally. If the identity we're
     // about to publish differs from the prior snapshot's, an incremental run
@@ -348,7 +354,7 @@ async function main() {
         let retryFiles = [];
         if (prior?.refreshId) {
           try {
-            retryFiles = await listFilesNeedingSummaryRetry(repoRow.id, prior.refreshId);
+            retryFiles = await listFilesNeedingSummaryRetry(repoId, prior.refreshId);
           } catch (err) {
             // Never block a refresh on the re-queue lookup.
             logOk(`WARNING: summary re-queue lookup failed (${err.message}) — continuing without it`);
@@ -668,6 +674,62 @@ async function main() {
         activeEmbeddingDim: embedDim,
       });
       logOk(`published refresh ${refreshId} as active`);
+
+      // 13. Per-repo band calibration (plan §2.1 C4-REVISED).
+      //
+      // The band floor is computed from THIS repo's own embedding background,
+      // never shipped as a constant: config.mjs and symbol-index.mjs both sync
+      // to consumers, so a threshold written there would carry our corpus
+      // statistics into a repo with different vocabulary and symbol density —
+      // the same class of defect as the original unreachable 0.90/0.85/0.75.
+      //
+      // Runs AFTER publish and samples from the PUBLISHED snapshot, because an
+      // incremental refresh only embeds touched files; sampling this run's own
+      // output would measure the background of whatever was being edited
+      // rather than of the corpus.
+      //
+      // Best-effort: a calibration failure leaves the repo uncalibrated, which
+      // bands `review` only. That is the honest degradation — never a reason to
+      // fail a refresh whose real work succeeded.
+      try {
+        const { computeBackgroundStats, floorFromStats, DEFAULT_K, DEFAULT_SAMPLE_SIZE, MIN_CLIFF_DELTA } =
+          await import('../lib/arch-memory/background-calibration.mjs');
+        const { COMPOSE_VERSION } = await import('../lib/symbol-index.mjs');
+        const { NORMALIZE_PROMPT_VERSION } = await import('../lib/arch-memory/normalize-intent.mjs');
+
+        const sample = await sampleSnapshotEmbeddings(refreshId, DEFAULT_SAMPLE_SIZE);
+        const stats = computeBackgroundStats(sample);
+        const floor = floorFromStats(stats, DEFAULT_K);
+
+        if (floor === null) {
+          // Too small / too sparse to characterise. Clear any stale record
+          // rather than leave a floor derived from a corpus that no longer
+          // exists — a stale floor is worse than none.
+          await recordBandCalibration(repoId, null);
+          logOk(`band calibration: insufficient sample (${sample.length} vectors) — repo left UNCALIBRATED (bands `
+            + `\`review\` only)`);
+        } else {
+          await recordBandCalibration(repoId, {
+            floor,
+            k: DEFAULT_K,
+            minCliffDelta: MIN_CLIFF_DELTA,
+            stats,
+            provenance: {
+              embedModel: embedProfile.provenanceId,
+              embedDim,
+              composeVersion: COMPOSE_VERSION,
+              normalizePromptVersion: NORMALIZE_PROMPT_VERSION,
+              normalizerId: symbolIndexConfig.summariseModel,
+              refreshId,
+            },
+            calibratedAt: new Date().toISOString(),
+          });
+          logOk(`band calibration: floor=${floor.toFixed(4)} (mu=${stats.mean.toFixed(4)} `
+            + `sigma=${stats.sd.toFixed(4)} k=${DEFAULT_K}, ${stats.pairs} pairs from ${stats.n} symbols)`);
+        }
+      } catch (err) {
+        logOk(`WARNING: band calibration failed (${err.message}) — repo stays uncalibrated, refresh stands`);
+      }
 
       process.stdout.write(JSON.stringify({
         ok: true,

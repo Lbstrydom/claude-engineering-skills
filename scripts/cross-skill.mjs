@@ -65,6 +65,7 @@ import {
   publishRefreshRun,
   abortRefreshRun,
   getActiveSnapshot,
+  getBandCalibration,
   recordSymbolDefinitions,
   recordSymbolIndex,
   recordSymbolEmbedding,
@@ -1856,6 +1857,7 @@ async function cmdGetNeighbourhood() {
     const out = await getNeighbourhoodForIntent({
       getRepoIdByUuid,
       getActiveSnapshot,
+      getBandCalibration,
       callNeighbourhoodRpc: (args) => callNeighbourhoodRpc(args),
     }, { ...p, repoUuid });
     emit({ ok: true, cloud: true, ...out });
