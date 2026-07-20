@@ -1,6 +1,22 @@
 # Project Status Log
 
-## 2026-07-20 (closing) — fixed the real stores→plan violation by moving the vocab to shared-lib
+## 2026-07-21 — synced npm-args:gate to consumers; corrected a "not synced" error
+
+Added `check-npm-run-args.mjs` to the sync `CORE_ENTRY`, beside the already-
+synced `check-cli-flags.mjs`. Dry-ran both consumers first (clean: +1 new file
+each, no collisions), then synced. Verified in wine: `--selfcheck-relocation`
+→ OK (the `./lib/cli-io.mjs` import rewrote correctly for the isolated layout),
+a typo still exits 2, the upstream banner is present, and the census
+immediately found 1 real broken command in that repo.
+
+Corrected a factual error this surfaced: my #57 comment and a memory both said
+"neither gate is in the sync payload." `check-cli-flags.mjs` has been synced
+since `18ae87e` (the item-4a fix), and a standalone CLI invoked by `node …`
+creates no import edge into the gitignored synced tree — so consumers never
+needed to FORK it (they fork the `assertKnownFlags` HELPER because THAT is an
+import). The gate's empty BASELINE (unlike check-cli-flags' upstream-shaped one)
+means it needs no `--baseline` to be adoptable. The sync copies the file but
+does not wire the consumer's package.json — gating there is a per-consumer step.
 
 The one genuine finding the arch-bouncer investigation surfaced — `stores → plan`,
 introduced by this session's own plan-path work — is now fixed, the way I said I'd

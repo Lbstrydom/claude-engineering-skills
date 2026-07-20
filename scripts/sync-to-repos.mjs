@@ -187,6 +187,14 @@ const CORE_ENTRY = [
   // 2026-07-20). Consumers should pass `--baseline <file>`; see the module
   // header for why the upstream baseline is wrong for them.
   'scripts/check-cli-flags.mjs',
+  // Sibling of check-cli-flags: the npm `--`-swallow gate. Same reason to ship
+  // it — the remedy (write `npm run x -- --flag`) is useless without the
+  // DIAGNOSTIC that finds a consumer's own broken commands, and this class bit
+  // the consumer that reported #57. Its BASELINE is EMPTY (not upstream-shaped),
+  // so unlike check-cli-flags it needs no `--baseline <file>` to be adoptable;
+  // its scope-exclusions (docs/plans, docs/research, status.md) apply verbatim
+  // in a consumer. Import closure is ./lib/cli-io.mjs, already synced above.
+  'scripts/check-npm-run-args.mjs',
   'scripts/brainstorm-round.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',
