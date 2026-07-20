@@ -166,6 +166,16 @@ export const CHECKS = [
     requiredEnv: ['AUDIT_DB_URL'],
     steps: [{ script: 'cache-hitrate-check.mjs', args: [] }],
   },
+  {
+    // Git-only, so no requiredEnv — it runs everywhere, including offline.
+    // Deliberately a REPORT: it exits 0 whether or not it flags anything, so it
+    // can never block a push. See the module header for why a guessing lint
+    // must not be a gate (check-docs-refs.mjs's doctrine).
+    key: 'context-staleness',
+    label: 'AGENTS.md staleness (cited code moved after the line did)',
+    requiredEnv: [],
+    steps: [{ script: 'context-staleness.mjs', args: [] }],
+  },
 ];
 
 export function missingEnv(requiredEnv) {

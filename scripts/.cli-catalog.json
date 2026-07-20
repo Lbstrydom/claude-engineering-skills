@@ -153,6 +153,14 @@
       "description": "Context-drift check, SARIF output (for GitHub code-scanning).",
       "category": "diagnostic"
     },
+    "context:staleness": {
+      "description": "Report AGENTS.md lines whose cited code has moved since the line did. A REPORT, never a gate — drift is a smell, not a verdict.",
+      "category": "diagnostic"
+    },
+    "context:staleness:json": {
+      "description": "context:staleness as JSON, for the weekly maintenance replica.",
+      "category": "diagnostic"
+    },
     "dashboard": {
       "description": "Build the dashboard, then serve it on a localhost port (default 4173).",
       "category": "dashboard"

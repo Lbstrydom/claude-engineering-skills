@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "_comment": "Acknowledgements for `npm run context:staleness`. A line lands here when its cited code has churned but the CLAIM is still true — typically a stable design rule or a pointer, as opposed to a description of an implementation that moved. Each ackKey hashes the line TEXT plus the cited path, so editing the line VOIDS its ack automatically and the line returns to the report. That is what stops this becoming a permanent blindfold: an ack asserts 'I checked this wording', not 'never ask again'. Verify before adding one — the whole value of the report is that it makes someone check.",
+  "acks": [
+    {
+      "ackKey": "720b7db355bc8c7f",
+      "line": "**Design rule**: all cross-skill writes go through `scripts/cross-skill.mjs`.",
+      "reason": "A design RULE, not a description of implementation. cross-skill.mjs churns constantly because it is the facade every skill writes through — which is the rule holding, not breaking.",
+      "verifiedAt": "2026-07-20"
+    },
+    {
+      "ackKey": "a468307e5023a241",
+      "line": "`computeUserImpactReward()` in [scripts/bandit.mjs](scripts/bandit.mjs).",
+      "reason": "Verified: computeUserImpactReward is still defined and exported in scripts/bandit.mjs.",
+      "verifiedAt": "2026-07-20"
+    },
+    {
+      "ackKey": "f591fff6ba877e82",
+      "line": "`scripts/lib/model-resolver.mjs` resolves model IDs so config stops going stale",
+      "reason": "Statement of the module's purpose, which is unchanged. The file churns because new provider models keep arriving — exactly the job described.",
+      "verifiedAt": "2026-07-20"
+    },
+    {
+      "ackKey": "57f2f5f6f1dbe78f",
+      "line": "the bottom of `tests/hook-arch-memory-check.test.mjs`):",
+      "reason": "Verified: the empirical-effectiveness recipe is still in the comment block at the end of that test file.",
+      "verifiedAt": "2026-07-20"
+    },
+    {
+      "ackKey": "980db8b073bc6d1c",
+      "line": "All Claude API calls go through [`scripts/lib/anthropic-client.mjs`](scripts/lib/anthropic-client.mjs).",
+      "reason": "Verified: still true and regression-guarded by tests/anthropic-client-migration.test.mjs, which greps for any bare `new Anthropic()` outside the factory.",
+      "verifiedAt": "2026-07-20"
+    },
+    {
+      "ackKey": "8da7a953e6c073a5",
+      "line": "- **`scripts/requirements.mjs`** — CLI: `extract --files <a,b,…> [--runs N]`",
+      "reason": "Verified: requirements.mjs still parses --files and --runs on the extract subcommand.",
+      "verifiedAt": "2026-07-20"
+    }
+  ]
+}

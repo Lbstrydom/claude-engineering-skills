@@ -148,7 +148,7 @@ code+test (never packaged/synced; no contract = `uncontracted`, not
 failed) — `npm run skills:check`/`gates:check` validate it; details:
 `docs/reference/gate-honesty.md`.
 
-Each skill is a sibling — they share env vars and Supabase stores but have distinct scopes:
+Each skill is a sibling — they share env vars and the cloud audit store but have distinct scopes:
 - **plan**: code that doesn't exist yet. Unified planner (auto-detects backend/frontend/full-stack); the frontend/full-stack path produces a machine-parseable "Acceptance Criteria" section that `/ux-lock verify` consumes.
 - **audit-plan**: refines plans before implementation (max 3 rounds, rigor-pressure stop). Single-file edits.
 - **audit-code**: code that was just written (5-pass parallel static analysis + LLM audit + R2+ suppression). Always also runs a mechanical **duplication** wave (pure-Git diff attribution against the architectural-memory index, read-only) — suppress an intentional duplicate with a `// @duplicate-justification: target=<file>:<symbol> reason=<why>` pragma above the declaration; see `skills/audit-code/SKILL.md` and `docs/plans/audit-code-duplication-wave.md`. **Wave 6 — containment adjacency ("what else is in this branch?")**: a diff hunk landing inside an `if` branch triggers enumeration of that branch's other top-level statements, each classified as condition-dependent or *merely nested* (trapped). Four invariants not to "simplify": enumeration is never the LLM's job (the bouncer only judges what it's handed); the trigger is the **diff**, never a finding; `clean` is unconstructable without real coverage, and the state label never gates emission; `buildAdjacencyState` has exactly one call site. Containers are conditionals only, never functions (that's the cost bound). Opt out via `--passes`; bounds are `adjacencyConfig`/`ADJACENCY_*`, not `symbolIndexConfig`. Adding a mechanical wave? Declare it in `MECHANICAL_WAVES` ([`audit-shadow.mjs`](scripts/lib/audit-shadow.mjs)) or `PASS_PROMPTS` silently enrols it in the model-A/B/C shadow's **paid** generator comparison. Plan: [`adjacency-check-containment.md`](docs/plans/adjacency-check-containment.md).
@@ -354,7 +354,7 @@ Gemini-pro, Claude):
   `openai-audit`, `gemini-review`, prompt builders. **Do NOT** assert on model
   prose or mock the whole provider API to test orchestration order — that tests
   the mock. Instead assert **invariants** ("Gemini final review always runs
-  regardless of GPT convergence"; "Supabase failure never blocks the local
+  regardless of GPT convergence"; "cloud-store failure never blocks the local
   ledger write"; "sensitive paths never enter a provider payload") and use
   canned-response fixtures for the parse / fallback / dedup paths.
 
@@ -443,7 +443,7 @@ maintenance: [`docs/reference/model-resolution.md`](docs/reference/model-resolut
 
 ## Memory-Health Gate
 
-`scripts/memory-health.mjs` runs three trigger metrics against Supabase to decide
+`scripts/memory-health.mjs` runs three trigger metrics against the audit store to decide
 whether our flat `audit_findings` + fingerprint-dedup design is starting to leak
 signal that a graph-shaped memory (pgvector + community clustering) would
 recover. Three triggers:
@@ -796,7 +796,7 @@ deployment quotas, rate-limits + throttling, rollback**: [`docs/runbooks/azure-w
 
 Migration `20260419120000_cross_skill_data_loop.sql` closes the feedback loop
 between the skills. Every skill writes to a shared learning store via
-`scripts/cross-skill.mjs` — graceful no-op when Supabase is off.
+`scripts/cross-skill.mjs` — graceful no-op when the cloud store is off.
 
 ### Tables
 
@@ -876,7 +876,7 @@ Two-axis state model: `adjudicationOutcome` (dismissed/accepted/severity_adjuste
 ## Architectural Memory — Pre-fix Consultation (MANDATORY)
 
 The architectural-memory feature (`docs/plans/architectural-memory.md`)
-indexes every symbol in this repo into Supabase, with embeddings, so we
+indexes every symbol in this repo into the audit store, with embeddings, so we
 can find near-duplicates before writing new code. The `/plan` skill
 consults it automatically. **But ad-hoc fixes in Claude Code or Copilot
 bypass the planning skill entirely** — which is where most architectural
@@ -921,7 +921,7 @@ manually as described above.
 **Disable per-session** (rare — debugging the hook, or working on the
 hook's own tests): set `ARCH_MEMORY_HOOK_DISABLE=1` in env.
 
-**Cost**: each consultation = 1 Gemini embed (~$0.0003) + 1 Supabase
+**Cost**: each consultation = 1 Gemini embed (~$0.0003) + 1 Postgres
 RPC (~50–200ms). Cached on disk by `(intentDescription, model, dim)`
 so repeats within 24h are free.
 

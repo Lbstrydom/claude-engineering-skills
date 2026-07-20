@@ -122,7 +122,9 @@
     "arch:coverage-gate": "node scripts/arch-coverage-gate.mjs",
     "db:check-rls:gate": "node scripts/check-rls.mjs --gate",
     "skills:check-surface": "node scripts/check-stale-skill-surface.mjs --gate",
-    "security:triage": "node scripts/security-triage.mjs"
+    "security:triage": "node scripts/security-triage.mjs",
+    "context:staleness": "node scripts/context-staleness.mjs",
+    "context:staleness:json": "node scripts/context-staleness.mjs --json"
   },
   "keywords": [
     "claude",

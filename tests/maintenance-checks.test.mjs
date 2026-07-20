@@ -32,11 +32,17 @@ import {
 } from '../scripts/maintenance-checks.mjs';
 
 describe('maintenance-checks — CHECKS manifest', () => {
-  it('declares all 6 replicated workflows', () => {
+  // An explicit inventory, so a check cannot be added silently. Note the set is
+  // NOT "the GH workflows" — `cache-hitrate` has never had a workflow file, and
+  // `context-staleness` is local-only by design (git-only, no cloud, and a
+  // report rather than a gate). Retitled 2026-07-20; the old "6 replicated
+  // workflows" wording was already inaccurate when cache-hitrate joined.
+  it('declares the exact weekly-maintenance inventory', () => {
     const keys = CHECKS.map((c) => c.key).sort();
     assert.deepEqual(keys, [
       'arch-maintenance',
       'cache-hitrate',
+      'context-staleness',
       'learning-weekly-review',
       'memory-health',
       'migration-drift',
