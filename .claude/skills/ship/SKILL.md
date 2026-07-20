@@ -411,6 +411,27 @@ Decide the provenance values (full convention: `docs/reference/commit-provenance
   docs-only ships). The helper also enforces `.audit/last-audit-run.json`
   freshness; an unevidenced or unverified `passed` is rejected.
 
+> **To earn `passed`: converge the audit loop, then commit that tree
+> UNCHANGED.** The helper compares the committed tree against the audited one
+> (`committedTree === evidence.auditedTree`) *before* any store lookup, so
+> hand-fixing findings after the last audit round makes `passed` unavailable —
+> by design, because those fixes are themselves unaudited. That is the
+> 2-stable-rounds convergence rule showing up at the commit boundary, not a
+> tooling limitation. A partial commit of an audited worktree also differs, and
+> is refused for the same reason.
+>
+> **`not-run` on a fix-heavy ship is the honest answer, not a failure.** The
+> value worth investigating is a `passed` that should not be there. Do NOT
+> hand-write `.audit/last-audit-run.json` or re-run a review purely to populate
+> the column — that is forging the receipt rather than earning it.
+>
+> **Freshness is `evidenceMs > headCommitTs`, so someone ELSE's commit ages out
+> your evidence.** In a repo with a concurrent session, a foreign commit landing
+> between your audit and your ship makes the marker stale — which also removes
+> `waived` (it requires `fresh`) and leaves `not-run` as the only legal value.
+> If you need the trailer to reflect your audit, don't ship across another
+> session's commits.
+
 ### 6.3 Commit and push
 
 **The `/ship` command IS the user's approval.** Proceed directly — no
