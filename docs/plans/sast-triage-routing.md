@@ -34,6 +34,12 @@ false-positive *class* had a crisp, mechanically-checkable predicate:
 | DOM XSS | ~90/108 | every `${…}` passes `esc`/`escapeHtml`/`DOMPurify` |
 | ReDoS | 1/1 | "sink" was `caches.match()` — Cache Storage API, not a regex |
 
+> ⚠ **The DOM-XSS row is the one estimate that did not survive measurement.**
+> Against the real source it is **3**, not ~90 — a ~30× overstatement, because
+> the estimate assumed the sink *is* the template, and in this codebase it
+> usually is not. §2d has the measurement and the cause. The other rows held.
+> Read this table as the hypothesis the design started from, not as a result.
+
 ### What exists today
 
 **Code Trace** — read before designing:
@@ -126,11 +132,17 @@ is INC-002 again.
 **D2 — Buckets are ordered by review priority, not by confidence.**
 (#5 SSoT, mirrors `SCOPE_BUCKET_RESTRICTIVENESS`)
 
-| Bucket | Meaning | Indicative n *(from the superseded 157-item prose walk — see §2b; authoritative counts live in `corpus.expected.json`)* |
-|---|---|---|
-| `A unexplained` | No predicate matched. **Review first.** | ~12 |
-| `C likely-mitigated` | Heuristic predicate matched — **spot-check, do not trust**. | ~93 |
-| `D out-of-reach` | Not reachable from untrusted input (canonicalized path). | ~25 |
+| Bucket | Meaning | Estimated (prose walk) | **MEASURED** (§2d, real source) |
+|---|---|---|---|
+| `A unexplained` | No predicate matched. **Review first.** | ~12 | **145 (60%)** |
+| `C likely-mitigated` | Heuristic predicate matched — **spot-check, do not trust**. | ~93 | **3 (1%)** |
+| `D out-of-reach` | Not reachable from untrusted input (canonicalized path). | ~25 | **92 (38%)** |
+
+The estimate column is kept deliberately, next to the measurement rather than
+deleted by it: the gap between the two is the most useful thing this plan
+learned, and a table showing only the right answer would hide that the design
+was aimed at a distribution that does not exist. `D` beat its estimate 3.7×;
+`C` missed its own by ~30×. See §2d.
 
 There are **three** finding buckets, not four (Gemini gate). An earlier draft
 listed a `U unverified` bucket, but nothing could ever land in it: run-level
@@ -529,6 +541,80 @@ So 108 findings in one file cost one `realpath` + one bounded scan, not 108 — 
 the scan is still bounded, because it stops at the last line any finding needs
 (#17 N+1 prevention). The cache is process-local and dies with the run.
 
+## 2d. Measured Against the Real Consumer SOURCE (2026-07-20)
+
+§2b measured the design against the real SARIF. It could not measure the one
+predicate that needs a source tree: `corpus.sarif` names files that do not exist
+in this repo, so `corpus.expected.json` records `C: 0` and says so. This section
+records the run that closed that gap — the shipped CLI against the consumer
+repo where all 165 files are present.
+
+**Method.** Sanitizers were discovered *empirically* before the run (`escapeHtml`
+869 interpolations, `esc` 29, `DOMPurify` in 3 files) rather than chosen to
+flatter the tool. `encodeURIComponent` was deliberately excluded despite 74 uses:
+it is a URL encoder, not an HTML-context escaper. The config was **not** iterated
+after seeing results.
+
+| | Estimated | Measured |
+|---|---|---|
+| `D out-of-reach` | ~25 | **92 (38%)** |
+| `C likely-mitigated` | ~93 | **3 (1%)** |
+| `A unexplained` | ~12 | **145 (60%)** |
+
+**Precision held; recall did not.** All 3 `C` findings are fully-escaped
+templates on inspection. All 92 `D` findings are `/test`-rule two-signal
+agreements. **No false demotion was observed** — the direction that hides a
+vulnerability is clean, which is the property D1 was designed to protect.
+
+**Why `C` is 3 and not ~90.** The 100 DOM-XSS findings still in `A`, by cause:
+
+| n | Cause | Assessment |
+|---|---|---|
+| **36** | Sink is `el.innerHTML = renderTable(x)`, `.map(renderRow).join('')`, or a bare variable — **the template lives in another function** | Architectural mismatch |
+| 21 | Multiple or nested templates in the window | Refused by design (D3a, §7c-2) |
+| 14 | Window ends mid-construct | Design interaction — see below |
+| 27 | Genuinely unsanitized, or a ternary/other unsupported interpolation | **Correctly in `A`** |
+| 1 | `escapeHtml(x) \|\| 'NV'` | Conservative near-miss |
+| 1 | Template with zero interpolations | Correct |
+
+The dominant cause is architectural, not a defect: this codebase renders HTML
+through components, so escaping happens one or two frames away from the sink the
+scanner reports. **D3a's supported forms — "a template literal, or a
+`+`-concatenation" — describe a shape this code mostly does not use.** The ~90
+estimate came from the prose walk, which read escaped templates and assumed the
+scanner would point at them.
+
+Two findings worth keeping: 11 of the 27 are *genuinely unsanitized bare
+identifiers* — exactly the review candidates the tool exists to surface, the same
+class as §9's negative control. And the near-miss is instructive: `escapeHtml(x)
+|| 'NV'` is refused because D3a requires the outermost call to span the whole
+interpolation, and here the outermost expression is `||`. The value is safe; the
+predicate still declines. That is D1 working — it costs rank, not safety.
+
+**A methodology note, recorded because it nearly produced a wrong conclusion.**
+The first diagnostic pass classified the *truncated* `sourceContext` from the
+report rather than the window the predicate actually sees, and reported "22
+refused as unterminated" plus one apparent predicate bug. Both were artifacts of
+the diagnostic. The tell was that re-running at `maxSinkLines: 200` changed
+nothing — if clamping were the constraint, it would have. **Re-running the tool
+with a bound raised to its ceiling is the cheap control for "is this a bound or a
+shape problem"**; it should be the first move next time.
+
+### What this changes
+
+- **v1 ships on the `D` bucket.** 38% of the queue removed mechanically with zero
+  false suppression is the real, measured value. The `C` bucket is honest but
+  narrow, and the report already labels it spot-check-only.
+- **Two v1.1 candidates, neither the deferred tar pit** (both are expression-shape
+  work, no cross-function analysis): (1) credit `sanitizer(x) || <literal>` and
+  `?? <literal>`, which is idiomatic here; (2) fix the whole-prefix-masking vs
+  bounded-read interaction — a template opening before the read boundary and
+  closing after it currently poisons the window, costing 14 findings.
+- **The 36 render-delegation cases need following the sink one function hop.**
+  That is adjacent to the analysis §6 deferred as the tar pit, and is NOT folded
+  in here. It is the decision v1.1 has to take deliberately, with this same
+  measurement re-run as the evidence.
+
 ## 6. Sustainability Notes
 
 ### Right-sizing gate
@@ -550,6 +636,22 @@ deployable (it has exactly **one voluntary adopter in a month** — not a valida
 abstraction); any AST/taint engine; any policy DSL; migrating the consumer's
 hand-rolled contract tests; and the remediation proof-bundle / negative-control
 gate (correct, but it improves the last mile while the noise problem is upstream).
+
+**Right-sizing, re-checked against measurement (§2d).** The chosen design was
+sized for a distribution where `C` absorbed ~90 findings. It absorbs 3. That
+does not retroactively make the design over-built — the three predicate kinds
+are still the smallest thing that serves the requirement, and `D`'s measured
+38% is the value actually delivered — but it does move where the next increment
+should go, and it changes what "smallest honest thing" means for v1.1:
+
+- **In scope for v1.1 (expression-shape only, no cross-function analysis):**
+  crediting `sanitizer(x) || <literal>` / `?? <literal>`, and fixing the
+  whole-prefix-masking vs bounded-read interaction. Neither adds a new predicate
+  *kind*; both make the existing one see what is already in front of it.
+- **Still the tar pit, still deferred:** following the sink into a render
+  function. It is one hop, not a taint engine — but "one hop" is how taint
+  engines start, and the 36 findings it would recover are safely in `A`
+  meanwhile. Take that decision deliberately, not as a follow-on.
 
 **Manual vs scripted**: scripted. The transformation is regular (N SARIF results
 → N routed findings) and verifiable (bucket counts assert against fixtures).
@@ -705,7 +807,8 @@ watch, not a clean bill of health.
 | **The resolved sink location is wrong for an unfamiliar producer** (R2-H1) | D3a0 resolves via code-flow terminal step, falls back to a single unambiguous location, and otherwise declares `sink-unresolved` → `A`. A producer we have not seen degrades to "reviewed by a human", never to a false demotion. |
 | **`sanitizer-wrapped` mis-fires on a multi-variable sink line** (the varA/varB case) | Routes to `C`, never `D`; `C` is explicitly labeled spot-check. The whole routing design exists for this risk. |
 | **Predicates rot as the codebase changes** | Config is committed and diffable; a predicate matching **zero** findings is reported as `unused`. Crucially the report must label this **ambiguous, not clean**: zero matches means either "no such findings exist" or "this predicate is broken" — the field incident in D3a2 produced exactly the second while reading as the first. The renderer states both readings; it never prints `unused` as if it were good news. |
-| **Bucket `C` becomes a dumping ground nobody reviews** | Report always prints per-bucket counts; `C` non-empty is visible, not hidden. Deliberately NOT gated in v1 — this is a triage aid, not a gate. |
+| **Bucket `C` becomes a dumping ground nobody reviews** | Report always prints per-bucket counts; `C` non-empty is visible, not hidden. Deliberately NOT gated in v1 — this is a triage aid, not a gate. **Measured (§2d): the opposite happened — `C` is 3, not ~93.** The risk register anticipated `C` being too full; it was never too empty. Worth noting as a register blind spot: every row here guards against a predicate being too *permissive*, and none asked what happens if one almost never fires. |
+| **`sanitizer-wrapped` almost never fires on real code** (§2d, measured 2026-07-20) | **Not mitigated in v1 — accepted and documented.** 36 of 100 DOM-XSS sinks delegate rendering to another function, so there is no expression at the sink to analyse. The predicate refuses rather than guesses, so the cost is rank, not safety, and every one of those findings is in `A` for a human. Recovering them needs a one-function hop, which is adjacent to the tar pit §6 deferred; that decision belongs to v1.1 with §2d's measurement re-run as its evidence. |
 | **Snyk requires a token in CI** | Formalized as D5: the CLI ingests a SARIF *file* and never executes a scanner. Acquiring it is the operator's business, which keeps this scanner-agnostic and keeps tokens out of our process. |
 | **Egress gate is bypassed when the LLM lands in v2** (SC2) | Recorded as an explicit precondition on the follow-up: the payload-capture test must exist before the first provider call is written. v1 has no provider, so there is nothing to bypass today. |
 | **The expected-bucket manifest becomes a rubber stamp** | It is a committed diff. A routing change that moves any of the 157 findings shows up as a reviewable line, which is the point; regenerating it blindly is the same anti-pattern the consumer's regen script warns about. |
