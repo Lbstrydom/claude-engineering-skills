@@ -31,6 +31,7 @@ import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 // Reused rather than re-parsed: env-setting owns .env key resolution (dotenv's
 // last-wins semantics included), and it is pure — the caller supplies the text.
 import { resolveEnvValue } from './lib/env-setting.mjs';
@@ -700,7 +701,25 @@ function assessConsumerAzureEmbed(repoPath) {
   return { actionable: read('AZURE_OPENAI_ENDPOINT') !== '' && read('AZURE_OPENAI_EMBED_DEPLOYMENT') === '' };
 }
 
+/**
+ * Every flag this CLI reads. Kept adjacent to `main()` rather than beside the
+ * `process.argv.includes` constants because those are module-scope and evaluate
+ * on IMPORT — throwing there would break the test that imports this module for
+ * its exports.
+ *
+ * `--target` takes a value; `assertKnownFlags` validates NAMES only, so the
+ * value is a bare positional it ignores by design.
+ */
+const KNOWN_FLAGS = ['--dry-run', '--keep-github-skills', '--no-prompt', '--adopt-orphans', '--target'];
+
 async function main() {
+  // This CLI WRITES INTO CONSUMER REPOS and its default is the real sync, so a
+  // dropped `--dry-runn` is the exact opt-out shape that caused the three
+  // incidents in check-cli-flags.mjs's header. It was unguarded until
+  // 2026-07-20 and had additionally gone INVISIBLE to that gate: a comment here
+  // naming `assertKnownFlags` made the name-based detector read the file as
+  // already fixed, so it was reported as "baseline can shrink — fixed or gone".
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'sync-to-repos' });
   assertRepoRoot(import.meta.url);
 
   if (!KEEP_GITHUB_SKILLS) {
@@ -1523,6 +1542,14 @@ const invokedAsScript = (() => {
 })();
 if (invokedAsScript) {
   main().catch((err) => {
+    // A usage mistake is not a crash: print the flag diagnostic alone (no stack)
+    // and exit 2, matching the other guarded CLIs. Burying "unknown flag
+    // --dry-runn" under a stack trace is how an operator concludes the tool is
+    // broken and re-runs it WITHOUT the flag — which is the real sync.
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
     process.stderr.write(`sync-to-repos: fatal: ${err.stack || err.message}\n`);
     process.exit(1);
   });

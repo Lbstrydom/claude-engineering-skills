@@ -133,6 +133,7 @@ export async function runConsistency(args, deps = {}) {
     ledger = openLedger(repoRoot, sessionId, {
       canaryName: args.canary,
       journeyKey: args.canary,
+      outPath: args.out,
     });
   } catch (err) {
     process.stderr.write(`LEDGER_PERSIST_FAILED: ${err.message}\n`);

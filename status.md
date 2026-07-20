@@ -1,6 +1,49 @@
 # Project Status Log
 
-## 2026-07-20 (latest) — the ship skill told the agent to commit a gitignored file
+## 2026-07-20 (latest) — a comment naming the guard counted as the guard
+
+Triaging issue #57 (wine-cellar-app consumer feedback on `cli:flags`). Items 1–4
+were already fixed in `18ae87e` and item 6 in `bed5887`; item 5 shipped in
+`878280e`. This entry covers what fell out of finishing it.
+
+**`rejectsUnknownFlags` matched `assertKnownFlags` inside comments.** The
+detector is name-based by design — that is what lets a consumer fork the helper
+and stay compatible. But it read *prose about* a guard as a guard.
+`sync-to-repos.mjs` — which writes into consumer repos, with the real sync as
+its default — silently left the census because a comment added in the very
+commit that fixed the sync-payload gap mentions the helper by name. The gate
+then reported it under "baseline can shrink — fixed or gone": a regression
+dressed as a win, and the second time in two days this file's own success path
+lied in the safe-looking direction.
+
+Fixed with a string-aware `stripComments()` plus call-shape matching. The
+asymmetry is deliberate and documented: `parsesFlags` still runs on raw source,
+because over-detecting a CLI is one visible false finding while under-detecting
+skips the file before the guard check ever runs — which is how 37 CLIs hid.
+
+**`sync-to-repos.mjs` is now genuinely guarded** (`--dry-runn` exits 2, real
+`--dry-run` unaffected), and the baseline is paid down 81 → 80 on the strength
+of that negative control rather than the detector's say-so.
+
+**#41 closed after two months** — `persona-consistency-run.mjs` parsed `--out`,
+documented it in `--help`, and never threaded it into `openLedger`. A CI step
+uploading a fixed artifact path found nothing there, with no error. Threaded,
+plus `mkdir` of the *actual* parent so an `--out` into a fresh directory does
+not defeat the write-once probe that exists to fail fast at exit 4.
+
+Deliberately NOT built: a general known-flag-dropped detector. Proving "parsed
+but never threaded" needs AST reachability and the false-positive surface is
+nasty (destructuring, options objects passed wholesale). This repo's own bar for
+building a gate is in `check-cli-flags.mjs`'s header — the unknown-flag class was
+"found by hand, one at a time, three separate times". #41 is one instance.
+
+Also worth relaying upstream: item 1's *mechanism* was wrong. Discovery was
+never depth-limited — git pathspec `*` crosses `/`, so `scripts/*.mjs` already
+matches at every depth (493 of 493 files). Two readers reproduced the "55%
+missed" figure by modelling the glob with shell/minimatch semantics instead of
+calling `discoverScripts()`. Their *target* was real and is fixed.
+
+## 2026-07-20 — the ship skill told the agent to commit a gitignored file
 
 Three stale blocks in `skills/ship/SKILL.md`, all from changes that landed
 elsewhere and left their instructions behind. Found by *running* the skill, not

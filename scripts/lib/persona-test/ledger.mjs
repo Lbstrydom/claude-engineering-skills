@@ -31,6 +31,9 @@ export const SESSIONS_DIR = path.join('.persona-test', 'sessions');
  * @property {string}      journeyKey
  * @property {string|null} [fixtureSeed]
  * @property {string}      [now]            - ISO timestamp injected for tests; otherwise new Date()
+ * @property {string}      [outPath]        - Override the ledger destination (the runner's `--out`).
+ *                                            Relative paths resolve against repoRoot; absolute are
+ *                                            honoured, since a CI artifact dir is a legitimate target.
  */
 
 /**
@@ -64,9 +67,18 @@ export function openLedger(repoRoot, sessionId, opts) {
     throw new Error('openLedger: opts.journeyKey is required');
   }
 
-  const dir = path.join(repoRoot, SESSIONS_DIR);
-  fs.mkdirSync(dir, { recursive: true });
-  const ledgerPath = path.join(dir, `${sessionId}.json`);
+  // `outPath` honours the runner's `--out`. It was parsed and documented in
+  // --help but never threaded here (#41, open 2026-05-21): callers who passed
+  // it got the default path with no error, so a CI step uploading a fixed
+  // artifact path silently found nothing. An output path the operator typed is
+  // deliberately NOT contained to repoRoot — a CI artifact directory outside
+  // the checkout is the motivating use case.
+  const ledgerPath = opts.outPath
+    ? path.resolve(repoRoot, opts.outPath)
+    : path.join(repoRoot, SESSIONS_DIR, `${sessionId}.json`);
+  // mkdir the ACTUAL parent, not SESSIONS_DIR — an --out into a fresh directory
+  // must not fail the write-once probe that exists to fail fast at exit 4.
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
 
   const startedAt = opts.now || new Date().toISOString();
 

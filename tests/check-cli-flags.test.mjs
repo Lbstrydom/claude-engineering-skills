@@ -260,11 +260,16 @@ describe('prose about a guard is not a guard', () => {
     assert.equal(rejectsUnknownFlags(VIA_TEXT), true);
   });
 
-  it('the real sync-to-repos.mjs reads unguarded (the live instance)', () => {
+  it('sync-to-repos.mjs is now genuinely guarded, by a CALL and not a comment', () => {
+    // This file was the live instance: a comment naming the helper masked a
+    // missing guard, and it has since been fixed for real. Asserting on the
+    // real file keeps both halves honest — the guard cannot regress, and it
+    // cannot be "restored" by prose, because stripComments removes that.
     const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..');
     const src = fs.readFileSync(path.join(repoRoot, 'scripts/sync-to-repos.mjs'), 'utf-8');
     assert.equal(parsesFlags(src), true);
-    assert.equal(rejectsUnknownFlags(src), false, 'a comment must not mask a missing guard');
+    assert.equal(rejectsUnknownFlags(src), true);
+    assert.match(stripComments(src), /assertKnownFlags\s*\(/, 'the guard must survive comment-stripping');
   });
 
   it('stripComments leaves string literals alone', () => {

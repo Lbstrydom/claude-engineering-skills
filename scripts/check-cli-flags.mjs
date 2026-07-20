@@ -144,7 +144,14 @@ export const BASELINE = new Set([
   'scripts/symbol-index/duplicates.mjs',
   'scripts/symbol-index/extract.mjs',
   'scripts/sync-shared-audit-refs.mjs',
-  'scripts/sync-to-repos.mjs',
+  // 'scripts/sync-to-repos.mjs' — FIXED 2026-07-20, baseline paid down. It
+  // WRITES INTO CONSUMER REPOS with a mutating default, so it was the
+  // highest-severity opt-out entry on the list. It was also the file that
+  // exposed the comment-blindness bug in `rejectsUnknownFlags`: a comment
+  // naming `assertKnownFlags` had removed it from the census entirely, and the
+  // gate reported that as "baseline can shrink — fixed or gone". This entry is
+  // removed on the strength of a negative control (`--dry-runn` now exits 2),
+  // not on the detector's say-so.
   'scripts/tiered-shadow-report.mjs',
   'scripts/ux-lock-run.mjs',
   'scripts/verify-anchor-contract.mjs',

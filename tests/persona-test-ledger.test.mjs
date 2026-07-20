@@ -274,3 +274,38 @@ describe('_internals', () => {
     assert.ok(cmp({surfaceId:'a',engineField:'g'}, {surfaceId:'a',engineField:'f'}) > 0);
   });
 });
+
+describe('--out is honoured (#41)', () => {
+  // Open 2026-05-21 → fixed 2026-07-20. `--out` was parsed by the runner AND
+  // documented in --help, but never threaded into openLedger, so a caller who
+  // passed it got the default path with NO error — a CI step uploading a fixed
+  // artifact path silently found nothing there. The adjacent shape to the
+  // unknown-flag class: there the flag is unknown and dropped, here it is
+  // known and dropped. Both are "the CLI silently did something else".
+  it('writes to outPath instead of the default sessions dir', () => {
+    const out = path.join(tmpDir, 'ci', 'artifacts', 'run.json');
+    const l = openLedger(tmpDir, 'sid', { canaryName: 'c', journeyKey: 'c', outPath: out });
+    assert.equal(l.ledgerPath, out);
+    assert.ok(fs.existsSync(out), 'the write-once probe must still persist immediately');
+    assert.equal(readLedger(out).sessionId, 'sid');
+  });
+
+  it('creates the outPath parent directory, not SESSIONS_DIR', () => {
+    // mkdir used to be hardcoded to SESSIONS_DIR; an --out into a fresh
+    // directory would fail the fail-fast probe that exists to exit 4 cleanly.
+    const out = path.join(tmpDir, 'brand', 'new', 'dir', 'run.json');
+    openLedger(tmpDir, 'sid', { canaryName: 'c', journeyKey: 'c', outPath: out });
+    assert.ok(fs.existsSync(path.dirname(out)));
+  });
+
+  it('resolves a relative outPath against repoRoot', () => {
+    const l = openLedger(tmpDir, 'sid', { canaryName: 'c', journeyKey: 'c', outPath: 'rel/x.json' });
+    assert.equal(l.ledgerPath, path.resolve(tmpDir, 'rel/x.json'));
+  });
+
+  it('falls back to the default path when outPath is absent', () => {
+    // The whole point is that the DEFAULT is unregressed.
+    const l = openLedger(tmpDir, 'sid', { canaryName: 'c', journeyKey: 'c' });
+    assert.equal(l.ledgerPath, path.join(tmpDir, SESSIONS_DIR, 'sid.json'));
+  });
+});
