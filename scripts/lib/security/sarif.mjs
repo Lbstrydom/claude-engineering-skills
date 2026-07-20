@@ -407,16 +407,26 @@ export function resolveSinkPhysicalLocation(result) {
 function contentHash(ruleId, rawLocation, message) {
   return crypto
     .createHash('sha256')
-    .update(`${ruleId} ${rawLocation} ${message}`)
+    .update(`${ruleId}\u0000${rawLocation}\u0000${message}`)
     .digest('hex')
     .slice(0, 16);
 }
 
+/**
+ * Carries the run status the CLI should adopt.
+ *
+ * The field is `triageStatus`, NOT `runStatus`, even though it maps onto the
+ * report's `runStatus`. `runStatus` is already the audit-loop's own vocabulary
+ * (`AuditRunResultSchema`), and a repo-wide guard requires every `runStatus`
+ * literal under `scripts/` to be a member of THAT enum. Two unrelated
+ * contracts sharing one identifier is exactly the ambiguity that guard exists
+ * to prevent, so this one gets its own name.
+ */
 export class SarifIngestError extends Error {
-  constructor(runStatus, message) {
+  constructor(triageStatus, message) {
     super(message);
     this.name = 'SarifIngestError';
-    this.runStatus = runStatus;
+    this.triageStatus = triageStatus;
   }
 }
 

@@ -61,14 +61,14 @@ describe('ingestSarif — document validation', () => {
   test('rejects a non-2.1.0 version as input_malformed', () => {
     const err = caught(() => ingestSarif({ version: '2.0.0', runs: [] }));
     assert.ok(err instanceof SarifIngestError);
-    assert.equal(err.runStatus, 'input_malformed');
+    assert.equal(err.triageStatus, 'input_malformed');
   });
 
   test('rejects a non-object root and a missing runs array', () => {
     for (const doc of [null, [], 'x', { version: '2.1.0' }]) {
       const err = caught(() => ingestSarif(doc));
       assert.ok(err instanceof SarifIngestError, String(doc));
-      assert.equal(err.runStatus, 'input_malformed');
+      assert.equal(err.triageStatus, 'input_malformed');
     }
   });
 
@@ -98,7 +98,7 @@ describe('ingestSarif — bounds', () => {
     const doc = sarif([result(), result(), result()]);
     const err = caught(() => ingestSarif(doc, { bounds: { ...BOUND_DEFAULTS, maxResults: 2 } }));
     assert.ok(err instanceof SarifIngestError);
-    assert.equal(err.runStatus, 'unverified');
+    assert.equal(err.triageStatus, 'unverified');
     assert.match(err.message, /run refused/);
   });
 

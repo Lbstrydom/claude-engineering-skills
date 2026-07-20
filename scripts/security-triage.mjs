@@ -1,0 +1,490 @@
+#!/usr/bin/env node
+/**
+ * SAST triage CLI — the Phase-3 I/O shell.
+ *
+ * Plan: docs/plans/sast-triage-routing.md — Phase 3.
+ *
+ * `--sarif <file>` ingest ONLY (D5): this CLI never executes a scanner. The
+ * operator produces the SARIF (`snyk code test --sarif > out.sarif`, Semgrep,
+ * CodeQL) and passes the path. That keeps the tool scanner-agnostic, keeps
+ * scanner tokens out of our process, and makes the failure model tractable.
+ *
+ * **This is the only layer that touches the filesystem.** `sarif.mjs` resolves
+ * URIs lexically and `triage-router.mjs` is pure; canonicalization (SC1),
+ * classification, and the bounded read all live here.
+ *
+ * v1 calls NO model (D4). There is no branch where a provider can emit
+ * "clean", because there is no provider.
+ *
+ * Deliberately has no `--selfcheck-relocation` handler: this CLI is not part of
+ * a synced consumer surface in v1 (audit R1-L1). Add one if consumer sync lands.
+ */
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import readline from 'node:readline';
+import { execFileSync } from 'node:child_process';
+
+import {
+  ingestSarif,
+  SarifIngestError,
+  ConfigSchema,
+  TriageReportSchema,
+  resolveBounds,
+} from './lib/security/sarif.mjs';
+import { routeFindings } from './lib/security/triage-router.mjs';
+import { resolveAndClassify } from './lib/sensitive-paths.mjs';
+import { redactSecrets } from './lib/secret-patterns.mjs';
+
+// ---------------------------------------------------------------------------
+// D5a — one run-status state machine; exit-code precedence is total.
+// ---------------------------------------------------------------------------
+
+export const EXIT_CODES = Object.freeze({
+  config_invalid: 6,
+  input_unreadable: 4,
+  input_malformed: 5,
+  unverified: 4,
+  needs_review: 3,
+  routed_clean: 0,
+});
+
+/**
+ * Statuses are mutually exclusive and evaluated in a fixed order — the first
+ * match wins. Pure, so the precedence table is testable without any I/O: a run
+ * that is BOTH config-invalid and malformed must exit 6, not 5.
+ *
+ * `0` is unreachable from an empty, failed, or unparsed input by construction.
+ * `routed_clean` explicitly means "≥1 finding parsed and every one routed to
+ * C/D", never "no findings" — a real scan finds *something* to say, and zero
+ * results are indistinguishable from a scanner that never ran.
+ */
+export function resolveRunStatus(flags) {
+  const pick = (runStatus) => ({ runStatus, exitCode: EXIT_CODES[runStatus] });
+  if (flags.configInvalid) return pick('config_invalid');
+  if (flags.inputUnreadable) return pick('input_unreadable');
+  if (flags.inputMalformed) return pick('input_malformed');
+  if (flags.zeroResults) return pick('unverified');
+  if (flags.bucketANonEmpty) return pick('needs_review');
+  return pick('routed_clean');
+}
+
+// ---------------------------------------------------------------------------
+// Path classification (SC1 / INC-001)
+// ---------------------------------------------------------------------------
+
+/**
+ * Map `resolveAndClassify`'s result onto the router's four-state contract.
+ *
+ * Order matters and is fail-closed: a path we could not RESOLVE is reported as
+ * `unresolved` rather than folded into `sensitive`, because the router treats
+ * every non-`ok` state as blocking and the report should say which one it was.
+ */
+export function classifyLocationPath(rawPath, repoRoot, deps = {}) {
+  const classify = deps.resolveAndClassify || resolveAndClassify;
+  const res = classify(rawPath, { repoRoot, ...(deps.fs ? { fs: deps.fs } : {}) });
+
+  let pathClassification = 'ok';
+  if (res.resolutionFailed) pathClassification = 'unresolved';
+  else if (res.escapedRepo) pathClassification = 'escaped';
+  else if (res.category === 'sensitive') pathClassification = 'sensitive';
+
+  const canonicalPath = res.canonical || path.resolve(repoRoot, rawPath);
+  // The router's glob matcher anchors with `^` against a REPO-RELATIVE path,
+  // but resolveAndClassify returns an ABSOLUTE realpath (Gemini G3). Without
+  // this conversion `tests/**` silently matches nothing and `path-scope`
+  // becomes a no-op — a predicate that reads as configured and does nothing.
+  const repoRelativePath = path
+    .relative(repoRoot, canonicalPath)
+    .split(path.sep)
+    .join('/');
+
+  return { pathClassification, canonicalPath, repoRelativePath };
+}
+
+// ---------------------------------------------------------------------------
+// Bounded source read (§2c) — an algorithm, not an assertion.
+// ---------------------------------------------------------------------------
+
+/**
+ * Read lines 1..`maxLine` of a file without allocating the whole thing.
+ *
+ * A `readFile` followed by a length check has ALREADY allocated the file,
+ * which defeats the bound. So: stat first, refuse before opening if oversized,
+ * then a streaming line scan that aborts once the last needed line is passed.
+ */
+export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}) {
+  const statFn = deps.stat || fsp.stat;
+  const createReadStream = deps.createReadStream || fs.createReadStream;
+
+  let st;
+  try {
+    st = await statFn(absPath);
+  } catch {
+    return { lines: null, withheld: 'unreadable' };
+  }
+  if (st.size > maxBytes) return { lines: null, withheld: 'too-large' };
+
+  return new Promise((resolve) => {
+    const lines = [];
+    let stream;
+    try {
+      stream = createReadStream(absPath, { encoding: 'utf8' });
+    } catch {
+      resolve({ lines: null, withheld: 'unreadable' });
+      return;
+    }
+    const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+    let done = false;
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      rl.close();
+      stream.destroy();
+      resolve(value);
+    };
+    // `if (done) return` and the defensive copy are both load-bearing.
+    // `resolve()` hands back a REFERENCE, and readline keeps emitting buffered
+    // lines after `close()` within the same tick — so without these the caller
+    // received an array that kept growing to the whole file. The bound would
+    // have read as enforced while enforcing nothing, which is precisely the
+    // green-that-checked-nothing shape this plan is built to avoid.
+    rl.on('line', (line) => {
+      if (done) return;
+      lines.push(line);
+      if (lines.length >= maxLine) finish({ lines: lines.slice(), withheld: null });
+    });
+    rl.on('close', () => finish({ lines: lines.slice(), withheld: null }));
+    stream.on('error', () => finish({ lines: null, withheld: 'unreadable' }));
+  });
+}
+
+/**
+ * Enrich ingested findings with everything the pure router needs.
+ *
+ * Findings are grouped by SINK file before any read (audit R3-M2), so 108
+ * findings in one file cost one classification + one bounded scan, not 108 —
+ * and the scan still stops at the last line any finding in that file needs.
+ */
+export async function enrichFindings(findings, { repoRoot, bounds, deps = {} }) {
+  const routable = [];
+
+  for (const f of findings) {
+    const enriched = { ...f };
+    for (const key of ['location', 'sinkLocation']) {
+      if (!f[key]) continue;
+      const c = classifyLocationPath(f[key].path, repoRoot, deps);
+      enriched[key] = { ...f[key], ...c };
+    }
+    routable.push(enriched);
+  }
+
+  // Group by sink file — only sinks are ever read.
+  const byFile = new Map();
+  for (const f of routable) {
+    const sink = f.sinkLocation;
+    // SC2 gate 1: a sensitive, unresolvable, or escaped target is NEVER
+    // opened. Asserting the classifier was *called* is not the same as
+    // asserting the file was not read, so the read is gated here, at the
+    // only place a read can happen.
+    if (!sink || sink.pathClassification !== 'ok' || !sink.region) continue;
+    const entry = byFile.get(sink.repoRelativePath) || {
+      canonicalPath: sink.canonicalPath,
+      maxLine: 0,
+      findings: [],
+    };
+    entry.maxLine = Math.max(entry.maxLine, sink.region.endLine + bounds.maxSinkLines);
+    entry.findings.push(f);
+    byFile.set(sink.repoRelativePath, entry);
+  }
+
+  const sourceByPath = new Map();
+  for (const [relPath, entry] of byFile) {
+    const { lines, withheld } = await readBoundedLines(
+      entry.canonicalPath,
+      entry.maxLine,
+      bounds.maxSourceBytesPerFile,
+      deps,
+    );
+    if (lines) sourceByPath.set(relPath, lines);
+    for (const f of entry.findings) {
+      if (withheld) {
+        f.contextWithheld = withheld;
+        continue;
+      }
+      // Redact IMMEDIATELY after the read, before the finding reaches the
+      // router — the boundary where the field first exists (SC2). The report
+      // gets pasted into issues, PRs, and chat.
+      const region = f.sinkLocation.region;
+      const start = Math.max(0, region.startLine - 1);
+      const end = Math.min(lines.length, region.endLine);
+      f.sourceContext = redactSecrets(lines.slice(start, end).join('\n')).text;
+    }
+  }
+
+  for (const f of routable) {
+    if (f.sinkLocation && f.sinkLocation.pathClassification !== 'ok') {
+      f.contextWithheld = 'sensitive';
+    }
+  }
+
+  return { routable, sourceByPath };
+}
+
+// ---------------------------------------------------------------------------
+// Config + input
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_CONFIG_BASENAME = '.security-triage.json';
+
+/**
+ * There is no implicit default policy. A silently-defaulted security policy is
+ * exactly the kind of thing that reads as configured when it isn't, so an
+ * absent config file is `config_invalid`, not a fallback.
+ */
+export function loadConfig(configPath, deps = {}) {
+  const readFileSync = deps.readFileSync || fs.readFileSync;
+  let raw;
+  try {
+    raw = readFileSync(configPath, 'utf8');
+  } catch {
+    return { ok: false, error: `config not found or unreadable: ${configPath}` };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return { ok: false, error: `config is not valid JSON: ${err.message}` };
+  }
+  const result = ConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    return { ok: false, error: `config failed validation: ${result.error.message}` };
+  }
+  return { ok: true, config: result.data };
+}
+
+export function resolveRepoRoot(explicit, deps = {}) {
+  // The root is REALPATH'd, because `classifyLocationPath` derives
+  // `repoRelativePath` as `path.relative(repoRoot, canonicalPath)` and
+  // `canonicalPath` is always canonical. Comparing a non-canonical root
+  // against a canonical target silently produces `../…` — which reads as an
+  // escaped repo, fails closed, and would route every finding to `A`. It bites
+  // wherever the root reaches the process through a symlink: macOS `/tmp` →
+  // `/private/tmp`, Windows 8.3 short paths, a symlinked checkout.
+  const realpathSync = deps.realpathSync || fs.realpathSync;
+  const canonicalise = (p) => {
+    try {
+      return realpathSync(path.resolve(p));
+    } catch {
+      return path.resolve(p);
+    }
+  };
+
+  if (explicit) return { ok: true, repoRoot: canonicalise(explicit) };
+  const exec = deps.execFileSync || execFileSync;
+  try {
+    const out = exec('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+    return { ok: true, repoRoot: canonicalise(out.trim()) };
+  } catch {
+    // Every security decision downstream is relative to this root, so guessing
+    // cwd would silently relocate the whole policy.
+    return { ok: false, error: 'not a git repository — pass --repo-root <path>' };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Render
+// ---------------------------------------------------------------------------
+
+export function renderReport(report) {
+  const L = [];
+  L.push('');
+  L.push('═══════════════════════════════════════');
+  L.push(`  SAST triage — ${report.runStatus} (exit ${report.exitCode})`);
+  L.push(`  A unexplained: ${report.counts.A}   C likely-mitigated: ${report.counts.C}   D out-of-reach: ${report.counts.D}`);
+  L.push('═══════════════════════════════════════');
+
+  if (report.counts.A > 0) {
+    L.push('');
+    L.push(`Bucket A — no predicate matched. REVIEW FIRST (${report.counts.A}):`);
+    for (const f of report.findings.filter((x) => x.bucket === 'A').slice(0, 20)) {
+      const where = f.location ? `${f.location.repoRelativePath}:${f.location.region?.startLine ?? '?'}` : '<no location>';
+      const why = f.matches.find((m) => m.predicate === 'sensitivity-guard')?.reason;
+      L.push(`  • [${f.ruleId}] ${where}${why ? `  (${why})` : ''}`);
+    }
+    if (report.counts.A > 20) L.push(`  … and ${report.counts.A - 20} more`);
+  }
+
+  if (report.counts.C > 0) {
+    L.push('');
+    L.push(`Bucket C — a heuristic predicate matched. SPOT-CHECK, do not trust (${report.counts.C}).`);
+  }
+
+  if (report.unusedPredicates.length > 0) {
+    L.push('');
+    // Never printed as good news. Zero matches means EITHER no such findings
+    // exist OR the predicate is broken — the field incident in D3a2 produced
+    // exactly the second while reading as the first.
+    L.push('Predicates that matched NOTHING — ambiguous, not clean:');
+    for (const p of report.unusedPredicates) {
+      L.push(`  • ${p} — either no such findings exist, or this predicate is broken. Both read identically here.`);
+    }
+  }
+
+  if (report.diagnostics.length > 0) {
+    L.push('');
+    L.push(`Diagnostics (${report.diagnostics.length}): ${report.diagnostics.slice(0, 5).join('; ')}`);
+  }
+  L.push('');
+  return L.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+function argValue(argv, flag) {
+  const i = argv.indexOf(flag);
+  return i !== -1 && argv[i + 1] ? argv[i + 1] : null;
+}
+
+export async function runTriage(argv, deps = {}) {
+  const sarifPath = argValue(argv, '--sarif');
+  const configArg = argValue(argv, '--config');
+  const repoRootArg = argValue(argv, '--repo-root');
+
+  const emptyCounts = { A: 0, C: 0, D: 0 };
+  const fail = (flags, diagnostics) => {
+    const { runStatus, exitCode } = resolveRunStatus(flags);
+    return {
+      schemaVersion: 1,
+      runStatus,
+      exitCode,
+      counts: emptyCounts,
+      findings: [],
+      unusedPredicates: [],
+      diagnostics,
+    };
+  };
+
+  const rootRes = resolveRepoRoot(repoRootArg, deps);
+  if (!rootRes.ok) return fail({ configInvalid: true }, [rootRes.error]);
+  const repoRoot = rootRes.repoRoot;
+
+  // Config is evaluated FIRST — precedence is total (D5a).
+  const configPath = configArg
+    ? path.resolve(configArg)
+    : path.join(repoRoot, DEFAULT_CONFIG_BASENAME);
+  const cfg = loadConfig(configPath, deps);
+  if (!cfg.ok) return fail({ configInvalid: true }, [cfg.error]);
+  const bounds = resolveBounds(cfg.config);
+
+  if (!sarifPath) return fail({ inputUnreadable: true }, ['--sarif <file> is required']);
+
+  const statSync = deps.statSync || fs.statSync;
+  const readFileSync = deps.readFileSync || fs.readFileSync;
+  let st;
+  try {
+    st = statSync(sarifPath);
+  } catch {
+    return fail({ inputUnreadable: true }, [`SARIF not found or unreadable: ${sarifPath}`]);
+  }
+  // Checked by `stat` BEFORE the read, so an oversized file is never allocated.
+  if (st.size > bounds.maxSarifBytes) {
+    return fail({ inputUnreadable: true }, [
+      `SARIF is ${st.size} bytes, above maxSarifBytes=${bounds.maxSarifBytes}`,
+    ]);
+  }
+
+  let doc;
+  try {
+    doc = JSON.parse(readFileSync(sarifPath, 'utf8'));
+  } catch (err) {
+    return fail({ inputMalformed: true }, [`SARIF is not valid JSON: ${err.message}`]);
+  }
+
+  let ingested;
+  try {
+    ingested = ingestSarif(doc, { bounds });
+  } catch (err) {
+    if (err instanceof SarifIngestError) {
+      const flags =
+        err.triageStatus === 'unverified'
+          ? { zeroResults: true }
+          : { inputMalformed: true };
+      return fail(flags, [err.message]);
+    }
+    throw err;
+  }
+
+  if (ingested.findings.length === 0) {
+    return fail({ zeroResults: true }, [
+      'SARIF parsed but carries zero results — indistinguishable from a scanner that did not run',
+      ...ingested.diagnostics,
+    ]);
+  }
+
+  const { routable, sourceByPath } = await enrichFindings(ingested.findings, {
+    repoRoot,
+    bounds,
+    deps,
+  });
+
+  const routed = routeFindings(routable, cfg.config, {
+    bounds,
+    getSource: (k) => sourceByPath.get(k) ?? null,
+  });
+
+  const { runStatus, exitCode } = resolveRunStatus({
+    bucketANonEmpty: routed.counts.A > 0,
+  });
+
+  return {
+    schemaVersion: 1,
+    runStatus,
+    exitCode,
+    counts: routed.counts,
+    findings: routed.findings,
+    unusedPredicates: routed.unusedPredicates,
+    diagnostics: [...ingested.diagnostics, ...routed.diagnostics],
+  };
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const report = await runTriage(argv);
+
+  // The renderer consumes ONLY this object, so render and logic cannot
+  // diverge. Validating it here means a shape breach is loud, not cosmetic.
+  const parsed = TriageReportSchema.safeParse(report);
+  if (!parsed.success) {
+    process.stderr.write(`[security-triage] report failed its own schema: ${parsed.error.message}\n`);
+    process.exit(1);
+  }
+
+  const outPath = argValue(argv, '--out');
+  if (outPath) {
+    fs.writeFileSync(outPath, `${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(
+      `${report.runStatus}: A=${report.counts.A} C=${report.counts.C} D=${report.counts.D} → ${outPath}\n`,
+    );
+  } else if (argv.includes('--json')) {
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  } else {
+    process.stdout.write(renderReport(report));
+  }
+  process.exit(report.exitCode);
+}
+
+const isMain = (() => {
+  const argv1 = process.argv[1]?.replace(/\\/g, '/');
+  if (!argv1) return false;
+  return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+})();
+
+if (isMain) {
+  main().catch((err) => {
+    process.stderr.write(`[security-triage] ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
+}

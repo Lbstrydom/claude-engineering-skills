@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "pathScope": {
+    "nonReachableGlobs": [
+      "tests/**",
+      "test/**",
+      "**/__tests__/**",
+      "**/*.test.js",
+      "**/*.spec.js"
+    ]
+  },
+  "sinkMismatch": {
+    "pairs": [
+      { "ruleId": "javascript/reDOS", "sinkFunction": "caches.match" }
+    ]
+  },
+  "sanitizerWrapped": {
+    "sanitizers": [
+      "esc",
+      "escapeHtml",
+      "DOMPurify.sanitize"
+    ]
+  },
+  "bounds": {
+    "maxSinkLines": 12
+  }
+}
