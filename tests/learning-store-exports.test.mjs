@@ -170,12 +170,14 @@ const EXPECTED_EXPORTS = [
   'getTopDuplicateClusters',
   'heartbeatRefreshRun',
   'listFileImportsForSnapshot',
+  'listFilesNeedingSummaryRetry',
   'listLayeringViolationsForSnapshot',
   'listSymbolsForSnapshot',
   'markImportGraphPopulated',
   'openRefreshRun',
   'publishRefreshRun',
   'recordDuplicateJustifications',
+  'recordSummaryOutcomes',
   'recordLayeringViolations',
   'recordSymbolDefinitions',
   'recordSymbolEmbedding',
@@ -275,6 +277,9 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // Both were dead (no callers, no readers) and syncExperiments wrote to an
     // `experiments` table that does not exist — it would have thrown if ever
     // called. Git history is the archive.
-    assert.equal(EXPECTED_EXPORTS.length, 161);
+    // 161 → 163: listFilesNeedingSummaryRetry + recordSummaryOutcomes added
+    // 2026-07-20 for the bounded null-summary re-queue (plan §2.1 C9). The
+    // cap constant is deliberately NOT exported — this surface is functions.
+    assert.equal(EXPECTED_EXPORTS.length, 163);
   });
 });

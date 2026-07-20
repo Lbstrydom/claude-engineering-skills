@@ -370,3 +370,94 @@ export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefre
   }
   return copied;
 }
+
+/** Cap on consecutive failed summarisation attempts before a symbol is terminal.
+ *  Module-private: this is the store's own retry policy, and nothing outside
+ *  needs it. Keeping it unexported preserves the barrel invariant that every
+ *  public member is a function — a contract three separate tests pin. */
+const SUMMARY_RETRY_CAP = 3;
+
+/**
+ * Files containing symbols whose summarisation has failed and is still
+ * retryable (plan §2.1 C9).
+ *
+ * WHY FILES, NOT SYMBOLS: an incremental refresh scopes EXTRACTION to a file
+ * list, and summarisation consumes extraction output. Re-queuing at file
+ * granularity lets the failed symbols flow back through the normal
+ * extract → summarise → embed pipeline instead of needing a second, divergent
+ * path (which would be a near-duplicate of the pipeline and drift from it).
+ *
+ * Terminal rows (`summary_failed = TRUE`) are excluded: they fail permanently
+ * — oversized body, safety-filter trip, malformed source — and retrying them
+ * every refresh spends provider calls on work that cannot succeed.
+ *
+ * @param {string} repoId
+ * @param {string} refreshId - the snapshot to inspect (usually the prior active one)
+ * @returns {Promise<string[]>} repo-relative file paths, deduplicated
+ */
+export async function listFilesNeedingSummaryRetry(repoId, refreshId) {
+  if (!await isCloudEnabled()) return [];
+  if (!repoId || !refreshId) return [];
+  const rows = await many(
+    `SELECT DISTINCT si.file_path
+       FROM symbol_index si
+       JOIN symbol_definitions sd ON sd.id = si.definition_id
+      WHERE si.repo_id = $1
+        AND si.refresh_id = $2
+        AND (si.purpose_summary IS NULL OR btrim(si.purpose_summary) = '')
+        AND sd.summary_failed = FALSE
+        AND sd.summary_attempts < $3
+        AND sd.archived_at IS NULL`,
+    [repoId, refreshId, SUMMARY_RETRY_CAP]
+  );
+  return (rows || []).map(r => r.file_path).filter(Boolean);
+}
+
+/**
+ * Record the outcome of a summarisation pass (plan §2.1 C9).
+ *
+ * Success RESETS the counter — the contract is "consecutive failures", so a
+ * symbol that recovers is not carrying scar tissue toward the cap. Failure
+ * increments and flips `summary_failed` at the cap, in one statement so the
+ * two can never disagree.
+ *
+ * @param {string} repoId
+ * @param {{definitionId: string, ok: boolean}[]} outcomes
+ * @returns {Promise<{reset: number, incremented: number, nowTerminal: number}>}
+ */
+export async function recordSummaryOutcomes(repoId, outcomes) {
+  const out = { reset: 0, incremented: 0, nowTerminal: 0 };
+  if (!await isCloudEnabled()) return out;
+  const list = (outcomes || []).filter(o => o && o.definitionId);
+  if (list.length === 0) return out;
+
+  const okIds = list.filter(o => o.ok).map(o => o.definitionId);
+  const badIds = list.filter(o => !o.ok).map(o => o.definitionId);
+
+  await withTx(async (tx) => {
+    if (okIds.length > 0) {
+      const r = await tx.query(
+        `UPDATE symbol_definitions
+            SET summary_attempts = 0, summary_failed = FALSE
+          WHERE repo_id = $1 AND id = ANY($2::uuid[])
+            AND (summary_attempts > 0 OR summary_failed = TRUE)`,
+        [repoId, okIds]
+      );
+      out.reset = r.rowCount || 0;
+    }
+    if (badIds.length > 0) {
+      const r = await tx.query(
+        `UPDATE symbol_definitions
+            SET summary_attempts = summary_attempts + 1,
+                summary_failed   = (summary_attempts + 1 >= $3)
+          WHERE repo_id = $1 AND id = ANY($2::uuid[])
+            AND summary_failed = FALSE
+        RETURNING summary_failed`,
+        [repoId, badIds, SUMMARY_RETRY_CAP]
+      );
+      out.incremented = r.rowCount || 0;
+      out.nowTerminal = (r.rows || []).filter(x => x.summary_failed).length;
+    }
+  });
+  return out;
+}

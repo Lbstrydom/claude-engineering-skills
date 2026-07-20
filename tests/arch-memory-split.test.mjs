@@ -45,6 +45,9 @@ const EXPECTED_EXPORTS = [
   'recordLayeringViolations',
   'recordDuplicateJustifications',
   'listSymbolsForSnapshot',
+  // Bounded null-summary re-queue (plan §2.1 C9) — arch/symbols.mjs.
+  'listFilesNeedingSummaryRetry',
+  'recordSummaryOutcomes',
   'listLayeringViolationsForSnapshot',
   'copyForwardUntouchedFiles',
   // arch/imports.mjs — 6 fns
@@ -69,10 +72,15 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 36 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 36);
+  test(`exactly 38 public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 38);
   });
 
+  // Every public member is a FUNCTION. `SUMMARY_RETRY_CAP` was briefly exported
+  // alongside the re-queue helpers and would have been the first non-function
+  // on this surface; it was made module-private instead, because the store's
+  // own retry policy is not something callers need and weakening this guard to
+  // admit one constant costs more than it buys.
   test('every name resolves through the barrel as a function', async () => {
     const mod = await import('../scripts/lib/store/arch-memory.mjs');
     const missing = [];
