@@ -15,10 +15,46 @@ import { many, one, updateWhere, upsert } from '../../db/query.mjs';
 import { isCloudEnabled } from '../repo.mjs';
 import { UPSERT_CHUNK_SIZE, IN_CHUNK, chunk } from './_shared.mjs';
 
+/**
+ * Persist a snapshot's file-import edges.
+ *
+ * Input is de-duplicated on the conflict key BEFORE chunking. Postgres aborts
+ * an `INSERT ... ON CONFLICT DO UPDATE` whose own VALUES list carries the same
+ * conflict key twice ("cannot affect row a second time") — a second UPDATE to
+ * a row the same statement already touched is ambiguous, so it refuses rather
+ * than pick one. Extraction can legitimately hand us the same
+ * (importer, imported) pair more than once, and a repeated edge carries no
+ * extra information: the edge either exists or it doesn't. Collapsing is
+ * therefore lossless, and the right place for it is this boundary, so the
+ * write path is idempotent against its input regardless of what upstream does.
+ *
+ * De-dup is GLOBAL, not per-chunk. Per-chunk would be enough to stop the
+ * abort (only same-statement repeats throw; a repeat landing in a later chunk
+ * merely UPDATEs), but it would leave `inserted` counting the same edge twice.
+ *
+ * Field failure this fixes: a consumer's full refresh (8,431 symbols / 6,077
+ * edges) died here at refresh step 12b, after the summarise and embed passes
+ * had already been paid for. This repo never hit it at its own scale.
+ * Guarded by tests/symbol-file-imports.test.mjs.
+ *
+ * @param {string} refreshId
+ * @param {{importer: string, imported: string}[]} edges
+ * @returns {Promise<{inserted: number}>} count of DISTINCT edges persisted
+ */
 export async function recordSymbolFileImports(refreshId, edges) {
   if (!Array.isArray(edges) || edges.length === 0) return { inserted: 0 };
+  const seen = new Set();
+  const distinct = [];
+  for (const e of edges) {
+    // NUL-delimited: paths cannot contain it, so the key is unambiguous where
+    // a plain concatenation could collide across odd-but-legal path pairs.
+    const key = `${e.importer}\u0000${e.imported}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    distinct.push(e);
+  }
   let inserted = 0;
-  for (const batch of chunk(edges, UPSERT_CHUNK_SIZE)) {
+  for (const batch of chunk(distinct, UPSERT_CHUNK_SIZE)) {
     const payload = batch.map((e) => ({
       refresh_id: refreshId,
       importer_path: e.importer,

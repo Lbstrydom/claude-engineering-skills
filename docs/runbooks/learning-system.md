@@ -32,13 +32,19 @@ limits):
 Mondays 09:00 UTC, per consumer repo. Sticky GitHub issue with label
 `learning-weekly-review`. Hard cap of 7 items: 3 awaiting triage + 3 no-brainer
 fix-now (recurring 3+ HIGH or 5+ MEDIUM) + 1 stale deferral (>30 days). Run locally
-with `npm run learning:weekly-review --repo <name>`.
+with `npm run learning:weekly-review -- --repo <name>`.
 
 ## CLI
 
 - `npm run learning:weekly-review` — generate digest, post sticky issue
-- `npm run learning:stats --repoName <name>` — counts of pending triage, no-brainer
-  recurring, stale deferrals
+- `npm run learning:stats -- --json '{"repoName":"<owner/repo>"}'` — counts of pending
+  triage, no-brainer recurring, stale deferrals. Two things the previous wording got
+  wrong, both silent: `repoName` is a **payload field, not an argv flag** (`--repoName`
+  is not in `KNOWN_FLAGS`), and without the `--` npm swallows it before the script
+  sees it — so the documented command returned `{"unknownRepo":true}` rather than
+  erroring. The name must be the **fully-qualified** identity from
+  `cross-skill.mjs resolve-repo-identity` (e.g. `Lbstrydom/claude-engineering-skills`);
+  a bare repo name also resolves to `unknownRepo`.
 - `npm run learning:record` — generic decision logger (mostly for tools)
 - `npm run learning:quickfix-stats` — Phase 2; print Beta posteriors per pattern
 - `npm run learning:quickfix-rebuild` — Phase 2; rebuild stats cache from cloud

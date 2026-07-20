@@ -191,7 +191,10 @@ This source repo's tooling deploys to consumer repos under
 `scripts/` directory. The directory is gitignored on the consumer
 side via a managed block in their root `.gitignore`. The directory
 isn't tracked — fresh clones of a consumer repo need to re-run
-`npm run sync --target <name>` from THIS repo to hydrate it.
+`npm run sync -- --target <name>` from THIS repo to hydrate it. (The `--` is
+load-bearing: without it npm eats `--target` as its own config and forwards the
+value as a bare positional the script ignores, so the sync writes into EVERY
+consumer instead of the named one. Verified 2026-07-20.)
 
 > **Upstream-owned — never patch the synced copy (governance).** A failure in a
 > consumer's `scripts/.claude-skills/**` file is an **UPSTREAM** bug: push back

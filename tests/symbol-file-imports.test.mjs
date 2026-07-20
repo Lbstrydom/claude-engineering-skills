@@ -12,10 +12,19 @@
  *
  * Live integration smoke (npm run arch:refresh:full → arch:render) is the
  * end-to-end gate.
+ *
+ * The same-batch duplicate-edge suite at the bottom is DB-gated on
+ * AUDIT_DB_TEST_URL (the DISPOSABLE container, never AUDIT_DB_URL) — the
+ * failure it pins is Postgres behaviour, not JS logic, so a mock could not
+ * have caught it.
  */
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import { renderSymbolTable } from '../scripts/lib/arch-render.mjs';
+import { getPool, closePool, _resetForTest, assertDisposableDbUrl } from '../scripts/lib/db/client.mjs';
+import { upsertRepoByUuid } from '../scripts/lib/store/repo.mjs';
+import { recordSymbolFileImports } from '../scripts/lib/store/arch/imports.mjs';
 
 // Mirror the chain-of-trust logic from refresh.mjs
 function computeImportGraphPopulated(mode, priorPopulated) {
@@ -127,5 +136,102 @@ describe('renderer respects importGraphPopulated (Plan v6 §2.6.1, R1-H2)', () =
       importGraphPopulated: true,
     });
     assert.match(out, /`src\/caller\.js`/);
+  });
+});
+
+// ── Same-batch duplicate edges (disposable DB) ──────────────────────────────
+//
+// Field failure (2026-07-20, downstream consumer, 8,431 symbols / 6,077 edges):
+//   recordSymbolFileImports failed: ON CONFLICT DO UPDATE command cannot
+//   affect row a second time
+//
+// Postgres raises this when ONE INSERT ... ON CONFLICT statement carries the
+// same conflict key twice — a second UPDATE to a row this statement already
+// touched is ambiguous, so it aborts. The whole refresh died at step 12b,
+// AFTER the (expensive) summarise + embed passes had completed.
+
+const TEST_URL = process.env.AUDIT_DB_TEST_URL;
+const dbSkip = TEST_URL ? false : 'AUDIT_DB_TEST_URL not set';
+
+describe('recordSymbolFileImports — duplicate edges in one batch', { skip: dbSkip }, () => {
+  let savedUrl, repoId, refreshId;
+  const REPO_UUID = `test-import-dedup-${crypto.randomUUID()}`;
+
+  before(async () => {
+    savedUrl = process.env.AUDIT_DB_URL;
+    assertDisposableDbUrl(TEST_URL, { productionUrl: savedUrl });
+    await _resetForTest();
+    process.env.AUDIT_DB_URL = TEST_URL;
+    if (/@(127\.0\.0\.1|localhost|\[::1\])[:/]/.test(TEST_URL)) {
+      process.env.AUDIT_DB_SSL_MODE = 'disable';
+    }
+    const repo = await upsertRepoByUuid({ repoUuid: REPO_UUID, name: 'import-dedup-test-repo', fingerprint: null });
+    repoId = repo.id;
+    const pool = await getPool();
+    refreshId = (await pool.query(
+      `INSERT INTO refresh_runs (repo_id, mode, status) VALUES ($1, 'full', 'running') RETURNING id`,
+      [repoId],
+    )).rows[0].id;
+  });
+
+  after(async () => {
+    const errors = [];
+    try {
+      const pool = await getPool();
+      if (pool) {
+        for (const [sql, params] of [
+          [`DELETE FROM symbol_file_imports WHERE refresh_id = $1`, [refreshId]],
+          [`DELETE FROM refresh_runs WHERE repo_id = $1`, [repoId]],
+          [`DELETE FROM audit_repos WHERE id = $1`, [repoId]],
+        ]) {
+          try { await pool.query(sql, params); } catch (err) { errors.push(new Error(`${sql}: ${err?.message || err}`)); }
+        }
+      }
+    } finally {
+      if (savedUrl === undefined) delete process.env.AUDIT_DB_URL;
+      else process.env.AUDIT_DB_URL = savedUrl;
+      try { await closePool(); } catch { /* env already restored */ }
+    }
+    if (errors.length > 0) throw new AggregateError(errors, 'teardown failed — disposable DB may have residual rows');
+  });
+
+  it('does not abort when the same (importer, imported) pair appears twice in one batch', async () => {
+    // The exact field shape: a duplicate pair well inside a single 500-row chunk.
+    const edges = [
+      { importer: 'src/a.js', imported: 'src/lib.js' },
+      { importer: 'src/b.js', imported: 'src/lib.js' },
+      { importer: 'src/a.js', imported: 'src/lib.js' },   // <- duplicate of [0]
+    ];
+    const res = await recordSymbolFileImports(refreshId, edges);
+    assert.equal(res.inserted, 2, 'reports DISTINCT edges persisted, not raw input length');
+
+    const pool = await getPool();
+    const { rows } = await pool.query(
+      `SELECT importer_path, imported_path FROM symbol_file_imports
+        WHERE refresh_id = $1 ORDER BY importer_path`, [refreshId]);
+    assert.deepEqual(
+      rows.map((r) => `${r.importer_path}->${r.imported_path}`),
+      ['src/a.js->src/lib.js', 'src/b.js->src/lib.js'],
+      'the duplicate collapses to one row; the distinct edge is unaffected',
+    );
+  });
+
+  it('survives duplicates that span a chunk boundary AND repeat within a chunk', async () => {
+    // > UPSERT_CHUNK_SIZE (500) so the batch is split: cross-chunk repeats are
+    // harmless (the 2nd chunk just UPDATEs), but same-chunk repeats are the
+    // aborting case. Both must pass, and the row count must stay distinct.
+    const edges = [];
+    for (let i = 0; i < 600; i++) edges.push({ importer: `src/f${i}.js`, imported: 'src/shared.js' });
+    edges.push({ importer: 'src/f0.js', imported: 'src/shared.js' });     // repeats chunk 1
+    edges.push({ importer: 'src/f550.js', imported: 'src/shared.js' });   // repeats chunk 2
+
+    const res = await recordSymbolFileImports(refreshId, edges);
+    assert.equal(res.inserted, 600, '602 inputs collapse to 600 distinct edges');
+
+    const pool = await getPool();
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM symbol_file_imports
+        WHERE refresh_id = $1 AND imported_path = 'src/shared.js'`, [refreshId]);
+    assert.equal(rows[0].n, 600, 'no duplicate rows persisted');
   });
 });
