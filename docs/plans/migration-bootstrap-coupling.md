@@ -102,7 +102,7 @@ assertion, and every provisioning path inherits the check.
 ## 5. Open questions to settle before implementation
 
 1. **Where does the assertion live?** A `--preflight`-adjacent function in
-   `setup-postgres.mjs` is the obvious home, but the value is highest if it also
+   `scripts/setup-postgres.mjs` is the obvious home, but the value is highest if it also
    guards paths that *bypass* that script — which by definition it cannot. Decide
    honestly whether this closes the whole hole or only the supported path, and
    say which in the doc rather than implying the former.
@@ -128,10 +128,10 @@ Parsing `compat-bootstrap.sql` instead yields exactly the documented inventory
 with zero noise — 1 schema, 3 roles, 3 extensions, `auth.uid()`, `auth.users` —
 and cannot rot, because the bootstrap *is* the definition of this surface: if it
 gains an object, the precondition gains it in the same edit. Both measurements are
-encoded as tests (`setup-postgres-surface-precondition.test.mjs`) so the rejected
+encoded as tests (`tests/setup-postgres-surface-precondition.test.mjs`) so the rejected
 option stays evidence-backed rather than becoming folklore.
 
-**Q1 — where does it live, and what does it NOT cover?** In `setup-postgres.mjs`,
+**Q1 — where does it live, and what does it NOT cover?** In `scripts/setup-postgres.mjs`,
 run in **both** `--migrate` and `--adopt` before any migration or ledger write.
 Stated plainly rather than implied: **it guards the supported path only.** A route
 that bypasses this script — `supabase db push`, a psql loop — never calls it, so

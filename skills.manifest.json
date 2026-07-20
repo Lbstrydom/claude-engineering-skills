@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "6f5de478a19e63f5",
+  "bundleVersion": "ea61ac78330527ab",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -253,14 +253,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "6b93c38b615d",
-      "size": 30287,
+      "sha": "41ac0838dc91",
+      "size": 32290,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "6b93c38b615d",
-          "size": 30287
+          "sha": "41ac0838dc91",
+          "size": 32290
         },
         {
           "relPath": "examples/mermaid-blocks.md",
