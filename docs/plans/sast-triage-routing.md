@@ -1,9 +1,31 @@
 # Plan: SAST Triage — Route, Never Suppress
 
 - **Date**: 2026-07-19
-- **Status**: Approved
+- **Status**: Complete
+- **Completed**: 2026-07-20
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
+
+### Completion record
+
+Everything §7 declared is built, audited and **measured against real source** —
+the last of those being the part a plan can most easily skip.
+
+| | |
+|---|---|
+| Delivered | Phases 1–3 + v1.1. `sarif.mjs`, `predicates.mjs`, `triage-router.mjs`, `security-triage.mjs`, `.security-triage.example.json`, the 240-result corpus + reviewed manifest, and 4 test suites (169 tests). |
+| Audit | Cluster A: 4 GPT rounds, in-scope defects 7 → 2 → 0. Cluster B: 4 rounds. Consolidated Gemini gate over the union diff: **APPROVE** — no bias, no over-engineering flags, coherence "Strong". |
+| Measured | §2d / §2d-i. `D` 92 (38%), `C` 4, `A` 144. No false demotion observed. |
+| Commits | `4d28e43` · `b3ee2a0` · `960d0ec` · `2b4d18f` · `b891011` · `243a0c3` |
+
+**Terminal, but not because everything worked.** `C` was designed to absorb ~90
+findings and absorbs 4 — §2d records why (the sinks are render-delegated, so
+D3a's supported forms describe a shape this code mostly does not use) and §2d-i
+records that both v1.1 predictions were wrong. The plan is Complete because its
+declared v1 scope shipped and the evidence is written down, **not** because the
+`C` hypothesis held. The follow-on decision — whether to take the one-function
+hop §6 deferred — is deliberately NOT carried by this plan; it needs its own,
+with §2d's measurement re-run as the evidence.
 
 ---
 

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**7 active · 128 terminal · 22 audit summaries · 4 reference docs**
+**6 active · 129 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -26,7 +26,6 @@ This is the list to read when asking "what is in flight?".
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
 | [Migration ↔ compat-bootstrap coupling — assert the surface, don't relocate the DDL](./migration-bootstrap-coupling.md) | `Draft` |  |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
-| [SAST Triage — Route, Never Suppress](./sast-triage-routing.md) | `Approved` |  |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
 ## Superseded / abandoned
@@ -47,7 +46,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 125 completed plans</summary>
+<summary>Show all 126 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -154,6 +153,7 @@ source comments that no docs linter sees — stays valid.
 | [Repo-Wide Reference-Integrity Gate](./reference-integrity-gate.md) | `Complete` | all three clusters implemented, converged, final-gated |
 | [Requirements Layer — a materialized view of the codebase's de-facto requirements](./requirements-layer.md) | `Complete` |  |
 | [Robustness Hardening & R2+ Ledger Auto-Write](./robustness-and-ledger-wiring.md) | `Complete` | shipped — `scripts/lib/ledger.mjs` exports `writeLedgerEntry` + tracks the two-axis state model (`adjudicat… |
+| [SAST Triage — Route, Never Suppress](./sast-triage-routing.md) | `Complete` |  |
 | [Isolate engineering-skills tooling in consumer repos under `scripts/.claude-skills/`](./scripts-claude-skills-isolation.md) | `Complete` | 2026-06-02) — archived to docs/completed/. All phases done; both consumers migrated. Phases 0/1/5 (source i… |
 | [Proactive Security Memory v1](./security-memory-v1.md) | `Complete` | shipped — `/security-strategy` skill + `scripts/security-memory/` (refresh-incidents, parse-strategy, incid… |
 | [Remove the legacy fallback from the tiered-SHADOW path](./shadow-no-legacy-fallback.md) | `Complete` | implemented 2026-07-17 via `/cycle --autonomous`. Plan-audit: 3 GPT rounds (7 findings, all fixed) + Gemini… |
