@@ -24,8 +24,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { buildManifest } from '../scripts/build-manifest.mjs';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { buildManifest, canonicaliseForHash } from '../scripts/build-manifest.mjs';
 
 const pkg = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'package.json'), 'utf-8'));
 const regenerate = pkg.scripts['skills:regenerate'];
@@ -145,6 +146,54 @@ describe('build-manifest is deterministic — a true Category-B artifact', () =>
     } finally {
       // Never leave the repo's committed manifest mangled by a test.
       fs.writeFileSync(manifestPath, pristine);
+    }
+  });
+});
+
+/**
+ * The Category-B contract is "a pure function of COMMITTED source". Hashing raw
+ * working-tree bytes broke it silently: `.gitattributes` pins `* text=auto
+ * eol=lf`, so committed content is LF, but a tool can leave CRLF in the working
+ * tree — and git reports those files CLEAN because it normalises on comparison.
+ * `bundleVersion` therefore became a function of local line endings, and 16
+ * skill reference files were contaminated, so a fresh clone computed a
+ * different hash and read STALE. Caught 2026-07-20 by the pre-push sandbox
+ * (docs/runbooks/prepush-sandbox.md), which builds the manifest in a clean
+ * checkout — the first thing that ever compared the two.
+ */
+describe('the manifest hashes committed source, not working-tree bytes', () => {
+  it('canonicaliseForHash normalises CRLF to LF', () => {
+    const crlf = Buffer.from('a\r\nb\r\n', 'utf-8');
+    assert.equal(canonicaliseForHash(crlf).toString('utf-8'), 'a\nb\n');
+  });
+
+  it('leaves LF content byte-identical', () => {
+    const lf = Buffer.from('a\nb\n', 'utf-8');
+    assert.deepEqual(canonicaliseForHash(lf), lf);
+  });
+
+  it('does not strip a lone CR that is not a line ending', () => {
+    const cr = Buffer.from('a\rb', 'utf-8');
+    assert.equal(canonicaliseForHash(cr).toString('utf-8'), 'a\rb');
+  });
+
+  it('every manifest entry matches the sha of the file as COMMITTED', () => {
+    // The real contract, asserted against git's own copy rather than the
+    // working tree — so this holds regardless of local line endings and fails
+    // if anyone reverts the normalisation.
+    const manifest = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'skills.manifest.json'), 'utf-8'));
+    for (const [name, skill] of Object.entries(manifest.skills)) {
+      for (const f of skill.files) {
+        const committed = execFileSync(
+          'git', ['show', `HEAD:skills/${name}/${f.relPath}`],
+          { cwd: process.cwd(), maxBuffer: 1e8 },
+        );
+        const sha = createHash('sha256').update(canonicaliseForHash(committed)).digest('hex').slice(0, 12);
+        assert.equal(
+          f.sha, sha,
+          `skills/${name}/${f.relPath}: manifest sha tracks the working tree, not the commit`,
+        );
+      }
     }
   });
 });

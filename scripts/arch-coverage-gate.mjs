@@ -70,8 +70,21 @@ function main() {
   }
 
   if (!fs.existsSync(envelopePath)) {
-    // Not a gate failure: a repo that has never rendered has nothing to judge.
-    // Failing here would block first-time consumers for a non-problem.
+    // Not a gate failure BY DEFAULT: a repo that has never rendered has nothing
+    // to judge, and failing here would block first-time consumers for a
+    // non-problem. That leniency is correct for "never rendered" and wrong for
+    // "the envelope should be here and isn't" — in a sandboxed pre-push run the
+    // envelope is copied in deliberately, so its absence means the sandbox was
+    // built wrong, and exiting 0 would be a gate reporting success having read
+    // nothing. Callers that KNOW an envelope should exist opt into the strict
+    // reading; the default is unchanged for every existing consumer.
+    if ((process.env.ARCH_COVERAGE_REQUIRE_ENVELOPE ?? '').trim() === '1') {
+      log(`arch:coverage-gate: FAILED — ${OBSERVED_FILE} is absent but ARCH_COVERAGE_REQUIRE_ENVELOPE=1.`);
+      log('  The caller asserted an envelope would be present, so this is a broken');
+      log('  invocation, not an unrendered repo. Refusing to report a coverage');
+      log('  verdict for a graph that was never read.');
+      process.exit(2);
+    }
     log(`arch:coverage-gate: no ${OBSERVED_FILE} — run \`npm run arch:render\` first (skipping)`);
     process.exit(0);
   }

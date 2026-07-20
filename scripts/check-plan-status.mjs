@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parsePlanStatus, selectAuditPlan } from './lib/plan-status.mjs';
+import { resolvePushRange } from './lib/push-range.mjs';
 
 const PLANS_DIR = 'docs/plans';
 const G = '\x1b[32m', R = '\x1b[31m', Y = '\x1b[33m', D = '\x1b[2m', X = '\x1b[0m', B = '\x1b[1m';
@@ -49,12 +50,13 @@ function changedFilesForPush() {
     const r = spawnSync('git', args, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
     return r.status === 0 ? r.stdout.trim() : null;
   };
-  // Prefer the actual push range; fall back to the last commit. `@{upstream}`
-  // is absent on a brand-new branch, which is exactly when HEAD~1 is right.
-  const base = rev(['rev-parse', '--verify', '--quiet', '@{upstream}'])
-    ?? rev(['rev-parse', '--verify', '--quiet', 'HEAD~1']);
-  if (!base) return null;
-  const out = rev(['diff', '--name-only', `${base}..HEAD`]);
+  // The range comes from the shared push-range contract, which prefers what the
+  // pre-push hook was told by git over anything inferred here. The old inline
+  // `@{upstream} ?? HEAD~1` scoped a multi-commit push to its tip, and resolved
+  // to HEAD~1 unconditionally in a detached checkout. See lib/push-range.mjs.
+  const range = resolvePushRange({ run: rev });
+  if (!range.ok) return null;
+  const out = rev(['diff', '--name-only', `${range.base}..${range.head}`]);
   if (out === null) return null;
   return out.split('\n').map(s => s.trim()).filter(Boolean);
 }

@@ -6,10 +6,10 @@
  * instances that motivated it).
  *
  * Default is DRIFT mode: gate only on findings whose line is in the changed
- * hunks (vs the dirty-aware base — uncommitted work, else last commit),
- * mirroring nav-audit/visual-audit. The existing store's design-correct-but-
- * flagged writers never gate; a new/edited bad conflict target does. `--all`
- * lints the whole tree (manual/audit use).
+ * hunks (vs the push range — see scripts/lib/push-range.mjs), mirroring
+ * nav-audit/visual-audit. The existing store's design-correct-but-flagged
+ * writers never gate; a new/edited bad conflict target does. `--all` lints
+ * the whole tree (manual/audit use).
  *
  * Exit codes:
  *   0 — clean (no gating findings)
@@ -19,32 +19,42 @@
  *
  * Flags:
  *   --all       lint the whole store tree (default is drift vs the base)
- *   --base <r>  drift base override (default: dirty→HEAD, clean→HEAD~1)
+ *   --base <r>  drift base override (default: the resolved push range)
  *   --json      machine-readable output
  *   --strict    treat unresolved-* diagnostics as failures (exit 3)
  *
  * @module scripts/on-conflict-lint
  */
 import { execFileSync } from 'node:child_process';
+import { resolvePushRange } from './lib/push-range.mjs';
 import { lintStoreTree, filterFindingsToDiff } from './lib/lint/on-conflict.mjs';
 import { parseDiffText } from './lib/diff-annotation.mjs';
 import { normalizePath } from './lib/file-io.mjs';
 
+/**
+ * Resolve the drift base via the shared push-range contract.
+ *
+ * This used to infer the base from working-tree state (`@{u}`, else
+ * dirty ? HEAD : HEAD~1). That silently under-scoped the gate twice over: a
+ * multi-commit push collapsed to its tip commit, and a clean detached checkout
+ * (which is never dirty and has no upstream) collapsed to HEAD~1 on EVERY run.
+ * The pre-push hook already knows the true range and now passes it through
+ * AUDIT_PUSH_RANGE_BASE; see scripts/lib/push-range.mjs.
+ *
+ * @returns {{base: string, source: string, trusted: boolean}}
+ * @throws when no base is resolvable — the caller falls back to --all rather
+ *   than reporting a clean drift run it could not actually scope.
+ */
 function resolveDefaultBase() {
-  // As a pre-push gate the right base is "everything not yet on the remote" —
-  // `git diff @{u}` covers committed AND uncommitted changes since the upstream,
-  // so a bad conflict target in any un-pushed commit gates. Fall back to the
-  // audit's dirty-aware convention when there's no upstream (fresh branch / CI).
-  try {
-    execFileSync('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    return '@{u}';
-  } catch { /* no upstream */ }
-  const dirty = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim() !== '';
-  return dirty ? 'HEAD' : 'HEAD~1';
+  const r = resolvePushRange();
+  if (!r.ok) throw new Error(`cannot resolve a drift base — ${r.message}`);
+  return r;
 }
 
 function computeDriftFindings(findings, baseArg) {
-  const base = baseArg || resolveDefaultBase();
+  // An explicit --base is an operator override and is trusted as given.
+  const resolved = baseArg ? { base: baseArg, source: 'flag', trusted: true } : resolveDefaultBase();
+  const base = resolved.base;
   const opts = { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 };
   // Tracked changes vs the base. Parse in memory — no temp file (audit R1-H4).
   let diffText = execFileSync('git', ['diff', base, '--', 'scripts/lib/store'], opts);
@@ -58,7 +68,12 @@ function computeDriftFindings(findings, baseArg) {
     catch (e) { diffText += (e.stdout || ''); } // --no-index exits 1 when files differ; the diff is on stdout
   }
   const diffMap = parseDiffText(diffText);
-  return { drift: filterFindingsToDiff(findings, diffMap, { normalize: normalizePath }), base };
+  return {
+    drift: filterFindingsToDiff(findings, diffMap, { normalize: normalizePath }),
+    base,
+    source: resolved.source,
+    trusted: resolved.trusted,
+  };
 }
 
 function main() {
@@ -74,20 +89,23 @@ function main() {
   const unresolved = diagnostics.filter((d) => d.kind?.startsWith('unresolved'));
 
   let gating = allFindings;
-  let base;
+  let base, rangeSource, rangeTrusted, driftFellBack = false;
   if (!all) {
     try {
       const res = computeDriftFindings(allFindings, baseArg);
       gating = res.drift;
       base = res.base;
+      rangeSource = res.source;
+      rangeTrusted = res.trusted;
     } catch (err) {
       process.stderr.write(`on-conflict-lint: drift computation failed (${err.message}); falling back to --all\n`);
       gating = allFindings;
+      driftFellBack = true;   // so the summary cannot claim a drift scope it never had
     }
   }
 
   if (json) {
-    process.stdout.write(JSON.stringify({ mode: all ? 'all' : 'drift', base, gating, allFindings, suppressed, diagnostics, filesScanned }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ mode: all ? 'all' : 'drift', base, rangeSource, rangeTrusted, gating, allFindings, suppressed, diagnostics, filesScanned }, null, 2) + '\n');
   } else {
     for (const f of gating) {
       process.stdout.write(`  ✖ [${f.rule}] ${f.file}:${f.line} — table "${f.table}", column "${f.column}"\n      ${f.message}\n`);
@@ -100,7 +118,12 @@ function main() {
         process.stdout.write(`  ⚠ [${d.kind}] ${d.file}:${d.line} — ${d.message}\n`);
       }
     }
-    const scope = all ? 'whole tree' : `drift vs ${base}`;
+    // Name the range SOURCE, not just the base. An inferred base may have
+    // under-scoped this run, and a summary that hides that reads as a
+    // stronger clean than it is.
+    const scope = (all || driftFellBack)
+      ? `whole tree${driftFellBack ? ' (drift unavailable)' : ''}`
+      : `drift vs ${base}${rangeTrusted === false ? ` (inferred: ${rangeSource})` : ''}`;
     const verdict = gating.length === 0 ? 'clean' : `${gating.length} gating finding(s)`;
     const extra = [];
     if (!all && allFindings.length > gating.length) extra.push(`${allFindings.length - gating.length} pre-existing (not in diff)`);

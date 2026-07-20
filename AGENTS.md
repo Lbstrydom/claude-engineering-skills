@@ -317,6 +317,34 @@ Covers atomic writes, schema derivation, ledger operations, finding identity,
 FP tracker, bandit posterior, reward computation, sensitive-path egress, the
 sync/relocation contract, and more.
 
+#### Pre-push runs against a clean checkout, not the working tree
+
+The hook runs `check` in a throwaway worktree at the **commit being pushed**
+([`prepush-check.mjs`](scripts/prepush-check.mjs)). Two sessions share one tree
+here, so tree-checking gave false blocks (a cried-wolf gate gets `--no-verify`'d)
+and false passes (a fix in the tree but not the commit read green). Not `git
+stash` — that yanks the other session's files mid-edit. Detail + escape hatches:
+[`docs/runbooks/prepush-sandbox.md`](docs/runbooks/prepush-sandbox.md).
+
+- **Sandbox-honesty rule.** A fresh worktree has no gitignored inputs, so a check
+  that *skips* on a missing input passes having read nothing. Known skips are
+  forced to hard errors (`AUDIT_PUSH_RANGE_REQUIRED`, `ARCH_COVERAGE_REQUIRE_ENVELOPE`).
+  **Adding a check? Ask whether it can go green in a clean checkout having
+  checked nothing — if so it needs a strictness flag, not a tolerated skip.** A
+  sandbox setup failure is a push failure, never a pass.
+- **One range, one resolver** — [`push-range.mjs`](scripts/lib/push-range.mjs).
+  Gates must not re-infer a base from working-tree state (`@{u}`, dirty→`HEAD`/
+  `HEAD~1`): that scoped multi-commit pushes to their tip and collapsed to
+  `HEAD~1` always in a detached tree. Results carry `source`/`trusted` and
+  summaries print them; an unresolvable explicit base fails hard, never demotes
+  to inference.
+- **Hashing working-tree bytes ≠ hashing committed source.** The sandbox caught
+  `skills.manifest.json` breaking its own Category-B contract: 16 skill files
+  carried CRLF locally while `.gitattributes` pins `eol=lf`, and git calls such
+  files CLEAN — so `bundleVersion` tracked local line endings and a fresh clone
+  read STALE. Generators hashing files for a committed artifact must
+  canonicalise CRLF→LF first.
+
 #### Testing doctrine — which seam gets which kind of test
 
 Blanket TDD is theatre at the LLM boundary (you can't red-green-refactor a

@@ -35,10 +35,36 @@ const REPO_URL = 'https://github.com/Lbstrydom/claude-engineering-skills';
 const RAW_URL_BASE = 'https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main';
 
 /**
- * Compute SHA-256 hex of file content. 12-char short form.
+ * Canonicalise text content for hashing: CRLF → LF.
+ *
+ * WHY (found 2026-07-20 by the pre-push sandbox, which computes this manifest
+ * in a clean checkout): `.gitattributes` pins `* text=auto eol=lf`, so the
+ * COMMITTED bytes are always LF — but an editor or tool can still leave CRLF
+ * in the working tree, and git reports those files as CLEAN because it
+ * normalises on comparison. Hashing raw working-tree bytes therefore made
+ * `bundleVersion` a function of LOCAL LINE ENDINGS, not of committed source.
+ *
+ * That silently broke the artifact's own contract twice over: the AGENTS.md
+ * generated-artifact policy requires a committed artifact to be a pure,
+ * byte-identical function of committed source, and the comment below this
+ * claimed exactly that. In practice 16 skill reference files carried CRLF
+ * locally, so the committed manifest was generated from contaminated input —
+ * a fresh clone computes a different `bundleVersion` and reads as STALE.
+ * `size` is normalised for the same reason (CRLF inflates it by one byte
+ * per line).
+ *
+ * @param {Buffer} buf
+ * @returns {Buffer} LF-normalised content
+ */
+export function canonicaliseForHash(buf) {
+  return Buffer.from(buf.toString('utf-8').replace(/\r\n/g, '\n'), 'utf-8');
+}
+
+/**
+ * Compute SHA-256 hex of LF-normalised file content. 12-char short form.
  */
 function fileSha(filePath) {
-  const content = fs.readFileSync(filePath);
+  const content = canonicaliseForHash(fs.readFileSync(filePath));
   return crypto.createHash('sha256').update(content).digest('hex').slice(0, 12);
 }
 
@@ -110,7 +136,9 @@ export function buildManifest() {
     const relFiles = enumerateSkillFiles(skillDir, { strict: true });
     const files = relFiles.map(rel => {
       const abs = path.join(skillDir, rel);
-      const content = fs.readFileSync(abs);
+      // Normalised, so the manifest is a function of COMMITTED source rather
+      // than of whatever line endings this checkout happens to carry.
+      const content = canonicaliseForHash(fs.readFileSync(abs));
       return {
         relPath: rel,
         sha: crypto.createHash('sha256').update(content).digest('hex').slice(0, 12),

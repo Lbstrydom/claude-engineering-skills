@@ -1,11 +1,22 @@
 #!/bin/bash
 # Pre-push hook for claude-engineering-skills.
 #
-# 1. CHECKS — runs `npm run check` (context-drift + skills + tests). This
-#    is the local replacement for the push-triggered CI workflows; it
-#    BLOCKS the push on failure. Bypass when you must: git push --no-verify
-# 2. SYNC — propagates SKILL.md + scripts to consumer repos. Non-blocking:
+# 0. RANGE  — reads git's stdin ONCE and derives the commit range being pushed.
+# 1. CHECKS — runs `npm run check` against a CLEAN CHECKOUT of the pushed
+#    commit (a throwaway git worktree), NOT the working tree. BLOCKS on
+#    failure. Bypass when you must: git push --no-verify
+# 2. SYNC   — propagates SKILL.md + scripts to consumer repos. Non-blocking:
 #    a missing consumer repo warns but never stops the push.
+#
+# WHY THE SANDBOX (2026-07-20): we routinely run two agent sessions against one
+# working tree. Checking the tree meant session A's push was blocked by session
+# B's half-finished edits (false block → the gate gets --no-verify'd → it is
+# effectively disarmed), AND a fix present in the tree but absent from the
+# commit made the hook green while the pushed commit was broken (false pass).
+# A clean checkout of the pushed sha verifies exactly what the remote receives.
+# Deliberately NOT `git stash`: with two live sessions that yanks the other
+# session's files mid-edit, and a pop conflict wedges both.
+# Set AUDIT_PREPUSH_SANDBOX=0 to run the checks in-tree (old behaviour).
 #
 # TRACKED — this file is the source of truth, wired via core.hooksPath=.githooks
 # by `scripts/install-git-hooks.mjs` on `npm install` (the `prepare` lifecycle).
@@ -16,12 +27,54 @@
 # hook meant an unenforced repo. Edit here, never in .git/hooks/.
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+# ── 0. Push range (read stdin ONCE) ──────────────────────────────────────
+# git feeds `<local_ref> <local_sha> <remote_ref> <remote_sha>` per line. stdin
+# is a stream: whoever reads it first consumes it. This block is the ONLY
+# reader — everything downstream uses the captured copy. (Before 2026-07-20 the
+# DB-seam advisory consumed it directly; adding a second reader silently
+# starved one of them.)
+PUSH_STDIN=""
+if [ ! -t 0 ]; then
+  PUSH_STDIN="$(cat)"
+fi
+
+PUSH_BASE=""
+PUSH_HEAD=""
+while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
+  [ -z "$LOCAL_SHA" ] && continue
+  [ "$LOCAL_SHA" = "$ZERO_SHA" ] && continue   # branch deletion — nothing pushed
+  if [ -z "$REMOTE_SHA" ] || [ "$REMOTE_SHA" = "$ZERO_SHA" ]; then
+    # New branch on the remote: the range is everything since it diverged from
+    # the default branch. NOT HEAD~1 — that would scope a multi-commit branch
+    # to its tip and let violations in earlier commits through.
+    CANDIDATE_BASE=$(git merge-base origin/main "$LOCAL_SHA" 2>/dev/null)
+  else
+    CANDIDATE_BASE="$REMOTE_SHA"
+  fi
+  if [ -n "$CANDIDATE_BASE" ]; then
+    PUSH_BASE="$CANDIDATE_BASE"
+    PUSH_HEAD="$LOCAL_SHA"
+    break   # first pushed ref wins; a multi-ref push is checked at its first ref
+  fi
+done <<EOF
+$PUSH_STDIN
+EOF
 
 # ── 1. Checks (blocking) ────────────────────────────────────────────────
 if [ -f "$REPO_ROOT/package.json" ]; then
-  echo "→ Pre-push checks: npm run check ..."
-  ( cd "$REPO_ROOT" && npm run check )
-  CHECK_EXIT=$?
+  if [ "$AUDIT_PREPUSH_SANDBOX" = "0" ]; then
+    echo "→ Pre-push checks: npm run check (in-tree; sandbox disabled) ..."
+    ( cd "$REPO_ROOT" && AUDIT_PUSH_RANGE_BASE="$PUSH_BASE" AUDIT_PUSH_RANGE_HEAD="$PUSH_HEAD" npm run check )
+    CHECK_EXIT=$?
+  else
+    ARGS=()
+    [ -n "$PUSH_BASE" ] && ARGS+=(--base "$PUSH_BASE")
+    [ -n "$PUSH_HEAD" ] && ARGS+=(--head "$PUSH_HEAD")
+    ( cd "$REPO_ROOT" && node scripts/prepush-check.mjs "${ARGS[@]}" )
+    CHECK_EXIT=$?
+  fi
   if [ $CHECK_EXIT -ne 0 ]; then
     echo "✗  pre-push checks FAILED (exit $CHECK_EXIT) — push blocked."
     echo "   Fix the issues above, or bypass with: git push --no-verify"
@@ -35,31 +88,20 @@ fi
 # need AUDIT_DB_TEST_URL, which is deliberately never set here). This block
 # tells the operator when a pushed commit touches that seam so it isn't
 # silently un-covered. Never blocks, never claims coverage.
-# Uses the hook's own stdin contract (<local_ref> <local_sha> <remote_ref>
-# <remote_sha> per line) rather than @{push}, which evaluates the wrong
-# commits for an explicit-ref push or an unconfigured upstream.
+# Uses the range captured in step 0 rather than @{push}, which evaluates the
+# wrong commits for an explicit-ref push or an unconfigured upstream.
 # See docs/plans/local-db-test-container.md.
 {
   DB_SEAM_MATCHED=0
-  ZERO_SHA="0000000000000000000000000000000000000000"
-  while read -r LOCAL_REF LOCAL_SHA REMOTE_REF REMOTE_SHA; do
-    [ -z "$LOCAL_SHA" ] && continue
-    [ "$LOCAL_SHA" = "$ZERO_SHA" ] && continue   # branch deletion — nothing pushed
-    if [ -z "$REMOTE_SHA" ] || [ "$REMOTE_SHA" = "$ZERO_SHA" ]; then
-      RANGE_BASE=$(git merge-base origin/main "$LOCAL_SHA" 2>/dev/null)
-      [ -z "$RANGE_BASE" ] && RANGE_BASE=$(git rev-parse "$LOCAL_SHA~1" 2>/dev/null)
-    else
-      RANGE_BASE="$REMOTE_SHA"
-    fi
-    [ -z "$RANGE_BASE" ] && continue
-    CHANGED=$(git diff --name-only "$RANGE_BASE" "$LOCAL_SHA" 2>/dev/null)
+  if [ -n "$PUSH_BASE" ] && [ -n "$PUSH_HEAD" ]; then
+    CHANGED=$(git diff --name-only "$PUSH_BASE" "$PUSH_HEAD" 2>/dev/null)
     for PREFIX in "scripts/lib/db/" "scripts/lib/store/" "supabase/migrations/" "tests/db-" "scripts/setup-postgres.mjs" "tests/fixtures/expected-schema.json"; do
       if printf '%s\n' "$CHANGED" | grep -qF "$PREFIX" 2>/dev/null; then
         DB_SEAM_MATCHED=1
         break
       fi
     done
-  done
+  fi
   if [ "$DB_SEAM_MATCHED" = "1" ]; then
     echo "ℹ DB-seam change detected — the local pre-push checks do NOT run the destructive DB suites. Run npm run db:local before pushing, or rely on the postgres-parity CI job." >&2
   fi

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "96170512ca71558f",
+  "bundleVersion": "6f5de478a19e63f5",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -65,13 +65,13 @@
         },
         {
           "relPath": "references/debt-capture.md",
-          "sha": "3f531a3c3c7b",
-          "size": 4775
+          "sha": "82adfb670836",
+          "size": 4657
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "76b56c059b14",
-          "size": 9104
+          "sha": "222c1fee521b",
+          "size": 8918
         },
         {
           "relPath": "references/ledger-format.md",
@@ -80,8 +80,8 @@
         },
         {
           "relPath": "references/r2-plus-mode.md",
-          "sha": "ba0df9b4a385",
-          "size": 5594
+          "sha": "0708da436ddc",
+          "size": 5472
         }
       ]
     },
@@ -98,8 +98,8 @@
         },
         {
           "relPath": "references/gemini-gate.md",
-          "sha": "76b56c059b14",
-          "size": 9104
+          "sha": "222c1fee521b",
+          "size": 8918
         },
         {
           "relPath": "references/ledger-format.md",
@@ -216,8 +216,8 @@
         },
         {
           "relPath": "examples/report-and-debrief.md",
-          "sha": "ee7510886849",
-          "size": 6797
+          "sha": "d0ce9fdffb6c",
+          "size": 6661
         },
         {
           "relPath": "references/audit-correlation.md",
@@ -226,8 +226,8 @@
         },
         {
           "relPath": "references/browser-tool-detection.md",
-          "sha": "33700fa2d34b",
-          "size": 3460
+          "sha": "3bfd5de2c7d4",
+          "size": 3377
         },
         {
           "relPath": "references/consistency-mode.md",
@@ -236,18 +236,18 @@
         },
         {
           "relPath": "references/interop.md",
-          "sha": "d3022c7f9ab7",
-          "size": 3677
+          "sha": "9cbe9dc0254c",
+          "size": 3575
         },
         {
           "relPath": "references/persona-debrief-format.md",
-          "sha": "921b8b405660",
-          "size": 3341
+          "sha": "2437807d742d",
+          "size": 3258
         },
         {
           "relPath": "references/session-history.md",
-          "sha": "04f6b5a2c8a6",
-          "size": 2407
+          "sha": "6eb292e0b432",
+          "size": 2334
         }
       ]
     },
@@ -269,28 +269,28 @@
         },
         {
           "relPath": "references/engineering-principles.md",
-          "sha": "bb2c6b3f1f64",
-          "size": 3234
+          "sha": "08bd33ecb879",
+          "size": 3180
         },
         {
           "relPath": "references/python-backend-profile.md",
-          "sha": "8d1f9c9f7325",
-          "size": 2210
+          "sha": "800c414577d2",
+          "size": 2159
         },
         {
           "relPath": "references/python-frontend-profile.md",
-          "sha": "e1c3c084bdc5",
-          "size": 2240
+          "sha": "33d7d66170a5",
+          "size": 2196
         },
         {
           "relPath": "references/technical-principles.md",
-          "sha": "ab4587550303",
-          "size": 3503
+          "sha": "fc0920faba68",
+          "size": 3442
         },
         {
           "relPath": "references/ux-principles.md",
-          "sha": "54b3df671271",
-          "size": 4369
+          "sha": "d65b7989e42c",
+          "size": 4294
         }
       ]
     },
@@ -320,13 +320,13 @@
         },
         {
           "relPath": "references/python-environment-discovery.md",
-          "sha": "ddf0c4303aab",
-          "size": 2737
+          "sha": "3b3016df54a0",
+          "size": 2662
         },
         {
           "relPath": "references/status-md-format.md",
-          "sha": "8a1051d33067",
-          "size": 2681
+          "sha": "823b3e52c5c3",
+          "size": 2588
         }
       ]
     },

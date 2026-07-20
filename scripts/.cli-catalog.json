@@ -369,6 +369,10 @@
       "description": "npm lifecycle — points core.hooksPath at the tracked .githooks/ so a fresh clone is gated on first install.",
       "category": "hooks"
     },
+    "prepush:check": {
+      "description": "Run the check chain against a clean checkout of the commit being pushed (throwaway git worktree), so a concurrent session's working-tree edits cannot cause a false block or a false pass.",
+      "category": "hooks"
+    },
     "security:refresh": {
       "description": "Refresh the security-incident memory from docs/security-strategy.md.",
       "category": "security"
