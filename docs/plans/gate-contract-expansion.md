@@ -328,9 +328,25 @@ of the finding.)
 | `skills/plan/SKILL.md` | modify | Phase 1 — resolve the §10 "ship gate" claim per branch A2 |
 | `skills/ux-lock/SKILL.md` | modify | Phase 1 — align the verify-is-a-report claim with `/ship` reality |
 | `skills/click-test/SKILL.md` | modify | Phase 1 — delete the false "required `record-click-test`" claim |
-| `docs/plans/gate-contract-expansion-inventory.md` | create | Phase 2 — the §7a inventory, filled in across all 13 skills |
+| `docs/plans/gate-contract-expansion-inventory.md` | create | Phase 2 — the §7a inventory: survey rule, disposition vocabulary, band assignment for all 13 skills, and every resolved `defect` row. Row-level fields (`gateId`, verbatim `stated`, `statedIn` anchor, `oracle`/`scenario`, `expect`) are filled **per skill, immediately before that skill's contract is authored** in the successor plan — see below |
 | `scripts/lib/gate-honesty/oracles.mjs` | modify | Phase 2 — the shared hermetic harness **only** (D1a). No new oracle (D2); no new recipes (successor plan) |
 | `tests/gate-honesty.test.mjs` | modify | Phase 2 — cover the harness; assert `env-skipped` is reported separately and never counted as CHECKED |
+
+**Why the inventory ships partial, deliberately** (code-audit R2-H1 escalated
+this after R1 raised it four times at MEDIUM — so the reasoning is recorded
+here rather than left implicit). A row's required fields include its
+`oracle`/`scenario` and `expect`, which are **properties of a fixture that does
+not exist yet**: no recipes are authored in this plan, and D1a's working-tree
+copy is explicitly unbuilt pending two unresolved contradictions (§8). Filling
+~40 rows against undefined fixtures would invent `expect` values nobody can
+verify — a table that *looks* complete and binds nothing, which is the failure
+class this plan exists to close, reproduced in its own deliverable. It is also
+the specific error that forced the parent plan's scope cut at audit round 3.
+
+So the deliverable is: the survey rule, the disposition vocabulary, band
+assignment for all 13 skills, and every resolved `defect` row — the parts that
+are decidable now. What was wrong was this table *claiming* the rows were
+filled; that claim is corrected above, not the artifact bent to match it.
 
 The gate targets previously listed here (cycle's `preview-gate [HALT]`, ship's
 `--gate passed` refusal, nav-audit's exit table, persona-test's consistency

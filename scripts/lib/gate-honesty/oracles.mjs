@@ -15,6 +15,8 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 
+import { atomicWriteFileSync } from '../file-io.mjs';
+
 /**
  * @typedef {{state: 'ok'} | {state: 'divergent', stated: string, found: string} | {state: 'env-skipped', skipReason: string}} OracleResult
  */
@@ -209,7 +211,7 @@ const CLI_EXIT_RECIPES = {
     args: ['--gate'],
     fixture(dir) {
       fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
-      fs.writeFileSync(path.join(dir, 'visual-contract.json'), JSON.stringify({
+      atomicWriteFileSync(path.join(dir, 'visual-contract.json'), JSON.stringify({
         version: 1, surfaces: [{ id: 'app', selector: 'body', sourceGlobs: ['src/**'] }],
         tokenSources: [], globalStyleGlobs: [], themes: [],
       }));
