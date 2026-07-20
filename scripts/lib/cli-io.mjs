@@ -56,3 +56,46 @@ export class ArgvError extends Error {
     this.name = 'ArgvError';
   }
 }
+
+/**
+ * Reject unknown `--flags` instead of ignoring them.
+ *
+ * **Why this exists** (2026-07-20): `symbol-index/refresh.mjs` parsed flags with
+ * an if/else-if chain and no `else`, so an unrecognised flag was silently
+ * dropped. `refresh.mjs --full --dry-run` — intended as a costing dry run —
+ * discarded `--dry-run` and executed a **real full refresh against the live
+ * store**. It was killed before publish, but it stranded a `running` row holding
+ * the per-repo lock that blocks every subsequent refresh.
+ *
+ * The assumption behind that command was not careless: its sibling
+ * `symbol-index/prune.mjs` **does** support `--dry-run`. A family where one
+ * destructive CLI honours the flag and another silently ignores it fails in the
+ * dangerous direction — the operator believes they asked for less work than they
+ * got. Silence is the wrong default wherever the CLI mutates.
+ *
+ * Deliberately narrow: it validates flag NAMES only, not values, arity, or
+ * combinations — those stay with each parser, which knows its own semantics.
+ * Bare (non-`--`) positional arguments are ignored for the same reason.
+ *
+ * @param {string[]} argv        typically `process.argv`
+ * @param {Iterable<string>} known  every accepted flag, INCLUDING `--x=y` forms
+ * @param {{cli?: string, from?: number}} [opts] `from` defaults to 2 (skip node + script)
+ * @throws {ArgvError} naming the offending flag and listing what is accepted
+ */
+export function assertKnownFlags(argv, known, { cli = 'cli', from = 2 } = {}) {
+  const allowed = new Set(known);
+  for (let i = from; i < argv.length; i++) {
+    const a = argv[i];
+    if (typeof a !== 'string' || !a.startsWith('--')) continue;
+    // `--` ends flag parsing by POSIX convention; everything after is positional.
+    if (a === '--') break;
+    // Accept `--flag=value` by checking the name half.
+    const name = a.includes('=') ? a.slice(0, a.indexOf('=')) : a;
+    if (allowed.has(name)) continue;
+    throw new ArgvError(
+      `${cli}: unknown flag "${name}". Accepted: ${[...allowed].sort().join(', ')}. `
+      + 'Refusing to run rather than ignore it — an ignored flag on a mutating command '
+      + 'silently does more than you asked for.',
+    );
+  }
+}

@@ -31,6 +31,7 @@ import { fileURLToPath } from 'node:url';
 import * as vcs from '../lib/vcs.mjs';
 import { runJsonLinesAsyncStrict, SUBPROC_ERROR_CODES } from '../lib/subprocess.mjs';
 import { filterDiffFiles, formatSkipLog } from '../lib/sensitive-paths.mjs';
+import { assertKnownFlags } from '../lib/cli-io.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -42,6 +43,8 @@ import {
   heartbeatRefreshRun,
   recordSymbolDefinitions,
   recordSymbolIndex,
+  listFilesNeedingSummaryRetry,
+  recordSummaryOutcomes,
   recordSymbolEmbedding,
   recordLayeringViolations,
   recordDuplicateJustifications,
@@ -92,7 +95,31 @@ export function provenanceRequiresFullReembed(prior, nextProvenanceId) {
   return Boolean(prior?.activeEmbeddingModel) && prior.activeEmbeddingModel !== nextProvenanceId;
 }
 
+/**
+ * Every flag this CLI accepts. `assertKnownFlags` rejects anything else.
+ *
+ * **The allowlist must list only flags this file actually HANDLES.** A first
+ * draft added `--selfcheck-relocation` on the assumption refresh.mjs carried the
+ * smoke-test handler like its siblings. It does not — it is not in
+ * `CLI_SMOKE_SET` (AGENTS.md) — so the guard accepted the flag, the parser
+ * ignored it, and the run proceeded to a real live refresh that published as
+ * active. That is precisely the accepted-then-ignored bug this guard exists to
+ * prevent, reintroduced one layer up. An allowlist entry is a claim that the
+ * parser below does something with it.
+ */
+export const KNOWN_FLAGS = Object.freeze([
+  '--full', '--since-commit', '--force', '--include-delegates',
+]);
+
 function parseArgs(argv) {
+  // Reject unknown flags BEFORE any work. This chain used to have no `else`, so
+  // an unrecognised flag was silently dropped: `--full --dry-run`, intended as a
+  // costing dry run, discarded `--dry-run` and ran a REAL full refresh against
+  // the live store (2026-07-20). Note this CLI has no `--dry-run` while its
+  // sibling `prune.mjs` does — a family that honours the flag in one destructive
+  // command and ignores it in another fails in the dangerous direction.
+  assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'refresh' });
+
   const args = { full: false, sinceCommit: null, force: false, includeDelegates: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
@@ -305,13 +332,39 @@ async function main() {
           ...diff.untracked,
           ...diff.renamed.map(r => r.to),
         ];
-        restrictFiles = fileList;
+        // NULL-SUMMARY RE-QUEUE (plan §2.1 C9).
+        //
+        // Incremental extraction is scoped to git-touched files, so a symbol
+        // whose summarisation failed is revisited ONLY if its file happens to
+        // be edited again. One transient provider outage would otherwise leave
+        // a permanent, silent blind spot: those symbols hold no embedding and
+        // surface as `unscored` forever, with nothing ever retrying them.
+        //
+        // Union their files into the extraction set so they flow back through
+        // the normal extract → summarise → embed path. Bounded by
+        // SUMMARY_RETRY_CAP on symbol_definitions, so permanently-
+        // unsummarisable symbols (oversized body, safety-filter trip) stop
+        // being retried rather than burning provider calls every refresh.
+        let retryFiles = [];
+        if (prior?.refreshId) {
+          try {
+            retryFiles = await listFilesNeedingSummaryRetry(repoRow.id, prior.refreshId);
+          } catch (err) {
+            // Never block a refresh on the re-queue lookup.
+            logOk(`WARNING: summary re-queue lookup failed (${err.message}) — continuing without it`);
+          }
+        }
+        const retryOnly = retryFiles.filter(f => !fileList.includes(f));
+        restrictFiles = [...fileList, ...retryOnly];
         touchedSet = new Set([
-          ...fileList,
+          ...restrictFiles,
           ...diff.deleted,
           ...diff.renamed.map(r => r.from),
         ]);
-        logOk(`incremental: ${fileList.length} touched files (since ${sinceCommit})`);
+        logOk(
+          `incremental: ${fileList.length} touched files (since ${sinceCommit})`
+          + (retryOnly.length ? ` + ${retryOnly.length} re-queued for failed summarisation` : ''),
+        );
       }
 
       // 5. (R1 H4 fix) — active_embedding_model + dim are now passed to the
@@ -396,6 +449,36 @@ async function main() {
         kind: s.kind,
       }));
       const defMap = await recordSymbolDefinitions(repoId, defs);
+
+      // 9b. Record summarisation outcomes so the bounded re-queue can converge
+      // (plan §2.1 C9). Success RESETS the counter — the contract is
+      // "consecutive failures", so a symbol that recovers carries no scar
+      // tissue toward the cap. Failure increments and flips `summary_failed`
+      // at SUMMARY_RETRY_CAP, after which the symbol stops being retried and
+      // stays honestly `unscored` rather than burning a provider call every
+      // refresh forever.
+      //
+      // Runs AFTER recordSymbolDefinitions because it needs definition ids,
+      // and is best-effort: a bookkeeping failure must never abort a refresh
+      // whose real work already succeeded.
+      try {
+        const outcomes = finalSymbols
+          .map(s => ({
+            definitionId: defMap[`${s.filePath}|${s.symbolName}|${s.kind}`],
+            ok: typeof s.purposeSummary === 'string' && s.purposeSummary.trim() !== '',
+          }))
+          .filter(o => o.definitionId);
+        const res = await recordSummaryOutcomes(repoId, outcomes);
+        if (res.incremented > 0 || res.reset > 0) {
+          logOk(
+            `summary retry ledger: ${res.reset} reset on success, `
+            + `${res.incremented} incremented on failure`
+            + (res.nowTerminal ? `, ${res.nowTerminal} now TERMINAL (cap reached — will not be retried)` : ''),
+          );
+        }
+      } catch (err) {
+        logOk(`WARNING: summary retry bookkeeping failed (${err.message}) — refresh continues`);
+      }
 
       // 10. Upsert symbol_index rows
       const indexRows = finalSymbols.map(s => ({

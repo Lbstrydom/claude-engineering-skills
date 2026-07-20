@@ -27,8 +27,22 @@ import {
   demoteRefreshRuns,
 } from '../learning-store.mjs';
 import { assertRepoRoot } from '../lib/assert-repo-root.mjs';
+import { assertKnownFlags } from '../lib/cli-io.mjs';
+
+/**
+ * Every flag this CLI accepts — must list only flags `parseArgs` HANDLES.
+ * @see scripts/symbol-index/refresh.mjs KNOWN_FLAGS for why that matters.
+ */
+export const KNOWN_FLAGS = Object.freeze(['--dry-run']);
 
 function parseArgs(argv) {
+  // Fails in the dangerous direction without this: the ONLY flag prune accepts
+  // is the one that makes it harmless, so any typo (`--dry-runn`, `--dryrun`)
+  // was silently dropped and the run DELETED rows the operator meant only to
+  // preview. Sibling `refresh.mjs` has no `--dry-run` at all, which is what
+  // made assuming this family's flags a live-store incident (2026-07-20).
+  assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'prune' });
+
   const args = { dryRun: false };
   for (let i = 2; i < argv.length; i++) {
     if (argv[i] === '--dry-run') args.dryRun = true;
@@ -94,6 +108,12 @@ async function main() {
 }
 
 main().catch((err) => {
+  // A usage mistake is not an operational failure: exit 2 with the message
+  // alone (a stack trace buries the one line the operator needs to read).
+  if (err?.code === 'ARGV_ERROR') {
+    process.stderr.write(`arch:prune: ${err.message}\n`);
+    process.exit(2);
+  }
   process.stderr.write(`arch:prune: fatal: ${err.stack || err.message}\n`);
   process.exit(1);
 });
