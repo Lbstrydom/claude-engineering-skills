@@ -732,6 +732,62 @@ the predicate guessing in the demoting direction. `C` stays narrow by design.
 Re-open only with evidence from a codebase whose sinks are *not*
 render-delegated, and re-run this ceiling probe there first.
 
+### 2d-iii. Independent corroboration of bucket `D` — a human reached the same 92
+
+Re-measured after the consumer had acted on the triage. Predicates byte-identical
+since v1.1, same config, not re-tuned.
+
+| | pre-fix scan | post-fix scan |
+|---|---|---|
+| total | 240 | 147 |
+| `A` | 144 | 143 |
+| `C` | **4** | **4** |
+| `D` | **92** | **0** |
+
+**`D` fell to zero because the consumer removed those findings at source, and
+independently derived the same set.** Their `.snyk` policy file now carries a
+global exclusion whose comment reads:
+
+> *"Test code is not a production surface. This removes **92 of 238** SAST
+> findings, 75 of which are a single artifact: every route test spins up its own
+> bare `express()` … The real app DOES disable it — `src/server.js:76` — but
+> Snyk Code is not interprocedural enough to see that from a harness which never
+> imports server.js."*
+
+92, against this router's 92. The removed rule classes match the `path-scope`
+demotions **one for one**: `DisablePoweredBy/test` 75, `HardcodedNonCryptoSecret/test`
+14, `HttpToHttps/test` 1, `InsecureHash/test` 1, `NoHardcodedCredentials/test` 1.
+
+This is the first check on `D` that is not the tool agreeing with itself. A human
+doing manual triage, reasoning in prose about an `express()` harness artifact,
+converged on the identical set that a two-signal mechanical predicate produced —
+including the same judgement that a test-path finding is not a production
+surface. `D` is empty in the new scan because those findings no longer reach the
+scanner at all, which is the outcome the bucket exists to enable.
+
+`C` reproduced at exactly 4, same findings and same reasons — so the v1.1 number
+is stable rather than incidental.
+
+**A precondition this measurement exposed, which the tool does NOT enforce.**
+The first SARIF was captured at 17:55; the XSS fixes landed at 21:11 and 21:31 —
+3½ hours later, touching the very file §2d-ii used as its render-delegation
+example. Running that SARIF against the current tree would have measured neither
+state: stale findings against moved line numbers, with sinks resolving to code
+that no longer sits there. Four SARIFs existed by then, a remediation
+progression; the post-fix one is the only coherent pair with the tree.
+
+**A SARIF and the source it names must come from the same commit.** The CLI
+happily accepts any SARIF against whatever tree is on disk and cannot currently
+tell. Worth a `--expect-commit` or a recorded scan-commit check before anyone
+treats a routed report as evidence — a mismatch degrades silently, in the
+direction of reading the wrong lines, which is the demoting direction.
+
+**Do not read a shrinking `A` as progress.** `DOMXSS` held at **103 across all
+four scans** while the consumer was actively fixing stored XSS and — per their
+own commit — found "a third XSS check Snyk itself missed". `A` moved 144 → 143.
+That gap is scanner recall, not triage: the tool ranks what the scanner reports
+and can say nothing about what it never reported.
+
 ## 6. Sustainability Notes
 
 ### Right-sizing gate
