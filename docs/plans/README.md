@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 129 terminal · 22 audit summaries · 4 reference docs**
+**5 active · 130 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -22,7 +22,6 @@ This is the list to read when asking "what is in flight?".
 | Plan | Status | Notes |
 |---|---|---|
 | [Arch-Memory Consultation — Close the Query/Index Asymmetry](./arch-memory-band-recalibration.md) | `Draft` |  |
-| [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `In Progress` | WS-0, WS-A, WS-B, WS-C Complete; WS-E/E1 Complete (2026-07-19). WS-D and WS-E/E2(b) remain open (verified a… |
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
 | [Migration ↔ compat-bootstrap coupling — assert the surface, don't relocate the DDL](./migration-bootstrap-coupling.md) | `Draft` |  |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
@@ -46,7 +45,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 126 completed plans</summary>
+<summary>Show all 127 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -91,6 +90,7 @@ source comments that no docs linter sees — stays valid.
 | [Dashboard "Purpose" view — outcome/requirement map](./dashboard-purpose-view.md) | `Complete` | v1 shipped — `purpose.mjs` renders the Purpose tab; extended by `dashboard-purpose-view-v2.md` + `-v3.md`, … |
 | [Dashboard UX — category/workflow clusters, new-user orientation, tiered-shadow panel](./dashboard-ux-clusters-and-shadow-panel.md) | `Complete` |  |
 | [Dead-Code Detection — Phase 1 (Orphan-Introduced Check)](./dead-code-phase-1-orphan-introduced.md) | `Complete` |  |
+| [Debt Burndown — Workstreams A–E (master)](./debt-burndown-workstreams.md) | `Complete` | 2026-07-19) — all workstreams closed and traced against the code, not against their labels. WS-D and WS-E/E… |
 | [Determinism Follow-ups — Model-Independent Outcome Capture + Deterministic ux-lock Runners](./determinism-follow-ups.md) | `Complete` | both workstreams implemented, audited, and shipped |
 | [Deterministic `/audit-code` outcome capture for rounds 1..N-1 (orchestrator-only)](./deterministic-outcome-capture.md) | `Complete` | shipped 2026-06-29. Audit trail: v1 hook+queue design REJECTED by Gemini (coherence *Weak*, over-engineered… |
 | [Device-profile emulation for persona-driven + structural browser tests](./device-profile-emulation.md) | `Complete` | implemented in this repo; shareable brief for porting elsewhere |

@@ -566,7 +566,7 @@ export default async function analyseImports({ mapped, domainMap, repoPath }) {
         const toDomain = mapped.get(toFile) ?? resolveFileToDomain(toFile, domainMap.rules);
         if (!toDomain) continue;
         if (!checkDepAllowed(fromDomain, toDomain, domainMap.allowedDeps)) {
-          const key = `${fromFile} ${toFile}`;
+          const key = `${fromFile}\x00${toFile}`;
           if (!seenViolation.has(key)) {
             seenViolation.add(key);
             violations.push({
