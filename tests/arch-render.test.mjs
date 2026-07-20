@@ -9,6 +9,7 @@ import {
   renderNeighbourhoodCallout,
   renderDriftIssue,
 } from '../scripts/lib/arch-render.mjs';
+import { DEFAULT_EXT_ALLOWLIST } from '../scripts/lib/sensitive-egress-gate.mjs';
 
 describe('escapeMarkdown', () => {
   it('escapes pipes', () => assert.equal(escapeMarkdown('a|b'), 'a\\|b'));
@@ -65,6 +66,17 @@ describe('renderArchitectureMap — partial-coverage banner', () => {
       ...base, unindexedStackKinds: ['python', 'java'],
     });
     assert.match(markdown, /python, java/);
+  });
+
+  it('states the allowlist DERIVED from the extractor, not a hardcoded copy', () => {
+    // Round-2 audit finding: the module imports the allowlist as its single
+    // source of truth and then restated it in prose — the exact drift the
+    // import exists to prevent. Pin the derivation: widening the extractor
+    // must change what the banner tells the reader.
+    const { markdown } = renderArchitectureMap({ ...base, unindexedStackKinds: ['python'] });
+    for (const ext of DEFAULT_EXT_ALLOWLIST) {
+      assert.ok(markdown.includes(ext), `banner must name ${ext} from the real allowlist`);
+    }
   });
 
   it('is SILENT for a pure JS/TS repo — a banner that always fires is unread', () => {

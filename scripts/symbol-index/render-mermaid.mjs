@@ -19,6 +19,7 @@ import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
 import { detectRepoStack } from '../lib/repo-stack.mjs';
+import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -48,10 +49,26 @@ import {
   computeObservedDomainDepsWithCoverage,
 } from '../lib/observed-deps.mjs';
 
+/** Every flag this CLI accepts. `assertKnownFlags` rejects anything else. */
+export const KNOWN_FLAGS = Object.freeze(['--out']);
+
 function parseArgs(argv) {
+  // Same sweep as refresh.mjs / prune.mjs / remove-legacy-synced.mjs: an
+  // ignored flag lets an operator believe they asked for something the CLI
+  // never did. `arch:render --dry-run` used to render for real, silently.
+  assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'arch:render' });
   const args = { out: 'docs/architecture-map.md' };
   for (let i = 2; i < argv.length; i++) {
-    if (argv[i] === '--out') args.out = argv[++i];
+    if (argv[i] === '--out') {
+      const value = argv[++i];
+      // Validate arity here — assertKnownFlags deliberately checks names only.
+      // Without this, `--out` with no value put `undefined` into path.resolve
+      // and surfaced as an implementation error instead of a CLI diagnostic.
+      if (!value || value.startsWith('--')) {
+        throw new ArgvError('arch:render: --out requires a file path (e.g. --out docs/architecture-map.md)');
+      }
+      args.out = value;
+    }
   }
   return args;
 }
@@ -287,9 +304,21 @@ async function main() {
   // arch-memory reasons about — including it would fire on every repo with a
   // supabase/migrations dir (this one), and a banner that always fires is one
   // nobody reads.
-  const SYMBOL_BEARING_STACKS = new Set(['python', 'java']);
-  const unindexedStackKinds = detectRepoStack(repoRoot).stackKinds
-    .filter(k => SYMBOL_BEARING_STACKS.has(k));
+  // Best-effort, like the domain-summary and importer steps above: this is an
+  // advisory banner input, and a stack-detection failure must not abort a
+  // render that would otherwise succeed. It also sits in the window BETWEEN
+  // the early-return cleanups and the observed-deps step's own try/catch — a
+  // throw here would reach the top-level fatal handler, which does NOT clear a
+  // prior observed-deps envelope, so an unguarded call would let a banner
+  // lookup strand a stale coverage verdict on disk. Degrade to "no banner".
+  let unindexedStackKinds = [];
+  try {
+    const SYMBOL_BEARING_STACKS = new Set(['python', 'java']);
+    unindexedStackKinds = detectRepoStack(repoRoot).stackKinds
+      .filter(k => SYMBOL_BEARING_STACKS.has(k));
+  } catch (err) {
+    process.stderr.write(`arch:render: stack detection failed — ${err.message}; partial-coverage banner omitted\n`);
+  }
 
   const { markdown, bytesWritten } = renderArchitectureMap({
     repoName: identity.name,
@@ -412,6 +441,15 @@ async function main() {
 }
 
 main().catch(err => {
+  // A usage mistake is not an operational failure: exit 2 with the message
+  // alone (a stack trace buries the one line the operator needs to read).
+  // Same contract as prune.mjs / refresh.mjs — 2 = bad input, 1 = tool error.
+  if (err?.code === 'ARGV_ERROR') {
+    // No prefix added here: both argv-error sources already lead with
+    // "arch:render:", and prefixing again yields "arch:render: arch:render:".
+    process.stderr.write(`${err.message}\n`);
+    process.exit(2);
+  }
   process.stderr.write(`arch:render: fatal: ${err.stack || err.message}\n`);
   process.exit(1);
 });

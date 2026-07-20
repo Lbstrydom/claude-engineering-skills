@@ -15,7 +15,16 @@
 // make claims ABOUT that list ("we index .js/.ts…"), so a stale copy would
 // turn the reassurance into a lie. Pure predicate — the "No I/O" rule above
 // still holds.
-import { isExtensionAllowlisted } from './sensitive-egress-gate.mjs';
+import { isExtensionAllowlisted, DEFAULT_EXT_ALLOWLIST } from './sensitive-egress-gate.mjs';
+
+/**
+ * The allowlist as prose, DERIVED not restated. Round-2 audit caught the
+ * original: these renderers imported the predicate as the single source of
+ * truth and then hardcoded the extension list in their message strings — the
+ * exact drift the import was chosen to avoid, one line below the comment
+ * saying so. Widening the extractor now updates what the reader is told.
+ */
+const ALLOWLIST_PROSE = DEFAULT_EXT_ALLOWLIST.join('/');
 
 const MERMAID_DEFS = `
 classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
@@ -222,7 +231,7 @@ export function renderArchitectureMap({
   if (unindexedStackKinds.length > 0) {
     const kinds = unindexedStackKinds.join(', ');
     out.push('');
-    out.push(`> ⚠ **Partial coverage** — this repo also contains ${kinds} sources, which the symbol extractor does not index (its allowlist is \`.js/.jsx/.mjs/.cjs/.ts/.tsx/.vue/.svelte\`). Everything below describes the JS/TS portion ONLY. A symbol absent from this map may simply be unindexed — do not read "not present" as "does not exist".`);
+    out.push(`> ⚠ **Partial coverage** — this repo also contains ${kinds} sources, which the symbol extractor does not index (its allowlist is \`${ALLOWLIST_PROSE}\`). Everything below describes the JS/TS portion ONLY. A symbol absent from this map may simply be unindexed — do not read "not present" as "does not exist".`);
     out.push('');
   }
 
@@ -345,7 +354,7 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
         '>',
         `> ${unindexable.map(p => `\`${p}\``).join(', ')}`,
         '>',
-        '> The symbol extractor indexes `.js/.jsx/.mjs/.cjs/.ts/.tsx/.vue/.svelte`',
+        `> The symbol extractor indexes \`${ALLOWLIST_PROSE}\``,
         '> only, so there are no rows to match against for the path(s) above.',
         '> **This is absence of evidence, not evidence of absence** — it does NOT',
         '> mean no similar code exists. Check for near-duplicates by hand before',

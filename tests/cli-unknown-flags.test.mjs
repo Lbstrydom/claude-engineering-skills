@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError } from '../scripts/lib/cli-io.mjs';
 import { KNOWN_FLAGS } from '../scripts/symbol-index/refresh.mjs';
 import { KNOWN_FLAGS as PRUNE_FLAGS } from '../scripts/symbol-index/prune.mjs';
+import { KNOWN_FLAGS as RENDER_FLAGS } from '../scripts/symbol-index/render-mermaid.mjs';
 import { KNOWN_FLAGS as RLS_FLAGS, _internals as RLS } from '../scripts/lib/remove-legacy-synced.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -135,6 +136,56 @@ describe('prune.mjs — the sibling that fails in the dangerous direction', () =
       path.join(REPO_ROOT, 'scripts', 'symbol-index', 'prune.mjs'), 'utf-8');
     const body = src.slice(src.indexOf('function parseArgs'), src.indexOf('const ROLLBACK_KEEP'));
     for (const flag of PRUNE_FLAGS) {
+      assert.ok(body.includes(`'${flag}'`), `${flag} is allow-listed but never handled`);
+    }
+  });
+});
+
+describe('render-mermaid.mjs — overwrites a committed artifact', () => {
+  // Swept in 2026-07-20 by /audit-code: parseArgs had the same if/no-else
+  // shape as the refresh.mjs incident, so `arch:render --dry-run` rendered
+  // for REAL — and this CLI overwrites docs/architecture-map.md. It also took
+  // `--out` with no value, putting `undefined` into path.resolve and
+  // surfacing as an implementation error rather than a usage diagnostic.
+  const runRender = (...flags) => {
+    let status = 0, stderr = '';
+    try {
+      execFileSync(process.execPath,
+        [path.join(REPO_ROOT, 'scripts', 'symbol-index', 'render-mermaid.mjs'), ...flags],
+        { cwd: REPO_ROOT, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 60_000 });
+    } catch (err) {
+      status = err.status; stderr = String(err.stderr || '');
+    }
+    return { status, stderr };
+  };
+
+  it('refuses an unknown flag with exit 2 and no stack trace', () => {
+    const { status, stderr } = runRender('--dry-run');
+    assert.equal(status, 2, 'usage mistake → exit 2, not 1 (operational failure)');
+    assert.match(stderr, /unknown flag "--dry-run"/);
+    assert.doesNotMatch(stderr, /at .*\.mjs:\d+/, 'a stack trace buries the actionable line');
+    assert.doesNotMatch(stderr, /wrote .*architecture-map/, 'must refuse BEFORE writing the artifact');
+  });
+
+  it('rejects --out with no value instead of resolving undefined', () => {
+    const { status, stderr } = runRender('--out');
+    assert.equal(status, 2);
+    assert.match(stderr, /--out requires a file path/);
+    assert.doesNotMatch(stderr, /at .*\.mjs:\d+/);
+  });
+
+  it('does not double-prefix the diagnostic', () => {
+    // assertKnownFlags already leads with the cli name; prefixing again in the
+    // catch produced "arch:render: arch:render: unknown flag ...".
+    const { stderr } = runRender('--dry-run');
+    assert.doesNotMatch(stderr, /arch:render:\s*arch:render:/);
+  });
+
+  it('KNOWN_FLAGS lists ONLY flags the parser actually handles', () => {
+    const src = fs.readFileSync(
+      path.join(REPO_ROOT, 'scripts', 'symbol-index', 'render-mermaid.mjs'), 'utf-8');
+    const body = src.slice(src.indexOf('function parseArgs'), src.indexOf('function commitSha'));
+    for (const flag of RENDER_FLAGS) {
       assert.ok(body.includes(`'${flag}'`), `${flag} is allow-listed but never handled`);
     }
   });
