@@ -75,6 +75,12 @@ arch-memory caller is known to degrade gracefully on refusal; the others were no
 audited for this and mostly guard **diffs and prompts**, where a false positive
 could abort a paid audit run rather than silently degrade.
 
+> **Superseded in part by §4c (2026-07-19).** The "rules out" below assumed an
+> unguarded refusal is costly. Auditing all 20 sites showed none of them leaks on
+> refusal, and §4b measured zero false positives for keyed matching — so the
+> shared floor can be raised without hardening the call sites first. The option
+> table stands; its risk weighting does not.
+
 That rules out simply making the shared gate aggressive. Two candidate shapes,
 both needing a decision:
 
@@ -133,6 +139,49 @@ as a token, yielding "1 distinct token". Re-run with `-a`. Recorded because the
 error direction was reassuring (it under-reported), which is exactly the kind
 that survives review.
 
+## 4c. Q2 SETTLED (2026-07-19) — no call site leaks on refusal; Q2 does not gate rollout
+
+Audited all **20** call sites by AST (`assertEgressSafe` inside a `try` block,
+then whether every caller of the enclosing function is itself wrapped):
+
+| Refusal behaviour | Sites | Paths |
+|---|---|---|
+| Caught locally, degrades to a non-sending fallback | 5 | `structured-extractor` (returns `egressDecision:'blocked'`, null context) · `cluster-propose` (`dupFallback()` — *"never send"*) · `arm-eval/judge` · `oss-structured-output:268` · `neighbourhood-query` (C10 deterministic path) |
+| Unguarded locally, but **every caller catches** → per-item skip | 8 | `extractDiff`, `runGptPass`, `runGeminiReview`, `runGeminiPass`, `runOssPass`, `runGptJudgeBatch`, `loadCorpusCase`, `invokeStructured` |
+| **Propagates to the top** — run aborts | ~5 | `runAuditGenerationArm`, `assertJudgePayloadSafe`, `ossStructuredCall` (5 of 6 callers unwrapped), `runStage` (1 of 2), `produceBrainstorm`/`producePlan` (dispatched at `arm-eval/run.mjs:75-76`, whose only `catch` covers archive export) |
+
+**The security answer is clean: not one site sends after a refusal.** Every path
+either aborts before the wire call or returns a fallback that does not send. The
+assert is consistently placed immediately before the provider call, so a throw
+cannot be stepped over. There is no "catch and continue anyway" anywhere.
+
+**So Q2's premise was wrong, and this is the useful part.** §4 assumed unguarded
+propagation was the blocker — "a false positive could abort a paid audit run
+rather than silently degrade". Two corrections:
+
+1. The variance between the three rows above is **operational, not
+   security-relevant**: lose-the-run versus lose-one-item. Both are fail-closed.
+2. Aborting on a *true* positive is arguably the **correct** behaviour for a
+   security gate, not a defect. The abort is only a cost when the refusal is a
+   false positive — and §4b measured the keyed form at **zero** false positives
+   across 18 MB of real payload.
+
+Combined, that removes Q2 as a rollout gate: **option B (keyed patterns on the
+gate) can ship without first hardening 15 call sites**, because the failure it
+would newly trigger is one that (a) never fires on measured-real payloads and
+(b) fails safe in every path when it does.
+
+What remains genuinely worth doing, at much lower priority: the ~5 propagating
+paths would produce a stack trace rather than a diagnosable message, which is a
+poor operator experience for a security refusal. That is an ergonomics item, not
+a correctness one, and should not block the fix.
+
+**Limits of this analysis, stated so it is not over-trusted**: it is static and
+two levels deep. Dependency-injected dispatch (`d.producePlan`) was followed by
+name, but a caller reached through a differently-named indirection could be
+missed. It also assumes an outer `catch` handles rather than rethrows — verified
+for the five local catches above, not exhaustively for every ancestor.
+
 ## 5. Open questions to settle before implementation
 
 1. **How aggressive can a strict gate be before it fires on real diffs?**
@@ -141,9 +190,13 @@ that survives review.
    row, whose only false positives are prose *documenting* the pattern (this
    repo's own security docs among them). Decide between keying that row too or
    carving out prose, and measure the choice the same way.
-2. **What do the other 19 call sites do on refusal?** Unaudited. If any of them
-   turns a refusal into a crash mid-run, that is a separate defect and it gates
-   option A's rollout.
+2. ~~**What do the other 19 call sites do on refusal?**~~ **SETTLED 2026-07-19 —
+   see §4c.** All 20 audited: none sends after a refusal. 5 degrade locally, 8
+   are skipped per-item by a catching caller, ~5 abort the run. The variance is
+   operational, not security-relevant, and aborting on a true positive is correct
+   behaviour — so this does **not** gate rollout, contrary to the assumption
+   here. Residual (low priority): the ~5 propagating paths emit a stack trace
+   rather than a diagnosable refusal message.
 3. ~~**Is the generic-40-hex row a true positive?**~~ **SETTLED 2026-07-19 — see
    §4b.** No: 227 occurrences across 18 MB of real payload, all git SHAs, zero
    secrets. But the shape is genuinely ambiguous (a legacy GitHub PAT is also
