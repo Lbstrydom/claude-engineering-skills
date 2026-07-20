@@ -290,25 +290,16 @@ still listed 2 test files against 100+ real ones). Layout in one line:
 backwards-compatible barrel); `tests/` is the Node built-in test-runner suite;
 `.claude/skills/**` is generated from `skills/**`.
 
-### Script Responsibilities
+### Script responsibilities + key patterns — pointer
 
-- **lib/*.mjs**: Focused modules — import directly from `./lib/<module>.mjs` for explicit deps, or from `./shared.mjs` barrel for convenience. Schemas (`lib/schemas.mjs`) are the single source of truth (JSON Schemas derived via `zodToGeminiSchema()`).
-- **openai-audit.mjs**: 5-pass parallel code audit (structure, wiring, backend, frontend, sustainability). Plan audit. Rebuttal deliberation. Uses GPT with `responses.parse()` + Zod schemas. Integrates bandit reward updates + Supabase cloud sync.
-- **gemini-review.mjs**: Independent final review (MANDATORY — not gated by convergence). Receives full audit transcript. Detects bias, false consensus, missed issues. Default Gemini 3.1 Pro (16K thinking budget); **provider-agnostic** via one abort-correct `callReviewer` seam + a `PROVIDERS` descriptor catalog — gemini / claude-opus / azure-claude (both shapes) / `openai-compatible` / `openrouter` (recipe: [`docs/runbooks/azure-work-profile.md`](docs/runbooks/azure-work-profile.md) §Provider-agnostic final review). Background-safe: guaranteed process termination (idempotent `finishAndExit` + hard-deadline watchdog), so a detached run can't hang on a lingering SDK socket. Claude deliberates on CONCERNS, then the reviewer re-verifies.
-- **learning-store.mjs**: Cloud persistence via Supabase — repos, runs, findings, pass stats, bandit arms, FP patterns, adjudication events. Graceful fallback to local-only mode.
-
-### Key Patterns
-
-- **Adaptive sizing**: `computePassLimits()` scales token limits and timeouts based on context size
-- **Graceful degradation**: `safeCallGPT()` catches failures and returns empty results instead of crashing
-- **Semantic dedup**: Content-hash IDs (`semanticId()`) enable exact cross-round and cross-model finding matching
-- **Targeted context**: `readProjectContextForPass()` sends only relevant AGENTS.md sections per pass (~1500 chars vs 8000)
-- **Sensitive file filtering**: `.env`, credentials, keys are never sent to external APIs
-- **Atomic persistence**: `atomicWriteFileSync()` — temp file + rename for crash-safe writes (ledger, bandit, FP tracker)
-- **Fuzzy file discovery**: When plan paths don't match exact filenames, Phase 2 extracts PascalCase/backtick identifiers and matches against repo files
-- **Schema validation at boundaries**: `callGemini()` throws on validation failure, `writeLedgerEntry()` validates entries before write
-- **Thompson Sampling**: `PromptBandit` — Beta posterior updates from deliberation outcomes, synced to Supabase
-- **Closed Gemini loop**: Step 7.1 — Claude deliberates on Gemini findings, fixes, then Gemini re-verifies (not GPT)
+Per-module prose (openai-audit, gemini-review, the learning-store barrel) and the
+named patterns (adaptive sizing, semantic dedup, atomic persistence, the closed
+Gemini loop, …) live in
+[`docs/reference/audit-internals.md`](docs/reference/audit-internals.md).
+Condensed out of this file 2026-07-20 — it had already gone stale (it still
+described `learning-store.mjs` as talking to Supabase, three milestones after M3
+split it into 9 modules behind the `db/` seam), which is the rot the
+"do not hand-maintain a module tree here" rule above exists to prevent.
 
 ### Testing
 
