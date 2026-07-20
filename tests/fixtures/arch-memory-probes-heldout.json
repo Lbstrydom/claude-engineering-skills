@@ -31,6 +31,16 @@
     "text rather than a retrieval defect. Read the returned candidates before",
     "concluding which."
   ],
+  "provenance": {
+    "_comment": "Machine-verifiable binding, not just a human-readable date. A calibration result is only interpretable against the pipeline that produced it; a reader must be able to tell mechanically whether a recorded result still applies. Verified by the harness against live config at run time.",
+    "indexRefreshId": "68f8af66-bccd-483e-81f0-32f7187a752d",
+    "indexSymbolCount": 3478,
+    "embedModel": "gemini-embedding-001",
+    "embedDim": 768,
+    "composeVersion": "d0530b33b5ce",
+    "authoredAt": "2026-07-20",
+    "authoredAgainstCommit": "4e2a22e"
+  },
   "probes": [
     {
       "id": "ho-install-detect-conflicts",

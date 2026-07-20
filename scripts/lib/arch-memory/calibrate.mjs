@@ -61,11 +61,31 @@ export function percentile(xs, p) {
   return a[idx];
 }
 
-/** Stable hash of the probe set — feeds `calibrationProvenance` (C4). */
+/**
+ * Stable hash of the probe set — feeds `calibrationProvenance` (C4).
+ *
+ * Hashes a CANONICAL form: object keys sorted recursively, so a hash change
+ * always means the probe SEMANTICS changed. `JSON.stringify` alone preserves
+ * insertion order, so merely reformatting the fixture — or rebuilding a probe
+ * object with its keys in a different order — produced a different hash and
+ * spuriously invalidated a still-valid calibration. Array order is preserved
+ * deliberately: probe ORDER is not semantically meaningful, but reordering is
+ * rare and treating it as a change is the safe direction.
+ */
+function canonicalise(value) {
+  if (Array.isArray(value)) return value.map(canonicalise);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.keys(value).sort().map(k => [k, canonicalise(value[k])]),
+    );
+  }
+  return value;
+}
+
 export function probeSetHash(probes) {
   return crypto
     .createHash('sha256')
-    .update(JSON.stringify(probes))
+    .update(JSON.stringify(canonicalise(probes)))
     .digest('hex')
     .slice(0, 16);
 }
@@ -198,7 +218,15 @@ export function deriveThresholds(results, metrics) {
     for (const r of resolved) {
       const banded = r.records.filter(rec => Number.isFinite(rec.similarityScore) && rec.similarityScore >= t);
       if (r.probe.relation === 'none') {
-        if (banded.length > 0) hardFp++;
+        // A hard negative that emits ANY band at this threshold is a false
+        // positive, and it MUST enter the precision denominator. Counting it
+        // only in `hardFp` and `continue`-ing (the original form) let a
+        // threshold that fires on every hard negative still report
+        // precision 1.0, so long as the positives it banded were right —
+        // precisely the "confidently wrong" outcome the whole plan exists to
+        // avoid. The separate `hardFp` counter is retained because the
+        // selection rule bounds it directly.
+        if (banded.length > 0) { hardFp++; fp++; }
         continue;
       }
       if (banded.length === 0) continue;
@@ -210,9 +238,23 @@ export function deriveThresholds(results, metrics) {
   };
 
   const rows = candidates.map(evaluate);
-  const reuse = rows.find(r => r.precision !== null && r.precision >= 0.90 && r.hardFp <= 1) || null;
-  const extend = rows.find(r => r.precision !== null && r.precision >= 0.75 && r.hardFp <= 1) || null;
   const jd = metrics.distribution.hardNegativeCeiling;
+
+  // `reuse` is the lowest threshold meeting the strict bar.
+  const reuse = rows.find(r => r.precision !== null && r.precision >= 0.90 && r.hardFp <= 1) || null;
+
+  // `extend` MUST be selected from thresholds strictly BELOW T_reuse. Scanning
+  // the same ascending list independently with a weaker bar (≥0.75) commonly
+  // returns the SAME row as `reuse` — whenever precision steps straight past
+  // 0.90, the first row satisfying ≥0.75 is that same row. That yields
+  // T_reuse === T_extend, which the C7 ordering invariant then rejects, so
+  // derivation could never succeed: a latent "no thresholds, ever" bug rather
+  // than a wrong-thresholds one. Constraining the search range is the fix;
+  // the ordering check below stays as the backstop, not the mechanism.
+  const extend = reuse
+    ? (rows.filter(r => r.t < reuse.t).reverse()
+        .find(r => r.precision !== null && r.precision >= 0.75 && r.hardFp <= 1) || null)
+    : (rows.find(r => r.precision !== null && r.precision >= 0.75 && r.hardFp <= 1) || null);
 
   // Ordering invariant (C7): T_reuse > T_extend > T_jd, else no thresholds.
   if (reuse && extend && jd !== null && !(reuse.t > extend.t && extend.t > jd)) {

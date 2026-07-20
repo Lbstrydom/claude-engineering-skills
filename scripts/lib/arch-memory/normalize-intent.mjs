@@ -33,9 +33,8 @@
  */
 
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import path from 'node:path';
-import { atomicWriteFileSync } from '../file-io.mjs';
+import { getCached as cacheGet, putCached as cachePut, loadCache } from './json-cache.mjs';
 
 const CACHE_REL = '.audit-loop/cache/intent-normalizations.json';
 const CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
@@ -112,17 +111,6 @@ function cacheFile(repoRoot) {
   return path.join(repoRoot, CACHE_REL);
 }
 
-function loadCache(repoRoot) {
-  const file = cacheFile(repoRoot);
-  if (!fs.existsSync(file)) return { entries: {} };
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    return parsed && typeof parsed === 'object' && parsed.entries ? parsed : { entries: {} };
-  } catch {
-    return { entries: {} };
-  }
-}
-
 /**
  * Cache key (C2/C10). Keyed on the REDACTED intent — never the raw text — so a
  * secret in a prompt is never hashed into, or written to, a disk cache file,
@@ -136,19 +124,50 @@ export function normalizationCacheKey(safeIntent, normalizerId) {
     .slice(0, 24);
 }
 
+// Cache primitives are shared with neighbourhood-query via json-cache.mjs —
+// this module previously carried its own near-identical trio (flagged at 0.88
+// similarity by the duplication wave). The shared helper also owns load-time
+// schema validation and TTL pruning, so both callers get them.
 function getCached(repoRoot, key, ttlMs) {
-  const e = loadCache(repoRoot).entries[key];
-  if (!e) return null;
-  if (Date.now() - e.savedAt > ttlMs) return null;
-  return typeof e.text === 'string' ? e.text : null;
+  const v = cacheGet(cacheFile(repoRoot), key, ttlMs);
+  return typeof v === 'string' ? v : null;
 }
 
-function putCached(repoRoot, key, text) {
-  const cache = loadCache(repoRoot);
-  cache.entries[key] = { text, savedAt: Date.now() };
-  const file = cacheFile(repoRoot);
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  atomicWriteFileSync(file, JSON.stringify(cache, null, 2));
+function putCached(repoRoot, key, text, ttlMs) {
+  cachePut(cacheFile(repoRoot), key, text, ttlMs);
+}
+
+/**
+ * Does provider output actually satisfy the contract the prompt asked for?
+ *
+ * The prompt demands a single purpose-genre sentence with no preamble, quotes
+ * or markdown — but the response was previously accepted after nothing but
+ * `String()`, `.slice()` and `.trim()`, then CACHED as trusted semantic input.
+ * That is how the cli-backend regression slipped through in the field: the
+ * model returned a multi-paragraph Claude Code answer complete with fenced
+ * code blocks, and it was embedded verbatim as though it were a purpose
+ * sentence. A malformed normalization is worse than no normalization, because
+ * it silently mis-ranks every candidate rather than failing visibly.
+ *
+ * Rejection routes to the deterministic fallback, which is band-capped.
+ *
+ * @returns {{ok: true} | {ok: false, reason: string}}
+ */
+export function validateNormalizedOutput(text) {
+  const t = String(text || '').trim();
+  if (!t) return { ok: false, reason: 'empty' };
+  if (t.length > MAX_OUTPUT_CHARS) return { ok: false, reason: 'too-long' };
+  if (/```|^#{1,6}\s|^\s*[-*]\s+/m.test(t)) return { ok: false, reason: 'markdown-detected' };
+  if (/\n\s*\n/.test(t)) return { ok: false, reason: 'multi-paragraph' };
+  // A purpose description is one sentence. Allow an abbreviation-free single
+  // terminal period; more than two sentence terminators means prose.
+  if ((t.match(/[.!?](\s|$)/g) || []).length > 2) return { ok: false, reason: 'multi-sentence' };
+  // Intent-genre leakage: the whole point is that the output is NOT phrased as
+  // a request. If the model echoed the intent verbs, the genre bridge failed.
+  if (/^\s*(?:add|create|implement|build|write|make|i\s+want|we\s+need|let'?s)\b/i.test(t)) {
+    return { ok: false, reason: 'intent-genre-not-converted' };
+  }
+  return { ok: true };
 }
 
 /**
@@ -197,8 +216,24 @@ export async function normalizeIntentToPurpose(safeIntent, opts = {}) {
   // Backend-aware availability (AGENTS.md): the cli backend authenticates via
   // the `claude` CLI and needs no key, so a raw ANTHROPIC_API_KEY check here
   // would silently skip a fully-available backend.
+  //
+  // DEADLINE COVERS THE PROBE TOO. The timeout below used to wrap only
+  // `messages.create`, leaving `isAvailable()` and `createClient()` unbounded —
+  // and `isAvailable()` on the cli backend can spawn a subprocess. This module
+  // runs on the UserPromptSubmit hook path, so an unbounded await here stalls
+  // every prompt, which is the one failure mode a "never blocks the query path"
+  // contract cannot tolerate.
+  const deadline = (p, label) => Promise.race([
+    p,
+    new Promise((_, rej) =>
+      setTimeout(() => rej(new Error(`normalize-timeout:${label}`)), NORMALIZE_TIMEOUT_MS).unref?.()
+    ),
+  ]);
+
   try {
-    if (typeof isAvailable === 'function' && !(await isAvailable())) {
+    if (typeof isAvailable === 'function' && !(await deadline(
+      Promise.resolve().then(() => isAvailable()), 'availability'
+    ))) {
       return {
         text: deterministicNormalize(bounded),
         mode: 'fallback',
@@ -228,18 +263,18 @@ export async function normalizeIntentToPurpose(safeIntent, opts = {}) {
     // AGENTS.md and returning a multi-paragraph essay instead of a one-line
     // purpose sentence. That output is unusable as an embedding input, and its
     // apparent similarity lift was an accident of shared vocabulary.
-    const client = await createClient({ backend: 'sdk' });
-    const resp = await Promise.race([
+    const client = await deadline(
+      Promise.resolve().then(() => createClient({ backend: 'sdk' })), 'client-construction'
+    );
+    const resp = await deadline(
       client.messages.create({
         model: normalizerId,
         max_tokens: 200,
         system: NORMALIZE_PROMPT,
         messages: [{ role: 'user', content: bounded }],
       }),
-      new Promise((_, rej) =>
-        setTimeout(() => rej(new Error('normalize-timeout')), NORMALIZE_TIMEOUT_MS).unref?.()
-      ),
-    ]);
+      'provider-call',
+    );
 
     const text = (resp?.content || [])
       .filter(b => b && b.type === 'text')
@@ -257,8 +292,21 @@ export async function normalizeIntentToPurpose(safeIntent, opts = {}) {
       };
     }
 
+    // Validate BEFORE caching. Trusting unvalidated provider output as semantic
+    // input is what let a multi-paragraph cli-backend answer get embedded as
+    // though it were a one-line purpose description.
+    const shape = validateNormalizedOutput(text);
+    if (!shape.ok) {
+      return {
+        text: deterministicNormalize(bounded),
+        mode: 'fallback',
+        normalizerId,
+        reason: `malformed-normalization: ${shape.reason}`,
+      };
+    }
+
     // Only successful LLM normalizations are cached (C10 / Gemini G1).
-    putCached(repoRoot, key, text);
+    putCached(repoRoot, key, text, ttlMs);
     return { text, mode: 'llm', normalizerId };
   } catch (err) {
     return {

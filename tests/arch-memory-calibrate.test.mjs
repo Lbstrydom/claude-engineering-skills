@@ -159,14 +159,91 @@ describe('calibrate / metrics', () => {
 });
 
 describe('calibrate / threshold derivation', () => {
+  const rec = (fp, sym, sim) => ({ filePath: fp, symbolName: sym, similarityScore: sim });
+  const pos = (id, sim) => ({
+    probe: { id, relation: 'reuse', intent: 'x', stratum: 's', expected: { filePath: 'a.mjs', symbolName: 'target' } },
+    records: [rec('a.mjs', 'target', sim)],
+  });
+  const neg = (id, sim) => ({
+    probe: { id, relation: 'none', intent: 'x', stratum: 'u' },
+    records: [rec('z.mjs', 'noise', sim)],
+  });
+  const passingMetrics = { verdict: 'pass', distribution: { hardNegativeCeiling: 0.60 } };
+
   it('refuses to derive thresholds when gates did not pass', () => {
     const d = deriveThresholds([], { verdict: 'fail' });
     assert.equal(d.ok, false);
   });
 
-  it('probeSetHash is stable and order-sensitive', () => {
+  // ── audit HIGH: hard-negative FPs must enter the precision denominator ──
+  it('counts a hard-negative false positive as a false positive in precision', () => {
+    // Every positive banded correctly, but the threshold also fires on three
+    // hard negatives. Precision must NOT read 1.0 — the earlier form skipped
+    // negatives before the tp/fp tally, so a threshold that fired on all
+    // garbage still scored perfectly.
+    const results = [
+      pos('p1', 0.95), pos('p2', 0.95),
+      neg('n1', 0.95), neg('n2', 0.95), neg('n3', 0.95),
+    ];
+    const d = deriveThresholds(results, passingMetrics);
+    const row = d.rows.find(r => Math.abs(r.t - 0.90) < 1e-9);
+    assert.equal(row.hardFp, 3);
+    assert.equal(row.fp, 3, 'hard-negative FPs must be in fp');
+    assert.ok(row.precision < 1.0, `precision must reflect the garbage it banded, got ${row.precision}`);
+    assert.ok(Math.abs(row.precision - 2 / 5) < 1e-9);
+  });
+
+  // ── audit HIGH: extend must be searched strictly below T_reuse ──
+  it('never selects T_extend equal to T_reuse', () => {
+    // Precision steps straight past 0.90, so an independent ascending scan for
+    // >=0.75 returns the same row as the >=0.90 scan. That collision made the
+    // C7 ordering invariant unsatisfiable and derivation could never succeed.
+    const results = [pos('p1', 0.95), pos('p2', 0.95), neg('n1', 0.55)];
+    const d = deriveThresholds(results, passingMetrics);
+    if (d.ok && d.thresholds.T_reuse !== null && d.thresholds.T_extend !== null) {
+      assert.ok(
+        d.thresholds.T_reuse > d.thresholds.T_extend,
+        `T_reuse (${d.thresholds.T_reuse}) must exceed T_extend (${d.thresholds.T_extend})`,
+      );
+    }
+  });
+
+  it('keeps the C7 ordering backstop even when the search range is constrained', () => {
+    const results = [pos('p1', 0.95), neg('n1', 0.55)];
+    const d = deriveThresholds(results, passingMetrics);
+    if (d.ok) {
+      const { T_reuse, T_extend, T_jd } = d.thresholds;
+      if (T_reuse !== null && T_extend !== null && T_jd !== null) {
+        assert.ok(T_reuse > T_extend && T_extend > T_jd);
+      }
+    }
+  });
+
+  it('probeSetHash is stable and array-order-sensitive', () => {
     const a = [{ id: 1 }, { id: 2 }];
     assert.equal(probeSetHash(a), probeSetHash([{ id: 1 }, { id: 2 }]));
     assert.notEqual(probeSetHash(a), probeSetHash([{ id: 2 }, { id: 1 }]));
+  });
+
+  it('probeSetHash ignores object KEY order — reformatting must not invalidate a calibration', () => {
+    // JSON.stringify preserves insertion order, so the pre-canonicalisation
+    // form changed hash when a probe object was merely rebuilt with its keys
+    // in a different order, spuriously invalidating a still-valid calibration.
+    const a = [{ id: 'p1', intent: 'x', relation: 'reuse' }];
+    const b = [{ relation: 'reuse', id: 'p1', intent: 'x' }];
+    assert.equal(probeSetHash(a), probeSetHash(b));
+  });
+
+  it('probeSetHash canonicalises nested objects too', () => {
+    const a = [{ id: 'p', expected: { filePath: 'a.mjs', symbolName: 'f' } }];
+    const b = [{ id: 'p', expected: { symbolName: 'f', filePath: 'a.mjs' } }];
+    assert.equal(probeSetHash(a), probeSetHash(b));
+  });
+
+  it('probeSetHash still changes when a VALUE changes', () => {
+    assert.notEqual(
+      probeSetHash([{ id: 'p', relation: 'reuse' }]),
+      probeSetHash([{ id: 'p', relation: 'extend' }]),
+    );
   });
 });

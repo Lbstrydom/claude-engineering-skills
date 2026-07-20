@@ -15,7 +15,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { atomicWriteFileSync } from './file-io.mjs';
+import { getCached as cacheGet, putCached as cachePut } from './arch-memory/json-cache.mjs';
 import {
   NeighbourhoodQueryArgsSchema,
   NeighbourhoodResultSchema,
@@ -52,35 +52,26 @@ function cacheKey(safeIntent, model, dim, normProvenance = '') {
     .slice(0, 24);
 }
 
-function loadCache(repoRoot) {
-  const file = path.join(repoRoot, CACHE_REL);
-  if (!fs.existsSync(file)) return { entries: {} };
-  try {
-    return JSON.parse(fs.readFileSync(file, 'utf-8'));
-  } catch {
-    return { entries: {} };
-  }
-}
-
-function saveCache(repoRoot, cache) {
-  const file = path.join(repoRoot, CACHE_REL);
-  const dir = path.dirname(file);
-  fs.mkdirSync(dir, { recursive: true });
-  atomicWriteFileSync(file, JSON.stringify(cache, null, 2));
+// Cache primitives live in arch-memory/json-cache.mjs, shared with the intent
+// normalizer. Previously each module carried its own copy (flagged at 0.88
+// similarity by the duplication wave), and neither validated what it loaded:
+// `loadCache()` accepted any syntactically valid JSON, so `[]`, `null` or a
+// legacy shape parsed fine and then failed on the later `cache.entries[key]`
+// dereference — on the prompt-submit hook path. The shared helper validates the
+// shape at load (invalid → recoverable miss) and prunes on write, which matters
+// more now that the normalization provenance is part of the key: one intent can
+// occupy several entries, so the file grows faster than it used to.
+function cacheFileFor(repoRoot) {
+  return path.join(repoRoot, CACHE_REL);
 }
 
 function getCached(repoRoot, key, ttlMs) {
-  const cache = loadCache(repoRoot);
-  const e = cache.entries[key];
-  if (!e) return null;
-  if (Date.now() - e.savedAt > ttlMs) return null;
-  return e.embedding;
+  const v = cacheGet(cacheFileFor(repoRoot), key, ttlMs);
+  return Array.isArray(v) ? v : null;
 }
 
-function putCached(repoRoot, key, embedding) {
-  const cache = loadCache(repoRoot);
-  cache.entries[key] = { embedding, savedAt: Date.now() };
-  saveCache(repoRoot, cache);
+function putCached(repoRoot, key, embedding, ttlMs) {
+  cachePut(cacheFileFor(repoRoot), key, embedding, ttlMs);
 }
 
 /**
@@ -251,7 +242,7 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
       active.activeEmbeddingDim
     );
     intentEmbedding = emb.result;
-    putCached(repoRoot, key, intentEmbedding);
+    putCached(repoRoot, key, intentEmbedding, ttlMs);
   }
 
   // 3. Call RPC
@@ -441,7 +432,7 @@ export async function getIncidentNeighbourhoodForIntent(adapters, args, repoRoot
       active.activeEmbeddingDim,
     );
     intentEmbedding = emb.result;
-    putCached(repoRoot, key, intentEmbedding);
+    putCached(repoRoot, key, intentEmbedding, ttlMs);
     usage.embeddingCalls++;
   }
 
@@ -488,7 +479,7 @@ export async function getIncidentNeighbourhoodForIntent(adapters, args, repoRoot
             const augmented = redactSecrets(intentDescription + ' ' + parsed.data.failureModes.join(' ')).text;
             const augKey = cacheKey(augmented, active.activeEmbeddingModel, active.activeEmbeddingDim);
             const augEmb = await generateIntentEmbedding(augmented, active.activeEmbeddingModel, active.activeEmbeddingDim);
-            putCached(repoRoot, augKey, augEmb.result);
+            putCached(repoRoot, augKey, augEmb.result, ttlMs);
             usage.embeddingCalls++;
             candidates = await adapters.callIncidentNeighbourhoodRpc({
               repoId: repoRow.id, targetPaths, intentEmbedding: augEmb.result, k,

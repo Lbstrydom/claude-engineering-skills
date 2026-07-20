@@ -17,6 +17,8 @@ import {
   NORMALIZE_PROMPT_VERSION,
   MAX_INTENT_CHARS,
   MAX_OUTPUT_CHARS,
+  NORMALIZE_TIMEOUT_MS,
+  validateNormalizedOutput,
 } from '../scripts/lib/arch-memory/normalize-intent.mjs';
 
 function tmpRepo() {
@@ -46,13 +48,24 @@ describe('normalize-intent / prompt version is a content hash (C6)', () => {
 });
 
 describe('normalize-intent / cache key redaction boundary (C2, Gemini G2)', () => {
-  it('two intents differing only by a secret share ONE cache entry', () => {
-    // The caller redacts first (C1), so both arrive here identically.
-    const redacted = 'connect to postgresql://user:[REDACTED:dsn-password]@host/db';
-    assert.equal(
-      normalizationCacheKey(redacted, 'm'),
-      normalizationCacheKey(redacted, 'm'),
+  it('two intents differing only by a secret share ONE cache entry', async () => {
+    // The original form of this test passed the SAME string twice and so
+    // asserted nothing but determinism, while its name claimed to prove
+    // convergence. Drive the real redactor over two DIFFERENT raw intents and
+    // assert their keys collide — that is the actual property.
+    const { redactSecrets } = await import('../scripts/lib/secret-patterns.mjs');
+    const a = redactSecrets('connect to postgresql://user:hunter2trustno1@host/db').text;
+    const b = redactSecrets('connect to postgresql://user:totallyDifferentPw99@host/db').text;
+    assert.notEqual(
+      'connect to postgresql://user:hunter2trustno1@host/db',
+      'connect to postgresql://user:totallyDifferentPw99@host/db',
     );
+    assert.equal(
+      normalizationCacheKey(a, 'm'),
+      normalizationCacheKey(b, 'm'),
+      'intents differing only by the secret must not split the cache',
+    );
+    assert.equal(normalizationCacheKey(a, 'm').includes('hunter2'), false);
   });
 
   it('differs by normalizerId so two providers never share an entry', () => {
@@ -179,5 +192,86 @@ describe('normalize-intent / deterministic fallback moves toward purpose genre',
     assert.equal(deterministicNormalize(''), '');
     assert.equal(deterministicNormalize(null), '');
     assert.equal(deterministicNormalize(undefined), '');
+  });
+});
+
+describe('normalize-intent / the deadline covers the whole provider path', () => {
+  // The production deadline timer is deliberately `.unref()`d so it never holds
+  // a short-lived CLI open. That means a test whose ONLY pending work is a
+  // never-settling promise would let node exit before the deadline fires, so
+  // these tests hold a ref'd keepalive for the duration. In the real caller the
+  // pending provider socket keeps the loop alive, so the deadline does fire.
+  const withKeepalive = async (fn) => {
+    const keep = setInterval(() => {}, 1_000);
+    try { return await fn(); } finally { clearInterval(keep); }
+  };
+
+  it('a hung availability probe degrades to fallback, it does not stall the caller', async () => {
+    const repoRoot = tmpRepo();
+    const started = Date.now();
+    const r = await withKeepalive(() => normalizeIntentToPurpose('add a resolver', {
+      repoRoot,
+      createClient: okClient('x'),
+      // isAvailable() on the cli backend can spawn a subprocess; a hang here
+      // used to be unbounded, and this module runs on the prompt-submit hook.
+      isAvailable: () => new Promise(() => {}),
+    }));
+    assert.equal(r.mode, 'fallback');
+    assert.ok(Date.now() - started >= NORMALIZE_TIMEOUT_MS - 500, 'the deadline actually elapsed');
+    assert.ok(Date.now() - started < NORMALIZE_TIMEOUT_MS + 5_000, 'must not hang past the deadline');
+  });
+
+  it('a hung client construction degrades to fallback', async () => {
+    const repoRoot = tmpRepo();
+    const r = await withKeepalive(() => normalizeIntentToPurpose('add a resolver', {
+      repoRoot,
+      createClient: () => new Promise(() => {}),
+      isAvailable: async () => true,
+    }));
+    assert.equal(r.mode, 'fallback');
+    assert.match(r.reason, /normalize-timeout:client-construction|provider-error/);
+  });
+});
+
+describe('normalize-intent / provider output is validated before it is trusted', () => {
+  it('rejects the multi-paragraph markdown answer the cli backend actually produced', () => {
+    // Verbatim-shaped sample of the real 2026-07-20 field failure: the cli
+    // backend answered as an interactive session instead of normalizing.
+    const essay = [
+      'Based on the AGENTS.md rules, I need to consult the architectural memory.',
+      '',
+      '```bash',
+      'node scripts/cross-skill.mjs get-neighbourhood',
+      '```',
+      '',
+      '**However — this already exists.**',
+    ].join('\n');
+    const r = validateNormalizedOutput(essay);
+    assert.equal(r.ok, false);
+    assert.match(r.reason, /markdown-detected|multi-paragraph/);
+  });
+
+  it('rejects output still phrased as an intent (the genre bridge failed)', () => {
+    assert.equal(validateNormalizedOutput('add a function that finds symbols').ok, false);
+    assert.match(validateNormalizedOutput('add a function that finds symbols').reason, /intent-genre/);
+  });
+
+  it('accepts a well-formed one-line purpose description', () => {
+    assert.equal(validateNormalizedOutput('Queries the symbol index for the nearest matching symbols.').ok, true);
+  });
+
+  it('malformed output degrades to fallback and is NOT cached', async () => {
+    const repoRoot = tmpRepo();
+    const r1 = await normalizeIntentToPurpose('add a resolver', {
+      repoRoot, createClient: okClient('# Heading\n\n- bullet\n- bullet'), isAvailable: available,
+    });
+    assert.equal(r1.mode, 'fallback');
+    assert.match(r1.reason, /malformed-normalization/);
+
+    // Must retry the provider next time rather than serving the bad result.
+    const r2 = await normalizeIntentToPurpose('add a resolver', {
+      repoRoot, createClient: okClient('Resolves a request to a handler.'), isAvailable: available,
+    });
+    assert.equal(r2.mode, 'llm');
   });
 });
