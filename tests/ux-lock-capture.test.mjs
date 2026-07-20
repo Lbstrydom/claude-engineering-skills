@@ -394,7 +394,14 @@ describe('captureWitness', () => {
     const sink = errorSink();
     const { store, removeListener } = attachNetworkListener(page, SINGLETON_MANIFEST, sink.opts);
     await page.fireResponse(fakeResponse({ url: '/api/cellar', body: { cellarOrganised: true } }));
-    const witness = await captureWitness(page, SINGLETON_MANIFEST, { store }, { pollMs: 1, capMs: 10, stepIndex: 3 });
+    // capMs must comfortably fit the two stabilisation evaluate() ticks plus the
+    // setTimeout between them. At capMs:10 a loaded machine aborted the loop
+    // after ONE tick, which desynchronised this fake's tick counter (extract
+    // then ran as tick 1 and returned the signature string instead of claims) —
+    // a ~12% flake, and a flaky gate is exactly what produces false blocks.
+    // Stabilisation still returns as soon as two signatures match, so the
+    // headroom costs nothing.
+    const witness = await captureWitness(page, SINGLETON_MANIFEST, { store }, { pollMs: 1, capMs: 2000, stepIndex: 3 });
     sink.assertClean();
     assert.equal(witness.stepIndex, 3);
     assert.equal(witness.domClaims.length, 1);
@@ -418,7 +425,7 @@ describe('captureWitness', () => {
     const { store } = attachNetworkListener(page, SINGLETON_MANIFEST, sink.opts);
     // Never fire a response → store is empty. The sink still guards the DOM
     // side: partialCapture must come from "nothing fired", not a swallowed throw.
-    const witness = await captureWitness(page, SINGLETON_MANIFEST, { store }, { pollMs: 1, capMs: 50 });
+    const witness = await captureWitness(page, SINGLETON_MANIFEST, { store }, { pollMs: 1, capMs: 2000 });
     sink.assertClean();
     assert.equal(witness.domClaims.length, 1, 'extract should have produced one DOM claim');
     assert.equal(witness.networkClaims.length, 0);

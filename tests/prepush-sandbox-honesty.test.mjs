@@ -103,7 +103,15 @@ describe('the pre-push hook feeds the sandbox a real range', () => {
 });
 
 describe('arch:coverage-gate absent-envelope behaviour (end-to-end)', () => {
-  /** Run the gate in a temp cwd that has a domain-map but no observed envelope. */
+  /**
+   * Run the gate in a temp cwd that has a domain-map but no observed envelope.
+   *
+   * The strictness var is stripped from the inherited env first: these very
+   * tests run INSIDE the sandbox during a pre-push, where the runner exports
+   * ARCH_COVERAGE_REQUIRE_ENVELOPE=1 — so inheriting it made the "default
+   * behaviour" case silently assert the strict behaviour instead. Found by the
+   * sandbox running this suite against itself.
+   */
   function runGate(extraEnv) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ces-arch-gate-'));
     try {
@@ -112,8 +120,10 @@ describe('arch:coverage-gate absent-envelope behaviour (end-to-end)', () => {
         path.join(REPO, '.audit-loop', 'domain-map.json'),
         path.join(dir, '.audit-loop', 'domain-map.json'),
       );
+      const baseEnv = { ...process.env };
+      delete baseEnv.ARCH_COVERAGE_REQUIRE_ENVELOPE;
       return spawnSync(process.execPath, [path.join(REPO, 'scripts', 'arch-coverage-gate.mjs')], {
-        cwd: dir, encoding: 'utf-8', env: { ...process.env, ...extraEnv },
+        cwd: dir, encoding: 'utf-8', env: { ...baseEnv, ...extraEnv },
       });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
