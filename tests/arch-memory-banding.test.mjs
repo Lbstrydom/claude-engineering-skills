@@ -10,51 +10,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
-import { recommendationFromSimilarity, rankNeighbourhood } from '../scripts/lib/symbol-index.mjs';
+import { rankNeighbourhood } from '../scripts/lib/symbol-index.mjs';
+import { bandTopResult } from '../scripts/lib/arch-memory/background-calibration.mjs';
 import { ScoredSymbolRecordSchema } from '../scripts/lib/symbol-index-contracts.mjs';
-
-describe('banding / null is unscored, never coerced', () => {
-  it('null → unscored', () => {
-    assert.equal(recommendationFromSimilarity(null), 'unscored');
-  });
-  it('undefined → unscored', () => {
-    assert.equal(recommendationFromSimilarity(undefined), 'unscored');
-  });
-  it('NaN → unscored, not a threshold comparison', () => {
-    assert.equal(recommendationFromSimilarity(NaN), 'unscored');
-  });
-  it('a real 0 is NOT unscored — it is a genuine (orthogonal) measurement', () => {
-    // This is the distinction the whole change exists to preserve: 0 means
-    // "compared, and orthogonal"; null means "never compared".
-    assert.equal(recommendationFromSimilarity(0), 'review');
-  });
-});
-
-describe('banding / threshold table boundaries', () => {
-  const cases = [
-    [1.00, 'reuse'],
-    [0.90, 'reuse'],
-    [0.8999, 'extend'],
-    [0.85, 'extend'],
-    [0.8499, 'justify-divergence'],
-    [0.75, 'justify-divergence'],
-    [0.7499, 'review'],
-    [0.00, 'review'],
-    [-1.0, 'review'],
-  ];
-  for (const [score, band] of cases) {
-    it(`${score} → ${band}`, () => assert.equal(recommendationFromSimilarity(score), band));
-  }
-
-  it('every finite input maps to exactly one band', () => {
-    const bands = new Set();
-    for (let s = -1; s <= 1.0001; s += 0.01) bands.add(recommendationFromSimilarity(Number(s.toFixed(4))));
-    for (const b of bands) {
-      assert.ok(['reuse', 'extend', 'justify-divergence', 'review'].includes(b), `unexpected band ${b}`);
-    }
-    assert.equal(bands.has('unscored'), false, 'a finite score must never band as unscored');
-  });
-});
 
 describe('banding / rankNeighbourhood mirrors the RPC null contract', () => {
   const intent = [1, 0, 0];
@@ -94,7 +52,7 @@ describe('banding / rankNeighbourhood mirrors the RPC null contract', () => {
 
   it('banding a ranked record never fabricates a verdict for missing evidence', () => {
     const [r] = rankNeighbourhood([{ filePath: 'a.mjs', symbolName: 'f' }], intent, ['a.mjs']);
-    assert.equal(recommendationFromSimilarity(r.similarityScore), 'unscored');
+    assert.equal(bandTopResult([r], { floor: 0.7146 }).band, 'unscored');
   });
 });
 
@@ -118,9 +76,21 @@ describe('banding / the contract schema admits the null case', () => {
 
   it('still accepts a normal scored record', () => {
     const r = ScoredSymbolRecordSchema.safeParse({
-      ...base, similarityScore: 0.8, scored: true, recommendation: 'justify-divergence',
+      ...base, similarityScore: 0.8, scored: true, recommendation: 'precedent',
     });
     assert.equal(r.success, true, JSON.stringify(r.error?.issues));
+  });
+
+  it('REJECTS the retired bands — the contract is the enforcement point', () => {
+    // reuse / extend / justify-divergence were retired 2026-07-20. The schema
+    // is where that has teeth: a stale caller emitting one now fails loudly
+    // instead of quietly propagating a band the system cannot produce.
+    for (const retired of ['reuse', 'extend', 'justify-divergence']) {
+      const r = ScoredSymbolRecordSchema.safeParse({
+        ...base, similarityScore: 0.8, scored: true, recommendation: retired,
+      });
+      assert.equal(r.success, false, `${retired} must be rejected`);
+    }
   });
 
   it('rejects an unknown band', () => {

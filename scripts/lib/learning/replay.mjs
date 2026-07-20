@@ -294,9 +294,14 @@ export function archMemoryBandReward(row, choice) {
   if (!o || typeof o !== 'object') return 0;
   const action = o.action;
   const candidateBand = choice?.band;
-  if (action === 'reuse-correct'  && candidateBand === 'reuse')  return 1;
-  if (action === 'extend-correct' && candidateBand === 'extend') return 1;
-  if (action === 'wrong-fork')                                   return -1;
+  // Band vocabulary updated 2026-07-20: `reuse`/`extend` retired in favour of
+  // `precedent`. Legacy rows keep the old strings, so both score — a historical
+  // row must remain scoreable under the vocabulary it was recorded with, or
+  // replay silently rewrites its own history.
+  const ACTIONABLE = new Set(['precedent', 'reuse', 'extend']);
+  if (action === 'reuse-correct'  && ACTIONABLE.has(candidateBand)) return 1;
+  if (action === 'extend-correct' && ACTIONABLE.has(candidateBand)) return 1;
+  if (action === 'wrong-fork')                                      return -1;
   return 0;
 }
 

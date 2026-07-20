@@ -13,7 +13,7 @@
  *     `getRequirementsContext`, which already glob-matches `appliesTo` +
  *     `provenance` against target paths, keeps `active` invariants as the
  *     enforced rubric, and degrades under a token budget. Reused rather
- *     than reimplemented (architectural-memory: `reuse`).
+ *     than reimplemented (architectural-memory: `precedent`).
  *  2. Named H2 sections of AGENTS.md, via the shared `loadSection` — the
  *     governance rules that live in prose and are not extractable from
  *     code (the `Do NOT` list, accepted debt, dependency-version traps).

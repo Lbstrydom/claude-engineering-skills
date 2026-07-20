@@ -8,7 +8,6 @@ import {
   chunkBatches,
   cosineSimilarity,
   rankNeighbourhood,
-  recommendationFromSimilarity,
 } from '../scripts/lib/symbol-index.mjs';
 import { runWithConcurrency } from '../scripts/symbol-index/summarise-domains.mjs';
 
@@ -139,17 +138,14 @@ describe('rankNeighbourhood', () => {
   });
 });
 
-describe('recommendationFromSimilarity', () => {
-  it('maps high sim to reuse', () => {
-    assert.equal(recommendationFromSimilarity(0.95), 'reuse');
-  });
-  it('maps moderate to extend', () => {
-    assert.equal(recommendationFromSimilarity(0.86), 'extend');
-  });
-  it('maps low-moderate to justify-divergence', () => {
-    assert.equal(recommendationFromSimilarity(0.78), 'justify-divergence');
-  });
-  it('maps low to review', () => {
-    assert.equal(recommendationFromSimilarity(0.5), 'review');
-  });
-});
+// `recommendationFromSimilarity` was DELETED 2026-07-20 along with these
+// tests, which asserted the 0.90 / 0.85 / 0.75 cutoffs. Those tests passed for
+// the entire period during which the bands they describe fired ZERO times in
+// 1,763 real consultations — a green suite pinning a mapping nothing could
+// reach. That is the failure mode worth remembering: the tests were correct
+// about the function and told us nothing about the system.
+//
+// Banding now lives in arch-memory/background-calibration.mjs against a
+// per-repo floor; see tests/arch-memory-background-calibration.test.mjs, whose
+// assertions are tied to measured distribution properties rather than to
+// constants.

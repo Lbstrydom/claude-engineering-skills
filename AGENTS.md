@@ -899,12 +899,41 @@ node scripts/cross-skill.mjs get-neighbourhood --json '{
 }'
 ```
 
-Then act on the recommendation column:
+Then act on the recommendation column. **Three bands, and no absolute cosine
+numbers — the cutoff is computed per repo** (see "Why no fixed numbers" below):
 
-- **`reuse`** (cosine ≥ 0.90) — reuse the existing symbol unless the user explicitly wants a sibling. Note the existing symbol in your reply.
-- **`extend`** (0.85–0.90) — strongly prefer extending the existing symbol; document why if you create a new one.
-- **`justify-divergence`** (0.75–0.85) — write the new code, but explicitly mention in your reply that you saw the similar candidate and why divergence is the right call.
-- **`review`** (<0.75) or empty records — proceed greenfield.
+- **`precedent`** — existing code occupies this space and merits a serious look
+  **before** you write anything. Open the named symbols. Then decide, on the
+  code, whether to reuse one, extend one, or write a sibling — and say which,
+  and why, in your reply. The band does **not** tell you which of those three
+  is right; a distance score cannot see dependency direction, API shape,
+  ownership or accumulated debt.
+  - `bandReason: above-floor-cluster` — several similar symbols. This is the
+    *strongest* duplication signal, not a weaker one.
+  - `bandReason: above-floor-standout` — one clear match.
+- **`review`** — nothing rose above this repo's noise floor. Proceed greenfield.
+  `bandReason` says why: `below-noise-floor` (compared, and weak) or
+  `uncalibrated-repo` (no calibration exists here yet — see below).
+- **`unscored`** — the symbol has **no embedding**, so nothing was compared.
+  This is *absence of evidence*, not a weak match. Never read it as "checked
+  and rejected".
+
+**Why no fixed numbers.** The bands were `reuse ≥0.90 / extend ≥0.85 /
+justify-divergence ≥0.75` and fired **zero times in 1,763 consultations** — the
+highest similarity this pipeline can produce is ~0.83, so they were
+mathematically unreachable and the feature was silently inert for its whole
+history. The cutoff is now `μ + 3σ` over the repo's OWN symbol-embedding
+background, computed at `arch:refresh` and stored per repo. A threshold is a
+property of *corpus × summary style × embedding model × compose template ×
+normalizer*, not of the tool — and this file's tooling syncs to other repos, so
+shipping a constant would repeat the original defect elsewhere.
+
+**An uncalibrated repo bands `review` only.** That is honest rather than
+degraded: nothing has established what a meaningful score is in that codebase.
+Run `npm run arch:refresh` to calibrate it.
+
+`reuse` / `extend` / `justify-divergence` are **retired**. If you see them, the
+tooling is stale.
 
 **When NOT to consult**:
 

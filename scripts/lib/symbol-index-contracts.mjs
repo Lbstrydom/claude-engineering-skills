@@ -62,7 +62,7 @@ export const ScoredSymbolRecordSchema = SymbolRecordSchema.extend({
   // apart against ~0.008 run-to-run variance, and the reuse-vs-extend choice
   // depends on dependency direction, API shape and ownership — none of which a
   // cosine distance expresses. `precedent` = "existing code merits a look".
-  recommendation:  z.enum(['unscored', 'review', 'precedent', 'justify-divergence']),
+  recommendation:  z.enum(['unscored', 'review', 'precedent']),
 });
 
 // ── Query args ──────────────────────────────────────────────────────────────

@@ -103,8 +103,12 @@ near the top of the plan output. State-handling per the failure matrix:
 - `EMBEDDING_MISMATCH` / `RPC_ERROR` → emit `_consultation failed: <code>; plan proceeds without architectural context_`; continue.
 - `BAD_INPUT` → surface to user, abort plan generation.
 
-Treat `reuse`/`extend` recommendations as defaults; document divergence
-under "Proposed Architecture" if the plan creates a sibling instead.
+A `precedent` band means existing code occupies this space: open the named
+symbols and decide on the code whether to reuse, extend, or write a sibling —
+then record which and why under "Proposed Architecture". The band does not make
+that choice; a distance score cannot see dependency direction, API shape or
+ownership. `review` = nothing cleared the repo's noise floor (proceed
+greenfield); `unscored` = no embedding, so nothing was compared.
 
 The neighbourhood callout includes a **Domain** column showing each
 candidate's `domainTag` from `.audit-loop/domain-map.json`. Use this

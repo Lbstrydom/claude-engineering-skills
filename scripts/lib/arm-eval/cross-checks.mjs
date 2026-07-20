@@ -52,7 +52,9 @@ export const CHECKS = Object.freeze({
     // DOCUMENT, so flagging any 'reuse' rec would penalize every plan touching a
     // populated area. Report the nearby reuse candidates as context for the judge/
     // human; never a penalty. (Reinvention detection is v-next, needs code.)
-    const reuseCandidates = recs.filter((x) => ['reuse', 'extend'].includes((x.recommendation || '').toLowerCase()));
+    // Band vocabulary updated 2026-07-20: reuse/extend retired for precedent.
+    // Legacy arm-eval sessions carry the old strings, so accept both.
+    const reuseCandidates = recs.filter((x) => ['precedent', 'reuse', 'extend'].includes((x.recommendation || '').toLowerCase()));
     return { status: 'ok', score: null, findings: reuseCandidates.slice(0, 10), evidenceRefs: { note: 'informational — nearby reuse candidates, not a reinvention penalty' } };
   },
   'requirements-invariant': async (ctx, deps) => {

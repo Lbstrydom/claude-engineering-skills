@@ -209,7 +209,7 @@ node -e '
       out.push("> No near-duplicates in symbol-index for this intent." + hint);
       out.push("> Proceed; this looks like greenfield work for the asked scope.");
     } else {
-      out.push("> Top " + records.length + " candidates from symbol-index. **Consider whether to reuse/extend before writing new code.**");
+      out.push("> Top " + records.length + " candidates from symbol-index. **Open these before writing new code.**");
       out.push("");
       out.push("| Sim | Symbol | Path | Recommendation | Purpose |");
       out.push("| --- | --- | --- | --- | --- |");
@@ -222,7 +222,7 @@ node -e '
         out.push("| " + sim + " | `" + sym + "` | `" + path + "` | **" + rec + "** | " + pur + " |");
       }
       out.push("");
-      out.push("_If a `reuse` or `extend` candidate matches your intent, prefer that over new code. Justify divergence in the change rationale if you proceed greenfield. To suppress this consultation per-prompt, set `ARCH_MEMORY_HOOK_DISABLE=1` in env._");
+      out.push("_A `precedent` band means existing code occupies this space — read it, then say in your reply whether you are reusing, extending, or writing a sibling and why. The band does not decide that for you. `review` = nothing cleared the repo noise floor; `unscored` = no embedding, so nothing was compared. To suppress per-prompt: `ARCH_MEMORY_HOOK_DISABLE=1`._");
     }
     process.stdout.write(out.join("\n") + "\n");
   });

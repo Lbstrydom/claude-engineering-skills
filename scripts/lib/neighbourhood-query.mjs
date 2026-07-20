@@ -20,7 +20,6 @@ import {
   NeighbourhoodQueryArgsSchema,
   NeighbourhoodResultSchema,
 } from './symbol-index-contracts.mjs';
-import { recommendationFromSimilarity } from './symbol-index.mjs';
 import { symbolIndexConfig, azureConfig } from './config.mjs';
 import { redactSecrets } from './secret-patterns.mjs';
 import { assertEgressSafe } from './sensitive-egress-gate.mjs';

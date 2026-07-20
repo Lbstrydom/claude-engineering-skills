@@ -617,7 +617,17 @@ export async function computeArchMemoryBandOutcome(row, deps = {}) {
   // drift.mjs both consume. A pragma naming this candidate as its `target=` is
   // the author saying, in a greppable artifact, "I saw it and forked anyway,
   // here is why" — which is exactly what the band asked for.
-  if (band === 'justify-divergence') {
+  // BAND VOCABULARY UPDATED 2026-07-20. `reuse` / `extend` /
+  // `justify-divergence` are retired; the actionable band is now `precedent`
+  // ("existing code occupies this space — look before writing"), gated on a
+  // per-repo noise floor rather than the old unreachable constants.
+  //
+  // The pragma logic below was written for `justify-divergence` and applies
+  // UNCHANGED to `precedent`, because it resolves the same question: was the
+  // candidate seen and consciously diverged from? Legacy rows still carry the
+  // old band string, so both are accepted — a historical row must stay
+  // resolvable under the vocabulary it was written with.
+  if (band === 'precedent' || band === 'justify-divergence') {
     if (!filePath || !symbol) {
       return { action: 'uncertain', evidence: 'missing-file-or-symbol' };
     }

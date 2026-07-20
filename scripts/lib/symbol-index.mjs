@@ -202,32 +202,21 @@ export function rankNeighbourhood(records, intentEmbedding, targetPaths, k = 50)
 }
 
 /**
- * Recommendation band from a similarity score.
+ * REMOVED 2026-07-20: `recommendationFromSimilarity(similarity)`.
  *
- * Accepts `number | null`. `null` means NO EVIDENCE — the symbol has no
- * embedding for the active (model, dim, signature) — and maps to the distinct
- * band `unscored`. It must never be coalesced to 0: `Number(null) === 0` would
- * land in `review`, which reads as "we looked and it was a poor match" rather
- * than "we have no representation of this symbol at all".
+ * It mapped a score onto `reuse` (≥0.90) / `extend` (≥0.85) /
+ * `justify-divergence` (≥0.75) / `review`. Those cutoffs were unreachable —
+ * the highest similarity this pipeline has ever produced is 0.8294 — which is
+ * why the consultation returned `review` for all 1,763 of its decisions.
  *
- * NOTE: the cutoffs below are the ORIGINAL hardcoded values and are known to
- * be unreachable in practice — the highest similarity this pipeline has ever
- * produced is 0.8294, below the 0.85 `extend` bar, which is why `reuse` and
- * `extend` never fired in 1,763 consultations. Replacing them with calibrated,
- * config-driven values is Phase 4 (Cluster C) and is gated on the calibration
- * harness passing. They are deliberately left in place here so this change
- * stays a pure null-contract fix; moving thresholds and changing the null
- * semantics in one step would make a regression impossible to attribute.
+ * Banding now lives in `arch-memory/background-calibration.mjs::bandTopResult`,
+ * against a floor computed PER REPO from that repo's own embedding background
+ * (μ+3σ), because a threshold is a property of the corpus rather than of the
+ * tool — and this file syncs to every consumer.
  *
- * @param {number|null|undefined} similarity
- * @returns {'unscored'|'reuse'|'extend'|'justify-divergence'|'review'}
+ * Deleted rather than deprecated on purpose. A function that still returns
+ * `reuse`/`extend` — bands the system can no longer emit — is precisely the
+ * kind of plausible-looking artifact that caused the original defect: someone
+ * would call it, get a confident answer, and never learn it was fiction. The
+ * import is gone from `neighbourhood-query.mjs`; git history is the archive.
  */
-export function recommendationFromSimilarity(similarity) {
-  if (similarity === null || similarity === undefined || !Number.isFinite(similarity)) {
-    return 'unscored';
-  }
-  if (similarity >= 0.90) return 'reuse';
-  if (similarity >= 0.85) return 'extend';
-  if (similarity >= 0.75) return 'justify-divergence';
-  return 'review';
-}
