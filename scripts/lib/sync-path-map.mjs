@@ -35,6 +35,17 @@ export const LAYOUT_CONSTANTS = Object.freeze({
   MARKER_BEGIN: '# managed-by:claude-engineering-skills-sync — DO NOT EDIT INSIDE',
   MARKER_END: '# /managed-by:claude-engineering-skills-sync',
   IN_PROGRESS_JOURNAL: 'scripts/.sync-in-progress.json',
+  // High-water mark of the last ownership record we wrote. Deliberately lives
+  // INSIDE the tooling dir, which is gitignored in every consumer: the manifest
+  // it shadows is a TRACKED file, so a merge/reset/checkout can roll that
+  // manifest backwards while the gitignored files it owns survive — the whole
+  // failure this watermark exists to detect. A watermark that git can revert
+  // would be reverted by the same operation and detect nothing.
+  //
+  // Never appears in the manifest, so the GC pass (which iterates prior
+  // manifest keys only) cannot delete it.
+  // See docs/plans/sync-ownership-from-content.md.
+  OWNERSHIP_WATERMARK: 'scripts/.claude-skills/.sync-watermark.json',
 });
 
 const STAYS_AT_CANONICAL_PATH_PREFIXES = [

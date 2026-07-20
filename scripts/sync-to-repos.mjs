@@ -21,7 +21,7 @@ import { execSync } from 'node:child_process';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { ensureAuditDeps } from './lib/install/deps.mjs';
 import { CONSUMER_REPOS } from './lib/consumer-repos.mjs';
-import { writeManifest } from './lib/sync-manifest.mjs';
+import { writeManifest, detectOwnershipRegression } from './lib/sync-manifest.mjs';
 import { collectImportClosure } from './lib/module-graph.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
@@ -824,6 +824,41 @@ async function main() {
     const priorLayout = priorManifest?.layout || 'legacy';
     const priorFiles = priorManifest?.files || {};
 
+    // ── Ownership-rollback detection ──────────────────────────────────────
+    // The manifest is TRACKED while the files it owns are gitignored, so a
+    // merge/reset/checkout rolls the ownership record backwards while the files
+    // survive. Every file synced since then reads as an unowned collision and
+    // aborts the whole target — the consumer silently stops receiving updates,
+    // and nothing reports it at the moment the damage is done. That went
+    // undetected for five weeks and recurred on a second consumer.
+    //
+    // The watermark is gitignored, so it does NOT move when the manifest does.
+    // A prior manifest older or smaller than the watermark is therefore proof
+    // the record regressed, available on the very next sync.
+    //
+    // Advisory only: it explains a state the collision guard already handles,
+    // and a stale watermark must never block a legitimate sync.
+    const watermarkPath = path.join(repo.path, LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK);
+    let watermark = null;
+    try {
+      if (fs.existsSync(watermarkPath)) {
+        watermark = JSON.parse(fs.readFileSync(watermarkPath, 'utf-8'));
+      }
+    } catch { /* corrupt watermark — treat as missing, never block */ }
+    const regression = detectOwnershipRegression(watermark, priorManifest);
+    if (regression) {
+      console.log(`  ${R}ownership record regressed${X} — the manifest moved backwards since our last sync.`);
+      if (regression.shrankBy > 0) {
+        console.log(`    ${D}files: ${regression.recordedCount} recorded → ${regression.priorCount} now (${regression.shrankBy} lost)${X}`);
+      }
+      if (regression.wentBackwards) {
+        console.log(`    ${D}generatedAt: ${regression.recordedAt} → ${regression.priorAt}${X}`);
+      }
+      console.log(`    ${D}scripts/.sync-manifest.json is TRACKED; a merge, reset or branch`);
+      console.log(`    checkout reverted it while its gitignored files stayed on disk.`);
+      console.log(`    Expect unowned collisions below — see docs/plans/sync-ownership-from-content.md${X}`);
+    }
+
     // Pre-flight #1: gitignore managed-block well-formedness. Abort BEFORE
     // any write if the block is in a malformed state — fail-fast prevents
     // a half-installed tree paired with stale ignores.
@@ -1188,6 +1223,21 @@ async function main() {
         };
         atomicWriteFileSync(priorManifestPath, JSON.stringify(consumerManifest, null, 2) + '\n');
         manifestWritten = true;
+        // High-water mark for rollback detection (see the check at read time).
+        // Written only after the manifest actually landed, so it never claims
+        // ownership of a record that does not exist. A failure here degrades
+        // detection on the NEXT run but must not fail a sync that succeeded.
+        try {
+          atomicWriteFileSync(
+            watermarkPath,
+            JSON.stringify({
+              generatedAt: consumerManifest.generatedAt,
+              fileCount: Object.keys(consumerFileMap).length,
+            }, null, 2) + '\n',
+          );
+        } catch (err) {
+          console.log(`  ${Y}watermark write failed${X} ${D}(rollback detection degraded next run): ${err.message?.slice(0, 80)}${X}`);
+        }
       } catch (err) {
         console.log(`  ${R}manifest write FAILED${X}: ${err.message?.slice(0, 120)}`);
         console.log(`    ${D}files were written but are now unowned; the in-progress journal is`);

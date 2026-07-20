@@ -363,3 +363,47 @@ export function isSourceRepo(rootDir) {
     return false;
   }
 }
+
+/**
+ * Detect that a consumer's ownership record moved BACKWARDS since we last
+ * wrote it.
+ *
+ * The consumer manifest is a TRACKED file while the files it owns are
+ * gitignored, so a merge, reset or branch checkout reverts the record while
+ * its files stay on disk. Every file synced since then reads as an unowned
+ * collision and aborts the whole target — the consumer silently stops
+ * receiving updates, with nothing reported at the moment of damage. The
+ * watermark is gitignored and therefore does NOT move with the manifest,
+ * which is what makes the comparison meaningful.
+ *
+ * Pure so the comparison is testable without a consumer checkout; the caller
+ * owns reading both files. Returns `null` when there is nothing to say —
+ * including when either input is missing, since "no watermark yet" is the
+ * normal first-sync state and must never read as a regression.
+ *
+ * @param {{generatedAt?: string, fileCount?: number}|null} watermark
+ * @param {{generatedAt?: string, files?: Record<string, string>}|null} priorManifest
+ * @returns {{shrankBy: number, wentBackwards: boolean, priorCount: number,
+ *            recordedCount: number, priorAt: string, recordedAt: string}|null}
+ */
+export function detectOwnershipRegression(watermark, priorManifest) {
+  if (!watermark || !priorManifest) return null;
+  const priorCount = Object.keys(priorManifest.files || {}).length;
+  const recordedCount = Number(watermark.fileCount);
+  // A non-numeric watermark count is corrupt, not evidence of shrinkage.
+  const shrankBy = Number.isFinite(recordedCount) ? recordedCount - priorCount : 0;
+  // Compare as instants, not strings: a manifest written under a different UTC
+  // offset would mis-order lexicographically and fabricate a regression.
+  const priorAt = Date.parse(priorManifest.generatedAt ?? '');
+  const markAt = Date.parse(watermark.generatedAt ?? '');
+  const wentBackwards = Number.isFinite(priorAt) && Number.isFinite(markAt) && priorAt < markAt;
+  if (shrankBy <= 0 && !wentBackwards) return null;
+  return {
+    shrankBy: Math.max(0, shrankBy),
+    wentBackwards,
+    priorCount,
+    recordedCount,
+    priorAt: priorManifest.generatedAt ?? '(none)',
+    recordedAt: watermark.generatedAt ?? '(none)',
+  };
+}

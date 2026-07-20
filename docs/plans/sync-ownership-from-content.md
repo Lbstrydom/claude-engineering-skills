@@ -111,6 +111,42 @@ re-derived.
 
 ## Fix
 
+### 0. Rollback detection — **IMPLEMENTED 2026-07-20**
+
+Detection, not prevention: A and B below remain the fix. This exists because the
+failure was *invisible at the moment of damage* — no error, surfacing only weeks
+later in a different repo, looking like a permissions problem.
+
+`sync-to-repos.mjs` now writes a **gitignored** watermark
+(`scripts/.claude-skills/.sync-watermark.json`, `LAYOUT_CONSTANTS.OWNERSHIP_WATERMARK`)
+recording the `generatedAt` + file count of each manifest it successfully writes.
+On the next sync, `detectOwnershipRegression` (`lib/sync-manifest.mjs`) compares
+the on-disk manifest against it and reports loudly if the record shrank or moved
+backwards.
+
+Load-bearing detail: the watermark must live **inside the tooling dir**, which is
+gitignored in every consumer. A watermark that git can revert would be reverted by
+the same merge/reset it exists to detect, and would detect nothing. It never
+appears in the manifest, so the GC pass — which iterates prior-manifest keys only
+— cannot delete it.
+
+Advisory only; it never blocks a sync, and both inputs missing (a first sync) is
+silence, not a warning.
+
+Verified against the real incident: rolling wine-cellar-app's manifest back to the
+07-19 08:55 / 533-file version produced
+
+```
+ownership record regressed — the manifest moved backwards since our last sync.
+  files: 549 recorded → 533 now (16 lost)
+  generatedAt: 2026-07-20T15:14:11.801Z → 2026-07-19T08:55:10.970Z
+```
+
+and a normal run stays silent. Unit-covered by
+`tests/sync-ownership-regression.test.mjs` (7 cases), including the two
+false-positive classes that would train operators to ignore it: a first sync with
+no watermark, and same-instant timestamps in different UTC offsets.
+
 ### A. Derive ownership from file content (primary)
 
 Ownership should be a property of the bytes on disk, not of a revertible tracked
