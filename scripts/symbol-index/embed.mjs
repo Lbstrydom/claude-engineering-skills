@@ -98,8 +98,50 @@ async function main() {
     return;
   }
 
-  const batches = chunkBatches(symbols, Math.min(symbolIndexConfig.batchSize, 25));
-  logProgress(`${symbols.length} symbols → ${batches.length} embed batches (model=${requestModel}, provenance=${provenanceId})`);
+  // NULL-SUMMARY GUARD (plan §2.1 C9).
+  //
+  // `compose()` is `<kind> <name>\n<summary>`. With a null/blank summary that
+  // collapses to pure metadata — and a metadata-only vector is NOT inert: it
+  // scored 0.5440 against a real intent, versus 0.4256 for a completely
+  // unrelated sentence and 0.6043 for a genuine match. That is only 0.06 below
+  // a correct answer, so such vectors compete for top-k slots while carrying no
+  // semantic content at all.
+  //
+  // Summaries go null when the summariser batch fails or no Claude provider is
+  // configured (`summarise.mjs` returns all-nulls in both cases). Embedding
+  // those anyway silently seeds the index with noise. Withhold the embedding
+  // instead: the symbol row is still indexed (the architecture map and drift
+  // detection need it), it simply has no vector, and the RPC now reports that
+  // honestly as `similarity: null` / `scored: false` → band `unscored`.
+  //
+  // PREVENTION, NOT REMEDIATION — measured 2026-07-20: the active snapshot
+  // holds ZERO null-summary rows today. This guard is what keeps that true
+  // through a future provider outage; it is not cleaning up existing damage.
+  const withSummary = [];
+  const withheld = [];
+  for (const s of symbols) {
+    const summary = typeof s.purposeSummary === 'string' ? s.purposeSummary.trim() : '';
+    (summary ? withSummary : withheld).push(s);
+  }
+  if (withheld.length > 0) {
+    logProgress(
+      `null-summary guard: withholding embeddings for ${withheld.length}/${symbols.length} symbol(s) ` +
+      `with no purpose summary — they will surface as \`unscored\`, not as weak matches`,
+    );
+    // Emit them WITHOUT an embedding so the symbol row is still recorded.
+    for (const s of withheld) {
+      emit({ ...s, embedding: null, embeddingModel: provenanceId, embeddingDim: null });
+    }
+  }
+
+  if (withSummary.length === 0) {
+    emit({ type: 'summary', counts: { embedded: 0, withheldNullSummary: withheld.length, model: provenanceId, dim: symbolIndexConfig.embedDim } });
+    logProgress(`done — embedded=0/${symbols.length} (all withheld: no purpose summaries)`);
+    return;
+  }
+
+  const batches = chunkBatches(withSummary, Math.min(symbolIndexConfig.batchSize, 25));
+  logProgress(`${withSummary.length} symbols → ${batches.length} embed batches (model=${requestModel}, provenance=${provenanceId})`);
   let embedded = 0;
   let dim = symbolIndexConfig.embedDim;
   for (const batch of batches) {
@@ -116,8 +158,12 @@ async function main() {
       if (v) embedded++;
     }
   }
-  emit({ type: 'summary', counts: { embedded, model: provenanceId, dim } });
-  logProgress(`done — embedded=${embedded}/${symbols.length} model=${requestModel} provenance=${provenanceId} dim=${dim}`);
+  emit({ type: 'summary', counts: { embedded, withheldNullSummary: withheld.length, model: provenanceId, dim } });
+  logProgress(
+    `done — embedded=${embedded}/${symbols.length} ` +
+    `withheld-null-summary=${withheld.length} ` +
+    `model=${requestModel} provenance=${provenanceId} dim=${dim}`,
+  );
 }
 
 main().catch(err => {

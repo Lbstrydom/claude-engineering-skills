@@ -330,7 +330,7 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
     const path = r.startLine ? `${r.filePath}:${r.startLine}` : r.filePath;
     const domain = r.domainTag ? `\`${escapeMarkdown(r.domainTag)}\`` : '—';
     rows.push(
-      `> | \`${escapeMarkdown(r.symbolName)}\` | \`${escapeMarkdown(path)}\` | ${domain} | ${(r.similarityScore || 0).toFixed(2)} | **${r.recommendation}** | ${escapeMarkdown(r.purposeSummary || '')} |`
+      `> | \`${escapeMarkdown(r.symbolName)}\` | \`${escapeMarkdown(path)}\` | ${domain} | ${r.similarityScore === null || r.similarityScore === undefined ? "—" : r.similarityScore.toFixed(2)} | **${r.recommendation}** | ${escapeMarkdown(r.purposeSummary || '')} |`
     );
   }
   if (records.length > TOP_N) {
@@ -346,7 +346,7 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
     ...records.map(r => {
       const path = r.startLine ? `${r.filePath}:${r.startLine}` : r.filePath;
       const domain = r.domainTag ? `\`${escapeMarkdown(r.domainTag)}\`` : '—';
-      return `| \`${escapeMarkdown(r.symbolName)}\` | \`${escapeMarkdown(path)}\` | ${domain} | ${(r.similarityScore || 0).toFixed(2)} | ${(r.hopScore || 0).toFixed(2)} | ${(r.score || 0).toFixed(2)} | **${r.recommendation}** | ${escapeMarkdown(r.purposeSummary || '')} |`;
+      return `| \`${escapeMarkdown(r.symbolName)}\` | \`${escapeMarkdown(path)}\` | ${domain} | ${r.similarityScore === null || r.similarityScore === undefined ? "—" : r.similarityScore.toFixed(2)} | ${(r.hopScore || 0).toFixed(2)} | ${(r.score || 0).toFixed(2)} | **${r.recommendation}** | ${escapeMarkdown(r.purposeSummary || '')} |`;
     }),
   ].join('\n');
   return {

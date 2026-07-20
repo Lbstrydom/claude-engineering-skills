@@ -42,8 +42,15 @@ export const SymbolRecordSchema = z.object({
 export const ScoredSymbolRecordSchema = SymbolRecordSchema.extend({
   score:           z.number().min(0).max(1),
   hopScore:        z.number().min(0).max(1),
-  similarityScore: z.number().min(-1).max(1),
-  recommendation:  z.enum(['reuse', 'extend', 'justify-divergence', 'review']),
+  // NULLABLE by contract (plan §2.1 C3): null means the symbol has no
+  // embedding for the active (model, dim, signature), i.e. NO EVIDENCE. It is
+  // deliberately not defaulted to 0 — a fabricated 0 bands as `review`, which
+  // asserts "considered and rejected" about something never compared.
+  similarityScore: z.number().min(-1).max(1).nullable(),
+  // `scored` lets a consumer distinguish absence from a low score without
+  // having to probe for null.
+  scored:          z.boolean().optional(),
+  recommendation:  z.enum(['unscored', 'reuse', 'extend', 'justify-divergence', 'review']),
 });
 
 // ── Query args ──────────────────────────────────────────────────────────────

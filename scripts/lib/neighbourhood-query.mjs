@@ -65,6 +65,21 @@ function cacheFileFor(repoRoot) {
   return path.join(repoRoot, CACHE_REL);
 }
 
+/**
+ * Read the RPC's nullable `similarity` without coercing absence to a number.
+ *
+ * The RPC returns NULL when the symbol has no embedding for the active
+ * (model, dim, signature). `Number(null)` is 0, and 0 bands as `review` — a
+ * confident "considered and rejected" about something never actually compared.
+ * Absence must survive as `null` all the way into the band.
+ */
+function rawSimilarity(row) {
+  const v = row?.similarity ?? row?.similarityScore;
+  if (v === null || v === undefined) return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function getCached(repoRoot, key, ttlMs) {
   const v = cacheGet(cacheFileFor(repoRoot), key, ttlMs);
   return Array.isArray(v) ? v : null;
@@ -268,10 +283,16 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     signatureHash:   r.signature_hash || r.signatureHash || '',
     purposeSummary:  r.purpose_summary ?? r.purposeSummary ?? null,
     domainTag:       r.domain_tag ?? r.domainTag ?? null,
-    score:           Number(r.combined_score ?? r.score ?? 0),
+    score:           Number(r.ranking_score ?? r.combined_score ?? r.score ?? 0),
     hopScore:        Number(r.hop_score ?? r.hopScore ?? 0),
-    similarityScore: Number(r.similarity ?? r.similarityScore ?? 0),
-    recommendation:  recommendationFromSimilarity(Number(r.similarity ?? 0)),
+    // similarity is NULLABLE by contract (plan §2.1 C3). The previous
+    // `Number(r.similarity ?? 0)` turned "no embedding" into a hard 0, which
+    // `recommendationFromSimilarity` then banded as `review` — an authoritative
+    // "considered and rejected" verdict about a symbol we had no evidence
+    // about. Preserve the null all the way to the band.
+    similarityScore: rawSimilarity(r),
+    scored:          rawSimilarity(r) !== null,
+    recommendation:  recommendationFromSimilarity(rawSimilarity(r)),
   }));
 
   // Phase 3 — adaptive-learning arch_memory_band telemetry.  One decision

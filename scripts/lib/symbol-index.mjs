@@ -176,10 +176,23 @@ export function rankNeighbourhood(records, intentEmbedding, targetPaths, k = 50)
   const scored = records.map(r => {
     const filePath = String(r.filePath || '').replace(/\\/g, '/');
     const hopScore = targets.has(filePath) ? 1.0 : 0.0;
-    const sim = cosineSimilarity(r.embedding || [], intentEmbedding || []);
-    const similarityScore = sim;
-    const score = hopScore * 0.4 + sim * 0.6;
-    return { ...r, hopScore, similarityScore, score };
+
+    // MUST mirror the RPC's null contract (plan §2.1 C3). This is a SECOND,
+    // in-process implementation of the same formula, and it reproduced the
+    // identical `ELSE 0` defect: an absent embedding degraded to an empty
+    // vector, `cosineSimilarity` returned 0, and that fabricated 0 flowed into
+    // banding as an authoritative "considered and rejected" verdict. Fixing
+    // only the SQL would have left the bug live on this path.
+    const hasEmbedding = Array.isArray(r.embedding) && r.embedding.length > 0
+      && Array.isArray(intentEmbedding) && intentEmbedding.length > 0;
+    const similarityScore = hasEmbedding
+      ? cosineSimilarity(r.embedding, intentEmbedding)
+      : null;
+
+    // Ranking coalesces; banding does not. See the migration comment for why
+    // the two jobs must not share one number.
+    const rankingScore = hopScore * 0.4 + (similarityScore ?? 0) * 0.6;
+    return { ...r, hopScore, similarityScore, scored: hasEmbedding, score: rankingScore, rankingScore };
   });
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
@@ -189,11 +202,30 @@ export function rankNeighbourhood(records, intentEmbedding, targetPaths, k = 50)
 }
 
 /**
- * Recommendation tag based on similarity score (per frontend plan).
- * @param {number} similarity
- * @returns {'reuse'|'extend'|'justify-divergence'|'review'}
+ * Recommendation band from a similarity score.
+ *
+ * Accepts `number | null`. `null` means NO EVIDENCE — the symbol has no
+ * embedding for the active (model, dim, signature) — and maps to the distinct
+ * band `unscored`. It must never be coalesced to 0: `Number(null) === 0` would
+ * land in `review`, which reads as "we looked and it was a poor match" rather
+ * than "we have no representation of this symbol at all".
+ *
+ * NOTE: the cutoffs below are the ORIGINAL hardcoded values and are known to
+ * be unreachable in practice — the highest similarity this pipeline has ever
+ * produced is 0.8294, below the 0.85 `extend` bar, which is why `reuse` and
+ * `extend` never fired in 1,763 consultations. Replacing them with calibrated,
+ * config-driven values is Phase 4 (Cluster C) and is gated on the calibration
+ * harness passing. They are deliberately left in place here so this change
+ * stays a pure null-contract fix; moving thresholds and changing the null
+ * semantics in one step would make a regression impossible to attribute.
+ *
+ * @param {number|null|undefined} similarity
+ * @returns {'unscored'|'reuse'|'extend'|'justify-divergence'|'review'}
  */
 export function recommendationFromSimilarity(similarity) {
+  if (similarity === null || similarity === undefined || !Number.isFinite(similarity)) {
+    return 'unscored';
+  }
   if (similarity >= 0.90) return 'reuse';
   if (similarity >= 0.85) return 'extend';
   if (similarity >= 0.75) return 'justify-divergence';
