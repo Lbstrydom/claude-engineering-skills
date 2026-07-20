@@ -272,6 +272,32 @@ export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}, ex
   });
 }
 
+const fileCommitCache = new Map();
+
+/**
+ * When a file was last committed, for the §2d-iii coherence check.
+ *
+ * An untracked or unknown file yields null, which means "cannot compare" and
+ * therefore never marks evidence stale — the check may refuse to demote, but it
+ * must never invent staleness it cannot demonstrate.
+ */
+export function lastCommitTime(absPath, deps = {}) {
+  if (fileCommitCache.has(absPath)) return fileCommitCache.get(absPath);
+  let when = null;
+  try {
+    const exec = deps.execFileSync || execFileSync;
+    const out = exec('git', ['log', '-1', '--format=%cI', '--', absPath], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (out) {
+      const t = new Date(out);
+      if (!Number.isNaN(t.getTime())) when = t;
+    }
+  } catch { /* untracked, or not a git repo */ }
+  fileCommitCache.set(absPath, when);
+  return when;
+}
+
 /**
  * Enrich ingested findings with everything the pure router needs.
  *
@@ -279,7 +305,7 @@ export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}, ex
  * findings in one file cost one classification + one bounded scan, not 108 —
  * and the scan still stops at the last line any finding in that file needs.
  */
-export async function enrichFindings(findings, { repoRoot, bounds, deps = {} }) {
+export async function enrichFindings(findings, { repoRoot, bounds, scanTime = null, deps = {} }) {
   const routable = [];
 
   // `identity` is adapter-internal plumbing for the read gate. It is kept OUT
@@ -295,6 +321,19 @@ export async function enrichFindings(findings, { repoRoot, bounds, deps = {} }) 
       const { identity, ...locFields } = classifyLocationPath(f[key].path, repoRoot, deps);
       enriched[key] = { ...f[key], ...locFields };
       if (identity) identityByPath.set(locFields.repoRelativePath, identity);
+    }
+    // §2d-iii: mark the finding when EITHER of its files was committed after
+    // the scan. Both, not just the sink: the primary location's line numbers
+    // are what the report shows a human, and a shifted one sends them to the
+    // wrong place. `scanTime === null` means the SARIF carried no provenance —
+    // that is "cannot check", so nothing is marked and the report says so.
+    if (scanTime) {
+      for (const key of ['location', 'sinkLocation']) {
+        const loc = enriched[key];
+        if (!loc?.canonicalPath) continue;
+        const committed = lastCommitTime(loc.canonicalPath, deps);
+        if (committed && committed > scanTime) { enriched.evidenceStale = true; break; }
+      }
     }
     routable.push(enriched);
   }
@@ -431,6 +470,24 @@ export function renderReport(report) {
   L.push(`  A unexplained: ${report.counts.A}   C likely-mitigated: ${report.counts.C}   D out-of-reach: ${report.counts.D}`);
   L.push('═══════════════════════════════════════');
 
+  // Provenance line always prints. A run that could not check coherence must
+  // say so — "no stale evidence" and "could not look" are different claims.
+  const prov = report.scanProvenance;
+  if (prov) {
+    L.push('');
+    if (prov.source === 'unavailable') {
+      L.push('  ⚠ SARIF carries no scan time — source-coherence UNCHECKED.');
+      L.push('    A scan taken against a different tree resolves sinks to code that has moved,');
+      L.push('    and it fails toward demotion. This is not a clean bill of health.');
+    } else if (prov.staleFindings > 0) {
+      L.push(`  ⚠ ${prov.staleFindings} finding(s) reference a file committed AFTER the scan (${prov.scanTime}).`);
+      L.push('    Their evidence predates the code, so each is held in A rather than demoted on it.');
+      L.push('    Re-scan against the current tree to triage them.');
+    } else {
+      L.push(`  Scan-source coherence OK — no referenced file postdates the scan (${prov.scanTime}).`);
+    }
+  }
+
   if (report.counts.A > 0) {
     L.push('');
     L.push(`Bucket A — no predicate matched. REVIEW FIRST (${report.counts.A}):`);
@@ -554,6 +611,7 @@ export async function runTriage(argv, deps = {}) {
   const { routable, sourceByPath } = await enrichFindings(ingested.findings, {
     repoRoot,
     bounds,
+    scanTime: ingested.provenance?.scanTime ?? null,
     deps,
   });
 
@@ -566,10 +624,16 @@ export async function runTriage(argv, deps = {}) {
     bucketANonEmpty: routed.counts.A > 0,
   });
 
+  const staleCount = routed.findings.filter((f) => f.evidenceStale === true).length;
   return {
     schemaVersion: 1,
     runStatus,
     exitCode,
+    scanProvenance: {
+      scanTime: ingested.provenance?.scanTime?.toISOString() ?? null,
+      source: ingested.provenance?.source ?? 'unavailable',
+      staleFindings: staleCount,
+    },
     counts: routed.counts,
     findings: routed.findings,
     unusedPredicates: routed.unusedPredicates,

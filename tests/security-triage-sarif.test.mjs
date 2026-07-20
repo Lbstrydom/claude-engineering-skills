@@ -18,6 +18,7 @@ import {
   BOUND_CEILINGS,
   BOUND_DEFAULTS,
   resolveBounds,
+  extractScanProvenance,
 } from '../scripts/lib/security/sarif.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -431,5 +432,68 @@ describe('ingestSarif — the real 240-result corpus', () => {
     const findings = corpus();
     assert.ok(findings.every((f) => f.sinkResolution === 'codeflow'));
     assert.ok(findings.every((f) => f.location !== null));
+  });
+});
+
+/**
+ * §2d-iii — scan provenance. A SARIF and the source it names must come from the
+ * same tree, or every source-reading predicate reads the wrong lines, and it
+ * degrades in the DEMOTING direction. SARIF's own commit field
+ * (`versionControlProvenance`) would be ideal but Snyk emits none — measured
+ * null across every real run and the committed corpus — so the check falls back
+ * to scan TIME, which is weaker than a commit but still factual.
+ */
+describe('extractScanProvenance', () => {
+  test('prefers the SARIF standard field', () => {
+    const r = extractScanProvenance({ invocations: [{ endTimeUtc: '2026-07-19T19:26:09Z' }] });
+    assert.equal(r.source, 'invocations.endTimeUtc');
+    assert.equal(r.scanTime.toISOString(), '2026-07-19T19:26:09.000Z');
+  });
+
+  test('falls back to startTimeUtc when there is no end time', () => {
+    const r = extractScanProvenance({ invocations: [{ startTimeUtc: '2026-07-19T15:55:32Z' }] });
+    assert.equal(r.source, 'invocations.startTimeUtc');
+  });
+
+  // The shape Snyk actually emits: "Snyk/Code/2026-07-19T19:26:09Z".
+  test('extracts the ISO stamp from a producer-specific automationDetails id', () => {
+    const r = extractScanProvenance({ automationDetails: { id: 'Snyk/Code/2026-07-19T19:26:09Z' } });
+    assert.equal(r.source, 'automationDetails.id');
+    assert.equal(r.scanTime.toISOString(), '2026-07-19T19:26:09.000Z');
+  });
+
+  // "Cannot check" must be distinguishable from "checked and fine".
+  test('reports unavailable rather than guessing a time', () => {
+    for (const run of [{}, { automationDetails: { id: 'Snyk/Code/no-date-here' } },
+      { invocations: [{ endTimeUtc: 'not-a-date' }] }]) {
+      const r = extractScanProvenance(run);
+      assert.equal(r.scanTime, null, JSON.stringify(run));
+      assert.equal(r.source, 'unavailable');
+    }
+  });
+
+  test('ingestSarif surfaces provenance and diagnoses its absence', () => {
+    const withTime = ingestSarif({
+      version: '2.1.0',
+      runs: [{ tool: { driver: { name: 'T' } }, automationDetails: { id: 'Snyk/Code/2026-07-19T19:26:09Z' }, results: [result()] }],
+    });
+    assert.equal(withTime.provenance.source, 'automationDetails.id');
+
+    const without = ingestSarif(sarif([result()]));
+    assert.equal(without.provenance.scanTime, null);
+    assert.ok(without.diagnostics.includes('scan-time-unavailable'),
+      'an unavailable scan time must be diagnosed, not silently accepted');
+  });
+
+  // A stale run must not be masked by a fresher sibling in the same document.
+  test('a multi-run SARIF keeps the OLDEST scan time', () => {
+    const r = ingestSarif({
+      version: '2.1.0',
+      runs: [
+        { tool: { driver: { name: 'A' } }, automationDetails: { id: 'x/2026-07-19T19:00:00Z' }, results: [result()] },
+        { tool: { driver: { name: 'B' } }, automationDetails: { id: 'x/2026-07-19T10:00:00Z' }, results: [result()] },
+      ],
+    });
+    assert.equal(r.provenance.scanTime.toISOString(), '2026-07-19T10:00:00.000Z');
   });
 });

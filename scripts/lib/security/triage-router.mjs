@@ -190,6 +190,14 @@ function sensitivityBlock(finding) {
   // finding whose claimed sink was never located sitting in the bottom bucket.
   // Blocking here keeps the unresolved case conservative across all three.
   if (finding.sinkResolution === 'unresolved') return 'sink-unresolved';
+
+  // §2d-iii — the SARIF was taken before this file's last commit, so its line
+  // numbers may address code that has since moved. Every predicate that reads
+  // source would then be reading the WRONG lines, and it fails in the demoting
+  // direction: a sanitizer found at a shifted offset would wrongly demote a
+  // live finding. Measured near-miss: a 15:55 scan analysed against a file
+  // rewritten at 19:11. Refuse to demote on evidence known to be out of date.
+  if (finding.evidenceStale === true) return 'sarif-predates-file';
   return null;
 }
 

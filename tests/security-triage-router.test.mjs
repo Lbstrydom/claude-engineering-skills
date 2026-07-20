@@ -720,3 +720,38 @@ describe('unusedPredicates — reported as AMBIGUOUS, never as good news', () =>
     assert.ok(!r.unusedPredicates.includes('path-scope'));
   });
 });
+
+/**
+ * §2d-iii — evidence-staleness guard. When the SARIF predates the file's last
+ * commit, its line numbers may address code that has moved, so every
+ * source-reading predicate would be reading the WRONG lines. That fails in the
+ * demoting direction: a sanitizer matched at a shifted offset wrongly demotes a
+ * live finding. Measured near-miss: a 15:55 scan against a file rewritten 19:11.
+ */
+describe('evidenceStale blocks demotion (§2d-iii)', () => {
+  test('a stale-evidence finding routes to A with a machine-readable reason', () => {
+    const f = { ...routable({ p: 'tests/x.js', ruleId: 'javascript/PT/test' }), evidenceStale: true };
+    assert.equal(pathScope(f, CONFIG).bucket, 'D', 'sanity: path-scope alone would demote');
+    const r = route([f]);
+    assert.equal(r.findings[0].bucket, 'A');
+    assert.ok(r.findings[0].matches.some((m) => m.reason === 'sarif-predates-file'));
+  });
+
+  test('it also blocks the source-reading predicate, not just path-scope', () => {
+    const src = 'el.innerHTML = `<b>${esc(a)}</b>`;';
+    const fresh = routable({ source: src });
+    assert.equal(route([fresh]).findings[0].bucket, 'C', 'sanity: fresh evidence demotes to C');
+
+    const stale = { ...routable({ source: src }), evidenceStale: true };
+    assert.equal(route([stale]).findings[0].bucket, 'A');
+  });
+
+  // Absence of the flag must mean "not stale", never "unknown treated as stale":
+  // the check may refuse to demote, but must not invent staleness it cannot show.
+  test('an absent or false flag does not block', () => {
+    const undef = routable({ source: 'el.innerHTML = `<b>${esc(a)}</b>`;' });
+    assert.equal(route([undef]).findings[0].bucket, 'C');
+    const explicit = { ...routable({ source: 'el.innerHTML = `<b>${esc(a)}</b>`;' }), evidenceStale: false };
+    assert.equal(route([explicit]).findings[0].bucket, 'C');
+  });
+});

@@ -159,6 +159,9 @@ export const NormalizedFindingShape = z
       .enum(['sensitive', 'too-large', 'unreadable'])
       .nullable()
       .optional(),
+    // Adapter-supplied (§2d-iii): the SARIF predates this file's last commit,
+    // so its line numbers may point at code that has since moved.
+    evidenceStale: z.boolean().optional(),
     diagnostics: z.array(z.string()),
   })
   .strict();
@@ -214,6 +217,16 @@ export const TriageReportSchema = z
       'routed_clean',
     ]),
     exitCode: z.number().int().nonnegative(),
+    // §2d-iii. `source: 'unavailable'` means the coherence check COULD NOT RUN,
+    // which the renderer must state rather than let a clean report imply it did.
+    scanProvenance: z
+      .object({
+        scanTime: z.string().nullable(),
+        source: z.string(),
+        staleFindings: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
     counts: z
       .object({
         A: z.number().int().nonnegative(),
@@ -346,6 +359,51 @@ export function resolveArtifactUri(artifactLocation, run, diagnostics) {
 }
 
 // ---------------------------------------------------------------------------
+// Scan provenance (§2d-iii)
+// ---------------------------------------------------------------------------
+
+/**
+ * When the scan that produced this run was taken.
+ *
+ * A SARIF and the source it names must come from the same tree, or every
+ * source-reading predicate is reading the wrong lines — and it degrades in the
+ * DEMOTING direction, which is the one that hides a real finding. §2d-iii
+ * measured this: a scan taken at 15:55 was nearly analysed against a tree whose
+ * key file had been rewritten at 19:11.
+ *
+ * SARIF's own commit field (`run.versionControlProvenance.revisionId`) would be
+ * ideal, but Snyk does not emit it — measured null across every real run and the
+ * committed corpus. So the check falls back to TIME, which is weaker than a
+ * commit but still factual: a file whose last commit postdates the scan cannot
+ * be the file that was scanned.
+ *
+ * Order: the SARIF standard field first, then the producer-specific id
+ * (`"Snyk/Code/2026-07-19T19:26:09Z"`), then null — and null means "cannot
+ * check", never "checked and fine".
+ *
+ * @returns {{scanTime: Date|null, source: string}}
+ */
+export function extractScanProvenance(run) {
+  const inv = run?.invocations?.[0];
+  for (const [field, src] of [[inv?.endTimeUtc, 'invocations.endTimeUtc'],
+    [inv?.startTimeUtc, 'invocations.startTimeUtc']]) {
+    if (typeof field === 'string') {
+      const d = new Date(field);
+      if (!Number.isNaN(d.getTime())) return { scanTime: d, source: src };
+    }
+  }
+  const id = run?.automationDetails?.id;
+  if (typeof id === 'string') {
+    const m = /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)/.exec(id);
+    if (m) {
+      const d = new Date(m[1]);
+      if (!Number.isNaN(d.getTime())) return { scanTime: d, source: 'automationDetails.id' };
+    }
+  }
+  return { scanTime: null, source: 'unavailable' };
+}
+
+// ---------------------------------------------------------------------------
 // Sink resolution (D3a0)
 // ---------------------------------------------------------------------------
 
@@ -473,6 +531,7 @@ export function ingestSarif(doc, opts = {}) {
 
   const findings = [];
   const occurrences = new Map();
+  let scanProvenance = null;
 
   for (const run of doc.runs) {
     if (!run || typeof run !== 'object') {
@@ -480,6 +539,14 @@ export function ingestSarif(doc, opts = {}) {
       continue;
     }
     const toolName = run.tool?.driver?.name ?? 'unknown';
+    const prov = extractScanProvenance(run);
+    if (!scanProvenance || (prov.scanTime && scanProvenance.scanTime
+        && prov.scanTime < scanProvenance.scanTime)) {
+      // Multi-run SARIF: keep the OLDEST scan time, so a stale run cannot be
+      // masked by a fresher sibling.
+      scanProvenance = prov;
+    }
+    scanProvenance ??= prov;
     const results = Array.isArray(run.results) ? run.results : [];
 
     for (const result of results) {
@@ -556,7 +623,9 @@ export function ingestSarif(doc, opts = {}) {
     }
   }
 
-  return { findings, diagnostics };
+  const provenance = scanProvenance ?? { scanTime: null, source: 'unavailable' };
+  if (!provenance.scanTime) diagnostics.push('scan-time-unavailable');
+  return { findings, diagnostics, provenance };
 }
 
 export const _internals = Object.freeze({ contentHash, regionOf, normaliseSlashes });
