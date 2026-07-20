@@ -1,0 +1,38 @@
+PROVENANCE NOTE — this commit carries one file its message does not describe.
+
+`tests/graph-coverage-lineage.test.mjs` (+36/-2) does NOT belong to the
+compose()/COMPOSE_VERSION work described above. It was folded in accidentally by
+a concurrent agent session running `git commit --amend` while HEAD had moved:
+that session had just committed 2393b95 ("fix(prepush): close the last three
+sandbox-honesty holes"), staged a follow-up test fix, and amended without
+re-checking HEAD — which by then was this commit (4e2a22e pre-amend).
+
+What that file's change actually is, and why it exists:
+
+  `runGate()` spawned the coverage gate with an inherited `process.env`. The
+  pre-push sandbox exports ARCH_COVERAGE_REQUIRE_ENVELOPE=1, so once 2393b95
+  taught that flag to reject an envelope with no `coverage` block, the existing
+  back-compat test ("a LEGACY envelope reads unknown — never verified, and never
+  a failure") passed locally and failed under the hook. It was failing for a
+  reason unrelated to what it asserted. `runGate` now takes an explicit env and
+  a `strictEnvelope` opt-in, so every test in that file is deterministic
+  regardless of ambient state, and a new sibling test pins the strict behaviour.
+
+  It belongs with 2393b95. Read the two together.
+
+Integrity, checked rather than assumed:
+
+  · Nothing was lost. This commit's own tree is intact — the amend added one
+    file, it did not replace or drop anything.
+  · No published history was rewritten. The pre-amend commit 4e2a22e was never
+    on the remote; the push that carried this one was a fast-forward
+    (696d67e..731570e), not a force-push.
+  · The amend used --no-verify, so THIS commit did not pass the pre-push gate.
+    The full suite passed immediately before it (7,957 pass / 0 fail) and again
+    on the following push, so the content is verified even though this specific
+    commit object was not gated.
+
+Deliberately not corrected by rebase or revert: this commit is pushed and a
+concurrent session has already built on it (b5431b7). Rewriting shared history
+under an active second session converts a cosmetic mislabel into a real problem.
+This note is the non-destructive correction.
