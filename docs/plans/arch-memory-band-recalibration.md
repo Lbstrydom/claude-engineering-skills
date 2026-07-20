@@ -1113,3 +1113,36 @@ improve similarity through shared vocabulary.
 - **The C5 three-way `review` split** (`review-near` / `review-low`) was
   designed around the old band structure and was not carried forward; the
   floor-relative equivalent is unbuilt.
+
+### 2026-07-20 (later) — C4 fallback cap restored
+
+Found while verifying the "is this actually complete?" question, and it was a
+real gap rather than stale prose: **C4's requirement that a fallback-normalized
+query never earn an actionable band survived into the plan but not into the
+reworked implementation.** When C4-REVISED replaced the band vocabulary, the
+floor and the cliff were carried across and the cap was not.
+
+`normalized.mode` was tracked (it is part of the cache key) but never reached
+`bandTopResult`, which had no mode parameter at all. So during a provider
+outage — not hypothetical; the `cli` backend timed out repeatedly in this very
+session before the normalizer pinned `{backend:'sdk'}` — a query normalized by
+regex munging could be scored against a floor calibrated on LLM-rewritten text,
+and emit a confident `precedent` from a measurement the calibration does not
+describe. That is the exact failure class this plan exists to remove.
+
+The failure direction was mostly safe by luck: fallback text scores lower
+(measured 0.5828 vs 0.8446 on the same intent), so it usually falls below the
+floor and abstains. But that was a property of the text, not an enforced
+invariant.
+
+Now enforced and verified live:
+
+| path | score | band |
+|---|---|---|
+| LLM normalization | 0.8480 | `precedent / above-floor-cluster` |
+| forced fallback (no provider) | 0.7051 | `review / fallback-normalization-uncalibrated` |
+
+Also corrected three comments that described retired behaviour, and marked the
+`reuse`/`extend` branches in the outcome resolver as LEGACY-ONLY — they resolve
+the 1,763 historical rows and must not be "fixed" into the new banding, which
+would strand that data as permanently `uncertain`.

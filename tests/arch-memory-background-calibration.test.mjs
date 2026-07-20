@@ -144,3 +144,37 @@ describe('background-calibration / cosineSimilarity guards', () => {
     assert.ok(Math.abs(cosineSimilarity([1, 2, 3], [1, 2, 3]) - 1) < 1e-12);
   });
 });
+
+describe('background-calibration / fallback normalization is out of calibration (C4)', () => {
+  const cal = { floor: 0.7146 };
+  const r = (s) => ({ similarityScore: s });
+
+  it('a fallback-normalized query NEVER earns precedent, even far above the floor', () => {
+    // The floor is calibrated on LLM-normalized text. Fallback output is regex
+    // munging — a different text distribution — so a score above the floor is
+    // not comparable evidence. Refusing here is the difference between
+    // abstaining and emitting a confident verdict from an uncalibrated
+    // measurement.
+    const out = bandTopResult([r(0.95), r(0.40)], { ...cal, normalizationMode: 'fallback' });
+    assert.equal(out.band, 'review');
+    assert.match(out.reason, /fallback-normalization-uncalibrated/);
+  });
+
+  it('the same scores DO earn precedent under llm normalization', () => {
+    const out = bandTopResult([r(0.95), r(0.40)], { ...cal, normalizationMode: 'llm' });
+    assert.equal(out.band, 'precedent');
+  });
+
+  it('an absent mode does not silently cap (only an explicit fallback does)', () => {
+    // Callers predating the mode plumbing must not all degrade to review —
+    // that would suppress the feature everywhere on an omitted field.
+    const out = bandTopResult([r(0.95), r(0.40)], cal);
+    assert.equal(out.band, 'precedent');
+  });
+
+  it('unscored still wins over the fallback cap — absence of evidence ranks first', () => {
+    const out = bandTopResult([r(null)], { ...cal, normalizationMode: 'fallback' });
+    assert.equal(out.band, 'unscored');
+    assert.match(out.reason, /no-embedding/);
+  });
+});

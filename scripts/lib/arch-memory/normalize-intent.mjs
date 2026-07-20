@@ -24,7 +24,9 @@
  *   never sees a raw intent and never bypasses the gate.
  * - C10 — caches only SUCCESSFUL LLM normalizations. Fallback output is never
  *   cached: one transient timeout would otherwise pin an intent to the fallback
- *   path permanently, and fallback is band-capped at `justify-divergence`.
+ *   path permanently, and a fallback-mode query cannot earn an actionable band
+ *   (see C4 below), so a cached fallback would silently disable the feature for
+ *   that intent forever.
  * - C4/C6 — `NORMALIZE_PROMPT_VERSION` is a CONTENT HASH of the prompt, not a
  *   hand-bumped constant. Editing the prompt mechanically invalidates cache
  *   keys and trips the stale-calibration guard, with no human in the loop.
@@ -81,9 +83,11 @@ export const NORMALIZE_PROMPT_VERSION = crypto
  * Deterministic, provider-free fallback (C10). Strips the intent-genre verb
  * scaffolding so the text moves toward purpose genre without an LLM call.
  *
- * This is a DEGRADED path, not an equivalent one — its output distribution
- * differs from LLM-normalized text, so callers must cap its band at
- * `justify-divergence` (C4) rather than trusting a calibrated threshold.
+ * This is a DEGRADED path, not an equivalent one. Its output distribution
+ * differs from LLM-normalized text, and the band floor is calibrated on the
+ * latter — so a fallback-mode result is NOT comparable evidence. `bandTopResult`
+ * refuses `precedent` when `normalizationMode === 'fallback'` (C4); the caller
+ * must thread that mode through rather than trusting the score alone.
  *
  * @param {string} safeIntent - already redacted by the caller (C1)
  * @returns {string}

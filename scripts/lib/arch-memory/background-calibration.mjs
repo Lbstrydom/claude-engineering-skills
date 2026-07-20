@@ -139,7 +139,7 @@ export function floorFromStats(stats, k = DEFAULT_K) {
  * API shape, ownership and debt, none of which a cosine distance expresses.
  *
  * @param {{similarityScore:number|null}[]} ranked - descending by rank
- * @param {{floor:number|null, minCliffDelta?:number}} calibration
+ * @param {{floor:number|null, normalizationMode?:'llm'|'fallback'}} calibration
  * @returns {{band:'unscored'|'review'|'precedent', reason:string, cliff:number|null}}
  */
 export function bandTopResult(ranked, calibration) {
@@ -149,6 +149,28 @@ export function bandTopResult(ranked, calibration) {
   if (!top || top.similarityScore === null || top.similarityScore === undefined
       || !Number.isFinite(top.similarityScore)) {
     return { band: 'unscored', reason: 'no-embedding', cliff: null };
+  }
+
+  // FALLBACK NORMALIZATION IS OUT OF CALIBRATION (plan §2.1 C4).
+  //
+  // When the LLM normalizer is unavailable — provider error, timeout, egress
+  // refusal — the query falls back to `deterministicNormalize`, which is regex
+  // munging rather than a rewrite. That produces a DIFFERENT text distribution
+  // from the LLM-normalized text the floor was calibrated against, so scoring
+  // one against the other compares across distributions.
+  //
+  // Measured on the same intent: fallback text scored 0.5828 where LLM
+  // normalization scored 0.8446 — well below the ~0.71 floor, so in practice it
+  // abstains anyway. But that is a property of the text happening to score
+  // lower, NOT a guarantee. Without this cap nothing stops a fallback query
+  // clearing the floor and emitting a confident `precedent` from a measurement
+  // the calibration does not describe — the exact failure class this plan
+  // exists to remove.
+  //
+  // The fallback is not hypothetical: the `cli` backend timed out repeatedly
+  // before the normalizer pinned `{backend:'sdk'}`.
+  if (calibration?.normalizationMode === 'fallback') {
+    return { band: 'review', reason: 'fallback-normalization-uncalibrated', cliff: null };
   }
 
   const floor = calibration?.floor;

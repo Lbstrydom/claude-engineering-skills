@@ -315,7 +315,13 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
     const calibration = adapters.getBandCalibration
       ? await adapters.getBandCalibration(repoRow.id)
       : null;
-    const verdict = bandTopResult(records, { floor: calibration?.floor ?? null });
+    // `normalizationMode` is load-bearing, not decorative: a fallback-normalized
+    // query is measured in a different text distribution from the one the floor
+    // was calibrated against, so it must never earn an actionable band (C4).
+    const verdict = bandTopResult(records, {
+      floor: calibration?.floor ?? null,
+      normalizationMode: normalized.mode,
+    });
     if (records.length > 0) {
       records[0].recommendation = verdict.band;
       records[0].bandReason = verdict.reason;

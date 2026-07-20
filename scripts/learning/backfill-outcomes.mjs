@@ -536,8 +536,9 @@ async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
 // ── arch_memory_band outcome detector ─────────────────────────────────────
 
 /**
- * How long a `justify-divergence` row stays pending while we wait for a
- * `@duplicate-justification` pragma to appear. Deliberately much longer than
+ * How long a `precedent` row (or a legacy `justify-divergence` one) stays
+ * pending while we wait for a `@duplicate-justification` pragma to appear.
+ * Deliberately much longer than
  * STALENESS_MS (which only gates when a row becomes *eligible* to resolve):
  * the pragma is written by a human or an audit round, not within 30 minutes of
  * the consultation. Bounded so pending rows cannot accumulate forever.
@@ -716,6 +717,13 @@ export async function computeArchMemoryBandOutcome(row, deps = {}) {
     return { action: 'uncertain', evidence: 'git-probe-failed' };
   }
 
+  // LEGACY-ONLY BRANCHES. `reuse` / `extend` were retired 2026-07-20 and the
+  // system no longer emits them, so these resolve HISTORICAL rows only —
+  // 1,763 of them recorded before the vocabulary changed. They are kept rather
+  // than deleted because a historical row must stay resolvable under the
+  // vocabulary it was written with; deleting them would strand that data as
+  // permanently `uncertain`. Marked explicitly so a reader does not mistake
+  // them for live paths and "fix" them into the new banding.
   if (band === 'reuse') {
     return commitsTouched === 0
       ? { action: 'reuse-correct', evidence: 'no-new-commits-in-dir' }
