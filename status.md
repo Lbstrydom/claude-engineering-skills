@@ -1,5 +1,54 @@
 # Project Status Log
 
+## 2026-07-20 (concurrent session) — the first alarm that was real, and one I nearly broke prod over
+
+Ran alongside the CLI-polarity work logged below; separate threads, same day.
+
+**Cluster density was AMBER, and it stays AMBER — but the number was wrong.**
+116 median pairs against a threshold of 5. Rather than trust it, I read the
+pairs. The top matches were all similarity **1.00** and byte-identical:
+`ADJACENCY_INCOMPLETE (enumeration-bound): maxContainers=20 reached …` — the
+adjacency wave's own coverage notice, emitted verbatim every time it hits its
+cap. A wave logging its execution state, not duplicated findings, and it was
+**44% of the raw signal**. The gate was reading AMBER partly on its own logging.
+
+Migration `20260720210000` fixes three defects, not one:
+1. Control-state sentinels excluded — matched on the detail-snapshot **prefix,
+   not the category**, because the same wave also emits
+   `[Adjacency] Statement may be trapped inside a conditional`, a real HIGH.
+   Excluding the category would have silenced genuine signal to remove noise.
+2. `open_findings` did not mean open findings — it was `COUNT(DISTINCT a.id)`
+   over the pair JOIN, counting only findings that already had a match. The
+   report read "116 pairs across 48 open findings" when 238 were considered.
+3. Repos with zero similar pairs were dropped by an INNER JOIN before
+   `percentile_cont`, so the median covered "repos that have duplication"
+   only — structurally unable to read healthy. `wine-cellar-app` appeared the
+   moment this was fixed (7 pairs / 38 findings), which is the proof the defect
+   was real rather than theoretical.
+
+Reading after: **116 → 30 median, still AMBER.** The remainder is genuine —
+five different wordings of one brainstorm→requirements coupling finding, each
+with its own fingerprint, plus a symmetric duplication finding counted from
+both directions. The trigger is real, fingerprint dedup is leaking exactly as
+this gate was designed to detect, and Monday's scheduled run now decides
+pgvector on a clean metric rather than on boilerplate.
+
+**The correction: I told the user `shadow_sample_rate` was a harmless orphan,
+they authorised dropping it, and I did not drop it.** I had inferred "retired
+subsystem, last trace" from a commit message without reading the code — the
+exact error I spent this session criticising elsewhere. The column is
+`NOT NULL` and live in the hot path: `rolloutRepository.js` SELECTs, lazily
+INSERTs and RETURNs it on every surface read, so dropping it fails the first
+request after deploy. `data/migrations/156` had already reached that conclusion
+and left the precondition in writing — *"drop it only in a change that also
+removes it from rolloutRepository.js"*. Authorisation to act is not evidence
+that the thing I described was true; the check comes first.
+
+Also closed: two orphaned Railway cron services (`shadow-eval-worker`,
+`auto-promote-watchdog`). Both pointed at scripts deleted by PR #130, which
+concluded they "were never scheduled" from the absence of a railway.json —
+they were scheduled in the Railway dashboard, which no repo-only check sees.
+
 ## 2026-07-20 (latest) — the opt-out bucket is empty, and that was the point
 
 Guarded all 13 opt-out CLIs `classifyPolarity` surfaced the same day it shipped,

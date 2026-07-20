@@ -456,11 +456,26 @@ recover. Three triggers:
 | Metric | What it measures | Default trigger |
 |---|---|---|
 | Fuzzy re-raise rate | New-fingerprint findings whose text matches a prior finding (trigram sim > 0.6) | `> 15%` |
-| Cluster density | Median per-repo count of open finding pairs with sim > 0.5 but different fingerprints | `>= 5` |
+| Cluster density | Median per-repo count of open finding pairs with sim > 0.5 but different fingerprints. **Excludes machine-emitted control-state markers** (see below) | `>= 5` |
 | Recurrence rate | Fixed findings that reappear in same repo within 30 days under a new fingerprint | `> 10%` |
 
 Runtime is the `memory_health_metrics(window_days)` Postgres RPC added by
 `supabase/migrations/20260421120000_memory_health.sql` (uses `pg_trgm`).
+
+> **Cluster density counts FINDINGS, never a wave's own control state.** A wave
+> that prints a machine-generated notice about its own execution (coverage cap
+> hit, aborted enumeration) emits byte-identical text every time, so those rows
+> pair at similarity 1.00 with each other and inflate the metric by
+> construction — 44% of the raw signal on 2026-07-20. Sentinels are listed in
+> `control_marker_prefixes` (migration `20260720210000`) and matched on the
+> **detail-snapshot prefix, not the category**: the adjacency wave emits both
+> `ADJACENCY_INCOMPLETE` control state AND real `[Adjacency]` findings, so
+> excluding the category would drop genuine signal. **Add a sentinel there when
+> a new wave starts emitting control state**, or this gate will read AMBER
+> forever on its own logging. Two companion fixes in the same migration:
+> `open_findings` now means the considered population (it previously counted
+> only findings that already had a match), and a repo with zero similar pairs
+> contributes a 0 to the median instead of vanishing from it via an INNER JOIN.
 
 **Auto-scheduled** via `.github/workflows/memory-health.yml` — runs every Monday
 09:00 UTC, silent when all metrics green, opens/updates a sticky GH issue
