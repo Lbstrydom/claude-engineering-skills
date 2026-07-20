@@ -54,18 +54,36 @@ describe('normalize-intent / cache key redaction boundary (C2, Gemini G2)', () =
     // convergence. Drive the real redactor over two DIFFERENT raw intents and
     // assert their keys collide — that is the actual property.
     const { redactSecrets } = await import('../scripts/lib/secret-patterns.mjs');
-    const a = redactSecrets('connect to postgresql://user:hunter2trustno1@host/db').text;
-    const b = redactSecrets('connect to postgresql://user:totallyDifferentPw99@host/db').text;
-    assert.notEqual(
-      'connect to postgresql://user:hunter2trustno1@host/db',
-      'connect to postgresql://user:totallyDifferentPw99@host/db',
-    );
+    const rawA = 'connect to postgresql://user:hunter2trustno1@host/db';
+    const rawB = 'connect to postgresql://user:totallyDifferentPw99@host/db';
+    assert.notEqual(rawA, rawB, 'the two raw intents must genuinely differ');
+
+    const a = redactSecrets(rawA).text;
+    const b = redactSecrets(rawB).text;
+
+    // THE LOAD-BEARING ASSERTION is this one: redaction must CONVERGE the two
+    // distinct secrets to the same text. Asserting only that their cache keys
+    // match is tautological once that holds — the second round of this audit
+    // was right to call the previous form a broken regression test, because
+    // key(a)===key(b) proves nothing when a===b. Assert convergence first, so
+    // a redactor that stopped collapsing secrets fails HERE rather than
+    // silently making the key assertion trivially true.
+    assert.equal(a, b, 'redaction must collapse two different secrets to one text');
+    assert.equal(a.includes('hunter2trustno1'), false, 'the secret must not survive redaction');
+    assert.equal(b.includes('totallyDifferentPw99'), false);
+
     assert.equal(
       normalizationCacheKey(a, 'm'),
       normalizationCacheKey(b, 'm'),
       'intents differing only by the secret must not split the cache',
     );
-    assert.equal(normalizationCacheKey(a, 'm').includes('hunter2'), false);
+
+    // And the converse: genuinely different intents must NOT collide, or the
+    // convergence property above would be satisfied by a degenerate key.
+    assert.notEqual(
+      normalizationCacheKey(a, 'm'),
+      normalizationCacheKey('an entirely unrelated intent', 'm'),
+    );
   });
 
   it('differs by normalizerId so two providers never share an entry', () => {
