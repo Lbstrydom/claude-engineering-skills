@@ -35,6 +35,7 @@ import {
   isCloudEnabled,
   upsertPlan,
   updatePlanStatus,
+  getPlanIdByPath,
   recordRegressionSpec,
   recordRegressionSpecRun,
   listConsistencyCandidates,
@@ -265,11 +266,34 @@ async function cmdUpsertPlan() {
 
 async function cmdUpdatePlanStatus() {
   const p = parsePayload();
-  if (!p.planId || !p.status) return emitError('BAD_INPUT', 'planId and status are required');
+  if (!p.planId && !p.path) {
+    return emitError('BAD_INPUT', 'one of planId or path is required (path is usually what you know)');
+  }
+  if (!p.status) return emitError('BAD_INPUT', 'status is required');
   await initLearningStore();
   if (!await isCloudEnabled()) return emit({ ok: true, cloud: false });
-  await updatePlanStatus(p.planId, p.status);
-  emit({ ok: true, cloud: true });
+
+  // `path` is the ergonomic entry point: this command exists to be typed by a
+  // human deciding a plan is done, and nobody knows a plan by its UUID.
+  let planId = p.planId;
+  let resolvedPath = null;
+  if (!planId) {
+    const repoId = await resolveRepoId(p);
+    const found = await getPlanIdByPath(repoId, p.path);
+    if (!found.ok) return emitError('PLAN_NOT_RESOLVED', found.message, {}, 1);
+    planId = found.planId;
+    resolvedPath = found.path;
+  }
+
+  // Report the STORE's answer, not a blanket ok. `updatePlanStatus` returns
+  // rowCount 0 for a stale id, an RLS-filtered row, or an invalid status —
+  // emitting `{ok:true}` regardless would report a phantom write.
+  const res = await updatePlanStatus(planId, p.status);
+  if (!res.ok) {
+    return emitError('STATUS_NOT_UPDATED',
+      `no row updated for planId=${planId} — stale id, invalid status, or RLS`, {}, 1);
+  }
+  emit({ ok: true, cloud: true, planId, path: resolvedPath, status: p.status });
 }
 
 async function cmdRecordRegressionSpec() {

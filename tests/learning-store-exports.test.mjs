@@ -112,6 +112,8 @@ const EXPECTED_EXPORTS = [
   'retireMissedCorrelationsForHash', // WS1 — dismissal cascade (Gemini gate round-3 finding)
   'updatePlanStatus',
   'upsertPlan',
+  'getPlanIdByPath',   // path→id so a human can mark a plan terminal by name
+  'validatePlanPath',  // plan-path guard — keeps CLI flags/temp paths out of `plans`
   // persona (9 — isPersonaCloudEnabled lives in Lifecycle)
   'getPersonaSessionsByRepo',
   'getPersonaSessionsByUrl',
@@ -283,6 +285,11 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // 161 → 163: listFilesNeedingSummaryRetry + recordSummaryOutcomes added
     // 2026-07-20 for the bounded null-summary re-queue (plan §2.1 C9). The
     // cap constant is deliberately NOT exported — this surface is functions.
-    assert.equal(EXPECTED_EXPORTS.length, 166);
+    // 166 → 168: getPlanIdByPath + validatePlanPath added 2026-07-20 with the
+    // plan-path guard (a live audit found `--help` and two temp-scratchpad
+    // paths registered as plans). The DB status vocabulary that landed
+    // alongside them is deliberately NOT here — it is a constant, and it lives
+    // in plan-status.mjs with the vocabulary it derives from.
+    assert.equal(EXPECTED_EXPORTS.length, 168);
   });
 });

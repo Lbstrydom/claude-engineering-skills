@@ -9,11 +9,85 @@
  * @module scripts/lib/store/plans-ship
  */
 
+import path from 'node:path';
 import { many, one, insertReturning, upsert, updateWhere, deleteWhere, withTx } from '../db/query.mjs';
 import { getPool } from '../db/client.mjs';
 import { isCloudEnabled } from './repo.mjs';
+// Imported, never re-declared — `plan-status.mjs` is the single source of
+// truth for the vocabulary and for the markdown↔store spelling reconciliation.
+// Not re-exported: the `learning-store.mjs` barrel is a functions-only surface.
+import { DB_PLAN_STATUSES, toDbPlanStatus } from '../plan-status.mjs';
 
 // ── plans ──────────────────────────────────────────────────────────────────
+
+/**
+ * Validate + normalise a plan path before it becomes a durable identifier.
+ *
+ * Added 2026-07-20 after an audit of the live store found three non-plans
+ * registered in `plans`: the literal string `--help` (an unconsumed CLI flag
+ * that `upsert-plan` accepted as a path) and two absolute session-scratchpad
+ * paths under AppData/Temp that no longer exist. Nothing read them, but
+ * `plans` is the join target for `audit_runs.plan_id`, so junk rows quietly
+ * degrade every effectiveness query built over it.
+ *
+ * Lexical only — deliberately no `realpathSync`. Registering a path is not
+ * egress (no content is read or sent), so the symlink-resolution that
+ * `requirements/extract.mjs` needs for `--files` would be cost without a
+ * threat here. Containment is still enforced, which is what rejects the
+ * scratchpad paths.
+ *
+ * Normalising to a repo-relative POSIX path also closes a latent idempotence
+ * hole: `plans` is unique on `(repo_id, path)`, so the same plan referenced
+ * once absolutely and once relatively used to INSERT two rows rather than
+ * update one.
+ *
+ * @param {string} rawPath
+ * @param {{repoRoot?: string}} [opts]
+ * @returns {{ok:true, path:string}
+ *          |{ok:false, reason:'empty'|'flag-like'|'not-markdown'|'escapes-repo', message:string}}
+ */
+export function validatePlanPath(rawPath, opts = {}) {
+  if (typeof rawPath !== 'string' || !rawPath.trim()) {
+    return { ok: false, reason: 'empty', message: 'plan path is empty' };
+  }
+  const raw = rawPath.trim();
+
+  // A leading `-` is an unconsumed CLI flag, never a path. This is precisely
+  // how `--help` became a plan row.
+  if (raw.startsWith('-')) {
+    return {
+      ok: false, reason: 'flag-like',
+      message: `refusing a flag-like plan path (unconsumed CLI argument?): ${raw}`,
+    };
+  }
+  if (!/\.md$/i.test(raw)) {
+    return {
+      ok: false, reason: 'not-markdown',
+      message: `refusing a plan path that is not a .md document: ${raw}`,
+    };
+  }
+
+  const root = path.resolve(opts.repoRoot ?? process.cwd());
+  const abs = path.resolve(root, raw);
+  // Windows drive-letter and path casing vary between callers (`C:/GIT/...`
+  // vs `c:/git/...`), so containment compares case-insensitively there. The
+  // RETURNED path is still derived from the real resolve, never the lowered
+  // copy — we normalise the comparison, not the data.
+  const ci = process.platform === 'win32';
+  const cmp = (s) => (ci ? s.toLowerCase() : s);
+  if (cmp(abs) !== cmp(root) && !cmp(abs).startsWith(cmp(root) + path.sep)) {
+    return {
+      ok: false, reason: 'escapes-repo',
+      message: `refusing a plan path outside the repo root (scratchpad or temp file?): ${raw}`,
+    };
+  }
+
+  const rel = path.relative(root, abs).replace(/\\/g, '/');
+  if (!rel) {
+    return { ok: false, reason: 'escapes-repo', message: `plan path resolves to the repo root itself: ${raw}` };
+  }
+  return { ok: true, path: rel };
+}
 
 /**
  * Upsert a plan artefact. Returns the plan UUID so audit_runs can link.
@@ -22,6 +96,21 @@ import { isCloudEnabled } from './repo.mjs';
 export async function upsertPlan(repoId, plan) {
   if (!plan?.path || !plan?.skill) return null;
   if (!await isCloudEnabled()) return null;
+  // Validated HERE rather than at the CLI boundary because `upsertPlan` is the
+  // real chokepoint — three callers reach it (cross-skill.mjs, the code-audit
+  // path in legacy-production-audit.mjs, and plan-audit-cloud.mjs), and two of
+  // those pass a user-supplied `--plan` argument straight through. Guarding
+  // only the CLI would have left the audit paths open, which is where the
+  // scratchpad rows most likely entered.
+  //
+  // Returns null rather than throwing: every caller already treats a null plan
+  // id as "no plan linkage" and continues, so a bad path costs the link, never
+  // the audit. The warning is what makes it non-silent.
+  const validated = validatePlanPath(plan.path);
+  if (!validated.ok) {
+    process.stderr.write(`  [learning] upsertPlan: ${validated.message}\n`);
+    return null;
+  }
   if (!repoId) {
     // Idempotence is claimed on (repo_id, path), a FULL unique index. A NULL
     // repo_id is distinct from every other NULL in Postgres, so a null here
@@ -37,7 +126,7 @@ export async function upsertPlan(repoId, plan) {
     // @on-conflict-ok: repoId is provably non-null — the early return above rejects a falsy repoId, naming this exact defect class; detecting that needs flow analysis.
     const rows = await upsert('plans', [{
       repo_id: repoId || null,
-      path: plan.path,
+      path: validated.path,   // repo-relative POSIX — see validatePlanPath
       skill: plan.skill,
       status: plan.status || 'draft',
       principles_cited: plan.principlesCited || [],   // jsonb — serialized by the db-layer seam
@@ -53,12 +142,61 @@ export async function upsertPlan(repoId, plan) {
   }
 }
 
+/**
+ * Resolve a plan UUID from its path, so a human can mark a plan terminal by
+ * the name they actually know it by rather than by hunting a UUID.
+ *
+ * Applies the same normalisation `upsertPlan` writes through, so a lookup by
+ * `docs/plans/<name>.md` matches a row registered from an absolute path.
+ *
+ * @returns {Promise<{ok:true, planId:string, path:string}
+ *                  |{ok:false, reason:'invalid-path'|'not-found'|'cloud-off', message:string}>}
+ */
+export async function getPlanIdByPath(repoId, rawPath) {
+  const validated = validatePlanPath(rawPath);
+  if (!validated.ok) return { ok: false, reason: 'invalid-path', message: validated.message };
+  if (!await isCloudEnabled()) return { ok: false, reason: 'cloud-off', message: 'cloud store is disabled' };
+  if (!repoId) return { ok: false, reason: 'not-found', message: 'no resolved repoId — cannot scope a plan lookup' };
+  try {
+    const row = await one(
+      'SELECT id, path FROM plans WHERE repo_id = $1 AND path = $2',
+      [repoId, validated.path],
+    );
+    if (!row) {
+      return {
+        ok: false, reason: 'not-found',
+        message: `no plan registered at ${validated.path} for this repo — run the /plan flow first, or check the path`,
+      };
+    }
+    return { ok: true, planId: row.id, path: row.path };
+  } catch (err) {
+    return { ok: false, reason: 'not-found', message: `plan lookup failed: ${err.message}` };
+  }
+}
+
 /** Update a plan's status. Returns { ok, rowCount }. */
 export async function updatePlanStatus(planId, status) {
   if (!planId || !await isCloudEnabled()) return { ok: false, rowCount: 0 };
+  // Accept the MARKDOWN spelling of the same token, not just the DB one.
+  // `skills/plan/SKILL.md` instructs `Draft | Approved | In Progress |
+  // Complete` while the CHECK constraint stores `in_progress` etc., so a human
+  // following our own docs types `Complete` and would otherwise be rejected for
+  // a difference in casing convention between two surfaces — not a real
+  // disagreement about the value. Same vocabulary, one spelling normaliser.
+  const normalised = toDbPlanStatus(status);
+
+  // Reject an out-of-vocabulary status BEFORE the write. The CHECK constraint
+  // would catch it anyway, but as an opaque `23514` the caller cannot act on —
+  // and the whole point of this path is that a human types the status by hand.
+  if (!DB_PLAN_STATUSES.includes(normalised)) {
+    process.stderr.write(
+      `  [learning] updatePlanStatus: '${status}' is not a valid status (expected one of: ${DB_PLAN_STATUSES.join(', ')})\n`,
+    );
+    return { ok: false, rowCount: 0 };
+  }
   try {
     const { rowCount } = await updateWhere('plans',
-      { status, updated_at: new Date().toISOString() },
+      { status: normalised, updated_at: new Date().toISOString() },
       { id: planId }
     );
     // A 0-row update means the planId matched nothing (stale id, or an RLS

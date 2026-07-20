@@ -21,6 +21,32 @@ export const PLAN_STATUS_VOCABULARY = Object.freeze({
   active: ['Draft', 'Approved', 'In Progress'],
 });
 
+/**
+ * Normalise a status token to its STORE spelling: lowercase, spaces to
+ * underscores (`In Progress` → `in_progress`). The markdown surface and the
+ * `plans_status_check` CHECK constraint spell the same vocabulary two ways;
+ * this is the one place that reconciles them.
+ */
+export function toDbPlanStatus(token) {
+  return typeof token === 'string' ? token.trim().toLowerCase().replace(/\s+/g, '_') : token;
+}
+
+/**
+ * The DB-side vocabulary, DERIVED from the markdown one above rather than
+ * restated. Lives here — not in the store module — because this file is the
+ * declared single source of truth for the vocabulary, and because the
+ * `learning-store.mjs` barrel is deliberately a functions-only surface.
+ *
+ * `abandoned` is additionally accepted: already-persisted data that predates
+ * the vocabulary and maps to no markdown token, so the CHECK keeps it (see
+ * migration 20260718120000). Restating this list anywhere else would recreate
+ * the three-definitions-one-vocabulary drift that migration exists to kill.
+ */
+export const DB_PLAN_STATUSES = Object.freeze([
+  ...[...PLAN_STATUS_VOCABULARY.terminal, ...PLAN_STATUS_VOCABULARY.active].map(toDbPlanStatus),
+  'abandoned',
+]);
+
 // Longest-token-first so `In Progress` matches before `In`. Each entry carries
 // its kind.
 const TOKENS = [

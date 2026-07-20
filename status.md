@@ -1,5 +1,78 @@
 # Project Status Log
 
+## 2026-07-20 (latest) — a store health check, and a number I got wrong by 10x
+
+Started as "is our Supabase telemetry capturing correctly?" The store itself was
+healthy — 77/77 migrations, no drift, core tables writing today, embeddings
+complete at 3 unembedded of 12,106. The findings were all in what the data
+*meant*.
+
+**The 10x error, which is the part worth keeping.** I reported `gemini_verdict`
+missing on **93%** of runs off a raw `count(*) FILTER (WHERE gemini_verdict IS
+NULL)`. Both halves of that were wrong. `audit_runs` holds one row **per round**
+while the Step-7 verdict is written once **per session**, so the denominator was
+inflated ~3x; and most of the NULL span predated the writer existing at all
+(`--run-id` threading landed 2026-07-18). Re-checked per session it is roughly
+**3 of 5** — a normal-sized gap, not a systemic skip. Recorded as a memory:
+before quoting any rate off `audit_runs`, ask whether the column is per-round or
+per-session, and whether its writer existed for the whole window.
+
+The same check cleared `round_converged_after` (NULL on 100% of rows). Rather
+than assume, I used the discriminator the writer provides: `recordConvergenceState`
+writes `audited_sha` unconditionally and `round_converged_after` only on
+convergence. `audited_sha` is present on 16 of 79 post-fix code runs — so the
+writer fires and **nothing has formally converged since 2026-07-18**. Mechanism
+fine; `AI-Gate: passed` stays unreachable because runs stop at round 2–3.
+
+**Refused a request, with evidence.** Asked to link 23 plans to their audit runs,
+I checked first: 0 audit_runs have a NULL `plan_id`, 0 dangle, and all 23 return
+zero matches by id, by exact path, and by basename. There was nothing to link —
+those plans were simply never audited. Linking them would have fabricated the
+associations the effectiveness views depend on.
+
+**What that query did surface: three non-plans in `plans`.** The literal string
+`--help` (an unconsumed CLI flag) and two absolute session-scratchpad paths under
+AppData/Temp. Hence `validatePlanPath` in `plans-ship.mjs`, called from inside
+`upsertPlan` rather than at the CLI — three callers reach it and two pass a
+user-supplied `--plan` straight through, so a CLI-only guard would have left the
+audit paths open (most likely how the scratchpad rows got in). Rejects flag-like
+/ non-`.md` / outside-repo-root; returns null rather than throwing, since every
+caller already treats a null plan id as "no linkage". Normalising to
+repo-relative POSIX also closed a latent idempotence hole: `plans` is unique on
+`(repo_id, path)`, so one plan referenced absolutely and relatively was inserting
+two rows. Deliberately lexical — registering a path is not egress, so the
+symlink resolution `requirements/extract.mjs` needs would be cost without a
+threat. The 3 junk rows were deleted in a guarded transaction (explicit ids, not
+a pattern; rowCount and table-delta both asserted; all three FK dependents zero,
+including the two CASCADE ones). `plans` 43 → 40.
+
+**Terminal marker made usable.** `update-plan-status` now accepts a `path` via
+the new `getPlanIdByPath`, because nobody knows a plan by its UUID. It also
+stopped reporting `{ok:true}` unconditionally — it now surfaces the store's real
+`rowCount`, so a stale id or RLS-filtered row reads as a failure instead of a
+phantom write. Smoke-testing caught genuine friction: `skills/plan/SKILL.md`
+instructs `Complete` while the CHECK constraint stores `complete`, so typing what
+our own docs say was rejected. `toDbPlanStatus` now reconciles the two spellings.
+
+Placement of the derived vocabulary was corrected by a test, not by me: I put
+`DB_PLAN_STATUSES` in the store module and `learning-store-exports` failed —
+that barrel is deliberately functions-only. It belongs in `plan-status.mjs`
+beside the vocabulary it derives from, which is also what migration
+`20260718120000` exists to protect. Good invariant to be stopped by.
+
+**Decision recorded: plan outcome stays unmeasured here.** `plan_verification_*`
+is empty because `/ux-lock verify` has never run — and it structurally cannot
+help in this repo (it drives a browser; this is CLI tooling with no URL). Plan
+status transitions were never wired to any skill (`git log -S` over `skills/`
+returns empty — not refactoring damage) and stay manual on purpose: a ship is not
+a plan completing, so auto-marking on `/ship` would encode a false semantic.
+Nothing downstream consumes plan status today, so the gap costs nothing yet.
+
+Also noted: memory-health is AMBER — cluster density 116 against a threshold of
+5, with sample matches at similarity 1.0. Per the standing decision rule, one
+trigger two weeks running means prototype pgvector similarity; this reading
+starts that clock.
+
 ## 2026-07-20 (later) — two closing fixes, and a bug I asserted that did not exist
 
 Tail of the arch-memory session above. Two commits of substance and one lesson
