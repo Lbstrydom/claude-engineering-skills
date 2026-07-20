@@ -78,6 +78,20 @@ run the script directly, which is the form the advisory prints:
 cd /path/to/consumer && node /path/to/claude-engineering-skills/scripts/azure-doctor.mjs --fix
 ```
 
+> **Field-verified 2026-07-20** (work tenant, read-only probe): with the
+> `text-embedding-3-large` default, `azure:doctor --json` returned
+> `selected: text-embedding-3-large`, `probed.length === 1` (verified on the
+> FIRST probe — no ladder walk), and `catalogSource: "catalog"`, confirming live
+> catalog listing works against a real endpoint rather than silently falling
+> back to the static list.
+>
+> **Not** field-verified: the contract-unsupported branch (a deployment that
+> exists but rejects the `dimensions` parameter). `text-embedding-ada-002` — the
+> case it exists for — is not deployed on that tenant, so the branch is pinned by
+> unit tests against the documented error wording, not by observation. If you
+> ever see discovery HALT on a deployment that exists, that is the branch to
+> suspect first.
+
 The doctor does **verified-candidate selection**, not blind trust: the model
 catalog lists models that aren't deployed (both `3-small` and `3-large` show as
 "generally-available" even when only one is deployed), so it confirms each

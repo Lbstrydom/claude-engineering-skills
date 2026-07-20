@@ -62,6 +62,39 @@ describe('probeDeployment — "verified" must mean "usable"', () => {
     assert.equal(r.outcome, ProbeOutcome.UNSUPPORTED);
   });
 
+  it('a 400 that merely ECHOES our request must NOT advance', async () => {
+    // The probe always sends `dimensions`, so a gateway that echoes the request
+    // body puts that word in the error text. Advancing on it would present a
+    // different deployment as verified and hide the real endpoint fault —
+    // the same class the bare-404 rule prevents. This is the regression guard
+    // for a too-loose first draft of the contract-unsupported pattern.
+    const err = new Error('400 Bad Request: {"model":"x","input":"ping","dimensions":768}');
+    err.status = 400;
+    const r = await probeDeployment({
+      embeddings: { create: async () => { throw err; } },
+      models: { list: async () => ({ data: [] }) },
+    }, 'text-embedding-3-large');
+    assert.equal(r.outcome, ProbeOutcome.UNVERIFIED);
+  });
+
+  it('the real OpenAI unsupported-parameter wording DOES advance', async () => {
+    // Verbatim shape of the documented error. Not observed against the tenant
+    // (ada-002 is not deployed there), so this pins the contract we reasoned to.
+    for (const msg of [
+      "Unsupported parameter: 'dimensions' is not supported with this model.",
+      'unsupported_parameter',
+      "Invalid parameter: 'dimensions'.",
+    ]) {
+      const err = new Error(msg);
+      err.status = 400;
+      const r = await probeDeployment({
+        embeddings: { create: async () => { throw err; } },
+        models: { list: async () => ({ data: [] }) },
+      }, 'text-embedding-ada-002');
+      assert.equal(r.outcome, ProbeOutcome.UNSUPPORTED, msg);
+    }
+  });
+
   it('a BARE 400 with no explicit signal stays terminal', async () => {
     // The module's discipline: advancing without an explicit signal would
     // repoint the vector space to hide a malformed-request or gateway fault.

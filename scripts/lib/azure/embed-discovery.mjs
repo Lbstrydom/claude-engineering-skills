@@ -84,7 +84,15 @@ function classifyProbeError(err) {
   // A bare 400 stays terminal, because that is also what a malformed request or
   // a gateway fault looks like, and advancing on those would repoint the vector
   // space to hide a config defect.
-  const contractUnsupported = /dimensions|unsupported[_ ]?parameter|unknown[_ ]?parameter|invalid[_ ]?parameter|extra fields/i.test(hay);
+  // Must name a PARAMETER problem explicitly. The first draft also matched a
+  // bare `dimensions`, which is unsafe in the advance direction: the probe
+  // itself sends `dimensions`, so any 400 whose body echoes the request (some
+  // gateways do) would have advanced the ladder and presented a DIFFERENT
+  // deployment as verified — masking the endpoint fault, exactly what the
+  // bare-404 rule above exists to prevent. Caught 2026-07-20 when a live probe
+  // could not validate this branch (ada-002 is not deployed on the tenant), so
+  // it got re-read instead of assumed.
+  const contractUnsupported = /(?:unsupported|unknown|invalid)[_ ]?parameter|not supported with this model|extra fields/i.test(hay);
   const isUnsupported = (status === 400 || status === 404) && (deploymentNotFound || contractUnsupported);
   return {
     outcome: isUnsupported ? ProbeOutcome.UNSUPPORTED : ProbeOutcome.UNVERIFIED,
