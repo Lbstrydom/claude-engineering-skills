@@ -149,6 +149,14 @@
       "description": "The DRIFT-gate form of cli:flags (part of `npm run check`): fails only on a NET-NEW CLI that parses flags but ignores unknown ones. The 24 pre-existing ones are baselined so the gate is a ratchet, not a wall. Origin: refresh.mjs --full --dry-run silently discarded --dry-run and ran a real full refresh.",
       "category": "diagnostic"
     },
+    "npm-args": {
+      "description": "Census of documented `npm run <script> --flag` commands that omit the `--` separator, so npm swallows the flag before the script sees it. Report-only.",
+      "category": "diagnostic"
+    },
+    "npm-args:gate": {
+      "description": "The DRIFT-gate form of npm-args (part of `npm run check`): fails only on a NET-NEW broken instruction in a live surface (plans/research/status.md excluded as records, not instructions). Origin: an AGENTS.md line omitted the `--` before a script flag, so npm consumed the flag and the sync ran unscoped, writing into every consumer repo instead of one.",
+      "category": "diagnostic"
+    },
     "context:check": {
       "description": "Detect drift between CLAUDE.md / AGENTS.md and the live codebase.",
       "category": "diagnostic"

@@ -52,7 +52,7 @@ with `npm run learning:weekly-review -- --repo <name>`.
   `.audit/quickfix-hits.jsonl` (for repos without cloud history yet)
 - `npm run learning:backfill-outcomes` — Phase 2; drain hits JSONL into
   `learning_decisions`, then resolve unresolved outcomes from file state
-- `npm run learning:replay <decision_type> [--policy <path>] [--since 30d] [--format markdown]`
+- `npm run learning:replay -- <decision_type> [--policy <path>] [--since 30d] [--format markdown]`
   — Phase 3; counterfactual evaluation of a candidate policy against historical
   decisions. Built-in reward fns: `pass_selection`, `convergence_predict`,
   `arch_memory_band` (per master plan §5).

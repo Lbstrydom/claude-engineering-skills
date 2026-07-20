@@ -4,7 +4,7 @@
  * The defect this guards: `walk()` used `statSync`, which FOLLOWS symlinks, and
  * recursed through anything reporting `isDirectory()`. Paired with the only
  * `recurse: true` entry — whose regex is `/./`, matching every basename — a
- * symlinked `.audit-loop/cache` turned `npm run audit:clean --apply` into a
+ * symlinked `.audit-loop/cache` turned `npm run audit:clean -- --apply` into a
  * recursive delete of files OUTSIDE the repo. The trigger is not an attacker
  * but an ordinary `ln -s /mnt/big/audit-cache .audit-loop/cache`.
  *

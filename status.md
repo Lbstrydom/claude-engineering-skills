@@ -1,5 +1,47 @@
 # Project Status Log
 
+## 2026-07-20 (latest) — the npm `--` swallow was a class of 34, not three instances
+
+Built `check-npm-run-args.mjs` (`npm-args:gate`, wired into `npm run check`). It
+scans live instruction surfaces for `npm run <script> --flag` written without
+the `--` separator — the form where npm consumes the flag as its own config
+before the script's argv exists. No in-script guard can catch this (the flag
+never reaches the script), so the documentation is the only place to catch it.
+
+I had told the issue this was "three hand-found instances, one below the bar."
+Checking it properly refuted that: a census found **34**, and one of them was
+the canonical AGENTS.md line every agent reads each session. The gate is the
+`check-cli-flags` class one layer out, so it reuses that design wholesale —
+report-only census + drift-only `--gating` + a baseline ratchet, `--json`,
+`--selfcheck-relocation`, and the empty-scan-is-a-failure guard.
+
+Three things worth recording, because each is a lesson this session already
+taught once and the gate re-taught:
+
+- **The tokenizer caught a real bug my manual regex census missed.**
+  `learning-system.md` documented `npm run learning:replay <decision_type>
+  [--policy <path>] …` — the flag sits after a positional, so my earlier
+  `npm run <script> --flag` grep skipped it, but `learning:replay` forwards
+  `rest` to `replay.mjs`, which reads `--policy`. Fixed.
+- **Scope excludes records, includes instructions.** `docs/plans/**`,
+  `docs/research/**`, and `status.md` are excluded: they QUOTE broken commands
+  to describe the bug (this very entry does), and gating them would punish
+  documenting the defect — the same "prose about the bug is not the bug" lesson
+  the `check-cli-flags` comment-stripping fix records. The 31 remaining
+  instances all live in those record surfaces.
+- **The gate flagged its own catalog entry, then its own flags.** Its
+  `.cli-catalog.json` description quoted the broken command (reworded to
+  describe without the trigger), and `cli:flags:gate` correctly failed the new
+  CLI for not guarding `--gating`/`--json` — the flag-drop tool dropping its
+  own flags. Both fixed. A live-repo test flaked once on an untracked scratch
+  file a parallel test wrote; pinned to `git ls-files` (tracked-only), which is
+  also what the pre-push clean-checkout actually sees.
+
+Recommendation stands from the issue thread: build THIS lint (regex + a small
+npm-native allowlist, high precision), do NOT build the AST "known-flag-dropped"
+detector (reachability, nasty FP surface). They are different checks; only this
+one cleared the bar.
+
 ## 2026-07-20 (later still) — the cluster-density signal was a false positive, dressed as 9 categories
 
 Follow-through on the memory-health AMBER logged below. The residual cluster
