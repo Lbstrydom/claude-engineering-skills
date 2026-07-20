@@ -677,6 +677,61 @@ no remaining cheap increment, so the next step is either the deferred hop, taken
 deliberately with its full cost, or accepting `C` as a narrow bucket and leaning
 on `D` (which continues to deliver 38%) plus a well-ranked `A`.
 
+### 2d-ii. The render-delegation hop — measured at zero, and CLOSED
+
+The decision §6 deferred was taken on 2026-07-20, by measuring the ceiling
+before writing the resolver rather than after.
+
+| Of the 99 DOM-XSS findings still in `A` | n |
+|---|---|
+| Not a delegation at all — a hop cannot touch them | 82 |
+| Delegation → resolves fine → **resolved function has MULTIPLE templates** → ambiguous again | 13 |
+| Delegation → bare specifier (`node_modules`) → unresolvable | 4 |
+| **Findings the hop would move to `C`** | **0** |
+
+Checked against the standard control: the body-scan window was widened
+2,500 → 30,000 chars in case the block was the probe's bound rather than the
+code's shape. Nothing moved — the 6 "template not closed" simply became
+"multiple templates". The ceiling is real.
+
+**This also corrects §2d's own count.** It said "36 render-delegation cases".
+Re-classified against v1.1, only **17** are delegations; the other 82 fail for
+reasons — bare variables, ternaries, genuinely unsanitized interpolations — that
+no function hop addresses.
+
+**Why it fails is structural, not incidental.** The canonical render function
+builds rows, then wraps them:
+
+```js
+const rows = users.map(u => `<tr>…${escapeHtml(u.email)}…</tr>`).join('');  // template 1
+return `<table>…${rows}…</table>`;                                          // template 2
+```
+
+Two templates, so §7c-2 fires and the predicate refuses rather than choosing.
+Overriding that to pick the *returned* template makes it worse, not better: the
+return carries only `${rows}`, while the user data lives in the other template —
+so the analysis would demote on the wrong one. Analysing both means recursing,
+and the rows template contains `${renderTrialBadge(u)}` (a **second** hop),
+ternary interpolations (unsupported), and `${Number(...)}` (safe by coercion but
+not a declared sanitizer).
+
+Clearing one function therefore needs multi-template disambiguation **plus**
+ternary support **plus** recursive hops **plus** a safe-by-coercion notion. That
+is the taint engine §6 deferred — reached by four increments instead of one
+decision, which is exactly how the tar pit is entered.
+
+Worth recording: the motivating function is *exemplary* code. Its own comment
+notes it was stored XSS in the admin panel and that every value is now escaped.
+It is correct **and** unanalysable by any closed-form predicate — which is the
+honest boundary of this design, not a defect in either the code or the tool.
+
+**Decision: closed. Do not build the hop.** Not because the fix is larger —
+that is never a valid reason — but because the measured yield is zero and the
+variant with non-zero yield requires overriding the one constraint that stops
+the predicate guessing in the demoting direction. `C` stays narrow by design.
+Re-open only with evidence from a codebase whose sinks are *not*
+render-delegated, and re-run this ceiling probe there first.
+
 ## 6. Sustainability Notes
 
 ### Right-sizing gate
@@ -710,10 +765,15 @@ should go, and it changes what "smallest honest thing" means for v1.1:
   crediting `sanitizer(x) || <literal>` / `?? <literal>`, and fixing the
   whole-prefix-masking vs bounded-read interaction. Neither adds a new predicate
   *kind*; both make the existing one see what is already in front of it.
-- **Still the tar pit, still deferred:** following the sink into a render
-  function. It is one hop, not a taint engine — but "one hop" is how taint
-  engines start, and the 36 findings it would recover are safely in `A`
-  meanwhile. Take that decision deliberately, not as a follow-on.
+- **~~Still the tar pit, still deferred~~ — DECIDED AND CLOSED (§2d-ii):**
+  following the sink into a render function was measured before being built,
+  and its ceiling is **zero** findings. The "36 findings it would recover" in
+  the original wording was itself wrong — only 17 are delegations, and all 17
+  resolve into functions carrying multiple templates, which §7c-2 refuses. The
+  variant that yields anything requires overriding that constraint and then
+  recursing, which is the taint engine reached in four increments. Do not
+  build it; re-open only with evidence from a non-render-delegated codebase,
+  and re-run the ceiling probe there first.
 
 **Manual vs scripted**: scripted. The transformation is regular (N SARIF results
 → N routed findings) and verifiable (bucket counts assert against fixtures).
