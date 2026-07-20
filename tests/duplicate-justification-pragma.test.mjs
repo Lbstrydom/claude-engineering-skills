@@ -195,6 +195,38 @@ describe('findRepoPragmas — untracked files + strict mode (round-2 M7 / H8)', 
     assert.equal(pragmas.length, 0);
   });
 
+  // CRLF regression (field, 2026-07-20). A consumer repo without an
+  // `eol=lf` .gitattributes checks files out CRLF, so every `git grep` line
+  // ends with \r. JS `.` does NOT match \r, so `(.*)$` in the line-shape
+  // regex could never reach the anchor and EVERY line was discarded — the
+  // sweep returned [] and the whole @duplicate-justification feature was
+  // silently inert, with no warning (an empty sweep is indistinguishable
+  // from "this repo has no pragmas"). This repo pins eol=lf, which is
+  // exactly why its own suite never caught it.
+  it('parses CRLF git-grep output (consumer repos without eol=lf)', () => {
+    fs.writeFileSync(
+      path.join(tmp, 'crlf.mjs'),
+      '// @duplicate-justification: target=a.mjs:foo reason=crlf test\r\nfunction foo() {}\r\n',
+    );
+    const pragmas = findRepoPragmas(tmp);
+    assert.equal(pragmas.length, 1, 'a CRLF file must not silently yield zero pragmas');
+    assert.equal(pragmas[0].pragmaFile, 'crlf.mjs');
+    assert.equal(pragmas[0].pragmaLine, 1);
+    assert.equal(pragmas[0].targetFile, 'a.mjs');
+    assert.equal(pragmas[0].targetSymbol, 'foo');
+    assert.equal(pragmas[0].reason, 'crlf test', 'the trailing \\r must not leak into the reason');
+  });
+
+  it('parses a mixed CRLF/LF repo — both line endings in one sweep', () => {
+    fs.writeFileSync(path.join(tmp, 'a-crlf.mjs'),
+      '// @duplicate-justification: target=x.mjs:one reason=r1\r\nfunction one() {}\r\n');
+    fs.writeFileSync(path.join(tmp, 'b-lf.mjs'),
+      '// @duplicate-justification: target=x.mjs:two reason=r2\nfunction two() {}\n');
+    const pragmas = findRepoPragmas(tmp);
+    assert.equal(pragmas.length, 2);
+    assert.deepEqual(pragmas.map((p) => p.reason).sort(), ['r1', 'r2']);
+  });
+
   it('default (non-strict) mode: a genuinely non-git directory degrades to []', () => {
     const notARepo = fs.mkdtempSync(path.join(os.tmpdir(), 'not-a-repo-'));
     try {

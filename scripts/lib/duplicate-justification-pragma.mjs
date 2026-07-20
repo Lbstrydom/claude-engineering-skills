@@ -79,7 +79,15 @@ export function findRepoPragmas(repoRoot, { strict = false } = {}) {
     return [];
   }
   const pragmas = [];
-  for (const line of output.split('\n')) {
+  // Split on /\r?\n/, NOT '\n' (field regression, 2026-07-20). A consumer
+  // repo without an `eol=lf` .gitattributes checks files out CRLF, so every
+  // `git grep` line arrives with a trailing \r. JS `.` does not match \r, so
+  // the `(.*)$` below could never reach its anchor and EVERY line was
+  // silently discarded — the sweep returned [], and because an empty sweep is
+  // indistinguishable from "this repo has no pragmas", the whole
+  // @duplicate-justification feature was inert in those repos with no
+  // warning. This repo pins eol=lf, which is why its own suite never saw it.
+  for (const line of output.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const m = line.match(/^([^:]+):(\d+):(.*)$/);
     if (!m) continue;
