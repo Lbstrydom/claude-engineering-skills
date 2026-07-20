@@ -40,6 +40,16 @@ import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { LAYOUT_CONSTANTS } from './sync-path-map.mjs';
 import { SyncManifestSchema } from './sync-manifest.mjs';
+import { assertKnownFlags } from './cli-io.mjs';
+
+/**
+ * Every flag this CLI accepts — must list only flags `parseArgs` HANDLES.
+ * @see scripts/symbol-index/refresh.mjs KNOWN_FLAGS for why that matters.
+ */
+export const KNOWN_FLAGS = Object.freeze([
+  '--consumer-root', '--legacy-manifest', '--dry-run', '--force-dirty',
+  '--selfcheck-relocation',
+]);
 
 // Strict safe relative path: no traversal, no absolute, no control chars.
 const SAFE_REL_PATH = /^(?!\.\.\/)(?!\/)(?![A-Za-z]:[/\\])[A-Za-z0-9_./\-+@]+$/;
@@ -51,6 +61,15 @@ function parseArgs(argv) {
     dryRun: false,
     forceDirty: false,
   };
+  // `from: 0` — this parser receives an already-sliced argv, unlike the
+  // symbol-index CLIs which read process.argv directly.
+  //
+  // Sharpest instance of this bug class in the repo: it `unlinkSync`s and
+  // `git rm`s files in a CONSUMER's repository, and --dry-run is the flag that
+  // makes it harmless. A typo'd `--dry-runn` was silently dropped and really
+  // deleted — in a repo whose owner is not the person who ran the command.
+  assertKnownFlags(argv, KNOWN_FLAGS, { cli: 'remove-legacy-synced', from: 0 });
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--consumer-root') out.consumerRoot = argv[++i];
@@ -317,7 +336,20 @@ function main() {
 }
 
 const isCli = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
-if (isCli) main();
+if (isCli) {
+  try {
+    main();
+  } catch (err) {
+    // A usage mistake exits 2 with the message alone — same contract as the
+    // `summary.errors` path below, and without a stack burying the one line
+    // the operator needs. Anything else keeps its stack and exits 1.
+    if (err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`[remove-legacy-synced] ${err.message}\n`);
+      process.exit(2);
+    }
+    throw err;
+  }
+}
 
 export const _internals = {
   SAFE_REL_PATH, parseArgs, validateRelPath, isTracked, isModified, gitRm, fsUnlink,

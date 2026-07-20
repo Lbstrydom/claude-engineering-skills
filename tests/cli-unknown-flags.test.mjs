@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { assertKnownFlags, ArgvError } from '../scripts/lib/cli-io.mjs';
 import { KNOWN_FLAGS } from '../scripts/symbol-index/refresh.mjs';
 import { KNOWN_FLAGS as PRUNE_FLAGS } from '../scripts/symbol-index/prune.mjs';
+import { KNOWN_FLAGS as RLS_FLAGS, _internals as RLS } from '../scripts/lib/remove-legacy-synced.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -134,6 +135,50 @@ describe('prune.mjs — the sibling that fails in the dangerous direction', () =
       path.join(REPO_ROOT, 'scripts', 'symbol-index', 'prune.mjs'), 'utf-8');
     const body = src.slice(src.indexOf('function parseArgs'), src.indexOf('const ROLLBACK_KEEP'));
     for (const flag of PRUNE_FLAGS) {
+      assert.ok(body.includes(`'${flag}'`), `${flag} is allow-listed but never handled`);
+    }
+  });
+});
+
+describe('remove-legacy-synced.mjs — deletes files in someone ELSE\'s repo', () => {
+  // The sharpest instance found by a mechanical sweep of every flag-parsing
+  // script for genuinely destructive calls (unlink / git rm / DB row deletion /
+  // snapshot publication). An earlier eyeball pass claimed refresh and prune
+  // were the only two; that was wrong, which is why this sweep was mechanical.
+
+  it('rejects a typo of --dry-run rather than really deleting', () => {
+    assert.throws(
+      () => RLS.parseArgs(['--consumer-root', '/tmp/x', '--dry-runn']),
+      (err) => {
+        assert.equal(err.code, 'ARGV_ERROR');
+        assert.match(err.message, /unknown flag "--dry-runn"/);
+        return true;
+      },
+    );
+  });
+
+  it('parses from index 0 — it receives an already-sliced argv', () => {
+    // Getting `from` wrong would silently skip the first two real flags,
+    // reopening the hole for exactly the arguments most likely to be typed.
+    assert.throws(() => RLS.parseArgs(['--bogus']), { code: 'ARGV_ERROR' });
+    assert.doesNotThrow(() => RLS.parseArgs(['--dry-run']));
+  });
+
+  it('still accepts every flag it documents, including value-taking ones', () => {
+    const parsed = RLS.parseArgs([
+      '--consumer-root', '/tmp/consumer', '--legacy-manifest', '/tmp/m.json',
+      '--dry-run', '--force-dirty',
+    ]);
+    assert.equal(parsed.dryRun, true);
+    assert.equal(parsed.forceDirty, true);
+    assert.equal(parsed.consumerRoot, '/tmp/consumer');
+  });
+
+  it('KNOWN_FLAGS lists ONLY flags the parser actually handles', () => {
+    const src = fs.readFileSync(
+      path.join(REPO_ROOT, 'scripts', 'lib', 'remove-legacy-synced.mjs'), 'utf-8');
+    const body = src.slice(src.indexOf('function parseArgs'), src.indexOf('function validateRelPath'));
+    for (const flag of RLS_FLAGS) {
       assert.ok(body.includes(`'${flag}'`), `${flag} is allow-listed but never handled`);
     }
   });
