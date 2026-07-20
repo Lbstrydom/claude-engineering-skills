@@ -53,11 +53,46 @@ import path from 'node:path';
 const IS_WIN = process.platform === 'win32';
 const NPM = IS_WIN ? 'npm.cmd' : 'npm';
 
-/** Gitignored files that must be copied into the sandbox for a check to be meaningful. */
+/** Gitignored/untracked files that must be copied into the sandbox for a check
+ *  to be meaningful.
+ *
+ *  Provisioning vs. a strictness flag — pick by WHO owns the input:
+ *  · Input is machine-derived evidence that should always exist (the DB graph)
+ *    → a REQUIRE flag is right; absent means something is broken.
+ *  · Input is OPERATOR CONFIG that may legitimately not exist (opt-in policy
+ *    files) → provisioning is right. A require flag there would fail every push
+ *    in a repo that simply hasn't opted in, and the honest reading of "absent
+ *    in the main checkout too" is genuinely "not configured".
+ *  The failure mode being closed is the middle case: the operator HAS opted in,
+ *  but the clean checkout doesn't see it, so the gate silently runs disabled
+ *  while they believe it is on. */
 const PROVISIONED_ARTIFACTS = [
   // DB-derived, not commit-derived, so the main checkout's copy is the correct
   // evidence for any commit. Absent → arch:coverage-gate would exit 0 blind.
   '.audit-loop/domain-deps-observed.json',
+];
+
+/** Untracked OPERATOR CONFIG: copied when present, silently skipped when not.
+ *
+ *  Deliberately NOT in PROVISIONED_ARTIFACTS — a missing entry there THROWS and
+ *  blocks the push, which is right for machine-derived evidence ("absent means
+ *  something is broken") and wrong for opt-in policy files ("absent means not
+ *  configured", the state this repo and most consumers are in today). Putting
+ *  them in the required list would fail every push for everyone who hasn't
+ *  opted in.
+ *
+ *  The hole being closed is the middle case: the operator HAS a config, but the
+ *  clean checkout can't see it, so the gate runs disabled while they believe it
+ *  is on. Absent in the main checkout too → genuinely not configured → the
+ *  sandbox reading matches the in-tree reading, which is honest. */
+const OPTIONAL_ARTIFACTS = [
+  // Absent → loadEfficacyConfig() falls to schema defaults (enabled:false) and
+  // efficacy-lints-check exits 0 with ZERO output.
+  'efficacy-lints.config.json',
+  // Absent → check-context-drift falls to DEFAULT_ALLOWLIST and default line
+  // ceilings, so a repo that TIGHTENED its limits gets silently loosened.
+  // `--strict` only covers a malformed config, never an absent one.
+  '.claude-context-allowlist.json',
 ];
 
 function log(msg) { process.stderr.write(`${msg}\n`); }
@@ -113,16 +148,26 @@ function provisionNodeModules(sandbox, repoRoot) {
   return 'installed';
 }
 
+function copyIfPresent(sandbox, repoRoot, rel) {
+  const src = path.join(repoRoot, rel);
+  if (!fs.existsSync(src)) return false;
+  const dest = path.join(sandbox, rel);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  return true;
+}
+
+/** @returns {{missing: string[], carried: string[]}} — `missing` is REQUIRED
+ *  artifacts only (the caller throws on those); `carried` is the optional
+ *  operator configs that were actually found, reported so the log says which
+ *  policy the run used rather than leaving it ambiguous. */
 function provisionArtifacts(sandbox, repoRoot) {
   const missing = [];
   for (const rel of PROVISIONED_ARTIFACTS) {
-    const src = path.join(repoRoot, rel);
-    if (!fs.existsSync(src)) { missing.push(rel); continue; }
-    const dest = path.join(sandbox, rel);
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.copyFileSync(src, dest);
+    if (!copyIfPresent(sandbox, repoRoot, rel)) missing.push(rel);
   }
-  return missing;
+  const carried = OPTIONAL_ARTIFACTS.filter(rel => copyIfPresent(sandbox, repoRoot, rel));
+  return { missing, carried };
 }
 
 function removeWorktree(sandbox, repoRoot) {
@@ -173,7 +218,7 @@ function main() {
     }
 
     const modules = provisionNodeModules(sandbox, repoRoot);
-    const missing = provisionArtifacts(sandbox, repoRoot);
+    const { missing, carried } = provisionArtifacts(sandbox, repoRoot);
     if (missing.length) {
       // Do not proceed into a run whose gates we have just told to be strict —
       // that would fail confusingly. Say exactly what is missing and why.
@@ -184,6 +229,10 @@ function main() {
       );
     }
     log(`  sandbox ready (node_modules: ${modules})`);
+    // Name the operator configs that came across. Silence would leave "gate ran
+    // with your policy" and "gate ran with defaults" indistinguishable — the
+    // exact ambiguity this provisioning exists to remove.
+    if (carried.length) log(`  operator config carried in: ${carried.join(', ')}`);
 
     const env = {
       ...process.env,

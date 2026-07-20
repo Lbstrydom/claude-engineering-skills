@@ -100,6 +100,22 @@ function main() {
   // A pre-feature envelope has no `coverage` block. That is `unknown`, which
   // does NOT fail the gate — we cannot fault a repo for a measurement that
   // did not exist when it rendered. It also must never read as `verified`.
+  //
+  // …but ARCH_COVERAGE_REQUIRE_ENVELOPE=1 means the caller asserted a MEANINGFUL
+  // envelope would be here, and `unknown` is precisely "no coverage was
+  // measured". Checking existsSync alone left the flag half-done: a truncated or
+  // pre-feature envelope satisfied it and then exited 0 having judged nothing —
+  // the same shape of hole the flag was added to close (sandbox-honesty rule,
+  // scripts/prepush-check.mjs fileoverview). Presence is not evidence; content is.
+  const strictEnvelope = (process.env.ARCH_COVERAGE_REQUIRE_ENVELOPE ?? '').trim() === '1';
+  if (strictEnvelope && !envelope.coverage?.verdict) {
+    log(`arch:coverage-gate: FAILED — ${OBSERVED_FILE} carries no coverage verdict but ARCH_COVERAGE_REQUIRE_ENVELOPE=1.`);
+    log('  The envelope exists but was rendered without a coverage measurement,');
+    log('  so there is nothing to judge. Re-run `npm run arch:render` with a');
+    log('  build that emits the coverage block.');
+    process.exit(2);
+  }
+
   const verdict = envelope.coverage?.verdict
     ?? { status: GRAPH_STATUS.UNKNOWN, reason: 'not_measured' };
 

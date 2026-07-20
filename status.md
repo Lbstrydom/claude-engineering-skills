@@ -53,14 +53,31 @@ connects and `db:check-rls:gate` exits 0. Recorded because the failure mode is t
 this repo's own notes warn about — reasoning about `process.env` instead of running
 the thing.
 
-**Still open** (latent — both configs are absent everywhere today, so they are no-ops
-in tree and sandbox alike, but each becomes a silent false-green the moment someone
-opts in locally): `efficacy-lints.config.json` (ENOENT → `enabled:false` → silent
-`exit(0)`) and `.claude-context-allowlist.json` (absent → default ceilings, so a repo
-that *tightened* limits gets silently loosened; `--strict` covers malformed, never
-absent). Plus a residual in an already-hardened check: `ARCH_COVERAGE_REQUIRE_ENVELOPE`
-guarantees the envelope *exists*, not that it has content — an envelope with no
-`coverage` block yields `unknown`, which `coverageGateExitCode` does not fail.
+**3. The remaining three, closed in the same session.** Two operator configs
+(`efficacy-lints.config.json`, `.claude-context-allowlist.json`) are untracked by
+design, so the sandbox could not see them: an opted-in repo's gate ran *disabled*
+while the operator believed it was on. The fix is **provisioning, not a strictness
+flag** — the choice turns on who owns the input. Machine-derived evidence that should
+always exist (the DB graph) deserves a require flag, because absent means broken.
+Opt-in policy files do not: requiring them would fail every push in a repo that simply
+hasn't opted in. So they went into a new `OPTIONAL_ARTIFACTS` list — copied when
+present, silently skipped when not — and the run now logs which configs it carried,
+because silence leaves "ran with your policy" and "ran with defaults"
+indistinguishable, which is the exact ambiguity the provisioning exists to remove.
+
+**A near-miss worth recording**: the first version of that fix put both configs in
+`PROVISIONED_ARTIFACTS` — whose missing-list *throws*. That would have hard-blocked
+every push for everyone who hasn't opted in, i.e. everyone including this repo. Caught
+by reading the caller rather than trusting that "provisioning" meant what it sounded
+like. The two lists now carry comments explaining why they are separate.
+
+Third: `ARCH_COVERAGE_REQUIRE_ENVELOPE` checked `existsSync` only, so a truncated or
+pre-feature envelope satisfied the flag and then exited 0 having judged nothing — the
+same shape of hole the flag was added to close. Under the strict flag a missing
+`coverage` block is now a hard fail; the default stays lenient, so a genuinely
+pre-feature repo is still not faulted for a measurement that did not exist when it
+rendered. Verified all three ways: strict+coverage-less → exit 2, strict+valid → 0,
+lenient+coverage-less → 0.
 
 ## 2026-07-20 — the push gate started checking the commit, and found four things wrong with itself
 
