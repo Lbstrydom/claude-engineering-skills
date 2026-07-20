@@ -312,6 +312,99 @@ evidence" from "low similarity" without inspecting nulls.
 - CLI/markdown rendering shows `unscored` distinctly from `review`, so a missing
   embedding is never displayed as a considered-and-rejected candidate.
 
+#### C4-REVISED — Thresholds are computed PER-REPO, never shipped (2026-07-20)
+
+> **This supersedes the original C4 below, which said thresholds move to
+> `config.mjs`.** That instruction was written before we checked whether
+> `config.mjs` is synced. It is. So is `symbol-index.mjs`. Writing a derived
+> threshold into either ships a number calibrated against THIS repo — 3,478
+> Node-CLI symbols with Haiku-written terse summaries — to every consumer.
+>
+> **That is the original defect in a new costume.** The bug this plan exists to
+> fix was hardcoded `0.90/0.85/0.75`: plausible constants that were unreachable
+> for the actual pipeline. Shipping `0.73` globally is the same error with a
+> better-evidenced number, because a threshold is not a property of the tool.
+> It is a property of **repo corpus × summary style × embedding model × compose
+> template × normalizer**. A wine app has different domain vocabulary and symbol
+> density, therefore a different noise floor. Our 0.7162 says nothing about theirs.
+
+**The floor is computed from the repo's own index, at refresh time.**
+
+```
+floor = μ + 3σ   over pairwise cosine similarity of a random sample of the
+                 repo's OWN symbol embeddings
+```
+
+Dense, repetitive corpora have a high μ and the bar rises automatically; diverse
+corpora get a lower bar. The **formula** syncs; the **value** is native to each
+consumer. No labelled probes required, works on first refresh.
+
+**Validated before adoption, on the one repo that could falsify it:**
+
+| method | inputs | floor |
+|---|---|---|
+| supervised — p95 of hard-negative best-hits (10 hand-authored probes) | intents → index | **0.7162** |
+| unsupervised — μ+3σ over 7,140 background pairs (120 random symbols) | index → index | **0.7146** |
+
+Agreement to **0.0016 (0.2%)**. Honest caveat: the two share the embedding model
+and the corpus, so this is *partial* corroboration, not independent confirmation.
+`k` matters — μ+4σ = 0.7584 sits **above** our observed true positives (0.73–0.83)
+and would suppress real matches. `k = 3` is empirical, not conventional.
+
+**Second gate — the cliff.** An absolute floor alone is fragile under hubness:
+in a repo where every symbol says "wine", a 0.72 may be background. So a match
+must ALSO be distinctive:
+
+```
+score₁ − score₂ > MIN_CLIFF_DELTA
+```
+
+This measures uniqueness against the repo's own vocabulary and ports far better
+than any absolute baseline. Both gates must hold.
+
+**What gets stored per repo** (not in synced source): the sample statistics
+(μ, σ, n, percentiles), the resulting floor, and the C4 provenance tuple below.
+A provenance mismatch invalidates the calibration exactly as before.
+
+**Labelled probes are no longer a prerequisite — they are the falsification
+instrument.** They are how the formula was validated here. Consumers inherit a
+validated formula rather than an authoring burden. Requiring ~30 hand-labelled
+probes per consumer would have "solved a data-science problem by offloading an
+administrative nightmare onto the user", and accepting that most consumers get a
+permanently degraded feature would relocate the blame for the tool's failure
+rather than fixing it.
+
+**Deliberate limitation, recorded**: an unsupervised floor establishes where
+scores stop being noise. It cannot establish semantic correctness — a score
+distribution contains no ground truth about whether an intent SHOULD map to a
+symbol. So the floor licenses "this is worth a look", not "this is the right
+symbol". That is why the bands collapse (C7-REVISED).
+
+#### C7-REVISED — Two actionable states, not four (2026-07-20)
+
+The derived bands were `T_reuse 0.73 / T_extend 0.72` — **0.01 apart**, while
+`medianPositive` varies **~0.008** across identical runs because normalization
+is LLM-generated (measured: 0.8082 / 0.8004 / 0.8007). A band narrower than the
+measurement noise is not a distinction; a 0.724 would be `reuse` on Tuesday and
+`extend` on Wednesday.
+
+Worse, the partition was never sound in the first place. Whether to *reuse* a
+symbol unchanged or *extend* it depends on dependency direction, API shape,
+ownership, stability guarantees and accumulated debt — architecture judgments
+that cosine distance cannot express. A near-identical symbol may be unusable; a
+moderately similar one may be exactly the right thing to extend.
+
+| band | condition |
+|---|---|
+| `unscored` | no embedding — no evidence (C3) |
+| `review` | scored, below floor, or not distinctive enough |
+| `precedent` | `similarity ≥ floor` AND `cliff > MIN_CLIFF_DELTA` |
+
+`reuse` and `extend` are **retired**. `precedent` means "existing code merits a
+serious look before you write this" — which is what the embedding can actually
+support. Choosing between reuse and extension is handed to the developer (or a
+later structured-comparison phase), not asserted from a distance score.
+
 #### C4 — Calibration is bound to its provenance (H6)
 
 A calibration is only valid for the exact pipeline that produced it. The
