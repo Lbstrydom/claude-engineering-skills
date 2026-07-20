@@ -16,6 +16,11 @@ node_modules/
 # IDE settings (per-machine)
 .claude/settings.local.json
 .claude/worktrees/
+# `.vscode/settings.json` only — extensions.json / mcp.json / tasks.json are
+# project-portable and stay TRACKED. This one accumulates per-machine, per-account
+# state (e.g. a Snyk org auto-select toggle), which the "personal config stays out
+# of the public repo" rule in CLAUDE.md puts on the local side of the line.
+.vscode/settings.json
 
 # Private/corporate consumer registry — names a non-public consumer repo,
 # must never be committed to this public repo (see consumer-repos.local.example.json).

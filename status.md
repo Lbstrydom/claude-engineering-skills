@@ -1,5 +1,42 @@
 # Project Status Log
 
+## 2026-07-20 — turned the third hand-found instance of a bug class into a ratchet
+
+Cleared three loose ends. Two were tidying; the third is the one that matters.
+
+**Deleted `.audit-loop/flagsurvey.mjs`.** It was the one-off sweep that found the
+silently-ignored-flag class — and it had started to LIE. It detected only the
+literal error text, so once `assertKnownFlags` existed, every CLI that correctly
+delegated to the shared helper read as unfixed; it reported `prune.mjs` and
+`render-mermaid.mjs` as broken while both demonstrably exit 2. A detector that
+misreports the fixed state trains people to ignore it.
+
+**Gitignored `.vscode/settings.json`** (one Snyk org toggle, per-machine).
+`extensions.json` / `mcp.json` / `tasks.json` stay tracked — they are
+project-portable; only this one accumulates per-account state.
+
+**Added `cli:flags:gate` — a drift-only push gate.** `refresh.mjs`, `prune.mjs`
+and `render-mermaid.mjs` all had the same if/no-else flag parser, and each was
+found **by hand, separately, three times**. The gate exists so there is no
+fourth.
+
+Two design choices worth recording. It is **baselined at the 24 currently-
+unguarded CLIs**: a check that fails on 24 existing files is a wall, not a
+ratchet, and this repo's own doctrine says a cried-wolf gate gets `--no-verify`'d.
+Only a NET-NEW unguarded CLI fails — same mechanism as `check-docs-refs.mjs`,
+reused rather than reinvented. And detection is **helper OR message text**,
+precisely the bug that made the survey lie.
+
+**Verified the gate can actually fail**, which is the only property that matters
+for a gate: dropped a throwaway unguarded CLI into `scripts/`, confirmed
+`DRIFT (1)` + exit 1, removed it, confirmed exit 0. An empty scan set is also a
+failure rather than a green — it means discovery broke, not that nothing is wrong.
+
+The repo's own gates then caught me twice while doing this: `dashboard-cli`
+refused the new npm scripts until they were registered in `.cli-catalog.json`,
+and the full suite is the only reason I noticed. Both are the same "a check that
+nobody registered is a check nobody sees" idea the new gate implements.
+
 ## 2026-07-20 — the Azure embed default now matches the tenant, and the doctor's "verified" now means "usable"
 
 A Databricks consumer warned it lacked `AZURE_OPENAI_EMBED_DEPLOYMENT`. The

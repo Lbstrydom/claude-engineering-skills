@@ -141,6 +141,14 @@
       "description": "Opt-in end-to-end smoke: arch:refresh:full + migration-drift check against the active repo + Postgres (NOT part of npm test). Requires AUDIT_DB_URL; both halves short-circuit gracefully when unset.",
       "category": "diagnostic"
     },
+    "cli:flags": {
+      "description": "Census of every flag-parsing CLI and whether it REJECTS unknown flags (via assertKnownFlags or its own diagnostic). Report-only.",
+      "category": "diagnostic"
+    },
+    "cli:flags:gate": {
+      "description": "The DRIFT-gate form of cli:flags (part of `npm run check`): fails only on a NET-NEW CLI that parses flags but ignores unknown ones. The 24 pre-existing ones are baselined so the gate is a ratchet, not a wall. Origin: refresh.mjs --full --dry-run silently discarded --dry-run and ran a real full refresh.",
+      "category": "diagnostic"
+    },
     "context:check": {
       "description": "Detect drift between CLAUDE.md / AGENTS.md and the live codebase.",
       "category": "diagnostic"
