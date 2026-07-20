@@ -115,10 +115,24 @@ scoped to touched files on incremental. And the in-code comment claiming step
 probably why this passed review — now records why the re-apply must *not* be
 widened.
 
-Verified end to end afterwards rather than trusting the green suite: a real
-full → incremental pair on this repo held its exclusion count steady, and the
-downstream consumer's committed pragma flipped true on a full refresh and
-survived the following incremental.
+Verified end to end afterwards rather than trusting the green suite. On this
+repo a real full → incremental pair now holds steady at 5 justified rows
+(15:51 full = 5, 16:13 incremental = 5); the immediately preceding incrementals
+read 0. That is the reported fix criterion met on live data.
+
+**The downstream-consumer half is NOT verified, and is blocked by a separate
+bug.** Its full refresh aborted at step 12b:
+`recordSymbolFileImports failed: ON CONFLICT DO UPDATE command cannot affect
+row a second time`. `recordSymbolFileImports` upserts each chunk without
+deduplicating, so two identical `(refresh_id, importer_path, imported_path)`
+edges in one batch abort the run — reachable only at that repo's scale (8,431
+symbols, 6,077 edges) which is why this repo never hit it. Unrelated to the
+copy-forward path; not fixed here, because it is a distinct defect that wants
+its own regression test rather than being bundled into this commit. Worth
+noting the abort came *after* the summarise + embed passes had completed, so a
+retry pays that cost again. Also worth a look separately: the process exited 0
+while reporting `{"ok":false}`, so a caller checking only the exit code reads a
+failed refresh as success.
 
 ## 2026-07-20 — a store health check, and a number I got wrong by 10x
 
