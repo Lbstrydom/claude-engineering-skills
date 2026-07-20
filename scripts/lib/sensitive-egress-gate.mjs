@@ -124,13 +124,92 @@ export function redactSecrets(payload) {
  * @param {string|object} payload
  * @returns {{ safe: boolean, patterns: string[] }}
  */
+/**
+ * GATE-ONLY secret shapes (plan: docs/plans/egress-secret-coverage-gap.md).
+ *
+ * **Why these live here and not in `secret-patterns.mjs`.** This gate delegated
+ * entirely to `scanForSecrets` — the same module `redactSecrets` uses — so its
+ * pattern set was a strict SUBSET of the redactor's. Two layers that share a
+ * pattern list do not fail differently; they fail identically, and every shape
+ * redaction missed passed the gate by construction. Measured 2026-07-19: an AWS
+ * secret access key, a JWT, a PEM private key and a keyed 40-hex token all
+ * reached a provider payload through both layers.
+ *
+ * They are added HERE and deliberately NOT to the redactor, because the two have
+ * opposite failure costs. A false positive in the redactor silently corrupts text
+ * — which is exactly why AGENTS.md pins the gentle `secret-patterns.mjs` over
+ * `sanitizer.mjs`. A false positive in the gate merely REFUSES, and every one of
+ * the 20 call sites was audited to fail safe on refusal (§4c of the plan).
+ *
+ * Every pattern below is measured at **zero** false positives against 18 MB of
+ * real audit payload (200 commits of diffs). The bare forms were not: 40-hex
+ * matched 227 times (all git SHAs) and 40-char base64 matched 301 times, which is
+ * why those two require a secret-ish key nearby rather than matching on shape.
+ *
+ * Names are `gate:`-prefixed on purpose. `secret-patterns.mjs` already exports a
+ * `pem-private-key`, and an unprefixed duplicate made the refusal message
+ * ambiguous about WHICH layer fired — which cost real time during this change,
+ * because a shared-scanner hit read as a gate-only hit and looked like a false
+ * positive that was not there.
+ */
+const GATE_ONLY_PATTERNS = [
+  // Ambiguous shapes — a bare match is overwhelmingly a git SHA or an ordinary
+  // base64 blob, so require a secret-ish key within a short window.
+  //
+  // GAP + TERMINATOR NOTE (Gemini gate, R1 HIGH + MEDIUM — both were real):
+  // an earlier revision spelled the gap as a NEGATED class (`[^0-9a-f]{0,12}` /
+  // `[^A-Za-z0-9/+=]{0,12}`). Under `/i` those exclude every letter, so the gap
+  // could not cross an ordinary variable-name suffix — `AWS_SECRET_KEY=…`,
+  // `api_key_id=…` and `GITHUB_TOKEN_VALUE=…` all slipped through, i.e. the three
+  // most common real spellings. The fixtures happened to use `secret <space>
+  // <token>`, the one form that worked, so the suite was 12/12 green over a
+  // pattern that missed the common case.
+  // It also ended in `\b`, which cannot fire when the token ends in base64
+  // padding (`=`) followed by a delimiter — both are non-word, so there is no
+  // word/non-word transition. Terminators are now negative lookaheads.
+  // NOTE — there is deliberately no separate `keyed-hex-40` rule. One existed and
+  // was removed as redundant: hex is a SUBSET of the base64 alphabet and both
+  // used the same gap, so `keyed-b64-40` already matches every keyed 40-hex
+  // token. Its only unique coverage was a 41-character run (`secret=<40hex>g`),
+  // which is not a 40-hex secret — i.e. a false positive, not coverage. Its
+  // presence also made the b64 rule impossible to mutation-test: reverting the
+  // hex rule left the suite green because b64 silently covered the same cases.
+  [
+    'gate:keyed-b64-40',
+    /(token|secret|api[_-]?key|apikey|password|passwd|auth|credential|aws)(?:[A-Za-z0-9_.\-[\]"']{0,24}\s*[:=]\s*["']?|\s{1,3})([A-Za-z0-9/+=]{40})(?![A-Za-z0-9/+=])/i,
+  ],
+  // Structurally distinctive — safe to match bare (zero bare false positives).
+  ['gate:jwt', /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/],
+  // TRUNCATED PEM — the case the redactor structurally cannot see. Its pattern
+  // (secret-patterns.mjs:46) requires a matching `-----END … PRIVATE KEY-----`,
+  // so a key clipped by a diff hunk or split across a payload boundary passes
+  // through with its body intact. This wants header + base64 BODY and no
+  // terminator, which is exactly the gap: a bare header is prose (correctly
+  // ignored by both layers), a complete key is already redacted, and only the
+  // truncated middle case leaks.
+  ['gate:pem-truncated', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n\s]+[A-Za-z0-9+/=]{40,}/],
+];
+
+/** @returns {string[]} names of gate-only patterns present in `text` */
+function scanGateOnly(text) {
+  const hits = [];
+  for (const [name, re] of GATE_ONLY_PATTERNS) {
+    if (re.test(text)) hits.push(name);
+  }
+  return hits;
+}
+
 export function scanEgressPayload(payload) {
   const text = typeof payload === 'string' ? payload : (() => {
     try { return JSON.stringify(payload ?? ''); } catch { return String(payload); }
   })();
   try {
     const r = scanForSecrets(text);
-    return { safe: !(r && r.matched), patterns: (r && r.patterns) || [] };
+    // Union of the shared redactor patterns and the gate-only set. The gate-only
+    // scan runs even when `scanForSecrets` reports clean — that is the whole
+    // point: the shapes it adds are precisely the ones the redactor does not know.
+    const patterns = [...((r && r.patterns) || []), ...scanGateOnly(text)];
+    return { safe: patterns.length === 0 && !(r && r.matched), patterns };
   } catch {
     // Fail-closed — a scanner failure must not read as "clean".
     return { safe: false, patterns: ['scan-error'] };

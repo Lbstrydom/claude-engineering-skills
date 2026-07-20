@@ -1,7 +1,7 @@
 # Plan: Egress secret coverage — the two layers are not independent
 
 - **Date**: 2026-07-19
-- **Status**: Draft
+- **Status**: Complete (option B implemented 2026-07-19; §4e records a correction to §1)
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Severity**: HIGH — four secret shapes currently reach an external LLM provider
@@ -148,7 +148,7 @@ then whether every caller of the enclosing function is itself wrapped):
 |---|---|---|
 | Caught locally, degrades to a non-sending fallback | 5 | `structured-extractor` (returns `egressDecision:'blocked'`, null context) · `cluster-propose` (`dupFallback()` — *"never send"*) · `arm-eval/judge` · `oss-structured-output:268` · `neighbourhood-query` (C10 deterministic path) |
 | Unguarded locally, but **every caller catches** → per-item skip | 8 | `extractDiff`, `runGptPass`, `runGeminiReview`, `runGeminiPass`, `runOssPass`, `runGptJudgeBatch`, `loadCorpusCase`, `invokeStructured` |
-| **Propagates to the top** — run aborts | ~5 | `runAuditGenerationArm`, `assertJudgePayloadSafe`, `ossStructuredCall` (5 of 6 callers unwrapped), `runStage` (1 of 2), `produceBrainstorm`/`producePlan` (dispatched at `arm-eval/run.mjs:75-76`, whose only `catch` covers archive export) |
+| **Propagates to the top** — run aborts | ~5 | `runAuditGenerationArm`, `assertJudgePayloadSafe`, `ossStructuredCall` (5 of 6 callers unwrapped), `runStage` (1 of 2), `produceBrainstorm`/`producePlan` (dispatched at `scripts/lib/arm-eval/run.mjs:75-76`, whose only `catch` covers archive export) |
 
 **The security answer is clean: not one site sends after a refusal.** Every path
 either aborts before the wire call or returns a fallback that does not send. The
@@ -182,14 +182,139 @@ name, but a caller reached through a differently-named indirection could be
 missed. It also assumes an outer `catch` handles rather than rethrows — verified
 for the five local catches above, not exhaustively for every ancestor.
 
+## 4d. Q1 SETTLED (2026-07-19) — the final detector set, all measured at zero FP
+
+The PEM row is the one §4b left open. Keying it (as for 40-hex and AWS) would be
+**wrong**: a leaked private key appears as a header followed by base64, with no
+`secret=`/`token=` beside it, so a keyed matcher would miss the very thing it is
+for. The distinguishing feature is not context but **structure** — real keys have
+a body; prose about keys does not.
+
+| Shape | Detector | FPs / 18 MB | Catches the real thing |
+|---|---|---|---|
+| Generic 40-hex | keyed context | **0** (vs 227 bare) | `GITHUB_TOKEN=<40-hex>` ✓ |
+| AWS secret (40-char b64) | keyed context | **0** (vs 301 bare) | ✓ |
+| JWT | bare structural | **0** | ✓ |
+| PEM private key | header **+ base64 body** | **0** (vs 6 bare) | ✓ real key flagged, prose allowed |
+
+Verified both directions on the PEM row: a real `-----BEGIN RSA PRIVATE KEY-----`
+plus body is flagged; the documentation string that produced all six bare-header
+false positives (`"…(e.g. \`-----BEGIN RSA PRIVATE KEY-----\n<20 lines of
+base64>\`)"`) is allowed.
+
+With Q1, Q2 and Q3 all settled empirically, **option B is implementable now** and
+its measured cost is zero false positives on real traffic.
+
+## 4e. IMPLEMENTED (2026-07-19) — option B, and a correction to §1
+
+Gate-only patterns added to `scripts/lib/sensitive-egress-gate.mjs`, **not** to the redactor:
+`gate:keyed-b64-40`, `gate:jwt`, `gate:pem-truncated`. The
+`gate:` prefix is load-bearing — `scripts/lib/secret-patterns.mjs` already exports a
+`pem-private-key`, and an unprefixed duplicate made a shared-scanner hit read as
+a gate-only hit, costing real time during this change.
+
+**Correction to §1: the "PEM private key reaches the provider" row was WRONG.**
+The probe used a bare `-----BEGIN RSA PRIVATE KEY-----` header with no key
+material — that is prose, not a secret, and both layers correctly ignore it. The
+redactor *does* catch a complete `BEGIN…END` key (`scripts/lib/secret-patterns.mjs:46`).
+
+The real gap is narrower and was found only by re-testing with proper fixtures:
+the redactor's pattern **requires the `-----END …-----` terminator**, so a
+**truncated** PEM block — clipped by a diff hunk, or split across a payload
+boundary — passes through with its body intact. That is what `gate:pem-truncated`
+catches, and it is a better finding than the one it replaces: it is a shape the
+redactor structurally cannot see, which is precisely the independence this plan
+is about.
+
+A second fixture error is recorded for the same reason: the original AWS probe
+used a 39-character token (the canonical example mistyped, `/` → `0`), so it was
+not a valid AWS secret-key shape at all. Both errors were self-inflicted and both
+were caught by re-measuring rather than by review.
+
+**Verification**
+- The four shapes are refused post-redaction through the real composition, each
+  attributed to its own `gate:` pattern.
+- **Zero refusals across 18 MB of real audit payload** (91 chunks, post-redaction
+  — the order production uses).
+- Legitimate shapes still pass: bare git SHAs, the null-ref sentinel, prose citing
+  a commit, PEM headers in documentation, bare 40-char base64.
+- `tests/egress-gate-only-patterns.test.mjs` asserts **independence** (redactor
+  leaves it AND gate refuses it), not merely coverage — so moving a pattern into
+  the shared scanner, which would silently re-collapse the layers, fails the test.
+- Mutation-tested: disabling the gate-only set fails 5 of 12.
+- `npm run check`: 7846 pass, 0 fail.
+
+**Not done, and deliberately**: option A (entropy/shape-based strictness). B was
+measured at zero false-positive cost, which is what made it the right first move;
+A remains the answer if a future shape has no usable key context. The layers are
+now genuinely independent for four shapes, not all shapes.
+
+
+### 4e.1 A side-effect worth its own note: the audit pipeline mangled its own input
+
+Auditing this change produced three HIGH-confidence findings that the new test
+file was **syntactically broken** — a single-quoted string crossing newlines, a
+dangling template terminator, a fixture holding `[REDACTED:pem-private-key]`
+instead of a key. The file was fine; it passed 12/12 and `npm run check` was green.
+
+The auditor was right about what it received. `readFilesAsContext` redacts file
+bodies before they reach the provider, and the redactor's `pem-private-key`
+pattern spans `BEGIN … END`. The fixture's `BEGIN` and a *different* test's
+`END` sat ~80 lines apart, so the whole span — including all the code between
+them — collapsed into one placeholder. Three reviewers then reasoned, correctly,
+about mangled source.
+
+Two things follow:
+
+1. **Fixed locally**: the fixture is now assembled from parts, so no literal
+   `BEGIN … END` span exists in the file. Verified: 117 source lines → 117
+   redacted lines, no placeholder.
+2. **Generalises beyond this file** (not fixed here — needs its own plan): *any*
+   file containing two PEM markers becomes unauditable this way, and the failure
+   is silent. The audit context is quietly shortened, and nothing tells the
+   reviewer that what they are reading is not what is on disk. A redaction that
+   deletes surrounding code is a context-integrity problem, not just a noise
+   problem — it is the same "green over content that was never really examined"
+   class this repo already tracks elsewhere.
+
+### 4e.2 What the Gemini gate caught — two real evasions and a redundant rule
+
+The consolidated gate returned **CONCERNS with 2 new findings**, both genuine,
+and both invisible to a suite that was 12/12 green:
+
+1. **HIGH — the gap matcher forbade letters.** The first revision spelled the gap
+   as a negated class (`[^A-Za-z0-9/+=]{0,12}`). Under `/i` that excludes every
+   letter, so it could not cross an ordinary variable-name suffix. Measured after
+   the report: **4 of 5 realistic spellings leaked** — `AWS_SECRET_KEY=`,
+   `api_key_id=`, `GITHUB_TOKEN_VALUE=` and a padded base64 value. The fixtures
+   had used `secret <space> <token>`, the one spelling that happened to work.
+2. **MEDIUM — `` cannot terminate a base64 token.** A token ending in padding
+   (`=`) followed by a delimiter is a non-word/non-word transition, so the
+   boundary never fires. Terminators are now negative lookaheads.
+
+Both fixed; the seven realistic spellings are now fixtures, so a future fixture
+set cannot be that unrepresentative again.
+
+**A third finding came from mutation-testing the fix**: `gate:keyed-hex-40` was
+**redundant** and has been removed. Hex is a subset of the base64 alphabet and
+both rules used the same gap, so `keyed-b64-40` already matched every keyed
+40-hex token. Its only unique coverage was a 41-character run
+(`secret=<40hex>g`) — not a 40-hex secret, so a false positive rather than
+coverage. It also made the b64 rule **impossible to mutation-test**: reverting
+the hex rule left the suite green because b64 silently covered the same inputs.
+With it gone the mutation isolates cleanly (7 of 20 fail).
+
+The lesson worth keeping: green tests over unrepresentative fixtures are exactly
+what an independent reviewer is for. The suite passed at every point during this
+change while the pattern missed the three most common real-world spellings.
+
 ## 5. Open questions to settle before implementation
 
-1. **How aggressive can a strict gate be before it fires on real diffs?**
-   **Largely answered by §4b for the four measured shapes** — keyed matching cost
-   zero false positives across 18 MB. What remains: the `BEGIN … PRIVATE KEY`
-   row, whose only false positives are prose *documenting* the pattern (this
-   repo's own security docs among them). Decide between keying that row too or
-   carving out prose, and measure the choice the same way.
+1. ~~**How aggressive can a strict gate be before it fires on real diffs?**~~
+   **SETTLED 2026-07-19 — see §4d.** All four shapes have a detector measured at
+   **zero** false positives across 18 MB of real payload. The PEM row is resolved
+   by requiring a base64 **body**, not by keying — keying would have missed real
+   keys, which have no `secret=` beside them.
 2. ~~**What do the other 19 call sites do on refusal?**~~ **SETTLED 2026-07-19 —
    see §4c.** All 20 audited: none sends after a refusal. 5 degrade locally, 8
    are skipped per-item by a catching caller, ~5 abort the run. The variance is
