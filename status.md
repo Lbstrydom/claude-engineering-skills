@@ -1,5 +1,32 @@
 # Project Status Log
 
+## 2026-07-20 (closing) — fixed the real stores→plan violation by moving the vocab to shared-lib
+
+The one genuine finding the arch-bouncer investigation surfaced — `stores → plan`,
+introduced by this session's own plan-path work — is now fixed, the way I said I'd
+recommend: move the shared contract, don't widen allowedDeps.
+
+The status vocabulary (`PLAN_STATUS_VOCABULARY`, `toDbPlanStatus`,
+`DB_PLAN_STATUSES`) moved from `scripts/lib/plan-status.mjs` (plan domain) to a
+new `scripts/lib/status-vocabulary.mjs` (shared-lib). Two domains legitimately
+need it — the plan parser reads a `Status:` line, the store validates before a DB
+write — so it belongs in the domain both may depend on. `plan → shared-lib` and
+`stores → shared-lib` are both allowed; `stores → plan` was not.
+
+Single-source-of-truth is preserved, which was the whole reason I did NOT split
+the vocabulary: it has exactly one definition (the new module), `plan-status.mjs`
+imports and re-exports it so it stays the discoverable plan-side entry point, and
+`plans-ship.mjs` imports it directly from shared-lib. The name matters — the
+domain resolver uses minimatch and `plan ← scripts/lib/plan-*.mjs`, so a
+`plan-`-prefixed filename would have landed right back in the plan domain;
+`status-vocabulary.mjs` resolves to shared-lib.
+
+Verified empirically, not by inference: `resolveFileToDomain` puts the new module
+in shared-lib, and the mechanical arch analysis now reports **0 violations** (was
+1). Full suite green (8,271). This closes the arch-finding thread — generator
+hallucinations grounded, the one real finding fixed, and no domain-map edit
+needed.
+
 ## 2026-07-20 (even later) — I shipped a fix for the wrong pass, then found the right one
 
 Continuing to improve the audit-finding signal, I traced the remaining

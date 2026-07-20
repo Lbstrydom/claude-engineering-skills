@@ -15,60 +15,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-/**
- * The CLOSED status vocabulary. Anything else is `unrecognized`.
- *
- * Three kinds, because deliberately-shelved work is neither of the other two
- * (consumer report, 2026-07-20). `Parked` was previously unrepresentable, and
- * the three available spellings were all wrong: `Draft` is false (it is not
- * being drafted), `Superseded` is false (nothing replaced it), and leaving it
- * non-conforming makes the plan INVISIBLE to selection — so it can never be
- * audited, which is the precise failure this vocabulary exists to prevent.
- *
- * `parked` is deliberately NOT folded into `active` (the report's own fallback
- * suggestion): an audit must not chase parked work for progress, and `active`
- * is exactly the bucket that gets chased. It is not `terminal` either — parked
- * work can resume, and filing it as finished would lose that.
- *
- * Adding a kind is not free: `generate-plans-index.mjs` derives its bucket
- * straight from `kind`, so a kind with no rendering branch silently vanishes
- * from the index — the same invisibility, one layer along. Any new kind needs
- * a section there and a decision in `context-staleness.mjs`.
- */
-export const PLAN_STATUS_VOCABULARY = Object.freeze({
-  terminal: ['Complete', 'Superseded'],
-  active: ['Draft', 'Approved', 'In Progress'],
-  parked: ['Parked'],
-});
+// The status VOCABULARY (markdown spellings, DB spellings, and the normaliser)
+// moved to shared-lib on 2026-07-20 so the stores domain (`plans-ship.mjs`)
+// can validate against it without a `stores → plan` cross-domain edge. This
+// module — the plan-domain PARSER — imports the shared contract and re-exports
+// it, so `plan-status.mjs` stays the discoverable entry point for the
+// plan-authoring side while `status-vocabulary.mjs` is the single definition.
+// See status-vocabulary.mjs for the full rationale.
+import { PLAN_STATUS_VOCABULARY, toDbPlanStatus, DB_PLAN_STATUSES } from './status-vocabulary.mjs';
 
-/**
- * Normalise a status token to its STORE spelling: lowercase, spaces to
- * underscores (`In Progress` → `in_progress`). The markdown surface and the
- * `plans_status_check` CHECK constraint spell the same vocabulary two ways;
- * this is the one place that reconciles them.
- */
-export function toDbPlanStatus(token) {
-  return typeof token === 'string' ? token.trim().toLowerCase().replace(/\s+/g, '_') : token;
-}
-
-/**
- * The DB-side vocabulary, DERIVED from the markdown one above rather than
- * restated. Lives here — not in the store module — because this file is the
- * declared single source of truth for the vocabulary, and because the
- * `learning-store.mjs` barrel is deliberately a functions-only surface.
- *
- * `abandoned` is additionally accepted: already-persisted data that predates
- * the vocabulary and maps to no markdown token, so the CHECK keeps it (see
- * migration 20260718120000). Restating this list anywhere else would recreate
- * the three-definitions-one-vocabulary drift that migration exists to kill.
- */
-export const DB_PLAN_STATUSES = Object.freeze([
-  // Derived from EVERY kind, not an enumerated subset — a new kind that the
-  // CHECK constraint rejects would make its plans unwritable to the store
-  // while reading as valid in markdown.
-  ...Object.values(PLAN_STATUS_VOCABULARY).flat().map(toDbPlanStatus),
-  'abandoned',
-]);
+export { PLAN_STATUS_VOCABULARY, toDbPlanStatus, DB_PLAN_STATUSES };
 
 // Longest-token-first so `In Progress` matches before `In`. Each entry carries
 // its kind. Derived from the vocabulary object so adding a kind above cannot

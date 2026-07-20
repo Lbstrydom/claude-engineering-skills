@@ -16,7 +16,11 @@ import { isCloudEnabled } from './repo.mjs';
 // Imported, never re-declared — `plan-status.mjs` is the single source of
 // truth for the vocabulary and for the markdown↔store spelling reconciliation.
 // Not re-exported: the `learning-store.mjs` barrel is a functions-only surface.
-import { DB_PLAN_STATUSES, toDbPlanStatus } from '../plan-status.mjs';
+// Import the status vocabulary from shared-lib, NOT from plan-status.mjs (plan
+// domain) — a `stores → plan` edge is not in allowedDeps. status-vocabulary.mjs
+// is the single definition; both this store and the plan-domain parser import
+// it. See status-vocabulary.mjs for why the shared contract lives there.
+import { DB_PLAN_STATUSES, toDbPlanStatus } from '../status-vocabulary.mjs';
 
 // ── plans ──────────────────────────────────────────────────────────────────
 

@@ -15,7 +15,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 import { validatePlanPath } from '../scripts/lib/store/plans-ship.mjs';
-import { PLAN_STATUS_VOCABULARY, DB_PLAN_STATUSES, toDbPlanStatus } from '../scripts/lib/plan-status.mjs';
+import { PLAN_STATUS_VOCABULARY, DB_PLAN_STATUSES, toDbPlanStatus } from '../scripts/lib/status-vocabulary.mjs';
 
 const REPO = process.platform === 'win32' ? 'C:\\GIT\\demo-repo' : '/git/demo-repo';
 
