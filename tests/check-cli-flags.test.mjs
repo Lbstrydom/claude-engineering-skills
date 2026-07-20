@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import {
   runCheck, parsesFlags, rejectsUnknownFlags, BASELINE,
-  discoverScripts, loadBaselineFile,
+  discoverScripts, loadBaselineFile, classifyPolarity, stripComments,
 } from '../scripts/check-cli-flags.mjs';
 
 /** Write files into a throwaway repo root; returns {root, files}. */
@@ -236,6 +236,112 @@ describe('--baseline is adoptable by consumers', () => {
     fs.writeFileSync(bad, '{"not":"an array"}');
     assert.throws(() => loadBaselineFile(bad), /must be an array/);
     assert.throws(() => loadBaselineFile(path.join(dir, 'missing.json')));
+  });
+});
+
+describe('prose about a guard is not a guard', () => {
+  // Found 2026-07-20 in this repo, not reported by the consumer. sync-to-repos.mjs
+  // WRITES INTO CONSUMER REPOS, is unguarded, and silently left the census
+  // because a comment added in the same commit that fixed the sync-payload gap
+  // mentions `assertKnownFlags` by name. The gate then listed it under
+  // "baseline can shrink — fixed or gone": a regression dressed as a win.
+  it('a comment MENTIONING assertKnownFlags does not count as guarded', () => {
+    const mentioned = `${UNGUARDED}\n// The remedy is assertKnownFlags, in lib/cli-io.mjs.\n`;
+    assert.equal(rejectsUnknownFlags(mentioned), false);
+  });
+
+  it('a docblock discussing unknown flags does not count as guarded', () => {
+    const prose = `/**\n * TODO: we should reject unknown flags here one day.\n */\n${UNGUARDED}`;
+    assert.equal(rejectsUnknownFlags(prose), false);
+  });
+
+  it('a real call still counts, commented neighbours notwithstanding', () => {
+    assert.equal(rejectsUnknownFlags(VIA_HELPER), true);
+    assert.equal(rejectsUnknownFlags(VIA_TEXT), true);
+  });
+
+  it('the real sync-to-repos.mjs reads unguarded (the live instance)', () => {
+    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..');
+    const src = fs.readFileSync(path.join(repoRoot, 'scripts/sync-to-repos.mjs'), 'utf-8');
+    assert.equal(parsesFlags(src), true);
+    assert.equal(rejectsUnknownFlags(src), false, 'a comment must not mask a missing guard');
+  });
+
+  it('stripComments leaves string literals alone', () => {
+    // A naive /\/\/.*$/ eats the rest of the line after any 'http://…' literal,
+    // which would silently blank real guard calls that follow a URL.
+    const src = `const u = 'http://x.test'; assertKnownFlags(argv, [], {});`;
+    assert.match(stripComments(src), /assertKnownFlags/);
+    assert.equal(rejectsUnknownFlags(src), true);
+  });
+
+  it('stripComments handles escapes and template literals', () => {
+    assert.match(stripComments("const s = 'it\\'s // not a comment'; keep();"), /keep\(\)/);
+    assert.match(stripComments('const t = `a // b`; keep();'), /keep\(\)/);
+  });
+
+  it('stripComments does not fuse tokens across a removed block', () => {
+    assert.doesNotMatch(stripComments('assertKnown/* x */Flags('), /assertKnownFlags/);
+  });
+});
+
+describe('polarity — the census is a triage list, not a flat wall', () => {
+  // A consumer reported (2026-07-20) that only 4 of their 10 findings were the
+  // dangerous polarity while their two WORST instances weren't listed at all.
+  // A severity-flat census buries the cases that matter.
+  it('a safety flag marks the CLI opt-out — its default is the mutating one', () => {
+    assert.equal(classifyPolarity("const DRY = argv.includes('--dry-run');"), 'opt-out');
+    assert.equal(classifyPolarity("const CHECK = argv.includes('--check');"), 'opt-out');
+  });
+
+  it('an opt-in danger flag is NOT opt-out — a typo there is a no-op', () => {
+    assert.equal(classifyPolarity("const APPLY = argv.includes('--apply');"), 'unknown');
+    assert.equal(classifyPolarity("const WRITE = argv.includes('--write');"), 'unknown');
+  });
+
+  it('does not match a safety flag it merely PASSES to another script', () => {
+    // Real FP: maintenance-checks.mjs contains `args: ['--check-drift']` — an
+    // argument forwarded to setup-postgres.mjs, not a brake on its own default.
+    // A bare \b would match `--check` inside `--check-drift`.
+    assert.equal(classifyPolarity("steps: [{ script: 'x.mjs', args: ['--check-drift'] }]"), 'unknown');
+  });
+
+  it('does not treat an output-suppression flag as a brake', () => {
+    // Real FP: debt-pr-comment.mjs `--no-op-if-empty` suppresses OUTPUT. The
+    // first draft of SAFETY_FLAG listed `--no-op` and mis-triaged it as danger.
+    assert.equal(classifyPolarity("noOpIfEmpty: args.includes('--no-op-if-empty')"), 'unknown');
+  });
+
+  it('optOut is a subset of findings, and never changes the gate verdict', () => {
+    // Polarity is triage ordering. A net-new unguarded CLI is drift whichever
+    // polarity it has — inferring intent into an exit code would make the gate
+    // wrong in a direction nobody can audit.
+    const SAFE_MODE_UNGUARDED = "const argv = process.argv.slice(2);\nconst CHECK = argv.includes('--check');";
+    const { root, files } = repoWith({
+      'scripts/brake.mjs': SAFE_MODE_UNGUARDED,
+      'scripts/plain.mjs': UNGUARDED,
+    });
+    const r = runCheck({ repoRoot: root, files, gating: true, baseline: new Set() });
+    assert.deepEqual(r.optOut, ['scripts/brake.mjs']);
+    assert.equal(r.findings.length, 2, 'optOut must not shrink the census');
+    for (const f of r.optOut) assert.ok(r.findings.includes(f), 'optOut ⊆ findings');
+    assert.deepEqual(r.drift.sort(), ['scripts/brake.mjs', 'scripts/plain.mjs']);
+    assert.equal(r.ok, false);
+  });
+
+  it('a GUARDED safety-flag CLI is not in optOut at all', () => {
+    // optOut is a subset of findings, so fixing the guard removes it from both.
+    const { root, files } = repoWith({ 'scripts/ok.mjs': `${VIA_HELPER}\nconst d = argv.includes('--dry-run');` });
+    const r = runCheck({ repoRoot: root, files, baseline: new Set() });
+    assert.deepEqual(r.findings, []);
+    assert.deepEqual(r.optOut, []);
+  });
+
+  it('the empty-scan refusal still carries the optOut key', () => {
+    // The early-return path builds its result literal separately — an absent
+    // key there would throw on `r.optOut.length` in the reporter.
+    const r = runCheck({ repoRoot: os.tmpdir(), files: [] });
+    assert.deepEqual(r.optOut, []);
   });
 });
 

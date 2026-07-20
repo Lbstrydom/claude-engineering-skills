@@ -26,18 +26,22 @@
  * broken while both demonstrably exit 2. A detector that misreports the fixed
  * state trains people to ignore it.
  *
- * **Triage by flag POLARITY, not list order.** The census is severity-flat, and
- * it deliberately does not try to infer intent — but the polarity of a CLI's
- * guard flag decides whether a dropped typo is harmless or destructive:
+ * **Triage by flag POLARITY, not list order.** The polarity of a CLI's guard
+ * flag decides whether a dropped typo is harmless or destructive:
  *   - **opt-in danger** (`--apply`, `--write`, `--commit`) — the default is
  *     safe, so a typo'd flag is a no-op. Low priority.
  *   - **opt-out danger** (`--dry-run`, `--check` over a MUTATING default) — a
  *     typo'd flag means the real mutation runs. This is the class that caused
  *     all three incidents above; fix these first.
- * Working the findings list top-down does the low-value ones first. A consumer
- * repo reported (2026-07-20) that only 4 of their 10 findings were opt-out,
- * while their two worst instances weren't listed at all — see the
- * `parsesFlags` note on the `argv.includes` spelling for why.
+ *
+ * The census used to be severity-flat, so working it top-down did the low-value
+ * ones first. A consumer repo reported (2026-07-20) that only 4 of their 10
+ * findings were opt-out while their two worst instances weren't listed at all,
+ * and that merging the two polarities overstated the problem while burying what
+ * mattered. `classifyPolarity` now splits them: 13 of this repo's 80 findings
+ * carry a safety flag, a 6x concentration. It is a REPORT-ONLY ordering — the
+ * drift gate stays polarity-blind, because a net-new unguarded CLI is drift
+ * whichever polarity it has and intent in an exit code cannot be audited.
  *
  * Usage:
  *   node scripts/check-cli-flags.mjs            # report-only census
@@ -200,6 +204,15 @@ export const BASELINE = new Set([
  * fix wrote `includes\('--` and a throwaway CLI using `includes("--force")` sailed
  * through the gate during verification. A detector that only recognises one
  * quote character is a detector with a hole in it.
+ *
+ * **This runs on RAW source, unlike `rejectsUnknownFlags`.** The asymmetry is
+ * deliberate and follows the blast radius. Over-detecting a CLI here is
+ * fail-safe: a library that merely discusses `--flags` in a docblock gets asked
+ * for a guard, and the worst case is one visible false finding. UNDER-detecting
+ * is silent — the file is skipped before the guard check ever runs, so it can
+ * never be a finding and never be drift, which is how 37 CLIs hid. Stripping
+ * comments here would drop any CLI whose flag vocabulary lives mainly in its
+ * usage docblock, trading a loud error for a silent one.
  */
 export function parsesFlags(src) {
   const readsArgv = /function parseArgs|for \(let i = 2; i < argv\.length|process\.argv\.slice\(2\)|process\.argv\.includes\(/.test(src);
@@ -208,15 +221,103 @@ export function parsesFlags(src) {
 }
 
 /**
+ * Flags whose EXISTENCE is evidence that the default path mutates.
+ *
+ * Nobody adds `--dry-run` to a read-only tool. That is the whole inference, and
+ * it is deliberately the only one made here: the gate does not model what a CLI
+ * does, it reads which brake the author felt the need to fit. A CLI offering a
+ * safe mode is a CLI whose default is not safe, so a DROPPED typo (`--dry-runn`,
+ * `--chek`) removes the brake and the real mutation runs. That is the polarity
+ * that caused all three incidents in this file's header.
+ *
+ * The complement is NOT "safe" — it is "no brake found". An opt-in danger flag
+ * (`--apply`, `--write`) lands there and is genuinely low-priority, but so does
+ * a mutating CLI that simply never offered a dry run, which is worse and
+ * invisible to this signal. Hence `unknown`, never `safe`.
+ *
+ * `(?![\w-])` is load-bearing: a bare `\b` would match `--check` inside
+ * `--check-deps`, and `--no-op` matched `--no-op-if-empty` in `debt-pr-comment.mjs`
+ * (an output-suppression flag, not a brake) when this set was first drafted.
+ * Extend this list only with flags that are a SAFE MODE OVER A MUTATING DEFAULT
+ * — not merely flags that sound cautious.
+ */
+const SAFETY_FLAG = /--(dry-run|dryrun|check-only|plan-only|verify-only|report-only|check)(?![\w-])/;
+
+/**
+ * `'opt-out'` — carries a safety flag, so a dropped typo removes a brake.
+ * `'unknown'` — no brake found; see `SAFETY_FLAG` for why this is not `'safe'`.
+ *
+ * Triage ordering only. This never gates: a net-new unguarded CLI is drift
+ * whatever its polarity, and inferring intent into an exit code would make the
+ * gate wrong in a direction nobody can audit.
+ */
+export function classifyPolarity(src) {
+  return SAFETY_FLAG.test(src) ? 'opt-out' : 'unknown';
+}
+
+/**
+ * Strip `//` and block comments, leaving string/template literals intact.
+ *
+ * Needed because both `rejectsUnknownFlags` routes are text matches, and PROSE
+ * ABOUT a guard is not a guard. Live case (2026-07-20, found while adding
+ * polarity): `sync-to-repos.mjs` — which writes into consumer repos and is
+ * unguarded — silently left the census because a comment added in the SAME
+ * commit that fixed the sync-payload gap mentions `assertKnownFlags` by name.
+ * The gate then reported it under "baseline can shrink — fixed or gone", i.e.
+ * a regression dressed as a win. The header's warning that a detector
+ * misreporting the FIXED state trains people to ignore it applies at least as
+ * hard in this direction: misreporting the BROKEN state is silent.
+ *
+ * A naive `/\/\/.*$/` would eat real code after a `'http://…'` literal, so
+ * quotes are tracked. Comments are stripped only for the GUARD check, never for
+ * `parsesFlags` — see that function for why the asymmetry is deliberate.
+ */
+export function stripComments(src) {
+  let out = '';
+  let i = 0;
+  let quote = null; // "'" | '"' | '`' when inside a literal
+  while (i < src.length) {
+    const c = src[i], next = src[i + 1];
+    if (quote) {
+      if (c === '\\') { out += c + (next ?? ''); i += 2; continue; }
+      if (c === quote) quote = null;
+      out += c; i++; continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; out += c; i++; continue; }
+    if (c === '/' && next === '/') {
+      while (i < src.length && src[i] !== '\n') i++;
+      continue; // leave the \n for the next iteration
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++;
+      i += 2;
+      out += ' '; // keep tokens from fusing across the removed block
+      continue;
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
+/**
  * Does it reject unknown flags? Either route counts:
  *   - delegating to `assertKnownFlags` (the shared helper), or
  *   - carrying its own explicit unknown-flag diagnostic.
  * Checking only the second is what made the original survey misreport every
  * CLI that had been fixed via the helper.
+ *
+ * Both routes run against COMMENT-STRIPPED source, and the helper route
+ * additionally requires CALL shape (`assertKnownFlags(`) rather than a bare
+ * mention. The direction of the remaining error matters and is chosen: a guard
+ * this fails to see produces a VISIBLE finding on an already-fixed file, which
+ * someone corrects. A guard it hallucinates from prose removes the file from
+ * the census entirely, which nobody ever sees.
  */
 export function rejectsUnknownFlags(src) {
-  if (/assertKnownFlags/.test(src)) return true;
-  return /unknown flag|unknown option|unrecognis|unrecogniz|Unknown argument/i.test(src);
+  const code = stripComments(src);
+  if (/assertKnownFlags\s*\(/.test(code)) return true;
+  return /unknown flag|unknown option|unrecognis|unrecogniz|Unknown argument/i.test(code);
 }
 
 /**
@@ -249,20 +350,25 @@ export function discoverScripts(repoRoot) {
 }
 
 /**
+ * `optOut` is a SUBSET of `findings` (same paths, not a partition of the
+ * result) — the triage-first bucket, see `classifyPolarity`. It is reported and
+ * sorted on, never gated on.
+ *
  * @param {{repoRoot:string, files:string[], gating?:boolean, baseline?:Set<string>}} opts
- * @returns {{ok:boolean, failures:object[], findings:string[], drift:string[],
- *   baselined:number, staleBaseline:string[], scanned:number}}
+ * @returns {{ok:boolean, failures:object[], findings:string[], optOut:string[],
+ *   drift:string[], baselined:number, staleBaseline:string[], scanned:number}}
  */
 export function runCheck({ repoRoot, files, gating = false, baseline = BASELINE } = {}) {
   const failures = [];
   const findings = [];
+  const optOut = [];
   let scanned = 0;
 
   // "Audit your success paths": an empty scan set is not a clean run, it is a
   // broken discovery reporting zero because it looked at nothing.
   if (!files || files.length === 0) {
     failures.push({ rule: 'scan/empty-scan-set', message: 'no scripts discovered — refusing to report a green' });
-    return { ok: false, failures, findings: [], drift: [], baselined: 0, staleBaseline: [], scanned: 0 };
+    return { ok: false, failures, findings: [], optOut: [], drift: [], baselined: 0, staleBaseline: [], scanned: 0 };
   }
 
   for (const rel of files) {
@@ -293,6 +399,7 @@ export function runCheck({ repoRoot, files, gating = false, baseline = BASELINE 
     if (!parsesFlags(src)) continue;
     if (rejectsUnknownFlags(src)) continue;
     findings.push(rel);
+    if (classifyPolarity(src) === 'opt-out') optOut.push(rel);
   }
 
   const drift = findings.filter((f) => !baseline.has(f));
@@ -305,7 +412,7 @@ export function runCheck({ repoRoot, files, gating = false, baseline = BASELINE 
 
   return {
     ok: failures.length === 0 && (!gating || drift.length === 0),
-    failures, findings, drift, baselined, staleBaseline, scanned,
+    failures, findings, optOut, drift, baselined, staleBaseline, scanned,
   };
 }
 
@@ -398,6 +505,8 @@ function main() {
 
   console.log(`${B}CLI unknown-flag gate${X} — ${r.scanned} script(s) scanned, ` +
     `${r.findings.length} still ignore unknown flags (${r.baselined} baselined, ${r.drift.length} net-new)`);
+  console.log(`${D}  of those, ${X}${B}${r.optOut.length} carry a safety flag${X}` +
+    `${D} (--dry-run/--check) — a dropped typo there removes a brake. Fix those first.${X}`);
 
   if (r.failures.length > 0) {
     console.error(`\n${R}${B}Scanner failures${X} (${r.failures.length}) — the scan is NOT trustworthy:`);
@@ -409,10 +518,25 @@ function main() {
     for (const f of r.staleBaseline) console.log(`  ${f}`);
   }
 
+  // The triage bucket is the only findings list worth printing unprompted: the
+  // full census is 80 lines of flat text that reads as a wall, which is what a
+  // consumer reported (2026-07-20) as burying the cases that matter. `--json`
+  // still carries every finding for anyone who wants the whole list.
+  if (r.optOut.length > 0) {
+    const drifting = new Set(r.drift);
+    console.log(`\n${Y}${B}safety-flag CLIs${X} (${r.optOut.length}) — triage these first:`);
+    for (const f of r.optOut) {
+      console.log(`  ${Y}${f}${X}${drifting.has(f) ? `${R} (NET-NEW)${X}` : `${D} (baselined)${X}`}`);
+    }
+  }
+
   if (gating) {
     if (r.drift.length > 0) {
+      const optOutSet = new Set(r.optOut);
       console.error(`\n${R}${B}DRIFT${X} (${r.drift.length}) — CLI(s) that parse flags but ignore unknown ones:`);
-      for (const f of r.drift) console.error(`  ${R}${f}${X}`);
+      for (const f of r.drift) {
+        console.error(`  ${R}${f}${X}${optOutSet.has(f) ? `  ${Y}⚠ carries a safety flag — a dropped typo runs the real mutation${X}` : ''}`);
+      }
       console.error(`\n${D}Add \`assertKnownFlags(argv, KNOWN_FLAGS, { cli: '<name>' })\` from scripts/lib/cli-io.mjs.${X}`);
       console.error(`${D}An ignored flag on a mutating command silently does more than the operator asked for.${X}`);
     } else {
