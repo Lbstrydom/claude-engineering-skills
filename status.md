@@ -1,5 +1,56 @@
 # Project Status Log
 
+## 2026-07-20 (later) — two closing fixes, and a bug I asserted that did not exist
+
+Tail of the arch-memory session above. Two commits of substance and one lesson
+that is worth more than either.
+
+**`d93fe32` — the C4 fallback cap was missing.** Found by checking whether the
+plan was genuinely complete rather than assuming it. C4 required that a
+fallback-normalized query never earn an actionable band; the requirement
+survived into the plan but not into the reworked implementation, because
+C4-REVISED replaced the band vocabulary and the cap was not carried across.
+`normalized.mode` was tracked (it is part of the cache key) but never reached
+`bandTopResult`, which had no mode parameter at all. During a provider outage a
+regex-munged query could therefore be scored against a floor calibrated on
+LLM-rewritten text and emit a confident `precedent`. Safe by luck rather than by
+design: fallback text scores lower (0.5828 vs 0.8446 on the same intent) so it
+usually fell below the floor anyway. Now enforced and verified live — forced
+fallback bands `review / fallback-normalization-uncalibrated` at 0.7051.
+
+**`8372991` — the ship skill now names what actually earns `AI-Gate: passed`.**
+Three things, none of which the skill said: the committed tree must equal the
+audited tree (so hand-fixing findings after the last round makes `passed`
+unavailable, by design — those fixes are unaudited); `not-run` on a fix-heavy
+ship is the honest answer rather than a failure; and freshness is
+`evidenceMs > headCommitTs`, so **another session's commit ages out your
+evidence** — which also removes `waived`, since it requires `fresh`.
+
+**The lesson, which cost the most and produced the least code.** I told the user
+`AI-Gate: passed` was unreachable because "nothing writes
+`.audit/last-audit-run.json`", called the trailer "the opposite of the truth on
+every commit", and began building a fix. All of it was wrong. The marker existed
+and was well-formed; `writeGateEvidence` had a live caller; the gate was working
+exactly as designed. I had read the **historical, superseded** section of my own
+memory note instead of its `RESOLVED` header — a note that additionally
+documented this precise trap from a prior ship. Only the instruction to go fix
+it made me open the file and discover there was nothing to fix.
+
+Two habits came out of it: verify a "this is broken" claim against the artefact
+before asserting it, and read a memory note's resolution header before its
+history. The note has been amended — historical section marked superseded, and
+the E1 tree-identity refusal (the one that actually fires on the normal
+audit → fix → commit loop) documented, since it previously covered only the
+convergence refusal.
+
+**Standing hazard, four incidents in one session**: a parallel session on the
+same working tree produced a phantom test failure (file read mid-write), a
+corrupt git pack (concurrent `.git` writes, repaired), stale gate evidence from a
+foreign commit, and three failing Azure tests now on `main` from `500ba7a`
+(embeddings 3-small → 3-large, tests still expecting the old value, plus a
+missing `it` import in `azure-embed-discovery.test.mjs`). None individually
+serious; the pattern is.
+
 ## 2026-07-20 — refused to demote a finding on evidence older than the code
 
 Closed the SAST-triage plan's last open precondition, then repaired the object
