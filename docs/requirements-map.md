@@ -1,23 +1,23 @@
-# Requirements Map — clusterB
+# Requirements Map — claude-engineering-skills
 
-_Generated from `.requirements/ledger.json` — 189 requirement(s) across 24 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
+_Generated from `.requirements/ledger.json` — 215 requirement(s) across 28 file(s). Do not hand-edit; regenerate with `node scripts/requirements.mjs render`._
 
 ## At a glance
 
 ```mermaid
 pie title Active invariants by kind
-  "security" : 4
+  "security" : 5
   "safety" : 6
   "correctness" : 5
   "behavioural" : 3
-  "persistence" : 5
+  "persistence" : 6
 ```
 
 | Status | Count |
 |---|---|
-| 🟢 active — enforced by /audit-code | 23 |
+| 🟢 active — enforced by /audit-code | 25 |
 | 🟡 needs-review — awaiting your call | 13 |
-| ⚪ inferred-only — refine backlog | 153 |
+| ⚪ inferred-only — refine backlog | 177 |
 
 ## 🟡 Needs review (13)
 
@@ -39,10 +39,11 @@ pie title Active invariants by kind
 
 ## 🟢 Active invariants — by kind
 
-### security (4)
+### security (5)
 
 | ID | Assertion | Governs |
 |---|---|---|
+| `REQ-security-9967f76c` | Artifact content must be read from the canonical path approved by the sensitivity gate rather than from the user-visible path. | scripts/lib/brainstorm/artifact-context.mjs |
 | `REQ-security-b0b533cc` | Extraction must redact secret-shaped content from every file body before including it in an LLM request. | scripts/lib/requirements/extract.mjs, scripts/lib/sensitive-egress-gate.mjs |
 | `REQ-security-b6cfe447` | Extraction must reject both lexically sensitive paths and symlink targets that resolve to sensitive paths before sending content to the LLM. | scripts/lib/requirements/extract.mjs, scripts/lib/sensitive-egress-gate.mjs |
 | `REQ-security-d55680e9` | Extraction must reject any requested file path that escapes the repo root before reading or sending file content. | scripts/lib/requirements/extract.mjs |
@@ -77,12 +78,13 @@ pie title Active invariants by kind
 | `REQ-behavioural-27a17fcf` | LLM JSON parsing must prefer the first fenced JSON block found anywhere in the response and otherwise parse the trimmed raw response. | scripts/lib/requirements/llm-json.mjs |
 | `REQ-behavioural-881aab25` | Suppression considers session ledger entries only when adjudicationOutcome is dismissed or remediationState is fixed or verified, and considers debt entries only when they are not escalated. | scripts/lib/ledger.mjs |
 
-### persistence (5)
+### persistence (6)
 
 | ID | Assertion | Governs |
 |---|---|---|
 | `REQ-persistence-18856855` | When a local telemetry write cannot reach cloud storage, the decision must be atomically written to the outbox or retained in memory for retry rather than silently discarded. | scripts/lib/learning/decision-logger.mjs |
 | `REQ-persistence-6623d196` | A file may be reported in extraction `coveredFiles` only if at least one LLM batch containing that file succeeded. | scripts/lib/requirements/extract.mjs |
+| `REQ-persistence-95ab6a1f` | Save mode must reject saving an insight unless the specified session exists and contains the specified round. | scripts/brainstorm-round.mjs |
 | `REQ-persistence-9c23f3e5` | A persona-consistency promotion must durably journal its intended file and candidate transition before writing the temporary spec file or requesting the database candidate-to-locked transition. | scripts/persona-consistency-promote.mjs |
 | `REQ-persistence-cac6fd0f` | Quickfix statistics cache writes must be atomic so concurrent readers cannot observe a partially written cache file. | scripts/lib/learning/quickfix-stats.mjs |
 | `REQ-persistence-d8f9613d` | Atomic writes must write to a same-directory temporary file and then rename it into place, deleting the temporary file on write or rename failure when possible. | scripts/lib/file-io.mjs |
@@ -91,9 +93,13 @@ pie title Active invariants by kind
 
 | File | 🟢 | 🟡 | ⚪ |
 |---|--:|--:|--:|
+| `scripts/brainstorm-round.mjs` | 1 | 0 | 10 |
 | `scripts/learning/backfill-outcomes.mjs` | 1 | 1 | 15 |
 | `scripts/lib/audit/finding-verification.mjs` | 0 | 2 | 18 |
 | `scripts/lib/audit/prompt-builder.mjs` | 0 | 1 | 2 |
+| `scripts/lib/brainstorm/artifact-context.mjs` | 1 | 0 | 10 |
+| `scripts/lib/brainstorm/policy-context.mjs` | 0 | 0 | 3 |
+| `scripts/lib/brainstorm/resume-context.mjs` | 0 | 0 | 4 |
 | `scripts/lib/brainstorm/session-store.mjs` | 1 | 0 | 3 |
 | `scripts/lib/claudemd/autofix.mjs` | 1 | 0 | 0 |
 | `scripts/lib/duplicate-justification-pragma.mjs` | 0 | 0 | 8 |
@@ -102,7 +108,7 @@ pie title Active invariants by kind
 | `scripts/lib/learning/decision-logger.mjs` | 1 | 0 | 6 |
 | `scripts/lib/learning/quickfix-stats.mjs` | 3 | 2 | 4 |
 | `scripts/lib/ledger.mjs` | 2 | 7 | 26 |
-| `scripts/lib/requirements/context.mjs` | 0 | 0 | 7 |
+| `scripts/lib/requirements/context.mjs` | 0 | 0 | 4 |
 | `scripts/lib/requirements/extract.mjs` | 6 | 0 | 9 |
 | `scripts/lib/requirements/gap-challenge.mjs` | 0 | 0 | 6 |
 | `scripts/lib/requirements/ledger.mjs` | 1 | 0 | 14 |

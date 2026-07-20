@@ -381,6 +381,14 @@
       "description": "Run the check chain against a clean checkout of the commit being pushed (throwaway git worktree), so a concurrent session's working-tree edits cannot cause a false block or a false pass.",
       "category": "hooks"
     },
+    "requirements:map": {
+      "description": "Regenerate docs/requirements-map.md from .requirements/ledger.json.",
+      "category": "plans"
+    },
+    "requirements:map:check": {
+      "description": "Fail if docs/requirements-map.md is stale against the ledger (Category-B freshness gate, in the pre-push check).",
+      "category": "plans"
+    },
     "security:refresh": {
       "description": "Refresh the security-incident memory from docs/security-strategy.md.",
       "category": "security"

@@ -166,14 +166,56 @@ function cmdIndex(argv, baseDir) {
 }
 
 /** Render the ledger as a human-readable map (Mermaid pie + grouped tables). */
-function cmdRender(argv, baseDir) {
+/**
+ * The repo's name, from COMMITTED source.
+ *
+ * Previously `path.basename(cwd)`, which made the rendered map depend on what
+ * the checkout directory happens to be called — the committed map carried the
+ * title "clusterB" because it was last generated inside a git worktree of that
+ * name. That is not a pure function of committed source, so two clones
+ * legitimately disagreed and the freshness check below would have false-failed
+ * for anyone whose directory is named differently. Same class as the
+ * CRLF-vs-committed-bytes bug the pre-push sandbox caught in skills.manifest.
+ */
+export function repoNameFor(baseDir) {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(baseDir, 'package.json'), 'utf8'));
+    if (pkg?.name) return pkg.name;
+  } catch { /* fall through */ }
+  return path.basename(path.resolve(baseDir));
+}
+
+/** Render the map. Pure w.r.t. committed source — no clock, sha, or cwd. */
+function renderMap(baseDir) {
   const ledger = loadLedger({ baseDir });
-  const repoName = path.basename(path.resolve(baseDir));
-  const md = renderRequirementsMap(ledger, { repoName });
+  const md = renderRequirementsMap(ledger, { repoName: repoNameFor(baseDir) });
+  return { ledger, text: md.endsWith('\n') ? md : `${md}\n` };
+}
+
+function cmdRender(argv, baseDir) {
   const outRel = flag(argv, '--out') || 'docs/requirements-map.md';
   const outAbs = path.join(baseDir, outRel);
+  const { ledger, text } = renderMap(baseDir);
+
+  // `--check` mirrors `plans:index:check`: regenerate in memory and compare,
+  // never write. This is what makes the map a Category-B artefact — committed
+  // AND freshness-verified — rather than a committed file whose staleness
+  // nothing detects (it had drifted by 26 requirements).
+  if (argv.includes('--check')) {
+    let current = null;
+    try { current = fs.readFileSync(outAbs, 'utf8'); } catch { /* missing */ }
+    if (current === text) {
+      process.stdout.write(`\x1b[32m✓\x1b[0m requirements:map — ${outRel} is up to date.\n`);
+      return;
+    }
+    process.stderr.write(`\n\x1b[31m\x1b[1m✗ requirements:map\x1b[0m — ${outRel} is ${current === null ? 'missing' : 'stale'}.\n`);
+    process.stderr.write('\x1b[2m  The ledger changed without regenerating the map.\n');
+    process.stderr.write('  Fix: npm run requirements:map\x1b[0m\n\n');
+    process.exit(1);
+  }
+
   fs.mkdirSync(path.dirname(outAbs), { recursive: true });
-  atomicWriteFileSync(outAbs, md.endsWith('\n') ? md : md + '\n');
+  atomicWriteFileSync(outAbs, text);
   process.stderr.write(`  [requirements] render: ${ledger.requirements.length} requirement(s) → ${outRel}\n`);
   process.stdout.write(`requirements map → ${outRel}\n`);
 }
@@ -197,7 +239,19 @@ async function main() {
   process.exit(1);
 }
 
-main().catch((err) => {
-  process.stderr.write(`  [requirements] FATAL: ${err.message}\n`);
-  process.exit(1);
-});
+// `main()` used to run unconditionally, so merely IMPORTING this module ran the
+// CLI — it printed help and called process.exit(1). That made the file
+// untestable from a test runner and is a landmine for any future importer.
+// Same isMain guard the other CLIs here use (check-rls.mjs, security-triage.mjs).
+const isMain = (() => {
+  const argv1 = process.argv[1]?.replace(/\\/g, '/');
+  if (!argv1) return false;
+  return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+})();
+
+if (isMain) {
+  main().catch((err) => {
+    process.stderr.write(`  [requirements] FATAL: ${err.message}\n`);
+    process.exit(1);
+  });
+}
