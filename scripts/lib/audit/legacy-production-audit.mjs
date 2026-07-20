@@ -226,6 +226,15 @@ DO raise findings for:
 - deadIntent (domain declared but no files) — possible stale intent.
 - unmappedFiles in src/ or scripts/ — gap in domain-map.
 
+GROUNDING — READ THIS. Every edge finding you emit MUST correspond to a file in
+the mechanical violations or unmapped list above. The mechanical analyser has
+ALREADY resolved every domain and checked every import against allowedDeps; an
+edge it did NOT flag is ALLOWED, and you must not re-raise it. Do NOT reason
+from the intent diagram to "notice" a questionable-looking edge and flag it —
+the diagram is context for SEVERITY, not an invitation to re-derive the graph.
+Set each finding's \`section\` to the exact flagged file it concerns. A finding
+whose file is not in the lists above will be dropped as ungrounded.
+
 Severity floor: any mechanical violation defaults to MEDIUM unless you can justify HIGH or LOW with concrete reasoning.`;
 // ── Intermediate Result Cache ────────────────────────────────────────────────
 // Write each wave's results to disk as they complete. If the merge step crashes
@@ -783,10 +792,18 @@ async function runArchitecturePass({ openai, repoRoot, focusBlock, planContent, 
     };
   }
 
+  // Ground the bouncer's findings to the mechanical report — drop any it
+  // hallucinated from the intent diagram about edges the mechanical layer
+  // never flagged (2026-07-20). Only touches the LLM success path; the
+  // deterministic fallback above is mechanical and already grounded.
+  const grounded = groundArchFindingsToReport(llmCall.result?.findings ?? [], report);
+  if (grounded.dropped.length > 0) {
+    process.stderr.write(`  [architecture] dropped ${grounded.dropped.length} ungrounded bouncer finding(s) (file not in mechanical report)\n`);
+  }
   return {
     state: derivedState,
     archReport: report,
-    result: llmCall,
+    result: { ...llmCall, result: { ...llmCall.result, findings: grounded.kept } },
   };
 }
 
@@ -927,6 +944,59 @@ async function runOrphanIntroducedPass({ archReport, repoRoot, baseRef, headRef,
       latencyMs,
     },
   };
+}
+
+/**
+ * Ground the LLM bouncer's findings to what the MECHANICAL analyser actually
+ * flagged — "the bouncer only judges what it's handed."
+ *
+ * Why (2026-07-20): the bouncer is handed the full architecture-intent mermaid
+ * diagram plus the mechanical violations, and the LLM reasons from the DIAGRAM
+ * to "notice" edges that look questionable — re-raising imports the mechanical
+ * layer already checked against allowedDeps and CLEARED. Reproduced: a run
+ * whose only mechanical violation was `stores → plan` emitted 16 findings
+ * claiming `brainstorm → requirements` violates a boundary. That edge is
+ * EXPLICITLY in allowedDeps["brainstorm"] — the mechanical detector correctly
+ * never flagged it; the bouncer invented it from the diagram. These recur on
+ * every audit (the arch pass scans the whole repo, not the diff) and were the
+ * dominant driver of the memory-health cluster-density trigger.
+ *
+ * The bouncer's schema carries no structured edge, but every finding carries a
+ * `section` (its file). A legitimate bouncer finding classifies a mechanical
+ * violation, so its file is one the mechanical layer flagged. A finding whose
+ * file is NOT in {violation fromFile/toFile} ∪ {unmapped files} is ungrounded
+ * and dropped. A finding with no file-like section is KEPT (conservative — a
+ * domain-level dead-intent finding legitimately names no file, and we do not
+ * drop what we cannot disprove).
+ *
+ * Pure. @returns {{kept: object[], dropped: object[]}}
+ */
+export function groundArchFindingsToReport(findings, report) {
+  if (!Array.isArray(findings) || findings.length === 0) return { kept: findings ?? [], dropped: [] };
+  const flagged = new Set();
+  for (const v of report?.violations ?? []) {
+    if (v.fromFile) flagged.add(normalizePath(v.fromFile));
+    if (v.toFile) flagged.add(normalizePath(v.toFile));
+  }
+  for (const u of report?.unmappedFiles ?? []) {
+    if (typeof u === 'string') flagged.add(normalizePath(u));
+  }
+  // A section is "file-like" if it carries a path separator or a file
+  // extension. `section` may be `path` or `path:symbol`/`path:line` — take the
+  // part before the first colon (after any Windows drive letter).
+  const fileOf = (f) => {
+    const raw = f?._primaryFile || f?.section;
+    if (typeof raw !== 'string' || !raw) return null;
+    const stripped = raw.replace(/^([A-Za-z]:)/, '$1 ').split(':')[0].replace(' ', ':');
+    return /[\\/]|\.[A-Za-z0-9]+$/.test(stripped) ? normalizePath(stripped) : null;
+  };
+  const kept = [], dropped = [];
+  for (const f of findings) {
+    const file = fileOf(f);
+    if (file === null || flagged.has(file)) kept.push(f);
+    else dropped.push(f);
+  }
+  return { kept, dropped };
 }
 
 /**

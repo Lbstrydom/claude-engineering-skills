@@ -1,5 +1,52 @@
 # Project Status Log
 
+## 2026-07-20 (even later) — I shipped a fix for the wrong pass, then found the right one
+
+Continuing to improve the audit-finding signal, I traced the remaining
+cluster-density AMBER — and in doing so discovered the fix I shipped one commit
+earlier (`cdd6893`, the `[Architecture]` namespace reservation) was aimed at the
+WRONG source. Owning that in full here.
+
+**The tell was the bracket depth.** Across 30 days: `[Architecture]` findings
+carry a SINGLE bracket, 0 double-bracketed; `[Duplication]` are ALL
+double-bracketed. `addFindings` prepends `[displayPrefix]` to each pass's
+category. A single `[Architecture]` means the category was BARE
+(`Layer Boundary Erosion`) when it reached the store and the `Architecture`
+pass's own prefix produced the bracket — i.e. these come from the **architecture
+pass bouncer**, not the general passes I aimed the prompt firewall at. And
+`normalizeArchCategory`, my backstop, checks `startsWith('[Architecture]')` — but
+it runs BEFORE the prefix is added, so the bare category never matches. Both of
+`cdd6893`'s fixes miss the actual source. (They still correctly handle a real
+SECONDARY class — 16 general-pass findings that DO emit a bracketed category,
+double-bracketed under `[Sustainability]` — so nothing is reverted.)
+
+**The real root cause, reproduced not inferred.** I ran the mechanical arch
+analysis on the live repo: exactly ONE violation (`stores → plan`), ZERO for
+`brainstorm → requirements`. Yet the bouncer emitted 16 findings claiming the
+latter violates a boundary. `formatViolationsForPrompt` hands the bouncer the
+FULL architecture-intent mermaid diagram, and the LLM reasons from the DIAGRAM to
+"notice" edges the mechanical layer already checked against allowedDeps and
+cleared. The arch pass scans the whole repo (not the diff), so it re-hallucinates
+the same finding on every audit of any plan — which is why 16 accumulated across
+unrelated runs. This is the repo's own "the bouncer only judges what it's handed"
+invariant, violated.
+
+**Fix: mechanical grounding filter** (`groundArchFindingsToReport`, wired into the
+bouncer success path) + a prompt constraint. A bouncer finding is kept only if
+its file is one the mechanical layer actually flagged (violation fromFile/toFile
+or unmapped); a file-less domain-level finding is kept (conservative). End-to-end
+against the real report: KEEPS `stores → plan`, DROPS the hallucinated
+`brainstorm → requirements` and `dashboard → plan`. 8 tests. This is the durable
+fix the earlier dismissals only cleaned up after.
+
+**A real finding fell out of this: `stores → plan` is mine.** This session's
+plan-path work added `import { DB_PLAN_STATUSES, toDbPlanStatus } from
+'../plan-status.mjs'` to `plans-ship.mjs` (stores domain → plan domain), an edge
+not in allowedDeps. Left UNFIXED and flagged: resolving it is a domain call
+(move the vocabulary to shared-lib — but that splits the single-source-of-truth
+migration 20260718120000 established — vs. widen allowedDeps, which inverts
+layering) and shouldn't be decided unilaterally on top of this turn's other calls.
+
 ## 2026-07-20 (latest) — finishing the consumer verification unearthed a third, worse bug
 
 A prior entry closed the duplicate-justification copy-forward fix with the
