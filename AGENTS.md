@@ -59,12 +59,17 @@
 >   SOURCE repo's `scripts/.sync-manifest.json`** (regenerated on every `npm run
 >   sync` with a timestamp + HEAD sha — committing it is pure per-push churn;
 >   gitignored source-only, while CONSUMERS still track their own copy for the
->   isolation verifier).
+>   isolation verifier), **`docs/architecture-map.md`** (reclassified B → A
+>   2026-07-20: header carries a timestamp + commit sha + refresh_id, the body
+>   carries 33 LLM-written domain summaries, and it renders from the CLOUD
+>   symbol_index — three independent reasons two renders of one commit differ;
+>   regenerate with `npm run arch:render`).
 > - **B — a pure, deterministic function of committed source → committed AND
 >   freshness-verified in the pre-push `check`.** Regeneration must be byte-
 >   identical (no clocks/shas/network). Example: `.claude/skills/**` (regen by
->   `skills:regenerate`, enforced by `skills:check`); `docs/architecture-map.md`
->   (structural-from-source); `docs/plans/README.md`, the status-bucketed plans index (`plans:index` / `plans:index:check`).
+>   `skills:regenerate`, enforced by `skills:check`); `docs/plans/README.md`, the
+>   status-bucketed plans index (`plans:index` / `plans:index:check`);
+>   `docs/requirements-map.md` (`requirements:map` / `requirements:map:check`).
 >
 > The test for a tracked generated file: *would two regenerations on the same
 > commit be byte-identical, and does a check enforce it?* If no → it belongs in

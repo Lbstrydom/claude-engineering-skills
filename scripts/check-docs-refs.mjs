@@ -182,7 +182,11 @@ export function classifyRef(ref, index) {
   // so `docs/plans/Foo.md` for `foo.md` is a finding on case-insensitive
   // Windows AND on case-sensitive CI. fs.existsSync would disagree across
   // platforms and let a broken ref through locally.
-  const resolved = index.has(ref.target);
+  // A Category-A generated artefact is gitignored, so it is absent from the git
+  // index this gate resolves against — but the citation is correct and must
+  // stay. Resolving it here (rather than via EXCLUSIONS, which is SOURCE-side)
+  // keeps every citing file still fully linted for its OTHER refs.
+  const resolved = index.has(ref.target) || GENERATED_UNTRACKED_TARGETS.has(ref.target);
 
   if (ref.planned) {
     // A marker cannot outlive its reason.
@@ -192,6 +196,24 @@ export function classifyRef(ref, index) {
   }
   return { class: resolved ? 'RESOLVES' : 'GONE', target: ref.target, offset: ref.offset, resolved };
 }
+
+/**
+ * Cited targets that are deliberately gitignored generated artefacts.
+ *
+ * The gate's grammar only sees `docs/**\/*.md`, so this set is small by
+ * construction — a Category-A artefact outside `docs/` (dashboard/index.html,
+ * .audit-loop/domain-deps-observed.json) is already structurally invisible here.
+ *
+ * `docs/architecture-map.md` was reclassified B → A on 2026-07-20: it fails the
+ * byte-identical test three ways over (a timestamp + commit sha + refresh_id in
+ * its header, 33 LLM-written domain summaries in its body, and the cloud
+ * symbol_index rather than committed source as its data source). AGENTS.md still
+ * directs every agent to it, so the citations are right; only the tracking was
+ * wrong. Regenerate with `npm run arch:render`.
+ */
+export const GENERATED_UNTRACKED_TARGETS = new Set([
+  'docs/architecture-map.md',
+]);
 
 /** Classes that are findings (everything else is informational). */
 const FINDING_CLASSES = new Set(['GONE', 'traversal', 'stale-planned-marker']);

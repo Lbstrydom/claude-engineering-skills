@@ -138,6 +138,19 @@ persona-final-*.png
 # belongs in the same "derived → gitignored" category as domain-deps-observed.json.
 dashboard/index.html
 dashboard/telemetry.html
+# Architecture map — reclassified B → A on 2026-07-20 for the same reason the
+# reference dashboard was, and it fails the byte-identical test three ways over:
+#   1. its header embeds `Generated: <ISO timestamp>  commit: <sha>  refresh_id: <uuid>`
+#   2. its body carries 33 LLM-written per-domain summaries + per-symbol prose,
+#      so two renders of the same commit differ in wording
+#   3. it is rendered from the CLOUD symbol_index, i.e. external mutable state,
+#      not from committed source
+# It was tracked-but-unverified — precisely the "messy middle" AGENTS.md's
+# generated-artifact policy forbids — and churned across 54 commits carrying no
+# information. Regenerate with `npm run arch:render` (or `npm run dashboard:setup`
+# for the full chain). The citations to it in AGENTS.md are deliberate and stay
+# legal via the GENERATED_UNTRACKED exclusion in check-docs-refs.mjs.
+docs/architecture-map.md
 # Per-run audit-findings pages (docs/plans/dashboard-audit-run-viewer.md) —
 # same category-A "derived → gitignored" rule; sourced from the durable cloud
 # audit_findings, rebuilt per run, never committed.
