@@ -421,10 +421,38 @@ export async function checkPlaywrightAvailable() {
   } catch (err) {
     return { available: true, version: null, browserBinary: false, reason: `npx playwright --version failed: ${err.message}` };
   }
-  // Probe for chromium binary — `npx playwright install --dry-run chromium`
-  // exits 0 if chromium is present (or just lists what would install). v1 uses
-  // a softer probe: assume binary present if `playwright --version` worked,
-  // and let the runner emit exit 5 with a more precise message at first run.
+  // Probe for the chromium binary for real.
+  //
+  // This used to `return { browserBinary: true }` unconditionally, deferring to
+  // "the runner emits exit 5 at first run". The runners DO fail loudly (verified
+  // 2026-07-20: nav-audit exits 2, visual-audit exits 2 via NO_CHROMIUM,
+  // persona-consistency reports BROKEN) — but that made this health check, whose
+  // whole job is telling you whether your setup works, structurally unable to
+  // report the one dependency four skills cannot run without. Measured with the
+  // browsers hidden, check-setup printed NOTHING about Playwright and exited 0:
+  // a clean bill of health for an install where /persona-test, /click-test,
+  // /nav-audit --verify and /visual-audit are all dead.
+  //
+  // `chromium.executablePath()` resolves the path Playwright WOULD launch (it
+  // honours PLAYWRIGHT_BROWSERS_PATH) without spawning anything, so this is an
+  // offline existence check rather than a launch — no network, no subprocess,
+  // no timeout to tune.
+  try {
+    const { chromium } = await import('playwright');
+    const exe = chromium.executablePath();
+    if (!exe || !fs.existsSync(exe)) {
+      return {
+        available: true, version, browserBinary: false,
+        reason: 'playwright is installed but its chromium binary is not downloaded',
+      };
+    }
+  } catch (err) {
+    // Resolution itself failed — report it rather than assuming either way.
+    return {
+      available: true, version, browserBinary: false,
+      reason: `could not resolve the chromium binary: ${err.message}`,
+    };
+  }
   return { available: true, version, browserBinary: true };
 }
 
@@ -460,20 +488,48 @@ async function checkConsistencyMode(env, report) {
       'mkdir -p .persona-test/canaries && add <canary>.json — see docs/reference/consistency-contract.md');
   }
 
-  // Playwright probe.
+}
+
+/**
+ * Browser prerequisite — its OWN section, deliberately not nested.
+ *
+ * This probe used to live at the end of checkConsistencyMode(), which returns
+ * early when no surfaces.json is found. Consistency mode is opt-in and most
+ * repos (including this one) have not adopted it, so the browser check was
+ * unreachable for exactly the repos most likely to need telling. Measured
+ * 2026-07-20 with the browsers hidden: check-setup printed NOTHING about
+ * Playwright and exited 0.
+ *
+ * Playwright is a prerequisite for FOUR skills — /persona-test, /click-test,
+ * /nav-audit --verify, /visual-audit — none of which require consistency mode.
+ * Scoping its health check to a fifth, opt-in feature was the wrong home.
+ *
+ * WARN, not FAIL: a backend-only consumer that never runs a UX lens is
+ * correctly configured without a browser, and failing them would be the same
+ * false-alarm class as the Azure/OPENAI_API_KEY fix above. The exit code stays
+ * 0; the operator gets told.
+ */
+async function checkBrowser(report) {
+  report.section('Browser (UX lenses)');
   const pw = await checkPlaywrightAvailable();
   if (!pw.available) {
-    report.fail(
+    report.warn(
       'Playwright unavailable',
-      pw.reason,
+      `${pw.reason} — /persona-test, /click-test, /nav-audit --verify and /visual-audit cannot run`,
       'npm install playwright && npx playwright install chromium',
     );
     return;
   }
   report.pass('Playwright', pw.version || '(version unknown — first install)');
   if (!pw.browserBinary) {
-    report.warn('Chromium binary not detected', pw.reason, 'npx playwright install chromium');
+    report.warn(
+      'Chromium binary not detected',
+      `${pw.reason} — the four browser-driven lenses will exit non-zero at first run`,
+      'npx playwright install chromium',
+    );
+    return;
   }
+  report.pass('Chromium binary', 'present');
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -519,6 +575,7 @@ async function main() {
   await checkAuditLoop(env, report);
   await checkPersonaTest(env, report);
   await checkConsistencyMode(env, report);
+  await checkBrowser(report);
 
   if (JSON_MODE) printJsonReport(report);
   else printReport(report);

@@ -1,5 +1,62 @@
 # Project Status Log
 
+## 2026-07-20 — tested what happens when Chromium is missing; the runners were fine, the diagnostics weren't
+
+Started from a plain question — do the skills auto-install their dependencies? They
+do not, and shouldn't: the posture is detect-and-instruct everywhere except
+`db-test-container.mjs`, which provisions a Docker Postgres but still requires Docker.
+That is the right split. The interesting part was testing the one dependency where
+the friction is highest and the risk lowest.
+
+**Method**: `PLAYWRIGHT_BROWSERS_PATH` pointed at an empty directory — a real missing
+browser, fully reversible, no uninstall.
+
+**The good news, measured rather than assumed.** No skill goes green without a browser.
+`nav-audit --verify` exits 2 naming the install command; `visual-audit` exits 2 via
+`NO_CHROMIUM`; `persona-consistency-run` reports `BROKEN no ledger written`.
+`runExtract`'s two-stage guard (separate returns for import failure vs launch failure,
+so a corrupted install stays distinguishable from "not installed") is genuinely
+well-built, and [visual-audit.mjs:124](scripts/visual-audit.mjs:124) checks `ok` and
+exits 2. The success paths are honest.
+
+**The diagnostics were not.** Two defects, and the second explains the symptom better
+than the first:
+
+1. `checkPlaywrightAvailable()` hardcoded `browserBinary: true` — an acknowledged v1
+   shortcut deferring to "the runner emits exit 5 at first run".
+2. It was called from the **end of `checkConsistencyMode()`**, which early-returns when
+   `surfaces.json` is absent. Consistency mode is opt-in and most repos have not adopted
+   it, so the browser check was unreachable for exactly the repos most likely to need it.
+   Fixing only the probe would have left it silent.
+
+Measured before: with zero browsers, `check-setup` printed **nothing** about Playwright
+and exited 0 — a clean bill of health for an install where four skills are dead. Now a
+real probe (`chromium.executablePath()` + `existsSync`; honours the env var, no
+subprocess, no network) in its own always-run `Browser (UX lenses)` section. WARN not
+FAIL, exit stays 0 — a backend-only consumer that never runs a UX lens is correctly
+configured without a browser, and failing them would repeat the Azure/`OPENAI_API_KEY`
+false-alarm class this file already fixed once. Verified both directions.
+
+**A separate breakage found by the control run.** `ux-lock-run` failed identically
+*with* browsers present, so the cause was not the browser: `@playwright/test` is not a
+dependency of this repo, so `req.resolve('@playwright/test/cli')` always throws, and the
+`npx.cmd` fallback EINVALs on Node ≥22.19. `looksLikePlaywrightMissing` matched `ENOENT`
+but not `EINVAL`, so it surfaced as `spawnSync npx.cmd EINVAL` under `SPAWN_FAILED`.
+
+Fixed as a **classification** bug, not a spawn one. Not `shell: true` — the comment at
+`playwright-runner.mjs:130` rejects it to keep the CVE-2024-27980 hardening and avoid
+quoting pitfalls, and that reasoning holds. Not adding `@playwright/test` either — this
+repo has no `tests/e2e/` and the runner targets consumer repos, where the primary path
+works. Instead the code now carries the fact it already had: reaching the fallback
+*means* the resolve failed, so any failure there is `PLAYWRIGHT_MISSING` by
+construction, rather than re-inferred from an error string. `spawn-failed`/exit 3 →
+`playwright-missing`/exit 5 with the install command.
+
+**The generalisable bit**: the runners were audited for gate honesty and passed. The
+*health check that exists to tell you about them* was never audited the same way, and it
+was the thing that lied. Worth asking of any diagnostic layer, not just the gates it
+watches.
+
 ## 2026-07-20 — two vacuous gates: an outcome loop that never resolved, a check that couldn't fail
 
 Both defects are the same species as the pre-push sandbox findings, and both were

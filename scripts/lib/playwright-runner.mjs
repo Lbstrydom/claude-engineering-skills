@@ -133,12 +133,19 @@ export function runPlaywrightJson(opts) {
   // (then PLAYWRIGHT_MISSING classification still applies as before).
   let bin;
   let args;
+  // Reaching the fallback MEANS `@playwright/test` did not resolve from this
+  // repo — that is the fact, known here for certain, rather than something to
+  // re-infer downstream from an error string. Carried so a fallback failure is
+  // classified as PLAYWRIGHT_MISSING (with its actionable install line) instead
+  // of a raw spawn error.
+  let usedNpxFallback = false;
   try {
     const req = createRequire(path.join(repoRoot, 'package.json'));
     const cliPath = req.resolve('@playwright/test/cli');
     bin = process.execPath;
     args = [cliPath, 'test', ...specPaths, '--reporter=json'];
   } catch {
+    usedNpxFallback = true;
     bin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
     args = ['playwright', 'test', ...specPaths, '--reporter=json'];
   }
@@ -151,7 +158,15 @@ export function runPlaywrightJson(opts) {
   }
 
   if (res.error) {
-    if (looksLikePlaywrightMissing(res.error, res.stderr)) {
+    // Any failure on the npx fallback is PLAYWRIGHT_MISSING by construction: we
+    // only got here because `@playwright/test` was unresolvable. This closes a
+    // real Windows hole — Node >=22.19 EINVALs when spawning a .cmd without
+    // shell:true, so on Windows a missing test-runner surfaced as the opaque
+    // `spawnSync npx.cmd EINVAL` under SPAWN_FAILED, and the user never saw the
+    // install command. `looksLikePlaywrightMissing` matched ENOENT but not
+    // EINVAL. Fixing the classification rather than adding shell:true keeps the
+    // CVE-2024-27980 hardening and the quoting pitfalls it avoids (see above).
+    if (usedNpxFallback || looksLikePlaywrightMissing(res.error, res.stderr)) {
       return { status: RUN_STATUS.PLAYWRIGHT_MISSING, report: null, exitCode: res.status ?? null, error: res.error.message };
     }
     return { status: RUN_STATUS.SPAWN_FAILED, report: null, exitCode: res.status ?? null, error: res.error.message };
