@@ -183,24 +183,31 @@ Run it WITHOUT `|| true` — the **exit code is the signal** and must be
 read, not masked. A non-zero exit must not abort the ship (this step is
 advisory): treat a failure as "skip staging, print a heads-up, continue".
 
-`reference` mode regenerates the committed `dashboard/index.html` (and a
-placeholder `dashboard/telemetry.html` if none exists — gitignored). The
-CLI exits non-zero on a **degraded** build (a source was invalid/errored):
+`reference` mode regenerates `dashboard/index.html` + `dashboard/telemetry.html`.
+The CLI exits non-zero on a **degraded** build (a source was invalid/errored).
 
-- Exit 0 → stage the regenerated page in the Step 6.1 list:
-  `git add dashboard/index.html`.
-- Exit non-zero → do **NOT** stage `dashboard/index.html` (a degraded page
-  must not reach a commit — §7.1 write/stage matrix). Print a one-line
-  heads-up; ship continues.
+**Nothing here is ever staged.** Both pages are **gitignored** — Category A per
+the generated-artifact policy (they derive from mutable store state, so two
+builds of one commit can differ). They were reclassified B → A in 2026-06
+(`docs/plans/local-dashboard.md` §2.1); this step's staging instruction outlived
+that change and told the agent to `git add` a gitignored path, which either
+fails or force-adds a Category-A artifact into a commit.
 
-This keeps the committed reference dashboard current with the skills/plans
-being shipped. `dashboard/telemetry.html` is never staged (gitignored).
+So the exit code is a **reporting** signal, not a staging one:
 
-> **Note**: this early build is superseded by **Step 5.5b**, which rebuilds
-> AFTER plan archiving so the Plans tab reflects the final active/completed
-> split. The build is deterministic (content `sourceHash`, no timestamp), so
-> the 5.5b re-run is byte-identical when nothing archived — and corrects the
-> page when a plan moved. If you only run one, run 5.5b.
+- Exit 0 → the local page is current; say nothing.
+- Exit non-zero → print a one-line heads-up that the dashboard build degraded;
+  ship continues.
+
+This keeps the LOCAL reference dashboard current with the skills/plans
+being shipped.
+
+> **This is the only dashboard build.** There was a second one at "Step 5.5b"
+> that rebuilt AFTER plan archiving so the Plans tab reflected the final
+> active/completed split. Plans no longer move (Step 5.5), so nothing can change
+> between the two points and Step 5.5b was deleted along with the archiver — but
+> this note outlived it and still said "if you only run one, run 5.5b", naming a
+> step that does not exist.
 
 ---
 
@@ -373,7 +380,8 @@ git add CLAUDE.md AGENTS.md    # only if modified
 git add docs/plans/<plan>.md   # only if plan was updated
 # NOTE: do NOT `git add scripts/.sync-manifest.json` in the source repo — it's
 # gitignored here (Category A; regenerated every sync). Consumers track their own.
-git add dashboard/index.html   # source repo only, after Step 0.5d, ONLY if that build exited 0
+# NOTE: do NOT `git add dashboard/index.html` — it and dashboard/telemetry.html
+# are gitignored (Category A; rebuilt by Step 0.5d, never committed).
 ```
 
 **Do NOT stage**: `.env`, credentials, `node_modules/`, temp/generated files.
@@ -566,15 +574,6 @@ Fire-and-forget — do not block on output. If cloud mode is off, CLI
 prints `{"ok":true,"cloud":false}` and returns 0.
 
 ---
-
-## Step 8 — Archive Completed Plans
-
-> **Note**: this step is documented for reference but is now run earlier
-> at **Step 5.5** (between plan-update and commit) so the archive moves
-> are part of the shipped commit rather than left uncommitted.  See
-> Step 5.5 above for the canonical flow.
-
-
 
 ## Quick Reference
 

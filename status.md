@@ -1,6 +1,34 @@
 # Project Status Log
 
-## 2026-07-20 (latest) — justified duplicates decayed on every incremental refresh
+## 2026-07-20 (latest) — the ship skill told the agent to commit a gitignored file
+
+Three stale blocks in `skills/ship/SKILL.md`, all from changes that landed
+elsewhere and left their instructions behind. Found by *running* the skill, not
+by reading it — each one only bites an agent following the steps literally.
+
+**`git add dashboard/index.html` (Steps 0.5d + 6.1).** Both dashboard pages were
+reclassified Category B → A in 2026-06 and gitignored; the staging instruction
+outlived that by six weeks. An agent obeying it either errors or force-adds a
+Category-A artifact into a commit — the exact "messy middle" the
+generated-artifact policy exists to prevent. The exit code is now a *reporting*
+signal, not a staging one.
+
+**Step 8 "Archive Completed Plans".** Vestigial: it pointed at Step 5.5, which
+itself says the archiver was deleted. A step whose entire body forwards to a
+step that says "this does not happen" is pure noise. Removed.
+
+**The Step 5.5b pointer.** Surfaced only by removing Step 8 — the 0.5d note
+said "if you only run one, run 5.5b", naming a step deleted with the archiver.
+Fixing two stale blocks without this would have left a dangling reference,
+which is how the previous two survived.
+
+Also noted, not fixed here (it is outside the repo): the GLOBAL
+`~/.claude/skills/ship/SKILL.md` has drifted 40 lines behind the repo copy and
+is missing the entire `AI-Gate: passed` provenance guidance. That global copy is
+what actually loads, so the skill being executed is not the skill under version
+control.
+
+## 2026-07-20 — justified duplicates decayed on every incremental refresh
 
 A bug report arrived with the symptom already measured: `duplicate_justified`
 rows oscillating by refresh mode across 2026-07-15 → 07-20 — full=5,
