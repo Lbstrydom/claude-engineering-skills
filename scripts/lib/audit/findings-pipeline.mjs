@@ -17,6 +17,61 @@ import { parseAcceptV1Markers } from './deferral-classifier.mjs';
 import { globMatch } from './glob-match.mjs';
 
 /**
+ * The CLOSED set of `[Architecture]` categories the MECHANICAL architecture
+ * pass is allowed to emit. That pass is the only one that receives the domain
+ * map (`allowedDeps`), so it is the only one that can legitimately assert a
+ * declared-boundary fact. Single source of truth — the mechanical pass in
+ * `legacy-production-audit.mjs` imports this and labels from it, and
+ * `normalizeArchCategory` reserves the namespace against it.
+ */
+export const MECHANICAL_ARCH_CATEGORIES = Object.freeze(new Set([
+  '[Architecture] Invalid domain-map.json',
+  '[Architecture] Forbidden cross-domain edge',
+  '[Architecture] File missing domain rule',
+  '[Architecture] Dead declared domain',
+]));
+
+/**
+ * The label a general (non-mechanical) pass's architecture opinion is demoted
+ * to. It is a coupling OBSERVATION, never a boundary VIOLATION — the pass
+ * cannot see the domain map, so it cannot know what is forbidden.
+ */
+export const COUPLING_CONCERN_CATEGORY = 'Coupling concern';
+
+/**
+ * Reserve the `[Architecture]` category namespace for the mechanical pass.
+ *
+ * Why (2026-07-20): the general LLM passes (structure/wiring/backend/frontend/
+ * sustainability) do NOT receive `allowedDeps`, yet were emitting findings like
+ * `[Architecture] Boundary Erosion` / `Layer Boundary Violation` asserting a
+ * declared-boundary violation they had no evidence for — 15 invented category
+ * names for one concept, each fingerprinting differently, driving the
+ * memory-health cluster-density trigger. The concrete case
+ * (`brainstorm → requirements`) is an edge the domain map EXPLICITLY ALLOWS.
+ *
+ * The prompt (prompt-seeds.mjs `NO_DECLARED_ARCH_VERDICTS`) tells the passes not
+ * to do this; this is the mechanical BACKSTOP for when a probabilistic model
+ * ignores the instruction — the same "the bouncer only judges what it's handed"
+ * philosophy the adjacency wave uses. An `[Architecture]`-prefixed category that
+ * is NOT one the mechanical pass emits is demoted to `Coupling concern`; the
+ * finding is KEPT (the coupling it names may be real), only its unfounded
+ * boundary-violation FRAMING is stripped. Mechanical-pass findings pass through
+ * untouched — matched by exact category, not by `is_mechanical` (one mechanical
+ * category legitimately carries `is_mechanical:false`).
+ *
+ * Pure; returns a new object when it relabels, the same reference otherwise.
+ * @param {{category?: string}} f
+ * @returns {object}
+ */
+export function normalizeArchCategory(f) {
+  const cat = f?.category;
+  if (typeof cat !== 'string') return f;
+  if (!cat.startsWith('[Architecture]')) return f;
+  if (MECHANICAL_ARCH_CATEGORIES.has(cat)) return f;
+  return { ...f, category: COUPLING_CONCERN_CATEGORY };
+}
+
+/**
  * Compute a stable fingerprint for a finding.
  *
  * For `orphan-introduced` findings (Gemini-G1 + R5/H1 + audit-code R1/M4):

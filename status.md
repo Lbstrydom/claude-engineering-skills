@@ -1,5 +1,58 @@
 # Project Status Log
 
+## 2026-07-20 (later still) — the cluster-density signal was a false positive, dressed as 9 categories
+
+Follow-through on the memory-health AMBER logged below. The residual cluster
+density (after excluding the adjacency control markers) was itself measuring a
+defect: **16 findings, one false positive.** Every one asserted that
+`brainstorm → requirements` violates a declared boundary. Three independent
+checks refuted it — the edge is EXPLICITLY in `allowedDeps["brainstorm"]`,
+`getRequirementsContext` is a documented public export consumed by three
+modules, and the code comment records the reuse was tooling-guided
+(`architectural-memory: precedent`). So this was not a bug to fix; it was a
+false positive to dismiss, plus the generator defect that produced it.
+
+**The generator defect.** Every `[Architecture]` finding in the store came from
+the LLM (`source_kind: MODEL`), NONE from the mechanical detector — which
+correctly stayed silent because there is no violation. The general passes
+(structure/wiring/backend/frontend/sustainability) do NOT receive the domain
+map, yet were asserting boundary verdicts against it, in **15 invented category
+names for one concept**. A fresh category per raise → a fresh fingerprint → the
+same non-issue accumulates forever as "distinct open findings". That is the
+mechanism the cluster-density gate was correctly detecting; the leak just isn't
+duplicated code, it's a duplicated false positive.
+
+Two fixes, root then backstop:
+1. **Prompt firewall** (`prompt-seeds.mjs` `NO_DECLARED_ARCH_VERDICTS`, all five
+   general passes): a pass without `allowedDeps` may not assert a declared
+   boundary violation — only the arch-intent pass owns that. It may still note
+   coupling, but under the exact label `Coupling concern`, framed as coupling.
+2. **Mechanical backstop** (`normalizeArchCategory` in findings-pipeline, wired
+   into `addFindings` before the identity hash): reserves the `[Architecture]`
+   namespace for the mechanical pass. Any other `[Architecture]` label from a
+   general pass is demoted to `Coupling concern`; the finding is KEPT, only its
+   unfounded framing stripped. Matched against a closed 4-category set, not
+   `is_mechanical` — one mechanical category legitimately carries
+   `is_mechanical:false`. A drift-guard test pins the shared constant to the
+   detector's literals. Same "the bouncer only judges what it's handed"
+   philosophy as the adjacency wave.
+
+**Honest scope correction.** I had told the user constraining the category would
+make re-raises collide on fingerprint. The fingerprint is `category|section|
+detail`, and detail is free prose that also varies — so category-normalisation
+does NOT force collisions. What the backstop actually buys is namespace
+reservation + countability, not dedup. Said so rather than ship a fix that
+doesn't do what I claimed.
+
+All 16 dismissed (`overrule` / `dismissed` / `pending`), **verified against the
+store** — 16/16 flag + event. That verification was load-bearing: the first two
+attempts printed "done 16/16" while every write silently failed
+(`recordAdjudicationEvent` is best-effort; I'd passed an invalid
+`remediation_state` then an invalid `ruling`). Reporting success off the
+script's own word would have been the "unverified write success" class the
+backend pass flags as HIGH. Cluster density stays AMBER (30.5) on OTHER genuine
+clusters — correct; the metric is now honest.
+
 ## 2026-07-20 (concurrent session) — the first alarm that was real, and one I nearly broke prod over
 
 Ran alongside the CLI-polarity work logged below; separate threads, same day.

@@ -81,7 +81,7 @@ import { getRequirementsContext } from '../requirements/context.mjs';
 import { ArchIntentPassSchema } from '../schemas.mjs';
 import { detectOrphansIntroduced } from './orphan-introduced.mjs';
 import { resolveDiffScope } from './diff-scope-resolver.mjs';
-import { processFindings, computeAuditVerdict } from './findings-pipeline.mjs';
+import { processFindings, computeAuditVerdict, normalizeArchCategory } from './findings-pipeline.mjs';
 import { emitOrphanRunMetrics } from './orphan-metrics.mjs';
 import { PlanFpTracker } from '../plan-fp-tracker.mjs';
 import {
@@ -2341,7 +2341,13 @@ export async function runLegacyProductionAudit(ctx) {
   function addFindings(findings, prefix) {
     // Sort by severity (HIGH first) before adding
     const sorted = [...(findings ?? [])].sort((a, b) => (sevOrder[a.severity] ?? 2) - (sevOrder[b.severity] ?? 2));
-    for (const f of sorted) {
+    for (const rawF of sorted) {
+      // Reserve the `[Architecture]` namespace for the mechanical arch pass:
+      // a general LLM pass cannot see `allowedDeps`, so any arch-boundary
+      // category it invents is demoted to `Coupling concern` BEFORE the
+      // identity hash is computed — otherwise 15 invented labels for one
+      // concept each fingerprint differently and never dedup (2026-07-20).
+      const f = normalizeArchCategory(rawF);
       const hash = semanticId(f);
 
       // Exact dedup by content hash

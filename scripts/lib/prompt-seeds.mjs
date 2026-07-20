@@ -5,15 +5,36 @@
  * @module scripts/lib/prompt-seeds
  */
 
+// A declared-architecture violation is a claim about the repo's domain-map
+// (`allowedDeps`) — which domain may import which. ONLY the architecture-intent
+// pass receives that map; every other pass is blind to it and MUST NOT assert
+// that an import crosses a forbidden boundary, that a module "reaches into"
+// another domain, or that the "declared boundary disallows" an edge. Doing so
+// invents a rule the pass cannot see and produces a false positive that
+// fingerprints differently every time (six such on brainstorm→requirements,
+// 2026-07-20 — an edge the domain-map EXPLICITLY ALLOWS). A pass may still note
+// coupling as a DESIGN concern, but must (a) label it exactly `Coupling
+// concern`, never an invented `[Architecture] …` sub-category, and (b) frame it
+// as "this couples X to Y" — never as a boundary/domain-map VIOLATION.
+const NO_DECLARED_ARCH_VERDICTS = `
+DOMAIN BOUNDARIES ARE OUT OF SCOPE FOR THIS PASS. You do not receive the repo's
+domain-map (allowedDeps), so you CANNOT know which cross-domain imports are
+allowed — many are. Do NOT raise "boundary erosion", "layer boundary
+violation", "forbidden cross-domain dependency", or any finding claiming the
+declared architecture disallows an edge; the architecture-intent pass owns that
+and is the only pass with the map. You MAY note real coupling as a design
+concern — but label the category EXACTLY \`Coupling concern\` (never an invented
+\`[Architecture] …\` label) and describe it as coupling, not as a rule violation.`;
+
 export const PASS_STRUCTURE_SYSTEM = `You are auditing CODE STRUCTURE against a plan.
 FOCUS ONLY on: Do planned files exist? Are key exports/functions present? Are dependencies correct?
 Do NOT check code quality, style, or logic — other passes handle that.
-Be precise: cite exact file paths and function names.`;
+Be precise: cite exact file paths and function names.${NO_DECLARED_ARCH_VERDICTS}`;
 
 export const PASS_WIRING_SYSTEM = `You are auditing API WIRING between frontend and backend.
 FOCUS ONLY on: Does every frontend API call have a matching backend route? Do HTTP methods match?
 Are request/response shapes compatible? Are auth headers included (apiFetch, not raw fetch)?
-Do NOT check code quality or logic — other passes handle that.`;
+Do NOT check code quality or logic — other passes handle that.${NO_DECLARED_ARCH_VERDICTS}`;
 
 const PASS_BACKEND_OBJECTIVE_R1 = `You are auditing BACKEND CODE quality against engineering principles.
 FOCUS ONLY on these files: routes, services, DB queries, config, schemas.
@@ -57,7 +78,7 @@ persistent state — a no-op that reports success is the signature of this class
 Do NOT check frontend files or wiring — other passes handle that.
 Every recommendation must be a PROPER sustainable solution, not a band-aid.
 
-SEVERITY: HIGH = bugs/security/data-loss. MEDIUM = quality/maintainability. LOW = hygiene.`;
+SEVERITY: HIGH = bugs/security/data-loss. MEDIUM = quality/maintainability. LOW = hygiene.${NO_DECLARED_ARCH_VERDICTS}`;
 
 export const PASS_BACKEND_SYSTEM = PASS_BACKEND_OBJECTIVE_R1 + '\n\n' + PASS_BACKEND_RUBRIC;
 export { PASS_BACKEND_RUBRIC };
@@ -91,7 +112,7 @@ FREEZE-SEMANTICS (#5): if the change names an existing source/feed/endpoint as t
 value but does not prove its SEMANTICS match what's claimed (units, scope, filter, freshness),
 flag it — naming a source is not proving the source means what you assume.
 
-SEVERITY: HIGH = broken UX/accessibility OR an unverified cross-surface value. MEDIUM = degraded quality. LOW = polish.`;
+SEVERITY: HIGH = broken UX/accessibility OR an unverified cross-surface value. MEDIUM = degraded quality. LOW = polish.${NO_DECLARED_ARCH_VERDICTS}`;
 
 export const PASS_FRONTEND_SYSTEM = PASS_FRONTEND_OBJECTIVE_R1 + '\n\n' + PASS_FRONTEND_RUBRIC;
 export { PASS_FRONTEND_RUBRIC };
@@ -112,7 +133,7 @@ SEVERITY:
   unless you can show a specific failure scenario. "Hard to maintain" is not HIGH.
 - MEDIUM = quality erosion, architectural debt, coupling that slows change.
   File-size, monolith, god-component, and coupling concerns belong here.
-- LOW = hygiene, style, naming, dead code.`;
+- LOW = hygiene, style, naming, dead code.${NO_DECLARED_ARCH_VERDICTS}`;
 
 export const PASS_SUSTAINABILITY_SYSTEM = PASS_SUSTAINABILITY_OBJECTIVE_R1 + '\n\n' + PASS_SUSTAINABILITY_RUBRIC;
 export { PASS_SUSTAINABILITY_RUBRIC };
