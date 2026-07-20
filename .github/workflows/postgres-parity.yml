@@ -2,11 +2,31 @@ name: postgres-parity
 
 # Plan §9 CI topology + §7 P4 row ".github/workflows/postgres-parity.yml".
 #
-# The DB-backed parity suite is the sole correctness gate for the new
-# pg-driver code path — the maintainer never runs it locally, so the
-# gate cannot depend on a local environment. Deliberate exception to
-# the repo's "local-first CI" preference (see CLAUDE.md memory
-# feedback_local_first_ci).
+# ROLE (corrected 2026-07-20 — read this before assuming what covers what).
+#
+# This job was once the SOLE gate for the pg-driver path, justified by "the
+# maintainer never runs it locally, so the gate cannot depend on a local
+# environment". That justification has expired: `scripts/db-test-container.mjs`
+# provisions the same ephemeral pgvector container locally, and
+# `db:suites:gate` runs these suites inside `npm run check`. Local coverage is
+# now real.
+#
+# The expiry is the lesson worth keeping. That premise was a claim about a
+# PERSON'S HABITS, not a property of the code, so no gate could ever test it —
+# it aged silently while continuing to justify a live design decision. Every
+# other load-bearing invariant in this repo is mechanically checkable; prefer
+# that, and date any justification that is not.
+#
+# What this job is FOR now: the clean-environment guarantee a dev machine
+# cannot give — fresh clone, `npm ci`, no local state, no
+# already-applied-migration history, LF checkout. It catches the
+# tracked-file/CRLF/missing-dep class that a warm working tree hides. It is a
+# SECOND opinion, no longer the only one.
+#
+# Its weakness is observability, not correctness: this workflow failed 20
+# consecutive runs (2026-07-18 → 07-20) with nobody noticing, because a remote
+# gate has no forcing function. `.githooks/pre-push` §1.5 now surfaces a red
+# run at push time. A gate nobody watches is not a gate.
 #
 # Two jobs:
 #   unit     — pure tests (no DB). Runs on every PR.

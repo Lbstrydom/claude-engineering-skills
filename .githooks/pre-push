@@ -101,27 +101,37 @@ if [ -f "$REPO_ROOT/package.json" ]; then
   echo "✓  checks passed"
 fi
 
-# ── 1.5 DB-seam change advisory (non-blocking) ───────────────────────────
-# `npm run check` does not run the destructive DB integration suites (they
-# need AUDIT_DB_TEST_URL, which is deliberately never set here). This block
-# tells the operator when a pushed commit touches that seam so it isn't
-# silently un-covered. Never blocks, never claims coverage.
-# Uses the range captured in step 0 rather than @{push}, which evaluates the
-# wrong commits for an explicit-ref push or an unconfigured upstream.
-# See docs/plans/local-db-test-container.md.
+# ── 1.5 Remote-gate observability (non-blocking) ─────────────────────────
+# A local gate cannot be ignored — it blocks the push. A REMOTE gate can stay
+# red indefinitely while everyone assumes it is green, which is exactly what
+# happened: postgres-parity failed 20 consecutive runs over two days
+# (2026-07-18 → 07-20) and nothing surfaced it. Worse, the advisory that used
+# to live here pointed AT that job as the DB seam's coverage story, so the
+# local side deferred to CI while CI deferred to nobody.
+#
+# This block is the local-first principle applied to OBSERVING CI rather than
+# replacing it: surface a red remote gate at the one moment the operator is
+# guaranteed to be looking. Never blocks — a red CI run is information about
+# an ALREADY-pushed commit, not a verdict on this one.
+#
+# (The DB-seam advisory this replaces is obsolete: `npm run check` now runs the
+# destructive suites via db:suites:gate, so the claim that it does not was
+# false the moment that landed.)
 {
-  DB_SEAM_MATCHED=0
-  if [ -n "$PUSH_BASE" ] && [ -n "$PUSH_HEAD" ]; then
-    CHANGED=$(git diff --name-only "$PUSH_BASE" "$PUSH_HEAD" 2>/dev/null)
-    for PREFIX in "scripts/lib/db/" "scripts/lib/store/" "supabase/migrations/" "tests/db-" "scripts/setup-postgres.mjs" "tests/fixtures/expected-schema.json"; do
-      if printf '%s\n' "$CHANGED" | grep -qF "$PREFIX" 2>/dev/null; then
-        DB_SEAM_MATCHED=1
-        break
-      fi
-    done
-  fi
-  if [ "$DB_SEAM_MATCHED" = "1" ]; then
-    echo "ℹ DB-seam change detected — the local pre-push checks do NOT run the destructive DB suites. Run npm run db:local before pushing, or rely on the postgres-parity CI job." >&2
+  if command -v gh >/dev/null 2>&1; then
+    # --limit 1 on the default branch; the JSON form avoids scraping columns.
+    LAST_CI=$(gh run list --workflow=postgres-parity.yml --branch main --limit 1 \
+                --json conclusion,status -q '.[0] | "\(.status):\(.conclusion // "")"' 2>/dev/null)
+    case "$LAST_CI" in
+      completed:failure|completed:timed_out|completed:startup_failure)
+        echo "⚠ postgres-parity on main is RED (last run: ${LAST_CI#completed:}) — the remote clean-environment gate is not passing." >&2
+        echo "  Inspect: gh run list --workflow=postgres-parity.yml --limit 5" >&2
+        ;;
+      # Any other value (success, in_progress, empty, gh unauthenticated) is
+      # deliberately silent. This block reports a KNOWN-red gate; it must never
+      # imply the gate is green, and it must never nag on a transient state.
+      *) : ;;
+    esac
   fi
 } || true
 
