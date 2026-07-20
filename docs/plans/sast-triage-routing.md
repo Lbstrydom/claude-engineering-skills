@@ -610,10 +610,50 @@ shape problem"**; it should be the first move next time.
   `?? <literal>`, which is idiomatic here; (2) fix the whole-prefix-masking vs
   bounded-read interaction — a template opening before the read boundary and
   closing after it currently poisons the window, costing 14 findings.
+
+  **Both shipped. Both under-delivered against this paragraph — see §2d-i.**
 - **The 36 render-delegation cases need following the sink one function hop.**
   That is adjacent to the analysis §6 deferred as the tar pit, and is NOT folded
   in here. It is the decision v1.1 has to take deliberately, with this same
   measurement re-run as the evidence.
+
+### 2d-i. v1.1 shipped — measured, and both predictions were wrong
+
+Same corpus, same config, re-run after both fixes landed:
+
+| | v1 | v1.1 |
+|---|---|---|
+| `A` | 145 | **144** |
+| `C` | 3 | **4** |
+| `D` | 92 | 92 |
+
+**Zero findings regressed out of `C`.** One was gained: `wineSearch.js:42`, the
+`escapeHtml(x) || 'NV'` case that motivated fix (1).
+
+Both predictions above were optimistic, and the way each was wrong differs:
+
+- **Fix (1) — predicted "likely recovers more than the 1 case that surfaced".
+  It recovered exactly 1.** The `||`-with-literal-fallback shape is idiomatic in
+  this codebase, but it almost always appears *inside* templates that are already
+  disqualified for another reason, so crediting it rarely changes the verdict.
+- **Fix (2) — predicted 14 findings. It moved 0 buckets.** But it was not
+  wasted, and the distinction matters: the "window ends mid-construct" category
+  went from **14 to 0**. Those findings are now *analysed* rather than refused
+  unseen — they simply have a second, genuine reason to stay in `A`. The fix
+  removed a blindfold; what was behind it was mostly architecture.
+
+**The correction that matters:** removing the blindfold showed the architectural
+share was **undercounted**. Re-classified against v1.1, **41 of the 99** remaining
+DOM-XSS findings have *no analysable expression at the sink at all* — the sink is
+a bare variable (17), a function call whose template lives elsewhere (13+2), or
+has no template (9). A further 26 carry multiple or nested templates.
+
+So the ceiling on expression-shape work is now measured, not guessed: **it is
+about 4 findings.** Everything else needs either the one-function hop or nothing.
+That makes the v1.1 → v1.2 decision sharper rather than more tempting — there is
+no remaining cheap increment, so the next step is either the deferred hop, taken
+deliberately with its full cost, or accepting `C` as a narrow bucket and leaning
+on `D` (which continues to deliver 38%) plus a well-ranked `A`.
 
 ## 6. Sustainability Notes
 

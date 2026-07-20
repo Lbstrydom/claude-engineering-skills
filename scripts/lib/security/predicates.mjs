@@ -223,11 +223,27 @@ function rangeOffsets(lines, startLine, endLine) {
   return { start: offset, end: offset + length - 1 };
 }
 
-/** Mask the whole prefix, then hand back just the window's masked text. */
+/**
+ * Mask the prefix THROUGH the window, then hand back the window's masked text.
+ *
+ * The prefix is cut at `window.endLine` rather than at the end of the bounded
+ * read (v1.1, §2d). Masking the whole read meant a construct that opened in the
+ * SLACK — the lines fetched after the window purely as headroom — could leave
+ * the mask "unterminated" and veto a window that had already closed cleanly
+ * twelve lines earlier. Measured on real source: `listEl.innerHTML =
+ * renderUserTable(users)` at line 35 was refused because an unrelated template
+ * opened at line 47. Code after the window cannot change the lexical state at
+ * or before it, so it must not get a vote.
+ *
+ * The prefix still starts at line 1: whether the window opens inside a block
+ * comment or a template is undecidable from the window alone (D3a2). That half
+ * is unchanged.
+ */
 function maskedWindow(lines, window) {
-  const { masked, terminated } = maskCommentsAndStrings(lines.join('\n'));
+  const prefix = lines.slice(0, window.endLine);
+  const { masked, terminated } = maskCommentsAndStrings(prefix.join('\n'));
   if (!terminated) return null; // D3a2: ambiguous stripping → no match
-  const { start, end } = rangeOffsets(lines, window.startLine, window.endLine);
+  const { start, end } = rangeOffsets(prefix, window.startLine, window.endLine);
   return { text: masked.slice(start, end), offset: start, full: masked };
 }
 
@@ -514,13 +530,84 @@ function extractInterpolations(template) {
  */
 export function outermostCallIsSanitizer(expr, sanitizers) {
   const text = String(expr).trim();
+
+  // v1.1 (§2d): `escapeHtml(x) || 'NV'` is idiomatic in real code and was
+  // refused, because the outermost expression is `||`, not a call. Every
+  // branch of a `||`/`??` chain can be the value that gets rendered, so the
+  // rule is that EVERY branch must be independently safe — a declared
+  // sanitizer call, or a string literal (safe by construction).
+  //
+  // This deliberately stays asymmetric with what it will NOT credit:
+  //   `a || escapeHtml(x)`  — `a` renders when truthy, and `a` is unchecked
+  //   `escapeHtml(x) || y`  — `y` renders when the escape yields ''
+  // Both keep a raw branch, so both stay in `A`. Only `+` concatenation and
+  // ternaries remain unsupported, exactly as D3a says.
+  const branches = splitTopLevel(text, ['||', '??']);
+  if (branches.length > 1) {
+    return branches.every((b) => isSafeBranch(b.trim(), sanitizers));
+  }
+  return isSanitizerCall(text, sanitizers);
+}
+
+function isSafeBranch(text, sanitizers) {
+  return isStringLiteral(text) || isSanitizerCall(text, sanitizers);
+}
+
+/**
+ * A literal with no interpolation. Bodies are already blanked by the masker,
+ * so this only has to confirm the delimiters — and that a template carries no
+ * `${…}`, which would make it code rather than a constant.
+ */
+function isStringLiteral(text) {
+  if (text.length < 2) return false;
+  const q = text[0];
+  if (q !== "'" && q !== '"' && q !== '`') return false;
+  if (text[text.length - 1] !== q) return false;
+  const body = text.slice(1, -1);
+  if (body.includes(q)) return false; // not a single literal
+  return q === '`' ? !body.includes('${') : true;
+}
+
+function isSanitizerCall(text, sanitizers) {
   const m = new RegExp(`^(${IDENT}(?:\\.${IDENT})*)\\s*\\(`).exec(text);
   if (!m) return false;
-  // The outermost call must span the whole expression: `esc(a) + b` is not a
-  // sanitized interpolation, it is a concatenation with a raw operand.
+  // The call must span the whole branch: `esc(a) + b` is not a sanitized
+  // value, it is a concatenation carrying a raw operand.
   if (!closesAtEnd(text, m[0].length - 1)) return false;
   const { chain, name } = splitCallee(m[1]);
   return sanitizers.includes(chain) || sanitizers.includes(name);
+}
+
+/**
+ * Split on the given operators at nesting depth zero, skipping string bodies.
+ * Only exact two-character operators are matched, so a ternary `?`, optional
+ * chaining `?.`, and a bitwise `|` are all left alone.
+ */
+function splitTopLevel(text, operators) {
+  const parts = [];
+  let depth = 0;
+  let quote = null;
+  let last = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') { i++; continue; }
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') { quote = c; continue; }
+    if (c === '(' || c === '[' || c === '{') { depth++; continue; }
+    if (c === ')' || c === ']' || c === '}') { depth--; continue; }
+    if (depth !== 0) continue;
+    const two = text.slice(i, i + 2);
+    if (operators.includes(two)) {
+      parts.push(text.slice(last, i));
+      i += 1;
+      last = i + 1;
+    }
+  }
+  parts.push(text.slice(last));
+  return parts;
 }
 
 function closesAtEnd(text, openIdx) {

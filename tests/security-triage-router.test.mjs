@@ -479,6 +479,39 @@ describe('D3a2 — comments and string literals are stripped first', () => {
     assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)).bucket, 'C');
   });
 
+  /**
+   * v1.1 (§2d). The prefix is masked only THROUGH the window, not to the end
+   * of the bounded read. Masking the whole read let a construct that opened in
+   * the SLACK — lines fetched purely as headroom — leave the mask
+   * "unterminated" and veto a window that had already closed cleanly.
+   *
+   * Shape drawn from the real miss: the sink is on line 2, and an unrelated
+   * template opens further down and never closes inside the read.
+   */
+  test('a template opening AFTER the window does not veto the window', () => {
+    const source = [
+      'function render(v) {',
+      '  el.innerHTML = `<b>${esc(v)}</b>`;',
+      '}',
+      'function other(users) {',
+      '  const rows = users.map(u => `',   // opens and never closes in-window
+    ].join('\n');
+    const f = routable({
+      source,
+      region: { startLine: 2, startColumn: null, endLine: 2, endColumn: null },
+    });
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)).bucket, 'C');
+  });
+
+  test('but a window that itself sits inside an unterminated construct is still refused', () => {
+    const source = ['const t = `', 'el.innerHTML = `<b>${esc(v)}</b>`;'].join('\n');
+    const f = routable({
+      source,
+      region: { startLine: 2, startColumn: null, endLine: 2, endColumn: null },
+    });
+    assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
+  });
+
   test('a window opening inside a block comment is judged from line 1, not the window', () => {
     // The window (line 3) looks like a live template, but it is commented out.
     const source = '/* disabled:\nel.innerHTML = `<b>${raw}</b>`;\nel.innerHTML = `<b>${esc(a)}</b>`;\n*/\nx();';
@@ -532,6 +565,54 @@ describe('sanitizer-wrapped — D3a', () => {
     assert.equal(outermostCallIsSanitizer('wrap(esc(a))', sans), false);
     assert.equal(outermostCallIsSanitizer('esc(a) + b', sans), false);
     assert.equal(outermostCallIsSanitizer('esc(a) + esc(b)', sans), false);
+  });
+
+  /**
+   * v1.1 (§2d). `escapeHtml(x) || 'NV'` is idiomatic in real code and was
+   * refused because the outermost expression is `||`, not a call. Every branch
+   * of a `||`/`??` chain can be the value that renders, so every branch must
+   * independently be a sanitizer call or a string literal.
+   */
+  describe('|| and ?? branches (v1.1)', () => {
+    const sans = CONFIG.sanitizerWrapped.sanitizers;
+    const credited = [
+      ["escapeHtml(x) || 'NV'", 'literal fallback'],
+      ["escapeHtml(x) || ''", 'empty-string fallback'],
+      ["escapeHtml(x) ?? 'NV'", 'nullish coalescing'],
+      ['escapeHtml(a) || escapeHtml(b)', 'both branches sanitized'],
+      ["escapeHtml(a || 'z')", 'the || is inside the arguments — still one call'],
+    ];
+    for (const [expr, why] of credited) {
+      test(`credits ${expr} — ${why}`, () => {
+        assert.equal(outermostCallIsSanitizer(expr, sans), true);
+      });
+    }
+
+    // The asymmetry is the safety property: a branch that renders unescaped
+    // must keep the whole interpolation out of C.
+    const refused = [
+      ['a || escapeHtml(x)', 'the RAW left branch renders when truthy'],
+      ['escapeHtml(x) || y', 'the RAW right branch renders when the escape is empty'],
+      ['x || y', 'no sanitizer on either branch'],
+      ['escapeHtml(x) || `raw${y}`', 'a template WITH interpolation is not a literal'],
+      ["cond ? escapeHtml(a) : 'x'", 'ternaries stay unsupported (D3a)'],
+    ];
+    for (const [expr, why] of refused) {
+      test(`refuses ${expr} — ${why}`, () => {
+        assert.equal(outermostCallIsSanitizer(expr, sans), false);
+      });
+    }
+
+    test('end-to-end: a template using the || form now routes to C', () => {
+      const f = routable({ source: "el.innerHTML = `<b>${escapeHtml(v) || 'NV'}</b>`;" });
+      assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)).bucket, 'C');
+    });
+
+    test('end-to-end: a raw branch keeps the finding in A', () => {
+      const f = routable({ source: 'el.innerHTML = `<b>${escapeHtml(v) || fallback}</b>`;' });
+      assert.equal(sanitizerWrapped(f, CONFIG, ctxFor(f)), null);
+      assert.equal(route([f]).findings[0].bucket, 'A');
+    });
   });
 
   // §7c constraint 2 — ambiguity resolves to A, never to a demotion.
