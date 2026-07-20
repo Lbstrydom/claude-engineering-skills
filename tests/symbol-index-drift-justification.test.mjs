@@ -263,4 +263,65 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     assert.equal(drift.duplication_excluded_count, 1, 'the bug-report symptom: this stayed 0 in the field');
     assert.equal(drift.duplication_pairs, 0, 'the pair must not count toward the drift score once excluded');
   });
+
+  it('copyForwardUntouchedFiles carries the duplicate_justification* columns, not just the 7 identity/summary columns', async () => {
+    const pool = await getPool();
+    const hash = `sig-copyfwd-${crypto.randomUUID()}`;
+
+    const r1 = await insertRefreshRun(pool, repoId);
+    const defQ = await makeSymbol(r1, repoId, { filePath: 'quiet.mjs', symbolName: 'zap', kind: 'function', signatureHash: hash });
+    await makeSymbol(r1, repoId, { filePath: 'noisy.mjs', symbolName: 'zap', kind: 'function', signatureHash: hash });
+    await recordDuplicateJustifications(r1, repoId, [
+      { definitionId: defQ, reason: 'intentional', target: 'noisy.mjs:zap', source: 'quiet.mjs:1' },
+    ]);
+
+    // Refresh 2 touches an unrelated file; quiet.mjs copy-forwards verbatim.
+    const r2 = await insertRefreshRun(pool, repoId);
+    await copyForwardUntouchedFiles({
+      repoId, fromRefreshId: r1, toRefreshId: r2, touchedFileSet: new Set(['unrelated.mjs']),
+    });
+
+    const row = (await pool.query(
+      `SELECT duplicate_justified, duplicate_justification_reason,
+              duplicate_justification_target, duplicate_justification_source
+         FROM symbol_index WHERE definition_id = $1 AND refresh_id = $2`,
+      [defQ, r2],
+    )).rows[0];
+    assert.equal(row.duplicate_justified, true, 'a justified row must stay justified when copied forward — it lands on the NOT NULL DEFAULT false otherwise');
+    assert.equal(row.duplicate_justification_reason, 'intentional', 'reason survives copy-forward');
+    assert.equal(row.duplicate_justification_target, 'noisy.mjs:zap', 'target survives copy-forward');
+    assert.equal(row.duplicate_justification_source, 'quiet.mjs:1', 'source survives copy-forward');
+  });
+
+  it('duplication_excluded_count is STABLE across full -> incremental when the justified declaration is in an UNTOUCHED file (the field oscillation)', async () => {
+    const pool = await getPool();
+    const hash = `sig-oscillate-${crypto.randomUUID()}`;
+
+    // Refresh 1 (full): both members indexed, one justified by its pragma.
+    const r1 = await insertRefreshRun(pool, repoId);
+    const defP = await makeSymbol(r1, repoId, { filePath: 'pragma-side.mjs', symbolName: 'dup', kind: 'function', signatureHash: hash });
+    await makeSymbol(r1, repoId, { filePath: 'other-side.mjs', symbolName: 'dup', kind: 'function', signatureHash: hash });
+    await recordDuplicateJustifications(r1, repoId, [
+      { definitionId: defP, reason: 'intentional', target: 'other-side.mjs:dup', source: 'pragma-side.mjs:1' },
+    ]);
+    const driftFull = await computeDriftScore({ repoId, refreshId: r1, simDup: 0.85, simName: 0.9 });
+    assert.equal(driftFull.duplication_excluded_count, 1, 'baseline: the full refresh excludes it');
+
+    // Refresh 2 (incremental): NEITHER duplicate file is touched. The pragma
+    // sweep is full-repo but pragmaCandidates comes from finalSymbols
+    // (touched files only), so nothing resolves -> the re-apply list is
+    // empty. Both members then arrive purely via copy-forward.
+    const r2 = await insertRefreshRun(pool, repoId);
+    await recordDuplicateJustifications(r2, repoId, []);
+    await copyForwardUntouchedFiles({
+      repoId, fromRefreshId: r1, toRefreshId: r2, touchedFileSet: new Set(['somewhere-else.mjs']),
+    });
+
+    const driftIncr = await computeDriftScore({ repoId, refreshId: r2, simDup: 0.85, simName: 0.9 });
+    assert.equal(
+      driftIncr.duplication_excluded_count, driftFull.duplication_excluded_count,
+      'the exclusion count must not decay across an incremental refresh (field: full=5, incremental=1, repeatedly)',
+    );
+    assert.equal(driftIncr.duplication_pairs, 0, 'and the justified pair must still not count toward drift');
+  });
 });

@@ -1,6 +1,55 @@
 # Project Status Log
 
-## 2026-07-20 (latest) — a store health check, and a number I got wrong by 10x
+## 2026-07-20 (latest) — justified duplicates decayed on every incremental refresh
+
+A bug report arrived with the symptom already measured: `duplicate_justified`
+rows oscillating by refresh mode across 2026-07-15 → 07-20 — full=5,
+incremental=1, full=4, incremental=1, repeatedly. A correctly-placed
+`@duplicate-justification` pragma resolved on a `--full` refresh and reverted on
+the next incremental, so `duplication_excluded_count` decayed with it and the
+drift score silently over-counted justified duplicates.
+
+**Two defects were reported; only one was real, and the ordering is what
+decides it.** `copyForwardUntouchedFiles` SELECTs and re-INSERTs 7 columns and
+drops all four `duplicate_justification*` ones, so every copied row lands on
+`duplicate_justified NOT NULL DEFAULT false`. That was the whole bug. The
+second — the "mismatched scope" between the full-repo reset in
+`recordDuplicateJustifications` and the touched-files-only re-apply — is not
+independently destructive, because step 12a runs *before* step 13's
+copy-forward: at 12a the new `refresh_id` owns only touched rows, so the reset
+is already de-facto touched-scoped and the two halves match at execution time.
+
+The report offered widen-the-apply or narrow-the-reset. **Neither is correct.**
+Widening the re-apply to full repo is a no-op — untouched rows don't exist under
+the new `refresh_id` yet. Making widening *work* by moving 12a after 13 would
+pair a genuine full-repo reset with a touched-only re-apply and wipe every
+copied-forward justification: exactly the scenario the `strict: true` skip
+exists to prevent, so it would gut that invariant rather than preserve it.
+Carrying the four columns through the copy is sound because a pragma sits
+immediately above its declaration — it cannot change without touching its own
+file, which would exclude that file from the copy. A copied flag is never stale.
+
+**The existing suite covered the mirror case, which is why this survived.** A
+test already pinned "pragma on a *touched* file, partner copy-forwarded" — that
+passes. The field bug is the inverse: the *justified* row is in an untouched
+file. Added two tests; the oscillation one failed `0 !== 1` against `main`
+before the fix, reproducing the reported symptom exactly. Ran against the
+disposable container, never the real store.
+
+Third change is smaller and secondary: after the fix the "unresolved pragma —
+not excluded from the drift score" warning became a lie for untouched files
+(they *are* still excluded, via copy-forward), so the pragma input set is now
+scoped to touched files on incremental. And the in-code comment claiming step
+12a is "always full repo, every refresh" — wrong for the apply half, and
+probably why this passed review — now records why the re-apply must *not* be
+widened.
+
+Verified end to end afterwards rather than trusting the green suite: a real
+full → incremental pair on this repo held its exclusion count steady, and the
+downstream consumer's committed pragma flipped true on a full refresh and
+survived the following incremental.
+
+## 2026-07-20 — a store health check, and a number I got wrong by 10x
 
 Started as "is our Supabase telemetry capturing correctly?" The store itself was
 healthy — 77/77 migrations, no drift, core tables writing today, embeddings

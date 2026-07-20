@@ -318,7 +318,9 @@ export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefre
   while (true) {
     const rows = await many(
       `SELECT definition_id, file_path, start_line, end_line,
-              signature_hash, purpose_summary, domain_tag
+              signature_hash, purpose_summary, domain_tag,
+              duplicate_justified, duplicate_justification_reason,
+              duplicate_justification_target, duplicate_justification_source
          FROM symbol_index
         WHERE refresh_id = $1
         ORDER BY definition_id
@@ -344,6 +346,21 @@ export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefre
           signature_hash: r.signature_hash,
           purpose_summary: r.purpose_summary,
           domain_tag: domainTag,
+          // A copied-forward row belongs to a file this refresh did NOT
+          // touch, so its @duplicate-justification pragma cannot have
+          // changed (the pragma sits immediately above the declaration —
+          // editing or removing it necessarily touches the file, which
+          // would put it in touchedFileSet and exclude it from this copy).
+          // Carrying these four columns is therefore the only way the flag
+          // survives: step 12a's re-apply runs BEFORE this copy and only
+          // covers touched files, so an omitted column here silently lands
+          // on `duplicate_justified NOT NULL DEFAULT false` and the drift
+          // score over-counts justified duplicates until the next full
+          // refresh. Guarded by tests/symbol-index-drift-justification.test.mjs.
+          duplicate_justified: r.duplicate_justified,
+          duplicate_justification_reason: r.duplicate_justification_reason,
+          duplicate_justification_target: r.duplicate_justification_target,
+          duplicate_justification_source: r.duplicate_justification_source,
         };
       });
       // Bulk insert without ON CONFLICT — legacy used a plain insert here.

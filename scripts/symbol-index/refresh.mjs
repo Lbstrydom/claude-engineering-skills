@@ -520,11 +520,24 @@ async function main() {
       await recordLayeringViolations(refreshId, repoId, violations);
 
       // 12a. Resolve @duplicate-justification pragmas + persist exclusions
-      // (arch-drift-duplication-cleanup) — always full repo, every refresh,
-      // mirroring step 12's layering-violations pattern. Candidates are
-      // sourced from finalSymbols + defMap (already in memory from steps
-      // 9-10) rather than a DB round-trip — the same (filePath, symbolName,
-      // kind, startLine) data symbol_index was just written from.
+      // (arch-drift-duplication-cleanup). Candidates are sourced from
+      // finalSymbols + defMap (already in memory from steps 9-10) rather
+      // than a DB round-trip — the same (filePath, symbolName, kind,
+      // startLine) data symbol_index was just written from.
+      //
+      // SCOPE (corrected): this step is NOT "always full repo". It runs
+      // BEFORE step 13's copy-forward, so at this point `refreshId` owns
+      // only the touched files' rows — which makes the reset inside
+      // recordDuplicateJustifications de-facto touched-scoped too, matching
+      // the touched-scoped re-apply. That symmetry is what keeps the
+      // `strict: true` skip below meaningful, and it is why the re-apply
+      // must NOT be "widened to full repo": untouched rows do not exist
+      // yet, so a widened apply would be a no-op, and reordering 12a after
+      // step 13 would pair a full-repo reset with a touched-only re-apply
+      // and wipe every copied-forward justification. Untouched files keep
+      // their flags by being COPIED WITH the duplicate_justification*
+      // columns (see copyForwardUntouchedFiles) — a pragma cannot change
+      // without touching its own file, so a copied flag is never stale.
       // round-2 H8 fix: `strict: true` throws on a REAL git failure instead
       // of degrading to []; a failed sweep and a genuinely-empty sweep are
       // NOT interchangeable here — recordDuplicateJustifications always
@@ -540,13 +553,22 @@ async function main() {
         repoPragmas = null;
       }
       if (repoPragmas !== null) {
+        // The sweep is full-repo, but the candidate set is touched-files-only
+        // on an incremental. Restricting the pragma set to the same scope
+        // keeps the "unresolved" warning below honest: without this, every
+        // pragma in an untouched file would be reported as "not excluded
+        // from the drift score" when it is in fact still excluded, via the
+        // copy-forward path. Full refreshes are unaffected (touchedSet null).
+        const scopedPragmas = (mode === 'incremental' && touchedSet)
+          ? repoPragmas.filter((p) => touchedSet.has(p.pragmaFile))
+          : repoPragmas;
         const pragmaCandidates = finalSymbols
           .map((s) => ({
             filePath: s.filePath, symbolName: s.symbolName, kind: s.kind, startLine: s.startLine,
             definitionId: defMap[`${s.filePath}|${s.symbolName}|${s.kind}`],
           }))
           .filter((c) => c.definitionId);
-        const { resolved, ambiguous, unresolved } = resolvePragmasToDefinitions(repoPragmas, pragmaCandidates);
+        const { resolved, ambiguous, unresolved } = resolvePragmasToDefinitions(scopedPragmas, pragmaCandidates);
         await recordDuplicateJustifications(refreshId, repoId, resolved);
         if (ambiguous.length > 0) {
           logOk(`WARNING: ${ambiguous.length} @duplicate-justification pragma(s) target a declaration already claimed by another pragma — NEITHER is applied (round-5 M5: an ambiguous declaration is never excluded on an unreliable signal) — see stderr detail below.`);
