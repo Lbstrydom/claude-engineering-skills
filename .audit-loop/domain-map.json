@@ -150,6 +150,11 @@
       "domain": "install"
     },
     {
+      "_why": "MUST precede the scripts/check-*.mjs catch-all (first-match-wins). That glob assigns every check-* CLI to `install`, which swallowed this one — a plan-status checker, not installation logic — and manufactured a recurring install -> plan violation out of a naming coincidence. The code was right; the map was wrong. Other check-* CLIs are likely miscategorised too (check-rls is security, check-stale-skill-surface is skills); retagged only the one with an observed violation rather than reshuffling the whole glob blind.",
+      "pattern": "scripts/check-plan-status.mjs",
+      "domain": "plan"
+    },
+    {
       "pattern": "scripts/check-*.mjs",
       "domain": "install"
     },
@@ -307,6 +312,7 @@
     ],
     "brainstorm": [
       "arm-eval",
+      "requirements",
       "shared-lib"
     ],
     "claude-hooks": [
@@ -333,6 +339,7 @@
       "audit-orchestration",
       "learning-store",
       "nav-audit",
+      "plan",
       "scripts",
       "shared-lib",
       "stores",
@@ -667,6 +674,15 @@
     "docs"
   ],
   "_comment_allowedDeps": "BASELINE, NOT ENDORSEMENT (domain-map-reconciliation Phase C, 2026-07-17). Set to the OBSERVED graph AFTER Phase A fixed rule coverage (13 orphaned lib subsystems) and the file-lock move removed the false trapped-primitive edges — so these are real edges, not measurement artifacts. This makes the violation check a RATCHET: it cannot fail on what exists today, only on NEW undeclared edges. THREE entries are recorded debt, NOT intent: (1) shared-lib -> audit-orchestration/claude-hooks/model-eval/nav-audit/stores — ~6 top-level lib files (efficacy-lints, config, repo-inventory, audit-shadow, finalize-outcomes, audit-arms) are feature coordinators, not domain-neutral primitives; retag or move them. (2) stores -> model-eval/persona-test — a LAYER INVERSION: the persistence layer reaching UP into feature domains. (3) cross-skill-bridge -> 11 domains — AGENTS.md calls this a thin facade; eleven deps is not thin. Do not grow these three without fixing the underlying coupling.",
+  "_adjudication_2026_07_20": {
+    "_date": "2026-07-20",
+    "_context": "Four domain edges were reported by /audit-code's architecture pass in NINE consecutive rounds across two clusters (plan: sast-triage-routing). Adjudicated once, on the merits, so they stop consuming a finding slot every round.",
+    "install -> plan": "MAP ERROR, not a code defect. check-plan-status.mjs was swallowed by the scripts/check-*.mjs catch-all and tagged `install`. Fixed by a specific rule ahead of it; the edge is now plan -> plan (same-domain, always allowed). See that rule's _why.",
+    "dashboard -> plan": "INTENT — DECLARED. collect-reference.mjs calls parsePlanStatus to bucket plans by status. A dashboard is a read-model consumer by construction (it already draws on eight domains), so this is its established role, not erosion.",
+    "brainstorm -> requirements": "INTENT — DECLARED. policy-context.mjs's own docstring records this as a REUSE decision taken under the architectural-memory protocol rather than reimplementing ledger filtering. NOTE: declaring it CLOSES A CYCLE, because requirements -> brainstorm already exists. That is recorded as debt (4) rather than hidden by the declaration.",
+    "supabase -> stores": "FABRICATED. The migration contains no reference to compat-bootstrap.sql, to scripts/, or to bootstrap at all; that file's real consumers are setup-postgres, the sync tooling, and postgres-parity — never a migration. Nine rounds reported an edge that does not exist. Nothing to fix in code or map; recorded so it is not re-litigated a tenth time.",
+    "_debt_4": "requirements -> brainstorm exists only because requirements/{extract,gap-challenge}.mjs import callOpenAI from brainstorm/openai-adapter.mjs — a domain-NEUTRAL LLM primitive that happens to live inside the brainstorm domain. Same misplacement class as debt (1). Moving it to shared-lib breaks the cycle and touches ~5 real call sites; that is a mechanical module move deserving its own change and its own verification, not a rider on a map adjudication."
+  },
   "_comment_tests": "tests is a VERIFICATION domain: allowed one-way into everything, with the inverse PROHIBITED — no production domain may import tests (enforced by the absence of `tests` from every other allowedDeps entry; a violation surfaces as an undeclared edge). This entry was UNVERIFIABLE until 2026-07-17: extract.mjs handed dep-cruiser a COMMON_SOURCE_DIRS allowlist with no `tests`, so the largest domain in the repo (380 files) produced zero observed edges while being fully symbol-indexed — the 12 entries here were hand-written from real knowledge but could never be corroborated. With `tests` cruised, all 12 proved real (zero over-declaration) and 17 more appeared. See docs/plans/observed-graph-discovery-unification.md — the allowlist remains a silent-blindness generator; this fixed the instance, not the class.",
   "_comment_coverage": "Observed-graph coverage contract (docs/plans/observed-graph-coverage-honesty.md 2.1.4). floor/attributionFloor are ratios in [0,1]; maxCruiseMs is the SOFT budget (degraded), hardTimeoutMs the parent-enforced kill. enforce:false ships first — arch:coverage-gate reports the verdict without failing for one cycle of real data. attributionFloor is deliberately low: an untagged domain is a domain-map gap, not a correctness bug; the load-bearing guard is the zero_attributed vacuity check, not this ratio.",
   "coverage": {
