@@ -72,6 +72,13 @@ docs/arm-eval/worksheets/
 .audit-loop/visual-verify-result.json
 .audit-loop/visual-drift-ledger.json
 
+# arch-memory band-calibration report — Category-A. Scores are a function of the
+# live symbol index + the LLM normalizer's output, so two runs on the same commit
+# are NOT byte-identical and its dirtiness carries no information. The committed
+# artefact for this feature is the probe FIXTURE (tests/fixtures/arch-memory-probes.json);
+# the report is the run output. Same shape as nav-/visual-verify-result.json above.
+.audit-loop/arch-memory-calibration.json
+
 # Repo-identity reconcile intermediate — operator-curated, one-time, applied
 # then spent (the merge it proposes lands in the DB, not the repo). Like the
 # requirements-layer candidates/gaps intermediates: kept locally, never committed.

@@ -23,15 +23,31 @@ import {
 import { recommendationFromSimilarity } from './symbol-index.mjs';
 import { symbolIndexConfig, azureConfig } from './config.mjs';
 import { redactSecrets } from './secret-patterns.mjs';
+import { assertEgressSafe } from './sensitive-egress-gate.mjs';
+import { NORMALIZE_PROMPT_VERSION } from './arch-memory/normalize-intent.mjs';
 import { embedText, azureProvenanceId } from './embed-text.mjs';
 
 const CACHE_REL = '.audit-loop/cache/intent-embeddings.json';
 const CACHE_TTL_MS_DEFAULT = 24 * 60 * 60 * 1000;
 
-function cacheKey(intentDescription, model, dim) {
+/**
+ * Cache key for the intent EMBEDDING.
+ *
+ * `safeIntent` is the post-`redactSecrets` text (never the raw intent), so a
+ * secret in a prompt is never hashed into or written to a disk cache file.
+ *
+ * The normalization provenance is part of the key (plan §2.1 C2): after the
+ * genre-normalization step the same raw intent maps to a DIFFERENT vector, so a
+ * key that ignored it would serve pre-normalization vectors and silently
+ * bypass the fix — a failure that would look exactly like "the fix didn't
+ * work". `normalizationMode` is included so a fallback-produced vector can
+ * never be served to an LLM-normalized query or vice versa (their text
+ * distributions differ, and only the LLM one is calibrated).
+ */
+function cacheKey(safeIntent, model, dim, normProvenance = '') {
   return crypto
     .createHash('sha256')
-    .update(`${intentDescription}|${model}|${dim}`)
+    .update(`${safeIntent}|${model}|${dim}|${normProvenance}`)
     .digest('hex')
     .slice(0, 24);
 }
@@ -192,11 +208,45 @@ export async function getNeighbourhoodForIntent(adapters, args, repoRoot = proce
   // the cache across secret variants. The embedding egress already redacts
   // internally; this aligns the key + egress to the same safe text.
   const safeIntent = redactSecrets(v.intentDescription || '').text;
-  const key = cacheKey(safeIntent, active.activeEmbeddingModel, active.activeEmbeddingDim);
+
+  // 2a. Genre bridge (plan §2.1 C1) — the query embeds an INTENT while the
+  // index embeds a PURPOSE DESCRIPTION, and that genre gap alone costs ~0.25
+  // cosine, which is why `reuse`/`extend` never fired in 1,763 consultations.
+  // Normalize the intent into the index's genre before embedding.
+  //
+  // EGRESS ORDER IS LOAD-BEARING: redact → gate → normalize → embed. The
+  // normalizer is a provider call, so it must never receive the raw intent.
+  // `safeIntent` is already redacted above; the gate is the second layer.
+  let normalized = { text: safeIntent, mode: 'fallback', normalizerId: 'none', reason: 'not-attempted' };
+  try {
+    assertEgressSafe(safeIntent, { label: 'arch-memory:normalize-intent' });
+    const { normalizeIntentToPurpose } = await import('./arch-memory/normalize-intent.mjs');
+    normalized = await normalizeIntentToPurpose(safeIntent, { repoRoot });
+  } catch (err) {
+    // A gate refusal means redact-once upstream missed something. Degrade to
+    // the deterministic path rather than sending, and never throw into the
+    // query path (C10).
+    const { deterministicNormalize } = await import('./arch-memory/normalize-intent.mjs');
+    normalized = {
+      text: deterministicNormalize(safeIntent),
+      mode: 'fallback',
+      normalizerId: 'none',
+      reason: `egress-refused: ${err.message || 'unknown'}`,
+    };
+  }
+  const embedInput = normalized.text || safeIntent;
+  const normProvenance = `${normalized.normalizerId}|${NORMALIZE_PROMPT_VERSION}|${normalized.mode}`;
+
+  const key = cacheKey(
+    safeIntent,
+    active.activeEmbeddingModel,
+    active.activeEmbeddingDim,
+    normProvenance,
+  );
   let intentEmbedding = getCached(repoRoot, key, ttlMs);
   if (!intentEmbedding) {
     const emb = await generateIntentEmbedding(
-      safeIntent,
+      embedInput,
       active.activeEmbeddingModel,
       active.activeEmbeddingDim
     );

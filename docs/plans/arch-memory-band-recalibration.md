@@ -190,9 +190,18 @@ graph LR
 
 - **Bridge the genre gap on the query side, not the index side (#1, #17).**
   Query-side normalization is one small LLM call per consultation, already
-  cacheable by the existing disk cache. Re-embedding the index into intent
-  genre means 124,616 symbols re-embedded for the *smaller* half of the gap.
-  Query-side is the smallest change that addresses the dominant term.
+  cacheable by the existing disk cache, and it addresses the dominant (~0.25)
+  term. Index-side re-embedding would address only the ~0.06 template term.
+
+> **Measured correction (implementation, 2026-07-19).** Earlier drafts of this
+> plan costed a re-index at **124,616 symbols**. That number is the accumulated
+> `symbol_index` row count across **41 historical refreshes** — the **active
+> snapshot is 3,324 symbols** over 688 files. A full re-index is therefore
+> cheap (minutes, not hours), which changes two decisions recorded below:
+> the `compose()` template fix is no longer meaningfully expensive to bundle
+> into Phase 3, and the Phase-3 re-index carries no significant cost risk.
+> Recorded rather than silently amended, because the original figure was used
+> to justify a deferral *and* to seek authorization for the run.
 - **Thresholds become derived config, not literals (#4, #19).** They move to
   `config.mjs` beside `embedModel`/`embedDim`, and their values come out of the
   calibration harness. A comment in `symbol-index.mjs` links `compose()` to the
@@ -455,6 +464,15 @@ the RPC and the query module. Full consumer set, all updated in Phase 5:
 - The Phase-3 migration includes a one-time purge of existing embeddings whose
   symbol has a null/blank `purposeSummary`, and reports the count purged.
 
+> **Measured (implementation, 2026-07-19): the active snapshot currently holds
+> ZERO null/blank `purposeSummary` rows.** The purge is therefore a no-op today
+> and will report 0. The guard is still worth shipping — it is what *keeps* the
+> count at zero through a future provider outage, and the 0.5440 metadata-only
+> similarity that motivated it is a real measurement of what such a vector would
+> score. But the framing must be accurate: this is **prevention of a latent
+> failure mode, not remediation of present pollution.** A "purged N noisy
+> vectors" claim in the Phase-3 report would be false.
+
 #### C10 — Normalizer module contract (M3)
 
 - **Caches the normalized text**, not the vector. The existing disk cache keeps
@@ -543,10 +561,18 @@ Files: `scripts/lib/arch-memory/calibrate.mjs` (create),
 `tests/fixtures/arch-memory-probes.json` (create).
 
 **Phase 2 — Query-side genre normalization**: the root fix. Re-measure with the
-harness; the spread must widen materially or the hypothesis is wrong and Phase 4
-must not proceed. Files: `scripts/lib/arch-memory/normalize-intent.mjs`
+harness; **all three §7c gates must pass** or the hypothesis is insufficient and
+Phase 4 must not proceed. Files: `scripts/lib/arch-memory/normalize-intent.mjs`
 (create), `scripts/lib/neighbourhood-query.mjs` (modify),
-`tests/arch-memory-normalize-intent.test.mjs` (create).
+`tests/arch-memory-normalize-intent.test.mjs` (create),
+`tests/sensitive-egress.test.mjs` (modify),
+`tests/audit-scope-egress.test.mjs` (modify).
+
+> The two canonical egress suites are declared **here**, in the same phase as
+> the normalizer, because C1 makes them a Tier-3 same-commit requirement. They
+> were listed in §7 but omitted from this phase's derived scope — caught by the
+> `/cycle` Step-0.7 preflight, which would otherwise have fail-closed on them as
+> out-of-scope edits mid-cluster.
 
 **Phase 3 — Index + RPC hygiene**: stop indexing null-summary vectors; stop
 scoring absent embeddings as 0 (C3). **Ends with a full `npm run arch:refresh`
@@ -676,7 +702,7 @@ never supply precision, so no gate is expressed in terms of them.
 | **Normalization adds an LLM call per consultation** — the hook fires on most prompts | Reuse the existing disk cache keyed on the intent string; a deterministic template fallback when no provider is available. Never blocks the query path. |
 | **The genre hypothesis could be wrong at scale** — 4 hand probes are not 1,770 rows | Phase 1 gates Phase 4 explicitly. If Phase 2 does not widen the spread on the labelled set, thresholds must NOT be lowered; re-open the diagnosis instead. |
 | **Recalibrated thresholds could still manufacture false reuse** | Thresholds are derived from precision on the labelled set, not from percentiles of the raw distribution. Report precision at each candidate cutoff. |
-| **Deferred: `compose()` template removal (≈0.06)** | Genuinely independent of the query-side fix — it changes only index-side text and needs a 124k re-embed. Deferred to the next scheduled re-index, not because it is harder. Revisit trigger: any full re-index. **Note**: Phase 3 now performs a re-index, so this becomes cheap to bundle there — reconsider at implementation time rather than deferring reflexively. |
+| ~~Deferred: `compose()` template removal (≈0.06)~~ **— deferral WITHDRAWN** | The deferral rested on a 124k-symbol re-embed cost that turned out to be **3,324** (see the measured correction in §2). At that size the re-index is minutes, and Phase 3 already performs one. The stated reason for deferring evaporated with the number, so it is no longer deferred — it is folded into Phase 3. This is the honest disposition: a defer justified by a cost figure must be revisited when the figure is wrong, otherwise it silently becomes "deferred because the fix is harder", which AGENTS.md names as a band-aid. |
 | **Deferred: calibrating the deterministic fallback separately** | The fallback's text distribution differs from LLM-normalized text, so its thresholds would need their own probe run. Capped at `justify-divergence` in the interim (C4) — a documented capability limit, not a silent gap. Revisit trigger: fallback rate exceeds ~10% of consultations. |
 | **1,763 historical rows stay `uncertain`** | Correct — they were produced under a broken construction and cannot be retro-labelled. The distribution remains useful as the pre-fix baseline. |
 | **`arch:refresh` cost after the null-summary guard** | Guard only skips records that carry no semantic content today; it reduces embed volume. |
@@ -731,6 +757,14 @@ never supply precision, so no gate is expressed in terms of them.
     `0`, and `unscored` never rendered as `review`.
   - author-tier: standard
 - **Final gate**: consolidated Gemini review over the union diff.
+
+> **Expected mid-run halt (not a defect).** `scripts/lib/symbol-index.mjs` is in
+> both Cluster B's scope (Phase 3, `rankNeighbourhood` null parity) and
+> Cluster C's (Phase 4, thresholds-from-config). Both edits are legitimate, so
+> when C touches the file, B's `auditedFileHashes` change and B flips
+> `gate-clear → stale`, halting the autonomous loop by design. Resume with
+> `--authorize-stale-reaudit` to re-process B against the post-C state. Noted
+> here so the halt reads as designed behaviour rather than a failure.
 
 ---
 
@@ -811,3 +845,66 @@ character — which belongs to `/audit-code`, where claims are checked against
 real code rather than prose. **This plan therefore enters implementation with an
 open `REJECT` on record**, deliberately, with the reasoning above; the three
 round-3 findings are fixed but unverified by a further gate pass.
+
+---
+
+## 13. Implementation Log
+
+### 2026-07-20 — first real §7c gate run; a retrieval bug found and fixed; Phase 4 stays shut
+
+**A defect in the retrieval path, found by the probe set itself.** The
+`reuse-atomic-write` probe returned 5 rows but only **3 distinct symbols**. Root
+cause was not the genre gap this plan is about: `symbol_embeddings` is `UNIQUE
+(definition_id, embedding_model, dimension, signature_hash)` with rows that survive
+across refreshes, but the `symbol_neighbourhood` RPC joined on only the first three
+columns — so any symbol whose signature had ever changed produced one row **per
+historical signature**, each scored against a stale embedding, all consuming the
+same `LIMIT p_k` budget. **186 of 3,324 active rows fanned out (5.6%), worst case
+10×.** Fixed in `supabase/migrations/20260720120000_symbol_neighbourhood_signature_pinned_embedding.sql`
+(commit `76636d2`) by pinning the join to `si.signature_hash`; 3,322 of 3,324 rows
+already had an exact-signature embedding, so the predicate costs nothing today.
+
+This is worth recording against §7c specifically: **the gates were measuring two
+independent defects at once**, and the genre hypothesis was being charged for a
+share of the loss that belonged to a join bug.
+
+**Gate results (k=5, 32 probes, 21 positive / 11 hard-negative):**
+
+| gate | threshold | value | verdict |
+|---|---|---|---|
+| medianPositive | ≥ 0.80 | **0.7502** | **FAIL** |
+| separation | ≥ 0.15 | 0.1587 | pass |
+| recall@5 | ≥ 0.90 | 0.9048 | pass (see caveat) |
+
+**Verdict `fail` → thresholds NOT derived, Phase 4 does NOT run.** §7c's gating
+worked as designed.
+
+**The recall figure must not be read at face value.** The probe-set hash changed
+between baseline and re-run (`7aa5f4c9` → `93971c08`) because six probes gained
+post-hoc `alternates`. An ablation separates the causes:
+
+| condition | recall@5 |
+|---|---|
+| old RPC + original fixture | 0.5714 (12/21) |
+| fixed RPC + original fixture | 0.6667 (14/21) |
+| fixed RPC + fixture with post-hoc alternates | 0.9048 (19/21) |
+
+**The RPC fix is worth +2 probes; the fixture alternates are worth +5.** Most of the
+gain is fixture-fitting, which the fixture's own README already flags as weaker
+evidence. Clean confirmation of the RPC mechanism, independent of the fixture change:
+`reuse-atomic-write` against its *original* expectation went **missed → rank 4
+(0.738)**.
+
+**Open question this raises for §7c.** A recall gate that any fixture edit can move
+by +0.24 is not a gate on retrieval quality. Consider requiring the gate to pass on
+**untouched** probes only, so fixture-fitting cannot unlock threshold derivation.
+
+**Open question this raises for §2.** `atomicWriteFileSync` returns at 0.738 — below
+the 0.75 `justify-divergence` cutoff, so the consultation says `review` ("proceed
+greenfield"). The repo currently holds **four** near-duplicate atomic writers
+(`file-io.mjs:atomicWriteFileSync` plus forks in `memory-health.mjs`,
+`symbol-index/drift.mjs`, `learning/quickfix-stats.mjs`). Even at the scores this
+pipeline *does* achieve, the reachable band permits the fork. Raising reachability
+alone therefore does not deliver the outcome this plan exists for; whether
+`justify-divergence` should keep permitting forks is a policy question this plan
+does not currently own.

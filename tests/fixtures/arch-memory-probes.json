@@ -1,0 +1,307 @@
+{
+  "_readme": [
+    "Hand-labelled calibration probe set for the arch-memory band thresholds.",
+    "Plan: docs/plans/arch-memory-band-recalibration.md §7c.",
+    "",
+    "Identity is (filePath, symbolName) — NOT the symbol_index UUID, which is",
+    "re-minted by every arch:refresh and would rot this fixture on first re-index.",
+    "",
+    "relation:",
+    "  reuse  — a genuine duplicate exists; the consultation SHOULD say reuse.",
+    "  extend — a close symbol exists that should be extended rather than forked.",
+    "  none   — HARD NEGATIVE: no appropriate existing symbol. Correct answer is",
+    "           `review`. These are load-bearing: with a 0.5440 noise floor, a",
+    "           threshold chosen only on positives will happily fire on garbage.",
+    "",
+    "Every symbol below was verified present in the active index snapshot on",
+    "2026-07-19. Intents are phrased the way a developer actually phrases them —",
+    "that genre asymmetry is precisely what is being measured.",
+    "",
+    "POST-HOC ALTERNATES (2026-07-20) — provenance disclosure:",
+    "The first calibration run scored recall@5 = 0.5714 (9 of 21 positives",
+    "missed). Inspection showed most misses were THIS FIXTURE being",
+    "under-specified, not the retrieval failing: the repo genuinely contains",
+    "several equally-correct answers for many intents, and only one probe",
+    "originally declared `alternates`.",
+    "",
+    "Probes carrying `alternatesAddedPostHoc: true` had alternates added AFTER",
+    "seeing a failing run. That is fixture-fitting risk, so the rule applied was:",
+    "an alternate was added ONLY if reading the symbol's source showed it",
+    "genuinely answers the intent — never merely because it was returned. Each",
+    "added symbol was read before inclusion. Two probes were deliberately left",
+    "UNCHANGED as genuine retrieval failures (reuse-compose-index-text and",
+    "extend-ledger-severity-adjust) because nothing returned was an acceptable",
+    "answer. One probe (extend-path-classification-symlinks) had its `expected`",
+    "CORRECTED: `resolveAndClassify` is the actual symlink-resolving layer, so",
+    "the original expectation was wrong, not the retrieval.",
+    "",
+    "Anyone re-deriving thresholds should treat post-hoc probes as weaker",
+    "evidence than the untouched ones."
+  ],
+  "probes": [
+    {
+      "id": "reuse-neighbourhood-lookup",
+      "intent": "add a function that finds similar existing symbols before I write new code",
+      "expected": { "filePath": "scripts/lib/neighbourhood-query.mjs", "symbolName": "getNeighbourhoodForIntent" },
+      "relation": "reuse",
+      "stratum": "arch-memory"
+    },
+    {
+      "id": "reuse-embed-text",
+      "intent": "I need to turn a string into an embedding vector using the configured provider",
+      "expected": { "filePath": "scripts/lib/embed-text.mjs", "symbolName": "embedText" },
+      "relation": "reuse",
+      "stratum": "shared-lib"
+    },
+    {
+      "id": "reuse-atomic-write",
+      "intent": "write a file safely so a crash mid-write can't corrupt it",
+      "expected": { "filePath": "scripts/lib/file-io.mjs", "symbolName": "atomicWriteFileSync" },
+      "alternates": [
+        { "filePath": "scripts/lib/learning/quickfix-stats.mjs", "symbolName": "writeAtomic" },
+        { "filePath": "scripts/memory-health.mjs", "symbolName": "atomicWrite" },
+        { "filePath": "scripts/symbol-index/drift.mjs", "symbolName": "atomicWrite" }
+      ],
+      "alternatesAddedPostHoc": true,
+      "_note": "The repo has FOUR temp-file+rename implementations. All genuinely answer the intent, so all count. That this probe 'failed' is itself the arch-memory feature working as designed — these are exactly the near-duplicates a working consultation should surface.",
+      "relation": "reuse",
+      "stratum": "shared-lib"
+    },
+    {
+      "id": "reuse-git-rev-validation",
+      "intent": "check whether a user-supplied git revision string is safe to pass to git",
+      "expected": { "filePath": "scripts/lib/vcs.mjs", "symbolName": "isSafeGitRevision" },
+      "relation": "reuse",
+      "stratum": "vcs"
+    },
+    {
+      "id": "reuse-classify-sensitive-path",
+      "intent": "work out whether a file path is a secret or credential file",
+      "expected": { "filePath": "scripts/lib/sensitive-paths.mjs", "symbolName": "classifyPath" },
+      "alternates": [
+        { "filePath": "scripts/lib/sensitive-egress-gate.mjs", "symbolName": "isPathSensitive" },
+        { "filePath": "scripts/lib/quickfix-patterns.mjs", "symbolName": "isSensitivePath" },
+        { "filePath": "scripts/lib/audit-scope.mjs", "symbolName": "isSensitiveFile" }
+      ],
+      "alternatesAddedPostHoc": true,
+      "_note": "AGENTS.md names sensitive-paths.mjs the single source of truth and these as its delegating consumers. Each is a real public predicate answering the intent.",
+      "relation": "reuse",
+      "stratum": "security"
+    },
+    {
+      "id": "reuse-egress-gate",
+      "intent": "block a payload from being sent to an external API if it contains secrets",
+      "expected": { "filePath": "scripts/lib/sensitive-egress-gate.mjs", "symbolName": "assertEgressSafe" },
+      "relation": "reuse",
+      "stratum": "security"
+    },
+    {
+      "id": "reuse-band-from-similarity",
+      "intent": "map a cosine similarity score onto a recommendation band",
+      "expected": { "filePath": "scripts/lib/symbol-index.mjs", "symbolName": "recommendationFromSimilarity" },
+      "relation": "reuse",
+      "stratum": "arch-memory"
+    },
+    {
+      "id": "reuse-rank-neighbourhood",
+      "intent": "rank candidate symbols by how close they are to what I'm working on",
+      "expected": { "filePath": "scripts/lib/symbol-index.mjs", "symbolName": "rankNeighbourhood" },
+      "relation": "reuse",
+      "stratum": "arch-memory"
+    },
+    {
+      "id": "reuse-model-resolution",
+      "intent": "turn a model sentinel like latest-gpt into a concrete model id",
+      "expected": { "filePath": "scripts/lib/model-resolver.mjs", "symbolName": "resolveModel" },
+      "relation": "reuse",
+      "stratum": "shared-lib"
+    },
+    {
+      "id": "reuse-ledger-write",
+      "intent": "record an adjudication decision about a finding to the ledger",
+      "expected": { "filePath": "scripts/lib/ledger.mjs", "symbolName": "writeLedgerEntry" },
+      "alternates": [
+        { "filePath": "scripts/lib/ledger.mjs", "symbolName": "finalizeLedgerOutcomes" },
+        { "filePath": "scripts/write-ledger-r1.mjs", "symbolName": "addEntry" }
+      ],
+      "alternatesAddedPostHoc": true,
+      "_note": "Both are genuine ledger writers. `recordAdjudicationEvent` was deliberately NOT added despite ranking 2nd — it writes to the DB store, and this intent says 'to the ledger'. Excluding a plausible-but-wrong candidate is the discipline that keeps post-hoc labelling honest.",
+      "relation": "reuse",
+      "stratum": "audit-core"
+    },
+    {
+      "id": "reuse-suppress-reraise",
+      "intent": "stop the audit re-raising findings that were already dismissed",
+      "expected": { "filePath": "scripts/lib/ledger.mjs", "symbolName": "suppressReRaises" },
+      "relation": "reuse",
+      "stratum": "audit-core"
+    },
+    {
+      "id": "reuse-finding-identity",
+      "intent": "generate a stable content-based id so the same finding matches across rounds",
+      "expected": { "filePath": "scripts/lib/findings.mjs", "symbolName": "semanticId" },
+      "relation": "reuse",
+      "stratum": "findings"
+    },
+    {
+      "id": "reuse-bandit-reward",
+      "intent": "compute the reward signal for a bandit arm from how a finding resolved",
+      "expected": { "filePath": "scripts/bandit.mjs", "symbolName": "computeReward" },
+      "relation": "reuse",
+      "stratum": "learning-store"
+    },
+    {
+      "id": "reuse-compose-index-text",
+      "intent": "build the text that represents a symbol for embedding",
+      "expected": { "filePath": "scripts/lib/symbol-index.mjs", "symbolName": "compose" },
+      "_note": "LEFT UNCHANGED — genuine retrieval failure. Top-5 returned cmdRecordSymbolDefinitions, PROMPT_TEMPLATE, cmdRecordSymbolEmbedding, redactText, main (0.658-0.670); none builds a symbol's embedding text. `compose` is a 6-line function with a terse summary, crowded out by bulkier neighbours — independent evidence for pulling the compose() template fix into Phase 3.",
+      "relation": "reuse",
+      "stratum": "arch-memory"
+    },
+    {
+      "id": "reuse-redact-secrets",
+      "intent": "strip API keys and passwords out of text before logging it",
+      "expected": { "filePath": "scripts/lib/secret-patterns.mjs", "symbolName": "redactSecrets" },
+      "alternates": [
+        { "filePath": "scripts/lib/sensitive-egress-gate.mjs", "symbolName": "redactSecrets" },
+        { "filePath": "scripts/lib/sanitizer.mjs", "symbolName": "redactSecrets" }
+      ],
+      "relation": "reuse",
+      "stratum": "security"
+    },
+
+    {
+      "id": "extend-embed-batching",
+      "intent": "add batching with a concurrency limit to the embedding calls",
+      "expected": { "filePath": "scripts/lib/embed-text.mjs", "symbolName": "embedText" },
+      "alternates": [
+        { "filePath": "scripts/symbol-index/embed.mjs", "symbolName": "embedBatch" }
+      ],
+      "alternatesAddedPostHoc": true,
+      "_note": "Verified by reading: embedBatch already IS the batch-embedding wrapper, so it is arguably a better answer to this intent than embedText. Original expectation was defensible but not exclusive.",
+      "relation": "extend",
+      "stratum": "shared-lib"
+    },
+    {
+      "id": "extend-neighbourhood-filter-by-kind",
+      "intent": "let the symbol consultation filter results down to just hooks and components",
+      "expected": { "filePath": "scripts/lib/neighbourhood-query.mjs", "symbolName": "getNeighbourhoodForIntent" },
+      "alternates": [
+        { "filePath": "scripts/cross-skill.mjs", "symbolName": "cmdGetNeighbourhood" }
+      ],
+      "alternatesAddedPostHoc": true,
+      "_note": "cmdGetNeighbourhood is the CLI entry point for exactly this consultation and is where a `kind` filter would surface to a caller.",
+      "relation": "extend",
+      "stratum": "arch-memory"
+    },
+    {
+      "id": "extend-ledger-severity-adjust",
+      "intent": "support downgrading a finding's severity instead of only accept or dismiss",
+      "expected": { "filePath": "scripts/lib/ledger.mjs", "symbolName": "writeLedgerEntry" },
+      "_note": "LEFT UNCHANGED — genuine retrieval failure. Top-5 returned isSeverityUnderstated, classifyStage1Outcome, applyStage1MechanicalEarlyFilter, classifyDeferralEvidence and a test fixture (0.636-0.671); none is where severity adjustment would be implemented. The ledger's two-axis outcome model (adjudicationOutcome incl. severity_adjusted) lives in writeLedgerEntry.",
+      "relation": "extend",
+      "stratum": "audit-core"
+    },
+    {
+      "id": "extend-path-classification-symlinks",
+      "intent": "make sensitive path detection follow symlinks to their real target",
+      "expected": { "filePath": "scripts/lib/sensitive-paths.mjs", "symbolName": "resolveAndClassify" },
+      "alternates": [
+        { "filePath": "scripts/lib/sensitive-paths.mjs", "symbolName": "classifyPath" },
+        { "filePath": "scripts/lib/audit/stage1-triage.mjs", "symbolName": "isSensitiveViaSymlinkResolution" }
+      ],
+      "expectedCorrectedPostHoc": true,
+      "_note": "EXPECTATION CORRECTED, not merely widened. Read of sensitive-paths.mjs:214 confirms resolveAndClassify IS the symlink-resolving layer over classifyPath (realpath + repoRoot containment, fail-closed). The retrieval was RIGHT and my original expectation was wrong — recorded explicitly because 'the tool was correct and the fixture was not' is the kind of result a calibration set must be able to represent.",
+      "relation": "extend",
+      "stratum": "security"
+    },
+    {
+      "id": "extend-model-resolver-new-tier",
+      "intent": "teach the model resolver about a new provider tier sentinel",
+      "expected": { "filePath": "scripts/lib/model-resolver.mjs", "symbolName": "resolveModel" },
+      "alternates": [
+        { "filePath": "scripts/lib/model-resolver.mjs", "symbolName": "sentinelForTier" },
+        { "filePath": "scripts/lib/model-resolver.mjs", "symbolName": "tierForModel" },
+        { "filePath": "scripts/lib/model-resolver.mjs", "symbolName": "isSentinel" }
+      ],
+      "alternatesAddedPostHoc": true,
+      "_note": "All three are the tier/sentinel machinery in the same module; adding a new tier sentinel touches them directly. Retrieval put the whole correct neighbourhood in the top 3.",
+      "relation": "extend",
+      "stratum": "shared-lib"
+    },
+    {
+      "id": "extend-atomic-write-fsync",
+      "intent": "add an fsync option to the atomic file writer for durability",
+      "expected": { "filePath": "scripts/lib/file-io.mjs", "symbolName": "atomicWriteFileSync" },
+      "relation": "extend",
+      "stratum": "shared-lib"
+    },
+
+    {
+      "id": "none-wine-pairing",
+      "intent": "recommend a wine pairing for a given dish based on tannin and acidity",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-invoice-pdf",
+      "intent": "generate a PDF invoice with line items and VAT for a customer order",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-websocket-presence",
+      "intent": "track which users are currently online using a websocket presence channel",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-image-thumbnail",
+      "intent": "resize an uploaded image into three thumbnail sizes and strip EXIF data",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-stripe-webhook",
+      "intent": "verify a Stripe webhook signature and record the payment",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-calendar-recurrence",
+      "intent": "expand a recurring calendar event rule into concrete occurrences",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-geo-distance",
+      "intent": "calculate the great-circle distance between two latitude longitude points",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-shopping-cart",
+      "intent": "apply a percentage discount code to a shopping cart subtotal",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-spellcheck",
+      "intent": "suggest spelling corrections for a mistyped search term using edit distance",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-audio-waveform",
+      "intent": "render an audio waveform visualisation from a raw PCM buffer",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    },
+    {
+      "id": "none-tax-bracket",
+      "intent": "compute income tax owed across progressive tax brackets",
+      "relation": "none",
+      "stratum": "unrelated-domain"
+    }
+  ]
+}

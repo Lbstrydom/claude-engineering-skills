@@ -58,6 +58,17 @@ decision, neither touched here: whether `justify-divergence` should keep permitt
 forks at all, and whether the recall gate should require passing on *untouched* probes
 so fixture-fitting cannot unlock threshold derivation.
 
+**Landed (second ship, same day).** The harness behind those numbers is now committed:
+`scripts/lib/arch-memory/{calibrate,normalize-intent}.mjs`, their tests, the hand-labelled
+probe fixture, and the genre-bridge wiring in `neighbourhood-query.mjs`. Until this,
+the results above referenced a probe set that wasn't in the repo — not reproducible.
+Plan §13 now carries the gate table and both open questions. One artifact-hygiene fix
+went with it: `.audit-loop/arch-memory-calibration.json` is the *run output* (a function
+of live index state + LLM normalizer output, not byte-reproducible) and was untracked but
+un-ignored — one `git add -A` from being committed. Now gitignored, matching its siblings
+`nav-verify-result.json` / `visual-verify-result.json`. The committed artefact for this
+feature is the **fixture**, not the report.
+
 ## 2026-07-19 — batch-contention flakes: one real bug, one unreproducible, one non-issue
 
 Three loose ends from the flake work, resolved in different directions — which is
