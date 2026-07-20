@@ -573,80 +573,35 @@ connection string. **Load-bearing invariants** (the rest is in the docs below):
 
 ## Anthropic Backend Routing
 
-All Claude API calls go through [`scripts/lib/anthropic-client.mjs`](scripts/lib/anthropic-client.mjs).
-The `CLAUDE_BACKEND` env switches the underlying transport without touching
-call sites:
+All Claude API calls go through one seam,
+[`scripts/lib/anthropic-client.mjs`](scripts/lib/anthropic-client.mjs);
+`CLAUDE_BACKEND` switches transport without touching call sites. `sdk`
+(default) is the direct `@anthropic-ai/sdk` API billing `ANTHROPIC_API_KEY`;
+`cli` spawns `claude -p --output-format json` and draws on the Max 20x Agent
+SDK credit. **Local status: `cli`** (in the gitignored `.env`; the committed
+default stays `sdk` for CI without the `claude` CLI). Call sites use
+`createAnthropicClient()`, never `new Anthropic()` — regression-guarded by
+[tests/anthropic-client-migration.test.mjs](tests/anthropic-client-migration.test.mjs).
+Smoke test: `npm run anthropic:ping`.
 
-| Backend | Transport | Bills against | Use when |
-|---|---|---|---|
-| `sdk` (default) | `@anthropic-ai/sdk` direct API | `ANTHROPIC_API_KEY` token meter | Today; CI without `claude` CLI installed |
-| `cli` | `claude -p --output-format json` subprocess | **Before 2026-06-15**: your interactive Max 20x subscription (same pool as IDE sessions). **From 2026-06-15**: dedicated Max 20x Agent SDK $200/mo credit. | After credit redemption opens; reduces API spend on high-volume scripts |
+**Load-bearing gotchas** (operational depth in the reference below):
 
-> **Status (2026-06-29): flipped to `cli` locally.** The 2026-06-15 pool split
-> has passed, so the cli backend now draws from the dedicated Agent SDK credit
-> (not the interactive IDE pool). `CLAUDE_BACKEND=cli` lives in the gitignored
-> `.env` (per-machine; the committed default stays `sdk` for CI without the
-> `claude` CLI). Consumers opt in via their own `.env`.
->
-> **Cost telemetry — what actually works (corrected 2026-06-29).** The cli
-> backend self-reports `cost_usd` + token `usage` per call (parsed from
-> `claude -p --output-format json` by `normaliseCliOutput`) — that is the
-> authoritative per-call signal for scripted jobs like `npm run arch:refresh`
-> (12 batched `claude -p` calls on its incremental path). **`claude-trace`
-> canNOT meter the scripted cli backend**: its interceptor writes log banners to
-> *stdout*, which corrupts the JSON envelope the backend parses, and it emits one
-> JSONL+HTML (and a browser-open attempt) per spawned process — useless across a
-> batch. Injecting it via `NODE_OPTIONS=--require <loader>` also breaks `npm`
-> itself (the loader expects to wrap the `claude` entry, not arbitrary node
-> processes). `claude-trace` is still the right tool for your **interactive**
-> Claude Code sessions (the shared-pool concern it was installed for); it is
-> installed globally and on PATH. The $200 credit is non-rolling and overage
-> requires manually-enabled billing, so watch the backend's own `cost_usd` on
-> high-volume runs.
+- **Forced tool-calling needs `{backend:'sdk'}` explicitly (found 2026-07-14).**
+  The `cli` backend reads only `{model, max_tokens, system, messages}` and
+  **silently drops** `tools`/`tool_choice` — it always spawns
+  `claude -p --tools ''`. A caller forcing `tool_choice` gets a plain `text`
+  block back with **no error**, so the failure surfaces one layer up. This
+  broke the tiered-recall pipeline's discovery generator for a whole shadow
+  window (20/20 runs fell back to legacy). Any call site forcing `tool_choice`
+  must pass `createAnthropicClient({backend:'sdk'})` — never the ambient env.
+- **Availability is `isClaudeAvailable()`, not `process.env.ANTHROPIC_API_KEY`.**
+  The cli backend authenticates via the `claude` CLI and needs no key, so a raw
+  env check silently skips a fully-available backend.
+- **`claude-trace` cannot meter the scripted cli backend** (it corrupts the JSON
+  envelope on stdout). Use the backend's own self-reported `cost_usd`.
 
-**Migration**: call sites use the factory instead of `new Anthropic({apiKey})`:
-
-```js
-const { createAnthropicClient } = await import('./anthropic-client.mjs');
-const client = await createAnthropicClient();
-const resp = await client.messages.create({ model, max_tokens, system, messages });
-```
-
-The adapter exposes the same `.messages.create()` shape as the raw SDK, so
-the body of every call site stays identical. The factory caches a single
-client per `(backend, apiKey, claudeBin)` key for the process lifetime —
-matches the "reuse client created in main()" rule below.
-
-**Fully migrated** (2026-06-29): every Claude call site now goes through
-`createAnthropicClient()` — `lib/context.mjs`, `lib/neighbourhood-query.mjs`,
-`lib/llm-wrappers.mjs`, `symbol-index/summarise{,‑domains}.mjs`,
-`refine-prompts.mjs`, `evolve-prompts.mjs`, and `gemini-review.mjs` (shadow
-client, ping, Opus final-review fallback). No bare `new Anthropic()` remains
-outside the factory itself (regression-guarded by a `grep` in
-[tests/anthropic-client-migration.test.mjs](tests/anthropic-client-migration.test.mjs)).
-
-**Backend-aware availability gate**: call sites that conditionally attempt a
-Claude call use `isClaudeAvailable()` (exported from `anthropic-client.mjs`),
-**not** `process.env.ANTHROPIC_API_KEY` — the cli backend authenticates via the
-`claude` CLI and needs no key, so a raw env check would silently skip a fully-
-available cli backend.
-
-**Smoke test**: `npm run anthropic:ping` invokes a tiny prompt through
-whichever backend the env resolves to.
-
-> **Forced tool-calling needs `{backend:'sdk'}` explicitly (load-bearing
-> gotcha, found 2026-07-14).** The `cli` backend's `messages.create()` only
-> reads `{model, max_tokens, system, messages}` — it silently drops `tools`/
-> `tool_choice` (by design: it always spawns `claude -p --tools ''`, a
-> single-shot-text contract). A caller that needs `tool_choice:{type:'tool',
-> name:'...'}` for structured output gets a plain `text` block back instead,
-> with **no error** — the failure surfaces one layer up, wherever the caller
-> checks for a `tool_use` block. This broke the tiered-recall pipeline's
-> Sonnet discovery generator silently for the entire 2026-07-13→07-14 shadow
-> window (20/20 runs fell back to legacy) before being root-caused; see
-> `docs/plans/tiered-recall-audit-pipeline.md`. Any new call site that forces
-> `tool_choice` must pass `createAnthropicClient({backend:'sdk'})` explicitly
-> — never rely on the ambient `CLAUDE_BACKEND` resolution for that case.
+→ Backend table, cost-telemetry detail, migration pattern, and the full
+call-site list: [`docs/reference/anthropic-backend-routing.md`](docs/reference/anthropic-backend-routing.md).
 
 ## Shadow Final-Review A/B
 
