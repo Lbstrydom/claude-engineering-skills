@@ -181,9 +181,16 @@ export function getRepoContext({
     else if (t === 'T1') block = buildT1(inv, targetPaths, sha, baseDir);
     else block = buildT0(inv, sha);
     if (block) { resolvedTier = t; break; }
-    fallbackReason = (t === 'T2' && !INTENT_SECTION_MAP[intent])
+    // Keep the FIRST reason — why the REQUESTED tier failed — not the last.
+    // Overwriting meant a T3 request with a missing symbol map reported
+    // `t1_no_resolvable_adjacency`, because the chain fell T3 → T1 → T0 and the
+    // T1 failure clobbered the real cause. That points the reader at adjacency
+    // when the fix is `npm run arch:render`. Latent until architecture-map.md
+    // became a Category-A artefact and stopped being present in a fresh clone.
+    const reason = (t === 'T2' && !INTENT_SECTION_MAP[intent])
       ? 't2_unknown_intent'
       : FALLBACK_REASON[t];
+    fallbackReason ??= reason;
   }
   if (!block) {
     block = '';

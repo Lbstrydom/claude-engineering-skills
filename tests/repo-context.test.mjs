@@ -122,3 +122,28 @@ describe('INTENT_SECTION_MAP', () => {
     assert.ok(INTENT_SECTION_MAP['audit-subsystem'].startsWith('## '));
   });
 });
+
+/**
+ * Regression: `fallbackReason` must name why the REQUESTED tier failed, not the
+ * last rung of the degrade chain. Requesting T3 in a tree with no symbol map
+ * used to report `t1_no_resolvable_adjacency` — the chain falls T3 → T1 → T0
+ * and the T1 failure clobbered the real cause, pointing the reader at adjacency
+ * when the fix is `npm run arch:render`. Latent until architecture-map.md
+ * became Category A and stopped existing in a fresh clone.
+ */
+describe('fallbackReason names the requested tier’s failure', () => {
+  it('T3 without a symbol map blames the symbol map, not adjacency', async () => {
+    const os = await import('node:os');
+    const fsp = await import('node:fs/promises');
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'repoctx-'));
+    try {
+      // An AGENTS.md so the tree is not so bare that T0 is the only option.
+      fs.writeFileSync(path.join(dir, 'AGENTS.md'), '# x\n\n## R2+ Audit Mode\n\nbody\n');
+      const r = getRepoContext({ tier: 'T3', baseDir: dir });
+      assert.notEqual(r.resolvedTier, 'T3', 'precondition: no map in this tree');
+      assert.equal(r.fallbackReason, 't3_symbol_map_unavailable');
+    } finally {
+      await fsp.rm(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
+});
