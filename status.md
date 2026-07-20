@@ -1,5 +1,51 @@
 # Project Status Log
 
+## 2026-07-20 (latest) — finishing the consumer verification unearthed a third, worse bug
+
+A prior entry closed the duplicate-justification copy-forward fix with the
+consumer half explicitly UNVERIFIED — its full refresh had aborted on a
+separate import-dedup bug. This session cleared both and, in doing so, found
+that neither was the reason the consumer read zero justified duplicates.
+
+**The import-dedup bug (the one I was asked to fix).**
+`recordSymbolFileImports` upserts each chunk with no dedup, and Postgres aborts
+an `INSERT ... ON CONFLICT DO UPDATE` whose own VALUES list carries the same
+conflict key twice. Extraction can hand us a repeated `(importer, imported)`
+pair, so a large enough repo trips it — the consumer's 6,077 edges did, this
+repo's never have. Fixed by de-duplicating on the conflict key before chunking,
+globally (not per-chunk, so `inserted` counts distinct edges). A DB-gated
+regression test reproduces the exact `cannot affect row a second time` error
+against the disposable container, red before the fix. (Committed by the
+concurrent session as `be867a5`, my work verbatim, so it would not be lost in
+the shared checkout.)
+
+**The bug that was actually hiding the pragmas (CRLF).** With the import bug
+fixed, the consumer's full refresh completed — and STILL recorded 0 justified.
+Root-caused by replaying the sweep against that repo: 32 raw `git grep` lines
+in, 0 parsed out. `findRepoPragmas` split on `'\n'` and matched each line with
+`/^([^:]+):(\d+):(.*)$/`. The consumer checks out CRLF (no `eol=lf`
+.gitattributes), so every line carried a trailing `\r`, and JS `.` does not
+match `\r`, so `(.*)$` never reached its anchor and every line was silently
+dropped. An empty sweep is indistinguishable from "no pragmas here", so the
+whole `@duplicate-justification` feature was inert in any CRLF repo with no
+warning — and `findStalePragmas` delegates to the same sweep, so it was inert
+too. This repo pins `eol=lf`, which is precisely why its suite never saw it.
+One-character-class fix (`/\r?\n/`), guarded by a CRLF-file test and a mixed
+CRLF/LF test that both fail on `'\n'`-split.
+
+**Consumer verification, now complete on live data.** The committed `round1`
+pragma in `dishFingerprintAggregator.js` flipped `true` on the consumer's full
+refresh (repo-wide justified 0 -> 29) and — the reported criterion — survived
+the following genuine incremental (4 touched files, `round1` among the 8,227
+copied forward): full = 29, incremental = 29, `round1 = true` in both. The
+column-carrying copy-forward and the CRLF fix together close the loop the
+original report opened.
+
+Three bugs, three layers, one symptom: a stale worktree at scale (import
+dedup), a persistence gap (copy-forward columns), and a line-ending assumption
+(CRLF). Only the last was invisible here for the same reason the whole feature
+looked healthy — this repo's own line-ending discipline hid it.
+
 ## 2026-07-20 (latest) — the npm `--` swallow was a class of 34, not three instances
 
 Built `check-npm-run-args.mjs` (`npm-args:gate`, wired into `npm run check`). It
