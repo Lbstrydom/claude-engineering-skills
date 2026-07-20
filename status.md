@@ -1,5 +1,62 @@
 # Project Status Log
 
+## 2026-07-20 — the push gate started checking the commit, and found four things wrong with itself
+
+The pre-push hook ran `npm run check` against the **working tree**. With two
+agent sessions sharing one checkout that produced false blocks — session B's
+half-written edits failing session A's clean push — and a gate that cries wolf
+gets `--no-verify`'d, which is how a gate stops existing. The fix was a throwaway
+`git worktree` at the pushed sha (`scripts/prepush-check.mjs`), so the checks
+verify what the remote actually receives.
+
+The false blocks were the reported symptom. **The false passes were the worse
+half and nobody had noticed them**: a fix present in the tree but absent from the
+commit — unstaged, or belonging to the other session's change set — made the hook
+green while the pushed commit was broken. Working-tree checking cannot catch that
+by construction, because it verifies an artifact nobody receives.
+
+**The load-bearing risk was the opposite of the obvious one.** A clean worktree
+has no gitignored inputs, so every check that *degrades to a skip* on a missing
+input would have passed having read nothing — the sandbox would have quietly
+converted real gates into decoration. Two such paths existed and are now hard
+errors inside the sandbox (`AUDIT_PUSH_RANGE_REQUIRED`,
+`ARCH_COVERAGE_REQUIRE_ENVELOPE`). That is the standing rule for anything added
+to `check`: ask whether it can go green in a clean checkout without checking
+anything.
+
+**The entry worth reading is `skills.manifest.json`.** It is a Category-B
+artifact — committed, freshness-verified, and documented in its own source as "a
+pure content hash of the committed skill sources". It was not. `build-manifest.mjs`
+hashed raw working-tree bytes, and 16 skill reference files carry CRLF locally
+while `.gitattributes` pins `eol=lf`. Git reports those files **clean**, because
+it normalises on comparison — so `bundleVersion` had silently become a function
+of local line endings, the committed manifest was generated from contaminated
+input, and a fresh clone computed a different hash and read STALE. Regenerating
+after canonicalising CRLF→LF produced exactly the hash the sandbox had computed,
+which is the confirmation: the sandbox was right and the committed artifact was
+wrong. Nothing could have caught this except comparing two checkouts, which
+nothing did until now.
+
+Two more were flakes, and they matter because a flaky gate *is* a false-block
+source — the thing this work existed to remove. A `captureWitness` test failed
+1-in-8 in-tree (`capMs:10` did not reliably fit two stabilisation ticks plus a
+`setTimeout`, desynchronising a fake page's tick counter); 0-in-15 after. And a
+10s spawn bound in the arch-memory hook test was doing duty as a latency
+assertion — the same trap that file's own comment records deleting once before.
+Verified it was load and not broken hermeticity (41/41 in a worktree) before
+raising it.
+
+The drift gates also stopped inferring their base from working-tree state
+(`@{u}`, else dirty?`HEAD`:`HEAD~1`), which had been scoping every multi-commit
+push to its tip commit — wrong before the sandbox, just unconditionally wrong
+after it. `scripts/lib/push-range.mjs` is now the single resolver and every
+result carries `source`/`trusted`, printed in gate summaries: an under-scoped run
+that announces itself is a bug report, one that reads as a plain clean is a
+shipped defect.
+
+Not `git stash`, incidentally — with two live sessions that yanks the other
+session's files mid-edit, and a pop conflict wedges both.
+
 ## 2026-07-20 — SAST triage shipped, and the predicate that justified it lands 4 of 240
 
 `docs/plans/sast-triage-routing.md` is **Complete**: SARIF ingestion, three
