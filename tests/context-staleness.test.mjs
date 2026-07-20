@@ -9,6 +9,8 @@ import {
   citationsInLine,
   computeStaleness,
   ackKey,
+  shouldTrack,
+  isGeneratedDoc,
   unverifiableReason,
   DEFAULT_THRESHOLD_DAYS,
 } from '../scripts/lib/context-staleness.mjs';
@@ -144,7 +146,7 @@ describe('acknowledgements', () => {
   };
 
   test('an acked line moves out of flagged into suppressed', () => {
-    const key = ackKey(one.lines[0], 'scripts/learning-store.mjs');
+    const key = ackKey('AGENTS.md', one.lines[0], 'scripts/learning-store.mjs');
     const r = computeStaleness({ ...one, acked: new Set([key]) });
     assert.equal(r.flagged.length, 0);
     assert.equal(r.suppressed.length, 1);
@@ -156,7 +158,7 @@ describe('acknowledgements', () => {
    * line has by definition been re-examined.
    */
   test('an ack SELF-INVALIDATES when the line text changes', () => {
-    const key = ackKey(one.lines[0], 'scripts/learning-store.mjs');
+    const key = ackKey('AGENTS.md', one.lines[0], 'scripts/learning-store.mjs');
     const edited = { ...one, lines: ['- **learning-store.mjs**: a barrel over lib/store/'] };
     const r = computeStaleness({ ...edited, acked: new Set([key]) });
     assert.equal(r.suppressed.length, 0, 'the old ack must not carry over');
@@ -164,7 +166,7 @@ describe('acknowledgements', () => {
   });
 
   test('an ack is line-number independent, so reflowing the file keeps it', () => {
-    const key = ackKey(one.lines[0], 'scripts/learning-store.mjs');
+    const key = ackKey('AGENTS.md', one.lines[0], 'scripts/learning-store.mjs');
     const shifted = {
       ...one,
       lines: ['header', '', ...one.lines],
@@ -172,6 +174,84 @@ describe('acknowledgements', () => {
     };
     const r = computeStaleness({ ...shifted, acked: new Set([key]) });
     assert.equal(r.suppressed.length, 1);
+  });
+});
+
+/**
+ * The scoping rule carries the widening decision: without it, 613 of 627
+ * flagged lines came from terminal plans. That is not a tuning knob — a
+ * completed plan is a historical record, so flagging its citations is both
+ * noise and semantically wrong.
+ */
+describe('shouldTrack — what is a live claim vs a historical record', () => {
+  const terminal = () => ({ ok: true, kind: 'terminal', token: 'Complete' });
+  const active = () => ({ ok: true, kind: 'active', token: 'In Progress' });
+  const none = () => ({ ok: false });
+
+  test('AGENTS.md is tracked', () => {
+    assert.equal(shouldTrack('AGENTS.md', '# x', none).tracked, true);
+  });
+
+  test('a TERMINAL plan is not tracked — it records what was true when written', () => {
+    const r = shouldTrack('docs/plans/foo.md', '- **Status**: Complete', terminal);
+    assert.equal(r.tracked, false);
+    assert.match(r.reason, /historical record/);
+  });
+
+  test('an ACTIVE plan IS tracked — it still describes intended work', () => {
+    assert.equal(shouldTrack('docs/plans/foo.md', '- **Status**: In Progress', active).tracked, true);
+  });
+
+  test('an audit summary is not tracked, whatever its status', () => {
+    assert.equal(shouldTrack('docs/plans/foo-audit-summary.md', 'x', none).tracked, false);
+    // The hyphenated-suffix form check-plan-status.mjs also exempts.
+    assert.equal(shouldTrack('docs/plans/foo-audit-summary-phase-1.md', 'x', none).tracked, false);
+  });
+
+  test('runbooks and reference docs are tracked — they are operational instructions', () => {
+    assert.equal(shouldTrack('docs/runbooks/x.md', 'x', none).tracked, true);
+    assert.equal(shouldTrack('docs/reference/x.md', 'x', none).tracked, true);
+  });
+
+  // The fix for a stale generated file is regeneration, so flagging its prose
+  // would point at the wrong action.
+  test('a generated artefact is not tracked, detected by its own header marker', () => {
+    for (const header of [
+      '# Map\n\n_Generated from `.requirements/ledger.json` — Do not hand-edit; regenerate with x._',
+      '# Index\n\n> **Generated file — do not edit.** Regenerate with `npm run plans:index`.',
+      '# Arch\n\n- Generated: 2026-07-19T09:24:04.233Z   commit: 807a407',
+    ]) {
+      assert.equal(shouldTrack('docs/anything.md', header, none).tracked, false, header.slice(0, 40));
+    }
+  });
+
+  /**
+   * Scoped to the header on purpose. AGENTS.md's own generated-artifact policy
+   * discusses "Generated: … do not edit" about OTHER files — a whole-file scan
+   * would silence the very document that explains the rule.
+   */
+  test('generated-detection does NOT fire on prose deep in a hand-written file', () => {
+    const doc = `${'filler\n'.repeat(20)}A generated file must say "do not edit" and be regenerated.`;
+    assert.equal(isGeneratedDoc(doc), false);
+    assert.equal(shouldTrack('AGENTS.md', doc, none).tracked, true);
+  });
+});
+
+describe('ackKey is scoped to the file', () => {
+  // Boilerplate lines citing the same path are common across docs/; one ack
+  // must not silence another file's line.
+  test('the same line+path in two files yields different keys', () => {
+    const line = 'see `scripts/cross-skill.mjs`';
+    assert.notEqual(
+      ackKey('AGENTS.md', line, 'scripts/cross-skill.mjs'),
+      ackKey('docs/runbooks/x.md', line, 'scripts/cross-skill.mjs'),
+    );
+  });
+
+  test('the key is stable for identical inputs', () => {
+    const a = ackKey('AGENTS.md', ' padded  ', 'scripts/x.mjs');
+    const b = ackKey('AGENTS.md', 'padded', 'scripts/x.mjs');
+    assert.equal(a, b, 'leading/trailing whitespace must not change identity');
   });
 });
 

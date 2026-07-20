@@ -64,17 +64,80 @@ export function citationsInLine(line, resolve) {
 /**
  * Stable identity for an acknowledgement.
  *
- * Keyed on the line's TEXT plus the cited path, never on a line number — so an
- * ack survives the file being reflowed, and **self-invalidates when the line is
- * edited**. That is the property that stops this becoming the usual rotting
- * allowlist: a changed line has, by definition, been looked at again.
+ * Keyed on the file, the line's TEXT and the cited path — never on a line
+ * number, so an ack survives the file being reflowed, and **self-invalidates
+ * when the line is edited**. That is the property that stops this becoming the
+ * usual rotting allowlist: a changed line has, by definition, been looked at
+ * again.
+ *
+ * The file is part of the key because widening beyond AGENTS.md made identical
+ * boilerplate lines citing the same path genuinely common across docs/ — one
+ * ack must not silence another file's line.
  */
-export function ackKey(lineText, citedPath) {
+export function ackKey(file, lineText, citedPath) {
   return crypto
     .createHash('sha256')
-    .update(JSON.stringify([lineText.trim(), citedPath]))
+    .update(JSON.stringify([file, lineText.trim(), citedPath]))
     .digest('hex')
     .slice(0, 16);
+}
+
+/**
+ * Whether a doc's claims are meant to TRACK the code, or are a record of what
+ * was true when written.
+ *
+ * Measured on this repo: without this filter, **613 of 627** flagged lines came
+ * from terminal plans. That is not a tuning problem — a completed plan is a
+ * historical artefact, so flagging its citations is both noise and
+ * semantically wrong. Excluding them leaves 14 across 95 files.
+ *
+ * `parseStatus` is injected so this stays pure; the CLI passes the canonical
+ * `parsePlanStatus` from `lib/plan-status.mjs` rather than re-deriving the
+ * vocabulary (an earlier probe hand-rolled the regex and mis-classified almost
+ * every terminal plan).
+ *
+ * @param {string} file repo-relative path
+ * @param {string} content
+ * @param {(c: string) => {ok: boolean, kind?: string}} parseStatus
+ * @returns {{tracked: boolean, reason: string}}
+ */
+/**
+ * Does this doc declare itself generated?
+ *
+ * Scoped to the HEADER (first ~10 lines) on purpose: prose deeper in a
+ * hand-written file routinely discusses generated artefacts — AGENTS.md's own
+ * generated-artifact policy says "Generated: … do not edit" about OTHER files —
+ * and a whole-file scan would silence the very document that explains the rule.
+ */
+export function isGeneratedDoc(content) {
+  const header = String(content).split('\n').slice(0, 10).join('\n');
+  return /generated[^\n]{0,80}(do not (hand-)?edit|regenerate)/i.test(header)
+    || /^-\s*Generated:\s/im.test(header);
+}
+
+export function shouldTrack(file, content, parseStatus) {
+  const p = String(file).replace(/\\/g, '/');
+
+  // Generated artefacts: the fix for a stale one is REGENERATION, not editing
+  // its prose, so flagging its lines would point at the wrong action.
+  //
+  // Detected by the header marker rather than a filename list, so a newly
+  // generated doc is covered without anyone remembering to add it. All three
+  // of this repo's generated docs already declare themselves this way
+  // (`plans/README.md`, `architecture-map.md`, `requirements-map.md`).
+  if (isGeneratedDoc(content)) return { tracked: false, reason: 'generated artefact' };
+
+  if (p.startsWith('docs/plans/')) {
+    // Mirrors check-plan-status.mjs's own exemption for these.
+    if (/-audit-summary(?:-[\w-]+)?\.md$/.test(p)) {
+      return { tracked: false, reason: 'audit summary — a record of a converged audit' };
+    }
+    const status = parseStatus(content);
+    if (status.ok && status.kind === 'terminal') {
+      return { tracked: false, reason: `terminal plan (${status.token}) — a historical record` };
+    }
+  }
+  return { tracked: true, reason: 'live' };
 }
 
 /**
@@ -90,7 +153,7 @@ export function ackKey(lineText, citedPath) {
  * @returns {{rows: object[], flagged: object[], suppressed: object[], coverage: object}}
  */
 export function computeStaleness({
-  lines, lineDates, pathDates, resolve,
+  file = 'AGENTS.md', lines, lineDates, pathDates, resolve,
   acked = new Set(), thresholdDays = DEFAULT_THRESHOLD_DAYS,
 }) {
   const rows = [];
@@ -112,8 +175,9 @@ export function computeStaleness({
     }
     if (!worst) return;
 
-    const key = ackKey(text, worst.path);
+    const key = ackKey(file, text, worst.path);
     rows.push({
+      file,
       lineNumber: i + 1,
       text: text.trim(),
       path: worst.path,
