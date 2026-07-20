@@ -177,6 +177,14 @@ const CORE_ENTRY = [
   'scripts/check-setup.mjs',
   'scripts/check-audit-tool-version.mjs',
   'scripts/cache-hitrate-check.mjs',
+  // The unknown-flag gate. Shipped because the REMEDY it recommends
+  // (`assertKnownFlags`, in the already-synced lib/cli-io.mjs) was reaching
+  // consumers while the DIAGNOSTIC that locates their own instances was not —
+  // so an adopter received the fix with no way to find what needed fixing, and
+  // learned the gate existed only because a sibling repo named it (reported
+  // 2026-07-20). Consumers should pass `--baseline <file>`; see the module
+  // header for why the upstream baseline is wrong for them.
+  'scripts/check-cli-flags.mjs',
   'scripts/brainstorm-round.mjs',
   'scripts/explain-history.mjs',
   'scripts/skills-help.mjs',

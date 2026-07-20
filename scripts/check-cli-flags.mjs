@@ -26,13 +26,37 @@
  * broken while both demonstrably exit 2. A detector that misreports the fixed
  * state trains people to ignore it.
  *
+ * **Triage by flag POLARITY, not list order.** The census is severity-flat, and
+ * it deliberately does not try to infer intent — but the polarity of a CLI's
+ * guard flag decides whether a dropped typo is harmless or destructive:
+ *   - **opt-in danger** (`--apply`, `--write`, `--commit`) — the default is
+ *     safe, so a typo'd flag is a no-op. Low priority.
+ *   - **opt-out danger** (`--dry-run`, `--check` over a MUTATING default) — a
+ *     typo'd flag means the real mutation runs. This is the class that caused
+ *     all three incidents above; fix these first.
+ * Working the findings list top-down does the low-value ones first. A consumer
+ * repo reported (2026-07-20) that only 4 of their 10 findings were opt-out,
+ * while their two worst instances weren't listed at all — see the
+ * `parsesFlags` note on the `argv.includes` spelling for why.
+ *
  * Usage:
  *   node scripts/check-cli-flags.mjs            # report-only census
  *   node scripts/check-cli-flags.mjs --gating   # drift-gate (pre-push)
  *   node scripts/check-cli-flags.mjs --json
+ *   node scripts/check-cli-flags.mjs --baseline .cli-flags-baseline.json --gating
  *
- * Exit codes: 0 — ok (or report-only) · 1 — scanner failure, or net-new drift
- * under `--gating`.
+ * **Adopting this in a consumer repo**: pass `--baseline <file>` (JSON array or
+ * newline-delimited paths). Without it the gate applies the UPSTREAM baseline,
+ * which lists upstream paths that do not exist in your repo — so every one
+ * reports as a stale "fixed or gone" entry while none of your own files are
+ * baselined. Consumers are NOT expected to import `assertKnownFlags` from the
+ * synced `scripts/.claude-skills/` tree: that tree is gitignored and overwritten
+ * wholesale on every sync, so an import edge into it lets a re-sync break your
+ * operator scripts. Fork a local copy keeping the export NAME — the detector is
+ * name-based (`/assertKnownFlags/`) precisely so a fork stays compatible.
+ *
+ * Exit codes: 0 — ok (or report-only) · 1 — scanner failure, unreadable
+ * `--baseline`, or net-new drift under `--gating`.
  *
  * @module scripts/check-cli-flags
  */
@@ -85,7 +109,13 @@ export const BASELINE = new Set([
   'scripts/generate-plans-index.mjs',
   'scripts/learning/replay.mjs',
   'scripts/ledger-decompose.mjs',
-  'scripts/lib/arch-memory/calibrate.mjs',
+  // 'scripts/lib/arch-memory/calibrate.mjs' — FIXED 2026-07-20, baseline paid
+  // down. It should never have been baselined: `--out` feeds writeFileSync
+  // against a committed artifact, so a typo'd `--outt` fell through `arg()` to
+  // the default and overwrote it — the same shape as `render-mermaid.mjs`, one
+  // of the three incidents in this file's header. Surfaced by a consumer repo's
+  // report; the mechanism they proposed was wrong (see `discoverScripts`) but
+  // the target was right.
   'scripts/lib/sync-isolation-verify.mjs',
   'scripts/lint-plan-mermaid.mjs',
   'scripts/maintenance-checks.mjs',
@@ -117,6 +147,41 @@ export const BASELINE = new Set([
   'scripts/visual-audit.mjs',
   'scripts/write-code-outcomes.mjs',
   'scripts/write-plan-outcomes.mjs',
+
+  // 61 → 82 (2026-07-20, second widening). `parsesFlags` dropped the RECEIVER
+  // requirement on its `includes('--x')` clause: the previous form demanded the
+  // literal `process.argv.includes(`, so the extremely common
+  //   const argv = process.argv.slice(2);
+  //   const CHECK_ONLY = argv.includes('--check');
+  // was classified not-a-CLI and skipped entirely. Reported by a consumer repo
+  // whose migration runner hid in exactly this shape — `--check` was the SAFE
+  // mode and the default APPLIED migrations, so a typo'd `--chek` ran them for
+  // real. Most files escaped by coincidence (they happened to contain a
+  // `startsWith('--')` elsewhere); files that only ever test boolean flags did
+  // not. Same reasoning as the 24 → 61 growth above: these 21 were ALWAYS
+  // unguarded and merely invisible, so they are baselined in the same commit
+  // that made them visible. Nothing regressed; the census got honest again.
+  'scripts/audit-metrics.mjs',
+  'scripts/check-deps.mjs',
+  'scripts/debt-backfill.mjs',
+  'scripts/debt-budget-check.mjs',
+  'scripts/debt-pr-comment.mjs',
+  'scripts/debt-review.mjs',
+  'scripts/evolve-prompts.mjs',
+  'scripts/gemini-review.mjs',
+  'scripts/install-prepush-hook.mjs',
+  'scripts/learning/backfill-outcomes.mjs',
+  'scripts/learning/weekly-review.mjs',
+  'scripts/lib/learning/quickfix-stats.mjs',
+  'scripts/lib/npm-script-enumerator.mjs',
+  'scripts/meta-assess.mjs',
+  'scripts/openai-audit.mjs',
+  'scripts/postgres-parity/check-non-core-references.mjs',
+  'scripts/refine-prompts.mjs',
+  'scripts/security-triage.mjs',
+  'scripts/setup-permissions.mjs',
+  'scripts/spikes/observed-graph-discovery-spike.mjs',
+  'scripts/sync-refresh.mjs',
 ]);
 
 /**
@@ -139,7 +204,7 @@ export const BASELINE = new Set([
 export function parsesFlags(src) {
   const readsArgv = /function parseArgs|for \(let i = 2; i < argv\.length|process\.argv\.slice\(2\)|process\.argv\.includes\(/.test(src);
   if (!readsArgv) return false;
-  return /--[a-z]/.test(src) && /(startsWith\(['"]--['"]\)|=== ['"]--|process\.argv\.includes\(['"]--)/.test(src);
+  return /--[a-z]/.test(src) && /(startsWith\(['"]--['"]\)|=== ['"]--|includes\(['"]--)/.test(src);
 }
 
 /**
@@ -154,10 +219,31 @@ export function rejectsUnknownFlags(src) {
   return /unknown flag|unknown option|unrecognis|unrecogniz|Unknown argument/i.test(src);
 }
 
-/** Enumerate candidate script files via git (tracked + untracked-not-ignored). */
+/**
+ * Enumerate candidate script files via git (tracked + untracked-not-ignored).
+ *
+ * **These pathspecs are NOT depth-limited — `*` crosses `/` in git pathspec
+ * matching.** git does not use `FNM_PATHNAME`, so `scripts/*.mjs` already
+ * matches at every depth (measured on this repo: 488 files — 93 at depth 1,
+ * 128 at depth 2, 224 at depth 3, 43 at depth 4). `scripts/*&#47;*.mjs` is a strict
+ * subset, kept only because removing it would be a behaviour change for zero
+ * gain.
+ *
+ * This is worth stating loudly because it has now misled two readers
+ * independently: a consumer repo reported "the depth-2 globs miss 55% of
+ * scripts/" (2026-07-20), and the first attempt to verify that claim
+ * reproduced the same error. Both had re-implemented the glob with
+ * shell/minimatch semantics instead of calling this function. If you want to
+ * know what is scanned, call `discoverScripts()` — do not model it.
+ *
+ * `.js` is included because adopters are frequently mixed-module; upstream is
+ * all-ESM-`.mjs`, so this costs 4 files here and is load-bearing downstream
+ * (it hid a DB-mutating backfill in a consumer repo).
+ */
 export function discoverScripts(repoRoot) {
   const out = execFileSync('git',
-    ['ls-files', '--cached', '--others', '--exclude-standard', '--', 'scripts/*.mjs', 'scripts/*/*.mjs'],
+    ['ls-files', '--cached', '--others', '--exclude-standard', '--',
+      'scripts/*.mjs', 'scripts/*/*.mjs', 'scripts/*.js', 'scripts/*/*.js'],
     { cwd: repoRoot, encoding: 'utf-8', maxBuffer: 64 * 1024 * 1024 });
   return out.split('\n').map((l) => l.trim()).filter(Boolean);
 }
@@ -223,6 +309,50 @@ export function runCheck({ repoRoot, files, gating = false, baseline = BASELINE 
   };
 }
 
+/**
+ * Load a consumer-supplied baseline: JSON array, or newline-delimited paths
+ * (`#` comments allowed). Returns a Set.
+ *
+ * Exists because `runCheck` has always taken a `baseline` parameter while
+ * `main()` hardcoded the upstream `BASELINE` — so an adopting repo ran the gate
+ * against OUR file list, reporting every upstream path as a stale
+ * "fixed or gone" entry while baselining none of its own. Report-only was still
+ * useful; `--gating` was not adoptable. Reported by a consumer repo 2026-07-20.
+ *
+ * A missing/unreadable/malformed file is a HARD failure, never a silent
+ * fallback to the upstream default: silently gating against the wrong baseline
+ * is the exact defect this flag fixes, and re-introducing it as an error path
+ * would be worse than not having the flag.
+ */
+export function loadBaselineFile(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error('baseline file is empty');
+  if (trimmed.startsWith('[')) {
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) throw new Error('JSON baseline must be an array of paths');
+    return new Set(parsed.map(String));
+  }
+  // A JSON OBJECT must be rejected explicitly, not fall through to the
+  // line parser. Caught by this module's own test: `{"not":"an array"}` has no
+  // leading `[`, so the newline branch happily returned a Set of JSON fragments
+  // — a baseline of garbage that matches no real path, silently baselining
+  // NOTHING while reporting success. A malformed baseline has to be loud; that
+  // is the whole reason this loader refuses to fall back to the upstream set.
+  if (trimmed.startsWith('{')) {
+    throw new Error('JSON baseline must be an array of paths, not an object');
+  }
+  const lines = trimmed.split('\n').map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'));
+  const malformed = lines.filter((l) => /["{}[\],]/.test(l));
+  if (malformed.length) {
+    throw new Error(
+      `baseline is neither valid JSON nor plain paths — offending line: ${malformed[0].slice(0, 60)}`,
+    );
+  }
+  return new Set(lines);
+}
+
 function main() {
   if (process.argv.includes('--selfcheck-relocation')) {
     console.log('OK');
@@ -232,6 +362,25 @@ function main() {
   const json = process.argv.includes('--json');
   const repoRoot = process.cwd();
 
+  // `--baseline <file>` / `--baseline=<file>`
+  let baseline = BASELINE;
+  const bIdx = process.argv.findIndex((a) => a === '--baseline' || a.startsWith('--baseline='));
+  if (bIdx !== -1) {
+    const arg = process.argv[bIdx];
+    const val = arg.includes('=') ? arg.slice(arg.indexOf('=') + 1) : process.argv[bIdx + 1];
+    if (!val || val.startsWith('--')) {
+      console.error(`${R}cli:flags: --baseline requires a file path${X}`);
+      process.exit(1);
+    }
+    try {
+      baseline = loadBaselineFile(path.resolve(repoRoot, val));
+    } catch (err) {
+      console.error(`${R}cli:flags: could not read baseline ${val}${X} — ${err.message}`);
+      console.error(`${D}  refusing to fall back to the upstream baseline — that would gate your repo against our file list${X}`);
+      process.exit(1);
+    }
+  }
+
   let files;
   try {
     files = discoverScripts(repoRoot);
@@ -240,7 +389,7 @@ function main() {
     process.exit(1);
   }
 
-  const r = runCheck({ repoRoot, files, gating });
+  const r = runCheck({ repoRoot, files, gating, baseline });
 
   if (json) {
     console.log(JSON.stringify(r, null, 2));

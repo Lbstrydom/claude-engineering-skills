@@ -27,6 +27,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { assertKnownFlags } from '../cli-io.mjs';
 
 /** k MUST match production. The UserPromptSubmit hook hardcodes k:5, and that
  *  is the consultation that actually fires on most prompts — calibrating at
@@ -374,11 +375,29 @@ export function loadProbes(probesPath) {
   return Array.isArray(parsed) ? parsed : parsed.probes;
 }
 
+/**
+ * Every flag this CLI accepts. Exported so `tests/cli-unknown-flags.test.mjs`
+ * asserts against the real set rather than a copy that can drift.
+ */
+export const KNOWN_FLAGS = Object.freeze([
+  '--selfcheck-relocation', '--json', '--probes', '--out', '--adjudications',
+]);
+
 /** CLI. Kept thin — everything above is pure and unit-tested. */
 async function main() {
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
   const argv = process.argv.slice(2);
+  // Reject unknown flags rather than silently dropping them. `arg()` falls
+  // through to its DEFAULT on a miss, so a typo'd `--outt` does not error — it
+  // writes to the committed default artifact
+  // (`.audit-loop/arch-memory-calibration.json`) instead of the path you asked
+  // for. That is the same "OVERWRITES a committed artifact" shape as
+  // `render-mermaid.mjs`, which is one of the three incidents that motivated
+  // the unknown-flag gate; this CLI was wrongly sitting in that gate's BASELINE
+  // as accepted debt until a consumer repo's 2026-07-20 report surfaced it.
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'arch-memory/calibrate' });
+
   const arg = (n, d) => { const i = argv.indexOf(n); return i >= 0 ? argv[i + 1] : d; };
   const asJson = argv.includes('--json');
   const probesPath = arg('--probes', path.resolve('tests/fixtures/arch-memory-probes.json'));
@@ -540,5 +559,15 @@ async function main() {
 
 const isDirect = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\//, ''));
 if (isDirect || process.argv[1]?.endsWith('calibrate.mjs')) {
-  main().catch(err => { process.stderr.write(`[calibrate] ${err.stack || err.message}\n`); process.exit(1); });
+  main().catch(err => {
+    // A usage mistake is not an operational failure: exit 2 with the message
+    // alone (a stack trace buries the one line the operator needs to read).
+    // Matches the `prune.mjs` / `refresh.mjs` convention.
+    if (err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`[calibrate] ${err.message}\n`);
+      process.exit(2);
+    }
+    process.stderr.write(`[calibrate] ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
 }

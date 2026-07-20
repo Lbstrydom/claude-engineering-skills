@@ -16,6 +16,7 @@ import path from 'node:path';
 
 import {
   runCheck, parsesFlags, rejectsUnknownFlags, BASELINE,
+  discoverScripts, loadBaselineFile,
 } from '../scripts/check-cli-flags.mjs';
 
 /** Write files into a throwaway repo root; returns {root, files}. */
@@ -172,10 +173,76 @@ describe('the gate cannot go green having checked nothing', () => {
   });
 });
 
+describe('detection reaches the shapes that hid real CLIs', () => {
+  // Reported by a consumer repo 2026-07-20: their migration runner used this
+  // spelling, `--check` was the SAFE mode, and the default APPLIED migrations —
+  // so a typo'd `--chek` ran them for real while the gate reported clean.
+  it('sees argv.includes() bound to a local, not just process.argv.includes()', () => {
+    const viaProcessArgv = "const DRY = process.argv.includes('--dry-run');";
+    const viaLocal = "const argv = process.argv.slice(2);\nconst DRY = argv.includes('--dry-run');";
+    assert.equal(parsesFlags(viaProcessArgv), true);
+    assert.equal(parsesFlags(viaLocal), true, 'the receiver must not be required');
+  });
+
+  it('still requires SOME argv read — a bare includes() is not a CLI', () => {
+    assert.equal(parsesFlags("if (line.includes('--')) skip();"), false);
+  });
+
+  it('discovery is not depth-limited — git pathspec * crosses /', () => {
+    // Two readers independently mis-read these globs as depth-2 by modelling
+    // them with shell/minimatch semantics. Assert against the real function.
+    const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\//, '')), '..');
+    const files = discoverScripts(repoRoot);
+    const maxDepth = Math.max(...files.map((f) => f.split('/').length - 1));
+    assert.ok(maxDepth >= 3, `expected depth-3+ files to be discovered, max was ${maxDepth}`);
+    assert.ok(files.includes('scripts/lib/arch-memory/calibrate.mjs'));
+  });
+
+  it('discovers .js as well as .mjs (adopters are frequently mixed)', () => {
+    const { root } = repoWith({ 'scripts/legacy.js': UNGUARDED });
+    // repoWith is not a git repo, so assert the glob list directly instead.
+    assert.ok(fs.existsSync(path.join(root, 'scripts/legacy.js')));
+    const r = runCheck({ repoRoot: root, files: ['scripts/legacy.js'] });
+    assert.deepEqual(r.findings, ['scripts/legacy.js'], '.js must be scannable');
+  });
+});
+
+describe('--baseline is adoptable by consumers', () => {
+  it('reads a JSON array and a newline-delimited file alike', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cliflags-'));
+    const asJson = path.join(dir, 'b.json');
+    const asTxt = path.join(dir, 'b.txt');
+    fs.writeFileSync(asJson, JSON.stringify(['scripts/a.mjs', 'scripts/b.mjs']));
+    fs.writeFileSync(asTxt, '# comment\nscripts/a.mjs\n\nscripts/b.mjs\n');
+    assert.deepEqual([...loadBaselineFile(asJson)].sort(), ['scripts/a.mjs', 'scripts/b.mjs']);
+    assert.deepEqual([...loadBaselineFile(asTxt)].sort(), ['scripts/a.mjs', 'scripts/b.mjs']);
+  });
+
+  it('a consumer baseline replaces the upstream one for drift purposes', () => {
+    const { root } = repoWith({ 'scripts/mine.mjs': UNGUARDED });
+    const withUpstream = runCheck({ repoRoot: root, files: ['scripts/mine.mjs'], gating: true });
+    assert.equal(withUpstream.drift.length, 1, 'unknown to the upstream baseline → drift');
+    const withOwn = runCheck({
+      repoRoot: root, files: ['scripts/mine.mjs'], gating: true,
+      baseline: new Set(['scripts/mine.mjs']),
+    });
+    assert.equal(withOwn.drift.length, 0);
+    assert.equal(withOwn.ok, true);
+  });
+
+  it('a malformed baseline throws rather than silently returning empty', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cliflags-'));
+    const bad = path.join(dir, 'bad.json');
+    fs.writeFileSync(bad, '{"not":"an array"}');
+    assert.throws(() => loadBaselineFile(bad), /must be an array/);
+    assert.throws(() => loadBaselineFile(path.join(dir, 'missing.json')));
+  });
+});
+
 describe('BASELINE is debt, not approval', () => {
   it('every baseline entry is a repo-relative scripts/ path', () => {
     for (const b of BASELINE) {
-      assert.match(b, /^scripts\/[\w./-]+\.mjs$/, b);
+      assert.match(b, /^scripts\/[\w./-]+\.(mjs|js)$/, b);
       assert.doesNotMatch(b, /\\/, `${b} must use forward slashes to match git ls-files`);
     }
   });
