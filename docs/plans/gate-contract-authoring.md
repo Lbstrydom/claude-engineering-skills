@@ -83,27 +83,26 @@ splits three ways and the plan is honest about which is which:
 
 ```mermaid
 graph TD
-  subgraph "Phase A — prerequisites (block everything)"
+  subgraph "Phase A — the machine"
     S["schema: admit {gates:[], reason}"]
-    F["resolve D1a fixture contradictions<br/>(realpath escape · gitignore-vs-artifacts)"]
+    CC["candidate-coverage check<br/>(grep verbs → require disposition)"]
   end
-  subgraph "Phase B — authoring (per skill)"
-    E["executable gates<br/>cli-exit recipes"]
-    D["document-only gates<br/>honest reason each"]
-    N["explain / skills<br/>{gates:[], reason}"]
+  subgraph "Phase B — prove the loop on 1 exemplar"
+    EX["ai-context-management<br/>survey→disposition→recipe→author→fail-proof"]
   end
-  subgraph "Phase C — ratchet"
-    BL[".gate-contract-baseline.json<br/>(computed AFTER B)"]
-    R["check-gate-contracts: net-new skill must declare"]
-    IT["integration test:<br/>synthetic skill fails npm run check"]
+  subgraph "Phase C — apply loop to remaining 12"
+    T0["T0 no-fixture"]
+    T1["T1 minimal-fixture"]
+    T2["T2 per-recipe-fixture<br/>(infeasible → document-only)"]
   end
-  S --> E
-  S --> N
-  F --> E
-  E --> BL
-  D --> BL
-  N --> BL
-  BL --> R --> IT
+  subgraph "Phase D — ratchet"
+    BL[".gate-contract-baseline.json<br/>= EMPTY after B+C"]
+    IT["integration test:<br/>synthetic skill fails npm run check,<br/>failure names the checker"]
+  end
+  S --> EX
+  CC --> EX
+  EX -->|"loop validated"| T0 & T1 & T2
+  T0 & T1 & T2 --> BL --> IT
 ```
 
 ### Key design decisions
@@ -139,7 +138,72 @@ dominated by the fixture a `cli-exit` recipe needs. Three tiers:
 `{version:1, skill, gates:[], reason}`. Schema change: allow `gates` empty **iff**
 a non-empty top-level `reason` is present; reject `reason` when `gates` is
 non-empty (so a real contract can't hide a hand-wave). One `validateGateContract`,
-not a special case (R3-H4).
+not a special case (R3-H4). **Mixed dispositions need no schema change** — a
+contract already carries `executable` + `document-only` gates in one `gates[]`
+(verified: `audit-code`'s live contract is 2+2), and a gate's `stated`+`statedIn`
+already links it to the exact candidate line it disposes. So the only schema
+work is the empty-gates rule above (audit R1-H1: the "add a per-candidate
+`dispositions` collection" remedy is declined — it duplicates what `gates[]`
+already expresses).
+
+**D5 — Author one skill at a time; the plannable unit is the LOOP + one proof,
+not 13 pre-filled contracts (audit R1-H1/H3/H4, and the parent plan's own R3
+lesson one level down).** "Author 13 contracts" is inherently iterative
+discovery: a candidate's disposition, and an executable recipe's feasibility,
+cannot be pinned before that skill is actually worked with its fixture in hand.
+A batch table that pre-decides them is dishonest — it did not decide them, it
+guessed. So this plan delivers the **machine** (schema + per-skill loop +
+coverage check + ratchet) and **proves it on one exemplar end-to-end**; the
+remaining twelve are iterative applications of the validated loop, each its own
+audit + commit. The per-skill loop:
+
+1. **Survey** the skill's enforcement-verb candidates (mechanical, §7a rule).
+2. **Disposition each**: `executable` | `document-only` | `not-a-gate`, all
+   recorded **in the contract** — executable/document-only as `gates[]`,
+   `not-a-gate` as `ignoredCandidates[]`. A candidate may not be dropped, and
+   the store is the contract, never a plan (Gemini G1).
+3. **For each executable**: prove the `cli-exit` recipe is *feasible* (a minimal
+   `fixture()` reaches the exit decision under `buildHermeticEnv`) BEFORE writing
+   the contract. Infeasible → `document-only` with the structural reason.
+4. **Author** the `gate-contract.json`; **prove each recipe can FAIL** (§9).
+5. **Audit + commit** that one skill.
+
+**D6 — "Every candidate dispositioned" must be CHECKED, but the store is the
+CONTRACT and the scope is the DIFF (audit R1-H1; Gemini G1/G2/G3).** A hand-
+maintained catalog drifts precisely as the prose did — so it must be checked.
+Three design corrections the Gemini gate forced, all load-bearing:
+
+- **The disposition store is the contract, never a plan (Gemini G1).** An
+  earlier draft had the CI check parse
+  `docs/plans/gate-contract-expansion-inventory.md` at pre-push time — coupling a
+  live gate to an immutable historical plan, which breaks the moment the plan is
+  edited or archived. The `not-a-gate` list moves **into `gate-contract.json`**
+  as an optional `ignoredCandidates: [{ line, reason }]` array (Zod-validated,
+  colocated, synced-exempt like the rest of the contract). The check reads only
+  contracts; a plan is never a runtime input.
+- **The check is diff-scoped, not corpus-wide (Gemini G3).** A bare verb grep
+  over every SKILL.md every push is unusable toil, and a noisy gate gets
+  `--no-verify`'d — the failure mode the repo documents. So it runs on the
+  **changed** SKILL.md surface only, exactly like `nav-audit`/`visual-audit`/
+  `cli:flags` drift gates: an enforcement-verb line that is **new or modified in
+  the diff** must be dispositioned; the existing corpus is dispositioned once
+  during its skill's Phase C authoring and never re-litigated. Low toil, and it
+  still catches the case that bit us — an unformalised claim in *new* prose.
+- **Match direction: `stated` ⊂ line (Gemini G2).** `stated` is a snippet *of*
+  the SKILL.md line, so a candidate is "covered" iff some gate's `stated` is a
+  substring of the candidate line, OR the line is in the contract's
+  `ignoredCandidates`. (An earlier draft had this reversed.)
+- **A line with TWO claims needs TWO dispositions (Gemini-r2 G2).** Substring
+  match alone lets a second enforcement claim added to an already-contracted
+  line ride in on the first gate's `stated` ("must exit 1" → "must exit 1 and
+  never delete files"). So coverage requires the count of distinct covering
+  `stated`/`ignoredCandidates` matches on a line to equal its enforcement-verb
+  hit count — a new claim on an edited line is uncovered until it gets its own
+  disposition. This is what makes the diff-scoped check catch *edits*, not just
+  new lines.
+
+This is the right-sized form — coverage is verified against the contract's own
+Zod-validated data, with no parallel datastore (D4) and no plan-parsing.
 
 ### Right-sizing gate
 
@@ -176,87 +240,186 @@ not a special case (R3-H4).
 
 ## 7. File-Level Plan
 
-### Phase A — prerequisites (block B and C)
+### Phase A — the machine (schema + coverage check; blocks B, C, D)
 
 | File | Intent | Purpose |
 |---|---|---|
-| `scripts/lib/gate-honesty/schema.mjs` | modify | admit `{gates:[], reason}` (empty iff `reason` present; `reason` rejected when `gates` non-empty); its own negative fixtures |
-| `docs/plans/gate-contract-authoring.md` §7a | (this doc) | resolve the two D1a fixture contradictions before any T2 recipe |
-| `tests/gate-honesty.test.mjs` | modify | schema tests for the empty-gates rule (both accept + both reject paths) |
+| `scripts/lib/gate-honesty/schema.mjs` | modify | admit `{gates:[], reason}` (empty iff `reason` present; `reason` rejected when `gates` non-empty); add optional `ignoredCandidates: [{line, reason}]` (the `not-a-gate` disposition store, Gemini G1). Mixed dispositions already work (D4) |
+| `scripts/check-gate-contracts.mjs` | modify | the **diff-scoped candidate-coverage check** (D6): for each changed SKILL.md, every new/modified enforcement-verb line must be covered by a gate `stated` (⊂ line) or the contract's `ignoredCandidates`. **Diff bounds come from the existing `push-range.mjs` resolver** (Gemini-r2 G3) — the same one the pre-push sandbox uses; the check does not re-infer a base from working-tree state |
+| `scripts/lib/gate-honesty/verb-pattern.mjs` | create | the frozen enforcement-verb pattern as **code, not a plan** (one source of truth for "what is a candidate"; Gemini G1 — no plan is a runtime input) |
+| `tests/gate-honesty.test.mjs` | modify | schema tests: empty-gates accept, `gates:[]`-without-reason reject, non-empty-with-reason reject; coverage-check unit tests (undispositioned candidate fails; catalog-covered passes) |
 
-### Phase B — authoring (per skill, T0 → T1 → T2)
+### Phase B — prove the loop on ONE exemplar (D5)
 
-| File | Intent | Tier | Notes |
-|---|---|---|---|
-| `skills/explain/gate-contract.json` | create | T0 | `{gates:[], reason:"read-only + cite-sources are agent-behavioural; no mechanical gate"}` |
-| `skills/skills/gate-contract.json` | create | T0 | `{gates:[], reason:"'never drift' is a design property (reads frontmatter directly), not an enforced check"}` |
-| `skills/audit-plan/gate-contract.json` | create | T0 | Gemini ≤2 / GPT ≤3 caps + `FINAL_GATE_SKIPPED` sentinel → document-only (agent-enforced); `--mode plan` required → cli-exit only if the CLI refuses its absence |
-| `skills/security-strategy/gate-contract.json` | create | T0/T1 | `redactSecrets()` before egress; write-gated-on-round-trip-parse |
-| `skills/brainstorm/gate-contract.json` | create | T1 | cheapest — already names `tests/brainstorm-artifact-context.test.mjs`; artifact-refusal is executable-adjacent |
-| `skills/ai-context-management/gate-contract.json` | create | T1 | exit map `0/1/2` via cli-exit |
-| `skills/click-test/gate-contract.json` | create | T1/T2 | verdict precedence (`auth-required`→never `Clean`) — try direct import (unit-seam) before cli-exit; touch-target threshold |
-| `skills/nav-audit/gate-contract.json` | create | T2 | `--gate` exit table — **one scenario per exit code** (R3-H1: never quote 0/1/2 while exercising one) |
-| `skills/persona-test/gate-contract.json` | create | T2 | consistency exit table (2/3/4/6) — one scenario each; confidence thresholds → document-only |
-| `skills/ux-lock/gate-contract.json` | create | T2 | verify exits 0 on failure (now a clean claim post-D-1); `--strict-selectors` warn→fail; **statedIn**: selector policy prose is in a reference file → restate in SKILL.md (listed below) or document-only (R3-H5) |
-| `skills/cycle/gate-contract.json` | create | T2 | `preview-gate [HALT]`, fix-gate predicate; `author-tier` never-routes → document-only negative |
-| `skills/ship/gate-contract.json` | create | T2 | `--gate passed` refused without evidence (strongest positive); Category-A never-staged; non-blocking-gate negatives |
-| `scripts/lib/gate-honesty/oracles.mjs` | modify | — | new `CLI_EXIT_RECIPES` entries + matching `CLI_EXIT_SCENARIOS` enum values; each uses `buildHermeticEnv` |
-| `skills/ux-lock/SKILL.md` | modify | — | (only if the selector-policy gate is made executable) restate the reference-file claim in SKILL.md so `statedIn` is legal |
-| `tests/gate-honesty.test.mjs` | modify | — | update the pinned census; each new recipe proven able to FAIL (assert once against a wrong `expectExit`) |
-
-### Phase C — ratchet
+Pick **`ai-context-management`** — a T1 skill with a real `cli-exit` candidate
+(the `0/1/2` exit map) AND at least one document-only candidate, so the exemplar
+exercises the whole loop: survey → disposition → recipe feasibility → author →
+recipe-can-fail → coverage-check-passes.
 
 | File | Intent | Purpose |
 |---|---|---|
-| `.gate-contract-baseline.json` | create | committed legacy-exception list; after B, contains only what legitimately has no contract |
-| `scripts/check-gate-contracts.mjs` | modify | a skill root (via `listSkillNames`) with no contract AND not baselined = failure; a stale baseline entry (skill root gone) = failure |
-| `tests/gate-contract-ratchet.test.mjs` | create | unit: the ratchet's set logic. **Integration: a synthetic skill added in a throwaway worktree fails `npm run check`, and the failure names the gate-contract checker** (R2-M2) |
-| `docs/reference/gate-honesty.md` | modify | new census, the empty-gates declaration, the ratchet + baseline lifecycle |
+| `docs/plans/gate-contract-expansion-inventory.md` | modify | fill the `ai-context-management` candidate catalog: every verb hit, one disposition |
+| `scripts/lib/gate-honesty/oracles.mjs` | modify | one `CLI_EXIT_RECIPES` entry + `CLI_EXIT_SCENARIOS` value for the exit-map gate; minimal `fixture()`, `buildHermeticEnv` |
+| `skills/ai-context-management/gate-contract.json` | create | the exemplar contract (executable + document-only) |
+| `tests/gate-honesty.test.mjs` | modify | pin the new census row; prove the recipe can FAIL (wrong `expectExit`) |
+
+**Gate**: the exemplar must pass `gates:check` + `gate-honesty.test.mjs` + the
+coverage check before Phase C authors any other skill. If the loop can't produce
+one honest contract end-to-end, the remaining twelve are not yet specifiable.
+
+### Phase C — apply the loop to the remaining 12 (iterative, T0 → T2)
+
+**Not a batch table** — each skill is one application of the D5 loop with its own
+audit + commit. Order by fixture cost (D3), and each row's dispositions are
+*decided during authoring*, not pre-guessed here:
+
+- **T0 (no fixture)**: `explain`, `skills` → `{gates:[], reason}`; `audit-plan`,
+  `security-strategy` → mostly document-only (agent-enforced caps, redaction).
+- **T1 (minimal fixture)**: `brainstorm` (names its own test already),
+  `click-test` (verdict/threshold — **disposition decided at authoring: cli-exit
+  if a minimal fixture reaches the verdict, else document-only; NO unit-seam
+  import — that is not a registered oracle**, audit R1-H2).
+- **T2 (per-recipe minimal fixture, feasibility-gated)**: `nav-audit` (exit
+  table — one scenario per code, R3-H1), `persona-test` (consistency exit table
+  — one scenario each), `ux-lock` (verify exit-0; `--strict-selectors`;
+  **statedIn** restatement in SKILL.md if the reference-file gate goes
+  executable, else document-only — R3-H5), `cycle`, `ship`. A T2 gate whose
+  recipe proves infeasible under the minimal-fixture rule (§7a) becomes
+  document-only — that is the expected, honest outcome, not a failure.
+
+Files touched per skill: its `gate-contract.json` (create), `oracles.mjs`
+(modify, only if it yields an executable recipe), `tests/gate-honesty.test.mjs`
+(modify, census + recipe-can-fail), and its SKILL.md (modify, only for a
+`statedIn` restatement).
+
+### Phase D — ratchet (baseline converges to EMPTY)
+
+| File | Intent | Purpose |
+|---|---|---|
+| `.gate-contract-baseline.json` | create | The declared-exception mechanism. **Empty is the ideal** — reached when B+C author every skill. A skill deliberately deferred (the "cut the T2 tail" option, §8) is **not** dropped: it lands as a baseline entry with a `reason`, so "uncontracted" is always either impossible or explicitly declared (resolving audit R2-H2 — the two states are consistent, not contradictory). Shape in §7b |
+| `scripts/check-gate-contracts.mjs` | modify | see §7b for the full checker contract |
+| `tests/gate-contract-ratchet.test.mjs` | create | unit: the ratchet's set logic + the checker-contract edge cases (§7b). **Integration: a synthetic skill added in a throwaway worktree fails `npm run check`, and the failure names the gate-contract checker** (R2-M2) |
+| `docs/reference/gate-honesty.md` | modify | new census (incl. the executable:document yield, D2), the empty-gates declaration, the coverage check, the ratchet + empty-baseline lifecycle |
 
 **Close-out (not a phase)**: `npm run gates:check && npm run skills:regenerate && npm run check`.
+`gate-contract.json` is a `SKILL_LOCAL_FILE` — never packaged, never synced — so
+`skills:regenerate` does **not** emit it into `.claude/skills/**` and produces no
+diff for it (audit R1-L1). The only regeneration a SKILL.md `statedIn`
+restatement can touch is `skills.manifest.json`'s content hash; that regen is
+byte-deterministic and is staged with the SKILL.md edit. If `skills:regenerate`
+shows any *other* changed file, stop — an unexpected diff means the edit reached
+a surface it shouldn't.
 
-### 7a. Resolving the two D1a fixture contradictions (Phase A gate for T2)
+### 7b. The ratchet checker contract (audit R1-M2)
+
+The set rule ("skill root without a contract fails") is not enough on its own —
+the checker's input/output contract must be specified or two implementers build
+incompatible ones. All of the following are **failures**, emitted in
+deterministic skill-root order, never silent passes:
+
+- **Skill discovery**: `listSkillNames` is the sole authority; a root it returns
+  with no `gate-contract.json` and no baseline entry → fail.
+- **Baseline integrity**: unreadable/malformed baseline JSON → fail (never
+  "treat as empty"). A baseline entry naming a root `listSkillNames` no longer
+  returns → fail (stale exemption, R1-M1). Duplicate/normalisation-colliding
+  entries → fail. **A baseline entry for a skill that ALSO has a
+  `gate-contract.json` → fail** (Gemini-r2 G1): once a deferred skill is
+  contracted, its exemption must be removed, or the exemption silently outlives
+  its purpose — the same stale-declaration rot in the other direction.
+- **Contract↔directory identity**: a `gate-contract.json` whose `skill` field
+  disagrees with its directory name → fail (already a schema concern; the
+  checker enforces it at enumeration too).
+- **Unreadable/malformed contract** discovered during enumeration → fail with
+  the path, never skipped.
+- **Symlinks**: a symlinked skill root or contract file is rejected
+  (fail-closed, mirroring the `statedIn` realpath policy).
+- **Coverage check** (D6): diff-scoped; a new/modified enforcement-verb line in
+  a changed SKILL.md that no gate `stated` (⊂ line) or `ignoredCandidates` entry
+  covers → fail, naming the line. Reads contracts only — never a plan.
+
+Deterministic ordering matters because the failure list is read by a human
+fixing them; non-deterministic output makes a diff between two runs look like a
+change.
+
+**Baseline shape** (audit R2-M1) — minimal, Zod-validated by the same
+`GateContractBaselineSchema`:
+```json
+{ "version": 1, "exemptions": [ { "skill": "<root>", "reason": "<why, non-empty>" } ] }
+```
+`exemptions: []` is the norm and the release target. `skill` must be a
+`listSkillNames` root (canonicalised the same way `check-gate-contracts` lists
+them — one normaliser, no second grammar); duplicate `skill` values → fail.
+
+**Right-sizing the disposition model** (audit R2-H1/M3, decided not deferred).
+The audit pushed for a versioned, Zod-validated candidate catalog with
+deterministic IDs, source spans, and per-candidate evidence fields. **Declined
+as over-built** — it duplicates what the contract already carries. The
+coverage check (D6) needs only two things, both of which already exist or are
+cheap:
+- **"What is a candidate"** — the enforcement-verb pattern, frozen in
+  `verb-pattern.mjs` (code, not a plan — Gemini G1). No per-candidate ID: a
+  candidate *is* its SKILL.md line.
+- **"Is it dispositioned"** — some gate's `stated` is a substring of the
+  candidate line (`stated` ⊂ line, Gemini G2), OR the line is in the contract's
+  `ignoredCandidates`. Substring match is exactly the link a stable-ID scheme
+  would rebuild by hand.
+
+The **`not-a-gate` vs `document-only` rubric** (R2-M3), one line each:
+`not-a-gate` = the verb is descriptive or an instruction to the agent with no
+enforcement claim (e.g. "always cite sources"); `document-only` = a real
+enforcement claim with no mechanical oracle under the closed registry (e.g. a
+numeric cap the agent honours). A downgraded executable candidate records its
+**live-service blocker** (§7a) as the `reason` — that is the retained evidence,
+no separate evidence datastore.
+
+### 7a. Resolving the two D1a fixture contradictions (Phase C gate for T2)
 
 Both were flagged by the parent plan's code-audit and block every T2 recipe.
 
-- **realpath escape**: `node_modules` symlinked into the fixture lets a dep that
-  resolves via `__dirname`/`import.meta.url` walk *out* of the fixture. **Chosen
-  resolution**: do not symlink `node_modules` at all for `cli-exit`. The gates
-  worth T2 (`nav-audit --gate`, `ux-lock` verify) are exercised by asserting the
-  CLI's **argument/exit contract**, which is reachable with the CLI's own file +
-  a fixture input, not the full dep tree — **if a recipe genuinely needs
-  installed deps to reach its exit decision, that is a signal the gate is
-  integration-shaped and should be `document-only`, not a reason to solve the
-  symlink problem.** (This keeps the harness a boundary, not a mini-CI.)
-- **gitignore vs generated artifacts**: a `.gitignore`-respecting copy omits the
-  generated artifacts the CLI reads. **Chosen resolution**: the recipe's
-  `fixture(dir)` writes the *minimal* declared inputs each CLI needs directly
-  (as the existing `visual-static-gate-refusal` recipe already does with
-  `visual-contract.json`) — never a bulk working-tree copy. This sidesteps both
-  contradictions: no copy, no symlink, no `.gitignore` question. The working-
-  tree-copy design is **abandoned**, not deferred — the minimal-fixture pattern
-  the harness already uses is sufficient for exit-contract assertions, and a
-  recipe that needs more is a document-only signal.
+First, a correction the audit forced (R2-H3). An earlier draft said "a recipe
+that needs installed deps → document-only." **That is unsound and is
+withdrawn.** The recipe entrypoint IS the real repo CLI file, launched by
+absolute path; Node resolves *its* imports from the **repo's** `node_modules` by
+walking up from the script's own location — not from the fixture cwd. So the CLI
+gets its dependencies correctly and that is *desired* (same-module identity is
+the suite's whole premise). Needing deps is normal, not a disqualifier.
 
-> This resolution *narrows* Phase A: the schema change is the only hard
-> prerequisite; the "fixture harness" reduces to per-recipe minimal `fixture()`
-> functions, which are T1/T2 authoring, not separate infrastructure.
+The **only** things the fixture must supply are the CLI's *input reads* — the
+files it opens relative to cwd, and the env it consults — and those are exactly
+what `buildHermeticEnv` + a minimal `fixture(dir)` already control. So:
+
+- **No `node_modules` symlink** (the realpath-escape contradiction never
+  arises — deps come from the repo, not the fixture).
+- **No working-tree copy, no `.gitignore` question** — the recipe's
+  `fixture(dir)` writes the *minimal declared input files* the CLI reads (as the
+  existing `visual-static-gate-refusal` recipe writes `visual-contract.json`).
+- **The real feasibility line** (replacing the withdrawn deps rule): a gate is
+  executable iff its exit decision is reachable from a minimal declared fixture
+  under `buildHermeticEnv` **without a live network / provider / DB call**. A
+  gate that *cannot* reach its decision without one of those is `document-only` —
+  and the recipe records the specific blocker (which live dependency), not a
+  vague "too hard". Needing files or deps is never the blocker; needing a live
+  external *service* is.
+
+> This *narrows* the prerequisites: the schema change (Phase A) is the only hard
+> infra prerequisite; the "fixture harness" reduces to per-recipe minimal
+> `fixture()` functions authored in B/C, not separate infrastructure.
 
 ---
 
 ## 8. Risk & Trade-off Register
 
-- **Low executable yield could make Phase B feel like paperwork.** Mitigated by
+- **Low executable yield could make Phase C feel like paperwork.** Mitigated by
   D1/D2: the document-only entries are the anti-drift record, and the ratchet
-  (Phase C) is the durable win regardless. If the yield is genuinely too low to
-  justify the per-skill authoring, **cut Phase B's T2 tail, keep Phase C** — the
+  (Phase D) is the durable win regardless. If the yield is genuinely too low to
+  justify the per-skill authoring, **cut Phase C's T2 tail, keep Phase D** — the
   ratchet works over whatever contracts exist plus the baseline.
 - **A recipe that passes against the wrong condition.** Every new recipe must be
   proven able to FAIL (assert once against a wrong `expectExit`) — an untested
   green recipe is the exact defect. Hard requirement in §9, not optional.
 - **`statedIn` forces SKILL.md edits.** Any reference-file gate made executable
   needs its claim restated in the owning SKILL.md (an edit that must appear in
-  Phase B's file list) or it stays document-only. Never widen the policy.
+  that skill's Phase C row) or it stays document-only. Never widen the policy.
 - **Multi-outcome `stated` (R3-H1).** A gate quoting an N-outcome table must be
   N scenarios or a narrowed quote. The `nav-audit` and `persona-test` exit
   tables are the live instances.
@@ -264,8 +427,8 @@ Both were flagged by the parent plan's code-audit and block every T2 recipe.
   R3-M1 it must **not** be opt-in behind a strictness flag — that reopens the
   substitution it exists to prevent. If cost is unacceptable, make it cheaper or
   state the chain is unproven; never silently downgrade it.
-- **Baseline drift (R1-M1).** Computed post-B via `listSkillNames`; a stale
-  entry (skill root gone) is a failure, not a silent pass.
+- **Baseline drift (R1-M1).** Empty after B+C; computed via `listSkillNames`; a
+  stale entry (skill root gone) is a failure, not a silent pass (§7b).
 
 ### Carried forward — required inputs, all from the parent's audit
 - R3-H1 — one scenario per exit outcome / narrowed `stated`.
@@ -286,18 +449,31 @@ Both were flagged by the parent plan's code-audit and block every T2 recipe.
 - **Schema (Phase A)**: `{gates:[], reason}` accepted; `gates:[]` without
   `reason` rejected; non-empty `gates` **with** `reason` rejected. Both accept
   and both reject paths — a one-sided test would let the fake-check back in.
-- **Each new `cli-exit` recipe (Phase B)**: runs green against the real CLI under
-  `buildHermeticEnv`, AND is proven able to fail (assert once against a wrong
-  `expectExit`). An untested-green recipe is the defect this suite catches.
+- **Coverage check (Phase A, D6)**: diff-scoped. A new/modified enforcement-verb
+  line with no covering gate `stated` (⊂ line) or `ignoredCandidates` entry
+  fails and names the line; a covered line passes; an unchanged corpus line is
+  not re-litigated. The `verb-pattern.mjs` pattern is pinned by its own test so
+  "what counts as a candidate" cannot drift silently. Reads contracts only.
+- **Exemplar gate (Phase B)**: `ai-context-management` passes `gates:check` +
+  `gate-honesty.test.mjs` + the coverage check as a single green bar — the proof
+  the loop produces one honest contract before Phase C authors any other.
+- **Each new `cli-exit` recipe (Phase B/C)**: runs green against the real CLI
+  under `buildHermeticEnv`, AND is proven able to fail (assert once against a
+  wrong `expectExit`). An untested-green recipe is the defect this suite catches.
 - **Census pinning**: `tests/gate-honesty.test.mjs` pins the exact contracted
   set + the executable/document/env-skipped counts; every phase updates it
   deliberately.
 - **`stated`-verbatim drift**: a contract whose `stated` no longer appears in
   `statedIn` must fail loudly — the prose-drift detector.
-- **Ratchet (Phase C)**: unit (net-new-without-declaration fails; explicit
-  `{gates:[], reason}` passes; the post-B baseline stays green) **and** the
-  integration test (synthetic skill in a worktree fails `npm run check`, failure
-  names the checker).
+- **Ratchet (Phase D)**: unit — net-new-without-declaration fails; explicit
+  `{gates:[], reason}` passes; the empty baseline stays green; plus every §7b
+  checker edge case (malformed baseline, skill≠dir, duplicate, symlink, stale
+  entry). **Integration** (audit R2-M2): the synthetic skill must be an
+  *otherwise-valid* surface — regenerate every derived artifact in the worktree
+  first (`skills:regenerate`, index) so the ONLY thing wrong is the missing
+  contract. Assert the run fails AND the failure text names the gate-contract
+  checker — otherwise a manifest/reference/packaging failure firing *before* the
+  ratchet would pass the test without proving the ratchet is reached at all.
 - **Empirical yield check (D2)**: the census output records the
   executable:document ratio so the registry-extension decision is data-backed.
 
@@ -306,3 +482,33 @@ Both were flagged by the parent plan's code-audit and block every T2 recipe.
 ## Audit trail
 
 _(to be appended by `/audit-plan`)_
+
+| Round | Reviewer | Verdict | Findings | Outcome |
+|---|---|---|---|---|
+| R1 | GPT (`--mode plan`) | SIGNIFICANT_GAPS | H:4 M:2 L:1 | restructured to per-skill loop + exemplar; H1 partial-accept (completeness→coverage check; declined the dispositions-collection remedy — mixed dispositions already ship) |
+| R2 | GPT | NEEDS_REVISION | H:3 M:3 | H3 real soundness bug fixed (deps≠document-only); H2 baseline/cut-tail contradiction reconciled; H1/M1/M3 rigor-pressure → right-sized (declined the Zod candidate-catalog) |
+| G1 | Gemini `gemini-pro-latest` | CONCERNS_REMAINING (coherence Adequate) | 3 + 1 wrongly-dismissed | all fixed: disposition store moved plan→contract (`ignoredCandidates`); `stated`⊂line direction; diff-scoped to kill toil |
+| G2 | Gemini `gemini-pro-latest` | CONCERNS (coherence **Strong**) | 3, all MEDIUM | folded in: baseline+contract collision, two-claims-two-dispositions, `push-range.mjs` diff base — gate closed at cap |
+
+**GPT stop decision (after R2).** Cap is 3 unless HIGH actively dropping; it went
+4→3 (weak). More telling, R2's findings turned to rigor pressure — "add a
+versioned Zod candidate model with stable IDs and evidence fields." Two were
+genuine design bugs (H2 contradiction, H3 soundness) and were fixed; the rest
+were formalism the coverage check does not need, so I right-sized (declined the
+model, defined the cheap minimum) and went to the mandatory Gemini gate rather
+than a GPT R3 that would only escalate the formalism.
+
+**Gemini stop decision (after G2).** Cap is 2. G2 returned three MEDIUMs, all
+implementation-completeness (a baseline edge case, a coverage refinement, a
+diff-base wiring), coherence rose Adequate→Strong, zero wrongly-dismissed. Per
+the cap rule, implementation nits fold into the plan and hand off to `/cycle`'s
+code audit — which verifies them against real code — rather than a third round.
+All three captured above.
+
+**Highest-value findings.** GPT-R2-H3 (a `cli-exit` recipe needing deps is *not*
+a document-only signal — Node resolves the CLI's deps from the repo regardless
+of cwd; the real line is a live network/provider/DB call) and Gemini-G1 (parsing
+an immutable plan doc as a live CI data source — the disposition store belongs
+in the Zod-validated contract, which also vindicated the H1 concern I'd partly
+overridden). Both reshaped the design from the reviewer's side, not the
+author's.
