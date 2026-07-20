@@ -1,5 +1,58 @@
 # Project Status Log
 
+## 2026-07-20 — burned down the deferred-items backlog; the audits' best catches were in code I had just written
+
+A cross-session backlog of ~25 deferred items became `docs/plans/debt-burndown-workstreams.md`
+(WS-0 through WS-E) via `/brainstorm --with-gemini`, then `/audit-plan` (GPT ×3 + Gemini ×2,
+26 findings), then `/cycle --autonomous` per workstream. Shipped WS-0, WS-A, WS-B, and the
+WS-C1/C3/C4 items; WS-C2, WS-D and WS-E closed via parallel work.
+
+**Three premises in my own plan were wrong, and checking them first is what kept the changes small.**
+
+- **WS-A** was specced as a one-row ledger patch. The real defect was that the migration hasher
+  hashed RAW bytes, so a migration applied from a CRLF tree false-aborted on every clean LF
+  clone. Fixed at the seam (`canonicalizeMigrationBytes`, byte-level, lone-CR/BOM/non-UTF-8
+  preserved) with an `eol-legacy` vs `shaMismatch` split and a guarded `--repair-eol`
+  (advisory lock, one transaction, per-row compare-and-swap). Verified against production
+  values *before* any write, then executed live: `✓ no drift`, `applied_at` preserved,
+  `--migrate` unblocked. The renormalize step the plan prescribed turned out to be
+  unnecessary — canonical hashing removed the need for its own workaround, which is the
+  clearest sign it was cut at the right seam.
+- **WS-B1** was specced as "extend the cli transport to accept a signal and kill the child".
+  It already did all of that. The real gap was a *budget* at the brief-gen seam: 120s is sized
+  for generation, not optional enrichment, and the Gemini leg had no bound at all.
+- **WS-C1** called two lint findings "the literal 403k-row shape, highest priority". Both were
+  false positives against code that already implements the remedy (an early-return guard; a
+  partial unique index with `conflictWhere`). A lint that fires on correct code teaches people
+  to skip its output, so they got reasoned pragmas.
+
+**The gates earned their keep on new code and misfired on old code.** Across WS-A/B/C/E the
+audits found ~15 real defects, nearly all in code I had written minutes earlier: `--repair-eol`
+stamping `applied_at` (destroying deployment history); `runAdopt`'s blanket upsert (which my
+canonical hashing would have turned into a silent unguarded repair); a re-entrancy guard using a
+global counter that could not distinguish nesting from concurrency; "hidden" reasons computed by
+key-filtering instead of count-subtraction; a redactor that redacted *everything* because
+`redactSecrets` returns `{text}` not a string. Conversely, two spun-off chips dissolved on
+investigation — the import-time env scrub was already fixed by `run-tests.mjs`, and the
+"unredacted eval payload" was never unredacted (`readFilesAsContext` skips sensitive paths and
+redacts bodies by default). I had forwarded both without executing the path first.
+
+**Gemini's sharpest catch was a live false-provenance bypass.** `ship-commit` validates trailers
+*before* the new commit exists, so `auditedSha === HEAD` compares parent-to-parent: audit a clean
+tree, edit, commit, and `AI-Gate: passed` attaches to unaudited content. Its follow-up caught that
+my fix was still wrong — `git write-tree` hashes the *index* while an audit reads the *worktree*.
+WS-E1 now captures the worktree identity and refuses on mismatch.
+
+**Also fixed, found while working:** a consumer had silently stopped receiving syncs entirely.
+The manifest write could fail without failing the sync, and the in-progress journal — the
+mechanism built to recover from exactly that — was deleted unconditionally afterwards. Both fixed,
+plus `--adopt-orphans` for records already lost; that consumer was 16 updates behind.
+
+**Running things beat reading them, repeatedly.** A CAS integration test passed vacuously until
+run (pre-corrupting a row made it classify as `shaMismatch`, so no candidate, so no conflict); a
+racing harness deadlocked by monkey-patching `client.query`; an evidence line reported "NO banner"
+for provably-owned files because `BANNER_BODY` is an array. Every one was green under static review.
+
 ## 2026-07-20 — tested what happens when Chromium is missing; the runners were fine, the diagnostics weren't
 
 Started from a plain question — do the skills auto-install their dependencies? They
