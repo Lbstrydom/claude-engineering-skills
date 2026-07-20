@@ -1,5 +1,61 @@
 # Project Status Log
 
+## 2026-07-20 — refused to demote a finding on evidence older than the code
+
+Closed the SAST-triage plan's last open precondition, then repaired the object
+store it was committed into.
+
+**The check.** §2d-iii had named a real gap and left it: a SARIF and the source
+it names must come from the same commit, and nothing verified that. The near-miss
+was concrete — a 15:55 scan measured against a file rewritten at 19:11, three and
+a half hours later, touching the very file §2d-ii used as its worked example.
+Four SARIFs existed by then and only one was a coherent pair with the tree.
+
+The failure is asymmetric, which is why it is worth a gate. Predicates read the
+line the SARIF names; if the file moved underneath them, a sanitizer matched at a
+shifted offset **demotes a live finding**, while the reverse only costs rank. So
+a stale-evidence finding is now held in `A` with reason `sarif-predates-file`,
+blocked before any predicate runs — the same gate the sensitivity block uses, for
+the same reason.
+
+**Not the `--expect-commit` flag the plan sketched.** Snyk emits no
+`versionControlProvenance` (null in all four SARIFs), so there is no commit to
+compare against, and a flag would put the burden on whoever is least placed to
+know. Scan time *is* recoverable: `invocations[].endTimeUtc`, then `startTimeUtc`,
+then the ISO stamp inside `automationDetails.id`. Compared against each file's
+last-commit time that answers the question factually and automatically. Where no
+scan time exists the run reports `unavailable` rather than assuming coherence —
+a report must not read clean because the check stopped looking.
+
+**Negative control on both halves**, per the standing procedure. Removing the
+router block reds the two staleness tests; making extraction invent a timestamp
+reds the two provenance tests. Each failure named its own assertion rather than
+something incidental — which is the part worth checking, given how many tests
+this plan produced that passed for the wrong reason.
+
+**Then the repo's object store turned out to be corrupt.** One 1.1MB blob in
+`pack-e20af…` had a zlib CRC failure, which had been silently failing the
+background repack on every fetch. The instinct — delete the bad pack — was wrong,
+and measuring first is what caught it: of its 429 objects, **274 existed nowhere
+else**, and a first quarantine attempt duly made HEAD's tree unreadable. Restored
+it, fetched a good copy of the one bad blob from origin, salvaged the rest with
+`git unpack-objects -r` (recovered exactly 274, erroring only on the already-
+replaced blob), and repacked. Two follow-on errors were stale `multi-pack-index`
+and `commit-graph` files still naming a pack that no longer existed — indexes,
+not damage. `fsck` clean, repack exits 0.
+
+**AGENTS.md hit its 1200-line cap** from a parallel session's addition. Condensed
+`Anthropic Backend Routing` (77 lines, mostly operational depth) to a stub plus
+`docs/reference/anthropic-backend-routing.md`, keeping three invariants inline —
+forced `tool_choice` silently degrading on the cli backend, `isClaudeAvailable()`
+over a raw env check, and claude-trace's inability to meter scripted runs. 1221 →
+1175. Raising the cap was available and is what the file itself tells you not to do.
+
+**Two sessions on one working tree caused most of the friction today** — a
+false-blocked push, a broken-HEAD window during the repair, commits swept into
+each other's twice, and most likely the pack corruption itself. Separate
+worktrees would remove the class.
+
 ## 2026-07-20 — turned the third hand-found instance of a bug class into a ratchet
 
 Cleared three loose ends. Two were tidying; the third is the one that matters.
