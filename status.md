@@ -1,6 +1,49 @@
 # Project Status Log
 
-## 2026-07-20 (latest) — a comment naming the guard counted as the guard
+## 2026-07-20 (latest) — the DB seam had no coverage anywhere, for two days
+
+Asked to wire the disposable Postgres container into the pre-push check. The
+wiring was the small half; finding out why it was needed was the rest.
+
+**`postgres-parity` had failed 20 consecutive runs since 2026-07-18.** The
+`.githooks/pre-push` §1.5 advisory tells the operator to "rely on the
+postgres-parity CI job" — that job was red, and red in the worst way: the
+failing step is *Verify schema matches the committed manifest*, which runs
+BEFORE every test step, so `symbol-index-drift-justification.test.mjs` and the
+`db-*` suites never executed at all. Locally, `check` skips them by design
+(`assertDisposableDbUrl` needs a disposable DSN), and node reports a suite that
+never ran as a clean 0-test pass. Both halves read green; neither had looked.
+The copyForward fix shipped earlier today was verified only because a container
+was spun by hand.
+
+Cause was mundane: migrations added `symbol_refresh_coverage` and `bandit_arms`
+columns and `tests/fixtures/expected-schema.json` was never regenerated.
+`npm run db:local:regen` fixed it (+254/−16).
+
+`scripts/db-suites-gate.mjs` now runs the suites in `check`. Three decisions
+worth keeping:
+
+- **In `check`, not the hook body.** `check` runs inside the prepush sandbox
+  worktree, so it tests the COMMIT being pushed. The hook would test the working
+  tree — the precise false-pass/false-block problem `prepush-check.mjs` exists to
+  eliminate.
+- **Only exit 1 blocks.** A missing daemon, port clash, or concurrent container
+  owner is environment, not evidence of a defect, so those degrade to a skip that
+  states the seam is UNVERIFIED and never implies coverage.
+  `AUDIT_LOOP_DB_TESTS_REQUIRED=1` promotes every skip to a hard failure.
+- **Unscoped on purpose.** No changed-path list. A stale path list that quietly
+  stops matching is a failure mode this repo hit twice today; ~25s beats that risk.
+
+Two things the work caught in itself. The first draft called `spawnSync` directly
+and ran `process.exit(main())` at module scope, so it was unimportable and its own
+degradation paths were untestable — the same cannot-fail-visibly shape it exists
+to remove; it is now injectable with 14 hermetic tests. And the day-old
+`cli:flags:gate` flagged the new CLI for ignoring unknown flags, which is the
+first net-new script it has caught.
+
+`npm run check` is ~75s → ~103s.
+
+## 2026-07-20 — a comment naming the guard counted as the guard
 
 Triaging issue #57 (wine-cellar-app consumer feedback on `cli:flags`). Items 1–4
 were already fixed in `18ae87e` and item 6 in `bed5887`; item 5 shipped in

@@ -221,6 +221,11 @@
       "description": "Apply pending migrations (idempotent; skips already-applied via sha256). Requires AUDIT_DB_URL.",
       "category": "diagnostic"
     },
+    "db:suites:gate": {
+      "script": "db:suites:gate",
+      "description": "The gate form of db:local, wired into `npm run check`: runs the destructive DB suites against an ephemeral Docker Postgres so the DB seam is covered by the same gate as everything else. Blocks ONLY on a real suite/schema-diff failure (exit 1); a missing daemon, port clash, or concurrent container owner degrades to a loud skip that never implies coverage. AUDIT_LOOP_DB_TESTS_REQUIRED=1 promotes every skip to a hard failure; AUDIT_LOOP_DB_TESTS_SKIP=1 opts out (REQUIRED wins).",
+      "category": "diagnostic"
+    },
     "docs:check": {
       "description": "Enforce docs/ root placement: root holds only allowlisted generated artefacts + live ledgers; hand-written docs belong in a bucket (reference/, runbooks/, plans/, research/). Runs as part of `npm run check`. Decision rule: docs/README.md.",
       "category": "diagnostic"

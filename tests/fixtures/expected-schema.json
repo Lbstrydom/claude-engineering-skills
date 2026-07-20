@@ -1022,6 +1022,13 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 13
+        },
+        {
+          "column_name": "band_calibration",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 14
         }
       ]
     },
@@ -1321,6 +1328,62 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 42
+        },
+        {
+          "column_name": "scope_mode",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 43
+        },
+        {
+          "column_name": "diff_lines_changed",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 44
+        },
+        {
+          "column_name": "diff_files_changed",
+          "data_type": "integer",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 45
+        },
+        {
+          "column_name": "session_cache_hit",
+          "data_type": "boolean",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 46
+        },
+        {
+          "column_name": "map_reduce_passes",
+          "data_type": "ARRAY",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 47
+        },
+        {
+          "column_name": "r2_skip_reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 48
+        },
+        {
+          "column_name": "audited_sha",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 49
+        },
+        {
+          "column_name": "audited_tree",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 50
         }
       ]
     },
@@ -1379,8 +1442,8 @@
         {
           "column_name": "context_bucket",
           "data_type": "text",
-          "is_nullable": "YES",
-          "column_default": null,
+          "is_nullable": "NO",
+          "column_default": "'global'::text",
           "ordinal_position": 8
         },
         {
@@ -1831,7 +1894,7 @@
         {
           "column_name": "repo_id",
           "data_type": "uuid",
-          "is_nullable": "YES",
+          "is_nullable": "NO",
           "column_default": "'00000000-0000-0000-0000-000000000000'::uuid",
           "ordinal_position": 3
         },
@@ -1918,6 +1981,41 @@
           "is_nullable": "NO",
           "column_default": "'global'::text",
           "ordinal_position": 15
+        },
+        {
+          "column_name": "dismissed",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "ordinal_position": 16
+        },
+        {
+          "column_name": "accepted",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "ordinal_position": 17
+        },
+        {
+          "column_name": "ema",
+          "data_type": "double precision",
+          "is_nullable": "NO",
+          "column_default": "0.5",
+          "ordinal_position": 18
+        },
+        {
+          "column_name": "decayed_accepted",
+          "data_type": "double precision",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "ordinal_position": 19
+        },
+        {
+          "column_name": "decayed_dismissed",
+          "data_type": "double precision",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "ordinal_position": 20
         }
       ]
     },
@@ -5528,6 +5626,20 @@
           "is_nullable": "YES",
           "column_default": null,
           "ordinal_position": 8
+        },
+        {
+          "column_name": "summary_attempts",
+          "data_type": "integer",
+          "is_nullable": "NO",
+          "column_default": "0",
+          "ordinal_position": 9
+        },
+        {
+          "column_name": "summary_failed",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 10
         }
       ]
     },
@@ -5786,6 +5898,67 @@
           "is_nullable": "NO",
           "column_default": "now()",
           "ordinal_position": 9
+        }
+      ]
+    },
+    {
+      "table_name": "symbol_refresh_coverage",
+      "columns": [
+        {
+          "column_name": "refresh_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 1
+        },
+        {
+          "column_name": "status",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 2
+        },
+        {
+          "column_name": "reason",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "column_default": null,
+          "ordinal_position": 3
+        },
+        {
+          "column_name": "stale",
+          "data_type": "boolean",
+          "is_nullable": "NO",
+          "column_default": "false",
+          "ordinal_position": 4
+        },
+        {
+          "column_name": "measured_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 5
+        },
+        {
+          "column_name": "measured_refresh_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 6
+        },
+        {
+          "column_name": "payload",
+          "data_type": "jsonb",
+          "is_nullable": "NO",
+          "column_default": null,
+          "ordinal_position": 7
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamp with time zone",
+          "is_nullable": "NO",
+          "column_default": "now()",
+          "ordinal_position": 8
         }
       ]
     },
@@ -7057,7 +7230,7 @@
     {
       "function_name": "symbol_neighbourhood",
       "args": "p_repo_id uuid, p_refresh_id uuid, p_target_paths text[], p_intent_embedding vector, p_kind_filter text[], p_k integer",
-      "return_type": "TABLE(symbol_index_id uuid, definition_id uuid, symbol_name text, kind text, file_path text, start_line integer, end_line integer, purpose_summary text, domain_tag text, similarity numeric, hop_score numeric, combined_score numeric)",
+      "return_type": "TABLE(symbol_index_id uuid, definition_id uuid, symbol_name text, kind text, file_path text, start_line integer, end_line integer, purpose_summary text, domain_tag text, similarity numeric, hop_score numeric, combined_score numeric, ranking_score numeric, scored boolean)",
       "security_definer": true,
       "config": "search_path=pg_catalog, public"
     },
@@ -7834,7 +8007,7 @@
       "table_name": "audit_runs",
       "constraint_name": "audit_runs_gemini_verdict_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((gemini_verdict = ANY (ARRAY['APPROVE'::text, 'CONCERNS'::text, 'REJECT'::text])))"
+      "definition": "CHECK ((gemini_verdict = ANY (ARRAY['APPROVE'::text, 'CONCERNS'::text, 'CONCERNS_REMAINING'::text, 'REJECT'::text])))"
     },
     {
       "table_name": "audit_runs",
@@ -7865,6 +8038,12 @@
       "constraint_name": "audit_runs_stage_type_chk",
       "constraint_type": "CHECK",
       "definition": "CHECK (((stage_type IS NULL) OR (stage_type = ANY (ARRAY['plan'::text, 'audit-plan'::text, 'audit-code'::text])))) NOT VALID"
+    },
+    {
+      "table_name": "bandit_arms",
+      "constraint_name": "bandit_arms_bucket_nonempty",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((context_bucket <> ''::text))"
     },
     {
       "table_name": "bandit_arms",
@@ -8003,12 +8182,6 @@
       "constraint_name": "false_positive_patterns_repo_pattern_key",
       "constraint_type": "UNIQUE",
       "definition": "UNIQUE (repo_id, pattern_type, pattern_value)"
-    },
-    {
-      "table_name": "false_positive_patterns",
-      "constraint_name": "false_positive_patterns_user_id_repo_id_pattern_type_patter_key",
-      "constraint_type": "UNIQUE",
-      "definition": "UNIQUE (user_id, repo_id, pattern_type, pattern_value)"
     },
     {
       "table_name": "finding_adjudication_events",
@@ -8434,7 +8607,7 @@
       "table_name": "plans",
       "constraint_name": "plans_status_check",
       "constraint_type": "CHECK",
-      "definition": "CHECK ((status = ANY (ARRAY['draft'::text, 'in_progress'::text, 'complete'::text, 'abandoned'::text])))"
+      "definition": "CHECK ((status = ANY (ARRAY['draft'::text, 'in_progress'::text, 'complete'::text, 'abandoned'::text, 'approved'::text, 'superseded'::text, 'parked'::text])))"
     },
     {
       "table_name": "prompt_experiments",
@@ -8779,6 +8952,36 @@
       "definition": "CHECK ((severity = ANY (ARRAY['error'::text, 'warn'::text, 'info'::text])))"
     },
     {
+      "table_name": "symbol_refresh_coverage",
+      "constraint_name": "symbol_refresh_coverage_pkey",
+      "constraint_type": "PRIMARY KEY",
+      "definition": "PRIMARY KEY (refresh_id)"
+    },
+    {
+      "table_name": "symbol_refresh_coverage",
+      "constraint_name": "symbol_refresh_coverage_reason_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((reason IS NULL) OR (reason = ANY (ARRAY['extraction_failed'::text, 'extraction_timeout'::text, 'not_measured'::text, 'stale_measurement'::text, 'empty_universe'::text, 'zero_cruised'::text, 'zero_attributed'::text, 'budget_exceeded'::text, 'below_floor'::text, 'below_attribution_floor'::text]))))"
+    },
+    {
+      "table_name": "symbol_refresh_coverage",
+      "constraint_name": "symbol_refresh_coverage_reason_matches_status",
+      "constraint_type": "CHECK",
+      "definition": "CHECK (((status = 'verified'::text) = (reason IS NULL)))"
+    },
+    {
+      "table_name": "symbol_refresh_coverage",
+      "constraint_name": "symbol_refresh_coverage_refresh_id_fkey",
+      "constraint_type": "FOREIGN KEY",
+      "definition": "FOREIGN KEY (refresh_id) REFERENCES refresh_runs(id) ON DELETE CASCADE"
+    },
+    {
+      "table_name": "symbol_refresh_coverage",
+      "constraint_name": "symbol_refresh_coverage_status_check",
+      "constraint_type": "CHECK",
+      "definition": "CHECK ((status = ANY (ARRAY['verified'::text, 'degraded'::text, 'unverified'::text, 'unknown'::text])))"
+    },
+    {
       "table_name": "tiered_shadow_observations",
       "constraint_name": "tiered_shadow_observations_pkey",
       "constraint_type": "PRIMARY KEY",
@@ -8968,6 +9171,11 @@
     },
     {
       "tablename": "audit_runs",
+      "indexname": "audit_runs_audited_tree_idx",
+      "indexdef": "CREATE INDEX audit_runs_audited_tree_idx ON public.audit_runs USING btree (audited_tree) WHERE (audited_tree IS NOT NULL)"
+    },
+    {
+      "tablename": "audit_runs",
       "indexname": "audit_runs_cache_rate_idx",
       "indexdef": "CREATE INDEX audit_runs_cache_rate_idx ON public.audit_runs USING btree (rounds, created_at) WHERE (cache_hit_rate IS NOT NULL)"
     },
@@ -9093,13 +9301,13 @@
     },
     {
       "tablename": "false_positive_patterns",
-      "indexname": "false_positive_patterns_repo_pattern_key",
-      "indexdef": "CREATE UNIQUE INDEX false_positive_patterns_repo_pattern_key ON public.false_positive_patterns USING btree (repo_id, pattern_type, pattern_value)"
+      "indexname": "false_positive_patterns_read_idx",
+      "indexdef": "CREATE INDEX false_positive_patterns_read_idx ON public.false_positive_patterns USING btree (repo_id, decayed_dismissed DESC, pattern_value)"
     },
     {
       "tablename": "false_positive_patterns",
-      "indexname": "false_positive_patterns_user_id_repo_id_pattern_type_patter_key",
-      "indexdef": "CREATE UNIQUE INDEX false_positive_patterns_user_id_repo_id_pattern_type_patter_key ON public.false_positive_patterns USING btree (user_id, repo_id, pattern_type, pattern_value)"
+      "indexname": "false_positive_patterns_repo_pattern_key",
+      "indexdef": "CREATE UNIQUE INDEX false_positive_patterns_repo_pattern_key ON public.false_positive_patterns USING btree (repo_id, pattern_type, pattern_value)"
     },
     {
       "tablename": "false_positive_patterns",
@@ -9662,6 +9870,16 @@
       "indexdef": "CREATE UNIQUE INDEX symbol_definitions_repo_id_canonical_path_symbol_name_kind_key ON public.symbol_definitions USING btree (repo_id, canonical_path, symbol_name, kind)"
     },
     {
+      "tablename": "symbol_definitions",
+      "indexname": "symbol_definitions_summary_retry_idx",
+      "indexdef": "CREATE INDEX symbol_definitions_summary_retry_idx ON public.symbol_definitions USING btree (repo_id) WHERE ((summary_failed = false) AND (summary_attempts > 0))"
+    },
+    {
+      "tablename": "symbol_embeddings",
+      "indexname": "idx_symbol_embeddings_def_model_dim_sig",
+      "indexdef": "CREATE INDEX idx_symbol_embeddings_def_model_dim_sig ON public.symbol_embeddings USING btree (definition_id, embedding_model, dimension, signature_hash)"
+    },
+    {
       "tablename": "symbol_embeddings",
       "indexname": "idx_symbol_embeddings_definition",
       "indexdef": "CREATE INDEX idx_symbol_embeddings_definition ON public.symbol_embeddings USING btree (definition_id)"
@@ -9745,6 +9963,16 @@
       "tablename": "symbol_layering_violations",
       "indexname": "symbol_layering_violations_refresh_id_rule_name_from_path_t_key",
       "indexdef": "CREATE UNIQUE INDEX symbol_layering_violations_refresh_id_rule_name_from_path_t_key ON public.symbol_layering_violations USING btree (refresh_id, rule_name, from_path, to_path)"
+    },
+    {
+      "tablename": "symbol_refresh_coverage",
+      "indexname": "symbol_refresh_coverage_pkey",
+      "indexdef": "CREATE UNIQUE INDEX symbol_refresh_coverage_pkey ON public.symbol_refresh_coverage USING btree (refresh_id)"
+    },
+    {
+      "tablename": "symbol_refresh_coverage",
+      "indexname": "symbol_refresh_coverage_status_idx",
+      "indexdef": "CREATE INDEX symbol_refresh_coverage_status_idx ON public.symbol_refresh_coverage USING btree (status) WHERE (stale = false)"
     },
     {
       "tablename": "tiered_shadow_observations",
@@ -10154,6 +10382,11 @@
     },
     {
       "grantee": "postgres",
+      "object": "public.symbol_refresh_coverage",
+      "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+    },
+    {
+      "grantee": "postgres",
       "object": "public.tiered_shadow_observations",
       "privileges": "DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
     },
@@ -10436,6 +10669,11 @@
     },
     {
       "object_name": "symbol_layering_violations",
+      "object_kind": "r",
+      "owner": "postgres"
+    },
+    {
+      "object_name": "symbol_refresh_coverage",
       "object_kind": "r",
       "owner": "postgres"
     },
