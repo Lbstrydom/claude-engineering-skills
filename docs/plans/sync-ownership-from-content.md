@@ -147,7 +147,47 @@ and a normal run stays silent. Unit-covered by
 false-positive classes that would train operators to ignore it: a first sync with
 no watermark, and same-instant timestamps in different UTC offsets.
 
-### A. Derive ownership from file content (primary)
+### A. Derive ownership from file content (primary) — **IMPLEMENTED 2026-07-20**
+
+Shipped. `scripts/lib/sync-ownership.mjs` (`classifyOwnership`) is consulted in
+the collision pre-flight before an orphan is called a collision:
+
+1. **Banner** → provably ours. A consumer-authored file cannot carry it.
+2. **Byte-identity to the outbound form** → ours, or moot: if the bytes already
+   equal what we would write, adopting discards nothing. This covers
+   `.audit-loop/migrations/*.sql`, which gets no banner (SQL is not injected).
+3. **Anything else** → still a collision, still aborts the target.
+
+Load-bearing implementation detail: the identity comparand is built by running
+the **same** `rewriteCommandSurface` + `injectUpstreamBanner` pipeline the write
+path uses, rather than re-deriving "is this file rewritten / banner-injected?"
+as a second predicate. That duplicate definition is the drift this repo keeps
+paying for; for `.sql` both steps are no-ops, so it reduces to source bytes.
+
+Fails closed: unreadable/empty content, an empty banner marker (`''.includes('')`
+is vacuously true and would have auto-adopted *everything*), and a missing
+comparand all yield "not ours".
+
+Auto-adoption is **never silent** — it only happens because the record
+regressed, and hiding that would trade a loud abort for a quiet pathology.
+
+Verified end-to-end against the real incident:
+
+- Manifest rolled back to the 533-file version → **17 orphans auto-adopted**
+  (banner ×13, byte-identity ×4 for the migrations), zero collisions, no abort.
+- Negative control: a planted consumer-authored file at a synced destination →
+  **still collides and would abort**, named explicitly. The guard is not
+  weakened.
+
+Also fixed alongside: the abort was gated on `!DRY_RUN`, so `--dry-run` — the
+one command an operator runs to ask "what would this do?" — could not see a
+whole-target refusal. It now reports `would ABORT`. This cost this
+investigation an hour.
+
+Tests: `tests/sync-ownership.test.mjs` (9, both directions) plus 5 contract
+tests in `tests/sync-ownership-recording.test.mjs`.
+
+### A (original design, retained for rationale)
 
 Ownership should be a property of the bytes on disk, not of a revertible tracked
 artifact. The mechanism already exists and is already trusted: `--adopt-orphans`
@@ -171,7 +211,24 @@ ours, and aborts only when it is not:
 The manifest stays as the record of *what was synced* (drift reporting, GC,
 `sync:dry`). It stops being the arbiter of *who owns a file*.
 
-### B. Untrack the consumer manifest (secondary)
+### B. Untrack the consumer manifest (secondary) — **calculus changed; not done**
+
+Approved in principle, deliberately not shipped with A, because A changed the
+argument for it.
+
+Untracking was justified as *removing the failure mode*. A already removes it:
+a reverted manifest no longer breaks sync, it produces a reported auto-adopt.
+What remains for B is weaker — per-push churn in consumers, and an ownership
+record that still shuffles on merges even though nothing depends on it any more.
+
+That is a tidiness argument, not a correctness one, and it carries a real cost:
+`sync-isolation-verify` reads the manifest as its source of truth, and Gates 2A
+("tracked-diff whitelist") and 6 ("manifest layout === isolated") have not been
+checked against an untracked manifest. Doing B on tidiness grounds while those
+gates are unverified would be trading a solved problem for an unmeasured one.
+
+**Recommendation**: leave the manifest tracked for now. Revisit only if the
+churn proves annoying in practice, and verify Gates 2A/6 first if so.
 
 With ownership no longer depending on it, the manifest has no reason to be
 tracked, and tracking is what exposes it to merge divergence.

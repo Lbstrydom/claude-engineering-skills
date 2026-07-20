@@ -27,6 +27,7 @@ import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { sourceRelToDestRel, LAYOUT_CONSTANTS } from './lib/sync-path-map.mjs';
 import { rewriteCommandSurface, buildOwnedSourceTails } from './lib/sync-rewriter.mjs';
 import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
+import { classifyOwnership, describeEvidence } from './lib/sync-ownership.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
@@ -940,6 +941,7 @@ async function main() {
     }
     const collisions = [];
     const inventoryOwned = []; // non-relocating managed surfaces absent from prior manifest
+    const contentOwned = [];   // orphans proved ours by their own bytes (see sync-ownership.mjs)
     for (const [dstRel] of intendedWrites) {
       const dstAbsPath = path.join(repo.path, dstRel);
       if (!fs.existsSync(dstAbsPath)) continue;
@@ -964,12 +966,52 @@ async function main() {
       const ownedByInventoryNonRelocating =
         !ownedAsIsolated && !ownedAsLegacyMap && dstRel === intendedWrites.get(dstRel);
       if (!ownedAsIsolated && !ownedAsLegacyMap && !ownedByInterruptedRun) {
-        if (ownedByInventoryNonRelocating) inventoryOwned.push(dstRel);
+        if (ownedByInventoryNonRelocating) { inventoryOwned.push(dstRel); continue; }
+        // Content-derived ownership. The manifest is a TRACKED file that a
+        // merge or reset can roll backwards while the gitignored files it
+        // describes survive, so "absent from the manifest" is NOT evidence a
+        // file is foreign. The bytes are evidence: our banner cannot be forged
+        // by a consumer-authored file, and content identical to what we would
+        // write makes adoption a no-op. Everything else still collides.
+        const srcRel = intendedWrites.get(dstRel);
+        let destContent = null;
+        try { destContent = fs.readFileSync(dstAbsPath, 'utf-8'); } catch { /* fails closed */ }
+        // Build the byte-identity comparand with the SAME pipeline the write
+        // path uses, rather than re-deriving "is this file rewritten /
+        // banner-injected?" as a second predicate — that duplicate definition
+        // is exactly the drift this repo keeps paying for. For `.sql`
+        // migrations both steps are no-ops, so this reduces to source bytes;
+        // for tooling the banner proof fires first anyway.
+        const srcContent = readSource(srcRel);
+        let expected = null;
+        if (srcContent !== null) {
+          expected = injectUpstreamBanner(
+            rewriteCommandSurface({ relPath: dstRel, content: srcContent, config: rewriteConfig }).rewritten,
+            dstRel,
+          );
+        }
+        const { provable, evidence } = classifyOwnership({
+          destContent,
+          sourceContent: expected,
+          bannerMarker: BANNER_MARKER,
+        });
+        if (provable) contentOwned.push({ dstRel, evidence });
         else collisions.push(dstRel);
       }
     }
     if (inventoryOwned.length && !DRY_RUN) {
       console.log(`  ${Y}note${X}  ${inventoryOwned.length} managed-surface file(s) not in prior manifest — treating as owned (legacy manifest predates skill/prompt tracking).`);
+    }
+    if (contentOwned.length) {
+      // Reported every run, never silent. This path exists because the manifest
+      // regressed, and a silent auto-adopt would hide a recurring rollback
+      // behind a clean-looking sync — trading a loud abort for a quiet
+      // pathology. The regression warning above usually accompanies it.
+      console.log(`  ${Y}adopt${X}  ${contentOwned.length} orphan(s) proved ours by content — ownership record had lost them:`);
+      for (const { dstRel, evidence } of contentOwned.slice(0, 10)) {
+        console.log(`    ${D}owned${X}  ${dstRel} ${D}(${describeEvidence(evidence)})${X}`);
+      }
+      if (contentOwned.length > 10) console.log(`    ${D}... ${contentOwned.length - 10} more${X}`);
     }
     if (collisions.length && ADOPT_ORPHANS) {
       // Operator override. Each orphan is reported with whether its on-disk
@@ -994,14 +1036,21 @@ async function main() {
       }
       collisions.length = 0;   // adopted: fall through to the normal write path
     }
-    if (collisions.length && !DRY_RUN) {
-      console.log(`  ${R}ABORT${X}  ${collisions.length} unowned collision(s); will not overwrite.`);
+    if (collisions.length) {
+      // Reported under --dry-run TOO. It used to be `collisions.length &&
+      // !DRY_RUN`, so a dry run of a consumer that a real sync would refuse
+      // outright printed a clean file-count summary — the one command an
+      // operator reaches for to ask "what would this do?" could not see the
+      // whole-target abort. That cost a real investigation an hour.
+      console.log(`  ${R}${DRY_RUN ? 'would ABORT' : 'ABORT'}${X}  ${collisions.length} unowned collision(s); will not overwrite.`);
       for (const c of collisions.slice(0, 10)) console.log(`    ${R}collide${X}  ${c}`);
       if (collisions.length > 10) console.log(`    ${D}... ${collisions.length - 10} more${X}`);
-      // An orphan is usually OUR file whose ownership record was lost, not a
-      // consumer's — most often because a previous run's manifest write failed
-      // (see the commit point below). Re-run with --adopt-orphans to re-record
-      // them after checking the reported paths.
+      // These survived the content check: no banner, and not byte-identical to
+      // what we would write. That is the residue the guard exists for — most
+      // plausibly a real consumer file, or one of ours that was edited in place
+      // (itself a governance violation worth seeing). --adopt-orphans still
+      // overrides, after checking the reported paths.
+      console.log(`    ${D}no banner and differs from source — inspect before adopting${X}`);
       console.log(`    ${D}if these are ours, re-run with --adopt-orphans to re-record them${X}`);
       totalErrors++;
       console.log('');

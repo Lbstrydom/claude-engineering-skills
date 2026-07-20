@@ -98,7 +98,7 @@ describe('--adopt-orphans (recovery for records already lost)', () => {
   });
 
   it('reports ownership EVIDENCE (our banner), not a content diff', () => {
-    const region = between(/if \(collisions\.length && ADOPT_ORPHANS\)/, /if \(collisions\.length && !DRY_RUN\)/);
+    const region = between(/if \(collisions\.length && ADOPT_ORPHANS\)/, /if \(collisions\.length\) \{/);
     assert.match(region, /BANNER_MARKER/,
       'outbound content is banner-injected, so a raw source diff always reads "differs" — useless');
     assert.match(region, /provably ours/);
@@ -107,19 +107,19 @@ describe('--adopt-orphans (recovery for records already lost)', () => {
   });
 
   it('adoption clears the collisions so the normal write path runs', () => {
-    const region = between(/if \(collisions\.length && ADOPT_ORPHANS\)/, /if \(collisions\.length && !DRY_RUN\)/);
+    const region = between(/if \(collisions\.length && ADOPT_ORPHANS\)/, /if \(collisions\.length\) \{/);
     assert.match(region, /collisions\.length = 0/);
   });
 
   it('WITHOUT the flag the abort still fires — the guard is not weakened', () => {
-    const region = between(/if \(collisions\.length && !DRY_RUN\)/, /Pre-flight passed/);
+    const region = between(/if \(collisions\.length\) \{/, /Pre-flight passed/);
     assert.match(region, /ABORT/);
     assert.match(region, /totalErrors\+\+/);
     assert.match(region, /continue;/, 'an unadopted collision must still skip the whole target');
   });
 
   it('the abort points the operator at the recovery flag', () => {
-    const region = between(/if \(collisions\.length && !DRY_RUN\)/, /Pre-flight passed/);
+    const region = between(/if \(collisions\.length\) \{/, /Pre-flight passed/);
     assert.match(region, /--adopt-orphans/,
       'an operator who hits this must learn the fix from the message, not the source');
   });
@@ -153,5 +153,47 @@ describe('BANNER_MARKER — the ownership fingerprint must actually match', () =
     if (typeof out === 'string' && out.includes('UPSTREAM-OWNED')) {
       assert.ok(out.includes(marker), 'the marker must be found in genuinely injected output');
     }
+  });
+});
+
+describe('content-derived ownership (the manifest is no longer the only proof)', () => {
+  it('classifies an orphan by CONTENT before calling it a collision', () => {
+    // The manifest is a TRACKED file a merge can roll backwards while the
+    // gitignored files it describes survive, so "absent from the manifest" is
+    // not evidence a file is foreign. The bytes are.
+    assert.match(SRC, /import \{[^}]*classifyOwnership[^}]*\} from '\.\/lib\/sync-ownership\.mjs'/);
+    assert.match(SRC, /classifyOwnership\(\{/);
+    assert.match(SRC, /if \(provable\) contentOwned\.push/,
+      'a provably-owned orphan must be adopted, not collided');
+  });
+
+  it('builds the identity comparand with the REAL write pipeline', () => {
+    // Re-deriving "is this file rewritten / banner-injected?" as a second
+    // predicate is the duplicate-definition drift this repo keeps paying for.
+    // The comparand must come from the same two functions the write path uses.
+    const region = between(/const srcContent = readSource\(srcRel\)/, /classifyOwnership\(\{/);
+    assert.match(region, /injectUpstreamBanner/);
+    assert.match(region, /rewriteCommandSurface/);
+  });
+
+  it('still collides on anything not provably ours — the guard is not weakened', () => {
+    assert.match(SRC, /else collisions\.push\(dstRel\)/,
+      'a file failing the content proof must still abort the target');
+  });
+
+  it('never adopts silently — an auto-adopt is always reported', () => {
+    // This path only runs because the ownership record regressed. Silent
+    // auto-adoption would hide a recurring rollback behind a clean sync,
+    // trading a loud abort for a quiet pathology.
+    assert.match(SRC, /contentOwned\.length\) \{/);
+    assert.match(SRC, /proved ours by content/);
+  });
+
+  it('reports a would-be abort under --dry-run too', () => {
+    // The abort used to be gated on `!DRY_RUN`, so the one command an operator
+    // runs to ask "what would this do?" could not see a whole-target refusal.
+    assert.match(SRC, /would ABORT/);
+    assert.doesNotMatch(SRC, /if \(collisions\.length && !DRY_RUN\)/,
+      'the dry-run-suppressed abort must not come back');
   });
 });
