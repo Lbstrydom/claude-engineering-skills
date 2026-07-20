@@ -53,6 +53,29 @@ function parseArgs(argv) {
 `;
 const NOT_A_CLI = `export function helper(a, b) { return a + b; }\n`;
 
+/**
+ * The spelling `parsesFlags` originally missed. A file matching no `readsArgv`
+ * pattern is skipped BEFORE the guard check, so it can never be a finding and
+ * never be drift — the gate reported green over 37 CLIs written this way,
+ * including ones that write to consumer repos, overwrite generated trees, and
+ * delete. Undetectable is indistinguishable from clean, which is the failure
+ * mode this whole module exists to prevent.
+ */
+const UNGUARDED_INCLUDES = `
+function main() {
+  const force = process.argv.includes('--force');
+  const dryRun = process.argv.includes('--dry-run');
+  return { force, dryRun };
+}
+`;
+const VIA_HELPER_INCLUDES = `
+import { assertKnownFlags } from './lib/cli-io.mjs';
+function main() {
+  assertKnownFlags(process.argv, ['--force'], { cli: 'x' });
+  return process.argv.includes('--force');
+}
+`;
+
 describe('detection — helper OR message text', () => {
   it('a CLI guarded by assertKnownFlags counts as guarded', () => {
     // The original one-off survey checked ONLY for the literal error text, so
@@ -68,6 +91,27 @@ describe('detection — helper OR message text', () => {
   });
   it('a plain library is not a flag-parsing CLI at all', () => {
     assert.equal(parsesFlags(NOT_A_CLI), false);
+  });
+
+  it('a CLI parsing via process.argv.includes() IS a flag-parsing CLI', () => {
+    // Regression: omitting this spelling hid 37 CLIs from the gate entirely —
+    // more than the original baseline, and none of them guarded.
+    assert.equal(parsesFlags(UNGUARDED_INCLUDES), true);
+    assert.equal(rejectsUnknownFlags(UNGUARDED_INCLUDES), false);
+  });
+
+  it('the includes() spelling still counts as guarded when it delegates', () => {
+    assert.equal(parsesFlags(VIA_HELPER_INCLUDES), true);
+    assert.equal(rejectsUnknownFlags(VIA_HELPER_INCLUDES), true);
+  });
+
+  it('an unguarded includes() CLI reaches the findings list, not just the detector', () => {
+    // parsesFlags returning true is necessary but not sufficient — the earlier
+    // bug was a skip BEFORE the guard check, so assert the full path.
+    const { root, files } = repoWith({ 'scripts/bad.mjs': UNGUARDED_INCLUDES });
+    const r = runCheck({ repoRoot: root, files, gating: true, baseline: new Set() });
+    assert.deepEqual(r.drift, ['scripts/bad.mjs']);
+    assert.equal(r.ok, false);
   });
 });
 

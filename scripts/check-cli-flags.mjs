@@ -47,39 +47,99 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0
  * CLIs that were already ignoring unknown flags when this gate landed
  * (2026-07-20). Accepted debt, NOT approval: shrink this list, never grow it.
  * Removing an entry after fixing its CLI is the intended direction of travel.
+ *
+ * Grew 24 → 61 when `parsesFlags` learned the `process.argv.includes('--flag')`
+ * spelling — the 37 additions were ALWAYS unguarded, they were merely invisible
+ * to the detector. Widening detection without extending the baseline in the same
+ * commit would have hard-failed 37 net-new entries on the next push: a wall, not
+ * a ratchet, and the exact shape that gets a gate `--no-verify`'d. Nothing
+ * regressed here; the census got honest.
  */
 export const BASELINE = new Set([
+  'scripts/arch-coverage-gate.mjs',
+  'scripts/audit-clean.mjs',
   'scripts/audit-full.mjs',
   'scripts/azure-doctor.mjs',
+  'scripts/build-manifest.mjs',
+  'scripts/cache-hitrate-check.mjs',
+  'scripts/cheap-triager-validate.mjs',
+  'scripts/check-audit-tool-version.mjs',
   'scripts/check-context-drift.mjs',
+  'scripts/check-docs-placement.mjs',
+  'scripts/check-docs-refs.mjs',
+  'scripts/check-gate-contracts.mjs',
+  'scripts/check-isolation-inventory.mjs',
   'scripts/check-model-freshness.mjs',
+  'scripts/check-plan-status.mjs',
+  'scripts/check-rls.mjs',
+  'scripts/check-setup.mjs',
+  'scripts/check-skill-updates.mjs',
+  'scripts/check-stale-skill-surface.mjs',
+  'scripts/check-sync.mjs',
+  'scripts/context-staleness.mjs',
   'scripts/cross-skill.mjs',
   'scripts/debt-resolve.mjs',
+  'scripts/defect-harvest.mjs',
+  'scripts/efficacy-lints-check.mjs',
   'scripts/friction-log.mjs',
+  'scripts/generate-plans-index.mjs',
   'scripts/learning/replay.mjs',
+  'scripts/ledger-decompose.mjs',
+  'scripts/lib/arch-memory/calibrate.mjs',
   'scripts/lib/sync-isolation-verify.mjs',
   'scripts/lint-plan-mermaid.mjs',
+  'scripts/maintenance-checks.mjs',
   'scripts/memory-health.mjs',
+  'scripts/model-eval-adjudicator.mjs',
+  'scripts/model-eval-auditor.mjs',
   'scripts/model-eval-discovery.mjs',
   'scripts/nav-audit.mjs',
+  'scripts/on-conflict-lint.mjs',
   'scripts/persona-consistency-promote.mjs',
   'scripts/persona-consistency-run.mjs',
   'scripts/postgres-parity/generate-expected-schema.mjs',
+  'scripts/prepush-check.mjs',
+  'scripts/reconcile-repo-identity.mjs',
+  'scripts/regenerate-skill-copies.mjs',
   'scripts/requirements.mjs',
+  'scripts/security-memory/refresh-incidents.mjs',
   'scripts/setup-cloud.mjs',
   'scripts/skills-fit-check.mjs',
+  'scripts/solo-control-audit.mjs',
   'scripts/symbol-index/drift.mjs',
   'scripts/symbol-index/duplicates.mjs',
   'scripts/symbol-index/extract.mjs',
+  'scripts/sync-shared-audit-refs.mjs',
+  'scripts/sync-to-repos.mjs',
+  'scripts/tiered-shadow-report.mjs',
+  'scripts/ux-lock-run.mjs',
+  'scripts/verify-anchor-contract.mjs',
+  'scripts/visual-audit.mjs',
   'scripts/write-code-outcomes.mjs',
   'scripts/write-plan-outcomes.mjs',
 ]);
 
-/** Does this source parse `--flags` at all? (Non-CLI libraries are out of scope.) */
+/**
+ * Does this source parse `--flags` at all? (Non-CLI libraries are out of scope.)
+ *
+ * `process.argv.includes('--flag')` is listed because omitting it hid 37 CLIs
+ * from this gate entirely — more than the original baseline. A file matching no
+ * `readsArgv` spelling is skipped BEFORE `rejectsUnknownFlags` runs, so it can
+ * never be a finding and never be drift: the gate reported green over it. Among
+ * the 37 were `sync-to-repos.mjs` (writes into consumer repos),
+ * `regenerate-skill-copies.mjs` (overwrites a generated tree) and
+ * `audit-clean.mjs` (deletes) — the mutating-default shape this gate exists for.
+ * Add a spelling here whenever a new one appears; a missed one is silent.
+ *
+ * Quote style is matched as `['"]`, not a hardcoded `'`. The first draft of this
+ * fix wrote `includes\('--` and a throwaway CLI using `includes("--force")` sailed
+ * through the gate during verification. A detector that only recognises one
+ * quote character is a detector with a hole in it.
+ */
 export function parsesFlags(src) {
-  const readsArgv = /function parseArgs|for \(let i = 2; i < argv\.length|process\.argv\.slice\(2\)/.test(src);
+  const readsArgv = /function parseArgs|for \(let i = 2; i < argv\.length|process\.argv\.slice\(2\)|process\.argv\.includes\(/.test(src);
   if (!readsArgv) return false;
-  return /--[a-z]/.test(src) && /(startsWith\('--'\)|=== '--)/.test(src);
+  return /--[a-z]/.test(src) && /(startsWith\(['"]--['"]\)|=== ['"]--|process\.argv\.includes\(['"]--)/.test(src);
 }
 
 /**
