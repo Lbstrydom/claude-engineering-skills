@@ -1,5 +1,63 @@
 # Project Status Log
 
+## 2026-07-20 — arch-memory: the neighbourhood RPC was fanning out on stale embeddings
+
+The band-recalibration probe set scored `recall@5 = 0.5714`, and the
+`reuse-atomic-write` probe was the tell: it returned 5 rows but only **3 distinct
+symbols** — `writeAtomic` twice and `atomicWrite` twice, each pair at *different*
+similarities. Two of the five k-slots were duplicates, and the canonical
+`file-io.mjs:atomicWriteFileSync` was pushed off the list by repeats of its own forks.
+
+**Root cause.** `symbol_embeddings` is `UNIQUE (definition_id, embedding_model,
+dimension, signature_hash)` and rows deliberately survive across refreshes (that is
+the table's stated design). The `symbol_neighbourhood` RPC's `LEFT JOIN` matched only
+the first three columns, so every symbol whose signature had ever changed produced one
+result row **per historical signature**, each scored against a different old
+embedding — all competing for the same `LIMIT p_k` budget. Measured on the active
+refresh: **186 of 3,324 index rows fanned out (5.6%), worst case 10×**.
+
+Fixed in `20260720120000_symbol_neighbourhood_signature_pinned_embedding.sql` by
+pinning the join to `si.signature_hash`. Chosen over `DISTINCT ON` deliberately: dedup
+would sometimes keep an embedding of code that no longer exists, whereas pinning always
+scores the code actually in the snapshot. Cost was checked before committing to it —
+**3,322 of 3,324 rows already have an exact-signature embedding**, and the same 2 lack
+any embedding under the old join too, so the predicate loses nothing today. Accepted
+trade-off, documented in the migration: if embedding generation ever lags indexing, an
+affected symbol now scores 0 rather than matching on a stale vector. That is the right
+direction — a match against a signature that no longer exists is a false match the
+consultation cannot distinguish from a real one.
+
+**The measurement needed decomposing, and that mattered.** Re-running gave
+`recall@5 = 0.9048`, but the probe-set hash had changed (`7aa5f4c9` → `93971c08`): the
+old 0.5714 baseline predates the post-hoc `alternates` added to the fixture, so the
+jump conflated two causes. An ablation run (fixed RPC, alternates stripped) separated
+them:
+
+| condition | recall@5 |
+|---|---|
+| old RPC + original fixture | 0.5714 (12/21) |
+| fixed RPC + original fixture | 0.6667 (14/21) |
+| fixed RPC + fixture with post-hoc alternates | 0.9048 (19/21) |
+
+**The RPC fix is worth +2 probes; the fixture alternates are worth +5.** Most of the
+headline gain is fixture-fitting, which the fixture's own README already flags as
+weaker evidence. Reporting 0.9048 as "the recall gate now passes" without that split
+would be the dishonest read. Direct confirmation of the mechanism, though:
+`reuse-atomic-write` against the *original* expectation went **missed → rank 4
+(0.738)** — freeing the two duplicate slots let the canonical symbol back in.
+
+Gate state is still `verdict=fail` (`medianPositive` 0.7502 vs the 0.80 threshold), so
+thresholds remain underived and Phase 4 stays shut. That is the plan's Phase-1 gate
+working as designed.
+
+**What this does not fix.** `atomicWriteFileSync` came back at 0.738 — below the 0.75
+`justify-divergence` cutoff, so the consultation would still say `review`, i.e.
+*proceed greenfield*. The retrieval bug was real, but it was never what licensed the
+four near-duplicate atomic writers now in the tree. Two open questions left for a
+decision, neither touched here: whether `justify-divergence` should keep permitting
+forks at all, and whether the recall gate should require passing on *untouched* probes
+so fixture-fitting cannot unlock threshold derivation.
+
 ## 2026-07-19 — batch-contention flakes: one real bug, one unreproducible, one non-issue
 
 Three loose ends from the flake work, resolved in different directions — which is
