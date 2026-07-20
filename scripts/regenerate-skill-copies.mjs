@@ -31,7 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
 import { generateAllPromptFiles } from './lib/install/copilot-prompts.mjs';
-import { sha } from './lib/cli-io.mjs';
+import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC_ROOT = path.join(ROOT, 'skills');
@@ -74,7 +74,6 @@ function loadSkillsOrDie() {
 }
 
 function copyFileIfChanged(srcAbs, dstAbs, opts) {
-  fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
   const srcBuf = fs.readFileSync(srcAbs);
   const dstExists = fs.existsSync(dstAbs);
   const dstBuf = dstExists ? fs.readFileSync(dstAbs) : null;
@@ -82,6 +81,10 @@ function copyFileIfChanged(srcAbs, dstAbs, opts) {
   if (opts.dryOrCheck) {
     process.stdout.write(`${Y}~${X} ${path.relative(ROOT, dstAbs)} ${D}(${dstExists ? 'update' : 'create'})${X}\n`);
   } else {
+    // mkdir belongs on the WRITE path only. It used to run unconditionally at
+    // the head of this function, so `--dry-run` created directories — see the
+    // note on the `syncSkillToDests` mkdir for what that cost.
+    fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
     fs.writeFileSync(dstAbs, srcBuf);
   }
   return 'wrote';
@@ -116,7 +119,14 @@ function syncSkillToDests(name, opts) {
   let writes = 0, unchanged = 0, deletes = 0;
   for (const destRoot of DEST_ROOTS) {
     const destDir = path.join(destRoot, name);
-    fs.mkdirSync(destDir, { recursive: true });
+    // `--dry-run` must not create the destination tree. This mkdir was
+    // unconditional: running `--keep-github-skills --dry-run` materialised 31
+    // empty `.github/skills/<name>/` directories, which then hard-failed
+    // `check-stale-skill-surface --gate` (a `.github/skills` tree shadows
+    // `.claude/skills` for Copilot). A safety flag that still mutates the
+    // filesystem is the same defect class as one that gets silently dropped —
+    // the operator asked for "show me", and the tool did something.
+    if (!opts.dryOrCheck) fs.mkdirSync(destDir, { recursive: true });
     for (const rel of srcFiles) {
       const result = copyFileIfChanged(path.join(skillSrcDir, rel), path.join(destDir, rel), opts);
       if (result === 'wrote') writes++;
@@ -213,7 +223,21 @@ function emitVerdict(stats, violations, check) {
   }
 }
 
+/**
+ * Every flag this CLI reads. Kept adjacent to `main()` rather than beside the
+ * module-scope `KEEP_GITHUB_SKILLS` constant, which evaluates on IMPORT —
+ * throwing there would break any consumer that imports this module.
+ *
+ * No flag here takes a value; all three are booleans.
+ */
+const KNOWN_FLAGS = ['--keep-github-skills', '--dry-run', '--check'];
+
 function main() {
+  // This CLI OVERWRITES the generated `.claude/skills/` tree by default, so
+  // `--dry-run`/`--check` are safety flags over a mutating default: a dropped
+  // `--dry-runn` runs the real regeneration. Guard before any side effect.
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'regenerate-skill-copies' });
+
   const DRY = process.argv.includes('--dry-run');
   const CHECK = process.argv.includes('--check');
   const opts = { dryOrCheck: DRY || CHECK };
@@ -243,4 +267,14 @@ function main() {
   process.exit(0);
 }
 
-main();
+try {
+  main();
+} catch (err) {
+  // A usage mistake is not a crash: print the flag diagnostic alone (no stack)
+  // and exit 2, matching the other guarded CLIs.
+  if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+    process.stderr.write(`${err.message}\n`);
+    process.exit(2);
+  }
+  throw err;
+}

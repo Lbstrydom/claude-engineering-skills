@@ -39,6 +39,16 @@ import { redactSecrets } from '../lib/secret-patterns.mjs';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
 import { retrySync } from '../lib/retry-transient-fs.mjs';
 import { findRepoPragmas } from '../lib/duplicate-justification-pragma.mjs';
+import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+
+// Every flag this CLI accepts. `--repo` takes a value; the rest are booleans.
+const KNOWN_FLAGS = [
+  '--repo',
+  '--dry-run',
+  '--skip-drain',
+  '--skip-resolve',
+  '--rebuild-stats',
+];
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -939,6 +949,15 @@ const isMain = (() => {
 })();
 
 if (isMain) {
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'backfill-outcomes' });
+  } catch (err) {
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(err.message + '\n');
+      process.exit(2);
+    }
+    throw err;
+  }
   const args = process.argv.slice(2);
   const repoIdx = args.indexOf('--repo');
   const opts = {

@@ -1,6 +1,49 @@
 # Project Status Log
 
-## 2026-07-20 (latest) — the DB seam had no coverage anywhere, for two days
+## 2026-07-20 (latest) — the opt-out bucket is empty, and that was the point
+
+Guarded all 13 opt-out CLIs `classifyPolarity` surfaced the same day it shipped,
+and paid the baseline down 80 → 67. The safety-flag bucket now reads 0.
+
+That is the argument for the triage split, made concrete: an 80-line flat census
+had sat unworked since the gate landed, because there was no way to tell which
+entries mattered. Split into "13 of these have a brake a typo can drop", it got
+finished in one sitting. The ordering was the whole intervention — the findings
+were always there.
+
+Every removal is backed by a **per-file negative control** (a typo'd flag exits
+2) and a **positive** one (every real caller invocation still runs). Not by the
+detector agreeing it was fixed — that is the failure recorded one entry below,
+and the baseline is the one place where believing the detector costs you the
+evidence.
+
+**A real bug fell out of it: `regenerate-skill-copies.mjs --dry-run` was not
+dry.** Two `fs.mkdirSync` calls ran unconditionally, ahead of the `dryOrCheck`
+branch. A dry run with `--keep-github-skills` materialised 31 empty
+`.github/skills/<name>/` directories, which then hard-failed
+`check-stale-skill-surface --gate` (a `.github/skills` tree shadows
+`.claude/skills` for Copilot). Same defect class as the flag-dropping this
+session has been chasing, one layer in: the operator asked to be *shown*, and
+the tool did something. mkdir now lives on the write path only.
+
+Found by actually *running* the safety flag rather than reading it — the
+pre-ship-empirical-verify lesson again. A guard was added to that same file in
+this pass; had we only added the guard and never exercised `--dry-run`, it would
+have looked fixed.
+
+Also flagged, not actioned (each is a separate change):
+- `build-manifest.mjs` calls `main()` at module scope while a test imports it.
+  Harmless today (a test child's argv is empty, so the guard no-ops), but it is
+  latent coupling — the sibling `generate-plans-index.mjs` has an `isMain` guard
+  and this one should too.
+- `sync-to-repos.mjs` prints `npm run hooks:install --target <name>`. npm
+  swallows `--target` as its own config unless `--` precedes it, so that
+  documented command silently installs to ALL consumer repos rather than one.
+- `cross-skill.mjs --paths` / `--since` are documented in plans but no handler
+  reads them; `backfill-outcomes.mjs` reads `--repo` while `cross-skill.mjs`
+  passes `--repo-id` for the same concept.
+
+## 2026-07-20 — the DB seam had no coverage anywhere, for two days
 
 Asked to wire the disposable Postgres container into the pre-push check. The
 wiring was the small half; finding out why it was needed was the rest.

@@ -37,6 +37,11 @@ import {
   readStaleClusters,
   readRecentFriction,
 } from '../learning-store.mjs';
+import { assertKnownFlags, ArgvError } from '../lib/cli-io.mjs';
+
+// Every flag this CLI accepts. `--repo` and `--format` take a value; `--dry-run`
+// is a boolean.
+const KNOWN_FLAGS = ['--repo', '--format', '--dry-run'];
 
 const TOTAL_CAP = 7;
 // Section caps — when friction notes exist, they're prioritised (3 friction
@@ -420,6 +425,15 @@ const isMain = import.meta.url === `file://${process.argv[1]}`
   || import.meta.url === `file:///${(process.argv[1] || '').replace(/\\/g, '/')}`;
 
 if (isMain) {
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'weekly-review' });
+  } catch (err) {
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(err.message + '\n');
+      process.exit(2);
+    }
+    throw err;
+  }
   const args = process.argv.slice(2);
   const repoIdx = args.indexOf('--repo');
   const formatIdx = args.indexOf('--format');

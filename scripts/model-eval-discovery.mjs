@@ -59,6 +59,18 @@ import { readFilesAsContext } from './lib/file-io.mjs';
 import { redactSecrets } from './lib/sensitive-egress-gate.mjs';
 import { shouldSkipForIndexing } from './lib/sensitive-paths.mjs';
 import { boundMalformedDetails } from './lib/audit/malformed-details.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+
+// Every flag this CLI accepts. `--n`, `--concurrency`, `--arms` and `--out` take
+// a value; `--dry-run` and `--selfcheck-relocation` are booleans.
+const KNOWN_FLAGS = [
+  '--n',
+  '--concurrency',
+  '--arms',
+  '--out',
+  '--dry-run',
+  '--selfcheck-relocation',
+];
 
 // ── args ────────────────────────────────────────────────────────────────────
 const argv = process.argv.slice(2);
@@ -230,6 +242,15 @@ function summarizeArm(label, records) {
 // field's whole contract is that identical input yields identical records.
 
 async function main() {
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'model-eval-discovery' });
+  } catch (err) {
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      console.error(err.message);
+      process.exit(2);
+    }
+    throw err;
+  }
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
   const baseUrl = auditShadowConfig.openrouterBaseUrl;

@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
 import { withFileLock } from './lib/file-lock.mjs';
 import { extractRequirements } from './lib/requirements/extract.mjs';
@@ -40,6 +41,26 @@ const HELP = `requirements — extract / reconcile / index / render the de-facto
   node scripts/requirements.mjs index [--json]
   node scripts/requirements.mjs render [--out docs/requirements-map.md]
 `;
+
+/**
+ * Union of every flag any subcommand accepts. `assertKnownFlags` validates
+ * flag NAMES only, so the bare `extract|reconcile|index|render` positional is
+ * ignored and per-subcommand semantics stay with each subcommand's parser.
+ *
+ * `render --check` is a SAFE mode over a MUTATING default (it otherwise
+ * overwrites the committed `docs/requirements-map.md`), so a dropped `--chek`
+ * silently rewrites the artifact the freshness gate compares against.
+ */
+const KNOWN_FLAGS = [
+  // extract
+  '--files', '--runs',
+  // index
+  '--json',
+  // render
+  '--out', '--check',
+  // global
+  '--help',
+];
 
 function gitSha() {
   try {
@@ -221,6 +242,12 @@ function cmdRender(argv, baseDir) {
 }
 
 async function main() {
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'requirements.mjs' });
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
+    throw err;
+  }
   assertRepoRoot(import.meta.url);
   const argv = process.argv.slice(2);
   const mode = argv[0];

@@ -23,6 +23,17 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { ManifestSchema } from './lib/schemas-install.mjs';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+
+/**
+ * Every flag this CLI accepts. None take a value.
+ *
+ * `--check` is a SAFE mode over a MUTATING default (the bare invocation
+ * rewrites the committed `skills.manifest.json`), so a silently-dropped
+ * `--chek` would rewrite the artifact while the operator believed they were
+ * only verifying it.
+ */
+const KNOWN_FLAGS = ['--check'];
 
 const SKILLS_DIR = path.resolve('skills');
 const MANIFEST_PATH = path.resolve('skills.manifest.json');
@@ -198,6 +209,8 @@ export function buildManifest() {
 }
 
 function main() {
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'build-manifest' });
+
   const checkMode = process.argv.includes('--check');
 
   const manifest = buildManifest();
@@ -267,4 +280,13 @@ function readManifestTextOrNull() {
   } catch { return null; }
 }
 
-main();
+try {
+  main();
+} catch (err) {
+  // A usage mistake is not a crash: print the diagnostic alone, no stack.
+  if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+    console.error(err.message);
+    process.exit(2);
+  }
+  throw err;
+}

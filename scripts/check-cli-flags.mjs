@@ -38,10 +38,16 @@
  * ones first. A consumer repo reported (2026-07-20) that only 4 of their 10
  * findings were opt-out while their two worst instances weren't listed at all,
  * and that merging the two polarities overstated the problem while burying what
- * mattered. `classifyPolarity` now splits them: 13 of this repo's 80 findings
- * carry a safety flag, a 6x concentration. It is a REPORT-ONLY ordering — the
- * drift gate stays polarity-blind, because a net-new unguarded CLI is drift
+ * mattered. `classifyPolarity` now splits them. It is a REPORT-ONLY ordering —
+ * the drift gate stays polarity-blind, because a net-new unguarded CLI is drift
  * whichever polarity it has and intent in an exit code cannot be audited.
+ *
+ * **The opt-out bucket is now EMPTY (2026-07-20), and that is the point.** The
+ * split found 13 of 80; all 13 were guarded the same day and the baseline paid
+ * down 80 → 67. The ordering did its job — it turned an 80-line wall nobody
+ * worked into a 13-item list that got finished. If this bucket ever reads
+ * non-zero again, that is a mutating default with a droppable brake, and it is
+ * the first thing to fix.
  *
  * Usage:
  *   node scripts/check-cli-flags.mjs            # report-only census
@@ -82,13 +88,19 @@ const G = '\x1b[32m', Y = '\x1b[33m', R = '\x1b[31m', D = '\x1b[2m', X = '\x1b[0
  * commit would have hard-failed 37 net-new entries on the next push: a wall, not
  * a ratchet, and the exact shape that gets a gate `--no-verify`'d. Nothing
  * regressed here; the census got honest.
+ *
+ * Then 82 → 67 (2026-07-20) as the debt was actually paid: `sync-to-repos.mjs`
+ * plus the 13 opt-out CLIs `classifyPolarity` surfaced. Every removal is backed
+ * by a per-file negative control (a typo'd flag exits 2) and a positive one
+ * (every real caller invocation still runs), not by the detector agreeing.
+ * Everything left in this list is opt-in polarity or takes only value flags —
+ * still debt, but a dropped typo there is a no-op rather than a mutation.
  */
 export const BASELINE = new Set([
   'scripts/arch-coverage-gate.mjs',
   'scripts/audit-clean.mjs',
   'scripts/audit-full.mjs',
   'scripts/azure-doctor.mjs',
-  'scripts/build-manifest.mjs',
   'scripts/cache-hitrate-check.mjs',
   'scripts/cheap-triager-validate.mjs',
   'scripts/check-audit-tool-version.mjs',
@@ -105,12 +117,10 @@ export const BASELINE = new Set([
   'scripts/check-stale-skill-surface.mjs',
   'scripts/check-sync.mjs',
   'scripts/context-staleness.mjs',
-  'scripts/cross-skill.mjs',
   'scripts/debt-resolve.mjs',
   'scripts/defect-harvest.mjs',
   'scripts/efficacy-lints-check.mjs',
   'scripts/friction-log.mjs',
-  'scripts/generate-plans-index.mjs',
   'scripts/learning/replay.mjs',
   'scripts/ledger-decompose.mjs',
   // 'scripts/lib/arch-memory/calibrate.mjs' — FIXED 2026-07-20, baseline paid
@@ -126,24 +136,18 @@ export const BASELINE = new Set([
   'scripts/memory-health.mjs',
   'scripts/model-eval-adjudicator.mjs',
   'scripts/model-eval-auditor.mjs',
-  'scripts/model-eval-discovery.mjs',
   'scripts/nav-audit.mjs',
   'scripts/on-conflict-lint.mjs',
   'scripts/persona-consistency-promote.mjs',
   'scripts/persona-consistency-run.mjs',
   'scripts/postgres-parity/generate-expected-schema.mjs',
   'scripts/prepush-check.mjs',
-  'scripts/reconcile-repo-identity.mjs',
-  'scripts/regenerate-skill-copies.mjs',
-  'scripts/requirements.mjs',
   'scripts/security-memory/refresh-incidents.mjs',
-  'scripts/setup-cloud.mjs',
   'scripts/skills-fit-check.mjs',
   'scripts/solo-control-audit.mjs',
   'scripts/symbol-index/drift.mjs',
   'scripts/symbol-index/duplicates.mjs',
   'scripts/symbol-index/extract.mjs',
-  'scripts/sync-shared-audit-refs.mjs',
   // 'scripts/sync-to-repos.mjs' — FIXED 2026-07-20, baseline paid down. It
   // WRITES INTO CONSUMER REPOS with a mutating default, so it was the
   // highest-severity opt-out entry on the list. It was also the file that
@@ -180,9 +184,6 @@ export const BASELINE = new Set([
   'scripts/debt-review.mjs',
   'scripts/evolve-prompts.mjs',
   'scripts/gemini-review.mjs',
-  'scripts/install-prepush-hook.mjs',
-  'scripts/learning/backfill-outcomes.mjs',
-  'scripts/learning/weekly-review.mjs',
   'scripts/lib/learning/quickfix-stats.mjs',
   'scripts/lib/npm-script-enumerator.mjs',
   'scripts/meta-assess.mjs',
@@ -190,7 +191,6 @@ export const BASELINE = new Set([
   'scripts/postgres-parity/check-non-core-references.mjs',
   'scripts/refine-prompts.mjs',
   'scripts/security-triage.mjs',
-  'scripts/setup-permissions.mjs',
   'scripts/spikes/observed-graph-discovery-spike.mjs',
   'scripts/sync-refresh.mjs',
 ]);

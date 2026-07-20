@@ -31,6 +31,11 @@ import path from 'node:path';
 // Adding a new consumer repo there auto-extends this script.
 import { CONSUMER_REPOS, resolveTargets } from './lib/consumer-repos.mjs';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+
+// Every accepted flag. `--target` and `--format` TAKE A VALUE (both the
+// `--flag value` and `--flag=value` forms are accepted by the guard).
+const KNOWN_FLAGS = ['--dry-run', '--uninstall', '--target', '--format'];
 
 const HOOK_MARKER     = '# managed-by: claude-engineering-skills install-prepush-hook.mjs';
 // Bump when the generated body changes in a way a consumer must re-install to
@@ -269,6 +274,7 @@ function installInRepo(repo) {
 // ── Main ───────────────────────────────────────────────────────────────────
 
 function main() {
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'install-prepush-hook.mjs' });
   assertRepoRoot(import.meta.url);
   const targetRepos = resolveTargets(targetName);
 
@@ -303,4 +309,14 @@ const isMain = (() => {
     return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
   } catch { return false; }
 })();
-if (isMain) main();
+if (isMain) {
+  try {
+    main();
+  } catch (err) {
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
+    throw err;
+  }
+}

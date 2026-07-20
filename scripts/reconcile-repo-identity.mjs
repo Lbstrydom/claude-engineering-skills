@@ -45,6 +45,14 @@ import 'dotenv/config';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+
+/**
+ * Every accepted flag. `--map` takes a value. `--dry-run` is the DEFAULT mode
+ * and is accepted as an explicit no-op spelling — rejecting it would turn the
+ * safest possible invocation into an error.
+ */
+const KNOWN_FLAGS = ['--apply', '--map', '--dry-run', '--selfcheck-relocation'];
 
 const ALIAS_MAP_PATH = '.audit-loop/repo-alias-map.json';
 // Stable 63-bit advisory-lock key for the reconcile critical section.
@@ -105,6 +113,8 @@ export function buildProposals(canonical, legacy) {
 }
 
 async function main() {
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'reconcile-repo-identity' });
+
   // CLI smoke contract — must short-circuit before any DB/config work.
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
@@ -361,6 +371,12 @@ const _invokedDirectly =
   process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (_invokedDirectly) {
   main().catch((err) => {
+    // A usage mistake is not a crash: print the diagnostic only, exit 2.
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`${err.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
     process.stderr.write(`reconcile-repo-identity failed: ${err.stack || err.message}\n`);
     process.exitCode = 1;
   });

@@ -104,7 +104,7 @@ import { auditShadowConfig } from './lib/config.mjs';
 import { finalizeRoundOutcomes } from './lib/finalize-outcomes.mjs';
 import { semanticId } from './lib/findings.mjs';
 import { getLearningStats } from './lib/learning/stats.mjs';
-import { emit } from './lib/cli-io.mjs';
+import { emit, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 import { resolveRepoIdentity, persistRepoIdentity } from './lib/repo-identity.mjs';
 import { getNeighbourhoodForIntent } from './lib/neighbourhood-query.mjs';
 import { detectRepoStack, detectPythonEnvironmentManager } from './lib/repo-stack.mjs';
@@ -122,6 +122,74 @@ import { z } from 'zod';
 // ── Arg parsing ─────────────────────────────────────────────────────────────
 
 const [subcommand, ...rest] = process.argv.slice(2);
+
+/**
+ * Union of every flag ANY subcommand of this dispatcher reads.
+ *
+ * `assertKnownFlags` validates flag NAMES only — it ignores bare positionals,
+ * so the `<subcommand>` word and the `quality <verb>` / `arm-eval-toggle on|off`
+ * sub-verbs pass through untouched. Per-subcommand validation (required flags,
+ * value shapes, mutual exclusion) stays with each handler, which knows its own
+ * semantics; this list only refuses a flag NO subcommand could ever read.
+ *
+ * Why the guard matters here: `learning-weekly-review` and
+ * `learning-backfill-outcomes` both carry `--dry-run` over a MUTATING default,
+ * so a typo'd `--dry-runn` used to be silently dropped and the real write ran.
+ *
+ * Grouped by subcommand. Some subcommands forward `rest` wholesale to another
+ * CLI (`friction-log` → friction-log.mjs, `learning-replay` → learning/replay.mjs),
+ * so those CLIs' own flags are included too.
+ */
+const KNOWN_FLAGS = [
+  // ── Global / payload ──────────────────────────────────────────────────────
+  '--json', '--stdin', '--help', '--selfcheck-relocation',
+  // ── Shared identity / scoping flags (many subcommands) ────────────────────
+  '--repo', '--repo-id', '--repo-uuid', '--limit', '--format', '--out', '--cwd',
+  // ── plan-satisfaction ─────────────────────────────────────────────────────
+  '--plan-id',
+  // ── final-review-stats / final-review-adjudicate ──────────────────────────
+  '--queue-limit', '--worksheet', '--run-id', '--fingerprint', '--action', '--bucket',
+  // ── model-ab-adjudicate ───────────────────────────────────────────────────
+  '--suggestions', '--canonical', '--actor',
+  // ── arm-eval-{run,decision,stats,adjudicate,toggle,maybe-capture,export} ──
+  '--experiment', '--task', '--budget-eur', '--phase', '--seed', '--all-repos',
+  '--session-id', '--ranked', '--reviewer', '--all',
+  // ── finalize-outcomes ─────────────────────────────────────────────────────
+  '--ledger', '--result', '--round',
+  // ── persona readers (list-personas / get-persona-sessions-by-{repo,url}) ──
+  '--url', '--p0-only', '--select',
+  // ── get-reachability-evidence ─────────────────────────────────────────────
+  '--since-days',
+  // ── get-recent-findings ───────────────────────────────────────────────────
+  '--severity',
+  // ── persona-outcomes label ────────────────────────────────────────────────
+  '--session', '--hash', '--outcome', '--rationale', '--by',
+  // ── recommend-skills ──────────────────────────────────────────────────────
+  '--changed', '--just-ran', '--max', '--plan-lenses', '--findings',
+  // ── detect-stack ──────────────────────────────────────────────────────────
+  '--include-env-manager',
+  // ── resolve-repo-identity ─────────────────────────────────────────────────
+  '--persist',
+  // ── list-layering-violations-for-snapshot ─────────────────────────────────
+  '--refresh-id',
+  // ── quality <add|mirror|digest|link|session-review> ───────────────────────
+  '--title', '--scope-tags', '--scope-tag', '--cost', '--name',
+  '--files', '--file', '--symbols', '--symbol', '--body',
+  '--repo-scoped', '--window-days', '--min-similarity',
+  '--memory', '--kind', '--ref', '--window-hours',
+  // ── get-friction-neighbourhood / get-incident-neighbourhood ───────────────
+  '--prompt', '--k',
+  // `--paths` is documented in docs/plans/security-memory-v1.md's acceptance
+  // criteria for get-incident-neighbourhood but is read from the JSON payload,
+  // not argv. Accepted (not rejected) so a doc-following caller is not broken.
+  '--paths',
+  // ── learning-backfill-outcomes ────────────────────────────────────────────
+  '--dry-run', '--skip-drain', '--skip-resolve', '--rebuild-stats',
+  // ── learning-quickfix-stats ───────────────────────────────────────────────
+  '--bootstrap',
+  // ── learning-replay (forwards `rest` to scripts/learning/replay.mjs) ──────
+  '--policy', '--baseline', '--since',
+];
 
 function parsePayload() {
   const jsonIdx = rest.indexOf('--json');
@@ -2294,6 +2362,12 @@ const commands = {
 };
 
 async function main() {
+  try {
+    assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'cross-skill.mjs' });
+  } catch (err) {
+    if (err instanceof ArgvError) { process.stderr.write(`${err.message}\n`); process.exit(2); }
+    throw err;
+  }
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
   if (!subcommand || subcommand === '--help' || subcommand === '-h') {
     process.stdout.write(

@@ -21,6 +21,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import readline from 'node:readline';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+
+// Every accepted `--flag`. All are boolean; none take a value. (`-y`, the
+// single-dash alias for `--yes`, is not `--`-prefixed so the guard ignores it.)
+const KNOWN_FLAGS = ['--yes', '--dry-run', '--project', '--user'];
 
 // ── ANSI ────────────────────────────────────────────────────────────────────
 
@@ -181,6 +186,7 @@ function mergeRules(settings, rules, denyRules = []) {
 // ── Main ────────────────────────────────────────────────────────────────────
 
 async function main() {
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'setup-permissions.mjs' });
   console.log(`\n${B}Audit-Loop Permission Setup${X}\n`);
   console.log(`This script adds wildcard permission rules to Claude Code settings`);
   console.log(`so the audit loop runs with minimal approval prompts.\n`);
@@ -279,4 +285,11 @@ async function main() {
   }
 }
 
-main().catch(err => { console.error(err.message); process.exit(1); });
+main().catch(err => {
+  if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+    console.error(err.message);
+    process.exit(2);
+  }
+  console.error(err.message);
+  process.exit(1);
+});

@@ -28,7 +28,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { sha } from './lib/cli-io.mjs';
+import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CANONICAL_DIR = path.join(ROOT, 'docs', 'audit', 'shared-references');
@@ -111,7 +111,21 @@ export function findSyncTargets(rootDir = ROOT) {
   return pairs;
 }
 
+/**
+ * Every flag this CLI reads. Declared beside `main()` and asserted inside it —
+ * this module is imported by `tests/sync-shared-audit-refs.test.mjs` for its
+ * exports, so throwing at module scope would break that import.
+ *
+ * Neither flag takes a value; both are booleans.
+ */
+const KNOWN_FLAGS = ['--check', '--dry-run'];
+
 function main() {
+  // The default path OVERWRITES each consumer skill's reference file from the
+  // canonical, so `--check`/`--dry-run` are safety flags over a mutating
+  // default: a dropped `--chek` performs the real sync. Guard first.
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'sync-shared-audit-refs' });
+
   const DRY = process.argv.includes('--dry-run');
   const CHECK = process.argv.includes('--check');
 
@@ -170,4 +184,16 @@ const invokedDirectly = (() => {
   } catch { return false; }
 })();
 
-if (invokedDirectly) main();
+if (invokedDirectly) {
+  try {
+    main();
+  } catch (err) {
+    // A usage mistake is not a crash: print the flag diagnostic alone (no
+    // stack) and exit 2, matching the other guarded CLIs.
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
+    throw err;
+  }
+}

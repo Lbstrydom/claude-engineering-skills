@@ -38,6 +38,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parsePlanStatus } from './lib/plan-status.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+
+/**
+ * Every flag this CLI accepts. None take a value.
+ *
+ * `--check` is a SAFE mode over a MUTATING default (the bare invocation
+ * overwrites the committed `docs/plans/README.md`), so a silently-dropped
+ * `--chek` would rewrite the artifact while the operator believed they were
+ * only verifying its freshness.
+ */
+const KNOWN_FLAGS = ['--check', '--selfcheck-relocation'];
 
 const PLANS_DIR = 'docs/plans';
 const INDEX_NAME = 'README.md';
@@ -224,6 +235,8 @@ export function renderIndex(rows) {
 }
 
 function main() {
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'generate-plans-index' });
+
   if (process.argv.includes('--selfcheck-relocation')) { console.log('OK'); process.exit(0); }
 
   const dir = path.resolve(PLANS_DIR);
@@ -254,4 +267,15 @@ const isMain = (() => {
     return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
   } catch { return false; }
 })();
-if (isMain) main();
+if (isMain) {
+  try {
+    main();
+  } catch (err) {
+    // A usage mistake is not a crash: print the diagnostic alone, no stack.
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      console.error(err.message);
+      process.exit(2);
+    }
+    throw err;
+  }
+}

@@ -29,6 +29,13 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { assertRepoRoot } from './lib/assert-repo-root.mjs';
 import { runSetupCloud, OUTCOMES, EXIT_CODE_FOR } from './lib/shared-cloud-config.mjs';
+import { assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
+
+/**
+ * Every accepted flag. `--format` and `--source-repo` take a value; the short
+ * alias `-y` is not `--`-prefixed so the guard leaves it alone.
+ */
+const KNOWN_FLAGS = ['--yes', '--dry-run', '--format', '--source-repo'];
 
 // R1-audit M3/M13: tightened acceptance — only empty (default Y) or
 // explicit `y`/`yes` confirms. Typos, pasted junk, arbitrary text → reject.
@@ -46,6 +53,8 @@ function defaultPrompt(question) {
 }
 
 async function main() {
+  assertKnownFlags(process.argv, KNOWN_FLAGS, { cli: 'setup-cloud' });
+
   const argv = process.argv.slice(2);
 
   // R1-audit H6: assertRepoRoot used to run before the try/catch wrapping
@@ -112,6 +121,12 @@ const invokedAsScript = (() => {
 })();
 if (invokedAsScript) {
   main().catch((err) => {
+    // A usage mistake is not a fatal crash: print the diagnostic only, exit 2
+    // (the existing bad-argv exit code).
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
     process.stderr.write(`setup-cloud: fatal: ${err.stack || err.message}\n`);
     process.exit(EXIT_CODE_FOR[OUTCOMES.FATAL]);
   });
