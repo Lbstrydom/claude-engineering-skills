@@ -651,7 +651,7 @@ its own arm outputs; nothing replaces your plan).
 - **Explore before proposing** — codebase is ground truth, not assumptions; §1's **Code Trace** is the artifact that proves you did (required on non-trivial plans)
 - **Name the principles** — every design choice cites which principle(s) it serves (#N)
 - **One document, one audit** — no merging child plans, no archive cruft
-- **Section 10 acceptance criteria is the ship gate** for frontend/full-stack — `/ux-lock verify` grades against these
+- **Section 10 acceptance criteria are what `/ux-lock verify` grades** for frontend/full-stack — a **report, not a gate**: verify exits 0 even when criteria fail, and `/ship` does not read `plan_satisfaction`. Write them to be gradeable, not because they block a ship (they don't)
 - **Phase the work only when it's large** — §7b/§11 are conditional (Gate 1: ≥6 files / ≥2 subsystems / dep-chain; Gate 2: ≥2 clusters). Never emit a lone "Phase 1"; cluster coupled phases so the audit sees the seam
 - **Show every state** — Empty/Loading/Error/Success for any component you design
 - **Wireframe before code** — ASCII layouts prevent expensive rework

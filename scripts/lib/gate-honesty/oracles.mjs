@@ -19,6 +19,83 @@ import os from 'node:os';
  * @typedef {{state: 'ok'} | {state: 'divergent', stated: string, found: string} | {state: 'env-skipped', skipReason: string}} OracleResult
  */
 
+// ── Hermetic execution boundary (docs/plans/gate-contract-expansion.md D1a) ──
+//
+// The v1 recipe targeted `visual-audit --gate`, which is deterministic and
+// touches nothing outside its cwd. Recipes for `ship` / `cycle` / `nav-audit`
+// resolve git state, `~/.audit-loop.env`, the cloud store and providers — so a
+// tmpdir `cwd` plus a filtered env is NOT isolation: the child still reaches the
+// real HOME, the real global git config, and real credentials.
+//
+// Two properties are load-bearing, and both were audit findings:
+//   1. ALLOWLIST, never filter (fail-closed). A filter is fail-open — a
+//      credential variable added to the repo later leaks in silently. An
+//      allowlist cannot leak a variable nobody listed.
+//   2. Redirect the state ROOTS, not just cwd (Gemini G1/G3): HOME, XDG_*,
+//      TMPDIR and the git config paths all point into the fixture, and PATH
+//      MUST be carried or the child cannot resolve `node`/`git` at all and
+//      every recipe dies for a reason unrelated to the gate under test.
+
+/** Variables carried through verbatim. Everything else is absent by construction. */
+const ENV_ALLOWLIST = Object.freeze([
+  'PATH', 'Path',                      // Gemini G3 — without these nothing resolves
+  'SystemRoot', 'COMSPEC', 'windir',   // Windows needs these for process creation
+  'LANG', 'LC_ALL', 'TZ',
+  // NODE_OPTIONS is deliberately ABSENT (audit H1/H2 — found by two independent
+  // passes). It is interpreted by Node BEFORE the CLI's first line runs, and
+  // `--require`/`--import` in it preload arbitrary modules that execute outside
+  // the fixture contract: they can read real filesystem state, use parent
+  // config, or make network calls. Inheriting it would have made the boundary
+  // decorative — a hermetic harness that isn't, which is precisely the
+  // unverified-claim defect this suite exists to catch. The child is spawned
+  // with `process.execPath` directly, so no Node flags are needed; a recipe
+  // genuinely requiring one must pass it as an explicit argv flag, where it is
+  // visible in the recipe rather than ambient.
+]);
+
+/**
+ * Build a hermetic child environment rooted at `fixtureDir`.
+ *
+ * Exported for its own test: the whole point is that a credential CANNOT reach
+ * the child, and an isolation guarantee asserted only in prose is exactly the
+ * unverified claim this suite exists to remove.
+ *
+ * @param {string} fixtureDir  the run's tmpdir — becomes HOME/XDG/TMPDIR
+ * @param {NodeJS.ProcessEnv} [source]  defaults to the real environment
+ */
+export function buildHermeticEnv(fixtureDir, source = process.env) {
+  const env = Object.create(null);
+  for (const k of ENV_ALLOWLIST) {
+    if (source[k] !== undefined) env[k] = source[k];
+  }
+  const home = path.join(fixtureDir, 'home');
+  // HOME/USERPROFILE relocate `~/.audit-loop.env` and any provider config;
+  // GIT_CONFIG_* neutralise global/system git config and credential helpers.
+  env.HOME = home;
+  env.USERPROFILE = home;
+  env.XDG_CONFIG_HOME = path.join(home, '.config');
+  env.XDG_CACHE_HOME = path.join(home, '.cache');
+  // TMPDIR alone is a POSIX-only redirect. On Windows `os.tmpdir()` and native
+  // child processes read TEMP/TMP FIRST, so setting only TMPDIR leaves the
+  // child writing to the real temp dir — the isolation reads correct on Linux
+  // and silently does nothing on the platform this repo is developed on
+  // (Gemini, re-raising audit M4 as wrongly dismissed).
+  const tmp = path.join(fixtureDir, 'tmp');
+  env.TMPDIR = tmp;
+  env.TEMP = tmp;
+  env.TMP = tmp;
+  env.GIT_CONFIG_GLOBAL = path.join(home, '.gitconfig-absent');
+  env.GIT_CONFIG_SYSTEM = path.join(home, '.gitconfig-absent');
+  env.GIT_TERMINAL_PROMPT = '0';
+  // Belt and braces: a recipe must never reach a real store even if a future
+  // edit widens the allowlist. Empty-string is distinguishable from unset for
+  // code that checks presence, so delete instead.
+  for (const k of Object.keys(env)) {
+    if (/_API_KEY$|^AUDIT_DB_/.test(k)) delete env[k];
+  }
+  return env;
+}
+
 async function importImplementation(gate, repoRoot) {
   const abs = path.resolve(repoRoot, gate.implementation);
   return import(pathToFileURL(abs).href);
@@ -152,8 +229,21 @@ async function cliExit(gate, { repoRoot }) {
     if (recipe.envPrereq && !recipe.envPrereq()) {
       return { state: 'env-skipped', skipReason: `scenario "${gate.scenario}" prerequisite unavailable` };
     }
+    // Fixture-owned state roots must exist before the child looks for them.
+    fs.mkdirSync(path.join(tmpDir, 'home'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, 'tmp'), { recursive: true });
     recipe.fixture(tmpDir);
-    const r = spawnSync(process.execPath, [cliAbs, ...recipe.args], { cwd: tmpDir, encoding: 'utf-8' });
+    const r = spawnSync(process.execPath, [cliAbs, ...recipe.args], {
+      cwd: tmpDir,
+      encoding: 'utf-8',
+      env: buildHermeticEnv(tmpDir),
+      timeout: recipe.timeoutMs ?? 60_000,
+    });
+    // A killed child has a null status; treating that as "not the expected
+    // exit" would report a divergence the gate did not actually have.
+    if (r.error || r.signal) {
+      return { state: 'divergent', stated: `exit ${recipe.expectExit}`, found: `child did not complete (${r.signal || r.error?.message})` };
+    }
     if (r.status !== recipe.expectExit) {
       return { state: 'divergent', stated: `exit ${recipe.expectExit}`, found: `exit ${r.status}` };
     }

@@ -62,9 +62,16 @@ export function loadGateContracts({ skillsRoot, repoRoot }) {
  */
 export function formatSummaryLines({ contracted, uncontracted, envSkipped = [] }) {
   const lines = [];
+  // CHECKED must mean RAN, not DECLARED. Counting every declared executable
+  // gate made the very next line ("never counted as checked") false in the same
+  // output: an env-skipped gate executed nothing yet inflated the headline
+  // number. Subtracting them here is what makes that promise true.
+  const skipped = new Set(envSkipped.map((e) => `${e.skill}/${e.gate}`));
   const executableBySkill = contracted.map((c) => ({
     skill: c.skill,
-    ids: c.gates.filter((g) => g.kind === 'executable').map((g) => g.id),
+    ids: c.gates
+      .filter((g) => g.kind === 'executable' && !skipped.has(`${c.skill}/${g.id}`))
+      .map((g) => g.id),
   })).filter((c) => c.ids.length > 0);
   const totalExecutable = executableBySkill.reduce((n, c) => n + c.ids.length, 0);
 

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "1af014b808f80902",
+  "bundleVersion": "1aa6d0ef223d7a84",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
@@ -253,14 +253,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "21fe01f32e14",
-      "size": 32595,
+      "sha": "c202fb0ad4ba",
+      "size": 32757,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "21fe01f32e14",
-          "size": 32595
+          "sha": "c202fb0ad4ba",
+          "size": 32757
         },
         {
           "relPath": "examples/mermaid-blocks.md",
@@ -345,14 +345,14 @@
     },
     "ux-lock": {
       "path": "skills/ux-lock/SKILL.md",
-      "sha": "935d2ff513a9",
-      "size": 13080,
+      "sha": "77da5c33e3e6",
+      "size": 13716,
       "summary": "Generate Playwright e2e specs. Two modes:",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "935d2ff513a9",
-          "size": 13080
+          "sha": "77da5c33e3e6",
+          "size": 13716
         },
         {
           "relPath": "references/lock-mode-spec-generation.md",

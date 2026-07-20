@@ -227,9 +227,18 @@ registers the SPEC row via cross-skill; this call owns only the RUN rows.)
   exactly. Pass `--plan-id` (the `plans` row UUID) or the run is not recorded.
 - **Graceful**: cloud off → runs + prints, skips recording; Playwright missing →
   exit 5. **Verify is a report, not a blocker** — it exits 0 even when criteria
-  fail (gating is `/ship`'s job via the status rubric + `plan_satisfaction`); a
-  non-zero exit means the spec could not RUN (PW missing / fatal), not that a
-  criterion failed.
+  fail; a non-zero exit means the spec could not RUN (PW missing / fatal), not
+  that a criterion failed.
+- **Nothing gates on this today.** An earlier version said gating was `/ship`'s
+  job "via the status rubric + `plan_satisfaction`". It is not: `/ship` never
+  queries `plan_satisfaction` — `readPlanSatisfaction`
+  (`scripts/lib/store/plans-ship.mjs`) is reachable through
+  `cross-skill.mjs plan-satisfaction`, but ship's only use of it is an optional
+  status.md reporting section. Meanwhile `skills/plan/SKILL.md` called §10 "the
+  ship gate" and pointed here. Each skill delegated the gate to the other and
+  nobody enforced it. Both claims are corrected; adding a real `/ship` gate is a
+  separate decision, deliberately not taken
+  (`docs/plans/gate-contract-expansion.md` §7b Phase 1, branch A1).
 
 The verify-spec template MUST emit each test with
 `{ annotation: [{ type: 'criterion_hash', description: '<hash>' }] }` — naming

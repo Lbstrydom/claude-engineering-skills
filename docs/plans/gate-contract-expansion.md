@@ -451,10 +451,22 @@ report, not a blocker" is the more considered of the two claims. A1 would add
 the repo's first hard content gate to `/ship` and needs its own plan.
 **A2 is a real decision, not a dodge — but it must be signed off, not assumed.**
 
-*Defect B — `record-click-test`.* The subcommand does not exist and the
-integration is explicitly deferred to v2, so the word "required" is the error.
-Correct the prose; do **not** contract the absence (D2). Files:
-`skills/click-test/SKILL.md` (modify).
+*Defect B — `record-click-test` — **RETRACTED at implementation, not a defect**.*
+Read in isolation, `skills/click-test/SKILL.md:571` looks like it asserts a
+subcommand that does not exist. Read in context it does the opposite: the line
+sits inside `## Phase 7 — Persistence (Out of Scope for v1)`, under a "Why
+deferred" list, and says *"The required `record-click-test` subcommand doesn't
+exist yet"* — an accurate statement that a prerequisite is **absent**. That is
+correctly-documented deferral, and the skill even reasons that shipping a
+"graceful no-op" would be worse. **No edit made.**
+
+Recorded because the error is instructive and was mine: the gate survey quoted
+one line, and this plan promoted it to a verified defect without reading the
+surrounding section — the same unverified-claim failure the plan exists to
+attack, committed while attacking it. It also vindicates D2's ordering rule
+from an unexpected direction: "establish the intended invariant first" here
+revealed there was no defect, so a contract asserting the absence would have
+pinned a state that was never wrong.
 
 Files (A2 + B): `skills/plan/SKILL.md`, `skills/ux-lock/SKILL.md`,
 `skills/click-test/SKILL.md` (all modify). **If A1 is chosen instead, Phase 1
@@ -541,6 +553,17 @@ unproven; never to leave a flag that silently downgrades it.
   for the observed failures and belongs in `efficacy-lints`, but it is a
   different mechanism and mixing it here would make both harder to review.
   **Tracked as its own plan; that is a scope boundary, not a debt dodge.**
+- **Two unresolved contradictions in D1a's working-tree copy** (code-audit
+  Gemini gate, 2026-07-20). The copy itself is deferred — no recipe in this
+  plan needs it — but the successor plan must resolve both before building it:
+  **(a)** `node_modules` "linked rather than copied" breaks isolation, because
+  Node resolves through `realpath`: a dependency using `__dirname` /
+  `import.meta.url` walks *out* of the fixture and back into the real repo.
+  **(b)** copying "respecting `.gitignore`" contradicts the requirement that
+  the fixture contain *generated artifacts* — those are gitignored by
+  definition, so the CLIs under test would never reach their exit decision.
+  Both were introduced by the same bullet and neither has an obviously free
+  answer; that is why the copy is not built here.
 - **Carried forward to the successor plan (not dropped).** Scope narrowing
   after R3 moved Phases 3–5 out; these audit findings are that plan's required
   inputs: R3-H1 (one gate per outcome / narrowed `stated`), R3-H5 (`statedIn`
