@@ -1,5 +1,75 @@
 # Project Status Log
 
+## 2026-07-20 — SAST triage shipped, and the predicate that justified it lands 4 of 240
+
+`docs/plans/sast-triage-routing.md` is **Complete**: SARIF ingestion, three
+predicate kinds, a pure router, the CLI with its egress boundary, a 240-result
+corpus with a reviewed manifest, and 169 tests. Cluster A converged over 4 GPT
+rounds (in-scope defects 7 → 2 → 0), Cluster B over 4 more, and the consolidated
+Gemini gate returned **APPROVE** over the union diff — no bias, no
+over-engineering flags, coherence "Strong".
+
+Then it was run against real source, and that is the entry worth reading.
+
+**The design was sized for a distribution that does not exist.** The plan
+predicted bucket `C` (`sanitizer-wrapped`) would absorb ~90 DOM-XSS findings.
+Measured against the consumer repo with sanitizers discovered empirically
+beforehand — `escapeHtml` 869 interpolations, `esc` 29 — it absorbed **3**, later
+4. Precision held perfectly (every `C` and `D` verified correct, **no false
+demotion anywhere**), so the tool is not wrong; it is narrow. The cause is
+architectural: this codebase renders HTML through components, so
+`el.innerHTML = renderTable(x)` puts the escaping one or two frames from the sink
+the scanner reports. D3a's supported forms — a template literal or a
+`+`-concatenation — describe a shape the code mostly does not use. The ~90 came
+from the superseded prose walk, which read escaped templates and assumed the
+scanner would point at them.
+
+`D` went the other way: estimated ~25, measured **92 (38%)**, all two-signal
+agreements. That is the value actually delivered — 38% of the queue removed
+mechanically with zero false suppression.
+
+**v1.1 shipped two expression-shape fixes and both predictions were wrong**, in
+different ways. Crediting `sanitizer(x) || <literal>` was predicted to recover
+"more than the 1 case that surfaced" — it recovered exactly 1. Fixing the
+masking-vs-bounded-read interaction was predicted at 14 findings and moved **0
+buckets** — but took the mid-construct refusals from 14 to 0, so those findings
+are now analysed rather than refused unseen. Removing that blindfold showed the
+architectural share had been *undercounted*: 41 of the 99 remaining sinks have no
+analysable expression at all. So the ceiling on expression-shape work is now
+measured at about 4 findings, which makes the "follow the sink one function hop"
+decision sharper rather than more tempting — there is no cheap increment left.
+Both falsified predictions are recorded in §2d-i rather than quietly replaced.
+
+**The negative control earned its keep three times**, and each time the test was
+green while testing nothing. A break I applied silently no-op'd and read GREEN —
+caught only by reading the file back. A bounded-read test asserted the *verdict*
+and passed with the bound removed; rewritten to assert bytes read, it fails at
+500,000 vs ~1,000. And the TOCTOU identity check had no test at all — adding one
+exposed that Windows inodes exceed `Number.MAX_SAFE_INTEGER`, so the float
+comparison could not distinguish two objects. Both sides are bigint now.
+
+Also: blinding the D3a2 comment-stripper demotes an unsanitized `someVar` sink to
+`C` on the strength of a sanitizer quoted in a *comment* — the upstream field
+incident, reproduced on demand.
+
+**Domain-map adjudication.** Four edges had been reported by `/audit-code`'s
+architecture pass in nine consecutive rounds (~40% of each round's findings).
+Adjudicated once, on the merits, and they resolved three different ways:
+`install -> plan` was a **map error** (the `scripts/check-*.mjs` catch-all
+swallowed a plan-status checker); `dashboard -> plan` and
+`brainstorm -> requirements` are **intent** and are now declared — the latter
+closing a cycle, so its root cause (a domain-neutral LLM adapter living inside
+the brainstorm domain) is recorded as debt rather than hidden by the
+declaration; and `supabase -> stores` is **fabricated** — the migration
+references `compat-bootstrap.sql` nowhere. Nothing was declared for that one:
+declaring intent for a dependency with no code would pollute the map to silence
+a hallucination. `arch:refresh` now reports **0 violations**.
+
+Incidental, unfixed: **eight source files contain NUL bytes** and so read as
+*binary* to git, meaning their diffs are invisible in review. One (`sarif.mjs`)
+was mine and is fixed; the other seven predate this session. For a repo whose
+review process is its main quality gate, unreviewable files seem worth a pass.
+
 ## 2026-07-20 — arch-memory: the neighbourhood RPC was fanning out on stale embeddings
 
 The band-recalibration probe set scored `recall@5 = 0.5714`, and the
