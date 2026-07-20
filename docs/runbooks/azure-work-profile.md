@@ -16,7 +16,7 @@ drifting from the work repo.
 |---|---|---|
 | GPT auditor | `api.openai.com` | Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` (`gpt-5.5`) |
 | Final reviewer | Gemini (→ Claude Opus fallback) | **Claude Opus on Azure Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` (`claude-opus-4-7`) — opt in with `set-provider azure-claude` (no longer automatic; see Provider precedence below) |
-| Embeddings | Gemini `gemini-embedding-001` | Azure OpenAI `text-embedding-3-small` (`dimensions: 768`) |
+| Embeddings | Gemini `gemini-embedding-001` | Azure OpenAI `text-embedding-3-large` (`dimensions: 768`) |
 | Author (coding) | your choice in the IDE | Sonnet 4.6 in VS Code (unchanged; out of the bundle's scope) |
 
 ## Setup
@@ -53,7 +53,7 @@ set, it chains `--migrate` to apply the audit-loop migrations. Non-interactive
 
 `AZURE_OPENAI_EMBED_DEPLOYMENT` is easy to leave unset — most real work `.env`s
 carry only the API key + endpoints. When it's unset the config falls back to a
-**guess** (`text-embedding-3-small`) that your resource may not actually have,
+**guess** (`text-embedding-3-large`) that your resource may not actually have,
 producing an opaque `400 unknown_model` on every embedding call.
 
 ```bash
@@ -101,7 +101,7 @@ node scripts/gemini-review.mjs ping   # final-reviewer (Opus) connectivity
 
 **Verified contract** (smoke-tested live against the work Azure resource, 2026-06-05;
 deployment selection refreshed 2026-06-08 as the Foundry quota expanded):
-- GPT + embeddings (`text-embedding-3-small`, 768) → `…/openai/v1/...` with the
+- GPT + embeddings (`text-embedding-3-large`, 768) → `…/openai/v1/...` with the
   `api-key` header. The Responses API works on the v1 surface, so the
   chat-completions fallback is rarely needed.
 - Claude Opus/Sonnet → **native Anthropic** at `…/anthropic/v1/messages` with
@@ -109,7 +109,7 @@ deployment selection refreshed 2026-06-08 as the Foundry quota expanded):
 - Deployments: `gpt-5.5` (auditor — replaces the deprecating `gpt-5.3-chat`,
   retires 2026-06-29), `claude-opus-4-7` (reviewer — 100K TPM, holds a full audit
   transcript; the older `claude-opus-4-6` at 10K TPM can 429 unrecoverably),
-  `claude-sonnet-4-6` (arch summaries), `text-embedding-3-small` (embeddings).
+  `claude-sonnet-4-6` (arch summaries), `text-embedding-3-large` (embeddings).
 - **`claude-haiku-4-5` now exists on Foundry** but summaries deliberately stay on
   Sonnet: Haiku here is 10K TPM / 10 RPM vs Sonnet's 200K / 200, and `arch:refresh`
   is a hundreds-of-calls batch where Azure quota — not per-token cost — binds.
@@ -226,7 +226,7 @@ signal ([`openai-responses-capability.mjs`](../../scripts/lib/openai-responses-c
 **Role swaps**: GPT auditor → Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`,
 deployment `AZURE_OPENAI_GPT_DEPLOYMENT`); final reviewer → **Opus on Foundry**
 (`AZURE_AI_ENDPOINT`, deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT`) replacing Gemini;
-embeddings → Azure `text-embedding-3-small` (`dimensions: 768`).
+embeddings → Azure `text-embedding-3-large` (`dimensions: 768`).
 
 **Vector-space safety**: embeddings are only comparable within one provider's space.
 Adopting Azure on a Gemini-built index is **refused** (provenance guard in
@@ -257,7 +257,7 @@ command if missing (never auto-installs), then chains `--migrate`.
 
 **Rate limits**: fresh Azure deployments often ship tiny default quotas; the
 `contoso-ai-dev` workhorses sit at **100K TPM / 100 RPM** (`gpt-5.5`, `claude-opus-4-7`),
-`claude-sonnet-4-6` at 200K/200, `text-embedding-3-small` at 100K/600. `npm run
+`claude-sonnet-4-6` at 200K/200, `text-embedding-3-large` at 100K/600. `npm run
 azure:limits` probes each deployment's live TPM/RPM + reset window. Management (opt-in,
 no-op on the public path): a global in-flight concurrency cap
 ([`scripts/lib/azure-throttle.mjs`](../../scripts/lib/azure-throttle.mjs),

@@ -725,7 +725,7 @@ audit trail: [`docs/plans/azure-work-profile.md`](docs/plans/azure-work-profile.
 |---|---|---|
 | GPT auditor | `new OpenAI()` → api.openai.com | Azure OpenAI v1 (`AZURE_OPENAI_ENDPOINT/openai/v1`), deployment `AZURE_OPENAI_GPT_DEPLOYMENT` |
 | Final reviewer | Gemini → Claude Opus fallback | **Opus on Foundry** (`AZURE_AI_ENDPOINT`), deployment `AZURE_FOUNDRY_CLAUDE_DEPLOYMENT` — replaces Gemini |
-| Embeddings | Gemini `gemini-embedding-001` | Azure `text-embedding-3-small` (`dimensions: 768`) |
+| Embeddings | Gemini `gemini-embedding-001` | Azure `text-embedding-3-large` (`dimensions: 768`) |
 
 **Seam (mirrors `anthropic-client.mjs`)**: [`scripts/lib/openai-client.mjs`](scripts/lib/openai-client.mjs)
 `createOpenAIClient({purpose})` + [`embed-text.mjs`](scripts/lib/embed-text.mjs)

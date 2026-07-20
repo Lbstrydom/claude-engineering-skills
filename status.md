@@ -1,5 +1,38 @@
 # Project Status Log
 
+## 2026-07-20 — the Azure embed default now matches the tenant, and the doctor's "verified" now means "usable"
+
+A Databricks consumer warned it lacked `AZURE_OPENAI_EMBED_DEPLOYMENT`. The
+framing was "we set Azure up too rigidly, only looking for the small embed — can
+it pick the best it finds?" The discovery is **not** rigid: `embed-discovery.mjs`
+queries the live Azure catalog, filters on `capabilities.embeddings`, and its
+static fallback already led with `text-embedding-3-large`. Only the *fallback
+guess* in config was `-3-small`, contradicting the very ladder the doctor probes.
+That guess is now `-3-large`, matching what the tenant actually deploys.
+
+**Declined the runtime half of the request, deliberately.** "Pick the best embed
+at runtime" would be a regression, not flexibility: embeddings define a vector
+space, and at the same requested `dimensions` two models are equal length and
+mutually incomparable — a silent switch returns plausible garbage rather than an
+error. `embed-text.mjs` already states the rule at the exact line where such a
+switch would go ("Runtime stays STRICT — never auto-switch deployments here").
+A *deliberate* switch is already handled: endpoint-qualified provenance plus an
+auto-promoted full re-index, so the new default is loud, not silently corrupting.
+
+**Found while verifying: the probe asked a weaker question than the runtime.**
+`probeDeployment` called `embeddings.create({model, input})` with no
+`dimensions`, while every real `embedText` call sends it — so `azure:doctor
+--fix` could stamp a deployment `verified`, lock it into `.env`, and have it fail
+on every actual embedding. `ada-002` is exactly that case: it is in the candidate
+list, has a fixed 1536 vector, and rejects the parameter. The probe now sends the
+same `dimensions` the runtime does, and a deployment that exists-but-cannot-serve
+advances the ladder instead of halting it — while a *bare* 400 stays terminal,
+preserving the module's rule that advancing requires an explicit signal.
+
+Could not probe the tenant from here: this repo has **0 `AZURE_*` vars** (the
+profile lives in the work environment), so the empirical confirmation has to run
+where Azure is configured.
+
 ## 2026-07-20 — audited the adoption work; the best catches were in code I wrote an hour earlier, including a comment I contradicted one line later
 
 Ran `/audit-code` over the two adoption commits before syncing to consumers.

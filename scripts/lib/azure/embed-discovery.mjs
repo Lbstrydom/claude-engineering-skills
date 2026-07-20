@@ -19,6 +19,10 @@
  * @module scripts/lib/azure/embed-discovery
  */
 
+// Single source of truth for the vector width the runtime requests. The probe
+// must ask the same question embedText asks, or "verified" is not "usable".
+import { symbolIndexConfig } from '../config.mjs';
+
 /** @enum {string} */
 export const ProbeOutcome = Object.freeze({
   VERIFIED: 'verified',     // 200 — selectable
@@ -69,7 +73,19 @@ function classifyProbeError(err) {
   // 404 (or 400) advances ONLY when the code/message explicitly says not-found;
   // any other error — including a signal-less 404 — is terminal `unverified`.
   const deploymentNotFound = /unknown[_ ]?model|deploymentnotfound|deployment (?:not found|does not exist)|does not exist|no such (?:model|deployment)|model_not_found|resourcenotfound/i.test(hay);
-  const isUnsupported = (status === 400 || status === 404) && deploymentNotFound;
+  // A deployment that EXISTS but cannot serve our contract is also "advance",
+  // not "stop". `text-embedding-ada-002` has a fixed 1536-vector and rejects the
+  // `dimensions` parameter that every real embedText call sends — so without
+  // this branch the probe (which now sends `dimensions`) would classify a
+  // present-but-unusable deployment as a terminal transient failure and halt
+  // the ladder in front of a perfectly good candidate behind it.
+  //
+  // Same discipline as the not-found rule above: an EXPLICIT signal is required.
+  // A bare 400 stays terminal, because that is also what a malformed request or
+  // a gateway fault looks like, and advancing on those would repoint the vector
+  // space to hide a config defect.
+  const contractUnsupported = /dimensions|unsupported[_ ]?parameter|unknown[_ ]?parameter|invalid[_ ]?parameter|extra fields/i.test(hay);
+  const isUnsupported = (status === 400 || status === 404) && (deploymentNotFound || contractUnsupported);
   return {
     outcome: isUnsupported ? ProbeOutcome.UNSUPPORTED : ProbeOutcome.UNVERIFIED,
     status,
@@ -85,7 +101,13 @@ function classifyProbeError(err) {
  * @returns {Promise<{name:string, outcome:string, status?:number|null, detail?:string}>}
  */
 export async function probeDeployment(client, name, opts = {}) {
-  const call = () => client.embeddings.create({ model: name, input: 'ping' });
+  // Probe with the SAME `dimensions` the runtime sends. Without it the probe
+  // asked a weaker question than embedText does, so a deployment could be
+  // stamped `verified` and locked into .env, and then fail on every real call —
+  // a green check that never checked the thing that matters. `dimensions` is
+  // exactly where that gap lives: ada-002 rejects it outright.
+  const dim = opts.dim ?? symbolIndexConfig.embedDim;
+  const call = () => client.embeddings.create({ model: name, input: 'ping', dimensions: dim });
   try {
     await (opts.throttle ? opts.throttle(call) : call());
     return { name, outcome: ProbeOutcome.VERIFIED, status: 200 };

@@ -2,7 +2,7 @@
  * @fileoverview Provider-aware single-text embedding router.
  *
  * Plan: docs/plans/azure-work-profile.md §1.5 / §7 #2. Routes embeddings to
- * Azure OpenAI (`text-embedding-3-small`, `dimensions: dim`) when the Azure
+ * Azure OpenAI (`text-embedding-3-large`, `dimensions: dim`) when the Azure
  * work profile is active, else to the existing Gemini `embedContent` path.
  *
  * **Return contract** — the project-standard `{result, usage, latencyMs}`
@@ -45,7 +45,7 @@ const DEFAULT_GEMINI_EMBED_MODEL = symbolIndexConfig.embedModel;
  * The provider identity for the active embedding route. Callers store/compare
  * this against the index's recorded provenance to prevent cross-provider mixing.
  * @param {{model?:string, azure?:typeof azureConfig}} [opts]
- * @returns {string} e.g. `azure-openai:text-embedding-3-small` | `gemini:gemini-embedding-001`
+ * @returns {string} e.g. `azure-openai:text-embedding-3-large` | `gemini:gemini-embedding-001`
  */
 export function providerTag(opts = {}) {
   const cfg = opts.azure || azureConfig;

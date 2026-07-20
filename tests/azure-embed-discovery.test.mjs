@@ -4,7 +4,7 @@
  * we probe), the H5 typed outcomes (only unknown_model advances), first-verified
  * wins (H11), and a bounded probe budget.
  */
-import { test, describe } from 'node:test';
+import { test, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   probeDeployment, listEmbeddingCandidates, selectEmbedDeployment, ProbeOutcome, STATIC_EMBED_CANDIDATES,
@@ -30,6 +30,50 @@ function fakeClient({ deployed = [], catalog = null, failWith = null } = {}) {
 }
 
 const err = (status, code, message) => Object.assign(new Error(message || code), { status, code });
+
+describe('probeDeployment — "verified" must mean "usable"', () => {
+  // The probe used to call embeddings.create WITHOUT `dimensions`, while every
+  // real embedText call sends it. So a deployment could pass the probe, get
+  // locked into .env by `azure:doctor --fix`, and then fail on every actual
+  // embedding — a green check that never checked the thing that matters.
+
+  it('sends the same `dimensions` the runtime sends', async () => {
+    let seen = null;
+    const client = {
+      embeddings: { create: async (args) => { seen = args; return { data: [{ embedding: [0.1] }] }; } },
+      models: { list: async () => ({ data: [] }) },
+    };
+    await probeDeployment(client, 'text-embedding-3-large');
+    assert.ok(seen, 'probe must call embeddings.create');
+    assert.equal(typeof seen.dimensions, 'number');
+    assert.ok(seen.dimensions > 0, 'dimensions must be a positive integer');
+  });
+
+  it('a deployment that REJECTS dimensions advances the ladder, not halts it', async () => {
+    // ada-002 exists but has a fixed 1536 vector and refuses `dimensions`.
+    // Classifying that as a terminal transient failure would stop discovery in
+    // front of a perfectly good candidate behind it.
+    const err = new Error("Unsupported parameter: 'dimensions' is not supported with this model.");
+    err.status = 400;
+    const r = await probeDeployment({
+      embeddings: { create: async () => { throw err; } },
+      models: { list: async () => ({ data: [] }) },
+    }, 'text-embedding-ada-002');
+    assert.equal(r.outcome, ProbeOutcome.UNSUPPORTED);
+  });
+
+  it('a BARE 400 with no explicit signal stays terminal', async () => {
+    // The module's discipline: advancing without an explicit signal would
+    // repoint the vector space to hide a malformed-request or gateway fault.
+    const err = new Error('Bad Request');
+    err.status = 400;
+    const r = await probeDeployment({
+      embeddings: { create: async () => { throw err; } },
+      models: { list: async () => ({ data: [] }) },
+    }, 'whatever');
+    assert.equal(r.outcome, ProbeOutcome.UNVERIFIED);
+  });
+});
 
 describe('probeDeployment — typed outcome (H5)', () => {
   test('200 → verified', async () => {

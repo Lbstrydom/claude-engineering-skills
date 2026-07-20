@@ -33,7 +33,7 @@ const fakeGeminiClient = (vec) => ({
 
 describe('providerTag — vector-space provenance (Gemini-R2-H1)', () => {
   it('reports azure-openai when active', () => {
-    assert.equal(providerTag({ azure: AZURE }), 'azure-openai:text-embedding-3-small');
+    assert.equal(providerTag({ azure: AZURE }), 'azure-openai:text-embedding-3-large');
   });
   it('reports gemini when inactive', () => {
     assert.equal(providerTag({ azure: INACTIVE, model: 'gemini-embedding-001' }), 'gemini:gemini-embedding-001');
@@ -45,7 +45,7 @@ describe('embedText — return contract {result, usage, latencyMs}', () => {
     const vec = new Array(768).fill(0.1);
     const out = await embedText('hello', { dim: 768, azure: AZURE, client: fakeAzureClient(vec) });
     assert.equal(out.result.length, 768);
-    assert.equal(out.provider, 'azure-openai:text-embedding-3-small');
+    assert.equal(out.provider, 'azure-openai:text-embedding-3-large');
     assert.ok(typeof out.latencyMs === 'number');
   });
 

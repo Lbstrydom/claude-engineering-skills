@@ -652,7 +652,7 @@ export function buildAzureConfig(env = process.env) {
       openaiEndpoint: null, aiEndpoint: null, apiKey: null,
       apiVersion: 'preview', gptDeployment: null, claudeDeployment: null,
       summaryDeployment: 'claude-sonnet-4-6',
-      embedDeployment: 'text-embedding-3-small', claudeApiShape: 'anthropic',
+      embedDeployment: 'text-embedding-3-large', claudeApiShape: 'anthropic',
       claudeBaseUrl: null, foundryApiPath: '/openai/v1',
     });
   }
@@ -709,7 +709,19 @@ export function buildAzureConfig(env = process.env) {
     // empty, and whitespace-only ALL collapse to the one default path, so the
     // check-setup predicate and runtime agree. Default kept (resilience over
     // fail-loud — the doctor handles a wrong/undeployed default by probing).
-    embedDeployment: (env.AZURE_OPENAI_EMBED_DEPLOYMENT || '').trim() || 'text-embedding-3-small',
+    // Default is `text-embedding-3-large` (2026-07-20): it is what the work
+    // tenant actually deploys, and it already led the discovery ladder's
+    // preference order — the old `-3-small` default contradicted the very list
+    // the doctor probes.
+    //
+    // Changing a default embedding model is a VECTOR-SPACE change, not a
+    // quality upgrade: at the same requested `dimensions` the two are equal
+    // length and mutually incomparable. This is safe only because the change is
+    // LOUD — `resolveEmbedProfile()` records endpoint-qualified provenance, and
+    // a space change auto-promotes the next refresh to a FULL re-index rather
+    // than silently mixing spaces. Any repo that had an index on the old default
+    // pays one re-index; none of them silently corrupt.
+    embedDeployment: (env.AZURE_OPENAI_EMBED_DEPLOYMENT || '').trim() || 'text-embedding-3-large',
     claudeApiShape,
     // Native-Anthropic base for the Foundry Claude path — the SDK appends
     // `/v1/messages`, yielding `…/anthropic/v1/messages`.

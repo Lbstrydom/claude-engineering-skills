@@ -15,7 +15,11 @@ describe('buildAzureConfig — opt-in gate', () => {
     assert.equal(c.active, false);
     assert.equal(c.openaiEndpoint, null);
     assert.equal(c.apiVersion, 'preview'); // v1-surface literal
-    assert.equal(c.embedDeployment, 'text-embedding-3-small');
+    // Pinned literal, deliberately not read back from config: a change to the
+    // default embedding deployment is a VECTOR-SPACE change (a repo indexed on
+    // the old one gets auto-promoted to a full re-index), so it must never
+    // happen silently. If this line needs editing, that is the point.
+    assert.equal(c.embedDeployment, 'text-embedding-3-large');
     assert.equal(c.claudeApiShape, 'anthropic');
   });
 
