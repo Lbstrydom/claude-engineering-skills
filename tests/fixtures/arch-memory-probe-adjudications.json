@@ -1,0 +1,55 @@
+{
+  "_readme": [
+    "Human rulings on held-out probe misses. SEPARATE FILE BY DESIGN.",
+    "",
+    "The held-out fixture (arch-memory-probes-heldout.json) says, in its own",
+    "header, not to edit it to make a gate pass — that would destroy the only",
+    "untainted measurement available. But a probe can miss because the FIXTURE",
+    "named one acceptable answer when the codebase genuinely has several, and",
+    "refusing to ever record that would make the metric permanently wrong in the",
+    "other direction.",
+    "",
+    "So rulings live here instead. The fixture stays exactly as authored, the raw",
+    "mechanical recall stays reported, and each ruling is attributable and",
+    "reviewable on its own.",
+    "",
+    "RULES:",
+    "  1. A ruling names the SPECIFIC returned symbol judged acceptable. Never a",
+    "     blanket 'this probe is fine'.",
+    "  2. `ruledBy` is the human who decided. This is a judgment call, recorded as",
+    "     one — not a silent metric adjustment.",
+    "  3. The harness reports RAW and ADJUDICATED recall side by side. A reader",
+    "     must always be able to see what the machine measured before anyone",
+    "     ruled on it.",
+    "  4. Rulings are for 'the fixture named the wrong-but-not-only answer'. They",
+    "     are NOT for 'the retrieval was bad but I want the gate green'."
+  ],
+  "probeSetRef": "arch-memory-probes-heldout.json",
+  "rulings": [
+    {
+      "probeId": "ho-dashboard-present-finding",
+      "verdict": "acceptable-alternative-returned",
+      "acceptedSymbol": {
+        "filePath": "scripts/lib/dashboard/sections/audit-run-detail.mjs",
+        "symbolName": "findingRow"
+      },
+      "rationale": "findingRow takes a single finding and emits an escaped <tr> with severity, pass, file, status and detail cells. The intent was 'format a single audit finding for display in the dashboard'. Source read before ruling; it is arguably a better answer than the a-priori pick (presentFinding).",
+      "ruledBy": "Louis Strydom",
+      "ruledAt": "2026-07-20"
+    },
+    {
+      "probeId": "ho-install-atomic-transaction",
+      "verdict": "genuine-miss",
+      "rationale": "Closest returned candidate was atomicWriteFileSync, which writes ONE file atomically. The intent requires all-or-nothing across a SET of writes ('cannot leave a half-installed state') — that is what transaction.mjs's journal, rollback and quarantine exist for. A single-file atomic write does not solve the stated problem. Recorded as a real miss; the probe wording was also ambiguous.",
+      "ruledBy": "Louis Strydom",
+      "ruledAt": "2026-07-20"
+    },
+    {
+      "probeId": "ho-install-receipt-write",
+      "verdict": "genuine-miss",
+      "rationale": "Closest returned candidate was receiptPath — six lines that path.join a filename. It records nothing, and the intent was 'record which files an install wrote so it can be undone'. Recorded as a real miss. Note writeReceipt scored 0.752 on a DIFFERENT probe but missed its own, which points at a weak purposeSummary rather than a retrieval defect.",
+      "ruledBy": "Louis Strydom",
+      "ruledAt": "2026-07-20"
+    }
+  ]
+}

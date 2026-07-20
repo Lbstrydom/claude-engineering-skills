@@ -144,6 +144,49 @@ export function matchesExpected(record, probe) {
  *
  * @param {Array<{probe: object, records: Array, error?: string}>} results
  */
+/**
+ * Apply human rulings to probe results (see
+ * `tests/fixtures/arch-memory-probe-adjudications.json`).
+ *
+ * A probe can miss because the FIXTURE named one acceptable answer when the
+ * codebase genuinely has several. Refusing to ever record that leaves the
+ * metric wrong in the other direction — but editing the held-out fixture to
+ * fix it would destroy the only untainted measurement available. So rulings
+ * are applied HERE, as an overlay, and the caller reports raw and adjudicated
+ * recall side by side.
+ *
+ * A ruling names a specific returned symbol. It cannot invent a hit that was
+ * not in the returned set: if the accepted symbol is absent from `records`,
+ * the ruling is IGNORED and reported as unapplied, so a stale or wishful
+ * ruling cannot manufacture recall.
+ *
+ * @returns {{results: object[], applied: string[], unapplied: string[]}}
+ */
+export function applyAdjudications(results, adjudications) {
+  const rulings = adjudications?.rulings || [];
+  const accepted = new Map(
+    rulings
+      .filter(r => r.verdict === 'acceptable-alternative-returned' && r.acceptedSymbol)
+      .map(r => [r.probeId, r.acceptedSymbol]),
+  );
+  const applied = [];
+  const unapplied = [];
+  const out = (results || []).map(r => {
+    const sym = accepted.get(r?.probe?.id);
+    if (!sym) return r;
+    const present = (r.records || []).some(rec =>
+      String(rec.filePath || '').replace(/\\/g, '/').toLowerCase() === String(sym.filePath).replace(/\\/g, '/').toLowerCase()
+      && String(rec.symbolName || '').toLowerCase() === String(sym.symbolName).toLowerCase());
+    if (!present) { unapplied.push(r.probe.id); return r; }
+    applied.push(r.probe.id);
+    // Widen this probe's acceptable set, in-memory only. The fixture on disk
+    // is untouched.
+    const probe = { ...r.probe, alternates: [...(r.probe.alternates || []), sym] };
+    return { ...r, probe };
+  });
+  return { results: out, applied, unapplied };
+}
+
 export function computeMetrics(results) {
   const resolved = (results || []).filter(r => r && !r.error && Array.isArray(r.records));
   if (resolved.length === 0) {
@@ -240,8 +283,22 @@ export function deriveThresholds(results, metrics) {
   const rows = candidates.map(evaluate);
   const jd = metrics.distribution.hardNegativeCeiling;
 
-  // `reuse` is the lowest threshold meeting the strict bar.
-  const reuse = rows.find(r => r.precision !== null && r.precision >= 0.90 && r.hardFp <= 1) || null;
+  // THE NOISE CEILING BOUNDS THE SEARCH — it is not merely a post-hoc check.
+  //
+  // `T_jd` is the 95th percentile of best-hit similarity across hard negatives:
+  // below it, a score is indistinguishable from "no appropriate symbol exists".
+  // Selecting `reuse`/`extend` from the full range and only THEN checking the
+  // ordering let the cutoff land under the ceiling and fail — measured here,
+  // precision first reaches 0.90 at t=0.71 while the ceiling sits at 0.7162, so
+  // the "best" reuse cutoff was one that fires inside the noise band.
+  //
+  // The `hardFp <= 1` allowance is what let it dip: tolerating a single
+  // hard-negative false positive is reasonable at a cutoff ABOVE the ceiling,
+  // but below it that tolerance is measuring noise. Constrain the candidate
+  // range instead, so a band can only ever be defined where scores mean
+  // something.
+  const eligible = jd === null ? rows : rows.filter(r => r.t > jd);
+  const reuse = eligible.find(r => r.precision !== null && r.precision >= 0.90 && r.hardFp <= 1) || null;
 
   // `extend` MUST be selected from thresholds strictly BELOW T_reuse. Scanning
   // the same ascending list independently with a weaker bar (≥0.75) commonly
@@ -252,9 +309,9 @@ export function deriveThresholds(results, metrics) {
   // than a wrong-thresholds one. Constraining the search range is the fix;
   // the ordering check below stays as the backstop, not the mechanism.
   const extend = reuse
-    ? (rows.filter(r => r.t < reuse.t).reverse()
+    ? (eligible.filter(r => r.t < reuse.t).reverse()
         .find(r => r.precision !== null && r.precision >= 0.75 && r.hardFp <= 1) || null)
-    : (rows.find(r => r.precision !== null && r.precision >= 0.75 && r.hardFp <= 1) || null);
+    : (eligible.find(r => r.precision !== null && r.precision >= 0.75 && r.hardFp <= 1) || null);
 
   // Ordering invariant (C7): T_reuse > T_extend > T_jd, else no thresholds.
   if (reuse && extend && jd !== null && !(reuse.t > extend.t && extend.t > jd)) {
@@ -365,8 +422,20 @@ async function main() {
     }
   }
 
-  const metrics = computeMetrics(results);
-  const derived = deriveThresholds(results, metrics);
+  // RAW first, always. The adjudicated figure never replaces it in the report —
+  // a reader must be able to see what the machine measured before anyone ruled.
+  const rawMetrics = computeMetrics(results);
+
+  let adjudications = null;
+  const adjPath = arg('--adjudications', path.resolve('tests/fixtures/arch-memory-probe-adjudications.json'));
+  try {
+    if (fs.existsSync(adjPath)) adjudications = JSON.parse(fs.readFileSync(adjPath, 'utf-8'));
+  } catch (err) {
+    process.stderr.write(`[calibrate] adjudications unreadable (${err.message}) — using raw only\n`);
+  }
+  const adj = adjudications ? applyAdjudications(results, adjudications) : { results, applied: [], unapplied: [] };
+  const metrics = adjudications ? computeMetrics(adj.results) : rawMetrics;
+  const derived = deriveThresholds(adj.results, metrics);
   const provenance = await buildProvenance(probes);
 
   // Per-probe detail. A gate verdict that says "recall 0.57" without showing
@@ -417,6 +486,8 @@ async function main() {
   const missed = perProbe.filter(p => p.outcome === 'missed');
   const report = {
     metrics,
+    rawMetrics,
+    adjudication: { applied: adj.applied, unapplied: adj.unapplied, source: adjudications ? adjPath : null },
     derived,
     provenance,
     probeCount: probes.length,
