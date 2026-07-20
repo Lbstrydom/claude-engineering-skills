@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
+import { detectRepoStack } from '../lib/repo-stack.mjs';
 import {
   initLearningStore,
   isCloudEnabled,
@@ -274,6 +275,22 @@ async function main() {
     process.stderr.write(`arch:render: importers fetch failed — ${err.message}; column omitted to avoid false-leaf labels\n`);
   }
 
+  // Which non-JS/TS stacks does this repo actually carry? `stackKinds` (not
+  // `stack`) is the right field: a repo with a package.json AND .java sources
+  // reports stack='js-ts' — it clears the gate and its Java half is dropped
+  // just as silently as a mixed repo's Python half, which the coarser `stack`
+  // enum cannot express. Cheap + pure (markers + a bounded git ls-files).
+  //
+  // Scoped to stacks that define a SYMBOL namespace someone could duplicate.
+  // `postgres` is deliberately excluded: the banner exists so an absent symbol
+  // is not misread as nonexistent, and migration DDL is not a symbol space
+  // arch-memory reasons about — including it would fire on every repo with a
+  // supabase/migrations dir (this one), and a banner that always fires is one
+  // nobody reads.
+  const SYMBOL_BEARING_STACKS = new Set(['python', 'java']);
+  const unindexedStackKinds = detectRepoStack(repoRoot).stackKinds
+    .filter(k => SYMBOL_BEARING_STACKS.has(k));
+
   const { markdown, bytesWritten } = renderArchitectureMap({
     repoName: identity.name,
     generatedAt: new Date().toISOString(),
@@ -289,6 +306,7 @@ async function main() {
     domainSummaries,
     importerMap,
     importGraphPopulated: snap.importGraphPopulated === true,
+    unindexedStackKinds,
   });
 
   atomicWriteFileSync(outPath, markdown);

@@ -43,6 +43,42 @@ describe('groupByDomain', () => {
   });
 });
 
+describe('renderArchitectureMap — partial-coverage banner', () => {
+  const base = {
+    repoName: 'r', generatedAt: '2026-05-01T00:00:00Z', commitSha: 'abc1234',
+    refreshId: '00000000-0000-4000-8000-000000000001',
+    drift: 0, threshold: 20, status: 'GREEN', symbols: [], violations: [],
+  };
+
+  it('warns when the repo carries unindexed symbol-bearing sources', () => {
+    // Sibling of the Truncated banner: both mean "this document is
+    // incomplete". A map that reads complete while covering half a repo is
+    // the failure — a reader takes "absent" for "does not exist".
+    const { markdown } = renderArchitectureMap({ ...base, unindexedStackKinds: ['python'] });
+    assert.match(markdown, /Partial coverage/);
+    assert.match(markdown, /python/);
+    assert.match(markdown, /JS\/TS portion ONLY/);
+  });
+
+  it('names every unindexed kind, not just the first', () => {
+    const { markdown } = renderArchitectureMap({
+      ...base, unindexedStackKinds: ['python', 'java'],
+    });
+    assert.match(markdown, /python, java/);
+  });
+
+  it('is SILENT for a pure JS/TS repo — a banner that always fires is unread', () => {
+    const { markdown } = renderArchitectureMap({ ...base, unindexedStackKinds: [] });
+    assert.doesNotMatch(markdown, /Partial coverage/);
+  });
+
+  it('defaults to silent when the caller omits the field entirely', () => {
+    // Back-compat: every existing call site predates this parameter.
+    const { markdown } = renderArchitectureMap({ ...base });
+    assert.doesNotMatch(markdown, /Partial coverage/);
+  });
+});
+
 describe('renderArchitectureMap', () => {
   it('starts with the sticky marker', () => {
     const { markdown } = renderArchitectureMap({
@@ -138,6 +174,51 @@ describe('renderNeighbourhoodCallout', () => {
     });
     assert.match(markdown, /No near-duplicates found/);
   });
+  // ── unindexed file types — absence of evidence vs evidence of absence ────
+  //
+  // AGENTS.md makes this consultation mandatory before writing a new symbol
+  // and reads empty records as "proceed greenfield". For a .py/.java target
+  // there are no rows to match because nothing was ever indexed, so the
+  // greenfield wording would be a confident wrong answer — and would invite
+  // exactly the duplicate arch-memory exists to prevent.
+  it('empty records for an UNINDEXED path must NOT say greenfield', () => {
+    const { markdown } = renderNeighbourhoodCallout({
+      records: [], cloudStatus: 'ok', targetPaths: ['api/users.py'],
+    });
+    assert.doesNotMatch(markdown, /greenfield/i);
+    assert.doesNotMatch(markdown, /No near-duplicates found/);
+    assert.match(markdown, /not indexed/i);
+    assert.match(markdown, /absence of evidence/i);
+    assert.match(markdown, /api\/users\.py/);
+  });
+
+  it('empty records for an INDEXED path still says greenfield (no false alarm)', () => {
+    const { markdown } = renderNeighbourhoodCallout({
+      records: [], cloudStatus: 'ok', targetPaths: ['lib/x.mjs'],
+    });
+    assert.match(markdown, /greenfield/i);
+    assert.doesNotMatch(markdown, /not indexed/i);
+  });
+
+  it('a mixed target list warns even when the JS half returned records', () => {
+    const { markdown } = renderNeighbourhoodCallout({
+      cloudStatus: 'ok',
+      targetPaths: ['lib/x.mjs', 'api/users.py'],
+      totalCandidatesConsidered: 1,
+      records: [{
+        symbolName: 'foo', filePath: 'lib/x.mjs', startLine: 10,
+        kind: 'function', purposeSummary: 'does foo',
+        similarityScore: 0.91, hopScore: 1.0, score: 0.95, recommendation: 'reuse',
+      }],
+    });
+    const partialLine = markdown.split('\n').find(l => l.includes('Partial'));
+    assert.ok(partialLine, 'expected a Partial caveat line');
+    assert.match(partialLine, /api\/users\.py/);
+    // The INDEXED path must not be named as unindexed — the caveat has to be
+    // precise about which target it disclaims, or it just reads as noise.
+    assert.doesNotMatch(partialLine, /lib\/x\.mjs/);
+  });
+
   it('non-empty emits a blockquote callout starting with "Neighbourhood considered"', () => {
     const { markdown } = renderNeighbourhoodCallout({
       cloudStatus: 'ok',

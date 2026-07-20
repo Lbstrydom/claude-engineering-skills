@@ -105,6 +105,11 @@ export function detectShape(cwd = process.cwd()) {
 
   return {
     stack: stackInfo.stack,
+    // The per-kind list, NOT derivable from `stack`: a repo with a
+    // package.json AND .java sources reports stack='js-ts' while carrying a
+    // whole language the symbol extractor never reads. Rules that speak about
+    // indexing coverage need the kinds, not the 4-value enum.
+    stackKinds: stackInfo.stackKinds,
     pythonFramework: stackInfo.pythonFramework,
     framework,
     hasUiRoutes,

@@ -75,8 +75,20 @@ export const SKILLS = [
     // in v1 — so this verdict must track THAT condition exactly.
     skill: 'architectural memory (arch:refresh / arch:render)',
     evaluate: (p) => {
-      if (p.stack === 'js-ts') {
+      // `stack` is a 4-value enum and cannot express "js-ts repo that also
+      // carries .java" — that reports plain `js-ts`, clears the gate, and has
+      // its Java half dropped exactly like a mixed repo's Python half. Check
+      // stackKinds so the coarser enum's blind spot doesn't read as FITS.
+      const unindexed = (p.stackKinds || []).filter(k => k === 'python' || k === 'java');
+      if (p.stack === 'js-ts' && unindexed.length === 0) {
         return { label: 'FITS', reason: 'Symbol extractor supports js-ts.' };
+      }
+      if (p.stack === 'js-ts') {
+        return {
+          label: 'PARTIAL',
+          reason: `Indexed as js-ts, but this repo also carries ${unindexed.join(', ')} sources — only JS/TS files are indexed.`,
+          setup: 'Read the generated map as covering the JS/TS half ONLY. Do not treat "no duplicate found" as authoritative for the other sources.',
+        };
       }
       // `mixed` clears refresh.mjs's stack gate, so the map BUILDS — but the
       // extractor's extension allowlist (sensitive-egress-gate.mjs

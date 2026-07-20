@@ -1,5 +1,45 @@
 # Project Status Log
 
+## 2026-07-20 — the mixed-repo fix was a label, not a fix; the consultation was still handing back a confident wrong answer
+
+Follow-up to the adoption session below, prompted by a single question: *is this
+properly resolved?* It wasn't. I had changed `skills:fit-check` to report
+architectural memory as PARTIAL on a mixed repo and treated that as done — but
+fit-check is an **opt-in diagnostic**. The two surfaces people actually consume
+were untouched.
+
+**The dangerous one was the consultation, not the map.** AGENTS.md makes
+`get-neighbourhood` mandatory before writing any new symbol and reads empty
+records as *proceed greenfield*. For a `.py` target in a mixed repo the query
+returns empty every time — not because nothing similar exists, but because
+nothing was ever indexed. So the mandatory consultation was returning a
+confident "write it fresh" for every Python symbol: the exact duplicate
+arch-memory exists to prevent, delivered by arch-memory itself.
+`renderNeighbourhoodCallout` now distinguishes the two meanings of empty —
+absence of evidence vs evidence of absence — and refuses the greenfield wording
+for unindexed file types. An indexed path still gets the old wording, so the
+change adds no false alarms.
+
+**The map now says what it covers.** `renderArchitectureMap` gained a
+partial-coverage banner, sibling to the existing `Truncated` banner — both mean
+"this document is incomplete", and an incomplete map that reads complete is how
+"absent" gets taken for "does not exist".
+
+**Two blind spots surfaced while wiring it.** `stack` is a 4-value enum and
+cannot express *js-ts repo that also carries `.java`* — that reports plain
+`js-ts`, clears the gate, and drops its Java half exactly like a mixed repo
+drops Python, while fit-check said FITS. Fixed by keying on `stackKinds` and
+threading it onto the ShapeProfile (it wasn't exposed, so the first version of
+the rule silently no-opped — caught only by asserting the field exists).
+Second: `stackKinds` includes `postgres`, which would have fired the banner on
+*this* repo. Scoped to symbol-bearing stacks — a banner that always fires is one
+nobody reads.
+
+**What I'd carry forward:** "fixed the label" felt like closure and wasn't. The
+question that exposed it — *is this properly resolved?* — is worth asking against
+my own claims, because the failure mode is specific and recognisable: fixing the
+surface that reports a problem while leaving the surface that causes it.
+
 ## 2026-07-20 — a Databricks repo couldn't adopt the bundle; every framing I proposed for why was wrong before the next one landed
 
 A field report from a Python/Databricks consumer (`dbricks-test1`): the synced tooling

@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { detectShape } from '../scripts/lib/fit-check/detect.mjs';
@@ -363,6 +364,29 @@ describe('architectural-memory rule tracks the real extractor gate', () => {
     assert.equal(v.label, 'PARTIAL');
     assert.match(v.reason, /only JS\/TS files are indexed/);
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('a js-ts repo carrying .java is PARTIAL, not FITS', () => {
+    // The blind spot `stack` alone cannot see: package.json + .java reports
+    // stack='js-ts', clears refresh.mjs's gate, and drops the Java half as
+    // silently as a mixed repo drops Python. Needs a git repo — hasJavaSources
+    // enumerates via `git ls-files`.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fit-java-'));
+    execFileSync('git', ['init', '--quiet', dir]);
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"dependencies":{"react":"18"}}');
+    fs.writeFileSync(path.join(dir, 'Main.java'), 'class Main {}\n');
+    const profile = detectShape(dir);
+    assert.equal(profile.stack, 'js-ts');
+    assert.ok(profile.stackKinds.includes('java'), 'stackKinds must expose java');
+    const v = verdictFor(applyRules(profile), ARCH_MEMORY);
+    assert.equal(v.label, 'PARTIAL');
+    assert.match(v.reason, /java/);
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('a pure js-ts repo stays FITS (the banner must not always fire)', () => {
+    const profile = detectShape(fixture('node-cli-tool'));
+    assert.equal(verdictFor(applyRules(profile), ARCH_MEMORY).label, 'FITS');
   });
 
   it('the extension allowlist backing that claim really excludes .py/.java', () => {

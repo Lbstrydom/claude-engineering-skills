@@ -10,6 +10,13 @@
  * @module scripts/lib/arch-render
  */
 
+// The ONE allowlist the extractor actually applies. Imported rather than
+// restated: a local copy would drift from the extractor, and these renderers
+// make claims ABOUT that list ("we index .js/.ts…"), so a stale copy would
+// turn the reassurance into a lie. Pure predicate — the "No I/O" rule above
+// still holds.
+import { isExtensionAllowlisted } from './sensitive-egress-gate.mjs';
+
 const MERMAID_DEFS = `
 classDef container fill:#f5f5f5,stroke:#333,stroke-width:2px,color:#000
 classDef component fill:#e8f0ff,stroke:#3178c6,color:#000
@@ -186,6 +193,11 @@ export function renderArchitectureMap({
   // Plan §2.6.1 (R1-H2 / R2-H1) — when false, "0 importers" renders as
   // "(unknown — run arch:refresh:full)" to distinguish leaf from missing.
   importGraphPopulated = false,
+  // Stack kinds present in the repo that the extractor does NOT index
+  // (anything but js-ts). Non-empty → this map covers only part of the repo
+  // and must say so. Sibling of `renderedSymbolCap`: both mean "the document
+  // is incomplete", and an incomplete map that reads complete is the failure.
+  unindexedStackKinds = [],
 }) {
   const grouped = groupByDomain(symbols);
   const domainCount = grouped.size;
@@ -200,6 +212,17 @@ export function renderArchitectureMap({
   if (renderedSymbolCap != null) {
     out.push('');
     out.push(`> ⚠ **Truncated** — this snapshot has more symbols than the renderer's cap of ${renderedSymbolCap}. Only the first ${renderedSymbolCap} are listed below; raise \`ARCH_RENDER_MAX_SYMBOLS\` and re-run \`npm run arch:render\` to include the rest.`);
+    out.push('');
+  }
+
+  // A repo carrying non-JS/TS sources clears refresh.mjs's stack gate as long
+  // as it ALSO has a package.json with deps — so the map builds and, without
+  // this banner, presents as a complete picture of a repo it has only half
+  // read. Louder than the Python-only case only because that one aborts.
+  if (unindexedStackKinds.length > 0) {
+    const kinds = unindexedStackKinds.join(', ');
+    out.push('');
+    out.push(`> ⚠ **Partial coverage** — this repo also contains ${kinds} sources, which the symbol extractor does not index (its allowlist is \`.js/.jsx/.mjs/.cjs/.ts/.tsx/.vue/.svelte\`). Everything below describes the JS/TS portion ONLY. A symbol absent from this map may simply be unindexed — do not read "not present" as "does not exist".`);
     out.push('');
   }
 
@@ -305,7 +328,31 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
     ].join('\n');
     return { markdown: md, appendixMarkdown: '', truncatedAt: 0 };
   }
+  // "No records" means two very different things, and conflating them makes
+  // the consultation confidently wrong. For an INDEXED file type, empty is
+  // evidence: nothing similar exists, greenfield is right. For a file type the
+  // extractor never reads (.py, .java, .go, .rs, .sql …) empty is the ABSENCE
+  // of evidence — there are no rows to match because nothing was ever indexed.
+  // AGENTS.md makes this consultation mandatory before writing a new symbol
+  // and reads empty records as "proceed greenfield", so emitting the greenfield
+  // wording here would hand back a duplicate-inviting verdict for every Python
+  // symbol in a mixed repo — the exact outcome arch-memory exists to prevent.
+  const unindexable = (targetPaths || []).filter(p => !isExtensionAllowlisted(p));
   if (!records || records.length === 0) {
+    if (unindexable.length > 0) {
+      const md = [
+        '> **Neighbourhood considered** — _not indexed for these file types_',
+        '>',
+        `> ${unindexable.map(p => `\`${p}\``).join(', ')}`,
+        '>',
+        '> The symbol extractor indexes `.js/.jsx/.mjs/.cjs/.ts/.tsx/.vue/.svelte`',
+        '> only, so there are no rows to match against for the path(s) above.',
+        '> **This is absence of evidence, not evidence of absence** — it does NOT',
+        '> mean no similar code exists. Check for near-duplicates by hand before',
+        '> adding a new symbol here.',
+      ].join('\n');
+      return { markdown: md, appendixMarkdown: '', truncatedAt: 0 };
+    }
     const md = [
       '> **Neighbourhood considered**',
       '>',
@@ -336,6 +383,13 @@ export function renderNeighbourhoodCallout({ records, targetPaths, totalCandidat
   if (records.length > TOP_N) {
     rows.push('>');
     rows.push(`> _Top-${TOP_N} of ${records.length}. Full neighbourhood at end of this plan._`);
+  }
+  // Records came back, but if SOME targets are unindexable the result covers
+  // only part of what was asked about. Without this line a mixed-language
+  // consultation looks fully answered because the JS/TS half returned rows.
+  if (unindexable.length > 0) {
+    rows.push('>');
+    rows.push(`> ⚠ _Partial: ${unindexable.map(p => `\`${p}\``).join(', ')} ${unindexable.length === 1 ? 'is' : 'are'} not an indexed file type, so the results above say nothing about ${unindexable.length === 1 ? 'it' : 'them'}._`);
   }
   // Appendix (full list as flat table, not in callout)
   const appendix = [
