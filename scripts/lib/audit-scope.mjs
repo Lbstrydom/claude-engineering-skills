@@ -118,10 +118,20 @@ export function safeReadFile(relPath, cwdBoundary) {
  *   caller with a documented reason to opt out.
  * @returns {string}
  */
+/**
+ * Characters a single redaction may remove before it counts as a SPAN COLLAPSE
+ * rather than a token mask. Masking the longest single-token pattern costs well
+ * under this; only a multi-line span (`pem-private-key`) exceeds it, and only a
+ * span can hide code from a reviewer.
+ */
+const SPAN_COLLAPSE_CHARS = 200;
+
 export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 120000, redact = true } = {}) {
   let total = '';
   let omitted = 0;
   let sensitive = 0;
+  /** Files where redaction collapsed a SPAN (not just masked a token). */
+  const shortened = [];
 
   const cwdBoundary = path.resolve('.');
 
@@ -135,12 +145,38 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
     // fragment in the retained prefix.
     const raw = redact ? redactSecrets(result.content) : result.content;
 
+    // Redaction can COLLAPSE a span, not just mask a token — a multi-line match
+    // (`pem-private-key`) replaces everything it covers with one placeholder. So
+    // the text under review can be structurally different from the file on disk,
+    // and nothing said so. Observed 2026-07-19: a test file lost ~80 lines this
+    // way and three reviewers confidently reported it as syntactically broken —
+    // correctly, for the input they were given.
+    //
+    // CHARACTER delta, not line delta. `redactSecrets` is deliberately
+    // line-count-preserving (secret-patterns.mjs: it re-appends the newlines a
+    // span contained, so diff-hunk line mapping stays aligned), so a line-count
+    // check can never fire — it would be dead code that reads as a working
+    // guard. Characters are what actually disappear.
+    //
+    // The threshold separates the two shapes: masking a token costs tens of
+    // characters (`ghp_…` → `[REDACTED:github-pat]`), while collapsing a span
+    // costs hundreds or thousands. Only the latter can hide code, so only the
+    // latter is worth interrupting a reviewer over.
+    const charsLost = redact ? result.content.length - raw.length : 0;
+    if (charsLost > SPAN_COLLAPSE_CHARS) shortened.push({ path: relPath, charsLost });
+
     const ext = relPath.split('.').pop();
     const lang = { sql: 'sql', css: 'css', html: 'html', md: 'markdown', json: 'json', py: 'python', rs: 'rust', go: 'go', java: 'java', rb: 'ruby', sh: 'bash' }[ext] ?? 'js';
     const content = raw.length > maxPerFile
       ? raw.slice(0, maxPerFile) + `\n... [TRUNCATED — ${raw.length} chars total]`
       : raw;
-    const block = `### ${relPath}\n\`\`\`${lang}\n${content}\n\`\`\`\n`;
+    const redactionNote = charsLost > SPAN_COLLAPSE_CHARS
+      ? `> ⚠ REDACTION REMOVED CONTENT FROM THIS FILE: ${charsLost} characters were removed by secret-redaction `
+        + 'before review. The text above is NOT byte-identical to the file on disk — a multi-line '
+        + 'secret match collapses everything it spans into one placeholder. Do NOT report syntax '
+        + 'errors, unbalanced delimiters, or missing code in this file; verify against disk first.\n'
+      : '';
+    const block = `### ${relPath}\n\`\`\`${lang}\n${content}\n\`\`\`\n${redactionNote}`;
 
     if (total.length + block.length > maxTotal) { omitted++; continue; }
     total += block;
@@ -148,6 +184,13 @@ export function readFilesAsContext(filePaths, { maxPerFile = 10000, maxTotal = 1
 
   if (omitted > 0) total += `\n... [${omitted} file(s) omitted — context budget reached]\n`;
   if (sensitive > 0) total += `\n... [${sensitive} sensitive file(s) excluded (.env, secrets, keys)]\n`;
+  if (shortened.length > 0) {
+    // Operator-facing as well as model-facing: the inline note reaches the model,
+    // this reaches the human watching the run — the one who can check disk.
+    const detail = shortened.map((s) => `${s.path} (-${s.charsLost} chars)`).join(', ');
+    process.stderr.write(`  [audit-scope] WARNING: redaction shortened ${shortened.length} file(s) sent for review: ${detail}\n`);
+    total += `\n... [${shortened.length} file(s) SHORTENED by secret-redaction before review: ${detail}]\n`;
+  }
   return total;
 }
 

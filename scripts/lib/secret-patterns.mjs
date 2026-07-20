@@ -43,7 +43,27 @@ export const SECRET_PATTERNS = Object.freeze([
     captureGroup: 1,
   },
   // Private-key PEM blocks
-  { name: 'pem-private-key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/g },
+  // The body is charset-bounded to what a PEM block can actually contain —
+  // base64, whitespace, and the `Proc-Type:`/`DEK-Info:` header punctuation of an
+  // encrypted key. It was `[\s\S]*?`, which spans ANYTHING between the two
+  // markers, and the markers do not have to belong to the same block.
+  //
+  // That is not theoretical. `readFilesAsContext` redacts file bodies before they
+  // reach the LLM auditor, so a file whose `BEGIN` and `END` sat in two unrelated
+  // fixtures ~80 lines apart had all the code between them collapsed into one
+  // placeholder. Three reviewers then reported the file as syntactically broken —
+  // correctly, for the mangled input they received. Silently shortening the thing
+  // under review is worse than noise: it produces confident findings about code
+  // that is not on disk.
+  //
+  // Excluding `{}()'";` is what does the work — any real code between two markers
+  // now breaks the match, while every PEM form still matches (verified: plain,
+  // long-body, and ENCRYPTED-with-headers). The length cap is a secondary bound,
+  // set generously at 20000 because the failure direction matters: missing a real
+  // key is a security failure, whereas over-spanning is only a review-quality one.
+  // A 16384-bit key body is ~3KB, so the cap has ~6x headroom. Verified
+  // backtracking-safe (1ms on an 80KB unterminated input).
+  { name: 'pem-private-key', re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----[A-Za-z0-9+/=\s:,.-]{0,20000}?-----END (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----/g },
   // Connection-string password (postgres/mysql/mongo/redis/amqp DSNs). This
   // repo's own threat model names it: "the runtime DSN's password IS the
   // secret" (AGENTS.md, AUDIT_DB_URL). Redacts ONLY the password segment so

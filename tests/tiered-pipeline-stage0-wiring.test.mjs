@@ -735,9 +735,20 @@ describe('discovery payload — planContent redaction (egress-gate root cause, 2
     // stops being true the test has lost its subject and must be re-pointed.
     assert.equal(scanEgressPayload(raw).safe, false,
       'precondition: the offending plan must still trip the gate when raw');
+    // The live gate reported `['dsn-password', 'pem-private-key']` in 2026-07.
+    // `pem-private-key` was a FALSE POSITIVE on this document and is no longer
+    // reported: the doc does not contain a key, it DESCRIBES one, in a single
+    // prose line reading `-----BEGIN RSA PRIVATE KEY-----\n<20 lines of
+    // base64>\n-----END …`. The pattern used to span BEGIN…END across anything
+    // (`[\s\S]*?`); it is now charset-bounded, and `<`/`>` are not PEM body
+    // characters, so prose about a key no longer reads as a key.
+    //
+    // Narrowed deliberately rather than loosened to `.includes(...)`: the exact
+    // set is the point of a precondition, and `dsn-password` — a real DSN shape
+    // quoted in the doc — must still trip it, or this test has lost its subject.
     assert.deepEqual(
-      scanEgressPayload(raw).patterns.sort(), ['dsn-password', 'pem-private-key'],
-      'precondition: the exact pattern pair the live gate reported',
+      scanEgressPayload(raw).patterns.sort(), ['dsn-password'],
+      'precondition: the doc must still trip the gate raw, via its real DSN shapes',
     );
 
     // The fix: the same redaction the code now applies makes it sendable.

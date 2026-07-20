@@ -269,13 +269,44 @@ Two things follow:
 1. **Fixed locally**: the fixture is now assembled from parts, so no literal
    `BEGIN … END` span exists in the file. Verified: 117 source lines → 117
    redacted lines, no placeholder.
-2. **Generalises beyond this file** (not fixed here — needs its own plan): *any*
-   file containing two PEM markers becomes unauditable this way, and the failure
-   is silent. The audit context is quietly shortened, and nothing tells the
-   reviewer that what they are reading is not what is on disk. A redaction that
-   deletes surrounding code is a context-integrity problem, not just a noise
-   problem — it is the same "green over content that was never really examined"
-   class this repo already tracks elsewhere.
+2. **FIXED 2026-07-19** (was deferred to its own plan; done instead because the
+   fix turned out small). Two independent defences, each mutation-verified:
+   - **The pattern is charset-bounded.** `pem-private-key` was
+     `BEGIN…[\s\S]*?…END` — it spanned anything. The body is now restricted to
+     what a PEM block can actually contain (base64, whitespace, and the
+     `Proc-Type:`/`DEK-Info:` punctuation of an encrypted key), so `{}()'";` in
+     real code breaks the match. Every PEM form still matches — plain, long-body,
+     and ENCRYPTED-with-headers — verified across 2048…16384-bit bodies. The
+     20000-char cap is deliberately generous because the failure direction
+     matters: **missing a real key is a security failure; over-spanning is only a
+     review-quality one.** Backtracking-safe (1 ms on 80 KB unterminated input).
+   - **A span collapse is now announced**, inline next to the file, telling the
+     reviewer the text is not byte-identical to disk and not to report syntax
+     errors from it. Plus a stderr warning for the operator, who is the one who
+     can check disk.
+
+   **Two measurement corrections, both self-inflicted, both worth recording:**
+   - **Blast radius was zero.** 7 tracked files carry 2+ PEM markers (including
+     `tests/secret-patterns.test.mjs` and the Tier-3 `sensitive-egress.test.mjs`),
+     but **none lost a single character** to span-swallow. The defect was latent,
+     not active — it had bitten exactly once, in the new file. That sized the fix
+     down from "rewrite the redactor" to "bound one pattern + surface the event".
+   - **The first detector could never have fired.** It compared LINE counts —
+     but `redactSecrets` is deliberately line-count-preserving (it re-appends the
+     newlines a span contained so diff-hunk mapping stays aligned). A line-count
+     guard would have been dead code that reads as a working check, the exact
+     class this plan is about. Switched to a CHARACTER delta with a 200-char
+     threshold, which separates a token mask (tens of chars) from a span collapse
+     (hundreds). It also means the earlier "117 → 117 lines" claim proved nothing;
+     only the placeholder's absence was real evidence.
+
+   **A false positive fell out of the fix.** `tests/tiered-pipeline-stage0-wiring`
+   pinned that `discovery-portfolio-secret-redaction.md` trips the gate with
+   `['dsn-password', 'pem-private-key']`. The `pem-private-key` half was always
+   wrong: that doc does not contain a key, it *describes* one in prose
+   (`<20 lines of base64>` — and `<`/`>` are not PEM body characters). The
+   precondition was narrowed to the real `dsn-password` shape, with the reason
+   recorded, rather than loosened to an `.includes` check.
 
 ### 4e.2 What the Gemini gate caught — two real evasions and a redundant rule
 
