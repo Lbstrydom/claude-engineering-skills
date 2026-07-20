@@ -87,19 +87,68 @@ A is the honest fix for the architecture; B is the cheap fix for today's four
 rows. They are not exclusive: B is a legitimate stopgap **if** A is actually
 scheduled, and dishonest if it is not.
 
+## 4b. Q3 SETTLED (2026-07-19) — and it settles the threshold question with it
+
+Measured against **18 MB of real audit payload** (the last 200 commits' diffs —
+the actual shape of what gets sent):
+
+| Shape | Bare-pattern false positives | Keyed-context false positives | Verdict |
+|---|---|---|---|
+| Generic 40-hex | **227** occurrences, **206 distinct — 205 resolve as real git objects**, the 1 remainder being git's all-zeros null-ref sentinel | **0** | **Bare is unusable. Keyed is free.** |
+| AWS secret (40-char base64) | **301** | **0** | **Bare is unusable. Keyed is free.** |
+| JWT | **0** | — | Safe to match bare |
+| `BEGIN … PRIVATE KEY` | **6** — all six are *prose documenting the pattern*, not keys | — | Near-safe bare; see caveat |
+
+**Answer to Q3: the generic-40-hex row is a FALSE POSITIVE as written.** Not one
+of the 227 occurrences was a secret; every resolvable token was a git object.
+Flagging bare 40-hex would refuse essentially every diff-bearing payload while
+catching nothing — the gate would be turned off within a day.
+
+**But "don't flag 40-hex" is also wrong**, and this is the part the original
+question missed: a legacy GitHub personal access token *is* exactly 40 hex
+characters. The shape is genuinely ambiguous, so the fix is not to include or
+exclude it — it is to stop matching on shape alone.
+
+**The disambiguator, measured**: require a secret-ish key within a short window
+(`token|secret|api_key|password|auth|credential`). Across the same 18 MB that
+yields **zero** false positives while still flagging
+`GITHUB_TOKEN=<40-hex>`, and correctly allowing a bare SHA in a diff, the
+`ZERO_SHA="000…"` sentinel, and prose citing a commit.
+
+Two consequences for the design above:
+
+- **Option B becomes viable and cheap.** It was written off as "still
+  pattern-based, only refills the subset" — true, but with keyed patterns its
+  measured false-positive cost is zero, which is what actually blocked it. B is
+  now the sensible first move rather than a stopgap.
+- **Q1 is largely answered for these four shapes.** The remaining threshold risk
+  is not 40-hex at all; it is the private-key header, whose only false positives
+  are *documentation about secrets* — including this repo's own security docs.
+  A gate that refuses payloads for discussing PEM blocks is a real irritant, so
+  that row needs the keyed treatment too, or an explicit prose carve-out.
+
+Method note: the first run of this measurement was **wrong** — `grep` treated the
+concatenated diff as binary and its "Binary file … matches" warning was counted
+as a token, yielding "1 distinct token". Re-run with `-a`. Recorded because the
+error direction was reassuring (it under-reported), which is exactly the kind
+that survives review.
+
 ## 5. Open questions to settle before implementation
 
 1. **How aggressive can a strict gate be before it fires on real diffs?**
-   Measure against the known-defect corpus and a sample of real audit payloads —
-   a gate that refuses 5% of genuine audits is worse than the leak it prevents.
-   This is a measurement, not a judgement call; do it before choosing a threshold.
+   **Largely answered by §4b for the four measured shapes** — keyed matching cost
+   zero false positives across 18 MB. What remains: the `BEGIN … PRIVATE KEY`
+   row, whose only false positives are prose *documenting* the pattern (this
+   repo's own security docs among them). Decide between keying that row too or
+   carving out prose, and measure the choice the same way.
 2. **What do the other 19 call sites do on refusal?** Unaudited. If any of them
    turns a refusal into a crash mid-run, that is a separate defect and it gates
    option A's rollout.
-3. **Is the generic-40-hex row a true positive?** A 40-char hex string is also a
-   git SHA, which appears legitimately in nearly every diff. This row may be
-   *correctly* not-refused, and treating it as a leak would make the gate unusable.
-   Decide explicitly; it materially changes the threshold.
+3. ~~**Is the generic-40-hex row a true positive?**~~ **SETTLED 2026-07-19 — see
+   §4b.** No: 227 occurrences across 18 MB of real payload, all git SHAs, zero
+   secrets. But the shape is genuinely ambiguous (a legacy GitHub PAT is also
+   40 hex), so the resolution is keyed-context matching rather than
+   include-or-exclude. Measured false-positive cost of the keyed form: **zero**.
 4. **Does the redactor need any of this?** Current answer: no — its gentleness is
    a deliberate, documented constraint and this plan does not touch it.
 
