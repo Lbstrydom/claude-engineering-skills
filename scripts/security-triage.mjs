@@ -90,6 +90,30 @@ export function classifyLocationPath(rawPath, repoRoot, deps = {}) {
   else if (res.category === 'sensitive') pathClassification = 'sensitive';
 
   const canonicalPath = res.canonical || path.resolve(repoRoot, rawPath);
+
+  // Record the identity of the object we CLASSIFIED, so the eventual read can
+  // prove it is opening the same one. `O_NOFOLLOW` refuses a symlink at the
+  // final component but says nothing about a path swapped for a different
+  // regular file, so on its own the classification and the read are two
+  // separate claims about two possibly-different objects. Comparing dev+ino
+  // does not close the race — nothing short of a handle held across both can —
+  // but it turns an undetected swap into a refused read.
+  //
+  // Read with `{bigint: true}`. A Windows inode is routinely larger than
+  // `Number.MAX_SAFE_INTEGER` (observed: 26177172837460940), so as a float it
+  // silently loses precision and two DIFFERENT inodes can compare equal — an
+  // identity check that cannot tell objects apart is worse than none, because
+  // it reads as enforced. BigInt compares exactly.
+  let identity = null;
+  if (pathClassification === 'ok') {
+    try {
+      const statSync = deps.statSync || fs.statSync;
+      const s = statSync(canonicalPath, { bigint: true });
+      identity = { dev: s.dev, ino: s.ino };
+    } catch {
+      identity = null; // unreadable now; the read will withhold anyway
+    }
+  }
   // The router's glob matcher anchors with `^` against a REPO-RELATIVE path,
   // but resolveAndClassify returns an ABSOLUTE realpath (Gemini G3). Without
   // this conversion `tests/**` silently matches nothing and `path-scope`
@@ -99,7 +123,7 @@ export function classifyLocationPath(rawPath, repoRoot, deps = {}) {
     .split(path.sep)
     .join('/');
 
-  return { pathClassification, canonicalPath, repoRelativePath };
+  return { pathClassification, canonicalPath, repoRelativePath, identity };
 }
 
 // ---------------------------------------------------------------------------
@@ -113,24 +137,93 @@ export function classifyLocationPath(rawPath, repoRoot, deps = {}) {
  * which defeats the bound. So: stat first, refuse before opening if oversized,
  * then a streaming line scan that aborts once the last needed line is passed.
  */
-export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}) {
-  const statFn = deps.stat || fsp.stat;
+export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}, expectIdentity = null) {
+  const openFn = deps.open || fsp.open;
   const createReadStream = deps.createReadStream || fs.createReadStream;
 
-  let st;
+  // Open FIRST, then `fstat` the handle. A `stat`-then-open sequence checks one
+  // filesystem object and reads another: the path can be swapped or the file
+  // grown in between, and the stream is not constrained by the size that was
+  // observed. Binding the size and type checks to the opened HANDLE removes
+  // that window instead of narrowing it.
+  //
+  // `O_NOFOLLOW` additionally refuses a symlink at the final component, so a
+  // link swapped in after `resolveAndClassify` classified the path cannot
+  // redirect the read. It is absent on some platforms (notably Windows), where
+  // this degrades to the handle-bound checks alone — the residual risk is
+  // recorded rather than papered over.
+  const O_NOFOLLOW = fs.constants.O_NOFOLLOW ?? 0;
+  let fh;
   try {
-    st = await statFn(absPath);
+    fh = await openFn(absPath, fs.constants.O_RDONLY | O_NOFOLLOW);
   } catch {
     return { lines: null, withheld: 'unreadable' };
   }
-  if (st.size > maxBytes) return { lines: null, withheld: 'too-large' };
+
+  let st;
+  try {
+    st = deps.fstat ? await deps.fstat(fh, absPath) : await fh.stat();
+  } catch {
+    await fh.close().catch(() => {});
+    return { lines: null, withheld: 'unreadable' };
+  }
+  // Only ever read a regular file — a path swapped for a FIFO, device, or
+  // directory would otherwise be streamed, and a FIFO would block forever.
+  if (typeof st.isFile === 'function' && !st.isFile()) {
+    await fh.close().catch(() => {});
+    return { lines: null, withheld: 'unreadable' };
+  }
+  if (st.size > maxBytes) {
+    await fh.close().catch(() => {});
+    return { lines: null, withheld: 'too-large' };
+  }
+  // Prove the object we OPENED is the object that was CLASSIFIED. Without
+  // this, classification and read are two claims about two possibly-different
+  // files: `O_NOFOLLOW` stops a symlink at the final component, but a path
+  // swapped for a different regular file passes it silently. A mismatch is
+  // refused rather than read — the swap becomes visible instead of effective.
+  if (expectIdentity && expectIdentity.ino != null) {
+    let actual = null;
+    try {
+      // BigInt, matching how the expectation was recorded — see
+      // classifyLocationPath on why float inodes cannot be compared safely.
+      actual = deps.bigintFstat
+        ? await deps.bigintFstat(fh, absPath)
+        : await fh.stat({ bigint: true });
+    } catch {
+      actual = null;
+    }
+    const same =
+      actual != null &&
+      String(actual.dev) === String(expectIdentity.dev) &&
+      String(actual.ino) === String(expectIdentity.ino);
+    if (!same) {
+      await fh.close().catch(() => {});
+      return { lines: null, withheld: 'unreadable' };
+    }
+  }
 
   return new Promise((resolve) => {
     const lines = [];
+    let seen = 0;
     let stream;
     try {
-      stream = createReadStream(absPath, { encoding: 'utf8' });
+      // `end` bounds the read BY CONSTRUCTION, which is what actually holds
+      // for a single enormous line: a stream emits no `line` event until it
+      // sees a newline, so a byte counter alone never gets a chance to run.
+      //
+      // Node treats `end` as INCLUSIVE, so this reads at most maxBytes+1 bytes
+      // — deliberately one over, so a file of EXACTLY maxBytes still reads
+      // cleanly while maxBytes+1 is detectable as over-bound below.
+      stream = createReadStream(null, {
+        fd: fh.fd,
+        encoding: 'utf8',
+        start: 0,
+        end: maxBytes,
+        autoClose: false,
+      });
     } catch {
+      fh.close().catch(() => {});
       resolve({ lines: null, withheld: 'unreadable' });
       return;
     }
@@ -141,6 +234,7 @@ export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}) {
       done = true;
       rl.close();
       stream.destroy();
+      fh.close().catch(() => {});
       resolve(value);
     };
     // `if (done) return` and the defensive copy are both load-bearing.
@@ -149,12 +243,31 @@ export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}) {
     // received an array that kept growing to the whole file. The bound would
     // have read as enforced while enforcing nothing, which is precisely the
     // green-that-checked-nothing shape this plan is built to avoid.
+    // Count the bytes the STREAM actually delivered. Reconstructing them from
+    // decoded lines (`byteLength(line) + 1`) invents a trailing LF for every
+    // line and mis-measures CRLF input, so a file legitimately at the bound
+    // was rejected for bytes it never contained. Attached immediately after
+    // `createInterface`, synchronously, so no chunk is missed.
+    stream.on('data', (chunk) => {
+      seen += typeof chunk === 'string' ? Buffer.byteLength(chunk, 'utf8') : chunk.length;
+    });
+
     rl.on('line', (line) => {
       if (done) return;
       lines.push(line);
       if (lines.length >= maxLine) finish({ lines: lines.slice(), withheld: null });
     });
-    rl.on('close', () => finish({ lines: lines.slice(), withheld: null }));
+    // Reaching the range cap means the file had MORE to give than the bound
+    // allows, so the window may be truncated. Reporting `too-large` rather
+    // than handing back a silently short window keeps the predicates from
+    // analysing source they only partly saw.
+    rl.on('close', () =>
+      finish(
+        seen > maxBytes
+          ? { lines: null, withheld: 'too-large' }
+          : { lines: lines.slice(), withheld: null },
+      ),
+    );
     stream.on('error', () => finish({ lines: null, withheld: 'unreadable' }));
   });
 }
@@ -169,12 +282,19 @@ export async function readBoundedLines(absPath, maxLine, maxBytes, deps = {}) {
 export async function enrichFindings(findings, { repoRoot, bounds, deps = {} }) {
   const routable = [];
 
+  // `identity` is adapter-internal plumbing for the read gate. It is kept OUT
+  // of the location objects deliberately: the router has no use for it, the
+  // strict routable schema rejects it, and dev/ino in a report that gets
+  // pasted into issues and chat is host detail nobody asked for.
+  const identityByPath = new Map();
+
   for (const f of findings) {
     const enriched = { ...f };
     for (const key of ['location', 'sinkLocation']) {
       if (!f[key]) continue;
-      const c = classifyLocationPath(f[key].path, repoRoot, deps);
-      enriched[key] = { ...f[key], ...c };
+      const { identity, ...locFields } = classifyLocationPath(f[key].path, repoRoot, deps);
+      enriched[key] = { ...f[key], ...locFields };
+      if (identity) identityByPath.set(locFields.repoRelativePath, identity);
     }
     routable.push(enriched);
   }
@@ -190,6 +310,7 @@ export async function enrichFindings(findings, { repoRoot, bounds, deps = {} }) 
     if (!sink || sink.pathClassification !== 'ok' || !sink.region) continue;
     const entry = byFile.get(sink.repoRelativePath) || {
       canonicalPath: sink.canonicalPath,
+      identity: identityByPath.get(sink.repoRelativePath) ?? null,
       maxLine: 0,
       findings: [],
     };
@@ -205,6 +326,7 @@ export async function enrichFindings(findings, { repoRoot, bounds, deps = {} }) 
       entry.maxLine,
       bounds.maxSourceBytesPerFile,
       deps,
+      entry.identity,
     );
     if (lines) sourceByPath.set(relPath, lines);
     for (const f of entry.findings) {
@@ -217,7 +339,12 @@ export async function enrichFindings(findings, { repoRoot, bounds, deps = {} }) 
       // gets pasted into issues, PRs, and chat.
       const region = f.sinkLocation.region;
       const start = Math.max(0, region.startLine - 1);
-      const end = Math.min(lines.length, region.endLine);
+      // Clamped to maxSinkLines, not just to the region. The region is
+      // attacker-influenced input (it comes from the SARIF), so an oversized
+      // one would otherwise put an unbounded excerpt into a report that gets
+      // pasted into issues, PRs, and chat — a configured bound that the
+      // reporting path quietly ignored.
+      const end = Math.min(lines.length, region.endLine, start + bounds.maxSinkLines);
       f.sourceContext = redactSecrets(lines.slice(start, end).join('\n')).text;
     }
   }

@@ -247,6 +247,109 @@ describe('canonicalization (SC1) + the bounded read', () => {
     assert.equal(res.lines, null);
     assert.equal(res.withheld, 'unreadable');
   });
+
+  // A pre-open stat is a TOCTOU window — the file can grow between the check
+  // and the open. The during-read cap is the half that cannot be raced.
+  test('the byte bound is enforced DURING the read, not only by the pre-open stat', async () => {
+    // ~10 KB of real content, but stat reports 1 byte — the shape of a file
+    // that grew (or was swapped) between the check and the open.
+    const p = writeFile(root, 'grows.js', Array.from({ length: 200 }, () => 'x'.repeat(50)).join('\n'));
+    const res = await readBoundedLines(p, 1000, 1_000, {
+      fstat: async () => ({ size: 1, isFile: () => true }),
+    });
+    assert.equal(res.lines, null, 'the read must abort once the real bytes exceed the bound');
+    assert.equal(res.withheld, 'too-large');
+  });
+
+  test('a non-regular file is refused rather than streamed', async () => {
+    const res = await readBoundedLines(root, 10, 10_000_000);
+    assert.equal(res.lines, null);
+    assert.equal(res.withheld, 'unreadable');
+  });
+
+  /**
+   * A single enormous line with no newline emits no `line` event until EOF, so
+   * a line-event byte counter reports `too-large` only AFTER the whole thing
+   * has been buffered. The verdict is therefore not the interesting part — the
+   * ALLOCATION is. This asserts on bytes actually pulled off the stream, which
+   * is what the read-range cap bounds; asserting the verdict alone passes with
+   * the cap removed, so it would not have caught its own regression.
+   */
+  test('a single enormous line with no newline is bounded in BYTES READ, not just verdict', async () => {
+    const p = writeFile(root, 'oneline.js', 'x'.repeat(500_000));
+    let bytesRead = 0;
+    const res = await readBoundedLines(p, 10, 1_000, {
+      fstat: async () => ({ size: 1, isFile: () => true }), // under-report: simulate a race
+      createReadStream: (target, opts) => {
+        const s = fs.createReadStream(target, opts);
+        s.on('data', (c) => { bytesRead += Buffer.byteLength(c, 'utf8'); });
+        return s;
+      },
+    });
+    assert.equal(res.withheld, 'too-large');
+    assert.equal(res.lines, null, 'must not hand back a truncated window');
+    assert.ok(
+      bytesRead <= 2_000,
+      `read must stay near the 1000-byte bound; actually read ${bytesRead} bytes`,
+    );
+  });
+
+  test('a file that fits the bound still reads normally', async () => {
+    const p = writeFile(root, 'small.js', 'a\nb\nc');
+    const res = await readBoundedLines(p, 10, 1_000_000);
+    assert.deepEqual(res.lines, ['a', 'b', 'c']);
+    assert.equal(res.withheld, null);
+  });
+
+  /**
+   * Classification and read are two claims about two possibly-different
+   * objects: O_NOFOLLOW stops a symlink at the final component, but a path
+   * swapped for a different REGULAR file passes it silently. The dev+ino
+   * comparison is what turns that swap from effective into refused.
+   */
+  test('a file whose identity differs from the classified object is refused', async () => {
+    const p = writeFile(root, 'swapped.js', 'a\nb');
+    // BigInt: a Windows inode exceeds Number.MAX_SAFE_INTEGER, so `+ 1` on a
+    // float is a no-op and the "wrong" value would silently equal the right one.
+    const real = fs.statSync(p, { bigint: true });
+    const wrong = { dev: real.dev, ino: real.ino + 1n };
+    assert.notEqual(String(wrong.ino), String(real.ino), 'sanity: the wrong ino really differs');
+    const res = await readBoundedLines(p, 10, 1_000_000, {}, wrong);
+    assert.equal(res.lines, null, 'a swapped object must not be read');
+    assert.equal(res.withheld, 'unreadable');
+  });
+
+  test('a matching identity reads normally', async () => {
+    const p = writeFile(root, 'stable.js', 'a\nb');
+    const real = fs.statSync(p, { bigint: true });
+    const res = await readBoundedLines(p, 10, 1_000_000, {}, { dev: real.dev, ino: real.ino });
+    assert.deepEqual(res.lines, ['a', 'b']);
+  });
+
+  test('classifyLocationPath records the identity of what it classified', () => {
+    const p = writeFile(root, 'ident.js', 'x');
+    const c = classifyLocationPath('ident.js', root);
+    const st = fs.statSync(p, { bigint: true });
+    assert.equal(String(c.identity.ino), String(st.ino));
+    assert.equal(String(c.identity.dev), String(st.dev));
+  });
+
+  // The region comes from the SARIF, so it is attacker-influenced.
+  test('sourceContext is clamped to maxSinkLines even when the region is larger', async () => {
+    const root2 = await makeRepo();
+    try {
+      writeFile(root2, 'src/big.js', Array.from({ length: 200 }, (_, i) => `line${i}`).join('\n'));
+      const wide = resultAt('src/big.js', 1);
+      wide.locations[0].physicalLocation.region = { startLine: 1, endLine: 150, startColumn: 1, endColumn: 5 };
+      wide.codeFlows[0].threadFlows[0].locations[0].location = wide.locations[0];
+      const r = await run(root2, { results: [wide], config: { ...CONFIG, bounds: { maxSinkLines: 5 } } });
+      const ctx = r.findings[0].sourceContext;
+      assert.ok(ctx != null, 'context should be present');
+      assert.ok(ctx.split('\n').length <= 5, `expected ≤5 lines, got ${ctx.split('\n').length}`);
+    } finally {
+      await fsp.rm(root2, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    }
+  });
 });
 
 describe('end-to-end routing through the CLI', () => {

@@ -280,7 +280,10 @@ describe('D1 — every ingested finding appears in exactly one bucket', () => {
         const out = { ...f };
         for (const key of ['location', 'sinkLocation']) {
           if (!f[key]) continue;
-          out[key] = { ...f[key], ...classifyLocationPath(f[key].path, root) };
+          // `identity` is adapter-internal read plumbing; the strict routable
+          // schema rejects it, exactly as it does in the real CLI path.
+          const { identity, ...locFields } = classifyLocationPath(f[key].path, root);
+          out[key] = { ...f[key], ...locFields };
         }
         return out;
       });
