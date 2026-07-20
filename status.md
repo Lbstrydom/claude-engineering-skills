@@ -1,5 +1,53 @@
 # Project Status Log
 
+## 2026-07-20 — audited the adoption work; the best catches were in code I wrote an hour earlier, including a comment I contradicted one line later
+
+Ran `/audit-code` over the two adoption commits before syncing to consumers.
+Three rounds, GPT + Gemini **APPROVE** (0 new, 0 wrongly-dismissed, 0
+over-engineering flags), then closed the one deferred item.
+
+**The audit paid for itself on my own code, not the repo's.** R1 raised a HIGH
+about stale observed-deps cleanup covering only the three early-return paths. My
+instinct was "pre-existing, not mine" — the wrong test. Impact says otherwise: I
+had introduced a **new throw site** (`detectRepoStack`) inside exactly that
+uncovered window, while every other optional enrichment in the same function is
+guarded. A cosmetic banner lookup could have stranded a stale coverage verdict on
+disk. Guarded at my own call site; the broader gap is now genuinely independent
+because my code can no longer throw into it.
+
+**R2 caught me contradicting myself one line apart.** I had written that a local
+copy of the extension allowlist "would drift and turn the reassurance into a
+lie" — then hardcoded that list in prose in the same file. Now derived from
+`DEFAULT_EXT_ALLOWLIST`, with a test pinning the derivation.
+
+**Running the fixes beat reviewing them, again.** The `arch:render` flag sweep
+(same if/no-else shape as the refresh.mjs incident — `--dry-run` rendered for
+REAL over a committed artifact) looked done on the page; executing it exposed a
+doubled `arch:render:` prefix and exit 1 where the sibling contract is 2. Later,
+adding a NUL separator to the mermaid uniqueKey silently embedded a **literal
+control byte** in the source — invisible in review, and `grep` began reporting
+"binary file matches". Replaced with an escape.
+
+**Then fixed the deferred mermaidId collisions** rather than banking them as
+debt. Verified both classes were real by running the old algorithm beside the
+new: `a-b.mjs` / `a_b.mjs`, and any two paths agreeing on their first 40
+normalised characters, produced *identical* ids — and Mermaid MERGES nodes
+sharing an id, so diagrams dropped symbols while the flat table below still
+listed them. Wrong picture, looks complete, no error anywhere. Now a readable
+stem plus a sha256 digest of the full pre-normalisation identity, with symbol
+nodes keyed on `s.id` when present (two records can legitimately share
+file + symbolName). Zero committed churn — `docs/architecture-map.md` is
+Category A / gitignored.
+
+**Two honesty notes on the run itself.** The audit commit carries
+`AI-Gate: waived`, not `passed` — the provenance gate **refused** `passed`
+because the audited worktree also held a concurrent session's uncommitted files,
+so the tree hash did not match what was staged. The audit did converge; the
+mechanical verification did not hold, and that state has a name. Separately,
+adjacency coverage was **absent, not clean** in both rounds (the wave hit its own
+enumeration bound) — recorded as a dismissed tooling diagnostic rather than
+allowed to read as a pass.
+
 ## 2026-07-20 — the arch-memory consultation fired for the first time in 1,763 decisions
 
 The architectural-memory consultation is MANDATORY per AGENTS.md before writing

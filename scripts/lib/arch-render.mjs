@@ -15,6 +15,7 @@
 // make claims ABOUT that list ("we index .js/.ts…"), so a stale copy would
 // turn the reassurance into a lie. Pure predicate — the "No I/O" rule above
 // still holds.
+import { createHash } from 'node:crypto';
 import { isExtensionAllowlisted, DEFAULT_EXT_ALLOWLIST } from './sensitive-egress-gate.mjs';
 
 /**
@@ -52,9 +53,30 @@ export function escapeMermaidLabel(s) {
     .slice(0, 60);
 }
 
-/** Stable safe ID for Mermaid nodes. */
-export function mermaidId(prefix, key) {
-  return `${prefix}_` + String(key).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40);
+/**
+ * Stable, COLLISION-FREE safe ID for Mermaid nodes.
+ *
+ * The readable half is lossy twice over — every non-alphanumeric collapses to
+ * `_`, then the result is cut at 40 chars — so `a-b.mjs` and `a_b.mjs`, or any
+ * two paths agreeing on their first 40 normalised characters, used to produce
+ * the same id. Mermaid silently MERGES nodes that share an id, so the diagram
+ * quietly dropped symbols while the flat table below it still listed both:
+ * a wrong picture that looks complete, with no error anywhere.
+ *
+ * Fix: keep the readable stem for debuggability, and append a digest of the
+ * FULL pre-normalisation identity. Deterministic (same input → same id, which
+ * the byte-determinism test depends on) and unique up to a sha256 prefix.
+ *
+ * @param {string} prefix   node-class prefix (`dom` / `file` / `sym`)
+ * @param {string} key      human-readable source for the stem
+ * @param {string} [uniqueKey=key]  what actually identifies the node, when that
+ *   differs from the readable text — e.g. two records can legitimately share
+ *   `file + symbolName`, and only the record id separates them.
+ */
+export function mermaidId(prefix, key, uniqueKey = key) {
+  const stem = String(key).replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 40);
+  const digest = createHash('sha256').update(String(uniqueKey)).digest('hex').slice(0, 8);
+  return `${prefix}_${stem}_${digest}`;
 }
 
 /** Group symbol records by domain_tag (or '_other' if unset). */
@@ -103,7 +125,12 @@ export function renderMermaidContainer(domain, symbols, dupSymbolIds = new Set()
     for (const s of syms) {
       const cls = dupSymbolIds.has(s.id) ? 'dup' : 'symbol';
       const label = escapeMermaidLabel(s.symbolName);
-      const sNode = mermaidId('sym', `${file}_${s.symbolName}`);
+      // Identity comes from the record id when present — two index records
+      // CAN share file + symbolName (overloads, re-exports, a re-indexed
+      // rename), and only `s.id` tells them apart. The readable stem still
+      // reads file_symbol. NUL joins the fallback so `a_b` + `c` cannot hash
+      // the same as `a` + `b_c`.
+      const sNode = mermaidId('sym', `${file}_${s.symbolName}`, s.id ?? `${file}\u0000${s.symbolName}`);
       lines.push(`  ${sNode}["${label}"]:::${cls}`);
       lines.push(`  ${fileNode} --> ${sNode}`);
     }

@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import {
   escapeMarkdown,
   escapeMermaidLabel,
+  mermaidId,
+  renderMermaidContainer,
   groupByDomain,
   renderArchitectureMap,
   renderNeighbourhoodCallout,
@@ -23,6 +25,54 @@ describe('escapeMermaidLabel', () => {
   });
   it('caps length', () => {
     assert.ok(escapeMermaidLabel('x'.repeat(120)).length <= 60);
+  });
+});
+
+describe('mermaidId — collisions merge nodes silently', () => {
+  // Deferred at audit round 1, fixed here. Mermaid MERGES nodes sharing an id,
+  // so every collision below used to drop a symbol from the diagram while the
+  // flat table kept listing it — a picture that looks complete and is not.
+
+  it('normalisation no longer collides: a-b.mjs vs a_b.mjs', () => {
+    // Both collapse to the same stem; only the digest separates them now.
+    assert.notEqual(mermaidId('file', 'a-b.mjs'), mermaidId('file', 'a_b.mjs'));
+  });
+
+  it('truncation no longer collides: keys sharing their first 40 chars', () => {
+    const shared = 'src/very/deeply/nested/module/path/aaaaaaaa';
+    assert.ok(shared.length >= 40, 'fixture must exceed the 40-char cut');
+    assert.notEqual(mermaidId('file', `${shared}/one.mjs`), mermaidId('file', `${shared}/two.mjs`));
+  });
+
+  it('two records sharing file + symbolName are distinct via uniqueKey', () => {
+    // Overloads, re-exports and a re-indexed rename all produce this shape.
+    const a = mermaidId('sym', 'lib/x.mjs_foo', 'id-aaa');
+    const b = mermaidId('sym', 'lib/x.mjs_foo', 'id-bbb');
+    assert.notEqual(a, b);
+  });
+
+  it('is deterministic — same input yields the same id', () => {
+    // The byte-determinism guarantee of the whole map rests on this.
+    assert.equal(mermaidId('file', 'a/b.mjs'), mermaidId('file', 'a/b.mjs'));
+    assert.equal(mermaidId('sym', 'k', 'u'), mermaidId('sym', 'k', 'u'));
+  });
+
+  it('emits only characters Mermaid accepts in an identifier', () => {
+    const id = mermaidId('sym', 'a/b-c.mjs::weird name!', 'x');
+    assert.match(id, /^[A-Za-z0-9_]+$/);
+  });
+
+  it('renderMermaidContainer emits unique node ids for colliding inputs', () => {
+    // End-to-end: the unit guarantee is worthless if a call site drops uniqueKey.
+    const symbols = [
+      { id: 's1', symbolName: 'foo', filePath: 'a-b.mjs', startLine: 1, endLine: 2 },
+      { id: 's2', symbolName: 'foo', filePath: 'a_b.mjs', startLine: 1, endLine: 2 },
+      { id: 's3', symbolName: 'foo', filePath: 'a_b.mjs', startLine: 9, endLine: 9 },
+    ];
+    const out = renderMermaidContainer('dom', symbols);
+    const symIds = [...out.matchAll(/^\s{2}(sym_[A-Za-z0-9_]+)\[/gm)].map(m => m[1]);
+    assert.equal(symIds.length, 3, 'every symbol must emit a node');
+    assert.equal(new Set(symIds).size, 3, 'no two symbol nodes may share an id');
   });
 });
 
