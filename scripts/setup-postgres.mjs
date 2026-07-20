@@ -593,6 +593,125 @@ const SHARED_CATALOG_QUERIES = {
 
 // ── Main flows ─────────────────────────────────────────────────────────────
 
+/**
+ * Parse `compat-bootstrap.sql` for the surface it provides.
+ *
+ * **Derived from the BOOTSTRAP, not from the migrations** — and that choice is
+ * measured, not stylistic. Scanning `supabase/migrations/*.sql` for `TO <role>`
+ * (the obvious approach, and the one this plan originally proposed) matched **70+
+ * English words** out of SQL comment prose — `TO the`, `TO avoid`, `TO make` —
+ * against only 3 real roles, while simultaneously MISSING `pgcrypto`, which no
+ * migration declares because the bootstrap creates it. Over- and under-inclusive
+ * at once, so a derived-from-migrations precondition would demand a role named
+ * "the" exist and still not check the extension that matters.
+ *
+ * The bootstrap is the artifact that DEFINES this surface, so parsing it yields
+ * exactly the documented inventory with zero noise, and it cannot rot: if the
+ * bootstrap gains an object, the precondition gains it in the same edit.
+ *
+ * @param {string} sql
+ * @returns {{schemas: string[], roles: string[], extensions: string[], functions: string[], tables: string[]}}
+ */
+export function parseRequiredSurface(sql) {
+  // Comment lines are stripped first — the file documents the very statements it
+  // runs, and matching its own prose would invent preconditions.
+  const code = sql.split('\n').filter((l) => !/^\s*--/.test(l)).join('\n');
+  const all = (re) => [...code.matchAll(re)].map((m) => m[1].toLowerCase());
+  return {
+    schemas: [...new Set(all(/CREATE SCHEMA(?: IF NOT EXISTS)?\s+([a-z_]+)/gi))],
+    roles: [...new Set(all(/CREATE ROLE\s+([a-z_]+)/gi))],
+    extensions: [...new Set(all(/CREATE EXTENSION(?: IF NOT EXISTS)?\s+"?([a-z_]+)/gi))],
+    functions: [...new Set(all(/CREATE (?:OR REPLACE )?FUNCTION\s+([a-z_.]+)/gi))],
+    tables: [...new Set(all(/CREATE TABLE(?: IF NOT EXISTS)?\s+([a-z_.]+)/gi))],
+  };
+}
+
+/**
+ * Check the live database for each required object, regardless of who provided
+ * it. Asserting the SURFACE rather than its provenance is the whole design: on
+ * managed Supabase the platform supplies it, on self-hosted the bootstrap does,
+ * and the check neither knows nor cares which.
+ *
+ * @returns {Promise<string[]>} human-readable descriptions of what is MISSING
+ */
+export async function findMissingSurface(pool, required) {
+  const missing = [];
+  const q = async (sql, params) => (await pool.query(sql, params)).rows[0]?.present === true;
+
+  for (const s of required.schemas) {
+    if (!await q('SELECT EXISTS(SELECT 1 FROM information_schema.schemata WHERE schema_name=$1) AS present', [s])) {
+      missing.push(`schema "${s}"`);
+    }
+  }
+  for (const r of required.roles) {
+    if (!await q('SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS present', [r])) {
+      missing.push(`role "${r}"`);
+    }
+  }
+  for (const e of required.extensions) {
+    if (!await q('SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname=$1) AS present', [e])) {
+      missing.push(`extension "${e}"`);
+    }
+  }
+  for (const f of required.functions) {
+    const [schema, name] = f.includes('.') ? f.split('.') : ['public', f];
+    if (!await q(
+      `SELECT EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname=$1 AND p.proname=$2) AS present`, [schema, name])) {
+      missing.push(`function "${f}()"`);
+    }
+  }
+  for (const t of required.tables) {
+    const [schema, name] = t.includes('.') ? t.split('.') : ['public', t];
+    if (!await q(
+      'SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=$1 AND table_name=$2) AS present',
+      [schema, name])) {
+      missing.push(`table "${t}"`);
+    }
+  }
+  return missing;
+}
+
+/**
+ * Fail BEFORE migration 1 if the environmental precondition is unmet.
+ *
+ * 35 of 74 migrations reference the Supabase auth surface (14 `TO anon`, 11
+ * `auth.uid()`, 10 `auth.users`), and until now nothing verified it existed.
+ * `setup-postgres --migrate` happens to satisfy it by running the bootstrap
+ * first; any other route to the same files — `supabase db push`, a psql loop, a
+ * CI job — does not, and fails LATE and PARTIALLY: migrations apply in order
+ * until the first one touching `auth.*`, leaving a half-migrated database whose
+ * ledger records fewer files than the schema actually has.
+ *
+ * **Scope, stated rather than implied**: this guards the supported path. It
+ * cannot guard a route that bypasses this script, because by definition such a
+ * route never calls it. It converts a late partial failure into an immediate,
+ * named one for everyone who does use it.
+ */
+async function assertSurfacePresent(pool, { dryRun = false } = {}) {
+  const sql = await fs.promises.readFile(BOOTSTRAP_SQL, 'utf-8');
+  const required = parseRequiredSurface(sql);
+  const missing = await findMissingSurface(pool, required);
+  if (missing.length === 0) {
+    process.stderr.write(`  ${G}✓${X} required surface present (${required.schemas.length} schema, `
+      + `${required.roles.length} roles, ${required.extensions.length} extensions)\n`);
+    return;
+  }
+  const list = missing.map((m) => `    - ${m}`).join('\n');
+  const msg = `the database is missing objects the migrations reference:\n${list}\n\n`
+    + `  On a self-hosted Postgres these come from ${path.relative(REPO_ROOT, BOOTSTRAP_SQL)};\n`
+    + '  on Supabase the platform provides them. Run:\n'
+    + '    node scripts/setup-postgres.mjs --bootstrap-only\n'
+    + '  Applying migrations without them fails partway and leaves the ledger\n'
+    + '  disagreeing with the schema.';
+  if (dryRun) {
+    process.stderr.write(`  ${Y}would fail${X}: ${msg}\n`);
+    return;
+  }
+  process.stderr.write(`\n${R}precondition failed:${X} ${msg}\n`);
+  process.exit(1);
+}
+
 async function runMigrate(pool, { dryRun }) {
   const supabaseManaged = await isSupabaseManaged(pool);
   process.stderr.write(`\n${G}── Compat bootstrap ──${X}\n`);
@@ -602,6 +721,12 @@ async function runMigrate(pool, { dryRun }) {
     process.stderr.write(`  applying ${path.relative(REPO_ROOT, BOOTSTRAP_SQL)}\n`);
     await applyBootstrap(pool, dryRun);
   }
+
+  // Assert the SURFACE, not its provenance — this passes on managed Supabase
+  // (platform-provided) and on a bootstrapped self-hosted DB alike, and fails
+  // before migration 1 anywhere else.
+  process.stderr.write(`\n${G}── Precondition ──${X}\n`);
+  await assertSurfacePresent(pool, { dryRun });
 
   process.stderr.write(`\n${G}── Migrations ──${X}\n`);
   await ensureLedger(pool);
@@ -782,6 +907,11 @@ export async function seedUnledgeredMigrations(pool, { files, existing, migratio
 
 async function runAdopt(pool) {
   process.stderr.write(`\n${G}── Adopt mode ──${X}\n`);
+  // Adopt seeds the ledger WITHOUT replaying, so a missing surface here is worse
+  // than in --migrate, not better: the ledger would claim 74 files applied
+  // against a database that cannot support them, and the discrepancy only
+  // surfaces later, on the first query that touches `auth.*`.
+  await assertSurfacePresent(pool);
   if (!fs.existsSync(EXPECTED_SCHEMA_PATH)) {
     process.stderr.write(
       `${R}error${X}: ${path.relative(REPO_ROOT, EXPECTED_SCHEMA_PATH)} does not exist.\n` +

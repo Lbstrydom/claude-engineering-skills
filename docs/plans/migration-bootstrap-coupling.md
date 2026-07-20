@@ -1,7 +1,7 @@
 # Plan: Migration ↔ compat-bootstrap coupling — assert the surface, don't relocate the DDL
 
 - **Date**: 2026-07-19
-- **Status**: Draft
+- **Status**: Complete (2026-07-19) — implemented; §5 questions settled empirically, and Q2 resolved to an option the plan had not considered
 - **Author**: Claude + Louis
 - **Scope**: backend
 - **Origin**: raised as HIGH/MEDIUM in **three consecutive `/audit-code` runs**
@@ -113,6 +113,48 @@ assertion, and every provisioning path inherits the check.
    preconditions — measure before choosing.
 3. **What does `--adopt` do here?** It seeds the ledger without replaying. If the
    surface is missing on an adopted DB, the assertion should still fire.
+
+## 5b. Questions settled (2026-07-19) — Q2's answer was neither option offered
+
+**Q2 — derived or hand-maintained? NEITHER. Derived from the BOOTSTRAP.**
+The plan offered "scan the migrations" vs "hand-maintain a list" and said measure
+first. Measuring killed the first outright: scanning `supabase/migrations/*.sql`
+for `TO <role>` matched **70+ English words** out of SQL comment prose — `TO the`,
+`TO avoid`, `TO make` — against only 3 real roles, and *simultaneously* **missed
+`pgcrypto`**, which no migration declares because the bootstrap creates it.
+Over-inclusive and under-inclusive at once.
+
+Parsing `compat-bootstrap.sql` instead yields exactly the documented inventory
+with zero noise — 1 schema, 3 roles, 3 extensions, `auth.uid()`, `auth.users` —
+and cannot rot, because the bootstrap *is* the definition of this surface: if it
+gains an object, the precondition gains it in the same edit. Both measurements are
+encoded as tests (`setup-postgres-surface-precondition.test.mjs`) so the rejected
+option stays evidence-backed rather than becoming folklore.
+
+**Q1 — where does it live, and what does it NOT cover?** In `setup-postgres.mjs`,
+run in **both** `--migrate` and `--adopt` before any migration or ledger write.
+Stated plainly rather than implied: **it guards the supported path only.** A route
+that bypasses this script — `supabase db push`, a psql loop — never calls it, so
+it cannot be guarded from here. What it does buy is converting a late, partial
+failure into an immediate named one for everyone who uses the script.
+
+Worth noting what it turned out to catch on `--migrate`: since the bootstrap runs
+first on self-hosted, the assertion there verifies **the bootstrap actually
+worked** — the repo's own "a migration that reports success without the schema
+existing" guard, now mechanical rather than assumed.
+
+**Q3 — `--adopt`?** It fires there too, and that is the path where it bites
+hardest: adopt seeds the ledger *without replaying*, so a missing surface would
+record 74 files as applied against a database that cannot support them, with the
+discrepancy surfacing later on the first query touching `auth.*`. Verified on the
+disposable container: `--adopt` against a DB with the `auth` schema removed exits
+1 naming `schema "auth"`, before any ledger write.
+
+**Verification** — both directions, disposable container only, never `AUDIT_DB_URL`:
+- bootstrapped DB → `✓ required surface present (1 schema, 3 roles, 3 extensions)`, migrate proceeds
+- surface removed → `--adopt` exits **1** with the missing object named and the fix command
+- comment-stripping mutation-tested (removing it fails the test)
+- `npm run check` 7926 pass / 0 fail; live `--check-drift` 74/74, no drift
 
 ## 6. Acceptance
 

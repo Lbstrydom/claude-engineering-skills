@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**5 active · 130 terminal · 22 audit summaries · 4 reference docs**
+**4 active · 131 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -23,7 +23,6 @@ This is the list to read when asking "what is in flight?".
 |---|---|---|
 | [Arch-Memory Consultation — Close the Query/Index Asymmetry](./arch-memory-band-recalibration.md) | `Draft` |  |
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
-| [Migration ↔ compat-bootstrap coupling — assert the surface, don't relocate the DDL](./migration-bootstrap-coupling.md) | `Draft` |  |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
 
@@ -45,7 +44,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 127 completed plans</summary>
+<summary>Show all 128 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -115,6 +114,7 @@ source comments that no docs linter sees — stays valid.
 | [Local Disposable DB Test Container](./local-db-test-container.md) | `Complete` |  |
 | [Local Weekly Maintenance Checks (opt-in)](./local-maintenance-checks.md) | `Complete` | implemented (retroactive plan — written after implementation, for /audit-code |
 | [Audit-Loop Meta-Assessment System](./meta-assessment-system.md) | `Complete` |  |
+| [Migration ↔ compat-bootstrap coupling — assert the surface, don't relocate the DDL](./migration-bootstrap-coupling.md) | `Complete` | 2026-07-19) — implemented; §5 questions settled empirically, and Q2 resolved to an option the plan had not … |
 | [Migration-drift detector for the audit-loop store](./migration-drift-detector.md) | `Complete` | code shipped (edffa19), operator bootstrap done via Supabase CLI, expected-schema regenerated (b13552d), --… |
 | [Model A/B/C effectiveness experiment harness (auditor-model selection from real data)](./model-ab-experiment-harness.md) | `Complete` | built + audited 2026-07-01; see Implementation Log |
 | [Model-A/B/C auditor harness — v2 (composition arms + outcome-based scoring)](./model-ab-harness-v2.md) | `Complete` | built 2026-07-01 via `/cycle code --autonomous` (2 clusters). Audit-plan: GPT R1–R3 H:7→4→4 plateau; Gemini… |
