@@ -39,8 +39,26 @@ not a matching language.
 
 **Tier 1 — full sync (consumer has `package.json` + installed deps).**
 The documented default. Everything in "What gets installed where" applies;
-`node scripts/.claude-skills/X.mjs` resolves the bundle's imports (`zod`, `pg`,
-`openai`, `@google/genai`, `dotenv`) from the consumer's own `node_modules`.
+`node scripts/.claude-skills/X.mjs` resolves the bundle's imports from the
+consumer's own `node_modules`. `npm run sync` installs them for you
+(`ensureAuditDeps`) — you do not maintain the list.
+
+> **The dependency set is DERIVED, not written down.** `requiredDeps()` in
+> [`scripts/lib/install/deps.mjs`](../../scripts/lib/install/deps.mjs) computes
+> it from the bundle's own import closure; `OPTIONAL_DEPS` beside it is the only
+> hand-curated part (a semantic judgement the graph can't make: does absence
+> degrade a feature or break an import?). To see the current set:
+>
+> ```bash
+> node -e "import('./scripts/lib/install/deps.mjs').then(m=>console.log(m.requiredDeps().join('\n')))"
+> ```
+>
+> This used to be a hardcoded list here and in `REQUIRED_DEPS`, and it drifted:
+> on 2026-07-20 the bundle imported 17 packages against 10 declared. The gap
+> was invisible until a consumer hit `ERR_MODULE_NOT_FOUND` at runtime —
+> `@babel/traverse` aborted `/audit-plan` in wine-cellar-app before its first
+> API call (upstream#57). Do not reintroduce a copy of the list; it will rot
+> the same way. `tests/install-deps-contract.test.mjs` guards the derivation.
 
 **Tier 2 — skills-only + source-repo driving (consumer has no `package.json`).**
 The markdown half installs and works. The `.mjs` half lands but is **inert** —

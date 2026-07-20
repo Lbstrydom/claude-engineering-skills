@@ -646,8 +646,10 @@ function deepMerge(target, source) {
  *
  * The bundle ships two independent halves: `.claude/skills/**` (markdown, read
  * directly by Claude Code, needs no runtime) and `scripts/.claude-skills/**`
- * (`.mjs`, whose imports — zod/pg/openai/@google/genai/dotenv — resolve from
- * the CONSUMER's own node_modules). A consumer with no package.json is a
+ * (`.mjs`, whose imports resolve from the CONSUMER's own node_modules — the
+ * exact set is derived by `requiredDeps()` in lib/install/deps.mjs, never
+ * listed by hand here; an inline list is what drifted in upstream#57). A
+ * consumer with no package.json is a
  * legitimate adopter of the first half only: the target language is irrelevant
  * to the skills' value (a Python diff audits as well as a TS one), but the
  * tooling half still needs a runtime.

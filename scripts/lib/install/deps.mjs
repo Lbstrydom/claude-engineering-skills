@@ -15,28 +15,18 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { getAllConsumerInventories } from '../sync-inventory.mjs';
 
 /**
- * Core dependencies — without these the audit loop can't import.
- * Mirrors `dependencies` in `claude-engineering-skills/package.json`
- * minus the optional ones.
- */
-export const REQUIRED_DEPS = [
-  '@anthropic-ai/sdk',
-  '@google/genai',
-  'dotenv',
-  'micromatch',
-  'openai',
-  'pg',                     // M4 — cloud learning store now Postgres-only;
-                            //   `pg` replaces `@supabase/supabase-js`.
-  'zod',
-];
-
-/**
- * Optional — audit loop still imports cleanly without these, but features
- * degrade (no cloud learning store, no codeowners routing, no advisory locks).
+ * Optional — the audit loop still imports cleanly without these, but features
+ * degrade (no codeowners routing, no advisory locks, no consistency runner).
  * Installed on a best-effort basis; a failure on any single one doesn't
  * block the rest.
+ *
+ * This list is hand-curated **by design**: "does this package's absence
+ * degrade a feature or break an import?" is a semantic question the import
+ * graph cannot answer. Everything the bundle imports that is NOT listed here
+ * is required — see `requiredDeps()`.
  */
 export const OPTIONAL_DEPS = [
   'codeowners-utils',       // owner resolution in debt ledger
@@ -45,7 +35,70 @@ export const OPTIONAL_DEPS = [
                             //   has adopted consistency mode (canaries/ + surfaces.json).
                             //   Browser binaries are a separate step:
                             //   `npx playwright install chromium`.
+  '@playwright/test',       // NOT imported by the bundle itself. The graph sees
+                            //   it because `ux-lock/candidate-spec.mjs` renders
+                            //   that import line into the specs it GENERATES
+                            //   (a string literal the regex walker cannot tell
+                            //   from real code — see bundleDeps()). Kept because
+                            //   it is genuinely required to RUN those generated
+                            //   specs; optional on the same adoption gate as
+                            //   `playwright`. If the generator stops emitting
+                            //   it, the stale-entry test fires and this line
+                            //   must be re-justified or dropped.
 ];
+
+/** Memoised — the closure walk reads the whole source tree. */
+let _bundleDepsCache = null;
+
+/**
+ * Every npm package the synced bundle imports, across ALL consumers.
+ *
+ * **Derived, never hand-maintained.** This list used to be a hand-written
+ * `REQUIRED_DEPS` array "mirroring package.json", and it drifted: on
+ * 2026-07-20 the bundle imported 17 packages while the hand-list declared 10.
+ * The 7 undeclared ones (`@babel/parser`, `@babel/traverse`, `@playwright/test`,
+ * `dependency-cruiser`, `minimatch`, `ts-morph`, `yaml`) were latent
+ * ERR_MODULE_NOT_FOUND crashes in any consumer that didn't happen to have
+ * them for its own reasons — which is exactly how `@babel/traverse` broke
+ * `/audit-plan` in wine-cellar-app (upstream#57).
+ *
+ * The same class had already been curated as a known audit defect once
+ * (`known-defects.json` — required-vs-optional misclassification). A hand-list
+ * that must be kept in sync with the import graph by memory will drift again;
+ * deriving it from the graph is the only version that cannot.
+ *
+ * **Known over-approximation.** `parseImports` is a regex, so an import line
+ * inside a STRING LITERAL — a code generator emitting a spec file — is
+ * indistinguishable from a real import. `@playwright/test` enters the set this
+ * way (via `ux-lock/candidate-spec.mjs`). This direction is the safe one: the
+ * set may name a package the bundle doesn't itself import, never miss one it
+ * does. A hallucinated package cannot reach `npm install` silently either —
+ * `tests/install-deps-contract.test.mjs` requires every REQUIRED dep to be
+ * declared in this repo's own package.json, so an invented name fails there
+ * first.
+ *
+ * @returns {string[]} sorted package names
+ */
+export function bundleDeps() {
+  if (_bundleDepsCache) return _bundleDepsCache;
+  const pkgs = new Set();
+  for (const inv of getAllConsumerInventories().values()) {
+    for (const e of inv.external || []) pkgs.add(e.pkg);
+  }
+  _bundleDepsCache = [...pkgs].sort();
+  return _bundleDepsCache;
+}
+
+/**
+ * Core dependencies — without these the audit loop can't import. Derived as
+ * "everything the bundle imports, minus the curated optional set".
+ *
+ * @returns {string[]} sorted package names
+ */
+export function requiredDeps() {
+  const optional = new Set(OPTIONAL_DEPS);
+  return bundleDeps().filter(d => !optional.has(d));
+}
 
 const G = '\x1b[32m', Y = '\x1b[33m', X = '\x1b[0m', D = '\x1b[2m';
 
@@ -63,7 +116,7 @@ export function findMissingDeps(repoRoot) {
   const nodeModules = path.join(repoRoot, 'node_modules');
   const present = (dep) => fs.existsSync(path.join(nodeModules, dep));
   return {
-    missing: REQUIRED_DEPS.filter(d => !present(d)),
+    missing: requiredDeps().filter(d => !present(d)),
     missingOptional: OPTIONAL_DEPS.filter(d => !present(d)),
     hasPackageJson: true,
   };

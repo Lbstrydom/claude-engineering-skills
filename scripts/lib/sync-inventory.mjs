@@ -218,12 +218,12 @@ function readSource(rel) {
 }
 
 function resolveBundle(entryPoints, assets = []) {
-  const { files, unresolved } = collectImportClosure({
+  const { files, unresolved, external } = collectImportClosure({
     entryPoints,
     repoFiles: getFileUniverse(),
     readFile: readSource,
   });
-  return { files: [...new Set([...files, ...assets])], unresolved };
+  return { files: [...new Set([...files, ...assets])], unresolved, external };
 }
 
 function bundleForRepo(repoName, { keepGithubSkills = false } = {}) {
@@ -233,11 +233,11 @@ function bundleForRepo(repoName, { keepGithubSkills = false } = {}) {
     ...(repoName === 'wine-cellar-app' ? DEBT_ENTRY : []),
   ];
   const assets = [...CORE_ASSETS, ...syncMigrations()];
-  const { files, unresolved } = resolveBundle(entries, assets);
+  const { files, unresolved, external } = resolveBundle(entries, assets);
   const skillFiles = buildSkillFiles(keepGithubSkills);
   const promptFiles = buildCopilotPromptFiles();
   const nonCode = [...skillFiles, ...promptFiles, ...EDITOR_FILES, ...CLAUDE_CODE_FILES];
-  return { files: [...files, ...nonCode], unresolved };
+  return { files: [...files, ...nonCode], unresolved, external };
 }
 
 /**
@@ -245,20 +245,20 @@ function bundleForRepo(repoName, { keepGithubSkills = false } = {}) {
  *
  * @param {string} aliasOrName — 'ai' / 'wine' / 'ai-organiser' / 'wine-cellar-app'
  * @param {{keepGithubSkills?: boolean}} [opts]
- * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>, name: string, alias: string}}
+ * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>, external: Array<{from:string,specifier:string,pkg:string}>, name: string, alias: string}}
  */
 export function getSyncInventoryForRepo(aliasOrName, opts = {}) {
   const repo = CONSUMER_REPOS.find((r) => r.alias === aliasOrName || r.name === aliasOrName);
   if (!repo) throw new Error(`getSyncInventoryForRepo: unknown consumer "${aliasOrName}". Known: ${CONSUMER_REPOS.map((r) => r.alias).join(', ')}`);
-  const { files, unresolved } = bundleForRepo(repo.name, opts);
-  return { files, unresolved, name: repo.name, alias: repo.alias };
+  const { files, unresolved, external } = bundleForRepo(repo.name, opts);
+  return { files, unresolved, external, name: repo.name, alias: repo.alias };
 }
 
 /**
  * Return inventories for ALL consumers, keyed by alias.
  *
  * @param {{keepGithubSkills?: boolean}} [opts]
- * @returns {Map<string, {files: string[], unresolved: Array<{from:string,specifier:string}>, name: string, alias: string}>}
+ * @returns {Map<string, {files: string[], unresolved: Array<{from:string,specifier:string}>, external: Array<{from:string,specifier:string,pkg:string}>, name: string, alias: string}>}
  */
 export function getAllConsumerInventories(opts = {}) {
   const out = new Map();

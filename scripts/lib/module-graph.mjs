@@ -16,6 +16,7 @@
  * @module scripts/lib/module-graph
  */
 import path from 'node:path';
+import { builtinModules } from 'node:module';
 
 /**
  * Repo file extensions a specifier may resolve to. Single source of truth —
@@ -29,6 +30,39 @@ const INDEX_PROBES = RESOLVABLE_EXTENSIONS.map((e) => `/index${e}`);
 export function isBareSpecifier(spec) {
   return !spec.startsWith('./') && !spec.startsWith('../') && !spec.startsWith('/');
 }
+
+/**
+ * The npm package a bare specifier installs from, or `null` when the specifier
+ * is not an installable dependency (a node builtin, or regex noise — see
+ * below). `@scope/pkg/sub/path` → `@scope/pkg`; `pkg/sub/path` → `pkg`.
+ *
+ * **Why the noise filter is load-bearing.** `parseImports` is a regex, not a
+ * parser, so it also matches import-like fragments inside doc comments and
+ * template literals ("write the final result to disk", "resolving", `https:`).
+ * Those are not packages, and a dependency contract derived from them would
+ * be junk. Anything that is not a syntactically valid npm name is rejected
+ * rather than guessed — the same "report, never guess" rule this module
+ * already applies to specifiers.
+ *
+ * @param {string} spec - the specifier as written
+ * @returns {string|null} the package name, or null if not an installable dep
+ */
+export function packageNameFromSpecifier(spec) {
+  if (typeof spec !== 'string' || spec.length === 0) return null;
+  if (!isBareSpecifier(spec)) return null;
+  if (spec.startsWith('node:')) return null;
+  if (builtinModules.includes(spec)) return null;
+
+  const parts = spec.split('/');
+  const name = spec.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+  return NPM_NAME.test(name) ? name : null;
+}
+
+/**
+ * npm package-name grammar (npm's own rules): optional `@scope/`, then a name
+ * of lowercase alphanumerics and `._-`, not starting with `.` or `_`.
+ */
+const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 
 /**
  * Resolve an import specifier to a repo-relative file path.
@@ -158,16 +192,30 @@ export function parseImports(content, { dynamic = false } = {}) {
  * @param {Set<string>|string[]} args.repoFiles - repo-relative file universe
  * @param {(relPath: string) => string|null} args.readFile - file contents,
  *   or null when unreadable/absent
- * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>}}
+ * @returns {{files: string[], unresolved: Array<{from:string,specifier:string}>,
+ *            external: Array<{from:string,specifier:string,pkg:string}>}}
  *   `files` = sorted closure (entry points + every reachable repo file);
  *   `unresolved` = path-like specifiers that did not resolve to a repo file
- *   (a genuinely missing dependency, or a typo — surfaced for diagnostics).
+ *   (a genuinely missing dependency, or a typo — surfaced for diagnostics);
+ *   `external` = bare specifiers naming an installable npm package. These are
+ *   the closure's **runtime dependency contract**: ship these files to a repo
+ *   that lacks these packages and every entry point dies on first import.
+ *   Node builtins are excluded (nothing to install).
+ *
+ *   `external` and `unresolved` are disjoint. Until 2026-07-20 the walk
+ *   `continue`d on `kind === 'external'` and reported nothing: the closure
+ *   observed its own dependency contract on every edge and discarded it. So
+ *   the synced-bundle contract drifted silently each time a lib grew a new
+ *   import, and consumers only found out via a hard ERR_MODULE_NOT_FOUND at
+ *   the first entry point that touched it. See upstream#57.
  */
 export function collectImportClosure({ entryPoints, repoFiles, readFile }) {
   const fileSet = repoFiles instanceof Set ? repoFiles : new Set(repoFiles || []);
   const norm = (p) => path.posix.normalize(String(p || '').replace(/\\/g, '/'));
   const visited = new Set();
   const unresolved = [];
+  const external = [];
+  const seenExternal = new Set();
   const queue = (entryPoints || []).map(norm);
 
   while (queue.length) {
@@ -180,7 +228,19 @@ export function collectImportClosure({ entryPoints, repoFiles, readFile }) {
 
     for (const spec of parseImports(content, { dynamic: true })) {
       const { resolved, kind } = resolveSpecifier({ fromFile: file, specifier: spec, repoFiles: fileSet });
-      if (kind === 'external') continue;
+      if (kind === 'external') {
+        // Bare specifier. Record the installable package (node builtins and
+        // regex noise resolve to null and are not dependencies).
+        const pkg = packageNameFromSpecifier(spec);
+        if (pkg) {
+          const key = `${file} ${pkg}`;
+          if (!seenExternal.has(key)) {
+            seenExternal.add(key);
+            external.push({ from: file, specifier: spec, pkg });
+          }
+        }
+        continue;
+      }
       if (kind === 'repo' && resolved) {
         if (!visited.has(resolved)) queue.push(resolved);
       } else {
@@ -188,7 +248,7 @@ export function collectImportClosure({ entryPoints, repoFiles, readFile }) {
       }
     }
   }
-  return { files: [...visited].sort(), unresolved };
+  return { files: [...visited].sort(), unresolved, external };
 }
 
 /**
