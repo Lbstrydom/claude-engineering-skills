@@ -20,6 +20,101 @@ present on a fresh clone until you re-sync.
 
 ---
 
+## Runtime prerequisites — and non-Node consumers
+
+**The consumer repo does NOT have to be a Node repo.** The bundle ships in two
+independent halves, and only one of them needs a Node runtime:
+
+| Half | Needs | Works in a Python / Go / Databricks repo? |
+|---|---|---|
+| `.claude/skills/**` (skill `.md`) | nothing — Claude Code reads the markdown directly | **Yes, fully** |
+| `scripts/.claude-skills/**` (`.mjs`) | Node + the bundle's deps resolvable from the consumer | **No** — see Tier 2 below |
+
+The **target language is irrelevant to the skills' value** — `/audit-code`
+sends a diff to GPT, and a Python diff audits exactly as well as a TypeScript
+one; `/plan` is language-agnostic. What the `.mjs` half needs is a *runtime*,
+not a matching language.
+
+### The three adoption tiers
+
+**Tier 1 — full sync (consumer has `package.json` + installed deps).**
+The documented default. Everything in "What gets installed where" applies;
+`node scripts/.claude-skills/X.mjs` resolves the bundle's imports (`zod`, `pg`,
+`openai`, `@google/genai`, `dotenv`) from the consumer's own `node_modules`.
+
+**Tier 2 — skills-only + source-repo driving (consumer has no `package.json`).**
+The markdown half installs and works. The `.mjs` half lands but is **inert** —
+nothing installs its deps, so every entry point fails to resolve on first
+import. Recover the tooling half by running the scripts **from your
+`claude-engineering-skills` checkout against the consumer's cwd**:
+
+```bash
+# from the CONSUMER repo's root (e.g. a Databricks / Python repo).
+# PLAN_FILE = the plan you are auditing, relative to the consumer root.
+PLAN_FILE=$(ls docs/plans/*.md | head -1)
+AUDIT_ALLOW_FOREIGN_CWD=1 node C:/GIT/claude-engineering-skills/scripts/openai-audit.mjs code "$PLAN_FILE" --scope diff
+```
+
+```powershell
+# PowerShell — set the source path and the plan once, then reuse them:
+$SkillsRepo = "C:/GIT/claude-engineering-skills"
+$PlanFile   = (Get-ChildItem docs/plans/*.md | Select-Object -First 1).FullName
+$env:AUDIT_ALLOW_FOREIGN_CWD = "1"
+node "$SkillsRepo/scripts/openai-audit.mjs" code "$PlanFile" --scope diff
+```
+
+`AUDIT_ALLOW_FOREIGN_CWD=1` is the **sanctioned** escape hatch, not a
+workaround — see [`scripts/lib/assert-repo-root.mjs`](../../scripts/lib/assert-repo-root.mjs).
+These scripts read their target from `process.cwd()`, so "script's repo ≠ cwd"
+is the correct shape here. The consumer pre-push hook we generate uses the
+identical pattern ([`install-prepush-hook.mjs`](../../scripts/install-prepush-hook.mjs)).
+The source repo supplies the runtime and deps; the consumer supplies the code
+under analysis.
+
+> Prefer Tier 2 over adding a `package.json` to a repo that has no other
+> reason to have one — a Node manifest in a Python repo is a lie about the
+> project that every future reader has to decode.
+
+**Tier 3 — private fork/mirror.** The bundle *is* the repo. See
+"Two ways to deploy this bundle" §B below.
+
+### The second axis: runtime ≠ language support
+
+Tier is about whether the `.mjs` can **run**. It says nothing about whether a
+given skill can **understand your code** — a separate axis, and the one that
+surprises people:
+
+> **Architectural memory (`arch:refresh` / `arch:render`) is JS/TS-only in v1.**
+> [`symbol-index/refresh.mjs`](../../scripts/symbol-index/refresh.mjs)
+> short-circuits unless `detectRepoStack` returns `js-ts` or `mixed`, emitting
+> `reason: 'unsupported-stack'`. `arch:render` then correctly writes its
+> `repo-not-registered` stub. Both steps report honestly — but you only find
+> out after running them.
+
+Because `detectRepoStack` requires a `package.json` **with dependencies** to
+report `js-ts`, **every Tier-2 consumer is automatically outside architectural
+memory's support** — fixing the runtime does not unlock it. A Tier-1 repo whose
+`package.json` is an empty shell is skipped for the same reason. Everything
+else — `/plan`, `/audit-plan`, `/audit-code`, `/ship`, and the browser lenses —
+is language-agnostic and works regardless.
+
+**Don't reason about this by hand — ask:**
+
+```bash
+node C:/GIT/claude-engineering-skills/scripts/skills-fit-check.mjs --repo-root .
+```
+
+It prints FITS / PARTIAL / MISMATCH per skill for the repo you point it at, and
+is the authoritative answer — the architectural-memory verdict is coupled by
+test to the extractor's real short-circuit, so it cannot quietly go stale.
+
+`npm run sync` detects which tier a target is in and prints the applicable
+mode. It **warns rather than aborts** on a Tier-2 target: the markdown half is
+genuinely useful on its own, so refusing to sync would withdraw working value
+to punish a missing `package.json`.
+
+---
+
 ## What gets installed where
 
 After adoption, your consumer repo's working tree contains:

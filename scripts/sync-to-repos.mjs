@@ -628,6 +628,28 @@ function deepMerge(target, source) {
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
+/**
+ * Classify a consumer's adoption tier by whether it can RUN the `.mjs` half.
+ *
+ * The bundle ships two independent halves: `.claude/skills/**` (markdown, read
+ * directly by Claude Code, needs no runtime) and `scripts/.claude-skills/**`
+ * (`.mjs`, whose imports — zod/pg/openai/@google/genai/dotenv — resolve from
+ * the CONSUMER's own node_modules). A consumer with no package.json is a
+ * legitimate adopter of the first half only: the target language is irrelevant
+ * to the skills' value (a Python diff audits as well as a TS one), but the
+ * tooling half still needs a runtime.
+ *
+ * Deliberately advisory, never fatal — see the caller.
+ *
+ * @param {string} repoPath Consumer repo root.
+ * @returns {{tier: 1|2, hasPackageJson: boolean, hasNodeModules: boolean}}
+ */
+function classifyConsumerRuntime(repoPath) {
+  const hasPackageJson = fs.existsSync(path.join(repoPath, 'package.json'));
+  const hasNodeModules = fs.existsSync(path.join(repoPath, 'node_modules'));
+  return { tier: hasPackageJson ? 1 : 2, hasPackageJson, hasNodeModules };
+}
+
 async function main() {
   assertRepoRoot(import.meta.url);
 
@@ -688,6 +710,39 @@ async function main() {
     let repoRemaps = 0, repoRewrites = 0, repoGcDeletions = 0;
 
     console.log(`${B}→ ${repo.name}${X} (${repo.path})`);
+
+    // ── Pre-flight: adoption tier (advisory) ──────────────────────────────
+    // WARN, never abort. A Tier-2 consumer still gets a fully-working
+    // `.claude/skills/**` half; refusing the sync would withdraw value that
+    // works in order to punish a missing package.json. The failure this
+    // catches is SILENCE — pre-2026-07-20 a non-Node consumer got a green
+    // sync and an inert tooling tree, discoverable only by running something.
+    const runtime = classifyConsumerRuntime(repo.path);
+    if (runtime.tier === 2) {
+      console.log(`  ${Y}tier 2${X}   no package.json — skill markdown will work; the .mjs half will be INERT here`);
+      // Concrete, paste-able example — NOT a `<placeholder>`. PowerShell
+      // reserves `<`, so an angle-bracket command cannot be pasted at all
+      // (repo-wide operator-doc rule; this bit us twice before 2026-07-02).
+      //
+      // The example is deliberately `openai-audit` and NOT `arch:render`:
+      // Tier 2 means no package.json, which makes detectRepoStack return
+      // python/unknown, which makes symbol-index/refresh.mjs short-circuit on
+      // unsupported-stack — so an arch:render example would hand a Tier-2
+      // operator the ONE command that cannot work for them. (Field report
+      // 2026-07-20: that is exactly the loop a Python consumer ran.)
+      const srcPosix = SOURCE_ROOT.replaceAll('\\', '/');
+      console.log(`  ${D}Drive the tooling from THIS repo instead — run from the consumer's root:${X}`);
+      // "$PLAN_FILE" rather than a literal plan path: a non-existent
+      // docs/plans/*.md literal is a broken reference (check-docs-refs), and
+      // the marked-placeholder form the checker wants uses angle brackets,
+      // which PowerShell cannot paste. A shell var satisfies both — and is
+      // what install-prepush-hook.mjs already emits.
+      console.log(`  ${D}  AUDIT_ALLOW_FOREIGN_CWD=1 node ${srcPosix}/scripts/openai-audit.mjs code "$PLAN_FILE" --scope diff${X}`);
+      console.log(`  ${D}  Which lenses fit this repo: node ${srcPosix}/scripts/skills-fit-check.mjs --repo-root .${X}`);
+      console.log(`  ${D}  (see docs/runbooks/consumer-adoption.md § Runtime prerequisites)${X}`);
+    } else if (!runtime.hasNodeModules) {
+      console.log(`  ${Y}tier 1${X}   package.json present but no node_modules — run \`npm install\` in the consumer before using the .mjs half`);
+    }
 
     // ── Pre-flight: ownership-aware preflight + gitignore validation ───────
     // Build ownership set from the source-side inventory. The verifier on the
@@ -1290,7 +1345,7 @@ async function maybePromptSharedCloudUpdate({ sourceRepoDir, stdio }) {
 
 // Test seam — exposes the sync-time D2b trigger helper so behaviour
 // tests can drive it directly instead of regex-asserting source text.
-export const _internals = Object.freeze({ maybePromptSharedCloudUpdate });
+export const _internals = Object.freeze({ maybePromptSharedCloudUpdate, classifyConsumerRuntime });
 
 // Only execute when invoked as a script (canonical-path compare). When
 // imported by a test, the module's exports are available without main()

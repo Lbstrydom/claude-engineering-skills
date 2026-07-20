@@ -1,5 +1,62 @@
 # Project Status Log
 
+## 2026-07-20 — a Databricks repo couldn't adopt the bundle; every framing I proposed for why was wrong before the next one landed
+
+A field report from a Python/Databricks consumer (`dbricks-test1`): the synced tooling
+wouldn't run, and `arch:render` produced only a stub. Three rounds of investigation, and
+**my framing was wrong at the start of each one** — each corrected by reading the code
+rather than by shipping and finding out.
+
+**Round 1 — "the bundle only adopts into Node repos."** False. `sync-to-repos.mjs` ships two
+independent halves: `.claude/skills/**` (markdown, read directly by Claude Code, needs no
+runtime) and `scripts/.claude-skills/**` (`.mjs`, whose imports resolve from the *consumer's*
+`node_modules`). A non-Node consumer gets a fully-working markdown half today. So it isn't a
+Node gate — it's three adoption tiers, and the runbook documented only the richest one. The
+defect was **silence**: sync reported success, files landed, nothing ran. Fix is therefore
+detection + naming, not new capability — `classifyConsumerRuntime` + a per-target preflight
+that **warns and never aborts** (aborting would withdraw the half that works to punish a
+missing `package.json`), plus a runbook section naming the tiers and the `AUDIT_ALLOW_FOREIGN_CWD`
+mode, which was already sanctioned and already used by the consumer pre-push hook.
+
+**Round 2 — "`arch:render` exiting 0 on a stub is a green-having-checked-nothing hole."**
+Refuted by the code before a line changed. `graph-verdict.mjs` states the invariant outright:
+render must always exit 0 so a non-zero gate can never abort `dashboard:setup &&` *precisely
+when there is a degraded graph to display*. The `&&` chain I cited as evidence of the bug is
+the reason the invariant exists. Verified all three legs empirically rather than by reading:
+the coverage gate exits **2** on an absent envelope under `ARCH_COVERAGE_REQUIRE_ENVELOPE=1`
+(which `prepush-check` always sets), and `collectArchitecture` independently reports a stub as
+`missing-optional` via its missing `## Contents` block. The honesty property was real and
+already held one layer downstream. Correct heuristic, wrong scoping — I applied it to one
+script's exit code without tracing where the verdict lives.
+
+**Round 3 — the tier model had one axis and there are two.** The consumer restored
+`node_modules`, re-ran refresh, and hit `unsupported-stack`. Tier answers "can the `.mjs`
+*run*"; it says nothing about "can the extractor *understand* your code". Worse, my own Tier-2
+doc used `render-mermaid.mjs` as the worked example — the one command guaranteed to fail there,
+since Tier 2 implies no `package.json`, implies `detectRepoStack` ≠ `js-ts`, implies
+`refresh.mjs` short-circuits. **Every Tier-2 consumer is permanently outside architectural
+memory**, verified across five fixtures including the trap that a Tier-1 empty-shell
+`package.json` also skips.
+
+**The fix reused `skills:fit-check` rather than adding a parallel doc table.** It already
+labels skills FITS/PARTIAL/MISMATCH but covered 9 entries with none for architectural memory —
+the one capability that fails on a *language* axis rather than a shape axis. Added that rule,
+coupled by test to `refresh.mjs`'s literal short-circuit so it can't outlive the constraint it
+describes.
+
+**And a ship-time question caught the rule I'd just written.** Asked whether architecture
+mapping works for Python/JS/Java, the honest answer forced a case I'd glossed: `mixed` clears
+the stack gate, so the map *builds* — but `DEFAULT_EXT_ALLOWLIST` is JS/TS/Vue/Svelte only, so
+every `.py` is `skippedExt` and the map looks complete while covering half the repo. Quieter
+than the Python-only case, which at least aborts loudly. I had labelled `mixed` as FITS. Now
+PARTIAL, with a second test coupling the wording to the allowlist. Separately worth not
+conflating: arch-*intent* (`lib/arch-intent/adapters/`) ships java/python/postgres/js-ts
+adapters — dependency-rule checking works across all four; it's the symbol map that doesn't.
+
+**Pattern across all three rounds:** every wrong framing was cheap because it was checked
+before it was built. The two that would have cost real work — the exit-code change and the
+vendored-deps option — were both killed by reading the thing they'd have modified.
+
 ## 2026-07-20 — burned down the deferred-items backlog; the audits' best catches were in code I had just written
 
 A cross-session backlog of ~25 deferred items became `docs/plans/debt-burndown-workstreams.md`

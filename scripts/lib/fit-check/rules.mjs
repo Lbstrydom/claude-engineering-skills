@@ -60,6 +60,47 @@ export const SKILLS = [
     },
   },
 
+  {
+    // NOT a slash-skill — a capability several skills lean on (/plan Phase 0.5,
+    // the arch-memory hook, /audit-code's duplication wave). It earns an entry
+    // because it is the one capability that fails on a LANGUAGE axis rather
+    // than a shape axis, and nothing else surfaced that.
+    //
+    // Field report (2026-07-20): a Python consumer restored node_modules, ran
+    // `arch:refresh`, and got `unsupported-stack`; render then wrote its
+    // repo-not-registered stub. Every step reported itself honestly, but the
+    // constraint was only discoverable by spending the effort and reading a
+    // skip line. `symbol-index/refresh.mjs` short-circuits on
+    // `stack !== 'js-ts' && stack !== 'mixed'` — the extractor is JS/TS-only
+    // in v1 — so this verdict must track THAT condition exactly.
+    skill: 'architectural memory (arch:refresh / arch:render)',
+    evaluate: (p) => {
+      if (p.stack === 'js-ts') {
+        return { label: 'FITS', reason: 'Symbol extractor supports js-ts.' };
+      }
+      // `mixed` clears refresh.mjs's stack gate, so the map BUILDS — but the
+      // extractor's extension allowlist (sensitive-egress-gate.mjs
+      // DEFAULT_EXT_ALLOWLIST) is .js/.jsx/.mjs/.cjs/.ts/.tsx/.vue/.svelte.
+      // Every .py file is counted as `skippedExt`. The resulting map looks
+      // complete while covering only the JS/TS half — a quieter failure than
+      // the Python-only case, which at least aborts loudly. Say so.
+      if (p.stack === 'mixed') {
+        return {
+          label: 'PARTIAL',
+          reason: 'Mixed stack: the map builds, but only JS/TS files are indexed — .py sources are skipped as skippedExt.',
+          setup: 'Read the generated map as covering the JS/TS half ONLY. Do not treat "no duplicate found" as authoritative for Python code.',
+        };
+      }
+      return {
+        label: 'MISMATCH',
+        reason: p.stack === 'python'
+          ? 'Symbol extraction is JS/TS-only in v1; arch:refresh skips Python with reason=unsupported-stack and arch:render writes a stub map.'
+          : 'No JS/TS manifest with dependencies detected; arch:refresh skips and arch:render writes a stub map.',
+        setup: 'No action available — the other skills do not depend on this. /plan, /audit-plan, /audit-code and the browser lenses work without an indexed repo.',
+      };
+    },
+  },
+
   // ── UI testing skills — shape-bound ────────────────────────────────────
   {
     skill: '/ux-lock (lock mode)',

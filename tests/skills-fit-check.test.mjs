@@ -15,10 +15,12 @@ import { fileURLToPath } from 'node:url';
 
 import { detectShape } from '../scripts/lib/fit-check/detect.mjs';
 import { applyRules, groupByLabel, SKILLS } from '../scripts/lib/fit-check/rules.mjs';
+import { isExtensionAllowlisted } from '../scripts/lib/sensitive-egress-gate.mjs';
 import { parseArgs, runFitCheck, renderCard } from '../scripts/skills-fit-check.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(__dirname, 'fixtures', 'fit-check');
+const ARCH_MEMORY = 'architectural memory (arch:refresh / arch:render)';
 
 function fixture(name) { return path.join(FIXTURES, name); }
 function verdictFor(verdicts, skill) {
@@ -177,6 +179,14 @@ describe('applyRules — Python FastAPI (backend-only API)', () => {
   it('/audit-code → FITS', () => {
     assert.equal(verdictFor(verdicts, '/audit-code').label, 'FITS');
   });
+  it('architectural memory → MISMATCH (extractor is JS/TS-only)', () => {
+    // The 2026-07-20 field case: a Python consumer could restore node_modules
+    // and still get nothing from arch:refresh. /audit-code FITS above while
+    // this MISMATCHes — that contrast is the whole point of the entry.
+    const v = verdictFor(verdicts, ARCH_MEMORY);
+    assert.equal(v.label, 'MISMATCH');
+    assert.match(v.reason, /JS\/TS-only/);
+  });
   it('/ux-lock (lock mode) → MISMATCH (no UI routes)', () => {
     const v = verdictFor(verdicts, '/ux-lock (lock mode)');
     assert.equal(v.label, 'MISMATCH');
@@ -318,6 +328,68 @@ describe('runFitCheck — end-to-end', () => {
     const { exitCode, error } = runFitCheck({ repoRoot: '/this/path/does/not/exist/xyz' });
     assert.equal(exitCode, 1);
     assert.match(error, /not found/);
+  });
+});
+
+// ─── architectural-memory verdict must not drift from the extractor ────────
+
+describe('architectural-memory rule tracks the real extractor gate', () => {
+  // This verdict is only useful if it says what refresh.mjs ACTUALLY does.
+  // The rule and the short-circuit live in different files, so assert the
+  // coupling directly rather than trusting two prose comments to agree.
+  // Three-way, NOT two-way. `mixed` clears the stack gate but only the JS/TS
+  // half is indexed, so it is PARTIAL — collapsing it into FITS would tell a
+  // FastAPI+React repo its Python code is covered when it is not.
+  const EXPECTED = { 'js-ts': 'FITS', mixed: 'PARTIAL', python: 'MISMATCH', unknown: 'MISMATCH' };
+
+  it('every fixture: label follows the detected stack', () => {
+    for (const name of ['nextjs-with-playwright', 'vite-react-no-playwright',
+      'python-fastapi', 'obsidian-plugin', 'node-cli-tool', 'unknown-shape']) {
+      const profile = detectShape(fixture(name));
+      const v = verdictFor(applyRules(profile), ARCH_MEMORY);
+      assert.equal(v.label, EXPECTED[profile.stack], `${name} (stack=${profile.stack})`);
+    }
+  });
+
+  it('mixed stack is PARTIAL, and says the Python half is unindexed', () => {
+    // Synthesised rather than fixtured: `mixed` needs a package.json WITH deps
+    // AND a Python marker, which no existing fixture has.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fit-mixed-'));
+    fs.writeFileSync(path.join(dir, 'package.json'), '{"dependencies":{"react":"18"}}');
+    fs.writeFileSync(path.join(dir, 'requirements.txt'), 'fastapi\n');
+    const profile = detectShape(dir);
+    assert.equal(profile.stack, 'mixed');
+    const v = verdictFor(applyRules(profile), ARCH_MEMORY);
+    assert.equal(v.label, 'PARTIAL');
+    assert.match(v.reason, /only JS\/TS files are indexed/);
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+  });
+
+  it('the extension allowlist backing that claim really excludes .py/.java', () => {
+    // If someone widens DEFAULT_EXT_ALLOWLIST, the `mixed` PARTIAL wording
+    // becomes a lie. Couple the claim to the list it describes.
+    assert.equal(isExtensionAllowlisted('a.py'), false);
+    assert.equal(isExtensionAllowlisted('a.java'), false);
+    assert.equal(isExtensionAllowlisted('a.ts'), true);
+  });
+
+  it('refresh.mjs still short-circuits on exactly those two stacks', () => {
+    // A source-coupling guard, in the spirit of tests/anthropic-client-migration.
+    // If someone teaches the extractor Python, this fails and points here —
+    // far better than the fit-check silently telling Python users "MISMATCH"
+    // forever after the constraint is gone.
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', 'scripts', 'symbol-index', 'refresh.mjs'), 'utf-8');
+    assert.match(
+      src,
+      /stack\s*!==\s*'js-ts'\s*&&\s*stack\s*!==\s*'mixed'/,
+      'refresh.mjs stack short-circuit changed — update the architectural-memory rule in lib/fit-check/rules.mjs to match',
+    );
+  });
+
+  it('MISMATCH never strands the user — it names what still works', () => {
+    const v = verdictFor(applyRules(detectShape(fixture('python-fastapi'))), ARCH_MEMORY);
+    assert.match(v.setup, /audit-code/);
   });
 });
 
