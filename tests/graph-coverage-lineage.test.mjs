@@ -76,8 +76,24 @@ const coverageBlock = (over = {}) => ({
   ...over,
 });
 
-function runGate(cwd) {
-  const r = spawnSync(process.execPath, [GATE], { cwd, encoding: 'utf-8' });
+/**
+ * Spawn the gate with an EXPLICIT env.
+ *
+ * Previously this inherited `process.env` wholesale, which made every
+ * assertion below depend on ambient state: the pre-push sandbox exports
+ * `ARCH_COVERAGE_REQUIRE_ENVELOPE=1`, so the legacy-envelope back-compat test
+ * passed locally and failed under the hook — for a reason having nothing to do
+ * with what it was asserting. Same lesson as the sandbox work itself: a check
+ * whose result depends on what happens to be in the environment is not
+ * measuring the thing it claims to measure.
+ *
+ * `strictEnvelope` opts a single test into the flag, explicitly.
+ */
+function runGate(cwd, { strictEnvelope = false } = {}) {
+  const env = { ...process.env };
+  delete env.ARCH_COVERAGE_REQUIRE_ENVELOPE;
+  if (strictEnvelope) env.ARCH_COVERAGE_REQUIRE_ENVELOPE = '1';
+  const r = spawnSync(process.execPath, [GATE], { cwd, encoding: 'utf-8', env });
   return { code: r.status, out: (r.stdout || '') + (r.stderr || '') };
 }
 
@@ -115,6 +131,22 @@ describe('lineage — envelope → gate exit codes (§2.1.6)', () => {
     assert.equal(code, 0, 'cannot fault a repo for a measurement that did not exist');
     assert.match(out, /UNKNOWN \(not_measured\)/);
     assert.doesNotMatch(out, /VERIFIED/);
+  });
+
+  it('…but a legacy envelope FAILS when the caller asserted a measured one', () => {
+    // The two rules are not in tension, because they answer different questions.
+    // Default: "this repo rendered before the feature" — not its fault, exit 0.
+    // ARCH_COVERAGE_REQUIRE_ENVELOPE=1: the CALLER (the pre-push sandbox)
+    // asserted a meaningful envelope would be present. `unknown` there means the
+    // provisioned envelope carried no measurement, so the gate would exit 0
+    // having judged nothing — the exact hole the flag exists to close. Checking
+    // existsSync alone left the flag half-done: presence is not evidence.
+    const { code, out } = runGate(
+      fixtureRepo({ coverage: undefined, enforce: true }),
+      { strictEnvelope: true },
+    );
+    assert.equal(code, 2, 'strict callers must not receive a verdict for an unmeasured graph');
+    assert.match(out, /carries no coverage verdict/);
   });
 
   it('refuses to run on a config it could not parse (§2.1.4 binding)', () => {

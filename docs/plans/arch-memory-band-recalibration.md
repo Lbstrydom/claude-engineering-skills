@@ -702,7 +702,7 @@ never supply precision, so no gate is expressed in terms of them.
 | **Normalization adds an LLM call per consultation** — the hook fires on most prompts | Reuse the existing disk cache keyed on the intent string; a deterministic template fallback when no provider is available. Never blocks the query path. |
 | **The genre hypothesis could be wrong at scale** — 4 hand probes are not 1,770 rows | Phase 1 gates Phase 4 explicitly. If Phase 2 does not widen the spread on the labelled set, thresholds must NOT be lowered; re-open the diagnosis instead. |
 | **Recalibrated thresholds could still manufacture false reuse** | Thresholds are derived from precision on the labelled set, not from percentiles of the raw distribution. Report precision at each candidate cutoff. |
-| ~~Deferred: `compose()` template removal (≈0.06)~~ **— deferral WITHDRAWN** | The deferral rested on a 124k-symbol re-embed cost that turned out to be **3,324** (see the measured correction in §2). At that size the re-index is minutes, and Phase 3 already performs one. The stated reason for deferring evaporated with the number, so it is no longer deferred — it is folded into Phase 3. This is the honest disposition: a defer justified by a cost figure must be revisited when the figure is wrong, otherwise it silently becomes "deferred because the fix is harder", which AGENTS.md names as a band-aid. |
+| ~~Deferred: `compose()` template removal (≈0.06)~~ **— DONE 2026-07-20, out of cluster order** | The deferral rested on a 124k-symbol re-embed cost that turned out to be **3,324** (see the measured correction in §2). At that size the re-index is minutes, and Phase 3 already performs one. The stated reason for deferring evaporated with the number, so it is no longer deferred — it is folded into Phase 3. This is the honest disposition: a defer justified by a cost figure must be revisited when the figure is wrong, otherwise it silently becomes "deferred because the fix is harder", which AGENTS.md names as a band-aid. |
 | **Deferred: calibrating the deterministic fallback separately** | The fallback's text distribution differs from LLM-normalized text, so its thresholds would need their own probe run. Capped at `justify-divergence` in the interim (C4) — a documented capability limit, not a silent gap. Revisit trigger: fallback rate exceeds ~10% of consultations. |
 | **1,763 historical rows stay `uncertain`** | Correct — they were produced under a broken construction and cannot be retro-labelled. The distribution remains useful as the pre-fix baseline. |
 | **`arch:refresh` cost after the null-summary guard** | Guard only skips records that carry no semantic content today; it reduces embed volume. |
@@ -765,6 +765,48 @@ never supply precision, so no gate is expressed in terms of them.
 > `gate-clear → stale`, halting the autonomous loop by design. Resume with
 > `--authorize-stale-reaudit` to re-process B against the post-C state. Noted
 > here so the halt reads as designed behaviour rather than a failure.
+
+---
+
+## 11b. Execution Log — deviations from the declared clustering
+
+**2026-07-20 — `compose()` template fix pulled forward out of cluster order
+(operator-directed).** The template change is declared in Cluster B (Phase 3)
+but was implemented directly after Cluster A, at the operator's instruction,
+because the first clean calibration run left `medianPositive` (0.7502) as the
+only failing gate and the template was the known remaining asymmetry.
+
+Recorded here rather than silently re-clustered, because it means Cluster B's
+derived scope is now partly implemented and its state record must be treated as
+`stale` on the next `/cycle` pass.
+
+**What was measured before choosing** (four probe symbols, normalized intents):
+
+| template | intent-query mean |
+|---|---|
+| `<kind> <name> in <path>\n<summary>\n<signature>` (old) | 0.7401 |
+| `<summary>` alone | 0.7970 |
+| **`<kind> <name>\n<summary>` (chosen)** | **0.7944** |
+| `<summary>\n<signature>` | 0.7590 |
+
+Summary-alone won on intent queries by 0.0026 but discards the symbol name.
+Measured on name-based lookup (`atomicWriteFileSync`, `where is
+atomicWriteFileSync defined`, `the atomicWriteFileSync helper`), keeping the
+name is worth **+0.06–0.08** (0.7544–0.7821 → 0.8140–0.8583). Name lookup is a
+real use case this index serves, so the 0.0026 was the right thing to give up —
+optimising the single measured metric at the cost of an unmeasured use case is
+how a benchmark gets gamed.
+
+**Honest caveat**: hard-negative similarity rises too under the new template
+(+~0.036 mean) alongside positives (+0.054), so net separation gain is only
+about **+0.018**. The template fix is real but modest, and is NOT a substitute
+for the query-side normalization that carries the dominant term.
+
+**Mandatory consequence**: changing the composition invalidates every stored
+embedding, so a **full** `arch:refresh` (not incremental) is required before
+the index is trustworthy. Until it completes, `duplication-detector.mjs:247` —
+which composes text to compare against stored vectors — is comparing
+new-template text against old-template embeddings.
 
 ---
 

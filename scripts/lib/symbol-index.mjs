@@ -60,23 +60,68 @@ export function signatureHash({ symbolName, signature, bodyText }) {
 }
 
 /**
- * Build a stable text representation for embedding: identity + summary +
- * signature. Moved here (was a local, unexported function in `embed.mjs`)
- * so `duplication-detector.mjs` can reuse the EXACT composition indexed
- * symbols were embedded with, without importing `embed.mjs` itself —
- * `embed.mjs` is a CLI entry point with an unconditional top-level
- * `main()` call (reads stdin), so importing it as a module for one pure
- * function would trigger that CLI behaviour as a side effect.
+ * The exact template `compose()` emits. Kept as a named constant so
+ * COMPOSE_VERSION can hash it — see below.
  *
- * @param {{kind:string, symbolName:string, filePath:string, purposeSummary?:string, signature?:string}} s
+ * SHAPE: `<kind> <symbolName>\n<purposeSummary>`
+ *
+ * The file path and signature were REMOVED (2026-07-20, measured). They are
+ * not natural language, and a query is compared against this whole string, so
+ * they dilute the semantic signal the summary carries. Measured over four
+ * probe symbols, mean cosine of a normalized intent against its own symbol:
+ *
+ *   `<kind> <name> in <path>\n<summary>\n<signature>`  (old)   0.7401
+ *   `<summary>` alone                                          0.7970
+ *   `<kind> <name>\n<summary>`                        (this)   0.7944
+ *   `<summary>\n<signature>`                                   0.7590
+ *
+ * Summary-alone scored a marginal 0.0026 higher on intent queries, but it
+ * DISCARDS the symbol name, and name-based lookup is a real use case this
+ * index serves. Measured on "atomicWriteFileSync" / "where is
+ * atomicWriteFileSync defined" / "the atomicWriteFileSync helper", keeping the
+ * name is worth +0.06–0.08 (0.7544–0.7821 → 0.8140–0.8583) at a cost of
+ * 0.0026 on intent queries. Keeping the name is the right trade.
+ *
+ * CAVEAT (honest): hard-negative similarity also rises under this template
+ * (+~0.036 mean) alongside positives (+0.054), so the net separation gain is
+ * roughly +0.018 — real but modest. The template fix is NOT a substitute for
+ * the query-side genre normalization, which carries the dominant term.
+ *
+ * Moved here (was a local, unexported function in `embed.mjs`) so
+ * `duplication-detector.mjs` can reuse the EXACT composition indexed symbols
+ * were embedded with, without importing `embed.mjs` itself — `embed.mjs` is a
+ * CLI entry point with an unconditional top-level `main()` call (reads stdin),
+ * so importing it as a module for one pure function would trigger that CLI
+ * behaviour as a side effect.
+ *
+ * @param {{kind:string, symbolName:string, purposeSummary?:string}} s
  * @returns {string}
  */
 export function compose(s) {
   const summary = s.purposeSummary || '';
-  return `${s.kind} ${s.symbolName} in ${s.filePath}\n` +
-         `${summary}\n` +
-         `${s.signature || ''}`;
+  return `${s.kind} ${s.symbolName}\n${summary}`;
 }
+
+/**
+ * Content hash of the composition template (plan §2.1 C6).
+ *
+ * This is deliberately NOT a hand-bumped constant. Any edit to `compose()`
+ * changes the text every embedding is built from, which silently invalidates
+ * both the cached query vectors and any band calibration derived against the
+ * old distribution. Hashing the function source makes that mechanical: change
+ * the template, and the version changes with it, with no human in the loop.
+ *
+ * The two values this binds together — the composition and the thresholds
+ * calibrated against it — previously sat ~70 lines apart in this file with
+ * nothing connecting them. Two coupled values drifting apart with nothing
+ * enforcing the link is the exact defect the recalibration plan exists to fix;
+ * re-introducing a "remember to bump this" convention would rebuild it one
+ * layer up.
+ */
+export const COMPOSE_VERSION = crypto.createHash('sha256')
+  .update(compose.toString())
+  .digest('hex')
+  .slice(0, 12);
 
 /**
  * Chunk an array into batches of size `n`.

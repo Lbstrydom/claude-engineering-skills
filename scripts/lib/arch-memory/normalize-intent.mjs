@@ -15,7 +15,9 @@
  *
  * This module rewrites the intent into the index's genre before embedding, so
  * the two sides are comparable. It is the dominant term of the fix (~0.25);
- * the `compose()` template accounts for a further ~0.06 and is deferred.
+ * the `compose()` template accounted for a further ~0.06 and was fixed
+ * separately on 2026-07-20 (file path + signature removed — see
+ * `symbol-index.mjs` `compose`).
  *
  * CONTRACTS (plan §2.1):
  * - C1 — the caller redacts and egress-gates BEFORE calling in. This module

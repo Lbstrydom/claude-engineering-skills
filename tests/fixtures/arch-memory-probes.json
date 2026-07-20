@@ -63,7 +63,7 @@
         { "filePath": "scripts/symbol-index/drift.mjs", "symbolName": "atomicWrite" }
       ],
       "alternatesAddedPostHoc": true,
-      "_note": "The repo has FOUR temp-file+rename implementations. All genuinely answer the intent, so all count. That this probe 'failed' is itself the arch-memory feature working as designed — these are exactly the near-duplicates a working consultation should surface.",
+      "_note": "CORRECTED 2026-07-20. The original note here claimed this probe's miss was 'the arch-memory feature working as designed — surfacing near-duplicates'. That was WRONG, and it is worth recording why. The actual cause was a fan-out bug: symbol_embeddings is UNIQUE on (definition_id, model, dimension, signature_hash) and rows survive across refreshes, but the RPC joined on only the first three — so one symbol produced N rows scored against N historical signatures, and those duplicates consumed the k=5 budget. The top-5 held only THREE distinct symbols; atomicWriteFileSync was pushed off by duplicates of two of its own forks. The duplicate rows were visible in the raw output at the time and were misread as distinct competitors. Fixed by migration 20260720120000_symbol_neighbourhood_signature_pinned_embedding. The alternates below still stand on their merits — the repo genuinely does have four temp-file+rename implementations — but they are NOT why this probe originally failed.",
       "relation": "reuse",
       "stratum": "shared-lib"
     },

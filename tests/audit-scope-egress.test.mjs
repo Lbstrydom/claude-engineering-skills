@@ -263,3 +263,56 @@ test('adjacency: a clean composed result is byte-stable and leaks nothing', () =
     assert.ok(composed.result.coverage.containersEnumerated > 0, 'clean must be earned by real coverage');
   });
 });
+
+// ── arch-memory consultation assembly (plan §2.1 C1) ──────────────────────
+//
+// Assembly-level counterpart to the gate test in sensitive-egress.test.mjs.
+// The consultation composes: redactSecrets → assertEgressSafe → normalizer →
+// embedText. This asserts the COMPOSED payload, since a regression at the seam
+// (one half of a payload redacted, the other not) is exactly the failure class
+// that broke the tiered-shadow discovery path for a month.
+test('arch-memory: the composed normalize payload carries no raw secret', async () => {
+  const { redactSecrets } = await import('../scripts/lib/secret-patterns.mjs');
+  const { normalizeIntentToPurpose } = await import('../scripts/lib/arch-memory/normalize-intent.mjs');
+
+  const rawIntent = 'wire up postgresql://svc:s3cr3t-p4ssw0rd@10.0.0.4:5432/billing for the resolver';
+  const safeIntent = redactSecrets(rawIntent).text;
+
+  let sent = null;
+  const capture = async () => ({
+    messages: {
+      create: async (p) => {
+        sent = JSON.stringify({ system: p.system, messages: p.messages });
+        return { content: [{ type: 'text', text: 'Resolves billing records.' }] };
+      },
+    },
+  });
+
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-assembly-'));
+  await normalizeIntentToPurpose(safeIntent, { repoRoot, createClient: capture, isAvailable: async () => true });
+
+  assert.ok(sent, 'the provider must have been invoked');
+  assert.equal(sent.includes('s3cr3t-p4ssw0rd'), false, 'the raw password must never reach the provider payload');
+});
+
+test('arch-memory: the normalization cache file never contains a raw secret', async () => {
+  const { redactSecrets } = await import('../scripts/lib/secret-patterns.mjs');
+  const { normalizeIntentToPurpose, _internals } = await import('../scripts/lib/arch-memory/normalize-intent.mjs');
+
+  const rawIntent = 'use key AKIAIOSFODNN7EXAMPLE and secret wJalrXUtnFEMI0K7MDENGbPxRfiCYEXAMPLEKEY';
+  const safeIntent = redactSecrets(rawIntent).text;
+
+  const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-cachefile-'));
+  await normalizeIntentToPurpose(safeIntent, {
+    repoRoot,
+    createClient: async () => ({ messages: { create: async () => ({ content: [{ type: 'text', text: 'Signs requests.' }] }) } }),
+    isAvailable: async () => true,
+  });
+
+  const cacheFile = _internals.cacheFile(repoRoot);
+  if (fs.existsSync(cacheFile)) {
+    const onDisk = fs.readFileSync(cacheFile, 'utf-8');
+    assert.equal(onDisk.includes('wJalrXUtnFEMI0K7MDENGbPxRfiCYEXAMPLEKEY'), false,
+      'a secret must never be persisted to the on-disk normalization cache');
+  }
+});

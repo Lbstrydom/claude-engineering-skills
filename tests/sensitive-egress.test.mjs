@@ -472,3 +472,46 @@ describe('adjacency wave — evidence carrier egress contract', () => {
     }
   });
 });
+
+// ── arch-memory intent normalizer (plan §2.1 C1) ──────────────────────────
+//
+// The normalizer added by docs/plans/arch-memory-band-recalibration.md is a NEW
+// external-LLM egress surface. AGENTS.md makes sensitive-path egress a Tier-3
+// hard test-first seam, so its coverage lives HERE, in the canonical suite,
+// not only in the module's own unit test.
+describe('arch-memory normalize-intent — egress boundary (C1)', () => {
+  it('a secret-bearing intent is refused by the gate before any provider call', async () => {
+    const { assertEgressSafe } = await import('../scripts/lib/sensitive-egress-gate.mjs');
+    const intent = 'connect using postgresql://user:hunter2trustno1@db.example.com:5432/prod';
+    assert.throws(
+      () => assertEgressSafe(intent, { label: 'arch-memory:normalize-intent' }),
+      /egress/i,
+      'a raw DSN password must not reach the normalizer',
+    );
+  });
+
+  it('the normalizer never receives text the caller has not redacted', async () => {
+    const { normalizeIntentToPurpose } = await import('../scripts/lib/arch-memory/normalize-intent.mjs');
+    let sent = null;
+    const capture = async () => ({
+      messages: {
+        create: async (p) => { sent = p.messages[0].content; return { content: [{ type: 'text', text: 'Does a thing.' }] }; },
+      },
+    });
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-egress-'));
+    // The contract is that callers pass POST-redaction text; assert the module
+    // transmits exactly what it was handed and never re-derives from a raw field.
+    const redacted = 'connect using postgresql://user:[REDACTED:dsn-password]@db/prod';
+    await normalizeIntentToPurpose(redacted, { repoRoot, createClient: capture, isAvailable: async () => true });
+    assert.equal(sent, redacted);
+    assert.equal(sent.includes('hunter2'), false);
+  });
+
+  it('a gate refusal degrades to the deterministic path — never sends, never throws', async () => {
+    const { deterministicNormalize } = await import('../scripts/lib/arch-memory/normalize-intent.mjs');
+    // Mirrors the catch branch in neighbourhood-query.mjs: refusal → fallback text.
+    const out = deterministicNormalize('add a connector for the billing service');
+    assert.ok(out.length > 0, 'fallback must still produce embeddable text');
+    assert.equal(out.includes('add a'), false, 'fallback normalizes rather than passing through');
+  });
+});
