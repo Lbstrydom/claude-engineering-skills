@@ -768,7 +768,7 @@ scanner at all, which is the outcome the bucket exists to enable.
 `C` reproduced at exactly 4, same findings and same reasons — so the v1.1 number
 is stable rather than incidental.
 
-**A precondition this measurement exposed, which the tool does NOT enforce.**
+**A precondition this measurement exposed — now enforced (v1.2).**
 The first SARIF was captured at 17:55; the XSS fixes landed at 21:11 and 21:31 —
 3½ hours later, touching the very file §2d-ii used as its render-delegation
 example. Running that SARIF against the current tree would have measured neither
@@ -776,11 +776,39 @@ state: stale findings against moved line numbers, with sinks resolving to code
 that no longer sits there. Four SARIFs existed by then, a remediation
 progression; the post-fix one is the only coherent pair with the tree.
 
-**A SARIF and the source it names must come from the same commit.** The CLI
-happily accepts any SARIF against whatever tree is on disk and cannot currently
-tell. Worth a `--expect-commit` or a recorded scan-commit check before anyone
-treats a routed report as evidence — a mismatch degrades silently, in the
-direction of reading the wrong lines, which is the demoting direction.
+**A SARIF and the source it names must come from the same commit.** A mismatch
+degrades silently in the direction of reading the wrong lines — the demoting
+direction — so the CLI now checks it per finding rather than trusting the
+operator.
+
+Not the `--expect-commit` flag first sketched here. Snyk emits no
+`versionControlProvenance` (null in all four SARIFs), so there is no commit to
+compare against, and a flag would put the burden on whoever is least placed to
+know. Scan time is recoverable, though: `invocations[].endTimeUtc`, falling back
+to `startTimeUtc`, then to the ISO timestamp inside `automationDetails.id`
+(`"Snyk/Code/2026-07-19T19:26:09Z"` — Snyk's shape). Compared against each
+referenced file's last-commit time, that answers the question factually and
+automatically. Findings whose file post-dates the scan are held in `A` with
+reason `sarif-predates-file`, blocked before any predicate runs — the same gate
+the sensitivity block uses, for the same reason: a demotion decided on evidence
+that cannot be trusted is worse than no demotion.
+
+When no scan time is recoverable the run reports `unavailable` rather than
+assuming coherence, so a report cannot read clean because the check stopped
+looking. Verified against the real pair:
+
+```
+### STALE pair — old SARIF (15:55) vs current tree
+  A 144   C 4   D 92
+  ⚠ 3 finding(s) reference a file committed AFTER the scan.
+
+### COHERENT pair — final SARIF (19:26)
+  A 143   C 4   D 0
+  ⚠ 1 finding(s) reference a file committed AFTER the scan.
+```
+
+The single flag on the coherent pair is correct, not noise: the last XSS fix
+landed at 19:31, five minutes after that scan finished.
 
 **Do not read a shrinking `A` as progress.** `DOMXSS` held at **103 across all
 four scans** while the consumer was actively fixing stored XSS and — per their
