@@ -38,6 +38,7 @@ import { execFileSync } from 'node:child_process';
 import { redactSecrets } from '../lib/secret-patterns.mjs';
 import { atomicWriteFileSync } from '../lib/file-io.mjs';
 import { retrySync } from '../lib/retry-transient-fs.mjs';
+import { findRepoPragmas } from '../lib/duplicate-justification-pragma.mjs';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -535,6 +536,41 @@ async function resolveUnresolvedOutcomes({ learningStore, repoId, dryRun }) {
 // ── arch_memory_band outcome detector ─────────────────────────────────────
 
 /**
+ * How long a `justify-divergence` row stays pending while we wait for a
+ * `@duplicate-justification` pragma to appear. Deliberately much longer than
+ * STALENESS_MS (which only gates when a row becomes *eligible* to resolve):
+ * the pragma is written by a human or an audit round, not within 30 minutes of
+ * the consultation. Bounded so pending rows cannot accumulate forever.
+ */
+const PRAGMA_GRACE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+/** Repo-root-relative, forward-slashed, no `./` prefix — pragma `target=` is
+ *  author-typed while `context.filePath` comes from the indexer, so the two
+ *  spellings must be normalised before comparison. */
+function normaliseRepoPath(p) {
+  return String(p || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\/+/, '');
+}
+
+/**
+ * Memoised pragma sweep. `findRepoPragmas` shells out to `git grep`, and
+ * resolvePending processes up to 500 rows per invocation — one sweep per row
+ * would be 500 subprocesses for an answer that cannot change mid-run. Module
+ * scope is safe here for the same reason as the other caches in this repo
+ * (CLI-per-invocation; see AGENTS.md "Accepted Technical Debt").
+ */
+let _pragmaCache = null;
+function defaultGetRepoPragmas() {
+  if (_pragmaCache) return _pragmaCache;
+  // strict: a failed sweep must not read as "zero pragmas" — that would mint
+  // false `divergence-unjustified` verdicts for every row in the batch.
+  _pragmaCache = findRepoPragmas(process.cwd(), { strict: true });
+  return _pragmaCache;
+}
+
+/** Test seam — clears the memoised sweep. */
+export function _resetPragmaCache() { _pragmaCache = null; }
+
+/**
  * Resolve the outcome of an arch_memory_band decision by inspecting git
  * history shortly after the decision.  v1 implementation is conservative:
  * it returns 'reuse-correct' / 'extend-correct' / 'wrong-fork' / 'uncertain'
@@ -565,10 +601,65 @@ export async function computeArchMemoryBandOutcome(row, deps = {}) {
   const band     = ch.band;
   if (!band) return null;
 
-  // Bands the audit-loop didn't actively recommend: emit uncertain so the
-  // row stops being pending but doesn't bias the posterior.
-  if (band === 'review' || band === 'justify-divergence') {
-    return { action: 'uncertain', evidence: `band=${band}` };
+  // `justify-divergence` IS a recommendation ("proceed, but say why"), so it is
+  // resolvable — and it has to be, because it and `review` are the only bands
+  // that ever fire. `reuse`/`extend` carry the git-probe logic below but sit
+  // above this pipeline's similarity ceiling: 0 of 1,763 consultations reached
+  // them (docs/plans/arch-memory-band-recalibration.md §1). Returning a blanket
+  // `uncertain` here therefore made the arch_memory_band loop vacuous BY
+  // CONSTRUCTION — 1,745 resolved rows, 100% `uncertain`, every `evidence`
+  // string echoing the input band back as if it were a measurement. Same
+  // species as the since/until inversion documented below, which also produced
+  // a verdict that had checked nothing.
+  //
+  // The resolution signal already exists and is already mechanical: the
+  // `@duplicate-justification` pragma that /audit-code's duplication wave and
+  // drift.mjs both consume. A pragma naming this candidate as its `target=` is
+  // the author saying, in a greppable artifact, "I saw it and forked anyway,
+  // here is why" — which is exactly what the band asked for.
+  if (band === 'justify-divergence') {
+    if (!filePath || !symbol) {
+      return { action: 'uncertain', evidence: 'missing-file-or-symbol' };
+    }
+    const getPragmas = deps.getRepoPragmas || defaultGetRepoPragmas;
+    let pragmas;
+    try {
+      pragmas = getPragmas();
+    } catch (err) {
+      // A failed sweep and "genuinely zero pragmas" are NOT interchangeable
+      // here: treating a git hiccup as zero would mint a false
+      // `divergence-unjustified`. Stay pending instead.
+      return { action: 'uncertain', evidence: `pragma-sweep-failed: ${err.message || 'unknown'}` };
+    }
+    const hit = pragmas.find(p =>
+      normaliseRepoPath(p.targetFile) === normaliseRepoPath(filePath) &&
+      p.targetSymbol === symbol);
+    if (hit) {
+      return {
+        action: 'divergence-justified',
+        evidence: `pragma@${normaliseRepoPath(hit.pragmaFile)}:${hit.pragmaLine}`,
+      };
+    }
+    // No pragma yet. A pragma can legitimately land later than the decision, so
+    // do NOT resolve on first look — `uncertain` would close the row forever
+    // (backfillLearningOutcome sets outcome_at) and re-create the vacuity in a
+    // new shape. Stay pending until the grace window has passed; the bounded
+    // window is what stops rows accumulating unresolved.
+    const decisionMs = Date.parse(row.created_at);
+    if (!Number.isFinite(decisionMs)) {
+      return { action: 'uncertain', evidence: 'unparseable-decision-timestamp' };
+    }
+    if (Date.now() - decisionMs < PRAGMA_GRACE_MS) return null; // retry later
+    return { action: 'divergence-unjustified', evidence: 'no-pragma-targeting-candidate' };
+  }
+
+  // `review` means "nothing appropriate exists — proceed greenfield". Resolving
+  // that requires evidence the greenfield call was right, which no artifact in
+  // this repo currently carries, so it stays deliberately unresolved rather
+  // than pretending. NOTE this is still 1,917 tautological rows; it is the
+  // remaining half of the vacuity, tracked in the plan's §13, not fixed here.
+  if (band === 'review') {
+    return { action: 'uncertain', evidence: 'band=review; no resolution signal defined' };
   }
 
   // Without a file path we can't probe git — emit uncertain.

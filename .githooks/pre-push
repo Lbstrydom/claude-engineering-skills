@@ -62,6 +62,24 @@ done <<EOF
 $PUSH_STDIN
 EOF
 
+# ── 0.9 Working-tree-only checks (blocking) ─────────────────────────────
+# Checks whose subject is UNTRACKED working-tree debris cannot run in the
+# sandbox: a clean checkout has no untracked files, so they would find nothing
+# and report a green they did not earn. They run here, against the real tree,
+# BEFORE the sandbox. Keep this list minimal — anything that can be judged from
+# committed source belongs in `npm run check`, where it gets the clean-checkout
+# guarantee. Nothing else has qualified so far; add only with the same argument.
+if [ -f "$REPO_ROOT/package.json" ]; then
+  ( cd "$REPO_ROOT" && node scripts/check-stale-skill-surface.mjs --gate )
+  WT_EXIT=$?
+  if [ $WT_EXIT -ne 0 ]; then
+    echo "✗  working-tree checks FAILED (exit $WT_EXIT) — push blocked."
+    echo "   A stale .github/skills/ tree shadows .claude/skills/ for Copilot."
+    echo "   Fix the issues above, or bypass with: git push --no-verify"
+    exit 1
+  fi
+fi
+
 # ── 1. Checks (blocking) ────────────────────────────────────────────────
 if [ -f "$REPO_ROOT/package.json" ]; then
   if [ "$AUDIT_PREPUSH_SANDBOX" = "0" ]; then

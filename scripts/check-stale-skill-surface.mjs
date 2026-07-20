@@ -113,6 +113,36 @@ function main() {
   const repoIdx = argv.indexOf('--repo');
   const root = repoIdx >= 0 && argv[repoIdx + 1] ? path.resolve(argv[repoIdx + 1]) : process.cwd();
 
+  // SANDBOX HONESTY (2026-07-20). The defect this check hunts is an UNTRACKED
+  // `.github/skills/` tree — `git ls-files .github/skills` is empty by design,
+  // and the incident that motivated this script was "an untracked tree of 9
+  // stale skills" (see the fileoverview). Since 25436c8 the pre-push hook runs
+  // `npm run check` inside a CLEAN CHECKOUT, which by construction contains no
+  // untracked files — so in the sandbox this check is guaranteed to find
+  // nothing and guaranteed to print "✓ nothing can shadow", a positive
+  // verification claim it did not earn.
+  //
+  // No strictness flag can fix that: the input is architecturally absent, not
+  // merely unprovisioned. The check has to run against the WORKING TREE, which
+  // the hook now does before entering the sandbox. Here we only refuse to lie.
+  // An explicit --repo means the caller aimed this at a specific tree on
+  // purpose (the honest usage); never suppress that, sandbox or not.
+  const repoOverride = repoIdx >= 0 && Boolean(argv[repoIdx + 1]);
+  const inSandbox = process.env.AUDIT_PREPUSH_SANDBOX_ACTIVE === '1';
+  if (inSandbox && !repoOverride) {
+    const msg = `unverifiable in the pre-push sandbox — a clean checkout has no untracked files, ` +
+      `so ${STALE_SURFACE}/ debris cannot exist here. The hook runs this against the working tree instead.`;
+    if (json) {
+      process.stdout.write(JSON.stringify({
+        repo: root, staleSurface: STALE_SURFACE, liveSurface: LIVE_SURFACE,
+        status: 'unverifiable', reason: 'clean-checkout-sandbox', exitCode: 0,
+      }, null, 2) + '\n');
+    } else {
+      process.stderr.write(`${Y}○ stale skill surface: ${msg}${X}\n`);
+    }
+    process.exit(0);
+  }
+
   const staleNames = listSkillDirs(root, STALE_SURFACE);
   const liveNames = listSkillDirs(root, LIVE_SURFACE);
   const result = compareSkillSurfaces({

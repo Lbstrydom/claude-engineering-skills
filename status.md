@@ -1,5 +1,67 @@
 # Project Status Log
 
+## 2026-07-20 — two vacuous gates: an outcome loop that never resolved, a check that couldn't fail
+
+Both defects are the same species as the pre-push sandbox findings, and both were
+found by asking the question AGENTS.md already prescribes: *can this return green
+without having actually checked anything?*
+
+**1. `arch_memory_band` was unresolvable by construction.**
+[backfill-outcomes.mjs:570](scripts/learning/backfill-outcomes.mjs) short-circuited
+`review` and `justify-divergence` to a blanket `uncertain`. Those are the only two
+bands that ever fire — `reuse`/`extend` carry the real git-probe logic but sit above
+this pipeline's similarity ceiling (0 of 1,763 consultations reached them). Result:
+**1,745 resolved rows, 100% `uncertain`**, every `evidence` string echoing the input
+band back as though it were a measurement. The learning loop for this decision type
+could never learn anything. Note the same function already carries a comment
+documenting a *previous* instance of this species — a `since`/`until` inversion that
+made `reuse` "unconditionally emit `reuse-correct` — a green that never checked
+anything." Found, fixed, and then reintroduced one branch higher.
+
+Fixed by resolving `justify-divergence` against the `@duplicate-justification` pragma
+that `/audit-code`'s duplication wave and `drift.mjs` already consume — a pragma
+naming the cited candidate as its `target=` *is* the author saying "I saw it and
+forked anyway, here is why", in a greppable artifact. `divergence-justified` /
+`divergence-unjustified`, with a 7-day grace during which the row stays **pending**
+rather than closing (resolving on first look would set `outcome_at` and recreate the
+vacuity in a new shape). A failed `git grep` sweep returns `uncertain`, never a false
+`unjustified`. The sweep is memoised — `resolvePending` handles 500 rows per run and
+one sweep per row would be 500 subprocesses for an answer that cannot change mid-run.
+
+**Live state, stated honestly**: `divergence-justified` is now *reachable* but has not
+fired. No row is past the grace window yet — the oldest `justify-divergence` decision
+is 6 days old. 7 tests cover the paths, including that a failed sweep cannot mint a
+verdict. `review` (1,797 rows) stays deliberately unresolved: no artifact in this repo
+carries evidence that a greenfield call was correct. That is now *said* in the code
+rather than disguised as a resolution.
+
+**2. `check-stale-skill-surface` could not fail in the sandbox.** The defect it hunts
+is an **untracked** `.github/skills/` tree. Since 25436c8 the hook runs `npm run check`
+against a clean checkout — which by construction has no untracked files. So the check
+was guaranteed to find nothing and guaranteed to print `✓ nothing can shadow`: a
+positive verification claim it could not earn. No strictness flag fixes this; the
+input is architecturally absent, not merely unprovisioned. It now declines to claim
+green under `AUDIT_PREPUSH_SANDBOX_ACTIVE=1`, and the hook runs it against the working
+tree in a new **step 0.9** before entering the sandbox. Verified by planting real
+debris: the working-tree run exits 1 and blocks.
+
+**A finding that did NOT survive checking.** A sweep of the `check` chain reported the
+RLS gate as fully defeated in the sandbox, on the reasoning that `AUDIT_DB_URL` lives
+in the gitignored `.env`. Wrong: it comes from `~/.audit-loop.env`, a **HOME** path
+present in any worktree. `env -u AUDIT_DB_URL node scripts/check-rls.mjs` still
+connects and `db:check-rls:gate` exits 0. Recorded because the failure mode is the one
+this repo's own notes warn about — reasoning about `process.env` instead of running
+the thing.
+
+**Still open** (latent — both configs are absent everywhere today, so they are no-ops
+in tree and sandbox alike, but each becomes a silent false-green the moment someone
+opts in locally): `efficacy-lints.config.json` (ENOENT → `enabled:false` → silent
+`exit(0)`) and `.claude-context-allowlist.json` (absent → default ceilings, so a repo
+that *tightened* limits gets silently loosened; `--strict` covers malformed, never
+absent). Plus a residual in an already-hardened check: `ARCH_COVERAGE_REQUIRE_ENVELOPE`
+guarantees the envelope *exists*, not that it has content — an envelope with no
+`coverage` block yields `unknown`, which `coverageGateExitCode` does not fail.
+
 ## 2026-07-20 — the push gate started checking the commit, and found four things wrong with itself
 
 The pre-push hook ran `npm run check` against the **working tree**. With two

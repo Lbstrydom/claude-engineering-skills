@@ -29,18 +29,95 @@ describe('arch_memory_band / outcome detector', () => {
     assert.equal(await computeArchMemoryBandOutcome({ context: {} }), null);
   });
 
-  it('uncertain when band is review/justify-divergence', async () => {
+  it('uncertain when band is review (no resolution signal defined)', async () => {
     const a = await computeArchMemoryBandOutcome(
       { context: { filePath: 'a.js', symbol: 'foo' }, choice: { band: 'review' }, created_at: '' },
       { execGit: () => '' }
     );
     assert.equal(a.action, 'uncertain');
     assert.match(a.evidence, /band=review/);
-    const b = await computeArchMemoryBandOutcome(
-      { context: { filePath: 'a.js', symbol: 'foo' }, choice: { band: 'justify-divergence' }, created_at: '' },
-      { execGit: () => '' }
-    );
-    assert.equal(b.action, 'uncertain');
+  });
+
+  // ── justify-divergence resolves via the @duplicate-justification pragma ──
+  //
+  // Regression guard for the vacuity fixed 2026-07-20: this band used to
+  // short-circuit to a blanket `uncertain`, and since `reuse`/`extend` sit
+  // above the pipeline's similarity ceiling, that made 100% of resolved
+  // arch_memory_band rows unresolvable BY CONSTRUCTION. The assertions below
+  // are what make `divergence-justified` reachable at all — if this band ever
+  // returns a bare `uncertain` again for a well-formed row, the loop is vacuous.
+  describe('justify-divergence / pragma resolution', () => {
+    const OLD = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); // past grace
+    const NEW = new Date(Date.now() - 60 * 1000).toISOString();                 // inside grace
+    const jd = (created_at) => ({
+      context: { filePath: 'scripts/lib/file-io.mjs', symbol: 'atomicWriteFileSync' },
+      choice: { band: 'justify-divergence' },
+      created_at,
+    });
+
+    it('divergence-justified when a pragma targets the cited candidate', async () => {
+      const r = await computeArchMemoryBandOutcome(jd(OLD), {
+        getRepoPragmas: () => ([{
+          pragmaFile: 'scripts/memory-health.mjs', pragmaLine: 291,
+          targetFile: 'scripts/lib/file-io.mjs', targetSymbol: 'atomicWriteFileSync',
+          reason: 'deliberate',
+        }]),
+      });
+      assert.equal(r.action, 'divergence-justified');
+      assert.match(r.evidence, /pragma@scripts\/memory-health\.mjs:291/);
+    });
+
+    it('normalises path spelling — author-typed backslashes still match', async () => {
+      const r = await computeArchMemoryBandOutcome(jd(OLD), {
+        getRepoPragmas: () => ([{
+          pragmaFile: 'scripts\\memory-health.mjs', pragmaLine: 291,
+          targetFile: '.\\scripts\\lib\\file-io.mjs', targetSymbol: 'atomicWriteFileSync',
+          reason: 'deliberate',
+        }]),
+      });
+      assert.equal(r.action, 'divergence-justified');
+    });
+
+    it('does not match a pragma targeting a DIFFERENT symbol in the same file', async () => {
+      const r = await computeArchMemoryBandOutcome(jd(OLD), {
+        getRepoPragmas: () => ([{
+          pragmaFile: 'x.mjs', pragmaLine: 1,
+          targetFile: 'scripts/lib/file-io.mjs', targetSymbol: 'readFileOrDie',
+          reason: 'other',
+        }]),
+      });
+      assert.equal(r.action, 'divergence-unjustified');
+    });
+
+    it('stays PENDING (null) inside the grace window — a pragma may still land', async () => {
+      const r = await computeArchMemoryBandOutcome(jd(NEW), { getRepoPragmas: () => ([]) });
+      assert.equal(r, null, 'must not close the row before the pragma has had time to appear');
+    });
+
+    it('divergence-unjustified once the grace window has passed with no pragma', async () => {
+      const r = await computeArchMemoryBandOutcome(jd(OLD), { getRepoPragmas: () => ([]) });
+      assert.equal(r.action, 'divergence-unjustified');
+      assert.match(r.evidence, /no-pragma-targeting-candidate/);
+    });
+
+    it('a FAILED sweep never mints divergence-unjustified', async () => {
+      // "git grep blew up" and "there are zero pragmas" are not interchangeable:
+      // conflating them would mark every row in the batch as unjustified.
+      const r = await computeArchMemoryBandOutcome(jd(OLD), {
+        getRepoPragmas: () => { throw new Error('git grep exploded'); },
+      });
+      assert.equal(r.action, 'uncertain');
+      assert.match(r.evidence, /pragma-sweep-failed/);
+    });
+
+    it('uncertain when the candidate has no filePath/symbol to match on', async () => {
+      const r = await computeArchMemoryBandOutcome(
+        { context: { symbol: 'foo' }, choice: { band: 'justify-divergence' }, created_at: OLD },
+        { getRepoPragmas: () => ([]) },
+      );
+      assert.equal(r.action, 'uncertain');
+      assert.match(r.evidence, /missing-file-or-symbol/);
+    });
   });
 
   it('uncertain when filePath or symbol missing', async () => {
