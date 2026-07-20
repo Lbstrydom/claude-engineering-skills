@@ -692,7 +692,7 @@ async function main() {
       // bands `review` only. That is the honest degradation — never a reason to
       // fail a refresh whose real work succeeded.
       try {
-        const { computeBackgroundStats, floorFromStats, DEFAULT_K, DEFAULT_SAMPLE_SIZE, MIN_CLIFF_DELTA } =
+        const { computeBackgroundStats, floorFromStats, DEFAULT_K, DEFAULT_SAMPLE_SIZE, CLIFF_REPORTING_THRESHOLD } =
           await import('../lib/arch-memory/background-calibration.mjs');
         const { COMPOSE_VERSION } = await import('../lib/symbol-index.mjs');
         const { NORMALIZE_PROMPT_VERSION } = await import('../lib/arch-memory/normalize-intent.mjs');
@@ -712,7 +712,9 @@ async function main() {
           await recordBandCalibration(repoId, {
             floor,
             k: DEFAULT_K,
-            minCliffDelta: MIN_CLIFF_DELTA,
+            // Reported, not gated — see CLIFF_REPORTING_THRESHOLD. Stored so a
+            // reader can tell a tight cluster from a lone standout.
+            cliffReportingThreshold: CLIFF_REPORTING_THRESHOLD,
             stats,
             provenance: {
               embedModel: embedProfile.provenanceId,

@@ -1,7 +1,7 @@
 # Plan: Arch-Memory Consultation — Close the Query/Index Asymmetry
 
 - **Date**: 2026-07-19
-- **Status**: Draft
+- **Status**: Complete
 - **Author**: Claude + Louis Strydom
 - **Scope**: backend
 - **Stack**: `js-ts` (+ postgres)
@@ -1043,3 +1043,73 @@ pipeline *does* achieve, the reachable band permits the fork. Raising reachabili
 alone therefore does not deliver the outcome this plan exists for; whether
 `justify-divergence` should keep permitting forks is a policy question this plan
 does not currently own.
+
+---
+
+## Implementation Log
+
+### 2026-07-20 — Complete
+
+**Outcome, in one line**: the consultation now emits an actionable band. It had
+emitted none in 1,763 prior decisions.
+
+| probe | before | after |
+|---|---|---|
+| "add a function that finds similar existing symbols" | 0.5846 `review` | **0.8480 `precedent` / above-floor-cluster** |
+| "price a European call option" (hard negative) | — | 0.6244 `review` / below-noise-floor |
+
+**Attribution of the +0.26**, measured by holding everything else constant:
+
+- query-side genre normalization — the dominant term (~0.25)
+- `compose()` template (path + signature removed) — ~0.05
+- signature-pinned embedding join (found by the parallel session) — fixed a
+  fan-out that was silently eating the k=5 budget
+
+**What shipped, by phase**: normalizer + calibration harness + held-out probe
+set (1–2) · null-similarity contract separating ranking from banding, plus the
+bounded summary re-queue (3) · per-repo μ+3σ calibration (4) · vocabulary
+retirement across nine consumers (5).
+
+### Deviations from the plan as written
+
+1. **C4 REVERSED. Thresholds are never shipped.** The plan said "move the
+   derived thresholds into `config.mjs`". That file syncs to consumers, so it
+   would have shipped a constant calibrated against this repo's corpus to every
+   other repo — the *same defect class* the plan exists to fix, with a better
+   number. Replaced by a per-repo floor computed from each repo's own embedding
+   background. Validated: supervised hard-negative ceiling 0.7162 vs
+   unsupervised μ+3σ 0.7146 — 0.2% apart.
+2. **C7 REVERSED. Bands collapsed to three, `reuse`/`extend` retired.** Derived
+   cutoffs were 0.01 apart against ~0.008 run-to-run variance. The partition was
+   also unsound: reuse-vs-extend depends on dependency direction, API shape and
+   ownership, none of which a distance expresses.
+3. **A cliff gate was implemented, then removed.** It rejected a genuine
+   three-symbol cluster as `not-distinctive`. For a *duplication* detector a
+   cluster is the strongest signal, not the weakest — and the floor already
+   handles hubness, since μ rises with corpus similarity. Now reported, never
+   gated.
+4. **`recommendationFromSimilarity` deleted**, not deprecated. Its tests
+   asserted the 0.90/0.85/0.75 mapping and passed throughout the entire period
+   those bands fired zero times.
+5. **Labelled probes became the falsification instrument, not a prerequisite.**
+   Requiring ~30 per consumer would offload a data-science problem onto users as
+   an administrative one; an uncalibrated repo bands `review` only, which is
+   honest and identical to prior behaviour.
+
+### What the live runs caught that review did not
+
+The cliff gate (above), two scope bugs in the re-queue (`prior` / `repoRow` not
+defined — the full suite passed with both present, because nothing exercises the
+incremental-refresh path), and a `cli`-backend normalizer that returned
+multi-paragraph essays instead of one-line summaries while *appearing* to
+improve similarity through shared vocabulary.
+
+### Deliberately not done
+
+- **`summary_attempts` retry telemetry is not surfaced** anywhere but refresh
+  logs.
+- **Passive label harvesting** from consultation telemetry (the cheap route to
+  supervised calibration) is designed but unbuilt.
+- **The C5 three-way `review` split** (`review-near` / `review-low`) was
+  designed around the old band structure and was not carried forward; the
+  floor-relative equivalent is unbuilt.

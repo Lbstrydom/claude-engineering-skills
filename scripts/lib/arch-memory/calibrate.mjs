@@ -308,8 +308,19 @@ export function deriveThresholds(results, metrics) {
   // derivation could never succeed: a latent "no thresholds, ever" bug rather
   // than a wrong-thresholds one. Constraining the search range is the fix;
   // the ordering check below stays as the backstop, not the mechanism.
+  // `.reverse()` was here and inverted the rule: on an ascending list it picks
+  // the HIGHEST qualifying cutoff, while §7c specifies the LOWEST. It was added
+  // to keep extend below reuse, but the range filter already does that —
+  // reversing on top of it narrowed the band for no reason.
+  //
+  // STANDING CAVEAT: `reuse`/`extend` are RETIRED bands (C7-REVISED). Production
+  // banding uses the per-repo floor, and nothing consumes T_reuse/T_extend.
+  // They survive here as a SUPERVISED CROSS-CHECK on the unsupervised floor —
+  // that comparison (0.7162 vs 0.7146, 0.2% apart) is what justified adopting
+  // mu+3sigma at all, so the derivation earns its place as validation. Do not
+  // read these as production thresholds.
   const extend = reuse
-    ? (eligible.filter(r => r.t < reuse.t).reverse()
+    ? (eligible.filter(r => r.t < reuse.t)
         .find(r => r.precision !== null && r.precision >= 0.75 && r.hardFp <= 1) || null)
     : (eligible.find(r => r.precision !== null && r.precision >= 0.75 && r.hardFp <= 1) || null);
 
@@ -511,7 +522,13 @@ async function main() {
     if (missed.length > 0) {
       process.stdout.write(`\n[calibrate] ${missed.length} positive probe(s) missed — expected symbol absent from top-${CALIBRATION_K}:\n`);
       for (const m of missed) {
-        process.stdout.write(`  ${m.id}\n    wanted: ${m.expected}\n    got:    ${m.returned.map(x => `${x.symbol} (${x.similarity.toFixed(3)})`).join('\n            ')}\n`);
+        // `similarity` is nullable by contract (plan §2.1 C3) — an unembedded
+        // symbol has no score. A bare `.toFixed(3)` throws a TypeError here and
+        // crashes the harness AFTER all the probe work is done, losing the
+        // entire run. The diagnostic path must be at least as null-safe as the
+        // thing it is diagnosing.
+        const fmt = (v) => (v === null || v === undefined || !Number.isFinite(v) ? 'unscored' : v.toFixed(3));
+        process.stdout.write(`  ${m.id}\n    wanted: ${m.expected}\n    got:    ${m.returned.map(x => `${x.symbol} (${fmt(x.similarity)})`).join('\n            ')}\n`);
       }
     }
     process.stdout.write(`[calibrate] report → ${outPath}\n`);

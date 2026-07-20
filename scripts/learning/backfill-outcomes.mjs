@@ -601,11 +601,12 @@ export async function computeArchMemoryBandOutcome(row, deps = {}) {
   const band     = ch.band;
   if (!band) return null;
 
-  // `justify-divergence` IS a recommendation ("proceed, but say why"), so it is
-  // resolvable — and it has to be, because it and `review` are the only bands
-  // that ever fire. `reuse`/`extend` carry the git-probe logic below but sit
-  // above this pipeline's similarity ceiling: 0 of 1,763 consultations reached
-  // them (docs/plans/arch-memory-band-recalibration.md §1). Returning a blanket
+  // `precedent` IS a recommendation ("existing code occupies this space — look
+  // before writing"), so it is resolvable. It and `review` are the only bands
+  // the system now emits: `reuse`/`extend`/`justify-divergence` were RETIRED
+  // 2026-07-20 because their cutoffs sat above this pipeline's similarity
+  // ceiling and fired 0 times in 1,763 consultations
+  // (docs/plans/arch-memory-band-recalibration.md §1). Returning a blanket
   // `uncertain` here therefore made the arch_memory_band loop vacuous BY
   // CONSTRUCTION — 1,745 resolved rows, 100% `uncertain`, every `evidence`
   // string echoing the input band back as if it were a measurement. Same

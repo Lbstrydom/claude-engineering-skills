@@ -1,5 +1,66 @@
 # Project Status Log
 
+## 2026-07-20 — the arch-memory consultation fired for the first time in 1,763 decisions
+
+The architectural-memory consultation is MANDATORY per AGENTS.md before writing
+any new symbol. It had returned an actionable band **zero times** across its
+entire history — 1,625 `review` and 138 `justify-divergence`, no `reuse`, no
+`extend`. Not rarely. Never.
+
+**Root cause, measured rather than guessed.** The query embeds an *intent* ("add
+a function that finds similar symbols") while the index embeds a *purpose
+description* ("Queries the index for K-nearest symbols"). Different genres of
+English, and the gap is ~0.25 cosine. The maximum similarity the pipeline could
+produce was 0.8294 — below the 0.85 `extend` bar — so the bands were
+mathematically unreachable and the feature was silently inert. Two hypotheses
+were refuted along the way: the metric is correct (identical string → 1.0000),
+and the provider/dimension guards are sound.
+
+**Result**: reference probe 0.5846 → **0.8480**, banding `precedent`; a hard
+negative ("price a European call option") correctly bands
+`review / below-noise-floor`.
+
+**The decision that mattered most was NOT shipping the obvious fix.** Deriving
+better thresholds and writing them into `config.mjs` would have looked like
+completion — but that file syncs to consumer repos, so it would have shipped a
+constant calibrated against this corpus (3,478 Node-CLI symbols, terse Haiku
+summaries) to a wine app with different vocabulary and density. That is the
+*same defect class* being fixed, wearing a better-evidenced number. The floor is
+now computed per repo from that repo's own embedding background (μ+3σ),
+validated against the labelled set to 0.2% (supervised 0.7162 vs unsupervised
+0.7146). An uncalibrated repo bands `review` only — honest, and identical to
+prior behaviour, so consumers see an accurate label rather than a regression.
+
+**Four things the live runs caught that review did not:**
+
+- A cliff gate ("a match must also be distinctive"), suggested by `/brainstorm`
+  and implemented as specified, rejected a genuine three-symbol cluster. For a
+  *duplication* detector a cluster is the strongest signal, not the weakest —
+  and the floor already handles hubness, since μ rises with corpus similarity.
+- Two scope bugs in the summary re-queue (`prior` / `repoRow` not defined). The
+  full suite passed with both present, because nothing exercises the
+  incremental-refresh path.
+- A `cli`-backend normalizer returning multi-paragraph essays instead of
+  one-line summaries, while *appearing* to improve similarity through shared
+  vocabulary. Trusting the number rather than reading the output would have
+  shipped it.
+- `recommendationFromSimilarity`'s unit tests asserted the 0.90/0.85/0.75
+  mapping and passed throughout the entire period those bands fired zero times —
+  correct about the function, silent about the system. Function and tests deleted.
+
+**Audited**: 5 rounds on the plan (GPT ×2, Gemini ×3 — closed at `REJECT` with
+all findings fixed rather than re-run until green, because round 3 reversed
+round 2's instruction on the same line); a union code audit (2 HIGH + 6 MEDIUM
+fixed, rest adjudicated with independence stated); and a consolidated Gemini gate
+(3 findings, all fixed — including a latent `undefined` constant that would have
+silently dropped a field from the stored calibration on the next refresh).
+
+**Not done, deliberately**: passive label harvesting from consultation telemetry
+(the cheap route to supervised calibration — designed, unbuilt); the C5 three-way
+`review` split; `summary_attempts` retry telemetry beyond refresh logs.
+
+Plan: `docs/plans/arch-memory-band-recalibration.md` (Complete).
+
 ## 2026-07-20 — the mixed-repo fix was a label, not a fix; the consultation was still handing back a confident wrong answer
 
 Follow-up to the adoption session below, prompted by a single question: *is this

@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**4 active · 131 terminal · 22 audit summaries · 4 reference docs**
+**3 active · 132 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -21,7 +21,6 @@ This is the list to read when asking "what is in flight?".
 
 | Plan | Status | Notes |
 |---|---|---|
-| [Arch-Memory Consultation — Close the Query/Index Asymmetry](./arch-memory-band-recalibration.md) | `Draft` |  |
 | [Dismissed-FP Reopen Policy (split `dismissed` from `fixed`)](./dismissed-fp-reopen-policy.md) | `In Progress` | Phase 1 implemented 2026-07-17 (`buildRulingsBlock` |
 | [Observed-Graph Discovery Unification (evidence-layer architecture)](./observed-graph-discovery-unification.md) | `Draft` | measured 2026-07-18 across all three repos (§3.1), and the |
 | [Tiered Recall-Weighted Audit Pipeline](./tiered-recall-audit-pipeline.md) | `In Progress` | implementation complete (Clusters A-F implemented |
@@ -44,7 +43,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 128 completed plans</summary>
+<summary>Show all 129 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -60,6 +59,7 @@ source comments that no docs linter sees — stays valid.
 | [Architectural-Drift Duplication Cleanup — Consolidate Real Dupes + Exclusion Mechanism](./arch-drift-duplication-cleanup.md) | `Complete` | implemented (Cluster A: 8 planned + 2 mid-audit-discovered duplicate consolidations + 4 pragmas; Cluster B:… |
 | [Architecture-Intent PR-B — Python & Java Adapters](./arch-intent-pr-b-python-java-adapters.md) | `Complete` | implemented + audited via /cycle; /audit-code → Gemini APPROVE 2026-05-15; see audit summary at docs/plans/… |
 | [Architecture-Intent PR-C — Postgres Adapter](./arch-intent-pr-c-postgres-adapter.md) | `Complete` | implemented + audited via /cycle; /audit-code 2 GPT + 2 Gemini rounds 2026-05-15, all findings fixed, Gemin… |
+| [Arch-Memory Consultation — Close the Query/Index Asymmetry](./arch-memory-band-recalibration.md) | `Complete` |  |
 | [Arch-Memory Planning Anchor](./arch-memory-planning-anchor.md) | `Complete` | shipped — `/plan` Phase 0.5 "Architectural-memory Neighbourhood" + `/audit-code` Phase 0.5 "Architectural-m… |
 | [Architectural Memory — Backend](./architectural-memory-backend.md) | `Complete` | shipped — `scripts/symbol-index/{refresh,extract,summarise,embed,render-mermaid,drift,duplicates,prune}.mjs… |
 | [Architectural Memory — Human-Facing Surfaces](./architectural-memory-frontend.md) | `Complete` | shipped — `Neighbourhood considered` callout fires in `/plan` Phase 0.5 + `/audit-code` Phase 0.5; `docs/ar… |
