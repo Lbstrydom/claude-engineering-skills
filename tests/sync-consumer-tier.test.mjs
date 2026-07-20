@@ -19,7 +19,7 @@ import path from 'node:path';
 
 import { _internals } from '../scripts/sync-to-repos.mjs';
 
-const { classifyConsumerRuntime } = _internals;
+const { classifyConsumerRuntime, assessConsumerAzureEmbed } = _internals;
 
 /** Build a throwaway consumer-shaped dir; returns its path. */
 function makeRepo({ packageJson = false, nodeModules = false } = {}) {
@@ -61,9 +61,75 @@ describe('classifyConsumerRuntime', () => {
   });
 
   it('classification is advisory — it never throws on an odd consumer', () => {
+    // (see assessConsumerAzureEmbed below for the Azure-side advisory)
     // Tier 2 must degrade to a warning, never an abort: the markdown half
     // works without a runtime, and refusing to sync would withdraw it.
     assert.doesNotThrow(() => classifyConsumerRuntime(makeRepo()));
     assert.doesNotThrow(() => classifyConsumerRuntime(path.join(os.tmpdir(), 'does-not-exist-xyz')));
+  });
+});
+
+describe('assessConsumerAzureEmbed — advise at adoption time, not at first 400', () => {
+  /** Write a consumer dir with the given .env contents (null = no .env at all). */
+  function repoWithEnv(envText) {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'consumer-azure-'));
+    if (envText !== null) fs.writeFileSync(path.join(root, '.env'), envText);
+    return root;
+  }
+
+  it('fires when Azure is active and no embed deployment is pinned', () => {
+    const root = repoWithEnv('AZURE_OPENAI_ENDPOINT=https://r.openai.azure.com\n');
+    assert.equal(assessConsumerAzureEmbed(root).actionable, true);
+  });
+
+  it('is silent once a deployment is pinned', () => {
+    const root = repoWithEnv(
+      'AZURE_OPENAI_ENDPOINT=https://r.openai.azure.com\n'
+      + 'AZURE_OPENAI_EMBED_DEPLOYMENT=text-embedding-3-large\n');
+    assert.equal(assessConsumerAzureEmbed(root).actionable, false);
+  });
+
+  it('is silent for a non-Azure consumer', () => {
+    // The overwhelming majority. An advisory that fires on every sync is unread.
+    assert.equal(assessConsumerAzureEmbed(repoWithEnv('OPENAI_API_KEY=sk-x\n')).actionable, false);
+  });
+
+  it('is silent when the consumer has no .env at all', () => {
+    assert.equal(assessConsumerAzureEmbed(repoWithEnv(null)).actionable, false);
+  });
+
+  it('treats whitespace-only and quoted-empty as NOT set, matching config.mjs', () => {
+    // config resolves `(env.X || '').trim() || default`, so a blank value takes
+    // the default guess. If this predicate disagreed, the advice would contradict
+    // the runtime it is advising about.
+    for (const blank of ['AZURE_OPENAI_EMBED_DEPLOYMENT=   ', 'AZURE_OPENAI_EMBED_DEPLOYMENT=""', "AZURE_OPENAI_EMBED_DEPLOYMENT=''"]) {
+      const root = repoWithEnv(`AZURE_OPENAI_ENDPOINT=https://r.openai.azure.com\n${blank}\n`);
+      assert.equal(assessConsumerAzureEmbed(root).actionable, true, blank);
+    }
+  });
+
+  it('strips quotes around a REAL value so it is not mistaken for unset', () => {
+    const root = repoWithEnv(
+      'AZURE_OPENAI_ENDPOINT="https://r.openai.azure.com"\n'
+      + 'AZURE_OPENAI_EMBED_DEPLOYMENT="text-embedding-3-large"\n');
+    assert.equal(assessConsumerAzureEmbed(root).actionable, false);
+  });
+
+  it('reads the CONSUMER file, never this process\'s env', () => {
+    // The subtle one: resolveEnvValue also reports process.env. If the source
+    // machine exports AZURE_OPENAI_ENDPOINT, every consumer would look
+    // Azure-active and the advisory would fire repo-wide on a false premise.
+    const prior = process.env.AZURE_OPENAI_ENDPOINT;
+    process.env.AZURE_OPENAI_ENDPOINT = 'https://source-machine.openai.azure.com';
+    try {
+      assert.equal(assessConsumerAzureEmbed(repoWithEnv('OPENAI_API_KEY=sk-x\n')).actionable, false);
+    } finally {
+      if (prior === undefined) delete process.env.AZURE_OPENAI_ENDPOINT;
+      else process.env.AZURE_OPENAI_ENDPOINT = prior;
+    }
+  });
+
+  it('never throws on an unreadable or missing consumer path', () => {
+    assert.doesNotThrow(() => assessConsumerAzureEmbed(path.join(os.tmpdir(), 'nope-xyz')));
   });
 });

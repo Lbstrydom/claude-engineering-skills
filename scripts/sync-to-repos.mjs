@@ -30,6 +30,9 @@ import { injectUpstreamBanner, BANNER_BODY } from './lib/sync-banner.mjs';
 import { updateManagedBlock, parseGitignoreState } from './lib/sync-gitignore.mjs';
 import { untrackNewlyIgnored } from './lib/sync-untrack.mjs';
 import { atomicWriteFileSync } from './lib/file-io.mjs';
+// Reused rather than re-parsed: env-setting owns .env key resolution (dotenv's
+// last-wins semantics included), and it is pure — the caller supplies the text.
+import { resolveEnvValue } from './lib/env-setting.mjs';
 
 // `.audit/` is OURS, entirely — the directory name is our invention and only
 // our tooling writes there (~30 distinct named paths, plus every skill
@@ -650,6 +653,44 @@ function classifyConsumerRuntime(repoPath) {
   return { tier: hasPackageJson ? 1 : 2, hasPackageJson, hasNodeModules };
 }
 
+/**
+ * Does this consumer run the Azure profile with no embedding deployment pinned?
+ *
+ * The gap this closes (2026-07-20): `azure:doctor` has always been able to probe
+ * a resource and lock in its real deployment name, but nothing ever POINTED at
+ * it, so every new Azure consumer rediscovered the need the same way — an opaque
+ * 400 on the first embedding call, or a `check-setup` warning they had to run
+ * separately. Adoption time is when the operator can act on it.
+ *
+ * Deliberately advisory and OFFLINE. It does not run the probe:
+ *   - the probe is a network call authenticated as the CONSUMER; sync
+ *     distributes files and should not hold another repo's credentials.
+ *   - `azure-doctor`'s `.env` containment guard is rooted at `process.cwd()`,
+ *     so writing a consumer's file means spawning with that cwd — fine as an
+ *     operator-chosen command, wrong as a silent side effect of `npm run sync`.
+ *
+ * @param {string} repoPath Consumer repo root.
+ * @returns {{actionable: boolean}}
+ */
+function assessConsumerAzureEmbed(repoPath) {
+  let text = '';
+  try {
+    text = fs.readFileSync(path.join(repoPath, '.env'), 'utf-8');
+  } catch {
+    return { actionable: false };   // no .env → nothing configured to advise on
+  }
+  // fileValue ONLY — never liveValue. `resolveEnvValue` also reports this
+  // (source) process's env, and the source machine exporting AZURE_OPENAI_*
+  // would otherwise make every consumer look Azure-active.
+  const read = (key) => {
+    const raw = resolveEnvValue(key, { envFileText: text }).fileValue;
+    return String(raw ?? '').trim().replace(/^["']|["']$/g, '').trim();
+  };
+  // Mirrors config.mjs's predicate exactly: absent, empty and whitespace-only
+  // all collapse to "not set", so this advice and the runtime agree.
+  return { actionable: read('AZURE_OPENAI_ENDPOINT') !== '' && read('AZURE_OPENAI_EMBED_DEPLOYMENT') === '' };
+}
+
 async function main() {
   assertRepoRoot(import.meta.url);
 
@@ -742,6 +783,18 @@ async function main() {
       console.log(`  ${D}  (see docs/runbooks/consumer-adoption.md § Runtime prerequisites)${X}`);
     } else if (!runtime.hasNodeModules) {
       console.log(`  ${Y}tier 1${X}   package.json present but no node_modules — run \`npm install\` in the consumer before using the .mjs half`);
+    }
+
+    // ── Pre-flight: Azure embedding deployment (advisory) ─────────────────
+    // Silent unless actionable — an advisory that fires on every sync is one
+    // nobody reads. The command is cd-scoped and paste-able (no <placeholders>:
+    // PowerShell reserves `<`).
+    if (assessConsumerAzureEmbed(repo.path).actionable) {
+      const srcPosix = SOURCE_ROOT.replaceAll('\\', '/');
+      const dstPosix = repo.path.replaceAll('\\', '/');
+      console.log(`  ${Y}azure${X}    AZURE_OPENAI_ENDPOINT set but AZURE_OPENAI_EMBED_DEPLOYMENT is not — embeddings will use the default guess`);
+      console.log(`  ${D}Probe this resource and lock in the real deployment name:${X}`);
+      console.log(`  ${D}  cd ${dstPosix} && node ${srcPosix}/scripts/azure-doctor.mjs --fix${X}`);
     }
 
     // ── Pre-flight: ownership-aware preflight + gitignore validation ───────
@@ -1345,7 +1398,9 @@ async function maybePromptSharedCloudUpdate({ sourceRepoDir, stdio }) {
 
 // Test seam — exposes the sync-time D2b trigger helper so behaviour
 // tests can drive it directly instead of regex-asserting source text.
-export const _internals = Object.freeze({ maybePromptSharedCloudUpdate, classifyConsumerRuntime });
+export const _internals = Object.freeze({
+  maybePromptSharedCloudUpdate, classifyConsumerRuntime, assessConsumerAzureEmbed,
+});
 
 // Only execute when invoked as a script (canonical-path compare). When
 // imported by a test, the module's exports are available without main()

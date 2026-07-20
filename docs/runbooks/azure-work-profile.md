@@ -61,6 +61,23 @@ npm run azure:doctor            # report-only: which deployment actually answers
 npm run azure:doctor -- --fix   # probe → confirm → write AZURE_OPENAI_EMBED_DEPLOYMENT to .env
 ```
 
+**You no longer have to remember this.** `npm run sync` inspects each consumer's
+`.env` and, when `AZURE_OPENAI_ENDPOINT` is set but `AZURE_OPENAI_EMBED_DEPLOYMENT`
+is not, prints the exact cd-scoped command for that repo. Silent otherwise — it
+fires only when actionable. The advisory does **not** run the probe for you: that
+is a network call authenticated as the consumer, and `azure-doctor`'s `.env`
+containment guard is rooted at `process.cwd()`, so writing another repo's file
+means running it there — correct as an operator's choice, wrong as a silent
+side effect of a file sync.
+
+For a consumer with no `package.json` (adoption Tier 2 — see
+[consumer-adoption.md](consumer-adoption.md)), `npm run` doesn't exist there;
+run the script directly, which is the form the advisory prints:
+
+```bash
+cd /path/to/consumer && node /path/to/claude-engineering-skills/scripts/azure-doctor.mjs --fix
+```
+
 The doctor does **verified-candidate selection**, not blind trust: the model
 catalog lists models that aren't deployed (both `3-small` and `3-large` show as
 "generally-available" even when only one is deployed), so it confirms each
