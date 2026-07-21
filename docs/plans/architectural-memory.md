@@ -305,6 +305,16 @@ Refresh writes are isolated from readers via `refresh_runs` + per-repo
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+> **Superseded (2026-07-21):** the `files_added/modified/deleted/renamed/untracked`
+> jsonb columns and `walk_end_commit` shown above were dropped (migration
+> `20260721150000`). The `files_*` set was briefly wired to a writer but nothing
+> ever read it and it duplicated `git diff`; the only real value — per-run churn
+> visibility — is now a `differential churn:` **log line** at refresh time, not
+> stored. `walk_end_commit` was never written and had no correct use: the
+> incremental anchor is deliberately `walk_start_commit` (it re-walks commits
+> that land mid-run; end-anchoring would drop them). Step 3 below still names the
+> `files_*` set — that's the in-memory diff the log reports, no longer a column.
+
 **Write path**:
 1. `refresh.mjs` opens a `refresh_runs` row with `status='running'`.
 2. All upserts during the run carry `refresh_id = <new id>`.

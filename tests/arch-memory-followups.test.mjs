@@ -22,7 +22,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 test('getRefreshRun: known columns accepted; unknown columns throw', async () => {
   const mod = await import('../scripts/lib/store/arch-memory.mjs');
   // Cloud disabled in test env → known-good path returns null silently.
-  const ok = await mod.getRefreshRun('some-id', { select: ['walk_start_commit', 'walk_end_commit'] });
+  const ok = await mod.getRefreshRun('some-id', { select: ['walk_start_commit', 'mode'] });
   assert.equal(ok, null);
 
   // Unknown column must throw with the column name in the message.

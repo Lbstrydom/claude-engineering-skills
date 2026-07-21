@@ -181,7 +181,6 @@ const EXPECTED_EXPORTS = [
   'markImportGraphPopulated',
   'openRefreshRun',
   'publishRefreshRun',
-  'recordRefreshDiffStats',
   'recordDuplicateJustifications',
   'recordSummaryOutcomes',
   'recordLayeringViolations',
@@ -298,10 +297,10 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // paths registered as plans). The DB status vocabulary that landed
     // alongside them is deliberately NOT here — it is a constant, and it lives
     // in plan-status.mjs with the vocabulary it derives from.
-    // 174 → 175: recordRefreshDiffStats added 2026-07-21 — the missing writer
-    // for the refresh_runs.files_* annotation columns (declared with DEFAULT
-    // '[]' at the table's birth but never wired to a writer). Observability
-    // only; nothing reads the columns.
-    assert.equal(EXPECTED_EXPORTS.length, 175);
+    // 174 → 175: recordRefreshDiffStats added 2026-07-21, then REVERTED back to
+    // 174 the same day — the refresh_runs.files_* columns it wrote were never
+    // read and duplicated `git diff`, so writer + columns were dropped
+    // (migration 20260721150000). Per-run churn is now a log line, not storage.
+    assert.equal(EXPECTED_EXPORTS.length, 174);
   });
 });

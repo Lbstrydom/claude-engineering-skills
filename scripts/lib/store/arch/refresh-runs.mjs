@@ -59,62 +59,6 @@ export async function publishRefreshRun({ repoId, refreshId, activeEmbeddingMode
   }
 }
 
-/**
- * Annotate a refresh_run with its differential file lists — the five
- * `files_added/modified/deleted/renamed/untracked` jsonb columns on
- * refresh_runs. These were declared at the table's birth (migration
- * 20260501120000) with DEFAULT `'[]'::jsonb` but NEVER wired to a writer, so
- * every row — full and incremental alike — carried the empty default forever,
- * making `files_modified` a column that lies by omission. This is the missing
- * writer.
- *
- * Observability ONLY: nothing reads these columns, so this cannot change any
- * refresh decision. It is deliberately NOT folded into the atomic
- * `publish_refresh_run` RPC — that RPC owns the active-pointer flip and is a
- * SECURITY DEFINER function with pinned search_path + revoked anon execute;
- * widening its signature for annotation columns would force a migration + a
- * re-grant + a search_path re-pin for zero behavioural gain. A plain UPDATE on
- * the already-existing row is the right-sized surface.
- *
- * Populated only for a DIFFERENTIAL (incremental) run that actually computed a
- * git diff. A full rebuild has no diff, so its columns stay `[]` — the honest
- * "not a differential run" value, not a lie. Fed the POST-filter diff (sensitive
- * paths already rewritten to `deleted`), so it reflects what the indexer acted
- * on, not the raw git output.
- *
- * jsonb columns → the arrays pass RAW: `updateWhere`'s `serializeWriteParam`
- * JSON-serializes a plain array, which is what a jsonb column needs. Binding a
- * bare JS array would instead build a Postgres ARRAY literal that jsonb rejects
- * (the M3 jsonb-write invariant, AGENTS.md).
- *
- * Best-effort: a failure here must never disturb a refresh whose real work and
- * atomic publish already succeeded — it logs + returns false, never throws.
- *
- * @param {{refreshId: string, added?: string[], modified?: string[],
- *   deleted?: string[], renamed?: Array<{from: string, to: string}>,
- *   untracked?: string[]}} args
- * @returns {Promise<boolean>} true iff the row was updated
- */
-export async function recordRefreshDiffStats({ refreshId, added, modified, deleted, renamed, untracked }) {
-  if (!refreshId || !await isCloudEnabled()) return false;
-  try {
-    await updateWhere('refresh_runs',
-      {
-        files_added: added ?? [],
-        files_modified: modified ?? [],
-        files_deleted: deleted ?? [],
-        files_renamed: renamed ?? [],
-        files_untracked: untracked ?? [],
-      },
-      { id: refreshId }
-    );
-    return true;
-  } catch (err) {
-    process.stderr.write(`  [arch] recordRefreshDiffStats failed: ${err.message}\n`);
-    return false;
-  }
-}
-
 /** Mark a refresh_run aborted — workers polling status see this and exit. */
 export async function abortRefreshRun({ refreshId, reason }) {
   try {
@@ -147,7 +91,7 @@ export async function heartbeatRefreshRun({ refreshId }) {
  */
 const GET_REFRESH_RUN_COLUMNS = new Set([
   'id', 'repo_id', 'mode', 'status',
-  'walk_start_commit', 'walk_end_commit',
+  'walk_start_commit',
   'started_at', 'completed_at',
   'retention_class', 'last_heartbeat_at', 'import_graph_populated',
   'created_at', 'updated_at', 'parent_run_id',
@@ -176,7 +120,7 @@ export async function getRefreshRun(refreshId, { select } = {}) {
     }
     cols = select.join(', ');
   } else {
-    cols = 'id, repo_id, mode, status, walk_start_commit, walk_end_commit, started_at, completed_at, retention_class, last_heartbeat_at, import_graph_populated';
+    cols = 'id, repo_id, mode, status, walk_start_commit, started_at, completed_at, retention_class, last_heartbeat_at, import_graph_populated';
   }
   if (!refreshId || !await isCloudEnabled()) return null;
   try {

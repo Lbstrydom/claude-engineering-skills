@@ -48,7 +48,6 @@ import {
   recordSymbolEmbedding,
   recordLayeringViolations,
   recordDuplicateJustifications,
-  recordRefreshDiffStats,
   recordSymbolFileImports,
   copyForwardImports,
   markImportGraphPopulated,
@@ -324,9 +323,17 @@ async function main() {
       if (prior?.refreshId) {
         try {
           const priorRun = await getRefreshRun(prior.refreshId, {
-            select: ['walk_start_commit', 'walk_end_commit'],
+            select: ['walk_start_commit'],
           });
-          sinceCommit = priorRun?.walk_end_commit || priorRun?.walk_start_commit || null;
+          // Anchor on the prior run's START commit (its HEAD-at-open), NOT a
+          // HEAD-at-completion. This is deliberate: start-anchoring re-walks any
+          // commits that landed DURING the prior run's execution, so no commit
+          // can slip through the gap between two runs. End-anchoring would
+          // silently miss exactly those mid-run commits — a data-loss bug. A
+          // `walk_end_commit` column once existed for the end-anchor idea; it
+          // was never written (there is no correct use) and was dropped
+          // (migration 20260721150000). Do not reintroduce it.
+          sinceCommit = priorRun?.walk_start_commit || null;
         } catch { /* fall through */ }
       }
       if (!sinceCommit) {
@@ -795,21 +802,17 @@ async function main() {
       });
       logOk(`published refresh ${refreshId} as active`);
 
-      // 14b. Annotate the published run with its differential file lists so the
-      // refresh_runs.files_* columns stop carrying the schema DEFAULT `'[]'`
-      // forever (observability only — nothing reads them). AFTER publish so
-      // only a run that actually became active is annotated; best-effort — the
-      // writer swallows + logs its own failure and never disturbs a published
-      // snapshot. Skipped on a full rebuild (diffStats === null): no diff, so
-      // `[]` is the honest value.
+      // 14b. Log the differential churn for operator visibility. This is the
+      // whole observability value of the per-run diff — surfaced live at run
+      // time, NOT stored: the old refresh_runs.files_* columns held this same
+      // data but nothing ever read them and they duplicated `git diff`, so they
+      // were dropped (migration 20260721150000). Only a differential run has a
+      // diff; a full rebuild leaves diffStats === null and logs nothing here.
       if (diffStats) {
-        const wrote = await recordRefreshDiffStats({ refreshId, ...diffStats });
-        if (wrote) {
-          logOk(
-            `annotated files_* (added=${diffStats.added.length} modified=${diffStats.modified.length} `
-            + `deleted=${diffStats.deleted.length} renamed=${diffStats.renamed.length} untracked=${diffStats.untracked.length})`,
-          );
-        }
+        logOk(
+          `differential churn: added=${diffStats.added.length} modified=${diffStats.modified.length} `
+          + `deleted=${diffStats.deleted.length} renamed=${diffStats.renamed.length} untracked=${diffStats.untracked.length}`,
+        );
       }
 
       // 13. Per-repo band calibration (plan §2.1 C4-REVISED).

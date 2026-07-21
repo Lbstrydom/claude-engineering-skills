@@ -4846,48 +4846,6 @@
           "ordinal_position": 5
         },
         {
-          "column_name": "walk_end_commit",
-          "data_type": "text",
-          "is_nullable": "YES",
-          "column_default": null,
-          "ordinal_position": 6
-        },
-        {
-          "column_name": "files_added",
-          "data_type": "jsonb",
-          "is_nullable": "NO",
-          "column_default": "'[]'::jsonb",
-          "ordinal_position": 7
-        },
-        {
-          "column_name": "files_modified",
-          "data_type": "jsonb",
-          "is_nullable": "NO",
-          "column_default": "'[]'::jsonb",
-          "ordinal_position": 8
-        },
-        {
-          "column_name": "files_deleted",
-          "data_type": "jsonb",
-          "is_nullable": "NO",
-          "column_default": "'[]'::jsonb",
-          "ordinal_position": 9
-        },
-        {
-          "column_name": "files_renamed",
-          "data_type": "jsonb",
-          "is_nullable": "NO",
-          "column_default": "'[]'::jsonb",
-          "ordinal_position": 10
-        },
-        {
-          "column_name": "files_untracked",
-          "data_type": "jsonb",
-          "is_nullable": "NO",
-          "column_default": "'[]'::jsonb",
-          "ordinal_position": 11
-        },
-        {
           "column_name": "llm_calls",
           "data_type": "integer",
           "is_nullable": "NO",

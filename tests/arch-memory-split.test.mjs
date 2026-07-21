@@ -23,10 +23,9 @@ const ARCH_DIR = path.join(REPO_ROOT, 'scripts/lib/store/arch');
 //      file-private, NOT in this list — exactly 31 PUBLIC functions) ────────
 
 const EXPECTED_EXPORTS = [
-  // arch/refresh-runs.mjs — 11 fns
+  // arch/refresh-runs.mjs — 10 fns
   'openRefreshRun',
   'publishRefreshRun',
-  'recordRefreshDiffStats',
   'abortRefreshRun',
   'heartbeatRefreshRun',
   'getRefreshRun',
@@ -77,8 +76,8 @@ const EXPECTED_EXPORTS = [
 ];
 
 describe('arch-memory.mjs barrel — public export contract', () => {
-  test(`exactly 42 public functions in EXPECTED_EXPORTS`, () => {
-    assert.equal(EXPECTED_EXPORTS.length, 42);
+  test(`exactly 41 public functions in EXPECTED_EXPORTS`, () => {
+    assert.equal(EXPECTED_EXPORTS.length, 41);
   });
 
   // Every public member is a FUNCTION. `SUMMARY_RETRY_CAP` was briefly exported

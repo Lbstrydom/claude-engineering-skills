@@ -1,5 +1,33 @@
 # Project Status Log
 
+## 2026-07-21 — reverted the refresh_runs.files_* writer + dropped 6 dead columns (no zombie)
+
+Same-day follow-up to the entry below. An upstream-report review re-examined the
+`files_*` columns through a sustainability lens ("no zombie — either live or
+remove"): the writer landed in `2c86388`, but **nothing ever reads** those five
+jsonb columns and they **duplicate `git diff`** (reconstructible from the anchor
+commit). A column that's written-but-never-read is a zombie — and in a shared
+upstream tool that cost multiplies across every consumer.
+
+The deciding observation: the per-run churn readout at
+[refresh.mjs](scripts/symbol-index/refresh.mjs) is driven by the **in-memory**
+`diffStats`, not the DB — it was merely gated behind the DB write. So the one
+genuine value (operator visibility of "how much did this incremental run
+touch?") needs **no columns at all**. Resolution: **remove the storage, keep the
+insight** — the churn is now an unconditional `differential churn: added=… …`
+log line (fires even cloud-off, strictly more observable than before).
+
+Removed: `recordRefreshDiffStats` + its call site; the 5 `files_*` columns and
+`walk_end_commit` (new migration
+[`20260721150000`](supabase/migrations/20260721150000_drop_refresh_runs_dead_columns.sql),
+idempotent `DROP COLUMN IF EXISTS`). `walk_end_commit` was a separate zombie —
+never written, and completing it would be a **bug** (end-anchoring drops
+mid-run commits; start-anchoring on `walk_start_commit` captures them; the
+anchor rationale is now documented at the read site). Export pins rolled back
+(42→41, 175→174), `expected-schema.json` regenerated from a migrated DB (clean
+42-line deletion, no ordinal churn), `architectural-memory.md` schema block
+carries a **superseded** note. 663 arch/store/symbol tests green.
+
 ## 2026-07-21 — wired the missing writer for refresh_runs.files_* (the column that lied by omission)
 
 A diagnostic question about `arch:refresh` — "why is `files_modified` empty on
