@@ -91,3 +91,41 @@ Not built here (a prototype measures; it doesn't ship a gate). The promotion:
 - `supabase/migrations/20260721120000_finding_embeddings_prototype.sql`
 - `scripts/memory-pgvector-prototype.mjs` (re-runnable: `node
   scripts/memory-pgvector-prototype.mjs --repo <name>`; idempotent embeds)
+
+## PROMOTED — semantic re-raise suppression (2026-07-21)
+
+The prototype's recommended highest-value use is built and validated.
+
+- **`scripts/lib/audit/semantic-suppression.mjs`** — the pure core: `cosine`,
+  `decideReRaise` (the conservative suppress/keep decision), `greedyReRaiseClusters`
+  (oldest-is-canonical, order-independent), and `nearestOpenReRaise` (the pgvector
+  `<=>` store query). Guarded by `tests/semantic-suppression.test.mjs` (10 cases).
+- **`scripts/semantic-suppress.mjs`** — the RETROSPECTIVE reconciler. Embeds open
+  findings, clusters same-file cosine re-raises, KEEPS the oldest canonical, and
+  dismisses the reworded repeats (`semantic-duplicate` ruling). **Dry-run by
+  default; `--apply` mutates; every dismissal names its canonical and is verified
+  against the store.**
+- **`semanticSuppressConfig`** (config.mjs) — the prospective (record-time) hook's
+  switches: `enabled` (OFF by default), `threshold` (0.92 — deliberately far above
+  the 0.85 used for *measuring*, because a false suppression drops a store row),
+  `requireSameFile` (the biggest false-suppression guard).
+
+**What it dedups, and what it does NOT.** It removes the redundant *learning-store
+row*; it never hides the finding from the audit's own user-facing report. A false
+suppression costs a duplicate row, never a missed bug — that asymmetry is the
+whole safety argument.
+
+**Validation (real data).** wine-cellar: 2 clusters / 3 dupes (`_parseSessionId`
+`Number.parseInt` in three wordings; the migration selector in two).
+claude-engineering-skills: `--apply` dismissed 23 reworded re-raises across 17
+clusters (the security-triage planned-file-absent churn), keeping 17 canonicals.
+Cluster-density median 13.5 → 5.5; the source repo fell to 4 pairs, **below the
+threshold of 5** — the AMBER cleared where suppression ran, honestly (canonicals
+kept, only reworded repeats removed).
+
+**Deferred (the validation-before-default convention).** The prospective
+record-time hook — wiring `nearestOpenReRaise` into the finding-record path so a
+new run never *writes* a duplicate — is left OFF (`semanticSuppressConfig.enabled`)
+until the reconciler's results are trusted across more repos, exactly as the
+tiered pipeline shipped off and shadow-validated before any flip. The core it
+needs (`nearestOpenReRaise` + `decideReRaise`) is built and tested here.

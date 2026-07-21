@@ -1,5 +1,41 @@
 # Project Status Log
 
+## 2026-07-21 — promoted pgvector into a working semantic re-raise suppressor
+
+The prototype's recommended highest-value use, built and validated end-to-end.
+
+**Core** (`scripts/lib/audit/semantic-suppression.mjs`, 10 tests): `cosine`,
+`decideReRaise` (conservative suppress/keep), `greedyReRaiseClusters`
+(oldest-is-canonical, proven order-independent), `nearestOpenReRaise` (pgvector
+`<=>` store query). **Reconciler** (`scripts/semantic-suppress.mjs`): embeds open
+findings, clusters same-file cosine re-raises, keeps the oldest canonical,
+dismisses the reworded repeats — dry-run by default, `--apply` verified against
+the store. **Config** (`semanticSuppressConfig`): the prospective record-time
+hook, OFF by default (validate-before-flip, same convention as the tiered
+pipeline); threshold 0.92 — deliberately far above the 0.85 used for *measuring*,
+because a false suppression drops a store row.
+
+**The safety line, stated in code and docs:** it dedups the redundant
+learning-store row; it never hides the finding from the audit's own user-facing
+report. A false suppression costs a duplicate row, not a missed bug.
+
+**This is the honest resolution of the cluster-density AMBER I refused to game
+earlier.** Two turns ago I would not batch-dismiss the security-triage findings
+because they were genuine — dismissing them would hide real findings. Suppression
+is different: it keeps the canonical and removes only the reworded *repeats*. On
+`--apply` the source repo shed 23 duplicates across 17 clusters (the exact
+security-triage churn) keeping 17 canonicals; cluster-density median 13.5 → 5.5,
+and the source repo fell to 4 pairs — BELOW the threshold of 5. The AMBER cleared
+where suppression ran, honestly. The residual median (5.5) is wine-cellar's
+un-reconciled churn (dry-run showed 3 clear dupes there); left for the owner to
+`--apply`, since it is the private repo.
+
+One self-caught bug: the reconciler's own verification printed a spurious
+"0 writes did not land" warning — a bigint (string) vs `::int` (number) compare
+firing on the success path. Fixed; the writes had in fact all landed (23/23,
+store-verified). A cry-wolf in a "verify your success path" check is the class
+this session kept flagging; nice to catch one in my own code.
+
 ## 2026-07-21 — Session summary: issue #57 → the npm `--`-swallow gate, end to end
 
 One thread followed to the end: triaging consumer issue #57 (`cli:flags` feedback

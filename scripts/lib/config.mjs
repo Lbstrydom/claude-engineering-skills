@@ -588,6 +588,28 @@ export const tieredAuditConfig = Object.freeze({
   }),
 });
 
+// ── Semantic Re-raise Suppression (pgvector prototype promotion, 2026-07-21) ──
+// Promotes docs/research/pgvector-clustering-prototype.md into a store-level
+// dedup: a new audit finding that is a cosine re-raise of an existing OPEN
+// finding (same repo+file) does not write a duplicate audit_findings row.
+// OFF by default and validated before any default-on flip — same convention as
+// the tiered pipeline above (a suppressor that hides data earns its default
+// only after a validation window, never on first ship).
+export const semanticSuppressConfig = Object.freeze({
+  // Explicit opt-in. The store-dedup path is skipped entirely when false, so an
+  // un-opted-in audit is byte-identical to today (no embedding cost, no query).
+  enabled: process.env.AUDIT_SEMANTIC_SUPPRESS_ENABLED === 'true',
+  // Deliberately HIGH — well above the 0.85 the prototype used for MEASURING.
+  // Measuring tolerates recall over precision; suppression is the opposite (a
+  // false suppression drops a store row that might be a genuinely-new finding).
+  threshold: clampConfigNumber(process.env.AUDIT_SEMANTIC_SUPPRESS_THRESHOLD, {
+    fallback: 0.92, min: 0.5, max: 1, parser: Number.parseFloat, envVar: 'AUDIT_SEMANTIC_SUPPRESS_THRESHOLD',
+  }),
+  // A re-raise is about the SAME file. Requiring it is the single biggest
+  // false-suppression guard; only relax it with strong evidence.
+  requireSameFile: process.env.AUDIT_SEMANTIC_SUPPRESS_REQUIRE_SAME_FILE !== 'false',
+});
+
 // ── Audit Runtime Config (Phase 7 — audit-orchestrator-hardening) ──────────
 // Bounds-validated runtime knobs for the legacy production audit
 // orchestrator. `mapReduceConcurrency` was previously read via a bare
