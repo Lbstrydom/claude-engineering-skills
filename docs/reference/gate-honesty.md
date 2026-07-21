@@ -40,8 +40,10 @@ The file is repo-local test metadata — colocated with the skill for
 visibility, but never packaged, never synced to consumers (`SKILL_LOCAL_FILES`
 in [`scripts/lib/skill-packaging.mjs`](../../scripts/lib/skill-packaging.mjs)
 tolerates it at a skill's root and excludes it from the returned file list;
-`enumerateSkillFiles` still rejects any OTHER non-markdown file). No contract
-= that skill is `uncontracted` — reported, never a failure.
+`enumerateSkillFiles` still rejects any OTHER non-markdown file). A skill with
+no contract file is `uncontracted` — and, since Phase D, that is a **failure**
+unless the skill is listed in the baseline (see "Net-new-skill ratchet" below).
+All 15 skills are contracted today, so the baseline is empty.
 
 ## Gate kinds
 
@@ -178,10 +180,52 @@ gap — `npm run check` runs both.
    path containment, and the `tests[]`-references-id rule before you ever
    run the suite.
 
+## Net-new-skill ratchet (Phase D)
+
+Once every skill is contracted, the system must not silently regress the
+moment someone adds a 16th skill. The ratchet
+([`scripts/lib/gate-honesty/ratchet.mjs`](../../scripts/lib/gate-honesty/ratchet.mjs)
++ the `checkRatchet` shell in `check-gate-contracts.mjs`) makes **declaring a
+gate-honesty status mandatory** for every skill root: a `gate-contract.json`,
+or a baseline exemption. A skill that declares neither fails `npm run check`.
+
+The set rules (pure, in `computeRatchetDivergences`), all emitted in
+deterministic skill-root order, never a silent pass:
+
+1. **Declare-or-fail** — a skill root whose `gate-contract.json` is *absent*
+   AND which is not baselined → fail. (A *present-but-broken* contract is
+   already a loader divergence, so the ratchet stays silent on it to avoid a
+   double report.)
+2. **Contract↔directory identity** — a contract's `skill` field must equal its
+   directory name, or the loader's by-`skill` keying would silently
+   misattribute it.
+3. **Baseline integrity** — a stale exemption (root no longer exists), a
+   duplicate exemption, or an exemption for a skill that *now* has a contract
+   (redundant) each fail.
+
+Fail-closed fs handling in the shell: the baseline path and every present
+`gate-contract.json` must be a **regular file** — a symlink is rejected (it
+could point the checker at attacker-chosen bytes). A malformed-JSON or
+schema-invalid baseline fails before the set rules run (never adjudicate
+garbage); an *absent* baseline is treated as empty exemptions — still strict,
+because the ratchet forces a real contract regardless.
+
+**The baseline** — [`.gate-contract-baseline.json`](../../.gate-contract-baseline.json),
+`{version:1, exemptions:[{skill, reason}]}`, committed and empty in the release
+state. An entry is a *declared, reasoned* deferral (a new skill with no CLI
+seam yet), never a silent gap — and it must be removed once the skill earns a
+contract.
+
+The ratchet is proven non-opt-in by a worktree integration test
+([`tests/gate-contract-ratchet.test.mjs`](../../tests/gate-contract-ratchet.test.mjs)):
+it runs the **real** checker binary against an otherwise-valid synthetic skill
+in a throwaway git worktree and asserts the checker fails and names the skill.
+
 ## Explicitly out of scope (v1)
 
-Contracts for the other 6+ skills; nav-audit/ux-lock/persona-test gates;
-mutation testing beyond the lying fixture; SKILL.md generation from the
-contract (would touch `skills:regenerate`, the repo's highest-blast-radius
-sync seam — v2, contingent on observed contract↔prose drift); CI service
-integration beyond the existing local-first pre-push hook.
+All 15 skills are now contracted (Phase C) and the ratchet keeps them so
+(Phase D). Still out of scope: mutation testing beyond the lying fixture;
+SKILL.md generation from the contract (would touch `skills:regenerate`, the
+repo's highest-blast-radius sync seam — v2, contingent on observed
+contract↔prose drift); CI service integration beyond the existing local-first
+pre-push hook.

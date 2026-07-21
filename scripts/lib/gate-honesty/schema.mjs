@@ -152,6 +152,19 @@ export const GateContractSchema = z.object({
   }
 });
 
+// The ratchet baseline (Phase D). `exemptions` is empty in the release state —
+// every skill is contracted — and each entry, when present, is a DECLARED
+// exception with a reason (a deferred skill), never a silent gap. `skill` is a
+// kebab-case identifier (a listSkillNames root); the checker additionally
+// verifies the root still exists and is not also contracted (§7b).
+export const GateContractBaselineSchema = z.object({
+  version: z.literal(1),
+  exemptions: z.array(z.object({
+    skill: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'skill must be a kebab-case identifier'),
+    reason: z.string().min(1),
+  }).strict()),
+}).strict();
+
 /**
  * Closed source-authority policy (R3-H2 — the ONE shared check consumed by
  * the loader, the suite, and check-gate-contracts.mjs). `statedIn` is legal

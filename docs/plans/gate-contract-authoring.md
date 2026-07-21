@@ -1,7 +1,7 @@
 # Plan: Gate-contract authoring — bind the surveyed gates, ratchet the rest
 
 - **Date**: 2026-07-20
-- **Status**: Draft
+- **Status**: Complete
 - **Author**: Claude + Louis
 - **Scope**: backend (contract JSON + schema + ratchet; no UI)
 
@@ -731,3 +731,41 @@ no CLI so D5-disposition-at-authoring applies). **Gemini: APPROVE**.
 
 **Remaining: Phase D only** — the ratchet + empty `.gate-contract-baseline.json`
 + the synthetic-skill integration test.
+
+### 2026-07-21 — Phase D (ratchet + baseline + integration test) — the capstone
+
+**Landed — the initiative is complete:**
+- **`.gate-contract-baseline.json`** (`{version:1, exemptions:[]}`, committed) —
+  empty in the release state, the declared-exception mechanism for a future
+  deferred skill. `GateContractBaselineSchema` (strict; kebab-case `skill`,
+  non-empty `reason`) added to `schema.mjs`.
+- **`scripts/lib/gate-honesty/ratchet.mjs`** — the PURE `computeRatchetDivergences`
+  implementing every §7b set rule (declare-or-fail keyed on file *absence* so a
+  broken contract is not double-reported; contract↔directory identity; baseline
+  integrity — stale/duplicate/now-contracted), emitted in deterministic
+  skill-root order.
+- **`checkRatchet` shell** in `check-gate-contracts.mjs` — fail-closed fs: symlink
+  rejection on the baseline + every present `gate-contract.json`; malformed-JSON /
+  schema-invalid baseline fails before the set rules; absent baseline → empty
+  exemptions (still strict). Wired into `main()` **before** the D6 coverage check,
+  running regardless of loader divergences. The loader now returns
+  `{skillNames, contractedByDir}` so identity is checkable.
+- **`tests/gate-contract-ratchet.test.mjs`** — 25 tests: the pure set rules,
+  the fs shell (baseline load + symlink), the baseline schema, a non-opt-in
+  wiring assertion (`check` → `skills:check` → `check-gate-contracts.mjs`), and
+  the **worktree integration test** (R2-M2): the REAL checker binary run against
+  an otherwise-valid synthetic uncontracted skill in a throwaway git worktree
+  (node_modules junctioned, live SUT files overlaid) FAILS and names the skill;
+  a baseline exemption then clears it.
+
+**Two implementation-time decisions, recorded:**
+- **Rule 1 keys on file ABSENCE, not contract validity.** A present-but-broken
+  contract is already a loader divergence; re-flagging it in the ratchet would
+  double-report. So `computeRatchetDivergences` treats "has a contract file" as
+  declared even when the file is invalid, and the loader's divergence carries it.
+- **The integration test overlays the live SUT files onto the HEAD worktree**
+  rather than trusting whatever HEAD carries — so it exercises the current
+  working-tree ratchet whether or not Phase D is committed yet (robust for local
+  verification; a no-op once committed).
+
+Status → **Complete.** All 15 skills contracted; the ratchet keeps them so.

@@ -5,12 +5,20 @@
  * failure, not a test-time surprise. Deliberately validate-don't-generate
  * (plan §F2.7): this does NOT write anything into SKILL.md.
  *
- * Exit codes: 0 = all contracts valid (uncontracted skills listed, not a
- * failure); 1 = at least one contract has a divergence.
+ * Three-way status per skill (Phase-D ratchet — `checkRatchet` below):
+ *   - a valid `gate-contract.json`                     → passes;
+ *   - NO contract file BUT a baseline exemption        → passes (declared deferral);
+ *   - NO contract file AND no baseline exemption       → FAILS.
+ * (So "uncontracted" is reported in the summary, but is only clean when the
+ * skill is baselined — an unbaselined uncontracted skill is a divergence.)
+ *
+ * Exit codes: 0 = every skill declares a valid status (contract or exemption)
+ * and every contract/coverage check passes; 1 = at least one divergence.
  *
  * @module scripts/check-gate-contracts
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,6 +27,10 @@ import { resolvePushRange, PUSH_RANGE_ENV } from './lib/push-range.mjs';
 import {
   isCandidateLine, normalizeCandidateLine, findUndispositionedCandidates,
 } from './lib/gate-honesty/verb-pattern.mjs';
+import { GateContractBaselineSchema } from './lib/gate-honesty/schema.mjs';
+import { computeRatchetDivergences } from './lib/gate-honesty/ratchet.mjs';
+
+export const BASELINE_FILENAME = '.gate-contract-baseline.json';
 
 /**
  * Parse a unified `git diff` into new/modified candidate lines per skill (D6).
@@ -113,6 +125,86 @@ function checkCandidateCoverage({ repoRoot, contracted, warn }) {
   );
 }
 
+/**
+ * The net-new-skill ratchet impure shell (Phase D, §7b). Reads the committed
+ * baseline + verifies no relevant path is a symlink (fail-closed), then defers
+ * the SET rules to the pure `computeRatchetDivergences`. Returns divergence
+ * strings (empty = clean).
+ *
+ * Fail-closed choices (never a silent pass):
+ * - baseline path or any `skills/<name>/gate-contract.json` is present but NOT a
+ *   regular file — a symlink (could point the checker at attacker-chosen bytes
+ *   outside the repo) OR any other node type (dir/fifo/device) → fail. Only a
+ *   plain regular file is accepted, matching the stated contract (audit M1).
+ * - baseline present but unreadable / malformed JSON / schema-invalid → fail.
+ * - baseline ABSENT → treated as empty exemptions (the ratchet still forces
+ *   every skill to carry a real contract; no file needed to be strict).
+ */
+export function checkRatchet({ repoRoot, skillsRoot, skillNames, uncontracted, contractedByDir }) {
+  const out = [];
+
+  // Regular-file enforcement — the baseline and every present contract file must
+  // be a plain file. lstat (not stat) so a symlink is seen as itself, not its
+  // target. A symlink is called out specifically (the bypass vector); any other
+  // non-regular node type is rejected under the same "must be a regular file"
+  // contract rather than being read.
+  const baselinePath = path.join(repoRoot, BASELINE_FILENAME);
+  /** @returns {'ok'|'absent'|'irregular'} and pushes a divergence when irregular. */
+  const requireRegularFile = (label, p) => {
+    let st;
+    try {
+      st = fs.lstatSync(p);
+    } catch (e) {
+      if (e.code === 'ENOENT') return 'absent';
+      out.push(`[ratchet] ${label} (${path.relative(repoRoot, p)}) could not be stat'd: ${e.message}`);
+      return 'irregular';
+    }
+    if (st.isFile()) return 'ok';
+    const kind = st.isSymbolicLink() ? 'a symlink' : 'not a regular file';
+    out.push(`[ratchet] ${label} (${path.relative(repoRoot, p)}) is ${kind} — gate-honesty inputs must be regular files (fail-closed)`);
+    return 'irregular';
+  };
+
+  const baselineFileState = requireRegularFile('baseline', baselinePath);
+  for (const name of skillNames) {
+    requireRegularFile(`skills/${name}/gate-contract.json`, path.join(skillsRoot, name, 'gate-contract.json'));
+  }
+
+  // Load + validate the baseline (only when it is a genuine regular file — an
+  // irregular baseline already failed above and must not be read through).
+  let baselineExemptions = [];
+  if (baselineFileState === 'ok') {
+    let raw = null;
+    try {
+      raw = fs.readFileSync(baselinePath, 'utf-8');
+    } catch (e) {
+      if (e.code !== 'ENOENT') out.push(`[ratchet] ${BASELINE_FILENAME} is present but unreadable: ${e.message}`);
+    }
+    if (raw !== null) {
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        out.push(`[ratchet] ${BASELINE_FILENAME} is not valid JSON: ${e.message}`);
+        return out; // cannot trust exemptions — stop before the set rules
+      }
+      const res = GateContractBaselineSchema.safeParse(parsed);
+      if (!res.success) {
+        for (const issue of res.error.issues) {
+          out.push(`[ratchet] ${BASELINE_FILENAME} invalid: ${issue.path.join('.') || '(root)'} — ${issue.message}`);
+        }
+        return out; // schema-invalid — do not run set rules on garbage
+      }
+      baselineExemptions = res.data.exemptions;
+    }
+  }
+
+  out.push(...computeRatchetDivergences({
+    skillNames, uncontractedDirs: uncontracted, contractSkillByDir: contractedByDir, baselineExemptions,
+  }));
+  return out;
+}
+
 function main() {
   // process.exitCode (not process.exit()) throughout: lets buffered
   // stdout/stderr writes drain naturally before the process terminates —
@@ -125,14 +217,22 @@ function main() {
 
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const skillsRoot = path.join(repoRoot, 'skills');
-  const { contracted, uncontracted, divergences } = loadGateContracts({ skillsRoot, repoRoot });
+  const {
+    contracted, uncontracted, divergences, skillNames, contractedByDir,
+  } = loadGateContracts({ skillsRoot, repoRoot });
 
-  // D6 candidate-coverage — only meaningful once contracts validate, so run it
-  // after the loader and fold its findings into the same failure gate.
-  const coverage = divergences.length === 0
+  // Phase-D ratchet — every skill root must declare a contract or a baseline
+  // exemption. Runs regardless of loader divergences (it is keyed on file
+  // presence, so a broken contract is not double-reported).
+  const ratchet = checkRatchet({ repoRoot, skillsRoot, skillNames, uncontracted, contractedByDir });
+  const structural = [...divergences, ...ratchet];
+
+  // D6 candidate-coverage — only meaningful once contracts validate AND the
+  // structural ratchet is clean, so run it last and fold its findings in.
+  const coverage = structural.length === 0
     ? checkCandidateCoverage({ repoRoot, contracted, warn: (m) => process.stderr.write(`  ${m}\n`) })
     : [];
-  const allDivergences = [...divergences, ...coverage];
+  const allDivergences = [...structural, ...coverage];
 
   if (allDivergences.length > 0) {
     process.stderr.write('check-gate-contracts: FAILED\n');

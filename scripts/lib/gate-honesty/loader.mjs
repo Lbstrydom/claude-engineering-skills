@@ -27,6 +27,11 @@ export function loadGateContracts({ skillsRoot, repoRoot }) {
   const contracted = [];
   const uncontracted = [];
   const divergences = [];
+  // dir → the contract's own `skill` field, for each dir whose contract VALIDATED.
+  // The ratchet (Phase D) uses this to enforce contract↔directory identity — the
+  // loader keys `contracted` by the self-declared `skill`, so a mismatch would
+  // otherwise be invisible here.
+  const contractedByDir = new Map();
 
   for (const name of skillNames) {
     const contractPath = path.join(skillsRoot, name, 'gate-contract.json');
@@ -47,9 +52,10 @@ export function loadGateContracts({ skillsRoot, repoRoot }) {
       continue;
     }
     contracted.push(result.contract);
+    contractedByDir.set(name, result.contract.skill);
   }
 
-  return { contracted, uncontracted, divergences };
+  return { contracted, uncontracted, divergences, skillNames, contractedByDir };
 }
 
 /**
