@@ -204,6 +204,31 @@ export function sweepStaleOrphanPreimages({ repoPath, tmpDir = os.tmpdir(), maxA
     }
     swept.push(p);
   }
+
+  // Second pass — reconcile DANGLING registrations whose backing dir has
+  // already vanished (e.g. Windows temp cleanup deletes the dir, but the git
+  // worktree registration + its "initializing" lock survive). The filesystem
+  // scan above can't see these (no dir to stat), and a bare `git worktree
+  // prune` skips them because they are LOCKED — so they accumulate (8 were
+  // cleaned by hand on 2026-07-21). Enumerate registrations, and for any
+  // `orphan-preimage-*` whose dir is gone, unlock it (harmless if not locked)
+  // so the prune below drops it. No age gate here: a registration with no
+  // backing dir cannot be a live cruise (a live one holds its dir open).
+  let porcelain = '';
+  try {
+    porcelain = execFileSync('git', ['worktree', 'list', '--porcelain'],
+      { cwd: repoPath, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch { /* not a git repo / git missing — nothing to reconcile */ }
+  for (const block of porcelain.replace(/\r\n/g, '\n').split(/\n{2,}/)) {
+    const m = block.match(/^worktree (.+)$/m);
+    if (!m) continue;
+    const wtPath = m[1].trim();
+    if (!path.basename(wtPath).startsWith('orphan-preimage-')) continue;
+    if (fs.existsSync(wtPath)) continue; // dir present → handled by the age-gated scan above
+    try { execFileSync('git', ['worktree', 'unlock', wtPath], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* not locked / already gone */ }
+    swept.push(wtPath);
+  }
+
   if (swept.length > 0) {
     try { execFileSync('git', ['worktree', 'prune'], { cwd: repoPath, stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* best-effort */ }
     process.stderr.write(`  [orphan] swept ${swept.length} stale preimage worktree(s) from a previously killed run\n`);

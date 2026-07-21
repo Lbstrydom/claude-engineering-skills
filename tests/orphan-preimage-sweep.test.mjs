@@ -96,6 +96,49 @@ describe('sweepStaleOrphanPreimages', () => {
     fs.rmSync(other, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
   });
 
+  test('reconciles a DANGLING registration whose dir already vanished (locked, no age gate)', () => {
+    // Reproduce the accumulation bug: a killed audit left a registered,
+    // "initializing"-locked worktree; the temp dir was later deleted out from
+    // under git. The fs scan can't see it (no dir) and `git worktree prune`
+    // skips it because it's locked — so it must be reconciled from the
+    // registration list, unlocked, and pruned regardless of age.
+    const dangling = path.join(tmpHome, 'orphan-preimage-dangling1');
+    git(repo, 'worktree', 'add', '--detach', '--quiet', dangling, 'HEAD');
+    git(repo, 'worktree', 'lock', '--reason', 'initializing', dangling);
+    fs.rmSync(dangling, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    assert.equal(fs.existsSync(dangling), false, 'precondition: dir is gone but registration survives');
+    // A plain prune must NOT clear it (locked) — proving the gap the fix closes.
+    git(repo, 'worktree', 'prune');
+    assert.match(git(repo, 'worktree', 'list').toString(), /orphan-preimage-dangling1/,
+      'plain prune leaves the locked dangling registration — the bug');
+
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome });
+
+    // path format from `git worktree list --porcelain` is git-normalised
+    // (forward slashes), so assert on outcome + a nonzero count rather than an
+    // exact string — the count is what audit-clean surfaces.
+    assert.ok(r.swept.length >= 1, 'sweep surfaces a nonzero worktree count');
+    assert.ok(r.swept.some((p) => p.includes('orphan-preimage-dangling1')), 'the dangling one is reported');
+    assert.doesNotMatch(git(repo, 'worktree', 'list').toString(), /orphan-preimage-dangling1/,
+      'dangling registration is now pruned');
+  });
+
+  test('leaves a NON-orphan worktree with a missing dir alone (targeted, does not blanket-unlock)', () => {
+    const other = path.join(tmpHome, 'some-worktree-notours');
+    git(repo, 'worktree', 'add', '--detach', '--quiet', other, 'HEAD');
+    git(repo, 'worktree', 'lock', '--reason', 'busy', other);
+    fs.rmSync(other, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+
+    const r = sweepStaleOrphanPreimages({ repoPath: repo, tmpDir: tmpHome });
+
+    assert.equal(r.swept.includes(other), false, 'a non orphan-preimage worktree is untouched');
+    assert.match(git(repo, 'worktree', 'list').toString(), /some-worktree-notours/,
+      'still locked + registered — we never blanket-unlock');
+    // cleanup
+    git(repo, 'worktree', 'unlock', other);
+    git(repo, 'worktree', 'prune');
+  });
+
   test('maxAgeMs is honored (a 36s-old dir sweeps under a 1s gate, kept under the 1h default)', () => {
     const d = path.join(tmpHome, 'orphan-preimage-now');
     fs.mkdirSync(d, { recursive: true });
