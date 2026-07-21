@@ -72,6 +72,15 @@ const MANAGED_IGNORE_PATTERNS = [
   '.audit-loop/last-maintenance.json', // local weekly-maintenance heartbeat (timestamped, regenerated per run)
   '.audit-loop/last-maintenance.log', // backgrounded opportunistic-run output (round-4 Gemini gate G2 fix)
   '.audit-loop/.maintenance.lock', // single-instance lock (round-4 Gemini gate G2 fix)
+  // The rendered architecture map is Category A (this source repo gitignored it
+  // 2026-07-20): it renders from the CLOUD symbol_index with a timestamp + commit
+  // sha + refresh_id header and 33 LLM-written domain summaries, so two renders of
+  // one commit are never byte-identical — every `arch:render` is a large
+  // non-deterministic diff carrying no information. Ignore-only (safe: a gitignore
+  // rule never touches an already-tracked file); deliberately NOT added to the
+  // destructive UNTRACK_PATTERNS below — a consumer that already tracks it must be
+  // untracked by an explicit per-repo human decision, never silently on sync.
+  'docs/architecture-map.md',
   // arm-eval session/worksheet exports. In THIS source repo docs/arm-eval/sessions/
   // is a *tracked* auditable experiment record; in a CONSUMER these are just local
   // runtime exports (the authoritative capture is the cloud arm_eval_* tables), so
