@@ -105,15 +105,27 @@ describe('review CLI terminates (background-safe)', () => {
     } finally { server.close(); }
   });
 
-  test('a hung provider terminates via the per-attempt timeout (non-zero, fast — never an infinite hang)', async () => {
+  test('a hung provider terminates via the per-attempt timeout (bounded, non-zero — never an infinite hang)', async () => {
     const { server, port } = await startServer('hang');
     try {
+      // The invariant under test is BOUNDED termination — the CLI exits on its
+      // own and never relies on the harness reaper (the original keep-alive-socket
+      // bug hung INDEFINITELY). It is NOT a wall-clock SLA. A hung provider throws
+      // on attempt 1 (runReviewWithRetry only retries JSON-truncation, not
+      // timeouts), so the CLI's own bound is ~GEMINI_REVIEW_TIMEOUT_MS + node
+      // startup + SDK teardown — a couple of seconds. But this is a spawned child
+      // in the full `npm test` pool: under CPU starvation, node startup + timer
+      // firing for this large module can slip several seconds, which is what made
+      // a tight 10s killer flake (observed 10.4s). The killer is a no-hang safety
+      // net, not a latency probe — give it generous headroom so contention can't
+      // trip it, while a genuine (infinite) hang still fails loudly. It costs
+      // nothing on the normal path: the child exits in ~2s and resolves at once.
       const { code, timedOut } = await runCli(
         ['review', planFile, transcriptFile, '--provider', 'openai-compatible', '--out', join(dir, 'out-h.json')],
         { FINAL_REVIEW_BASE_URL: `http://127.0.0.1:${port}/v1`, FINAL_REVIEW_API_KEY: 'x', FINAL_REVIEW_MODEL: 'test-model', GEMINI_REVIEW_TIMEOUT_MS: '1500' },
-        10000,
+        30000,
       );
-      assert.equal(timedOut, false, 'a hung provider must not hang the CLI');
+      assert.equal(timedOut, false, 'a hung provider must not hang the CLI (bounded termination, no reaper reliance)');
       assert.notEqual(code, 0, 'a hung/aborted review exits non-zero');
     } finally { server.close(); }
   });

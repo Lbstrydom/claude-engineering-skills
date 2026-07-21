@@ -1,5 +1,22 @@
 # Project Status Log
 
+## 2026-07-21 — de-flaked the hung-provider termination test (load-induced pre-push flake)
+
+The `08f77b1` ship above was briefly blocked by an **unrelated** flake:
+`gemini-review-termination.test.mjs:108` failed once in the full-suite pre-push
+run (observed 10.4s) but passed 4/4 in isolation. Root cause: the hung-provider
+subtest gave the **slowest-by-design** path (a full `GEMINI_REVIEW_TIMEOUT_MS`
+wait) the **tightest** 10s killer, so under full-suite CPU starvation the spawned
+child's node startup + timer slip slipped past it. Not a retry ladder —
+`runReviewWithRetry` retries only JSON-truncation, not timeouts, so a hung
+provider throws on attempt 1; the CLI's own bound is ~1.5s + startup + teardown.
+
+Fix: raise the subtest's killer to 30s (a no-hang safety net, not a latency SLA)
+and de-overclaim the "fast" wording to "bounded". The real guard — never an
+**infinite** hang, non-zero exit — is preserved and still fails loudly. Validated
+under 32 CPU burners (subtest ran ~16s, passed 4/4) where the old 10s killer
+would flake. (Original ship re-run passed cleanly; this removes the recurrence.)
+
 ## 2026-07-21 — reverted the refresh_runs.files_* writer + dropped 6 dead columns (no zombie)
 
 Same-day follow-up to the entry below. An upstream-report review re-examined the
