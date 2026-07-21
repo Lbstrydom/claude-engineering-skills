@@ -66,6 +66,9 @@ const PINNED_EXECUTABLE = {
   // Phase C — empty-gates declarations (no mechanical gate; see each contract's reason).
   explain: [],
   skills: [],
+  // Phase C — document-only skills (no executable gate).
+  'audit-plan': [],
+  'security-strategy': [],
 };
 const PINNED_DOCUMENT_ONLY = {
   'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop'],
@@ -73,8 +76,12 @@ const PINNED_DOCUMENT_ONLY = {
   'ai-context-management': ['never-write-without-confirmation'],
   explain: [],
   skills: [],
+  // Phase C — mostly-document-only skills (agent-enforced caps / write-gate /
+  // judgement calls; no CLI exit the skill states).
+  'audit-plan': ['round-caps', 'mode-plan-required', 'final-gate-mandatory'],
+  'security-strategy': ['write-gated-on-round-trip-parse', 'never-include-real-secrets', 'never-inflate-threat-model', 'on-demand-non-blocking'],
 };
-const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'explain', 'skills', 'visual-audit'];
+const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'explain', 'security-strategy', 'skills', 'visual-audit'];
 
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {
@@ -105,9 +112,12 @@ describe('gate-honesty — real skills/', () => {
     const contractedNames = new Set(contracted.map((c) => c.skill));
     assert.deepEqual([...contractedNames].sort(), contracted.map((c) => c.skill).sort());
     for (const name of allSkillNames) {
+      // XOR, not OR (Gemini G1): the comment promises "never both, never
+      // neither" — an inclusive OR would pass a skill that landed in BOTH
+      // lists, which is exactly the loader bug this guard should catch.
       assert.ok(
-        contractedNames.has(name) || uncontracted.includes(name),
-        `skill "${name}" is neither contracted nor reported uncontracted`,
+        contractedNames.has(name) !== uncontracted.includes(name),
+        `skill "${name}" must be in exactly one of contracted / uncontracted, not both or neither`,
       );
     }
   });
@@ -128,7 +138,7 @@ describe('gate-honesty — real skills/', () => {
     const totalExecutable = Object.values(PINNED_EXECUTABLE).flat().length;
     const totalDocOnly = Object.values(PINNED_DOCUMENT_ONLY).flat().length;
     assert.equal(totalExecutable, 7); // +2: ai-context-management exit-map exemplar
-    assert.equal(totalDocOnly, 5);    // +1: never-write-without-confirmation
+    assert.equal(totalDocOnly, 12);   // +3 audit-plan, +4 security-strategy (Phase C)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));

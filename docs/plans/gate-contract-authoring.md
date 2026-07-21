@@ -609,3 +609,30 @@ the independent reviewer confirmed the contracts and the H2 dismissal.
 
 **Remaining Phase C (10 skills)**: audit-plan, brainstorm, click-test, cycle,
 nav-audit, persona-test, plan, security-strategy, ship, ux-lock.
+
+### 2026-07-21 — Phase C increment 2: audit-plan + security-strategy (document-only)
+
+Two mostly-document-only skills. Uncontracted 10 → 8; document-only gates
+5 → 12; contracted 5 → 7.
+
+- **audit-plan** (3 document-only): the GPT/Gemini round caps, `--mode plan`
+  required, and the mandatory-final-gate/`FINAL_GATE_SKIPPED` ladder — all
+  enforced by the MODEL following the skill (round caps live in the agent's
+  judgement; the flag is an instruction; the sentinel is agent output), none a
+  CLI exit a `cli-exit` recipe can bind. Feasibility-checked: no executable
+  candidate.
+- **security-strategy** (4 document-only): the write-gated-on-round-trip-parse
+  (agent-orchestrated — the model calls `parseSecurityStrategy()` then gates its
+  own `atomicWriteFileSync`; `security:refresh`'s REFUSE runs *after*),
+  never-include-real-secrets, never-inflate-threat-model, and the
+  on-demand-non-blocking negative. Verified the round-trip parse is
+  agent-orchestrated, not a single-CLI exit, before defaulting to document-only.
+
+Audit: GPT H:2 (both deferred — Phase-D ratchet test; Phase C incomplete, this
+being a partial step), M1 re-raised document-only-unverified (dismissed per D1,
+as Gemini approved last increment), L1 false-positive. **Gemini: APPROVE**
+(coherence Strong) + one LOW (G1: an `||` mutual-exclusivity assertion that
+should be XOR — fixed).
+
+**Remaining Phase C (8 skills)**: brainstorm, click-test, cycle, nav-audit,
+persona-test, plan, ship, ux-lock.

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "skill": "audit-plan",
+  "gates": [
+    {
+      "id": "round-caps",
+      "kind": "document-only",
+      "reason": "The GPT cap (max 3 rounds, stop unless HIGH is actively dropping) and the symmetric Gemini cap (max 2 rounds) are enforced by the MODEL following the skill — it decides each round whether findings still warrant continuing. There is no CLI exit code or counter a cli-exit recipe can assert; the caps live in the agent's judgement, not a mechanical seam. Document-only is the honest disposition."
+    },
+    {
+      "id": "mode-plan-required",
+      "kind": "document-only",
+      "reason": "'Always pass --mode plan' is an instruction to the agent invoking openai-audit, not a refusal the skill mechanically enforces — openai-audit does not reject a missing --mode, it just audits differently, and the skill relies on the model to pass the flag. No oracle in the closed registry binds an agent-side flag-passing instruction."
+    },
+    {
+      "id": "final-gate-mandatory",
+      "kind": "document-only",
+      "reason": "The Gemini final review being MANDATORY after the last round, with the FINAL_GATE_SKIPPED sentinel + Opus/independent-agent fallback ladder when no key is present, is an orchestration invariant the model enacts by following Step 6 — not a CLI exit. A cli-exit recipe cannot assert 'the agent ran the final gate'; the sentinel is agent OUTPUT, not a script's exit code."
+    }
+  ]
+}

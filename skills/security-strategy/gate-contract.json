@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "skill": "security-strategy",
+  "gates": [
+    {
+      "id": "write-gated-on-round-trip-parse",
+      "kind": "document-only",
+      "reason": "'Never write docs/security-strategy.md without a round-trip parse first; on parse failure output the warnings and do NOT write' is AGENT-orchestrated — the model calls parseSecurityStrategy(), asserts no warnings, and only then calls atomicWriteFileSync. It is a sequence the model performs by following Steps 3-7, not a single CLI whose exit code a cli-exit recipe can assert. (npm run security:refresh runs AFTER the write to sync the index; its secret-classifier REFUSE is a downstream infra behaviour, not this write-gate.)"
+    },
+    {
+      "id": "never-include-real-secrets",
+      "kind": "document-only",
+      "reason": "'Never include real secrets in the markdown' is an authoring constraint the model honours; redactSecrets() is a defence-in-depth backstop in the refresh pipeline, not the gate the SKILL states. Asserting 'the author never typed a secret' is not mechanically checkable from an exit code — it is a judgement about intent no oracle in the closed registry fits."
+    },
+    {
+      "id": "never-inflate-threat-model",
+      "kind": "document-only",
+      "reason": "'Never inflate the threat model — real assets + realistic actors only' is a judgement call about whether a threat is realistic. There is no mechanical oracle for 'is this threat model honest'; it is the archetypal document-only claim."
+    },
+    {
+      "id": "on-demand-non-blocking",
+      "kind": "document-only",
+      "reason": "'The skill is on-demand only — it never blocks /cycle, /plan, or any other skill' is a NEGATIVE cross-skill guarantee. Verifying it would require asserting that no other skill invokes security-strategy as a gate — a source-graph negative with no oracle in the closed registry; the cli-exit oracle cannot assert an absence of invocation."
+    }
+  ]
+}
