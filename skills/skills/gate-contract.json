@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "skill": "skills",
+  "gates": [],
+  "reason": "skills (the reference/help generator) has no mechanically-assertable gate under the closed oracle registry. 'Never drift from reality' is a DESIGN PROPERTY — it reads SKILL.md frontmatter directly rather than a hand-maintained list — not an enforced check; 'must be invoked explicitly via /<name>' documents the disable-model-invocation frontmatter field; and the helper's non-zero 'skill not found' exit is described only as something the AGENT handles, not a gate the skill asserts. No exit code, threshold, or refusal a cli-exit recipe can bind; no oracle fits."
+}

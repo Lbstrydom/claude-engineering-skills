@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "skill": "explain",
+  "gates": [],
+  "reason": "explain has no mechanically-assertable gate under the closed oracle registry. Its stated constraints — read-only (never edits/commits/triggers workflows), cite-sources (every claim traceable to one of the four sources), and 'exit with a not-found message' in symbol mode — are all agent behaviour the model enacts by following the skill, not a CLI exit code, threshold, or refusal a cli-exit recipe can bind. No oracle fits; declaring them executable would be the fake-check this suite exists to prevent."
+}

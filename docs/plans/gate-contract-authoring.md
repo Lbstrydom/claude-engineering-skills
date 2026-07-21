@@ -584,3 +584,28 @@ read as clean.
 
 **Still remaining**: Phase C (12 skills, iterative) and Phase D (ratchet +
 empty baseline).
+
+### 2026-07-21 — Phase C increment 1: explain + skills (empty-gates)
+
+The first two Phase C skills, both `{gates:[], reason}` empty declarations —
+proving the schema path with real contracts. Uncontracted 12 → 10; contracted
+3 → 5.
+
+**A finding worth recording**: the plan's human survey called these "no stated
+gates", but the MECHANICAL D6 verb pattern flags exit-behaviours
+(`explain:41`, `skills:66`) and descriptive matches ("detail **block**", a
+table row, a frontmatter-doc "must"). Dispositioned per the mechanical pattern,
+not the survey: each flagged line is agent behaviour the model enacts (an
+instruction to exit-with-a-message, or how it handles a helper's exit) or plain
+description — none is a mechanical exit/threshold/refusal a `cli-exit` recipe
+can bind. So the empty-gates `reason` NAMES those claims and why none is a gate,
+rather than asserting a bare "no gates". D6 is diff-scoped, so these existing
+lines are not re-litigated unless edited.
+
+Audit: GPT H:2 M:2 → both HIGH deferred/dismissed (Phase-D ratchet test; a
+re-litigation of the audited D1/D2 document-only decision), M1/M2 recurring
+false positives. **Gemini final gate: APPROVE** (0 new, 0 wrongly-dismissed) —
+the independent reviewer confirmed the contracts and the H2 dismissal.
+
+**Remaining Phase C (10 skills)**: audit-plan, brainstorm, click-test, cycle,
+nav-audit, persona-test, plan, security-strategy, ship, ux-lock.

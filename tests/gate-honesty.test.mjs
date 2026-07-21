@@ -63,13 +63,18 @@ const PINNED_EXECUTABLE = {
   // gate-contract-authoring.md Phase B exemplar — the two ai-context-management
   // exit-map scenarios (one per outcome, R3-H1).
   'ai-context-management': ['ctx-exit-clean', 'ctx-exit-high'],
+  // Phase C — empty-gates declarations (no mechanical gate; see each contract's reason).
+  explain: [],
+  skills: [],
 };
 const PINNED_DOCUMENT_ONLY = {
   'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop'],
   'visual-audit': ['partial-matrix-refusal', 'vlm-advisory-only'],
   'ai-context-management': ['never-write-without-confirmation'],
+  explain: [],
+  skills: [],
 };
-const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'visual-audit'];
+const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'explain', 'skills', 'visual-audit'];
 
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {
