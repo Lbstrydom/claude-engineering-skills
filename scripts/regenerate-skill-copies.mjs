@@ -267,14 +267,34 @@ function main() {
   process.exit(0);
 }
 
-try {
-  main();
-} catch (err) {
-  // A usage mistake is not a crash: print the flag diagnostic alone (no stack)
-  // and exit 2, matching the other guarded CLIs.
-  if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
-    process.stderr.write(`${err.message}\n`);
-    process.exit(2);
+// Test-only exports (mirrors the project's `_internals` convention). The
+// underscore signals private; `copyFileIfChanged` is the seam where a dropped
+// `--dry-run` once still ran fs.mkdirSync — guarded by
+// tests/regenerate-skill-copies.test.mjs.
+export const _internals = Object.freeze({ copyFileIfChanged, pruneFilesNotInSource });
+
+// Only run when invoked as a script. Without this guard, importing the module
+// for `_internals` would execute main() against the test runner's argv — and
+// main() OVERWRITES the real .claude/skills tree and calls process.exit(0), so
+// the import would regenerate the tree and kill the test process. Same
+// module-scope-main coupling as the sibling generate-plans-index.mjs.
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+
+if (isMain) {
+  try {
+    main();
+  } catch (err) {
+    // A usage mistake is not a crash: print the flag diagnostic alone (no stack)
+    // and exit 2, matching the other guarded CLIs.
+    if (err instanceof ArgvError || err?.code === 'ARGV_ERROR') {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
+    throw err;
   }
-  throw err;
 }
