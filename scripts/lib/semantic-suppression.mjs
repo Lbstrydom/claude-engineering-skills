@@ -31,7 +31,7 @@
  *
  * @module scripts/lib/audit/semantic-suppression
  */
-import { normalizePath } from '../file-io.mjs';
+import { normalizePath } from './file-io.mjs';
 
 /**
  * The pure suppression decision: given a candidate finding and its nearest

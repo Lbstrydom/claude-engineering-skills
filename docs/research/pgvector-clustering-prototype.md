@@ -96,7 +96,7 @@ Not built here (a prototype measures; it doesn't ship a gate). The promotion:
 
 The prototype's recommended highest-value use is built and validated.
 
-- **`scripts/lib/audit/semantic-suppression.mjs`** — the pure core: `cosine`,
+- **`scripts/lib/semantic-suppression.mjs`** — the pure core: `cosine`,
   `decideReRaise` (the conservative suppress/keep decision), `greedyReRaiseClusters`
   (oldest-is-canonical, order-independent), and `nearestOpenReRaise` (the pgvector
   `<=>` store query). Guarded by `tests/semantic-suppression.test.mjs` (10 cases).

@@ -1,5 +1,37 @@
 # Project Status Log
 
+## 2026-07-21 — the post-flip check caught a violation I'd introduced by flipping
+
+Checking the record-time hook in production surfaced two things.
+
+**The hook works.** It fired on a real audit (14 merged findings embedded
+record-time, 0.3s after each finding — the recordFindings signature). All 14 were
+KEPT, and that was CORRECT: 0 of them had a >0.92 same-file match to an open
+finding in another run, so they were genuinely new, not re-raises. Fail-open
+intact; no over- or under-suppression.
+
+**But cluster density jumped 4.5 → 17.5 (back to AMBER), and the cause was MINE.**
+`involves_recent = 0` ruled out the recent findings, so it was older churn — and
+the top clusters were all on `runs-findings.mjs`, every one a reworded variant of
+"the stores domain imports `scripts/lib/audit/semantic-suppression.mjs`". Wiring
+the hook made `runs-findings.mjs` (stores) import from `scripts/lib/audit/**`
+(audit-orchestration) — a `stores → audit-orchestration` cross-domain edge not in
+allowedDeps. The mechanical detector (not the hallucinating bouncer — verified)
+flagged exactly 1 violation. **The identical class as the stores→plan edge I fixed
+earlier, reintroduced by my own record-time wiring.** The scope-by-impact rule in
+person: my change depended on a path that broke a boundary.
+
+**Fixed by the same precedent.** The suppression logic is a cross-cutting
+algorithm (cosine, clustering, pgvector query), not audit-orchestration — moved
+`scripts/lib/audit/semantic-suppression.mjs` → `scripts/lib/semantic-suppression.mjs`
+(shared-lib), which both the store and the CLIs may import. Mechanical
+re-analysis: 1 → **0 violations**. Full suite green (8,394). The stale findings
+about the edge are now resolved and reconciled separately.
+
+The lesson worth keeping: a feature that writes to the audit store can create the
+very churn it exists to suppress. Checking after the flip — not just before — is
+what caught it.
+
 ## 2026-07-21 — closed the remediation-state loop: the ship gate is no longer vacuously green
 
 A telemetry review of the Supabase store found **0 of 989** `audit_findings`
@@ -67,7 +99,7 @@ interference, which is why default-ON is safe.
 
 The prototype's recommended highest-value use, built and validated end-to-end.
 
-**Core** (`scripts/lib/audit/semantic-suppression.mjs`, 10 tests): `cosine`,
+**Core** (`scripts/lib/semantic-suppression.mjs`, 10 tests): `cosine`,
 `decideReRaise` (conservative suppress/keep), `greedyReRaiseClusters`
 (oldest-is-canonical, proven order-independent), `nearestOpenReRaise` (pgvector
 `<=>` store query). **Reconciler** (`scripts/semantic-suppress.mjs`): embeds open

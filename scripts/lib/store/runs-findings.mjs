@@ -27,7 +27,7 @@ import { getPool } from '../db/client.mjs';
 import { isCloudEnabled, getRepoIdByName } from './repo.mjs';
 import crypto from 'node:crypto';
 import { semanticSuppressConfig, symbolIndexConfig } from '../config.mjs';
-import { partitionRecordTimeReRaises, toVectorLiteral } from '../audit/semantic-suppression.mjs';
+import { partitionRecordTimeReRaises, toVectorLiteral } from '../semantic-suppression.mjs';
 import { embedText } from '../embed-text.mjs';
 
 /**

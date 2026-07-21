@@ -36,7 +36,7 @@ import { isCloudEnabled } from './lib/store/repo.mjs';
 import { initLearningStore, recordAdjudicationEvent } from './learning-store.mjs';
 import { embedText } from './lib/embed-text.mjs';
 import { symbolIndexConfig, semanticSuppressConfig } from './lib/config.mjs';
-import { greedyReRaiseClusters, toVectorLiteral } from './lib/audit/semantic-suppression.mjs';
+import { greedyReRaiseClusters, toVectorLiteral } from './lib/semantic-suppression.mjs';
 
 export const KNOWN_FLAGS = Object.freeze([
   '--selfcheck-relocation', '--repo', '--apply', '--threshold', '--window-days', '--cap', '--concurrency',

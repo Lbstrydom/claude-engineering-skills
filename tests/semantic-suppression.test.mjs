@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import {
   decideReRaise, cosine, greedyReRaiseClusters, toVectorLiteral,
   partitionRecordTimeReRaises,
-} from '../scripts/lib/audit/semantic-suppression.mjs';
+} from '../scripts/lib/semantic-suppression.mjs';
 
 // A mock pg pool whose nearestOpenReRaise query returns a scripted neighbour.
 const mockPool = (neighbourRow) => ({ query: async () => ({ rows: neighbourRow ? [neighbourRow] : [] }) });
