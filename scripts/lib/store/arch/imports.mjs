@@ -73,7 +73,16 @@ export async function recordSymbolFileImports(refreshId, edges) {
   return { inserted };
 }
 
-export async function copyForwardImports({ fromRefreshId, toRefreshId, touchedFileSet }) {
+/**
+ * Copy a prior snapshot's import edges whose importer file is NOT in
+ * `touchedFileSet` into the new snapshot.
+ *
+ * @param {((filePath: string) => boolean)|null} [args.fileStillExists] -
+ *   optional on-disk gate, mirroring copyForwardUntouchedFiles. Passed only by
+ *   the timed-out-full recovery so a deleted importer's edges are not
+ *   resurrected; incremental passes null (deletions are already in touchedFileSet).
+ */
+export async function copyForwardImports({ fromRefreshId, toRefreshId, touchedFileSet, fileStillExists = null }) {
   if (!fromRefreshId || !toRefreshId || !await isCloudEnabled()) return { copied: 0 };
   let copied = 0;
   const pageSize = 500;
@@ -87,7 +96,9 @@ export async function copyForwardImports({ fromRefreshId, toRefreshId, touchedFi
       [fromRefreshId, offset, pageSize]
     );
     if (rows.length === 0) break;
-    const keep = rows.filter((r) => !touchedFileSet.has(r.importer_path));
+    const keep = rows.filter((r) =>
+      !touchedFileSet.has(r.importer_path)
+      && (!fileStillExists || fileStillExists(r.importer_path)));
     if (keep.length > 0) {
       const payload = keep.map((r) => ({
         refresh_id: toRefreshId,

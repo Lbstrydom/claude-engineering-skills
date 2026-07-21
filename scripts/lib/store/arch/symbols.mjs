@@ -310,7 +310,23 @@ export async function listLayeringViolationsForSnapshot(refreshId) {
  * refresh_id. Paginated read + bulk insert. Optional `retagDomain`
  * callback re-derives domain_tag per row (preserves prior tag on null).
  */
-export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefreshId, touchedFileSet, retagDomain = null }) {
+/**
+ * Copy a prior snapshot's rows for files NOT in `touchedFileSet` into the new
+ * snapshot, carrying the duplicate_justification* columns (see the SELECT).
+ *
+ * @param {object} args
+ * @param {Set<string>} args.touchedFileSet - files this run authoritatively
+ *   covered; their rows are NOT copied (the run wrote them fresh).
+ * @param {((filePath: string) => boolean)|null} [args.fileStillExists] -
+ *   optional existence gate. When provided, a prior row is copied only if this
+ *   returns true for its file_path. Incremental runs pass null: their
+ *   touchedFileSet already contains git-detected deletions, so a deleted file
+ *   is excluded that way. A timed-out FULL run has no git-diff of deletions —
+ *   "un-reached" (copy me) and "deleted" (drop me) both present as "absent from
+ *   this run's symbols", so it passes an on-disk check here to avoid
+ *   resurrecting a file that was genuinely removed since the prior snapshot.
+ */
+export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefreshId, touchedFileSet, retagDomain = null, fileStillExists = null }) {
   if (!await isCloudEnabled()) return 0;
   let copied = 0;
   const pageSize = 500;
@@ -328,7 +344,9 @@ export async function copyForwardUntouchedFiles({ repoId, fromRefreshId, toRefre
       [fromRefreshId, offset, pageSize]
     );
     if (rows.length === 0) break;
-    const keep = rows.filter((r) => !touchedFileSet.has(r.file_path));
+    const keep = rows.filter((r) =>
+      !touchedFileSet.has(r.file_path)
+      && (!fileStillExists || fileStillExists(r.file_path)));
     if (keep.length > 0) {
       const payload = keep.map((r) => {
         let domainTag = r.domain_tag;

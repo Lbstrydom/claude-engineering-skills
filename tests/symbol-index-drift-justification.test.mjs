@@ -324,4 +324,55 @@ describe('duplicate-justification exclusion — end-to-end (disposable DB)', { s
     );
     assert.equal(driftIncr.duplication_pairs, 0, 'and the justified pair must still not count toward drift');
   });
+
+  // Timed-out-full recovery (field, 2026-07-20). A SIGKILL during the
+  // synchronous ts-morph loop truncates a FULL extraction mid-way, so the tail
+  // of files is never reached and their symbols (+ justification flags) vanish
+  // from a snapshot that still publishes as "full". The recovery treats the
+  // reached files as an incremental "touched" set and copies the rest forward —
+  // but a full run has no git-diff of deletions, so it must NOT resurrect a
+  // file that was genuinely deleted since the prior snapshot. copyForwardUntouchedFiles
+  // gains an optional fileStillExists gate for exactly this case.
+  it('copyForwardUntouchedFiles honours a fileStillExists gate — keeps un-reached existing files (with their flags), drops deleted ones', async () => {
+    const pool = await getPool();
+    const r1 = await insertRefreshRun(pool, repoId);
+    const hashKept = `sig-kept-${crypto.randomUUID()}`;
+    const hashGone = `sig-gone-${crypto.randomUUID()}`;
+    const defKept = await makeSymbol(r1, repoId, { filePath: 'kept.mjs', symbolName: 'k', kind: 'function', signatureHash: hashKept });
+    const defGone = await makeSymbol(r1, repoId, { filePath: 'gone.mjs', symbolName: 'g', kind: 'function', signatureHash: hashGone });
+    await recordDuplicateJustifications(r1, repoId, [
+      { definitionId: defKept, reason: 'k', target: 'x.mjs:k', source: 'kept.mjs:1' },
+      { definitionId: defGone, reason: 'g', target: 'x.mjs:g', source: 'gone.mjs:1' },
+    ]);
+
+    // Refresh 2 reached NEITHER file (empty touched set — a timeout truncated
+    // extraction before either). gone.mjs no longer exists on disk.
+    const r2 = await insertRefreshRun(pool, repoId);
+    const copied = await copyForwardUntouchedFiles({
+      repoId, fromRefreshId: r1, toRefreshId: r2,
+      touchedFileSet: new Set(),
+      fileStillExists: (fp) => fp !== 'gone.mjs',
+    });
+    assert.equal(copied, 1, 'only the still-existing un-reached file copies forward');
+
+    const rows = (await pool.query(
+      `SELECT file_path, duplicate_justified FROM symbol_index WHERE refresh_id=$1 ORDER BY file_path`, [r2],
+    )).rows;
+    assert.deepEqual(rows.map((r) => r.file_path), ['kept.mjs'], 'the deleted file is NOT resurrected by copy-forward');
+    assert.equal(rows[0].duplicate_justified, true, 'the kept file rides copy-forward WITH its justification flag');
+  });
+
+  it('copyForwardUntouchedFiles without a fileStillExists gate copies every untouched file (incremental behaviour unchanged)', async () => {
+    const pool = await getPool();
+    const r1 = await insertRefreshRun(pool, repoId);
+    const h = `sig-nogate-${crypto.randomUUID()}`;
+    await makeSymbol(r1, repoId, { filePath: 'p.mjs', symbolName: 'p', kind: 'function', signatureHash: h });
+    await makeSymbol(r1, repoId, { filePath: 'q.mjs', symbolName: 'q', kind: 'function', signatureHash: `${h}-2` });
+
+    const r2 = await insertRefreshRun(pool, repoId);
+    const copied = await copyForwardUntouchedFiles({
+      repoId, fromRefreshId: r1, toRefreshId: r2, touchedFileSet: new Set(),
+    });
+    assert.equal(copied, 2, 'no gate → both untouched files copy forward, exactly as before');
+  });
 });

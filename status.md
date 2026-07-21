@@ -1,5 +1,56 @@
 # Project Status Log
 
+## 2026-07-21 — the "jsx pragma resolution gap" was a load-truncated extraction
+
+Chased down the three consumer pragmas that logged `unresolved` after a full
+refresh. My own earlier note called it "a real gap in .jsx extraction." It is
+not. There is no jsx gap.
+
+**What it actually was.** ts-morph parses the file fine (reproduced: all 7
+functions found, including the three pragma targets), the clean baseline
+snapshot indexed it, and resolution matched all 32 pragmas against that
+snapshot. The coverage data settled it: the clean full run measured the cruise
+at **5.3s**; the run that produced the warnings recorded `outcome=timedOut` and
+dropped 146 symbols (8433 → 8287), the whole `WineInputPanel.jsx` among them.
+Symbol extraction is a synchronous ts-morph loop and the 300s hard timeout is a
+parent-owned SIGKILL, so a slow run under load (I was hammering the machine with
+test suites + concurrent refreshes at the time) gets killed mid-loop and the
+tail of files is never reached. Pragmas whose target file sat in that tail then
+mis-report as `unresolved / not excluded from the drift score` — blaming the
+author for a machine truncation.
+
+**The fix (chosen with the user: honesty + copy-forward recovery).** A
+timed-out full run is really a partial run, so recover it exactly as an
+incremental does: treat the files extraction *did* reach as the "touched" set,
+scope pragma resolution to them (so un-reached-file pragmas ride copy-forward
+instead of false-warning), and copy the un-reached tail forward from the prior
+snapshot — carrying the `duplicate_justification*` columns my earlier fix
+already taught copy-forward to preserve. The one difference from incremental: a
+full run has no git-diff of deletions, so an un-reached file and a
+deleted-since-prior file both look "absent from this run's symbols." So
+`copyForwardUntouchedFiles`/`copyForwardImports` gained an optional
+`fileStillExists` on-disk gate, used only in the timeout case, so a genuinely
+deleted file is not resurrected. Coverage still records `unverified
+(extraction_timeout)` — recovery restores completeness, it does not launder the
+degraded verdict (and the coverage copy-forward is kept incremental-only for
+exactly that reason).
+
+**Verified live, on the disposable container (never the prod store — INC-002
+rule).** Clean baseline: 3565 symbols, coverage `verified`, 5 justified
+pragmas. Then forced a 3s timeout and re-ran: extraction truncated at 10 files
+reached, recovery copied forward 3524 un-reached symbols + 1959 import edges →
+3565 total, coverage `unverified`, **justified still 5**. Before this fix that
+run would have published 41 symbols and 0 (or few) justified. The existence
+gate + justification-carry are covered by a red-before-green DB integration
+test; the wiring was exercised by the real forced-timeout run.
+
+Left as a known, deliberately-unfixed follow-up: the timeout itself. A coverage
+measurement whose cruise costs ~5s should not be able to truncate the essential
+symbol index at all — the truer fix is to stop the coverage-sized timeout from
+bounding extraction. That's a redesign of a plan-backed subsystem; recovery
+makes a truncated run correct rather than silently lossy, which is the
+user-visible bug. Flagged for a separate pass.
+
 ## 2026-07-21 — synced npm-args:gate to consumers; corrected a "not synced" error
 
 Added `check-npm-run-args.mjs` to the sync `CORE_ENTRY`, beside the already-

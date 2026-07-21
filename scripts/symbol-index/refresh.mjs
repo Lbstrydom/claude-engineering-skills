@@ -448,6 +448,37 @@ async function main() {
       });
       const finalSymbols = embedded.filter(r => r.type === 'symbol');
 
+      // 8b. Timed-out-full recovery. A full extraction is a synchronous ts-morph
+      // loop; the hard timeout is a parent-owned SIGKILL, so a slow run under
+      // load is killed MID-LOOP and the tail of files is never reached — their
+      // symbols (and their duplicate_justification flags) vanish from a snapshot
+      // that still publishes as `full`. Field-observed on a consumer: a full
+      // refresh dropped 146 symbols including a file whose 3 pragmas then
+      // mis-reported as `unresolved`. There is no jsx-extraction gap — the file
+      // parses fine; it was simply never reached.
+      //
+      // A truncated full run is really a partial run, so recover it exactly as
+      // an incremental does: treat the files we DID reach as the "touched" set
+      // (pragma resolution scopes to it below; step 13 copies the rest forward).
+      // The one difference from incremental: a full run has no git-diff of
+      // deletions, so step 13 gates copy-forward on on-disk existence to avoid
+      // resurrecting a file deleted since the prior snapshot. Coverage still
+      // records `unverified (extraction_timeout)` — recovery restores
+      // completeness, it does not launder the degraded verdict.
+      let timeoutRecovery = null;
+      if (mode === 'full' && extractionTimedOut) {
+        const priorForRecovery = await getActiveSnapshot(repoId);
+        if (priorForRecovery?.refreshId) {
+          touchedSet = new Set(finalSymbols.map(s => s.filePath));
+          timeoutRecovery = { prior: priorForRecovery };
+          logOk(`WARNING: full extraction was truncated by timeout — reached ${touchedSet.size} file(s); `
+            + `recovering the rest via copy-forward from ${priorForRecovery.refreshId} `
+            + `(snapshot stays coverage-unverified). Re-run \`npm run arch:refresh:full\` unloaded for a clean baseline.`);
+        } else {
+          logOk('WARNING: full extraction truncated by timeout and no prior snapshot to recover from — publishing a partial full snapshot.');
+        }
+      }
+
       // 9. Upsert definitions, get id map
       const defs = finalSymbols.map(s => ({
         canonicalPath: s.filePath,
@@ -553,13 +584,16 @@ async function main() {
         repoPragmas = null;
       }
       if (repoPragmas !== null) {
-        // The sweep is full-repo, but the candidate set is touched-files-only
-        // on an incremental. Restricting the pragma set to the same scope
-        // keeps the "unresolved" warning below honest: without this, every
-        // pragma in an untouched file would be reported as "not excluded
-        // from the drift score" when it is in fact still excluded, via the
-        // copy-forward path. Full refreshes are unaffected (touchedSet null).
-        const scopedPragmas = (mode === 'incremental' && touchedSet)
+        // The sweep is full-repo, but the candidate set is scope-limited when
+        // `touchedSet` is set — touched files on an incremental, OR the reached
+        // files on a timed-out full run (8b). Restricting the pragma set to the
+        // same scope keeps the "unresolved" warning below honest: without this,
+        // every pragma in a copy-forwarded file would be reported as "not
+        // excluded from the drift score" when it is in fact still excluded, via
+        // the copy-forward path (which carries its flag). A clean full refresh
+        // has `touchedSet === null` → every pragma is resolved with full
+        // authority.
+        const scopedPragmas = touchedSet
           ? repoPragmas.filter((p) => touchedSet.has(p.pragmaFile))
           : repoPragmas;
         const pragmaCandidates = finalSymbols
@@ -633,39 +667,62 @@ async function main() {
       // from prior snapshot. Symbol copy-forward already proven; imports
       // copy-forward keys on importer_path (R1-H1) so dropped edges from
       // touched files correctly disappear.
+      // Copy-forward fires for a scope-limited run: an incremental (untouched
+      // files) OR a timed-out full run (8b — the un-reached tail). `touchedSet`
+      // is non-null in exactly those two cases.
       let priorImportGraphPopulated = false;
-      if (mode === 'incremental' && touchedSet) {
-        const prior = await getActiveSnapshot(repoId);
+      if (touchedSet) {
+        // Reuse the prior fetched by the 8b recovery when present, so a timed-out
+        // full run does not issue a second getActiveSnapshot.
+        const prior = timeoutRecovery?.prior ?? await getActiveSnapshot(repoId);
+        // A full run has no git-diff of deletions, so an "un-reached" file and a
+        // "deleted since prior" file both look absent from this run's symbols.
+        // Gate copy-forward on on-disk existence for the timeout case so a
+        // deleted file is not resurrected. Incremental keeps its git-detected
+        // deletions in touchedSet and needs no on-disk check (null gate).
+        const fileStillExists = timeoutRecovery
+          ? (filePath => fs.existsSync(path.join(repoRoot, filePath)))
+          : null;
         if (prior?.refreshId) {
           const copied = await copyForwardUntouchedFiles({
             repoId,
             fromRefreshId: prior.refreshId,
             toRefreshId: refreshId,
             touchedFileSet: touchedSet,
+            fileStillExists,
             // Re-apply current domain rules to copied rows so domain-map.json
             // edits take effect on incremental refresh, not just full rebuild.
             retagDomain: domainRules.length > 0 ? (filePath => tagDomain(filePath, domainRules)) : null,
           });
-          logOk(`copy-forward ${copied} untouched-file symbols from ${prior.refreshId}`);
+          logOk(`copy-forward ${copied} ${timeoutRecovery ? 'un-reached' : 'untouched'}-file symbols from ${prior.refreshId}`);
           // Also carry forward the import edges
           const imp = await copyForwardImports({
             fromRefreshId: prior.refreshId,
             toRefreshId: refreshId,
             touchedFileSet: touchedSet,
+            fileStillExists,
           });
-          if (imp.copied > 0) logOk(`copy-forward ${imp.copied} untouched-file import edges`);
+          if (imp.copied > 0) logOk(`copy-forward ${imp.copied} ${timeoutRecovery ? 'un-reached' : 'untouched'}-file import edges`);
           // Coverage is a FULL-RUN measurement (§2.1.3 row 4). An incremental
           // run inherits the NUMBERS for display but never the VERDICT — file
           // content can change (adding edges, making them untagged) while the
           // file LIST stays byte-identical, so any digest-based freshness check
           // would be false comfort. Categorical beats heuristic here.
-          const cov = await copyForwardCoverage({
-            fromRefreshId: prior.refreshId,
-            toRefreshId: refreshId,
-          });
-          logOk(cov.copied
-            ? `copy-forward coverage from ${prior.refreshId} (stale — reports \`unknown\`)`
-            : `no prior coverage to copy forward (${cov.reason}); graph reads \`unknown\``);
+          //
+          // A timed-out full run must NOT copy coverage forward: it recorded its
+          // own honest `timedOut` verdict at step 12c, and overwriting that with
+          // the prior (often `verified`) record would launder a degraded run
+          // into a clean-looking one — the exact capture-dishonesty this whole
+          // fix exists to remove. Incremental only.
+          if (mode === 'incremental') {
+            const cov = await copyForwardCoverage({
+              fromRefreshId: prior.refreshId,
+              toRefreshId: refreshId,
+            });
+            logOk(cov.copied
+              ? `copy-forward coverage from ${prior.refreshId} (stale — reports \`unknown\`)`
+              : `no prior coverage to copy forward (${cov.reason}); graph reads \`unknown\``);
+          }
           priorImportGraphPopulated = await getImportGraphPopulated(prior.refreshId);
         }
       }
