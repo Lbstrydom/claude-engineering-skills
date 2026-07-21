@@ -1,6 +1,30 @@
 # Project Status Log
 
-## 2026-07-21 — pgvector prototype: the churn signal is REAL, and trigram under-counts it
+## 2026-07-21 — guarded two destructive CLIs that ran main() on import
+
+`symbol-index/prune.mjs` (DELETES rows) and `render-mermaid.mjs` (OVERWRITES the
+committed `docs/architecture-map.md`) called `main().catch(...)` at module scope
+with no `isMain` guard, while `tests/cli-unknown-flags.test.mjs` ESM-imports both
+purely for their `KNOWN_FLAGS`. Importing a module runs its top-level code, so
+that import ran `main()` — safe in CI only because the store is off; with a real
+`AUDIT_DB_URL` set (a locally-configured store, which mine has) the import would
+prune / render for real. Same module-scope-main coupling already fixed in
+build-manifest.mjs and regenerate-skill-copies.mjs; `refresh.mjs` (the sibling)
+was already guarded. Wrapped both in the zero-import `isMain` IIFE.
+
+Regression test asserts the guard in SOURCE (a subprocess sentinel can't catch a
+revert reliably — `main()` is async and races the import resolving) plus the
+behavioural half (the `KNOWN_FLAGS` imports still resolve). Verified the guard
+holds even with the cloud config loaded: importing resolves `KNOWN_FLAGS`
+without running `main()` or touching the artifact.
+
+Census (careful this time — keyed on a COLUMN-0 `main()` call, cross-referenced
+with test IMPORTS not spawns): 8 other files carry an unguarded module-scope
+`main()`, but NONE are imported by a test — `embed.mjs` is only read as source
+TEXT, `duplicates.mjs` only named in a comment. So the coupling can only bite
+those two. Guarding the other 8 defensively would be over-engineering past the
+confirmed issue; noted here so a future test-import of any of them knows to add
+a guard first.
 
 The memory-health decision rule's prescribed next step, executed. Cluster
 density fired consistently → "prototype pgvector similarity first, re-measure."

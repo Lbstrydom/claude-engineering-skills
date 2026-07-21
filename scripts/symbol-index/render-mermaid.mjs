@@ -440,16 +440,31 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  // A usage mistake is not an operational failure: exit 2 with the message
-  // alone (a stack trace buries the one line the operator needs to read).
-  // Same contract as prune.mjs / refresh.mjs — 2 = bad input, 1 = tool error.
-  if (err?.code === 'ARGV_ERROR') {
-    // No prefix added here: both argv-error sources already lead with
-    // "arch:render:", and prefixing again yields "arch:render: arch:render:".
-    process.stderr.write(`${err.message}\n`);
-    process.exit(2);
-  }
-  process.stderr.write(`arch:render: fatal: ${err.stack || err.message}\n`);
-  process.exit(1);
-});
+// Run as a CLI only. main() OVERWRITES the committed docs/architecture-map.md,
+// and this module is imported by tests/cli-unknown-flags.test.mjs for its
+// KNOWN_FLAGS export — without this guard, that import runs main() and, with a
+// real AUDIT_DB_URL set, would render + overwrite the artifact for real (safe
+// today only because the test env has the store off). Same module-scope-main
+// coupling fixed in build-manifest.mjs / refresh.mjs.
+const isMain = (() => {
+  try {
+    const argv1 = (process.argv[1] || '').replace(/\\/g, '/');
+    return import.meta.url === `file://${argv1}` || import.meta.url === `file:///${argv1}`;
+  } catch { return false; }
+})();
+
+if (isMain) {
+  main().catch(err => {
+    // A usage mistake is not an operational failure: exit 2 with the message
+    // alone (a stack trace buries the one line the operator needs to read).
+    // Same contract as prune.mjs / refresh.mjs — 2 = bad input, 1 = tool error.
+    if (err?.code === 'ARGV_ERROR') {
+      // No prefix added here: both argv-error sources already lead with
+      // "arch:render:", and prefixing again yields "arch:render: arch:render:".
+      process.stderr.write(`${err.message}\n`);
+      process.exit(2);
+    }
+    process.stderr.write(`arch:render: fatal: ${err.stack || err.message}\n`);
+    process.exit(1);
+  });
+}

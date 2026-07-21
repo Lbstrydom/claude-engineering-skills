@@ -234,3 +234,31 @@ describe('remove-legacy-synced.mjs — deletes files in someone ELSE\'s repo', (
     }
   });
 });
+
+describe('destructive CLIs guard main() against import (module-scope-main coupling)', () => {
+  // prune.mjs DELETES rows and render-mermaid.mjs OVERWRITES the committed
+  // docs/architecture-map.md. Both are imported ABOVE purely for KNOWN_FLAGS —
+  // without an isMain guard, that import runs main(), which with a real
+  // AUDIT_DB_URL set would prune / render for real (safe in CI only because the
+  // store is off). A subprocess sentinel can't reliably catch a regression here
+  // (main() is async and races the import resolving), so assert the guard in
+  // SOURCE — a revert to a bare module-scope `main()` must fail this.
+  for (const rel of ['scripts/symbol-index/prune.mjs', 'scripts/symbol-index/render-mermaid.mjs']) {
+    it(`${rel} calls main() only under an isMain guard`, () => {
+      const src = fs.readFileSync(path.join(REPO_ROOT, rel), 'utf-8');
+      assert.match(src, /const isMain =/, 'must define an isMain guard');
+      // Column 0 exactly — a bare module-scope call. The guarded call is
+      // indented inside `if (isMain) {`, so it must NOT match this.
+      assert.doesNotMatch(src, /^main\(\)\.catch/m, 'main() must not be called at module scope');
+      assert.match(src, /if \(isMain\) \{[\s\S]*?\bmain\(\)\.catch/, 'main() must sit inside the isMain guard');
+    });
+  }
+
+  it('the KNOWN_FLAGS exports still import cleanly (main() did not run on import)', () => {
+    // If main() had run + process.exit'd during the top-level imports, this test
+    // file would not have loaded at all. Reaching here with both flag lists
+    // populated is the behavioural half of the guarantee.
+    assert.ok(Array.isArray(PRUNE_FLAGS) && PRUNE_FLAGS.length >= 1, 'prune KNOWN_FLAGS');
+    assert.ok(Array.isArray(RENDER_FLAGS) && RENDER_FLAGS.length >= 1, 'render KNOWN_FLAGS');
+  });
+});
