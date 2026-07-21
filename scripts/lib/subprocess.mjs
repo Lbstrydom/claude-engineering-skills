@@ -42,14 +42,26 @@ export const SUBPROC_ERROR_CODES = Object.freeze({
  * ALWAYS resolves — the caller switches on `exitCode`/`signal`. Use
  * `runJsonLinesAsyncStrict` if you want exception-based control flow.
  *
- * `timeoutMs` (optional, default OFF) kills the child after that long:
- * SIGTERM, then SIGKILL after `killGraceMs`. It is default-off so every
- * existing call site is byte-identical in behaviour (#20 Backward Compat).
+ * `timeoutMs` (optional, default OFF) is an ABSOLUTE-duration kill: SIGTERM
+ * after that long, then SIGKILL after `killGraceMs`. `idleTimeoutMs` (optional,
+ * default OFF) is an INACTIVITY kill: the timer resets on every stdout chunk and
+ * fires only after that long with NO output. Either, both, or neither may be
+ * set; the first to fire wins and its reason is recorded. Both default-off so
+ * every existing call site is byte-identical in behaviour (#20 Backward Compat).
+ *
+ * Prefer `idleTimeoutMs` for a child that STREAMS progress (like `extract.mjs`,
+ * which emits a record per file): a healthy-but-slow run keeps resetting the
+ * idle timer and is never killed for total duration, while a genuinely wedged
+ * run (no output for the threshold) still is. An absolute `timeoutMs` bounds
+ * total wall-time regardless of progress — correct only for a child whose
+ * silence is not a reliable wedge signal.
  *
  * This works only because the timer runs in the PARENT. A child doing
  * substantial synchronous work blocks its own event loop, so no in-child
  * timer could ever fire — a process boundary is the only thing that actually
- * interrupts it, and callers like `refresh.mjs` already have one.
+ * interrupts it, and callers like `refresh.mjs` already have one. (The idle
+ * timer is parent-side too, so it observes silence correctly even while the
+ * child is blocked in synchronous work.)
  *
  * LIMITATION — kills the direct child only, not its descendants. The child is
  * not spawned detached into its own process group, so a grandchild it spawned
@@ -63,7 +75,7 @@ export const SUBPROC_ERROR_CODES = Object.freeze({
  * @param {string} cmd
  * @param {string[]} args
  * @param {{cwd?: string, input?: string, env?: Record<string,string>, stage?: string,
- *          timeoutMs?: number, killGraceMs?: number}} [opts]
+ *          timeoutMs?: number, idleTimeoutMs?: number, killGraceMs?: number}} [opts]
  * @returns {Promise<{
  *   records: object[],
  *   parseErrors: {lineNo: number, line: string, message: string}[],
@@ -71,8 +83,89 @@ export const SUBPROC_ERROR_CODES = Object.freeze({
  *   signal: string | null,
  *   spawnError: Error | null,
  *   timedOut: boolean,
+ *   killReason: 'absolute' | 'idle' | null,
  * }>}
  */
+/**
+ * Pure timeout state machine for {@link runJsonLinesAsync}, split out so the
+ * absolute/idle/close/error interleaving is testable WITHOUT a real subprocess
+ * (inject `setTimeoutFn`/`clearTimeoutFn`). Owns exactly one kill decision:
+ *
+ *   - `onTimeout(reason)` is the ONLY path that initiates a kill. It is
+ *     idempotent (a second timer expiry after the first is a no-op), records the
+ *     FIRST reason, clears the OTHER timeout timer, calls `sendTerm()` once, and
+ *     arms the single grace timer that calls `sendKill()`.
+ *   - `onData()` resets the idle deadline (only while still active).
+ *   - `dispose()` clears every timer. The caller invokes it from BOTH `close`
+ *     and `error` — neither of which is a kill. `runJsonLinesAsync` ALWAYS
+ *     resolves (never rejects): a natural close resolves with the exit result,
+ *     and a spawn/process `error` is recorded as `spawnError` on the resolved
+ *     result (the strict wrapper then maps it to a `SPAWN_FAILED` throw). Only
+ *     `onTimeout` ever sets `timedOut`.
+ *
+ * @param {{timeoutMs?: number, idleTimeoutMs?: number, killGraceMs?: number,
+ *          sendTerm: () => void, sendKill: () => void,
+ *          setTimeoutFn?: typeof setTimeout, clearTimeoutFn?: typeof clearTimeout}} cfg
+ */
+export function makeTimeoutController(cfg) {
+  const setT = cfg.setTimeoutFn || setTimeout;
+  const clearT = cfg.clearTimeoutFn || clearTimeout;
+  const absMs = Number.isFinite(cfg.timeoutMs) && cfg.timeoutMs > 0 ? cfg.timeoutMs : 0;
+  const idleMs = Number.isFinite(cfg.idleTimeoutMs) && cfg.idleTimeoutMs > 0 ? cfg.idleTimeoutMs : 0;
+  const graceMs = Number.isFinite(cfg.killGraceMs) && cfg.killGraceMs >= 0 ? cfg.killGraceMs : 5000;
+
+  let state = 'active';           // 'active' | 'terminating' | 'disposed'
+  let killReason = null;          // 'absolute' | 'idle' | null — first wins
+  let absTimer = null;
+  let idleTimer = null;
+  let graceTimer = null;
+
+  const armIdle = () => {
+    if (idleMs <= 0) return;
+    idleTimer = setT(() => onTimeout('idle'), idleMs);
+    idleTimer?.unref?.();
+  };
+
+  function onTimeout(reason) {
+    if (state !== 'active') return;   // idempotent — first expiry wins
+    state = 'terminating';
+    killReason = reason;
+    // Clear BOTH timeout timers so the other one cannot also fire.
+    if (absTimer) { clearT(absTimer); absTimer = null; }
+    if (idleTimer) { clearT(idleTimer); idleTimer = null; }
+    cfg.sendTerm();
+    // SIGTERM is a request; a child wedged in synchronous work may never
+    // service it, so escalate to SIGKILL after the grace window.
+    graceTimer = setT(() => cfg.sendKill(), graceMs);
+    graceTimer?.unref?.();
+  }
+
+  return {
+    /** Arm the absolute + idle timers. Call once after spawn. */
+    arm() {
+      if (state !== 'active') return;
+      if (absMs > 0) { absTimer = setT(() => onTimeout('absolute'), absMs); absTimer?.unref?.(); }
+      armIdle();
+    },
+    /** Reset the idle deadline on child output (only while active). */
+    onData() {
+      if (state !== 'active' || idleMs <= 0) return;
+      if (idleTimer) { clearT(idleTimer); idleTimer = null; }
+      armIdle();
+    },
+    /** Clear every timer. Called from close AND error — never initiates a kill. */
+    dispose() {
+      state = 'disposed';
+      if (absTimer) { clearT(absTimer); absTimer = null; }
+      if (idleTimer) { clearT(idleTimer); idleTimer = null; }
+      if (graceTimer) { clearT(graceTimer); graceTimer = null; }
+    },
+    get timedOut() { return killReason !== null; },
+    get killReason() { return killReason; },
+    get _state() { return state; },
+  };
+}
+
 export function runJsonLinesAsync(cmd, args, opts = {}) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, {
@@ -88,31 +181,19 @@ export function runJsonLinesAsync(cmd, args, opts = {}) {
     let stdoutBuf = '';
     let spawnError = null;
     let settled = false;
-    let timedOut = false;
-    let termTimer = null;
-    let killTimer = null;
 
-    if (Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0) {
-      const graceMs = Number.isFinite(opts.killGraceMs) && opts.killGraceMs >= 0
-        ? opts.killGraceMs : 5000;
-      termTimer = setTimeout(() => {
-        timedOut = true;
-        try { child.kill('SIGTERM'); } catch { /* already gone */ }
-        // SIGTERM is a request. A child wedged in synchronous work may never
-        // service it, so escalate — otherwise the "timeout" would hand back a
-        // verdict while leaving a live process behind.
-        killTimer = setTimeout(() => {
-          try { child.kill('SIGKILL'); } catch { /* already gone */ }
-        }, graceMs);
-        killTimer.unref?.();
-      }, opts.timeoutMs);
-      termTimer.unref?.();
-    }
-
-    const clearTimers = () => {
-      if (termTimer) clearTimeout(termTimer);
-      if (killTimer) clearTimeout(killTimer);
-    };
+    // Absolute + idle timeouts, close/error settling, and the SIGTERM→SIGKILL
+    // escalation all live in one state machine so they can't interleave (a
+    // natural close and a timeout kill can never both "win"). `dispose()` from
+    // close/error clears every timer; only `onTimeout` sets timedOut.
+    const timeouts = makeTimeoutController({
+      timeoutMs: opts.timeoutMs,
+      idleTimeoutMs: opts.idleTimeoutMs,
+      killGraceMs: opts.killGraceMs,
+      sendTerm: () => { try { child.kill('SIGTERM'); } catch { /* already gone */ } },
+      sendKill: () => { try { child.kill('SIGKILL'); } catch { /* already gone */ } },
+    });
+    timeouts.arm();
 
     function flushLine(line) {
       lineNo++;
@@ -140,6 +221,9 @@ export function runJsonLinesAsync(cmd, args, opts = {}) {
 
     child.stdout.setEncoding('utf-8');
     child.stdout.on('data', (chunk) => {
+      // Any output is progress — reset the idle deadline BEFORE parsing, so a
+      // partial-line write still counts as liveness.
+      timeouts.onData();
       stdoutBuf += chunk;
       let nl;
       while ((nl = stdoutBuf.indexOf('\n')) !== -1) {
@@ -151,17 +235,20 @@ export function runJsonLinesAsync(cmd, args, opts = {}) {
     child.on('error', (err) => {
       // ENOENT / EACCES / etc. — child never ran. close/exit may also fire,
       // but we record the error here so the caller can distinguish
-      // "spawn failed" from "ran and exited non-zero".
+      // "spawn failed" from "ran and exited non-zero". NOT a kill: dispose the
+      // timers and let close/this path settle via the spawnError branch.
       spawnError = err;
+      timeouts.dispose();
     });
 
     child.on('close', (exitCode, signal) => {
       if (settled) return;
       settled = true;
-      clearTimers();
+      timeouts.dispose();
       // Flush any trailing line without a final \n.
       if (stdoutBuf.length > 0) flushLine(stdoutBuf);
-      resolve({ records, parseErrors, exitCode, signal, spawnError, timedOut });
+      resolve({ records, parseErrors, exitCode, signal, spawnError,
+                timedOut: timeouts.timedOut, killReason: timeouts.killReason });
     });
 
     if (opts.input !== undefined) {
@@ -219,15 +306,21 @@ export async function runJsonLinesAsyncStrict(cmd, args, opts = {}) {
   // would be unreachable by construction.
   if (result.timedOut) {
     const stageTag = stage ? `stage=${stage} ` : '';
+    // Report the reason + the threshold that actually fired — an idle kill has
+    // no `opts.timeoutMs`, so the old message would have printed `undefined`.
+    const reason = result.killReason || 'timeout';
+    const thresholdMs = result.killReason === 'idle' ? opts.idleTimeoutMs : opts.timeoutMs;
     const err = new Error(
-      `subprocess timed out after ${opts.timeoutMs}ms: ${stageTag}cmd=${cmd}`
+      `subprocess ${reason === 'idle' ? 'went idle' : 'timed out'} after ${thresholdMs}ms `
+      + `(${reason}): ${stageTag}cmd=${cmd}`
       + `${result.signal ? ` signal=${result.signal}` : ''}`
     );
     err.code = SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL;
     err.stage = stage ?? null;
     err.signal = result.signal;
     err.timedOut = true;
-    err.cause = result;   // carries cause.timedOut === true
+    err.killReason = result.killReason ?? null;
+    err.cause = result;   // carries cause.timedOut === true + cause.killReason
     throw err;
   }
 

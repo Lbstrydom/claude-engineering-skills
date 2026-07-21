@@ -98,6 +98,26 @@ export function provenanceRequiresFullReembed(prior, nextProvenanceId) {
 }
 
 /**
+ * Spawn options for the extract subprocess (docs/plans/extract-idle-timeout.md).
+ *
+ * The extract child streams a `progress` record per file, so a healthy run is
+ * never silent for long; the coverage-sized threshold is used as an **idle**
+ * (inactivity) bound, NOT a total-duration one, so a slow-but-progressing
+ * extraction is never truncated. Pulled out as a pure builder so a test can pin
+ * `coverageConfig.hardTimeoutMs → idleTimeoutMs` and fail loudly if a future
+ * edit reverts to a total `timeoutMs` (which silently re-opens the truncation
+ * defect). Deliberately emits `idleTimeoutMs` and NO `timeoutMs`: an absolute
+ * ceiling is a deferred, non-required guard (plan §6) — the child's output is
+ * finite, so a "streams forever" runaway cannot occur.
+ *
+ * @param {{hardTimeoutMs: number}} coverageConfig
+ * @returns {{stage: 'extract', idleTimeoutMs: number}}
+ */
+export function buildExtractSpawnOpts(coverageConfig) {
+  return { stage: 'extract', idleTimeoutMs: coverageConfig.hardTimeoutMs };
+}
+
+/**
  * Every flag this CLI accepts. `assertKnownFlags` rejects anything else.
  *
  * **The allowlist must list only flags this file actually HANDLES.** A first
@@ -398,25 +418,27 @@ async function main() {
       }
       logOk(`extracting symbols...`);
       let extracted;
-      // A timeout here is a DEGRADED MEASUREMENT, not a failed refresh: the
-      // symbol index is independently valuable (#16), so we synthesise the
-      // coverage record and continue. Any OTHER abnormal death keeps today's
-      // failure behaviour — an unexplained kill is still an error. The child
-      // cannot report its own death, which is exactly why the parent owns this
-      // (§2.1.8); a timer inside a child wedged in synchronous cruise work
-      // could never fire.
+      // The bound is an IDLE (inactivity) timeout, not a total-duration one
+      // (docs/plans/extract-idle-timeout.md): the child streams a `progress`
+      // record per file, so a healthy-but-slow extraction keeps the timer reset
+      // and is never truncated — only genuine silence (a wedged parse) trips it.
+      // A trip here is a DEGRADED MEASUREMENT, not a failed refresh: the symbol
+      // index is independently valuable (#16), so we synthesise the coverage
+      // record and recover the un-reached tail via copy-forward. Any OTHER
+      // abnormal death keeps today's failure behaviour. The parent owns the
+      // timer (§2.1.8) precisely because it is immune to the child's synchronous
+      // blocking — a parent-side idle timer observes silence correctly even
+      // while the child is wedged in synchronous work.
       let extractionTimedOut = false;
       try {
-        extracted = await runJsonLinesAsyncStrict('node', extractArgs, {
-          stage: 'extract',
-          timeoutMs: coverageConfig.hardTimeoutMs,
-        });
+        extracted = await runJsonLinesAsyncStrict('node', extractArgs, buildExtractSpawnOpts(coverageConfig));
       } catch (err) {
         if (err.code === SUBPROC_ERROR_CODES.KILLED_BY_SIGNAL && err.cause?.timedOut) {
           extractionTimedOut = true;
           extracted = err.cause.records || [];
-          logOk(`WARNING: extract timed out after ${coverageConfig.hardTimeoutMs}ms — `
-            + `coverage will report extraction_timeout; the symbol index still publishes`);
+          logOk(`WARNING: extract went idle for ${coverageConfig.hardTimeoutMs}ms `
+            + `(no output — a wedged parse, not a slow one${err.cause?.records?.length ? `; last file: ${err.cause.records[err.cause.records.length - 1]?.file ?? '?'}` : ''}) — `
+            + `coverage will report extraction_timeout; reached symbols publish and the un-reached tail recovers via copy-forward`);
         } else {
           throw err;
         }

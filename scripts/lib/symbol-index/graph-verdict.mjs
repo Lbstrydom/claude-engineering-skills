@@ -38,6 +38,15 @@ export const COVERAGE_DEFAULTS = Object.freeze({
   floor: 0.90,
   attributionFloor: 0.50,
   maxCruiseMs: 120_000,
+  // `hardTimeoutMs` is the extract subprocess's **idle** (inactivity) threshold
+  // — the longest the child may go with NO stdout output before it is treated
+  // as wedged (docs/plans/extract-idle-timeout.md). It is NOT a total-duration
+  // bound: the child streams a `progress` record per file, so a healthy run of
+  // any size keeps resetting it. The `hardTimeoutMs > maxCruiseMs` repair below
+  // is exactly the liveness invariant — the idle threshold must exceed the
+  // longest *expected* silent phase, which (after the per-file heartbeat) is the
+  // coverage cruise. (Name retained for config back-compat; a rename is a
+  // mechanical follow-up if a second silent phase ever appears.)
   hardTimeoutMs: 300_000,
   enforce: false,
   sampleCap: 20,
@@ -113,11 +122,15 @@ export function parseCoverageConfig(raw, warn = () => {}) {
   for (const k of Object.keys(raw)) {
     if (!(k in COVERAGE_DEFAULTS)) warn(`[coverage] ignoring unknown key \`${k}\``, 'unknown');
   }
-  // A hard timeout at or below the soft budget means the soft budget can never
-  // report — the run is always killed first. Repair rather than reject.
+  // The idle threshold must exceed the longest expected silent phase — the
+  // coverage cruise (bounded by maxCruiseMs). At or below it, a slow-but-working
+  // cruise's silence would trip the idle kill, AND the soft budget could never
+  // report first. Repair rather than reject. (Pre-idle this guard read "the soft
+  // budget can never fire"; the arithmetic is identical, the reason is now
+  // liveness — see COVERAGE_DEFAULTS.hardTimeoutMs.)
   if (out.hardTimeoutMs <= out.maxCruiseMs) {
     warn(`[coverage] hardTimeoutMs (${out.hardTimeoutMs}) must exceed maxCruiseMs `
-      + `(${out.maxCruiseMs}) or the soft budget can never fire — using ${out.maxCruiseMs * 2}`, 'invalid');
+      + `(${out.maxCruiseMs}) — the idle threshold must clear the cruise's silent window — using ${out.maxCruiseMs * 2}`, 'invalid');
     out.hardTimeoutMs = out.maxCruiseMs * 2;
   }
   return out;

@@ -1,5 +1,52 @@
 # Project Status Log
 
+## 2026-07-21 — the SIGKILL root cause: a coverage-sized timeout bounding total duration
+
+The prior two entries fixed the *symptoms* of a truncated extraction (copy-forward
+recovery, then diagnosing the jsx warnings as a load-truncation). This one fixes
+the *cause*: extraction was killed for taking too long, when it should only be
+killed for making no progress.
+
+**Mechanism.** `refresh.mjs` bounded the extract subprocess with
+`hardTimeoutMs` (300 s, a coverage-cruise budget) as a **total-duration**
+SIGKILL. The cruise costs ~5 s; the long pole is the synchronous ts-morph symbol
+loop. Under load that loop alone exceeds 300 s, so the parent killed a
+*healthy, still-streaming* extraction mid-loop and dropped the tail. Bounding
+total duration is the wrong invariant — a process still emitting records is not
+wedged.
+
+**Fix (idle timeout + explicit heartbeat).** The bound is now an **inactivity**
+timeout: it resets on every stdout chunk and fires only after genuine silence.
+Because the timer is parent-side, it observes silence correctly even while the
+child is blocked in synchronous work. To make liveness explicit rather than
+incidental (a file yields no `symbol` records if it is skipped or symbol-less),
+`extract.mjs` emits a `{type:'progress', file}` heartbeat at the top of every
+file iteration — so the max silent interval is exactly one file, and the
+threshold's honest meaning is "the longest a single file may block before the
+process is declared wedged." A wedge kill still drives the existing copy-forward
+recovery; coverage still reports `unverified`. The timeout/close/error
+interleave was split into one `makeTimeoutController` state machine (kill is
+`onTimeout`-only; close/error just settle) so the paths can't race.
+
+**Driven through the full cycle** (`/plan → /audit-plan → implement →
+/audit-code`, the way the request asked). Plan audit: 2 GPT rounds — the R2 pass
+caught that a file-*count* heartbeat bounds files not elapsed silence (→ per-file
+beat) and that "close/error route through the kill controller" was contradictory
+(→ split paths) — then Gemini APPROVE. Code audit: the one in-scope finding
+(re-add an absolute wall-clock cap) was **rebutted and GPT-overruled** — a
+finite file list can't run forever, and a wall-clock cap that kills a progressing
+run is the very bug being fixed; five pre-existing findings deferred to
+tech-debt; Gemini APPROVE.
+
+**Verified, live, on the disposable container (never prod).** A full refresh
+under a forced **3 s idle threshold** extracted all 3568 symbols, `coverage:
+verified`. Under the old 3 s total timeout the same run would have been
+SIGKILLed at 3 s wall-clock and truncated to a handful. Tests: a deterministic
+fake-timer suite for the controller (reset/idempotency/first-reason/guards), a
+generous-margin real-subprocess smoke (streaming survives, silence is killed),
+and a heartbeat test proving per-file emission on symbol-less files. Plan:
+[extract-idle-timeout.md](docs/plans/extract-idle-timeout.md).
+
 ## 2026-07-21 — the "jsx pragma resolution gap" was a load-truncated extraction
 
 Chased down the three consumer pragmas that logged `unresolved` after a full

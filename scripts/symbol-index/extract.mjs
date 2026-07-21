@@ -53,6 +53,12 @@ function parseArgs(argv) {
     // refresh.mjs for incremental runs so a large touched-file list never hits
     // the OS argv length limit (Windows ENAMETOOLONG at ~1600+ files). Newline-
     // delimited (not comma) so any filename is safe. Takes precedence over --files.
+    // ACCEPTED DEBT (code-audit 2026-07-21, H1/M4 — pre-existing, independent of
+    // the idle-timeout change): the newline-delimited format + `.trim()` cannot
+    // faithfully carry a POSIX filename with an embedded newline or leading/
+    // trailing whitespace. Harmless for this tool (it indexes source files, whose
+    // names never contain those); a real fix is a NUL-delimited manifest (git -z
+    // style). Deferred, not fixed here — see .audit/tech-debt.json.
     else if (a === '--files-from') {
       const manifestPath = argv[++i];
       args.files = fs.readFileSync(manifestPath, 'utf-8').split('\n').map(s => s.trim()).filter(Boolean);
@@ -100,6 +106,17 @@ function extractSymbols(filePaths, repoRoot, opts = {}) {
 
   for (const abs of filePaths) {
     const rel = path.relative(repoRoot, abs).replace(/\\/g, '/');
+    // Liveness heartbeat (docs/plans/extract-idle-timeout.md). This
+    // synchronous loop is bounded by the parent's IDLE timeout, which resets on
+    // any stdout record. A file yields no `symbol` records if it is skipped or
+    // contains no extractable declarations, so symbol output alone is NOT a
+    // reliable liveness signal — emit a `progress` beat at the TOP of every
+    // iteration, BEFORE this file's ts-morph work, so the max silent interval is
+    // exactly one file's processing time. Goes to stdout via `emit` (NOT
+    // `emitProgress`, which is stderr and invisible to the parent's timer).
+    // refresh.mjs's record filters ignore the `progress` type, so the published
+    // snapshot is unchanged; the file path lets a wedge kill name the culprit.
+    emit({ type: 'progress', file: rel });
     // Skip filter covers BOTH categories. In incremental mode this is
     // defence-in-depth (refresh.mjs already filtered the diff). In full
     // mode (refresh.mjs passes no `--files`) this IS the discovery filter
