@@ -74,6 +74,31 @@ export const SQL_BUILTIN = new Set([
   'tsquery', 'xml', 'point', 'line', 'box', 'circle', 'oid', 'name',
 ]);
 
+/**
+ * Platform-provided schemas — objects the DATABASE PLATFORM owns, not the app.
+ * A reference to `auth.users` / `auth.uid()` is a dependency on Supabase (or
+ * the compatibility shim that stands in for it on self-hosted Postgres), NOT
+ * on whatever repo file happens to `CREATE` a parity copy of it.
+ *
+ * Why this exists (2026-07-20): `compat-bootstrap.sql` (stores domain) does
+ * `CREATE SCHEMA auth; CREATE TABLE auth.users` so self-hosted Postgres has the
+ * `auth.users` Supabase provides natively. That made every migration's
+ * `REFERENCES auth.users(id)` resolve to compat-bootstrap.sql, fabricating a
+ * `supabase → stores` edge the mechanical pass reported for NINE rounds. The
+ * migration has no real dependency on the shim — it depends on the platform
+ * schema, which is external. Adjudicated FABRICATED in domain-map.json's
+ * `_adjudication_2026_07_20`; this is the mechanical fix that stops it, so the
+ * bouncer never sees the fabricated edge to hallucinate findings from.
+ *
+ * These are the standard Supabase-managed schemas. Treated exactly like
+ * `pg_catalog` / `pg_*`: platform-owned, so a reference to them is
+ * `proven-external`, never a local edge — even when a shim creates a copy.
+ */
+export const PLATFORM_SCHEMAS = new Set([
+  'auth', 'storage', 'realtime', 'graphql', 'graphql_public', 'extensions',
+  'vault', 'supabase_functions', 'supabase_migrations', 'pgbouncer', 'net', 'cron',
+]);
+
 /** A reference's expected target kind → which catalog map resolves it. */
 const KIND_TO_MAP = {
   'foreign-key': 'relation',
@@ -571,11 +596,16 @@ export function buildSqlCatalog(parses) {
 export function resolveSqlRef(name, expectedKind, catalog) {
   const map = expectedKind === 'function' ? catalog.functionToDef
     : expectedKind === 'type' ? catalog.typeToDef : catalog.relationToDef;
+  const bare = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
+  const schema = name.includes('.') ? name.slice(0, name.indexOf('.')) : '';
+  // Platform-owned schema (auth.*, storage.*, …) — external even when a parity
+  // shim CREATEs a local copy, so this MUST precede the local-catalog match
+  // below (compat-bootstrap.sql defines auth.users; without this, every
+  // `REFERENCES auth.users` would fabricate an edge to it). See PLATFORM_SCHEMAS.
+  if (schema && PLATFORM_SCHEMAS.has(schema)) return { state: 'proven-external' };
   // Exact (possibly schema-qualified) match.
   if (map.has(name)) return { state: 'resolved-local', targetFile: map.get(name).definingFile };
   // Builtin / pg_catalog / information_schema.
-  const bare = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
-  const schema = name.includes('.') ? name.slice(0, name.indexOf('.')) : '';
   if (schema === 'pg_catalog' || schema === 'information_schema'
       || bare.startsWith('pg_') || SQL_BUILTIN.has(bare)) {
     return { state: 'proven-external' };

@@ -234,6 +234,25 @@ describe('resolveSqlRef', () => {
   it('classifies an unknown reference as unresolved', () => {
     assert.equal(resolveSqlRef('app.nonexistent', 'relation', cat).state, 'unresolved');
   });
+
+  it('a platform schema (auth.*) is proven-external EVEN WHEN a shim defines it locally', () => {
+    // The 2026-07-20 fabricated-edge fix: compat-bootstrap.sql does
+    // `CREATE TABLE auth.users` so self-hosted Postgres has what Supabase
+    // provides natively. A migration's `REFERENCES auth.users` depends on the
+    // PLATFORM, not on the shim — so it must resolve external even though the
+    // catalog contains a local definition. The check must PRECEDE the
+    // local-catalog match; this asserts exactly that ordering.
+    const shimCat = buildSqlCatalog([
+      { file: 'compat-bootstrap.sql', parse: parse('create schema auth; create table auth.users (id uuid);', 'compat-bootstrap.sql') },
+    ]);
+    assert.equal(resolveSqlRef('auth.users', 'relation', shimCat).state, 'proven-external');
+    assert.equal(resolveSqlRef('auth.uid', 'function', shimCat).state, 'proven-external');
+    // A real app object in public still resolves local — no over-reach.
+    const mixed = buildSqlCatalog([
+      { file: 'm.sql', parse: parse('create table public.audit_runs (id uuid);', 'm.sql') },
+    ]);
+    assert.equal(resolveSqlRef('public.audit_runs', 'relation', mixed).state, 'resolved-local');
+  });
 });
 
 // ── Integration — analyseImports against a fixture repo ─────────────────────

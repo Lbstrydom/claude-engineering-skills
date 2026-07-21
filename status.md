@@ -1,5 +1,45 @@
 # Project Status Log
 
+## 2026-07-21 — the last AMBER driver was a FABRICATED edge a human had already adjudicated
+
+Closing the cluster-density thread. After grounding out the bouncer hallucinations,
+the residual AMBER was dominated by 32 findings on one migration file claiming a
+`supabase → stores` boundary violation. I had earlier called these "grounded /
+real" and refused to dismiss them — that was wrong, and the domain-map itself
+told me so: `_adjudication_2026_07_20` already recorded `supabase → stores` as
+**FABRICATED** after a human examined it over nine rounds. I trusted the
+mechanical adapter over an existing human adjudication; the adjudication was
+right.
+
+**The fabrication, and why it was never enforced.** `compat-bootstrap.sql`
+(stores domain) does `CREATE SCHEMA auth; CREATE TABLE auth.users` so self-hosted
+Postgres has what Supabase provides natively. So every migration's
+`REFERENCES auth.users(id)` resolved to that file — fabricating a `supabase →
+stores` edge that is really a dependency on the PLATFORM, not the shim. The prior
+adjudication said "nothing to fix in code or map" and only documented it — so the
+mechanical adapter re-fabricated it every run and the bouncer kept hallucinating
+findings off it. Documenting a false positive doesn't stop it; enforcing does.
+
+**Fix — the real one the adjudication identified but didn't implement.**
+`PLATFORM_SCHEMAS` in `adapters/postgres.mjs`: a reference to `auth.*` (and the
+other Supabase-managed schemas) is `proven-external`, exactly like `pg_*`, even
+when a parity shim defines a local copy — the check precedes the local-catalog
+match. Verified: `resolveSqlRef('auth.users')` → external, `public.audit_runs` →
+local (no over-reach), `runArchIntentAnalysis` → **0 violations**. This is a
+domain-model correction (auth is platform), NOT an allowedDeps addition — you
+don't declare an edge that doesn't exist. Updated the adjudication note from
+"nothing to fix" to record the code fix. Guard: the postgres adapter test.
+
+**Where cluster density landed, and why I stopped.** 30.5 → 19 → 13.5. Dismissed
+only the mechanically-confirmed hallucinations/fabrications (all verified against
+the store). The residual ~13.5 is GENUINE finding-churn — real items re-raised
+across rounds with varying wording (`security-triage.mjs` planned-but-absent, the
+`setup-postgres/audit-loop parseArgs` duplication). Dismissing those to force the
+gate green would be metric-gaming, the exact anti-pattern. So the AMBER now stands
+HONESTLY: it is the memory-health gate doing its job — signalling that flat
+fingerprint dedup leaks signal, which is the pgvector-prototype trigger the
+decision rule prescribes.
+
 ## 2026-07-21 — the SIGKILL root cause: a coverage-sized timeout bounding total duration
 
 The prior two entries fixed the *symptoms* of a truncated extraction (copy-forward
