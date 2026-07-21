@@ -56,6 +56,7 @@ const CLI_SMOKE_SET = [
   'efficacy-lints-check.mjs', // GREEN≠REALIZED Cluster A CLI — relocation-sensitive lib import
   'tiered-shadow-report.mjs', // tiered-recall Close-out shadow-validation report — reads the consumer's own shadow log
   'ship-commit.mjs', // deterministic /ship commit helper — AI-* provenance trailers (docs/reference/commit-provenance.md)
+  'ensure-branch-protection.mjs', // strengthen-only main-branch ruleset tool — declared in sync-to-repos.mjs entries; a cloned consumer self-applies
   'maintenance-checks.mjs', // local weekly-maintenance replica — spawns sibling checks, must survive relocation
   // NOTE: `verify-anchor-contract.mjs` is deliberately NOT here. Its plan
   // (evidence-anchor-path-contract §9a) originally demanded membership by

@@ -119,6 +119,8 @@
     "parity:expected-schema": "node scripts/postgres-parity/generate-expected-schema.mjs",
     "audit:clean": "node scripts/audit-clean.mjs",
     "audit:clean:apply": "node scripts/audit-clean.mjs --apply",
+    "protect:main": "node scripts/ensure-branch-protection.mjs",
+    "protect:main:apply": "node scripts/ensure-branch-protection.mjs --apply",
     "arch:coverage-gate": "node scripts/arch-coverage-gate.mjs",
     "db:check-rls:gate": "node scripts/check-rls.mjs --gate",
     "skills:check-surface": "node scripts/check-stale-skill-surface.mjs --gate",

@@ -402,6 +402,14 @@
       "description": "Run the check chain against a clean checkout of the commit being pushed (throwaway git worktree), so a concurrent session's working-tree edits cannot cause a false block or a false pass.",
       "category": "hooks"
     },
+    "protect:main": {
+      "description": "Preview (dry-run) 'require branches up to date before merging' on a repo's existing main-branch ruleset — strengthen-only, auto-detects origin. Closes the stale-baseline ratchet failure class.",
+      "category": "diagnostic"
+    },
+    "protect:main:apply": {
+      "description": "Apply 'require branches up to date before merging' to a repo's existing main-branch ruleset (never creates protection where none exists). Needs gh CLI + admin.",
+      "category": "diagnostic"
+    },
     "requirements:map": {
       "description": "Regenerate docs/requirements-map.md from .requirements/ledger.json.",
       "category": "plans"

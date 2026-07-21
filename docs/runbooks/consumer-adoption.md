@@ -393,6 +393,45 @@ and you can start using `/audit-code`, `/persona-test`, etc.
 
 ---
 
+## Main-branch protection (baseline-ratchet safety)
+
+**Why.** Any consumer that runs a **main-derived ratchet** — a Snyk baseline,
+a schema round-trip baseline, or any status check that compares a PR against
+the state on `main` — has a latent failure: a branch cut *before* the current
+baseline landed on `main` fails the ratchet on **phantom findings** (findings
+that already exist on `main`), even on a PR touching nothing security-related.
+The fix is the native GitHub lever **"Require branches to be up to date before
+merging"** (`strict_required_status_checks_policy` on the status-check ruleset
+rule): it forces every PR current with `main` before checks run, so the ratchet
+always compares against the landed baseline.
+
+**Apply it** — from the consumer repo (auto-detects `origin`), or from anywhere
+with `--repo`:
+
+```bash
+npm run protect:main            # dry-run: preview what would change
+npm run protect:main:apply      # write it
+# or against a named repo:
+node scripts/ensure-branch-protection.mjs --repo <owner>/<name> --apply
+```
+
+Requires the `gh` CLI authenticated with **admin** on the target repo.
+
+**Strengthen-only, by design.** The tool sets the flag on an **existing**
+status-check ruleset; it **never creates** protection where none exists. A
+direct-push consumer with no PR/ratchet flow has nothing to strengthen and is
+left as-is (imposing a PR workflow there is a *workflow* change, not a safety
+fix). Idempotent — re-running is a no-op once strict is on. Add
+`protect:main:apply` to a new consumer's adoption checklist.
+
+> **Not automatic on `git clone`.** Server-side settings can't be applied by a
+> clone — git has no post-clone hook, and a clone must not be able to silently
+> change a repo's settings. So this is a **one-command setup step**, not a hook.
+> Background + the general invariant: memory
+> `project_baseline_ratchet_needs_branch_current`.
+
+---
+
 ## Troubleshooting
 
 ### Sync aborts on `.gitignore` malformed marker

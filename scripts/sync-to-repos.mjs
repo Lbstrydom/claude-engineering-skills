@@ -237,6 +237,13 @@ const CORE_ENTRY = [
   // for consumer repos to audit their Supabase project's exposure after a
   // migration. Same lib/db/ closure as setup-postgres.mjs.
   'scripts/check-rls.mjs',
+  // Strengthen-only main-branch protection: sets "require branches up to date
+  // before merging" on a consumer's EXISTING status-check ruleset, closing the
+  // stale-baseline ratchet failure class. A standalone CLI nothing imports; it
+  // carries --selfcheck-relocation AND is in CLI_SMOKE_SET, so it ships to
+  // consumers (a cloned consumer self-applies via `npm run protect:main:apply`).
+  // Walker pulls in lib/branch-protection.mjs automatically.
+  'scripts/ensure-branch-protection.mjs',
   // One-shot operator reconcile of fragmented audit_repos rows in the shared
   // store. A standalone CLI nothing imports, but it carries --selfcheck-relocation
   // AND is in the relocation guard's CLI_SMOKE_SET (which asserts consumer
