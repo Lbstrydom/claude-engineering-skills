@@ -39,6 +39,9 @@ export const CLI_EXIT_SCENARIOS = Object.freeze([
   'ctx-drift-clean',
   'ctx-drift-high',
   'brainstorm-argv-error',
+  'nav-invalid-contract',
+  'nav-bootstrap-refuse-clobber',
+  'persona-fatal-rig-no-manifest',
 ]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);
@@ -72,14 +75,18 @@ const TieredShadowRow = z.object({
   // `typeof === 'number'` guard.
   comparison: z.object({
     tieredRunStatus: z.enum(['complete', 'fallback_legacy']),
-    // Eligible-row cardinalities: non-negative integers, never fractional or
-    // negative (audit M4). Optional because the fallback_legacy fixtures omit
-    // them; a partial pair is tolerated by the oracle (its `typeof === number`
-    // guard simply doesn't count a missing side toward the decision-grade
-    // comparison), so no both-or-neither refinement is needed here.
+    // Eligible-row cardinalities: non-negative integers (audit M4). Optional
+    // because the fallback_legacy fixtures omit them, but they MUST be a pair —
+    // both present or both absent (audit H3, escalated from M4). A half-
+    // specified row is meaningless (the oracle's typeof-number guard would
+    // silently drop it from the decision-grade comparison), so it is a schema
+    // error, not a tolerated shape.
     tieredEligibleCount: z.number().int().nonnegative().optional(),
     legacyEligibleCount: z.number().int().nonnegative().optional(),
-  }).strict().nullable(),
+  }).strict().refine(
+    (c) => (c.tieredEligibleCount === undefined) === (c.legacyEligibleCount === undefined),
+    { message: 'tieredEligibleCount and legacyEligibleCount must be specified as a pair — both or neither' },
+  ).nullable(),
 }).strict();
 
 const ExecutableGateSchema = z.discriminatedUnion('oracle', [

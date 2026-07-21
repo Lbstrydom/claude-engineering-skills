@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "skill": "persona-test",
+  "gates": [
+    {
+      "id": "consistency-fatal-rig-exit-3",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "persona-fatal-rig-no-manifest",
+      "statedIn": "skills/persona-test/SKILL.md",
+      "stated": "fatal-rig — manifest missing",
+      "implementation": "scripts/persona-consistency-run.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "process"
+    },
+    {
+      "id": "consistency-exit-codes-live",
+      "kind": "document-only",
+      "reason": "The other consistency exit codes need a LIVE browser to reach: 2 (rig-broken — a canary that finds fewer contradictions than expected), 6 (app-error — a journey action throwing), and 4 (ledger-persist-failed — a disk/permission failure) all require actually driving Playwright against a running app or forcing an I/O failure, none of which is hermetically deterministic under the cli-exit fixture. Exit 3 (fatal-rig, missing manifest) IS bound executably above; these are document-only, blocked on a live browser / injected I/O failure."
+    },
+    {
+      "id": "persona-finding-hash-single-source",
+      "kind": "document-only",
+      "reason": "'personaFindingHash() is the single source' — the same hash computed identically on both the correlator and report sides — is a same-function-identity guarantee. There is no cli-exit for it, and while a unit-seam oracle could import personaFindingHash and assert stability, the closed registry has no general 'assert this function is the sole hash producer' oracle; a cli-exit recipe cannot bind a code-identity invariant."
+    },
+    {
+      "id": "no-typed-input-values-persisted",
+      "kind": "document-only",
+      "reason": "'NEVER include typed input values … the store rejects any' is enforced at the STORE boundary (a server-side rejection), not by the persona-test skill's own CLI. Asserting it would mean exercising the store's validation, which is a different subsystem's contract, not persona-test's exit behaviour; document-only here."
+    }
+  ]
+}

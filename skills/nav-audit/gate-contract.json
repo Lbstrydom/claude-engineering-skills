@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "skill": "nav-audit",
+  "gates": [
+    {
+      "id": "exit-2-tool-error",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "nav-invalid-contract",
+      "statedIn": "skills/nav-audit/SKILL.md",
+      "stated": "`2` tool",
+      "implementation": "scripts/nav-audit.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "process"
+    },
+    {
+      "id": "bootstrap-refuses-to-clobber",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "nav-bootstrap-refuse-clobber",
+      "statedIn": "skills/nav-audit/SKILL.md",
+      "stated": "refuses to clobber",
+      "implementation": "scripts/nav-audit.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "process"
+    },
+    {
+      "id": "gate-exit-1-on-regression",
+      "kind": "document-only",
+      "reason": "'With --gate, exit 1 only when a declared-intent regression appears on the changed surface' needs a fixture with an observed nav graph, a nav-contract.json declaring intent, AND a git diff producing a genuine regression on the changed surface — a multi-artifact setup that also depends on the diff-scope resolver. Constructing that deterministically is beyond a minimal cli-exit fixture; the two exit-2 tool-error paths are bound executably above, and this exit-1 path is document-only until (if ever) it earns a dedicated fixture."
+    }
+  ]
+}

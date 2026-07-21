@@ -261,6 +261,39 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: 'Unknown flag',
     envPrereq: null,
   },
+  // nav-audit tool-error: an invalid nav-contract.json → exit 2. The early
+  // contract check fires before any git/source read, so a bare malformed file
+  // is a sufficient fixture (no git init needed — verified).
+  'nav-invalid-contract': {
+    args: [],
+    fixture(dir) { atomicWriteFileSync(path.join(dir, 'nav-contract.json'), '{ not valid json'); },
+    expectExit: 2,
+    expectStderrContains: 'present but invalid',
+    envPrereq: null,
+  },
+  // nav-audit refuse-to-clobber: --bootstrap over an existing contract without
+  // --force → exit 2. A distinct behaviour from the tool-error above (different
+  // stated, different stderr) that also exits 2.
+  'nav-bootstrap-refuse-clobber': {
+    args: ['--bootstrap'],
+    fixture(dir) {
+      atomicWriteFileSync(path.join(dir, 'nav-contract.json'),
+        JSON.stringify({ version: 1, navLayers: {}, personaIntents: [] }));
+    },
+    expectExit: 2,
+    expectStderrContains: 'refusing to overwrite',
+    envPrereq: null,
+  },
+  // persona-consistency fatal-rig: a missing surfaces.json manifest → exit 3.
+  // Deterministic and hermetic — no browser is reached; the manifest is
+  // resolved (and found absent) first.
+  'persona-fatal-rig-no-manifest': {
+    args: ['--canary', 'nonexistent', '--url', 'http://127.0.0.1:1'],
+    fixture() { /* the ABSENCE of surfaces.json is the fixture */ },
+    expectExit: 3,
+    expectStderrContains: 'fatal-rig',
+    envPrereq: null,
+  },
 };
 
 /** @returns {Promise<OracleResult>} */

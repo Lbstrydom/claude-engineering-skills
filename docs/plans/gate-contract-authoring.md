@@ -663,3 +663,33 @@ file), **M4 fixed** (tieredEligibleCount/legacyEligibleCount now int + nonnegati
 **Remaining Phase C (6 skills)**: cycle, nav-audit, persona-test, plan, ship,
 ux-lock — the T2 tier, where the richest executable candidates live (nav-audit's
 `--gate` exit table, persona-test's consistency exit codes).
+
+### 2026-07-21 — Phase C increment 4: nav-audit + persona-test (T2, executable-rich)
+
+Uncontracted 6 → 4; executable 8 → 11; document-only 18 → 22; contracted 9 → 11.
+
+- **nav-audit** — 2 executable: `exit-2-tool-error` (an invalid nav-contract.json
+  → exit 2 + "present but invalid") and `bootstrap-refuses-to-clobber`
+  (--bootstrap over an existing contract → exit 2 + "refusing to overwrite").
+  Both fire before any git/source read, so the fixtures are bare files (verified
+  no git init needed). The `--gate` exit-1-on-regression is document-only — it
+  needs an observed graph + contract + a real diff-scoped regression, beyond a
+  minimal fixture.
+- **persona-test** — 1 executable: `consistency-fatal-rig-exit-3` (a missing
+  surfaces.json manifest → exit 3 + "fatal-rig", hermetic, no browser reached).
+  The other consistency exit codes (2/4/6) need a live browser or an injected
+  I/O failure → document-only. Plus document-only for the personaFindingHash
+  single-source and no-typed-input-persisted (store-boundary) claims.
+
+Executable yield so far (D2 measurement): **11 gates across 6 skills** — and the
+pattern holds: executable clusters on skills with a real CLI (nav-audit,
+persona-test, brainstorm, ai-context-management), document-only on the
+agent/MCP-driven ones.
+
+Audit: GPT H:3 — H1/H2/M1 deferred (Phase D ratchet+baseline; partial Phase C),
+**H3 fixed** (the tieredEligible/legacyEligible pair now both-or-neither),
+M2/M3/M4/M5/L1 dismissed (false-positive verbatim-check-exists; PATH required by
+design; cohesion nit; not-my-file; by-design parallel registries).
+**Gemini: APPROVE** (0 new, 0 wrongly-dismissed).
+
+**Remaining Phase C (4 skills)**: cycle, plan, ship, ux-lock.

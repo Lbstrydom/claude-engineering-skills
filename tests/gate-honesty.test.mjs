@@ -72,6 +72,9 @@ const PINNED_EXECUTABLE = {
   // Phase C — brainstorm's argv-error executable gate.
   brainstorm: ['argv-error-exit'],
   'click-test': [],
+  // Phase C T2 — nav-audit (2 exit-2 paths) + persona-test (fatal-rig exit 3).
+  'nav-audit': ['exit-2-tool-error', 'bootstrap-refuses-to-clobber'],
+  'persona-test': ['consistency-fatal-rig-exit-3'],
 };
 const PINNED_DOCUMENT_ONLY = {
   'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop'],
@@ -85,8 +88,10 @@ const PINNED_DOCUMENT_ONLY = {
   'security-strategy': ['write-gated-on-round-trip-parse', 'never-include-real-secrets', 'never-inflate-threat-model', 'on-demand-non-blocking'],
   brainstorm: ['artifact-sensitive-path-refusal', 'exit-0-on-provider-failure'],
   'click-test': ['verdict-precedence', 'arg-validation-refusals', 'capability-abort', 'scanner-error-caps'],
+  'nav-audit': ['gate-exit-1-on-regression'],
+  'persona-test': ['consistency-exit-codes-live', 'persona-finding-hash-single-source', 'no-typed-input-values-persisted'],
 };
-const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'explain', 'security-strategy', 'skills', 'visual-audit'];
+const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'explain', 'nav-audit', 'persona-test', 'security-strategy', 'skills', 'visual-audit'];
 
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {
@@ -142,8 +147,8 @@ describe('gate-honesty — real skills/', () => {
 
     const totalExecutable = Object.values(PINNED_EXECUTABLE).flat().length;
     const totalDocOnly = Object.values(PINNED_DOCUMENT_ONLY).flat().length;
-    assert.equal(totalExecutable, 8); // +1 brainstorm argv-error (Phase C T1)
-    assert.equal(totalDocOnly, 18);   // +2 brainstorm, +4 click-test (Phase C T1)
+    assert.equal(totalExecutable, 11); // +2 nav-audit, +1 persona-test (Phase C T2)
+    assert.equal(totalDocOnly, 22);   // +1 nav-audit, +3 persona-test (Phase C T2)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
@@ -592,6 +597,32 @@ describe('brainstorm gate-contract — argv-error-exit', () => {
   it('argv-error-exit: a bad flag → exit 1 + "Unknown flag" (real CLI, hermetic)', async () => {
     const gate = load().gates.find((g) => g.id === 'argv-error-exit');
     const res = await runOracle(gate, { repoRoot: REPO_ROOT });
+    assert.equal(res.state, 'ok', JSON.stringify(res));
+  });
+});
+
+// ── 10. Phase C T2: nav-audit + persona-test executable exit gates ──────────
+// Reference the gate ids (so tests[] links resolve) AND prove each recipe
+// fires against the real CLI under the hermetic harness.
+describe('nav-audit + persona-test executable gates (Phase C T2)', () => {
+  const loadGate = (skill, id) => {
+    const c = JSON.parse(fs.readFileSync(
+      path.join(REPO_ROOT, 'skills', skill, 'gate-contract.json'), 'utf-8'));
+    return c.gates.find((g) => g.id === id);
+  };
+
+  it('nav-audit exit-2-tool-error: an invalid nav-contract.json → exit 2', async () => {
+    const res = await runOracle(loadGate('nav-audit', 'exit-2-tool-error'), { repoRoot: REPO_ROOT });
+    assert.equal(res.state, 'ok', JSON.stringify(res));
+  });
+
+  it('nav-audit bootstrap-refuses-to-clobber: --bootstrap over an existing contract → exit 2', async () => {
+    const res = await runOracle(loadGate('nav-audit', 'bootstrap-refuses-to-clobber'), { repoRoot: REPO_ROOT });
+    assert.equal(res.state, 'ok', JSON.stringify(res));
+  });
+
+  it('persona-test consistency-fatal-rig-exit-3: a missing manifest → exit 3', async () => {
+    const res = await runOracle(loadGate('persona-test', 'consistency-fatal-rig-exit-3'), { repoRoot: REPO_ROOT });
     assert.equal(res.state, 'ok', JSON.stringify(res));
   });
 });
