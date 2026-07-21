@@ -1,5 +1,36 @@
 # Project Status Log
 
+## 2026-07-21 — pgvector prototype: the churn signal is REAL, and trigram under-counts it
+
+The memory-health decision rule's prescribed next step, executed. Cluster
+density fired consistently → "prototype pgvector similarity first, re-measure."
+
+Built `finding_embeddings` (migration `20260721120000`, mirrors the
+symbol_embeddings/security_incidents pgvector pattern) + a re-runnable eval
+script (`scripts/memory-pgvector-prototype.mjs`). It embeds the SAME
+open-finding population the trigram metric clusters over, then cross-tabulates
+trigram vs cosine pairs.
+
+**Result is decisive — PROMOTE.** On this repo (200 findings, 19 900 candidate
+pairs): trigram finds 21 similar-pairs; at cosine > 0.85 semantic finds 96, of
+which **75 are pairs trigram MISSES entirely**, and it misses nothing trigram
+catches (strict superset). Every sampled miss was a genuine reworded re-raise —
+`security-triage.mjs is absent` vs `The planned CLI file security-triage.mjs
+does not exist` (cos 0.965, trigram 0.498, sitting just under its 0.5 cutoff
+precisely because the words differ).
+
+**What this means:** the AMBER was reading a REAL signal — finding-churn — and
+trigram was UNDER-counting it, not over-counting. ~75 open findings on this repo
+are reworded re-raises that neither the fingerprint nor the trigram metric
+collapses. That reframes the whole cluster-density thread: the gate was right to
+fire; the metric was just too blunt to show the full extent.
+
+Deliberately NOT built (prototype measures, doesn't ship a gate): threshold
+calibration on a labeled sample, a `finding_semantic_clusters` RPC + trigger
+metric, and the higher-value use — **semantic re-raise suppression at raise
+time**, closing the churn at the source instead of only measuring it. Full
+write-up + promotion plan: `docs/research/pgvector-clustering-prototype.md`.
+
 ## 2026-07-21 — the last AMBER driver was a FABRICATED edge a human had already adjudicated
 
 Closing the cluster-density thread. After grounding out the bouncer hallucinations,
