@@ -693,3 +693,41 @@ design; cohesion nit; not-my-file; by-design parallel registries).
 **Gemini: APPROVE** (0 new, 0 wrongly-dismissed).
 
 **Remaining Phase C (4 skills)**: cycle, plan, ship, ux-lock.
+
+### 2026-07-21 — Phase C increment 5 (FINAL): cycle, plan, ship, ux-lock — PHASE C COMPLETE
+
+The last 4 skills. **All 15 skills are now contracted; uncontracted = (none).**
+Executable 11 → 12; document-only 22 → 35.
+
+- **ux-lock** — 1 executable: `strict-selectors-fails-the-run` (a spec with an
+  unmarked structural selector under `--strict-selectors` → exit 6; the
+  selector-policy lint is PRE-RUN so no browser is reached). Plus document-only
+  for verify-is-a-report-not-a-blocker (needs a live app) and the status rubric.
+- **ship** — 3 document-only. The `--gate passed` refusal is real (observed live
+  this session) but its exit code is git+evidence-state-dependent (1 vs 2), so a
+  hermetic recipe cannot bind it deterministically — document-only, verified by
+  ship-commit's own provenance tests. Plus Category-A-never-staged and the
+  non-blocking-gate negatives.
+- **cycle** — 4 document-only. An orchestrator with no CLI: preview-gate [HALT],
+  fix-gate convergence (the SAME predicate audit-code's contract already binds),
+  author-tier-never-routes, and mandatory-Gemini-gate are all enacted by
+  orchestration, not a cycle exit code.
+- **plan** — 4 document-only. An authoring skill with no CLI: Gate-1 triggers,
+  never-a-lone-Phase-1, warnings-never-block, and the corrected §10-is-graded-
+  not-gated claim are all model-enacted while authoring.
+
+**Final executable yield (D2 measurement): 12 executable gates across 7 skills;
+35 document-only across all 15.** The thesis held cleanly: executable clusters
+on skills with a real CLI (ai-context-management, brainstorm, nav-audit,
+persona-test, ux-lock, audit-code, visual-audit); everything else — the
+orchestrator (cycle), authoring skills (plan), agent/MCP-driven skills
+(click-test), and agent-enforced caps/writes (audit-plan, security-strategy,
+ship) — is honestly document-only. No gate was forced executable.
+
+Audit: GPT H:2 both deferred to **Phase D** (the empty baseline + ratchet test,
+now UNBLOCKED since all skills are contracted — the next and final increment),
+the rest dismissed (false-positive; PATH-required; cohesion nit; click-test has
+no CLI so D5-disposition-at-authoring applies). **Gemini: APPROVE**.
+
+**Remaining: Phase D only** — the ratchet + empty `.gate-contract-baseline.json`
++ the synthetic-skill integration test.

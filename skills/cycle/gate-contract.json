@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "skill": "cycle",
+  "gates": [
+    {
+      "id": "preview-gate-halt-blocks-ship",
+      "kind": "document-only",
+      "reason": "'Under [HALT] a P0 blocks ship until fixed' delegates to the preview-gate seam (cross-skill.mjs preview-gate) whose decision is a tested function, but /cycle enacts the halt by ORCHESTRATION — it reads the directive and chooses not to ship. There is no /cycle CLI exit code; /cycle is an orchestrator invoking other skills, so the halt is agent flow, not a mechanical exit a cli-exit recipe can assert."
+    },
+    {
+      "id": "fix-gate-convergence-before-next-cluster",
+      "kind": "document-only",
+      "reason": "'fix-gate: yes → reach /audit-code convergence (HIGH==0 && MEDIUM<=2 && quickFix==0) before the next cluster builds on it' is the SAME predicate audit-code's contracted convergence-threshold gate already binds. /cycle enforces it by orchestration (it runs /audit-code and reads the verdict), so there is no separate /cycle exit code — the executable binding lives in audit-code's contract, and /cycle's use of it is document-only."
+    },
+    {
+      "id": "author-tier-never-routes",
+      "kind": "document-only",
+      "reason": "'AUDIT_AUTHOR_TIER_HINT is observation-only — /cycle records it, never routes on it, no wrong tier hint has any execution impact' is a NEGATIVE guarantee (no routing code reads it to change which model runs). Asserting an absence-of-routing is a source-graph negative with no cli-exit binding; there is no router to exercise. Document-only."
+    },
+    {
+      "id": "consolidated-gemini-gate-mandatory",
+      "kind": "document-only",
+      "reason": "'The consolidated Gemini gate is mandatory after clustered execution, regardless of per-cluster convergence' is an orchestration invariant /cycle enacts by always running the union-diff Gemini review. No /cycle CLI, no exit code — the mandatory-ness is agent flow the model performs, not a mechanical gate."
+    }
+  ]
+}

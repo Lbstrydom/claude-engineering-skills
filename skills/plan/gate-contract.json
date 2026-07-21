@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "skill": "plan",
+  "gates": [
+    {
+      "id": "gate-1-phase-triggers",
+      "kind": "document-only",
+      "reason": "'Gate-1: emit Implementation Phases ONLY when ≥6 files touched, OR ≥2 subsystems, OR a dependency chain, OR >1 sitting' is a numeric trigger the MODEL applies while authoring the plan document — /plan has no CLI; it is an agent-driven authoring skill. No exit code a cli-exit recipe can assert."
+    },
+    {
+      "id": "never-a-lone-phase-1",
+      "kind": "document-only",
+      "reason": "'Never emit a lone Phase 1 — a plan with phases always has ≥2 (anti-degenerate invariant)' is a structural rule the model honours while writing the plan. It could in principle be a lint over a produced plan file, but the closed oracle registry has no 'lint a markdown structure' oracle, and /plan produces prose, not an exit code; document-only."
+    },
+    {
+      "id": "warnings-never-block-plan-generation",
+      "kind": "document-only",
+      "reason": "'Both cross-domain / untagged-path warnings are heads-ups, not blocks; the security-strategy soft warning never blocks plan generation' is a NEGATIVE guarantee (an absence of abort). Asserting it needs the model to reach those warning paths and continue; /plan has no CLI exit to check, so this is document-only agent behaviour."
+    },
+    {
+      "id": "section-10-graded-by-ux-lock-verify",
+      "kind": "document-only",
+      "reason": "'Section 10 acceptance criteria are what /ux-lock verify grades — a report, not a gate; nothing blocks on it' (the corrected claim from the parent plan's Phase 1). This describes a cross-skill relationship the model sets up by writing gradeable criteria; it is not a /plan exit code, and the corrected-to-non-blocking semantics are exactly a document-only judgement about how the criteria are consumed."
+    }
+  ]
+}

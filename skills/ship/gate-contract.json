@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "skill": "ship",
+  "gates": [
+    {
+      "id": "gate-passed-refused-without-evidence",
+      "kind": "document-only",
+      "reason": "'--gate passed is refused unless the run's convergence verdict is verified against the cloud store' is real (ship-commit.mjs enforces it — observed live this session), but its exit code depends on the git + .audit/last-audit-run.json evidence state (exit 1 vs 2 across setups), so a hermetic cli-exit fixture cannot bind it DETERMINISTICALLY — the trigger state is subtle and store-dependent. The refusal itself is verified by ship-commit's own provenance tests; document-only here rather than a fragile recipe."
+    },
+    {
+      "id": "category-a-never-staged",
+      "kind": "document-only",
+      "reason": "'Do NOT git add scripts/.sync-manifest.json / dashboard/index.html — they are gitignored Category-A artifacts' is an instruction to the AGENT running /ship about what NOT to stage. There is no exit code to assert; it is a staging-discipline rule the model follows, enforced downstream by .gitignore, not by a ship CLI."
+    },
+    {
+      "id": "step-0-5-gates-non-blocking",
+      "kind": "document-only",
+      "reason": "'Step 0.5 pre-ship gates are non-blocking by default; a query failure never makes the gate stricter OR blind' is a NEGATIVE guarantee about the agent's orchestration of the pre-ship queries. Asserting an absence-of-blocking across cloud-off / query-failure / no-session states is a judgement about agent flow, not a single CLI exit; document-only."
+    }
+  ]
+}

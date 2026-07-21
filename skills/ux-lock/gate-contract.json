@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "skill": "ux-lock",
+  "gates": [
+    {
+      "id": "strict-selectors-fails-the-run",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "uxlock-strict-selector-violation",
+      "statedIn": "skills/ux-lock/SKILL.md",
+      "stated": "`--strict-selectors` fails the run",
+      "implementation": "scripts/ux-lock-run.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "process"
+    },
+    {
+      "id": "verify-is-a-report-not-a-blocker",
+      "kind": "document-only",
+      "reason": "'Verify is a report, not a blocker — it exits 0 even when criteria fail' is a NEGATIVE gate (an absence of failure), and asserting it needs a live plan + a running app the verify runner drives via Playwright to produce a genuine criterion failure at exit 0 — not hermetically constructible under the cli-exit fixture without a browser. The strict-selectors FAILURE direction is bound executably above."
+    },
+    {
+      "id": "status-rubric",
+      "kind": "document-only",
+      "reason": "The PLAN_SATISFIED / PLAN_PARTIAL / PLAN_NOT_SHIPPED status rubric is computed by the verify runner over live plan_satisfaction data (a browser-driven run against a real app); it surfaces as a status string, not a process exit code the cli-exit oracle can assert."
+    }
+  ]
+}

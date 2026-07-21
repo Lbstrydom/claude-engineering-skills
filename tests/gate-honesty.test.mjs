@@ -75,6 +75,11 @@ const PINNED_EXECUTABLE = {
   // Phase C T2 — nav-audit (2 exit-2 paths) + persona-test (fatal-rig exit 3).
   'nav-audit': ['exit-2-tool-error', 'bootstrap-refuses-to-clobber'],
   'persona-test': ['consistency-fatal-rig-exit-3'],
+  // Phase C final — ux-lock strict-selectors; ship/cycle/plan document-only.
+  'ux-lock': ['strict-selectors-fails-the-run'],
+  ship: [],
+  cycle: [],
+  plan: [],
 };
 const PINNED_DOCUMENT_ONLY = {
   'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop'],
@@ -90,8 +95,12 @@ const PINNED_DOCUMENT_ONLY = {
   'click-test': ['verdict-precedence', 'arg-validation-refusals', 'capability-abort', 'scanner-error-caps'],
   'nav-audit': ['gate-exit-1-on-regression'],
   'persona-test': ['consistency-exit-codes-live', 'persona-finding-hash-single-source', 'no-typed-input-values-persisted'],
+  'ux-lock': ['verify-is-a-report-not-a-blocker', 'status-rubric'],
+  ship: ['gate-passed-refused-without-evidence', 'category-a-never-staged', 'step-0-5-gates-non-blocking'],
+  cycle: ['preview-gate-halt-blocks-ship', 'fix-gate-convergence-before-next-cluster', 'author-tier-never-routes', 'consolidated-gemini-gate-mandatory'],
+  plan: ['gate-1-phase-triggers', 'never-a-lone-phase-1', 'warnings-never-block-plan-generation', 'section-10-graded-by-ux-lock-verify'],
 };
-const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'explain', 'nav-audit', 'persona-test', 'security-strategy', 'skills', 'visual-audit'];
+const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'cycle', 'explain', 'nav-audit', 'persona-test', 'plan', 'security-strategy', 'ship', 'skills', 'ux-lock', 'visual-audit'];
 
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {
@@ -147,8 +156,8 @@ describe('gate-honesty — real skills/', () => {
 
     const totalExecutable = Object.values(PINNED_EXECUTABLE).flat().length;
     const totalDocOnly = Object.values(PINNED_DOCUMENT_ONLY).flat().length;
-    assert.equal(totalExecutable, 11); // +2 nav-audit, +1 persona-test (Phase C T2)
-    assert.equal(totalDocOnly, 22);   // +1 nav-audit, +3 persona-test (Phase C T2)
+    assert.equal(totalExecutable, 12); // +1 ux-lock strict-selectors (Phase C final)
+    assert.equal(totalDocOnly, 35);   // +2 ux-lock, +3 ship, +4 cycle, +4 plan (Phase C final — ALL 15 contracted)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
@@ -623,6 +632,20 @@ describe('nav-audit + persona-test executable gates (Phase C T2)', () => {
 
   it('persona-test consistency-fatal-rig-exit-3: a missing manifest → exit 3', async () => {
     const res = await runOracle(loadGate('persona-test', 'consistency-fatal-rig-exit-3'), { repoRoot: REPO_ROOT });
+    assert.equal(res.state, 'ok', JSON.stringify(res));
+  });
+});
+
+// ── 11. Phase C final: ux-lock strict-selectors executable gate ─────────────
+// References gate id `strict-selectors-fails-the-run` so the tests[] link
+// resolves, and proves the recipe fires: a spec with an unmarked structural
+// selector under --strict-selectors → exit 6 (pre-run lint, no browser).
+describe('ux-lock gate-contract — strict-selectors-fails-the-run', () => {
+  it('an unjustified structural selector under --strict-selectors → exit 6', async () => {
+    const c = JSON.parse(fs.readFileSync(
+      path.join(REPO_ROOT, 'skills', 'ux-lock', 'gate-contract.json'), 'utf-8'));
+    const gate = c.gates.find((g) => g.id === 'strict-selectors-fails-the-run');
+    const res = await runOracle(gate, { repoRoot: REPO_ROOT });
     assert.equal(res.state, 'ok', JSON.stringify(res));
   });
 });

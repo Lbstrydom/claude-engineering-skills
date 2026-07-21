@@ -294,6 +294,21 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: 'fatal-rig',
     envPrereq: null,
   },
+  // ux-lock --strict-selectors fails the run on an unjustified structural
+  // selector. The selector-policy lint is a PRE-RUN scan (before Playwright),
+  // so no browser is reached — deterministic. The bad spec is scanned as text;
+  // its require() never executes. Exit 6 is the strict-mode violation code.
+  'uxlock-strict-selector-violation': {
+    args: ['spec', '--strict-selectors', '--spec', 'bad.spec.js', '--commit', 'x'],
+    fixture(dir) {
+      atomicWriteFileSync(path.join(dir, 'bad.spec.js'),
+        "const { test } = require('@playwright/test');\n"
+        + "test('t', async ({ page }) => { await page.locator('.unmarked-structural-class').click(); });\n");
+    },
+    expectExit: 6,
+    expectStderrContains: null, // the violation is on stdout as JSON; exit 6 is the gate
+    envPrereq: null,
+  },
 };
 
 /** @returns {Promise<OracleResult>} */

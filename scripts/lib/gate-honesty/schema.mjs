@@ -42,6 +42,7 @@ export const CLI_EXIT_SCENARIOS = Object.freeze([
   'nav-invalid-contract',
   'nav-bootstrap-refuse-clobber',
   'persona-fatal-rig-no-manifest',
+  'uxlock-strict-selector-violation',
 ]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);
