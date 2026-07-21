@@ -26,9 +26,6 @@ import {
   buildPatternKey,
   loadOutcomes,
   compactOutcomes,
-  createRemediationTask,
-  trackEdit,
-  verifyTask,
   normalizeLanguage,
   createRNG,
   reservoirSample,
@@ -666,45 +663,6 @@ describe('loadOutcomes (v2)', () => {
     loadOutcomes(logPath);
     const mtimeAfter = fs.statSync(logPath).mtimeMs;
     assert.equal(mtimeBefore, mtimeAfter, 'File should not be modified by loadOutcomes');
-  });
-});
-
-// ── Remediation Tasks ───────────────────────────────────────────────────────
-
-describe('RemediationTask', () => {
-  it('creates task with deterministic ID', () => {
-    const task = createRemediationTask('run-1', 'backend', {
-      id: 'H1', severity: 'HIGH', semanticHash: 'abc12345',
-      category: 'test', section: 'file.js', detail: 'test'
-    });
-    assert.equal(task.taskId, 'run-1-backend-abc12345');
-    assert.equal(task.remediationState, 'pending');
-    assert.equal(task.edits.length, 0);
-  });
-
-  it('trackEdit updates state to fixed', () => {
-    const task = createRemediationTask('run-1', 'backend', {
-      id: 'H1', severity: 'HIGH', semanticHash: 'abc12345',
-      category: 'test', section: 'file.js', detail: 'test'
-    });
-    trackEdit(task, { file: 'src/app.js', type: 'edit' });
-    assert.equal(task.remediationState, 'fixed');
-    assert.equal(task.edits.length, 1);
-    assert.ok(task.edits[0].timestamp);
-  });
-
-  it('verifyTask sets verified or regressed', () => {
-    const task = createRemediationTask('run-1', 'backend', {
-      id: 'H1', severity: 'HIGH', semanticHash: 'abc12345',
-      category: 'test', section: 'file.js', detail: 'test'
-    });
-    verifyTask(task, 'gemini', true);
-    assert.equal(task.remediationState, 'verified');
-    assert.equal(task.verifiedBy, 'gemini');
-    assert.ok(task.verifiedAt);
-
-    verifyTask(task, 'gpt', false);
-    assert.equal(task.remediationState, 'regressed');
   });
 });
 

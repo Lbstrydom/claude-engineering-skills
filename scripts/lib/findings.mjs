@@ -55,8 +55,3 @@ export {
   appendOutcome, batchAppendOutcomes, loadOutcomes, compactOutcomes,
   computePassEffectiveness, computePassEWR
 } from './findings-outcomes.mjs';
-
-export {
-  createRemediationTask, trackEdit, verifyTask,
-  persistTask, loadTasks, updateTask
-} from './findings-tasks.mjs';

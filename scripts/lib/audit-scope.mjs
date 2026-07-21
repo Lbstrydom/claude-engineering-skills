@@ -41,7 +41,7 @@ export const AUDIT_INFRA_BASENAMES = new Set([
   'file-io.mjs', 'audit-scope.mjs', 'diff-annotation.mjs', 'plan-paths.mjs',
   'schemas.mjs', 'ledger.mjs', 'code-analysis.mjs', 'context.mjs',
   'findings.mjs', 'findings-format.mjs', 'findings-tracker.mjs',
-  'findings-outcomes.mjs', 'findings-tasks.mjs', 'outcome-sync.mjs',
+  'findings-outcomes.mjs', 'outcome-sync.mjs',
   'config.mjs', 'llm-auditor.mjs', 'llm-wrappers.mjs',
   'language-profiles.mjs', 'rng.mjs', 'robustness.mjs', 'sanitizer.mjs',
   'secret-patterns.mjs', 'suppression-policy.mjs', 'backfill-parser.mjs',

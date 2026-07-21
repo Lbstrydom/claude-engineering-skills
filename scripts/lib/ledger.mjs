@@ -281,6 +281,45 @@ export function populateFindingMetadata(finding, passName) {
 // jaccardSimilarity moved to text-similarity.mjs and is re-exported above.
 
 /**
+ * The single fuzzy text-similarity used to compare a current finding against a
+ * ledger entry. Extracted verbatim from `suppressReRaises`'s two inline call
+ * sites (fix-lifecycle plan, R1-audit M5) so suppression AND the fix/regressed
+ * lifecycle predicate share ONE scoring expression and can never diverge. The
+ * text-pair form is byte-identical to the pre-extraction inline version — the
+ * golden suite (`tests/suppress-rereais-golden.test.mjs`) locks that.
+ * @param {object} f - current finding (category/section/detail)
+ * @param {object} d - ledger entry (category/section/detailSnapshot|detail)
+ * @returns {number} Jaccard similarity in [0,1]
+ */
+export function ledgerFindingSimilarity(f, d) {
+  return jaccardSimilarity(
+    `${f.category} ${f.section} ${f.detail}`,
+    `${d.category} ${d.section} ${d.detailSnapshot || d.detail}`
+  );
+}
+
+/**
+ * Does current finding `f` match ledger entry `d`? Encodes the SAME rule
+ * `suppressReRaises` applies per candidate: file-scope overlap is required, then
+ * a same-pass pair matches at `> threshold` and a cross-pass pair at the higher
+ * `> 0.8` bar (the conceptual-duplicate fallback). Pure — the fix-lifecycle
+ * predicate (`computeFixLifecycleUpdates`) uses it to ask "is entry `e` still
+ * raised?" with identical semantics to suppression, so the two never diverge.
+ * @param {object} f - current finding (_primaryFile/_pass/category/section/detail)
+ * @param {object} d - ledger entry (pass/affectedFiles/category/section/detailSnapshot)
+ * @param {{threshold: number}} opts
+ * @returns {boolean}
+ */
+export function matchesLedgerEntry(f, d, { threshold }) {
+  const fFile = normalizePath(f._primaryFile || f.section || '');
+  const fileOverlap = Array.isArray(d.affectedFiles) &&
+    d.affectedFiles.some(af => normalizePath(af) === fFile || fFile.includes(normalizePath(af)));
+  if (!fileOverlap) return false;
+  const score = ledgerFindingSimilarity(f, d);
+  return d.pass === f._pass ? score > threshold : score > 0.8;
+}
+
+/**
  * Three-step suppression: narrow by pass+scope, fuzzy score, reopen check.
  * @param {object[]} findings - Current round findings (with _primaryFile, _pass)
  * @param {object} ledger - Parsed adjudication ledger
@@ -371,13 +410,7 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
       );
       // Only use cross-pass candidates if they have high similarity (>0.8)
       if (candidates.length > 0) {
-        candidates = candidates.filter(d => {
-          const score = jaccardSimilarity(
-            `${f.category} ${f.section} ${f.detail}`,
-            `${d.category} ${d.section} ${d.detailSnapshot || d.detail}`
-          );
-          return score > 0.8;
-        });
+        candidates = candidates.filter(d => ledgerFindingSimilarity(f, d) > 0.8);
       }
     }
 
@@ -386,10 +419,7 @@ export function suppressReRaises(findings, ledger, { changedFiles = [], impactSe
     // Step 2: Score all candidates, pick highest
     let bestMatch = null, bestScore = 0;
     for (const d of candidates) {
-      const score = jaccardSimilarity(
-        `${f.category} ${f.section} ${f.detail}`,
-        `${d.category} ${d.section} ${d.detailSnapshot || d.detail}`
-      );
+      const score = ledgerFindingSimilarity(f, d);
       if (score > bestScore) { bestScore = score; bestMatch = d; }
     }
 
@@ -721,4 +751,122 @@ export function finalizeLedgerOutcomes(adjudicationResult) {
     ledgerUpdates,
     newCandidates: adjudicationResult.missedCandidates || [],
   };
+}
+
+// ── Fix Lifecycle (pending↔fixed↔regressed) — docs/plans/remediation-state-fix-lifecycle.md ──
+
+/** Build the immutable-identity transition payload (§Decision B). */
+function buildLifecycleUpdate(action, e, round) {
+  return {
+    action,                                      // 'mark-fixed' | 'mark-regressed'
+    topicId: e.topicId,                          // ledger addressing (apply side)
+    findingFingerprint: e.semanticHash || semanticId(e), // DB addressing (audit_findings.finding_fingerprint)
+    pass: e.pass ?? null,
+    primaryFile: (Array.isArray(e.affectedFiles) && e.affectedFiles[0]) || null,
+    resolvedRound: round,
+  };
+}
+
+/**
+ * PURE. Compute the fix-lifecycle transitions a round-diff implies — mirrors
+ * `finalizeLedgerOutcomes`'s "return a plan the caller applies" contract, but
+ * keyed on the (ledger × current findings × changedFiles) round-diff rather
+ * than a Stage-2 adjudication result.
+ *
+ * Two evidence-gated transitions, both requiring the entry be a `session` entry
+ * whose scope actually changed this round (the "work happened" guard against a
+ * flaky non-re-emission):
+ *   - **A1 `pending|regressed → fixed`**: adjudicationOutcome ∈ {accepted,
+ *     severity_adjusted}, and NO current finding still matches the entry.
+ *   - **A2 `fixed|verified → regressed`**: SOME current finding still matches.
+ *
+ * "Still raised?" uses `matchesLedgerEntry` — the SAME matcher suppression uses
+ * — so the lifecycle can never disagree with what the audit report shows.
+ *
+ * @param {object} ledger - parsed adjudication ledger
+ * @param {object[]} currentFindings - this round's findings (post-suppression)
+ * @param {string[]} changedFiles - files changed since the prior round
+ * @param {number} round - current round number → resolvedRound
+ * @returns {{updates: Array<object>}}
+ */
+export function computeFixLifecycleUpdates(ledger, currentFindings, changedFiles = [], round) {
+  const threshold = parseFloat(process.env.SUPPRESS_SIMILARITY_THRESHOLD || '0.35');
+  const changedSet = new Set((changedFiles || []).map(normalizePath));
+  const entries = Array.isArray(ledger?.entries) ? ledger.entries : [];
+  const findings = Array.isArray(currentFindings) ? currentFindings : [];
+  const updates = [];
+
+  for (const e of entries) {
+    if ((e.source || 'session') !== 'session') continue;          // A1.3 — session only
+    const scopeChanged = Array.isArray(e.affectedFiles) &&
+      e.affectedFiles.some(af => changedSet.has(normalizePath(af)));
+    if (!scopeChanged) continue;                                   // both transitions need work evidence
+
+    const stillRaised = findings.some(f => matchesLedgerEntry(f, e, { threshold }));
+
+    const realOpen = e.adjudicationOutcome === 'accepted' || e.adjudicationOutcome === 'severity_adjusted';
+    const a1Eligible = e.remediationState === 'pending' || e.remediationState === 'regressed';
+    if (realOpen && a1Eligible && !stillRaised) {                  // A1: → fixed
+      updates.push(buildLifecycleUpdate('mark-fixed', e, round));
+      continue;
+    }
+
+    const a2Eligible = e.remediationState === 'fixed' || e.remediationState === 'verified';
+    if (a2Eligible && stillRaised) {                               // A2: → regressed
+      updates.push(buildLifecycleUpdate('mark-regressed', e, round));
+    }
+  }
+  return { updates };
+}
+
+/**
+ * Apply lifecycle updates to the ledger under a lock, **conditionally**: each
+ * update's guard fields are re-checked against the freshly-read entry (a
+ * concurrent audit/rerun may have moved it since compute), so a stale update is
+ * silently skipped, never clobbered. Returns only the updates actually
+ * committed. `mark-regressed` sets ONLY `remediationState` — it never touches
+ * `adjudicationOutcome` (Gemini-gate-2: that would desync the DB, whose writer
+ * touches only remediation_state, and wipe a human severity_adjusted decision).
+ *
+ * @param {string} ledgerPath
+ * @param {Array<object>} updates - output of computeFixLifecycleUpdates
+ * @returns {{committed: Array<object>}}
+ */
+export function applyLifecycleUpdates(ledgerPath, updates) {
+  if (!Array.isArray(updates) || updates.length === 0) return { committed: [] };
+  const absPath = path.resolve(ledgerPath);
+  const committed = [];
+  if (!fs.existsSync(absPath)) return { committed: [] };
+  let release;
+  try {
+    release = lockfile.lockSync(absPath, { stale: 10000 });
+    const ledger = readLedgerJson(absPath);
+    const byTopic = new Map(ledger.entries.map(e => [e.topicId, e]));
+    for (const u of updates) {
+      const e = byTopic.get(u.topicId);
+      if (!e || (e.source || 'session') !== 'session') continue;
+      if (u.action === 'mark-fixed') {
+        const realOpen = e.adjudicationOutcome === 'accepted' || e.adjudicationOutcome === 'severity_adjusted';
+        const eligible = e.remediationState === 'pending' || e.remediationState === 'regressed';
+        if (!realOpen || !eligible) continue;                      // guard re-check
+        e.remediationState = 'fixed';
+        e.resolvedRound = u.resolvedRound;
+        committed.push(u);
+      } else if (u.action === 'mark-regressed') {
+        if (e.remediationState !== 'fixed' && e.remediationState !== 'verified') continue;
+        e.remediationState = 'regressed';                          // adjudicationOutcome untouched (Gemini-gate-2)
+        e.resolvedRound = u.resolvedRound;
+        committed.push(u);
+      }
+    }
+    if (committed.length > 0) {
+      ledger.entries = [...byTopic.values()];
+      atomicWriteFileSync(absPath, JSON.stringify(ledger, null, 2));
+    }
+  } catch (err) {
+    process.stderr.write(`  [lifecycle] applyLifecycleUpdates failed: ${err.message}\n`);
+  } finally {
+    if (release) release();
+  }
+  return { committed };
 }

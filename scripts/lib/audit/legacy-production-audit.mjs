@@ -60,7 +60,8 @@ import {
 import {
   generateTopicId, populateFindingMetadata, jaccardSimilarity,
   suppressReRaises, buildRulingsBlock, R2_ROUND_MODIFIER, buildR2SystemPrompt,
-  computeImpactSet, batchWriteLedger
+  computeImpactSet, batchWriteLedger,
+  computeFixLifecycleUpdates, applyLifecycleUpdates
 } from '../ledger.mjs';
 import {
   estimateTokens, chunkLargeFile, extractExportsOnly, buildAuditUnits,
@@ -93,7 +94,7 @@ import { executeTools, normalizeToolResults, formatLintSummary } from '../linter
 import {
   selectEventSource, loadDebtLedger, appendEvents, reconcileLocalToCloud, mergeLedgers as mergeLedgersForSuppression
 } from '../debt-memory.mjs';
-import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision } from '../../learning-store.mjs';
+import { initLearningStore, isCloudEnabled, resolveRepoForStore, upsertPlan, recordRunStart, recordRunComplete, recordFindings, recordPassStats, recordSuppressionEvents, syncBanditArms, syncFalsePositivePatterns, loadFalsePositivePatterns, recordDiffComplexity, backfillLearningOutcome, insertLearningDecision, markFindingsRemediation, reconcileRemediationProjection } from '../../learning-store.mjs';
 import { buildCloudFpPolicy, runSuppressionPasses } from '../suppression-policy.mjs';
 import { finalizePriorRoundOutcomes } from '../finalize-outcomes.mjs';
 import { recordDecision as _learningRecordDecision, flush as _learningFlush, installLifecycleHooks as _learningInstallHooks, buildDecisionKey as _learningBuildKey, reconcileOutbox as _learningReconcileOutbox } from '../learning/decision-logger.mjs';
@@ -2609,6 +2610,35 @@ export async function runLegacyProductionAudit(ctx) {
     reopenedSet = new Set(reopened);
     allFindings.length = 0;
     allFindings.push(...kept, ...reopened);
+
+    // Fix-lifecycle transitions (docs/plans/remediation-state-fix-lifecycle.md).
+    // A prior accepted entry whose scope changed and is no longer raised → fixed;
+    // a fixed entry re-raised on a changed scope → regressed. This is what finally
+    // populates `audit_findings.remediation_state` so the `unlocked_fixes` view /
+    // /ship missing-spec gate stop reading vacuously empty. Fail-open — a failure
+    // here never blocks the round.
+    try {
+      // ORDER IS LOAD-BEARING (Gemini final-gate H). Self-heal FIRST, using the
+      // round-start `mergedLedger` (which reflects PRIOR rounds' committed
+      // terminal states, before this round's transitions). Running it AFTER the
+      // transitions would re-project from this same pre-transition snapshot and
+      // REVERT a just-applied regression/fix in the DB. This matches the plan's
+      // B2: "before computing new transitions, reconcile."
+      if (cloudRepoId) await reconcileRemediationProjection(cloudRepoId, mergedLedger);
+      // Then compute + apply + project THIS round's fresh transitions.
+      const { updates } = computeFixLifecycleUpdates(mergedLedger, allFindings, changedFiles, round);
+      if (updates.length > 0) {
+        const { committed } = applyLifecycleUpdates(ledgerFile, updates);
+        if (committed.length > 0) {
+          const nFixed = committed.filter(u => u.action === 'mark-fixed').length;
+          const nReg = committed.filter(u => u.action === 'mark-regressed').length;
+          process.stderr.write(`  [lifecycle] ${committed.length} transition(s): ${nFixed} fixed, ${nReg} regressed\n`);
+          if (cloudRepoId) await markFindingsRemediation(cloudRepoId, committed);
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`  [lifecycle] skipped: ${err.message}\n`);
+    }
 
     // Populate _suppression — full arrays for recordSuppressionEvents() + summary counts
     // Stored in temp var because mergedResult is defined later (TDZ)

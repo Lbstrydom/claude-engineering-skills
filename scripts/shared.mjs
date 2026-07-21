@@ -85,13 +85,7 @@ export {
   buildPatternKey,
   FalsePositiveTracker,
   setRepoProfileCache,
-  compactOutcomes,
-  createRemediationTask,
-  trackEdit,
-  verifyTask,
-  persistTask,
-  loadTasks,
-  updateTask
+  compactOutcomes
 } from './lib/findings.mjs';
 
 // ── Project Context & Repo Profiling ────────────────────────────────────────

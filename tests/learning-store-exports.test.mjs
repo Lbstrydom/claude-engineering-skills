@@ -198,6 +198,13 @@ const EXPECTED_EXPORTS = [
   'getRunFindingOutcomeCounts', // Cluster B / Phase 4 — pass_selection resolver input
   'auditRunExists',             // determinism WS1 Phase 2 — finalize run-existence probe
   'markRunFindingsNeedsTriage', // determinism WS1 Phase 2 — finalize reconciliation writeback
+  // fix-lifecycle projection (docs/plans/remediation-state-fix-lifecycle.md)
+  'buildFindingAdjudicationPatch', // gap #2 — remediation_state → audit_findings (pure seam)
+  'markFindingsRemediation',       // repo-scoped fingerprint writer for fixed/regressed
+  'normalizeRemediationUpdates',   // pure validation seam for the writer (audit R1/M7)
+  'reconcileRemediationProjection',// DB-driven self-heal sweep (14-day window)
+  'buildLedgerTerminalIndex',      // pure — fingerprint → terminal state index
+  'selectReconcileTargets',        // pure — DB-vs-ledger disagreement selector
   // dashboard audit-run findings viewer (docs/plans/dashboard-audit-run-viewer.md)
   'getRunFindings',
   'getRunMeta',
@@ -290,6 +297,6 @@ describe('learning-store.mjs — public export surface (plan §2 / R3/M2)', () =
     // paths registered as plans). The DB status vocabulary that landed
     // alongside them is deliberately NOT here — it is a constant, and it lives
     // in plan-status.mjs with the vocabulary it derives from.
-    assert.equal(EXPECTED_EXPORTS.length, 168);
+    assert.equal(EXPECTED_EXPORTS.length, 174);
   });
 });

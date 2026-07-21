@@ -1,5 +1,35 @@
 # Project Status Log
 
+## 2026-07-21 — closed the remediation-state loop: the ship gate is no longer vacuously green
+
+A telemetry review of the Supabase store found **0 of 989** `audit_findings`
+rows with `remediation_state` beyond `pending` — so `unlocked_fixes` was
+permanently empty and every `/ship` reported `missing_spec_count: 0` **without
+checking anything** (a gate-honesty violation). Tracing it found **two**
+independent breaks: nothing transitioned a finding to `fixed`, AND
+`recordAdjudicationEvent` never wrote `remediation_state` to the `audit_findings`
+column the view reads.
+
+**Fix (R2-disappearance evidence).** A prior *accepted/severity_adjusted* ledger
+entry whose scope changed and is no longer raised → `fixed`; a `fixed` entry
+re-raised on changed scope → `regressed`. Pure `computeFixLifecycleUpdates` +
+conditional `applyLifecycleUpdates` (`ledger.mjs`) sharing a golden-locked
+`matchesLedgerEntry` extracted from `suppressReRaises`; repo-scoped
+`markFindingsRemediation` + DB-driven `reconcileRemediationProjection`
+(`runs-findings.mjs`, `UPDATE…RETURNING` affected-row assertion); wired into the
+code-audit round loop (`legacy-production-audit.mjs`, reconcile-first ordering).
+gap#2 closed via `buildFindingAdjudicationPatch`. Dead `findings-tasks.mjs`
+deleted; migration `20260721140000` widened `unlocked_fixes` to include
+`severity_adjusted`.
+
+**Also this session**: fixed `persona_test_sessions.repo_name` being left null
+(load-bearing — the `audit_effectiveness` view joins on it) in `cross-skill.mjs`.
+
+**Verification**: 32 new test assertions; full suite green. `/audit-plan`
+(Gemini coherence Strong) + `/audit-code` (R1 H2/M9 → R3 H0/M1) + **Gemini final
+gate APPROVE**. Live: `list-unlocked-fixes` now returns rows (was empty) — the
+loop works end-to-end.
+
 ## 2026-07-21 — flipped the record-time hook ON: churn stopped at the source
 
 The prospective hook I'd deferred for a validation window is now built, wired,

@@ -1198,13 +1198,37 @@ export async function recordSuppressionEvents(runId, suppressionResult) {
 // ── finding_adjudication_events ────────────────────────────────────────────
 
 /**
+ * Build the denormalised `audit_findings` patch for an adjudication event.
+ * Pure + exported so the propagation contract is unit-testable without a DB.
+ *
+ * `remediation_state` (fix-lifecycle plan, gap #2): the `unlocked_fixes` view
+ * reads `audit_findings.remediation_state`, but this UPDATE historically set
+ * only `adjudication_outcome`, so the column was write-never and the view was
+ * permanently empty. It is now propagated here — **only when the event carries a
+ * value** (`!= null`), so an adjudication event lacking `remediationState` can
+ * never null an existing state (monotonic-safe).
+ *
+ * @param {{adjudicationOutcome: string, remediationState?: string|null}} event
+ * @param {Date} decidedAt
+ * @returns {Record<string, unknown>}
+ */
+export function buildFindingAdjudicationPatch(event, decidedAt) {
+  // decided_at (model-swap-eval-harness Phase 4 migration 20260713110000) — the
+  // only column recording WHEN a finding was adjudicated; created_at is when it
+  // was RAISED, not decided.
+  const patch = { adjudication_outcome: event.adjudicationOutcome, decided_at: decidedAt };
+  if (event.remediationState != null) patch.remediation_state = event.remediationState;
+  return patch;
+}
+
+/**
  * Record an adjudication event for a finding. Two-step:
  *   1. Resolve the audit_findings.id from the finding fingerprint
  *      (+ optional pass_name / round_raised disambiguation)
  *   2. Inside a transaction:
  *        - DELETE any prior adjudication events on this finding (idempotent re-record)
  *        - INSERT the new event
- *        - UPDATE audit_findings.adjudication_outcome (denormalised)
+ *        - UPDATE audit_findings.adjudication_outcome + remediation_state (denormalised)
  */
 export async function recordAdjudicationEvent(runId, findingFingerprint, event) {
   if (!runId || !await isCloudEnabled()) return;
@@ -1236,15 +1260,161 @@ export async function recordAdjudicationEvent(runId, findingFingerprint, event) 
         ruling_rationale: event.rulingRationale,
         round: event.round,
       });
-      await updateWhere('audit_findings',
-        // decided_at (model-swap-eval-harness Phase 4 migration
-        // 20260713110000) — the only column recording WHEN a finding was
-        // adjudicated; created_at is when it was RAISED, not decided.
-        { adjudication_outcome: event.adjudicationOutcome, decided_at: new Date() },
-        { id: finding.id }
-      );
+      await updateWhere('audit_findings', buildFindingAdjudicationPatch(event, new Date()), { id: finding.id });
     });
   } catch (err) {
     process.stderr.write(`  [learning] recordAdjudicationEvent failed: ${err.message}\n`);
+  }
+}
+
+// ── Fix-lifecycle projection (docs/plans/remediation-state-fix-lifecycle.md) ──
+
+const TERMINAL_REMEDIATION = new Set(['fixed', 'verified', 'regressed']);
+
+/**
+ * PURE. Index a ledger's terminal-state entries by finding fingerprint →
+ * remediationState, for O(1) reconciliation lookup. Non-terminal entries are
+ * excluded (only fixed/verified/regressed are projected to the DB).
+ * @param {object} ledger
+ * @returns {Map<string,string>} fingerprint → terminal remediationState
+ */
+export function buildLedgerTerminalIndex(ledger) {
+  const idx = new Map();
+  for (const e of (ledger?.entries || [])) {
+    if (!TERMINAL_REMEDIATION.has(e.remediationState)) continue;
+    const fp = e.semanticHash;
+    if (fp) idx.set(fp, e.remediationState);
+  }
+  return idx;
+}
+
+/**
+ * PURE. Given recent DB rows `{finding_fingerprint, remediation_state}` and the
+ * ledger terminal index, return the subset whose DB state DISAGREES with the
+ * ledger's terminal state (a matching state is a no-op; a fingerprint absent
+ * from the index is left alone). This is what makes the reconciliation both
+ * bounded (caller supplies only recent rows) and COMPLETE — it heals
+ * pending→terminal AND terminal→terminal divergence (Gemini-gate-3), unlike a
+ * `remediation_state='pending'`-only filter.
+ * @param {Array<{finding_fingerprint:string, remediation_state:string}>} dbRows
+ * @param {Map<string,string>} index
+ * @returns {Array<{fingerprint:string, state:string}>}
+ */
+export function selectReconcileTargets(dbRows, index) {
+  const out = [];
+  for (const row of dbRows || []) {
+    const want = index.get(row.finding_fingerprint);
+    if (want && want !== row.remediation_state) out.push({ fingerprint: row.finding_fingerprint, state: want });
+  }
+  return out;
+}
+
+/** Resolve a lifecycle update's target state from an explicit `state` or an action. */
+function updateTargetState(u) {
+  return u.state || (u.action === 'mark-regressed' ? 'regressed' : u.action === 'mark-fixed' ? 'fixed' : null);
+}
+
+/**
+ * PURE. Partition raw lifecycle updates into `{valid, rejected}` — a valid
+ * update has both a resolvable terminal `state` and a `findingFingerprint`.
+ * Exported so validation is unit-testable directly (not masked behind a
+ * cloud-off no-op — audit R1/M7). `rejected` carries a reason per input.
+ * @param {Array<object>} updates
+ * @returns {{valid: Array<{fingerprint:string, state:string, resolvedRound:number|null}>, rejected: Array<{update:object, reason:string}>}}
+ */
+export function normalizeRemediationUpdates(updates) {
+  const valid = [], rejected = [];
+  for (const u of (Array.isArray(updates) ? updates : [])) {
+    const state = updateTargetState(u);
+    const fingerprint = u.findingFingerprint || u.fingerprint;
+    if (!state) { rejected.push({ update: u, reason: 'no resolvable remediation state' }); continue; }
+    if (!TERMINAL_REMEDIATION.has(state)) { rejected.push({ update: u, reason: `non-terminal state "${state}"` }); continue; }
+    if (!fingerprint) { rejected.push({ update: u, reason: 'missing findingFingerprint' }); continue; }
+    valid.push({ fingerprint, state, resolvedRound: u.resolvedRound ?? null });
+  }
+  return { valid, rejected };
+}
+
+/**
+ * Project fix-lifecycle updates onto `audit_findings.remediation_state` for a
+ * repo, addressing rows by `(repo_id, finding_fingerprint)` within the
+ * `unlocked_fixes` 14-day window (the exact population the view reads). Updates
+ * the denormalised column AND upserts the parallel `finding_adjudication_events`
+ * row. Fail-open (never throws to the audit). Idempotent — setting the same
+ * state twice is a no-op. The `audit_findings` write asserts an affected row
+ * (RETURNING id): a 0-row update is logged, never silently counted as success
+ * (audit R1/H2 — gate honesty).
+ *
+ * @param {string} repoId - audit_repos.id
+ * @param {Array<{findingFingerprint:string, state?:string, action?:string, resolvedRound?:number}>} updates
+ * @returns {Promise<{updated:number}>}
+ */
+export async function markFindingsRemediation(repoId, updates) {
+  if (!repoId || !await isCloudEnabled()) return { updated: 0 };
+  const { valid } = normalizeRemediationUpdates(updates);
+  if (valid.length === 0) return { updated: 0 };
+  let updated = 0;
+  for (const { fingerprint: fp, state, resolvedRound } of valid) {
+    try {
+      const finding = await one(
+        `SELECT f.id FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id
+         WHERE r.repo_id = $1 AND f.finding_fingerprint = $2
+           AND r.created_at > now() - interval '14 days'
+         ORDER BY f.created_at DESC LIMIT 1`,
+        [repoId, fp]
+      );
+      if (!finding?.id) continue;
+      const affected = await withTx(async () => {
+        const rows = await many(
+          `UPDATE audit_findings SET remediation_state = $1 WHERE id = $2 RETURNING id`,
+          [state, finding.id]
+        );
+        if (rows.length === 0) return 0; // 0-row → do not write a phantom event
+        await deleteWhere('finding_adjudication_events', { finding_id: finding.id });
+        await insertReturning('finding_adjudication_events', {
+          finding_id: finding.id, remediation_state: state, round: resolvedRound,
+        });
+        return rows.length;
+      });
+      if (affected > 0) updated += 1;
+      else process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}): 0-row update (finding vanished) — not counted\n`);
+    } catch (err) {
+      process.stderr.write(`  [lifecycle] markFindingsRemediation(${fp}) failed: ${err.message}\n`);
+    }
+  }
+  return { updated };
+}
+
+/**
+ * Self-healing sweep (fail-open). DB-DRIVEN for O(recent): fetch the repo's
+ * `audit_findings` rows within the 14-day `unlocked_fixes` window (regardless of
+ * current remediation_state — Gemini-gate-3), then project any whose state
+ * disagrees with the ledger's terminal index. Heals a projection that a prior
+ * round's fail-open write dropped, including terminal→terminal (fixed→regressed)
+ * divergence a pending-only filter would miss.
+ *
+ * @param {string} repoId
+ * @param {object} ledger - parsed adjudication ledger
+ * @returns {Promise<{reconciled:number}>}
+ */
+export async function reconcileRemediationProjection(repoId, ledger) {
+  if (!repoId || !await isCloudEnabled()) return { reconciled: 0 };
+  const index = buildLedgerTerminalIndex(ledger);
+  if (index.size === 0) return { reconciled: 0 };
+  try {
+    const rows = await many(
+      `SELECT f.finding_fingerprint, f.remediation_state
+       FROM audit_findings f JOIN audit_runs r ON r.id = f.run_id
+       WHERE r.repo_id = $1 AND r.created_at > now() - interval '14 days'
+         AND f.adjudication_outcome IN ('accepted','severity_adjusted')`,
+      [repoId]
+    );
+    const targets = selectReconcileTargets(rows, index);
+    if (targets.length === 0) return { reconciled: 0 };
+    const { updated } = await markFindingsRemediation(repoId, targets);
+    return { reconciled: updated };
+  } catch (err) {
+    process.stderr.write(`  [lifecycle] reconcileRemediationProjection failed: ${err.message}\n`);
+    return { reconciled: 0 };
   }
 }

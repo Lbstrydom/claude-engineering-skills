@@ -1263,9 +1263,15 @@ async function cmdRecordPersonaSession() {
   // path entirely, without breaking re-posts (an explicit id passes through).
   const mintedSessionId = data.sessionId ? null : buildPersonaSessionId();
   if (mintedSessionId) data.sessionId = mintedSessionId;
-  if (!data.repoId) {
+  // Populate BOTH the canonical repo_id (native join key) and the denormalized
+  // repo_name. repo_name is load-bearing, not cosmetic: the `audit_effectiveness`
+  // view joins `persona_test_sessions.repo_name = audit_repos.name`, so a null
+  // here silently drops the session from precision/recall entirely. Resolve when
+  // EITHER is missing (a caller may pass repoId but omit the name).
+  if (!data.repoId || !data.repoName) {
     const ref = await resolveRepoForStore({}).catch(() => null);
-    if (ref?.repoRowId) data.repoId = ref.repoRowId;
+    if (ref?.repoRowId && !data.repoId) data.repoId = ref.repoRowId;
+    if (ref?.name && !data.repoName) data.repoName = ref.name;
   }
 
   const result = await recordPersonaSession(data);
