@@ -1,5 +1,41 @@
 # Project Status Log
 
+## 2026-07-21 — Session summary: issue #57 → the npm `--`-swallow gate, end to end
+
+One thread followed to the end: triaging consumer issue #57 (`cli:flags` feedback
+from wine-cellar-app) became building, shipping, and deploying a new gate class
+across three repos. The granular entries below — this session's, interleaved with
+a concurrent session's pgvector / arch-coverage work — hold the detail; the arc:
+
+- **#57 triage.** 5 of 6 items were already fixed; item 5 (a severity-flat census)
+  got `classifyPolarity`. Found + fixed a detector bug the issue missed — a comment
+  *naming* `assertKnownFlags` counted as the guard, hiding an unguarded
+  `sync-to-repos.mjs`. Closed #57 and #41.
+- **Paid the debt down.** Guarded all 13 opt-out CLIs the polarity split surfaced
+  (baseline 80 → 67, opt-out bucket → 0); fixed three "known flag, wrong plumbing"
+  bugs — one silently ran a backfill UNSCOPED against the shared store
+  (`resolve.examined` 500 → 0 once fixed).
+- **The npm `--`-swallow class.** My "three instances" estimate was wrong; a census
+  found 34, including the AGENTS.md line every agent reads each session. Built
+  `npm-args:gate` (wired into `npm run check`), synced it to both consumers, wired
+  it into both pre-push hooks, pushed live, and landed it on wine's protected `main`
+  via PR #141 (checks watched, squash-merged).
+- **"Did we miss anything" follow-ups.** A missing regression test surfaced a second
+  module-scope-`main()` bug (regenerate-skill-copies overwrites the skills tree on
+  import); the census then found two more (prune DELETES, render-mermaid OVERWRITES)
+  — all guarded with the `isMain` IIFE + tests.
+
+The through-line: **every bug this session was a success path that lied** — a
+detector calling a broken file "fixed", a `--dry-run` that created directories, a
+`--repo` that scoped nothing, a gate that flagged its own bug-quoting prose, a gate
+that failed to guard its own flags. None were found by reading code; each came from
+*running* the thing and checking the green.
+
+Shipped: 8 commits on `main` (`2ee7846` … `6e11fbd`), both consumers gated and
+pushed, PR #141 merged, #57 + #41 closed with a corrected public record. Meta-lessons
+banked to memory: census-before-concluding-a-class-size, shared-working-tree
+concurrency (`ship-commit --path`), and the npm `--` gotcha.
+
 ## 2026-07-21 — guarded two destructive CLIs that ran main() on import
 
 `symbol-index/prune.mjs` (DELETES rows) and `render-mermaid.mjs` (OVERWRITES the
