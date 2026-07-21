@@ -1,5 +1,38 @@
 # Project Status Log
 
+## 2026-07-21 — VS Code Copilot compatibility audit: retired prompt shims, capped descriptions
+
+Audited the repo for seamless GitHub Copilot Agent Skills operation (GA +
+default-on since VS Code 1.109). Shipped in `120d72a` (full-suite pre-push green,
+8373 tests):
+
+- **6 skill descriptions trimmed under Copilot's hard 1024-char cap** by relocating
+  Usage/Examples from the always-loaded frontmatter into a `## Usage` SKILL body
+  section — trigger phrases kept for selection, command syntax preserved verbatim
+  (verified line-by-line; ~1000 always-loaded tokens saved/session). Two genuinely-
+  condensed clauses restored after the preservation check.
+- **`.github/prompts/*.prompt.md` shim surface RETIRED** (generator, its test, format
+  reference, 15 shims; prompt wiring stripped from regenerate + both sync modules;
+  GENERATE_PROMPTS mode removed from ai-context-management). Rationale: since 1.109
+  skills ARE the `/name` slash-command surface, so same-basename shims collided with
+  their own skills — and 7/15 pointed at non-existent CLIs. No functional loss:
+  `.claude/skills/**` is the sole Copilot surface.
+- **mermaid MCP added to `.vscode/mcp.json`** (VS Code doesn't read `.mcp.json`).
+- README / AGENTS.md / consumer-adoption runbook updated to the July-2026 surface facts.
+
+**Audit-code + Gemini gate**: round-1's 8 findings were all pre-existing debt in the
+two sync files the diff touched (Gemini endorsed the defers, `wrongly_dismissed: []`);
+Gemini caught one real regression GPT missed — `skills-help.mjs::parseSkill` scraped
+Usage from the frontmatter description, so the relocation emptied it. Fixed with a body
+`## Usage` fallback + regression test; `SKILLS-INDEX.md` regenerates identically. Plan:
+`docs/plans/copilot-compat-audit.md`.
+
+**Consumers cleaned**: the 15 tracked shims removed from ai-organiser (`224dfe4`, direct)
+and wine-cellar-app (PR #159, merged) — the sync only advises on orphaned tracked files.
+
+Earlier same-session ships (already on main): `ec138bc` strengthen-only main-branch
+protection tool + `78a7261` orphan-preimage reaper fix.
+
 ## 2026-07-21 — de-flaked the hung-provider termination test (load-induced pre-push flake)
 
 The `08f77b1` ship above was briefly blocked by an **unrelated** flake:
