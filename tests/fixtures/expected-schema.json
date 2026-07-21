@@ -6887,14 +6887,14 @@
       "args": "window_days integer, similarity_reraise numeric, similarity_cluster numeric, max_pairs_per_repo integer",
       "return_type": "jsonb",
       "security_definer": true,
-      "config": "statement_timeout=120s"
+      "config": "statement_timeout=120s,search_path=public, pg_temp"
     },
     {
       "function_name": "model_ab_attribute_arms",
       "args": "p_stage text, p_arm text",
       "return_type": "text[]",
       "security_definer": false,
-      "config": null
+      "config": "search_path=public, pg_temp"
     },
     {
       "function_name": "pgp_armor_headers",
@@ -7293,21 +7293,21 @@
       "args": "",
       "return_type": "trigger",
       "security_definer": false,
-      "config": null
+      "config": "search_path=public, pg_temp"
     },
     {
       "function_name": "touch_persona_finding_outcomes_updated_at",
       "args": "",
       "return_type": "trigger",
       "security_definer": false,
-      "config": null
+      "config": "search_path=public, pg_temp"
     },
     {
       "function_name": "touch_security_incidents_updated_at",
       "args": "",
       "return_type": "trigger",
       "security_definer": false,
-      "config": null
+      "config": "search_path=public, pg_temp"
     },
     {
       "function_name": "vector",
