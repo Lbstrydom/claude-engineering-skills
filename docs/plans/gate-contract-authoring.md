@@ -541,3 +541,46 @@ author's.
   baseline requires all skills contracted first.
 
 Status stays **Draft** — Phases A/B partial-land; C/D and the D6 check remain.
+
+### 2026-07-21 — D6 candidate-coverage check (rest of Phase A)
+
+**Landed** — Phase A is now complete (schema + coverage check + verb-pattern):
+- `scripts/lib/gate-honesty/verb-pattern.mjs` — the frozen enforcement-verb set
+  (pinned by test) + a PURE coverage core (`lineIsCovered`,
+  `findUndispositionedCandidates`), testable without git.
+- `scripts/check-gate-contracts.mjs` — diff-scoped shell: `resolvePushRange`
+  (Gemini-r2 G3) → `git diff` changed SKILL.md `+` lines →
+  `parseChangedSkillCandidates` → coverage decision, folded into the same
+  failure gate. Made import-safe (guarded `main()`), so its export is testable.
+
+**Two implementation-time refinements, recorded (not silent):**
+- **Span coverage, not the plan's count formulation.** The plan wrote Gemini-G2
+  as "#matches == #verb-hits"; that overcounts a single claim with two verbs
+  ("must exit 1"). Implemented as SPAN coverage — every verb position must fall
+  inside some covering `stated` span — which realises the same "a second claim
+  is uncovered" intent without the overcount. Proven by test.
+- **D6 scopes to CONTRACTED skills only.** The plan implied every changed
+  candidate line needs a disposition; but an uncontracted skill has no
+  dispositions yet (that is Phase C), so firing on it would block routine edits
+  to the 12 not-yet-contracted skills. D6 checks only skills that HAVE a
+  contract; the Phase-D ratchet forces the rest to be contracted, after which
+  D6 keeps them current. Composes correctly; no premature toil.
+
+**Proven to FIRE end-to-end**, not just unit-green: a committed undispositioned
+enforcement line in the contracted exemplar → `check-gate-contracts` exits 1
+naming the exact line; removing/dispositioning it → clean. 31 gate-honesty
+tests. Honest degradation: an unresolvable range is reported + skipped, never
+read as clean.
+
+**Hardened via review, both silent-pass holes closed:**
+- **Fail-closed under enforcement (audit H1/M2/M3).** An unresolvable range or a
+  failed `git diff` now hard-fails when `AUDIT_PUSH_RANGE_REQUIRED=1` (the flag
+  the pre-push sandbox sets alongside a base), and only warn-skips in unforced
+  local runs — a diff gate must not go green having read nothing.
+- **Config-independent diff format (Gemini G1).** The git invocation pins
+  `-c diff.noprefix=false`, `--src-prefix=a/ --dst-prefix=b/`, `--no-ext-diff`,
+  so a developer's `diff.noprefix=true` cannot silently defeat the `b/`-prefix
+  parser and pass the gate — proven to still fire under a forced noprefix config.
+
+**Still remaining**: Phase C (12 skills, iterative) and Phase D (ratchet +
+empty baseline).

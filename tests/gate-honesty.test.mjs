@@ -22,6 +22,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
 import { loadGateContracts, formatSummaryLines } from '../scripts/lib/gate-honesty/loader.mjs';
 import { runOracle, buildHermeticEnv } from '../scripts/lib/gate-honesty/oracles.mjs';
 import { validateGateContract } from '../scripts/lib/gate-honesty/schema.mjs';
@@ -424,5 +426,132 @@ describe('exemplar ai-context-management gate-contract', () => {
     const crossed = { ...clean, scenario: 'ctx-drift-high' };
     const res = await runOracle(crossed, { repoRoot });
     assert.equal(res.state, 'ok', 'high fixture genuinely drives exit 1 — not a constant');
+  });
+});
+
+// ── 8. D6 candidate-coverage check (gate-contract-authoring.md) ──────────────
+import {
+  ENFORCEMENT_VERBS, normalizeCandidateLine, findUndispositionedCandidates,
+  lineIsCovered,
+} from '../scripts/lib/gate-honesty/verb-pattern.mjs';
+import { parseChangedSkillCandidates } from '../scripts/check-gate-contracts.mjs';
+
+describe('D6 verb pattern — pinned so a widening cannot drift silently', () => {
+  it('is exactly the frozen enforcement-verb set', () => {
+    assert.deepEqual([...ENFORCEMENT_VERBS].sort(), [
+      'always', 'block', 'blocks', 'cap', 'caps', 'exit', 'exits', 'fail',
+      'fails', 'gate', 'gates', 'max', 'must', 'never', 'refuse', 'refuses',
+      'require', 'requires', 'threshold', 'thresholds',
+    ].sort());
+  });
+});
+
+describe('D6 parseChangedSkillCandidates', () => {
+  const diff = [
+    'diff --git a/skills/foo/SKILL.md b/skills/foo/SKILL.md',
+    '--- a/skills/foo/SKILL.md',
+    '+++ b/skills/foo/SKILL.md',
+    '@@ -1,0 +2,3 @@',
+    '+- **New rule** — the run must exit 1 on failure',   // candidate
+    '+just some descriptive prose about wines',            // NOT a candidate
+    '+  - a gate blocks the push',                          // candidate (bullet stripped)
+    ' unchanged context line with must',                    // context, ignored
+    '-a removed line that requires something',              // removed, ignored
+    'diff --git a/skills/bar/README.md b/skills/bar/README.md',
+    '+++ b/skills/bar/README.md',
+    '+this must not count — not a SKILL.md',                // wrong file, ignored
+  ].join('\n');
+
+  it('extracts only added SKILL.md candidate lines, normalised, tagged by skill', () => {
+    const got = parseChangedSkillCandidates(diff);
+    assert.deepEqual(got, [
+      { skill: 'foo', line: '**New rule** — the run must exit 1 on failure' },
+      { skill: 'foo', line: 'a gate blocks the push' },
+    ]);
+  });
+
+  it('a content line starting with ++ is NOT misread as a file header (audit M3)', () => {
+    const d = [
+      'diff --git a/skills/foo/SKILL.md b/skills/foo/SKILL.md',
+      '--- a/skills/foo/SKILL.md',
+      '+++ b/skills/foo/SKILL.md',
+      '@@ -1,0 +1,1 @@',
+      '++ must exit nonzero on invalid input',
+    ].join('\n');
+    const got = parseChangedSkillCandidates(d);
+    assert.equal(got.length,1,'the ++ content line must be caught, not dropped as a header');
+    assert.match(got[0].line,/must exit nonzero/);
+  });
+
+  it('ignores context, removed, and non-SKILL.md lines', () => {
+    const got = parseChangedSkillCandidates(diff);
+    assert.ok(!got.some((c) => c.line.includes('descriptive prose')), 'non-candidate dropped');
+    assert.ok(!got.some((c) => c.line.includes('removed')), 'removed line dropped');
+    assert.ok(!got.some((c) => c.skill === 'bar'), 'non-SKILL.md dropped');
+  });
+});
+
+describe('D6 coverage decision — the gate FIRES on an undispositioned change', () => {
+  const contracts = () => new Map([['foo', {
+    stateds: ['must exit 1 on failure'],
+    ignoredLines: [normalizeCandidateLine('- an editorial note that always applies')],
+  }]]);
+
+  it('a changed line covered by a gate `stated` passes', () => {
+    const r = findUndispositionedCandidates(
+      [{ skill: 'foo', line: 'the run must exit 1 on failure' }], contracts());
+    assert.deepEqual(r, []);
+  });
+
+  it('a changed line covered by `ignoredCandidates` passes', () => {
+    const r = findUndispositionedCandidates(
+      [{ skill: 'foo', line: 'an editorial note that always applies' }], contracts());
+    assert.deepEqual(r, []);
+  });
+
+  it('an UNDISPOSITIONED changed enforcement line FAILS (the whole point)', () => {
+    const r = findUndispositionedCandidates(
+      [{ skill: 'foo', line: 'a brand-new rule: never delete the cache' }], contracts());
+    assert.equal(r.length, 1);
+    assert.equal(r[0].skill, 'foo');
+    assert.match(r[0].line, /never delete/);
+  });
+
+  it('a SECOND claim edited onto a covered line is uncovered (Gemini G2)', () => {
+    // "must exit 1 on failure" is dispositioned; adding "and never delete"
+    // places `never` outside the stated span → flagged.
+    const r = findUndispositionedCandidates(
+      [{ skill: 'foo', line: 'must exit 1 on failure and never delete' }], contracts());
+    assert.equal(r.length, 1, 'the added claim must be caught');
+  });
+
+  it('an uncontracted skill is out of D6 scope (contract forced by the ratchet)', () => {
+    const r = findUndispositionedCandidates(
+      [{ skill: 'not-contracted', line: 'this must gate' }], contracts());
+    assert.deepEqual(r, [], 'no contract yet → not D6\'s job (Phase D forces it)');
+  });
+});
+
+describe('D6 coverage-check fail-closed contract (audit H1/M2/M3)', () => {
+  const CLI = path.join(REPO_ROOT, 'scripts', 'check-gate-contracts.mjs');
+  const run = (env) => {
+    const { spawnSync } = require('node:child_process');
+    return spawnSync(process.execPath, [CLI], {
+      cwd: REPO_ROOT, encoding: 'utf-8',
+      env: { ...process.env, ...env },
+    });
+  };
+
+  it('an unresolvable range under AUDIT_PUSH_RANGE_REQUIRED=1 FAILS, never passes silently', () => {
+    // A diff gate that cannot scope must not go green having read nothing
+    // (sandbox-honesty rule). Required + no base = unresolvable = hard fail.
+    const r = run({ AUDIT_PUSH_RANGE_REQUIRED: '1', AUDIT_PUSH_RANGE_BASE: '', AUDIT_PUSH_RANGE_HEAD: '' });
+    assert.equal(r.status, 1, `expected exit 1, got ${r.status}: ${r.stderr}`);
+    assert.match(r.stderr, /UNVERIFIABLE and AUDIT_PUSH_RANGE_REQUIRED=1/);
+  });
+
+  it('a resolvable range under REQUIRED=1 runs the check normally (clean)', () => {
+    const r = run({ AUDIT_PUSH_RANGE_REQUIRED: '1', AUDIT_PUSH_RANGE_BASE: 'HEAD~1', AUDIT_PUSH_RANGE_HEAD: 'HEAD' });
+    assert.equal(r.status, 0, `expected clean exit 0, got ${r.status}: ${r.stderr}`);
   });
 });
