@@ -544,7 +544,7 @@ collisions.
 | Copilot prompt shims (`.github/prompts/*.prompt.md`) | same path (rewritten) | Yes |
 | Editor config (`.vscode/mcp.json`) | same path (rewritten if it references scripts) | Yes |
 | Claude Code hooks + settings (`.claude/hooks/`, `.claude/settings.json`) | same path (rewritten) | Yes |
-| Per-consumer manifest (`scripts/.sync-manifest.json`) | same path; layout=`isolated` | Yes |
+| Per-consumer manifest (`scripts/.sync-manifest.json`) | same path; layout=`isolated` | No (gitignored 2026-07-21 — Feature B of sync-ownership-from-content.md; `sync-isolation-verify` reads it from disk) |
 | Migrations (`supabase/migrations/*.sql` in source) | `.audit-loop/migrations/*.sql` | Yes |
 
 The managed `.gitignore` block also covers our **runtime outputs** (`AUDIT_RUNTIME_IGNORES`

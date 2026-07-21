@@ -56,10 +56,10 @@
 >   (DB import graph), `.audit-loop/cache/`, **`dashboard/index.html` +
 >   `dashboard/telemetry.html`** (local-only, rebuilt by `npm run dashboard`),
 >   `.audit-loop/repo-alias-map.json` (spent reconcile intermediate), **the
->   SOURCE repo's `scripts/.sync-manifest.json`** (regenerated on every `npm run
->   sync` with a timestamp + HEAD sha — committing it is pure per-push churn;
->   gitignored source-only, while CONSUMERS still track their own copy for the
->   isolation verifier), **`docs/architecture-map.md`** (reclassified B → A
+>   `scripts/.sync-manifest.json`** (timestamp + HEAD sha ⇒ per-push churn;
+>   gitignored in BOTH source and consumers since 2026-07-21 — Feature B of
+>   `sync-ownership-from-content.md`, once ownership moved to content banners and
+>   `sync-isolation-verify` read it from disk), **`docs/architecture-map.md`** (reclassified B → A
 >   2026-07-20: header carries a timestamp + commit sha + refresh_id, the body
 >   carries 33 LLM-written domain summaries, and it renders from the CLOUD
 >   symbol_index — three independent reasons two renders of one commit differ;

@@ -95,6 +95,26 @@ describe('managed-ignore vs untrack allow-list are separate contracts', () => {
     }
   });
 
+  it('the consumer sync-manifest is IGNORED but never auto-UNTRACKED (Feature B, sync-ownership-from-content §B)', () => {
+    // Feature B untracked the consumer manifest to kill per-sync churn + the
+    // merge-revert footgun (ownership moved to content-derived banners; the
+    // isolation verifier reads the manifest from disk, Gates 2A/6 assert nothing
+    // about its tracked state). It belongs in the ignore list so a fresh consumer
+    // stops committing it — but NOT in the destructive untrack list: a consumer
+    // that committed it BY DESIGN must be untracked by an explicit per-repo
+    // `git rm --cached`, never silently on sync.
+    const ignore = arrayLiterals('MANAGED_IGNORE_PATTERNS');
+    const untrack = arrayLiterals('UNTRACK_PATTERNS');
+    assert.ok(
+      ignore.includes('scripts/.sync-manifest.json'),
+      'the consumer manifest must be in the ignore list (Feature B)',
+    );
+    assert.ok(
+      !untrack.includes('scripts/.sync-manifest.json'),
+      'the consumer manifest must NOT be auto-untracked on sync — explicit per-repo decision only',
+    );
+  });
+
   it('.audit-loop/ stays PRECISE — consumers track migrations there', () => {
     const ignore = arrayLiterals('MANAGED_IGNORE_PATTERNS');
     assert.ok(!ignore.includes('.audit-loop/'), 'a blanket .audit-loop/ would ignore tracked migrations');

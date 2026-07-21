@@ -211,7 +211,19 @@ ours, and aborts only when it is not:
 The manifest stays as the record of *what was synced* (drift reporting, GC,
 `sync:dry`). It stops being the arbiter of *who owns a file*.
 
-### B. Untrack the consumer manifest (secondary) — **calculus changed; not done**
+### B. Untrack the consumer manifest (secondary) — **DONE 2026-07-21**
+
+Landed when the churn proved annoying in practice (the documented revisit
+trigger). Both preconditions verified first: Gate 2A only inspects
+`scripts/.claude-skills/` tracked state, and Gate 6 reads `manifest.layout` from
+the on-disk object — neither asserts the manifest is *tracked*, so no gate needed
+adjusting. `scripts/.sync-manifest.json` was added to the sync `MANAGED_IGNORE_PATTERNS`
+(ignore-only, not the destructive UNTRACK_PATTERNS) so consumers stop nagging/
+committing it; an already-tracking consumer is untracked by an explicit per-repo
+`git rm --cached`. AGENTS.md + consumer-adoption.md updated. See the acceptance
+criteria below (all met).
+
+Original deferral rationale (kept for the record):
 
 Approved in principle, deliberately not shipped with A, because A changed the
 argument for it.
