@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "skill": "brainstorm",
+  "gates": [
+    {
+      "id": "argv-error-exit",
+      "kind": "executable",
+      "oracle": "cli-exit",
+      "scenario": "brainstorm-argv-error",
+      "statedIn": "skills/brainstorm/SKILL.md",
+      "stated": "Only exit 1 means an argv error",
+      "implementation": "scripts/brainstorm-round.mjs",
+      "tests": ["tests/gate-honesty.test.mjs"],
+      "proof": "process"
+    },
+    {
+      "id": "artifact-sensitive-path-refusal",
+      "kind": "document-only",
+      "reason": "The sensitive-path / escaping-symlink artifact refusal is RECORDED IN THE JSON OUTPUT — the helper exits 0 and 'a refusal never aborts the round' — so it is not an exit-code or stderr signal a cli-exit recipe can assert. It already has a dedicated contract test (tests/brainstorm-artifact-context.test.mjs), but the closed oracle registry has no 'run an arbitrary test file' oracle to bind it here."
+    },
+    {
+      "id": "exit-0-on-provider-failure",
+      "kind": "document-only",
+      "reason": "'The helper exits 0 even when providers fail or are misconfigured — read the JSON state field, not the exit code' is the complement of the executable argv-error gate above. Asserting the exit-0 direction would need a valid-topic run that reaches a configured-to-fail provider, which is not hermetically deterministic under buildHermeticEnv (keys stripped) without a live provider — so the assertable half (argv error -> exit 1) is bound executably and this direction is document-only."
+    }
+  ]
+}

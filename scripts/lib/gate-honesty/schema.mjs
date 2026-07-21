@@ -38,6 +38,7 @@ export const CLI_EXIT_SCENARIOS = Object.freeze([
   'visual-static-gate-refusal',
   'ctx-drift-clean',
   'ctx-drift-high',
+  'brainstorm-argv-error',
 ]);
 
 const ProofSchema = z.enum(['process', 'unit-seam']);
@@ -71,8 +72,13 @@ const TieredShadowRow = z.object({
   // `typeof === 'number'` guard.
   comparison: z.object({
     tieredRunStatus: z.enum(['complete', 'fallback_legacy']),
-    tieredEligibleCount: z.number().optional(),
-    legacyEligibleCount: z.number().optional(),
+    // Eligible-row cardinalities: non-negative integers, never fractional or
+    // negative (audit M4). Optional because the fallback_legacy fixtures omit
+    // them; a partial pair is tolerated by the oracle (its `typeof === number`
+    // guard simply doesn't count a missing side toward the decision-grade
+    // comparison), so no both-or-neither refinement is needed here.
+    tieredEligibleCount: z.number().int().nonnegative().optional(),
+    legacyEligibleCount: z.number().int().nonnegative().optional(),
   }).strict().nullable(),
 }).strict();
 

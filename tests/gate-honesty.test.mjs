@@ -69,6 +69,9 @@ const PINNED_EXECUTABLE = {
   // Phase C — document-only skills (no executable gate).
   'audit-plan': [],
   'security-strategy': [],
+  // Phase C — brainstorm's argv-error executable gate.
+  brainstorm: ['argv-error-exit'],
+  'click-test': [],
 };
 const PINNED_DOCUMENT_ONLY = {
   'audit-code': ['mechanical-vs-architectural-label', 'rigor-pressure-stop'],
@@ -80,8 +83,10 @@ const PINNED_DOCUMENT_ONLY = {
   // judgement calls; no CLI exit the skill states).
   'audit-plan': ['round-caps', 'mode-plan-required', 'final-gate-mandatory'],
   'security-strategy': ['write-gated-on-round-trip-parse', 'never-include-real-secrets', 'never-inflate-threat-model', 'on-demand-non-blocking'],
+  brainstorm: ['artifact-sensitive-path-refusal', 'exit-0-on-provider-failure'],
+  'click-test': ['verdict-precedence', 'arg-validation-refusals', 'capability-abort', 'scanner-error-caps'],
 };
-const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'explain', 'security-strategy', 'skills', 'visual-audit'];
+const PINNED_CONTRACTED_SKILLS = ['ai-context-management', 'audit-code', 'audit-plan', 'brainstorm', 'click-test', 'explain', 'security-strategy', 'skills', 'visual-audit'];
 
 describe('gate-honesty — real skills/', () => {
   it('loads the current repo contracts and runs every oracle clean, printing the coverage report', async () => {
@@ -137,8 +142,8 @@ describe('gate-honesty — real skills/', () => {
 
     const totalExecutable = Object.values(PINNED_EXECUTABLE).flat().length;
     const totalDocOnly = Object.values(PINNED_DOCUMENT_ONLY).flat().length;
-    assert.equal(totalExecutable, 7); // +2: ai-context-management exit-map exemplar
-    assert.equal(totalDocOnly, 12);   // +3 audit-plan, +4 security-strategy (Phase C)
+    assert.equal(totalExecutable, 8); // +1 brainstorm argv-error (Phase C T1)
+    assert.equal(totalDocOnly, 18);   // +2 brainstorm, +4 click-test (Phase C T1)
 
     const allSkillNames = listSkillNames(skillsRoot);
     const expectedUncontracted = allSkillNames.filter((n) => !PINNED_CONTRACTED_SKILLS.includes(n));
@@ -568,5 +573,25 @@ describe('D6 coverage-check fail-closed contract (audit H1/M2/M3)', () => {
   it('a resolvable range under REQUIRED=1 runs the check normally (clean)', () => {
     const r = run({ AUDIT_PUSH_RANGE_REQUIRED: '1', AUDIT_PUSH_RANGE_BASE: 'HEAD~1', AUDIT_PUSH_RANGE_HEAD: 'HEAD' });
     assert.equal(r.status, 0, `expected clean exit 0, got ${r.status}: ${r.stderr}`);
+  });
+});
+
+// ── 9. Phase C: brainstorm argv-error executable gate ───────────────────────
+// References gate id `argv-error-exit` so the contract's tests[] link resolves,
+// and proves the recipe fires: a bad flag → exit 1 with an "Unknown flag"
+// stderr (proving the exit is the ARGV validator's, not a wrong-reason failure).
+describe('brainstorm gate-contract — argv-error-exit', () => {
+  const load = () => JSON.parse(fs.readFileSync(
+    path.join(REPO_ROOT, 'skills', 'brainstorm', 'gate-contract.json'), 'utf-8'));
+
+  it('validates against the shared schema', () => {
+    const r = validateGateContract(load(), REPO_ROOT);
+    assert.equal(r.ok, true, r.ok ? '' : JSON.stringify(r.errors));
+  });
+
+  it('argv-error-exit: a bad flag → exit 1 + "Unknown flag" (real CLI, hermetic)', async () => {
+    const gate = load().gates.find((g) => g.id === 'argv-error-exit');
+    const res = await runOracle(gate, { repoRoot: REPO_ROOT });
+    assert.equal(res.state, 'ok', JSON.stringify(res));
   });
 });

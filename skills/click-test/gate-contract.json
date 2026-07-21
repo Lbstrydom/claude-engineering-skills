@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "skill": "click-test",
+  "gates": [
+    {
+      "id": "verdict-precedence",
+      "kind": "document-only",
+      "reason": "'The overall verdict becomes at most Incomplete (never Clean) when any route is auth-required' is computed inside the click-test scanner logic the AGENT runs via Playwright MCP page.evaluate — click-test has no CLI entry point (verified: no scripts/click-test*.mjs), so there is no exit code a cli-exit recipe can assert, and the verdict function is not one of the closed registry's hardwired unit-seam oracles."
+    },
+    {
+      "id": "arg-validation-refusals",
+      "kind": "document-only",
+      "reason": "The argument refusals — unknown device name -> fail, supplying two device flags -> fail, unknown flags -> fail, missing url -> usage + STOP, invalid scope -> fail — are enacted by the AGENT parsing the /click-test invocation, not by a CLI with an exit code. click-test drives a browser via MCP and has no script to spawn; these are agent-behavioural refusals with no cli-exit binding."
+    },
+    {
+      "id": "capability-abort",
+      "kind": "document-only",
+      "reason": "'If any required capability is missing, abort before scanning' and the WebFetch-only degradation are decisions the model makes about which MCP tools are available before it drives the browser — runtime capability discovery, not a script exit code. No oracle in the closed registry binds an MCP-capability precondition."
+    },
+    {
+      "id": "scanner-error-caps",
+      "kind": "document-only",
+      "reason": "The >999-findings -> scanner-error cap (a Zod .max(999) inside the scanner) and the failed-validation -> scanner-error classification live in code the agent runs via page.evaluate against the live DOM; they surface as a coverageStatus field, not a process exit code. Assertable only by importing the scanner into a browser context, which the closed cli-exit/unit-seam registry does not cover."
+    }
+  ]
+}

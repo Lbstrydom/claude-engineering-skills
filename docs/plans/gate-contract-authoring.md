@@ -636,3 +636,30 @@ should be XOR — fixed).
 
 **Remaining Phase C (8 skills)**: brainstorm, click-test, cycle, nav-audit,
 persona-test, plan, ship, ux-lock.
+
+### 2026-07-21 — Phase C increment 3: brainstorm + click-test (T1)
+
+Uncontracted 8 → 6; executable 7 → 8; document-only 12 → 18; contracted 7 → 9.
+
+- **brainstorm** — the FIRST executable gate beyond the exemplar: `argv-error-exit`
+  (cli-exit) runs the real `brainstorm-round.mjs --bogus-flag` → exit 1 with an
+  "Unknown flag" stderr. The stderr match is load-bearing: it proves the exit
+  came from the ARGV validator, not a wrong-reason failure, so the gate asserts
+  exactly the "Only exit 1 means an argv error" claim. Needs no providers (argv
+  is validated first; keys stripped by buildHermeticEnv). Plus two document-only:
+  the artifact sensitive-path refusal (recorded in JSON at exit 0 — not an
+  exit-code signal — with its own named contract test) and the exit-0-on-provider-
+  failure complement (not hermetically deterministic without a live provider).
+- **click-test** — all 4 document-only. Verified it has NO CLI entry point
+  (no scripts/click-test*.mjs); it drives a browser via Playwright MCP, so its
+  verdict precedence, arg refusals, capability abort, and scanner-error caps are
+  agent/scanner-internal — no exit code a cli-exit recipe can assert.
+
+Audit: GPT H:2 both deferred (Phase-D ratchet test + empty baseline), M1/M2/M3/M5
+dismissed (false positive / pre-existing D6+schema not exploited here / not my
+file), **M4 fixed** (tieredEligibleCount/legacyEligibleCount now int + nonnegative).
+**Gemini: APPROVE** (0 new, 0 wrongly-dismissed).
+
+**Remaining Phase C (6 skills)**: cycle, nav-audit, persona-test, plan, ship,
+ux-lock — the T2 tier, where the richest executable candidates live (nav-audit's
+`--gate` exit table, persona-test's consistency exit codes).

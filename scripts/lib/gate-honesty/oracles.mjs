@@ -248,6 +248,19 @@ const CLI_EXIT_RECIPES = {
     expectStderrContains: null,
     envPrereq: null,
   },
+  // brainstorm exit contract (Phase C). The stderr match on "Unknown flag" is
+  // load-bearing: it proves the exit 1 came from the ARGV validator, not a
+  // wrong-reason failure (e.g. a missing key), so the gate asserts exactly the
+  // "exit 1 means an argv error" claim. Needs no providers — argv is validated
+  // before any provider is touched — and buildHermeticEnv strips the keys, so
+  // it is deterministic anywhere.
+  'brainstorm-argv-error': {
+    args: ['--bogus-flag-xyz'],
+    fixture() { /* no fixture files needed — argv is rejected before anything else */ },
+    expectExit: 1,
+    expectStderrContains: 'Unknown flag',
+    envPrereq: null,
+  },
 };
 
 /** @returns {Promise<OracleResult>} */
