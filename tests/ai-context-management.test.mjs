@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import fs from 'node:fs';
 
-import { SKILL_ENTRY_SCRIPTS, generatePromptFile } from '../scripts/lib/install/copilot-prompts.mjs';
 import { runDriftCheck } from '../scripts/check-context-drift.mjs';
 
 const SKILL_DIR = path.resolve('skills/ai-context-management');
@@ -14,7 +13,6 @@ const EXAMPLES_DIR = path.join(SKILL_DIR, 'examples');
 const EXPECTED_REFS = [
   'drift-rules.md',
   'reconcile-playbook.md',
-  'prompt-file-format.md',
   'canonical-flip.md',
 ];
 const EXPECTED_EXAMPLES = [
@@ -49,9 +47,10 @@ describe('ai-context-management skill', () => {
         `SKILL.md is ${content.length} chars, exceeds 12K target`);
     });
 
-    it('SKILL.md describes all 4 documented modes', () => {
+    it('SKILL.md describes all 3 documented modes', () => {
       const content = readSkillContent();
-      for (const mode of ['audit', 'reconcile', 'generate-prompts', 'migrate']) {
+      // generate-prompts mode retired with the .github/prompts shim surface (2026-07-21).
+      for (const mode of ['audit', 'reconcile', 'migrate']) {
         assert.match(content, new RegExp(`/ai-context-management ${mode}`),
           `must document mode: ${mode}`);
       }
@@ -99,29 +98,6 @@ describe('ai-context-management skill', () => {
     }
   });
 
-  describe('skill is registered for Copilot prompt generation', () => {
-    it('appears in SKILL_ENTRY_SCRIPTS', () => {
-      assert.ok(SKILL_ENTRY_SCRIPTS['ai-context-management'],
-        'ai-context-management must be in SKILL_ENTRY_SCRIPTS');
-    });
-
-    it('has a valid CLI invocation referencing the scripts/ directory', () => {
-      const entry = SKILL_ENTRY_SCRIPTS['ai-context-management'];
-      // Both the source repo and consumer repos use a flat `scripts/` layout.
-      // The earlier assertion locked in `.audit-loop/scripts/` which never
-      // existed in either context — see commit fixing this for context.
-      assert.match(entry.cli, /\bnode scripts\//);
-    });
-
-    it('generates a prompt file via generatePromptFile', () => {
-      const fm = { name: 'ai-context-management', description: 'Test description.' };
-      const content = generatePromptFile('ai-context-management', fm);
-      assert.ok(content);
-      assert.match(content, /# \/ai-context-management/);
-      assert.match(content, /audit-loop-bundle:prompt:start/);
-    });
-  });
-
   describe('skill output is integration-tested via underlying CLI tests', () => {
     it('AUDIT mode delegates to scripts/check-context-drift.mjs (validated by tests/check-context-drift.test.mjs)', () => {
       // The skill's AUDIT mode runs `npm run context:check` which invokes
@@ -130,15 +106,6 @@ describe('ai-context-management skill', () => {
       const repo = path.resolve('.');
       const report = runDriftCheck(repo);
       assert.ok(Array.isArray(report.findings));
-    });
-
-    it('GENERATE_PROMPTS mode delegates to npm run skills:regenerate (validated by tests/copilot-prompts.test.mjs)', () => {
-      // The generate-prompts mode wraps the regen script. The actual prompt
-      // generation logic is tested in tests/copilot-prompts.test.mjs.
-      // Here we sanity-check that the registry has the expected number of
-      // entries (one per skill that should get a Copilot shim).
-      const skills = Object.keys(SKILL_ENTRY_SCRIPTS);
-      assert.ok(skills.length >= 7, `expected ≥7 registered skills, got ${skills.length}`);
     });
   });
 

@@ -4,22 +4,31 @@ description: |
   Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI
   (and optionally Gemini) so the user can compare independent perspectives
   alongside Claude's. Convergence is manual — Claude waits for the user
-  to ask for synthesis instead of auto-merging the views.
+  to ask for synthesis instead of auto-merging the views. Supports model
+  selection, repo-architecture context attachment (auto on arch topics),
+  a debate second round, depth budgets, session resume, extra context and
+  artifact attachment, and saving keeper insights from prior rounds.
   Triggers on: "brainstorm", "let's think about", "get other LLMs on this",
   "what would Gemini/GPT say", "/brainstorm".
-  Usage:
-    /brainstorm <topic>                          # OpenAI + Gemini (default)
-    /brainstorm --no-gemini <topic>              # OpenAI only (alias: --openai-only)
-    /brainstorm --models openai,gemini <topic>   # explicit
-    /brainstorm --with-arch <topic>              # force-attach repo architecture context
-    /brainstorm --no-arch <topic>                # force-skip architecture context (default: auto-attach on arch topics)
-    /brainstorm --debate <topic>                 # second round where models react to each other
-    /brainstorm --depth shallow|standard|deep <topic>  # token budget per response
-    /brainstorm --continue-from <sid> <topic>    # resume a prior session
-    /brainstorm --with-context "<text>" <topic>  # attach extra context (repeatable)
-    /brainstorm --with-artifact <path> <topic>   # attach the focal artifact verbatim (repeatable)
-    /brainstorm save <sid> <round> "<insight>"   # record a keeper insight from a prior round
+  Full command syntax: see the Usage section in this skill.
 ---
+
+## Usage
+
+```
+Usage:
+  /brainstorm <topic>                          # OpenAI + Gemini (default)
+  /brainstorm --no-gemini <topic>              # OpenAI only (alias: --openai-only)
+  /brainstorm --models openai,gemini <topic>   # explicit
+  /brainstorm --with-arch <topic>              # force-attach repo architecture context
+  /brainstorm --no-arch <topic>                # force-skip architecture context (default: auto-attach on arch topics)
+  /brainstorm --debate <topic>                 # second round where models react to each other
+  /brainstorm --depth shallow|standard|deep <topic>  # token budget per response
+  /brainstorm --continue-from <sid> <topic>    # resume a prior session
+  /brainstorm --with-context "<text>" <topic>  # attach extra context (repeatable)
+  /brainstorm --with-artifact <path> <topic>   # attach the focal artifact verbatim (repeatable)
+  /brainstorm save <sid> <round> "<insight>"   # record a keeper insight from a prior round
+```
 
 # /brainstorm — Multi-LLM Brainstorming
 

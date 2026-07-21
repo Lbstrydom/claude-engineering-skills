@@ -157,6 +157,30 @@ export function parseSkill(skillFile) {
     }
   }
 
+  // Fallback: skills whose Usage/Examples were relocated out of the (≤1024-char
+  // Copilot-capped) frontmatter description into a `## Usage` body section
+  // (2026-07-21). Scan the markdown body after the frontmatter for that
+  // section's fenced block. Skip fences and any stray "Triggers on:" line the
+  // relocated tail may carry (triggers already parsed from the description).
+  if (usage.length === 0) {
+    const body = raw.slice(m[0].length);
+    const section = body.match(/^##\s+Usage\b[^\n]*\n([\s\S]*?)(?=^##\s|$(?![\s\S]))/m);
+    if (section) {
+      // Prefer the fenced block so trailing prose after the fence isn't captured;
+      // fall back to the raw section for a non-fenced `## Usage`.
+      const fence = section[1].match(/```[^\n]*\n([\s\S]*?)```/);
+      const src = fence ? fence[1] : section[1];
+      let inTrig = false;
+      for (const rawLine of src.split('\n')) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('```')) continue;
+        if (/^triggers? on:/i.test(line)) { inTrig = true; continue; }
+        if (inTrig) { if (!line.includes('"')) inTrig = false; else continue; }
+        usage.push(line.replace(/^usage:\s*/i, ''));
+      }
+    }
+  }
+
   return {
     name: fm.name,
     oneLiner: firstSentence || (lines[0] || '').slice(0, 200),

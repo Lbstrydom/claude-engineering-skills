@@ -140,8 +140,7 @@ After adoption, your consumer repo's working tree contains:
 | Where | What | Tracked? |
 |---|---|---|
 | `scripts/.claude-skills/` | All of the engineering-skills `.mjs` files (~250 files including transitive lib deps) | **NO** — gitignored via managed block |
-| `.claude/skills/` | Skill `.md` files (Claude Code reads from here) | YES |
-| `.github/prompts/` | Copilot prompt shims | YES |
+| `.claude/skills/` | Skill `.md` files (Claude Code + Copilot Agent Skills read from here) | YES |
 | `.vscode/mcp.json` | MCP server registrations (deep-merged with your existing values) | YES |
 | `.claude/hooks/`, `.claude/settings.json` | Claude Code hooks + settings (deep-merged) | YES |
 | `scripts/.sync-manifest.json` | Authoritative file list + `layout: 'isolated'` | YES |
@@ -233,7 +232,7 @@ This:
 - Reads your consumer's prior manifest (legacy layout)
 - Writes new tooling files under `scripts/.claude-skills/...`
 - Rewrites every `node scripts/X.mjs` reference in `.claude/skills/**/*.md`,
-  `.claude/hooks/`, `.claude/settings.json`, `.github/prompts/*.prompt.md`,
+  `.claude/hooks/`, `.claude/settings.json`,
   `.vscode/mcp.json` to point at the new path — but ONLY for files we own.
   Your `scripts/automated-tests.js`-style consumer commands stay untouched.
 - Writes a new `scripts/.sync-manifest.json` with `layout: 'isolated'`.
@@ -405,14 +404,21 @@ merging"** (`strict_required_status_checks_policy` on the status-check ruleset
 rule): it forces every PR current with `main` before checks run, so the ratchet
 always compares against the landed baseline.
 
-**Apply it** — from the consumer repo (auto-detects `origin`), or from anywhere
-with `--repo`:
+**Apply it.** Three invocation forms, by where you are:
 
 ```bash
-npm run protect:main            # dry-run: preview what would change
-npm run protect:main:apply      # write it
-# or against a named repo:
-node scripts/ensure-branch-protection.mjs --repo <owner>/<name> --apply
+# From THIS source repo (has the npm scripts) — target any repo by name:
+node scripts/ensure-branch-protection.mjs --repo Lbstrydom/wine-cellar-app          # dry-run
+node scripts/ensure-branch-protection.mjs --repo Lbstrydom/wine-cellar-app --apply  # write
+
+# From this source repo against itself (npm shorthand; auto-detects origin):
+npm run protect:main            # dry-run
+npm run protect:main:apply      # write
+
+# From a CONSUMER repo checkout (no npm script there — run the synced copy;
+# auto-detects that repo's origin):
+node scripts/.claude-skills/ensure-branch-protection.mjs            # dry-run
+node scripts/.claude-skills/ensure-branch-protection.mjs --apply    # write
 ```
 
 Requires the `gh` CLI authenticated with **admin** on the target repo.
@@ -580,7 +586,6 @@ collisions.
 |---|---|---|
 | Tooling files (`scripts/X.mjs` and subdirs) | `scripts/.claude-skills/X.mjs` etc. | No (gitignored) |
 | Skill `.md` files (`.claude/skills/**`) | `.claude/skills/**` (rewritten — paths in body point at `scripts/.claude-skills/`) | Yes |
-| Copilot prompt shims (`.github/prompts/*.prompt.md`) | same path (rewritten) | Yes |
 | Editor config (`.vscode/mcp.json`) | same path (rewritten if it references scripts) | Yes |
 | Claude Code hooks + settings (`.claude/hooks/`, `.claude/settings.json`) | same path (rewritten) | Yes |
 | Per-consumer manifest (`scripts/.sync-manifest.json`) | same path; layout=`isolated` | No (gitignored 2026-07-21 — Feature B of sync-ownership-from-content.md; `sync-isolation-verify` reads it from disk) |

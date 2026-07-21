@@ -9,21 +9,23 @@ description: |
   database schemas. Also auto-invoke when detecting planning context like
   "I want to add", "let's design", "plan the implementation", "how should we
   structure this", "I need to refactor", "design the UI for", "build a
-  component", "improve the UX of".
-
-  Accepts arguments describing the task: /plan add a wine recommendation engine
-
-  Optional explicit scope hint via `--scope=backend|frontend|full-stack` for
-  cases where auto-detection is wrong; otherwise scope is inferred from the
-  task description and the files mentioned.
-
-  Usage: /plan <task description>                                  — auto-detected scope
-  Usage: /plan <task> --scope=backend|frontend|full-stack          — explicit scope hint
-  Usage: /plan <task> --no-diagram                                 — skip the architecture mermaid block
-  Usage: /plan <task> --diagram=sequence|graph|er|state            — force a specific mermaid diagram type
-  Triggers on: "plan", "design this", "architect this", "I want to add",
-  "let's design", "plan the implementation", "how should we structure this".
+  component", "improve the UX of". Accepts a task description as argument;
+  an explicit scope hint and diagram controls are available as flags.
+  Triggers on: "plan", "design this", "architect this".
+  Full command syntax: see the Usage section in this skill.
 ---
+
+## Usage
+
+```
+Example: /plan add a wine recommendation engine
+Usage: /plan <task description>                                  — auto-detected scope
+Usage: /plan <task> --scope=backend|frontend|full-stack          — explicit scope hint
+Usage: /plan <task> --no-diagram                                 — skip the architecture mermaid block
+Usage: /plan <task> --diagram=sequence|graph|er|state            — force a specific mermaid diagram type
+Triggers on: "plan", "design this", "architect this", "I want to add",
+"let's design", "plan the implementation", "how should we structure this".
+```
 
 # Unified Architecture + UX Planner
 

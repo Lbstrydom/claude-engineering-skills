@@ -3,30 +3,38 @@ name: persona-test
 description: |
   Persona-driven exploratory browser testing against a live URL.
   Drives a browser as a specific user persona using a Plan → Act → Reflect loop,
-  takes screenshots at each step, analyses UX and functional issues with confidence
-  scoring, and returns a structured P0–P3 severity report plus a qualitative persona debrief.
-  Personas are tracked per app URL — use "list" to see who's registered, "add" to register new ones.
-  Use for exploratory QA against deployed apps — not scripted regression tests.
-  Works with Playwright MCP (preferred — free, no credentials) or BrightData Scraping Browser (for external/anti-bot sites).
-  Triggers on: "persona test", "test as", "explore the app as", "run persona test",
-  "test the site as", "browse the app as", "QA as", "list personas", "add persona",
-  "who are my personas", "which persona should test".
-  Usage:
-    /persona-test list [url]                                                       — show all personas for an app
-    /persona-test add "<name>" "<description>" <url> [app name]                    — register a new persona
-    /persona-test "<persona or name>" <url> [focus] [--device <preset>]            — run an exploratory test (device auto-resolved from persona description)
-    /persona-test --pair "<p1>" "<p2>" <url> [focus] [--device <preset>]           — pair mode (--device overrides both personas)
-    /persona-test --mode consistency --canary <name> <url>                         — deterministic consistency canary (code-driven Playwright)
-  Device presets: desktop (default fallback) | desktop-large | tablet | mobile | mobile-small
-  Examples:
-    /persona-test list https://myapp.railway.app
-    /persona-test add "Pieter" "wine enthusiast, 40s, drinks daily, mobile-first" https://myapp.railway.app "Wine Cellar App"
-    /persona-test "Pieter" https://myapp.railway.app "adding a bottle"
-    /persona-test "first-time user on mobile" https://myapp.railway.app
-    /persona-test "Pieter" https://myapp.railway.app --device mobile-small      — override resolved device
-    /persona-test --pair "Elena (sommelier)" "Martha (newer drinker)" https://myapp.railway.app "browsing the cellar"
-    /persona-test --mode consistency --canary oliver-infeasible-reorg http://localhost:3000
+  takes screenshots at each step, analyses UX and functional issues with
+  confidence scoring, and returns a structured P0–P3 severity report plus a
+  qualitative persona debrief. Personas are tracked per app URL (list/add
+  subcommands); pair mode runs two opposed personas back-to-back; consistency
+  mode runs a deterministic code-driven canary. Use for exploratory QA against
+  deployed apps — not scripted regression tests. Works with Playwright MCP
+  (preferred — free, no credentials) or BrightData Scraping Browser (for external/anti-bot sites).
+  Triggers on: "persona test", "test as", "explore the app as", "run persona
+  test", "test the site as", "browse the app as", "QA as", "list personas",
+  "add persona", "who are my personas", "which persona should test".
+  Full command syntax: see the Usage section in this skill.
 ---
+
+## Usage
+
+```
+Usage:
+  /persona-test list [url]                                                       — show all personas for an app
+  /persona-test add "<name>" "<description>" <url> [app name]                    — register a new persona
+  /persona-test "<persona or name>" <url> [focus] [--device <preset>]            — run an exploratory test (device auto-resolved from persona description)
+  /persona-test --pair "<p1>" "<p2>" <url> [focus] [--device <preset>]           — pair mode (--device overrides both personas)
+  /persona-test --mode consistency --canary <name> <url>                         — deterministic consistency canary (code-driven Playwright)
+Device presets: desktop (default fallback) | desktop-large | tablet | mobile | mobile-small
+Examples:
+  /persona-test list https://myapp.railway.app
+  /persona-test add "Pieter" "wine enthusiast, 40s, drinks daily, mobile-first" https://myapp.railway.app "Wine Cellar App"
+  /persona-test "Pieter" https://myapp.railway.app "adding a bottle"
+  /persona-test "first-time user on mobile" https://myapp.railway.app
+  /persona-test "Pieter" https://myapp.railway.app --device mobile-small      — override resolved device
+  /persona-test --pair "Elena (sommelier)" "Martha (newer drinker)" https://myapp.railway.app "browsing the cellar"
+  /persona-test --mode consistency --canary oliver-infeasible-reorg http://localhost:3000
+```
 
 # Persona-Driven Browser Testing
 

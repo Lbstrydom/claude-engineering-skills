@@ -1,19 +1,19 @@
 {
   "schemaVersion": 2,
-  "bundleVersion": "1aa6d0ef223d7a84",
+  "bundleVersion": "eafccc1eca59d5fa",
   "repoUrl": "https://github.com/Lbstrydom/claude-engineering-skills",
   "rawUrlBase": "https://raw.githubusercontent.com/Lbstrydom/claude-engineering-skills/main",
   "skills": {
     "ai-context-management": {
       "path": "skills/ai-context-management/SKILL.md",
-      "sha": "f99609f8e6c6",
-      "size": 7686,
+      "sha": "37ec010a8f26",
+      "size": 6443,
       "summary": "Manage AGENTS.md and CLAUDE.md alignment across a repo so Claude, Copilot,",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "f99609f8e6c6",
-          "size": 7686
+          "sha": "37ec010a8f26",
+          "size": 6443
         },
         {
           "relPath": "examples/monorepo-layout.md",
@@ -39,11 +39,6 @@
           "relPath": "references/drift-rules.md",
           "sha": "6fb875475a32",
           "size": 3614
-        },
-        {
-          "relPath": "references/prompt-file-format.md",
-          "sha": "23c567037735",
-          "size": 3737
         },
         {
           "relPath": "references/reconcile-playbook.md",
@@ -110,27 +105,27 @@
     },
     "brainstorm": {
       "path": "skills/brainstorm/SKILL.md",
-      "sha": "f9f4736303e0",
-      "size": 18198,
+      "sha": "83f8f8d19d9c",
+      "size": 18484,
       "summary": "Multi-LLM concept-level brainstorming. Sends the user's topic to OpenAI",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "f9f4736303e0",
-          "size": 18198
+          "sha": "83f8f8d19d9c",
+          "size": 18484
         }
       ]
     },
     "click-test": {
       "path": "skills/click-test/SKILL.md",
-      "sha": "e1a5f970544f",
-      "size": 36021,
-      "summary": "Structural DOM audit of a live app — walk every interactive element and assert",
+      "sha": "232a2ac26f8d",
+      "size": 35867,
+      "summary": "Structural DOM audit of a live app — walk every interactive element and",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "e1a5f970544f",
-          "size": 36021
+          "sha": "232a2ac26f8d",
+          "size": 35867
         },
         {
           "relPath": "references/dom-scanner.md",
@@ -141,14 +136,14 @@
     },
     "cycle": {
       "path": "skills/cycle/SKILL.md",
-      "sha": "c196f4b2f364",
-      "size": 23877,
+      "sha": "584856ec7818",
+      "size": 24164,
       "summary": "End-to-end feature cycle orchestrator. Runs the full skill chain in",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c196f4b2f364",
-          "size": 23877
+          "sha": "584856ec7818",
+          "size": 24164
         }
       ]
     },
@@ -167,14 +162,14 @@
     },
     "nav-audit": {
       "path": "skills/nav-audit/SKILL.md",
-      "sha": "bfcddea06038",
-      "size": 10881,
+      "sha": "931473a5d590",
+      "size": 11130,
       "summary": "Static, code-derived navigation / information-architecture audit — the",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "bfcddea06038",
-          "size": 10881
+          "sha": "931473a5d590",
+          "size": 11130
         },
         {
           "relPath": "examples/example-report.md",
@@ -205,14 +200,14 @@
     },
     "persona-test": {
       "path": "skills/persona-test/SKILL.md",
-      "sha": "af20f3a4c5fa",
-      "size": 37841,
+      "sha": "aae63bfcd7ef",
+      "size": 37958,
       "summary": "Persona-driven exploratory browser testing against a live URL.",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "af20f3a4c5fa",
-          "size": 37841
+          "sha": "aae63bfcd7ef",
+          "size": 37958
         },
         {
           "relPath": "examples/report-and-debrief.md",
@@ -253,14 +248,14 @@
     },
     "plan": {
       "path": "skills/plan/SKILL.md",
-      "sha": "c202fb0ad4ba",
-      "size": 32757,
+      "sha": "81fe062d65c6",
+      "size": 32758,
       "summary": "Unified architecture + UX planner with engineering principles. Auto-detects",
       "files": [
         {
           "relPath": "SKILL.md",
-          "sha": "c202fb0ad4ba",
-          "size": 32757
+          "sha": "81fe062d65c6",
+          "size": 32758
         },
         {
           "relPath": "examples/mermaid-blocks.md",

@@ -194,7 +194,7 @@ function main() {
   process.stderr.write(
     `${Y}Fix${X}: delete the deprecated tree —\n` +
     `  rm -rf "${path.join(root, ...STALE_SURFACE.split('/'))}"\n` +
-    `${D}  (${LIVE_SURFACE}/ is the single Copilot-native surface; .github/prompts/ shims are unaffected.)${X}\n`
+    `${D}  (${LIVE_SURFACE}/ is the single Copilot-native surface.)${X}\n`
   );
   process.exit(exitCode);
 }

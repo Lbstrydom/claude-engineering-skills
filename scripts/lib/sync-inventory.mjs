@@ -162,16 +162,6 @@ function buildSkillFiles(keepGithubSkills = false) {
   return out;
 }
 
-function buildCopilotPromptFiles() {
-  const out = [];
-  const promptsDir = path.join(REPO_ROOT, '.github', 'prompts');
-  if (!fs.existsSync(promptsDir)) return out;
-  for (const f of fs.readdirSync(promptsDir)) {
-    if (f.endsWith('.prompt.md')) out.push(`.github/prompts/${f}`);
-  }
-  return out;
-}
-
 const EDITOR_FILES = ['.vscode/mcp.json'];
 const CLAUDE_CODE_FILES = [
   '.claude/hooks/arch-memory-check.sh',
@@ -235,8 +225,7 @@ function bundleForRepo(repoName, { keepGithubSkills = false } = {}) {
   const assets = [...CORE_ASSETS, ...syncMigrations()];
   const { files, unresolved, external } = resolveBundle(entries, assets);
   const skillFiles = buildSkillFiles(keepGithubSkills);
-  const promptFiles = buildCopilotPromptFiles();
-  const nonCode = [...skillFiles, ...promptFiles, ...EDITOR_FILES, ...CLAUDE_CODE_FILES];
+  const nonCode = [...skillFiles, ...EDITOR_FILES, ...CLAUDE_CODE_FILES];
   return { files: [...files, ...nonCode], unresolved, external };
 }
 
@@ -272,6 +261,6 @@ export function getAllConsumerInventories(opts = {}) {
 export const _internals = {
   CORE_ENTRY, CORE_NON_IMPORTABLE, LEARNING_ENTRY, ARCH_ENTRY, DEBT_ENTRY,
   SYNC_ISOLATION_ENTRY, CORE_ASSETS, EDITOR_FILES, CLAUDE_CODE_FILES,
-  bundleForRepo, syncMigrations, buildSkillFiles, buildCopilotPromptFiles,
+  bundleForRepo, syncMigrations, buildSkillFiles,
   REPO_ROOT,
 };

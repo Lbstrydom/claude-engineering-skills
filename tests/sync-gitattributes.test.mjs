@@ -14,7 +14,6 @@ describe('sync .gitattributes EOL pins', () => {
   it('EOL pins render as one valid managed block of `<glob> text eol=lf` lines', () => {
     const pins = [
       '.claude/skills/** text eol=lf',
-      '.github/prompts/** text eol=lf',
       'docs/reference/consistency-contract.md text eol=lf',
     ];
     const r = updateManagedBlock(null, pins);

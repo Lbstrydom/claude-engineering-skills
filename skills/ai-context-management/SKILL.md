@@ -3,25 +3,23 @@ name: ai-context-management
 description: |
   Manage AGENTS.md and CLAUDE.md alignment across a repo so Claude, Copilot,
   Cursor, Windsurf, and other AI agents share the same project context.
-  Detects drift, reconciles manually-introduced divergence, generates Copilot
-  slash-command shims from skills, and migrates legacy CLAUDE.md-canonical
-  repos to AGENTS.md-canonical.
+  Detects drift, reconciles manually-introduced divergence, and migrates legacy
+  CLAUDE.md-canonical repos to AGENTS.md-canonical.
   Triggers on: "audit AGENTS.md", "check context drift", "AGENTS.md vs CLAUDE.md",
-  "fix context drift", "regenerate copilot prompts", "migrate to AGENTS.md",
+  "fix context drift", "migrate to AGENTS.md",
   "context sync", "what tools read which file", "ai-context-management".
   Usage: /ai-context-management audit          — Score drift + report findings
   Usage: /ai-context-management reconcile      — Apply patches to fix drift
-  Usage: /ai-context-management generate-prompts — Refresh .github/prompts/*
   Usage: /ai-context-management migrate        — Flip legacy repo to AGENTS.md canonical
 ---
 
 # AI Context Management
 
 Keep `AGENTS.md` (canonical, shared) and `CLAUDE.md` (slim, Claude-only addendum)
-aligned across a repo. Generates Copilot prompt-file shims so VS Code teammates
-get parity slash commands.
+aligned across a repo, so Claude, Copilot (which reads `.claude/skills` +
+`AGENTS.md` natively), and other agents share one project context.
 
-**Input**: `$ARGUMENTS` — `audit | reconcile | generate-prompts | migrate`
+**Input**: `$ARGUMENTS` — `audit | reconcile | migrate`
 (plus optional `--repo <path>` for cross-repo invocation).
 
 ---
@@ -32,7 +30,6 @@ get parity slash commands.
 |---|---|---|
 | `audit` | AUDIT | Run `npm run context:check`; report findings; no writes |
 | `reconcile` | RECONCILE | Detect drift, propose patch, apply after confirmation |
-| `generate-prompts` | GENERATE_PROMPTS | Run `npm run skills:regenerate`; refresh `.github/prompts/*.prompt.md` |
 | `migrate` | MIGRATE | Convert legacy CLAUDE.md-canonical → AGENTS.md-canonical |
 | (no args) | AUDIT | Default to audit |
 
@@ -83,29 +80,7 @@ Full step-by-step playbook with conflict resolution: `references/reconcile-playb
 
 ---
 
-## Step 3 — GENERATE_PROMPTS Mode
-
-Goal: ensure every registered skill has a current `.github/prompts/<name>.prompt.md`
-shim for VS Code Copilot users.
-
-```bash
-npm run skills:regenerate 2>&1 | grep -E 'prompt|verdict'
-```
-
-The script handles:
-- Reading each `skills/<name>/SKILL.md` frontmatter
-- Cross-referencing the `SKILL_ENTRY_SCRIPTS` registry in `scripts/lib/install/copilot-prompts.mjs`
-- Generating a managed-block-wrapped `.prompt.md` for each registered skill
-- Pruning managed prompt files for skills no longer in the registry
-
-If a skill is missing from the registry, it silently skips — add it to
-`SKILL_ENTRY_SCRIPTS` to enable Copilot parity.
-
-Format spec + registry editing rules: `references/prompt-file-format.md`.
-
----
-
-## Step 4 — MIGRATE Mode
+## Step 3 — MIGRATE Mode
 
 For repos that currently use `CLAUDE.md` as the canonical project context (legacy
 single-file pattern). Flips to `AGENTS.md`-canonical so the wider AI ecosystem
@@ -128,7 +103,7 @@ Migration playbook with edge cases: `references/canonical-flip.md`.
 
 ---
 
-## Step 5 — Status Card
+## Step 4 — Status Card
 
 After every mode, emit a compact status card:
 
@@ -168,7 +143,6 @@ situations — read them only when the trigger applies.
 |---|---|---|
 | `references/drift-rules.md` | Per-rule severity, fix recipes, and the Claude-only heading allowlist for ctx/* rules. | A finding's rule ID is unfamiliar, OR you need to extend the allowlist for a custom heading. |
 | `references/reconcile-playbook.md` | Step-by-step: bring drifted AGENTS.md and CLAUDE.md back into alignment safely. | RECONCILE mode is firing AND a finding has competing edits in both files. |
-| `references/prompt-file-format.md` | Copilot .prompt.md format spec, frontmatter rules, and the SKILL_ENTRY_SCRIPTS registry. | Adding a new skill that needs Copilot parity, OR diagnosing why a skill has no `.github/prompts/` shim. |
 | `references/canonical-flip.md` | Migration guide: switch a repo from CLAUDE.md-canonical to AGENTS.md-canonical. | MIGRATE mode is firing on a legacy single-file repo. |
 | `examples/slim-claude-md.md` | Canonical 30-line CLAUDE.md template after AGENTS.md flip. | Producing a slim CLAUDE.md from scratch in MIGRATE mode. |
 | `examples/well-formed-agents-md.md` | 100-150 line AGENTS.md exemplar with reasoned rules and standard sections. | A repo has no AGENTS.md and you're producing one from project knowledge. |

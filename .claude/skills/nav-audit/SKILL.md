@@ -5,20 +5,29 @@ description: |
   system-level third lens complementing /persona-test (journey-level) and
   /click-test (page-level). Builds the whole nav graph from source, checks
   whether what's OFFERED matches what's NEEDED (grounded in the persona
-  registry), and gates CI only on declared-intent regressions.
+  registry), and gates CI only on declared-intent regressions. A verify mode
+  drives the live app to reconcile static-vs-live (per-persona scorecard +
+  live findings); a bootstrap mode emits a review-queue nav-contract.json
+  skeleton on first run.
   Triggers on: "map the nav flow", "navigation audit", "IA audit",
   "is the menu coherent", "nav map", "information architecture",
   "offered vs needed", "/nav-audit", "/ia-map".
-  Usage:
-    /nav-audit                         — static map + analysis of the repo's nav surface (--scope diff default)
-    /nav-audit --scope full            — analyse the whole nav graph, not just the changed surface
-    /nav-audit --bootstrap             — emit a review-queue nav-contract.json skeleton (first run)
-    /nav-audit --gate                  — exit non-zero on a declared-intent regression on the changed surface
-    /nav-audit --verify <url>          — live-verify: multi-state DOM layer attribution → scorecard pass/misplaced/missing + LIVE FINDINGS
-    /nav-audit --verify <url> --breakpoints mobile,desktop --storage-state auth.json   — states to capture (default mobile,desktop) + auth
-    /nav-audit --verify <url> --no-activate   — skip the collapsed-menu activation pass (faster; single-state capture only)
-    /nav-audit --bootstrap --from-url <url>   — draft nav-contract.json navLayers from the live app (refuses to clobber; --force to replace)
+  Full command syntax: see the Usage section in this skill.
 ---
+
+## Usage
+
+```
+Usage:
+  /nav-audit                         — static map + analysis of the repo's nav surface (--scope diff default)
+  /nav-audit --scope full            — analyse the whole nav graph, not just the changed surface
+  /nav-audit --bootstrap             — emit a review-queue nav-contract.json skeleton (first run)
+  /nav-audit --gate                  — exit non-zero on a declared-intent regression on the changed surface
+  /nav-audit --verify <url>          — live-verify: multi-state DOM layer attribution → scorecard pass/misplaced/missing + LIVE FINDINGS
+  /nav-audit --verify <url> --breakpoints mobile,desktop --storage-state auth.json   — states to capture (default mobile,desktop) + auth
+  /nav-audit --verify <url> --no-activate   — skip the collapsed-menu activation pass (faster; single-state capture only)
+  /nav-audit --bootstrap --from-url <url>   — draft nav-contract.json navLayers from the live app (refuses to clobber; --force to replace)
+```
 
 # /nav-audit — Contract-backed Navigation Verifier (with static assists)
 

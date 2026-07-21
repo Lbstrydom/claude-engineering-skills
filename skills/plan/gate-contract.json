@@ -22,5 +22,11 @@
       "kind": "document-only",
       "reason": "'Section 10 acceptance criteria are what /ux-lock verify grades — a report, not a gate; nothing blocks on it' (the corrected claim from the parent plan's Phase 1). This describes a cross-skill relationship the model sets up by writing gradeable criteria; it is not a /plan exit code, and the corrected-to-non-blocking semantics are exactly a document-only judgement about how the criteria are consumed."
     }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "Usage: /plan <task> --no-diagram                                 — skip the architecture mermaid block",
+      "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
+    }
   ]
 }

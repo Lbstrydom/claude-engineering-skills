@@ -30,7 +30,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { enumerateSkillFiles, listSkillNames } from './lib/skill-packaging.mjs';
-import { generateAllPromptFiles } from './lib/install/copilot-prompts.mjs';
 import { sha, assertKnownFlags, ArgvError } from './lib/cli-io.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
@@ -155,54 +154,6 @@ function pruneOrphanSkillDirs(srcSet, opts) {
   return deletes;
 }
 
-function writePromptFiles(entries, opts) {
-  const expected = new Set();
-  let writes = 0, unchanged = 0;
-  for (const entry of entries) {
-    const dstAbs = path.join(ROOT, entry.relPath);
-    expected.add(dstAbs);
-    fs.mkdirSync(path.dirname(dstAbs), { recursive: true });
-    const dstExists = fs.existsSync(dstAbs);
-    const dstContent = dstExists ? fs.readFileSync(dstAbs, 'utf-8') : null;
-    if (dstContent === entry.content) { unchanged++; continue; }
-    if (opts.dryOrCheck) {
-      process.stdout.write(`${Y}~${X} ${path.relative(ROOT, dstAbs)} ${D}(${dstExists ? 'update' : 'create'} prompt)${X}\n`);
-    } else {
-      fs.writeFileSync(dstAbs, entry.content);
-    }
-    writes++;
-  }
-  return { writes, unchanged, expected };
-}
-
-function pruneStalePrompts(promptDir, expected, opts) {
-  if (!fs.existsSync(promptDir)) return 0;
-  let deletes = 0;
-  for (const f of fs.readdirSync(promptDir)) {
-    if (!f.endsWith('.prompt.md')) continue;
-    const abs = path.join(promptDir, f);
-    if (expected.has(abs)) continue;
-    const content = fs.readFileSync(abs, 'utf-8');
-    // Only prune managed files; leave operator-authored prompts alone.
-    if (!content.includes('<!-- audit-loop-bundle:prompt:start -->')) continue;
-    if (opts.dryOrCheck) {
-      process.stdout.write(`${R}-${X} ${path.relative(ROOT, abs)} ${D}(prune managed prompt)${X}\n`);
-    } else {
-      fs.unlinkSync(abs);
-    }
-    deletes++;
-  }
-  return deletes;
-}
-
-function syncCopilotPrompts(opts) {
-  const promptDir = path.join(ROOT, '.github', 'prompts');
-  const entries = generateAllPromptFiles(SRC_ROOT);
-  const { writes, unchanged, expected } = writePromptFiles(entries, opts);
-  const deletes = pruneStalePrompts(promptDir, expected, opts);
-  return { writes, unchanged, deletes };
-}
-
 function computeVerdict(stats, violationsCount) {
   if (violationsCount > 0) return 'VIOLATIONS';
   if (stats.writes + stats.deletes === 0) return 'IN SYNC';
@@ -257,11 +208,6 @@ function main() {
   }
 
   stats.deletes += pruneOrphanSkillDirs(new Set(skills), opts);
-
-  const promptStats = syncCopilotPrompts(opts);
-  stats.writes += promptStats.writes;
-  stats.unchanged += promptStats.unchanged;
-  stats.deletes += promptStats.deletes;
 
   emitVerdict(stats, violations, CHECK);
   process.exit(0);

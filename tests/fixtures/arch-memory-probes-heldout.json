@@ -105,13 +105,6 @@
       "stratum": "install"
     },
     {
-      "id": "ho-install-frontmatter",
-      "intent": "read the YAML frontmatter block out of a skill markdown file",
-      "expected": { "filePath": "scripts/lib/install/copilot-prompts.mjs", "symbolName": "parseSkillFrontmatter" },
-      "relation": "reuse",
-      "stratum": "install"
-    },
-    {
       "id": "ho-install-receipt-write",
       "intent": "record which files an install wrote so the operation can be undone later",
       "expected": { "filePath": "scripts/lib/install/receipt.mjs", "symbolName": "writeReceipt" },

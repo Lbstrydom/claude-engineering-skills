@@ -38,9 +38,8 @@ describe('sync-banner — injectUpstreamBanner', () => {
     assert.ok(out.startsWith('# ' + BANNER_BODY[0]));
   });
 
-  it('does NOT touch tracked skills/prompts (only scripts/.claude-skills/)', () => {
+  it('does NOT touch tracked skills (only scripts/.claude-skills/)', () => {
     assert.equal(injectUpstreamBanner('# Skill\n', '.claude/skills/plan/SKILL.md'), '# Skill\n');
-    assert.equal(injectUpstreamBanner('prompt\n', '.github/prompts/plan.prompt.md'), 'prompt\n');
   });
 
   it('skips non-comment-capable (JSON) relocated files', () => {

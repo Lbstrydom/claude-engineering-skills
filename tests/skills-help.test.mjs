@@ -61,6 +61,39 @@ Body.
     assert.equal(r.disableModelInvocation, false);
   });
 
+  it('falls back to a `## Usage` body section when the frontmatter has none (Copilot 1024-cap relocation)', () => {
+    // Regression: 2026-07-21 six skills relocated Usage out of the ≤1024-char
+    // description into a body `## Usage` fence; parseSkill scraped Usage only
+    // from the description and silently dropped it (caught by the Gemini gate).
+    const root = mkTmpRepo();
+    const file = writeSkill(root, 'baz', `---
+name: baz
+description: |
+  A short summary.
+  Triggers on: "do baz", "/baz"
+  Full command syntax: see the Usage section in this skill.
+---
+
+# Baz
+
+## Usage
+
+\`\`\`
+Usage: /baz <arg>            — does the thing
+Usage: /baz --flag          — with a flag
+Triggers on: "do baz", "/baz"
+\`\`\`
+
+More body.
+`);
+    const r = parseSkill(file);
+    assert.equal(r.name, 'baz');
+    assert.deepEqual(r.triggers, ['do baz', '/baz'], 'triggers still come from the description');
+    assert.equal(r.usage.length, 2, 'both Usage lines recovered from the body fence');
+    assert.match(r.usage[0], /\/baz <arg>/);
+    assert.ok(!r.usage.some((u) => /triggers on:/i.test(u)), 'stray Triggers line in the fence is not treated as usage');
+  });
+
   it('handles CRLF line endings', () => {
     const root = mkTmpRepo();
     const lfBody = `---

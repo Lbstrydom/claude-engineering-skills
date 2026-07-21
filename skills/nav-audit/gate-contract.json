@@ -10,7 +10,9 @@
       "statedIn": "skills/nav-audit/SKILL.md",
       "stated": "`2` tool",
       "implementation": "scripts/nav-audit.mjs",
-      "tests": ["tests/gate-honesty.test.mjs"],
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
       "proof": "process"
     },
     {
@@ -21,13 +23,25 @@
       "statedIn": "skills/nav-audit/SKILL.md",
       "stated": "refuses to clobber",
       "implementation": "scripts/nav-audit.mjs",
-      "tests": ["tests/gate-honesty.test.mjs"],
+      "tests": [
+        "tests/gate-honesty.test.mjs"
+      ],
       "proof": "process"
     },
     {
       "id": "gate-exit-1-on-regression",
       "kind": "document-only",
       "reason": "'With --gate, exit 1 only when a declared-intent regression appears on the changed surface' needs a fixture with an observed nav graph, a nav-contract.json declaring intent, AND a git diff producing a genuine regression on the changed surface — a multi-artifact setup that also depends on the diff-scope resolver. Constructing that deterministically is beyond a minimal cli-exit fixture; the two exit-2 tool-error paths are bound executably above, and this exit-1 path is document-only until (if ever) it earns a dedicated fixture."
+    }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "registry), and gates CI only on declared-intent regressions. A verify mode",
+      "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
+    },
+    {
+      "line": "/nav-audit --gate                  — exit non-zero on a declared-intent regression on the changed surface",
+      "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
     }
   ]
 }

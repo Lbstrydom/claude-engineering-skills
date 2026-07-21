@@ -10,7 +10,7 @@ archiver was deleted ([`reference-integrity-gate.md`](./reference-integrity-gate
 Cluster C). A path is an identity; status is a fact that changes. This index is
 the derived view that makes status navigable without touching identity.
 
-**6 active · 135 terminal · 22 audit summaries · 4 reference docs**
+**6 active · 136 terminal · 22 audit summaries · 4 reference docs**
 
 ---
 
@@ -46,7 +46,7 @@ Shipped. Kept in place so every inbound reference — including the ones in
 source comments that no docs linter sees — stays valid.
 
 <details>
-<summary>Show all 132 completed plans</summary>
+<summary>Show all 133 completed plans</summary>
 
 | Plan | Status | Notes |
 |---|---|---|
@@ -86,6 +86,7 @@ source comments that no docs linter sees — stays valid.
 | [Wire the Cloud FP-Pattern Read Loop into Audit Suppression](./cloud-fp-suppression-read-loop.md) | `Complete` | implemented + audited. Plan audit: 5 GPT + 2 Gemini |
 | [Harden consumer deployment — prevent silent local-patching of synced tooling](./consumer-deployment-hardening.md) | `Complete` | all three phases built, tested, and deployed (the |
 | [Audit Context Brief Generator](./context-brief.md) | `Complete` | shipped — `scripts/lib/context.mjs` (`readProjectContextForPass`, `readRepoProfile`, `generateBriefViaGemin… |
+| [VS Code GitHub Copilot compatibility audit + fixes](./copilot-compat-audit.md) | `Complete` |  |
 | [Read-only Audit-Run Findings Viewer (dashboard module)](./dashboard-audit-run-viewer.md) | `Complete` | implemented + audited — see Implementation Log |
 | [Dashboard "Purpose" view — v2 (coverage, reverse-link, live health)](./dashboard-purpose-view-v2.md) | `Complete` |  |
 | [Dashboard "Purpose" view — v3 (per-domain health + outcome×domain matrix)](./dashboard-purpose-view-v3.md) | `Complete` |  |

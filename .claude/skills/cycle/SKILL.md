@@ -5,20 +5,29 @@ description: |
   sequence: /plan → /audit-plan → (wait for human implementation) →
   /audit-code → /persona-test (if frontend/full-stack) → /ux-lock (if
   fixes shipped) → /ship. Use when starting a new feature or non-trivial
-  fix and you want the whole workflow on autopilot.
+  fix and you want the whole workflow on autopilot. Supports resuming from
+  an existing plan or straight to code-audit, per-step skips, max-round
+  pass-through, and an opt-in autonomous mode that implements + audits each
+  plan cluster (the default still pauses for the human).
   Triggers on: "run the full cycle", "do the whole flow", "plan + audit
   + ship", "feature cycle", "/cycle".
-  Usage: /cycle <task-description>          — Full chain from scratch
-  Usage: /cycle plan <plan-file>            — Skip planning; use existing plan
-  Usage: /cycle code <plan-file>            — Skip to code-audit-then-ship
-  Usage: /cycle <plan-file> --no-persona    — Skip persona-test step
-  Usage: /cycle <plan-file> --no-uxlock     — Skip ux-lock step (no UI changes)
-  Usage: /cycle <plan-file> --no-ship       — Stop after audit; don't commit or push
-  Usage: /cycle <plan-file> --max-rounds N  — Pass through to /audit-plan and /audit-code
-  Usage: /cycle --autonomous <plan-file>    — Opt-in: autonomously implement + audit each §11 cluster (default still pauses for the human)
-  Usage: /cycle code <plan-file> --cluster <ID> [--baseline-ref <sha>]  — Resume one declared cluster (human clustered path)
-  Usage: /cycle --autonomous <plan-file> --authorize-stale-reaudit      — Resume a halted autonomous run; re-process stale clusters
+  Full command syntax: see the Usage section in this skill.
 ---
+
+## Usage
+
+```
+Usage: /cycle <task-description>          — Full chain from scratch
+Usage: /cycle plan <plan-file>            — Skip planning; use existing plan
+Usage: /cycle code <plan-file>            — Skip to code-audit-then-ship
+Usage: /cycle <plan-file> --no-persona    — Skip persona-test step
+Usage: /cycle <plan-file> --no-uxlock     — Skip ux-lock step (no UI changes)
+Usage: /cycle <plan-file> --no-ship       — Stop after audit; don't commit or push
+Usage: /cycle <plan-file> --max-rounds N  — Pass through to /audit-plan and /audit-code
+Usage: /cycle --autonomous <plan-file>    — Opt-in: autonomously implement + audit each §11 cluster (default still pauses for the human)
+Usage: /cycle code <plan-file> --cluster <ID> [--baseline-ref <sha>]  — Resume one declared cluster (human clustered path)
+Usage: /cycle --autonomous <plan-file> --authorize-stale-reaudit      — Resume a halted autonomous run; re-process stale clusters
+```
 
 # Feature Cycle Orchestrator
 

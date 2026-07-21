@@ -22,5 +22,15 @@
       "kind": "document-only",
       "reason": "'The consolidated Gemini gate is mandatory after clustered execution, regardless of per-cluster convergence' is an orchestration invariant /cycle enacts by always running the union-diff Gemini review. No /cycle CLI, no exit code — the mandatory-ness is agent flow the model performs, not a mechanical gate."
     }
+  ],
+  "ignoredCandidates": [
+    {
+      "line": "an existing plan or straight to code-audit, per-step skips, max-round",
+      "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
+    },
+    {
+      "line": "Usage: /cycle <plan-file> --max-rounds N  — Pass through to /audit-plan and /audit-code",
+      "reason": "Usage/description documentation line surfaced by the 2026-07-21 Copilot-cap description trim (Usage relocated to the SKILL body). Not a new gate claim — it documents an existing flag; the real gate (where one exists, e.g. nav-audit --gate) is contracted separately in this file."
+    }
   ]
 }
